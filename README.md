@@ -8,8 +8,10 @@ game files are modified — the mod loads at runtime via
 
 ## Status
 
-Phase 0 (feasibility + bootstrap). See `docs/FEASIBILITY.md` for the
-current viability assessment and `docs/ROADMAP.md` for the phase plan.
+**Target game version: Alpha 0.9.0-n** (the mod version tag mirrors the
+VOTV release it targets). Phase 0 done (feasibility + bootstrap +
+substrate); Phase 1 (engine archaeology) underway. See `docs/FEASIBILITY.md`
+for the viability assessment and `docs/ROADMAP.md` for the phase plan.
 
 ## Architecture in one paragraph
 

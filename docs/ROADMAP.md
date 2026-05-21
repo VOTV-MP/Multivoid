@@ -34,17 +34,20 @@ be pulled forward once UE4SS is installed against the game.
 **Goal**: a research finding for each engine entry point we'll hook.
 **Gate**: all of the below documented in `research/findings/`.
 
-- ☐ 1.1 Entity factory — confirm `UWorld::SpawnActor` path for VOTV pawn.
-- ☐ 1.2 Player class layout — VOTV pawn + controller class names, key
-       properties (position via `AActor`, health, inventory, mode).
-- ☐ 1.3 Input dispatch path — `APlayerController` / `UPlayerInput` /
-       `UCharacterMovementComponent` input consumption.
+- ☑ 1.1 Entity factory — `UWorld::SpawnActor`; 2nd player via
+       `UGameplayStatics::CreatePlayer` (engine-native). See finding
+       `coop-phase-1-player-class-and-spawn-2026-05-21.md`.
+- ☑ 1.2 Player class layout — pawn `AmainPlayer_C : ACharacter` (camera,
+       grab/hold, stats, inventory mapped); controller = stock
+       `APlayerController`; GameMode `AmainGamemode_C` (world/save hub).
+- ◐ 1.3 Input dispatch path — stock `APlayerController`; VOTV input via
+       pawn `InpActEvt_*` BP events. Enumerate for 4.1 (input replication).
 - ☐ 1.4 Sim tick — UE `UWorld::Tick` / actor tick groups VOTV relies on.
 - ☐ 1.5 Render tick — confirm decoupling (UE renders on its own thread).
 - ☐ 1.6 Level-load entry + completion — `UGameplayStatics::OpenLevel` /
        `LoadStreamLevel` + post-load callback used by VOTV.
-- ☐ 1.7 Save / load entry — VOTV's `USaveGame` load `UFunction`; file
-       location, layout, encryption.
+- ◐ 1.7 Save / load entry — classes found (`Usave_main_C`, `UsaveSlot_C`,
+       `UmainGameInstance_C`); layout + load UFunction pending (Phase 4.5).
 - ☐ 1.8 Screen / UI system — VOTV's UMG/HUD stack; how menus push/pop.
 - ☐ 1.9 Script VM — Blueprint VM; map key gameplay `UFunction`s (AI,
        interaction, day cycle, signals). Blueprint-vs-C++ split.
@@ -53,7 +56,9 @@ be pulled forward once UE4SS is installed against the game.
 **Gate**: spawn a 2nd `APawn` + `APlayerController` (the "orphan") and
 have it tick without crashing for ≥60 s (target several minutes).
 
-- ☐ 2.1 Spawn the orphan via `SpawnActor` (the cheapest derisk).
+- ◐ 2.1 Spawn the orphan — mechanism identified (`CreatePlayer` +
+       `bUseSplitscreen`; bundled SplitScreenMod binds it to CTRL+Y).
+       Needs an interactive run to confirm a 2nd `AmainPlayer_C` ticks.
 - ☐ 2.2 Crash-by-crash root-cause fixes (per-site, no broad filters).
 - ☐ 2.3 Registry / state mirror for any per-player subsystem VOTV/UE
        expects (subsystems registered per `APlayerController`).

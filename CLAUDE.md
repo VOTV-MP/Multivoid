@@ -95,6 +95,14 @@ unchanged; the *techniques* shift:
   Adding them means editing assets (A6). We run a custom UDP layer and
   drive the engine via replicated *input* + state push.
 
+## Versioning — mirror the game version
+
+The mod's version tag **mirrors the VOTV game version it targets**, to avoid
+confusion about compatibility. The current target is **Alpha 0.9.0-n**
+(the latest game release), so the mod is tagged `0.9.0-n`. When the mod is
+brought up against a future game release, it carries that release's tag.
+The game install folder name (`Game_0.9.0n/`) reflects the current target.
+
 ## Other standing rules
 
 - Document findings + rename functions/objects (in IDB if doing RE; in
