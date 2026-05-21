@@ -68,8 +68,9 @@ have it tick without crashing for ≥60 s (target several minutes).
 - ☐ 2.2 Crash-by-crash root-cause fixes (per-site, no broad filters).
 - ☐ 2.3 Registry / state mirror for any per-player subsystem VOTV/UE
        expects (subsystems registered per `APlayerController`).
-- ◐ 2.4 Sustained-soak validation — first ~65s idle soak passed; needs
-       5+ min soak + a driven (possessed) orphan to fully clear the gate.
+- ◐ 2.4 Sustained-soak validation — 4-min idle soak PASSED (orphan alive,
+       no crash, no singleton clobber: count 1->2 clean, local pawn
+       unchanged). Remaining: driven/possessed orphan + movement under load.
 
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN

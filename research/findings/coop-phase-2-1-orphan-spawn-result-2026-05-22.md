@@ -34,6 +34,26 @@ This de-risks the entire project's hardest assumption: UE's multi-pawn
 support holds for VOTV's player class, and `SpawnActor<mainPlayer_C>` is a
 viable orphan primitive for `coop::RemotePlayer`.
 
+### Extended soak + singleton check (2nd run, 4 min)
+
+A follow-up run soaked the idle orphan to T+240s and checked per-player
+singletons (methodology 2.3):
+
+```
+pre-spawn   mainPlayer_C count=1 | gamemode.origPawn=nil
+ORPHAN SPAWNED (mainPlayer_C_2147466125)
+post-spawn  mainPlayer_C count=2 | gamemode.origPawn=nil
+T+62/120/180/240s  orphan alive=true (pos constant); local pawn still mainPlayer_C
+T+240s      mainPlayer_C count=2 | game stable, no crash
+```
+
+- **No clobber**: count went 1->2 cleanly; the **local player kept its
+  original pawn** (orphan did not steal possession or replace the player).
+- **4-minute soak passed**: orphan alive throughout, HUD intact, no crash.
+- Note: `gamemode.origPawn` was `nil` even pre-spawn (not populated in a
+  fresh New Game), so it is not a useful clobber indicator in this state;
+  the meaningful signals are the stable count and unchanged local pawn.
+
 ## Honest caveats (NOT yet validated)
 
 1. **Unpossessed + idle.** The orphan was not possessed by a controller and
