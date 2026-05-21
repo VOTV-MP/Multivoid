@@ -56,9 +56,10 @@ be pulled forward once UE4SS is installed against the game.
 **Gate**: spawn a 2nd `APawn` + `APlayerController` (the "orphan") and
 have it tick without crashing for ≥60 s (target several minutes).
 
-- ◐ 2.1 Spawn the orphan — mechanism identified (`CreatePlayer` +
-       `bUseSplitscreen`; bundled SplitScreenMod binds it to CTRL+Y).
-       Needs an interactive run to confirm a 2nd `AmainPlayer_C` ticks.
+- ◐ 2.1 Spawn the orphan — via `SpawnActor<AmainPlayer_C>` on our own path
+       (NOT `CreatePlayer`/split-screen — that's local-player baggage).
+       SplitScreenMod only proves a 2nd pawn can exist; not the impl.
+       Needs an interactive run to confirm our orphan ticks.
 - ☐ 2.2 Crash-by-crash root-cause fixes (per-site, no broad filters).
 - ☐ 2.3 Registry / state mirror for any per-player subsystem VOTV/UE
        expects (subsystems registered per `APlayerController`).

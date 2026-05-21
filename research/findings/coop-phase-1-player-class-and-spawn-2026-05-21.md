@@ -88,36 +88,45 @@ to be mapped when Phase 4.5 needs it.
 
 ## Entity factory + spawn mechanism (1.1 + Phase 2.1 derisk)
 
-- General factory: UE `UWorld::SpawnActor` / `UGameplayStatics` (universal).
-- **Second player**: `UGameplayStatics::CreatePlayer(existingController,
-  ControllerId, bSpawnPawn=true)` with `GameMapsSettings.bUseSplitscreen =
-  true`. This is the engine-native local-player path — it creates a new
-  `APlayerController` AND spawns its pawn (VOTV's default pawn =
-  `AmainPlayer_C`). `RemovePlayer` tears it down.
+**Goal is networked LAN coop, NOT split-screen.** The remote player is a
+pawn in the local full-screen world driven by network input/pose — not a
+local split-screen player.
 
-This is the UE form of "spawn the orphan" (methodology Phase 2.1). The
-bundled **`SplitScreenMod`** demonstrates it and is already installed:
+- **Shipping primitive — `UWorld::SpawnActor<AmainPlayer_C>`**: spawn the
+  remote pawn directly. It brings VOTV's rendering/anim/physics/grab for
+  free. We wrap it in `coop::RemotePlayer` (parallel class hierarchy,
+  principle 3) and drive it from network input / interpolated pose. No
+  `ULocalPlayer`, no local gamepad binding, no viewport split. A
+  controller is attached only insofar as VOTV systems require a possessor;
+  it is OUR controller, not a local player.
+- **Do NOT use `UGameplayStatics::CreatePlayer` for the remote player.** It
+  creates a `ULocalPlayer` tied to local input + the engine's split-screen
+  viewport path — local-coop baggage that does not fit a networked remote.
 
-- `CTRL+Y` → `CreatePlayer` (spawn player 2)
-- `CTRL+U` → `RemovePlayer`
-- `CTRL+I` → teleport extra players to player 1
+### SplitScreenMod = reference only (not the architecture)
 
-Reference: `Mods/SplitScreenMod/Scripts/main.lua`. UEHelpers gives
-`GetGameplayStatics()` / `GetGameMapsSettings()`.
+The bundled `SplitScreenMod` (`Mods/SplitScreenMod/Scripts/main.lua`,
+CTRL+Y/U/I) uses `CreatePlayer`. Its value to us is narrow: it **proves
+VOTV tolerates a 2nd `AmainPlayer_C` instance in the world** and is a handy
+code sample of the UE4SS Lua API (`GetGameplayStatics()`, `FindAllOf`,
+`ExecuteInGameThread`, pawn transform getters). We do **not** ship its
+mechanism. Optionally it can serve as a one-off crash smoke-test ("does a
+2nd pawn tick at all?"), but the real Phase 2.1 work spawns via
+`SpawnActor` on our own path.
 
-**Implication**: Phase 2.1 ("can we spawn a 2nd player pawn that ticks?")
-is largely answered — UE supports it natively and a mod already does it.
-The remaining Phase 2 work is the SP-only-assumption crash hunt (principle
-4, per-site fixes) once a 2nd `AmainPlayer_C` ticks, and confirming it
-survives VOTV-specific systems (camera/grab/inventory/save singletons that
-may assume one player). The first concrete experiment: in-game `CTRL+Y`,
-observe stability + what breaks.
+**Implication**: Phase 2.1 ("can a 2nd `AmainPlayer_C` exist and tick?") is
+de-risked in principle (the engine supports multiple pawns; a mod already
+instantiates one). Remaining Phase 2 = the SP-only-assumption crash hunt
+(principle 4, per-site fixes) on our `SpawnActor` orphan, plus confirming
+it survives VOTV singletons (camera/grab/inventory/save) that may assume
+one player.
 
 ## Next steps
 
-1. **Run the spawn derisk**: in a loaded save, `CTRL+Y` (SplitScreenMod),
-   observe whether a 2nd `AmainPlayer_C` spawns and ticks; log crashes /
-   misbehavior. (Needs an interactive launch.)
+1. **Build the orphan on our path**: `SpawnActor<AmainPlayer_C>` from a
+   minimal UE4SS probe (Lua first, then the C++ mod), attach a controller
+   we own, confirm it ticks; crash-hunt per-site. (`SplitScreenMod` CTRL+Y
+   is an optional smoke-test only — not the implementation.)
 2. Map `save_main_C` layout + the load entry UFunction (1.7 detail).
 3. Confirm the input-action path on `AmainPlayer_C` for input replication
    (4.1) — enumerate `InpActEvt_*` events.
