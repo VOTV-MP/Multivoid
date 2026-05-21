@@ -72,6 +72,17 @@ have it tick without crashing for ≥60 s (target several minutes).
        no crash, no singleton clobber: count 1->2 clean, local pawn
        unchanged). Remaining: driven/possessed orphan + movement under load.
 
+### Standalone mod foundation (RULE №3) — the shipping vehicle
+- ☑ C++ toolchain + build: `votv-coop.dll` (CMake + VS2019, x64, static CRT).
+- ☑ Standalone load proven: DLL injected + ran in VOTV with UE4SS absent
+      (marker written; `UE4SS.dll` not loaded). See finding
+      `standalone-bootstrap-loads-2026-05-22.md`.
+- ☐ Shipping loader = proxy DLL (not `dwmapi`; small-export DLL VOTV
+      imports) to replace the dev injector.
+- ☐ `ue_wrap` reflection: resolve `GUObjectArray`/`GNames`/`ProcessEvent`
+      via AOB sigs (IDA) — our own SDK access, no UE4SS.
+- ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
+
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN
 (position only; T-pose slide OK).
