@@ -61,14 +61,15 @@ be pulled forward once UE4SS is installed against the game.
 **Gate**: spawn a 2nd `APawn` + `APlayerController` (the "orphan") and
 have it tick without crashing for ≥60 s (target several minutes).
 
-- ◐ 2.1 Spawn the orphan — via `SpawnActor<AmainPlayer_C>` on our own path
-       (NOT `CreatePlayer`/split-screen — that's local-player baggage).
-       SplitScreenMod only proves a 2nd pawn can exist; not the impl.
-       Needs an interactive run to confirm our orphan ticks.
+- ☑ 2.1 Spawn the orphan — DONE. `SpawnActor<mainPlayer_C>` (unpossessed)
+       confirmed live: orphan spawned, no crash, survived ~65s idle soak
+       (gate met for idle case). Engine-native, autonomous. See finding
+       `coop-phase-2-1-orphan-spawn-result-2026-05-22.md`.
 - ☐ 2.2 Crash-by-crash root-cause fixes (per-site, no broad filters).
 - ☐ 2.3 Registry / state mirror for any per-player subsystem VOTV/UE
        expects (subsystems registered per `APlayerController`).
-- ☐ 2.4 Sustained-soak validation (orphan idle, real player plays).
+- ◐ 2.4 Sustained-soak validation — first ~65s idle soak passed; needs
+       5+ min soak + a driven (possessed) orphan to fully clear the gate.
 
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN
