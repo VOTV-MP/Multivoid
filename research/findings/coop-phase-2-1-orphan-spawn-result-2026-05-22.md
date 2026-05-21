@@ -54,6 +54,27 @@ T+240s      mainPlayer_C count=2 | game stable, no crash
   fresh New Game), so it is not a useful clobber indicator in this state;
   the meaningful signals are the stable count and unchanged local pawn.
 
+### Pose-drive test (3rd run) — orphan is drivable
+
+Drove the spawned orphan with `K2_SetActorLocation(newLoc, bSweep=true, ...)`
+(the pose-application path the network `RemotePlayer` will use):
+
+```
+ORPHAN SPAWNED at X=-37495
+drive step 1 -> set X=-37345, orphan moved to X=-37419   (relocated ~76u)
+drive step 2..6 -> set X=-37269, orphan stays X=-37419   (swept move blocked)
+post-drive orphan alive=true; game stable, no crash
+```
+
+- **Pose-driving works**: the orphan physically relocated; alive throughout;
+  no crash.
+- **Design takeaway**: `bSweep=true` makes the orphan's character capsule
+  collide and stick against world geometry. For network pose-apply we want
+  the orphan AT the authoritative pose, so use **`bSweep=false` (teleport)**
+  for snapshot application (and interpolate between snapshots locally),
+  rather than sweeping. Sweeping is for locally-simulated movement, not for
+  applying a received absolute pose. (Phase 3.4 / 3.5 design.)
+
 ## Honest caveats (NOT yet validated)
 
 1. **Unpossessed + idle.** The orphan was not possessed by a controller and
