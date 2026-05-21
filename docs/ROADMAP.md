@@ -14,9 +14,14 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 
 - ☑ Read methodology; confirm UE4.27 + approach (UE4SS + reflection).
 - ☑ `docs/FEASIBILITY.md` written (no blockers found).
-- ◐ Directory layout + skeleton docs + `.gitignore` + `CLAUDE.md`.
-- ☐ Vendor references: `reference/RE-UE4SS/`, `reference/mtasa-blue/`.
-- ☐ First commit (skeleton + submodule pins).
+- ☑ Directory layout + skeleton docs + `.gitignore` + `CLAUDE.md`.
+- ☑ Vendor references: `reference/RE-UE4SS/` (7f7cc36),
+       `reference/mtasa-blue/` (c07ccb0).
+- ☑ First commit (skeleton + submodule pins) — `43a6a11`.
+
+**Phase 0 gate: MET.** Proceed to Phase 1 (engine archaeology via
+reflection). First concrete derisk: Phase 2.1 spawn-orphan experiment can
+be pulled forward once UE4SS is installed against the game.
 
 ## Phase 1 — Engine archaeology (mostly reflection, not RE)
 **Goal**: a research finding for each engine entry point we'll hook.
