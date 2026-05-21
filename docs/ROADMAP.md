@@ -85,8 +85,17 @@ have it tick without crashing for ≥60 s (target several minutes).
       both DLLs in modules, `UE4SS.dll` absent, game renders, responding).
       `tools/deploy-loader.ps1` installs it; replaces `tools/inject.ps1`. See
       `research/findings/standalone-proxy-loader-2026-05-22.md`.
-- ☐ `ue_wrap` reflection: resolve `GUObjectArray`/`GNames`/`ProcessEvent`
-      via AOB sigs (IDA) — our own SDK access, no UE4SS.
+- ◐ `ue_wrap` reflection: resolve `GUObjectArray`/`GNames`/`ProcessEvent`
+      via AOB sigs — our own SDK access, no UE4SS.
+      - ☑ `GUObjectArray` + `FName::ToString` AOB-resolved and VALIDATED live:
+            standalone walk of 17770 UObjects with correct names; resolved
+            addresses match the UE4SS log exactly; FUObjectArray layout
+            confirmed by the raw header dump. `ue_wrap/sig_scan` +
+            `ue_wrap/reflection`. See
+            `research/findings/ue-wrap-reflection-2026-05-22.md`.
+      - ☐ `ProcessEvent` (UFunction call path) + UClass/UFunction lookup —
+            next; addresses for ProcessInternal/StaticConstructObject/GMalloc/
+            FName::FName already computed (in the finding).
 - ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
 
 ## Phase 3 — Networking transport

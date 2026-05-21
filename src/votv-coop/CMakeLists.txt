@@ -17,6 +17,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
+    src/ue_wrap/sig_scan.cpp
+    src/ue_wrap/reflection.cpp
 )
 
 target_include_directories(votv-coop PRIVATE include)
