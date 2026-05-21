@@ -20,10 +20,11 @@ Copies the probe into the game's UE4SS `Mods/` and enables it in
 
 ## Probes
 
-- **coopSpawnProbe** — Phase 2.1 "spawn the orphan" derisk. Spawns a 2nd
-  `AmainPlayer_C` via `UWorld:SpawnActor` (our path; not split-screen /
-  `CreatePlayer`) and watches it for the 60s gate window.
-  Keybinds: `CTRL+P` spawn, `CTRL+O` report, `CTRL+K` destroy.
-  Retire when: the C++ orphan in `src/votv-coop/` spawns + ticks, OR the
-  experiment's findings are recorded in a research finding and the question
-  is fully answered.
+- **coopTestHarness** — the autonomous test driver (launch + skip-to-
+  gameplay + screenshot + report), and the Phase 2.1 orphan spawn.
+  Scenarios (via `run-test.ps1`): `newgame`, `load:<slot>`, `orphan`
+  (enter gameplay then spawn a 2nd `mainPlayer_C` and soak it), `inspect`,
+  `none`. Keybinds: `CTRL+8` new game, `CTRL+P` spawn orphan, `CTRL+9`
+  screenshot, `CTRL+7` report.
+  (The orphan spawn was consolidated here from the former standalone
+  coopSpawnProbe — RULE No.2, one implementation.)

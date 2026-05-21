@@ -125,8 +125,49 @@ local function EnterGameplay(slot)
     end)
 end
 
+-- Phase 2.1 derisk: spawn a SECOND mainPlayer_C (the "orphan") on our own
+-- path -- UWorld:SpawnActor, unpossessed, NOT split-screen/CreatePlayer.
+-- The shipping coop::RemotePlayer will use this same primitive. A native
+-- crash here is expected data (the first single-player assumption to fix).
+OrphanPawn = nil
+local function SpawnOrphan()
+    ExecuteInGameThread(function()
+        local ok, err = pcall(function()
+            local pc = UEHelpers.GetPlayerController()
+            if not pc or not pc.Pawn or not pc.Pawn:IsValid() then log("no local player yet; not in gameplay"); return end
+            local src = pc.Pawn
+            local cls = src:GetClass()
+            if cls:GetFName():ToString() ~= "mainPlayer_C" then log("local pawn is not mainPlayer_C; aborting orphan spawn"); return end
+            local world = UEHelpers.GetWorld()
+            local loc = src:K2_GetActorLocation()
+            local rot = src:K2_GetActorRotation()
+            loc.X = loc.X + 200.0
+            log("spawning 2nd mainPlayer_C (orphan) ...")
+            OrphanPawn = world:SpawnActor(cls, loc, rot)
+            if OrphanPawn and OrphanPawn:IsValid() then
+                log("ORPHAN SPAWNED: " .. OrphanPawn:GetFullName())
+            else
+                log("orphan SpawnActor returned INVALID")
+            end
+        end)
+        if not ok then log("orphan spawn error: " .. tostring(err)) end
+    end)
+end
+
+local function ReportOrphan(label)
+    ExecuteInGameThread(function()
+        if OrphanPawn and OrphanPawn:IsValid() then
+            local ok, loc = pcall(function() return OrphanPawn:K2_GetActorLocation() end)
+            log(label .. " orphan alive=true" .. (ok and string.format(" pos=(%.0f,%.0f,%.0f)", loc.X, loc.Y, loc.Z) or ""))
+        else
+            log(label .. " orphan alive=FALSE (invalid/destroyed)")
+        end
+    end)
+end
+
 -- Keybinds
 RegisterKeyBind(Key.NUM_EIGHT, {ModifierKey.CONTROL}, function() EnterGameplay(nil) end) -- new game
+RegisterKeyBind(Key.P, {ModifierKey.CONTROL}, SpawnOrphan)
 RegisterKeyBind(Key.NUM_NINE,  {ModifierKey.CONTROL}, Screenshot)
 RegisterKeyBind(Key.NUM_SEVEN, {ModifierKey.CONTROL}, Report)
 
@@ -147,12 +188,21 @@ local function RunTimeline(scenario)
     end
     ExecuteWithDelay(20000, function() StateScreenshot("T+20s boot state") end)
     local slot = scenario:match("^load:(.+)$")
-    if scenario == "newgame" or slot then
+    if scenario == "newgame" or scenario == "orphan" or slot then
         ExecuteWithDelay(25000, function()
             log("auto: EnterGameplay(" .. (slot or "new") .. ")"); EnterGameplay(slot)
         end)
     end
     ExecuteWithDelay(50000, function() StateScreenshot("T+50s post-load state") end)
+    if scenario == "orphan" then
+        -- spawn the 2nd mainPlayer_C once we're confirmed in gameplay, then
+        -- watch it across the 60s gate.
+        ExecuteWithDelay(55000, function() log("=== Phase 2.1: spawn orphan ==="); SpawnOrphan() end)
+        ExecuteWithDelay(60000, function() ReportOrphan("T+60s"); Screenshot() end)
+        ExecuteWithDelay(90000, function() ReportOrphan("T+90s"); StateScreenshot("T+90s orphan-soak") end)
+        ExecuteWithDelay(120000, function() ReportOrphan("T+120s"); StateScreenshot("T+120s orphan-soak") end)
+        return
+    end
     ExecuteWithDelay(80000, function() StateScreenshot("T+80s settled state") end)
 end
 
