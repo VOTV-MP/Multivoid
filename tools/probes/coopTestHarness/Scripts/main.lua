@@ -154,6 +154,22 @@ local function SpawnOrphan()
     end)
 end
 
+-- Check VOTV per-player singletons for clobber when a 2nd player exists
+-- (methodology 2.3): how many mainPlayer_C live, and what the GameMode
+-- thinks the "original" pawn is.
+local function CheckSingletons(label)
+    ExecuteInGameThread(function()
+        pcall(function()
+            local players = FindAllOf("mainPlayer_C") or {}
+            local n = 0; for _, p in pairs(players) do if p:IsValid() then n = n + 1 end end
+            local gm = FindFirstOf("mainGamemode_C")
+            local op = "nil"
+            if gm and gm:IsValid() and gm.origPawn and gm.origPawn:IsValid() then op = gm.origPawn:GetFullName() end
+            log(label .. " mainPlayer_C count=" .. n .. " | gamemode.origPawn=" .. op)
+        end)
+    end)
+end
+
 local function ReportOrphan(label)
     ExecuteInGameThread(function()
         if OrphanPawn and OrphanPawn:IsValid() then
@@ -195,12 +211,14 @@ local function RunTimeline(scenario)
     end
     ExecuteWithDelay(50000, function() StateScreenshot("T+50s post-load state") end)
     if scenario == "orphan" then
-        -- spawn the 2nd mainPlayer_C once we're confirmed in gameplay, then
-        -- watch it across the 60s gate.
+        -- spawn the 2nd mainPlayer_C once in gameplay, then soak it longer
+        -- and watch per-player singletons for clobber (2.3).
+        ExecuteWithDelay(52000, function() CheckSingletons("pre-spawn") end)
         ExecuteWithDelay(55000, function() log("=== Phase 2.1: spawn orphan ==="); SpawnOrphan() end)
-        ExecuteWithDelay(60000, function() ReportOrphan("T+60s"); Screenshot() end)
-        ExecuteWithDelay(90000, function() ReportOrphan("T+90s"); StateScreenshot("T+90s orphan-soak") end)
-        ExecuteWithDelay(120000, function() ReportOrphan("T+120s"); StateScreenshot("T+120s orphan-soak") end)
+        ExecuteWithDelay(62000, function() ReportOrphan("T+62s"); CheckSingletons("post-spawn"); Screenshot() end)
+        ExecuteWithDelay(120000, function() ReportOrphan("T+120s") end)
+        ExecuteWithDelay(180000, function() ReportOrphan("T+180s"); CheckSingletons("T+180s"); StateScreenshot("T+180s soak") end)
+        ExecuteWithDelay(240000, function() ReportOrphan("T+240s"); StateScreenshot("T+240s soak") end)
         return
     end
     ExecuteWithDelay(80000, function() StateScreenshot("T+80s settled state") end)
