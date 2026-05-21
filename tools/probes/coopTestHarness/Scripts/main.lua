@@ -31,8 +31,6 @@ local UEHelpers = require("UEHelpers")
 
 local TAG = "[coop-harness]"
 local GAMEPLAY_MAP = "untitled_1"
-local NEWGAME_FN = "BndEvt__button_NewGame_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature"
-local AUTO_DELAY_MS = 8000  -- wait for the menu to settle before acting
 
 local function log(m) print(TAG .. " " .. m .. "\n") end
 
@@ -76,40 +74,88 @@ local function Report()
     end)
 end
 
-local function SkipToGameplay()
+-- Reflection introspection of the live UI: logs the active widgets and
+-- every button's full path (which reveals the owning widget class + the
+-- button's name), so we can drive the real handlers instead of clicking
+-- pixels. Read these from UE4SS.log.
+local function InspectWidgets()
     ExecuteInGameThread(function()
-        if GetLocalPawn() then log("already in gameplay; skip-to-gameplay is a no-op."); return end
-
-        -- (1) Preferred: drive VOTV's own New Game flow via the menu widget.
-        local menu = FindFirstOf("ui_menu_C")
-        if menu and menu:IsValid() and menu[NEWGAME_FN] then
-            local ok, err = pcall(function() menu[NEWGAME_FN](menu) end)
-            if ok then log("invoked ui_menu_C NewGame; entering gameplay."); return end
-            log("NewGame invoke failed: " .. tostring(err) .. " -- falling back to OpenLevel.")
-        else
-            log("ui_menu_C / NewGame event not found -- falling back to OpenLevel.")
-        end
-
-        -- (2) Fallback: open the gameplay map directly.
         local ok, err = pcall(function()
-            local gs = UEHelpers.GetGameplayStatics()
-            gs:OpenLevel(UEHelpers.GetWorldContextObject(), FName(GAMEPLAY_MAP), true, "")
+            local buttons = FindAllOf("Button") or {}
+            local n = 0
+            for _, b in pairs(buttons) do
+                if b:IsValid() then n = n + 1; log("button: " .. b:GetFullName()) end
+            end
+            log("button count = " .. n)
+            for _, cls in ipairs({ "UserWidget", "ui_menu_C" }) do
+                local ws = FindAllOf(cls) or {}
+                for _, w in pairs(ws) do
+                    if w:IsValid() then log("widget(" .. cls .. "): " .. w:GetFullName()) end
+                end
+            end
         end)
-        log(ok and ("OpenLevel(" .. GAMEPLAY_MAP .. ") issued.") or ("OpenLevel error: " .. tostring(err)))
+        if not ok then log("inspect error: " .. tostring(err)) end
+    end)
+end
+
+-- Jump straight into gameplay via VOTV's OWN load path -- no menu nav, no
+-- pixel clicks. For a save: load the slot, register it on the persistent
+-- mainGameInstance_C (the real entry VOTV's load uses), then OpenLevel the
+-- gameplay map; the GameMode applies the save on BeginPlay. slot=nil => new.
+local function EnterGameplay(slot)
+    ExecuteInGameThread(function()
+        local ok, err = pcall(function()
+            local gs  = UEHelpers.GetGameplayStatics()
+            local wco = UEHelpers.GetWorldContextObject()
+            if slot and slot ~= "" then
+                local gi   = FindFirstOf("mainGameInstance_C")
+                local save = gs:LoadGameFromSlot(slot, 0)
+                if gi and gi:IsValid() and save and save:IsValid() then
+                    gi:setSaveSlotObject(save, slot)
+                    gi.loadObjects = true
+                    log("registered save '" .. slot .. "' on mainGameInstance_C")
+                else
+                    log("WARN: load slot '" .. slot .. "' or GameInstance invalid; opening map without save")
+                end
+            end
+            gs:OpenLevel(wco, FName(GAMEPLAY_MAP), true, "")
+            log("OpenLevel(" .. GAMEPLAY_MAP .. ") issued" .. (slot and (" with save '" .. slot .. "'") or " (new)"))
+        end)
+        if not ok then log("EnterGameplay error: " .. tostring(err)) end
     end)
 end
 
 -- Keybinds
-RegisterKeyBind(Key.NUM_EIGHT, {ModifierKey.CONTROL}, SkipToGameplay)
+RegisterKeyBind(Key.NUM_EIGHT, {ModifierKey.CONTROL}, function() EnterGameplay(nil) end) -- new game
 RegisterKeyBind(Key.NUM_NINE,  {ModifierKey.CONTROL}, Screenshot)
 RegisterKeyBind(Key.NUM_SEVEN, {ModifierKey.CONTROL}, Report)
 
--- Auto-run scenario
-local scenario = ReadScenario()
-log("loaded. scenario='" .. scenario .. "'. CTRL+8 skip-to-gameplay | CTRL+9 shot | CTRL+7 report.")
-if scenario == "newgame" or scenario == "loadlast" then
-    ExecuteWithDelay(AUTO_DELAY_MS, function()
-        log("auto: running scenario '" .. scenario .. "' after " .. (AUTO_DELAY_MS // 1000) .. "s.")
-        SkipToGameplay()
-    end)
+-- Self-documenting timeline so an unattended run leaves evidence (the log
+-- + screenshots, both readable after the fact).
+local function StateScreenshot(label)
+    log("=== " .. label .. " ===")
+    Report()
+    Screenshot()
 end
+
+-- scenario forms: "newgame" | "load:<slot>" | "inspect" | "none"
+local function RunTimeline(scenario)
+    if scenario == "inspect" then
+        ExecuteWithDelay(20000, function() log("=== inspect @20s ==="); InspectWidgets() end)
+        ExecuteWithDelay(40000, function() log("=== inspect @40s ==="); InspectWidgets() end)
+        return
+    end
+    ExecuteWithDelay(20000, function() StateScreenshot("T+20s boot state") end)
+    local slot = scenario:match("^load:(.+)$")
+    if scenario == "newgame" or slot then
+        ExecuteWithDelay(25000, function()
+            log("auto: EnterGameplay(" .. (slot or "new") .. ")"); EnterGameplay(slot)
+        end)
+    end
+    ExecuteWithDelay(50000, function() StateScreenshot("T+50s post-load state") end)
+    ExecuteWithDelay(80000, function() StateScreenshot("T+80s settled state") end)
+end
+
+local scenario = ReadScenario()
+log("loaded. scenario='" .. scenario .. "'. shots @20/50/80s. Keys: CTRL+8 newgame/9 shot/7 report.")
+RunTimeline(scenario)

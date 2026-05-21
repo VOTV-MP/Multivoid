@@ -21,7 +21,8 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('newgame','loadlast','none')] [string]$Scenario = 'newgame',
+    [ValidateSet('newgame','none','inspect')] [string]$Scenario = 'newgame',
+    [string]$Save = '',   # if set, load this save slot (e.g. s_ehehe) instead of -Scenario
     [int]$ResX = 1280,
     [int]$ResY = 720,
     [switch]$Fullscreen,
@@ -38,8 +39,9 @@ $harnessDir = Join-Path $Win64Dir 'Mods\coopTestHarness'
 if (-not (Test-Path $harnessDir)) {
     throw "coopTestHarness not deployed. Run: ./tools/deploy-probe.ps1 -Name coopTestHarness"
 }
-Set-Content -Path (Join-Path $harnessDir 'scenario.txt') -Value $Scenario -NoNewline
-Write-Host "Scenario = $Scenario" -ForegroundColor Cyan
+$scenarioValue = if ($Save) { "load:$Save" } else { $Scenario }
+Set-Content -Path (Join-Path $harnessDir 'scenario.txt') -Value $scenarioValue -NoNewline
+Write-Host "Scenario = $scenarioValue" -ForegroundColor Cyan
 
 # UE launch args.
 $argList = @("-ResX=$ResX", "-ResY=$ResY")

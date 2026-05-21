@@ -31,6 +31,21 @@ Triggers: `// deprecated, kept for now` comments; flags that re-enable old
 behaviour; two implementations of one concept compiled together; type
 aliases kept "for compatibility"; stub functions for old callers.
 
+## RULE №3 — Standalone mod; UE4SS is a tool, not a dependency
+
+The shipping mod is **standalone**: its own loader (proxy DLL), its own
+engine reflection (resolve `GUObjectArray` / `GNames` / `ProcessEvent` via
+AOB signatures), its own UFunction/native hooking. It must run with **no
+UE4SS present**.
+
+UE4SS is a **development tool only** — used for: the reflection dumps (our
+SDK), the Lua probes, and the autonomous test harness (`tools/probes/*`).
+None of that ships. Anything under `src/votv-coop/` must not depend on
+UE4SS at runtime; all engine/substrate access goes behind `ue_wrap/` so the
+loader/reflection/hook implementation is swappable. The CXX header dump is
+our standalone SDK. (Dropping UE4SS later is RULE №2: it goes fully, no
+UE4SS-and-not-UE4SS dual paths.)
+
 ---
 
 ## The 7 architectural principles
@@ -112,6 +127,9 @@ The game install folder name (`Game_0.9.0n/`) reflects the current target.
 - Mod menu / debug overlay: Dear ImGui (UE4SS ships an ImGui integration).
 - Plain-English UI labels; technical depth in `(?)` tooltips (WP10).
 - No emojis in code / files unless explicitly requested.
+- **Testing loads only a recent, fresh save** (made with the current game
+  version). Prefer New Game — always fresh. Never auto-load old/stale saves
+  (e.g. 2023-2024 slots); they risk version-mismatch and confusing results.
 
 ## Reading order after a session reset / new conversation
 
