@@ -77,8 +77,10 @@ have it tick without crashing for ≥60 s (target several minutes).
 - ☑ Standalone load proven: DLL injected + ran in VOTV with UE4SS absent
       (marker written; `UE4SS.dll` not loaded). See finding
       `standalone-bootstrap-loads-2026-05-22.md`.
-- ☐ Shipping loader = proxy DLL (not `dwmapi`; small-export DLL VOTV
-      imports) to replace the dev injector.
+- ☐ Shipping loader = proxy DLL. Chosen: **`xinput1_3.dll`** — VOTV imports
+      only `XInputGetState`/`XInputSetState` from it (tiny forwarder set),
+      and it's distinct from UE4SS's `dwmapi` (coexists in dev). Forward
+      both to the system XInput; bootstrap our mod in `DllMain`.
 - ☐ `ue_wrap` reflection: resolve `GUObjectArray`/`GNames`/`ProcessEvent`
       via AOB sigs (IDA) — our own SDK access, no UE4SS.
 - ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
