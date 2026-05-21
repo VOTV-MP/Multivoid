@@ -23,6 +23,13 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 reflection). First concrete derisk: Phase 2.1 spawn-orphan experiment can
 be pulled forward once UE4SS is installed against the game.
 
+- ☑ UE4SS v3.0.1 installed into the game (`tools/install-ue4ss.ps1`;
+       additive, principle 1 intact). IDA MCP holds the shipping binary as
+       the RE fallback. See `research/findings/coop-phase-0-ue4ss-bootstrap-2026-05-21.md`.
+- ☐ **(needs user)** One interactive launch to verify UE4SS injects (4.27
+       detected) and capture reflection dumps: `CTRL+H` (C++ headers) +
+       `CTRL+J` (object dump) at main menu, then again in-world.
+
 ## Phase 1 — Engine archaeology (mostly reflection, not RE)
 **Goal**: a research finding for each engine entry point we'll hook.
 **Gate**: all of the below documented in `research/findings/`.

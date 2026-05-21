@@ -3,6 +3,13 @@
 Build, launch, and test helpers for the VOTV coop mod. All regenerable;
 nothing here is load-bearing game state.
 
+## Available
+
+- `install-ue4ss.ps1` — download a pinned UE4SS release (v3.0.1) and
+  install it next to `VotV-Win64-Shipping.exe` (additive; no game files
+  modified). Re-run with `-Force` to reinstall. The game dir is gitignored,
+  so this script is the committed source of truth for the substrate setup.
+
 ## Planned (filled in as phases land)
 
 - `run-test.ps1` — single-process autonomous test (methodology 5.1).
