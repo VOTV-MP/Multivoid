@@ -225,7 +225,7 @@ local function RunTimeline(scenario)
     end
     ExecuteWithDelay(20000, function() StateScreenshot("T+20s boot state") end)
     local slot = scenario:match("^load:(.+)$")
-    if scenario == "newgame" or scenario == "orphan" or slot then
+    if scenario == "newgame" or scenario == "orphan" or scenario == "drive" or slot then
         ExecuteWithDelay(25000, function()
             log("auto: EnterGameplay(" .. (slot or "new") .. ")"); EnterGameplay(slot)
         end)
