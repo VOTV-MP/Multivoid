@@ -58,6 +58,22 @@ bool SetActorTickEnabled(void* actor, bool enabled);
 // APawn::GetController on `pawn` -- returns the AController* (or nullptr).
 void* GetController(void* pawn);
 
+// AController::GetControlRotation on `controller` -- the view rotation the game
+// drives from mouse-look. Reading it for a freecam gives smooth, game-native
+// look with no raw-mouse handling. (0,0,0) on failure. Game thread only.
+FRotator GetControlRotation(void* controller);
+
+// APlayerController::SetViewTargetWithBlend(NewViewTarget, BlendTime) -- repoint
+// the player's view to `newViewTarget` (e.g. a freecam ACameraActor), blending
+// over `blendTime` seconds for a smooth cut. Game thread only.
+bool SetViewTargetWithBlend(void* playerController, void* newViewTarget, float blendTime);
+
+// Current view camera world location / rotation (APlayerCameraManager::
+// GetCameraLocation / GetCameraRotation on the live manager). Used to seed a
+// freecam at the player's eye. Zero on failure. Game thread only.
+FVector GetCameraLocation();
+FRotator GetCameraRotation();
+
 // APawn::SpawnDefaultController on `pawn` -- spawns the pawn's AIControllerClass
 // and possesses. Gives the body's AnimBP a valid controller (so it poses) with
 // NO viewport/input/camera (AIController != PlayerController), so it does not
@@ -78,11 +94,14 @@ bool DestroyActor(void* actor);
 FVector GetComponentLocation(void* component);
 FVector GetComponentForwardVector(void* component);
 
-// Spawn a 3D world-space text marker (ATextRenderActor) at `location` showing
-// `text`, sized `worldSize`. Renders as actual geometry, so it works in shipping
-// builds (debug-draw text is compiled out). Returns the marker actor, or nullptr.
-// Game thread only.
-void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize = 80.f);
+// Spawn a 3D world-space text label (ATextRenderActor) showing `text`, sized
+// `worldSize`, in `color`, centered. Renders as world geometry -> works without
+// the HUD canvas (which VOTV does not run). Place/billboard it with
+// SetActorLocation + SetActorRotation. Uses the SetText(FString) overload (NOT
+// K2_SetText(FText) -- that overload caused the earlier shared-ref crash).
+// Returns the actor, or nullptr. Game thread only.
+void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSize,
+                     const FColor& color);
 
 // Set a USceneComponent's visibility: SetVisibility(visible, propagate) +
 // SetHiddenInGame(!visible, propagate). visible=true shows a remote pawn's
@@ -97,6 +116,16 @@ bool SetComponentVisible(void* component, bool visible = true);
 // the rendered viewpoint stops posing and collapses to its skeleton ("a stick").
 // Direct byte write (no setter UFunction exists). Game thread only.
 bool SetAnimTickAlways(void* skeletalMeshComponent);
+
+// USkinnedMeshComponent::SetSkeletalMesh(NewMesh, bReinitPose=true) -- swap the
+// skin asset onto a (puppet) SkeletalMeshComponent. Resolved from the
+// SkinnedMeshComponent class (the function's OWNING class). Game thread only.
+bool SetSkeletalMesh(void* skeletalMeshComponent, void* skeletalMeshAsset);
+
+// USkeletalMeshComponent::SetAnimClass(NewClass) -- assign an AnimBP class to a
+// SkeletalMeshComponent and (re)instantiate it (also flips AnimationMode to
+// UseAnimBlueprint). Drives the puppet's pose. Game thread only.
+bool SetAnimClass(void* skeletalMeshComponent, void* animBlueprintClass);
 
 // Destroy an actor component (UActorComponent::K2_DestroyComponent). Used to
 // strip a remote pawn's local-only systems (e.g. its unbound PostProcessComponent

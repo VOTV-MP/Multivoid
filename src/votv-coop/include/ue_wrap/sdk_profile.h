@@ -58,6 +58,7 @@ inline constexpr const char* kSigProcessEvent =
 
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
+inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)
 inline constexpr size_t UObject_ClassPrivate = 0x10;
 inline constexpr size_t UObject_NamePrivate = 0x18;
 inline constexpr size_t UObject_OuterPrivate = 0x20;
@@ -108,10 +109,63 @@ inline constexpr size_t APawn_AIControllerClass = 0x238;    // UClass* (TSubclas
 // only ticks its pose when rendered; force AlwaysTickPoseAndRefreshBones(=0).
 // And drive the body AnimBP (UAnimBlueprint_kerfurOmega_regular_C on
 // mesh_playerVisible) walk speed directly: 0 = idle.
-inline constexpr size_t USkinnedMesh_VisibilityBasedAnimTickOption = 0x604;  // uint8 (set 0)
-inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // AnimInstance*
-inline constexpr size_t AnimBP_kerfur_walkSpeed = 0x2D68;                    // float
-inline constexpr size_t AnimBP_kerfur_spd = 0x2E1C;                          // float
+inline constexpr size_t USkinnedMesh_VisibilityBasedAnimTickOption = 0x604;  // uint8 (set 0)  Engine.hpp:18308
+inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // AnimInstance*  Engine.hpp:18095
+
+// ---- skin-puppet (the remote body) ---------------------------------------
+// Root-cause finding (two converging agents, CXX dump): the body AnimBP poses
+// purely from its own public variables; it does NOT require a possessing
+// controller (the SAME AnimBP is shared by NPC classes figura/kerfurOmega, so
+// its owner casts are null-safe). So the remote body is a BARE actor we own
+// (ASkeletalMeshActor) wearing the local player's exact skin + this AnimBP,
+// posed by driving the variables below directly -- no pawn, no controller, no
+// hijack surface. (RULE 3 parallel class hierarchy; RULE 1 root-cause.)
+inline constexpr size_t AmainPlayer_mesh_playerVisible = 0x04F8;  // USkeletalMeshComponent*  mainPlayer.hpp:13
+inline constexpr size_t USkinnedMesh_SkeletalMesh = 0x0480;       // USkeletalMesh* (the skin asset)  Engine.hpp:18299
+inline constexpr size_t USkeletalMesh_AnimClass = 0x06A8;         // TSubclassOf<UAnimInstance>  Engine.hpp:18094
+
+// UAnimBlueprint_kerfurOmega_regular_C public variables (offsets within the live
+// AnimInstance). walkSpeed/spd drive the locomotion BlendSpace; the rest are
+// dumped for the local-vs-puppet state diff and to suppress world-dependent IK.
+inline constexpr size_t AnimBP_kerfur_walkSpeed = 0x2D68;           // float
+inline constexpr size_t AnimBP_kerfur_Pawn = 0x2D70;               // APawn*   (cached owner; null on puppet)
+inline constexpr size_t AnimBP_kerfur_Controller = 0x2D78;         // AController* (cached; null on puppet)
+inline constexpr size_t AnimBP_kerfur_lookAt = 0x2D90;            // FVector
+inline constexpr size_t AnimBP_kerfur_lookingAtPlayer = 0x2E01;   // bool
+inline constexpr size_t AnimBP_kerfur_kerfur = 0x2E08;            // AkerfurOmega_C* (null for a player body too)
+inline constexpr size_t AnimBP_kerfur_walkSpeedMultiplier = 0x2E18; // float
+inline constexpr size_t AnimBP_kerfur_spd = 0x2E1C;                // float
+inline constexpr size_t AnimBP_kerfur_useLegIK = 0x2E39;          // bool (false = skip floor-trace IK)
+inline constexpr size_t AnimBP_kerfur_headLookAt = 0x2E3C;        // FRotator
+inline constexpr size_t AnimBP_kerfur_isFace = 0x2E48;            // bool
+
+// ---- HUD / Canvas (screen-space nameplate, MTA-style) --------------------
+// We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
+// off the HUD, project the remote head world->screen and draw the nickname with
+// UCanvas::K2_DrawText (takes an FString -> no FText, outline+shadow built in).
+// Ground placement: a spawned puppet's mesh root sits at the actor origin =
+// ACharacter capsule CENTRE, which is half a body above the feet -> it floats.
+// Subtract the local player's capsule half-height to put the feet on the ground.
+inline constexpr size_t ACharacter_CapsuleComponent = 0x0290;          // UCapsuleComponent*  Engine.hpp:6972
+inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float  Engine.hpp:9883
+
+// Freecam gamma fix: a bare ACameraActor renders with default post-process, so the
+// player's exposure/grading is lost and the view goes dark. Copy the player camera's
+// FPostProcessSettings onto the freecam camera. The struct has ONE TArray
+// (WeightedBlendables @0x550) -- zero it in the copy so the two cameras don't alias
+// the same heap array (double-free).
+inline constexpr size_t AmainPlayer_Camera = 0x0530;                    // UCameraComponent*  mainPlayer.hpp:20
+inline constexpr size_t ACameraActor_CameraComponent = 0x0228;          // UCameraComponent*  Engine.hpp:6947
+inline constexpr size_t UCameraComponent_PostProcessBlendWeight = 0x0240; // float  Engine.hpp:9762
+inline constexpr size_t UCameraComponent_PostProcessSettings = 0x0270;    // FPostProcessSettings  Engine.hpp (size 0x560)
+inline constexpr size_t FPostProcessSettings_Size = 0x0560;
+inline constexpr size_t FPostProcessSettings_WeightedBlendables = 0x0550; // TArray (0x10) within the PP struct
+
+inline constexpr size_t AHUD_bShowHUD = 0x0228;     // uint8  Engine.hpp:7413 (VOTV draws via UMG -> default HUD canvas off; force 1 to get ReceiveDrawHUD)
+inline constexpr size_t AHUD_Canvas = 0x0270;       // UCanvas*  Engine.hpp:7422
+inline constexpr size_t UCanvas_SizeX = 0x0040;     // int32     Engine.hpp:9846
+inline constexpr size_t UCanvas_SizeY = 0x0044;     // int32     Engine.hpp:9847
+inline constexpr size_t UEngine_SmallFont = 0x0050; // UFont*    Engine.hpp:10732
 }  // namespace off
 
 // EPropertyFlags bits we test (engine-stable).
@@ -161,6 +215,27 @@ inline constexpr const wchar_t* DetachFromControllerFn = L"DetachFromControllerP
 // path) WITHOUT a PlayerController's viewport/input/camera -> no local hijack.
 inline constexpr const wchar_t* SpawnDefaultControllerFn = L"SpawnDefaultController";
 
+// Skin-puppet: a bare ASkeletalMeshActor wearing the local player's skin +
+// the body AnimBP. SetSkeletalMesh is owned by USkinnedMeshComponent; SetAnimClass
+// by USkeletalMeshComponent (FindFunction does NOT climb to super, so each is
+// resolved from its OWN class).
+inline constexpr const wchar_t* SkeletalMeshActorClass = L"SkeletalMeshActor";
+inline constexpr const wchar_t* SkeletalMeshComponentClass = L"SkeletalMeshComponent";
+inline constexpr const wchar_t* SkinnedMeshComponentClass = L"SkinnedMeshComponent";
+inline constexpr const wchar_t* SetSkeletalMeshFn = L"SetSkeletalMesh";   // USkinnedMeshComponent
+inline constexpr const wchar_t* SetAnimClassFn = L"SetAnimClass";         // USkeletalMeshComponent
+
+// Dev freecam: a spawned ACameraActor we point the view at (SetViewTargetWithBlend),
+// look driven by the game's own control rotation (smooth), moved by WASD per frame.
+inline constexpr const wchar_t* CameraActorClass = L"CameraActor";
+inline constexpr const wchar_t* ControllerClassName = L"Controller";
+inline constexpr const wchar_t* GetControlRotationFn = L"GetControlRotation";
+inline constexpr const wchar_t* PlayerControllerClassName = L"PlayerController";
+inline constexpr const wchar_t* SetViewTargetWithBlendFn = L"SetViewTargetWithBlend";
+inline constexpr const wchar_t* PlayerCameraManagerClass = L"PlayerCameraManager";
+inline constexpr const wchar_t* GetCameraLocationFn = L"GetCameraLocation";
+inline constexpr const wchar_t* GetCameraRotationFn = L"GetCameraRotation";
+
 // Component visibility (USceneComponent BlueprintCallable) -- to force the
 // third-person body meshes visible on an unpossessed remote pawn.
 inline constexpr const wchar_t* SceneComponentClass = L"SceneComponent";
@@ -177,16 +252,23 @@ inline constexpr const wchar_t* ActorComponentClass = L"ActorComponent";
 inline constexpr const wchar_t* DestroyComponentFn = L"K2_DestroyComponent";
 inline constexpr const wchar_t* PostProcessComponentClass = L"PostProcessComponent";
 
-// 3D world-space text marker (renders as geometry -> works in shipping, unlike
-// stripped debug-draw). ATextRenderActor + UTextRenderComponent; FText built via
-// UKismetTextLibrary::Conv_StringToText.
+// Nameplate via a 3D world-space text actor (ATextRenderActor + UTextRenderComponent).
+// VOTV does NOT run the stock HUD canvas (ReceiveDrawHUD never fires even with
+// bShowHUD forced), so screen-space UCanvas drawing is dead here -- 3D text renders
+// independently of the HUD. CRITICAL: use the SetText(FString) overload, NOT
+// K2_SetText(FText) (the FText overload caused the earlier shared-ref crash).
 inline constexpr const wchar_t* TextRenderActorClass = L"TextRenderActor";
 inline constexpr const wchar_t* TextRenderComponentClass = L"TextRenderComponent";
-inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
-inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";
-inline constexpr const wchar_t* SetTextFn = L"SetText";
-inline constexpr const wchar_t* SetWorldSizeFn = L"SetWorldSize";
-inline constexpr const wchar_t* SetTextRenderColorFn = L"SetTextRenderColor";
+inline constexpr const wchar_t* SetTextFn = L"SetText";                  // FString overload (NOT K2_SetText)
+inline constexpr const wchar_t* SetWorldSizeFn = L"SetWorldSize";        // float
+inline constexpr const wchar_t* SetTextRenderColorFn = L"SetTextRenderColor";  // FColor
+inline constexpr const wchar_t* SetHorizontalAlignmentFn = L"SetHorizontalAlignment";  // EHorizTextAligment (1=Center)
+// The default text material (DefaultTextMaterialOpaque) is OPAQUE and ignores the
+// color alpha. Use the engine's UnlitText material so the FColor alpha gives real
+// transparency. SetTextMaterial param is named "Material".
+inline constexpr const wchar_t* SetTextMaterialFn = L"SetTextMaterial";
+inline constexpr const wchar_t* UnlitTextMaterialName = L"UnlitText";  // /Engine/EngineMaterials/UnlitText
+inline constexpr const wchar_t* MaterialClassName = L"Material";
 }  // namespace name
 
 }  // namespace ue_wrap::profile

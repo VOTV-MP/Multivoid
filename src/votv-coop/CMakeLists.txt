@@ -38,7 +38,10 @@ add_library(votv-coop SHARED
     src/ue_wrap/game_thread.cpp
     src/ue_wrap/engine.cpp
     src/ue_wrap/call.cpp
+    src/ue_wrap/puppet.cpp
     src/coop/remote_player.cpp
+    src/coop/nameplate.cpp
+    src/dev/freecam.cpp
     src/harness/harness.cpp
     src/harness/screenshot.cpp
 )

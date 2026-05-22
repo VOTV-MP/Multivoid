@@ -55,13 +55,22 @@ void Pump() {
 }
 
 void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
-    // Record the game thread id the first time we run here.
+    // Record the game thread id the first time we run here. CAS so that if two
+    // threads race the very first dispatch, exactly one wins (a plain load+store
+    // could let a worker thread overwrite the real game thread id).
     if (g_gameThreadId.load(std::memory_order_relaxed) == 0) {
-        g_gameThreadId.store(::GetCurrentThreadId(), std::memory_order_relaxed);
+        unsigned long expected = 0;
+        g_gameThreadId.compare_exchange_strong(expected, ::GetCurrentThreadId(),
+                                               std::memory_order_relaxed, std::memory_order_relaxed);
     }
 
-    if (!t_inPump) {
-        // Cheap fast path: only take the lock when there is something to run.
+    // ProcessEvent is also called from task-graph WORKER threads (parallel anim,
+    // etc.), not just the game thread. Posted tasks call engine UFunctions, which
+    // are game-thread-only -- running them on a worker thread corrupts engine state
+    // and crashes (seen as an AV on TaskGraphThreadHP). So drain the queue ONLY on
+    // the recorded game thread (the first ProcessEvent caller, validated by the
+    // self-test). Other threads just forward.
+    if (!t_inPump && ::GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed)) {
         bool hasWork;
         {
             std::lock_guard<std::mutex> lk(g_queueMutex);

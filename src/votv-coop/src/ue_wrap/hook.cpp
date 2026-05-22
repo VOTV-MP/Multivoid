@@ -4,10 +4,12 @@
 
 #include <MinHook.h>
 
+#include <atomic>
+
 namespace ue_wrap::hook {
 namespace {
 
-bool g_initialized = false;
+std::atomic<bool> g_initialized{false};
 
 const char* StatusName(MH_STATUS s) { return MH_StatusToString(s); }
 

@@ -16,11 +16,22 @@ ParamFrame::ParamFrame(void* function) : fn_(function) {
         return;
     }
     buf_.assign(static_cast<size_t>(frameSize), 0);
+    // Cache param name->offset once (the FProperty chain doesn't change).
+    for (const auto& p : reflection::FunctionParams(fn_)) {
+        offsets_.emplace_back(p.name, p.offset);
+    }
+}
+
+int32_t ParamFrame::OffsetOf(const wchar_t* name) const {
+    for (const auto& o : offsets_) {
+        if (o.first == name) return o.second;
+    }
+    return -1;
 }
 
 bool ParamFrame::SetRaw(const wchar_t* name, const void* src, int32_t size) {
     if (!valid()) return false;
-    const int32_t off = reflection::FindParamOffset(fn_, name);
+    const int32_t off = OffsetOf(name);
     if (off < 0) {
         UE_LOGE("ParamFrame::Set: unknown param '%ls'", name);
         return false;
@@ -36,7 +47,7 @@ bool ParamFrame::SetRaw(const wchar_t* name, const void* src, int32_t size) {
 
 bool ParamFrame::GetRaw(const wchar_t* name, void* dst, int32_t size) const {
     if (fn_ == nullptr || buf_.empty()) return false;
-    const int32_t off = reflection::FindParamOffset(fn_, name);
+    const int32_t off = OffsetOf(name);
     if (off < 0) {
         UE_LOGE("ParamFrame::Get: unknown param '%ls'", name);
         return false;

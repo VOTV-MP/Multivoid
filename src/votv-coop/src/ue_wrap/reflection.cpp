@@ -71,6 +71,13 @@ void* ObjectAt(int32_t index) {
     return *reinterpret_cast<void**>(item);  // FUObjectItem.Object @ +0x00
 }
 
+bool IsLive(void* obj) {
+    if (!obj) return false;
+    const int32_t idx = *reinterpret_cast<int32_t*>(
+        reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
+    return idx >= 0 && ObjectAt(idx) == obj;
+}
+
 const FName& NameOf(void* uobject) {
     return *reinterpret_cast<FName*>(reinterpret_cast<uint8_t*>(uobject) + O::UObject_NamePrivate);
 }
@@ -85,8 +92,11 @@ void* OuterOf(void* uobject) {
 
 std::wstring ToString(const FName& name) {
     if (!g_fnameToString) return L"";
-    static FString scratch{nullptr, 0, 0};
-    scratch.Num = 0;  // reuse the buffer; write from the start (one buffer, freed never)
+    // thread_local (not static): the scratch buffer is reused per thread, so two
+    // threads calling ToString never race the same FString -- without paying a
+    // per-call free of UE-allocated memory we can't release.
+    thread_local FString scratch{nullptr, 0, 0};
+    scratch.Num = 0;  // reuse the buffer; write from the start (one buffer per thread)
     g_fnameToString(&name, &scratch);
     if (!scratch.Data || scratch.Num <= 0) return L"";
     int len = scratch.Num;

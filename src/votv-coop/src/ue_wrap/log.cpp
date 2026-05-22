@@ -5,13 +5,14 @@
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
+#include <mutex>
 
 namespace ue_wrap::log {
 namespace {
 
 FILE* g_file = nullptr;
 CRITICAL_SECTION g_lock;
-bool g_lockInit = false;
+std::once_flag g_lockOnce;
 bool g_opened = false;
 
 // Build "<dir of this DLL>\votv-coop.log".
@@ -35,16 +36,18 @@ void LogPath(wchar_t (&out)[MAX_PATH]) {
 }
 
 void EnsureOpen() {
-    if (!g_lockInit) {
-        ::InitializeCriticalSection(&g_lock);
-        g_lockInit = true;
-    }
+    // Initialize the lock exactly once, even if Write() is called from several
+    // threads before Init() (a plain-bool double-check would let two threads
+    // init the CRITICAL_SECTION concurrently -- UB).
+    std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
+    ::EnterCriticalSection(&g_lock);
     if (!g_opened) {
         wchar_t path[MAX_PATH] = {};
         LogPath(path);
         _wfopen_s(&g_file, path, L"w");
         g_opened = true;
     }
+    ::LeaveCriticalSection(&g_lock);
 }
 
 const char* Tag(Level l) {
@@ -67,7 +70,7 @@ void Init() {
 }
 
 void Shutdown() {
-    if (!g_lockInit) return;
+    std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
     ::EnterCriticalSection(&g_lock);
     if (g_file) {
         std::fclose(g_file);

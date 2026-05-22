@@ -10,6 +10,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace ue_wrap {
@@ -44,8 +46,14 @@ public:
     }
 
 private:
+    // Param name -> frame offset, walked from the UFunction's FProperty chain ONCE
+    // in the ctor (not per Set/Get -- that re-walked the chain + heap-allocated a
+    // vector on every argument, churning on the per-snapshot Drive() path).
+    int32_t OffsetOf(const wchar_t* name) const;
+
     void* fn_ = nullptr;
     std::vector<uint8_t> buf_;
+    std::vector<std::pair<std::wstring, int32_t>> offsets_;
 };
 
 // Invoke `frame` on `object` (reflection::CallFunction under the hood). OUT

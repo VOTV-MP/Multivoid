@@ -1,6 +1,8 @@
 #include "harness/harness.h"
 
 #include "harness/screenshot.h"
+#include "dev/freecam.h"
+#include "coop/nameplate.h"
 #include "coop/remote_player.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -10,7 +12,9 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <string>
 
 namespace harness {
@@ -72,12 +76,13 @@ void DumpParams(const wchar_t* className, const wchar_t* funcName) {
 
 // Runs on the game thread (posted): log enough to confirm where we are.
 void Report(const char* label) {
+    // NumObjects is O(1). Avoid CountObjectsByClass here (a full GUObjectArray
+    // walk) -- Report runs in the play path too, and per the post-ship audit we
+    // don't pay a 100k-object scan just for a log line.
     const int32_t n = R::NumObjects();
-    const int32_t players = R::CountObjectsByClass(P::name::MainPlayerClass);
     void* world = R::FindObjectByClass(P::name::WorldClass);
     std::wstring worldName = world ? R::ToString(R::NameOf(world)) : L"(none)";
-    UE_LOGI("harness report [%s]: NumObjects=%d, mainPlayer_C count=%d, world=%ls",
-            label, n, players, worldName.c_str());
+    UE_LOGI("harness report [%s]: NumObjects=%d, world=%ls", label, n, worldName.c_str());
 }
 
 // The C++ orphan (replaces the Lua harness's SpawnOrphan/DriveOrphan): a
@@ -97,6 +102,81 @@ void DumpComponents(const char* label, void* actor) {
 
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
+// Diagnostic: log every live UUserWidget instance (name + class). Used to find
+// the OMEGA WARNING startup widget's class so we can auto-Proceed past it. Fast:
+// resolves the UserWidget UClass once and walks each object's super chain by
+// POINTER compare (no per-object string work).
+void DumpLiveWidgets() {
+    void* userWidgetCls = R::FindClass(L"UserWidget");
+    if (!userWidgetCls) { UE_LOGW("widgets: UserWidget class not found"); return; }
+    const int32_t n = R::NumObjects();
+    int found = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        void* c = R::ClassOf(obj);
+        bool isWidget = false;
+        for (int d = 0; d < 16 && c; ++d) {
+            if (c == userWidgetCls) { isWidget = true; break; }
+            c = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(c) + P::off::UStruct_SuperStruct);
+        }
+        if (!isWidget) continue;
+        std::wstring nm = R::ToString(R::NameOf(obj));
+        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDOs
+        UE_LOGI("widget: %ls : %ls", R::ClassNameOf(obj).c_str(), nm.c_str());
+        if (++found >= 80) break;
+    }
+    UE_LOGI("widgets: %d live UserWidget instances logged", found);
+}
+
+// Spawn the 2nd player the INSTANT the local mainPlayer_C exists -- no fixed
+// timer. Polls on the game thread (engine state can only be read there) every
+// ~100 ms; the moment the local player is present, spawns and returns. The shared
+// flag is a shared_ptr so it outlives the worker loop even if a posted check is
+// still queued (no use-after-free).
+void SpawnSecondPlayerWhenReady() {
+    UE_LOGI("play: waiting for gameplay (direct boot), spawn 2nd player the instant it's ready");
+    bool fallbackOpened = false;
+    for (int i = 0; i < 1200; ++i) {  // ~120 s safety cap
+        auto state = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 not-ready,2 ok,3 failed
+        Post([state] {
+            if (g_orphan.valid()) { state->store(2); return; }
+            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+            if (!local) { state->store(1); return; }
+            // A mainPlayer_C ALSO exists at the menu (the 'preLoad' world) sitting
+            // at the ORIGIN. Spawning against it puts the puppet in the menu world,
+            // which the level load then destroys -> "no one spawns". Gate on the
+            // player being placed in the real level: a non-origin location.
+            const ue_wrap::FVector p = ue_wrap::engine::GetActorLocation(local);
+            if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
+                state->store(1);  // still the origin menu player; wait for gameplay
+                return;
+            }
+            state->store(g_orphan.Spawn() ? 2 : 3);
+        });
+        while (state->load() == 0) ::Sleep(5);  // let the posted check run (~1 frame)
+        const int s = state->load();
+        if (s == 2) {
+            UE_LOGI("play: 2nd player spawned the moment the local player was ready");
+            return;
+        }
+        if (s == 3) UE_LOGW("play: spawn attempt failed; retrying");
+        // Fallback: if we're still not in gameplay after ~8 s, the direct-boot URL
+        // may not have loaded the map -> issue `open` ourselves, once.
+        if (!fallbackOpened && i == 80) {
+            fallbackOpened = true;
+            UE_LOGW("play: not in gameplay after ~8s; issuing 'open %ls' fallback", P::name::GameplayLevel);
+            Post([] {
+                std::wstring cmd = L"open ";
+                cmd += P::name::GameplayLevel;
+                ue_wrap::engine::ExecuteConsoleCommand(cmd.c_str());
+            });
+        }
+        ::Sleep(100);  // local player not in world yet -> poll again
+    }
+    UE_LOGW("play: gave up waiting for local mainPlayer_C");
+}
+
 // Background timeline. Sleeps for pacing; every engine touch is posted to the
 // game thread. Mirrors the Lua harness's newgame timeline.
 DWORD WINAPI TimelineThread(LPVOID param) {
@@ -105,7 +185,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
     UE_LOGI("harness: timeline start, scenario='%s'", scenario.c_str());
 
-    ::Sleep(8000);  // let the menu settle
+    ::Sleep(scenario == "play" ? 3000 : 8000);  // let the engine init (play wants gameplay ASAP)
     Post([] { Report("menu"); });
     // Param-offset reflection validator (scenario "paramdump"): logs a UFunction's
     // FProperty layout (names/offsets/sizes/flags) to check against the known
@@ -121,7 +201,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     const bool wantGameplay = (scenario == "newgame" || scenario == "orphan" ||
                                scenario == "skin" || scenario == "show" ||
                                scenario == "play");
-    if (wantGameplay) {
+    // Autonomous scenarios boot to the menu then `open` + wait a fixed time. `play`
+    // is handled in its own branch (it opens ASAP + polls), so it skips this.
+    if (wantGameplay && scenario != "play") {
         ::Sleep(4000);
         Post([] {
             UE_LOGI("harness: skip-to-gameplay (open %ls)", P::name::GameplayLevel);
@@ -129,7 +211,6 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             cmd += P::name::GameplayLevel;
             ue_wrap::engine::ExecuteConsoleCommand(cmd.c_str());
         });
-
         ::Sleep(25000);  // level load + BeginPlay (mainPlayer_C spawns)
         Post([] { Report("post-load"); });
     }
@@ -175,63 +256,51 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("post-drive soak"); });
         UE_LOGI("harness: ==== AUTONOMOUS ORPHAN TIMELINE DONE ====");
     } else if (scenario == "play") {
-        // Hands-on test: spawn the orphan exactly on the local player's position
-        // (user request) with its body forced visible, then leave the player in
-        // control. NO text marker here -- the marker path is still being
-        // root-caused (it crashed live); exercise it only via the autonomous
-        // `show`/`marker` scenarios so the human tester never eats that crash.
-        ::Sleep(2000);
+        // Hands-on test. VOTV's boot is omega-warning -> main menu -> gameplay (a
+        // startup map URL is ignored). We issue `open` as soon as a world context
+        // is up -- it may blast past the omega/menu, else the world loads right
+        // after you click Proceed (no long timer). The puppet (a bare actor wearing
+        // your skin + body AnimBP) spawns the instant gameplay is live.
+        // DIAGNOSTIC: dump live widgets now (the OMEGA WARNING is on screen) to
+        // find its class, so we can auto-Proceed past it next build.
+        Post([] { DumpLiveWidgets(); });
         Post([] {
-            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
-            const ue_wrap::FVector loc =
-                local ? ue_wrap::engine::GetActorLocation(local) : ue_wrap::FVector{};
-            const ue_wrap::FVector fwd =
-                local ? ue_wrap::engine::GetActorForwardVector(local) : ue_wrap::FVector{1, 0, 0};
-            if (!g_orphan.Spawn()) return;
-            const int neutered = g_orphan.NeuterLocalSystems();  // stop gamma stomp
-            const int shown = g_orphan.ShowBody();
-            const int hid = g_orphan.HideGizmos();
-            // Place it ~2.5 m IN FRONT of you, FACING you -- a clearly separate,
-            // independently-oriented 2nd player (not overlapping your own body).
-            const ue_wrap::FVector inFront{loc.X + fwd.X * 250.f, loc.Y + fwd.Y * 250.f, loc.Z};
-            g_orphan.SetLocation(inFront);
-            const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;  // face the player
-            ue_wrap::engine::SetActorRotation(g_orphan.actor(), ue_wrap::FRotator{0.f, yaw, 0.f});
-            UE_LOGI("play: 2nd player in front at (%.0f,%.0f,%.0f) facing you (yaw=%.0f), "
-                    "body shown=%d, gizmos hidden=%d, postprocess stripped=%d",
-                    inFront.X, inFront.Y, inFront.Z, yaw, shown, hid, neutered);
+            UE_LOGI("play: early open %ls (reach gameplay ASAP)", P::name::GameplayLevel);
+            std::wstring cmd = L"open ";
+            cmd += P::name::GameplayLevel;
+            ue_wrap::engine::ExecuteConsoleCommand(cmd.c_str());
         });
+        SpawnSecondPlayerWhenReady();
         UE_LOGI("harness: ==== PLAY READY (you have control) ====");
+        // Keep the 3D nameplate(s) glued above the head + facing the local player.
+        // (~20 Hz is smooth enough for a label; the puppet is static for now.)
+        for (;;) {
+            Post([] { coop::nameplate::Update(); });
+            ::Sleep(50);
+        }
     } else if (scenario == "show") {
-        // Spawn the orphan directly in front of the local player's camera and
-        // screenshot it, to visually confirm the remote body renders (the skin
-        // comes from the class defaults -- mesh_playerVisible/playermodel).
+        // Autonomous visual confirm: spawn the puppet in front, hold idle, then
+        // drive a walk (speed) for a few seconds to confirm the AnimBP animates
+        // from our direct variable writes -- the Drive() path UDP will use.
         ::Sleep(2000);
         Post([] {
-            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
-            if (!local) { UE_LOGW("show: no local player"); return; }
-            const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
-            const ue_wrap::FVector fwd = ue_wrap::engine::GetActorForwardVector(local);
-            UE_LOGI("show: local at (%.0f,%.0f,%.0f) fwd=(%.2f,%.2f,%.2f)",
-                    loc.X, loc.Y, loc.Z, fwd.X, fwd.Y, fwd.Z);
-            if (!g_orphan.Spawn()) return;
-            g_orphan.NeuterLocalSystems();           // strip post-process (gamma stomp)
-            const int shown = g_orphan.ShowBody();  // force the body meshes visible
-            const int hid = g_orphan.HideGizmos();   // hide arrow/billboard debug gizmos
-            // 300 units along the pawn's forward, same height -> in the forward view.
-            ue_wrap::FVector inFront{loc.X + fwd.X * 300.f, loc.Y + fwd.Y * 300.f, loc.Z};
-            g_orphan.SetLocation(inFront);
-            // EXPERIMENT: rotate the orphan to FACE the local player (yaw of -fwd).
-            // If the body then shows its FRONT, the body anim reads the orphan's
-            // OWN rotation (easy fix). If it still shows the back tracking the
-            // local camera, the anim reads a global local-player ref (network-drive
-            // is the only fix). NOTE: text marker disabled (SetText crash).
-            const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;  // deg
-            ue_wrap::engine::SetActorRotation(g_orphan.actor(), ue_wrap::FRotator{0.f, yaw, 0.f});
-            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), faced-local yaw=%.0f, "
-                    "body shown=%d, gizmos hidden=%d", inFront.X, inFront.Y, inFront.Z, yaw, shown, hid);
+            UE_LOGI("show: === spawn skin-puppet ===");
+            g_orphan.Spawn();
         });
-        // Visual check is via external tools/capture-window.ps1 (no in-game toast).
+        ::Sleep(3000);
+        Post([] {
+            if (!g_orphan.valid()) { UE_LOGW("show: no puppet"); return; }
+            const ue_wrap::FVector at = g_orphan.GetLocation();
+            UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
+            g_orphan.Drive(at, 0.f, 200.f);  // same loc/yaw, walking
+        });
+        ::Sleep(4000);
+        Post([] {
+            if (!g_orphan.valid()) return;
+            const ue_wrap::FVector at = g_orphan.GetLocation();
+            g_orphan.Drive(at, 0.f, 0.f);  // back to idle
+            UE_LOGI("show: back to idle (speed=0)");
+        });
         UE_LOGI("harness: ==== SHOW DONE ====");
     } else if (scenario == "skin") {
         // Investigate the player's visible-body setup: enumerate components of
@@ -262,6 +331,9 @@ void Start() {
     // F12 -> screenshot (toast-free, saved to coop-screenshots/). Always on,
     // independent of the scenario, so it's available during hands-on testing.
     screenshot::StartHotkeyWatcher();
+
+    // Dev free-flying camera (HOME toggle). No-op unless votv-coop.ini enables it.
+    dev::freecam::Init();
 
     auto* scenario = new std::string(ReadScenario());
     if (HANDLE t = ::CreateThread(nullptr, 0, TimelineThread, scenario, 0, nullptr)) {

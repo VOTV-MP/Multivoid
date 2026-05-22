@@ -48,7 +48,10 @@ bool Resolve() {
             g_execFn = R::FindFunction(cls, P::name::ExecuteConsoleCommandFn);
         }
     }
-    // World context can become available later than the CDO; re-resolve until found.
+    // World context can become available later than the CDO; re-resolve until
+    // found. Also drop it if it was destroyed (a stale World from the pre-
+    // GameInstance fallback would otherwise be used after a level reload).
+    if (g_worldContext && !R::IsLive(g_worldContext)) g_worldContext = nullptr;
     if (!g_worldContext) g_worldContext = ResolveWorldContext();
     return g_kslCdo && g_execFn && g_worldContext;
 }
@@ -167,16 +170,6 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         a[P::off::APawn_AutoPossessAI] = 0;        // we possess explicitly post-spawn
         a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
         a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
-        // mainPlayer_C's AIControllerClass is null -> SpawnDefaultController can't
-        // make a controller, so the body's AnimBP has no controller and collapses.
-        // Point it at the engine AIController so we CAN give it a (non-hijacking)
-        // controller that poses the body.
-        if (void* aiCls = R::FindClass(P::name::AIControllerClassName)) {
-            *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = aiCls;
-            UE_LOGI("engine: SpawnActor inertPawn -> AIControllerClass set to AIController (%p)", aiCls);
-        } else {
-            UE_LOGW("engine: SpawnActor inertPawn -> AIController class not found");
-        }
         UE_LOGI("engine: SpawnActor inertPawn -> no player possess, bBlockInput=1");
     }
 
@@ -266,18 +259,6 @@ bool SetComponentVisible(void* component, bool visible) {
     return true;
 }
 
-// Byte size of a UFunction's parameter named `name`, straight from reflection
-// (ElementSize*ArrayDim). 0 if not found. We drive FText copies off this rather
-// than hardcoding 16/24 -- the same FText must round-trip Conv's ReturnValue and
-// SetText's Value, and an FText with a null shared-ref controller crashes the
-// engine's refcount increment (write to controller+0x20).
-int32_t ParamSize(void* fn, const wchar_t* name) {
-    for (const auto& p : R::FunctionParams(fn)) {
-        if (p.name == name) return p.size;
-    }
-    return 0;
-}
-
 namespace {
 void* g_actorCompClass = nullptr;
 void* g_destroyCompFn = nullptr;
@@ -300,90 +281,112 @@ bool DestroyComponent(void* component, void* contextObject) {
     return Call(component, f);
 }
 
-void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize) {
-    void* ktlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
-    void* convFn = ktlCdo ? R::FindFunction(R::ClassOf(ktlCdo), P::name::ConvStringToTextFn) : nullptr;
-    void* traClass = R::FindClass(P::name::TextRenderActorClass);
-    void* trcClass = R::FindClass(P::name::TextRenderComponentClass);
-    void* setTextFn = trcClass ? R::FindFunction(trcClass, P::name::SetTextFn) : nullptr;
-    void* setSizeFn = trcClass ? R::FindFunction(trcClass, P::name::SetWorldSizeFn) : nullptr;
-    if (!convFn || !traClass || !setTextFn) {
-        UE_LOGE("engine: SpawnTextMarker unresolved (conv=%p tra=%p trc=%p setText=%p)",
-                convFn, traClass, trcClass, setTextFn);
-        return nullptr;
-    }
-
-    // 1) FString -> FText (UKismetTextLibrary::Conv_StringToText). Sizes come from
-    //    reflection so Conv's ReturnValue and SetText's Value agree (both FText).
-    const int32_t convRetSize = ParamSize(convFn, L"ReturnValue");
-    const int32_t setValSize = ParamSize(setTextFn, L"Value");
-    const int32_t ftextSize = (convRetSize > setValSize ? convRetSize : setValSize);
-    if (ftextSize <= 0) {
-        UE_LOGE("engine: SpawnTextMarker FText sizes unresolved (convRet=%d setVal=%d)",
-                convRetSize, setValSize);
-        return nullptr;
-    }
-
-    std::wstring sbuf(text);
-    R::FString fs{sbuf.data(), static_cast<int32_t>(sbuf.size()) + 1,
-                  static_cast<int32_t>(sbuf.size()) + 1};
-    std::vector<uint8_t> ftext(static_cast<size_t>(ftextSize), 0);
-    bool convOk = false;
-    {
-        ParamFrame conv(convFn);
-        conv.SetRaw(L"inString", &fs, sizeof(fs));
-        convOk = Call(ktlCdo, conv);
-        conv.GetRaw(L"ReturnValue", ftext.data(), convRetSize);
-    }
-    // FText's TSharedRef is { ITextData* Object @0x00; FReferenceController* @0x08 }.
-    // A null controller means Conv didn't populate -- passing it to SetText would
-    // crash on the refcount increment, so verify before use.
-    uint64_t ftObj = 0, ftCtrl = 0;
-    std::memcpy(&ftObj, ftext.data(), sizeof(ftObj));
-    std::memcpy(&ftCtrl, ftext.data() + 8, sizeof(ftCtrl));
-    UE_LOGI("engine: SpawnTextMarker FText convOk=%d convRet=%d setVal=%d obj=%p ctrl=%p",
-            convOk, convRetSize, setValSize, reinterpret_cast<void*>(ftObj),
-            reinterpret_cast<void*>(ftCtrl));
-
-    // 2) Spawn the TextRenderActor and find its TextRenderComponent.
-    void* actor = SpawnActor(traClass, location);
-    if (!actor) return nullptr;
-    void* trc = nullptr;
-    for (const auto& c : R::ChildObjectsOf(actor)) {
-        if (c.className == P::name::TextRenderComponentClass) { trc = c.object; break; }
-    }
-    if (!trc) { UE_LOGW("engine: TextMarker has no TextRenderComponent"); return actor; }
-
-    // 3) SetText(FText Value) + SetWorldSize(float Value) + ensure visible.
-    //    Per-call logs (flushed) so a crash in any one of these is pinpointed by
-    //    which "marker: before X" line is the last in the log.
-    UE_LOGI("engine: marker trc=%p before SetText (setVal=%d)", trc, setValSize);
-    if (ftCtrl == 0) {
-        UE_LOGW("engine: TextMarker FText has null shared-ref controller; skipping "
-                "SetText (would crash on refcount). Marker spawned but blank.");
-    } else {
-        ParamFrame f(setTextFn);
-        f.SetRaw(L"Value", ftext.data(), setValSize);
-        Call(trc, f);
-    }
-    UE_LOGI("engine: marker before SetWorldSize");
-    if (setSizeFn) {
-        ParamFrame f(setSizeFn);
-        f.Set<float>(L"Value", worldSize);
-        Call(trc, f);
-    }
-    UE_LOGI("engine: marker before SetComponentVisible");
-    SetComponentVisible(trc);
-    UE_LOGI("engine: SpawnTextMarker '%ls' actor=%p at (%.0f,%.0f,%.0f)",
-            text, actor, location.X, location.Y, location.Z);
-    return actor;
-}
-
 bool SetAnimTickAlways(void* component) {
     if (!component) return false;
     // EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones == 0.
     reinterpret_cast<uint8_t*>(component)[P::off::USkinnedMesh_VisibilityBasedAnimTickOption] = 0;
     return true;
+}
+
+namespace {
+void* g_traClass = nullptr;
+void* g_trcClass = nullptr;
+void* g_setTextFn = nullptr;
+void* g_setWorldSizeFn = nullptr;
+void* g_setTextColorFn = nullptr;
+void* g_setHAlignFn = nullptr;
+void* g_setTextMaterialFn = nullptr;
+void* g_unlitTextMat = nullptr;
+bool ResolveTextActorFns() {
+    if (!g_traClass) g_traClass = R::FindClass(P::name::TextRenderActorClass);
+    if (!g_trcClass) g_trcClass = R::FindClass(P::name::TextRenderComponentClass);
+    if (g_trcClass) {
+        if (!g_setTextFn) g_setTextFn = R::FindFunction(g_trcClass, P::name::SetTextFn);
+        if (!g_setWorldSizeFn) g_setWorldSizeFn = R::FindFunction(g_trcClass, P::name::SetWorldSizeFn);
+        if (!g_setTextColorFn) g_setTextColorFn = R::FindFunction(g_trcClass, P::name::SetTextRenderColorFn);
+        if (!g_setHAlignFn) g_setHAlignFn = R::FindFunction(g_trcClass, P::name::SetHorizontalAlignmentFn);
+        if (!g_setTextMaterialFn) g_setTextMaterialFn = R::FindFunction(g_trcClass, P::name::SetTextMaterialFn);
+    }
+    if (!g_unlitTextMat) g_unlitTextMat = R::FindObject(P::name::UnlitTextMaterialName, P::name::MaterialClassName);
+    return g_traClass && g_setTextFn;
+}
+}  // namespace
+
+void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSize,
+                     const FColor& color) {
+    if (!ResolveTextActorFns()) {
+        UE_LOGE("engine: SpawnTextActor unresolved (tra=%p trc=%p setText=%p)",
+                g_traClass, g_trcClass, g_setTextFn);
+        return nullptr;
+    }
+    void* actor = SpawnActor(g_traClass, location);
+    if (!actor) return nullptr;
+    void* trc = nullptr;
+    for (const auto& c : R::ChildObjectsOf(actor)) {
+        if (c.className == P::name::TextRenderComponentClass) { trc = c.object; break; }
+    }
+    if (!trc) { UE_LOGW("engine: SpawnTextActor -- no TextRenderComponent"); return actor; }
+
+    // SetText takes a plain FString (the FString overload, NOT K2_SetText/FText).
+    std::wstring sbuf(text);
+    R::FString fs{sbuf.data(), static_cast<int32_t>(sbuf.size()) + 1,
+                  static_cast<int32_t>(sbuf.size()) + 1};
+    { ParamFrame f(g_setTextFn); f.SetRaw(L"Value", &fs, sizeof(fs)); Call(trc, f); }
+
+    // Translucent text material so the color alpha actually shows (the default is
+    // opaque). Without this the nameplate is fully solid regardless of alpha.
+    if (g_setTextMaterialFn && g_unlitTextMat) {
+        ParamFrame f(g_setTextMaterialFn); f.Set<void*>(L"Material", g_unlitTextMat); Call(trc, f);
+    } else {
+        UE_LOGW("engine: SpawnTextActor -- UnlitText material/SetTextMaterial unresolved (mat=%p fn=%p); text will be opaque",
+                g_unlitTextMat, g_setTextMaterialFn);
+    }
+    if (g_setWorldSizeFn) { ParamFrame f(g_setWorldSizeFn); f.Set<float>(L"Value", worldSize); Call(trc, f); }
+    if (g_setTextColorFn) { ParamFrame f(g_setTextColorFn); f.SetRaw(L"Value", &color, sizeof(color)); Call(trc, f); }
+    if (g_setHAlignFn) { ParamFrame f(g_setHAlignFn); f.Set<uint8_t>(L"Value", 1); Call(trc, f); }  // EHTA_Center
+    SetComponentVisible(trc, true);
+    UE_LOGI("engine: SpawnTextActor '%ls' actor=%p at (%.0f,%.0f,%.0f)",
+            text, actor, location.X, location.Y, location.Z);
+    return actor;
+}
+
+namespace {
+void* g_skinnedMeshClass = nullptr;   // owns SetSkeletalMesh
+void* g_skeletalMeshClass = nullptr;  // owns SetAnimClass
+void* g_setSkeletalMeshFn = nullptr;
+void* g_setAnimClassFn = nullptr;
+bool ResolveMeshFns() {
+    if (!g_skinnedMeshClass) g_skinnedMeshClass = R::FindClass(P::name::SkinnedMeshComponentClass);
+    if (g_skinnedMeshClass && !g_setSkeletalMeshFn)
+        g_setSkeletalMeshFn = R::FindFunction(g_skinnedMeshClass, P::name::SetSkeletalMeshFn);
+    if (!g_skeletalMeshClass) g_skeletalMeshClass = R::FindClass(P::name::SkeletalMeshComponentClass);
+    if (g_skeletalMeshClass && !g_setAnimClassFn)
+        g_setAnimClassFn = R::FindFunction(g_skeletalMeshClass, P::name::SetAnimClassFn);
+    return g_setSkeletalMeshFn && g_setAnimClassFn;
+}
+}  // namespace
+
+bool SetSkeletalMesh(void* component, void* skeletalMeshAsset) {
+    if (!component || !skeletalMeshAsset || !ResolveMeshFns()) {
+        UE_LOGE("engine: SetSkeletalMesh unresolved (comp=%p mesh=%p fn=%p)",
+                component, skeletalMeshAsset, g_setSkeletalMeshFn);
+        return false;
+    }
+    ParamFrame f(g_setSkeletalMeshFn);
+    f.Set<void*>(L"NewMesh", skeletalMeshAsset);
+    f.Set<bool>(L"bReinitPose", true);
+    return Call(component, f);
+}
+
+bool SetAnimClass(void* component, void* animBlueprintClass) {
+    if (!component || !animBlueprintClass || !ResolveMeshFns()) {
+        UE_LOGE("engine: SetAnimClass unresolved (comp=%p cls=%p fn=%p)",
+                component, animBlueprintClass, g_setAnimClassFn);
+        return false;
+    }
+    ParamFrame f(g_setAnimClassFn);
+    f.Set<void*>(L"NewClass", animBlueprintClass);
+    return Call(component, f);
 }
 
 FVector GetActorForwardVector(void* actor) {
@@ -451,6 +454,84 @@ void* GetController(void* pawn) {
     ParamFrame f(g_getControllerFn);
     if (!Call(pawn, f)) return nullptr;
     return f.Get<void*>(L"ReturnValue");
+}
+
+namespace {
+void* g_controllerClass = nullptr;
+void* g_getControlRotFn = nullptr;
+void* g_pcClass = nullptr;
+void* g_setViewTargetFn = nullptr;
+void* g_camMgrClass = nullptr;
+void* g_getCamLocFn = nullptr;
+void* g_getCamRotFn = nullptr;
+}  // namespace
+
+FRotator GetControlRotation(void* controller) {
+    FRotator rot;
+    if (!controller) return rot;
+    if (!g_controllerClass) g_controllerClass = R::FindClass(P::name::ControllerClassName);
+    if (g_controllerClass && !g_getControlRotFn)
+        g_getControlRotFn = R::FindFunction(g_controllerClass, P::name::GetControlRotationFn);
+    if (!g_getControlRotFn) return rot;
+    ParamFrame f(g_getControlRotFn);
+    if (!Call(controller, f)) return rot;
+    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    return rot;
+}
+
+bool SetViewTargetWithBlend(void* playerController, void* newViewTarget, float blendTime) {
+    if (!playerController || !newViewTarget) return false;
+    if (!g_pcClass) g_pcClass = R::FindClass(P::name::PlayerControllerClassName);
+    if (g_pcClass && !g_setViewTargetFn)
+        g_setViewTargetFn = R::FindFunction(g_pcClass, P::name::SetViewTargetWithBlendFn);
+    if (!g_setViewTargetFn) { UE_LOGE("engine: SetViewTargetWithBlend unresolved"); return false; }
+    ParamFrame f(g_setViewTargetFn);
+    f.Set<void*>(L"NewViewTarget", newViewTarget);
+    f.Set<float>(L"BlendTime", blendTime);
+    f.Set<float>(L"BlendExp", 0.f);
+    f.Set<bool>(L"bLockOutgoing", false);
+    return Call(playerController, f);
+}
+
+namespace {
+void* g_camMgr = nullptr;  // cached instance; FindObjectByClass walks the array
+bool ResolveCamMgrFns() {
+    if (!g_camMgrClass) g_camMgrClass = R::FindClass(P::name::PlayerCameraManagerClass);
+    if (g_camMgrClass) {
+        if (!g_getCamLocFn) g_getCamLocFn = R::FindFunction(g_camMgrClass, P::name::GetCameraLocationFn);
+        if (!g_getCamRotFn) g_getCamRotFn = R::FindFunction(g_camMgrClass, P::name::GetCameraRotationFn);
+    }
+    return g_getCamLocFn && g_getCamRotFn;
+}
+// Cached camera manager; only walk the GUObjectArray when the cache is empty or
+// the previous instance was destroyed (level change). Safe for per-frame callers.
+void* CamMgr() {
+    if (g_camMgr && !R::IsLive(g_camMgr)) g_camMgr = nullptr;
+    if (!g_camMgr) g_camMgr = R::FindObjectByClass(P::name::PlayerCameraManagerClass);
+    return g_camMgr;
+}
+}  // namespace
+
+FVector GetCameraLocation() {
+    FVector loc;
+    if (!ResolveCamMgrFns()) return loc;
+    void* mgr = CamMgr();
+    if (!mgr) return loc;
+    ParamFrame f(g_getCamLocFn);
+    if (!Call(mgr, f)) return loc;
+    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
+    return loc;
+}
+
+FRotator GetCameraRotation() {
+    FRotator rot;
+    if (!ResolveCamMgrFns()) return rot;
+    void* mgr = CamMgr();
+    if (!mgr) return rot;
+    ParamFrame f(g_getCamRotFn);
+    if (!Call(mgr, f)) return rot;
+    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    return rot;
 }
 
 bool DetachFromController(void* pawn) {

@@ -38,6 +38,18 @@ struct FColor {
 };
 static_assert(sizeof(FColor) == 4, "FColor layout");
 
+// FVector2D -- 2 floats (screen coords / sizes), 8 bytes.
+struct FVector2D {
+    float X = 0.f, Y = 0.f;
+};
+static_assert(sizeof(FVector2D) == 8, "FVector2D layout");
+
+// FLinearColor -- 4 floats RGBA (0..1), 16 bytes. The UCanvas draw API color type.
+struct FLinearColor {
+    float R = 0.f, G = 0.f, B = 0.f, A = 1.f;
+};
+static_assert(sizeof(FLinearColor) == 16, "FLinearColor layout");
+
 inline FTransform MakeTransform(const FVector& location) {
     FTransform t;
     t.TX = location.X;

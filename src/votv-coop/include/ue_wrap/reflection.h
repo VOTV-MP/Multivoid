@@ -52,6 +52,12 @@ int32_t NumObjects();
 // UObjectBase* at object index, or nullptr (slot empty / out of range).
 void* ObjectAt(int32_t index);
 
+// True if `obj` is still a live UObject (its GUObjectArray slot still points back
+// to it). O(1): reads the object's InternalIndex and checks the slot. Use to guard
+// a cached actor/object pointer before touching it -- a destroyed object's slot no
+// longer matches, so this returns false instead of dereferencing freed memory.
+bool IsLive(void* obj);
+
 // UObjectBase accessors (offsets are the standard UE4.27 layout).
 const FName& NameOf(void* uobject);   // NamePrivate  @ +0x18
 void*        ClassOf(void* uobject);  // ClassPrivate @ +0x10
