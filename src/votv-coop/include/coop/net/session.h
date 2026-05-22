@@ -19,6 +19,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
+#include "coop/net/reliable_channel.h"
 #include "coop/net/transport.h"
 
 #include <atomic>
@@ -73,6 +74,13 @@ public:
     // newer than the previous TryGet (for skip-if-unchanged callers).
     bool TryGetRemotePose(PoseSnapshot& out, bool* outIsNew = nullptr);
 
+    // Game thread: queue a reliable message (chat / system event). Stop-and-wait,
+    // so returns false if one is still in flight. See ReliableChannel.
+    bool SendReliable(ReliableKind kind, const void* payload, int len);
+
+    // Game thread: pop a delivered reliable message, if a new one arrived.
+    bool TryGetReliable(ReliableChannel::Message& out);
+
     // Diagnostics / validation (methodology 5.2: packets sent/received counts).
     uint64_t packetsSent() const { return sent_.load(); }
     uint64_t packetsRecv() const { return recv_.load(); }
@@ -115,6 +123,8 @@ private:
     std::atomic<uint32_t> sendSeq_{0};
     std::atomic<uint64_t> sent_{0};
     std::atomic<uint64_t> recv_{0};
+
+    ReliableChannel reliable_;  // reliable sub-channel (chat / system events)
 };
 
 }  // namespace coop::net

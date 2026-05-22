@@ -2,9 +2,11 @@
 
 #include "harness/screenshot.h"
 #include "dev/freecam.h"
+#include "coop/event_feed.h"
 #include "coop/nameplate.h"
 #include "coop/net/session.h"
 #include "coop/remote_player.h"
+#include "ue_wrap/hud_feed.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -160,6 +162,13 @@ void* g_netLocal = nullptr;
 // methodology 3.5). `displayOffsetX` shifts the rendered puppet sideways so a
 // LOOPBACK mirror (remote pose == our own) is visible next to us; 0 for real coop.
 void NetPumpTick(float displayOffsetX) {
+    // Lazily bring up the on-screen event feed once the GameInstance exists (it is the
+    // persistent widget outer). One-time FindObjectByClass until it succeeds, then it
+    // stops -- never a per-tick walk after init (post-ship audit).
+    if (!ue_wrap::hud_feed::IsInitialized()) {
+        if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) ue_wrap::hud_feed::Init(gi);
+    }
+
     if (g_netLocal && !R::IsLive(g_netLocal)) g_netLocal = nullptr;
     if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
     if (g_netLocal) {
@@ -176,6 +185,9 @@ void NetPumpTick(float displayOffsetX) {
         const ue_wrap::FVector loc{remote.x + displayOffsetX, remote.y, remote.z};
         g_orphan.Drive(loc, remote.yaw, remote.speed);
     }
+
+    // Surface session events (joins/disconnects) to the feed + send our Join.
+    coop::event_feed::Update(g_session, &g_orphan);
 }
 
 // Runs on the game thread: log an actor's default subobjects (its components),
@@ -437,6 +449,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         bool netEnabled = false;
         const coop::net::Config netCfg = ReadNetConfig(netEnabled);
         if (netEnabled) {
+            const std::string nick = ReadIniValue("net.nick", "Player");
+            coop::event_feed::SetLocalNickname(std::wstring(nick.begin(), nick.end()));
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
@@ -467,6 +481,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
         cfg.initiate = true;  // host targets itself for the loopback handshake
+        const std::string nick = ReadIniValue("net.nick", "Player");
+        coop::event_feed::SetLocalNickname(std::wstring(nick.begin(), nick.end()));
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;

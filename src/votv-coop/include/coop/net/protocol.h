@@ -27,8 +27,17 @@ inline constexpr uint16_t kDefaultPort = 47621;
 
 enum class MsgType : uint8_t {
     Hello = 1,         // handshake (either direction); no payload beyond the header
-    PoseSnapshot = 2,  // a player pose (the only Phase 3 state)
+    PoseSnapshot = 2,  // a player pose (unreliable: freely dropped, newest wins)
     Bye = 3,           // graceful disconnect; no payload
+    Reliable = 4,      // a reliable, ordered, ack'd message (chat / system events)
+    ReliableAck = 5,   // acknowledges a Reliable message by its relSeq
+};
+
+// Payload kinds carried inside a Reliable message. The chat/event-feed groundwork:
+// Join announces a player (its nickname) so the peer can post "<nick> joined" and
+// label the remote player. (Chat text is a future ReliableKind.)
+enum class ReliableKind : uint8_t {
+    Join = 1,  // payload: [uint8 len][len bytes UTF-8 nickname]
 };
 
 #pragma pack(push, 1)
@@ -66,10 +75,25 @@ struct PosePacket {
 };
 static_assert(sizeof(PosePacket) == 40, "PosePacket must be 40 bytes");
 
+// A reliable message: standard header (type=Reliable, seq=the reliable seq) +
+// ReliableHeader + variable UTF-8 payload. relSeq is a SEPARATE counter from the
+// header seq space (the unreliable pose seq); it lives in the header's seq field
+// for reliable packets and is what the ack references.
+struct ReliableHeader {
+    uint8_t  kind;     // ReliableKind
+    uint8_t  _pad[3];
+    uint16_t payloadLen;
+    uint16_t _pad2;
+};
+static_assert(sizeof(ReliableHeader) == 8, "ReliableHeader must be 8 bytes");
+
 #pragma pack(pop)
 
-// Largest datagram we ever send/receive (a single pose). Recv buffers size to this.
+// Largest datagram we ever send/receive. Recv buffers size to this.
 inline constexpr int kMaxPacketBytes = 256;
+
+// Max reliable payload that fits one datagram: 256 - 20 (PacketHeader) - 8 (ReliableHeader).
+inline constexpr int kMaxReliablePayload = kMaxPacketBytes - 20 - 8;
 
 // Coordinate / speed sanity bounds (cm). A pose outside these is garbage or a
 // hostile teleport-spam and is REJECTED at the trust boundary so non-finite or

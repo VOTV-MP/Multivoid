@@ -37,6 +37,26 @@ items.
   (`engine::SpawnNameplateWidget`), so this is appending to that string. Build
   after the basic pose-sync `play` path works on two machines.
 
+- **Coop chat + session event log** — an in-game chat where players type messages
+  to each other, AND a system/event feed that posts connection JOINS, DISCONNECTS,
+  and ERRORS so players can see what's happening with the session. Owner: host
+  relays chat between peers and is authoritative for the session events it
+  broadcasts (who joined/left); each machine also surfaces its own local transport
+  errors. UI: our OWN runtime UMG chat widget (the `NewObject`/`SpawnObject` path
+  proven by the nameplate — no VOTV asset edited). Plain-English text.
+  Decided 2026-05-23 (user). Reason: visibility of connection state + player
+  communication. KEY DESIGN IMPLICATION: chat + system messages need RELIABLE,
+  ORDERED delivery, which the Phase 3 pose channel deliberately is NOT (pose is
+  unreliable UDP, freely dropped, newest-wins). So this adds a small reliable
+  channel over the SAME session/socket — sequenced control messages with ack +
+  retransmit — alongside the lossy pose stream (root-cause, RULE 1: one socket,
+  two channels by reliability class; not a second transport). System events derive
+  from session state transitions (Connected / Bye) + transport error paths, so the
+  join/disconnect/error feed is largely free once the reliable channel exists.
+  Methodology: extends Phase 3 transport (new MsgType: ChatText / SystemEvent over
+  the reliable channel). Cross-link: the chat widget is the same UMG-at-runtime
+  family as the multiplayer menu + nameplate.
+
 - **Master server + opt-in public server browser** — a central master server
   that lists coop hosts who opted IN (a checkbox shown when creating a host
   game: "make my game visible in the browser"). The Connect side's server
@@ -165,3 +185,6 @@ Design implications (do NOT build yet; record so the architecture serves it):
 - 2026-05-23 — Added master server + opt-in public server browser to In scope;
   user. Opt-in only (default OFF), WAN/Phase 7+ (LAN direct-IP ships first);
   backs the multiplayer menu's "server browser" element.
+- 2026-05-23 — Added coop chat + session event log (joins/disconnects/errors) to
+  In scope; user. Needs a RELIABLE ordered channel (ack+retransmit) over the
+  Phase 3 session, distinct from the lossy pose stream; UMG-at-runtime chat widget.

@@ -118,6 +118,25 @@ FVector GetComponentForwardVector(void* component);
 // host you position/billboard each frame), or nullptr. Game thread only.
 void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity);
 
+// Build a SCREEN-SPACE HUD widget (a UUserWidget with a single multi-line UTextBlock
+// root) and add it to the viewport. Unlike the world-space nameplate, this renders on
+// the player's screen via UUserWidget::AddToViewport -- it does NOT need the stock HUD
+// canvas (which VOTV doesn't run). Set to HitTestInvisible so it never steals input.
+// `outer` should be a persistent object (the GameInstance) so it survives level loads.
+// Returns the root UUserWidget* (outRoot, for re-attach on level change) and the
+// UTextBlock* (outText, to drive text via SetWidgetText). Game thread only.
+bool SpawnHudFeedWidget(void* outer, int zOrder, void** outRoot, void** outText);
+
+// Set a UTextBlock's text (Conv_StringToText -> UTextBlock::SetText). The HUD feed
+// updates its line by rebuilding the whole multi-line string. Game thread only.
+bool SetWidgetText(void* textBlock, const wchar_t* text);
+
+// UUserWidget::AddToViewport(zOrder) / RemoveFromViewport -- re-attach the HUD feed
+// after a level load (the widget object survives with a GameInstance outer, but its
+// Slate viewport tree is torn down with the old world). Game thread only.
+bool AddWidgetToViewport(void* userWidget, int zOrder);
+bool RemoveWidgetFromViewport(void* userWidget);
+
 // World location of the skeletal mesh's "head" bone (USceneComponent::GetSocketLocation;
 // the head bone FName is enumerated once + cached). Used to anchor the nameplate to the
 // visible head instead of the actor origin. Returns false if unresolved. Game thread only.

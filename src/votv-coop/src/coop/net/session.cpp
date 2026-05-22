@@ -91,6 +91,14 @@ void Session::SetLocalPose(const PoseSnapshot& pose) {
     hasLocal_ = true;
 }
 
+bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
+    return reliable_.Send(kind, payload, len);
+}
+
+bool Session::TryGetReliable(ReliableChannel::Message& out) {
+    return reliable_.TryDrain(out);
+}
+
 bool Session::TryGetRemotePose(PoseSnapshot& out, bool* outIsNew) {
     if (state_.load() != ConnState::Connected) return false;
     std::lock_guard<std::mutex> lk(remoteMutex_);
@@ -164,6 +172,15 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         ++remoteStamp_;
         break;
     }
+    case MsgType::Reliable: {
+        // Ack to the sender's address; deliver in order via the reliable channel.
+        auto ack = [this, &from](const void* d, int n) { return transport_.SendTo(from, d, n); };
+        reliable_.OnReliable(data, len, token, ack);
+        break;
+    }
+    case MsgType::ReliableAck:
+        reliable_.OnAck(seq);  // the header seq carries the acked relSeq
+        break;
     case MsgType::Bye: {
         UE_LOGI("net: peer said Bye");
         state_.store(ConnState::Handshaking);
@@ -171,6 +188,7 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         // not stale-dropped for the rest of the session, and re-learn the peer.
         { std::lock_guard<std::mutex> lk(remoteMutex_);
           hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0; }
+        reliable_.Reset();
         if (cfg_.role == Role::Host) {
             std::lock_guard<std::mutex> lk(peerMutex_);
             peerLocked_ = false;  // host re-learns the peer on the next Hello
@@ -207,6 +225,13 @@ void Session::NetThread() {
         Endpoint peer;
         uint64_t token;
         { std::lock_guard<std::mutex> lk(peerMutex_); peer = peer_; token = sessionToken_; }
+
+        // Reliable channel: retransmit the in-flight control message if its RTO
+        // elapsed (sends to the current peer).
+        auto sendToPeer = [this, &peer](const void* d, int n) {
+            return peer.valid() && transport_.SendTo(peer, d, n);
+        };
+        reliable_.Tick(sendToPeer, token);
 
         // 2) Handshake: until connected, send a Hello carrying our token ~5x/s. The
         // host advertises its real token; the client sends 0 until it learns one. A

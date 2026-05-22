@@ -446,6 +446,64 @@ void* SpawnObject(void* objectClass, void* outer) {
     if (!Call(g_npGsCdo, f)) return nullptr;
     return f.Get<void*>(L"ReturnValue");
 }
+
+// Set a UTextBlock's text via Conv_StringToText -> UTextBlock::SetText. Requires
+// ResolveNameplateFns() to have run (resolves g_npConvFn/g_npTbSetTextFn/g_npKtlCdo).
+void SetTextOnBlock(void* txt, const wchar_t* text) {
+    if (!txt || !g_npConvFn || !g_npTbSetTextFn || !g_npKtlCdo) return;
+    uint8_t ftext[0x18] = {};
+    std::wstring b(text);
+    R::FString fs{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
+    { ParamFrame cf(g_npConvFn); cf.SetRaw(L"inString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);  // 'inString' (lowercase i)
+      cf.GetRaw(L"ReturnValue", ftext, sizeof(ftext)); }
+    ParamFrame tf(g_npTbSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(txt, tf);
+}
+
+// Build UUserWidget(outer) -> UWidgetTree -> UTextBlock(root) with the given font
+// size / colour / justification and initial text. Shared by the world-space
+// nameplate and the screen-space HUD feed (RULE 2: one UMG-text-build, not two).
+// Returns {root, txt}; {nullptr,nullptr} on failure.
+struct BuiltText { void* root; void* txt; };
+BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& color,
+                          int32_t fontSize, uint8_t justification) {
+    void* root = SpawnObject(g_npUserWidgetClass, outer);
+    void* tree = root ? SpawnObject(g_npWidgetTreeClass, root) : nullptr;
+    void* txt  = tree ? SpawnObject(g_npTbClass, tree) : nullptr;
+    if (!root || !tree || !txt) {
+        UE_LOGE("engine: BuildTextWidget SpawnObject failed (root=%p tree=%p txt=%p)", root, tree, txt);
+        return {nullptr, nullptr};
+    }
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = txt;
+    auto tU8 = reinterpret_cast<uint8_t*>(txt);
+    if (g_npFont) *reinterpret_cast<void**>(tU8 + P::off::UTextBlock_Font) = g_npFont;
+    *reinterpret_cast<int32_t*>(tU8 + P::off::UTextBlock_Font + P::off::FSlateFontInfo_Size) = fontSize;
+    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = color;
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = justification;
+    SetTextOnBlock(txt, text);
+    return {root, txt};
+}
+
+// Screen-space (viewport) widget functions, resolved on the UserWidget class.
+void* g_addToVpFn = nullptr, *g_removeFromVpFn = nullptr, *g_widgetSetVisFn = nullptr;
+void* g_setPosVpFn = nullptr, *g_setAlignVpFn = nullptr;
+bool ResolveScreenWidgetFns() {
+    if (!ResolveNameplateFns()) return false;  // UMG classes + SpawnObject + text fns
+    if (g_npUserWidgetClass) {
+        if (!g_addToVpFn) g_addToVpFn = R::FindFunction(g_npUserWidgetClass, P::name::AddToViewportFn);
+        if (!g_removeFromVpFn) g_removeFromVpFn = R::FindFunction(g_npUserWidgetClass, P::name::RemoveFromViewportFn);
+        if (!g_setPosVpFn) g_setPosVpFn = R::FindFunction(g_npUserWidgetClass, P::name::SetPositionInViewportFn);
+        if (!g_setAlignVpFn) g_setAlignVpFn = R::FindFunction(g_npUserWidgetClass, P::name::SetAlignmentInViewportFn);
+    }
+    // SetVisibility is owned by UWidget (a parent), and FindFunction matches the
+    // OWNING class only -- resolve it on "Widget", not "UserWidget".
+    if (!g_widgetSetVisFn) {
+        if (void* wc = R::FindClass(P::name::WidgetClass))
+            g_widgetSetVisFn = R::FindFunction(wc, P::name::WidgetSetVisibilityFn);
+    }
+    return g_addToVpFn && g_widgetSetVisFn;
+}
 }  // namespace
 
 void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity) {
@@ -497,35 +555,12 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     if (g_npTransMatOneSided) *reinterpret_cast<void**>(cU8 + P::off::UWidgetComponent_TranslucentMaterialOneSided) = g_npTransMatOneSided;
     if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, 1.f}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }
 
-    // 4) Build OUR widget tree via NewObject: UUserWidget -> UWidgetTree -> UTextBlock(root).
-    void* root = SpawnObject(g_npUserWidgetClass, actor);
-    void* tree = root ? SpawnObject(g_npWidgetTreeClass, root) : nullptr;
-    void* txt  = tree ? SpawnObject(g_npTbClass, tree) : nullptr;
-    if (!root || !tree || !txt) {
-        UE_LOGE("engine: SpawnNameplateWidget -- SpawnObject failed (root=%p tree=%p txt=%p)", root, tree, txt);
-        return actor;
-    }
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = txt;
-    auto tU8 = reinterpret_cast<uint8_t*>(txt);
-
-    // Font (FSlateFontInfo: FontObject @0, Size @0x48), translucent-white colour
-    // (FSlateColor: FLinearColor @0, ColorUseRule @0x10 = UseColor_Specified), centre.
-    if (g_npFont) *reinterpret_cast<void**>(tU8 + P::off::UTextBlock_Font) = g_npFont;
-    *reinterpret_cast<int32_t*>(tU8 + P::off::UTextBlock_Font + P::off::FSlateFontInfo_Size) = 14;
-    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = FLinearColor{1.f, 1.f, 1.f, opacity};
-    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
-    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = 1;  // Center
-
-    // Text: UTextBlock::SetText(Conv_StringToText(text)).
-    if (g_npConvFn && g_npTbSetTextFn) {
-        uint8_t ftext[0x18] = {};
-        std::wstring b(text);
-        R::FString fs{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
-        { ParamFrame cf(g_npConvFn); cf.SetRaw(L"inString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);  // 'inString' (lowercase i)
-          cf.GetRaw(L"ReturnValue", ftext, sizeof(ftext)); }
-        ParamFrame tf(g_npTbSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(txt, tf);
-    }
+    // 4) Build OUR widget tree (shared builder): UUserWidget -> UWidgetTree ->
+    // UTextBlock(root), translucent-white centred text at font size 14.
+    BuiltText bt = BuildTextWidget(actor, text, FLinearColor{1.f, 1.f, 1.f, opacity}, 14, /*Center*/ 1);
+    void* root = bt.root;
+    void* txt = bt.txt;
+    if (!root || !txt) { UE_LOGE("engine: SpawnNameplateWidget -- BuildTextWidget failed"); return actor; }
 
     // 5) Attach our widget (re-parents + rebuilds the slate/render-target), then make
     // the runtime-added component tick so it actually draws its RT.
@@ -537,6 +572,56 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p txt=%p font=%p at (%.0f,%.0f,%.0f)",
             text, actor, comp, root, txt, g_npFont, location.X, location.Y, location.Z);
     return actor;
+}
+
+bool SetWidgetText(void* textBlock, const wchar_t* text) {
+    if (!textBlock || !ResolveNameplateFns()) return false;
+    SetTextOnBlock(textBlock, text);
+    return true;
+}
+
+bool AddWidgetToViewport(void* userWidget, int zOrder) {
+    if (!userWidget || !ResolveScreenWidgetFns() || !g_addToVpFn) return false;
+    ParamFrame f(g_addToVpFn);
+    f.Set<int32_t>(L"ZOrder", zOrder);
+    return Call(userWidget, f);
+}
+
+bool RemoveWidgetFromViewport(void* userWidget) {
+    if (!userWidget || !ResolveScreenWidgetFns() || !g_removeFromVpFn) return false;
+    ParamFrame f(g_removeFromVpFn);
+    return Call(userWidget, f);
+}
+
+bool SpawnHudFeedWidget(void* outer, int zOrder, void** outRoot, void** outText) {
+    if (outRoot) *outRoot = nullptr;
+    if (outText) *outText = nullptr;
+    if (!outer || !ResolveScreenWidgetFns()) {
+        UE_LOGE("engine: SpawnHudFeedWidget unresolved (uw=%p addVp=%p setVis=%p)",
+                g_npUserWidgetClass, g_addToVpFn, g_widgetSetVisFn);
+        return false;
+    }
+    // Opaque-white, RIGHT-justified, multi-line text (the feed rebuilds the whole
+    // string on each push); font 16. Outer = a persistent object (GameInstance) so
+    // it survives level loads.
+    BuiltText bt = BuildTextWidget(outer, L"", FLinearColor{1.f, 1.f, 1.f, 1.f}, 16, /*Right*/ 2);
+    if (!bt.root || !bt.txt) return false;
+    // Visible but input-transparent (ESlateVisibility::HitTestInvisible = 3) so the
+    // overlay never steals mouse/keyboard focus from the game.
+    if (g_widgetSetVisFn) { ParamFrame f(g_widgetSetVisFn); f.Set<uint8_t>(L"InVisibility", 3); Call(bt.root, f); }
+    if (!AddWidgetToViewport(bt.root, zOrder)) {
+        UE_LOGE("engine: SpawnHudFeedWidget -- AddToViewport failed");
+        return false;
+    }
+    // Anchor to the TOP-RIGHT: alignment (1,0) makes the widget's top-right corner
+    // the pivot, positioned near the top-right of the viewport (by the right lamp).
+    // Pixel coords assume the 1920x1080 test window; tune if the resolution differs.
+    if (g_setAlignVpFn) { ParamFrame f(g_setAlignVpFn); FVector2D a{1.f, 0.f}; f.SetRaw(L"Alignment", &a, sizeof(a)); Call(bt.root, f); }
+    if (g_setPosVpFn)   { ParamFrame f(g_setPosVpFn); FVector2D p{1900.f, 40.f}; f.SetRaw(L"Position", &p, sizeof(p)); f.Set<bool>(L"bRemoveDPIScale", true); Call(bt.root, f); }
+    if (outRoot) *outRoot = bt.root;
+    if (outText) *outText = bt.txt;
+    UE_LOGI("engine: SpawnHudFeedWidget root=%p txt=%p z=%d", bt.root, bt.txt, zOrder);
+    return true;
 }
 
 namespace {
