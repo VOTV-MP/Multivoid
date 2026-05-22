@@ -4,3 +4,6 @@
 [submodule "reference/mtasa-blue"]
 	path = reference/mtasa-blue
 	url = https://github.com/multitheftauto/mtasa-blue.git
+[submodule "src/votv-coop/third_party/minhook"]
+	path = src/votv-coop/third_party/minhook
+	url = https://github.com/TsudaKageyu/minhook.git

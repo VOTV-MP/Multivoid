@@ -113,6 +113,23 @@ have it tick without crashing for ≥60 s (target several minutes).
             ProcessEvent via AOB" milestone COMPLETE: read the object graph +
             call any UFunction, no UE4SS. (Live call validated with the spawn
             port — needs a game-thread context.)
+- ☑ Game-thread execution context (so `CallFunction`/ProcessEvent runs safely
+      — it must NOT run on the boot thread). We hook `UObject::ProcessEvent`
+      (already AOB-resolved) and use its detour as a guaranteed game-thread
+      callback: a reentrancy-guarded task pump drains posted tasks, then
+      forwards via the MinHook trampoline. MinHook vendored as a submodule
+      (`third_party/minhook`, WP13) behind `ue_wrap/hook`. Proven live,
+      standalone (no UE4SS): a posted self-test task ran on the game thread
+      (tid != boot tid) and read engine state. See
+      `research/findings/game-thread-context-2026-05-22.md`.
+- ☐ Port the autonomous test framework into the standalone mod (RULE No.3;
+      retires the UE4SS Lua `coopTestHarness`, RULE No.2). Driven from the
+      game-thread context via `CallFunction`:
+      - ☐ skip-to-gameplay (new game) — `ExecuteConsoleCommand("open untitled_1")`
+            so `mainPlayer_C` loads (FString-only params; no FName ctor needed).
+      - ☐ screenshot — `ExecuteConsoleCommand("HighResShot ...")`.
+      - ☐ report — local pawn / mainPlayer_C count / gamemode.origPawn to the log.
+      - ☐ scenario timeline (read scenario.txt or boot-delayed sequence).
 - ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
 
 ## Phase 3 — Networking transport

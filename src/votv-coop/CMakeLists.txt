@@ -10,22 +10,39 @@
 # behind ue_wrap/ next.
 
 cmake_minimum_required(VERSION 3.20)
-project(votv_coop CXX)
+project(votv_coop CXX C)  # C for the MinHook sources (third_party/minhook)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# MinHook (WP13: established inline-hook library, MIT). We compile its C
+# sources into our own static target rather than add_subdirectory(), so it picks
+# up the SAME static-CRT runtime as the mod (a runtime mismatch would break the
+# link). Source lives in third_party/minhook (git submodule).
+set(MINHOOK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook)
+add_library(minhook STATIC
+    ${MINHOOK_DIR}/src/buffer.c
+    ${MINHOOK_DIR}/src/hook.c
+    ${MINHOOK_DIR}/src/trampoline.c
+    ${MINHOOK_DIR}/src/hde/hde32.c
+    ${MINHOOK_DIR}/src/hde/hde64.c
+)
+target_include_directories(minhook PUBLIC ${MINHOOK_DIR}/include)
 
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
     src/ue_wrap/log.cpp
     src/ue_wrap/sig_scan.cpp
     src/ue_wrap/reflection.cpp
+    src/ue_wrap/hook.cpp
+    src/ue_wrap/game_thread.cpp
 )
 
 target_include_directories(votv-coop PRIVATE include)
 set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "votv-coop")
 # version.lib: read the running exe's file version in the health check.
-target_link_libraries(votv-coop PRIVATE version)
+# minhook: our inline-hook substrate (game-thread dispatcher).
+target_link_libraries(votv-coop PRIVATE version minhook)
 
 # Standalone shipping loader: a xinput1_3.dll proxy that auto-loads the payload
 # (votv-coop.dll) on game start, replacing the dev-only inject.ps1. VOTV imports
@@ -42,6 +59,9 @@ set_target_properties(xinput1_3 PROPERTIES OUTPUT_NAME "xinput1_3" PREFIX "")
 if (MSVC)
     set_property(TARGET votv-coop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(votv-coop PRIVATE /W4 /permissive-)
+
+    # MinHook must match the mod's static CRT or the link fails.
+    set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
     set_property(TARGET xinput1_3 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(xinput1_3 PRIVATE /W4 /permissive-)

@@ -7,6 +7,7 @@
 // (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
 // in later steps, behind ue_wrap/.
 
+#include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
@@ -59,6 +60,28 @@ DWORD WINAPI BootThread(LPVOID) {
     // report to votv-coop.log -- our own SDK access, no UE4SS.
     ue_wrap::log::Init();
     ue_wrap::reflection::RunHealthCheck();
+
+    // Establish a game-thread execution context: hook ProcessEvent so we have a
+    // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent
+    // must NOT be called from this boot thread). Then post a self-test task to
+    // prove it: the task runs on the game thread (a different thread than this
+    // one) and reads engine state safely from there.
+    const unsigned long bootTid = ::GetCurrentThreadId();
+    UE_LOGI("boot: BootThread tid=%lu", bootTid);
+    if (ue_wrap::game_thread::Install()) {
+        ue_wrap::game_thread::Post([bootTid] {
+            const unsigned long tid = ::GetCurrentThreadId();
+            const int32_t n = ue_wrap::reflection::NumObjects();
+            UE_LOGI("game-thread self-test: task ran on tid=%lu (boot tid=%lu, %s); "
+                    "NumObjects()=%d read from game thread",
+                    tid, bootTid, tid != bootTid ? "DIFFERENT thread -- OK" : "SAME -- WRONG",
+                    n);
+            UE_LOGI("==== GAME-THREAD CONTEXT: LIVE ====");
+        });
+        UE_LOGI("boot: game-thread dispatcher installed; self-test task posted");
+    } else {
+        UE_LOGE("boot: failed to install game-thread dispatcher");
+    }
     return 0;
 }
 
