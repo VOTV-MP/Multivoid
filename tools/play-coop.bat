@@ -33,7 +33,7 @@ REM Write scenario.txt with no trailing newline.
 del "%WIN64%\votv-coop.log" 2>nul
 
 echo Launching VOTV (scenario=%SCENARIO%)...
-start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=1600 -ResY=900
+start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=1920 -ResY=1080
 echo.
 echo Running. The 2nd player spawns ~2m beside you a few seconds after gameplay loads.
 echo When done, run stop-coop.bat to restore UE4SS.

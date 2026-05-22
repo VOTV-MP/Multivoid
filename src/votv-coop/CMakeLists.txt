@@ -40,13 +40,14 @@ add_library(votv-coop SHARED
     src/ue_wrap/call.cpp
     src/coop/remote_player.cpp
     src/harness/harness.cpp
+    src/harness/screenshot.cpp
 )
 
 target_include_directories(votv-coop PRIVATE include)
 set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "votv-coop")
 # version.lib: read the running exe's file version in the health check.
 # minhook: our inline-hook substrate (game-thread dispatcher).
-target_link_libraries(votv-coop PRIVATE version minhook)
+target_link_libraries(votv-coop PRIVATE version minhook gdiplus)
 
 # Standalone shipping loader: a xinput1_3.dll proxy that auto-loads the payload
 # (votv-coop.dll) on game start, replacing the dev-only inject.ps1. VOTV imports

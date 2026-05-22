@@ -1,5 +1,6 @@
 #include "harness/harness.h"
 
+#include "harness/screenshot.h"
 #include "coop/remote_player.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -130,8 +131,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
         ::Sleep(25000);  // level load + BeginPlay (mainPlayer_C spawns)
         Post([] { Report("post-load"); });
-        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
     }
+    // NOTE: in-game HighResShot is BANNED -- it pops a "screenshot saved" toast
+    // (bottom-right) that distracts the human tester. For agent-side visual
+    // verification use the external tools/capture-window.ps1 (Windows GDI grab,
+    // no in-game notification) instead.
 
     if (scenario == "orphan") {
         // C++ port of the Phase 2.1 orphan derisk: spawn a 2nd mainPlayer_C via
@@ -166,25 +170,29 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             });
         }
 
-        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
         ::Sleep(5000);
         Post([] { Report("post-drive soak"); });
         UE_LOGI("harness: ==== AUTONOMOUS ORPHAN TIMELINE DONE ====");
     } else if (scenario == "play") {
-        // Hands-on test: spawn the orphan beside the player and force its body
-        // visible, then leave the player in control to walk around and look at
-        // it. Uses the proven spawn path (no camera calls).
+        // Hands-on test: spawn the orphan exactly on the local player's position
+        // (user request) with its body forced visible, then leave the player in
+        // control. NO text marker here -- the marker path is still being
+        // root-caused (it crashed live); exercise it only via the autonomous
+        // `show`/`marker` scenarios so the human tester never eats that crash.
         ::Sleep(2000);
         Post([] {
+            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+            const ue_wrap::FVector loc =
+                local ? ue_wrap::engine::GetActorLocation(local) : ue_wrap::FVector{};
             if (!g_orphan.Spawn()) return;
+            if (local) g_orphan.SetLocation(loc);  // exactly on the player
+            const int neutered = g_orphan.NeuterLocalSystems();  // stop gamma stomp
             const int shown = g_orphan.ShowBody();
+            const int hid = g_orphan.HideGizmos();
             const ue_wrap::FVector p = g_orphan.GetLocation();
-            // Floating 3D label above the orphan so it's easy to spot.
-            ue_wrap::FVector above{p.X, p.Y, p.Z + 130.f};
-            ue_wrap::engine::SpawnTextMarker(above, L"P2", 100.f);
-            UE_LOGI("play: orphan spawned at (%.0f,%.0f,%.0f), body meshes shown=%d, "
-                    "'P2' label above -- turn around / walk ~2m to see the 2nd player",
-                    p.X, p.Y, p.Z, shown);
+            UE_LOGI("play: orphan on player pos (%.0f,%.0f,%.0f), body shown=%d, gizmos hidden=%d, "
+                    "postprocess stripped=%d -- step back / look down to see the 2nd player",
+                    p.X, p.Y, p.Z, shown, hid, neutered);
         });
         UE_LOGI("harness: ==== PLAY READY (you have control) ====");
     } else if (scenario == "show") {
@@ -200,19 +208,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             UE_LOGI("show: local at (%.0f,%.0f,%.0f) fwd=(%.2f,%.2f,%.2f)",
                     loc.X, loc.Y, loc.Z, fwd.X, fwd.Y, fwd.Z);
             if (!g_orphan.Spawn()) return;
+            g_orphan.NeuterLocalSystems();           // strip post-process (gamma stomp)
             const int shown = g_orphan.ShowBody();  // force the body meshes visible
+            const int hid = g_orphan.HideGizmos();   // hide arrow/billboard debug gizmos
             // 300 units along the pawn's forward, same height -> in the forward view.
             ue_wrap::FVector inFront{loc.X + fwd.X * 300.f, loc.Y + fwd.Y * 300.f, loc.Z};
             g_orphan.SetLocation(inFront);
-            ue_wrap::FVector above{inFront.X, inFront.Y, inFront.Z + 130.f};
-            ue_wrap::engine::SpawnTextMarker(above, L"P2", 100.f);
-            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), body shown=%d, label above",
-                    inFront.X, inFront.Y, inFront.Z, shown);
+            // NOTE: text marker disabled here -- SetText crashes (root-causing in
+            // IDA). We want a clean screenshot of the BODY without the crash.
+            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), body shown=%d, gizmos hidden=%d",
+                    inFront.X, inFront.Y, inFront.Z, shown, hid);
         });
-        ::Sleep(3000);
-        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
-        ::Sleep(3000);
-        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
+        // Visual check is via external tools/capture-window.ps1 (no in-game toast).
         UE_LOGI("harness: ==== SHOW DONE ====");
     } else if (scenario == "skin") {
         // Investigate the player's visible-body setup: enumerate components of
@@ -240,6 +247,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 }  // namespace
 
 void Start() {
+    // F12 -> screenshot (toast-free, saved to coop-screenshots/). Always on,
+    // independent of the scenario, so it's available during hands-on testing.
+    screenshot::StartHotkeyWatcher();
+
     auto* scenario = new std::string(ReadScenario());
     if (HANDLE t = ::CreateThread(nullptr, 0, TimelineThread, scenario, 0, nullptr)) {
         ::CloseHandle(t);

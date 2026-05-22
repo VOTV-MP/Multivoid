@@ -35,6 +35,21 @@ public:
     // the number of SkeletalMeshComponents shown. Game thread only.
     int ShowBody();
 
+    // Hide the orphan's editor-debug visualizers (ArrowComponent +
+    // BillboardComponent) that an unpossessed pawn leaves visible -- the red
+    // arrow / white rod / "ball" the user sees floating on the orphan. Targeted
+    // to those debug-primitive types only (principle 4), never gameplay meshes.
+    // Returns the number of components hidden. Game thread only.
+    int HideGizmos();
+
+    // Strip the remote pawn's local-only viewpoint systems that a non-local
+    // player must NOT own. Foremost: its PostProcessComponent(s) -- a player's
+    // post-process is unbound (whole-screen), so an extra pawn's defaults stomp
+    // the LOCAL player's gamma/exposure (and the local gamma slider then does
+    // nothing). Root-cause per-player routing (principle 6), not symptom-hiding.
+    // Returns the number of components stripped. Game thread only.
+    int NeuterLocalSystems();
+
     // Current engine-reported location (for verification / interpolation base).
     ue_wrap::FVector GetLocation() const;
 

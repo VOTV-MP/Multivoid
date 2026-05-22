@@ -51,10 +51,18 @@ FVector GetComponentForwardVector(void* component);
 // Game thread only.
 void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize = 80.f);
 
-// Force a USceneComponent visible: SetVisibility(true, propagate) +
-// SetHiddenInGame(false, propagate). Used to show a remote pawn's third-person
-// body meshes (an unpossessed pawn never runs the gameplay code that unhides
-// them). Game thread only.
-bool SetComponentVisible(void* component);
+// Set a USceneComponent's visibility: SetVisibility(visible, propagate) +
+// SetHiddenInGame(!visible, propagate). visible=true shows a remote pawn's
+// third-person body meshes (an unpossessed pawn never runs the gameplay code
+// that unhides them); visible=false hides the orphan's editor-debug visualizers
+// (ArrowComponent/BillboardComponent) that the unpossessed pawn leaves on.
+// Game thread only.
+bool SetComponentVisible(void* component, bool visible = true);
+
+// Destroy an actor component (UActorComponent::K2_DestroyComponent). Used to
+// strip a remote pawn's local-only systems (e.g. its unbound PostProcessComponent
+// that hijacks the local screen's gamma/exposure). `contextObject` is the calling
+// object for the engine's auth check (pass the owning actor). Game thread only.
+bool DestroyComponent(void* component, void* contextObject);
 
 }  // namespace ue_wrap::engine

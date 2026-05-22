@@ -95,3 +95,6 @@ desktop.ini
 !src/**/*.dll
 !tools/**/*.exe
 !Game/coop-*.bat
+
+# Agent-side test screenshots (capture-window.ps1 / shot.bat output)
+tools/shots/

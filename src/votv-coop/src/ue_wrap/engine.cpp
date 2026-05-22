@@ -217,7 +217,7 @@ FVector GetComponentForwardVector(void* component) {
     return fwd;
 }
 
-bool SetComponentVisible(void* component) {
+bool SetComponentVisible(void* component, bool visible) {
     if (!component || !ResolveCompVis()) {
         UE_LOGE("engine: SetComponentVisible unresolved (cls=%p setVis=%p setHidden=%p)",
                 g_sceneCompClass, g_setVisFn, g_setHiddenFn);
@@ -225,17 +225,51 @@ bool SetComponentVisible(void* component) {
     }
     {
         ParamFrame f(g_setVisFn);
-        f.Set<bool>(L"bNewVisibility", true);
+        f.Set<bool>(L"bNewVisibility", visible);
         f.Set<bool>(L"bPropagateToChildren", true);
         Call(component, f);
     }
     {
         ParamFrame f(g_setHiddenFn);
-        f.Set<bool>(L"NewHidden", false);  // UE4.27 param is "NewHidden" (no b prefix)
+        f.Set<bool>(L"NewHidden", !visible);  // UE4.27 param is "NewHidden" (no b prefix)
         f.Set<bool>(L"bPropagateToChildren", true);
         Call(component, f);
     }
     return true;
+}
+
+// Byte size of a UFunction's parameter named `name`, straight from reflection
+// (ElementSize*ArrayDim). 0 if not found. We drive FText copies off this rather
+// than hardcoding 16/24 -- the same FText must round-trip Conv's ReturnValue and
+// SetText's Value, and an FText with a null shared-ref controller crashes the
+// engine's refcount increment (write to controller+0x20).
+int32_t ParamSize(void* fn, const wchar_t* name) {
+    for (const auto& p : R::FunctionParams(fn)) {
+        if (p.name == name) return p.size;
+    }
+    return 0;
+}
+
+namespace {
+void* g_actorCompClass = nullptr;
+void* g_destroyCompFn = nullptr;
+bool ResolveDestroy() {
+    if (!g_actorCompClass) g_actorCompClass = R::FindClass(P::name::ActorComponentClass);
+    if (g_actorCompClass && !g_destroyCompFn)
+        g_destroyCompFn = R::FindFunction(g_actorCompClass, P::name::DestroyComponentFn);
+    return g_destroyCompFn != nullptr;
+}
+}  // namespace
+
+bool DestroyComponent(void* component, void* contextObject) {
+    if (!component || !ResolveDestroy()) {
+        UE_LOGE("engine: DestroyComponent unresolved (cls=%p fn=%p)",
+                g_actorCompClass, g_destroyCompFn);
+        return false;
+    }
+    ParamFrame f(g_destroyCompFn);
+    f.Set<void*>(L"Object", contextObject);  // the calling object (auth check)
+    return Call(component, f);
 }
 
 void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize) {
@@ -251,20 +285,37 @@ void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldS
         return nullptr;
     }
 
-    // 1) FString -> FText (UKismetTextLibrary::Conv_StringToText). Param names
-    //    confirmed by a runtime FProperty dump: input "inString" (FString, 16),
-    //    ReturnValue is FText (24). SetText's Value param is 16 (the TSharedRef
-    //    core of the FText); we copy that many bytes across.
+    // 1) FString -> FText (UKismetTextLibrary::Conv_StringToText). Sizes come from
+    //    reflection so Conv's ReturnValue and SetText's Value agree (both FText).
+    const int32_t convRetSize = ParamSize(convFn, L"ReturnValue");
+    const int32_t setValSize = ParamSize(setTextFn, L"Value");
+    const int32_t ftextSize = (convRetSize > setValSize ? convRetSize : setValSize);
+    if (ftextSize <= 0) {
+        UE_LOGE("engine: SpawnTextMarker FText sizes unresolved (convRet=%d setVal=%d)",
+                convRetSize, setValSize);
+        return nullptr;
+    }
+
     std::wstring sbuf(text);
     R::FString fs{sbuf.data(), static_cast<int32_t>(sbuf.size()) + 1,
                   static_cast<int32_t>(sbuf.size()) + 1};
-    std::vector<uint8_t> ftext(24, 0);
+    std::vector<uint8_t> ftext(static_cast<size_t>(ftextSize), 0);
+    bool convOk = false;
     {
         ParamFrame conv(convFn);
         conv.SetRaw(L"inString", &fs, sizeof(fs));
-        Call(ktlCdo, conv);
-        conv.GetRaw(L"ReturnValue", ftext.data(), 24);
+        convOk = Call(ktlCdo, conv);
+        conv.GetRaw(L"ReturnValue", ftext.data(), convRetSize);
     }
+    // FText's TSharedRef is { ITextData* Object @0x00; FReferenceController* @0x08 }.
+    // A null controller means Conv didn't populate -- passing it to SetText would
+    // crash on the refcount increment, so verify before use.
+    uint64_t ftObj = 0, ftCtrl = 0;
+    std::memcpy(&ftObj, ftext.data(), sizeof(ftObj));
+    std::memcpy(&ftCtrl, ftext.data() + 8, sizeof(ftCtrl));
+    UE_LOGI("engine: SpawnTextMarker FText convOk=%d convRet=%d setVal=%d obj=%p ctrl=%p",
+            convOk, convRetSize, setValSize, reinterpret_cast<void*>(ftObj),
+            reinterpret_cast<void*>(ftCtrl));
 
     // 2) Spawn the TextRenderActor and find its TextRenderComponent.
     void* actor = SpawnActor(traClass, location);
@@ -275,17 +326,25 @@ void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldS
     }
     if (!trc) { UE_LOGW("engine: TextMarker has no TextRenderComponent"); return actor; }
 
-    // 3) SetText(FText Value, 16) + SetWorldSize(float Value) + ensure visible.
-    {
+    // 3) SetText(FText Value) + SetWorldSize(float Value) + ensure visible.
+    //    Per-call logs (flushed) so a crash in any one of these is pinpointed by
+    //    which "marker: before X" line is the last in the log.
+    UE_LOGI("engine: marker trc=%p before SetText (setVal=%d)", trc, setValSize);
+    if (ftCtrl == 0) {
+        UE_LOGW("engine: TextMarker FText has null shared-ref controller; skipping "
+                "SetText (would crash on refcount). Marker spawned but blank.");
+    } else {
         ParamFrame f(setTextFn);
-        f.SetRaw(L"Value", ftext.data(), 16);
+        f.SetRaw(L"Value", ftext.data(), setValSize);
         Call(trc, f);
     }
+    UE_LOGI("engine: marker before SetWorldSize");
     if (setSizeFn) {
         ParamFrame f(setSizeFn);
         f.Set<float>(L"Value", worldSize);
         Call(trc, f);
     }
+    UE_LOGI("engine: marker before SetComponentVisible");
     SetComponentVisible(trc);
     UE_LOGI("engine: SpawnTextMarker '%ls' actor=%p at (%.0f,%.0f,%.0f)",
             text, actor, location.X, location.Y, location.Z);

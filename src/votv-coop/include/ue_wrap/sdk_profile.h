@@ -135,6 +135,13 @@ inline constexpr const wchar_t* GetComponentLocationFn = L"K2_GetComponentLocati
 inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
 inline constexpr const wchar_t* CameraComponentClass = L"CameraComponent";
 
+// Component destruction (UActorComponent::K2_DestroyComponent(Object)) -- to
+// remove the local-only systems a remote pawn must NOT own (its unbound
+// PostProcessComponent stomps the local screen's gamma/exposure).
+inline constexpr const wchar_t* ActorComponentClass = L"ActorComponent";
+inline constexpr const wchar_t* DestroyComponentFn = L"K2_DestroyComponent";
+inline constexpr const wchar_t* PostProcessComponentClass = L"PostProcessComponent";
+
 // 3D world-space text marker (renders as geometry -> works in shipping, unlike
 // stripped debug-draw). ATextRenderActor + UTextRenderComponent; FText built via
 // UKismetTextLibrary::Conv_StringToText.

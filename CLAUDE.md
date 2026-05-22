@@ -123,6 +123,17 @@ The game install folder name (`Game_0.9.0n/`) reflects the current target.
 - Document findings + rename functions/objects (in IDB if doing RE; in
   research findings always). Verify, don't guess (WP4/WP18 — memory
   decays, current code/reflection is authority).
+- **Escalation ladder when stuck.** Reflection/dumps are the first tool. If
+  stuck (offsets/layout/a crash you can't explain from reflection alone),
+  drop to **IDA** (IDA Pro MCP available) — decompile the exact call site,
+  read the real struct layout / param sizes / the faulting instruction. If
+  stuck *in IDA* too (e.g. need live behaviour, BP graph semantics, or a fast
+  reflected truth), use **UE4SS** as the dev probe (Lua dumps / live
+  inspection). Order: reflection → IDA → UE4SS. None of IDA/UE4SS ship
+  (RULE №3); they are diagnosis tools only.
+- **Screenshots during hands-on tests:** `HighResShot` pops a distracting
+  "saving screenshot" toast — never use it in the hands-on `play` scenario.
+  Screenshots are only for autonomous (agent-run) verification scenarios.
 - Don't reinvent the wheel (WP13). Hooks/reflection: UE4SS.
 - Mod menu / debug overlay: Dear ImGui (UE4SS ships an ImGui integration).
 - Plain-English UI labels; technical depth in `(?)` tooltips (WP10).
