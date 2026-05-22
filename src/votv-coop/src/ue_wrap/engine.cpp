@@ -190,6 +190,8 @@ void* g_actorClass = nullptr;  // the Actor UClass (owns K2_Get/SetActorLocation
 void* g_getLocFn = nullptr;
 void* g_setLocFn = nullptr;
 void* g_getFwdFn = nullptr;
+void* g_getRotFn = nullptr;
+void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
 void* g_setTickFn = nullptr;
 
@@ -213,6 +215,8 @@ bool ResolveActorFns() {
         if (!g_getLocFn) g_getLocFn = R::FindFunction(g_actorClass, P::name::GetActorLocationFn);
         if (!g_setLocFn) g_setLocFn = R::FindFunction(g_actorClass, P::name::SetActorLocationFn);
         if (!g_getFwdFn) g_getFwdFn = R::FindFunction(g_actorClass, P::name::GetActorForwardVectorFn);
+        if (!g_getRotFn) g_getRotFn = R::FindFunction(g_actorClass, P::name::GetActorRotationFn);
+        if (!g_getVelFn) g_getVelFn = R::FindFunction(g_actorClass, P::name::GetActorVelocityFn);
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
     }
@@ -625,6 +629,24 @@ FVector GetActorForwardVector(void* actor) {
     if (!Call(actor, f)) return fwd;
     f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
     return fwd;
+}
+
+FRotator GetActorRotation(void* actor) {
+    FRotator rot;
+    if (!actor || !ResolveActorFns() || !g_getRotFn) return rot;
+    ParamFrame f(g_getRotFn);
+    if (!Call(actor, f)) return rot;
+    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    return rot;
+}
+
+FVector GetActorVelocity(void* actor) {
+    FVector vel;
+    if (!actor || !ResolveActorFns() || !g_getVelFn) return vel;
+    ParamFrame f(g_getVelFn);
+    if (!Call(actor, f)) return vel;
+    f.GetRaw(L"ReturnValue", &vel, sizeof(vel));
+    return vel;
 }
 
 bool SetActorLocation(void* actor, const FVector& location) {

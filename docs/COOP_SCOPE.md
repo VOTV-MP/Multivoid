@@ -28,6 +28,28 @@ items.
   Decided 2026-05-22 (user). Design: `docs/MULTIPLAYER_UI.md`. Build gated
   on the Phase 3 session API.
 
+- **Nameplate ping readout** — the floating per-player nameplate shows the
+  round-trip latency to that peer in parentheses after the nickname, e.g.
+  `Player 2 (42 ms)`. Owner: per-machine (each side measures RTT to the peer).
+  Decided 2026-05-23 (user). Reason: at-a-glance connection health while
+  playing. Depends on: the Phase 3 session adding an RTT measurement (ping/pong
+  or timestamped pose-ack); the nameplate already renders OUR own UMG text
+  (`engine::SpawnNameplateWidget`), so this is appending to that string. Build
+  after the basic pose-sync `play` path works on two machines.
+
+- **Master server + opt-in public server browser** — a central master server
+  that lists coop hosts who opted IN (a checkbox shown when creating a host
+  game: "make my game visible in the browser"). The Connect side's server
+  browser queries the master server to populate the public host list (alongside
+  direct-IP connect, which stays). Owner: host opts in per-session; master
+  server is external infrastructure (host-registers / heartbeats / delists).
+  Decided 2026-05-23 (user). Reason: discoverability without sharing IPs.
+  Methodology phase: this is a WAN concern (Phase 7+ per COOP_METHODOLOGY 3.1
+  "LAN first ... WAN is a Phase 7+ concern"); the LAN direct-IP path ships
+  first. Privacy: opt-in only (default OFF); no host is listed without the
+  explicit checkbox. The server-browser UI is the already-in-scope multiplayer
+  menu's "server browser (future)" element, now given a backing source.
+
 <!--
 Template for an entry:
 - **<system>** — replicated <how>. Owner: <host / per-machine>.
@@ -138,3 +160,8 @@ Design implications (do NOT build yet; record so the architecture serves it):
 - 2026-05-22 — Recorded shared money/points balance (host-authoritative shared
   wallet, 4.6) and proximity-reactive world incl. auto-doors reacting to the 2nd
   player + synced state (4.3); user (see architectural note).
+- 2026-05-23 — Added nameplate ping readout (`Player 2 (42 ms)`, per-machine RTT)
+  to In scope; user. Depends on a session RTT measurement.
+- 2026-05-23 — Added master server + opt-in public server browser to In scope;
+  user. Opt-in only (default OFF), WAN/Phase 7+ (LAN direct-IP ships first);
+  backs the multiplayer menu's "server browser" element.

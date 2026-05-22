@@ -41,6 +41,8 @@ add_library(votv-coop SHARED
     src/ue_wrap/puppet.cpp
     src/coop/remote_player.cpp
     src/coop/nameplate.cpp
+    src/coop/net/transport.cpp
+    src/coop/net/session.cpp
     src/dev/freecam.cpp
     src/harness/harness.cpp
     src/harness/screenshot.cpp
@@ -50,7 +52,8 @@ target_include_directories(votv-coop PRIVATE include)
 set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "votv-coop")
 # version.lib: read the running exe's file version in the health check.
 # minhook: our inline-hook substrate (game-thread dispatcher).
-target_link_libraries(votv-coop PRIVATE version minhook gdiplus)
+# ws2_32: Winsock for the UDP coop transport (src/coop/net).
+target_link_libraries(votv-coop PRIVATE version minhook gdiplus ws2_32)
 
 # Standalone shipping loader: a xinput1_3.dll proxy that auto-loads the payload
 # (votv-coop.dll) on game start, replacing the dev-only inject.ps1. VOTV imports

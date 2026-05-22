@@ -3,10 +3,12 @@
 #include "harness/screenshot.h"
 #include "dev/freecam.h"
 #include "coop/nameplate.h"
+#include "coop/net/session.h"
 #include "coop/remote_player.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
+#include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
@@ -15,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cwctype>
 #include <memory>
 #include <string>
@@ -54,29 +57,60 @@ std::string ReadScenario() {
     return s.empty() ? "newgame" : s;
 }
 
-// The STORY save slot the `play` scenario auto-loads. Configurable via votv-coop.ini
-// (a line "save=<slotname>", section-agnostic); defaults to s_may2026. Coop targets
-// story mode, so we never boot the sandbox map fresh.
-std::wstring ReadStorySaveSlot() {
-    std::wstring slot = L"s_may2026";  // default story save
+// Read a single "key=value" line from votv-coop.ini (section-agnostic). Returns
+// the value (trimmed), or `def` if the key is absent. ASCII.
+std::string ReadIniValue(const char* key, const char* def) {
     const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
     FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return slot;
-    char line[160];
-    while (std::fgets(line, sizeof(line), f)) {  // single fclose below (no early return)
+    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return def;
+    const std::string prefix = std::string(key) + "=";
+    std::string result = def;
+    char line[256];
+    while (std::fgets(line, sizeof(line), f)) {
         std::string s(line);
-        // strip whitespace
         s.erase(std::remove_if(s.begin(), s.end(),
                                [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
                 s.end());
-        if (s.rfind("save=", 0) == 0 && s.size() > 5) {
-            const std::string v = s.substr(5);
-            slot.assign(v.begin(), v.end());  // ASCII slot name
-            break;
-        }
+        if (s.rfind(prefix, 0) == 0) { result = s.substr(prefix.size()); break; }
     }
     std::fclose(f);
-    return slot;
+    return result;
+}
+
+// The single coop networking session (Phase 3). Host binds the LAN port; client
+// targets the host. Drives the remote puppet from received pose snapshots and
+// sends the local player's pose. Off unless a scenario starts it.
+coop::net::Session g_session;
+
+// Build the net Config from votv-coop.ini ("net.role=host|client", "net.peer=<ip>",
+// "net.port=<n>"). `enabled` is set false when no role is configured (the default:
+// hands-on play stays single-machine until coop is wired up on a 2nd box).
+coop::net::Config ReadNetConfig(bool& enabled) {
+    coop::net::Config c;
+    const std::string role = ReadIniValue("net.role", "");
+    enabled = (role == "host" || role == "client");
+    c.role = (role == "client") ? coop::net::Role::Client : coop::net::Role::Host;
+    c.peerIp = ReadIniValue("net.peer", "127.0.0.1");
+    const std::string port = ReadIniValue("net.port", "");
+    if (!port.empty()) c.port = static_cast<uint16_t>(std::strtoul(port.c_str(), nullptr, 10));
+    return c;
+}
+
+// Game thread: read the local player's pose into a network snapshot. z carries the
+// FEET (capsule centre - half-height), so the remote machine's mesh-root puppet
+// stands on the ground; yaw is the body facing; speed is horizontal velocity (cm/s).
+bool ReadLocalPose(void* local, coop::net::PoseSnapshot& out) {
+    if (!local) return false;
+    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
+    const ue_wrap::FRotator rot = ue_wrap::engine::GetActorRotation(local);
+    const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
+    const float halfH = ue_wrap::puppet::GetCapsuleHalfHeight(local);
+    out.x = loc.X;
+    out.y = loc.Y;
+    out.z = loc.Z - halfH;
+    out.yaw = rot.Yaw;
+    out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
+    return true;
 }
 
 // Runs on the game thread (posted): dump a UFunction's parameter frame so we can
@@ -115,6 +149,34 @@ void Report(const char* label) {
 // The C++ orphan (replaces the Lua harness's SpawnOrphan/DriveOrphan): a
 // coop::RemotePlayer spawned + pose-driven via our own CallFunction path.
 coop::RemotePlayer g_orphan;
+
+// Cached local mainPlayer_C for the net pump. FindObjectByClass walks the whole
+// GUObjectArray, so we resolve it ONCE, hold it, re-validate with IsLive, and only
+// re-find if it died (level change) -- never a full scan per tick (post-ship audit).
+void* g_netLocal = nullptr;
+
+// Game thread, ~send-rate: push the local player's pose to the session and apply
+// the latest remote pose to the puppet (auto-spawning it on the first packet,
+// methodology 3.5). `displayOffsetX` shifts the rendered puppet sideways so a
+// LOOPBACK mirror (remote pose == our own) is visible next to us; 0 for real coop.
+void NetPumpTick(float displayOffsetX) {
+    if (g_netLocal && !R::IsLive(g_netLocal)) g_netLocal = nullptr;
+    if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
+    if (g_netLocal) {
+        coop::net::PoseSnapshot mine;
+        if (ReadLocalPose(g_netLocal, mine)) g_session.SetLocalPose(mine);
+    }
+
+    coop::net::PoseSnapshot remote;
+    if (g_session.TryGetRemotePose(remote)) {
+        if (!g_orphan.valid()) {
+            UE_LOGI("net: first remote pose -> auto-spawning remote puppet");
+            if (!g_orphan.Spawn()) { UE_LOGW("net: remote puppet spawn failed; will retry"); return; }
+        }
+        const ue_wrap::FVector loc{remote.x + displayOffsetX, remote.y, remote.z};
+        g_orphan.Drive(loc, remote.yaw, remote.speed);
+    }
+}
 
 // Runs on the game thread: log an actor's default subobjects (its components),
 // so we can find the mesh component(s) that carry the player's visible body.
@@ -248,6 +310,27 @@ void SpawnSecondPlayerWhenReady() {
     UE_LOGW("play: gave up waiting for local mainPlayer_C");
 }
 
+// Boot STORY gameplay (the coop target). LoadStorySave (re)issues `open untitled_1`
+// each tick while at preLoad/OMEGA/menu (a single early open during preLoad is
+// dropped -> must retry) and returns true once gameplay is reached; ~1.5 s/tick
+// throttles the opens. Blocks (worker thread) until loaded or the ~120 s cap.
+bool BootStorySaveBlocking() {
+    // STORY save slot, from votv-coop.ini "save=<slot>" (defaults s_may2026). Coop
+    // targets story mode, so we never boot the sandbox map fresh.
+    const std::string slotA = ReadIniValue("save", "s_may2026");
+    const std::wstring slot(slotA.begin(), slotA.end());  // ASCII slot name
+    UE_LOGI("harness: target STORY save '%ls'", slot.c_str());
+    for (int i = 0; i < 80; ++i) {  // ~120 s cap (boot + omega + level load)
+        auto st = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 retry,2 ok
+        Post([slot, st] { st->store(ue_wrap::engine::LoadStorySave(slot.c_str()) ? 2 : 1); });
+        while (st->load() == 0) ::Sleep(5);
+        if (st->load() == 2) return true;
+        ::Sleep(1500);
+    }
+    UE_LOGW("harness: did not reach story gameplay in time for '%ls'", slot.c_str());
+    return false;
+}
+
 // Background timeline. Sleeps for pacing; every engine touch is posted to the
 // game thread. Mirrors the Lua harness's newgame timeline.
 DWORD WINAPI TimelineThread(LPVOID param) {
@@ -262,7 +345,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // since VOTV preloads its UMG and the omega widget is gone by then). Each Post
     // runs on the game thread as soon as the pump is live (which is while the omega
     // screen ticks UMG), so these land during the intro.
-    if (scenario == "play") {
+    const bool storyBoot = (scenario == "play" || scenario == "netloopback");
+    if (storyBoot) {
         for (int k = 0; k < 7; ++k) {  // ~2.8 s of coverage
             Post([k] { UE_LOGI("widgets: == intro dump pass %d ==", k); DumpLiveWidgets(); });
             ::Sleep(400);
@@ -284,10 +368,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
     const bool wantGameplay = (scenario == "newgame" || scenario == "orphan" ||
                                scenario == "skin" || scenario == "show" ||
-                               scenario == "play");
-    // Autonomous scenarios boot to the menu then `open` + wait a fixed time. `play`
-    // is handled in its own branch (it opens ASAP + polls), so it skips this.
-    if (wantGameplay && scenario != "play") {
+                               scenario == "play" || scenario == "netloopback");
+    // Autonomous scenarios boot to the menu then `open` + wait a fixed time. The
+    // story-boot scenarios (play/netloopback) load via LoadStorySave in their own
+    // branch, so they skip this sandbox `open`.
+    if (wantGameplay && !storyBoot) {
         ::Sleep(4000);
         Post([] {
             UE_LOGI("harness: skip-to-gameplay (open %ls)", P::name::GameplayLevel);
@@ -345,32 +430,58 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // skips the omega/menu (the travel happens as soon as the GameInstance is
         // up). NOT the sandbox `open`. The puppet spawns the instant gameplay live.
         // (Intro widget dumps already ran during the first ~3 s above.)
-        const std::wstring slot = ReadStorySaveSlot();
-        UE_LOGI("play: target STORY save '%ls'", slot.c_str());
-        // LoadStorySave (re)issues `open untitled_1` each tick while at preLoad/OMEGA/
-        // menu (a single early open during preLoad is dropped -> must retry), and
-        // returns true once gameplay is reached. ~1.5 s/tick throttles the opens.
-        bool loaded = false;
-        for (int i = 0; i < 80 && !loaded; ++i) {  // ~120 s cap (boot + omega + level load)
-            auto st = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 retry,2 ok
-            Post([slot, st] {
-                st->store(ue_wrap::engine::LoadStorySave(slot.c_str()) ? 2 : 1);
-            });
-            while (st->load() == 0) ::Sleep(5);
-            if (st->load() == 2) { loaded = true; break; }
-            ::Sleep(1500);
+        BootStorySaveBlocking();
+        // Coop networking: if votv-coop.ini configures net.role, the puppet is
+        // network-driven (auto-spawned on the first peer pose) and we send our pose;
+        // otherwise the puppet is spawned locally + static (the pre-net behaviour).
+        bool netEnabled = false;
+        const coop::net::Config netCfg = ReadNetConfig(netEnabled);
+        if (netEnabled) {
+            g_session.Start(netCfg);
+            UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
+                    netCfg.role == coop::net::Role::Host ? "host" : "client");
+            for (;;) {
+                Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
+                ::Sleep(33);  // ~30 Hz pose pump
+            }
+        } else {
+            SpawnSecondPlayerWhenReady();
+            UE_LOGI("harness: ==== PLAY READY (you have control) ====");
+            // (No auto-screenshot here: GDI can't read the 3D swapchain in-process ->
+            // black. Use the external tools/capture-window.ps1 for gameplay frames.)
+            // Keep the 3D nameplate(s) glued above the head + facing the local player.
+            for (;;) {
+                Post([] { coop::nameplate::Update(); });
+                ::Sleep(50);
+            }
         }
-        if (!loaded)
-            UE_LOGW("play: did not reach story gameplay in time for '%ls'", slot.c_str());
-        SpawnSecondPlayerWhenReady();
-        UE_LOGI("harness: ==== PLAY READY (you have control) ====");
-        // (No auto-screenshot here: GDI can't read the 3D swapchain in-process ->
-        // black. Use the external tools/capture-window.ps1 for gameplay frames.)
-        // Keep the 3D nameplate(s) glued above the head + facing the local player.
-        // (~20 Hz is smooth enough for a label; the puppet is static for now.)
+    } else if (scenario == "netloopback") {
+        // Autonomous Phase 3 plumbing test: ONE process, ONE session in loopback
+        // (role=host, peer=self, initiate=true). The session sends the local
+        // player's pose to itself over real UDP and receives it back; the puppet is
+        // auto-spawned on the first packet (3.5) and Drive()n from the round-tripped
+        // pose, offset +250 in X so the mirror is visibly beside the player. Proves
+        // transport+serialization+session+Drive end-to-end without a 2nd machine.
+        BootStorySaveBlocking();
+        coop::net::Config cfg;
+        cfg.role = coop::net::Role::Host;
+        cfg.peerIp = "127.0.0.1";
+        cfg.initiate = true;  // host targets itself for the loopback handshake
+        g_session.Start(cfg);
+        UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
+        int tick = 0;
         for (;;) {
-            Post([] { coop::nameplate::Update(); });
-            ::Sleep(50);
+            Post([] { NetPumpTick(250.f); coop::nameplate::Update(); });
+            if (++tick % 60 == 0) {  // ~every 2 s
+                Post([] {
+                    UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",
+                            static_cast<int>(g_session.state()),
+                            static_cast<unsigned long long>(g_session.packetsSent()),
+                            static_cast<unsigned long long>(g_session.packetsRecv()),
+                            g_orphan.valid() ? 1 : 0);
+                });
+            }
+            ::Sleep(33);  // ~30 Hz
         }
     } else if (scenario == "show") {
         // Autonomous visual confirm: spawn the puppet in front, hold idle, then

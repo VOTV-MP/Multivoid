@@ -47,6 +47,15 @@ FVector GetActorLocation(void* actor);
 // failure. Used to place something in front of the actor.
 FVector GetActorForwardVector(void* actor);
 
+// AActor::K2_GetActorRotation on `actor` (world rotation). Zero on failure. The
+// pose-snapshot read for the network send path (we only wire yaw). Game thread only.
+FRotator GetActorRotation(void* actor);
+
+// AActor::GetVelocity on `actor` (world velocity, cm/s). Zero on failure. Its
+// horizontal magnitude is the walk speed fed to the remote AnimBP locomotion
+// blend (RemotePlayer::Drive's `speed`). Game thread only.
+FVector GetActorVelocity(void* actor);
+
 // AActor::K2_SetActorLocation on `actor` (teleport: bSweep=false, bTeleport=true
 // -- snap to the absolute pose, the network pose-apply path). Returns the
 // engine's success bool. Game thread only.
