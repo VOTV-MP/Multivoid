@@ -44,7 +44,20 @@ std::wstring ModuleDir() {
     return sep == std::wstring::npos ? L"." : p.substr(0, sep);
 }
 
+// Read an environment variable (ASCII). Empty string if unset. Used by the
+// two-instance LAN test framework: both instances load the SAME DLL from the SAME
+// game dir, so they cannot be configured by per-file scenario.txt/votv-coop.ini --
+// the framework passes each instance its role/peer/etc. via the environment instead.
+std::string ReadEnv(const char* name) {
+    char buf[256] = {};
+    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
+    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
+}
+
 std::string ReadScenario() {
+    // Env override first (LAN test framework), then scenario.txt, then default.
+    const std::string env = ReadEnv("VOTVCOOP_SCENARIO");
+    if (!env.empty()) return env;
     const std::wstring path = ModuleDir() + L"\\scenario.txt";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return "newgame";
@@ -89,13 +102,26 @@ coop::net::Session g_session;
 // hands-on play stays single-machine until coop is wired up on a 2nd box).
 coop::net::Config ReadNetConfig(bool& enabled) {
     coop::net::Config c;
-    const std::string role = ReadIniValue("net.role", "");
+    // Env first (LAN test framework gives each instance its role), then ini.
+    std::string role = ReadEnv("VOTVCOOP_NET_ROLE");
+    if (role.empty()) role = ReadIniValue("net.role", "");
     enabled = (role == "host" || role == "client");
     c.role = (role == "client") ? coop::net::Role::Client : coop::net::Role::Host;
-    c.peerIp = ReadIniValue("net.peer", "127.0.0.1");
-    const std::string port = ReadIniValue("net.port", "");
+
+    std::string peer = ReadEnv("VOTVCOOP_NET_PEER");
+    c.peerIp = peer.empty() ? ReadIniValue("net.peer", "127.0.0.1") : peer;
+
+    std::string port = ReadEnv("VOTVCOOP_NET_PORT");
+    if (port.empty()) port = ReadIniValue("net.port", "");
     if (!port.empty()) c.port = static_cast<uint16_t>(std::strtoul(port.c_str(), nullptr, 10));
     return c;
+}
+
+// The local player's display nickname (env first, then ini, then default).
+std::wstring ReadNickname() {
+    std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
+    if (nick.empty()) nick = ReadIniValue("net.nick", "Player");
+    return std::wstring(nick.begin(), nick.end());
 }
 
 // Game thread: read the local player's pose into a network snapshot. z carries the
@@ -449,13 +475,22 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         bool netEnabled = false;
         const coop::net::Config netCfg = ReadNetConfig(netEnabled);
         if (netEnabled) {
-            const std::string nick = ReadIniValue("net.nick", "Player");
-            coop::event_feed::SetLocalNickname(std::wstring(nick.begin(), nick.end()));
+            coop::event_feed::SetLocalNickname(ReadNickname());
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
+            int tick = 0;
             for (;;) {
                 Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
+                if (++tick % 60 == 0) {  // ~every 2 s: stats for the LAN test framework
+                    Post([] {
+                        UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
+                                static_cast<int>(g_session.state()),
+                                static_cast<unsigned long long>(g_session.packetsSent()),
+                                static_cast<unsigned long long>(g_session.packetsRecv()),
+                                g_orphan.valid() ? 1 : 0);
+                    });
+                }
                 ::Sleep(33);  // ~30 Hz pose pump
             }
         } else {
@@ -481,8 +516,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
         cfg.initiate = true;  // host targets itself for the loopback handshake
-        const std::string nick = ReadIniValue("net.nick", "Player");
-        coop::event_feed::SetLocalNickname(std::wstring(nick.begin(), nick.end()));
+        coop::event_feed::SetLocalNickname(ReadNickname());
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;

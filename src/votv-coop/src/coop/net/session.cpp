@@ -56,8 +56,11 @@ bool Session::Start(const Config& cfg) {
         std::lock_guard<std::mutex> lk(peerMutex_);
         peerLocked_ = false;
         if (cfg_.role == Role::Client || cfg_.initiate) {
+            // We know our peer up front (the configured host, or self for loopback)
+            // -> lock it so its Hello passes the fromPeer check. A REAL host has no
+            // peer yet and learns + locks it from the first client Hello.
             peer_ = Transport::Resolve(cfg_.peerIp, cfg_.port);
-            peerLocked_ = (cfg_.role == Role::Host);  // loopback host: peer is fixed (self)
+            peerLocked_ = true;
         }
         sessionToken_ = (cfg_.role == Role::Host) ? MintToken() : 0;
     }
@@ -152,6 +155,17 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         }
         // Non-Hello: must be the locked peer with the right token.
         if (!fromPeer || token == 0 || token != sessionToken_) return;
+        // A correct token PROVES the peer completed the handshake (the only way it
+        // can know the token is to have received our Hello). So any valid-token
+        // message also confirms Connected -- the host needs this because, once the
+        // client adopts the token, it stops sending Hellos and only sends poses, so
+        // the Hello-only Connected path above would never fire on the host side.
+        if (state_.load() != ConnState::Connected) {
+            state_.store(ConnState::Connected);
+            UE_LOGI("net: CONNECTED (%s, via token'd %s)",
+                    cfg_.role == Role::Host ? "host" : "client",
+                    type == MsgType::PoseSnapshot ? "pose" : "msg");
+        }
     }
 
     switch (type) {

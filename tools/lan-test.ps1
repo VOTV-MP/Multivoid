@@ -1,0 +1,162 @@
+<#
+.SYNOPSIS
+    Two-instance LAN coop test framework (RULE 1: a real cross-process test, not the
+    single-process loopback). Launches TWO VotV instances -- one host, one client --
+    each in its own net role, and verifies they discover each other and exchange
+    state over real UDP (separate sockets, real handshake, no self-send).
+
+.DESCRIPTION
+    Both instances load the SAME mod DLL from the SAME game dir, so they cannot be
+    configured by per-file scenario.txt / votv-coop.ini. Instead each is given its
+    role/peer/port/nickname AND its own log file via ENVIRONMENT VARIABLES the harness
+    reads (VOTVCOOP_SCENARIO / _NET_ROLE / _NET_PEER / _NET_PORT / _NET_NICK / _LOG).
+
+    PASS criteria (parsed from the two logs -- the deterministic proof):
+      host   log: "CONNECTED (host)"   + "Client joined the game" + net stats recv>0, puppet=1
+      client log: "CONNECTED (client)" + "Host joined the game"   + net stats recv>0, puppet=1
+    The DISTINCT nicknames crossing over (host sees "Client", client sees "Host") prove
+    real cross-process exchange -- impossible in the self-loopback.
+
+    Screenshots of both windows are captured best-effort as artifacts (sequential
+    foreground BitBlt; 3D frames are black under PrintWindow).
+
+.PARAMETER Port        UDP port the host binds / the client targets (default 47621).
+.PARAMETER TimeoutSec  Max wait for both to connect + exchange (default 240; two
+                       instances boot + load story under CPU/GPU contention).
+.PARAMETER NoBuild     Skip the cmake build + deploy (use the already-deployed mod).
+.PARAMETER Keep        Leave both instances running after the verdict (for inspection).
+.PARAMETER ResX/-ResY  Per-window resolution (default 1280x720 so two fit on screen).
+#>
+[CmdletBinding()]
+param(
+    [int]$Port = 47621,
+    [int]$TimeoutSec = 240,
+    [switch]$NoBuild,
+    [switch]$Keep,
+    [int]$ResX = 1280,
+    [int]$ResY = 720
+)
+$ErrorActionPreference = "Stop"
+$root  = Split-Path -Parent $PSScriptRoot
+$win64 = Join-Path $root "Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64"
+$exe   = Join-Path $win64 "VotV-Win64-Shipping.exe"
+$hostLogName   = "votv-coop-host.log"
+$clientLogName = "votv-coop-client.log"
+$hostLog   = Join-Path $win64 $hostLogName
+$clientLog = Join-Path $win64 $clientLogName
+
+function Step($m) { Write-Host "[lan-test] $m" -ForegroundColor Cyan }
+
+# --- build + deploy ---------------------------------------------------------
+if (-not $NoBuild) {
+    Step "building mod (Release)..."
+    cmake --build (Join-Path $root "build\votv-coop") --config Release | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "build failed" }
+}
+Step "deploying standalone loader (UE4SS disabled)..."
+& (Join-Path $PSScriptRoot "deploy-loader.ps1") -Standalone | Out-Null
+
+# Fresh logs so we only parse THIS run.
+Remove-Item $hostLog, $clientLog -ErrorAction SilentlyContinue
+
+# --- launch the two instances with per-process env --------------------------
+function Launch-Instance($role, $nick, $logName, $extraEnv) {
+    $env:VOTVCOOP_SCENARIO = "play"
+    $env:VOTVCOOP_NET_ROLE = $role
+    $env:VOTVCOOP_NET_PORT = "$Port"
+    $env:VOTVCOOP_NET_NICK = $nick
+    $env:VOTVCOOP_LOG      = $logName
+    $env:VOTVCOOP_NET_PEER = $extraEnv
+    $p = Start-Process -FilePath $exe `
+            -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
+    # Clear so the next launch / this shell isn't polluted.
+    Remove-Item Env:VOTVCOOP_SCENARIO,Env:VOTVCOOP_NET_ROLE,Env:VOTVCOOP_NET_PORT,`
+                Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER -ErrorAction SilentlyContinue
+    return $p
+}
+
+Step "launching HOST (nick=Host, binds port $Port)..."
+$hostProc = Launch-Instance "host" "Host" $hostLogName ""
+Start-Sleep -Seconds 4   # let the host process come up first
+Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port)..."
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1"
+Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
+
+# --- verification helpers ---------------------------------------------------
+function Log-Has($path, $pattern) {
+    return (Test-Path $path) -and `
+           [bool](Select-String -Path $path -Pattern $pattern -SimpleMatch -ErrorAction SilentlyContinue)
+}
+# Last "net stats:" line -> @{recv; puppet} (or $null).
+function Net-Stats($path) {
+    if (-not (Test-Path $path)) { return $null }
+    $line = Select-String -Path $path -Pattern "net stats: " -ErrorAction SilentlyContinue |
+            Select-Object -Last 1
+    if (-not $line) { return $null }
+    if ($line.Line -match "recv=(\d+).*puppet=(\d)") {
+        return @{ recv = [int]$Matches[1]; puppet = [int]$Matches[2] }
+    }
+    return $null
+}
+function Side-Ok($log, $connStr, $joinStr) {
+    if (-not (Log-Has $log $connStr)) { return $false }
+    if (-not (Log-Has $log $joinStr)) { return $false }
+    $s = Net-Stats $log
+    return ($s -ne $null) -and ($s.recv -gt 0) -and ($s.puppet -eq 1)
+}
+
+# --- poll until both sides pass or timeout ----------------------------------
+Step "waiting up to ${TimeoutSec}s for cross-process connect + state exchange..."
+$deadline = (Get-Date).AddSeconds($TimeoutSec)
+$pass = $false
+while ((Get-Date) -lt $deadline) {
+    if (($hostProc.HasExited) -or ($clientProc.HasExited)) {
+        Step "an instance exited early (host exited=$($hostProc.HasExited) client exited=$($clientProc.HasExited))"
+        break
+    }
+    # Prefix match: the connect line may be "CONNECTED (host)" or
+    # "CONNECTED (host, via token'd msg)" depending on which path confirmed it.
+    $hostOk   = Side-Ok $hostLog   "CONNECTED (host"   "Client joined the game"
+    $clientOk = Side-Ok $clientLog "CONNECTED (client" "Host joined the game"
+    if ($hostOk -and $clientOk) { $pass = $true; break }
+    Start-Sleep -Seconds 3
+}
+
+# --- capture both windows (best-effort) -------------------------------------
+$shotDir = Join-Path $win64 "coop-screenshots"
+New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
+$cap = Join-Path $PSScriptRoot "capture-window.ps1"
+foreach ($pair in @(@($hostProc,"host"), @($clientProc,"client"))) {
+    if ($pair[0].HasExited) { continue }
+    $out = Join-Path $shotDir ("lan-" + $pair[1] + ".png")
+    try { & powershell -NoProfile -ExecutionPolicy Bypass -File $cap -ProcessId $pair[0].Id -OutPath $out | Out-Null } catch {}
+    if (Test-Path $out) { Step ("screenshot[" + $pair[1] + "] -> " + $out) }
+}
+
+# --- report -----------------------------------------------------------------
+Write-Host ""
+Step "==== HOST log (key lines) ===="
+if (Test-Path $hostLog) {
+    Get-Content $hostLog | Where-Object { $_ -match "CONNECTED|joined the game|net stats:|locked peer|left the game|ERROR" } |
+        Select-Object -Last 8 | ForEach-Object { Write-Host "  $_" }
+}
+Step "==== CLIENT log (key lines) ===="
+if (Test-Path $clientLog) {
+    Get-Content $clientLog | Where-Object { $_ -match "CONNECTED|joined the game|net stats:|left the game|ERROR" } |
+        Select-Object -Last 8 | ForEach-Object { Write-Host "  $_" }
+}
+Write-Host ""
+if ($pass) {
+    Write-Host "[lan-test] RESULT: PASS -- two instances connected over UDP and exchanged state cross-process." -ForegroundColor Green
+} else {
+    Write-Host "[lan-test] RESULT: FAIL -- see the log lines above (timeout=${TimeoutSec}s)." -ForegroundColor Red
+}
+
+# --- teardown ---------------------------------------------------------------
+if (-not $Keep) {
+    Step "stopping both instances..."
+    Stop-Process -Id $hostProc.Id, $clientProc.Id -Force -ErrorAction SilentlyContinue
+} else {
+    Step "leaving instances running (-Keep). host pid=$($hostProc.Id) client pid=$($clientProc.Id)"
+}
+if (-not $pass) { exit 1 }

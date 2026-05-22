@@ -17,6 +17,7 @@
 #>
 param(
     [string]$ProcessName = "VotV-Win64-Shipping",
+    [int]$ProcessId = 0,   # capture THIS pid (needed when two instances share the name, e.g. the LAN test)
     [string]$OutPath = "$env:TEMP\votv_cap.png",
     [string]$ExcludeTitle = "UE4SS"
 )
@@ -50,12 +51,19 @@ public class W {
   public static string Title(IntPtr h){ var sb=new StringBuilder(256); GetWindowText(h,sb,256); return sb.ToString(); }
 }
 "@
-$proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
-if (-not $proc) { Write-Output "ERR: process '$ProcessName' not running"; exit 1 }
+# Resolve the target PID: explicit -ProcessId wins (two same-named instances);
+# else the first process matching -ProcessName.
+if ($ProcessId -gt 0) {
+    $targetPid = $ProcessId
+} else {
+    $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $proc) { Write-Output "ERR: process '$ProcessName' not running"; exit 1 }
+    $targetPid = $proc.Id
+}
 
 # Pick the game window: visible, has a client area, title doesn't match exclude.
 $cand = $null
-foreach ($h in [W]::Windows([uint32]$proc.Id)) {
+foreach ($h in [W]::Windows([uint32]$targetPid)) {
     $t = [W]::Title($h)
     if ($t -and $t -like "*$ExcludeTitle*") { continue }
     $r = New-Object W+RECT

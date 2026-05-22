@@ -16,7 +16,10 @@ CRITICAL_SECTION g_lock;
 std::once_flag g_lockOnce;
 bool g_opened = false;
 
-// Build "<dir of this DLL>\votv-coop.log".
+// Build "<dir of this DLL>\<logfile>". The filename is VOTVCOOP_LOG if set, else
+// votv-coop.log -- so the two-instance LAN test can give each process its own log
+// (both instances load the SAME DLL from the SAME dir; without this they would
+// clobber one shared file).
 void LogPath(wchar_t (&out)[MAX_PATH]) {
     HMODULE self = nullptr;
     ::GetModuleHandleExW(
@@ -33,7 +36,10 @@ void LogPath(wchar_t (&out)[MAX_PATH]) {
         const size_t dirLen = static_cast<size_t>(lastSep - dll) + 1;
         wcsncpy_s(out, MAX_PATH, dll, dirLen);
     }
-    wcscat_s(out, L"votv-coop.log");
+    wchar_t name[64] = {};
+    if (::GetEnvironmentVariableW(L"VOTVCOOP_LOG", name, 64) == 0 || name[0] == L'\0')
+        wcscpy_s(name, L"votv-coop.log");
+    wcscat_s(out, name);
 }
 
 void EnsureOpen() {
