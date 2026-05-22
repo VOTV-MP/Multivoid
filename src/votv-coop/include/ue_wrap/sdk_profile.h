@@ -281,27 +281,19 @@ inline constexpr const wchar_t* DestroyComponentFn = L"K2_DestroyComponent";
 inline constexpr const wchar_t* PostProcessComponentClass = L"PostProcessComponent";
 
 // Nameplate via a world-space UWidgetComponent (TRANSLUCENT). TextRender can't do
-// partial alpha (UnlitText is Masked). A WidgetComponent renders its UMG to a
-// render target composited with /Engine/EngineMaterials/Widget3DPassThrough_Translucent
-// (BlendMode=Transparent default), so TintColorAndOpacity.A is the master opacity.
-// We reuse the cooked uicomp_helpText_C (a UUserWidget with SetText(FText)) as the
-// WidgetClass and let the engine construct it (we have no NewObject primitive).
+// partial alpha (UnlitText is Masked). A WidgetComponent renders its UMG to a render
+// target composited with /Engine/EngineMaterials/Widget3DPassThrough_Translucent
+// (BlendMode must be set Transparent -- ctor defaults Masked). We build our OWN UMG
+// (UUserWidget+UTextBlock via SpawnObject) -- no cooked-widget dependency.
 inline constexpr const wchar_t* WidgetComponentClass = L"WidgetComponent";
 inline constexpr const wchar_t* AddComponentByClassFn = L"AddComponentByClass";      // on Actor
 inline constexpr const wchar_t* FinishAddComponentFn = L"FinishAddComponent";        // on Actor
-inline constexpr const wchar_t* SetWidgetSpaceFn = L"SetWidgetSpace";                // EWidgetSpace (0=World)
-inline constexpr const wchar_t* SetWidgetDrawSizeFn = L"SetDrawSize";                // FVector2D
 inline constexpr const wchar_t* SetTintColorAndOpacityFn = L"SetTintColorAndOpacity";// FLinearColor
-inline constexpr const wchar_t* SetTwoSidedFn = L"SetTwoSided";                      // bool
-inline constexpr const wchar_t* GetUserWidgetObjectFn = L"GetUserWidgetObject";      // -> UUserWidget*
 inline constexpr const wchar_t* RequestRedrawFn = L"RequestRedraw";                  // sets bRedrawRequested
 inline constexpr const wchar_t* RequestRenderUpdateFn = L"RequestRenderUpdate";      // forces render-state/RT refresh
 inline constexpr const wchar_t* SetComponentTickEnabledFn = L"SetComponentTickEnabled";  // on UActorComponent -- a runtime-added WidgetComponent doesn't tick -> never draws its RT
-inline constexpr const wchar_t* NameplateWidgetClass = L"uicomp_helpText_C";         // reused UMG label
-inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // on uicomp_helpText_C (FText)
-inline constexpr const wchar_t* TextBlockClass = L"TextBlock";                       // the inner text_help (drive it directly)
-inline constexpr const wchar_t* TextBlockSetColorFn = L"SetColorAndOpacity";         // FSlateColor (opaque white)
-inline constexpr const wchar_t* TextBlockSetJustificationFn = L"SetJustification";   // ETextJustify (1=Center)
+inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // UTextBlock::SetText(FText)
+inline constexpr const wchar_t* TextBlockClass = L"TextBlock";
 inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
 inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
 inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)

@@ -99,7 +99,7 @@ ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
         ue_wrap::FVector head;
         if (E::GetHeadWorldLocation(comp, head)) {
-            head.Z += 18.f;  // float just above the crown
+            head.Z += 45.f;  // float above the crown
             return head;
         }
     }
