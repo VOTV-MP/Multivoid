@@ -1,52 +1,19 @@
 #include "ue_wrap/reflection.h"
 
+#include "ue_wrap/log.h"
+#include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/sig_scan.h"
 
 #include <windows.h>
 
-#include <cstdio>
-#include <map>
+#include <vector>
 
 namespace ue_wrap::reflection {
 namespace {
 
-// ---- Signatures (VOTV Alpha 0.9.0-n, UE4.27) ----------------------------
-//
-// FName::ToString: unique function prologue. Match = function address.
-constexpr const char* kSigFNameToString =
-    "48 89 5C 24 18 55 56 57 48 8B EC 48 83 EC 30 8B 01 48 8B F1 "
-    "44 8B 49 04 8B F8 C1 EF 10 48 8B DA 0F B7 C8";
-
-// GUObjectArray: a static init-guard that loads &GUObjectArray into rcx. The
-// pattern's `lea rcx,[rip+disp32]` is at match+21 (disp32 at match+24, the
-// instruction ends at match+28). Verified: every match in this binary decodes
-// to GUObjectArray (0x...4D8F910 static).
-constexpr const char* kSigGUObjectArray =
-    "8B 05 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 75 13 48 8D 15 ?? ?? ?? ?? "
-    "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 45 33 C9 "
-    "48 89 45 ?? 4C 8D 45";
-constexpr size_t kGUObjLeaDispOff = 24;  // offset of the disp32 within the match
-constexpr size_t kGUObjLeaEndOff = 28;   // rip base (end of the lea instruction)
-
-// UObject::ProcessEvent: unique prologue (vtable index 68; sits just before
-// ProcessInternal). Match == function address. The only wildcarded bytes are
-// the __security_cookie rip displacement.
-constexpr const char* kSigProcessEvent =
-    "40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00 48 8D 6C 24 30 "
-    "48 89 9D 18 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 85 B0 00 00 00";
-
-// ---- UObject / FUObjectArray layout (standard UE4.27) -------------------
-constexpr size_t kUObj_ClassPrivate = 0x10;
-constexpr size_t kUObj_NamePrivate = 0x18;
-constexpr size_t kUObj_OuterPrivate = 0x20;
-
-constexpr size_t kArr_ObjObjects = 0x10;   // FUObjectArray.ObjObjects
-constexpr size_t kChunk_Objects = 0x00;    // FUObjectItem** (chunk pointers)
-constexpr size_t kChunk_NumElements = 0x14;
-constexpr size_t kChunk_MaxElements = 0x10;
-constexpr size_t kChunk_NumChunks = 0x1C;
-constexpr int32_t kElemsPerChunk = 64 * 1024;  // FChunkedFixedUObjectArray
-constexpr size_t kItemStride = 0x18;           // sizeof(FUObjectItem)
+// All version-specific knowledge lives in the profile (the porting surface).
+namespace P = profile;
+namespace O = profile::off;
 
 using FNameToStringFn = void(__fastcall*)(const FName*, FString*);
 using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* params);
@@ -64,18 +31,18 @@ bool IsResolved() { return g_objArray && g_fnameToString; }
 
 bool Resolve() {
     if (!g_fnameToString) {
-        const uintptr_t hit = FindPattern(kSigFNameToString);
+        const uintptr_t hit = FindPattern(P::kSigFNameToString);
         if (hit) g_fnameToString = reinterpret_cast<FNameToStringFn>(hit);
     }
     if (!g_objArray) {
-        const uintptr_t hit = FindPattern(kSigGUObjectArray);
+        const uintptr_t hit = FindPattern(P::kSigGUObjectArray);
         if (hit) {
-            const int32_t disp = *reinterpret_cast<int32_t*>(hit + kGUObjLeaDispOff);
-            g_objArray = hit + kGUObjLeaEndOff + disp;
+            const int32_t disp = *reinterpret_cast<int32_t*>(hit + P::kGUObjArrayLeaDispOff);
+            g_objArray = hit + P::kGUObjArrayLeaEndOff + disp;
         }
     }
     if (!g_processEvent) {
-        const uintptr_t hit = FindPattern(kSigProcessEvent);
+        const uintptr_t hit = FindPattern(P::kSigProcessEvent);
         if (hit) g_processEvent = reinterpret_cast<ProcessEventFn>(hit);
     }
     return IsResolved();
@@ -89,31 +56,31 @@ bool CallFunction(void* object, void* function, void* params) {
 
 int32_t NumObjects() {
     if (!g_objArray) return 0;
-    return *reinterpret_cast<int32_t*>(g_objArray + kArr_ObjObjects + kChunk_NumElements);
+    return *reinterpret_cast<int32_t*>(g_objArray + O::FUObjectArray_ObjObjects + O::Chunk_NumElements);
 }
 
 void* ObjectAt(int32_t index) {
     if (!g_objArray || index < 0) return nullptr;
-    const uintptr_t objObjects = g_objArray + kArr_ObjObjects;
-    if (index >= *reinterpret_cast<int32_t*>(objObjects + kChunk_NumElements)) return nullptr;
-    auto** chunks = *reinterpret_cast<uint8_t***>(objObjects + kChunk_Objects);
+    const uintptr_t objObjects = g_objArray + O::FUObjectArray_ObjObjects;
+    if (index >= *reinterpret_cast<int32_t*>(objObjects + O::Chunk_NumElements)) return nullptr;
+    auto** chunks = *reinterpret_cast<uint8_t***>(objObjects + O::Chunk_Objects);
     if (!chunks) return nullptr;
-    uint8_t* chunk = chunks[index / kElemsPerChunk];
+    uint8_t* chunk = chunks[index / O::ElemsPerChunk];
     if (!chunk) return nullptr;
-    uint8_t* item = chunk + static_cast<size_t>(index % kElemsPerChunk) * kItemStride;
+    uint8_t* item = chunk + static_cast<size_t>(index % O::ElemsPerChunk) * O::FUObjectItem_Stride;
     return *reinterpret_cast<void**>(item);  // FUObjectItem.Object @ +0x00
 }
 
 const FName& NameOf(void* uobject) {
-    return *reinterpret_cast<FName*>(reinterpret_cast<uint8_t*>(uobject) + kUObj_NamePrivate);
+    return *reinterpret_cast<FName*>(reinterpret_cast<uint8_t*>(uobject) + O::UObject_NamePrivate);
 }
 
 void* ClassOf(void* uobject) {
-    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + kUObj_ClassPrivate);
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + O::UObject_ClassPrivate);
 }
 
 void* OuterOf(void* uobject) {
-    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + kUObj_OuterPrivate);
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + O::UObject_OuterPrivate);
 }
 
 std::wstring ToString(const FName& name) {
@@ -177,133 +144,122 @@ void* FindFunction(void* owningClass, const wchar_t* funcName) {
     return nullptr;
 }
 
-void RunSelfTest(const wchar_t* outPath) {
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, outPath, L"w") != 0 || !f) return;
+namespace {
 
-    if (!Resolve()) {
-        std::fprintf(f, "RESOLVE FAILED: GUObjectArray=%p FName::ToString=%p\n",
-                     reinterpret_cast<void*>(g_objArray),
-                     reinterpret_cast<void*>(g_fnameToString));
-        std::fclose(f);
-        return;
+// Log the running exe's version + size and warn if it differs from the build
+// the profile was derived against -- the first thing to check on a new release.
+void LogGameVersion() {
+    wchar_t exe[MAX_PATH] = {};
+    ::GetModuleFileNameW(::GetModuleHandleW(nullptr), exe, MAX_PATH);
+
+    unsigned long long sizeBytes = 0;
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (::GetFileAttributesExW(exe, GetFileExInfoStandard, &fad)) {
+        sizeBytes = (static_cast<unsigned long long>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
     }
 
+    // Exe file version (catches engine-version changes that shift offsets).
+    unsigned ms = 0, ls = 0;
+    DWORD dummy = 0;
+    const DWORD vsz = ::GetFileVersionInfoSizeW(exe, &dummy);
+    if (vsz) {
+        std::vector<uint8_t> buf(vsz);
+        if (::GetFileVersionInfoW(exe, 0, vsz, buf.data())) {
+            VS_FIXEDFILEINFO* ffi = nullptr;
+            UINT len = 0;
+            if (::VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&ffi), &len) && ffi) {
+                ms = ffi->dwFileVersionMS;
+                ls = ffi->dwFileVersionLS;
+            }
+        }
+    }
+
+    UE_LOGI("target build: game=%s engine=%s", P::kTargetGameVersion, P::kTargetEngineVersion);
+    UE_LOGI("running exe : %ls", exe);
+    UE_LOGI("exe fileversion=%u.%u.%u.%u  size=%llu bytes",
+            ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF, sizeBytes);
+    if constexpr (P::kExpectedExeSize != 0) {
+        if (sizeBytes != P::kExpectedExeSize) {
+            UE_LOGW("exe size differs from the build these signatures target (%llu) -- "
+                    "AOBs/offsets are SUSPECT; re-derive sdk_profile.h for this build.",
+                    P::kExpectedExeSize);
+        }
+    }
+}
+
+}  // namespace
+
+void RunHealthCheck() {
+    int fails = 0;
+    auto check = [&](bool ok, const char* what) {
+        if (ok) {
+            UE_LOGI("  [ OK ] %s", what);
+        } else {
+            UE_LOGE("  [FAIL] %s", what);
+            ++fails;
+        }
+    };
+
+    UE_LOGI("---- SDK health check ----");
+    LogGameVersion();
+
+    // 1) AOB resolution. Log each address + RVA, so a bad sig is obvious.
+    Resolve();
     uintptr_t base = 0;
     size_t imgSize = 0;
     MainModuleRange(base, imgSize);
-    std::fprintf(f, "main module base=%p size=0x%zx\n", reinterpret_cast<void*>(base), imgSize);
-    std::fprintf(f, "GUObjectArray   = %p (rva 0x%zx)\n", reinterpret_cast<void*>(g_objArray), g_objArray - base);
-    std::fprintf(f, "FName::ToString = %p (rva 0x%zx)\n",
-                 reinterpret_cast<void*>(g_fnameToString),
-                 reinterpret_cast<uintptr_t>(g_fnameToString) - base);
-    std::fprintf(f, "ProcessEvent    = %p (rva 0x%zx)  [expect rva 0x1465930]\n\n",
-                 reinterpret_cast<void*>(g_processEvent),
-                 g_processEvent ? reinterpret_cast<uintptr_t>(g_processEvent) - base : 0);
+    auto rva = [&](uintptr_t a) { return a ? a - base : 0; };
+    UE_LOGI("resolve: GUObjectArray=%p (rva 0x%zx)", reinterpret_cast<void*>(g_objArray), rva(g_objArray));
+    UE_LOGI("resolve: FName::ToString=%p (rva 0x%zx)",
+            reinterpret_cast<void*>(g_fnameToString), rva(reinterpret_cast<uintptr_t>(g_fnameToString)));
+    UE_LOGI("resolve: ProcessEvent=%p (rva 0x%zx)",
+            reinterpret_cast<void*>(g_processEvent), rva(reinterpret_cast<uintptr_t>(g_processEvent)));
+    check(g_objArray != 0, "GUObjectArray signature");
+    check(g_fnameToString != nullptr, "FName::ToString signature");
+    check(g_processEvent != nullptr, "ProcessEvent signature");
 
-    // Wait for the engine to populate the object array (proxy loads pre-engine).
+    // The proxy loads before the engine; wait for the object array to populate.
     int32_t n = 0;
     for (int i = 0; i < 120; ++i) {
         n = NumObjects();
         if (n >= 10000) break;
         ::Sleep(500);
     }
+    UE_LOGI("NumObjects()=%d", n);
+    check(n >= 10000, "object array populated (offsets sane)");
 
-    // Raw FUObjectArray header (proves/refutes the assumed layout).
-    std::fprintf(f, "FUObjectArray header bytes:\n");
-    auto* hdr = reinterpret_cast<uint8_t*>(g_objArray);
-    for (int i = 0; i < 0x40; ++i) {
-        std::fprintf(f, "%02X ", hdr[i]);
-        if ((i & 0xF) == 0xF) std::fprintf(f, "\n");
-    }
-    const uintptr_t oo = g_objArray + kArr_ObjObjects;
-    std::fprintf(f, "\nObjObjects @ +0x%zx: Objects(chunks)=%p Max=%d Num=%d NumChunks=%d\n\n",
-                 kArr_ObjObjects,
-                 *reinterpret_cast<void**>(oo + kChunk_Objects),
-                 *reinterpret_cast<int32_t*>(oo + kChunk_MaxElements),
-                 *reinterpret_cast<int32_t*>(oo + kChunk_NumElements),
-                 *reinterpret_cast<int32_t*>(oo + kChunk_NumChunks));
+    // 2) Functional validation -- proves the sigs/offsets actually WORK, not
+    //    just that an AOB matched something (catches matching the wrong site).
+    if (g_objArray && g_fnameToString) {
+        // Round-trip a known engine name. Index 1 is the UObject class "Object".
+        const std::wstring objName = ToString(NameOf(ObjectAt(1)));
+        UE_LOGI("name round-trip: object[1] = '%ls' (expect 'Object')", objName.c_str());
+        check(objName == L"Object", "FName::ToString round-trip");
 
-    std::fprintf(f, "NumObjects()=%d\n\n", n);
-
-    // Walk: sample first names, and tally a few classes of interest.
-    int sampled = 0;
-    int valid = 0;
-    long mainPlayer = 0, controllers = 0, gamemode = 0;
-    std::fprintf(f, "--- sample (first 30 valid objects) ---\n");
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = ObjectAt(i);
-        if (!obj) continue;
-        ++valid;
-        void* cls = ClassOf(obj);
-        if (!cls) continue;
-        const std::wstring objName = ToString(NameOf(obj));
-        const std::wstring clsName = ToString(NameOf(cls));
-        if (clsName == L"mainPlayer_C") ++mainPlayer;
-        if (clsName == L"mainGamemode_C") ++gamemode;
-        if (clsName == L"PlayerController" || clsName.find(L"PlayerController") != std::wstring::npos) ++controllers;
-        if (sampled < 30) {
-            std::fprintf(f, "[%6d] obj=%-28ls class=%ls\n", i, objName.c_str(), clsName.c_str());
-            ++sampled;
+        void* clsObject = FindClass(L"Object");
+        void* clsActor = FindClass(P::name::ActorClass);
+        void* clsWorld = FindClass(P::name::WorldClass);
+        check(clsObject != nullptr, "FindClass(Object)");
+        check(clsActor != nullptr, "FindClass(Actor)");
+        check(clsWorld != nullptr, "FindClass(World)");
+        if (clsActor) {
+            void* fn = FindFunction(clsActor, P::name::SetActorLocationFn);
+            UE_LOGI("FindFunction(Actor, %ls) = %p", P::name::SetActorLocationFn, fn);
+            check(fn != nullptr, "FindFunction(Actor, K2_SetActorLocation)");
         }
     }
-    std::fprintf(f, "\nvalid objects walked = %d\n", valid);
-    std::fprintf(f, "instances: mainPlayer_C=%ld  mainGamemode_C=%ld  *PlayerController*=%ld\n\n",
-                 mainPlayer, gamemode, controllers);
 
-    // --- lookups (the building blocks for the C++ orphan-spawn port) ---
-    auto report = [&](const wchar_t* what, void* obj) {
-        if (obj) {
-            std::fprintf(f, "  %-40ls = %p  (class %ls)\n", what, obj, ClassNameOf(obj).c_str());
-        } else {
-            std::fprintf(f, "  %-40ls = NOT FOUND\n", what);
-        }
-    };
-    std::fprintf(f, "--- lookups ---\n");
-    void* clsMainPlayer = FindClass(L"mainPlayer_C");
-    void* clsActor = FindClass(L"Actor");
-    void* clsWorld = FindClass(L"World");
-    report(L"FindClass(mainPlayer_C)", clsMainPlayer);
-    report(L"FindClass(Actor)", clsActor);
-    report(L"FindClass(World)", clsWorld);
-    report(L"FindClass(mainGamemode_C)", FindClass(L"mainGamemode_C"));
-    if (clsActor) {
-        report(L"FindFunction(Actor, K2_SetActorLocation)", FindFunction(clsActor, L"K2_SetActorLocation"));
-        report(L"FindFunction(Actor, K2_DestroyActor)", FindFunction(clsActor, L"K2_DestroyActor"));
+    // 3) Gameplay-content signals (informational; absent at the menu).
+    void* clsMainPlayer = FindClass(P::name::MainPlayerClass);
+    UE_LOGI("content: %ls = %s (loads with the gameplay map; absent at menu)",
+            P::name::MainPlayerClass, clsMainPlayer ? "present" : "not loaded");
+
+    if (fails == 0) {
+        UE_LOGI("==== HEALTH: PASS ====");
+    } else {
+        UE_LOGE("==== HEALTH: FAIL (%d issue(s)) -- sdk_profile.h likely needs "
+                "re-derivation for this build ====", fails);
     }
-    // A live World instance (proves we can find runtime objects, not just classes).
-    void* worldInst = nullptr;
-    for (int32_t i = 0; i < n && !worldInst; ++i) {
-        void* obj = ObjectAt(i);
-        if (obj && ClassNameOf(obj) == L"World") worldInst = obj;
-    }
-    report(L"first World instance", worldInst);
-
-    // --- vtable dump (to locate ProcessEvent: a UObject virtual) ---
-    // Dump the same slots for two unrelated objects; ProcessEvent is an
-    // un-overridden UObject virtual, so its slot RVA is identical across both.
-    auto dumpVtable = [&](const wchar_t* label, void* obj) {
-        std::fprintf(f, "\n--- vtable: %ls (obj=%p) ---\n", label, obj);
-        if (!obj) {
-            std::fprintf(f, "  (null)\n");
-            return;
-        }
-        auto** vt = *reinterpret_cast<void***>(obj);
-        for (int i = 0; i < 100; ++i) {
-            void* fn = vt[i];
-            const uintptr_t a = reinterpret_cast<uintptr_t>(fn);
-            // Only print plausible code addresses inside the main image.
-            if (a >= base && a < base + imgSize) {
-                std::fprintf(f, "  [%3d] rva 0x%zx\n", i, a - base);
-            } else {
-                std::fprintf(f, "  [%3d] %p (out of image)\n", i, fn);
-            }
-        }
-    };
-    dumpVtable(L"object[0] (CoreUObject package)", ObjectAt(0));
-    dumpVtable(L"World instance", worldInst);
-
-    std::fclose(f);
 }
 
 }  // namespace ue_wrap::reflection

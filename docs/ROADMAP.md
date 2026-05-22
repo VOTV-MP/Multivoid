@@ -99,6 +99,13 @@ have it tick without crashing for ≥60 s (target several minutes).
             `K2_SetActorLocation`/`K2_DestroyActor` UFunctions. (`mainPlayer_C`
             not found at the menu is expected — BP gameplay classes load with
             the map.)
+      - ☑ Version-portability infra: all version-specific knowledge (AOBs,
+            offsets, content names) isolated in `ue_wrap/sdk_profile.h` (the
+            porting surface); `ue_wrap/log` -> `votv-coop.log`; boot
+            `RunHealthCheck` detects the game/engine version, resolves +
+            FUNCTIONALLY validates every primitive, warns on exe-fingerprint
+            mismatch, prints PASS/FAIL. Live: HEALTH PASS on 0.9.0-n. Strategy:
+            `docs/VERSION_PORTABILITY.md`.
       - ☑ `ProcessEvent` (UFunction call path) AOB-resolved at rva 0x1465930
             (vtable index 68; found via runtime vtable dump + decompile
             confirm). Wired as `reflection::CallFunction(obj, func, params)`.

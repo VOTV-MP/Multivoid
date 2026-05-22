@@ -1,0 +1,104 @@
+#include "ue_wrap/log.h"
+
+#include <windows.h>
+
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+
+namespace ue_wrap::log {
+namespace {
+
+FILE* g_file = nullptr;
+CRITICAL_SECTION g_lock;
+bool g_lockInit = false;
+bool g_opened = false;
+
+// Build "<dir of this DLL>\votv-coop.log".
+void LogPath(wchar_t (&out)[MAX_PATH]) {
+    HMODULE self = nullptr;
+    ::GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&LogPath), &self);
+    wchar_t dll[MAX_PATH] = {};
+    ::GetModuleFileNameW(self, dll, MAX_PATH);
+    wchar_t* lastSep = nullptr;
+    for (wchar_t* p = dll; *p; ++p) {
+        if (*p == L'\\' || *p == L'/') lastSep = p;
+    }
+    out[0] = L'\0';
+    if (lastSep) {
+        const size_t dirLen = static_cast<size_t>(lastSep - dll) + 1;
+        wcsncpy_s(out, MAX_PATH, dll, dirLen);
+    }
+    wcscat_s(out, L"votv-coop.log");
+}
+
+void EnsureOpen() {
+    if (!g_lockInit) {
+        ::InitializeCriticalSection(&g_lock);
+        g_lockInit = true;
+    }
+    if (!g_opened) {
+        wchar_t path[MAX_PATH] = {};
+        LogPath(path);
+        _wfopen_s(&g_file, path, L"w");
+        g_opened = true;
+    }
+}
+
+const char* Tag(Level l) {
+    switch (l) {
+        case Level::Warn: return "WARN";
+        case Level::Error: return "ERROR";
+        default: return "INFO";
+    }
+}
+
+}  // namespace
+
+void Init() {
+    EnsureOpen();
+    if (!g_file) return;
+    ::EnterCriticalSection(&g_lock);
+    std::fprintf(g_file, "==== votv-coop log ====\n");
+    std::fflush(g_file);
+    ::LeaveCriticalSection(&g_lock);
+}
+
+void Shutdown() {
+    if (!g_lockInit) return;
+    ::EnterCriticalSection(&g_lock);
+    if (g_file) {
+        std::fclose(g_file);
+        g_file = nullptr;
+        g_opened = false;
+    }
+    ::LeaveCriticalSection(&g_lock);
+}
+
+void Write(Level level, const char* fmt, ...) {
+    EnsureOpen();
+    if (!g_file) return;
+
+    ::EnterCriticalSection(&g_lock);
+
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &now);
+    char ts[32] = {};
+    std::strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
+    std::fprintf(g_file, "[%s] [%-5s] ", ts, Tag(level));
+
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(g_file, fmt, args);
+    va_end(args);
+
+    std::fprintf(g_file, "\n");
+    std::fflush(g_file);
+
+    ::LeaveCriticalSection(&g_lock);
+}
+
+}  // namespace ue_wrap::log

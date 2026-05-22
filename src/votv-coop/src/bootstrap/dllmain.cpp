@@ -7,6 +7,7 @@
 // (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
 // in later steps, behind ue_wrap/.
 
+#include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
 #include <windows.h>
@@ -51,34 +52,13 @@ void WriteMarker() {
     }
 }
 
-// Build the reflection self-test output path next to this DLL.
-void SelfTestPath(wchar_t (&out)[MAX_PATH]) {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&WriteMarker), &self);
-    wchar_t dllPath[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, dllPath, MAX_PATH);
-    wchar_t* lastSep = nullptr;
-    for (wchar_t* p = dllPath; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') lastSep = p;
-    }
-    out[0] = L'\0';
-    if (lastSep) {
-        const size_t dirLen = static_cast<size_t>(lastSep - dllPath) + 1;
-        wcsncpy_s(out, MAX_PATH, dllPath, dirLen);
-    }
-    wcscat_s(out, L"votv-coop-reflection.txt");
-}
-
 DWORD WINAPI BootThread(LPVOID) {
     WriteMarker();
-    // Standalone reflection self-validation (resolves GUObjectArray +
-    // FName::ToString via AOB, waits for the engine, dumps the live object
-    // graph). This is our own SDK access -- no UE4SS.
-    wchar_t reflPath[MAX_PATH] = {};
-    SelfTestPath(reflPath);
-    ue_wrap::reflection::RunSelfTest(reflPath);
+    // Standalone SDK health check (resolves GUObjectArray / FName::ToString /
+    // ProcessEvent via AOB, then functionally validates them). Logs a PASS/FAIL
+    // report to votv-coop.log -- our own SDK access, no UE4SS.
+    ue_wrap::log::Init();
+    ue_wrap::reflection::RunHealthCheck();
     return 0;
 }
 

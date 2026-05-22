@@ -76,9 +76,11 @@ std::wstring ClassNameOf(void* uobject);
 // FName -> wide string via the engine's FName::ToString.
 std::wstring ToString(const FName& name);
 
-// One-shot self-validation: resolve, wait for the engine to populate objects,
-// then dump the FUObjectArray header + a sample of object/class names to
-// `outPath`. Proves standalone reflection reads the live object graph.
-void RunSelfTest(const wchar_t* outPath);
+// Boot health check (logs to votv-coop.log via ue_wrap::log): detect+log the
+// game/engine version, resolve every primitive, then FUNCTIONALLY validate them
+// (name round-trip, known-class lookups) and print a PASS/FAIL verdict. On a new
+// game build this is the fast path to "what broke" -- it pinpoints the failing
+// signature/offset instead of crashing later.
+void RunHealthCheck();
 
 }  // namespace ue_wrap::reflection
