@@ -364,8 +364,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             UE_LOGW("play: did not reach story gameplay in time for '%ls'", slot.c_str());
         SpawnSecondPlayerWhenReady();
         UE_LOGI("harness: ==== PLAY READY (you have control) ====");
-        ::Sleep(1500);  // let the puppet + nameplate render a frame
-        harness::screenshot::Capture(L"play-ready");  // pure Win32/GDI, any thread
+        // (No auto-screenshot here: GDI can't read the 3D swapchain in-process ->
+        // black. Use the external tools/capture-window.ps1 for gameplay frames.)
         // Keep the 3D nameplate(s) glued above the head + facing the local player.
         // (~20 Hz is smooth enough for a label; the puppet is static for now.)
         for (;;) {

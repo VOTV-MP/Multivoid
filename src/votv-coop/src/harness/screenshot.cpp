@@ -73,8 +73,12 @@ bool GetEncoderClsid(const wchar_t* mime, CLSID* out) {
     return false;
 }
 
-// PrintWindow the client area into a PNG. PW_RENDERFULLCONTENT (2) grabs the
-// game's swapchain content without bringing the window to the foreground.
+// Capture the client area to a PNG via PrintWindow (PW_RENDERFULLCONTENT, no focus
+// theft). Works for flat UMG/UI (e.g. the OMEGA screen). NOTE: VOTV's 3D gameplay
+// is a hardware DX swapchain that GDI cannot read from inside the game's own
+// process -> a black frame. For autonomous GAMEPLAY verification use the external
+// tools/capture-window.ps1 (a separate process: foreground + screen BitBlt grabs
+// the DWM-composited frame). This in-process path is a UI-capture dev aid only.
 bool CapturePng(HWND hwnd, const std::wstring& path) {
     RECT rc{};
     if (!::GetClientRect(hwnd, &rc)) return false;
@@ -86,10 +90,10 @@ bool CapturePng(HWND hwnd, const std::wstring& path) {
     HBITMAP bmp = ::CreateCompatibleBitmap(hdcWin, w, h);
     HGDIOBJ old = ::SelectObject(hdcMem, bmp);
 
-    const BOOL printed = ::PrintWindow(hwnd, hdcMem, 2 /*PW_RENDERFULLCONTENT*/);
+    const bool haveFrame = ::PrintWindow(hwnd, hdcMem, 2 /*PW_RENDERFULLCONTENT*/) != 0;
 
     bool ok = false;
-    if (printed) {
+    if (haveFrame) {
         Gdiplus::Bitmap gb(bmp, nullptr);
         CLSID png{};
         if (GetEncoderClsid(L"image/png", &png)) {
