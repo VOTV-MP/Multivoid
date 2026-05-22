@@ -16,4 +16,9 @@ namespace harness::screenshot {
 // saves a screenshot. Idempotent. Runs for the process lifetime.
 void StartHotkeyWatcher();
 
+// Capture the game window to coop-screenshots/coop-<timestamp>-<label>.png NOW
+// (programmatic; no key press). Pure Win32/GDI -- callable from any thread.
+// Returns true on success. This is the API the harness uses for autonomous shots.
+bool Capture(const wchar_t* label);
+
 }  // namespace harness::screenshot

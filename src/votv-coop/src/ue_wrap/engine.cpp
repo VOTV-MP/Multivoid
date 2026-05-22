@@ -91,19 +91,40 @@ bool ExecuteConsoleCommand(const wchar_t* command) {
 }
 
 namespace {
-// Cached across the harness's boot retry loop (LoadStorySave is polled until the
-// GameInstance is up). The CDO + UFunctions never move; resolving them every retry
-// would re-walk the GUObjectArray (the standing perf rule). gi is resolved fresh
-// until found (it doesn't exist at the very start), then cached + liveness-checked.
+// Cached across the harness's boot retry loop (LoadStorySave is polled until we're
+// in gameplay). The CDO + UFunctions never move; the slot is loaded from disk ONCE.
 void* g_storyGsCdo = nullptr;
 void* g_loadGameFn = nullptr;
 void* g_setSaveSlotFn = nullptr;
+void* g_storySave = nullptr;  // cached USaveGame* (LoadGameFromSlot once)
 }  // namespace
 
+// Called repeatedly by the harness boot loop. Returns true ONLY once a mainPlayer_C
+// is in the real level (non-origin) -- i.e. we've reached story gameplay. While
+// still at preLoad / the OMEGA WARNING / the menu it (re)issues `open untitled_1`
+// each call; the user confirmed `open` travels straight to gameplay from the OMEGA
+// screen (Proceed only loads preLoad, which we DON'T want). A single early open
+// fired during preLoad is silently dropped, hence the retry. It will NOT re-open
+// once the gameplay world is already loading (that would restart the load).
 bool LoadStorySave(const wchar_t* slot) {
     if (!slot || !*slot) return false;
 
-    // A non-owning FString view over a wstring (ProcessEvent only reads it).
+    // (a) Already in gameplay? mainPlayer_C placed in the real level (non-origin).
+    if (void* lp = R::FindObjectByClass(P::name::MainPlayerClass)) {
+        const FVector p = GetActorLocation(lp);
+        if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
+            UE_LOGI("engine: LoadStorySave -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+            return true;
+        }
+    }
+    // (b) Gameplay map already loading? The gameplay world is "Untitled" (map
+    // untitled_1); preLoad/menu are other worlds. If we're in/loading it, DON'T
+    // re-open -- just wait for the player to spawn.
+    if (void* w = R::FindObjectByClass(P::name::WorldClass)) {
+        if (R::ToString(R::NameOf(w)).find(L"ntitled") != std::wstring::npos) return false;
+    }
+
+    // (c) Still at preLoad / OMEGA / menu: register the save (once) + (re)issue open.
     auto makeFStr = [](std::wstring& b) {
         R::FString fs{};
         fs.Data = b.data();
@@ -111,63 +132,52 @@ bool LoadStorySave(const wchar_t* slot) {
         fs.Max = fs.Num;
         return fs;
     };
-
     if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     if (g_storyGsCdo && !g_loadGameFn) {
         if (void* cls = R::ClassOf(g_storyGsCdo)) g_loadGameFn = R::FindFunction(cls, P::name::LoadGameFromSlotFn);
     }
-    if (!g_storyGsCdo || !g_loadGameFn) {
-        UE_LOGW("engine: LoadStorySave -- GameplayStatics not up yet (cdo=%p fn=%p); retry",
-                g_storyGsCdo, g_loadGameFn);
+    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    if (!g_storyGsCdo || !g_loadGameFn || !gi) {
+        UE_LOGW("engine: LoadStorySave -- not up yet (cdo=%p fn=%p gi=%p); retry", g_storyGsCdo, g_loadGameFn, gi);
         return false;
     }
-
-    // Resolve the persistent mainGameInstance_C FIRST and bail early if it isn't up
-    // -- so a boot-time retry doesn't pointlessly LoadGameFromSlot (a disk read)
-    // every tick before we even have somewhere to register the save.
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
-    if (!gi) { UE_LOGW("engine: LoadStorySave -- mainGameInstance_C not up yet; retry"); return false; }
     if (!g_setSaveSlotFn) {
         if (void* gicls = R::ClassOf(gi)) g_setSaveSlotFn = R::FindFunction(gicls, P::name::SetSaveSlotObjectFn);
     }
 
-    // 1) USaveGame* save = GameplayStatics::LoadGameFromSlot(slot, 0)
-    void* save = nullptr;
-    {
+    // Load the slot from disk ONCE (cached).
+    if (!g_storySave) {
         std::wstring b(slot);
         R::FString fs = makeFStr(b);
         ParamFrame f(g_loadGameFn);
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         f.Set<int32_t>(L"UserIndex", 0);
         if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot call failed"); return false; }
-        save = f.Get<void*>(L"ReturnValue");
+        g_storySave = f.Get<void*>(L"ReturnValue");
+        if (!g_storySave) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty", slot); return false; }
+        UE_LOGI("engine: LoadStorySave -- loaded save '%ls' = %p", slot, g_storySave);
     }
-    if (!save) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty (save=null)", slot); return false; }
 
-    // 2) gi->setSaveSlotObject(save, slot)
+    // Register on the (persistent) GameInstance + flag the GameMode to APPLY it on
+    // BeginPlay. Re-asserted each retry (cheap, no disk) so it's fresh at the travel.
     if (g_setSaveSlotFn) {
         std::wstring b(slot);
         R::FString fs = makeFStr(b);
         ParamFrame f(g_setSaveSlotFn);
-        f.Set<void*>(L"save_gameInst", save);
+        f.Set<void*>(L"save_gameInst", g_storySave);
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         Call(gi, f);
     } else {
         UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
     }
-
-    // 3) gi->loadObjects = true -> the GameMode APPLIES the save on BeginPlay
-    // (without this it would open the map fresh, i.e. effectively sandbox/new).
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
 
-    UE_LOGI("engine: LoadStorySave -- registered save '%ls' (save=%p gi=%p); opening %ls",
-            slot, save, gi, P::name::GameplayLevel);
-
-    // 4) travel to the gameplay map; the save+loadObjects on the (persistent)
-    // GameInstance drive what loads. The gameplay map is untitled_1 for all modes.
     std::wstring openCmd = L"open ";
     openCmd += P::name::GameplayLevel;
-    return ExecuteConsoleCommand(openCmd.c_str());
+    UE_LOGI("engine: LoadStorySave -- at preLoad/menu; (re)issuing '%ls' (save '%ls' registered)",
+            openCmd.c_str(), slot);
+    ExecuteConsoleCommand(openCmd.c_str());
+    return false;  // not in gameplay yet -> caller keeps retrying
 }
 
 // ---- actor spawning + transform -----------------------------------------

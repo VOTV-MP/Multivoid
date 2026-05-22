@@ -6,6 +6,7 @@
 #include <gdiplus.h>
 
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,18 @@ namespace harness::screenshot {
 namespace {
 
 std::atomic<bool> g_running{false};
+
+// GDI+ must be initialized once per process before any Bitmap/encoder use.
+// Both Capture() (programmatic, any thread) and the F12 watcher rely on it, so
+// init lazily exactly once instead of only on the watcher thread.
+std::once_flag g_gdiOnce;
+void EnsureGdiPlus() {
+    std::call_once(g_gdiOnce, [] {
+        Gdiplus::GdiplusStartupInput gi;
+        ULONG_PTR token = 0;  // intentionally leaked: GDI+ lives for the process
+        Gdiplus::GdiplusStartup(&token, &gi, nullptr);
+    });
+}
 
 // Directory of this mod DLL (the game's Win64 dir) -- screenshots land beside it.
 std::wstring ModuleDir() {
@@ -92,40 +105,37 @@ bool CapturePng(HWND hwnd, const std::wstring& path) {
 }
 
 DWORD WINAPI WatcherThread(LPVOID) {
-    Gdiplus::GdiplusStartupInput gi;
-    ULONG_PTR token = 0;
-    Gdiplus::GdiplusStartup(&token, &gi, nullptr);
-
-    const std::wstring dir = ModuleDir() + L"\\coop-screenshots";
-    ::CreateDirectoryW(dir.c_str(), nullptr);
-
     bool prevDown = false;
     while (g_running.load(std::memory_order_relaxed)) {
         const bool down = (::GetAsyncKeyState(VK_F12) & 0x8000) != 0;
-        if (down && !prevDown) {
-            HWND h = FindGameWindow();
-            if (h) {
-                SYSTEMTIME t{};
-                ::GetLocalTime(&t);
-                wchar_t name[64] = {};
-                swprintf(name, 64, L"coop-%04d%02d%02d-%02d%02d%02d.png",
-                         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-                const std::wstring path = dir + L"\\" + name;
-                const bool ok = CapturePng(h, path);
-                UE_LOGI("screenshot: F12 -> %ls (%s)", path.c_str(), ok ? "ok" : "FAILED");
-            } else {
-                UE_LOGW("screenshot: F12 -- no game window found");
-            }
-        }
+        if (down && !prevDown) Capture(L"f12");
         prevDown = down;
         ::Sleep(40);
     }
-
-    Gdiplus::GdiplusShutdown(token);
     return 0;
 }
 
 }  // namespace
+
+bool Capture(const wchar_t* label) {
+    EnsureGdiPlus();
+    const std::wstring dir = ModuleDir() + L"\\coop-screenshots";
+    ::CreateDirectoryW(dir.c_str(), nullptr);
+
+    HWND h = FindGameWindow();
+    if (!h) { UE_LOGW("screenshot: Capture('%ls') -- no game window found", label ? label : L""); return false; }
+
+    SYSTEMTIME t{};
+    ::GetLocalTime(&t);
+    wchar_t name[96] = {};
+    swprintf(name, 96, L"coop-%04d%02d%02d-%02d%02d%02d-%ls.png",
+             t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
+             (label && *label) ? label : L"shot");
+    const std::wstring path = dir + L"\\" + name;
+    const bool ok = CapturePng(h, path);
+    UE_LOGI("screenshot: '%ls' -> %ls (%s)", label ? label : L"", path.c_str(), ok ? "ok" : "FAILED");
+    return ok;
+}
 
 void StartHotkeyWatcher() {
     if (g_running.exchange(true)) return;  // already running

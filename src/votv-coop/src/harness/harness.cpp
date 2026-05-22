@@ -208,19 +208,30 @@ void SpawnSecondPlayerWhenReady() {
     UE_LOGI("play: waiting for STORY gameplay, spawn 2nd player the instant it's ready");
     for (int i = 0; i < 1200; ++i) {  // ~120 s safety cap
         auto state = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 not-ready,2 ok,3 failed
-        Post([state] {
+        Post([state, i] {
             if (g_orphan.valid()) { state->store(2); return; }
             void* local = R::FindObjectByClass(P::name::MainPlayerClass);
-            if (!local) { state->store(1); return; }
+            const bool diag = (i % 20 == 0);  // ~every 2 s
+            if (!local) {
+                if (diag) {
+                    void* w = R::FindObjectByClass(P::name::WorldClass);
+                    UE_LOGI("play[wait %d]: no mainPlayer_C; world=%ls objs=%d", i,
+                            w ? R::ToString(R::NameOf(w)).c_str() : L"(none)", R::NumObjects());
+                }
+                state->store(1); return;
+            }
             // A mainPlayer_C ALSO exists at the menu (the 'preLoad' world) sitting
             // at the ORIGIN. Spawning against it puts the puppet in the menu world,
             // which the level load then destroys -> "no one spawns". Gate on the
             // player being placed in the real level: a non-origin location.
             const ue_wrap::FVector p = ue_wrap::engine::GetActorLocation(local);
             if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
+                if (diag) UE_LOGI("play[wait %d]: mainPlayer_C @ORIGIN (%.0f,%.0f,%.0f) -- waiting for real gameplay",
+                                  i, p.X, p.Y, p.Z);
                 state->store(1);  // still the origin menu player; wait for gameplay
                 return;
             }
+            UE_LOGI("play: mainPlayer_C ready @ (%.0f,%.0f,%.0f) -- spawning puppet", p.X, p.Y, p.Z);
             state->store(g_orphan.Spawn() ? 2 : 3);
         });
         while (state->load() == 0) ::Sleep(5);  // let the posted check run (~1 frame)
@@ -336,20 +347,25 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // (Intro widget dumps already ran during the first ~3 s above.)
         const std::wstring slot = ReadStorySaveSlot();
         UE_LOGI("play: target STORY save '%ls'", slot.c_str());
+        // LoadStorySave (re)issues `open untitled_1` each tick while at preLoad/OMEGA/
+        // menu (a single early open during preLoad is dropped -> must retry), and
+        // returns true once gameplay is reached. ~1.5 s/tick throttles the opens.
         bool loaded = false;
-        for (int i = 0; i < 40 && !loaded; ++i) {  // ~20 s for the GameInstance to come up
+        for (int i = 0; i < 80 && !loaded; ++i) {  // ~120 s cap (boot + omega + level load)
             auto st = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 retry,2 ok
             Post([slot, st] {
                 st->store(ue_wrap::engine::LoadStorySave(slot.c_str()) ? 2 : 1);
             });
             while (st->load() == 0) ::Sleep(5);
             if (st->load() == 2) { loaded = true; break; }
-            ::Sleep(500);
+            ::Sleep(1500);
         }
         if (!loaded)
-            UE_LOGW("play: could not auto-load '%ls'; load it from the menu manually", slot.c_str());
+            UE_LOGW("play: did not reach story gameplay in time for '%ls'", slot.c_str());
         SpawnSecondPlayerWhenReady();
         UE_LOGI("harness: ==== PLAY READY (you have control) ====");
+        ::Sleep(1500);  // let the puppet + nameplate render a frame
+        harness::screenshot::Capture(L"play-ready");  // pure Win32/GDI, any thread
         // Keep the 3D nameplate(s) glued above the head + facing the local player.
         // (~20 Hz is smooth enough for a label; the puppet is static for now.)
         for (;;) {
