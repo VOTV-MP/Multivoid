@@ -102,15 +102,6 @@ bool DestroyActor(void* actor);
 FVector GetComponentLocation(void* component);
 FVector GetComponentForwardVector(void* component);
 
-// Spawn a 3D world-space text label (ATextRenderActor) showing `text`, sized
-// `worldSize`, in `color`, centered. Renders as world geometry -> works without
-// the HUD canvas (which VOTV does not run). Place/billboard it with
-// SetActorLocation + SetActorRotation. Uses the SetText(FString) overload (NOT
-// K2_SetText(FText) -- that overload caused the earlier shared-ref crash).
-// Returns the actor, or nullptr. Game thread only.
-void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSize,
-                     const FColor& color);
-
 // Spawn a TRANSLUCENT world-space nameplate: an Actor carrying a UWidgetComponent
 // that renders the reused uicomp_helpText_C UMG label. opacity (0..1) drives the
 // whole plate's alpha (TintColorAndOpacity.A) -- real partial transparency, which

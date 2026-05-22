@@ -379,78 +379,6 @@ bool SetAnimTickAlways(void* component) {
 }
 
 namespace {
-void* g_traClass = nullptr;
-void* g_trcClass = nullptr;
-void* g_setTextFn = nullptr;
-void* g_setWorldSizeFn = nullptr;
-void* g_setTextColorFn = nullptr;
-void* g_setHAlignFn = nullptr;
-void* g_setTextMaterialFn = nullptr;
-void* g_translucentTextMat = nullptr;
-bool ResolveTextActorFns() {
-    if (!g_traClass) g_traClass = R::FindClass(P::name::TextRenderActorClass);
-    if (!g_trcClass) g_trcClass = R::FindClass(P::name::TextRenderComponentClass);
-    if (g_trcClass) {
-        if (!g_setTextFn) g_setTextFn = R::FindFunction(g_trcClass, P::name::SetTextFn);
-        if (!g_setWorldSizeFn) g_setWorldSizeFn = R::FindFunction(g_trcClass, P::name::SetWorldSizeFn);
-        if (!g_setTextColorFn) g_setTextColorFn = R::FindFunction(g_trcClass, P::name::SetTextRenderColorFn);
-        if (!g_setHAlignFn) g_setHAlignFn = R::FindFunction(g_trcClass, P::name::SetHorizontalAlignmentFn);
-        if (!g_setTextMaterialFn) g_setTextMaterialFn = R::FindFunction(g_trcClass, P::name::SetTextMaterialFn);
-    }
-    if (!g_translucentTextMat) {
-        g_translucentTextMat = R::FindObject(P::name::UnlitTextMaterialName, P::name::MaterialClassName);
-        if (g_translucentTextMat) {
-            const uint8_t blend = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(g_translucentTextMat) + P::off::UMaterial_BlendMode);
-            UE_LOGI("engine: text material '%ls' = %p, BlendMode=%u (0=Opaque,1=Masked,2=Translucent)",
-                    P::name::UnlitTextMaterialName, g_translucentTextMat, blend);
-        }
-    }
-    return g_traClass && g_setTextFn;
-}
-}  // namespace
-
-void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSize,
-                     const FColor& color) {
-    if (!ResolveTextActorFns()) {
-        UE_LOGE("engine: SpawnTextActor unresolved (tra=%p trc=%p setText=%p)",
-                g_traClass, g_trcClass, g_setTextFn);
-        return nullptr;
-    }
-    void* actor = SpawnActor(g_traClass, location);
-    if (!actor) return nullptr;
-    void* trc = nullptr;
-    for (const auto& c : R::ChildObjectsOf(actor)) {
-        if (c.className == P::name::TextRenderComponentClass) { trc = c.object; break; }
-    }
-    if (!trc) { UE_LOGW("engine: SpawnTextActor -- no TextRenderComponent"); return actor; }
-
-    // SetText takes a plain FString (the FString overload, NOT K2_SetText/FText).
-    std::wstring sbuf(text);
-    R::FString fs{sbuf.data(), static_cast<int32_t>(sbuf.size()) + 1,
-                  static_cast<int32_t>(sbuf.size()) + 1};
-    { ParamFrame f(g_setTextFn); f.SetRaw(L"Value", &fs, sizeof(fs)); Call(trc, f); }
-
-    // Bind the stock translucent text material so the FColor alpha actually shows
-    // (the default is opaque and discards alpha). Without this the nameplate is
-    // fully solid regardless of alpha.
-    if (g_setTextMaterialFn && g_translucentTextMat) {
-        ParamFrame f(g_setTextMaterialFn); f.Set<void*>(L"Material", g_translucentTextMat); Call(trc, f);
-        UE_LOGI("engine: SpawnTextActor bound translucent text material %p", g_translucentTextMat);
-    } else {
-        UE_LOGW("engine: SpawnTextActor -- %ls not resident / SetTextMaterial unresolved (mat=%p fn=%p)",
-                P::name::UnlitTextMaterialName, g_translucentTextMat, g_setTextMaterialFn);
-    }
-    if (g_setWorldSizeFn) { ParamFrame f(g_setWorldSizeFn); f.Set<float>(L"Value", worldSize); Call(trc, f); }
-    if (g_setTextColorFn) { ParamFrame f(g_setTextColorFn); f.SetRaw(L"Value", &color, sizeof(color)); Call(trc, f); }
-    if (g_setHAlignFn) { ParamFrame f(g_setHAlignFn); f.Set<uint8_t>(L"Value", 1); Call(trc, f); }  // EHTA_Center
-    SetComponentVisible(trc, true);
-    UE_LOGI("engine: SpawnTextActor '%ls' actor=%p at (%.0f,%.0f,%.0f)",
-            text, actor, location.X, location.Y, location.Z);
-    return actor;
-}
-
-namespace {
 // Identity FTransform (0x30): FQuat{0,0,0,1} @0x00, FVector Translation{0} @0x10,
 // FVector Scale3D{1,1,1} @0x20.
 void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
@@ -467,7 +395,7 @@ void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
 void* g_npWidgetBaseClass = nullptr, *g_npSetVisFn = nullptr, *g_npRedrawFn = nullptr;
 void* g_npRenderUpdateFn = nullptr, *g_npTickFn = nullptr;
 void* g_npTransMat = nullptr, *g_npTransMatOneSided = nullptr;
-void* g_npTbClass = nullptr, *g_npTbSetTextFn = nullptr, *g_npTbSetColorFn = nullptr;
+void* g_npTbClass = nullptr, *g_npTbSetTextFn = nullptr, *g_npTbSetColorFn = nullptr, *g_npTbJustifyFn = nullptr;
 bool ResolveNameplateFns() {
     if (!g_npActorClass) g_npActorClass = R::FindClass(P::name::ActorClassName);
     if (!g_npCompClass) g_npCompClass = R::FindClass(P::name::WidgetComponentClass);
@@ -493,6 +421,7 @@ bool ResolveNameplateFns() {
     if (g_npTbClass) {
         if (!g_npTbSetTextFn) g_npTbSetTextFn = R::FindFunction(g_npTbClass, P::name::NameplateSetTextFn);  // UTextBlock::SetText(FText)
         if (!g_npTbSetColorFn) g_npTbSetColorFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetColorFn);
+        if (!g_npTbJustifyFn) g_npTbJustifyFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetJustificationFn);
     }
     if (!g_npWidgetBaseClass) g_npWidgetBaseClass = R::FindClass(P::name::WidgetBaseClass);
     if (g_npWidgetBaseClass && !g_npSetVisFn) g_npSetVisFn = R::FindFunction(g_npWidgetBaseClass, P::name::SetVisibilityFn);
@@ -540,6 +469,7 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     *reinterpret_cast<void**>(preU8 + P::off::UWidgetComponent_WidgetClass) = g_npWidgetClass;
     *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_BlendMode) = 2;   // Transparent
     *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_bIsTwoSided) = 1;  // two-sided -> 0x4F0 slot
+    *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_bDrawAtDesiredSize) = 1;  // quad fits text -> centered on head
 
     // 3) FinishAddComponent -> register -> InitWidget creates the uicomp_helpText_C instance.
     {
@@ -597,6 +527,8 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
         *reinterpret_cast<FLinearColor*>(slate) = c;  // slate[0x10]=ColorUseRule=0 already
         ParamFrame f(g_npTbSetColorFn); f.SetRaw(L"InColorAndOpacity", slate, sizeof(slate)); Call(textBlock, f);
     }
+    // Centre the text horizontally so it sits on top of the head (not left-aligned).
+    if (textBlock && g_npTbJustifyFn) { ParamFrame f(g_npTbJustifyFn); f.Set<uint8_t>(L"InJustification", 1 /*Center*/); Call(textBlock, f); }
     // Force visible (reused help-text widgets default Collapsed). ESlateVisibility::Visible=0.
     if (widget && g_npSetVisFn) { ParamFrame f(g_npSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(widget, f); }
     if (textBlock && g_npSetVisFn) { ParamFrame f(g_npSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(textBlock, f); }

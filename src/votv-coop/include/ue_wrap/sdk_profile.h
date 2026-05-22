@@ -71,11 +71,11 @@ inline constexpr size_t Chunk_NumChunks = 0x1C;
 inline constexpr int32_t ElemsPerChunk = 64 * 1024;
 inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cluster, serial}
 inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObjectFlags (PendingKill/Unreachable -> dying)
-inline constexpr size_t UMaterial_BlendMode = 0x151;     // TEnumAsByte<EBlendMode> (0=Opaque,1=Masked,2=Translucent)
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
 inline constexpr size_t UWidgetComponent_WidgetClass = 0x0480;  // TSubclassOf<UUserWidget> (set before register so InitWidget builds it)
 inline constexpr size_t UWidgetComponent_BlendMode = 0x04E4;    // EWidgetBlendMode (uint8): 0=Opaque,1=Masked(ctor DEFAULT!),2=Transparent
 inline constexpr size_t UWidgetComponent_bIsTwoSided = 0x04E5;  // bool
+inline constexpr size_t UWidgetComponent_bDrawAtDesiredSize = 0x04A8;  // bool: quad fits the widget (centers text on the actor)
 inline constexpr size_t UWidgetComponent_TranslucentMaterial = 0x04F0;          // UMaterialInterface* (two-sided slot)
 inline constexpr size_t UWidgetComponent_TranslucentMaterialOneSided = 0x04F8;  // UMaterialInterface*
 inline constexpr size_t UWidgetComponent_MaterialInstance = 0x0528;             // UMaterialInstanceDynamic* (the live drawn material)
@@ -271,27 +271,6 @@ inline constexpr const wchar_t* ActorComponentClass = L"ActorComponent";
 inline constexpr const wchar_t* DestroyComponentFn = L"K2_DestroyComponent";
 inline constexpr const wchar_t* PostProcessComponentClass = L"PostProcessComponent";
 
-// Nameplate via a 3D world-space text actor (ATextRenderActor + UTextRenderComponent).
-// VOTV does NOT run the stock HUD canvas (ReceiveDrawHUD never fires even with
-// bShowHUD forced), so screen-space UCanvas drawing is dead here -- 3D text renders
-// independently of the HUD. CRITICAL: use the SetText(FString) overload, NOT
-// K2_SetText(FText) (the FText overload caused the earlier shared-ref crash).
-inline constexpr const wchar_t* TextRenderActorClass = L"TextRenderActor";
-inline constexpr const wchar_t* TextRenderComponentClass = L"TextRenderComponent";
-inline constexpr const wchar_t* SetTextFn = L"SetText";                  // FString overload (NOT K2_SetText)
-inline constexpr const wchar_t* SetWorldSizeFn = L"SetWorldSize";        // float
-inline constexpr const wchar_t* SetTextRenderColorFn = L"SetTextRenderColor";  // FColor
-inline constexpr const wchar_t* SetHorizontalAlignmentFn = L"SetHorizontalAlignment";  // EHorizTextAligment (1=Center)
-// A TextRenderComponent's default material (DefaultTextMaterialOpaque) is OPAQUE
-// and discards the FColor alpha. VOTV cooked in only two text materials -- that
-// opaque default and the stock /Engine/EngineMaterials/UnlitText; the translucent
-// DefaultTextMaterialTranslucent is NOT cooked in (verified via the object dump),
-// so it can't be loaded. We bind UnlitText and read its blend mode at runtime to
-// learn whether partial alpha is achievable here. SetTextMaterial param: "Material".
-inline constexpr const wchar_t* SetTextMaterialFn = L"SetTextMaterial";
-inline constexpr const wchar_t* UnlitTextMaterialName = L"UnlitText";  // /Engine/EngineMaterials/UnlitText
-inline constexpr const wchar_t* MaterialClassName = L"Material";
-
 // Nameplate via a world-space UWidgetComponent (TRANSLUCENT). TextRender can't do
 // partial alpha (UnlitText is Masked). A WidgetComponent renders its UMG to a
 // render target composited with /Engine/EngineMaterials/Widget3DPassThrough_Translucent
@@ -313,6 +292,7 @@ inline constexpr const wchar_t* NameplateWidgetClass = L"uicomp_helpText_C";    
 inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // on uicomp_helpText_C (FText)
 inline constexpr const wchar_t* TextBlockClass = L"TextBlock";                       // the inner text_help (drive it directly)
 inline constexpr const wchar_t* TextBlockSetColorFn = L"SetColorAndOpacity";         // FSlateColor (opaque white)
+inline constexpr const wchar_t* TextBlockSetJustificationFn = L"SetJustification";   // ETextJustify (1=Center)
 inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
 inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
 inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)

@@ -29,7 +29,7 @@ struct Entry {
 std::vector<Entry> g_entries;
 void* g_viewer = nullptr;  // cached local player (avoid a GUObjectArray walk every Update)
 
-constexpr float kHeadTextZ = 195.f;  // just above the head (actor origin = feet)
+constexpr float kHeadTextZ = 188.f;  // just above the head (actor origin = feet)
 
 }  // namespace
 
@@ -44,7 +44,7 @@ void Register(RemotePlayer* player) {
     // Translucent nameplate via a world-space UWidgetComponent (0.6 = ~60% opacity).
     // A TextRender can't be translucent here (UnlitText is Masked). The component
     // must TICK to draw its render target (root cause of the earlier blank quad).
-    void* label = E::SpawnNameplateWidget(at, player->GetNickname().c_str(), 0.6f);  // 0.6 = translucent text
+    void* label = E::SpawnNameplateWidget(at, player->GetNickname().c_str(), 0.22f);  // 0.22 = more translucent text
     g_entries.push_back({player, label});
     UE_LOGI("nameplate: label '%ls' actor=%p for player %p (now %zu)",
             player->GetNickname().c_str(), label, player, g_entries.size());
