@@ -74,6 +74,15 @@ inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObje
 inline constexpr size_t UMaterial_BlendMode = 0x151;     // TEnumAsByte<EBlendMode> (0=Opaque,1=Masked,2=Translucent)
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
 inline constexpr size_t UWidgetComponent_WidgetClass = 0x0480;  // TSubclassOf<UUserWidget> (set before register so InitWidget builds it)
+inline constexpr size_t UWidgetComponent_BlendMode = 0x04E4;    // EWidgetBlendMode (uint8): 0=Opaque,1=Masked(ctor DEFAULT!),2=Transparent
+inline constexpr size_t UWidgetComponent_bIsTwoSided = 0x04E5;  // bool
+inline constexpr size_t UWidgetComponent_TranslucentMaterial = 0x04F0;          // UMaterialInterface* (two-sided slot)
+inline constexpr size_t UWidgetComponent_TranslucentMaterialOneSided = 0x04F8;  // UMaterialInterface*
+inline constexpr size_t UWidgetComponent_MaterialInstance = 0x0528;             // UMaterialInstanceDynamic* (the live drawn material)
+inline constexpr size_t UWidgetComponent_RenderTarget = 0x0520;                 // UTextureRenderTarget2D*
+inline constexpr size_t UWidgetComponent_bManuallyRedraw = 0x0490;             // bool (must be 0 to auto-redraw on tick)
+inline constexpr size_t UWidgetComponent_RedrawTime = 0x0494;                  // float (0 = redraw every tick)
+inline constexpr size_t UWidgetComponent_BackgroundColor = 0x04C0;             // FLinearColor (RT clear color)
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
@@ -297,12 +306,21 @@ inline constexpr const wchar_t* SetWidgetDrawSizeFn = L"SetDrawSize";           
 inline constexpr const wchar_t* SetTintColorAndOpacityFn = L"SetTintColorAndOpacity";// FLinearColor
 inline constexpr const wchar_t* SetTwoSidedFn = L"SetTwoSided";                      // bool
 inline constexpr const wchar_t* GetUserWidgetObjectFn = L"GetUserWidgetObject";      // -> UUserWidget*
-inline constexpr const wchar_t* RequestRedrawFn = L"RequestRedraw";                  // force the render target to draw
+inline constexpr const wchar_t* RequestRedrawFn = L"RequestRedraw";                  // sets bRedrawRequested
+inline constexpr const wchar_t* RequestRenderUpdateFn = L"RequestRenderUpdate";      // forces render-state/RT refresh
+inline constexpr const wchar_t* SetComponentTickEnabledFn = L"SetComponentTickEnabled";  // on UActorComponent -- a runtime-added WidgetComponent doesn't tick -> never draws its RT
 inline constexpr const wchar_t* NameplateWidgetClass = L"uicomp_helpText_C";         // reused UMG label
 inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // on uicomp_helpText_C (FText)
+inline constexpr const wchar_t* TextBlockClass = L"TextBlock";                       // the inner text_help (drive it directly)
+inline constexpr const wchar_t* TextBlockSetColorFn = L"SetColorAndOpacity";         // FSlateColor (opaque white)
 inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
 inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
 inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)
+// World-space WidgetComponent translucent material (the slot a runtime-added
+// component may have null -> blank quad). bIsTwoSided=true uses the two-sided slot.
+inline constexpr const wchar_t* Widget3DTranslucentMatName = L"Widget3DPassThrough_Translucent";
+inline constexpr const wchar_t* Widget3DTranslucentOneSidedMatName = L"Widget3DPassThrough_Translucent_OneSided";
+inline constexpr const wchar_t* MaterialInstanceConstantClass = L"MaterialInstanceConstant";  // class of those MICs
 }  // namespace name
 
 }  // namespace ue_wrap::profile

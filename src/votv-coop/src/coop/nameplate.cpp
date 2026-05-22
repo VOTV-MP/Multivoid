@@ -41,12 +41,10 @@ void Register(RemotePlayer* player) {
 
     ue_wrap::FVector at = player->GetLocation();
     at.Z += kHeadTextZ;
-    // NOTE: opaque TextRender (UnlitText is Masked -> no partial alpha). The
-    // translucent UWidgetComponent path (engine::SpawnNameplateWidget) builds the
-    // widget but its world-space quad won't render yet -- WIP; likely pivoting to a
-    // screen-projected viewport widget (what VOTV's toasts use).
-    const ue_wrap::FColor color{255, 255, 255, 255};
-    void* label = E::SpawnTextActor(at, player->GetNickname().c_str(), 11.f, color);
+    // Translucent nameplate via a world-space UWidgetComponent (0.6 = ~60% opacity).
+    // A TextRender can't be translucent here (UnlitText is Masked). The component
+    // must TICK to draw its render target (root cause of the earlier blank quad).
+    void* label = E::SpawnNameplateWidget(at, player->GetNickname().c_str(), 0.6f);  // 0.6 = translucent text
     g_entries.push_back({player, label});
     UE_LOGI("nameplate: label '%ls' actor=%p for player %p (now %zu)",
             player->GetNickname().c_str(), label, player, g_entries.size());
