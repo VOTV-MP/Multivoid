@@ -130,6 +130,17 @@ The game install folder name (`Game_0.9.0n/`) reflects the current target.
   independent agents converging is strong signal. (This is how the
   auto-possess root cause was found: agents pinpointed `APawn::AutoPossessPlayer`
   + the deferred-spawn prevention window.)
+- **After shipping, audit with agents (RULE).** Whenever code is built + deployed
+  for a test, spawn agent(s) to audit the shipped change BEFORE/while the user
+  tests it — above all for **performance**: no per-frame full-array scans (e.g.
+  `FindObjectByClass`/GUObjectArray walks every frame), no heavy work on hot paths
+  (anything running per `ProcessEvent` / per tick), no FPS-eating patterns; also
+  thread-safety (engine UFunctions are game-thread only) and correctness. The goal
+  is to catch dumb costly solutions before the user feels them. (Born from a real
+  120→60 fps drop: a per-`ProcessEvent` observer + a per-frame `FindObjectByClass`.)
+  Draw on the curated audit prompts in `reference/agency-agents/` to brief the
+  audit agents (code-reviewer, security-engineer, autonomous-optimization-architect,
+  testing-performance-benchmarker, testing-reality-checker).
 - **Verify behaviour by diffing observable state, not just hooks.** UE4SS
   UFunction hooks only fire on ProcessEvent-dispatched calls; native engine
   paths (Possess, EnableInput, auto-possess) bypass them. To catch those,
