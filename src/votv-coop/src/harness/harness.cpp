@@ -58,25 +58,25 @@ std::string ReadScenario() {
 // (a line "save=<slotname>", section-agnostic); defaults to s_may2026. Coop targets
 // story mode, so we never boot the sandbox map fresh.
 std::wstring ReadStorySaveSlot() {
+    std::wstring slot = L"s_may2026";  // default story save
     const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
     FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") == 0 && f) {
-        char line[160];
-        while (std::fgets(line, sizeof(line), f)) {
-            std::string s(line);
-            // strip whitespace
-            s.erase(std::remove_if(s.begin(), s.end(),
-                                   [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
-                    s.end());
-            if (s.rfind("save=", 0) == 0 && s.size() > 5) {
-                std::string v = s.substr(5);
-                std::fclose(f);
-                return std::wstring(v.begin(), v.end());  // ASCII slot name
-            }
+    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return slot;
+    char line[160];
+    while (std::fgets(line, sizeof(line), f)) {  // single fclose below (no early return)
+        std::string s(line);
+        // strip whitespace
+        s.erase(std::remove_if(s.begin(), s.end(),
+                               [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
+                s.end());
+        if (s.rfind("save=", 0) == 0 && s.size() > 5) {
+            const std::string v = s.substr(5);
+            slot.assign(v.begin(), v.end());  // ASCII slot name
+            break;
         }
-        std::fclose(f);
     }
-    return L"s_may2026";  // default story save
+    std::fclose(f);
+    return slot;
 }
 
 // Runs on the game thread (posted): dump a UFunction's parameter frame so we can

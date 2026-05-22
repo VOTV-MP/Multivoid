@@ -90,6 +90,16 @@ bool ExecuteConsoleCommand(const wchar_t* command) {
     return ok;
 }
 
+namespace {
+// Cached across the harness's boot retry loop (LoadStorySave is polled until the
+// GameInstance is up). The CDO + UFunctions never move; resolving them every retry
+// would re-walk the GUObjectArray (the standing perf rule). gi is resolved fresh
+// until found (it doesn't exist at the very start), then cached + liveness-checked.
+void* g_storyGsCdo = nullptr;
+void* g_loadGameFn = nullptr;
+void* g_setSaveSlotFn = nullptr;
+}  // namespace
+
 bool LoadStorySave(const wchar_t* slot) {
     if (!slot || !*slot) return false;
 
@@ -102,12 +112,23 @@ bool LoadStorySave(const wchar_t* slot) {
         return fs;
     };
 
-    void* gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    void* gsCls = gsCdo ? R::ClassOf(gsCdo) : nullptr;
-    void* loadFn = gsCls ? R::FindFunction(gsCls, P::name::LoadGameFromSlotFn) : nullptr;
-    if (!gsCdo || !loadFn) {
-        UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot unresolved (cdo=%p fn=%p)", gsCdo, loadFn);
+    if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_storyGsCdo && !g_loadGameFn) {
+        if (void* cls = R::ClassOf(g_storyGsCdo)) g_loadGameFn = R::FindFunction(cls, P::name::LoadGameFromSlotFn);
+    }
+    if (!g_storyGsCdo || !g_loadGameFn) {
+        UE_LOGW("engine: LoadStorySave -- GameplayStatics not up yet (cdo=%p fn=%p); retry",
+                g_storyGsCdo, g_loadGameFn);
         return false;
+    }
+
+    // Resolve the persistent mainGameInstance_C FIRST and bail early if it isn't up
+    // -- so a boot-time retry doesn't pointlessly LoadGameFromSlot (a disk read)
+    // every tick before we even have somewhere to register the save.
+    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    if (!gi) { UE_LOGW("engine: LoadStorySave -- mainGameInstance_C not up yet; retry"); return false; }
+    if (!g_setSaveSlotFn) {
+        if (void* gicls = R::ClassOf(gi)) g_setSaveSlotFn = R::FindFunction(gicls, P::name::SetSaveSlotObjectFn);
     }
 
     // 1) USaveGame* save = GameplayStatics::LoadGameFromSlot(slot, 0)
@@ -115,23 +136,19 @@ bool LoadStorySave(const wchar_t* slot) {
     {
         std::wstring b(slot);
         R::FString fs = makeFStr(b);
-        ParamFrame f(loadFn);
+        ParamFrame f(g_loadGameFn);
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         f.Set<int32_t>(L"UserIndex", 0);
-        if (!Call(gsCdo, f)) { UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot call failed"); return false; }
+        if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot call failed"); return false; }
         save = f.Get<void*>(L"ReturnValue");
     }
     if (!save) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty (save=null)", slot); return false; }
 
-    // 2) the persistent mainGameInstance_C (survives the level travel)
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
-    if (!gi) { UE_LOGE("engine: LoadStorySave -- no mainGameInstance_C"); return false; }
-
-    // 3) gi->setSaveSlotObject(save, slot)
-    if (void* setFn = R::FindFunction(R::ClassOf(gi), P::name::SetSaveSlotObjectFn)) {
+    // 2) gi->setSaveSlotObject(save, slot)
+    if (g_setSaveSlotFn) {
         std::wstring b(slot);
         R::FString fs = makeFStr(b);
-        ParamFrame f(setFn);
+        ParamFrame f(g_setSaveSlotFn);
         f.Set<void*>(L"save_gameInst", save);
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         Call(gi, f);
@@ -139,14 +156,14 @@ bool LoadStorySave(const wchar_t* slot) {
         UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
     }
 
-    // 4) gi->loadObjects = true -> the GameMode APPLIES the save on BeginPlay
+    // 3) gi->loadObjects = true -> the GameMode APPLIES the save on BeginPlay
     // (without this it would open the map fresh, i.e. effectively sandbox/new).
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
 
     UE_LOGI("engine: LoadStorySave -- registered save '%ls' (save=%p gi=%p); opening %ls",
             slot, save, gi, P::name::GameplayLevel);
 
-    // 5) travel to the gameplay map; the save+loadObjects on the (persistent)
+    // 4) travel to the gameplay map; the save+loadObjects on the (persistent)
     // GameInstance drive what loads. The gameplay map is untitled_1 for all modes.
     std::wstring openCmd = L"open ";
     openCmd += P::name::GameplayLevel;
