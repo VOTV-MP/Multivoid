@@ -388,24 +388,23 @@ void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
     f[8] = 1.f; f[9] = 1.f; f[10] = 1.f;  // Scale3D
 }
 
-void* g_npActorClass = nullptr, *g_npCompClass = nullptr, *g_npWidgetClass = nullptr;
-void* g_npAddFn = nullptr, *g_npFinishFn = nullptr, *g_npDrawFn = nullptr;
-void* g_npTintFn = nullptr, *g_npGetWidgetFn = nullptr, *g_npSetTextFn = nullptr;
-void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
-void* g_npWidgetBaseClass = nullptr, *g_npSetVisFn = nullptr, *g_npRedrawFn = nullptr;
-void* g_npRenderUpdateFn = nullptr, *g_npTickFn = nullptr;
+void* g_npActorClass = nullptr, *g_npCompClass = nullptr;
+void* g_npAddFn = nullptr, *g_npFinishFn = nullptr, *g_npTintFn = nullptr;
+void* g_npRedrawFn = nullptr, *g_npRenderUpdateFn = nullptr, *g_npTickFn = nullptr, *g_npSetWidgetFn = nullptr;
 void* g_npTransMat = nullptr, *g_npTransMatOneSided = nullptr;
-void* g_npTbClass = nullptr, *g_npTbSetTextFn = nullptr, *g_npTbSetColorFn = nullptr, *g_npTbJustifyFn = nullptr;
+void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
+// Own-widget construction (NewObject = UGameplayStatics::SpawnObject).
+void* g_npGsCdo = nullptr, *g_npSpawnObjFn = nullptr;
+void* g_npUserWidgetClass = nullptr, *g_npWidgetTreeClass = nullptr, *g_npTbClass = nullptr;
+void* g_npTbSetTextFn = nullptr, *g_npFont = nullptr;
 bool ResolveNameplateFns() {
     if (!g_npActorClass) g_npActorClass = R::FindClass(P::name::ActorClassName);
     if (!g_npCompClass) g_npCompClass = R::FindClass(P::name::WidgetComponentClass);
-    if (!g_npWidgetClass) g_npWidgetClass = R::FindClass(P::name::NameplateWidgetClass);
     if (g_npActorClass && !g_npAddFn) g_npAddFn = R::FindFunction(g_npActorClass, P::name::AddComponentByClassFn);
     if (g_npActorClass && !g_npFinishFn) g_npFinishFn = R::FindFunction(g_npActorClass, P::name::FinishAddComponentFn);
     if (g_npCompClass) {
-        if (!g_npDrawFn) g_npDrawFn = R::FindFunction(g_npCompClass, P::name::SetWidgetDrawSizeFn);
         if (!g_npTintFn) g_npTintFn = R::FindFunction(g_npCompClass, P::name::SetTintColorAndOpacityFn);
-        if (!g_npGetWidgetFn) g_npGetWidgetFn = R::FindFunction(g_npCompClass, P::name::GetUserWidgetObjectFn);
+        if (!g_npSetWidgetFn) g_npSetWidgetFn = R::FindFunction(g_npCompClass, P::name::SetWidgetFn);
         if (!g_npRedrawFn) g_npRedrawFn = R::FindFunction(g_npCompClass, P::name::RequestRedrawFn);
         if (!g_npRenderUpdateFn) g_npRenderUpdateFn = R::FindFunction(g_npCompClass, P::name::RequestRenderUpdateFn);
     }
@@ -416,27 +415,39 @@ bool ResolveNameplateFns() {
         g_npTransMat = R::FindObject(P::name::Widget3DTranslucentMatName, P::name::MaterialInstanceConstantClass);
     if (!g_npTransMatOneSided)
         g_npTransMatOneSided = R::FindObject(P::name::Widget3DTranslucentOneSidedMatName, P::name::MaterialInstanceConstantClass);
-    if (g_npWidgetClass && !g_npSetTextFn) g_npSetTextFn = R::FindFunction(g_npWidgetClass, P::name::NameplateSetTextFn);
-    if (!g_npTbClass) g_npTbClass = R::FindClass(P::name::TextBlockClass);
-    if (g_npTbClass) {
-        if (!g_npTbSetTextFn) g_npTbSetTextFn = R::FindFunction(g_npTbClass, P::name::NameplateSetTextFn);  // UTextBlock::SetText(FText)
-        if (!g_npTbSetColorFn) g_npTbSetColorFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetColorFn);
-        if (!g_npTbJustifyFn) g_npTbJustifyFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetJustificationFn);
+    // NewObject path + UMG classes + font.
+    if (!g_npGsCdo) g_npGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_npGsCdo && !g_npSpawnObjFn) {
+        if (void* c = R::ClassOf(g_npGsCdo)) g_npSpawnObjFn = R::FindFunction(c, P::name::SpawnObjectFn);
     }
-    if (!g_npWidgetBaseClass) g_npWidgetBaseClass = R::FindClass(P::name::WidgetBaseClass);
-    if (g_npWidgetBaseClass && !g_npSetVisFn) g_npSetVisFn = R::FindFunction(g_npWidgetBaseClass, P::name::SetVisibilityFn);
+    if (!g_npUserWidgetClass) g_npUserWidgetClass = R::FindClass(P::name::UserWidgetClass);
+    if (!g_npWidgetTreeClass) g_npWidgetTreeClass = R::FindClass(P::name::WidgetTreeClass);
+    if (!g_npTbClass) g_npTbClass = R::FindClass(P::name::TextBlockClass);
+    if (g_npTbClass && !g_npTbSetTextFn) g_npTbSetTextFn = R::FindFunction(g_npTbClass, P::name::NameplateSetTextFn);  // UTextBlock::SetText(FText)
+    if (!g_npFont) g_npFont = R::FindObject(P::name::FontName, P::name::FontClassName);
     if (!g_npKtlCdo) g_npKtlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
     if (g_npKtlCdo && !g_npConvFn) {
         if (void* c = R::ClassOf(g_npKtlCdo)) g_npConvFn = R::FindFunction(c, P::name::ConvStringToTextFn);
     }
-    return g_npActorClass && g_npCompClass && g_npWidgetClass && g_npAddFn && g_npFinishFn;
+    return g_npActorClass && g_npCompClass && g_npAddFn && g_npFinishFn &&
+           g_npGsCdo && g_npSpawnObjFn && g_npUserWidgetClass && g_npWidgetTreeClass && g_npTbClass;
+}
+
+// NewObject by class via the reflected UGameplayStatics::SpawnObject(objectClass, Outer).
+void* SpawnObject(void* objectClass, void* outer) {
+    if (!g_npGsCdo || !g_npSpawnObjFn || !objectClass || !outer) return nullptr;
+    ParamFrame f(g_npSpawnObjFn);
+    f.Set<void*>(L"objectClass", objectClass);
+    f.Set<void*>(L"Outer", outer);
+    if (!Call(g_npGsCdo, f)) return nullptr;
+    return f.Get<void*>(L"ReturnValue");
 }
 }  // namespace
 
 void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity) {
     if (!ResolveNameplateFns()) {
-        UE_LOGE("engine: SpawnNameplateWidget unresolved (actor=%p comp=%p wcls=%p add=%p fin=%p)",
-                g_npActorClass, g_npCompClass, g_npWidgetClass, g_npAddFn, g_npFinishFn);
+        UE_LOGE("engine: SpawnNameplateWidget unresolved (actor=%p comp=%p add=%p fin=%p spawnObj=%p uw=%p tb=%p)",
+                g_npActorClass, g_npCompClass, g_npAddFn, g_npFinishFn, g_npSpawnObjFn, g_npUserWidgetClass, g_npTbClass);
         return nullptr;
     }
     void* actor = SpawnActor(g_npActorClass, location);
@@ -445,7 +456,7 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     uint8_t xform[0x30];
     MakeIdentityTransform(xform);
 
-    // 1) AddComponentByClass(WidgetComponent, bManualAttachment=false, identity, deferred=true)
+    // 1) AddComponentByClass(WidgetComponent, deferred) -- own widget, NOT a cooked one.
     void* comp = nullptr;
     {
         ParamFrame f(g_npAddFn);
@@ -457,21 +468,17 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
         comp = f.Get<void*>(L"ReturnValue");
     }
     if (!comp) { UE_LOGE("engine: SpawnNameplateWidget -- no WidgetComponent returned"); return actor; }
+    auto cU8 = reinterpret_cast<uint8_t*>(comp);
 
-    // 2) Set WidgetClass + BlendMode + two-sided BEFORE finishing, so that on
-    // register InitWidget/UpdateMaterialInstance build the MID over the correct
-    // material. ROOT CAUSE (IDA-confirmed): GetMaterial(0) routes by BlendMode, and
-    // the ctor DEFAULTS BlendMode=Masked(1) -> the MID was built over
-    // Widget3DPassThrough_Masked, which alpha-clips our low-alpha/transparent content
-    // -> the whole quad is discarded (invisible). Setting BlendMode=Transparent(2)
-    // routes to TranslucentMaterial (0x4F0) -> real partial alpha.
-    auto preU8 = reinterpret_cast<uint8_t*>(comp);
-    *reinterpret_cast<void**>(preU8 + P::off::UWidgetComponent_WidgetClass) = g_npWidgetClass;
-    *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_BlendMode) = 2;   // Transparent
-    *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_bIsTwoSided) = 1;  // two-sided -> 0x4F0 slot
-    *reinterpret_cast<uint8_t*>(preU8 + P::off::UWidgetComponent_bDrawAtDesiredSize) = 1;  // quad fits text -> centered on head
+    // 2) BEFORE register: BlendMode=Transparent(2) + two-sided + draw-at-desired-size.
+    // (IDA: GetMaterial(0) routes by BlendMode; the ctor defaults Masked(1), which
+    // alpha-clips the content -> invisible. Transparent routes to TranslucentMaterial.)
+    // Leave WidgetClass NULL -- we build + SetWidget our OWN UMG (no cooked widget).
+    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_BlendMode) = 2;
+    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bIsTwoSided) = 1;
+    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bDrawAtDesiredSize) = 1;
 
-    // 3) FinishAddComponent -> register -> InitWidget creates the uicomp_helpText_C instance.
+    // 3) FinishAddComponent -> register.
     {
         ParamFrame f(g_npFinishFn);
         f.Set<void*>(L"Component", comp);
@@ -479,65 +486,97 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
         f.SetRaw(L"relativeTransform", xform, sizeof(xform));
         Call(actor, f);
     }
+    // Component draw config: auto-redraw, the translucent material slot, full tint.
+    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bManuallyRedraw) = 0;
+    *reinterpret_cast<float*>(cU8 + P::off::UWidgetComponent_RedrawTime) = 0.f;
+    if (g_npTransMat) *reinterpret_cast<void**>(cU8 + P::off::UWidgetComponent_TranslucentMaterial) = g_npTransMat;
+    if (g_npTransMatOneSided) *reinterpret_cast<void**>(cU8 + P::off::UWidgetComponent_TranslucentMaterialOneSided) = g_npTransMatOneSided;
+    if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, 1.f}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }
 
-    // 4) Draw size + translucency tint (Space=World and two-sided are set pre-register).
-    if (g_npDrawFn) { ParamFrame f(g_npDrawFn); FVector2D sz{200.f, 52.f}; f.SetRaw(L"Size", &sz, sizeof(sz)); Call(comp, f); }
-    if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, 1.f}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }  // full tint; translucency is on the text alpha
-    // No background pill -- the TEXT itself is translucent (set on text_help below).
-    { FLinearColor bg{0.f, 0.f, 0.f, 0.f};
-      *reinterpret_cast<FLinearColor*>(reinterpret_cast<uint8_t*>(comp) + P::off::UWidgetComponent_BackgroundColor) = bg; }
+    // 4) Build OUR widget tree via NewObject: UUserWidget -> UWidgetTree -> UTextBlock(root).
+    void* root = SpawnObject(g_npUserWidgetClass, actor);
+    void* tree = root ? SpawnObject(g_npWidgetTreeClass, root) : nullptr;
+    void* txt  = tree ? SpawnObject(g_npTbClass, tree) : nullptr;
+    if (!root || !tree || !txt) {
+        UE_LOGE("engine: SpawnNameplateWidget -- SpawnObject failed (root=%p tree=%p txt=%p)", root, tree, txt);
+        return actor;
+    }
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = txt;
+    auto tU8 = reinterpret_cast<uint8_t*>(txt);
 
-    // ROOT-CAUSE FIX (two agents converged): a runtime AddComponentByClass'd
-    // WidgetComponent never ticks -> DrawWidgetToRenderTarget never runs -> its
-    // RenderTarget + MaterialInstance stay null -> GetMaterial()==null -> the quad
-    // is invisible (the Slate widget itself is fine). Enable tick + force a render
-    // update; ensure auto-redraw (bManuallyRedraw=0, RedrawTime=0); and populate the
-    // translucent material slot in case NewObject didn't copy the CDO's default.
-    auto compU8 = reinterpret_cast<uint8_t*>(comp);
-    *reinterpret_cast<uint8_t*>(compU8 + P::off::UWidgetComponent_bManuallyRedraw) = 0;
-    *reinterpret_cast<float*>(compU8 + P::off::UWidgetComponent_RedrawTime) = 0.f;
-    if (g_npTransMat)
-        *reinterpret_cast<void**>(compU8 + P::off::UWidgetComponent_TranslucentMaterial) = g_npTransMat;
-    if (g_npTransMatOneSided)
-        *reinterpret_cast<void**>(compU8 + P::off::UWidgetComponent_TranslucentMaterialOneSided) = g_npTransMatOneSided;
-    if (g_npTickFn) { ParamFrame f(g_npTickFn); f.Set<bool>(L"bEnabled", true); Call(comp, f); }
-    if (g_npRenderUpdateFn) { ParamFrame f(g_npRenderUpdateFn); Call(comp, f); }
+    // Font (FSlateFontInfo: FontObject @0, Size @0x48), translucent-white colour
+    // (FSlateColor: FLinearColor @0, ColorUseRule @0x10 = UseColor_Specified), centre.
+    if (g_npFont) *reinterpret_cast<void**>(tU8 + P::off::UTextBlock_Font) = g_npFont;
+    *reinterpret_cast<int32_t*>(tU8 + P::off::UTextBlock_Font + P::off::FSlateFontInfo_Size) = 14;
+    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = FLinearColor{1.f, 1.f, 1.f, opacity};
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = 1;  // Center
 
-    // 5) Text. widget = comp.GetUserWidgetObject(); then drive the INNER text_help
-    // UTextBlock directly (uicomp_helpText_C::SetText doesn't paint it for our use):
-    // SetText + opaque-white SetColorAndOpacity + SetVisibility(Visible). Without
-    // real text painted, the translucent RT is fully transparent -> invisible quad.
-    void* widget = nullptr;
-    if (g_npGetWidgetFn) { ParamFrame f(g_npGetWidgetFn); if (Call(comp, f)) widget = f.Get<void*>(L"ReturnValue"); }
-    void* textBlock = widget ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(widget) + 0x268) : nullptr;
-
-    if (g_npConvFn) {
+    // Text: UTextBlock::SetText(Conv_StringToText(text)).
+    if (g_npConvFn && g_npTbSetTextFn) {
         uint8_t ftext[0x18] = {};
         std::wstring b(text);
         R::FString fs{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
-        { ParamFrame cf(g_npConvFn); cf.SetRaw(L"inString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);  // param is 'inString' (lowercase i)
+        { ParamFrame cf(g_npConvFn); cf.SetRaw(L"inString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);  // 'inString' (lowercase i)
           cf.GetRaw(L"ReturnValue", ftext, sizeof(ftext)); }
-        if (widget && g_npSetTextFn) { ParamFrame f(g_npSetTextFn); f.SetRaw(L"InText", ftext, sizeof(ftext)); Call(widget, f); }
-        if (textBlock && g_npTbSetTextFn) { ParamFrame f(g_npTbSetTextFn); f.SetRaw(L"InText", ftext, sizeof(ftext)); Call(textBlock, f); }
+        ParamFrame tf(g_npTbSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(txt, tf);
     }
-    // FSlateColor (0x28): SpecifiedColor{1,1,1,1} @0x00, ColorUseRule=UseColor_Specified(0) @0x10.
-    if (textBlock && g_npTbSetColorFn) {
-        uint8_t slate[0x28] = {};
-        FLinearColor c{1.f, 1.f, 1.f, opacity};  // TRANSLUCENT white text (alpha = opacity, ~0.6)
-        *reinterpret_cast<FLinearColor*>(slate) = c;  // slate[0x10]=ColorUseRule=0 already
-        ParamFrame f(g_npTbSetColorFn); f.SetRaw(L"InColorAndOpacity", slate, sizeof(slate)); Call(textBlock, f);
-    }
-    // Centre the text horizontally so it sits on top of the head (not left-aligned).
-    if (textBlock && g_npTbJustifyFn) { ParamFrame f(g_npTbJustifyFn); f.Set<uint8_t>(L"InJustification", 1 /*Center*/); Call(textBlock, f); }
-    // Force visible (reused help-text widgets default Collapsed). ESlateVisibility::Visible=0.
-    if (widget && g_npSetVisFn) { ParamFrame f(g_npSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(widget, f); }
-    if (textBlock && g_npSetVisFn) { ParamFrame f(g_npSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(textBlock, f); }
-    // A runtime-added WidgetComponent may not auto-draw its render target -> force it.
+
+    // 5) Attach our widget (re-parents + rebuilds the slate/render-target), then make
+    // the runtime-added component tick so it actually draws its RT.
+    if (g_npSetWidgetFn) { ParamFrame f(g_npSetWidgetFn); f.Set<void*>(L"Widget", root); Call(comp, f); }
+    if (g_npTickFn) { ParamFrame f(g_npTickFn); f.Set<bool>(L"bEnabled", true); Call(comp, f); }
+    if (g_npRenderUpdateFn) { ParamFrame f(g_npRenderUpdateFn); Call(comp, f); }
     if (g_npRedrawFn) { ParamFrame f(g_npRedrawFn); Call(comp, f); }
 
-    UE_LOGI("engine: SpawnNameplateWidget '%ls' actor=%p comp=%p widget=%p opacity=%.2f at (%.0f,%.0f,%.0f)",
-            text, actor, comp, widget, opacity, location.X, location.Y, location.Z);
+    UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p txt=%p font=%p at (%.0f,%.0f,%.0f)",
+            text, actor, comp, root, txt, g_npFont, location.X, location.Y, location.Z);
     return actor;
+}
+
+namespace {
+void* g_numBonesFn = nullptr, *g_boneNameFn = nullptr, *g_socketLocFn = nullptr;
+uint8_t g_headBone[8] = {};       // cached FName of the head bone (ComparisonIndex,Number)
+bool g_headBoneResolved = false;
+bool ResolveBoneFns() {
+    if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass)) {
+        if (!g_numBonesFn) g_numBonesFn = R::FindFunction(sk, P::name::GetNumBonesFn);
+        if (!g_boneNameFn) g_boneNameFn = R::FindFunction(sk, P::name::GetBoneNameFn);
+    }
+    if (void* sc = R::FindClass(P::name::SceneComponentClass)) {
+        if (!g_socketLocFn) g_socketLocFn = R::FindFunction(sc, P::name::GetSocketLocationFn);
+    }
+    return g_numBonesFn && g_boneNameFn && g_socketLocFn;
+}
+}  // namespace
+
+bool GetHeadWorldLocation(void* skelMeshComp, FVector& out) {
+    if (!skelMeshComp || !ResolveBoneFns()) return false;
+    if (!g_headBoneResolved) {
+        // Enumerate bones ONCE; cache the head bone's FName (the player skin rides the
+        // kerfurOmega skeleton -- bone names are stable across instances).
+        int32_t n = 0;
+        { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+        for (int32_t i = 0; i < n; ++i) {
+            ParamFrame f(g_boneNameFn); f.Set<int32_t>(L"BoneIndex", i);
+            if (!Call(skelMeshComp, f)) break;
+            uint8_t name[8] = {};
+            f.GetRaw(L"ReturnValue", name, sizeof(name));
+            const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
+            if (s == L"head" || s == L"Head") {
+                std::memcpy(g_headBone, name, sizeof(g_headBone));
+                UE_LOGI("engine: nameplate head bone = '%ls' (index %d/%d)", s.c_str(), i, n);
+                break;
+            }
+        }
+        g_headBoneResolved = true;  // give up after one pass; zero FName ("None") -> actor loc fallback
+    }
+    ParamFrame f(g_socketLocFn);
+    f.SetRaw(L"InSocketName", g_headBone, sizeof(g_headBone));
+    if (!Call(skelMeshComp, f)) return false;
+    out = f.Get<FVector>(L"ReturnValue");
+    return true;
 }
 
 namespace {

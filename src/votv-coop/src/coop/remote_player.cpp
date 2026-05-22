@@ -92,8 +92,19 @@ ue_wrap::FVector RemotePlayer::GetLocation() const {
 }
 
 ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
+    if (!valid()) return {};
+    // Anchor to the actual head BONE (the skeletal mesh renders offset from the actor
+    // origin, so origin+Z sits to the side of the visible head). Falls back to the
+    // actor location + a height offset if the bone can't be resolved.
+    if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
+        ue_wrap::FVector head;
+        if (E::GetHeadWorldLocation(comp, head)) {
+            head.Z += 18.f;  // float just above the crown
+            return head;
+        }
+    }
     ue_wrap::FVector p = GetLocation();
-    p.Z += 200.f;  // ~head height + a little, so the tag floats just above
+    p.Z += 200.f;
     return p;
 }
 

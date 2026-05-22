@@ -29,8 +29,6 @@ struct Entry {
 std::vector<Entry> g_entries;
 void* g_viewer = nullptr;  // cached local player (avoid a GUObjectArray walk every Update)
 
-constexpr float kHeadTextZ = 188.f;  // just above the head (actor origin = feet)
-
 }  // namespace
 
 void Register(RemotePlayer* player) {
@@ -39,12 +37,10 @@ void Register(RemotePlayer* player) {
                     [&](const Entry& e) { return e.player == player; }))
         return;
 
-    ue_wrap::FVector at = player->GetLocation();
-    at.Z += kHeadTextZ;
-    // Translucent nameplate via a world-space UWidgetComponent (0.6 = ~60% opacity).
-    // A TextRender can't be translucent here (UnlitText is Masked). The component
-    // must TICK to draw its render target (root cause of the earlier blank quad).
-    void* label = E::SpawnNameplateWidget(at, player->GetNickname().c_str(), 0.22f);  // 0.22 = more translucent text
+    const ue_wrap::FVector at = player->GetHeadPosition();  // anchored to the head bone
+    // Translucent nameplate via a world-space UWidgetComponent (we build our own
+    // UMG; the text alpha gives the translucency). 0.22 = quite see-through.
+    void* label = E::SpawnNameplateWidget(at, player->GetNickname().c_str(), 0.22f);
     g_entries.push_back({player, label});
     UE_LOGI("nameplate: label '%ls' actor=%p for player %p (now %zu)",
             player->GetNickname().c_str(), label, player, g_entries.size());
@@ -77,13 +73,11 @@ void Update() {
     for (const auto& e : g_entries) {
         if (!e.player || !e.player->valid() || !e.textActor) continue;
         if (!R::IsLive(e.textActor)) continue;  // label destroyed (level change)
-        ue_wrap::FVector at = e.player->GetLocation();
-        at.Z += kHeadTextZ;
+        const ue_wrap::FVector at = e.player->GetHeadPosition();  // head-bone anchored
         E::SetActorLocation(e.textActor, at);
 
-        // Face the viewer. TextRenderComponent draws text readable from the -X
-        // side, so point the actor's +X TOWARD the viewer (yaw of label->viewer)
-        // -- otherwise the glyphs render mirrored (seen from behind).
+        // Face the viewer: point the WidgetComponent quad's +X toward the viewer
+        // (its normal is +X, IDA-confirmed) -- yaw of label->viewer.
         const float dx = viewer.X - at.X;
         const float dy = viewer.Y - at.Y;
         const float yaw = std::atan2(dy, dx) * 57.29578f;

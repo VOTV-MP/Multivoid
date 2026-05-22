@@ -109,6 +109,11 @@ FVector GetComponentForwardVector(void* component);
 // host you position/billboard each frame), or nullptr. Game thread only.
 void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity);
 
+// World location of the skeletal mesh's "head" bone (USceneComponent::GetSocketLocation;
+// the head bone FName is enumerated once + cached). Used to anchor the nameplate to the
+// visible head instead of the actor origin. Returns false if unresolved. Game thread only.
+bool GetHeadWorldLocation(void* skelMeshComp, FVector& out);
+
 // Set a USceneComponent's visibility: SetVisibility(visible, propagate) +
 // SetHiddenInGame(!visible, propagate). visible=true shows a remote pawn's
 // third-person body meshes (an unpossessed pawn never runs the gameplay code

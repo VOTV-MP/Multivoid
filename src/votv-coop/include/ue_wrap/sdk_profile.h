@@ -83,6 +83,15 @@ inline constexpr size_t UWidgetComponent_RenderTarget = 0x0520;                 
 inline constexpr size_t UWidgetComponent_bManuallyRedraw = 0x0490;             // bool (must be 0 to auto-redraw on tick)
 inline constexpr size_t UWidgetComponent_RedrawTime = 0x0494;                  // float (0 = redraw every tick)
 inline constexpr size_t UWidgetComponent_BackgroundColor = 0x04C0;             // FLinearColor (RT clear color)
+// Own-UMG widget tree (built via SpawnObject):
+inline constexpr size_t UUserWidget_WidgetTree = 0x01D8;       // UWidgetTree*
+inline constexpr size_t UWidgetTree_RootWidget = 0x0028;       // UWidget*
+inline constexpr size_t UTextBlock_Text = 0x0128;              // FText
+inline constexpr size_t UTextBlock_ColorAndOpacity = 0x0150;   // FSlateColor {FLinearColor@0, ColorUseRule(uint8)@0x10}
+inline constexpr size_t UTextBlock_Font = 0x0188;              // FSlateFontInfo {FontObject@0, Size(int32)@0x48}
+inline constexpr size_t UTextLayoutWidget_Justification = 0x010B;  // TEnumAsByte<ETextJustify> (1=Center)
+inline constexpr size_t FSlateFontInfo_Size = 0x48;            // within UTextBlock_Font
+inline constexpr size_t FSlateColor_ColorUseRule = 0x10;       // within UTextBlock_ColorAndOpacity (0=UseColor_Specified)
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
@@ -301,6 +310,20 @@ inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                    
 inline constexpr const wchar_t* Widget3DTranslucentMatName = L"Widget3DPassThrough_Translucent";
 inline constexpr const wchar_t* Widget3DTranslucentOneSidedMatName = L"Widget3DPassThrough_Translucent_OneSided";
 inline constexpr const wchar_t* MaterialInstanceConstantClass = L"MaterialInstanceConstant";  // class of those MICs
+
+// RULE-1 nameplate: build our OWN UMG (no cooked-widget reuse). NewObject is the
+// reflected UFunction UGameplayStatics::SpawnObject(objectClass, Outer). We make a
+// UUserWidget -> UWidgetTree -> UTextBlock (root), then UWidgetComponent::SetWidget.
+inline constexpr const wchar_t* SpawnObjectFn = L"SpawnObject";        // on GameplayStatics: (objectClass, Outer)->UObject*
+inline constexpr const wchar_t* UserWidgetClass = L"UserWidget";
+inline constexpr const wchar_t* WidgetTreeClass = L"WidgetTree";
+inline constexpr const wchar_t* SetWidgetFn = L"SetWidget";            // UWidgetComponent::SetWidget(UUserWidget*)
+inline constexpr const wchar_t* FontName = L"Roboto";                  // /Engine/EngineFonts/Roboto.Roboto
+inline constexpr const wchar_t* FontClassName = L"Font";
+// Head-bone anchoring (USceneComponent::GetSocketLocation world; enumerate bones to find head).
+inline constexpr const wchar_t* GetSocketLocationFn = L"GetSocketLocation";  // (FName)->FVector (world)
+inline constexpr const wchar_t* GetNumBonesFn = L"GetNumBones";
+inline constexpr const wchar_t* GetBoneNameFn = L"GetBoneName";              // (int32)->FName
 }  // namespace name
 
 }  // namespace ue_wrap::profile
