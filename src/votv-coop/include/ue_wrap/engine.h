@@ -30,9 +30,31 @@ void* SpawnActor(void* actorClass, const FVector& location);
 // AActor::K2_GetActorLocation on `actor`. Returns (0,0,0) if it cannot be called.
 FVector GetActorLocation(void* actor);
 
+// AActor::GetActorForwardVector on `actor` (unit facing vector). (0,0,0) on
+// failure. Used to place something in front of the actor.
+FVector GetActorForwardVector(void* actor);
+
 // AActor::K2_SetActorLocation on `actor` (teleport: bSweep=false, bTeleport=true
 // -- snap to the absolute pose, the network pose-apply path). Returns the
 // engine's success bool. Game thread only.
 bool SetActorLocation(void* actor, const FVector& location);
+
+// USceneComponent world location (K2_GetComponentLocation) and forward vector
+// (GetForwardVector) -- e.g. the Camera component's eye point + look direction,
+// to place something exactly in the player's view. (0,0,0) on failure.
+FVector GetComponentLocation(void* component);
+FVector GetComponentForwardVector(void* component);
+
+// Spawn a 3D world-space text marker (ATextRenderActor) at `location` showing
+// `text`, sized `worldSize`. Renders as actual geometry, so it works in shipping
+// builds (debug-draw text is compiled out). Returns the marker actor, or nullptr.
+// Game thread only.
+void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize = 80.f);
+
+// Force a USceneComponent visible: SetVisibility(true, propagate) +
+// SetHiddenInGame(false, propagate). Used to show a remote pawn's third-person
+// body meshes (an unpossessed pawn never runs the gameplay code that unhides
+// them). Game thread only.
+bool SetComponentVisible(void* component);
 
 }  // namespace ue_wrap::engine

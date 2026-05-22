@@ -51,4 +51,17 @@ ue_wrap::FVector RemotePlayer::GetLocation() const {
     return E::GetActorLocation(actor_);
 }
 
+int RemotePlayer::ShowBody() {
+    if (!actor_) return 0;
+    int shown = 0;
+    for (const auto& comp : R::ChildObjectsOf(actor_)) {
+        if (comp.className != L"SkeletalMeshComponent") continue;
+        if (E::SetComponentVisible(comp.object)) {
+            UE_LOGI("RemotePlayer::ShowBody: shown %ls", comp.name.c_str());
+            ++shown;
+        }
+    }
+    return shown;
+}
+
 }  // namespace coop

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::engine {
 namespace {
@@ -95,6 +96,7 @@ void* g_finishSpawnFn = nullptr;
 void* g_actorClass = nullptr;  // the Actor UClass (owns K2_Get/SetActorLocation)
 void* g_getLocFn = nullptr;
 void* g_setLocFn = nullptr;
+void* g_getFwdFn = nullptr;
 
 // ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
 // (the orphan must exist even if it overlaps geometry).
@@ -115,6 +117,7 @@ bool ResolveActorFns() {
     if (g_actorClass) {
         if (!g_getLocFn) g_getLocFn = R::FindFunction(g_actorClass, P::name::GetActorLocationFn);
         if (!g_setLocFn) g_setLocFn = R::FindFunction(g_actorClass, P::name::SetActorLocationFn);
+        if (!g_getFwdFn) g_getFwdFn = R::FindFunction(g_actorClass, P::name::GetActorForwardVectorFn);
     }
     return g_actorClass && g_getLocFn && g_setLocFn;
 }
@@ -171,6 +174,131 @@ FVector GetActorLocation(void* actor) {
     if (!Call(actor, f)) return loc;
     f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
     return loc;
+}
+
+namespace {
+void* g_sceneCompClass = nullptr;
+void* g_setVisFn = nullptr;
+void* g_setHiddenFn = nullptr;
+void* g_getCompLocFn = nullptr;
+void* g_getCompFwdFn = nullptr;
+void* SceneCompClass() {
+    if (!g_sceneCompClass) g_sceneCompClass = R::FindClass(P::name::SceneComponentClass);
+    return g_sceneCompClass;
+}
+bool ResolveCompVis() {
+    if (SceneCompClass()) {
+        if (!g_setVisFn) g_setVisFn = R::FindFunction(g_sceneCompClass, P::name::SetVisibilityFn);
+        if (!g_setHiddenFn) g_setHiddenFn = R::FindFunction(g_sceneCompClass, P::name::SetHiddenInGameFn);
+    }
+    return g_sceneCompClass && g_setVisFn && g_setHiddenFn;
+}
+}  // namespace
+
+FVector GetComponentLocation(void* component) {
+    FVector loc;
+    if (!component || !SceneCompClass()) return loc;
+    if (!g_getCompLocFn) g_getCompLocFn = R::FindFunction(g_sceneCompClass, P::name::GetComponentLocationFn);
+    if (!g_getCompLocFn) return loc;
+    ParamFrame f(g_getCompLocFn);
+    if (!Call(component, f)) return loc;
+    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
+    return loc;
+}
+
+FVector GetComponentForwardVector(void* component) {
+    FVector fwd;
+    if (!component || !SceneCompClass()) return fwd;
+    if (!g_getCompFwdFn) g_getCompFwdFn = R::FindFunction(g_sceneCompClass, P::name::GetComponentForwardFn);
+    if (!g_getCompFwdFn) return fwd;
+    ParamFrame f(g_getCompFwdFn);
+    if (!Call(component, f)) return fwd;
+    f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
+    return fwd;
+}
+
+bool SetComponentVisible(void* component) {
+    if (!component || !ResolveCompVis()) {
+        UE_LOGE("engine: SetComponentVisible unresolved (cls=%p setVis=%p setHidden=%p)",
+                g_sceneCompClass, g_setVisFn, g_setHiddenFn);
+        return false;
+    }
+    {
+        ParamFrame f(g_setVisFn);
+        f.Set<bool>(L"bNewVisibility", true);
+        f.Set<bool>(L"bPropagateToChildren", true);
+        Call(component, f);
+    }
+    {
+        ParamFrame f(g_setHiddenFn);
+        f.Set<bool>(L"NewHidden", false);  // UE4.27 param is "NewHidden" (no b prefix)
+        f.Set<bool>(L"bPropagateToChildren", true);
+        Call(component, f);
+    }
+    return true;
+}
+
+void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldSize) {
+    void* ktlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
+    void* convFn = ktlCdo ? R::FindFunction(R::ClassOf(ktlCdo), P::name::ConvStringToTextFn) : nullptr;
+    void* traClass = R::FindClass(P::name::TextRenderActorClass);
+    void* trcClass = R::FindClass(P::name::TextRenderComponentClass);
+    void* setTextFn = trcClass ? R::FindFunction(trcClass, P::name::SetTextFn) : nullptr;
+    void* setSizeFn = trcClass ? R::FindFunction(trcClass, P::name::SetWorldSizeFn) : nullptr;
+    if (!convFn || !traClass || !setTextFn) {
+        UE_LOGE("engine: SpawnTextMarker unresolved (conv=%p tra=%p trc=%p setText=%p)",
+                convFn, traClass, trcClass, setTextFn);
+        return nullptr;
+    }
+
+    // 1) FString -> FText (UKismetTextLibrary::Conv_StringToText). Param names
+    //    confirmed by a runtime FProperty dump: input "inString" (FString, 16),
+    //    ReturnValue is FText (24). SetText's Value param is 16 (the TSharedRef
+    //    core of the FText); we copy that many bytes across.
+    std::wstring sbuf(text);
+    R::FString fs{sbuf.data(), static_cast<int32_t>(sbuf.size()) + 1,
+                  static_cast<int32_t>(sbuf.size()) + 1};
+    std::vector<uint8_t> ftext(24, 0);
+    {
+        ParamFrame conv(convFn);
+        conv.SetRaw(L"inString", &fs, sizeof(fs));
+        Call(ktlCdo, conv);
+        conv.GetRaw(L"ReturnValue", ftext.data(), 24);
+    }
+
+    // 2) Spawn the TextRenderActor and find its TextRenderComponent.
+    void* actor = SpawnActor(traClass, location);
+    if (!actor) return nullptr;
+    void* trc = nullptr;
+    for (const auto& c : R::ChildObjectsOf(actor)) {
+        if (c.className == P::name::TextRenderComponentClass) { trc = c.object; break; }
+    }
+    if (!trc) { UE_LOGW("engine: TextMarker has no TextRenderComponent"); return actor; }
+
+    // 3) SetText(FText Value, 16) + SetWorldSize(float Value) + ensure visible.
+    {
+        ParamFrame f(setTextFn);
+        f.SetRaw(L"Value", ftext.data(), 16);
+        Call(trc, f);
+    }
+    if (setSizeFn) {
+        ParamFrame f(setSizeFn);
+        f.Set<float>(L"Value", worldSize);
+        Call(trc, f);
+    }
+    SetComponentVisible(trc);
+    UE_LOGI("engine: SpawnTextMarker '%ls' actor=%p at (%.0f,%.0f,%.0f)",
+            text, actor, location.X, location.Y, location.Z);
+    return actor;
+}
+
+FVector GetActorForwardVector(void* actor) {
+    FVector fwd;
+    if (!actor || !ResolveActorFns() || !g_getFwdFn) return fwd;
+    ParamFrame f(g_getFwdFn);
+    if (!Call(actor, f)) return fwd;
+    f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
+    return fwd;
 }
 
 bool SetActorLocation(void* actor, const FVector& location) {

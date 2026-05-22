@@ -29,6 +29,12 @@ public:
     // Apply an absolute pose (teleport, no sweep) -- the network snapshot path.
     bool SetLocation(const ue_wrap::FVector& location);
 
+    // Force the pawn's third-person body meshes visible. An unpossessed remote
+    // pawn never runs the gameplay code that unhides them, so a freshly spawned
+    // orphan's body can be hidden; this makes the remote player see it. Returns
+    // the number of SkeletalMeshComponents shown. Game thread only.
+    int ShowBody();
+
     // Current engine-reported location (for verification / interpolation base).
     ue_wrap::FVector GetLocation() const;
 

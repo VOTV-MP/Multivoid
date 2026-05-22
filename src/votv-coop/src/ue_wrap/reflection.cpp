@@ -167,6 +167,35 @@ void* FindClassDefaultObject(const wchar_t* className) {
     return FindObject(defName.c_str());
 }
 
+std::vector<ObjectRef> ChildObjectsOf(void* outer) {
+    std::vector<ObjectRef> out;
+    if (!outer) return out;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj || OuterOf(obj) != outer) continue;
+        out.push_back({ToString(NameOf(obj)), ClassNameOf(obj), obj});
+    }
+    return out;
+}
+
+void DebugProbeSuperStructOffset() {
+    void* actorCls = FindClass(L"Actor");
+    void* objectCls = FindClass(L"Object");
+    void* pawnCls = FindClass(L"Pawn");
+    UE_LOGI("superstruct probe: Actor=%p Object=%p Pawn=%p", actorCls, objectCls, pawnCls);
+    if (!actorCls || !objectCls) return;
+    auto* base = reinterpret_cast<uint8_t*>(actorCls);
+    for (size_t off = 0x28; off <= 0x80; off += 8) {
+        void* q = *reinterpret_cast<void**>(base + off);
+        if (q == objectCls) {
+            UE_LOGI("  Actor[0x%02zx] == Object class -> SuperStruct offset = 0x%02zx", off, off);
+        } else if (q == pawnCls && pawnCls) {
+            UE_LOGI("  Actor[0x%02zx] == Pawn class (unexpected)", off);
+        }
+    }
+}
+
 int32_t CountObjectsByClass(const wchar_t* className) {
     if (!className) return 0;
     int32_t count = 0;

@@ -82,6 +82,17 @@ void Report(const char* label) {
 // coop::RemotePlayer spawned + pose-driven via our own CallFunction path.
 coop::RemotePlayer g_orphan;
 
+// Runs on the game thread: log an actor's default subobjects (its components),
+// so we can find the mesh component(s) that carry the player's visible body.
+void DumpComponents(const char* label, void* actor) {
+    if (!actor) { UE_LOGW("components [%s]: null actor", label); return; }
+    auto kids = R::ChildObjectsOf(actor);
+    UE_LOGI("components [%s] of %p: %zu", label, actor, kids.size());
+    for (const auto& k : kids) {
+        UE_LOGI("    %-34ls : %ls", k.className.c_str(), k.name.c_str());
+    }
+}
+
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
 // Background timeline. Sleeps for pacing; every engine touch is posted to the
@@ -105,7 +116,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         });
     }
 
-    const bool wantGameplay = (scenario == "newgame" || scenario == "orphan");
+    const bool wantGameplay = (scenario == "newgame" || scenario == "orphan" ||
+                               scenario == "skin" || scenario == "show" ||
+                               scenario == "play");
     if (wantGameplay) {
         ::Sleep(4000);
         Post([] {
@@ -157,6 +170,63 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(5000);
         Post([] { Report("post-drive soak"); });
         UE_LOGI("harness: ==== AUTONOMOUS ORPHAN TIMELINE DONE ====");
+    } else if (scenario == "play") {
+        // Hands-on test: spawn the orphan beside the player and force its body
+        // visible, then leave the player in control to walk around and look at
+        // it. Uses the proven spawn path (no camera calls).
+        ::Sleep(2000);
+        Post([] {
+            if (!g_orphan.Spawn()) return;
+            const int shown = g_orphan.ShowBody();
+            const ue_wrap::FVector p = g_orphan.GetLocation();
+            // Floating 3D label above the orphan so it's easy to spot.
+            ue_wrap::FVector above{p.X, p.Y, p.Z + 130.f};
+            ue_wrap::engine::SpawnTextMarker(above, L"P2", 100.f);
+            UE_LOGI("play: orphan spawned at (%.0f,%.0f,%.0f), body meshes shown=%d, "
+                    "'P2' label above -- turn around / walk ~2m to see the 2nd player",
+                    p.X, p.Y, p.Z, shown);
+        });
+        UE_LOGI("harness: ==== PLAY READY (you have control) ====");
+    } else if (scenario == "show") {
+        // Spawn the orphan directly in front of the local player's camera and
+        // screenshot it, to visually confirm the remote body renders (the skin
+        // comes from the class defaults -- mesh_playerVisible/playermodel).
+        ::Sleep(2000);
+        Post([] {
+            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+            if (!local) { UE_LOGW("show: no local player"); return; }
+            const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
+            const ue_wrap::FVector fwd = ue_wrap::engine::GetActorForwardVector(local);
+            UE_LOGI("show: local at (%.0f,%.0f,%.0f) fwd=(%.2f,%.2f,%.2f)",
+                    loc.X, loc.Y, loc.Z, fwd.X, fwd.Y, fwd.Z);
+            if (!g_orphan.Spawn()) return;
+            const int shown = g_orphan.ShowBody();  // force the body meshes visible
+            // 300 units along the pawn's forward, same height -> in the forward view.
+            ue_wrap::FVector inFront{loc.X + fwd.X * 300.f, loc.Y + fwd.Y * 300.f, loc.Z};
+            g_orphan.SetLocation(inFront);
+            ue_wrap::FVector above{inFront.X, inFront.Y, inFront.Z + 130.f};
+            ue_wrap::engine::SpawnTextMarker(above, L"P2", 100.f);
+            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), body shown=%d, label above",
+                    inFront.X, inFront.Y, inFront.Z, shown);
+        });
+        ::Sleep(3000);
+        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
+        ::Sleep(3000);
+        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
+        UE_LOGI("harness: ==== SHOW DONE ====");
+    } else if (scenario == "skin") {
+        // Investigate the player's visible-body setup: enumerate components of
+        // the local pawn and a spawned orphan, and confirm SuperStruct offset.
+        ::Sleep(2000);
+        Post([] {
+            R::DebugProbeSuperStructOffset();
+            void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+            DumpComponents("local mainPlayer_C", local);
+            g_orphan.Spawn();
+        });
+        ::Sleep(2000);
+        Post([] { DumpComponents("orphan mainPlayer_C", g_orphan.actor()); });
+        UE_LOGI("harness: ==== SKIN INSPECT DONE ====");
     } else if (scenario == "newgame") {
         ::Sleep(5000);
         Post([] { Report("post-shot"); });

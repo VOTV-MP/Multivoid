@@ -26,6 +26,18 @@ struct FTransform {
 };
 static_assert(sizeof(FTransform) == 48, "FTransform layout");
 
+// FRotator -- 3 floats (Pitch, Yaw, Roll), degrees. 12 bytes.
+struct FRotator {
+    float Pitch = 0.f, Yaw = 0.f, Roll = 0.f;
+};
+static_assert(sizeof(FRotator) == 12, "FRotator layout");
+
+// FColor -- BGRA byte order (UE convention), 4 bytes.
+struct FColor {
+    uint8_t B = 0, G = 0, R = 0, A = 255;
+};
+static_assert(sizeof(FColor) == 4, "FColor layout");
+
 inline FTransform MakeTransform(const FVector& location) {
     FTransform t;
     t.TX = location.X;

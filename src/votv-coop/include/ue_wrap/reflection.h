@@ -86,6 +86,22 @@ void* FindClassDefaultObject(const wchar_t* className);
 // detect spawn/clobber (e.g. mainPlayer_C count 1 -> 2 after an orphan spawn).
 int32_t CountObjectsByClass(const wchar_t* className);
 
+// A discovered object (used by the component/child enumerator).
+struct ObjectRef {
+    std::wstring name;
+    std::wstring className;
+    void* object;
+};
+
+// All UObjects whose Outer == `outer` (an actor's default subobjects: its
+// components live here). Linear walk; one-time inspection use.
+std::vector<ObjectRef> ChildObjectsOf(void* outer);
+
+// DEBUG: probe UStruct::SuperStruct's byte offset by scanning the Actor class
+// for the qword that equals the Object class pointer (Actor's super). Logs the
+// match. Pointer compares only -- safe even if our guess is wrong.
+void DebugProbeSuperStructOffset();
+
 // ---- UFunction parameter reflection --------------------------------------
 // To call a UFunction via ProcessEvent we must hand it a parameter frame with
 // each argument at the exact byte offset the engine expects. Rather than

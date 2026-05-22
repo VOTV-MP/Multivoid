@@ -154,6 +154,17 @@ have it tick without crashing for ≥60 s (target several minutes).
       tracks the set position exactly, soak stable, no crash. Teleport pose-apply
       (bSweep=false) is the network snapshot path. See
       `research/findings/remote-player-spawn-cpp-2026-05-22.md`.
+- ◐ Remote player VISIBILITY (so players see each other). Orphan has the full
+      body meshes from class defaults (playermodel/mesh_playerVisible/arms/
+      CharacterMesh0); `RemotePlayer::ShowBody()` force-shows them
+      (SetVisibility+SetHiddenInGame) — works. 3D `P2` text marker
+      (`engine::SpawnTextMarker`, ATextRenderActor — shipping-safe) implemented.
+      NOT yet visually confirmed: body in-view needs camera-accurate placement
+      (camera look dir != pawn forward); marker needs render-verify + bright
+      color + face-camera. `tools/play-coop.bat` for hands-on testing. See
+      `research/findings/remote-player-visible-body-and-marker-2026-05-22.md`.
+      Also added: generic UProperty get/set still TODO; SuperStruct@0x40 mapped;
+      `reflection::ChildObjectsOf` (component enum).
 
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN

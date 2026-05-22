@@ -86,6 +86,11 @@ inline constexpr size_t FProperty_ElementSize = 0x38;     // int32
 inline constexpr size_t FProperty_ArrayDim = 0x3C;        // int32
 inline constexpr size_t FProperty_PropertyFlags = 0x40;   // uint64
 inline constexpr size_t FProperty_Offset_Internal = 0x4C; // int32 (byte offset in the frame)
+
+// UStruct::SuperStruct -- the parent class/struct, for walking the inheritance
+// chain when resolving an inherited UProperty/UFunction. CONFIRMED 0x40 at
+// runtime (the Actor class's qword at 0x40 == the Object class pointer).
+inline constexpr size_t UStruct_SuperStruct = 0x40;
 }  // namespace off
 
 // EPropertyFlags bits we test (engine-stable).
@@ -119,6 +124,27 @@ inline constexpr const wchar_t* BeginDeferredSpawnFn = L"BeginDeferredActorSpawn
 inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetActorLocation
 inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
+inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
+
+// Component visibility (USceneComponent BlueprintCallable) -- to force the
+// third-person body meshes visible on an unpossessed remote pawn.
+inline constexpr const wchar_t* SceneComponentClass = L"SceneComponent";
+inline constexpr const wchar_t* SetVisibilityFn = L"SetVisibility";
+inline constexpr const wchar_t* SetHiddenInGameFn = L"SetHiddenInGame";
+inline constexpr const wchar_t* GetComponentLocationFn = L"K2_GetComponentLocation";
+inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
+inline constexpr const wchar_t* CameraComponentClass = L"CameraComponent";
+
+// 3D world-space text marker (renders as geometry -> works in shipping, unlike
+// stripped debug-draw). ATextRenderActor + UTextRenderComponent; FText built via
+// UKismetTextLibrary::Conv_StringToText.
+inline constexpr const wchar_t* TextRenderActorClass = L"TextRenderActor";
+inline constexpr const wchar_t* TextRenderComponentClass = L"TextRenderComponent";
+inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
+inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";
+inline constexpr const wchar_t* SetTextFn = L"SetText";
+inline constexpr const wchar_t* SetWorldSizeFn = L"SetWorldSize";
+inline constexpr const wchar_t* SetTextRenderColorFn = L"SetTextRenderColor";
 }  // namespace name
 
 }  // namespace ue_wrap::profile
