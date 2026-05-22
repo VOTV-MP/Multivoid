@@ -69,7 +69,31 @@ inline constexpr size_t Chunk_NumElements = 0x14;
 inline constexpr size_t Chunk_NumChunks = 0x1C;
 inline constexpr int32_t ElemsPerChunk = 64 * 1024;
 inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cluster, serial}
+
+// UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
+// Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
+// it allocs PropertiesSize, memcpy's ParmsSize from the caller params, walks the
+// param chain from ChildProperties via FField::Next, and reads each property's
+// flags/size/offset. See research/findings/uproperty-param-marshaling-*.
+inline constexpr size_t UStruct_ChildProperties = 0x50;   // FField* (params first, then locals)
+inline constexpr size_t UStruct_PropertiesSize = 0x58;    // int32 (full frame size)
+inline constexpr size_t UFunction_ParmsSize = 0xB6;       // uint16 (param-region size)
+inline constexpr size_t UFunction_ReturnValueOffset = 0xB8;  // uint16 (0xFFFF = none)
+
+inline constexpr size_t FField_Next = 0x20;               // FField*
+inline constexpr size_t FField_NamePrivate = 0x28;        // FName
+inline constexpr size_t FProperty_ElementSize = 0x38;     // int32
+inline constexpr size_t FProperty_ArrayDim = 0x3C;        // int32
+inline constexpr size_t FProperty_PropertyFlags = 0x40;   // uint64
+inline constexpr size_t FProperty_Offset_Internal = 0x4C; // int32 (byte offset in the frame)
 }  // namespace off
+
+// EPropertyFlags bits we test (engine-stable).
+namespace cpf {
+inline constexpr uint64_t Parm = 0x80;
+inline constexpr uint64_t OutParm = 0x100;
+inline constexpr uint64_t ReturnParm = 0x400;
+}  // namespace cpf
 
 // ---- content names (change with game content, not the engine) ------------
 namespace name {
@@ -87,6 +111,14 @@ inline constexpr const wchar_t* GameplayLevel = L"untitled_1";
 inline constexpr const wchar_t* KismetSystemLibraryClass = L"KismetSystemLibrary";
 inline constexpr const wchar_t* ExecuteConsoleCommandFn = L"ExecuteConsoleCommand";
 inline constexpr const wchar_t* GameInstanceClass = L"mainGameInstance_C";
+
+// Actor spawning (the BlueprintCallable deferred-spawn pair the K2
+// SpawnActorFromClass node uses) + transform get/set.
+inline constexpr const wchar_t* GameplayStaticsClass = L"GameplayStatics";
+inline constexpr const wchar_t* BeginDeferredSpawnFn = L"BeginDeferredActorSpawnFromClass";
+inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
+inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetActorLocation
+inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
 }  // namespace name
 
 }  // namespace ue_wrap::profile

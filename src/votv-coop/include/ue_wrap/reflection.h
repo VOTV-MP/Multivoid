@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::reflection {
 
@@ -80,6 +81,35 @@ void* FindObjectByClass(const wchar_t* className);
 // The Class Default Object for a class given by name (the "Default__<Class>"
 // object). Static BlueprintCallable UFunctions are dispatched on the CDO.
 void* FindClassDefaultObject(const wchar_t* className);
+
+// Count live INSTANCES whose class name == `className` (skips the CDO). Used to
+// detect spawn/clobber (e.g. mainPlayer_C count 1 -> 2 after an orphan spawn).
+int32_t CountObjectsByClass(const wchar_t* className);
+
+// ---- UFunction parameter reflection --------------------------------------
+// To call a UFunction via ProcessEvent we must hand it a parameter frame with
+// each argument at the exact byte offset the engine expects. Rather than
+// hardcode those offsets (fragile across builds), we read them from the live
+// UFunction's FProperty chain -- correct-by-construction and version-portable.
+
+// One parameter of a UFunction (a CPF_Parm FProperty), in declaration order.
+struct ParamInfo {
+    std::wstring name;
+    int32_t offset;   // byte offset within the parameter frame (Offset_Internal)
+    int32_t size;     // ElementSize * ArrayDim
+    uint64_t flags;   // EPropertyFlags (test cpf::Parm / OutParm / ReturnParm)
+};
+
+// All CPF_Parm properties of `function` (a UFunction*), in declaration order
+// (includes the return value, which carries CPF_ReturnParm).
+std::vector<ParamInfo> FunctionParams(void* function);
+
+// Size in bytes to allocate for the parameter frame (UFunction::PropertiesSize,
+// >= ParmsSize). 0 if `function` is null.
+int32_t FunctionFrameSize(void* function);
+
+// Byte offset of parameter `paramName` in the frame, or -1 if not found.
+int32_t FindParamOffset(void* function, const wchar_t* paramName);
 
 // Convenience: the object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);

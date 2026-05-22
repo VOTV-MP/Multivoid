@@ -167,6 +167,60 @@ void* FindClassDefaultObject(const wchar_t* className) {
     return FindObject(defName.c_str());
 }
 
+int32_t CountObjectsByClass(const wchar_t* className) {
+    if (!className) return 0;
+    int32_t count = 0;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (ClassNameOf(obj) != className) continue;
+        if (ToString(NameOf(obj)).rfind(L"Default__", 0) == 0) continue;  // skip CDO
+        ++count;
+    }
+    return count;
+}
+
+// FField (not UObject) carries its name at a different offset than UObject.
+static const FName& FieldName(void* field) {
+    return *reinterpret_cast<FName*>(reinterpret_cast<uint8_t*>(field) + O::FField_NamePrivate);
+}
+
+std::vector<ParamInfo> FunctionParams(void* function) {
+    std::vector<ParamInfo> params;
+    if (!function) return params;
+    auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(function) +
+                                               O::UStruct_ChildProperties);
+    while (field) {
+        const uint64_t flags = *reinterpret_cast<uint64_t*>(field + O::FProperty_PropertyFlags);
+        if (flags & profile::cpf::Parm) {
+            ParamInfo p;
+            p.name = ToString(FieldName(field));
+            p.offset = *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+            p.size = *reinterpret_cast<int32_t*>(field + O::FProperty_ElementSize) *
+                     *reinterpret_cast<int32_t*>(field + O::FProperty_ArrayDim);
+            p.flags = flags;
+            params.push_back(std::move(p));
+        }
+        field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
+    }
+    return params;
+}
+
+int32_t FunctionFrameSize(void* function) {
+    if (!function) return 0;
+    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(function) +
+                                       O::UStruct_PropertiesSize);
+}
+
+int32_t FindParamOffset(void* function, const wchar_t* paramName) {
+    if (!function || !paramName) return -1;
+    for (const ParamInfo& p : FunctionParams(function)) {
+        if (p.name == paramName) return p.offset;
+    }
+    return -1;
+}
+
 namespace {
 
 // Log the running exe's version + size and warn if it differs from the build

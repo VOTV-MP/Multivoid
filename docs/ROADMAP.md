@@ -138,9 +138,22 @@ have it tick without crashing for ≥60 s (target several minutes).
       - ☑ report — NumObjects / mainPlayer_C presence / world name to the log.
       - ☑ scenario timeline (reads `scenario.txt` next to the DLL; bg thread
             posts each engine action to the game thread).
+      - ☑ orphan spawn/drive — now `coop::RemotePlayer` (C++, standalone); see below.
       - ☐ NOT yet ported (Lua harness stays until then): save load (`load:<slot>`),
-            orphan spawn/drive (folds into `coop::RemotePlayer`), widget inspect.
-- ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
+            widget inspect, singleton check. Then delete the Lua harness (RULE No.2).
+- ☑ Generic UFunction param marshaling — read each param's byte offset from the
+      live UFunction's FProperty chain (UE4.27 offsets from the ProcessEvent
+      decompile), not hardcoded. `reflection::FunctionParams`/`FindParamOffset` +
+      `ue_wrap::ParamFrame`. Validated live (K2_SetActorLocation + deferred-spawn
+      param dumps matched UE4.27 exactly). The substrate for all entity/object
+      sync (see `docs/COOP_SCOPE.md`). Still TODO: generic UProperty get/set.
+- ☑ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
+      `SpawnActor` (deferred GameplayStatics pair) + `K2_SetActorLocation`
+      (teleport), all via CallFunction on the game-thread context. Proven live
+      standalone (no UE4SS): 2nd mainPlayer_C spawned, count 1->2, pose-drive
+      tracks the set position exactly, soak stable, no crash. Teleport pose-apply
+      (bSweep=false) is the network snapshot path. See
+      `research/findings/remote-player-spawn-cpp-2026-05-22.md`.
 
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN

@@ -1,9 +1,11 @@
 #include "ue_wrap/engine.h"
 
+#include "ue_wrap/call.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -82,6 +84,103 @@ bool ExecuteConsoleCommand(const wchar_t* command) {
         UE_LOGE("engine: CallFunction failed for console command: %ls", command);
     }
     return ok;
+}
+
+// ---- actor spawning + transform -----------------------------------------
+namespace {
+
+void* g_gsCdo = nullptr;       // Default__GameplayStatics
+void* g_beginSpawnFn = nullptr;
+void* g_finishSpawnFn = nullptr;
+void* g_actorClass = nullptr;  // the Actor UClass (owns K2_Get/SetActorLocation)
+void* g_getLocFn = nullptr;
+void* g_setLocFn = nullptr;
+
+// ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
+// (the orphan must exist even if it overlaps geometry).
+constexpr uint8_t kAlwaysSpawn = 1;
+
+bool ResolveSpawn() {
+    if (!g_gsCdo) g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_gsCdo) {
+        void* cls = R::ClassOf(g_gsCdo);
+        if (cls && !g_beginSpawnFn) g_beginSpawnFn = R::FindFunction(cls, P::name::BeginDeferredSpawnFn);
+        if (cls && !g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(cls, P::name::FinishSpawningActorFn);
+    }
+    return g_gsCdo && g_beginSpawnFn && g_finishSpawnFn;
+}
+
+bool ResolveActorFns() {
+    if (!g_actorClass) g_actorClass = R::FindClass(P::name::ActorClassName);
+    if (g_actorClass) {
+        if (!g_getLocFn) g_getLocFn = R::FindFunction(g_actorClass, P::name::GetActorLocationFn);
+        if (!g_setLocFn) g_setLocFn = R::FindFunction(g_actorClass, P::name::SetActorLocationFn);
+    }
+    return g_actorClass && g_getLocFn && g_setLocFn;
+}
+
+}  // namespace
+
+void* SpawnActor(void* actorClass, const FVector& location) {
+    if (!actorClass) return nullptr;
+    if (!ResolveSpawn()) {
+        UE_LOGE("engine: SpawnActor unresolved (cdo=%p begin=%p finish=%p)",
+                g_gsCdo, g_beginSpawnFn, g_finishSpawnFn);
+        return nullptr;
+    }
+    if (!g_worldContext) g_worldContext = ResolveWorldContext();
+
+    const FTransform xform = MakeTransform(location);
+
+    // 1) BeginDeferredActorSpawnFromClass -> AActor* (uninitialized).
+    ParamFrame begin(g_beginSpawnFn);
+    begin.Set<void*>(L"WorldContextObject", g_worldContext);
+    begin.Set<void*>(L"ActorClass", actorClass);
+    begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+    begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
+    begin.Set<void*>(L"Owner", nullptr);
+    if (!Call(g_gsCdo, begin)) {
+        UE_LOGE("engine: BeginDeferredActorSpawnFromClass call failed");
+        return nullptr;
+    }
+    void* actor = begin.Get<void*>(L"ReturnValue");
+    if (!actor) {
+        UE_LOGE("engine: BeginDeferredActorSpawnFromClass returned null");
+        return nullptr;
+    }
+
+    // 2) FinishSpawningActor(actor, transform) -> runs the actor's construction
+    //    + BeginPlay. Returns the (same) actor.
+    ParamFrame finish(g_finishSpawnFn);
+    finish.Set<void*>(L"Actor", actor);
+    finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+    if (!Call(g_gsCdo, finish)) {
+        UE_LOGE("engine: FinishSpawningActor call failed");
+        return nullptr;
+    }
+    void* finished = finish.Get<void*>(L"ReturnValue");
+    UE_LOGI("engine: SpawnActor -> %p (finished %p) at (%.0f,%.0f,%.0f)",
+            actor, finished, location.X, location.Y, location.Z);
+    return finished ? finished : actor;
+}
+
+FVector GetActorLocation(void* actor) {
+    FVector loc;
+    if (!actor || !ResolveActorFns()) return loc;
+    ParamFrame f(g_getLocFn);
+    if (!Call(actor, f)) return loc;
+    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
+    return loc;
+}
+
+bool SetActorLocation(void* actor, const FVector& location) {
+    if (!actor || !ResolveActorFns()) return false;
+    ParamFrame f(g_setLocFn);
+    f.SetRaw(L"NewLocation", &location, sizeof(location));
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", true);  // snap to the absolute pose (no sweep)
+    if (!Call(actor, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
 }
 
 }  // namespace ue_wrap::engine

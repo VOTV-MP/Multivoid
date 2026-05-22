@@ -1,5 +1,6 @@
 #include "harness/harness.h"
 
+#include "coop/remote_player.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -45,15 +46,41 @@ std::string ReadScenario() {
     return s.empty() ? "newgame" : s;
 }
 
+// Runs on the game thread (posted): dump a UFunction's parameter frame so we can
+// verify the FProperty offsets (names/offsets/sizes) against the known UE4.27
+// signature before we rely on them for marshaling. Temporary validation aid.
+void DumpParams(const wchar_t* className, const wchar_t* funcName) {
+    void* cls = R::FindClass(className);
+    void* fn = cls ? R::FindFunction(cls, funcName) : nullptr;
+    if (!fn) {
+        UE_LOGW("paramdump: %ls::%ls not found (cls=%p)", className, funcName, cls);
+        return;
+    }
+    const int32_t frame = R::FunctionFrameSize(fn);
+    auto params = R::FunctionParams(fn);
+    UE_LOGI("paramdump: %ls::%ls  frameSize=%d  params=%zu", className, funcName,
+            frame, params.size());
+    for (const auto& p : params) {
+        UE_LOGI("    %-28ls off=0x%02x size=%-3d flags=0x%llx%s%s", p.name.c_str(),
+                p.offset, p.size, static_cast<unsigned long long>(p.flags),
+                (p.flags & ue_wrap::profile::cpf::OutParm) ? " OUT" : "",
+                (p.flags & ue_wrap::profile::cpf::ReturnParm) ? " RET" : "");
+    }
+}
+
 // Runs on the game thread (posted): log enough to confirm where we are.
 void Report(const char* label) {
     const int32_t n = R::NumObjects();
-    void* mainPlayer = R::FindObjectByClass(P::name::MainPlayerClass);
+    const int32_t players = R::CountObjectsByClass(P::name::MainPlayerClass);
     void* world = R::FindObjectByClass(P::name::WorldClass);
     std::wstring worldName = world ? R::ToString(R::NameOf(world)) : L"(none)";
-    UE_LOGI("harness report [%s]: NumObjects=%d, mainPlayer_C=%s, world=%ls",
-            label, n, mainPlayer ? "PRESENT" : "absent", worldName.c_str());
+    UE_LOGI("harness report [%s]: NumObjects=%d, mainPlayer_C count=%d, world=%ls",
+            label, n, players, worldName.c_str());
 }
+
+// The C++ orphan (replaces the Lua harness's SpawnOrphan/DriveOrphan): a
+// coop::RemotePlayer spawned + pose-driven via our own CallFunction path.
+coop::RemotePlayer g_orphan;
 
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
@@ -67,8 +94,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
     ::Sleep(8000);  // let the menu settle
     Post([] { Report("menu"); });
+    // Param-offset reflection validator (scenario "paramdump"): logs a UFunction's
+    // FProperty layout (names/offsets/sizes/flags) to check against the known
+    // signature when bringing up a new function or game build.
+    if (scenario == "paramdump") {
+        Post([] {
+            DumpParams(L"Actor", L"K2_SetActorLocation");
+            DumpParams(L"GameplayStatics", L"BeginDeferredActorSpawnFromClass");
+            DumpParams(L"GameplayStatics", L"FinishSpawningActor");
+        });
+    }
 
-    if (scenario == "newgame") {
+    const bool wantGameplay = (scenario == "newgame" || scenario == "orphan");
+    if (wantGameplay) {
         ::Sleep(4000);
         Post([] {
             UE_LOGI("harness: skip-to-gameplay (open %ls)", P::name::GameplayLevel);
@@ -80,7 +118,46 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(25000);  // level load + BeginPlay (mainPlayer_C spawns)
         Post([] { Report("post-load"); });
         Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
+    }
 
+    if (scenario == "orphan") {
+        // C++ port of the Phase 2.1 orphan derisk: spawn a 2nd mainPlayer_C via
+        // our own CallFunction path, confirm the count goes 1->2, pose-drive it
+        // by absolute teleport (the network snapshot path), then soak.
+        ::Sleep(2000);
+        Post([] { Report("pre-spawn"); });
+        Post([] {
+            UE_LOGI("harness: === spawn coop::RemotePlayer (2nd mainPlayer_C) ===");
+            g_orphan.Spawn();
+        });
+        ::Sleep(2000);
+        Post([] { Report("post-spawn"); });
+        Post([] {
+            if (g_orphan.valid()) {
+                ue_wrap::FVector p = g_orphan.GetLocation();
+                UE_LOGI("harness: orphan post-spawn pos=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+            }
+        });
+
+        // Pose-drive: teleport the orphan in +X steps, read back each time.
+        for (int i = 1; i <= 5; ++i) {
+            ::Sleep(3000);
+            Post([i] {
+                if (!g_orphan.valid()) { UE_LOGW("harness: drive %d -- no orphan", i); return; }
+                ue_wrap::FVector p = g_orphan.GetLocation();
+                p.X += 150.f;
+                const bool ok = g_orphan.SetLocation(p);
+                ue_wrap::FVector got = g_orphan.GetLocation();
+                UE_LOGI("harness: drive step %d set X=%.0f ok=%d -> read (%.0f,%.0f,%.0f)",
+                        i, p.X, ok, got.X, got.Y, got.Z);
+            });
+        }
+
+        Post([] { ue_wrap::engine::ExecuteConsoleCommand(L"HighResShot 1920x1080"); });
+        ::Sleep(5000);
+        Post([] { Report("post-drive soak"); });
+        UE_LOGI("harness: ==== AUTONOMOUS ORPHAN TIMELINE DONE ====");
+    } else if (scenario == "newgame") {
         ::Sleep(5000);
         Post([] { Report("post-shot"); });
         UE_LOGI("harness: ==== AUTONOMOUS NEWGAME TIMELINE DONE ====");
