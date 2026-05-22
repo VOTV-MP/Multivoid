@@ -451,6 +451,123 @@ void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSi
 }
 
 namespace {
+// Identity FTransform (0x30): FQuat{0,0,0,1} @0x00, FVector Translation{0} @0x10,
+// FVector Scale3D{1,1,1} @0x20.
+void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
+    std::memset(xform, 0, sizeof(xform));
+    float* f = reinterpret_cast<float*>(xform);
+    f[3] = 1.f;                       // Quat.W
+    f[8] = 1.f; f[9] = 1.f; f[10] = 1.f;  // Scale3D
+}
+
+void* g_npActorClass = nullptr, *g_npCompClass = nullptr, *g_npWidgetClass = nullptr;
+void* g_npAddFn = nullptr, *g_npFinishFn = nullptr, *g_npSpaceFn = nullptr, *g_npDrawFn = nullptr;
+void* g_npTintFn = nullptr, *g_npTwoSidedFn = nullptr, *g_npGetWidgetFn = nullptr, *g_npSetTextFn = nullptr;
+void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
+void* g_npWidgetBaseClass = nullptr, *g_npSetVisFn = nullptr, *g_npRedrawFn = nullptr;
+bool ResolveNameplateFns() {
+    if (!g_npActorClass) g_npActorClass = R::FindClass(P::name::ActorClassName);
+    if (!g_npCompClass) g_npCompClass = R::FindClass(P::name::WidgetComponentClass);
+    if (!g_npWidgetClass) g_npWidgetClass = R::FindClass(P::name::NameplateWidgetClass);
+    if (g_npActorClass && !g_npAddFn) g_npAddFn = R::FindFunction(g_npActorClass, P::name::AddComponentByClassFn);
+    if (g_npActorClass && !g_npFinishFn) g_npFinishFn = R::FindFunction(g_npActorClass, P::name::FinishAddComponentFn);
+    if (g_npCompClass) {
+        if (!g_npSpaceFn) g_npSpaceFn = R::FindFunction(g_npCompClass, P::name::SetWidgetSpaceFn);
+        if (!g_npDrawFn) g_npDrawFn = R::FindFunction(g_npCompClass, P::name::SetWidgetDrawSizeFn);
+        if (!g_npTintFn) g_npTintFn = R::FindFunction(g_npCompClass, P::name::SetTintColorAndOpacityFn);
+        if (!g_npTwoSidedFn) g_npTwoSidedFn = R::FindFunction(g_npCompClass, P::name::SetTwoSidedFn);
+        if (!g_npGetWidgetFn) g_npGetWidgetFn = R::FindFunction(g_npCompClass, P::name::GetUserWidgetObjectFn);
+        if (!g_npRedrawFn) g_npRedrawFn = R::FindFunction(g_npCompClass, P::name::RequestRedrawFn);
+    }
+    if (g_npWidgetClass && !g_npSetTextFn) g_npSetTextFn = R::FindFunction(g_npWidgetClass, P::name::NameplateSetTextFn);
+    if (!g_npWidgetBaseClass) g_npWidgetBaseClass = R::FindClass(P::name::WidgetBaseClass);
+    if (g_npWidgetBaseClass && !g_npSetVisFn) g_npSetVisFn = R::FindFunction(g_npWidgetBaseClass, P::name::SetVisibilityFn);
+    if (!g_npKtlCdo) g_npKtlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
+    if (g_npKtlCdo && !g_npConvFn) {
+        if (void* c = R::ClassOf(g_npKtlCdo)) g_npConvFn = R::FindFunction(c, P::name::ConvStringToTextFn);
+    }
+    return g_npActorClass && g_npCompClass && g_npWidgetClass && g_npAddFn && g_npFinishFn;
+}
+}  // namespace
+
+void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity) {
+    if (!ResolveNameplateFns()) {
+        UE_LOGE("engine: SpawnNameplateWidget unresolved (actor=%p comp=%p wcls=%p add=%p fin=%p)",
+                g_npActorClass, g_npCompClass, g_npWidgetClass, g_npAddFn, g_npFinishFn);
+        return nullptr;
+    }
+    void* actor = SpawnActor(g_npActorClass, location);
+    if (!actor) { UE_LOGE("engine: SpawnNameplateWidget -- SpawnActor failed"); return nullptr; }
+
+    uint8_t xform[0x30];
+    MakeIdentityTransform(xform);
+
+    // 1) AddComponentByClass(WidgetComponent, bManualAttachment=false, identity, deferred=true)
+    void* comp = nullptr;
+    {
+        ParamFrame f(g_npAddFn);
+        f.Set<void*>(L"Class", g_npCompClass);
+        f.Set<bool>(L"bManualAttachment", false);
+        f.SetRaw(L"relativeTransform", xform, sizeof(xform));
+        f.Set<bool>(L"bDeferredFinish", true);
+        if (!Call(actor, f)) { UE_LOGE("engine: SpawnNameplateWidget -- AddComponentByClass call failed"); return actor; }
+        comp = f.Get<void*>(L"ReturnValue");
+    }
+    if (!comp) { UE_LOGE("engine: SpawnNameplateWidget -- no WidgetComponent returned"); return actor; }
+
+    // 2) Set WidgetClass BEFORE finishing so InitWidget (on register) builds the widget.
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(comp) + P::off::UWidgetComponent_WidgetClass) = g_npWidgetClass;
+
+    // 3) FinishAddComponent -> register -> InitWidget creates the uicomp_helpText_C instance.
+    {
+        ParamFrame f(g_npFinishFn);
+        f.Set<void*>(L"Component", comp);
+        f.Set<bool>(L"bManualAttachment", false);
+        f.SetRaw(L"relativeTransform", xform, sizeof(xform));
+        Call(actor, f);
+    }
+
+    // 4) World space, draw size, translucency (TintColorAndOpacity.A), two-sided.
+    if (g_npSpaceFn) { ParamFrame f(g_npSpaceFn); f.Set<uint8_t>(L"NewSpace", 0 /*EWidgetSpace::World*/); Call(comp, f); }
+    if (g_npDrawFn) { ParamFrame f(g_npDrawFn); FVector2D sz{512.f, 128.f}; f.SetRaw(L"Size", &sz, sizeof(sz)); Call(comp, f); }
+    if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, opacity}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }
+    if (g_npTwoSidedFn) { ParamFrame f(g_npTwoSidedFn); f.Set<bool>(L"bWantTwoSided", true); Call(comp, f); }
+
+    // 5) Text: widget = comp.GetUserWidgetObject(); widget.SetText(Conv_StringToText(text)).
+    void* widget = nullptr;
+    if (g_npGetWidgetFn) { ParamFrame f(g_npGetWidgetFn); if (Call(comp, f)) widget = f.Get<void*>(L"ReturnValue"); }
+    if (widget) {
+        // DIAG: confirm the engine built the right widget + that its inner TextBlock
+        // (uicomp_helpText_C.text_help @0x268) exists -- to tell content-blank from
+        // a world-facing/size problem.
+        void* textBlock = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(widget) + 0x268);
+        UE_LOGI("engine: nameplate widget class=%ls text_help=%p (%ls)",
+                R::ClassNameOf(widget).c_str(), textBlock,
+                textBlock ? R::ClassNameOf(textBlock).c_str() : L"null");
+    }
+    if (widget && g_npConvFn && g_npSetTextFn) {
+        uint8_t ftext[0x18] = {};
+        std::wstring b(text);
+        R::FString fs{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
+        { ParamFrame cf(g_npConvFn); cf.SetRaw(L"InString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);
+          cf.GetRaw(L"ReturnValue", ftext, sizeof(ftext)); }
+        ParamFrame tf(g_npSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(widget, tf);
+    } else {
+        UE_LOGW("engine: SpawnNameplateWidget -- text unset (widget=%p conv=%p setText=%p)",
+                widget, g_npConvFn, g_npSetTextFn);
+    }
+    // Reused help-text widgets default to Collapsed (shown only on a game hint).
+    // Force the root visible so our label actually draws. (ESlateVisibility::Visible=0)
+    if (widget && g_npSetVisFn) { ParamFrame f(g_npSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(widget, f); }
+    // A runtime-added WidgetComponent may not auto-draw its render target -> force it.
+    if (g_npRedrawFn) { ParamFrame f(g_npRedrawFn); Call(comp, f); }
+
+    UE_LOGI("engine: SpawnNameplateWidget '%ls' actor=%p comp=%p widget=%p opacity=%.2f at (%.0f,%.0f,%.0f)",
+            text, actor, comp, widget, opacity, location.X, location.Y, location.Z);
+    return actor;
+}
+
+namespace {
 void* g_skinnedMeshClass = nullptr;   // owns SetSkeletalMesh
 void* g_skeletalMeshClass = nullptr;  // owns SetAnimClass
 void* g_setSkeletalMeshFn = nullptr;

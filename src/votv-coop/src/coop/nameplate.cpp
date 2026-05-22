@@ -41,9 +41,11 @@ void Register(RemotePlayer* player) {
 
     ue_wrap::FVector at = player->GetLocation();
     at.Z += kHeadTextZ;
-    // Translucent white (FColor BGRA; alpha ~150/255 ≈ 59%) -- needs the UnlitText
-    // material (set in SpawnTextActor) for the alpha to show. Smaller world size.
-    const ue_wrap::FColor color{255, 255, 255, 150};
+    // NOTE: opaque TextRender (UnlitText is Masked -> no partial alpha). The
+    // translucent UWidgetComponent path (engine::SpawnNameplateWidget) builds the
+    // widget but its world-space quad won't render yet -- WIP; likely pivoting to a
+    // screen-projected viewport widget (what VOTV's toasts use).
+    const ue_wrap::FColor color{255, 255, 255, 255};
     void* label = E::SpawnTextActor(at, player->GetNickname().c_str(), 11.f, color);
     g_entries.push_back({player, label});
     UE_LOGI("nameplate: label '%ls' actor=%p for player %p (now %zu)",

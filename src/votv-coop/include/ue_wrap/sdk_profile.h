@@ -73,6 +73,7 @@ inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cl
 inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObjectFlags (PendingKill/Unreachable -> dying)
 inline constexpr size_t UMaterial_BlendMode = 0x151;     // TEnumAsByte<EBlendMode> (0=Opaque,1=Masked,2=Translucent)
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
+inline constexpr size_t UWidgetComponent_WidgetClass = 0x0480;  // TSubclassOf<UUserWidget> (set before register so InitWidget builds it)
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
@@ -281,6 +282,27 @@ inline constexpr const wchar_t* SetHorizontalAlignmentFn = L"SetHorizontalAlignm
 inline constexpr const wchar_t* SetTextMaterialFn = L"SetTextMaterial";
 inline constexpr const wchar_t* UnlitTextMaterialName = L"UnlitText";  // /Engine/EngineMaterials/UnlitText
 inline constexpr const wchar_t* MaterialClassName = L"Material";
+
+// Nameplate via a world-space UWidgetComponent (TRANSLUCENT). TextRender can't do
+// partial alpha (UnlitText is Masked). A WidgetComponent renders its UMG to a
+// render target composited with /Engine/EngineMaterials/Widget3DPassThrough_Translucent
+// (BlendMode=Transparent default), so TintColorAndOpacity.A is the master opacity.
+// We reuse the cooked uicomp_helpText_C (a UUserWidget with SetText(FText)) as the
+// WidgetClass and let the engine construct it (we have no NewObject primitive).
+inline constexpr const wchar_t* WidgetComponentClass = L"WidgetComponent";
+inline constexpr const wchar_t* AddComponentByClassFn = L"AddComponentByClass";      // on Actor
+inline constexpr const wchar_t* FinishAddComponentFn = L"FinishAddComponent";        // on Actor
+inline constexpr const wchar_t* SetWidgetSpaceFn = L"SetWidgetSpace";                // EWidgetSpace (0=World)
+inline constexpr const wchar_t* SetWidgetDrawSizeFn = L"SetDrawSize";                // FVector2D
+inline constexpr const wchar_t* SetTintColorAndOpacityFn = L"SetTintColorAndOpacity";// FLinearColor
+inline constexpr const wchar_t* SetTwoSidedFn = L"SetTwoSided";                      // bool
+inline constexpr const wchar_t* GetUserWidgetObjectFn = L"GetUserWidgetObject";      // -> UUserWidget*
+inline constexpr const wchar_t* RequestRedrawFn = L"RequestRedraw";                  // force the render target to draw
+inline constexpr const wchar_t* NameplateWidgetClass = L"uicomp_helpText_C";         // reused UMG label
+inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // on uicomp_helpText_C (FText)
+inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
+inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
+inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)
 }  // namespace name
 
 }  // namespace ue_wrap::profile

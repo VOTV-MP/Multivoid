@@ -111,6 +111,13 @@ FVector GetComponentForwardVector(void* component);
 void* SpawnTextActor(const FVector& location, const wchar_t* text, float worldSize,
                      const FColor& color);
 
+// Spawn a TRANSLUCENT world-space nameplate: an Actor carrying a UWidgetComponent
+// that renders the reused uicomp_helpText_C UMG label. opacity (0..1) drives the
+// whole plate's alpha (TintColorAndOpacity.A) -- real partial transparency, which
+// a TextRender cannot do (its materials are Opaque/Masked). Returns the actor (a
+// host you position/billboard each frame), or nullptr. Game thread only.
+void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity);
+
 // Set a USceneComponent's visibility: SetVisibility(visible, propagate) +
 // SetHiddenInGame(!visible, propagate). visible=true shows a remote pawn's
 // third-person body meshes (an unpossessed pawn never runs the gameplay code

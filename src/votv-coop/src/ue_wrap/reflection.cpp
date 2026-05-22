@@ -150,10 +150,14 @@ void* FindClass(const wchar_t* className) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
         if (ToString(NameOf(obj)) != className) continue;
-        // Its meta-class identifies it as a class object.
+        // Its meta-class identifies it as a class object. Every UClass-derived
+        // meta-type ends in "Class" (Class, BlueprintGeneratedClass,
+        // WidgetBlueprintGeneratedClass, AnimBlueprintGeneratedClass, DynamicClass,
+        // LinkerPlaceholderClass, ...). Match the suffix so BP-generated classes
+        // (UMG widgets, anim BPs) resolve too -- the exact-name match above already
+        // excludes instances (which carry numeric suffixes).
         const std::wstring meta = ClassNameOf(obj);
-        if (meta == L"Class" || meta == L"BlueprintGeneratedClass" ||
-            meta == L"DynamicClass" || meta == L"LinkerPlaceholderClass") {
+        if (meta.size() >= 5 && meta.compare(meta.size() - 5, 5, L"Class") == 0) {
             return obj;
         }
     }
