@@ -155,16 +155,30 @@ have it tick without crashing for ≥60 s (target several minutes).
       (bSweep=false) is the network snapshot path. See
       `research/findings/remote-player-spawn-cpp-2026-05-22.md`.
 - ◐ Remote player VISIBILITY (so players see each other). Orphan has the full
-      body meshes from class defaults (playermodel/mesh_playerVisible/arms/
-      CharacterMesh0); `RemotePlayer::ShowBody()` force-shows them
-      (SetVisibility+SetHiddenInGame) — works. 3D `P2` text marker
-      (`engine::SpawnTextMarker`, ATextRenderActor — shipping-safe) implemented.
-      NOT yet visually confirmed: body in-view needs camera-accurate placement
-      (camera look dir != pawn forward); marker needs render-verify + bright
-      color + face-camera. `tools/play-coop.bat` for hands-on testing. See
-      `research/findings/remote-player-visible-body-and-marker-2026-05-22.md`.
-      Also added: generic UProperty get/set still TODO; SuperStruct@0x40 mapped;
-      `reflection::ChildObjectsOf` (component enum).
+      body meshes from class defaults; `RemotePlayer::ShowBody()` force-shows them.
+      Body RENDERS (real player skin) — user-confirmed.
+- ☑ 2.2a Local-player HIJACK fixed (the big one, user-verified). Spawning a 2nd
+      mainPlayer_C stole the local player's input + view + gamma because
+      `AutoPossessPlayer=Player0` made each spawn grab a 2nd PlayerController. FIX:
+      `engine::SpawnActor(inertPawn=true)` zeroes AutoPossessPlayer/AutoPossessAI/
+      AutoReceiveInput + sets bBlockInput in the deferred-spawn window (PREVENTION,
+      not post-hoc teardown). Control + gamma restored. Found via parallel agents +
+      UE4SS state-diff. Marker DISABLED (SetText/FText crash, deferred). See
+      `research/findings/body-visible-f12-and-pose-mirroring-2026-05-22.md`.
+- ◐ 2.2b Remote BODY POSE — **NEXT SESSION PRIORITY: "actual player model".**
+      Body currently renders as a COLLAPSED "stick facing away" — its AnimBP
+      (kerfurOmega on mesh_playerVisible) needs a possessing CONTROLLER to pose.
+      mainPlayer_C's `AIControllerClass` is NULL; we now set it to the engine
+      AIController in the inert window so `SpawnDefaultController` can make a
+      (non-hijacking) AIController — UNVERIFIED (must confirm "controller =
+      AIController" + body poses next session). If the full pawn keeps fighting,
+      fall back to the lightweight skin-puppet (player SkeletalMesh + driven anim).
+- ◐ 2.2c Remote FACING — **NEXT: model must NOT face away.** Drive its yaw
+      independently (SetActorRotation works; mesh-forward vs actor-forward offset
+      to confirm). Tooling: `play-coop.bat`/`stop-coop.bat`/`shot.bat` at PROJECT
+      ROOT; F12 in-mod screenshot; `tools/brightness.ps1`. Harness auto-skip-to-
+      gameplay is FLAKY (sometimes stalls at menu) — harden it, or use UE4SS Lua
+      (reliable) for diagnosis. Still TODO: generic UProperty get/set.
 
 ## Phase 3 — Networking transport
 **Gate**: both players see each other's pawn moving in real time on LAN
