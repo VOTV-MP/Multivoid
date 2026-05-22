@@ -73,11 +73,36 @@ deferred). Not a shipping code path.
 - StaticConstructObject_Internal rva 0x146d330; GMalloc rva 0x4d0b190;
   FName::FName(wchar_t*) rva 0x1270b20.
 
+## Update: object/class/function lookup (DONE, validated)
+
+Added `FindObject`/`FindClass`/`FindFunction`/`OuterOf`/`ClassNameOf` (linear
+GUObjectArray walk; match on NamePrivate, meta-class for classes, Outer for
+functions). Validated live (standalone, no UE4SS) at the menu:
+
+```
+FindClass(Actor)                         = found (class Class)
+FindClass(World)                         = found (class Class)
+FindFunction(Actor, K2_SetActorLocation) = found (class Function)
+FindFunction(Actor, K2_DestroyActor)     = found (class Function)
+first World instance                     = found (class World)
+FindClass(mainPlayer_C)                  = NOT FOUND  <- expected
+FindClass(mainGamemode_C)                = NOT FOUND  <- expected
+```
+
+`mainPlayer_C`/`mainGamemode_C` not found is CORRECT: those Blueprint gameplay
+classes aren't loaded at the OMEGA-WARNING/menu; they load with the gameplay
+map (`untitled_1`). The lookup path itself is proven by Actor/World/Function.
+This means we already have the exact pieces the orphan-spawn port needs once in
+gameplay: the `Actor` class, a live `World`, and `K2_SetActorLocation`.
+
 ## Next
 
 1. Resolve **ProcessEvent** (UObject::ProcessEvent) by AOB — the universal
-   UFunction call entry needed to drive the engine (SpawnActor,
-   K2_SetActorLocation, ...).
-2. Add UClass/UFunction lookup (FindObject by name through GUObjectArray) so we
-   can fetch `mainPlayer_C`, `UWorld`, and the spawn/move functions.
-3. Port the validated Phase 2.1 orphan spawn into C++ behind `coop::RemotePlayer`.
+   UFunction call entry. Unblocks BOTH skip-to-gameplay (call
+   `OpenLevel`/load UFunctions ourselves) AND driving the pawn
+   (`K2_SetActorLocation`). Note: UFunction dispatches via `UFunction.Func`
+   @ +0xD8 (UFunction::Bind = sub_1412FACF0 sets it to ProcessInternal
+   sub_141465CE0 for script fns); ProcessEvent is a UObject virtual, not yet
+   pinned statically -- find its vtable slot or a clean AOB next.
+2. Then enter gameplay, find `mainPlayer_C`, and port the Phase 2.1 orphan
+   spawn into C++ behind `coop::RemotePlayer`.

@@ -31,6 +31,7 @@ constexpr size_t kGUObjLeaEndOff = 28;   // rip base (end of the lea instruction
 // ---- UObject / FUObjectArray layout (standard UE4.27) -------------------
 constexpr size_t kUObj_ClassPrivate = 0x10;
 constexpr size_t kUObj_NamePrivate = 0x18;
+constexpr size_t kUObj_OuterPrivate = 0x20;
 
 constexpr size_t kArr_ObjObjects = 0x10;   // FUObjectArray.ObjObjects
 constexpr size_t kChunk_Objects = 0x00;    // FUObjectItem** (chunk pointers)
@@ -93,6 +94,10 @@ void* ClassOf(void* uobject) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + kUObj_ClassPrivate);
 }
 
+void* OuterOf(void* uobject) {
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + kUObj_OuterPrivate);
+}
+
 std::wstring ToString(const FName& name) {
     if (!g_fnameToString) return L"";
     static FString scratch{nullptr, 0, 0};
@@ -103,6 +108,55 @@ std::wstring ToString(const FName& name) {
     if (scratch.Data[len - 1] == L'\0') --len;  // Num counts the null terminator
     if (len <= 0) return L"";
     return std::wstring(scratch.Data, scratch.Data + len);
+}
+
+std::wstring ClassNameOf(void* uobject) {
+    void* cls = uobject ? ClassOf(uobject) : nullptr;
+    if (!cls) return L"";
+    return ToString(NameOf(cls));
+}
+
+void* FindObject(const wchar_t* name, const wchar_t* className) {
+    if (!name) return nullptr;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (ToString(NameOf(obj)) != name) continue;
+        if (className && ClassNameOf(obj) != className) continue;
+        return obj;
+    }
+    return nullptr;
+}
+
+void* FindClass(const wchar_t* className) {
+    if (!className) return nullptr;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (ToString(NameOf(obj)) != className) continue;
+        // Its meta-class identifies it as a class object.
+        const std::wstring meta = ClassNameOf(obj);
+        if (meta == L"Class" || meta == L"BlueprintGeneratedClass" ||
+            meta == L"DynamicClass" || meta == L"LinkerPlaceholderClass") {
+            return obj;
+        }
+    }
+    return nullptr;
+}
+
+void* FindFunction(void* owningClass, const wchar_t* funcName) {
+    if (!owningClass || !funcName) return nullptr;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (OuterOf(obj) != owningClass) continue;
+        if (ClassNameOf(obj) != L"Function") continue;
+        if (ToString(NameOf(obj)) == funcName) return obj;
+    }
+    return nullptr;
 }
 
 void RunSelfTest(const wchar_t* outPath) {
@@ -173,8 +227,37 @@ void RunSelfTest(const wchar_t* outPath) {
         }
     }
     std::fprintf(f, "\nvalid objects walked = %d\n", valid);
-    std::fprintf(f, "instances: mainPlayer_C=%ld  mainGamemode_C=%ld  *PlayerController*=%ld\n",
+    std::fprintf(f, "instances: mainPlayer_C=%ld  mainGamemode_C=%ld  *PlayerController*=%ld\n\n",
                  mainPlayer, gamemode, controllers);
+
+    // --- lookups (the building blocks for the C++ orphan-spawn port) ---
+    auto report = [&](const wchar_t* what, void* obj) {
+        if (obj) {
+            std::fprintf(f, "  %-40ls = %p  (class %ls)\n", what, obj, ClassNameOf(obj).c_str());
+        } else {
+            std::fprintf(f, "  %-40ls = NOT FOUND\n", what);
+        }
+    };
+    std::fprintf(f, "--- lookups ---\n");
+    void* clsMainPlayer = FindClass(L"mainPlayer_C");
+    void* clsActor = FindClass(L"Actor");
+    void* clsWorld = FindClass(L"World");
+    report(L"FindClass(mainPlayer_C)", clsMainPlayer);
+    report(L"FindClass(Actor)", clsActor);
+    report(L"FindClass(World)", clsWorld);
+    report(L"FindClass(mainGamemode_C)", FindClass(L"mainGamemode_C"));
+    if (clsActor) {
+        report(L"FindFunction(Actor, K2_SetActorLocation)", FindFunction(clsActor, L"K2_SetActorLocation"));
+        report(L"FindFunction(Actor, K2_DestroyActor)", FindFunction(clsActor, L"K2_DestroyActor"));
+    }
+    // A live World instance (proves we can find runtime objects, not just classes).
+    void* worldInst = nullptr;
+    for (int32_t i = 0; i < n && !worldInst; ++i) {
+        void* obj = ObjectAt(i);
+        if (obj && ClassNameOf(obj) == L"World") worldInst = obj;
+    }
+    report(L"first World instance", worldInst);
+
     std::fclose(f);
 }
 

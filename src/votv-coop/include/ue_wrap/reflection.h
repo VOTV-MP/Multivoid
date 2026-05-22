@@ -45,6 +45,24 @@ void* ObjectAt(int32_t index);
 // UObjectBase accessors (offsets are the standard UE4.27 layout).
 const FName& NameOf(void* uobject);   // NamePrivate  @ +0x18
 void*        ClassOf(void* uobject);  // ClassPrivate @ +0x10
+void*        OuterOf(void* uobject);  // OuterPrivate @ +0x20
+
+// Lookups over GUObjectArray (linear walk; intended for one-time setup).
+// All match on the object's NamePrivate (the leaf name, not a path).
+
+// First object whose name == `name`; if `className` is non-null, also require
+// its class name to match. Returns UObjectBase* or nullptr.
+void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
+
+// A UClass by name (its meta-class is Class/BlueprintGeneratedClass/etc).
+// e.g. FindClass(L"mainPlayer_C"), FindClass(L"World").
+void* FindClass(const wchar_t* className);
+
+// A UFunction named `funcName` owned (Outer) by `owningClass`.
+void* FindFunction(void* owningClass, const wchar_t* funcName);
+
+// Convenience: the object's class name as a string ("" if null).
+std::wstring ClassNameOf(void* uobject);
 
 // FName -> wide string via the engine's FName::ToString.
 std::wstring ToString(const FName& name);

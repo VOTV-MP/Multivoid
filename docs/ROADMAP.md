@@ -93,9 +93,16 @@ have it tick without crashing for ≥60 s (target several minutes).
             confirmed by the raw header dump. `ue_wrap/sig_scan` +
             `ue_wrap/reflection`. See
             `research/findings/ue-wrap-reflection-2026-05-22.md`.
-      - ☐ `ProcessEvent` (UFunction call path) + UClass/UFunction lookup —
-            next; addresses for ProcessInternal/StaticConstructObject/GMalloc/
-            FName::FName already computed (in the finding).
+      - ☑ Object/class/function lookup over GUObjectArray
+            (`FindObject`/`FindClass`/`FindFunction`/`OuterOf`). Validated live:
+            found `Actor`, `World`, a live `World` instance, and
+            `K2_SetActorLocation`/`K2_DestroyActor` UFunctions. (`mainPlayer_C`
+            not found at the menu is expected — BP gameplay classes load with
+            the map.)
+      - ☐ `ProcessEvent` (UFunction call path) — next; unblocks both our own
+            skip-to-gameplay and pawn driving. UFunction.Func @ +0xD8 (Bind =
+            sub_1412FACF0). Addresses for ProcessInternal/StaticConstructObject/
+            GMalloc/FName::FName already computed (in the finding).
 - ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
 
 ## Phase 3 — Networking transport
