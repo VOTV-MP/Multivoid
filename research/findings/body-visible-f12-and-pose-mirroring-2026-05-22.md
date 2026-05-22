@@ -129,13 +129,73 @@ reads a **global/singleton local-player reference each frame** (a VOTV SP-only
 assumption), NOT the orphan's own state. (To be 100% confirmed by driving the
 orphan's own rotation once we have `engine::SetActorRotation` + a controller.)
 
-CONSEQUENCE: there is no quick component-toggle fix. The orphan mirrors the local
-player because it has NO independent pose/input source yet. Truly fixing it =
-driving the orphan independently (its own control rotation + movement), which is
-the network/input phase — the core coop work, not a patch. This is on the
-critical path: Phase 3 (UDP) sends the remote player's input/pose; we apply it to
-the orphan (control rotation + movement), which both breaks the mirror AND is the
-actual feature.
+UPDATE — EXPERIMENT RESULT (self-read, NOT global): added
+`engine::SetActorRotation` (K2_SetActorRotation) and rotated the orphan in `show`
+to FACE the local player (yaw=-30). The body then RENDERS ITS FRONT facing the
+camera (`tools/shots/rot-test.png`). So the third-person body orientation follows
+the orphan's OWN actor rotation — a SELF-READ, controllable per-instance. The
+earlier "global read" inference was WRONG.
+
+So the "it copies my direction / I only ever see its back" was an OVERLAP
+ILLUSION in `play`: the orphan spawned exactly ON the local player with an unset
+rotation (which happened to match the local spawn), so the user was partly seeing
+their OWN camera-tracked body. With a small offset + an explicit SetActorRotation,
+the orphan is a clearly separate, independently-oriented second player.
+
+REMAINING anim issue: the orphan's body is stuck in a WALK/RUN animation while
+stationary (visible in rot-test.png mid-stride). The AnimBP isn't settling to
+idle for an unpossessed/teleported pawn (likely reads a nonzero speed or defaults
+to a moving state without a controller). Secondary; investigate the body AnimBP's
+speed input next.
+
+## ROOT CAUSE of control/view/gamma hijack: orphan auto-acquires a 2nd PlayerController
+
+User symptom: the instant the 2nd pawn spawns, the world goes BLACK, the gamma
+slider does nothing, and the LOCAL player loses WASD + mouse-look (only jump /
+crouch / sit respond). Component-level fixes (destroy PostProcess, disable tick)
+did NOT help -- because they weren't the cause.
+
+### How the definitive data was found (TOOL-USE PATTERN -- reuse this)
+
+The bug triggers on the orphan's spawn/BeginPlay, so it reproduces even
+autonomously. Investigation ladder that worked:
+
+1. **Standalone autonomous tests didn't reproduce the user-visible hijack** (no
+   input -> input/view theft is invisible). First clue: the hijack is tied to the
+   live controller/input, not the static scene.
+2. **UE4SS Lua `RegisterHook` on the suspects FAILED to catch it** -- hooked
+   `Controller:Possess`, `Actor:EnableInput`, `PlayerController:SetViewTargetWithBlend`,
+   `Pawn:PossessedBy`. NONE fired on spawn -- not even the LOCAL player's own
+   possession at level load. LESSON: **UE4SS UFunction hooks only fire on
+   ProcessEvent-dispatched calls; native C++ engine calls (Possess, EnableInput,
+   AutoPossess) bypass them.** Hooking is the wrong tool for native engine paths.
+3. **WINNER: read OBSERVABLE STATE before vs after the event, and diff it.** A Lua
+   `DumpPlayerState` read PROPERTIES (which always reflect truth, no hook needed):
+   `PlayerController.Pawn`, `.AcknowledgedPawn`, `PlayerCameraManager.ViewTarget.Target`,
+   and `orphan.Controller`. The diff was unambiguous:
+   - PRE-SPAWN:  `orphan.Controller = nil`
+   - POST-SPAWN: `orphan.Controller = PlayerController`
+   while the LOCAL `PC.Pawn`/`ViewTarget` stayed on the local pawn -- so the orphan
+   got its OWN, SECOND PlayerController.
+
+GENERAL PATTERN: when a hook won't fire (native call) or you can't see the cause,
+**snapshot the relevant object state immediately before and after the trigger and
+diff the snapshots.** Property reads beat call-hooks for native engine behaviour.
+(Escalation ladder: reflection -> IDA -> UE4SS; and within UE4SS: state-read
+before hooks.)
+
+### The fix (root cause, per-player routing)
+
+`mainPlayer_C` auto-possesses Player0, so every spawned copy acquires a
+PlayerController; that 2nd controller fights the local player's input/view. Fix in
+`coop::RemotePlayer::NeuterLocalSystems()`: `engine::GetController(orphan)` ->
+`DetachFromController(orphan)` (unpossess; the body keeps existing) ->
+`DestroyActor(controller)` (delete the stray 2nd PlayerController). New engine
+wrappers: `GetController` (APawn::GetController), `DetachFromController`
+(DetachFromControllerPendingDestroy), `DestroyActor` (K2_DestroyActor),
+`SetActorTickEnabled`. SAFE because the UE4SS data confirmed the orphan's
+controller is a DISTINCT 2nd PlayerController (local `PC.Pawn` stayed local), not
+the local PC.
 
 ## Next
 

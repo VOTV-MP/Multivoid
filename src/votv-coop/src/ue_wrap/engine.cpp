@@ -97,6 +97,8 @@ void* g_actorClass = nullptr;  // the Actor UClass (owns K2_Get/SetActorLocation
 void* g_getLocFn = nullptr;
 void* g_setLocFn = nullptr;
 void* g_getFwdFn = nullptr;
+void* g_setRotFn = nullptr;
+void* g_setTickFn = nullptr;
 
 // ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
 // (the orphan must exist even if it overlaps geometry).
@@ -118,13 +120,15 @@ bool ResolveActorFns() {
         if (!g_getLocFn) g_getLocFn = R::FindFunction(g_actorClass, P::name::GetActorLocationFn);
         if (!g_setLocFn) g_setLocFn = R::FindFunction(g_actorClass, P::name::SetActorLocationFn);
         if (!g_getFwdFn) g_getFwdFn = R::FindFunction(g_actorClass, P::name::GetActorForwardVectorFn);
+        if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
+        if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
     }
     return g_actorClass && g_getLocFn && g_setLocFn;
 }
 
 }  // namespace
 
-void* SpawnActor(void* actorClass, const FVector& location) {
+void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
     if (!actorClass) return nullptr;
     if (!ResolveSpawn()) {
         UE_LOGE("engine: SpawnActor unresolved (cdo=%p begin=%p finish=%p)",
@@ -150,6 +154,30 @@ void* SpawnActor(void* actorClass, const FVector& location) {
     if (!actor) {
         UE_LOGE("engine: BeginDeferredActorSpawnFromClass returned null");
         return nullptr;
+    }
+
+    // 1b) ROOT-CAUSE remote-pawn fix: BEFORE FinishSpawningActor runs BeginPlay,
+    //     zero the fields that make a pawn behave as a local player. BeginPlay's
+    //     native auto-possess reads AutoPossessPlayer; clearing it here prevents
+    //     the orphan from grabbing a 2nd PlayerController (which stole the local
+    //     player's input/view). These are plain data fields -> direct writes.
+    if (inertPawn) {
+        auto* a = reinterpret_cast<uint8_t*>(actor);
+        a[P::off::APawn_AutoPossessPlayer] = 0;   // no PLAYER controller (no input/view hijack)
+        a[P::off::APawn_AutoPossessAI] = 0;        // we possess explicitly post-spawn
+        a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
+        a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
+        // mainPlayer_C's AIControllerClass is null -> SpawnDefaultController can't
+        // make a controller, so the body's AnimBP has no controller and collapses.
+        // Point it at the engine AIController so we CAN give it a (non-hijacking)
+        // controller that poses the body.
+        if (void* aiCls = R::FindClass(P::name::AIControllerClassName)) {
+            *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = aiCls;
+            UE_LOGI("engine: SpawnActor inertPawn -> AIControllerClass set to AIController (%p)", aiCls);
+        } else {
+            UE_LOGW("engine: SpawnActor inertPawn -> AIController class not found");
+        }
+        UE_LOGI("engine: SpawnActor inertPawn -> no player possess, bBlockInput=1");
     }
 
     // 2) FinishSpawningActor(actor, transform) -> runs the actor's construction
@@ -351,6 +379,13 @@ void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldS
     return actor;
 }
 
+bool SetAnimTickAlways(void* component) {
+    if (!component) return false;
+    // EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones == 0.
+    reinterpret_cast<uint8_t*>(component)[P::off::USkinnedMesh_VisibilityBasedAnimTickOption] = 0;
+    return true;
+}
+
 FVector GetActorForwardVector(void* actor) {
     FVector fwd;
     if (!actor || !ResolveActorFns() || !g_getFwdFn) return fwd;
@@ -368,6 +403,75 @@ bool SetActorLocation(void* actor, const FVector& location) {
     f.Set<bool>(L"bTeleport", true);  // snap to the absolute pose (no sweep)
     if (!Call(actor, f)) return false;
     return f.Get<bool>(L"ReturnValue");
+}
+
+bool SetActorRotation(void* actor, const FRotator& rotation) {
+    if (!actor || !ResolveActorFns() || !g_setRotFn) {
+        UE_LOGE("engine: SetActorRotation unresolved (fn=%p)", g_setRotFn);
+        return false;
+    }
+    ParamFrame f(g_setRotFn);
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    f.Set<bool>(L"bTeleportPhysics", true);
+    if (!Call(actor, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
+}
+
+bool SetActorTickEnabled(void* actor, bool enabled) {
+    if (!actor || !ResolveActorFns() || !g_setTickFn) {
+        UE_LOGE("engine: SetActorTickEnabled unresolved (fn=%p)", g_setTickFn);
+        return false;
+    }
+    ParamFrame f(g_setTickFn);
+    f.Set<bool>(L"bEnabled", enabled);
+    return Call(actor, f);
+}
+
+namespace {
+void* g_pawnClass = nullptr;
+void* g_getControllerFn = nullptr;
+void* g_detachFn = nullptr;
+void* g_destroyActorFn = nullptr;
+void* g_spawnDefControllerFn = nullptr;
+bool ResolvePawnFns() {
+    if (!g_pawnClass) g_pawnClass = R::FindClass(P::name::PawnClassName);
+    if (g_pawnClass) {
+        if (!g_getControllerFn) g_getControllerFn = R::FindFunction(g_pawnClass, P::name::GetControllerFn);
+        if (!g_detachFn) g_detachFn = R::FindFunction(g_pawnClass, P::name::DetachFromControllerFn);
+        if (!g_spawnDefControllerFn) g_spawnDefControllerFn = R::FindFunction(g_pawnClass, P::name::SpawnDefaultControllerFn);
+    }
+    if (!g_actorClass) g_actorClass = R::FindClass(P::name::ActorClassName);
+    if (g_actorClass && !g_destroyActorFn) g_destroyActorFn = R::FindFunction(g_actorClass, P::name::DestroyActorFn);
+    return g_getControllerFn && g_detachFn && g_destroyActorFn;
+}
+}  // namespace
+
+void* GetController(void* pawn) {
+    if (!pawn || !ResolvePawnFns()) return nullptr;
+    ParamFrame f(g_getControllerFn);
+    if (!Call(pawn, f)) return nullptr;
+    return f.Get<void*>(L"ReturnValue");
+}
+
+bool DetachFromController(void* pawn) {
+    if (!pawn || !ResolvePawnFns()) return false;
+    ParamFrame f(g_detachFn);  // DetachFromControllerPendingDestroy: no params
+    return Call(pawn, f);
+}
+
+bool DestroyActor(void* actor) {
+    if (!actor || !ResolvePawnFns()) return false;
+    ParamFrame f(g_destroyActorFn);  // K2_DestroyActor: no params
+    return Call(actor, f);
+}
+
+bool SpawnDefaultController(void* pawn) {
+    if (!pawn || !ResolvePawnFns() || !g_spawnDefControllerFn) {
+        UE_LOGE("engine: SpawnDefaultController unresolved (fn=%p)", g_spawnDefControllerFn);
+        return false;
+    }
+    ParamFrame f(g_spawnDefControllerFn);  // no params; spawns AIControllerClass + possesses
+    return Call(pawn, f);
 }
 
 }  // namespace ue_wrap::engine

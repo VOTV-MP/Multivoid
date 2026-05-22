@@ -10,6 +10,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <string>
 
 namespace harness {
@@ -184,15 +185,21 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             void* local = R::FindObjectByClass(P::name::MainPlayerClass);
             const ue_wrap::FVector loc =
                 local ? ue_wrap::engine::GetActorLocation(local) : ue_wrap::FVector{};
+            const ue_wrap::FVector fwd =
+                local ? ue_wrap::engine::GetActorForwardVector(local) : ue_wrap::FVector{1, 0, 0};
             if (!g_orphan.Spawn()) return;
-            if (local) g_orphan.SetLocation(loc);  // exactly on the player
             const int neutered = g_orphan.NeuterLocalSystems();  // stop gamma stomp
             const int shown = g_orphan.ShowBody();
             const int hid = g_orphan.HideGizmos();
-            const ue_wrap::FVector p = g_orphan.GetLocation();
-            UE_LOGI("play: orphan on player pos (%.0f,%.0f,%.0f), body shown=%d, gizmos hidden=%d, "
-                    "postprocess stripped=%d -- step back / look down to see the 2nd player",
-                    p.X, p.Y, p.Z, shown, hid, neutered);
+            // Place it ~2.5 m IN FRONT of you, FACING you -- a clearly separate,
+            // independently-oriented 2nd player (not overlapping your own body).
+            const ue_wrap::FVector inFront{loc.X + fwd.X * 250.f, loc.Y + fwd.Y * 250.f, loc.Z};
+            g_orphan.SetLocation(inFront);
+            const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;  // face the player
+            ue_wrap::engine::SetActorRotation(g_orphan.actor(), ue_wrap::FRotator{0.f, yaw, 0.f});
+            UE_LOGI("play: 2nd player in front at (%.0f,%.0f,%.0f) facing you (yaw=%.0f), "
+                    "body shown=%d, gizmos hidden=%d, postprocess stripped=%d",
+                    inFront.X, inFront.Y, inFront.Z, yaw, shown, hid, neutered);
         });
         UE_LOGI("harness: ==== PLAY READY (you have control) ====");
     } else if (scenario == "show") {
@@ -214,10 +221,15 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // 300 units along the pawn's forward, same height -> in the forward view.
             ue_wrap::FVector inFront{loc.X + fwd.X * 300.f, loc.Y + fwd.Y * 300.f, loc.Z};
             g_orphan.SetLocation(inFront);
-            // NOTE: text marker disabled here -- SetText crashes (root-causing in
-            // IDA). We want a clean screenshot of the BODY without the crash.
-            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), body shown=%d, gizmos hidden=%d",
-                    inFront.X, inFront.Y, inFront.Z, shown, hid);
+            // EXPERIMENT: rotate the orphan to FACE the local player (yaw of -fwd).
+            // If the body then shows its FRONT, the body anim reads the orphan's
+            // OWN rotation (easy fix). If it still shows the back tracking the
+            // local camera, the anim reads a global local-player ref (network-drive
+            // is the only fix). NOTE: text marker disabled (SetText crash).
+            const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;  // deg
+            ue_wrap::engine::SetActorRotation(g_orphan.actor(), ue_wrap::FRotator{0.f, yaw, 0.f});
+            UE_LOGI("show: orphan placed in front at (%.0f,%.0f,%.0f), faced-local yaw=%.0f, "
+                    "body shown=%d, gizmos hidden=%d", inFront.X, inFront.Y, inFront.Z, yaw, shown, hid);
         });
         // Visual check is via external tools/capture-window.ps1 (no in-game toast).
         UE_LOGI("harness: ==== SHOW DONE ====");

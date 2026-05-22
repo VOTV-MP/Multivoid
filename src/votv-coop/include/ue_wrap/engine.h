@@ -25,7 +25,12 @@ bool ExecuteConsoleCommand(const wchar_t* command);
 // -- the same path the K2 SpawnActorFromClass node uses. Always spawns
 // (CollisionHandlingOverride = AlwaysSpawn). Returns the spawned AActor* (a
 // UObject*), or nullptr on failure. Game thread only.
-void* SpawnActor(void* actorClass, const FVector& location);
+// `inertPawn=true` makes a spawned APawn inert as a LOCAL player: in the deferred
+// window (before BeginPlay) it zeroes AutoPossessPlayer / AutoPossessAI /
+// AutoReceiveInput and sets bBlockInput, so the pawn never auto-acquires a
+// PlayerController nor steals the local player's input/view. ROOT-CAUSE fix for
+// the remote-pawn hijack (prevention, not post-hoc teardown).
+void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn = false);
 
 // AActor::K2_GetActorLocation on `actor`. Returns (0,0,0) if it cannot be called.
 FVector GetActorLocation(void* actor);
@@ -38,6 +43,34 @@ FVector GetActorForwardVector(void* actor);
 // -- snap to the absolute pose, the network pose-apply path). Returns the
 // engine's success bool. Game thread only.
 bool SetActorLocation(void* actor, const FVector& location);
+
+// AActor::K2_SetActorRotation on `actor` (bTeleportPhysics=true). The network
+// pose-apply path for orientation, and the diagnostic for whether the remote
+// body follows its OWN rotation vs a global local-player read. Game thread only.
+bool SetActorRotation(void* actor, const FRotator& rotation);
+
+// AActor::SetActorTickEnabled. A remote pawn must NOT run the local-player
+// per-frame BP EventTick (which re-applies view/post-process/exposure to the
+// shared screen every frame -- the gamma stomp that survives a component
+// destroy). Game thread only.
+bool SetActorTickEnabled(void* actor, bool enabled);
+
+// APawn::GetController on `pawn` -- returns the AController* (or nullptr).
+void* GetController(void* pawn);
+
+// APawn::SpawnDefaultController on `pawn` -- spawns the pawn's AIControllerClass
+// and possesses. Gives the body's AnimBP a valid controller (so it poses) with
+// NO viewport/input/camera (AIController != PlayerController), so it does not
+// hijack the local player. Game thread only.
+bool SpawnDefaultController(void* pawn);
+
+// APawn::DetachFromControllerPendingDestroy on `pawn` -- unpossess (the pawn
+// keeps existing; only the controller link is severed). Game thread only.
+bool DetachFromController(void* pawn);
+
+// AActor::K2_DestroyActor on `actor` -- destroy it. Used to delete the orphan's
+// stray 2nd PlayerController. Game thread only.
+bool DestroyActor(void* actor);
 
 // USceneComponent world location (K2_GetComponentLocation) and forward vector
 // (GetForwardVector) -- e.g. the Camera component's eye point + look direction,
@@ -58,6 +91,12 @@ void* SpawnTextMarker(const FVector& location, const wchar_t* text, float worldS
 // (ArrowComponent/BillboardComponent) that the unpossessed pawn leaves on.
 // Game thread only.
 bool SetComponentVisible(void* component, bool visible = true);
+
+// Force a SkeletalMeshComponent to ALWAYS tick its pose (VisibilityBasedAnimTick
+// Option = AlwaysTickPoseAndRefreshBones). Without this a remote body that isn't
+// the rendered viewpoint stops posing and collapses to its skeleton ("a stick").
+// Direct byte write (no setter UFunction exists). Game thread only.
+bool SetAnimTickAlways(void* skeletalMeshComponent);
 
 // Destroy an actor component (UActorComponent::K2_DestroyComponent). Used to
 // strip a remote pawn's local-only systems (e.g. its unbound PostProcessComponent

@@ -91,6 +91,27 @@ inline constexpr size_t FProperty_Offset_Internal = 0x4C; // int32 (byte offset 
 // chain when resolving an inherited UProperty/UFunction. CONFIRMED 0x40 at
 // runtime (the Actor class's qword at 0x40 == the Object class pointer).
 inline constexpr size_t UStruct_SuperStruct = 0x40;
+
+// APawn / AActor instance fields that make a spawned pawn act as a LOCAL player.
+// Zeroed in the deferred-spawn window (before FinishSpawningActor/BeginPlay) so a
+// remote pawn never auto-acquires a PlayerController / steals input. Verified
+// against the CXX SDK dump (Engine.hpp): APawn 0x230/0x231, AActor 0x5A/0xF3.
+// EAutoReceiveInput::Disabled = 0.
+inline constexpr size_t AActor_bBlockInput = 0x5A;          // uint8 (set 1)
+inline constexpr size_t AActor_AutoReceiveInput = 0xF3;     // uint8 enum (set 0)
+inline constexpr size_t APawn_AutoPossessPlayer = 0x230;    // uint8 enum (set 0)
+inline constexpr size_t APawn_AutoPossessAI = 0x231;        // uint8 enum (set 0)
+inline constexpr size_t APawn_AIControllerClass = 0x238;    // UClass* (TSubclassOf<AController>)
+
+// Remote-body animation (verified against CXX SDK dump). An unpossessed/off-
+// screen remote pawn's body collapses to a "stick" because the skeletal mesh
+// only ticks its pose when rendered; force AlwaysTickPoseAndRefreshBones(=0).
+// And drive the body AnimBP (UAnimBlueprint_kerfurOmega_regular_C on
+// mesh_playerVisible) walk speed directly: 0 = idle.
+inline constexpr size_t USkinnedMesh_VisibilityBasedAnimTickOption = 0x604;  // uint8 (set 0)
+inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // AnimInstance*
+inline constexpr size_t AnimBP_kerfur_walkSpeed = 0x2D68;                    // float
+inline constexpr size_t AnimBP_kerfur_spd = 0x2E1C;                          // float
 }  // namespace off
 
 // EPropertyFlags bits we test (engine-stable).
@@ -125,6 +146,20 @@ inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetActorLocation
 inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
+inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
+inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
+inline constexpr const wchar_t* DestroyActorFn = L"K2_DestroyActor";
+
+// Controller removal -- a remote pawn auto-acquires its OWN PlayerController on
+// spawn (mainPlayer_C auto-possesses Player0), and that 2nd controller fights the
+// LOCAL player's input/view. Strip it: GetController -> Detach -> destroy.
+inline constexpr const wchar_t* PawnClassName = L"Pawn";
+inline constexpr const wchar_t* AIControllerClassName = L"AIController";  // /Script/AIModule.AIController
+inline constexpr const wchar_t* GetControllerFn = L"GetController";
+inline constexpr const wchar_t* DetachFromControllerFn = L"DetachFromControllerPendingDestroy";
+// Give the remote pawn an AIController (poses the body via the possession drive
+// path) WITHOUT a PlayerController's viewport/input/camera -> no local hijack.
+inline constexpr const wchar_t* SpawnDefaultControllerFn = L"SpawnDefaultController";
 
 // Component visibility (USceneComponent BlueprintCallable) -- to force the
 // third-person body meshes visible on an unpossessed remote pawn.

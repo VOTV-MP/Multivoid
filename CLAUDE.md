@@ -123,6 +123,18 @@ The game install folder name (`Game_0.9.0n/`) reflects the current target.
 - Document findings + rename functions/objects (in IDB if doing RE; in
   research findings always). Verify, don't guess (WP4/WP18 — memory
   decays, current code/reflection is authority).
+- **When stuck/lost, ask agents (RULE).** If an approach has failed more than
+  once or the root cause is unclear, STOP guessing and spawn parallel sub-agents
+  (feature-dev:code-architect for design; general-purpose to mine the SDK
+  dumps/methodology) with the full context, instructed to follow RULE №1. Two
+  independent agents converging is strong signal. (This is how the
+  auto-possess root cause was found: agents pinpointed `APawn::AutoPossessPlayer`
+  + the deferred-spawn prevention window.)
+- **Verify behaviour by diffing observable state, not just hooks.** UE4SS
+  UFunction hooks only fire on ProcessEvent-dispatched calls; native engine
+  paths (Possess, EnableInput, auto-possess) bypass them. To catch those,
+  snapshot the relevant object PROPERTIES (e.g. `PC.Pawn`, `ViewTarget`,
+  `pawn.Controller`) immediately before vs after the trigger and diff.
 - **Escalation ladder when stuck.** Reflection/dumps are the first tool. If
   stuck (offsets/layout/a crash you can't explain from reflection alone),
   drop to **IDA** (IDA Pro MCP available) — decompile the exact call site,

@@ -9,14 +9,14 @@ REM Uses Windows PowerShell 5.1 (powershell.exe) because capture-window.ps1
 REM needs System.Drawing. The game must be running.
 
 setlocal
-set "TOOLS=%~dp0"
+set "ROOT=%~dp0"
 set "OUT=%~1"
 if "%OUT%"=="" (
-  if not exist "%TOOLS%shots" mkdir "%TOOLS%shots"
+  if not exist "%ROOT%tools\shots" mkdir "%ROOT%tools\shots"
   for /f "tokens=2 delims==" %%t in ('wmic os get localdatetime /value 2^>nul ^| find "="') do set "TS=%%t"
-  set "OUT=%TOOLS%shots\shot-%TS:~0,14%.png"
+  set "OUT=%ROOT%tools\shots\shot-%TS:~0,14%.png"
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TOOLS%capture-window.ps1" -ProcessName VotV-Win64-Shipping -OutPath "%OUT%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\capture-window.ps1" -ProcessName VotV-Win64-Shipping -OutPath "%OUT%"
 echo Saved: %OUT%
 endlocal
