@@ -67,8 +67,19 @@ void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
 // e.g. FindClass(L"mainPlayer_C"), FindClass(L"World").
 void* FindClass(const wchar_t* className);
 
-// A UFunction named `funcName` owned (Outer) by `owningClass`.
+// A UFunction named `funcName` owned (Outer) by `owningClass`. Walks the
+// class's Outer-children; does NOT climb to super classes.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
+
+// First live INSTANCE whose class name == `className` (skips the class's CDO,
+// i.e. names starting with "Default__"). Use for runtime singletons that exist
+// by the time you call -- e.g. the GameInstance (a valid world context) or a
+// live World. Returns UObjectBase* or nullptr. (Mirrors UE4SS FindFirstOf.)
+void* FindObjectByClass(const wchar_t* className);
+
+// The Class Default Object for a class given by name (the "Default__<Class>"
+// object). Static BlueprintCallable UFunctions are dispatched on the CDO.
+void* FindClassDefaultObject(const wchar_t* className);
 
 // Convenience: the object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);

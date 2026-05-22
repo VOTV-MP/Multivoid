@@ -144,6 +144,29 @@ void* FindFunction(void* owningClass, const wchar_t* funcName) {
     return nullptr;
 }
 
+void* FindObjectByClass(const wchar_t* className) {
+    if (!className) return nullptr;
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (ClassNameOf(obj) != className) continue;
+        // Skip the CDO (the archetype, named "Default__<Class>"); we want a
+        // real instance.
+        const std::wstring name = ToString(NameOf(obj));
+        if (name.rfind(L"Default__", 0) == 0) continue;
+        return obj;
+    }
+    return nullptr;
+}
+
+void* FindClassDefaultObject(const wchar_t* className) {
+    if (!className) return nullptr;
+    std::wstring defName = L"Default__";
+    defName += className;
+    return FindObject(defName.c_str());
+}
+
 namespace {
 
 // Log the running exe's version + size and warn if it differs from the build

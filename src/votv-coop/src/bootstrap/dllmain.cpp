@@ -7,6 +7,7 @@
 // (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
 // in later steps, behind ue_wrap/.
 
+#include "harness/harness.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -79,6 +80,10 @@ DWORD WINAPI BootThread(LPVOID) {
             UE_LOGI("==== GAME-THREAD CONTEXT: LIVE ====");
         });
         UE_LOGI("boot: game-thread dispatcher installed; self-test task posted");
+
+        // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
+        // skip the menus into gameplay, screenshot, report -- standalone.
+        harness::Start();
     } else {
         UE_LOGE("boot: failed to install game-thread dispatcher");
     }

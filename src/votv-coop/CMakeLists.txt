@@ -36,6 +36,8 @@ add_library(votv-coop SHARED
     src/ue_wrap/reflection.cpp
     src/ue_wrap/hook.cpp
     src/ue_wrap/game_thread.cpp
+    src/ue_wrap/engine.cpp
+    src/harness/harness.cpp
 )
 
 target_include_directories(votv-coop PRIVATE include)

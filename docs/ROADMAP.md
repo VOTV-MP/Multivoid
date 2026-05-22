@@ -122,14 +122,24 @@ have it tick without crashing for ≥60 s (target several minutes).
       standalone (no UE4SS): a posted self-test task ran on the game thread
       (tid != boot tid) and read engine state. See
       `research/findings/game-thread-context-2026-05-22.md`.
-- ☐ Port the autonomous test framework into the standalone mod (RULE No.3;
+- ◐ Port the autonomous test framework into the standalone mod (RULE No.3;
       retires the UE4SS Lua `coopTestHarness`, RULE No.2). Driven from the
-      game-thread context via `CallFunction`:
-      - ☐ skip-to-gameplay (new game) — `ExecuteConsoleCommand("open untitled_1")`
-            so `mainPlayer_C` loads (FString-only params; no FName ctor needed).
-      - ☐ screenshot — `ExecuteConsoleCommand("HighResShot ...")`.
-      - ☐ report — local pawn / mainPlayer_C count / gamemode.origPawn to the log.
-      - ☐ scenario timeline (read scenario.txt or boot-delayed sequence).
+      game-thread context via `CallFunction`. First parity PROVEN LIVE
+      standalone (no UE4SS, no crash) — `research/findings/harness-port-skip-to-
+      gameplay-2026-05-22.md`. This was the first real CallFunction/ProcessEvent:
+      - ☑ skip-to-gameplay (new game) — `ExecuteConsoleCommand("open untitled_1")`;
+            world went preLoad -> Untitled_1 (FString-only params; no FName ctor).
+            `ue_wrap/engine::ExecuteConsoleCommand` (CDO + UFunction + world
+            context resolve + param marshal); `FindObjectByClass`/
+            `FindClassDefaultObject` added to reflection.
+      - ☑ screenshot — `ExecuteConsoleCommand("HighResShot 1920x1080")`; 1.7 MB
+            rendered gameplay frame written to `%LOCALAPPDATA%\VotV\Saved\
+            Screenshots\WindowsNoEditor`.
+      - ☑ report — NumObjects / mainPlayer_C presence / world name to the log.
+      - ☑ scenario timeline (reads `scenario.txt` next to the DLL; bg thread
+            posts each engine action to the game thread).
+      - ☐ NOT yet ported (Lua harness stays until then): save load (`load:<slot>`),
+            orphan spawn/drive (folds into `coop::RemotePlayer`), widget inspect.
 - ☐ Port the validated orphan spawn into C++ behind `coop::RemotePlayer`.
 
 ## Phase 3 — Networking transport

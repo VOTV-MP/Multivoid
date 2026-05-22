@@ -79,6 +79,14 @@ inline constexpr const wchar_t* ActorClass = L"Actor";
 inline constexpr const wchar_t* WorldClass = L"World";
 inline constexpr const wchar_t* SetActorLocationFn = L"K2_SetActorLocation";
 inline constexpr const wchar_t* GameplayLevel = L"untitled_1";
+
+// Engine classes/functions we dispatch through (stable engine names, not VOTV
+// content -- but kept here so the porting surface is one file). The persistent
+// GameInstance subclass is VOTV content (the world context that survives a
+// level load).
+inline constexpr const wchar_t* KismetSystemLibraryClass = L"KismetSystemLibrary";
+inline constexpr const wchar_t* ExecuteConsoleCommandFn = L"ExecuteConsoleCommand";
+inline constexpr const wchar_t* GameInstanceClass = L"mainGameInstance_C";
 }  // namespace name
 
 }  // namespace ue_wrap::profile
