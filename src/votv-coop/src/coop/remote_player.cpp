@@ -96,6 +96,8 @@ bool RemotePlayer::Spawn() {
     curYaw_ = yaw;
     curPitch_ = 0.f;
     curSpeed_ = 0.f;
+    bodyYawShown_ = yaw;     // body starts aligned with view (head delta = 0)
+    lastApplyMs_ = NowMs();  // dt clock reset
     targetPos_ = loc;
     targetYaw_ = yaw;
     targetPitch_ = 0.f;
@@ -131,6 +133,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         curYaw_ = snap.yaw;
         curPitch_ = snap.pitch;
         curSpeed_ = snap.speed;
+        bodyYawShown_ = snap.yaw;  // body aligned at snap (no head-cone delta)
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
@@ -153,6 +156,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         curYaw_ = snap.yaw;
         curPitch_ = snap.pitch;
         curSpeed_ = snap.speed;
+        bodyYawShown_ = snap.yaw;  // body re-aligned on teleport (no head-cone delta)
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
@@ -221,12 +225,14 @@ void RemotePlayer::Tick() {
         }
     }
 
-    // Skip the engine write when nothing has changed since the last push (frozen
-    // at target between packets). The puppet's SkeletalMeshActor has no
-    // physics/CharacterMovement -- it cannot move on its own, so a frozen pose
-    // genuinely stays where it is; re-writing the same SetActorLocation/Rotation
-    // dozens of times per second is wasted UFunction dispatch.
-    if (dirty_) {
+    // Body may still be CATCHING UP even after the interp window ends (a fast
+    // yaw turn that left the head-cone right before the peer's stream paused).
+    // Stay dirty until body is settled inside the cone, so each Tick advances
+    // it. After that, frozen = skip (the puppet has no physics; same pose
+    // every tick = no need to re-push).
+    const bool bodyNeedsCatchup =
+        std::fabs(OffsetDegrees(bodyYawShown_, curYaw_)) > kHeadYawConeDeg;
+    if (dirty_ || bodyNeedsCatchup) {
         ApplyToEngine();
         dirty_ = false;
     }
@@ -246,6 +252,42 @@ void RemotePlayer::Destroy() {
 
 void RemotePlayer::ApplyToEngine() {
     E::SetActorLocation(actor_, curPos_);
+
+    // Real-time delta since last apply, used to cap body catch-up speed at
+    // kBodyCatchupDegPerSec degrees / real second. Clamp to 50 ms to keep
+    // a hitch (level load, GC pause) from teleporting the body.
+    const uint64_t now = NowMs();
+    float dt = (lastApplyMs_ == 0 || now < lastApplyMs_) ? 0.f
+             : static_cast<float>(now - lastApplyMs_) * 0.001f;
+    if (dt > 0.05f) dt = 0.05f;
+    lastApplyMs_ = now;
+
+    // "Head leads, body follows" cone (per user request, Mafia/Hitman style).
+    //   diff = view yaw relative to body shortest-arc.
+    //   |diff| <= cone -> head deflects, body holds (small look-around stays
+    //   in the head only; body is steady).
+    //   |diff| >  cone -> body sweeps toward view at <= kBodyCatchupDegPerSec
+    //   so the head stays inside the cone. Body never snaps -- bound by the
+    //   per-second cap and real elapsed dt.
+    const float diff = OffsetDegrees(bodyYawShown_, curYaw_);
+    if (std::fabs(diff) > kHeadYawConeDeg) {
+        const float excess = std::fabs(diff) - kHeadYawConeDeg;
+        const float step   = std::min(excess, kBodyCatchupDegPerSec * dt);
+        bodyYawShown_ += (diff > 0.f ? step : -step);
+        // Normalise into (-180, 180] -- otherwise bodyYawShown_ keeps adding step
+        // each tick during sustained turns and grows unbounded (tens of thousands
+        // of degrees over a long session), risking float ULP drift in the engine
+        // rotation math. OffsetDegrees handles arbitrary inputs cleanly but
+        // SetActorRotation gets the raw value; keep it sane.
+        bodyYawShown_ = std::fmod(bodyYawShown_, 360.f);
+        if (bodyYawShown_ >  180.f) bodyYawShown_ -= 360.f;
+        if (bodyYawShown_ < -180.f) bodyYawShown_ += 360.f;
+    }
+    // Head yaw deflection AFTER any body catch-up this frame -- by construction
+    // clamped to +/-cone (unless dt was so small the body couldn't keep up; that
+    // resolves in the next ticks).
+    const float headYawDelta = OffsetDegrees(bodyYawShown_, curYaw_);
+
     // Yaw compensation for the SkeletalMesh's local orientation: VOTV's mainPlayer_C
     // (a Character) has its SkeletalMeshComponent rotated -90 yaw inside the actor
     // (standard UE4 character setup -- imported meshes face Y+, the -90 RelativeRotation
@@ -255,8 +297,9 @@ void RemotePlayer::ApplyToEngine() {
     // (puppet visual) == (source visual) without poking the engine's mesh RelativeRotation.
     constexpr float kPuppetMeshYawCompensationDeg = -90.f;
     E::SetActorRotation(actor_,
-                        ue_wrap::FRotator{0.f, curYaw_ + kPuppetMeshYawCompensationDeg, 0.f});
-    Pup::DriveAnimBP(actor_, curSpeed_, curPitch_);
+                        ue_wrap::FRotator{0.f, bodyYawShown_ + kPuppetMeshYawCompensationDeg, 0.f});
+    // Head bone gets pitch (always) + yaw delta (deflection from body within cone).
+    Pup::DriveAnimBP(actor_, curSpeed_, curPitch_, headYawDelta);
 }
 
 bool RemotePlayer::SetLocation(const ue_wrap::FVector& location) {

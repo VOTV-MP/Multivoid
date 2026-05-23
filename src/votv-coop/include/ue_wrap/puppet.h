@@ -55,13 +55,13 @@ void* GetSkeletalMeshComponent(void* puppetActor);
 // Drive the puppet's pose from a network snapshot value:
 //   * walkSpeed/spd (locomotion BlendSpace inputs; speed in cm/s, 0 = idle).
 //   * headLookAt (FRotator): the AnimBP-exposed head-bone look direction.
-//     headPitch is the streamed view pitch in degrees (-90..90). Body yaw is
-//     applied via SetActorRotation in RemotePlayer::ApplyToEngine, so head
-//     yaw delta inside this rotator stays 0 (head stays aligned with body in
-//     the common case). When the user can strafe-look in future, head yaw
-//     delta = view_yaw - body_yaw goes here too.
+//     - headPitch: streamed view pitch, degrees (-90..90).
+//     - headYawDelta: head yaw RELATIVE to body (head-leads-body cone). The
+//       caller clamps this to +/- cone so the head doesn't owl-spin past
+//       physical limits; beyond the cone the BODY rotates instead (handled
+//       by the caller via SetActorRotation).
 // No-op if the live AnimInstance isn't resolved yet.
-void DriveAnimBP(void* puppetActor, float speed, float headPitch);
+void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawDelta);
 
 // DIAGNOSTIC (the "diff observable state" rule): read the live AnimInstance off a
 // SkeletalMeshComponent and log its key pose-driver variables. Call on the LOCAL

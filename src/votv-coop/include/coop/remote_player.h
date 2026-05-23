@@ -106,6 +106,16 @@ private:
     // teleport (door warp, respawn) -- snap instead of trying to LERP across.
     static constexpr float kSnapBaseCm = 1000.f;
     static constexpr float kSnapPerSpeedSec = 0.5f;
+    // "Head leads, body follows" cone (Mafia / Hitman style):
+    // The puppet's HEAD swivels freely up to +/- kHeadYawConeDeg relative to
+    // the BODY. Beyond that the body rotates to catch up so the head stays
+    // inside the cone. Body catch-up speed is capped at
+    // kBodyCatchupDegPerSec so the body doesn't snap -- it sweeps smoothly
+    // toward the view direction. Both are RECEIVER-side cosmetics: the source
+    // still streams the raw controller view yaw; the source's own body just
+    // matches its camera as VOTV's Character normally does.
+    static constexpr float kHeadYawConeDeg = 60.f;
+    static constexpr float kBodyCatchupDegPerSec = 540.f;
 
     void* actor_ = nullptr;  // the engine ASkeletalMeshActor puppet (owned by the engine)
     // Placeholder until the peer's Join reliable message lands (typically within
@@ -119,9 +129,14 @@ private:
     // single-threaded; no mutex). curPos_/curYaw_/curSpeed_ is what was last
     // applied to the engine; targetPos_/targetYaw_ is what we're walking toward.
     ue_wrap::FVector curPos_{};
-    float            curYaw_ = 0.f;
-    float            curPitch_ = 0.f;   // view pitch for the head bone
+    float            curYaw_ = 0.f;       // interpolated source VIEW yaw (camera direction)
+    float            curPitch_ = 0.f;     // interpolated source view pitch (head tilt)
     float            curSpeed_ = 0.f;
+    // Body yaw the puppet ACTOR is currently rotated to. Lags curYaw_ via the
+    // head-leads-body cone: head can deflect kHeadYawConeDeg before bodyYaw_
+    // starts moving. Updated each ApplyToEngine using real dt.
+    float            bodyYawShown_ = 0.f;
+    uint64_t         lastApplyMs_ = 0;  // for dt-based body catch-up speed
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;
     float            targetPitch_ = 0.f;
