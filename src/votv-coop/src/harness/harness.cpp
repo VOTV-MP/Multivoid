@@ -920,8 +920,16 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // (No auto-screenshot here: GDI can't read the 3D swapchain in-process ->
             // black. Use the external tools/capture-window.ps1 for gameplay frames.)
             // Keep the 3D nameplate(s) glued above the head + facing the local player.
+            // Also install the Stage-1 grab observers (idempotent) so single-
+            // instance hands-on play sees the hook lines fire on E-press --
+            // the net branch installs them via NetPumpTick, but this branch
+            // doesn't run NetPumpTick. The observers are purely local
+            // (observe THIS instance's own UFunctions); zero wire dependency.
             for (;;) {
-                Post([] { coop::nameplate::Update(); });
+                Post([] {
+                    if (!g_grabObserversInstalled) InstallGrabObservers();
+                    coop::nameplate::Update();
+                });
                 ::Sleep(50);
             }
         }
