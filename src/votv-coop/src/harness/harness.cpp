@@ -542,11 +542,25 @@ void RunAutonomousGrabTest() {
     if (!rsv->ok) { UE_LOGW("grab_test: resolve failed -- aborting"); return; }
 
     // ---- 2. Find nearest Aprop_C derivative (super-walk over GUObjectArray).
+    // Anchor: env VOTVCOOP_GRAB_TEST_ANCHOR_{X,Y,Z} if set, else the local
+    // player's world location. The env-anchor lets BOTH peers scan around
+    // the SAME world point -- which is how the cross-peer Key string match
+    // is validated (without an env anchor each peer finds its own nearest).
+    const std::string anchXs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_X");
+    const std::string anchYs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Y");
+    const std::string anchZs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Z");
+    const bool haveAnchor = !anchXs.empty() && !anchYs.empty() && !anchZs.empty();
+    const ue_wrap::FVector envAnchor{
+        haveAnchor ? static_cast<float>(std::atof(anchXs.c_str())) : 0.f,
+        haveAnchor ? static_cast<float>(std::atof(anchYs.c_str())) : 0.f,
+        haveAnchor ? static_cast<float>(std::atof(anchZs.c_str())) : 0.f};
     struct PropResult { void* prop = nullptr; void* mesh = nullptr; float dist = 0.f; std::wstring cls; };
     auto pr = std::make_shared<PropResult>();
     done->store(0);
-    GT::Post([rsv, pr, done] {
-        ue_wrap::FVector pLoc = ue_wrap::engine::GetActorLocation(rsv->player);
+    GT::Post([rsv, pr, done, haveAnchor, envAnchor] {
+        ue_wrap::FVector pLoc = haveAnchor ? envAnchor : ue_wrap::engine::GetActorLocation(rsv->player);
+        UE_LOGI("grab_test: scan anchor = (%.0f, %.0f, %.0f) [%s]",
+                pLoc.X, pLoc.Y, pLoc.Z, haveAnchor ? "env" : "player");
         const int32_t n = R::NumObjects();
         float bestD2 = 1e18f;
         int candidates = 0, scanned = 0;

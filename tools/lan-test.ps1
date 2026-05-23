@@ -87,14 +87,23 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
     $env:VOTVCOOP_AUTOTEST_Z     = $pose.Z
     $env:VOTVCOOP_AUTOTEST_YAW   = $pose.Yaw
     $env:VOTVCOOP_AUTOTEST_PITCH = $pose.Pitch
-    if ($grabTest) { $env:VOTVCOOP_RUN_GRAB_TEST = "1" }
+    if ($grabTest) {
+        $env:VOTVCOOP_RUN_GRAB_TEST = "1"
+        # Cross-peer scan anchor: both peers scan around the HOST's autotest
+        # pose so they find the SAME nearest prop and we can directly verify
+        # Key string match (UUID stable cross-peer; ComparisonIndex per-process).
+        $env:VOTVCOOP_GRAB_TEST_ANCHOR_X = $hostPose.X
+        $env:VOTVCOOP_GRAB_TEST_ANCHOR_Y = $hostPose.Y
+        $env:VOTVCOOP_GRAB_TEST_ANCHOR_Z = $hostPose.Z
+    }
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
     Remove-Item Env:VOTVCOOP_SCENARIO,Env:VOTVCOOP_NET_ROLE,Env:VOTVCOOP_NET_PORT,`
                 Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER,`
                 Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
-                Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST `
+                Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST,`
+                Env:VOTVCOOP_GRAB_TEST_ANCHOR_X,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Y,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Z `
                 -ErrorAction SilentlyContinue
     return $p
 }
