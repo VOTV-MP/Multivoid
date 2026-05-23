@@ -554,7 +554,13 @@ void RunAutonomousGrabTest() {
         haveAnchor ? static_cast<float>(std::atof(anchXs.c_str())) : 0.f,
         haveAnchor ? static_cast<float>(std::atof(anchYs.c_str())) : 0.f,
         haveAnchor ? static_cast<float>(std::atof(anchZs.c_str())) : 0.f};
-    struct PropResult { void* prop = nullptr; void* mesh = nullptr; float dist = 0.f; std::wstring cls; };
+    struct PropResult {
+        void* prop = nullptr; void* mesh = nullptr; float dist = 0.f; std::wstring cls;
+        // Also track the nearest HEAVY prop separately, for the heavy-grab
+        // arm of the autonomous test (different observer suite).
+        void* heavyProp = nullptr; void* heavyMesh = nullptr; float heavyDist = 0.f; std::wstring heavyCls;
+        int totalHeavy = 0;  // census across the whole world
+    };
     auto pr = std::make_shared<PropResult>();
     done->store(0);
     GT::Post([rsv, pr, done, haveAnchor, envAnchor] {
@@ -581,6 +587,10 @@ void RunAutonomousGrabTest() {
             }
             if (!isProp) continue;
             ++candidates;
+            // Read heavy flag from propData (Fstruct_prop @+0x6C inside propData @+0x0260).
+            const bool isHeavy = *reinterpret_cast<bool*>(
+                reinterpret_cast<uint8_t*>(obj) + P::off::Aprop_propData_heavy);
+            if (isHeavy) ++pr->totalHeavy;
             // Read location via the K2 BP-callable (works for any AActor subclass).
             ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
             const float dx = loc.X - pLoc.X, dy = loc.Y - pLoc.Y, dz = loc.Z - pLoc.Z;
@@ -590,14 +600,33 @@ void RunAutonomousGrabTest() {
                 pr->prop = obj;
                 pr->cls = R::ClassNameOf(obj);
             }
+            // Track nearest HEAVY prop separately for the heavy-grab arm.
+            static float sBestHeavyD2;  // re-init below per call
+            // ^ static-in-lambda is process-global; we reset via the outer pr->heavyDist.
+            const float bestHeavyD2 = pr->heavyProp ? (pr->heavyDist * pr->heavyDist) : 1e18f;
+            if (isHeavy && d2 < bestHeavyD2) {
+                pr->heavyProp = obj;
+                pr->heavyCls = R::ClassNameOf(obj);
+                pr->heavyDist = std::sqrt(d2);
+            }
         }
         pr->dist = (pr->prop ? std::sqrt(bestD2) : 0.f);
         if (pr->prop) {
             pr->mesh = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(pr->prop) + P::off::Aprop_StaticMesh);
         }
-        UE_LOGI("grab_test: prop scan scanned=%d candidates=%d nearest=%p (%ls) dist=%.1f mesh=%p",
-                scanned, candidates, pr->prop, pr->cls.c_str(), pr->dist, pr->mesh);
+        if (pr->heavyProp) {
+            pr->heavyMesh = *reinterpret_cast<void**>(
+                reinterpret_cast<uint8_t*>(pr->heavyProp) + P::off::Aprop_StaticMesh);
+        }
+        UE_LOGI("grab_test: prop scan scanned=%d candidates=%d totalHeavy=%d nearest=%p (%ls) dist=%.1f mesh=%p",
+                scanned, candidates, pr->totalHeavy, pr->prop, pr->cls.c_str(), pr->dist, pr->mesh);
+        if (pr->heavyProp) {
+            UE_LOGI("grab_test: nearest HEAVY=%p (%ls) dist=%.1f mesh=%p",
+                    pr->heavyProp, pr->heavyCls.c_str(), pr->heavyDist, pr->heavyMesh);
+        } else {
+            UE_LOGI("grab_test: NO heavy props in scene (totalHeavy=0) -- skip heavy-grab arm");
+        }
         // Stage 2 preview: log the prop's identity + heavy/static/frozen
         // bools. Validates the propData / Key / Static / frozen offsets that
         // Stage 4-7 will need for the wire. Aprop_propData_heavy = 0x02CC,
@@ -684,6 +713,80 @@ void RunAutonomousGrabTest() {
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);
+
+    // ---- 7. (HOST + heavy prop nearby) Heavy-grab arm: drive
+    // UPhysicsConstraintComponent observers. Different class than PHC.
+    if (pr->heavyProp && pr->heavyMesh) {
+        UE_LOGI("grab_test: now driving HEAVY arm (PCC.SetConstrainedComponents + BreakConstraint)");
+        struct HeavyResolved {
+            void* heavyGrab = nullptr;
+            void* pccCls = nullptr;
+            void* setConstrainedFn = nullptr;
+            void* breakFn = nullptr;
+            int32_t scFrame = 0;
+            int32_t scPComp1 = -1, scPBone1 = -1, scPComp2 = -1, scPBone2 = -1;
+            bool ok = false;
+        };
+        auto hr = std::make_shared<HeavyResolved>();
+        done->store(0);
+        GT::Post([rsv, hr, done] {
+            hr->heavyGrab = *reinterpret_cast<void**>(
+                reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_heavyGrab);
+            if (!hr->heavyGrab) { UE_LOGW("grab_test: mainPlayer.heavyGrab is null"); done->store(2); return; }
+            hr->pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
+            hr->setConstrainedFn = R::FindFunction(hr->pccCls, P::name::SetConstrainedComponentsFn);
+            hr->breakFn          = R::FindFunction(hr->pccCls, P::name::BreakConstraintFn);
+            if (!hr->setConstrainedFn || !hr->breakFn) {
+                UE_LOGW("grab_test: PCC UFunction lookup failed (set=%p break=%p)",
+                        hr->setConstrainedFn, hr->breakFn);
+                done->store(2); return;
+            }
+            hr->scFrame  = R::FunctionFrameSize(hr->setConstrainedFn);
+            hr->scPComp1 = R::FindParamOffset(hr->setConstrainedFn, L"Component1");
+            hr->scPBone1 = R::FindParamOffset(hr->setConstrainedFn, L"BoneName1");
+            hr->scPComp2 = R::FindParamOffset(hr->setConstrainedFn, L"Component2");
+            hr->scPBone2 = R::FindParamOffset(hr->setConstrainedFn, L"BoneName2");
+            UE_LOGI("grab_test: PCC resolve heavyGrab=%p pccCls=%p setFn=%p frame=%d "
+                    "(C1@%d B1@%d C2@%d B2@%d) breakFn=%p",
+                    hr->heavyGrab, hr->pccCls, hr->setConstrainedFn, hr->scFrame,
+                    hr->scPComp1, hr->scPBone1, hr->scPComp2, hr->scPBone2, hr->breakFn);
+            hr->ok = (hr->scPComp1 >= 0 && hr->scPBone1 >= 0 && hr->scPComp2 >= 0 && hr->scPBone2 >= 0);
+            done->store(hr->ok ? 1 : 2);
+        });
+        while (done->load() == 0) ::Sleep(5);
+        if (hr->ok) {
+            // Call heavyGrab.SetConstrainedComponents(nullptr, NAME_None,
+            // heavyProp.mesh, NAME_None). nullptr Component1 means "constrain
+            // Component2 to the constraint's own transform" which is the
+            // simplest test -- we just want to verify the PCC observer fires.
+            done->store(0);
+            GT::Post([rsv, pr, hr, done] {
+                std::vector<uint8_t> frame(static_cast<size_t>(hr->scFrame), 0);
+                *reinterpret_cast<void**>(frame.data() + hr->scPComp1) = nullptr;
+                *reinterpret_cast<R::FName*>(frame.data() + hr->scPBone1) = R::FName{0, 0};
+                *reinterpret_cast<void**>(frame.data() + hr->scPComp2) = pr->heavyMesh;
+                *reinterpret_cast<R::FName*>(frame.data() + hr->scPBone2) = R::FName{0, 0};
+                const bool ok = R::CallFunction(hr->heavyGrab, hr->setConstrainedFn, frame.data());
+                UE_LOGI("grab_test: CallFunction(PCC.SetConstrainedComponents) -> %d "
+                        "(expect grab_hook[PCC.SetConstrainedComponents])", ok);
+                done->store(1);
+            });
+            while (done->load() == 0) ::Sleep(5);
+
+            ::Sleep(1000);
+
+            done->store(0);
+            GT::Post([hr, done] {
+                const bool ok = R::CallFunction(hr->heavyGrab, hr->breakFn, nullptr);
+                UE_LOGI("grab_test: CallFunction(PCC.BreakConstraint) -> %d "
+                        "(expect grab_hook[PCC.BreakConstraint PRE])", ok);
+                done->store(1);
+            });
+            while (done->load() == 0) ::Sleep(5);
+        }
+    } else {
+        UE_LOGI("grab_test: no nearby heavy prop -- skipping heavy-grab arm");
+    }
 
     UE_LOGI("grab_test: DONE -- autonomous grab routine complete");
 }

@@ -166,9 +166,10 @@ while ((Get-Date) -lt $deadline) {
 # don't apply -- they DO, but the screenshot timing is what was wrong.)
 if ($pass) {
     if ($GrabTest) {
-        # Grab test: 10 s stabilization + 5 s SetTargetLocation drive + log tail.
-        Step "PASS detected; GRAB TEST armed -- waiting 25 s for grab routine to complete..."
-        Start-Sleep -Seconds 25
+        # Grab test: 10 s stabilization + 5 s SetTargetLocation drive +
+        # 4 s heavy-grab arm + log tail.
+        Step "PASS detected; GRAB TEST armed -- waiting 30 s for grab routine to complete..."
+        Start-Sleep -Seconds 30
     } else {
         Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
         Start-Sleep -Seconds 6
