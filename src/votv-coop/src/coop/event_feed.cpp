@@ -2,11 +2,13 @@
 
 #include "coop/net/session.h"
 #include "coop/remote_player.h"
+#include "coop/remote_prop.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
 
+#include <cstring>
 #include <vector>
 
 namespace coop::event_feed {
@@ -89,6 +91,19 @@ void Update(net::Session& session, RemotePlayer* remote) {
             g_remoteNick = nick;
             if (remote) remote->SetNickname(nick);  // label the nameplate too
             ue_wrap::hud_feed::Push(nick + L" joined the game");
+            break;
+        }
+        case net::ReliableKind::PropRelease: {
+            // v4: peer released a held prop. Dispatch to remote_prop which
+            // re-enables SimulatePhysics + AddImpulse if throw.
+            if (msg.payload.size() < sizeof(net::PropReleasePayload)) {
+                UE_LOGW("event_feed: PropRelease payload too short (%zu < %zu)",
+                        msg.payload.size(), sizeof(net::PropReleasePayload));
+                break;
+            }
+            net::PropReleasePayload p{};
+            std::memcpy(&p, msg.payload.data(), sizeof(p));
+            remote_prop::OnRelease(p);
             break;
         }
         }

@@ -164,22 +164,45 @@ while ((Get-Date) -lt $deadline) {
 # not at the placeholder. (Without this delay the screenshots can catch the
 # puppet mid-snap or before the snap, making it look like the autotest poses
 # don't apply -- they DO, but the screenshot timing is what was wrong.)
+$shotDir = Join-Path $win64 "coop-screenshots"
+New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
+$cap = Join-Path $PSScriptRoot "capture-window.ps1"
+
+# Helper: capture both processes' windows with a label suffix.
+function Capture-Pair($labelSuffix) {
+    foreach ($pair in @(@($hostProc,"host"), @($clientProc,"client"))) {
+        if ($pair[0].HasExited) { continue }
+        $out = Join-Path $shotDir ("lan-" + $pair[1] + "-" + $labelSuffix + ".png")
+        try { & powershell -NoProfile -ExecutionPolicy Bypass -File $cap -ProcessId $pair[0].Id -OutPath $out | Out-Null } catch {}
+        if (Test-Path $out) { Step ("screenshot[" + $pair[1] + "] " + $labelSuffix + " -> " + $out) }
+    }
+}
+
 if ($pass) {
     if ($GrabTest) {
-        # Grab test: 10 s stabilization + 5 s SetTargetLocation drive +
-        # 4 s heavy-grab arm + 3 s Timeline-force tail.
-        Step "PASS detected; GRAB TEST armed -- waiting 35 s for grab routine to complete..."
-        Start-Sleep -Seconds 35
+        # Grab test timing (matches RunAutonomousGrabTest()):
+        #   PASS + ~10 s    routine starts (post-stabilization)
+        #   PASS + ~12 s    teleport + Grab fires; 30-tick hold loop begins
+        #   PASS + ~15 s    host BEFORE-TILT screenshot (host tick 6)
+        #   PASS + ~16 s    tilt phase begins (ticks 8-19)
+        #   PASS + ~25 s    host AFTER-TILT screenshot (host tick 26)
+        #   PASS + ~27 s    release; heavy + Timeline tail
+        #   PASS + ~32 s    routine done
+        Step "PASS detected; GRAB TEST armed -- capturing CROSS-PEER views during host's hold..."
+        Start-Sleep -Seconds 15
+        Capture-Pair "before-tilt"
+        Start-Sleep -Seconds 10
+        Capture-Pair "after-tilt"
+        # Let the routine fully complete (release + post-grab arms) before the
+        # final state capture.
+        Start-Sleep -Seconds 8
     } else {
         Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
         Start-Sleep -Seconds 6
     }
 }
 
-# --- capture both windows (best-effort) -------------------------------------
-$shotDir = Join-Path $win64 "coop-screenshots"
-New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
-$cap = Join-Path $PSScriptRoot "capture-window.ps1"
+# Final capture (existing names so other tooling/docs that reference these still work).
 foreach ($pair in @(@($hostProc,"host"), @($clientProc,"client"))) {
     if ($pair[0].HasExited) { continue }
     $out = Join-Path $shotDir ("lan-" + $pair[1] + ".png")

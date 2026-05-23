@@ -84,6 +84,27 @@ public:
     // Game thread: pop a delivered reliable message, if a new one arrived.
     bool TryGetReliable(ReliableChannel::Message& out);
 
+    // v4: publish the held-prop world transform for the net thread to send each
+    // tick. While `set==true`, the net thread emits one PropPosePacket per
+    // sendHz interval; pass set=false to stop (host released the prop or
+    // grabbing_actor went null). The Key string is the cross-peer prop ID
+    // (Aprop_C.Key via prop_wrap::GetKeyString); receiver looks up its local
+    // Aprop_C* by walking GUObjectArray + string match.
+    void SetLocalPropPose(bool set, const PropPoseSnapshot& pose);
+
+    // v4: fetch the most recent remote PropPose. Returns true and fills `out`
+    // when connected AND at least one snapshot has arrived. `outIsNew` reports
+    // whether it is newer than the previous TryGet (the receiver applies only
+    // when new, to skip redundant engine writes when the stream pauses).
+    bool TryGetRemotePropPose(PropPoseSnapshot& out, bool* outIsNew = nullptr);
+
+    // v4: signal the peer that we released the prop (one-shot, reliable).
+    // `impulse` = (0,0,0) for drop, non-zero for throw -> receiver does
+    // AddImpulse on the prop after re-enabling SimulatePhysics. Returns false
+    // if the reliable channel is busy (stop-and-wait queue is currently
+    // carrying another message); caller should retry next tick.
+    bool SendPropRelease(const WireKey& key, float impulseX, float impulseY, float impulseZ);
+
     // Diagnostics / validation (methodology 5.2: packets sent/received counts).
     uint64_t packetsSent() const { return sent_.load(); }
     uint64_t packetsRecv() const { return recv_.load(); }
@@ -121,6 +142,12 @@ private:
     PoseSnapshot localPose_{};
     bool hasLocal_ = false;
 
+    // v4: local held-prop pose slot (game thread writes, net thread reads).
+    // hasLocalProp_ gates the net thread's per-tick PropPose send.
+    PropPoseSnapshot localPropPose_{};
+    bool hasLocalProp_ = false;
+    uint32_t lastLocalPropSeq_ = 0;  // distinct per-prop-stream seq for stale-drop
+
     // Remote pose slot (net thread writes, game thread reads).
     std::mutex remoteMutex_;
     PoseSnapshot remotePose_{};
@@ -128,6 +155,13 @@ private:
     uint32_t lastRemoteSeq_ = 0;  // highest seq applied (stale-drop reordered UDP)
     uint64_t remoteStamp_ = 0;    // bumped on each accepted pose (for outIsNew)
     uint64_t lastReadStamp_ = 0;  // last stamp returned by TryGetRemotePose
+
+    // v4: remote prop pose slot. Same mutex as remotePose_ (low rate, simpler).
+    PropPoseSnapshot remotePropPose_{};
+    bool hasRemoteProp_ = false;
+    uint32_t lastRemotePropSeq_ = 0;
+    uint64_t remotePropStamp_ = 0;
+    uint64_t lastReadPropStamp_ = 0;
 
     std::atomic<uint32_t> sendSeq_{0};
     std::atomic<uint64_t> sent_{0};

@@ -7,6 +7,7 @@
 #include "coop/nameplate.h"
 #include "coop/net/session.h"
 #include "coop/remote_player.h"
+#include "coop/remote_prop.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -663,15 +664,27 @@ void RunAutonomousGrabTest() {
     while (done->load() == 0) ::Sleep(5);
 
     // ---- 4. Call grabHandle.GrabComponentAtLocation(propMesh, NAME_None, handPos).
+    // ALSO write mainPlayer.grabbing_actor + grabbing_component directly so the
+    // BP-state matches the native PHC state. A real BP-driven grab sets these
+    // fields too; the NetPumpTick emit reads mainPlayer.grabbing_actor to
+    // decide whether to send PropPose. Without these writes the autonomous
+    // grab would never emit on the wire (only proves the local PhysX side).
     done->store(0);
     GT::Post([rsv, pr, handPos, done] {
         std::vector<uint8_t> frame(static_cast<size_t>(rsv->grabFrameSize), 0);
         *reinterpret_cast<void**>(frame.data() + rsv->grabPComp) = pr->mesh;
-        // NAME_None (FName{0,0}).
         *reinterpret_cast<R::FName*>(frame.data() + rsv->grabPBone) = R::FName{0, 0};
         *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->grabPLoc) = *handPos;
         const bool ok = R::CallFunction(rsv->grabHandle, rsv->grabFn, frame.data());
-        UE_LOGI("grab_test: CallFunction(GrabComponentAtLocation) -> %d (expect grab_hook[PHC.Grab] above/below)", ok);
+        // Mirror to BP state. mainPlayer.grabbing_actor + grabbing_component
+        // are what NetPumpTick checks each frame to decide "host is holding
+        // -> send PropPose". Real BP grabs set these in pickupObject (the
+        // BP-pure function that VOTV's BP graph calls inline).
+        *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_actor) = pr->prop;
+        *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_component) = pr->mesh;
+        UE_LOGI("grab_test: CallFunction(GrabComponentAtLocation) -> %d + wrote mainPlayer.grabbing_{actor,component}", ok);
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);
@@ -681,7 +694,9 @@ void RunAutonomousGrabTest() {
     // not pinned to a static world location). Drive SetTargetLocation from
     // the LIVE camera location + forward each tick. Tilt the controller pitch
     // up gradually between screenshots so the comparison is unambiguous.
-    UE_LOGI("grab_test: holding + tilting camera up over 8 sec (2 screenshots: before-tilt vs after-tilt)");
+    // 30 ticks * 500ms = 15 sec hold -- long enough for lan-test to capture
+    // BOTH cross-peer screenshot pairs deep inside the hold window.
+    UE_LOGI("grab_test: holding + tilting camera up over 15 sec (2 screenshots: before-tilt vs after-tilt)");
 
     // Per-tick: read camera, optionally tilt pitch up, compute target from
     // CAMERA forward (not actor forward -- camera and actor differ in pitch),
@@ -727,30 +742,36 @@ void RunAutonomousGrabTest() {
         while (done->load() == 0) ::Sleep(5);
     };
 
-    // Drive 16 ticks over 8 sec. First 4 ticks: no tilt (let the screenshot
-    // catch the BEFORE state). Ticks 5-12 (8 ticks * +5 deg = +40 deg): tilt
-    // pitch up. Last 4 ticks: hold steady (let screenshot catch AFTER state).
-    for (int i = 0; i < 16; ++i) {
+    // Drive 30 ticks over 15 sec. First 8 ticks: no tilt (BEFORE state stable).
+    // Ticks 9-20 (12 ticks * +3 deg = +36 deg): tilt pitch up. Last 10 ticks:
+    // hold steady at tilted pose. Screenshots at i=6 (deep in BEFORE phase)
+    // and i=26 (deep in AFTER phase) so lan-test cross-peer captures land
+    // squarely inside each phase.
+    for (int i = 0; i < 30; ++i) {
         ::Sleep(500);
-        const float pitchDelta = (i >= 4 && i < 12) ? 5.f : 0.f;
+        const float pitchDelta = (i >= 8 && i < 20) ? 3.f : 0.f;
         driveTick(pitchDelta);
-        if (i == 3) {
-            // BEFORE tilt: suitcase straight ahead.
+        if (i == 6) {
             const bool ok = harness::screenshot::Capture(L"grab-before-tilt");
-            UE_LOGI("grab_test: SCREENSHOT 1 (before tilt, camera level) saved=%d", ok);
+            UE_LOGI("grab_test: HOST SCREENSHOT 1 (before tilt, level camera) saved=%d", ok);
         }
-        if (i == 14) {
-            // AFTER tilt: suitcase has risen with the look direction.
+        if (i == 26) {
             const bool ok = harness::screenshot::Capture(L"grab-after-tilt");
-            UE_LOGI("grab_test: SCREENSHOT 2 (after +40deg pitch tilt) saved=%d", ok);
+            UE_LOGI("grab_test: HOST SCREENSHOT 2 (after +36deg pitch tilt) saved=%d", ok);
         }
     }
 
-    // ---- 6. ReleaseComponent.
+    // ---- 6. ReleaseComponent + clear BP state. NetPumpTick will see the
+    // grabbing_actor transition non-null -> null on the NEXT tick and emit
+    // PropRelease (reliable) so the peer re-enables SimulatePhysics.
     done->store(0);
     GT::Post([rsv, done] {
         const bool ok = R::CallFunction(rsv->grabHandle, rsv->releaseFn, nullptr);
-        UE_LOGI("grab_test: CallFunction(ReleaseComponent) -> %d (expect grab_hook[PHC.Release PRE] above/below)", ok);
+        *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_actor) = nullptr;
+        *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_component) = nullptr;
+        UE_LOGI("grab_test: CallFunction(ReleaseComponent) -> %d + cleared mainPlayer.grabbing_{actor,component}", ok);
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);
@@ -934,6 +955,49 @@ void NetPumpTick(float displayOffsetX) {
         if (!g_grabObserversInstalled) InstallGrabObservers();
         coop::net::PoseSnapshot mine;
         if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
+
+        // v4: held-prop replication. Read mainPlayer.grabbing_actor; if non-
+        // null, build a PropPoseSnapshot from the prop's current world transform
+        // and publish to the net thread. On the edge held -> not-held, send a
+        // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
+        // never rely solely on the 500 ms stream-stop timeout).
+        static void* sLastHeldProp = nullptr;
+        static coop::net::WireKey sLastHeldKey{};
+        void* heldActor = *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(g_netLocal) + P::off::mainPlayer_grabbing_actor);
+        if (heldActor && R::IsLive(heldActor)) {
+            const std::wstring keyW = ue_wrap::prop::GetKeyString(heldActor);
+            coop::net::PropPoseSnapshot pp{};
+            pp.key.len = 0;
+            for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
+                // The save UUIDs are ASCII; this lossless narrowing is fine.
+                pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
+            }
+            const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
+            const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
+            pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+            pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
+            g_session.SetLocalPropPose(true, pp);
+            // Throttled emit log: first 3 + every 60th, matches receiver
+            // throttle so the two logs can be diff'd line-for-line.
+            static uint64_t sEmitCount = 0;
+            const uint64_t n = ++sEmitCount;
+            if (n <= 3 || (n % 60) == 0) {
+                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d",
+                        static_cast<unsigned long long>(n),
+                        pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
+                        static_cast<int>(pp.key.len));
+            }
+            sLastHeldProp = heldActor;
+            sLastHeldKey = pp.key;
+        } else if (sLastHeldProp) {
+            // Edge: was holding, now not. Stop sending PropPose + tell peer.
+            g_session.SetLocalPropPose(false, {});
+            g_session.SendPropRelease(sLastHeldKey, 0.f, 0.f, 0.f);  // drop (no throw impulse yet)
+            UE_LOGI("net: held -> released, sent PropRelease (key.len=%d)", sLastHeldKey.len);
+            sLastHeldProp = nullptr;
+            sLastHeldKey = {};
+        }
     }
 
     coop::net::PoseSnapshot remote;
@@ -968,6 +1032,11 @@ void NetPumpTick(float displayOffsetX) {
         }
     }
     if (g_orphan.valid()) g_orphan.Tick();
+
+    // v4: receiver-side held-prop driver. Drains the latest PropPose from the
+    // session and applies it (lookup-by-Key on first arrival, transform writes
+    // thereafter). Stream-stop timeout (>500 ms) treated as implicit release.
+    coop::remote_prop::Tick(g_session);
 
     // Surface session events (joins/disconnects) to the feed + send our Join.
     coop::event_feed::Update(g_session, &g_orphan);

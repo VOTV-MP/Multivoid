@@ -20,14 +20,18 @@ namespace coop::net {
 // Opaque magic guard (rejects stray datagrams that hit our port). Both peers
 // just agree on the constant; the spelling is "VMTP" (VoTv MultiPlayer).
 inline constexpr uint32_t kMagic = 0x564D5450u;
-// v3 (2026-05-23 PM): PoseSnapshot grew from 24 -> 28 bytes (added headYawDelta
-// for puppet-head-follows-SOURCE-camera replication: the source's controller yaw
-// minus actor yaw, so the puppet's head bone can lead/lag the body the way the
-// source's first-person camera does, instead of the AnimBP's default "twist
-// head to track the LOCAL player" path). Both peers must run v3; v2 packets
-// are rejected at the header check. No back-compat layer (RULE 2 -- mod is
-// pre-ship; bump cleanly).
-inline constexpr uint16_t kProtocolVersion = 3;
+// v4 (2026-05-24): physics-object grab replication added.
+//   - MsgType::PropPose = per-frame world transform of the prop the sender
+//     currently holds (unreliable; receiver lookup-by-Key on first arrival,
+//     SetSimulatePhysics(false) + drive transform per packet)
+//   - ReliableKind::PropRelease = one-shot release signal carrying optional
+//     throw-impulse FVector; receiver re-enables SimulatePhysics + AddImpulse
+//   - WireKey carries the FName string (cross-peer stable, idx is NOT --
+//     see research/findings/votv-physics-interaction-deep-re-2026-05-23.md)
+// v3 (2026-05-23 PM): PoseSnapshot grew from 24 -> 28 bytes (added headYawDelta).
+// Both peers must run v4; v3 packets are rejected at the header check. No
+// back-compat layer (RULE 2 -- mod is pre-ship; bump cleanly).
+inline constexpr uint16_t kProtocolVersion = 4;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -40,13 +44,20 @@ enum class MsgType : uint8_t {
     ReliableAck = 5,   // acknowledges a Reliable message by its relSeq
     Ping = 6,          // RTT probe: payload = sender's local steady_clock millis (uint32)
     Pong = 7,          // RTT echo:  payload = the SAME millis we received in Ping
+    PropPose = 8,      // v4: held-prop world transform (unreliable; sent per-frame
+                       //     while host holds; receiver finds local prop by Key,
+                       //     SetSimulatePhysics(false), drives transform per packet)
 };
 
 // Payload kinds carried inside a Reliable message. The chat/event-feed groundwork:
 // Join announces a player (its nickname) so the peer can post "<nick> joined" and
 // label the remote player. (Chat text is a future ReliableKind.)
 enum class ReliableKind : uint8_t {
-    Join = 1,  // payload: [uint8 len][len bytes UTF-8 nickname]
+    Join = 1,         // payload: [uint8 len][len bytes UTF-8 nickname]
+    PropRelease = 2,  // v4: host released a held prop. Payload: PropReleasePayload
+                      //     (WireKey + FVector impulse; impulse=(0,0,0) for drop,
+                      //     non-zero for throw). Receiver re-enables
+                      //     SetSimulatePhysics(true) + AddImpulse if non-zero.
 };
 
 #pragma pack(push, 1)
@@ -123,6 +134,48 @@ struct ReliableHeader {
     uint16_t _pad2;
 };
 static_assert(sizeof(ReliableHeader) == 8, "ReliableHeader must be 8 bytes");
+
+// v4: FName carrier. The Aprop_C.Key save UUIDs are ~22 ASCII chars; 31 + null
+// gives ample headroom without going to variable-length wire encoding. Empty
+// keys (len=0) reserved for "not set" / sentinel. Bytes beyond `len` MUST be
+// zero on the wire so equality compare works.
+struct WireKey {
+    uint8_t len;       // 0..31 (chars in `data`)
+    char    data[31];  // UTF-8 (Aprop_C Keys are ASCII)
+};
+static_assert(sizeof(WireKey) == 32, "WireKey must be 32 bytes");
+
+// v4: held-prop world transform. Sent unreliable, ~sendHz, while the sender's
+// mainPlayer.grabbing_actor is non-null. Receiver's first packet for a new key:
+// FindByKeyString -> local Aprop_C*, SetSimulatePhysics(false) on its StaticMesh,
+// cache the pointer. Subsequent packets: SetActorLocation+Rotation on the
+// cached actor. Stream-stops (>500 ms gap) treated as implicit release.
+struct PropPoseSnapshot {
+    WireKey key;        // 32 -- which prop (cross-peer stable string)
+    float   x, y, z;    // world cm
+    float   pitch;
+    float   yaw;
+    float   roll;
+};
+static_assert(sizeof(PropPoseSnapshot) == 56, "PropPoseSnapshot must be 56 bytes");
+
+struct PropPosePacket {
+    PacketHeader     header;  // 20
+    PropPoseSnapshot pose;    // 56
+};
+static_assert(sizeof(PropPosePacket) == 76, "PropPosePacket must be 76 bytes");
+
+// v4: PropRelease reliable payload. Sent ONCE when the sender's grab ends.
+// Receiver re-enables SimulatePhysics on the cached prop + AddImpulse if the
+// impulse vector is non-zero (throw vs drop). Carries the Key so a release
+// out of order vs the last PropPose still finds the right prop.
+struct PropReleasePayload {
+    WireKey key;
+    float   impulseX;
+    float   impulseY;
+    float   impulseZ;  // (0,0,0) = drop; non-zero = throw
+};
+static_assert(sizeof(PropReleasePayload) == 44, "PropReleasePayload must be 44 bytes");
 
 #pragma pack(pop)
 

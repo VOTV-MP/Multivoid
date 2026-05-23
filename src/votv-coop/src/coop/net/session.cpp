@@ -111,12 +111,25 @@ void Session::SetLocalPose(const PoseSnapshot& pose) {
     hasLocal_ = true;
 }
 
+void Session::SetLocalPropPose(bool set, const PropPoseSnapshot& pose) {
+    std::lock_guard<std::mutex> lk(localMutex_);
+    hasLocalProp_ = set;
+    if (set) localPropPose_ = pose;
+}
+
 bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     return reliable_.Send(kind, payload, len);
 }
 
 bool Session::TryGetReliable(ReliableChannel::Message& out) {
     return reliable_.TryDrain(out);
+}
+
+bool Session::SendPropRelease(const WireKey& key, float ix, float iy, float iz) {
+    PropReleasePayload p{};
+    p.key = key;
+    p.impulseX = ix; p.impulseY = iy; p.impulseZ = iz;
+    return reliable_.Send(ReliableKind::PropRelease, &p, sizeof(p));
 }
 
 bool Session::TryGetRemotePose(PoseSnapshot& out, bool* outIsNew) {
@@ -126,6 +139,16 @@ bool Session::TryGetRemotePose(PoseSnapshot& out, bool* outIsNew) {
     out = remotePose_;
     if (outIsNew) *outIsNew = (remoteStamp_ != lastReadStamp_);
     lastReadStamp_ = remoteStamp_;
+    return true;
+}
+
+bool Session::TryGetRemotePropPose(PropPoseSnapshot& out, bool* outIsNew) {
+    if (state_.load() != ConnState::Connected) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteProp_) return false;
+    out = remotePropPose_;
+    if (outIsNew) *outIsNew = (remotePropStamp_ != lastReadPropStamp_);
+    lastReadPropStamp_ = remotePropStamp_;
     return true;
 }
 
@@ -203,6 +226,31 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         ++remoteStamp_;
         break;
     }
+    case MsgType::PropPose: {
+        // v4: per-tick held-prop world transform.
+        if (len < static_cast<int>(sizeof(PropPosePacket))) return;
+        PropPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        // Trust-boundary sanity: finite floats + sane bounds + key len in range.
+        const float vals[6] = {pkt.pose.x, pkt.pose.y, pkt.pose.z,
+                               pkt.pose.pitch, pkt.pose.yaw, pkt.pose.roll};
+        for (float v : vals) if (!std::isfinite(v)) return;
+        if (std::fabs(pkt.pose.x) > kMaxCoord ||
+            std::fabs(pkt.pose.y) > kMaxCoord ||
+            std::fabs(pkt.pose.z) > kMaxCoord) return;
+        if (pkt.pose.key.len > 31) return;  // malformed
+
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        // PropPose has its own seq lineage (sender uses the same sendSeq_ counter,
+        // but the order vs PoseSnapshot is independent in semantics). Apply only
+        // strictly newer.
+        if (hasRemoteProp_ && static_cast<int32_t>(seq - lastRemotePropSeq_) <= 0) return;
+        remotePropPose_ = pkt.pose;
+        lastRemotePropSeq_ = seq;
+        hasRemoteProp_ = true;
+        ++remotePropStamp_;
+        break;
+    }
     case MsgType::Reliable: {
         // Ack to the sender's address; deliver in order via the reliable channel.
         auto ack = [this, &from](const void* d, int n) { return transport_.SendTo(from, d, n); };
@@ -218,7 +266,9 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         // Reset remote tracking so a reconnecting peer (whose seq restarts at 0) is
         // not stale-dropped for the rest of the session, and re-learn the peer.
         { std::lock_guard<std::mutex> lk(remoteMutex_);
-          hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0; }
+          hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0;
+          hasRemoteProp_ = false; lastRemotePropSeq_ = 0;
+          remotePropStamp_ = 0; lastReadPropStamp_ = 0; }
         reliable_.Reset();
         lastRttMs_.store(0);
         if (cfg_.role == Role::Host) {
@@ -309,14 +359,26 @@ void Session::NetThread() {
         }
 
         // 3) Connected: stream the local pose at sendHz (with the session token).
+        // Also stream the held-prop pose if the host is currently grabbing
+        // something (v4: one extra unreliable datagram per tick while held).
         if (state_.load() == ConnState::Connected && now >= nextSend) {
             PoseSnapshot local;
             bool have;
-            { std::lock_guard<std::mutex> lk(localMutex_); local = localPose_; have = hasLocal_; }
+            PropPoseSnapshot localProp;
+            bool haveProp;
+            { std::lock_guard<std::mutex> lk(localMutex_);
+              local = localPose_; have = hasLocal_;
+              localProp = localPropPose_; haveProp = hasLocalProp_; }
             if (have && peer.valid()) {
                 PosePacket pkt{};
                 WriteHeader(pkt.header, MsgType::PoseSnapshot, sendSeq_.fetch_add(1), token);
                 pkt.pose = local;
+                if (transport_.SendTo(peer, &pkt, sizeof(pkt))) sent_.fetch_add(1);
+            }
+            if (haveProp && peer.valid()) {
+                PropPosePacket pkt{};
+                WriteHeader(pkt.header, MsgType::PropPose, sendSeq_.fetch_add(1), token);
+                pkt.pose = localProp;
                 if (transport_.SendTo(peer, &pkt, sizeof(pkt))) sent_.fetch_add(1);
             }
             nextSend = now + sendInterval;

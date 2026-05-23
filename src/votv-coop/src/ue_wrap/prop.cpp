@@ -160,7 +160,14 @@ void* FindByKeyString(const std::wstring& keyString) {
         if (!IsDescendantOfProp(obj)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
-        if (GetKeyString(obj) == keyString) return obj;
+        if (GetKeyString(obj) != keyString) continue;
+        // Liveness gate: reject PendingKill / Unreachable matches. UE4 keeps
+        // the dying actor in its GUObjectArray slot until GC purge -- without
+        // this check we can return the OLD instance after a level reload
+        // when the same Key is re-spawned on the fresh actor (same wire
+        // string, fresh memory). Caller wants the LIVE one only.
+        if (!R::IsLive(obj)) continue;
+        return obj;
     }
     return nullptr;
 }
