@@ -132,28 +132,23 @@ std::wstring ReadNickname() {
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
+    const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
     const float halfH = ue_wrap::puppet::GetCapsuleHalfHeight(local);
-    // View rotation lives on the CONTROLLER (control rotation), NOT the actor:
-    // actor pitch is always 0 for an upright character; the controller carries
-    // the camera's pitch/yaw which is the player's actual look direction. Send
-    // both so the puppet's head can mirror the remote's view (pitch drives the
-    // head-bone tilt; yaw drives the body since VOTV's Character uses
-    // bUseControllerRotationYaw). Fall back to actor rotation if no controller
-    // (e.g. transient frames during level load / OMEGA pre-possession). The
-    // caller (NetPumpTick) caches the controller alongside g_netLocal to avoid
-    // re-resolving it every tick (post-ship audit).
-    ue_wrap::FRotator viewRot{};
-    if (controller) {
-        viewRot = ue_wrap::engine::GetControlRotation(controller);
-    } else {
-        viewRot = ue_wrap::engine::GetActorRotation(local);
-    }
+    // BODY yaw: read from the ACTOR (the real body facing direction). Earlier
+    // attempt sent controller yaw -- but VOTV's Character body LAGS the camera
+    // (head-leads-body is natural to the source), so sending controller yaw made
+    // the puppet body show the CAMERA direction instead of the BODY direction
+    // = sideways-when-camera-leads (user-confirmed regression).
+    // HEAD pitch: read from the CONTROLLER (actor pitch is always 0 on an
+    // upright character; the controller carries the real view pitch). Cached
+    // by NetPumpTick to skip re-resolving GetController every tick.
     out.x = loc.X;
     out.y = loc.Y;
     out.z = loc.Z - halfH;
-    out.yaw = viewRot.Yaw;
-    out.pitch = viewRot.Pitch;
+    out.yaw = actorRot.Yaw;
+    out.pitch = controller ? ue_wrap::engine::GetControlRotation(controller).Pitch
+                           : actorRot.Pitch;
     out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
     return true;
 }

@@ -181,11 +181,13 @@ void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawD
     if (!anim) return;
     WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeed, speed);
     WriteAt<float>(anim, P::off::AnimBP_kerfur_spd, speed);
-    // KILLER FEATURE: drive the puppet's head bone from the streamed view.
+    // Drive the puppet head bone from the streamed view.
     // AnimBP_kerfur_headLookAt is the AnimBP-exposed FRotator for head IK.
     //   Pitch: streamed view pitch -- head tilts up/down with the source.
-    //   Yaw:   head-leads-body cone delta (the caller clamps |yaw| <= cone);
-    //          body catches up via SetActorRotation when yaw saturates the cone.
+    //   Yaw:   head yaw delta vs body. Currently 0 -- the source's body lag
+    //          already encodes the head-leads-body lean; replicate it by
+    //          streaming actor yaw (not camera yaw) into bodyRotation. The
+    //          parameter is kept for a future "free-look" mode.
     // With lookingAtPlayer=false (set in SpawnPuppet), the AnimBP graph uses
     // headLookAt as the explicit head-look rotation rather than chasing a
     // phantom camera target.

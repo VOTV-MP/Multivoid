@@ -56,10 +56,12 @@ void* GetSkeletalMeshComponent(void* puppetActor);
 //   * walkSpeed/spd (locomotion BlendSpace inputs; speed in cm/s, 0 = idle).
 //   * headLookAt (FRotator): the AnimBP-exposed head-bone look direction.
 //     - headPitch: streamed view pitch, degrees (-90..90).
-//     - headYawDelta: head yaw RELATIVE to body (head-leads-body cone). The
-//       caller clamps this to +/- cone so the head doesn't owl-spin past
-//       physical limits; beyond the cone the BODY rotates instead (handled
-//       by the caller via SetActorRotation).
+//     - headYawDelta: head yaw RELATIVE to body (degrees). Currently always
+//       streamed as 0 -- the source actor's body yaw already lags the camera
+//       inside VOTV's Character, so the natural "head leads body" effect
+//       reproduces on the puppet for free when we stream actor yaw. Param
+//       kept for a future enhancement where the head's yaw lead is sent
+//       explicitly (e.g. free-look key without turning the body).
 // No-op if the live AnimInstance isn't resolved yet.
 void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawDelta);
 
