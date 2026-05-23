@@ -133,6 +133,13 @@ int32_t FunctionFrameSize(void* function);
 // Byte offset of parameter `paramName` in the frame, or -1 if not found.
 int32_t FindParamOffset(void* function, const wchar_t* paramName);
 
+// Byte offset of an INSTANCE property named `propName` on `owningClass` (a
+// UClass*). Walks the class's own ChildProperties chain only (does NOT climb to
+// SuperStruct). Returns -1 if not found. Used to locate fields like
+// `UMovementComponent::Velocity` for direct memory access. Cache the result;
+// the linear walk is fine one-shot but bad in a hot loop.
+int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName);
+
 // Convenience: the object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);
 

@@ -82,25 +82,53 @@ bool RemotePlayer::Spawn() {
         return false;
     }
 
-    // Bug 2 / Plan B1: register the puppet's AnimInstance with the BUA
-    // interceptor so BlueprintUpdateAnimation's "spd = 0 on null Pawn" clobber
-    // is bypassed for this puppet (and ONLY this puppet -- the local mainPlayer
-    // and any NPC kerfurs continue to run BUA normally). On first registration
-    // ever, the interceptor itself gets installed; subsequent puppets just
-    // add to the registered set.
-    if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
-        // The AnimInstance is at SkeletalMeshComponent +0x6B0 (AnimScriptInstance);
-        // use the same path SpawnPuppet's DumpAnimState/DriveAnimBP use, so it
-        // pairs with the IsLive guards there.
-        void* anim = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(comp) + P::off::USkeletalMesh_AnimScriptInstance);
-        if (anim) {
-            puppetAnim_ = anim;  // remembered for Destroy's unregister
-            Pup::RegisterPuppetAnimInstance(anim);
-        } else {
-            UE_LOGW("RemotePlayer::Spawn: puppet has no live AnimInstance yet; "
-                    "BUA-interceptor registration deferred (locomotion will not animate)");
+    // Bug 2 / Plan B2 (root-cause fix per RULE 1): the AnimBP's
+    // BlueprintUpdateAnimation reads Pawn->GetMovementComponent()->Velocity
+    // and writes a LOT of AnimInstance fields from it (Movement, spd, IK
+    // targets, lookAt, headLookAt, packed bools). On a SkeletalMeshActor
+    // puppet, Pawn is null and BUA short-circuits -> AnimInstance is vastly
+    // under-populated (8 set fields vs ~26 on local, confirmed via the full
+    // AnimBP_vars_all diff dump 2026-05-23). The state machine transition
+    // reads one or more of those missing fields and stays in idle.
+    //
+    // Fix: spawn a hidden, inert satellite ACharacter co-located with the
+    // puppet. Set its CharacterMovementComponent.Velocity from the streamed
+    // pose each tick. Write the puppet AnimInstance.Pawn pointer at +0x2D70
+    // to point at this satellite. BUA then runs naturally on the puppet's
+    // AnimInstance -- reading Pawn=satellite, Movement=satellite.CMC,
+    // Movement.Velocity=our streamed velocity -- and populates EVERY field
+    // the state machine looks at. Transitions fire on the same conditions
+    // the local mainPlayer's AnimInstance does, so the puppet walks/runs
+    // exactly like a normal kerfur.
+    //
+    // The satellite is invisible + has its CMC tick disabled (CMC would
+    // otherwise integrate Velocity into position and reset it each tick
+    // from its own state machine; we just need it as a Velocity data
+    // holder, NOT a physics simulator).
+    satellite_ = ue_wrap::engine::SpawnSatelliteCharacter(loc);
+    if (satellite_) {
+        satelliteCmc_ = ue_wrap::engine::GetCharacterMovementComponent(satellite_);
+        if (satelliteCmc_) {
+            // Park the CMC -- we own the Velocity field; CMC physics would
+            // overwrite it each tick otherwise.
+            ue_wrap::engine::SetComponentTickEnabled(satelliteCmc_, false);
         }
+        // Wire puppet AnimInstance -> satellite Pawn. Once done, BUA's
+        // velocity-pull path reads from the satellite each tick; no per-tick
+        // override needed (BeginPlay set Pawn=null once, our spawn-time write
+        // overrides it permanently for the puppet's AnimInstance lifetime).
+        if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
+            void* anim = *reinterpret_cast<void**>(
+                reinterpret_cast<uint8_t*>(comp) + P::off::USkeletalMesh_AnimScriptInstance);
+            if (anim) {
+                puppetAnim_ = anim;
+                ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Pawn, satellite_);
+                UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn -> satellite %p",
+                        anim, satellite_);
+            }
+        }
+    } else {
+        UE_LOGE("RemotePlayer::Spawn: SpawnSatelliteCharacter failed -- puppet will not animate");
     }
 
     // Face the puppet toward the local player (yaw = direction from puppet to
@@ -257,16 +285,18 @@ void RemotePlayer::Tick() {
 
 void RemotePlayer::Destroy() {
     if (!actor_) return;
-    // Unregister from the BUA interceptor BEFORE destroying the engine actor:
-    // once the AnimInstance is freed, any further BUA interception on a stale
-    // pointer is undefined (we keyed on the AnimInstance address; the engine
-    // does not guarantee the next allocation reuses the same slot, but a
-    // straggling BUA dispatch landing after DestroyActor could read freed
-    // memory via the interceptor's map lookup).
-    if (puppetAnim_) {
-        Pup::UnregisterPuppetAnimInstance(puppetAnim_);
-        puppetAnim_ = nullptr;
+    // Order: clear AnimInstance.Pawn pointer (so BUA can't dereference a freed
+    // satellite next tick), then destroy satellite, then destroy puppet actor,
+    // then nameplate.
+    if (puppetAnim_ && R::IsLive(puppetAnim_)) {
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn, nullptr);
     }
+    if (satellite_) {
+        if (R::IsLive(satellite_)) E::DestroyActor(satellite_);
+        satellite_ = nullptr;
+        satelliteCmc_ = nullptr;
+    }
+    puppetAnim_ = nullptr;
     nameplate::Unregister(this);  // drops + destroys the floating label
     if (R::IsLive(actor_)) E::DestroyActor(actor_);
     actor_ = nullptr;
@@ -274,7 +304,7 @@ void RemotePlayer::Destroy() {
     interpFinishMs_ = 0;
     lastAlpha_ = 0.f;
     dirty_ = false;
-    UE_LOGI("RemotePlayer::Destroy: puppet + nameplate gone");
+    UE_LOGI("RemotePlayer::Destroy: puppet + satellite + nameplate gone");
 }
 
 void RemotePlayer::ApplyToEngine() {
@@ -289,6 +319,33 @@ void RemotePlayer::ApplyToEngine() {
     constexpr float kPuppetMeshYawCompensationDeg = -90.f;
     E::SetActorRotation(actor_,
                         ue_wrap::FRotator{0.f, curYaw_ + kPuppetMeshYawCompensationDeg, 0.f});
+
+    // Bug 2 Plan B2: drive the satellite Character (the AnimBP Pawn pull source)
+    // so its CharacterMovementComponent.Velocity carries the streamed velocity.
+    // Co-locate the satellite with the puppet so any IK targets BUA computes
+    // (footZ, floorFoot, lookAt) sit at sane world coordinates. Both axes of
+    // the velocity vector are derived from yaw + speed (the puppet is upright;
+    // Z velocity stays zero -- the BlendSpace X-input is the planar magnitude
+    // = |vx|^2+|vy|^2 = speed^2 -> sqrt = speed, exactly what BUA computes).
+    if (satellite_ && R::IsLive(satellite_)) {
+        E::SetActorLocation(satellite_, curPos_);
+        if (satelliteCmc_) {
+            // Derive the planar velocity vector from streamed yaw + speed. The
+            // ACTOR yaw (not camera yaw) is what gets streamed; the source's
+            // body movement is along its actor +X forward, so velocity points
+            // along (cos(yaw), sin(yaw)) * speed. UE4 yaw is in degrees,
+            // measured from +X around +Z (right-handed Z-up); cosf/sinf use
+            // radians.
+            const float yawRad = curYaw_ * 0.01745329252f;  // PI/180
+            const ue_wrap::FVector vel{
+                std::cos(yawRad) * curSpeed_,
+                std::sin(yawRad) * curSpeed_,
+                0.f,
+            };
+            E::SetMovementVelocity(satelliteCmc_, vel);
+        }
+    }
+
     // Head bone gets the source's view pitch (head tilt up/down). No yaw delta:
     // VOTV's body already naturally lags the camera on the source side (where
     // applicable); we stream actor yaw so the puppet body shows the SAME lag

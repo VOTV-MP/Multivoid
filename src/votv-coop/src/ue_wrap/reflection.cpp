@@ -275,6 +275,19 @@ int32_t FunctionFrameSize(void* function) {
                                        O::UStruct_PropertiesSize);
 }
 
+int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
+    if (!owningClass || !propName) return -1;
+    auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(owningClass) +
+                                               O::UStruct_ChildProperties);
+    while (field) {
+        if (ToString(FieldName(field)) == propName) {
+            return *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+        }
+        field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
+    }
+    return -1;
+}
+
 int32_t FindParamOffset(void* function, const wchar_t* paramName) {
     if (!function || !paramName) return -1;
     for (const ParamInfo& p : FunctionParams(function)) {

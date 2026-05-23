@@ -109,10 +109,19 @@ private:
 
     void* actor_ = nullptr;  // the engine ASkeletalMeshActor puppet (owned by the engine)
     void* puppetAnim_ = nullptr;  // the puppet's live UAnimBlueprint_kerfurOmega_regular_C
-                                  // AnimInstance; cached at Spawn so Destroy can
-                                  // call puppet::UnregisterPuppetAnimInstance even
-                                  // after the SkeletalMeshComponent has gone away.
-                                  // BUA-interceptor key (Bug 2 Plan B1).
+                                  // AnimInstance; cached at Spawn for later cleanup
+                                  // and to track Pawn-pointer write target.
+    void* satellite_ = nullptr;   // Bug 2 Plan B2 root-cause fix: a hidden, inert
+                                  // ACharacter co-located with the puppet that
+                                  // serves as the AnimBP's Pawn pull source. Its
+                                  // CharacterMovementComponent.Velocity carries the
+                                  // streamed pose's velocity; BUA reads it and
+                                  // populates Movement / spd / IK / state-machine
+                                  // inputs naturally. Owned by the engine; we
+                                  // destroy it in Destroy(). null until first
+                                  // successful spawn.
+    void* satelliteCmc_ = nullptr; // cached satellite->CharacterMovementComponent
+                                   // for per-tick Velocity writes.
     // Placeholder until the peer's Join reliable message lands (typically within
     // a few RTT of connect). nameplate::Update repaints when SetNickname changes
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"

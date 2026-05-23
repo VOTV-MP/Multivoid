@@ -896,4 +896,87 @@ bool SpawnDefaultController(void* pawn) {
     return Call(pawn, f);
 }
 
+// ---- Bug 2 / Plan B2: AnimBP satellite ----------------------------------------
+// The puppet's AnimInstance fields (Movement, spd, IK targets, ...) are populated
+// by BUA reading Pawn->GetMovementComponent()->Velocity. On a SkeletalMeshActor
+// puppet, Pawn=NULL -> BUA early-outs -> the AnimInstance is vastly under-
+// populated (confirmed empirically via the full-region dump 2026-05-23: 8 set
+// fields on puppet vs ~26 on local). The state machine transition reads one or
+// more of those fields and stays in idle.
+//
+// Fix: spawn a hidden satellite ACharacter, point puppet AnimInstance.Pawn at
+// it, drive its Movement.Velocity from the network-streamed pose. BUA runs
+// naturally, populates everything from the satellite. State machine sees
+// valid Movement + correct velocity -> transitions on the same conditions
+// the local mainPlayer's AnimInstance does.
+
+void* SpawnSatelliteCharacter(const FVector& location) {
+    void* characterClass = R::FindClass(L"Character");
+    if (!characterClass) {
+        UE_LOGE("engine: SpawnSatelliteCharacter -- Character class not found");
+        return nullptr;
+    }
+    // inertPawn=true: clears AutoPossessPlayer/AI + sets bBlockInput in the
+    // deferred window -> no PlayerController acquisition, no input theft.
+    void* sat = SpawnActor(characterClass, location, /*inertPawn=*/true);
+    if (!sat) {
+        UE_LOGE("engine: SpawnSatelliteCharacter -- SpawnActor failed");
+        return nullptr;
+    }
+    UE_LOGI("engine: SpawnSatelliteCharacter -> %p at (%.0f,%.0f,%.0f)",
+            sat, location.X, location.Y, location.Z);
+    return sat;
+}
+
+void* GetCharacterMovementComponent(void* characterPawn) {
+    if (!characterPawn) return nullptr;
+    for (const auto& c : R::ChildObjectsOf(characterPawn)) {
+        if (c.className == L"CharacterMovementComponent") {
+            return c.object;
+        }
+    }
+    UE_LOGW("engine: GetCharacterMovementComponent -- no CMC subobject on %p", characterPawn);
+    return nullptr;
+}
+
+bool SetComponentTickEnabled(void* component, bool enabled) {
+    if (!component) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        void* acc = R::FindClass(P::name::ActorComponentClass);
+        if (acc) sFn = R::FindFunction(acc, P::name::SetComponentTickEnabledFn);
+    }
+    if (!sFn) return false;
+    ParamFrame f(sFn);
+    f.Set<bool>(L"bEnabled", enabled);
+    return Call(component, f);
+}
+
+void WriteObjectField(void* target, size_t byteOffset, void* value) {
+    if (!target) return;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(target) + byteOffset) = value;
+}
+
+bool SetMovementVelocity(void* movementComp, const FVector& velocity) {
+    if (!movementComp) return false;
+    // Resolve UMovementComponent::Velocity offset ONCE via reflection
+    // (FindPropertyOffset walks the class's FProperty chain). Cached.
+    static int32_t sVelocityOffset = -1;
+    if (sVelocityOffset < 0) {
+        void* mcClass = R::FindClass(L"MovementComponent");
+        if (!mcClass) {
+            UE_LOGE("engine: SetMovementVelocity -- UMovementComponent class not found");
+            return false;
+        }
+        sVelocityOffset = R::FindPropertyOffset(mcClass, L"Velocity");
+        if (sVelocityOffset < 0) {
+            UE_LOGE("engine: SetMovementVelocity -- 'Velocity' property not found on UMovementComponent");
+            return false;
+        }
+        UE_LOGI("engine: UMovementComponent::Velocity offset = 0x%X", sVelocityOffset);
+    }
+    *reinterpret_cast<FVector*>(reinterpret_cast<uint8_t*>(movementComp) + sVelocityOffset) = velocity;
+    return true;
+}
+
 }  // namespace ue_wrap::engine

@@ -6,7 +6,10 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <unordered_map>
 
 namespace ue_wrap::puppet {
@@ -37,44 +40,13 @@ inline void WriteAt(void* base, size_t off, T value) {
 // per Drive() frame).
 std::unordered_map<void*, void*> g_meshComp;
 
-// Bug 2 / Plan B1 state. Game-thread-only access, no lock: BUA interceptor
-// fires on the game thread (ProcessEvent), Register/Unregister/SetPuppetSpeed
-// are all called from game-thread code (RemotePlayer::Spawn / Destroy / Tick).
-// AnimInstance pointer -> last-streamed speed (cm/s). Presence implies "this
-// AnimInstance is a puppet -> intercept BUA, skip original".
-std::unordered_map<void*, float> g_puppetSpeed;
-
-// Cached pointer to UAnimBlueprint_kerfurOmega_regular_C::BlueprintUpdateAnimation.
-// Resolved lazily on first RegisterPuppetAnimInstance (the kerfur class isn't
-// guaranteed loaded before gameplay enters). Stays cached for the session.
-void* g_buaUFunc = nullptr;
-
-bool BUAInterceptor(void* self, void* /*params*/) {
-    auto it = g_puppetSpeed.find(self);
-    if (it == g_puppetSpeed.end()) return false;  // not a puppet -> let original BUA run
-
-    // We are running BEFORE the original BUA body. Write spd directly: the
-    // original would write spd=0 (Pawn null on a puppet -> velocity branch dead),
-    // we write spd=streamed_speed instead. EvaluateGraphExposedInputs fires
-    // immediately after this in the same tick, reads OUR spd, feeds it to the
-    // BlendSpace as the X coordinate. The AnimGraph then poses the actual walk.
-    //
-    // animWalkRate=1.0 kept (a default of 0 would freeze the BlendSpace's
-    // sample interpolation; safer to explicitly set). animWalkAlpha
-    // intentionally NOT written -- the spawn-time local dump showed
-    // animWalkAlpha=0 even on a WALKING local player, so it's NOT the
-    // locomotion gate (an earlier hypothesis was wrong; the diagnostic
-    // disproved it). spd is the only locomotion-driving variable.
-    //
-    // Skipping the original is safe for the puppet: its side-effects on
-    // other AnimBP variables (lookAt, footZ_R/L, floorFoot_*, pelvisLoc,
-    // etc.) drive IK paths we've already disabled (useLegIK=false,
-    // lookingAtPlayer=false set in SpawnPuppet). The puppet poses correctly
-    // without BUA running -- only the locomotion variable was missing.
-    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(self) + P::off::AnimBP_kerfur_spd) = it->second;
-    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(self) + P::off::AnimBP_kerfur_animWalkRate) = 1.f;
-    return true;  // skip original BUA -> no clobber
-}
+// Plan B1 (BUA interceptor) RETIRED 2026-05-23 in favour of Plan B2 (satellite
+// Character drives the AnimBP via real Pawn->Movement->Velocity pull). The
+// satellite makes BUA's normal velocity-pull work; intercepting and skipping
+// it caused the AnimInstance to be vastly under-populated (no Movement, no
+// IK fields), which kept the state machine stuck in idle even when spd was
+// being written. See [[project-bug2-locomotion-anim]] memo for the full
+// investigation trace.
 
 // The live AnimInstance running on a SkeletalMeshComponent (comp + AnimScriptInstance).
 void* LiveAnimInstance(void* skeletalMeshComponent) {
@@ -146,6 +118,54 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
     }
     if (comp) g_meshComp[puppetActor] = comp;
     return comp;
+}
+
+// Bug 2 deep diagnostic 2026-05-23: BUA interceptor is firing every frame writing
+// correct spd values (290 cm/s while remote walks), but the puppet STILL doesn't
+// animate -- so spd isn't reaching the BlendSpace, or a state machine gates the
+// transition. Dump the live FAnimNode_* memory regions (offsets per the CXX dump:
+// BlendSpacePlayer @ 0x1180 sz 0xE8; StateMachine @ 0x1AC0 sz 0xB0;
+// StateMachine_1 @ 0x1CC8 sz 0xB0) and log all non-trivial floats+ints. Compare
+// LOCAL (walking, animates correctly) vs PUPPET (sliding) to find the offset
+// where walking-speed appears on local and to see if puppet state index is
+// stuck on idle.
+void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
+    void* anim = LiveAnimInstance(skeletalMeshComponent);
+    if (!anim) return;
+    struct Region { const char* name; size_t start; size_t end; };
+    const Region regions[] = {
+        {"BlendSpacePlayer", 0x1180, 0x1268},
+        {"StateMachine_1",   0x1AC0, 0x1B70},
+        {"StateMachine",     0x1CC8, 0x1D78},
+        // The AnimBP's INSTANCE-LEVEL public variables block (post-AnimGraphNode
+        // tail, per CXX dump line 82+). Bug 2 deep dive 2026-05-23: the state
+        // machine differs (idx 1 vs 2) between local-walking and puppet-sliding,
+        // but DumpAnimState only logs the KNOWN AnimBP vars from sdk_profile.
+        // Dump the WHOLE block (size_t from 0x2D60 through end-of-class 0x2E4A,
+        // covering ALL kerfur-AnimBP variables + any padding/inherited tail)
+        // so any field difference between local and puppet shows up.
+        {"AnimBP_vars_all", 0x2D60, 0x2E50},
+    };
+    for (const Region& r : regions) {
+        std::string out;
+        for (size_t off = r.start; off < r.end; off += 4) {
+            uint8_t* p = static_cast<uint8_t*>(anim) + off;
+            const float fv = *reinterpret_cast<float*>(p);
+            const int32_t iv = *reinterpret_cast<int32_t*>(p);
+            // log only non-zero values, in either float or int form (engine
+            // values are typically floats or small ints; pointers would show as
+            // huge ints that we filter by upper bound).
+            const bool floatNontrivial = std::isfinite(fv) && std::fabs(fv) > 0.0001f && std::fabs(fv) < 1.0e6f;
+            const bool intNontrivial = (iv != 0 && iv > -1000000 && iv < 1000000);
+            if (floatNontrivial || intNontrivial) {
+                char buf[96];
+                snprintf(buf, sizeof(buf), "    +0x%04zX: f=%9.3f  i=%d\n", off, fv, iv);
+                out += buf;
+            }
+        }
+        UE_LOGI("anim[%ls] %s @ +0x%04zX-+0x%04zX:\n%s",
+                label, r.name, r.start, r.end, out.c_str());
+    }
 }
 
 void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
@@ -234,7 +254,7 @@ void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) 
     return actor;
 }
 
-void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawDelta) {
+void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float headYawDelta) {
     void* comp = GetSkeletalMeshComponent(puppetActor);
     // The actor slot can still pass IsLive for a tick while its child component is
     // already being torn down (UE finalizes sub-objects first). Re-check the
@@ -243,13 +263,10 @@ void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawD
     void* anim = LiveAnimInstance(comp);
     if (!anim) return;
 
-    // Push the streamed speed via the BUA-interceptor path (Bug 2 fix). The
-    // interceptor writes `spd` at the right tick-order position (BEFORE
-    // EvaluateGraphExposedInputs reads it); writing from here at end-of-frame
-    // does NOT survive the next frame's BUA tick (confirmed via shipped
-    // read-back diagnostic 2026-05-23). SetPuppetSpeed is the supported entry
-    // point and is registered for this AnimInstance by RemotePlayer::Spawn.
-    SetPuppetSpeed(anim, speed);
+    // spd is now driven by BUA reading the satellite Character's
+    // CharacterMovementComponent.Velocity (Plan B2). headLookAt remains driven
+    // here because BUA does not write it (the local-vs-puppet diff confirmed
+    // it stays at whatever we set), and it's directly the head-bone target.
 
     // Drive the puppet head bone from the streamed view. headLookAt is NOT
     // written by BUA (BUA only touches velocity-derived vars), so end-of-frame
@@ -264,58 +281,6 @@ void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawD
     // phantom camera target.
     const FRotator headLook{headPitch, headYawDelta, 0.f};
     WriteAt<FRotator>(anim, P::off::AnimBP_kerfur_headLookAt, headLook);
-}
-
-void RegisterPuppetAnimInstance(void* animInstance) {
-    if (!animInstance) return;
-    // Lazy: resolve BUA UFunction + install the interceptor on the first puppet
-    // ever registered. The kerfur AnimBP class isn't guaranteed loaded before
-    // gameplay (we spawn the puppet AFTER mainPlayer_C exists, so the AnimBP
-    // class is definitely live by then). One-shot; reuses for every subsequent
-    // puppet.
-    if (!g_buaUFunc) {
-        void* cls = R::FindClass(P::name::AnimBPKerfurRegularClass);
-        if (!cls) {
-            UE_LOGE("puppet: AnimBP class '%ls' not found -- BUA interceptor NOT installed; "
-                    "puppet locomotion will not animate",
-                    P::name::AnimBPKerfurRegularClass);
-            return;
-        }
-        g_buaUFunc = R::FindFunction(cls, P::name::BlueprintUpdateAnimationFn);
-        if (!g_buaUFunc) {
-            UE_LOGE("puppet: BlueprintUpdateAnimation UFunction not found on '%ls' -- "
-                    "BUA interceptor NOT installed",
-                    P::name::AnimBPKerfurRegularClass);
-            return;
-        }
-        GT::SetInterceptor(g_buaUFunc, &BUAInterceptor);
-        UE_LOGI("puppet: BUA interceptor installed (UFunc=%p) -- puppet AnimInstances "
-                "now bypass BlueprintUpdateAnimation's null-Pawn clobber",
-                g_buaUFunc);
-    }
-    g_puppetSpeed[animInstance] = 0.f;
-    UE_LOGI("puppet: registered AnimInstance %p (now %zu puppet(s) intercepted)",
-            animInstance, g_puppetSpeed.size());
-}
-
-void UnregisterPuppetAnimInstance(void* animInstance) {
-    if (!animInstance) return;
-    if (g_puppetSpeed.erase(animInstance) == 0) return;
-    UE_LOGI("puppet: unregistered AnimInstance %p (%zu puppet(s) remaining)",
-            animInstance, g_puppetSpeed.size());
-    // Clear the interceptor when the last puppet exits -- keeps the hot
-    // ProcessEvent path's pointer-compare against a null target (still cheap;
-    // also avoids a stale interceptor running if the BUA UFunction itself is
-    // GC'd, though FindFunction returns a UObject* that the engine pins).
-    if (g_puppetSpeed.empty()) {
-        GT::ClearInterceptor();
-        UE_LOGI("puppet: BUA interceptor cleared (no puppets registered)");
-    }
-}
-
-void SetPuppetSpeed(void* animInstance, float speed) {
-    auto it = g_puppetSpeed.find(animInstance);
-    if (it != g_puppetSpeed.end()) it->second = speed;
 }
 
 }  // namespace ue_wrap::puppet

@@ -105,6 +105,44 @@ bool DetachFromController(void* pawn);
 // stray 2nd PlayerController. Game thread only.
 bool DestroyActor(void* actor);
 
+// Bug 2 / Plan B2 (root-cause fix): spawn a HIDDEN satellite ACharacter as a
+// "data source" for the puppet's AnimInstance. The puppet itself stays a
+// SkeletalMeshActor (no SP-hijack cascade), but its AnimBP's Pawn field gets
+// pointed at this satellite. BUA then runs normally on the puppet's
+// AnimInstance, reads satellite->Movement->Velocity (which WE drive each
+// tick), and populates spd / Movement / IK fields naturally -- so the
+// state machine transitions on the same conditions the local player's does.
+//
+// The satellite is spawned with inertPawn=true (no auto-possess, no input)
+// and made invisible + non-collidable on top so it has zero gameplay effect.
+// Located co-located with the puppet (caller's responsibility) so any IK
+// targets BUA computes are at a sane place.
+void* SpawnSatelliteCharacter(const FVector& location);
+
+// Find the UCharacterMovementComponent default subobject on a Character. Used
+// by the per-tick velocity push for the AnimBP satellite. Returns nullptr if
+// the pawn isn't a Character or its CMC isn't present yet.
+void* GetCharacterMovementComponent(void* characterPawn);
+
+// Write a FVector to a UMovementComponent's `Velocity` UPROPERTY (offset
+// resolved once at startup via reflection: FindPropertyOffset on UMovementComponent).
+// Used to drive the satellite Character's velocity from the network-streamed
+// speed/yaw, so the AnimBP's Pawn->GetVelocity() reads our value naturally.
+// Game thread only.
+bool SetMovementVelocity(void* movementComp, const FVector& velocity);
+
+// UActorComponent::SetComponentTickEnabled. Used to PARK a satellite Character's
+// CharacterMovementComponent (we just need it as a Velocity data carrier; we
+// don't want it integrating physics each frame and resetting Velocity from
+// its own state-machine). Game thread only.
+bool SetComponentTickEnabled(void* component, bool enabled);
+
+// Direct field write of a UObject* slot at `byteOffset` inside `target`. Used
+// for the Bug 2 fix to set the puppet AnimInstance.Pawn pointer (offset
+// 0x2D70) to the satellite Character, so BUA reads the satellite naturally.
+// Game thread only.
+void WriteObjectField(void* target, size_t byteOffset, void* value);
+
 // USceneComponent world location (K2_GetComponentLocation) and forward vector
 // (GetForwardVector) -- e.g. the Camera component's eye point + look direction,
 // to place something exactly in the player's view. (0,0,0) on failure.

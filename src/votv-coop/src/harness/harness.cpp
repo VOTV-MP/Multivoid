@@ -284,6 +284,22 @@ void NetPumpTick(float displayOffsetX) {
     }
     if (g_orphan.valid()) g_orphan.Tick();
 
+    // Bug 2 deep diagnostic 2026-05-23: hook fires correctly but puppet still
+    // slides. Every ~3 s, dump the live FAnimNode memory regions (BlendSpace
+    // player + 2 state machines) for BOTH local (walking, animates) and puppet
+    // (sliding) so we can diff: find the byte offset within the BlendSpacePlayer
+    // where the walking speed lives on local, and see whether the puppet state
+    // machine is stuck on the idle state index.
+    {
+        static unsigned int sDiagCtr = 0;
+        if (++sDiagCtr % 180 == 0 && g_orphan.valid() && g_netLocal) {
+            void* localMesh = ue_wrap::puppet::GetMeshPlayerVisibleComponent(g_netLocal);
+            void* puppetMesh = ue_wrap::puppet::GetSkeletalMeshComponent(g_orphan.actor());
+            if (localMesh)  ue_wrap::puppet::DumpAnimNodeRegions(L"local",  localMesh);
+            if (puppetMesh) ue_wrap::puppet::DumpAnimNodeRegions(L"puppet", puppetMesh);
+        }
+    }
+
     // Surface session events (joins/disconnects) to the feed + send our Join.
     coop::event_feed::Update(g_session, &g_orphan);
 

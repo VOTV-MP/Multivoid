@@ -73,39 +73,35 @@ void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawD
 // puppet still doesn't pose. No-op-safe on null.
 void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent);
 
-// Bug 2 root-cause fix (Plan B1, confirmed via shipped read-back diagnostic):
-//
-// The kerfur AnimBP's BlueprintUpdateAnimation runs every frame and writes
-// `spd = 0` on a null-Pawn puppet (no early-out on null). Our end-of-frame
-// DriveAnimBP writes get clobbered by the NEXT frame's BUA before
-// EvaluateGraphExposedInputs reads spd for the BlendSpace -- net result: the
-// AnimGraph always sees spd=0 -> idle pose -> "puppet slides without legs".
-//
-// Fix: intercept BUA via the ue_wrap::game_thread UFunction interceptor.
-// For a registered puppet AnimInstance, write the network-pushed `spd` and
-// SKIP the original BUA (so it can't clobber). For all other AnimInstances
-// (local mainPlayer, NPC kerfurs), BUA runs unchanged. This puts our write
-// at exactly the same tick-order position BUA would have written -- no race
-// against EvaluateGraphExposedInputs; the AnimGraph evaluation that follows
-// reads our spd directly.
-//
-// Generalises forward: same hook is the natural home for ragdoll state and
-// any other puppet-side AnimBP variable a future feature needs to push from
-// the network (see [[project-ragdoll-sync]]).
+// Bug 2 deep diagnostic: dump live FAnimNode memory regions (BlendSpacePlayer
+// at +0x1180, both FAnimNode_StateMachines at +0x1AC0 and +0x1CC8 per the CXX
+// dump). Logs non-trivial floats + ints to pinpoint:
+//   * Local BlendSpacePlayer.X offset (the walking-speed sample coordinate;
+//     non-zero on walking local -- gives us the byte offset within the node).
+//   * Local State Machine current state index vs puppet's (whether the puppet
+//     is stuck on idle while the local is in walk).
+// Call on BOTH local and puppet to diff. No-op-safe on null.
+void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent);
 
-// Mark `animInstance` (a live UAnimBlueprint_kerfurOmega_regular_C*) as a
-// puppet. On the first registration ever, also resolves the BUA UFunction
-// pointer and installs the game_thread interceptor. Idempotent.
-void RegisterPuppetAnimInstance(void* animInstance);
-
-// Unregister `animInstance`. When the last puppet unregisters, the
-// interceptor is cleared (so the hot ProcessEvent path goes back to a
-// single-pointer-compare with a null target -- still cheap, but cleaner).
-void UnregisterPuppetAnimInstance(void* animInstance);
-
-// Push the network-pushed locomotion speed for a registered puppet. Called
-// each Tick by RemotePlayer::ApplyToEngine. Stored game-thread-local; read by
-// the BUA interceptor the next time BUA fires for this AnimInstance.
-void SetPuppetSpeed(void* animInstance, float speed);
+// Bug 2 root-cause fix (Plan B2, 2026-05-23):
+//
+// The AnimBP's BlueprintUpdateAnimation pulls velocity from
+// Pawn->GetMovementComponent()->Velocity and uses it to populate spd,
+// Movement, IK targets, and the bool packs the state machine reads. On a
+// null-Pawn puppet, BUA short-circuits and the AnimInstance is vastly
+// under-populated -> state machine stays in idle even with our spd writes.
+//
+// Earlier Plan B1 (intercept BUA via game_thread::SetInterceptor and skip
+// the original) was retired because skipping BUA left ALL the other
+// AnimInstance fields zero, not just spd. The full AnimBP_vars_all diff
+// dump (2026-05-23) proved this empirically: 8 set fields on puppet vs ~26
+// on local.
+//
+// Plan B2: RemotePlayer spawns a hidden, inert satellite ACharacter at
+// puppet creation time, writes its CharacterMovementComponent.Velocity from
+// the streamed pose each Tick, and points the puppet's AnimInstance.Pawn
+// pointer at the satellite. BUA then runs naturally and pulls EVERY field
+// it would on the local mainPlayer -- including the ones the state machine
+// transitions read. The puppet animates the same way the local does.
 
 }  // namespace ue_wrap::puppet
