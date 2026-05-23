@@ -702,6 +702,57 @@ bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ) {
     return true;
 }
 
+void DumpAllBonesWorldZ(void* skelMeshComp) {
+    if (!skelMeshComp || !ResolveBoneFns()) return;
+    int32_t n = 0;
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    if (n <= 0) { UE_LOGW("engine: DumpAllBonesWorldZ: 0 bones on comp %p", skelMeshComp); return; }
+    std::string acc;
+    char buf[160];
+    for (int32_t i = 0; i < n; ++i) {
+        uint8_t name[8] = {};
+        { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
+          if (!Call(skelMeshComp, nf)) continue;
+          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
+        ParamFrame lf(g_socketLocFn);
+        lf.SetRaw(L"InSocketName", name, sizeof(name));
+        if (!Call(skelMeshComp, lf)) continue;
+        const FVector loc = lf.Get<FVector>(L"ReturnValue");
+        const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
+        // ToString returns UTF-16; collapse to ASCII for the log buffer.
+        std::string asc; asc.reserve(s.size());
+        for (wchar_t c : s) asc.push_back(static_cast<char>(c < 0x80 ? c : '?'));
+        snprintf(buf, sizeof(buf), "    [%3d] %-32s world=(%.1f, %.1f, %.1f)\n", i, asc.c_str(), loc.X, loc.Y, loc.Z);
+        acc += buf;
+    }
+    UE_LOGI("engine: DumpAllBonesWorldZ comp=%p (%d bones):\n%s", skelMeshComp, n, acc.c_str());
+}
+
+bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ) {
+    if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
+    // Find the bone INDEX whose FName matches the requested name. We can't pass an
+    // FName directly without looking up its (ComparisonIndex, Number) -- enumerate
+    // bones once, match by string, then call GetSocketLocation with the matched FName.
+    int32_t n = 0;
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    if (n <= 0) return false;
+    for (int32_t i = 0; i < n; ++i) {
+        uint8_t name[8] = {};
+        { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
+          if (!Call(skelMeshComp, nf)) continue;
+          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
+        const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
+        if (s == boneName) {
+            ParamFrame lf(g_socketLocFn);
+            lf.SetRaw(L"InSocketName", name, sizeof(name));
+            if (!Call(skelMeshComp, lf)) return false;
+            outZ = lf.Get<FVector>(L"ReturnValue").Z;
+            return true;
+        }
+    }
+    return false;
+}
+
 float GetActorCharacterHalfHeight(void* mainPlayerPawn) {
     if (!mainPlayerPawn) return 0.f;
     void* capsule = *reinterpret_cast<void**>(
@@ -844,6 +895,38 @@ void* g_camMgrClass = nullptr;
 void* g_getCamLocFn = nullptr;
 void* g_getCamRotFn = nullptr;
 }  // namespace
+
+void SetControlRotation(void* controller, const FRotator& rot) {
+    if (!controller) return;
+    *reinterpret_cast<FRotator*>(reinterpret_cast<uint8_t*>(controller)
+                                 + P::off::AController_ControlRotation) = rot;
+}
+
+namespace { void* g_teleportToFn = nullptr; void* g_getActorBoundsFn = nullptr; }
+
+bool GetActorBounds(void* actor, bool onlyColliding, FVector& outOrigin, FVector& outBoxExtent) {
+    if (!actor || !ResolveActorFns()) return false;
+    if (!g_getActorBoundsFn) g_getActorBoundsFn = R::FindFunction(g_actorClass, P::name::GetActorBoundsFn);
+    if (!g_getActorBoundsFn) { UE_LOGE("engine: GetActorBounds unresolved"); return false; }
+    ParamFrame f(g_getActorBoundsFn);
+    f.Set<bool>(L"bOnlyCollidingComponents", onlyColliding);
+    f.Set<bool>(L"bIncludeFromChildActors", false);
+    if (!Call(actor, f)) return false;
+    f.GetRaw(L"Origin", &outOrigin, sizeof(outOrigin));
+    f.GetRaw(L"BoxExtent", &outBoxExtent, sizeof(outBoxExtent));
+    return true;
+}
+
+bool TeleportTo(void* actor, const FVector& location, const FRotator& rotation) {
+    if (!actor || !ResolveActorFns()) return false;
+    if (!g_teleportToFn) g_teleportToFn = R::FindFunction(g_actorClass, P::name::TeleportToFn);
+    if (!g_teleportToFn) { UE_LOGE("engine: TeleportTo unresolved"); return false; }
+    ParamFrame f(g_teleportToFn);
+    f.SetRaw(L"DestLocation", &location, sizeof(location));
+    f.SetRaw(L"DestRotation", &rotation, sizeof(rotation));
+    if (!Call(actor, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
+}
 
 FRotator GetControlRotation(void* controller) {
     FRotator rot;

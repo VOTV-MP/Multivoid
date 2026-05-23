@@ -566,12 +566,70 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         bool netEnabled = false;
         const coop::net::Config netCfg = ReadNetConfig(netEnabled);
         if (netEnabled) {
-            // User rule 2026-05-23: client lands at КПП (the host's natural save
-            // spawn), NOT at the per-instance save wakeup spot that puts the two
-            // peers ~14 m apart at different anchors. Teleport once, post-load,
-            // BEFORE the network session starts -- so the first pose the client
-            // sends already carries the КПП position.
-            if (netCfg.role == coop::net::Role::Client) {
+            // Two post-load teleport paths:
+            //   * Autonomous-test mode (env VOTVCOOP_AUTOTEST_X/Y/Z/YAW/PITCH set):
+            //     position + camera-rotate the local pawn to the role-specific
+            //     verified pose so each test instance's screenshot can SEE the
+            //     other's puppet (per [[project-autotest-spawn-pose]]).
+            //   * Production client mode (no env set, role=Client): land the
+            //     client at the КПП guard checkpoint -- user rule 2026-05-23
+            //     so both peers spawn near each other in regular play.
+            // Either path teleports ONCE post-load, BEFORE session.Start so the
+            // very first pose packet already carries the right position.
+            const std::string xs = ReadEnv("VOTVCOOP_AUTOTEST_X");
+            const std::string ys = ReadEnv("VOTVCOOP_AUTOTEST_Y");
+            const std::string zs = ReadEnv("VOTVCOOP_AUTOTEST_Z");
+            if (!xs.empty() && !ys.empty() && !zs.empty()) {
+                const float ax = static_cast<float>(std::atof(xs.c_str()));
+                const float ay = static_cast<float>(std::atof(ys.c_str()));
+                const float az = static_cast<float>(std::atof(zs.c_str()));
+                const std::string yaws   = ReadEnv("VOTVCOOP_AUTOTEST_YAW");
+                const std::string pitchs = ReadEnv("VOTVCOOP_AUTOTEST_PITCH");
+                const float ayaw   = yaws.empty()   ? 0.f : static_cast<float>(std::atof(yaws.c_str()));
+                const float apitch = pitchs.empty() ? 0.f : static_cast<float>(std::atof(pitchs.c_str()));
+                // RETRY LOOP: K2_SetActorLocation across large distances on an
+                // ACharacter can be silently reverted by VOTV's player constraints
+                // (initial diagnostic showed the client's 14-m autotest teleport
+                // never stuck while the host's 50-cm one did -- the engine snapped
+                // the actor back near the save spawn). K2_TeleportTo is the
+                // engine's proper "cross-world teleport" path that bypasses those
+                // checks; combine it with a polling retry loop that verifies the
+                // actor's actual world position matches the target within 2 m
+                // tolerance, since the BP-callable can also lose to a one-frame
+                // post-init reposition. Up to 5 s of retries; the loop quits
+                // early on success.
+                const ue_wrap::FVector target{ax, ay, az};
+                const ue_wrap::FRotator targetRot{apitch, ayaw, 0.f};
+                bool teleported = false;
+                for (int attempt = 0; attempt < 50 && !teleported; ++attempt) {
+                    auto okFlag = std::make_shared<std::atomic<int>>(0);  // 0=pending,1=ok,2=nope
+                    Post([target, targetRot, ayaw, okFlag] {
+                        void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+                        if (!local) { okFlag->store(2); return; }
+                        ue_wrap::engine::TeleportTo(local, target, targetRot);
+                        if (void* ctrl = ue_wrap::engine::GetController(local)) {
+                            ue_wrap::engine::SetControlRotation(ctrl, targetRot);
+                        }
+                        // Verify: read back the actor's world position; success
+                        // if within 200 cm of the target on every axis.
+                        const auto cur = ue_wrap::engine::GetActorLocation(local);
+                        const float dx = cur.X - target.X, dy = cur.Y - target.Y, dz = cur.Z - target.Z;
+                        const bool ok = std::fabs(dx) < 200.f && std::fabs(dy) < 200.f && std::fabs(dz) < 200.f;
+                        okFlag->store(ok ? 1 : 2);
+                    });
+                    while (okFlag->load() == 0) ::Sleep(2);
+                    teleported = (okFlag->load() == 1);
+                    if (!teleported) ::Sleep(100);
+                }
+                Post([ax, ay, az, ayaw, apitch, teleported] {
+                    void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+                    const auto cur = local ? ue_wrap::engine::GetActorLocation(local) : ue_wrap::FVector{};
+                    UE_LOGI("autotest teleport: target=(%.0f,%.0f,%.0f) yaw=%.1f pitch=%.1f "
+                            "-> actual=(%.0f,%.0f,%.0f) settled=%d",
+                            ax, ay, az, ayaw, apitch, cur.X, cur.Y, cur.Z, teleported ? 1 : 0);
+                });
+                ::Sleep(100);
+            } else if (netCfg.role == coop::net::Role::Client) {
                 Post([] {
                     void* local = R::FindObjectByClass(P::name::MainPlayerClass);
                     if (!local) {
@@ -594,9 +652,48 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
+
+            // Autotest CONTINUED CORRECTION: VOTV's player late-init (BeginPlay /
+            // possess / save-restore) can revert the autotest teleport AFTER it
+            // appeared to succeed (user-observed: client lands at the correct
+            // autotest coords briefly, then VOTV reverts the position once the
+            // instance "fully loads"). The fix is to keep re-applying the
+            // teleport for ~30 s after session start -- each iteration is a
+            // no-op if the actor is already within 200 cm of the target.
+            const bool autotestActive = !xs.empty() && !ys.empty() && !zs.empty();
+            const float atx = autotestActive ? static_cast<float>(std::atof(xs.c_str())) : 0.f;
+            const float aty = autotestActive ? static_cast<float>(std::atof(ys.c_str())) : 0.f;
+            const float atz = autotestActive ? static_cast<float>(std::atof(zs.c_str())) : 0.f;
+            const float atyaw   = autotestActive ? static_cast<float>(std::atof(ReadEnv("VOTVCOOP_AUTOTEST_YAW").c_str()))   : 0.f;
+            const float atpitch = autotestActive ? static_cast<float>(std::atof(ReadEnv("VOTVCOOP_AUTOTEST_PITCH").c_str())) : 0.f;
+            using namespace std::chrono;
+            const auto autotestUntil = steady_clock::now() + seconds(30);
+
             int tick = 0;
             for (;;) {
                 Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
+                // Autotest correction tick: every ~250 ms while still inside the
+                // 30 s window, re-check actor position and re-teleport if it
+                // drifted outside the 200-cm tolerance. Catches VOTV's late
+                // BeginPlay / save-restore reverting our teleport.
+                if (autotestActive && steady_clock::now() < autotestUntil && (tick % 30 == 0)) {
+                    Post([atx, aty, atz, atyaw, atpitch] {
+                        void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+                        if (!local) return;
+                        const auto cur = ue_wrap::engine::GetActorLocation(local);
+                        const float dx = cur.X - atx, dy = cur.Y - aty, dz = cur.Z - atz;
+                        if (std::fabs(dx) > 200.f || std::fabs(dy) > 200.f || std::fabs(dz) > 200.f) {
+                            const ue_wrap::FVector target{atx, aty, atz};
+                            const ue_wrap::FRotator targetRot{atpitch, atyaw, 0.f};
+                            ue_wrap::engine::TeleportTo(local, target, targetRot);
+                            if (void* ctrl = ue_wrap::engine::GetController(local)) {
+                                ue_wrap::engine::SetControlRotation(ctrl, targetRot);
+                            }
+                            UE_LOGI("autotest correction: was (%.0f,%.0f,%.0f), retargeting (%.0f,%.0f,%.0f)",
+                                    cur.X, cur.Y, cur.Z, atx, aty, atz);
+                        }
+                    });
+                }
                 if (++tick % 250 == 0) {  // ~every 2 s at 125 Hz: stats for the LAN test framework
                     Post([] {
                         UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
@@ -604,6 +701,24 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                                 static_cast<unsigned long long>(g_session.packetsSent()),
                                 static_cast<unsigned long long>(g_session.packetsRecv()),
                                 g_orphan.valid() ? 1 : 0);
+                        // Position diagnostic: log the local actor AND the puppet
+                        // (if alive) world positions. Lets us see whether the
+                        // autotest teleport stuck + whether the pose stream is
+                        // updating the puppet position vs leaving it at spawn.
+                        if (void* lp = R::FindObjectByClass(P::name::MainPlayerClass)) {
+                            const auto loc = ue_wrap::engine::GetActorLocation(lp);
+                            const auto rot = ue_wrap::engine::GetActorRotation(lp);
+                            ue_wrap::FRotator cRot{};
+                            if (void* c = ue_wrap::engine::GetController(lp)) {
+                                cRot = ue_wrap::engine::GetControlRotation(c);
+                            }
+                            UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f) actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
+                                    loc.X, loc.Y, loc.Z, rot.Yaw, cRot.Pitch, cRot.Yaw);
+                        }
+                        if (g_orphan.valid()) {
+                            const auto p = g_orphan.GetLocation();
+                            UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+                        }
                     });
                 }
                 // 125 Hz pump for MAX SMOOTHNESS: RemotePlayer::Tick advances the

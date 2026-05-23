@@ -173,6 +173,12 @@ inline constexpr size_t AnimBP_kerfur_useLegIK = 0x2E39;           // bool (fals
 inline constexpr size_t AnimBP_kerfur_headLookAt = 0x2E3C;         // FRotator
 inline constexpr size_t AnimBP_kerfur_isFace = 0x2E48;             // bool
 
+// AController::ControlRotation -- the view rotation the input system accumulates
+// (pitch + yaw). Direct write to set the camera direction without going through
+// the BP-callable SetControlRotation UFunction (which does the same thing).
+// Engine.hpp:7071.
+inline constexpr size_t AController_ControlRotation = 0x0288;  // FRotator
+
 // ACharacter capsule -- needed for the foot-on-ground correction in RemotePlayer.
 // The puppet's SkeletalMeshComponent is the actor's root (no sub-component slot
 // for the standard ACharacter::Mesh.RelLoc.Z = -halfH shim), so RemotePlayer
@@ -213,6 +219,42 @@ inline constexpr uint64_t Parm = 0x80;
 inline constexpr uint64_t OutParm = 0x100;
 inline constexpr uint64_t ReturnParm = 0x400;
 }  // namespace cpf
+
+// kerfur AnimBP head-rotation pipeline (from CXX dump AnimBlueprint_kerfurOmega_regular.hpp
+// + AnimGraphRuntime.hpp, confirmed by IDA agent 2026-05-23 PM). The visible head
+// twist is driven by TWO FAnimNode_LookAt nodes -- they take a target (bone-socket
+// or world-space FVector) and rotate `BoneToModify` toward it. With these enabled,
+// no amount of writing `lookingAtPlayer = false` or `headLookAt` will stop the
+// head from tracking whatever the LookAt's target is. To bypass entirely we set
+// each LookAt's `Alpha` (the SkeletalControlBase blend weight) to 0 + clear
+// `bAlphaBoolEnabled`. There are also 7 FAnimNode_ModifyBone instances in the
+// graph; the one with BoneToModify=='head' (TBD by runtime probe -- diagnostic
+// dumps each instance's name once at puppet spawn) is the bone-rotation slot
+// we can drive directly with FRotator writes.
+namespace anim {
+// FAnimNode_SkeletalControlBase fields (relative to node base):
+inline constexpr size_t SkelCtl_bAlphaBoolEnabled = 0x29;   // bool
+inline constexpr size_t SkelCtl_Alpha             = 0x2C;   // float
+// FAnimNode_LookAt + FAnimNode_ModifyBone share BoneToModify at the same offset:
+inline constexpr size_t LookAtMod_BoneToModify    = 0xC8;   // FBoneReference (FName @+0)
+// FAnimNode_LookAt specifics:
+inline constexpr size_t LookAt_LookAtTarget       = 0xE0;   // FBoneSocketTarget (0x60 bytes)
+inline constexpr size_t LookAt_LookAtLocation     = 0x140;  // FVector (fallback if no socket target)
+// FAnimNode_ModifyBone specifics (for direct head-rotation writes):
+inline constexpr size_t ModBone_Translation       = 0xD8;   // FVector
+inline constexpr size_t ModBone_Rotation          = 0xE4;   // FRotator
+inline constexpr size_t ModBone_RotationMode      = 0xFD;   // EBoneModificationMode (0=Ignore,1=Add,2=Replace)
+// AnimGraphNode_* offsets within the kerfurOmega_regular AnimInstance:
+inline constexpr size_t kKerfurLookAt_1           = 0x1730;
+inline constexpr size_t kKerfurLookAt             = 0x18E0;
+inline constexpr size_t kKerfurModifyBone_6       = 0x1268;
+inline constexpr size_t kKerfurModifyBone_5       = 0x1ED0;
+inline constexpr size_t kKerfurModifyBone_4       = 0x2450;
+inline constexpr size_t kKerfurModifyBone_3       = 0x2578;
+inline constexpr size_t kKerfurModifyBone_2       = 0x2680;
+inline constexpr size_t kKerfurModifyBone_1       = 0x2A28;
+inline constexpr size_t kKerfurModifyBone         = 0x2C60;
+}  // namespace anim
 
 // ---- content names (change with game content, not the engine) ------------
 namespace name {
@@ -263,6 +305,8 @@ inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVecto
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
 inline constexpr const wchar_t* DestroyActorFn = L"K2_DestroyActor";
+inline constexpr const wchar_t* TeleportToFn = L"K2_TeleportTo";  // bool(FVector, FRotator); large-distance teleport that survives Character/CMC constraints
+inline constexpr const wchar_t* GetActorBoundsFn = L"GetActorBounds";   // (bool,FVector&,FVector&,bool); world-space AABB of the actor's mesh
 
 // Controller removal -- a remote pawn auto-acquires its OWN PlayerController on
 // spawn (mainPlayer_C auto-possesses Player0), and that 2nd controller fights the

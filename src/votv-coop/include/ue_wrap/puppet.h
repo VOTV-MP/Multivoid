@@ -87,6 +87,14 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent);
 // Call on BOTH local and puppet to diff. No-op-safe on null.
 void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent);
 
+// Head-tracking diagnostic 2026-05-23 PM: dump the kerfur AnimBP's FAnimNode_LookAt
+// instances + every FAnimNode_ModifyBone's BoneToModify FName + their Alpha. The
+// "puppet head tracks local player" symptom is driven by these nodes; we need to
+// identify which ModifyBone targets 'head' (so we can write its Rotation) and
+// confirm the LookAt Alphas (so we can zero them to bypass the auto-track). No-op-
+// safe on null. One-shot at puppet spawn.
+void DumpKerfurHeadGraph(void* skeletalMeshComponent);
+
 // Bug 2 root-cause fix (Plan B2, 2026-05-23):
 //
 // The AnimBP's BlueprintUpdateAnimation pulls velocity from

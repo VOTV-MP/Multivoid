@@ -59,27 +59,44 @@ Step "deploying standalone loader (UE4SS disabled)..."
 # Fresh logs so we only parse THIS run.
 Remove-Item $hostLog, $clientLog -ErrorAction SilentlyContinue
 
+# Verified autotest spawn poses (per [[project-autotest-spawn-pose]] memo,
+# user-confirmed 2026-05-23): host + client face each other ~14 m apart along Y
+# at ~64 m elevation, so each instance's screenshot sees the OTHER's puppet in
+# full frame. Replaces the prior OMEGA-interior-stuck screenshots that showed
+# nothing. The harness reads VOTVCOOP_AUTOTEST_X/Y/Z/YAW/PITCH and teleports
+# the local pawn + sets controller rotation post-load (env unset = no
+# teleport, prod default).
+$hostPose   = @{ X = "-37730"; Y = "69943";  Z = "6420"; Yaw = "-86.8"; Pitch = "-5.9" }
+$clientPose = @{ X = "-37640"; Y = "68532";  Z = "6399"; Yaw = "88.2";  Pitch = "-4.7" }
+
 # --- launch the two instances with per-process env --------------------------
-function Launch-Instance($role, $nick, $logName, $extraEnv) {
+function Launch-Instance($role, $nick, $logName, $extraEnv, $pose) {
     $env:VOTVCOOP_SCENARIO = "play"
     $env:VOTVCOOP_NET_ROLE = $role
     $env:VOTVCOOP_NET_PORT = "$Port"
     $env:VOTVCOOP_NET_NICK = $nick
     $env:VOTVCOOP_LOG      = $logName
     $env:VOTVCOOP_NET_PEER = $extraEnv
+    $env:VOTVCOOP_AUTOTEST_X     = $pose.X
+    $env:VOTVCOOP_AUTOTEST_Y     = $pose.Y
+    $env:VOTVCOOP_AUTOTEST_Z     = $pose.Z
+    $env:VOTVCOOP_AUTOTEST_YAW   = $pose.Yaw
+    $env:VOTVCOOP_AUTOTEST_PITCH = $pose.Pitch
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
     Remove-Item Env:VOTVCOOP_SCENARIO,Env:VOTVCOOP_NET_ROLE,Env:VOTVCOOP_NET_PORT,`
-                Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER -ErrorAction SilentlyContinue
+                Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER,`
+                Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
+                Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH -ErrorAction SilentlyContinue
     return $p
 }
 
-Step "launching HOST (nick=Host, binds port $Port)..."
-$hostProc = Launch-Instance "host" "Host" $hostLogName ""
+Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host)..."
+$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose
 Start-Sleep -Seconds 4   # let the host process come up first
-Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port)..."
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1"
+Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client)..."
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------
@@ -120,6 +137,18 @@ while ((Get-Date) -lt $deadline) {
     $clientOk = Side-Ok $clientLog "CONNECTED (client" "Host joined the game"
     if ($hostOk -and $clientOk) { $pass = $true; break }
     Start-Sleep -Seconds 3
+}
+
+# PASS only means "connected + first pose seen + puppet spawned". The puppet's
+# first network pose SNAPS its position from the spawn placeholder (2.5 m in
+# front of the local) to the source's actual world position. Give the stream
+# 6 s to settle so screenshots show puppets at their TRUE pose locations,
+# not at the placeholder. (Without this delay the screenshots can catch the
+# puppet mid-snap or before the snap, making it look like the autotest poses
+# don't apply -- they DO, but the screenshot timing is what was wrong.)
+if ($pass) {
+    Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
+    Start-Sleep -Seconds 6
 }
 
 # --- capture both windows (best-effort) -------------------------------------

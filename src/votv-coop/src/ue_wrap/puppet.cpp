@@ -161,6 +161,56 @@ void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
     }
 }
 
+void DumpKerfurHeadGraph(void* skeletalMeshComponent) {
+    void* anim = LiveAnimInstance(skeletalMeshComponent);
+    if (!anim) { UE_LOGW("puppet: DumpKerfurHeadGraph: no AnimInstance"); return; }
+    auto bn = reinterpret_cast<uint8_t*>(anim);
+    // Read FName at BoneToModify (FBoneReference.BoneName @ +0 of the struct).
+    auto boneName = [bn](size_t nodeOff) {
+        return *reinterpret_cast<R::FName*>(bn + nodeOff + P::anim::LookAtMod_BoneToModify);
+    };
+    auto alpha = [bn](size_t nodeOff) {
+        return *reinterpret_cast<float*>(bn + nodeOff + P::anim::SkelCtl_Alpha);
+    };
+    auto alphaBool = [bn](size_t nodeOff) {
+        return *reinterpret_cast<bool*>(bn + nodeOff + P::anim::SkelCtl_bAlphaBoolEnabled);
+    };
+    auto lookAtTargetComp = [bn](size_t nodeOff) {
+        // FBoneSocketTarget's first qword is the TWeakObjectPtr<USkeletalMeshComponent>.
+        return *reinterpret_cast<void**>(bn + nodeOff + P::anim::LookAt_LookAtTarget);
+    };
+    auto lookAtLoc = [bn](size_t nodeOff) {
+        return *reinterpret_cast<FVector*>(bn + nodeOff + P::anim::LookAt_LookAtLocation);
+    };
+    UE_LOGI("puppet: DumpKerfurHeadGraph anim=%p", anim);
+    UE_LOGI("  LookAt_1  @0x%04zX BoneToModify='%ls' alpha=%.2f boolEnabled=%d "
+            "lookAtTargetComp=%p lookAtLoc=(%.0f,%.0f,%.0f)",
+            P::anim::kKerfurLookAt_1, R::ToString(boneName(P::anim::kKerfurLookAt_1)).c_str(),
+            alpha(P::anim::kKerfurLookAt_1), (int)alphaBool(P::anim::kKerfurLookAt_1),
+            lookAtTargetComp(P::anim::kKerfurLookAt_1),
+            lookAtLoc(P::anim::kKerfurLookAt_1).X, lookAtLoc(P::anim::kKerfurLookAt_1).Y, lookAtLoc(P::anim::kKerfurLookAt_1).Z);
+    UE_LOGI("  LookAt    @0x%04zX BoneToModify='%ls' alpha=%.2f boolEnabled=%d "
+            "lookAtTargetComp=%p lookAtLoc=(%.0f,%.0f,%.0f)",
+            P::anim::kKerfurLookAt, R::ToString(boneName(P::anim::kKerfurLookAt)).c_str(),
+            alpha(P::anim::kKerfurLookAt), (int)alphaBool(P::anim::kKerfurLookAt),
+            lookAtTargetComp(P::anim::kKerfurLookAt),
+            lookAtLoc(P::anim::kKerfurLookAt).X, lookAtLoc(P::anim::kKerfurLookAt).Y, lookAtLoc(P::anim::kKerfurLookAt).Z);
+    const size_t mbOffs[7] = {
+        P::anim::kKerfurModifyBone_6, P::anim::kKerfurModifyBone_5, P::anim::kKerfurModifyBone_4,
+        P::anim::kKerfurModifyBone_3, P::anim::kKerfurModifyBone_2, P::anim::kKerfurModifyBone_1,
+        P::anim::kKerfurModifyBone,
+    };
+    const char* mbLabels[7] = {"ModifyBone_6","ModifyBone_5","ModifyBone_4","ModifyBone_3","ModifyBone_2","ModifyBone_1","ModifyBone"};
+    for (int i = 0; i < 7; ++i) {
+        const float* rot = reinterpret_cast<float*>(bn + mbOffs[i] + P::anim::ModBone_Rotation);
+        const uint8_t mode = *(bn + mbOffs[i] + P::anim::ModBone_RotationMode);
+        UE_LOGI("  %-12s @0x%04zX BoneToModify='%ls' alpha=%.2f boolEnabled=%d rot=(P=%.1f Y=%.1f R=%.1f) rotMode=%u",
+                mbLabels[i], mbOffs[i], R::ToString(boneName(mbOffs[i])).c_str(),
+                alpha(mbOffs[i]), (int)alphaBool(mbOffs[i]),
+                rot[0], rot[1], rot[2], static_cast<unsigned>(mode));
+    }
+}
+
 void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
     void* anim = LiveAnimInstance(skeletalMeshComponent);
     if (!anim) {
@@ -257,22 +307,52 @@ void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float head
     if (!anim) return;
 
     // spd is driven by BUA reading the satellite Character's
-    // CharacterMovementComponent.Velocity (Plan B2). headLookAt + lookingAtPlayer
-    // are driven here per tick.
+    // CharacterMovementComponent.Velocity (Plan B2).
     //
-    // The kerfur AnimBP's default behaviour ("NPC kerfur looks at the player")
-    // is to re-write lookingAtPlayer=true each frame and then compute a head-
-    // track rotation aimed at whatever the AnimBP considers "the player" --
-    // which is the LOCAL player from the puppet's perspective. That makes the
-    // puppet's head twist to face the OBSERVER's body regardless of where the
-    // SOURCE is looking, which is the wrong behaviour for a remote player's
-    // puppet. We REVERSE that auto-track each tick: write lookingAtPlayer=false
-    // (overrides BUA's reset) and drive headLookAt explicitly from the streamed
-    // view (pitch = source's view tilt up/down, yaw = source's controller-vs-
-    // actor yaw lead, so head-leads-body / free-look replicates exactly).
+    // The visible head twist on the kerfur AnimBP comes from TWO native-engine
+    // FAnimNode_LookAt skeletal-control nodes (proven by IDA agent 2026-05-23 PM
+    // -- offsets 0x1730 / 0x18E0 in the AnimInstance, target bones 'head' /
+    // 'neck' respectively). These nodes evaluate their LookAtLocation each
+    // frame and rotate the bones toward it; the AnimBP property
+    // 'lookingAtPlayer' does NOT control whether they're active (live diagnostic
+    // dump confirmed Alpha=1.0 / 0.5 on a puppet that had lookingAtPlayer=false
+    // at spawn). To DECOUPLE the puppet's head from the local-player track:
+    //
+    //   1. Zero each LookAt node's Alpha + clear bAlphaBoolEnabled. The
+    //      FAnimNode_LookAt::Evaluate still runs but contributes zero blend
+    //      weight -- the head stays at the BlendSpace pose.
+    //
+    //   2. Drive AnimGraphNode_ModifyBone @0x2C60 (the one targeting 'head' --
+    //      confirmed via DumpKerfurHeadGraph) with the streamed view pitch
+    //      and head-yaw-delta. RotationMode = Replace so our value overrides
+    //      whatever the BlendSpace put on the head bone.
+    //
+    // This is RULE-1 surgical: we touch exactly the AnimGraph nodes that drive
+    // the head bone, not broad AnimBP-property writes that don't work.
+    {
+        // (1) Disable both LookAt nodes (head + neck).
+        auto bn = reinterpret_cast<uint8_t*>(anim);
+        *reinterpret_cast<float*>(bn + P::anim::kKerfurLookAt_1 + P::anim::SkelCtl_Alpha) = 0.f;
+        *reinterpret_cast<bool*> (bn + P::anim::kKerfurLookAt_1 + P::anim::SkelCtl_bAlphaBoolEnabled) = false;
+        *reinterpret_cast<float*>(bn + P::anim::kKerfurLookAt   + P::anim::SkelCtl_Alpha) = 0.f;
+        *reinterpret_cast<bool*> (bn + P::anim::kKerfurLookAt   + P::anim::SkelCtl_bAlphaBoolEnabled) = false;
+        // (2) Drive head-bone ModifyBone (instance @0x2C60 -- the one whose
+        //     BoneToModify == 'head' per the live diagnostic). RotationMode =
+        //     Replace (2) so our absolute view direction overrides the base
+        //     animation pose. Roll = 0 (head doesn't tilt sideways).
+        *reinterpret_cast<FRotator*>(bn + P::anim::kKerfurModifyBone + P::anim::ModBone_Rotation) =
+            FRotator{headPitch, headYawDelta, 0.f};
+        *(bn + P::anim::kKerfurModifyBone + P::anim::ModBone_RotationMode) = 2;  // BMM_Replace
+    }
+
+    // Belt-and-braces: zero the AnimBP-property lookingAtPlayer too. It may not
+    // gate the LookAt nodes directly, but the BP graph elsewhere might use it
+    // (e.g. selecting between target sources). Cheap, no downside.
     WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
-    const FRotator headLook{headPitch, headYawDelta, 0.f};
-    WriteAt<FRotator>(anim, P::off::AnimBP_kerfur_headLookAt, headLook);
+    // headLookAt remains a useful auxiliary write -- if any other graph path
+    // reads it (e.g. additive blend on top of the ModifyBone), the value is
+    // consistent with what we wrote to ModifyBone above.
+    WriteAt<FRotator>(anim, P::off::AnimBP_kerfur_headLookAt, FRotator{headPitch, headYawDelta, 0.f});
 }
 
 }  // namespace ue_wrap::puppet

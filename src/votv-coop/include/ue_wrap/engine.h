@@ -80,6 +80,27 @@ void* GetController(void* pawn);
 // look with no raw-mouse handling. (0,0,0) on failure. Game thread only.
 FRotator GetControlRotation(void* controller);
 
+// Direct write to AController::ControlRotation (offset 0x0288). The engine reads
+// this UPROPERTY next tick to derive view rotation; the BP-callable
+// SetControlRotation UFunction does no extra clamping (just stores the value),
+// so the direct write is equivalent and cheaper. Game thread only.
+void SetControlRotation(void* controller, const FRotator& rot);
+
+// K2_TeleportTo(DestLocation, DestRotation) -- the proper "teleport actor across
+// the world" UFunction (returns bool: success). Unlike K2_SetActorLocation
+// (which can be silently reverted by Character/CMC constraints when the move
+// is far), K2_TeleportTo is designed to handle large teleports including
+// across CMC's nav/floor checks. Returns the UFunction's bool return. Game
+// thread only.
+bool TeleportTo(void* actor, const FVector& location, const FRotator& rotation);
+
+// GetActorBounds(bOnlyCollidingComponents, Origin, BoxExtent, bIncludeFromChildActors)
+// -- the BP-callable that returns the actor's world-space axis-aligned bounding
+// box (computed each tick from the rendered mesh's actual extent, NOT from
+// bone hierarchy). Used for the puppet's "lowest visible point" Z derivation:
+// bottom = Origin.Z - BoxExtent.Z. Returns false if unresolved. Game thread only.
+bool GetActorBounds(void* actor, bool onlyColliding, FVector& outOrigin, FVector& outBoxExtent);
+
 // APlayerController::SetViewTargetWithBlend(NewViewTarget, BlendTime) -- repoint
 // the player's view to `newViewTarget` (e.g. a freecam ACameraActor), blending
 // over `blendTime` seconds for a smooth cut. Game thread only.
@@ -199,13 +220,23 @@ bool RemoveWidgetFromViewport(void* userWidget);
 bool GetHeadWorldLocation(void* skelMeshComp, FVector& out);
 
 // World Z of the LOWEST bone on this skeletal mesh's currently-evaluated pose.
-// Enumerates all bones (50+) on first call by walking GetBoneName + GetSocketLocation
-// and tracks the minimum Z; cheap one-shot used at puppet spawn to compute the
-// mesh-asset's "lowest visible point" offset (where the visible feet are vs the
-// mesh-local origin). Robust against bone-name conventions across skeletons
-// ("foot_l" vs "L_foot" vs custom names). Returns false if unresolved or no
-// bones. Game thread only.
+// NOT suitable for "where the visible feet are" on a skeleton that mixes humanoid
+// + non-humanoid bones (the VOTV kerfur skeleton has both humanoid foot bones
+// AND non-humanoid 'wheels_R_end' for the non-upgraded variant -- a HUMAN player
+// skin's visible feet are NOT at the lowest bone of this skeleton). Use
+// GetBoneWorldZByName with a known foot bone name instead. Kept for diagnostics.
 bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ);
+
+// One-shot diagnostic: log every bone name + world location on a skeletal mesh
+// component. Used to identify the correct foot bone for the rendered skin when
+// the skeleton has hidden / non-visible bones at lower Z. Game thread only.
+void DumpAllBonesWorldZ(void* skelMeshComp);
+
+// World Z of a SPECIFIC bone (by FName string match) on the mesh component's
+// currently-evaluated pose. Returns false if not found. Use this with a known
+// foot-bone name to derive the visible-feet world Z (robust against
+// authored-but-invisible bones in a multi-variant skeleton). Game thread only.
+bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ);
 
 // ACharacter capsule half-height read (UCapsuleComponent::CapsuleHalfHeight at the
 // fixed offset). 0.f if `mainPlayerPawn` is null or has no capsule. Used by

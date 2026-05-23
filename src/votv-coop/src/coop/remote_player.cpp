@@ -101,38 +101,25 @@ bool RemotePlayer::Spawn() {
     // visible mesh orientation (typically -90 for "mesh +Y forward" vs UE4
     // actor "+X forward"), data-driven and robust against any attach-parent
     // reshuffle.
+    // Yaw offset is data-driven from the local mesh comp's WORLD forward vector
+    // (vs the actor's world yaw). This is stable: rotation chain composes the
+    // same regardless of the mesh comp's POSE state. The Z offset (meshOffsetZ_)
+    // is left at the safe -halfH default here and REFINED on the puppet's first
+    // Tick via GetActorBounds (which returns the rendered mesh's true world AABB
+    // -- robust against the kerfur skeleton's mixed humanoid/wheel bone layout
+    // and against the local's transient pose state). See Tick() for the
+    // calibration logic.
     if (void* srcMeshComp = Pup::GetMeshPlayerVisibleComponent(local)) {
-        const ue_wrap::FVector localActorLoc = E::GetActorLocation(local);  // RAW (pre-fwd-offset)
         const ue_wrap::FRotator localActorRot = E::GetActorRotation(local);
-        const ue_wrap::FVector meshWorld = E::GetComponentLocation(srcMeshComp);
         const ue_wrap::FVector meshFwd = E::GetComponentForwardVector(srcMeshComp);
         const float meshWorldYaw = std::atan2(meshFwd.Y, meshFwd.X) * 57.29577951f;
         meshOffsetYaw_ = ue_wrap::NormalizeAxis(meshWorldYaw - localActorRot.Yaw);
-        const float halfH = E::GetActorCharacterHalfHeight(local);
-        float lowestBoneZ = 0.f;
-        // The local's mesh_playerVisible IS the third-person body's skeletal mesh
-        // (and runs the kerfur skeleton the puppet inherits) -- query its lowest
-        // bone directly. (mainPlayer_C also has the inherited ACharacter::Mesh at
-        // +0x0280 for first-person arms; we deliberately don't query that one.)
-        if (E::GetLowestBoneWorldZ(srcMeshComp, lowestBoneZ)) {
-            meshOffsetZ_ = meshWorld.Z - lowestBoneZ - halfH;
-            UE_LOGI("RemotePlayer::Spawn: mesh visual offsets cached: "
-                    "localActor.Z=%.1f mesh.world.Z=%.1f lowestBone.world.Z=%.1f halfH=%.1f "
-                    "-> meshOffsetZ_=%.2f meshOffsetYaw_=%.2f",
-                    localActorLoc.Z, meshWorld.Z, lowestBoneZ, halfH,
-                    meshOffsetZ_, meshOffsetYaw_);
-        } else {
-            // Couldn't enumerate bones; fall back to the pre-bone math (puts the
-            // mesh root at source feet; visible feet may still float by the asset
-            // shim, but this is the best we can do without the lowest-bone read).
-            meshOffsetZ_ = meshWorld.Z - localActorLoc.Z;  // == -halfH for standard ACharacter chain
-            UE_LOGW("RemotePlayer::Spawn: GetLowestBoneWorldZ failed -- falling back to chain-offset only "
-                    "(meshOffsetZ_=%.2f); visible feet may float by mesh-asset's foot-vs-origin shim",
-                    meshOffsetZ_);
-        }
-    } else {
-        UE_LOGW("RemotePlayer::Spawn: no local mesh_playerVisible -- puppet will float/face sideways");
     }
+    const float halfH = E::GetActorCharacterHalfHeight(local);
+    meshOffsetZ_ = -halfH;  // safe initial (mesh-root at source feet); refined on first Tick.
+    UE_LOGI("RemotePlayer::Spawn: initial meshOffsetZ_=%.2f (= -halfH) meshOffsetYaw_=%.2f. "
+            "Z will be calibrated on first Tick via puppet's GetActorBounds.",
+            meshOffsetZ_, meshOffsetYaw_);
 
     // Pre-apply the Z offset to the spawn placement so the puppet appears at
     // the right world Z from SpawnActor onward (avoids a one-tick visual pop
@@ -242,6 +229,14 @@ bool RemotePlayer::Spawn() {
     // Show the floating nameplate above this body (lazily hooks the HUD draw).
     nameplate::Register(this);
 
+    // One-shot head-graph diagnostic (the IDA agent identified 2 FAnimNode_LookAt
+    // instances + 7 ModifyBone instances; we need to know which ModifyBone targets
+    // 'head' and what the LookAt's BoneToModify is, before we can write the
+    // proper head-tracking fix). Logs at puppet spawn (~once per session).
+    if (void* puppetMeshComp = Pup::GetSkeletalMeshComponent(actor_)) {
+        Pup::DumpKerfurHeadGraph(puppetMeshComp);
+    }
+
     UE_LOGI("RemotePlayer::Spawn: puppet=%p at (%.0f,%.0f,%.0f) yaw=%.0f nick='%ls'",
             actor_, loc.X, loc.Y, loc.Z, yaw, nickname_.c_str());
     return true;
@@ -328,6 +323,73 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
 
 void RemotePlayer::Tick() {
     if (!valid()) { actor_ = nullptr; return; }
+
+    // FOOT-GROUNDING CALIBRATION (one-shot, on first Tick where the puppet's
+    // rendered AABB is non-degenerate). UE4's GetActorBounds returns the
+    // mesh's actual world-space axis-aligned bounding box -- updated each
+    // tick from the LIVE evaluated pose's vertex positions. The BOTTOM of
+    // the AABB = the visible lowest point (whichever bone/vertex it lands
+    // on, no need to guess "which foot bone" in a multi-variant skeleton).
+    //
+    // After spawn we don't know meshOffsetZ_ exactly; we initialised it to
+    // -halfH (mesh root at source feet -- close but visible feet may float
+    // by the mesh-asset's foot-vs-origin shim). On the first Tick where the
+    // AnimGraph has evaluated AND the bounds are non-degenerate, we MEASURE
+    // the actual visible-bottom delta and refine meshOffsetZ_ so the
+    // puppet's lowest visible vertex lands EXACTLY at source ground
+    // (= source.actor.Z - halfH, where halfH is in our current meshOffsetZ_'s
+    // initial value).
+    if (!meshOffsetCalibrated_) {
+        // Wait ~30 ticks (~250ms at 125Hz) after spawn before sampling bounds.
+        // Right after SetSkeletalMesh/SetAnimClass the AnimGraph hasn't had time
+        // to evaluate; GetActorBounds can return a degenerate AABB (extent near
+        // zero) or one based on the T-pose rest skeleton (which can have bones
+        // far from where the human skin's visible feet end up after pose eval).
+        // The delay gives BUA + the BlendSpace + state machines a few frames
+        // to settle into the proper idle pose, after which the AABB reflects
+        // the actual visible extent.
+        if (++calibrationDelayTicks_ < 30) {
+            // skip this tick; calibrate later
+        } else {
+        ue_wrap::FVector origin, extent;
+        if (E::GetActorBounds(actor_, /*onlyColliding=*/false, origin, extent)
+            && extent.Z > 1.f) {
+            // Math derivation. Let:
+            //   K = (visible bottom Z in world) - (puppet.actor.Z) [in mesh-local Z,
+            //       signed: negative = bottom below mesh root, positive = above]
+            // Currently (with initial meshOffsetZ_ = -halfH):
+            //   puppet.actor.Z = curPos_.Z + (-halfH) = source ground
+            //   visible bottom  = puppet.actor.Z + K = source ground + K
+            //   If K > 0 (visible bottom above root): puppet FLOATS by K
+            //   If K < 0 (visible bottom below root): puppet SINKS by |K|
+            // We want visible bottom == source ground, which means we need:
+            //   new puppet.actor.Z = source ground - K = (source.actor.Z) - halfH - K
+            //   new meshOffsetZ_   = -halfH - K
+            // Diff from initial: (-halfH - K) - (-halfH) = -K
+            //
+            // From GetActorBounds: lowestZ = origin.Z - extent.Z.
+            // So K = lowestZ - puppet.actor.Z. The change to apply is -K =
+            //   puppet.actor.Z - lowestZ. Add that to meshOffsetZ_.
+            const ue_wrap::FVector puppetWorld = E::GetActorLocation(actor_);
+            const float lowestZ = origin.Z - extent.Z;
+            const float deltaToApply = puppetWorld.Z - lowestZ;  // = -K
+            if (deltaToApply > -250.f && deltaToApply < 250.f) {
+                meshOffsetZ_ += deltaToApply;
+                meshOffsetCalibrated_ = true;
+                UE_LOGI("RemotePlayer::Tick: GROUND CALIBRATED. puppet.actor.Z=%.1f lowest=%.1f "
+                        "K=%.2f (visible bottom %s mesh root) -> meshOffsetZ_=%.2f",
+                        puppetWorld.Z, lowestZ, (lowestZ - puppetWorld.Z),
+                        (lowestZ < puppetWorld.Z ? "below" : "above"),
+                        meshOffsetZ_);
+                dirty_ = true;  // force ApplyToEngine with the refined offset
+            } else {
+                UE_LOGW("RemotePlayer::Tick: calibration delta %.2f out of bounds; "
+                        "leaving meshOffsetZ_=%.2f and retrying next Tick",
+                        deltaToApply, meshOffsetZ_);
+            }
+        }
+        }  // close `else` (calibration window reached)
+    }
 
     // Advance interpolation if a window is open. MTA shape: error is cached
     // ONCE at packet arrival (= target - cur at that moment). Each frame:

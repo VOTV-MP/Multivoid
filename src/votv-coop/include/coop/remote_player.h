@@ -137,6 +137,20 @@ private:
     // class as the source -> same BP-authored values).
     float meshOffsetZ_ = 0.f;
     float meshOffsetYaw_ = 0.f;
+    // meshOffsetZ_ is REFINED from the puppet's own foot bone on the first Tick
+    // (after the AnimGraph has evaluated). Reading the local's bones at spawn
+    // time gave wildly variable values (foot_R mesh-local Z swings from +5cm
+    // when IK is engaged to +82cm in T-pose, depending on what state the
+    // local's mesh comp happens to be in). The puppet has useLegIK=false and
+    // runs deterministic AnimGraph poses driven only by our streamed velocity
+    // -- a stable reference. Calibrated once on first Tick where the puppet's
+    // foot bone reports a sensible non-zero position. See [[project-remote-
+    // player-open-issues]] (b).
+    bool meshOffsetCalibrated_ = false;
+    int  calibrationDelayTicks_ = 0;  // wait a few Ticks before sampling GetActorBounds:
+                                       // immediately after spawn the AnimGraph hasn't
+                                       // evaluated yet, so the rendered mesh's AABB
+                                       // can report a degenerate or T-pose extent.
     // Placeholder until the peer's Join reliable message lands (typically within
     // a few RTT of connect). nameplate::Update repaints when SetNickname changes
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"
