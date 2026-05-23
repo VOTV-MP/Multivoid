@@ -1,6 +1,7 @@
 #include "dev/freecam.h"
 
 #include "dev/common.h"
+
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -111,6 +112,11 @@ void Teleport() {
 // specific event firing. Runs on the game thread inside the detour.
 void MovementTick() {
     if (!g_active.load() || !g_camActor || !g_pc) return;
+    // Foreground-window gate (same reason as the hotkey thread): the WASD /
+    // Space / Ctrl / Shift KeyDown reads are GLOBAL, so without this the
+    // freecam would still move when the user types in the OTHER instance's
+    // window. Stop moving immediately when our window loses focus.
+    if (!::dev::IsOurWindowForeground()) return;
     // The level may have reloaded under us (the cached actors are then freed).
     // Bail without touching dead objects -- never SetActorLocation a freed actor.
     if (!R::IsLive(g_camActor) || !R::IsLive(g_pc)) {
@@ -166,7 +172,11 @@ void MovementTick() {
 // event-based). Global, but the proc is trivial (one atomic add when active) and
 // never consumes the event. Requires a message pump on its thread.
 LRESULT CALLBACK MouseProc(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL && g_active.load()) {
+    // Only accrue wheel notches when freecam is on AND our window is focused
+    // -- else the wheel in another window (e.g. the other VOTV instance) would
+    // change THIS instance's freecam speed. Foreground check is cheap.
+    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL && g_active.load() &&
+        ::dev::IsOurWindowForeground()) {
         const auto* ms = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         const int delta = GET_WHEEL_DELTA_WPARAM(ms->mouseData);  // multiples of 120
         if (delta) g_wheelNotches.fetch_add(delta / WHEEL_DELTA);
@@ -189,13 +199,18 @@ DWORD WINAPI WheelHookThread(LPVOID) {
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevHome = false, prevMmb = false;
     for (;;) {
-        const bool home = KeyDown(VK_HOME);
+        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
+        // so HOME pressed in the client's window would otherwise toggle freecam
+        // in BOTH host + client. Only react to keys when OUR window is focused.
+        const bool focused = ::dev::IsOurWindowForeground();
+
+        const bool home = focused && KeyDown(VK_HOME);
         if (home && !prevHome) {
             GT::Post([] { g_active.load() ? Disable() : Enable(); });
         }
         prevHome = home;
 
-        const bool mmb = KeyDown(VK_MBUTTON);
+        const bool mmb = focused && KeyDown(VK_MBUTTON);
         if (mmb && !prevMmb && g_active.load()) {
             GT::Post([] { Teleport(); });
         }

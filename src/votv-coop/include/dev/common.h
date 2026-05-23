@@ -29,4 +29,14 @@ bool MasterEnabled();
 // ReadIniEnabled (RULE 2 dedup).
 bool IsIniKeyTrue(const char* key);
 
+// True ONLY when the current foreground window belongs to our process. Dev
+// hotkey threads (freecam HOME, pos_hud F2) must gate on this -- otherwise
+// when the user runs TWO instances of the game on one machine (host + client),
+// pressing F2 in the client's window fires the hotkey in BOTH processes (the
+// underlying GetAsyncKeyState is GLOBAL, not foreground-only). The fix is
+// per-process: only react when our window is focused. Returns true if no
+// foreground window query is possible (defensive default = don't break the
+// hotkey if the foreground API errors).
+bool IsOurWindowForeground();
+
 }  // namespace dev

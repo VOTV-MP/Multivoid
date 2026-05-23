@@ -142,7 +142,11 @@ DWORD WINAPI HotkeyThread(LPVOID) {
     int refreshCounter = 0;
     constexpr int kRefreshEveryN = 12;  // 12 * 8 ms = ~96 ms -> ~10 Hz
     for (;;) {
-        const bool f2 = KeyDown(VK_F2);
+        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
+        // so pressing F2 in the client's window would otherwise fire the hotkey
+        // in BOTH host + client (each runs its own pos_hud thread reading the
+        // same global key state). Only react when OUR window is focused.
+        const bool f2 = ::dev::IsOurWindowForeground() && KeyDown(VK_F2);
         if (f2 && !prevF2) {
             // Rising edge -> flip. Only this thread writes g_active, so plain
             // load+store is race-free (the game-thread Refresh callback reads it

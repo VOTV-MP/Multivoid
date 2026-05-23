@@ -71,4 +71,12 @@ bool IsIniKeyTrue(const char* key) {
     return LookupTriState(key) == 1;
 }
 
+bool IsOurWindowForeground() {
+    HWND fg = ::GetForegroundWindow();
+    if (!fg) return true;  // defensive: if we can't tell, don't break the hotkey
+    DWORD ownerPid = 0;
+    ::GetWindowThreadProcessId(fg, &ownerPid);
+    return ownerPid == ::GetCurrentProcessId();
+}
+
 }  // namespace dev
