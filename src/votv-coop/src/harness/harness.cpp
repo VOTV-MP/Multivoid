@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cwctype>
@@ -195,6 +196,14 @@ void NetPumpTick(float displayOffsetX) {
         if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) ue_wrap::hud_feed::Init(gi);
     }
 
+    // Detect peer disconnect (Connected -> Handshaking/Disconnected). Wipe the
+    // remote player's interp state so the NEXT first pose after a reconnect SNAPS
+    // -- otherwise the puppet would LERP across the disconnect-gap distance.
+    static bool sWasConnected = false;
+    const bool isConnected = (g_session.state() == coop::net::ConnState::Connected);
+    if (sWasConnected && !isConnected && g_orphan.valid()) g_orphan.ResetPoseState();
+    sWasConnected = isConnected;
+
     if (g_netLocal && !R::IsLive(g_netLocal)) g_netLocal = nullptr;
     if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
     if (g_netLocal) {
@@ -203,14 +212,37 @@ void NetPumpTick(float displayOffsetX) {
     }
 
     coop::net::PoseSnapshot remote;
-    if (g_session.TryGetRemotePose(remote)) {
+    bool isNew = false;
+    const bool havePose = g_session.TryGetRemotePose(remote, &isNew);
+    if (havePose) {
         if (!g_orphan.valid()) {
+            // Spawn-retry backoff: BeginDeferredActorSpawnFromClass refuses if the world
+            // is mid-transition (the OMEGA->story transition under 2-instance CPU
+            // contention can take many seconds; refused spawns reach hundreds/sec at
+            // 60 Hz pump rate -- pure log noise + wasted reflection calls). Only retry
+            // once per second after a failure (RULE 1: don't crutch the engine, just
+            // wait for it).
+            using namespace std::chrono;
+            static steady_clock::time_point sNextSpawnAttempt{};
+            const auto now = steady_clock::now();
+            if (now < sNextSpawnAttempt) return;
             UE_LOGI("net: first remote pose -> auto-spawning remote puppet");
-            if (!g_orphan.Spawn()) { UE_LOGW("net: remote puppet spawn failed; will retry"); return; }
+            if (!g_orphan.Spawn()) {
+                UE_LOGW("net: remote puppet spawn failed; will retry in 1 s");
+                sNextSpawnAttempt = now + seconds(1);
+                return;
+            }
         }
-        const ue_wrap::FVector loc{remote.x + displayOffsetX, remote.y, remote.z};
-        g_orphan.Drive(loc, remote.yaw, remote.speed);
+        // Only RE-BASE the interpolation on a NEW packet; re-pushing the latest
+        // every frame would zero `errorPos_` mid-window and freeze motion. The
+        // per-frame advance happens in Tick() below.
+        if (isNew) {
+            coop::net::PoseSnapshot withOffset = remote;
+            withOffset.x += displayOffsetX;  // loopback mirror shift (0 for real coop)
+            g_orphan.SetTargetPose(withOffset);
+        }
     }
+    if (g_orphan.valid()) g_orphan.Tick();
 
     // Surface session events (joins/disconnects) to the feed + send our Join.
     coop::event_feed::Update(g_session, &g_orphan);
@@ -482,7 +514,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             int tick = 0;
             for (;;) {
                 Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
-                if (++tick % 60 == 0) {  // ~every 2 s: stats for the LAN test framework
+                if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz: stats for the LAN test framework
                     Post([] {
                         UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
                                 static_cast<int>(g_session.state()),
@@ -491,7 +523,13 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                                 g_orphan.valid() ? 1 : 0);
                     });
                 }
-                ::Sleep(33);  // ~30 Hz pose pump
+                // ~60 Hz pump: RemotePlayer::Tick runs at this rate so the receiver-side
+                // 50 ms LERP window covers ~3 Ticks (smooth without oversampling). NOT
+                // 125 Hz -- a busier harness thread starves the engine under 2-instance
+                // CPU contention and makes story-load drag (seen in LAN testing).
+                // SetLocalPose is cheap; SetTargetPose only fires on NEW packets at 30 Hz.
+                // The NetThread paces the actual SENDS at sendHz independently of this.
+                ::Sleep(16);
             }
         } else {
             SpawnSecondPlayerWhenReady();
@@ -510,7 +548,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // player's pose to itself over real UDP and receives it back; the puppet is
         // auto-spawned on the first packet (3.5) and Drive()n from the round-tripped
         // pose, offset +250 in X so the mirror is visibly beside the player. Proves
-        // transport+serialization+session+Drive end-to-end without a 2nd machine.
+        // transport+serialization+session+interp end-to-end without a 2nd machine.
         BootStorySaveBlocking();
         coop::net::Config cfg;
         cfg.role = coop::net::Role::Host;
@@ -522,7 +560,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         int tick = 0;
         for (;;) {
             Post([] { NetPumpTick(250.f); coop::nameplate::Update(); });
-            if (++tick % 60 == 0) {  // ~every 2 s
+            if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz
                 Post([] {
                     UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",
                             static_cast<int>(g_session.state()),
@@ -531,12 +569,16 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                             g_orphan.valid() ? 1 : 0);
                 });
             }
-            ::Sleep(33);  // ~30 Hz
+            ::Sleep(16);  // ~60 Hz pump for smooth Tick() interp (see play-net branch)
         }
     } else if (scenario == "show") {
         // Autonomous visual confirm: spawn the puppet in front, hold idle, then
         // drive a walk (speed) for a few seconds to confirm the AnimBP animates
-        // from our direct variable writes -- the Drive() path UDP will use.
+        // from our direct variable writes. NOTE: this scenario does NOT exercise
+        // the receiver-side INTERPOLATION (each SetTargetPose here either snaps
+        // -- first call -- or has zero positional delta -- subsequent walk/idle
+        // at same loc). The interp linear LERP path is exercised by netloopback
+        // and the LAN test.
         ::Sleep(2000);
         Post([] {
             UE_LOGI("show: === spawn skin-puppet ===");
@@ -547,13 +589,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             if (!g_orphan.valid()) { UE_LOGW("show: no puppet"); return; }
             const ue_wrap::FVector at = g_orphan.GetLocation();
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
-            g_orphan.Drive(at, 0.f, 200.f);  // same loc/yaw, walking
+            // Same loc/yaw, just bump speed -- the first SetTargetPose since spawn
+            // snaps (hasPose_ false), then Tick applies. AnimBP locomotion picks it up.
+            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, 0.f, 200.f};
+            g_orphan.SetTargetPose(s);
+            g_orphan.Tick();
         });
         ::Sleep(4000);
         Post([] {
             if (!g_orphan.valid()) return;
             const ue_wrap::FVector at = g_orphan.GetLocation();
-            g_orphan.Drive(at, 0.f, 0.f);  // back to idle
+            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, 0.f, 0.f};
+            g_orphan.SetTargetPose(s);
+            g_orphan.Tick();
             UE_LOGI("show: back to idle (speed=0)");
         });
         UE_LOGI("harness: ==== SHOW DONE ====");

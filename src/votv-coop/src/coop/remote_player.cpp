@@ -7,6 +7,8 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -16,6 +18,32 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace Pup = ue_wrap::puppet;
+
+namespace {
+
+// steady_clock millis (game thread). Same clock everywhere keeps the interp
+// math deterministic regardless of wall-clock changes.
+uint64_t NowMs() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+// Shortest-arc delta in degrees: result is in (-180, 180]. Avoids the 359 -> 1
+// "long way round" the puppet would otherwise spin (MTA's GetOffsetDegrees).
+float OffsetDegrees(float fromDeg, float toDeg) {
+    float d = std::fmod(toDeg - fromDeg, 360.f);
+    if (d > 180.f)  d -= 360.f;
+    if (d < -180.f) d += 360.f;
+    return d;
+}
+
+float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+}  // namespace
 
 bool RemotePlayer::Spawn() {
     // The local player gives us BOTH the spawn anchor and the skin to copy.
@@ -59,6 +87,20 @@ bool RemotePlayer::Spawn() {
     const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;
     SetFacing(yaw);
 
+    // Seed the interpolation state to the spawn placement so the first network
+    // pose snaps from a SANE current (not zero), and per-frame Tick() in the
+    // first few frames before the first packet arrives just no-ops gracefully.
+    curPos_ = loc;
+    curYaw_ = yaw;
+    curSpeed_ = 0.f;
+    targetPos_ = loc;
+    targetYaw_ = yaw;
+    interpStartMs_ = 0;
+    interpFinishMs_ = 0;
+    lastAlpha_ = 0.f;
+    hasPose_ = false;  // the first network pose SNAPS away from this fake placement
+    dirty_ = false;    // Spawn just placed the actor at curPos_; nothing pending
+
     // Show the floating nameplate above this body (lazily hooks the HUD draw).
     nameplate::Register(this);
 
@@ -69,11 +111,123 @@ bool RemotePlayer::Spawn() {
 
 bool RemotePlayer::valid() const { return actor_ != nullptr && R::IsLive(actor_); }
 
-void RemotePlayer::Drive(const ue_wrap::FVector& location, float yaw, float speed) {
+void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (!valid()) { actor_ = nullptr; return; }
-    E::SetActorLocation(actor_, location);
-    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, yaw, 0.f});
-    Pup::DriveAnimBP(actor_, speed);
+    const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
+
+    // First packet: the puppet sits at the fake spawn placement (250 cm in
+    // front of the local player). Snap to the real pose instead of LERPing
+    // across that whole vector -- the placement is a placeholder, not a state.
+    if (!hasPose_) {
+        curPos_ = tgtPos;
+        curYaw_ = snap.yaw;
+        curSpeed_ = snap.speed;
+        targetPos_ = tgtPos;
+        targetYaw_ = snap.yaw;
+        interpFinishMs_ = 0;  // freeze (no interp budget)
+        lastAlpha_ = 0.f;
+        hasPose_ = true;
+        ApplyToEngine();
+        dirty_ = false;  // just pushed it
+        return;
+    }
+
+    // Snap on true teleports (door warp / respawn). The legal-motion budget is
+    // a fixed base + what they could plausibly cover in half a second at the
+    // pose's reported speed -- LAN jitter never reaches it, real teleports do.
+    const float dist = Dist3(curPos_, tgtPos);
+    const float snapLimit = kSnapBaseCm + kSnapPerSpeedSec * std::fabs(snap.speed);
+    if (dist > snapLimit) {
+        UE_LOGI("RemotePlayer::SetTargetPose: SNAP (dist=%.0f > %.0f cm)", dist, snapLimit);
+        curPos_ = tgtPos;
+        curYaw_ = snap.yaw;
+        curSpeed_ = snap.speed;
+        targetPos_ = tgtPos;
+        targetYaw_ = snap.yaw;
+        interpFinishMs_ = 0;  // no active window
+        lastAlpha_ = 0.f;
+        ApplyToEngine();
+        dirty_ = false;  // just pushed it
+        return;
+    }
+
+    // Normal path: open a fresh interp window from cur -> new target. The
+    // error is cached NOW (target - cur, target's yaw shortest-arc from cur);
+    // each Tick applies dAlpha * cachedError so the motion is LINEAR (MTA
+    // form, not geometric-decay). If the next packet arrives before alpha=1,
+    // it rebases the interp from wherever cur got to.
+    targetPos_ = tgtPos;
+    targetYaw_ = snap.yaw;
+    curSpeed_ = snap.speed;  // speed is not interpolated; AnimBP blends locomotion
+    errorPos_.X = tgtPos.X - curPos_.X;
+    errorPos_.Y = tgtPos.Y - curPos_.Y;
+    errorPos_.Z = tgtPos.Z - curPos_.Z;
+    errorYaw_ = OffsetDegrees(curYaw_, snap.yaw);
+    const uint64_t now = NowMs();
+    interpStartMs_ = now;
+    interpFinishMs_ = now + kInterpWindowMs;
+    lastAlpha_ = 0.f;
+    dirty_ = true;  // a new window is open; Tick will start applying motion this frame
+}
+
+void RemotePlayer::Tick() {
+    if (!valid()) { actor_ = nullptr; return; }
+
+    // Advance interpolation if a window is open. MTA shape: error is cached
+    // ONCE at packet arrival (= target - cur at that moment). Each frame:
+    //   alpha    = (now - start) / window   (clamped 0..1)
+    //   dAlpha   = alpha - lastAlpha
+    //   cur     += errorPos * dAlpha        (linear; not geometric decay)
+    //   lastAlpha = alpha
+    // At alpha=1 the puppet has applied the full error; we then freeze
+    // (interpFinishMs_=0) until the next packet rebases the interp.
+    if (interpFinishMs_ != 0) {
+        const uint64_t now = NowMs();
+        const uint64_t span = interpFinishMs_ - interpStartMs_;  // == kInterpWindowMs
+        float alpha = (span == 0) ? 1.f
+                                  : static_cast<float>(now - interpStartMs_) / static_cast<float>(span);
+        alpha = std::clamp(alpha, 0.f, 1.f);
+        const float dAlpha = alpha - lastAlpha_;
+        lastAlpha_ = alpha;
+
+        curPos_.X += errorPos_.X * dAlpha;
+        curPos_.Y += errorPos_.Y * dAlpha;
+        curPos_.Z += errorPos_.Z * dAlpha;
+        curYaw_   += errorYaw_   * dAlpha;
+        dirty_ = true;  // pose moved this frame -> needs an engine push
+
+        if (alpha >= 1.f) {
+            curPos_ = targetPos_;  // exact arrival (kills any float drift over the window)
+            curYaw_ = targetYaw_;
+            interpFinishMs_ = 0;
+        }
+    }
+
+    // Skip the engine write when nothing has changed since the last push (frozen
+    // at target between packets). The puppet's SkeletalMeshActor has no
+    // physics/CharacterMovement -- it cannot move on its own, so a frozen pose
+    // genuinely stays where it is; re-writing the same SetActorLocation/Rotation
+    // dozens of times per second is wasted UFunction dispatch.
+    if (dirty_) {
+        ApplyToEngine();
+        dirty_ = false;
+    }
+}
+
+void RemotePlayer::ResetPoseState() {
+    // Wipe interp state; the puppet stays at cur (no engine move). The next
+    // SetTargetPose will see hasPose_=false and snap to the new target.
+    hasPose_ = false;
+    interpFinishMs_ = 0;
+    lastAlpha_ = 0.f;
+    errorPos_ = ue_wrap::FVector{};
+    errorYaw_ = 0.f;
+}
+
+void RemotePlayer::ApplyToEngine() {
+    E::SetActorLocation(actor_, curPos_);
+    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, curYaw_, 0.f});
+    Pup::DriveAnimBP(actor_, curSpeed_);
 }
 
 bool RemotePlayer::SetLocation(const ue_wrap::FVector& location) {

@@ -53,7 +53,7 @@ FRotator GetActorRotation(void* actor);
 
 // AActor::GetVelocity on `actor` (world velocity, cm/s). Zero on failure. Its
 // horizontal magnitude is the walk speed fed to the remote AnimBP locomotion
-// blend (RemotePlayer::Drive's `speed`). Game thread only.
+// blend (PoseSnapshot::speed -> RemotePlayer interp). Game thread only.
 FVector GetActorVelocity(void* actor);
 
 // AActor::K2_SetActorLocation on `actor` (teleport: bSweep=false, bTeleport=true
