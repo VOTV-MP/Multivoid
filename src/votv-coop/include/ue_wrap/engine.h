@@ -177,6 +177,18 @@ void LogClassProperties(const wchar_t* className);
 FVector GetComponentLocation(void* component);
 FVector GetComponentForwardVector(void* component);
 
+// USceneComponent::RelativeLocation -- the BP-authored static relative offset
+// to the attach-parent, read DIRECTLY via raw memory at +0x011C (not via
+// UFunction). The "world" variant above (K2_GetComponentLocation) returns the
+// computed world transform, which during BP construction / save-load init is
+// transiently non-settled. This raw read returns the field's CURRENT stored
+// value -- which is the BP-authored constant for the rest of the session once
+// the construction script has completed. Used by RemotePlayer::Spawn to
+// capture the mesh_playerVisible.RelLoc.Z shim once the local player is
+// settled. (0,0,0) on null input -- but the offset itself is real; a true
+// (0,0,0) RelLoc on a non-root component is unusual and worth logging.
+FVector GetComponentRelativeLocation(void* component);
+
 // Spawn a TRANSLUCENT world-space nameplate: an Actor carrying a UWidgetComponent
 // that renders the reused uicomp_helpText_C UMG label. opacity (0..1) drives the
 // whole plate's alpha (TintColorAndOpacity.A) -- real partial transparency, which

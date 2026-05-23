@@ -189,6 +189,20 @@ inline constexpr size_t AController_ControlRotation = 0x0288;  // FRotator
 inline constexpr size_t ACharacter_CapsuleComponent = 0x0290;          // UCapsuleComponent*  Engine.hpp:6972
 inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float  Engine.hpp:9883
 
+// USceneComponent::RelativeLocation @ +0x011C (FVector, 12 bytes). The
+// BP-AUTHORED relative offset to the parent component -- a STATIC field whose
+// settled value is what the BP construction script writes (mainPlayer_C's
+// construction sets mesh_playerVisible.RelativeLocation.Z to its authored
+// shim, typically ~-halfH). Read directly via raw memory (not via
+// K2_GetComponentLocation, which returns the computed WORLD location and is
+// affected by transient mid-init values). RULE 1 Option-G fix: stream
+// source.actor.Z (stable capsule centre), receiver reads the LOCAL player's
+// settled mesh_playerVisible.RelativeLocation.Z ONCE at puppet Spawn (the BP
+// constant -- same value on every instance of the same class, same value on
+// every peer), apply as actor-level Z offset on the puppet. See Engine.hpp
+// line 17904 for the FProperty descriptor. IDA-confirmed.
+inline constexpr size_t USceneComponent_RelativeLocation = 0x011C;     // FVector  Engine.hpp:17904
+
 // ---- HUD / Canvas (screen-space nameplate, MTA-style) --------------------
 // We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
 // off the HUD, project the remote head world->screen and draw the nickname with

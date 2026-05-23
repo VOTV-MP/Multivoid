@@ -123,34 +123,30 @@ private:
     void* satelliteCmc_ = nullptr; // cached satellite->CharacterMovementComponent
                                    // for per-tick Velocity writes.
 
-    // BP-authored visual offset between mainPlayer_C's actor centre and the
-    // visible body. On the source this lives on the `mesh_playerVisible`
-    // sub-component as RelativeLocation.Z and RelativeRotation.Yaw (typically
-    // -halfH-ish for Z and -90 for Yaw -- the "+Y forward mesh / +X forward
-    // actor" UE4 character convention shim). The puppet's SkeletalMeshComponent
-    // is the actor's ROOT component, so it has no sub-component to host the
-    // same offset (root-component RelLoc/RelRot just compose into the world
-    // transform that SetActorLocation overwrites). We apply the same shim at
-    // the ACTOR transform level instead: puppet.actor.Z = source.actor.Z +
-    // meshOffsetZ_; puppet.actor.Yaw = source.actor.Yaw + meshOffsetYaw_. Read
-    // once at Spawn from the local mainPlayer_C's mesh_playerVisible (same
-    // class as the source -> same BP-authored values).
-    float meshOffsetZ_ = 0.f;
-    float meshOffsetYaw_ = 0.f;
-    // meshOffsetZ_ is REFINED from the puppet's own foot bone on the first Tick
-    // (after the AnimGraph has evaluated). Reading the local's bones at spawn
-    // time gave wildly variable values (foot_R mesh-local Z swings from +5cm
-    // when IK is engaged to +82cm in T-pose, depending on what state the
-    // local's mesh comp happens to be in). The puppet has useLegIK=false and
-    // runs deterministic AnimGraph poses driven only by our streamed velocity
-    // -- a stable reference. Calibrated once on first Tick where the puppet's
-    // foot bone reports a sensible non-zero position. See [[project-remote-
-    // player-open-issues]] (b).
-    bool meshOffsetCalibrated_ = false;
-    int  calibrationDelayTicks_ = 0;  // wait a few Ticks before sampling GetActorBounds:
-                                       // immediately after spawn the AnimGraph hasn't
-                                       // evaluated yet, so the rendered mesh's AABB
-                                       // can report a degenerate or T-pose extent.
+    // Both offsets are captured ONCE at Spawn from the RECEIVER's own local
+    // mainPlayer_C -- same BP class as the source, so the BP-authored RelLoc
+    // values are identical on every peer (BP construction sets the same
+    // constants on every instance). Read raw from the static USceneComponent
+    // fields (RelativeLocation @ +0x011C, RelativeRotation @ +0x0128) NOT via
+    // K2_GetComponentLocation / K2_GetComponentForwardVector -- the world-
+    // transform UFunctions return the COMPUTED world transform which during
+    // BP construction + save-load init is transiently non-settled (Z-trace
+    // 2026-05-23 captured an 84cm swing in mesh.world.Z over the first 2 sec
+    // post-teleport). The RAW field carries the settled value the BP
+    // construction script writes.
+    //
+    // Z fix history (Option G shipped 2026-05-23 evening per code-architect
+    // RULE 1 verdict + MTA fidelity): the prior chain 4407fa7 -> 9765ad2 ->
+    // bfa91d2 -> c8e192b -> 195dd72 -> 'stream mesh.world.Z' all failed for
+    // ONE reason: they used either (a) a guessed offset (-halfH) or (b) a
+    // computed world transform delta that varies with transient init state.
+    // Option G streams source.actor.Z (stable capsule centre, MTA's wire
+    // shape) and applies meshOffsetZ_ from a stable raw-field read of the
+    // LOCAL's BP-authored RelativeLocation.Z. Identical on every instance,
+    // robust to source-side init transients (puppet doesn't see them
+    // because the wire no longer carries them).
+    float meshOffsetZ_ = 0.f;    // = local mesh_playerVisible.RelativeLocation.Z (raw, +0x11C)
+    float meshOffsetYaw_ = 0.f;  // = atan2(mesh forward) - actor yaw (BP-authored mesh frame shim)
     // Placeholder until the peer's Join reliable message lands (typically within
     // a few RTT of connect). nameplate::Update repaints when SetNickname changes
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"

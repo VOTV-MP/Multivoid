@@ -152,6 +152,29 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     // by NetPumpTick to skip re-resolving GetController every tick.
     out.x = loc.X;
     out.y = loc.Y;
+    // Z = source actor.Z (capsule centre on an ACharacter). This is UE4's
+    // stable physics position -- CMC floor-snap keeps it within ~2 cm of
+    // (ground + halfH), it does NOT swing through the +/-85 cm transient
+    // that mesh_playerVisible.world.Z does during BP construction / save-load
+    // init (Z-trace 2026-05-23 captured `mesh.world.Z = actor.Z + 2.57` for
+    // 1 sec post-teleport, then a drop of 84 cm to settled).
+    //
+    // The receiver does the offset reconstruction at the puppet ACTOR transform:
+    // puppet.actor.Z = wire.z + localMeshRelLocZ, where localMeshRelLocZ is the
+    // raw USceneComponent::RelativeLocation.Z field (offset +0x11C) read ONCE
+    // from the RECEIVER's own mainPlayer_C at puppet spawn. Same BP class on
+    // every peer => identical authored RelLoc.Z constant. RULE 1 root-cause
+    // fix per the code-architect verdict + MTA fidelity (MTA streams the
+    // CEntitySA matrix.vPos = capsule centre, lets the engine reconstruct
+    // visible body offset internally -- exactly the same shape).
+    //
+    // KNOWN LIMITATION (Phase 2 wire bump): when the SOURCE crouches, UE4's
+    // ACharacter::Crouch reduces halfH AND adjusts Mesh.RelLoc.Z upward to
+    // keep the feet pinned. The LOCAL's cached RelLoc.Z reflects standing
+    // state; the puppet's visible mesh will sit ~(crouchedHalfH - standingHalfH)
+    // cm too low when the source is crouched. Fix: stream a `bCrouched` bit
+    // in PoseSnapshot.flags; receiver applies a different cached offset when
+    // crouched. Tracked alongside the ragdoll sync wire change.
     out.z = loc.Z;
     // Normalize yaw and pitch into the canonical FRotator axis range (-180, 180]
     // BEFORE they go on the wire. UE4's AController::GetControlRotation returns
@@ -691,6 +714,43 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                             }
                             UE_LOGI("autotest correction: was (%.0f,%.0f,%.0f), retargeting (%.0f,%.0f,%.0f)",
                                     cur.X, cur.Y, cur.Z, atx, aty, atz);
+                        }
+                    });
+                }
+                // Z-trace tick: every ~500 ms log the local actor.Z AND the
+                // local mesh_playerVisible.world.Z (the value the source now
+                // streams). This catches the "puppet jumps afloat after init"
+                // signature: if the local's mesh.world.Z changes over the
+                // first few seconds, the streamed Z changes, the puppet's
+                // rendered world Z changes -- the jump moment lives in this
+                // trace. Tight cadence (500 ms) for the first 30 s, then drop
+                // to the 2 s stats interval.
+                using namespace std::chrono;
+                static const auto sTickEpoch = steady_clock::now();
+                const bool tightTrace = (steady_clock::now() - sTickEpoch) < seconds(30);
+                if (tightTrace && (tick % 60 == 0)) {  // ~500 ms at 125 Hz
+                    Post([] {
+                        void* lp = R::FindObjectByClass(P::name::MainPlayerClass);
+                        if (!lp) return;
+                        const auto actorLoc = ue_wrap::engine::GetActorLocation(lp);
+                        float meshWorldZ = NAN, meshRelZ = NAN;
+                        if (void* mc = ue_wrap::puppet::GetMeshPlayerVisibleComponent(lp)) {
+                            meshWorldZ = ue_wrap::engine::GetComponentLocation(mc).Z;
+                            meshRelZ = ue_wrap::engine::GetComponentRelativeLocation(mc).Z;
+                        }
+                        // Option G: the wire carries actor.Z; the receiver applies
+                        // mesh.RelLoc.Z (raw +0x11C, BP-authored static value). The
+                        // raw RelLoc.Z column should STABILIZE within 1-2 sec of
+                        // load. If it keeps drifting beyond that, a BP timeline
+                        // (wakingup, fixCrouch) is still touching it -- which the
+                        // puppet WON'T see, because we don't stream it anymore.
+                        UE_LOGI("Z-trace: local actor.Z=%.2f mesh.RelLoc.Z=%.2f mesh.world.Z=%.2f (delta=%.2f)%s",
+                                actorLoc.Z, meshRelZ, meshWorldZ, meshWorldZ - actorLoc.Z,
+                                g_orphan.valid() ? "" : " (puppet not spawned)");
+                        if (g_orphan.valid()) {
+                            const auto pp = g_orphan.GetLocation();
+                            UE_LOGI("Z-trace: puppet world.Z=%.2f (= wire.actor.Z + cached local mesh.RelLoc.Z)",
+                                    pp.Z);
                         }
                     });
                 }

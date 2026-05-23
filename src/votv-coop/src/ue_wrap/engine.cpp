@@ -332,6 +332,18 @@ FVector GetComponentForwardVector(void* component) {
     return fwd;
 }
 
+FVector GetComponentRelativeLocation(void* component) {
+    if (!component) return {};
+    // Raw field read at USceneComponent::RelativeLocation @ +0x011C (FVector,
+    // 12 bytes). NOT a UFunction call -- this is intentional: K2_GetComponent
+    // Location returns the computed WORLD transform which composes RelLoc with
+    // the parent's world transform AND any transient mid-init state, defeating
+    // the whole point of capturing the BP-authored static offset. The raw
+    // field carries the value the BP construction script wrote.
+    return *reinterpret_cast<FVector*>(
+        reinterpret_cast<uint8_t*>(component) + P::off::USceneComponent_RelativeLocation);
+}
+
 bool SetComponentVisible(void* component, bool visible) {
     if (!component || !ResolveCompVis()) {
         UE_LOGE("engine: SetComponentVisible unresolved (cls=%p setVis=%p setHidden=%p)",

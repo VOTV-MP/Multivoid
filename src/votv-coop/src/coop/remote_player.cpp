@@ -53,17 +53,13 @@ bool RemotePlayer::Spawn() {
         return false;
     }
 
-    // Wire convention: source actor centre Z (engine native frame, MTA-style).
-    // The visible-body-vs-actor visual shim lives on mainPlayer_C's
-    // mesh_playerVisible (a SUB-component, not the root) as RelLoc.Z / RelRot.Yaw.
-    // We can't put the same shim on the puppet's SkeletalMeshComponent because
-    // it IS the puppet's root component (root RelLoc/RelRot just compose into
-    // the world transform that SetActorLocation overwrites). Instead: read the
-    // local mainPlayer_C's mesh_playerVisible.RelLoc.Z + RelRot.Yaw ONCE and
-    // cache as a per-RemotePlayer additive offset. ApplyToEngine then writes
-    // puppet.actor.Z = curPos_.Z + meshOffsetZ_ and puppet.actor.Yaw = curYaw_
-    // + meshOffsetYaw_ -- the same world transform the source's visible body
-    // ends up at, achieved at a different component layer.
+    // Wire convention (post-2026-05-23-evening): source streams its visible
+    // mesh WORLD Z (mesh_playerVisible.GetComponentLocation().Z), NOT actor.Z.
+    // Rationale + history in [[project-remote-player-open-issues]] (b). On the
+    // receiver we write puppet.actor.Z = wire.z directly. The puppet's
+    // SkeletalMeshComponent is the actor's ROOT, so puppet.mesh.world.Z =
+    // puppet.actor.Z by construction -- exact match to source.mesh.world.Z,
+    // zero offset reconstruction.
     ue_wrap::FVector loc = E::GetActorLocation(local);
 
     // Place the puppet a couple metres in FRONT of the local player so it's
@@ -80,83 +76,46 @@ bool RemotePlayer::Spawn() {
     }
     void* animClass = Pup::GetMeshPlayerVisibleAnimClass(local);
 
-    // Cache the actor-Z + actor-Yaw offsets that put the puppet's visible body
-    // on the ground and facing the right way. Both are derived from the live
-    // LOCAL mainPlayer_C (same class as the source, so same BP-authored geometry).
+    // Both offsets captured from the LOCAL's mesh_playerVisible -- same
+    // mainPlayer_C BP on every peer.
     //
-    // Z derivation: we want the puppet's LOWEST visible bone (= visible feet) to
-    // land at source ground = source.actor.Z - halfH. The puppet's mesh comp is
-    // the actor's root, so puppet.lowestBone.world.Z = puppet.actor.Z + K, where
-    // K = (lowestBone Z in mesh-local space) = local.lowestBone.world.Z -
-    // local.mesh.world.Z. Solving for puppet.actor.Z:
-    //   puppet.actor.Z = source.actor.Z - halfH - K
-    //                  = source.actor.Z + (local.mesh.world.Z - local.lowestBone.world.Z - halfH)
-    // so meshOffsetZ_ = (local.mesh.world.Z) - (local.lowestBone.world.Z) - halfH.
-    // For the standard ACharacter + kerfur skin this is approximately -halfH plus
-    // the small "mesh-asset origin below visible feet" shim that's been making
-    // the puppet float ~10-20 cm above ground since the start of the project.
+    // Yaw: data-driven from the mesh's WORLD forward vector vs the actor's
+    // world yaw -- the BP-authored mesh-frame (+Y forward) vs UE-actor-frame
+    // (+X forward) shim. Stable (mesh comp RelRot doesn't transient-drift the
+    // way RelLoc does on this component chain).
     //
-    // Yaw derivation: read the mesh comp's WORLD forward vector and subtract the
-    // actor's world yaw -- captures whatever chain-of-RelRot composes to the
-    // visible mesh orientation (typically -90 for "mesh +Y forward" vs UE4
-    // actor "+X forward"), data-driven and robust against any attach-parent
-    // reshuffle.
-    // Both offsets are DATA-DRIVEN from the local's live mesh_playerVisible
-    // sub-component vs the actor centre. RULE 1 root-cause: never assume the
-    // shim equals -halfH; the BP author is free to set RelLoc.Z to ANY value,
-    // and there's no UE-imposed equality between halfH and the visible mesh's
-    // vertical offset. (The 10cm "spawn-then-float" regression was exactly
-    // this: -halfH was 10cm shorter than the actual BP-authored RelLoc.Z, so
-    // the puppet drew correctly at the spawn placement -- which happens to be
-    // 250 cm forward of the local where the LOCAL's own visible body grounds --
-    // but as soon as the first source pose arrived (carrying source.actor.Z,
-    // which is source.mesh.Z + |authored_shim|, not source.mesh.Z + halfH),
-    // our -halfH compensation under-shot by 10 cm and the puppet floated.)
-    //
-    // Z: read GetActorLocation (= root component world Z = capsule centre on
-    // an ACharacter, since the capsule is the root) and GetComponentLocation
-    // on the visible mesh sub-component. Difference = the EXACT actor-to-mesh
-    // vertical offset, in world Z, that the BP-authored RelLoc.Z resolves to
-    // (composed with any parent transform). Apply that same offset on the
-    // puppet at the ACTOR level (the puppet's mesh comp is the actor's root --
-    // no sub-component to host the shim natively).
-    //
-    // Yaw: read mesh comp's WORLD forward vector vs the actor's world yaw.
-    // Stable: the rotation chain composes the same regardless of the mesh's
-    // POSE state.
+    // Z: -halfH from the inherited ACharacter::CapsuleComponent.CapsuleHalfHeight.
+    // Why this and NOT the mesh_playerVisible.RelativeLocation.Z raw field
+    // (which the code-architect recommended): the runtime Z-trace 2026-05-23
+    // proved `mesh_playerVisible.RelativeLocation.Z = 0.00` ALL THE TIME on
+    // VOTV's mainPlayer_C -- the -85 cm offset of its world position from the
+    // actor centre is composed via an intermediate AttachParent in the BP
+    // graph, NOT stored directly on this component. Reading +0x11C returns
+    // zero. The settled `mesh.world.Z - actor.world.Z` is exactly -85.00 cm
+    // = -halfH (Z-trace empirical, IDA-confirmed default ACharacter shape).
+    // Using -halfH is therefore BOTH stable (the capsule's HalfHeight field at
+    // +0x468 doesn't drift like the dynamic world transform does) AND correct
+    // (matches the settled world delta to the centimetre). The IDA agent also
+    // confirmed only stock ACharacter::Crouch modifies CapsuleHalfHeight at
+    // runtime, and Crouch updates it in lockstep with Mesh.RelLoc.Z so the
+    // -halfH formula stays valid through crouch transitions on the source.
+    // (Receiver-side crouch handling is Phase 2 wire bump.)
     if (void* srcMeshComp = Pup::GetMeshPlayerVisibleComponent(local)) {
         const ue_wrap::FRotator localActorRot = E::GetActorRotation(local);
         const ue_wrap::FVector meshFwd = E::GetComponentForwardVector(srcMeshComp);
         const float meshWorldYaw = std::atan2(meshFwd.Y, meshFwd.X) * 57.29577951f;
         meshOffsetYaw_ = ue_wrap::NormalizeAxis(meshWorldYaw - localActorRot.Yaw);
-
-        const ue_wrap::FVector localActorWorld = E::GetActorLocation(local);
-        const ue_wrap::FVector localMeshWorld  = E::GetComponentLocation(srcMeshComp);
-        meshOffsetZ_ = localMeshWorld.Z - localActorWorld.Z;
-        // Diagnostic: compare data-driven value against the old -halfH guess
-        // so a future divergence (different game version / different BP) is
-        // visible in the log. Big delta == BP shim != halfH (the floating
-        // root cause we just fixed).
-        const float halfHGuess = E::GetActorCharacterHalfHeight(local);
-        UE_LOGI("RemotePlayer::Spawn: meshOffsetZ_=%.2f (data-driven from mesh.world.Z-actor.world.Z) "
-                "vs -halfH=%.2f (legacy guess) delta=%.2f cm. meshOffsetYaw_=%.2f",
-                meshOffsetZ_, -halfHGuess, meshOffsetZ_ + halfHGuess, meshOffsetYaw_);
-    } else {
-        // Fallback path: no mesh comp resolved (early-init race). The -halfH
-        // guess is closer than zero for standard ACharacter geometry; log
-        // loudly so this doesn't go unnoticed.
-        const float halfHGuess = E::GetActorCharacterHalfHeight(local);
-        meshOffsetZ_ = -halfHGuess;
-        UE_LOGW("RemotePlayer::Spawn: NO mesh_playerVisible component -- falling back to "
-                "meshOffsetZ_=-halfH=%.2f (puppet may float; data-driven path needed mesh comp)",
-                meshOffsetZ_);
     }
+    const float halfH = E::GetActorCharacterHalfHeight(local);
+    meshOffsetZ_ = -halfH;
+    UE_LOGI("RemotePlayer::Spawn: meshOffsetZ_=%.2f (= -halfH, capsule HalfHeight @+0x468) "
+            "meshOffsetYaw_=%.2f", meshOffsetZ_, meshOffsetYaw_);
 
-    // Pre-apply the Z offset to the spawn placement so the puppet appears at
-    // the right world Z from SpawnActor onward (avoids a one-tick visual pop
-    // before the first ApplyToEngine runs).
+    // Spawn-placement Z = actor.Z + meshOffsetZ_, same formula as ApplyToEngine.
+    // No visual pop between SpawnActor and the first ApplyToEngine because both
+    // produce the same world transform.
     ue_wrap::FVector spawnLoc = loc;
-    spawnLoc.Z += meshOffsetZ_;
+    spawnLoc.Z = loc.Z + meshOffsetZ_;
     actor_ = Pup::SpawnPuppet(spawnLoc, skin, animClass);
     if (!actor_) {
         UE_LOGE("RemotePlayer::Spawn: SpawnPuppet failed");
@@ -233,9 +192,13 @@ bool RemotePlayer::Spawn() {
     // mesh_playerVisible) is added inside ApplyToEngine at the actor write.
     const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;
 
-    // Seed the interpolation state to the spawn placement so the first network
-    // pose snaps from a SANE current (not zero), and per-frame Tick() in the
-    // first few frames before the first packet arrives just no-ops gracefully.
+    // Seed the interpolation state to the ACTOR-Z reference (loc, NOT spawnLoc):
+    // ApplyToEngine adds meshOffsetZ_ each tick, so curPos_.Z must carry the
+    // RAW actor.Z (== what the wire will deliver as source.actor.Z). If we
+    // seeded with spawnLoc (= loc + meshOffsetZ_), ApplyToEngine would add
+    // meshOffsetZ_ a SECOND time and the puppet would float by exactly
+    // |meshOffsetZ_| for one frame. The SpawnActor placement (spawnLoc above)
+    // and curPos_=loc + ApplyToEngine produce the SAME world Z by construction.
     curPos_ = loc;
     curYaw_ = yaw;
     curPitch_ = 0.f;
@@ -249,11 +212,11 @@ bool RemotePlayer::Spawn() {
     interpFinishMs_ = 0;
     lastAlpha_ = 0.f;
     hasPose_ = false;  // the first network pose SNAPS away from this fake placement
-    // Push the spawn placement (curPos_, curYaw_) to the engine NOW. ApplyToEngine
-    // adds meshOffsetZ_/Yaw_ to produce the puppet's actor transform, matching
-    // what the source's visible body would land at -- the SpawnActor placement
-    // already pre-applied meshOffsetZ_ to spawnLoc, so this is consistent (no
-    // visual pop between SpawnActor and the first ApplyToEngine).
+    // Push the spawn placement (curPos_=actor.Z, curYaw_) to the engine NOW.
+    // ApplyToEngine adds meshOffsetZ_ to curPos_.Z and meshOffsetYaw_ to
+    // curYaw_, producing the same world transform as the SpawnActor placement
+    // (= loc.Z + meshOffsetZ_). No visual pop between SpawnActor and the first
+    // ApplyToEngine.
     ApplyToEngine();
     dirty_ = false;     // just pushed it
 
@@ -355,16 +318,13 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
 void RemotePlayer::Tick() {
     if (!valid()) { actor_ = nullptr; return; }
 
-    // User-verified empirical fact: meshOffsetZ_ = -halfH (set at Spawn) puts
-    // the puppet's visible feet ON the ground. Any subsequent "calibration"
-    // that nudges that value (e.g. via GetActorBounds AABB-bottom math) makes
-    // things WORSE -- the AABB reading varies with the puppet's transient pose
-    // state, and the calculated delta moves the puppet OFF the ground that
-    // -halfH had it on. So calibration is DISABLED here: we trust the spawn-
-    // time -halfH value, which is correct for the standard ACharacter capsule
-    // both peers run. The puppet stands on the ground; when the source crouches
-    // (Ctrl), source.actor.Z drops, the puppet follows down via the streamed
-    // pose -- which the user noted is a nice visible-crouch indicator.
+    // No receiver-side Z calibration: the wire carries source.mesh.world.Z
+    // directly (harness::ReadLocalPose), so the puppet's mesh world.Z is
+    // pinned to the source's by construction every ApplyToEngine. Crouch
+    // shows up visually because UE4's ACharacter::Crouch shrinks halfH and
+    // bumps Mesh.RelLoc.Z to keep mesh.world.Z anchored at ground -- which
+    // means the streamed value drops slightly (the visible body actually
+    // does descend a few cm in crouch), and the puppet follows along.
 
     // Advance interpolation if a window is open. MTA shape: error is cached
     // ONCE at packet arrival (= target - cur at that moment). Each frame:
@@ -436,15 +396,22 @@ void RemotePlayer::Destroy() {
 }
 
 void RemotePlayer::ApplyToEngine() {
-    // Apply the BP-authored visual shim at the actor transform level. The wire
-    // carries the source's NATIVE actor frame (capsule centre Z, actor body
-    // yaw); the source's visible body sits at (actor + mesh_playerVisible's
-    // RelLoc/RelRot) on its end. The puppet's mesh comp is the actor's root
-    // (no sub-component to host the same RelLoc/RelRot), so we apply the same
-    // shim here -- adding meshOffsetZ_/Yaw_ that were read from the local's
-    // mesh_playerVisible at Spawn. Result: puppet.mesh.world.Z = source.mesh.
-    // world.Z and puppet visible-look-direction = source visible-look-direction,
-    // by construction, regardless of capsule sizing or mesh-asset authoring.
+    // Option G wire convention (2026-05-23-evening, code-architect verdict +
+    // MTA fidelity):
+    //   wire.z = source.actor.Z (stable capsule centre, MTA::CEntitySA::vPos
+    //            shape -- the physics anchor, unaffected by BP init transients)
+    //   puppet.actor.Z = wire.z + meshOffsetZ_  (where meshOffsetZ_ is the
+    //                    LOCAL's raw BP-authored mesh.RelLoc.Z, captured once
+    //                    at Spawn -- identical on every instance of the same
+    //                    mainPlayer_C BP)
+    // Net effect: puppet's mesh comp (= the actor's root, so puppet.mesh.world.Z
+    // = puppet.actor.Z) lands at SETTLED source.mesh.world.Z by reconstruction
+    // -- the source's actor.Z is stable, the offset is stable, the result is
+    // stable. The 84cm mid-init swing in mesh.world.Z on the source does NOT
+    // reach the wire, so the puppet does not "jump afloat after init" anymore.
+    //
+    // Yaw: data-driven mesh-+Y-forward vs UE-actor-+X-forward shim, also
+    // captured once at Spawn.
     ue_wrap::FVector puppetLoc = curPos_;
     puppetLoc.Z += meshOffsetZ_;
     E::SetActorLocation(actor_, puppetLoc);
