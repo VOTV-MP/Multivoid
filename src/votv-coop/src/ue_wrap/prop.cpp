@@ -16,13 +16,19 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Cached prop_C UClass -- one-shot reflection lookup, cleared on level unload
-// by the caller (or implicitly by IsLive check on first miss). NOT thread-safe
-// to write; readers run on the game thread.
+// Cached prop_C UClass -- one-shot reflection lookup, re-validated via IsLive
+// each call. A full level unload + reload could either (a) keep the same
+// UClass live (typical for cooked-content classes), (b) destroy it and
+// re-create with a different address, or (c) destroy it and reuse the address
+// for another object. The IsLive check covers (b) and partially (c): when the
+// slot's InternalIndex no longer matches the cached pointer, IsLive returns
+// false and we re-resolve. NOT thread-safe to WRITE; readers run on the game
+// thread (the only write site is PropBaseClass itself, called only on the
+// game thread by the observer / autonomous-test paths).
 void* g_propBaseCls = nullptr;
 
 void* PropBaseClass() {
-    if (g_propBaseCls) return g_propBaseCls;
+    if (g_propBaseCls && R::IsLive(g_propBaseCls)) return g_propBaseCls;
     g_propBaseCls = R::FindClass(P::name::PropClass);
     return g_propBaseCls;
 }
@@ -101,11 +107,16 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outS
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         ++stats.totalScanned;
-        // Skip CDOs (Default__<Class>) -- they have no world location and
-        // aren't grabbable instances.
+        // Fast filter FIRST: super-chain walk is a few pointer compares with
+        // no allocation. Most of GUObjectArray (>99% of ~237k entries) isn't
+        // an Aprop_C derivative and shouldn't pay for a wstring allocation.
+        if (!IsDescendantOfProp(obj)) continue;
+        // Now safe to allocate: skip CDOs (Default__<Class>) -- they have no
+        // world location and aren't grabbable instances. With the filter
+        // order above, this allocates only ~candidate count (~2k) wstrings
+        // instead of ~237k.
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
-        if (!IsDescendantOfProp(obj)) continue;
         ++stats.candidates;
         const bool heavy = IsHeavy(obj);
         if (heavy) ++stats.totalHeavy;

@@ -35,8 +35,8 @@ std::atomic<UFunctionInterceptor> g_interceptCb{nullptr};
 // entry is a free slot. Writes via SetObserverSlot store the cb FIRST then
 // the function pointer with release ordering; reads in the detour load the
 // function pointer with acquire ordering then the cb with relaxed (same
-// pattern as g_interceptUFunc/g_interceptCb). Fixed size kMaxObservers (8)
-// keeps the detour loop bounded.
+// pattern as g_interceptUFunc/g_interceptCb). Fixed size kMaxObservers (see
+// game_thread.h; currently 16) keeps the detour loop bounded.
 struct ObserverSlot {
     std::atomic<void*> targetFn{nullptr};
     std::atomic<ProcessEventObserverFn> cb{nullptr};
@@ -203,10 +203,11 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     }
 
     // PRE-observers: fire BEFORE the original. Used to snapshot state the BP
-    // is about to clear (drop/throw observers in [[project-physics-object-pickup]]).
-    // The walk is kMaxObservers=8 pointer compares -- same cost class as the
+    // is about to clear (e.g. PHC.ReleaseComponent PRE reads handle+176
+    // GrabbedComponent before PhysX clears it).
+    // The walk is kMaxObservers (16) pointer compares -- same cost class as the
     // single interceptor compare above. NO observers registered = NO cost
-    // beyond the 8 null loads.
+    // beyond the 16 null loads.
     FireObservers(g_preObservers, self, function, params);
 
     // Diagnostic name-prefix sniffer (zero cost when no slot is set).
@@ -215,7 +216,9 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     g_originalPE(self, function, params);
 
     // POST-observers: fire AFTER the original. Used to read state the BP just
-    // wrote (pickup/smoothGrab observers).
+    // wrote (e.g. PHC.GrabComponentAtLocation POST reads handle+176 to see
+    // what was just grabbed; PHC.SetTargetLocation POST sees the per-tick
+    // drive target).
     FireObservers(g_postObservers, self, function, params);
 }
 

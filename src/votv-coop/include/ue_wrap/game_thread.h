@@ -73,16 +73,16 @@ void ClearInterceptor();
 //
 // Two variants:
 //   Post-observer: called AFTER the original ProcessEvent. Used to read
-//     state the BP just wrote (e.g. read mainPlayer_C.grabbing_actor in
-//     a pickupObject observer to see what was just grabbed).
+//     state the BP just wrote (e.g. read UPhysicsHandleComponent.GrabbedComponent
+//     @+176 in a PHC.GrabComponentAtLocation observer to see what was just grabbed).
 //   Pre-observer:  called BEFORE the original. Used to snapshot state
-//     the BP is about to CLEAR (e.g. read grabbing_actor in a
-//     dropGrabObject observer before the BP nulls it out).
+//     the BP is about to CLEAR (e.g. read GrabbedComponent in a
+//     PHC.ReleaseComponent observer before PhysX clears it).
 //
-// Performance: on the hot path, the detour walks a fixed-size 8-entry
-// table comparing the dispatched function pointer against each registered
-// target. Eight pointer compares per dispatch -- same cost class as the
-// existing single-target SetInterceptor pointer compare, and unlike a
+// Performance: on the hot path, the detour walks a fixed-size kMaxObservers
+// table (currently 16) comparing the dispatched function pointer against each
+// registered target. 16 pointer compares per dispatch -- same cost class as
+// the existing single-target SetInterceptor pointer compare, and unlike a
 // map lookup involves no allocation or hashing.
 //
 // Thread-safety: registration uses an atomic store so the detour reads a

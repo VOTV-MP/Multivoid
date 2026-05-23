@@ -297,9 +297,11 @@ void GrabObserver_PHC_SetTarget(void* self, void* /*function*/, void* /*params*/
     // Per-tick driver -- fires every frame the BP graph wants to move the held
     // prop. Hot. Log first 3 calls + every 30th after, so a short autonomous
     // test (5 calls) still sees observer activity but a real grab (~60 Hz x
-    // seconds) doesn't drown the log.
-    static uint64_t sCount = 0;
-    const uint64_t n = ++sCount;
+    // seconds) doesn't drown the log. ATOMIC because ProcessEvent CAN dispatch
+    // from a task-graph worker under parallel anim (per game_thread.h:91-92);
+    // the relaxed fetch_add is cheap and the counter semantics tolerate it.
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 || (n % 30) == 0) {
         UE_LOGI("grab_hook[PHC.SetTarget]: handle=%p (call #%llu)", self,
                 static_cast<unsigned long long>(n));
@@ -307,8 +309,8 @@ void GrabObserver_PHC_SetTarget(void* self, void* /*function*/, void* /*params*/
 }
 
 void GrabObserver_PHC_SetTargetWithRotation(void* self, void* /*function*/, void* /*params*/) {
-    static uint64_t sCount = 0;
-    const uint64_t n = ++sCount;
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 || (n % 30) == 0) {
         UE_LOGI("grab_hook[PHC.SetTargetWithRot]: handle=%p (call #%llu)", self,
                 static_cast<unsigned long long>(n));
@@ -373,9 +375,10 @@ void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/
 void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) {
     // Per-tick Timeline update. Log first 3 + every 30th after (same throttle
     // policy as PHC.SetTarget so a short autonomous test still sees activity).
+    // Atomic for the same reason as PHC.SetTarget above.
     if (!self) return;
-    static uint64_t sCount = 0;
-    const uint64_t n = ++sCount;
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n > 3 && (n % 30) != 0) return;
     void* grabbing = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);

@@ -94,10 +94,21 @@ struct ScanStats {
 // nearest HEAVY drag prop). Skips CDOs (Default__*). Reads location via
 // engine::GetActorLocation (BP-callable, works for any AActor subclass).
 //
-// One-shot scan (~237k UObjects per call); NOT hot-loop safe. Cache the
-// result if you need it across frames. The autonomous test calls this
-// once per grab routine; the production wire path would call it once
-// per GRAB packet receive (to resolve sent_key_string -> local Aprop_C*).
+// COST PROFILE -- read before promoting to a hot path:
+//   * ~237k pointer-compares for the GUObjectArray walk + super-chain check
+//     (cheap; cache-friendly)
+//   * ~candidate count wstring allocations for the CDO-skip name read
+//     (~2,059 Aprop_C derivatives in the КПП spawn area; one allocation each)
+//   * ~candidate count ProcessEvent DISPATCHES for engine::GetActorLocation
+//     (each goes through our own detour, which walks both observer tables --
+//     a 32-atomic-load amplifier per candidate). This is the dominant cost
+//     for a populated scene.
+// At ~2k candidates: ~64k atomic loads + ~2k allocations + 2k full PE
+// dispatches per call. One-shot is fine; do NOT call per-frame or inside an
+// observer. Cache the result if you need it across ticks. The autonomous
+// test calls this once per grab routine; the production wire path would call
+// it once per GRAB packet receive (to resolve sent_key_string -> local
+// Aprop_C* -- prefer FindByKeyString which has the same cost profile).
 //
 // Pass `outStats` for the diagnostic counts.
 NearestResult FindNearest(const FVector& anchor, bool wantHeavy = false,
