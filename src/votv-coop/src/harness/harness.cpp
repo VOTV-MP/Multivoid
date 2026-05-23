@@ -129,16 +129,31 @@ std::wstring ReadNickname() {
 // Game thread: read the local player's pose into a network snapshot. z carries the
 // FEET (capsule centre - half-height), so the remote machine's mesh-root puppet
 // stands on the ground; yaw is the body facing; speed is horizontal velocity (cm/s).
-bool ReadLocalPose(void* local, coop::net::PoseSnapshot& out) {
+bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
-    const ue_wrap::FRotator rot = ue_wrap::engine::GetActorRotation(local);
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
     const float halfH = ue_wrap::puppet::GetCapsuleHalfHeight(local);
+    // View rotation lives on the CONTROLLER (control rotation), NOT the actor:
+    // actor pitch is always 0 for an upright character; the controller carries
+    // the camera's pitch/yaw which is the player's actual look direction. Send
+    // both so the puppet's head can mirror the remote's view (pitch drives the
+    // head-bone tilt; yaw drives the body since VOTV's Character uses
+    // bUseControllerRotationYaw). Fall back to actor rotation if no controller
+    // (e.g. transient frames during level load / OMEGA pre-possession). The
+    // caller (NetPumpTick) caches the controller alongside g_netLocal to avoid
+    // re-resolving it every tick (post-ship audit).
+    ue_wrap::FRotator viewRot{};
+    if (controller) {
+        viewRot = ue_wrap::engine::GetControlRotation(controller);
+    } else {
+        viewRot = ue_wrap::engine::GetActorRotation(local);
+    }
     out.x = loc.X;
     out.y = loc.Y;
     out.z = loc.Z - halfH;
-    out.yaw = rot.Yaw;
+    out.yaw = viewRot.Yaw;
+    out.pitch = viewRot.Pitch;
     out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
     return true;
 }
@@ -184,6 +199,10 @@ coop::RemotePlayer g_orphan;
 // GUObjectArray, so we resolve it ONCE, hold it, re-validate with IsLive, and only
 // re-find if it died (level change) -- never a full scan per tick (post-ship audit).
 void* g_netLocal = nullptr;
+// Cached controller for the same pawn -- avoids 2 ProcessEvent dispatches per
+// pump tick (GetController + GetControlRotation). Bound to g_netLocal's lifetime:
+// nulled when g_netLocal is nulled (level change).
+void* g_netLocalController = nullptr;
 
 // Connected-state edge detection for the disconnect cleanup (Destroy the puppet).
 // File-scope (NOT a static-local in NetPumpTick) so a future session restart can
@@ -212,11 +231,16 @@ void NetPumpTick(float displayOffsetX) {
     if (g_wasConnected && !isConnected && g_orphan.valid()) g_orphan.Destroy();
     g_wasConnected = isConnected;
 
-    if (g_netLocal && !R::IsLive(g_netLocal)) g_netLocal = nullptr;
+    if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
     if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
     if (g_netLocal) {
+        // Re-resolve the controller only when missing or invalidated; the
+        // controller pointer stays stable between possess events. Caching here
+        // saves ~250 ProcessEvent dispatches/sec at 125 Hz pump (post-ship audit).
+        if (g_netLocalController && !R::IsLive(g_netLocalController)) g_netLocalController = nullptr;
+        if (!g_netLocalController) g_netLocalController = ue_wrap::engine::GetController(g_netLocal);
         coop::net::PoseSnapshot mine;
-        if (ReadLocalPose(g_netLocal, mine)) g_session.SetLocalPose(mine);
+        if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
     }
 
     coop::net::PoseSnapshot remote;
@@ -610,7 +634,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
             // Same loc/yaw, just bump speed -- the first SetTargetPose since spawn
             // snaps (hasPose_ false), then Tick applies. AnimBP locomotion picks it up.
-            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, 0.f, 200.f};
+            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/200.f};
             g_orphan.SetTargetPose(s);
             g_orphan.Tick();
         });
@@ -618,7 +642,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] {
             if (!g_orphan.valid()) return;
             const ue_wrap::FVector at = g_orphan.GetLocation();
-            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, 0.f, 0.f};
+            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/0.f};
             g_orphan.SetTargetPose(s);
             g_orphan.Tick();
             UE_LOGI("show: back to idle (speed=0)");

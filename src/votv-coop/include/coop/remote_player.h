@@ -93,10 +93,14 @@ private:
     // some other system moved the actor between frames; cheap).
     void ApplyToEngine();
 
-    // Linear LERP window for new poses. ~1.5x the 30 Hz send interval (33 ms);
-    // so the puppet is still ~30% short of the previous target when the next
-    // packet arrives, smoothing jitter without an explicit render-delay buffer.
-    static constexpr int kInterpWindowMs = 50;
+    // Linear LERP window. At 60 Hz send (~16.7 ms interval) this is ~4.5x the
+    // interval -- a generous jitter buffer that handles LAN noise instantly
+    // AND tolerates WAN jitter (50-150 ms RTT, irregular arrivals). The
+    // visual lag added vs a tight 30 ms window is ~25 ms steady-state, well
+    // below the threshold of "feels laggy" for a peer-view puppet (the local
+    // player's own input is unaffected). Could be made adaptive (track avg
+    // recv interval) later if needed.
+    static constexpr int kInterpWindowMs = 75;
     // Snap thresholds (cm). At sprint ~600 cm/s in VOTV, one window's legal
     // motion is ~30 cm; anything more than (base + 0.5 s * speed) is a real
     // teleport (door warp, respawn) -- snap instead of trying to LERP across.
@@ -116,14 +120,17 @@ private:
     // applied to the engine; targetPos_/targetYaw_ is what we're walking toward.
     ue_wrap::FVector curPos_{};
     float            curYaw_ = 0.f;
+    float            curPitch_ = 0.f;   // view pitch for the head bone
     float            curSpeed_ = 0.f;
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;
+    float            targetPitch_ = 0.f;
     // Cached at SetTargetPose time = target - cur. The interp incrementally
     // applies dAlpha * errorPos_ each frame (MTA's linear form -- recomputing
     // (target - cur) each frame would decay geometrically, not linearly).
     ue_wrap::FVector errorPos_{};
     float            errorYaw_ = 0.f;
+    float            errorPitch_ = 0.f;
     uint64_t         interpStartMs_ = 0;
     uint64_t         interpFinishMs_ = 0;  // 0 == no active interp window (frozen)
     float            lastAlpha_ = 0.f;

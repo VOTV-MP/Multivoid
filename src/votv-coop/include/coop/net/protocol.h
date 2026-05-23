@@ -20,7 +20,11 @@ namespace coop::net {
 // Opaque magic guard (rejects stray datagrams that hit our port). Both peers
 // just agree on the constant; the spelling is "VMTP" (VoTv MultiPlayer).
 inline constexpr uint32_t kMagic = 0x564D5450u;
-inline constexpr uint16_t kProtocolVersion = 1;
+// v2 (2026-05-23): PoseSnapshot grew from 20 -> 24 bytes (added `pitch` for
+// head-bone view-direction replication). Both peers must run v2; an old v1
+// packet is rejected at the header check (ParseHeader). No back-compat layer
+// (RULE 2 -- mod is pre-ship; bump cleanly).
+inline constexpr uint16_t kProtocolVersion = 2;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -61,21 +65,29 @@ struct PacketHeader {
 };
 static_assert(sizeof(PacketHeader) == 20, "PacketHeader must be 20 bytes");
 
-// Position-only pose (methodology 3.4). Floats are UE4 cm / degrees (UE4.27's
-// FVector/FRotator are float, not double). yaw is the horizontal facing; speed is
-// the horizontal velocity magnitude (cm/s) -> the remote AnimBP locomotion blend.
+// Position + view-direction pose. Floats are UE4 cm / degrees (UE4.27's
+// FVector/FRotator are float, not double).
+//   yaw   -- body horizontal facing (controller's view-yaw -> actor yaw for
+//            a Character with bUseControllerRotationYaw, which VOTV uses).
+//   pitch -- controller's view PITCH only. The actor itself never tilts
+//            (player stays upright), so this drives the puppet's HEAD-BONE
+//            look direction via AnimBP_kerfur_headLookAt -- "killer feature":
+//            you can SEE the remote player looking up/down.
+//   speed -- horizontal velocity magnitude (cm/s) -> remote AnimBP locomotion
+//            blend (deferred -- see project_bug2_locomotion_anim memo).
 struct PoseSnapshot {
     float x, y, z;
     float yaw;
+    float pitch;
     float speed;
 };
-static_assert(sizeof(PoseSnapshot) == 20, "PoseSnapshot must be 20 bytes");
+static_assert(sizeof(PoseSnapshot) == 24, "PoseSnapshot must be 24 bytes");
 
 struct PosePacket {
     PacketHeader header;
     PoseSnapshot pose;
 };
-static_assert(sizeof(PosePacket) == 40, "PosePacket must be 40 bytes");
+static_assert(sizeof(PosePacket) == 44, "PosePacket must be 44 bytes");
 
 // Ping/Pong: header + a single uint32_t payload (the sender's local steady-clock
 // milliseconds, truncated to 32 bits -- ~49 days of monotonic range, far more
@@ -142,12 +154,16 @@ inline bool ParseHeader(const void* data, int len, MsgType& outType, uint32_t& o
 // Reject a pose that is non-finite (NaN/Inf) or outside sane world bounds, BEFORE
 // it can reach the engine. true == safe to apply.
 inline bool ValidatePose(const PoseSnapshot& p) {
-    const float vals[5] = {p.x, p.y, p.z, p.yaw, p.speed};
+    const float vals[6] = {p.x, p.y, p.z, p.yaw, p.pitch, p.speed};
     for (float v : vals)
         if (!std::isfinite(v)) return false;
     if (std::fabs(p.x) > kMaxCoord || std::fabs(p.y) > kMaxCoord || std::fabs(p.z) > kMaxCoord)
         return false;
     if (p.speed < 0.f || p.speed > kMaxSpeed) return false;
+    // UE4 control rotation pitch is clamped to (-90, 90); reject anything wild
+    // (NaN already caught above; this catches a hostile mid-range "look at the sky"
+    // value used to anim-glitch the puppet).
+    if (p.pitch < -90.f || p.pitch > 90.f) return false;
     return true;
 }
 

@@ -171,7 +171,7 @@ void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) 
     return actor;
 }
 
-void DriveAnimBP(void* puppetActor, float speed) {
+void DriveAnimBP(void* puppetActor, float speed, float headPitch) {
     void* comp = GetSkeletalMeshComponent(puppetActor);
     // The actor slot can still pass IsLive for a tick while its child component is
     // already being torn down (UE finalizes sub-objects first). Re-check the
@@ -181,6 +181,16 @@ void DriveAnimBP(void* puppetActor, float speed) {
     if (!anim) return;
     WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeed, speed);
     WriteAt<float>(anim, P::off::AnimBP_kerfur_spd, speed);
+    // KILLER FEATURE: drive the puppet's head bone from the streamed view pitch.
+    // AnimBP_kerfur_headLookAt is an FRotator the AnimBP exposes for head IK;
+    // writing (Pitch=streamedPitch, Yaw=0, Roll=0) makes the head tilt up/down
+    // matching the source player's actual view direction (body yaw is set
+    // separately by ApplyToEngine -> SetActorRotation). If `lookingAtPlayer`
+    // is false on the puppet (current default -- see SpawnPuppet), the AnimBP
+    // graph uses headLookAt as the explicit head-look rotation rather than
+    // chasing a phantom camera target.
+    const FRotator headLook{headPitch, 0.f, 0.f};
+    WriteAt<FRotator>(anim, P::off::AnimBP_kerfur_headLookAt, headLook);
 }
 
 }  // namespace ue_wrap::puppet

@@ -94,9 +94,11 @@ bool RemotePlayer::Spawn() {
     // first few frames before the first packet arrives just no-ops gracefully.
     curPos_ = loc;
     curYaw_ = yaw;
+    curPitch_ = 0.f;
     curSpeed_ = 0.f;
     targetPos_ = loc;
     targetYaw_ = yaw;
+    targetPitch_ = 0.f;
     interpStartMs_ = 0;
     interpFinishMs_ = 0;
     lastAlpha_ = 0.f;
@@ -127,9 +129,11 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (!hasPose_) {
         curPos_ = tgtPos;
         curYaw_ = snap.yaw;
+        curPitch_ = snap.pitch;
         curSpeed_ = snap.speed;
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
+        targetPitch_ = snap.pitch;
         interpFinishMs_ = 0;  // freeze (no interp budget)
         lastAlpha_ = 0.f;
         hasPose_ = true;
@@ -147,9 +151,11 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         UE_LOGI("RemotePlayer::SetTargetPose: SNAP (dist=%.0f > %.0f cm)", dist, snapLimit);
         curPos_ = tgtPos;
         curYaw_ = snap.yaw;
+        curPitch_ = snap.pitch;
         curSpeed_ = snap.speed;
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
+        targetPitch_ = snap.pitch;
         interpFinishMs_ = 0;  // no active window
         lastAlpha_ = 0.f;
         ApplyToEngine();
@@ -164,11 +170,15 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     // it rebases the interp from wherever cur got to.
     targetPos_ = tgtPos;
     targetYaw_ = snap.yaw;
+    targetPitch_ = snap.pitch;
     curSpeed_ = snap.speed;  // speed is not interpolated; AnimBP blends locomotion
     errorPos_.X = tgtPos.X - curPos_.X;
     errorPos_.Y = tgtPos.Y - curPos_.Y;
     errorPos_.Z = tgtPos.Z - curPos_.Z;
     errorYaw_ = OffsetDegrees(curYaw_, snap.yaw);
+    // Pitch is a STRAIGHT delta (no shortest-arc wrap): the controller clamps
+    // pitch to (-90, 90), so cross-180 never happens.
+    errorPitch_ = snap.pitch - curPitch_;
     const uint64_t now = NowMs();
     interpStartMs_ = now;
     interpFinishMs_ = now + kInterpWindowMs;
@@ -200,11 +210,13 @@ void RemotePlayer::Tick() {
         curPos_.Y += errorPos_.Y * dAlpha;
         curPos_.Z += errorPos_.Z * dAlpha;
         curYaw_   += errorYaw_   * dAlpha;
+        curPitch_ += errorPitch_ * dAlpha;
         dirty_ = true;  // pose moved this frame -> needs an engine push
 
         if (alpha >= 1.f) {
             curPos_ = targetPos_;  // exact arrival (kills any float drift over the window)
             curYaw_ = targetYaw_;
+            curPitch_ = targetPitch_;
             interpFinishMs_ = 0;
         }
     }
@@ -244,7 +256,7 @@ void RemotePlayer::ApplyToEngine() {
     constexpr float kPuppetMeshYawCompensationDeg = -90.f;
     E::SetActorRotation(actor_,
                         ue_wrap::FRotator{0.f, curYaw_ + kPuppetMeshYawCompensationDeg, 0.f});
-    Pup::DriveAnimBP(actor_, curSpeed_);
+    Pup::DriveAnimBP(actor_, curSpeed_, curPitch_);
 }
 
 bool RemotePlayer::SetLocation(const ue_wrap::FVector& location) {
