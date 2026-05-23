@@ -11,6 +11,7 @@
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
+#include "ue_wrap/prop.h"
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
@@ -574,93 +575,53 @@ void RunAutonomousGrabTest() {
         haveAnchor ? static_cast<float>(std::atof(anchXs.c_str())) : 0.f,
         haveAnchor ? static_cast<float>(std::atof(anchYs.c_str())) : 0.f,
         haveAnchor ? static_cast<float>(std::atof(anchZs.c_str())) : 0.f};
+    // PropResult: same shape as before, but populated by prop::FindNearest.
+    // Keep the local struct (rather than direct prop::NearestResult) so the
+    // heavy + nearest fields are co-located across two scan calls.
     struct PropResult {
         void* prop = nullptr; void* mesh = nullptr; float dist = 0.f; std::wstring cls;
-        // Also track the nearest HEAVY prop separately, for the heavy-grab
-        // arm of the autonomous test (different observer suite).
         void* heavyProp = nullptr; void* heavyMesh = nullptr; float heavyDist = 0.f; std::wstring heavyCls;
-        int totalHeavy = 0;  // census across the whole world
+        int totalHeavy = 0;
     };
     auto pr = std::make_shared<PropResult>();
     done->store(0);
     GT::Post([rsv, pr, done, haveAnchor, envAnchor] {
-        ue_wrap::FVector pLoc = haveAnchor ? envAnchor : ue_wrap::engine::GetActorLocation(rsv->player);
+        const ue_wrap::FVector pLoc = haveAnchor ? envAnchor
+                                                : ue_wrap::engine::GetActorLocation(rsv->player);
         UE_LOGI("grab_test: scan anchor = (%.0f, %.0f, %.0f) [%s]",
                 pLoc.X, pLoc.Y, pLoc.Z, haveAnchor ? "env" : "player");
-        const int32_t n = R::NumObjects();
-        float bestD2 = 1e18f;
-        int candidates = 0, scanned = 0;
-        for (int32_t i = 0; i < n; ++i) {
-            void* obj = R::ObjectAt(i);
-            if (!obj) continue;
-            ++scanned;
-            // Skip CDOs (Default__*) -- they have no world location and aren't grabbable.
-            std::wstring nm = R::ToString(R::NameOf(obj));
-            if (nm.rfind(L"Default__", 0) == 0) continue;
-            // Walk super chain: is class a descendant of prop_C?
-            void* cls = R::ClassOf(obj);
-            bool isProp = false;
-            for (int hops = 0; hops < 16 && cls; ++hops) {
-                if (cls == rsv->propBase) { isProp = true; break; }
-                cls = *reinterpret_cast<void**>(
-                    reinterpret_cast<uint8_t*>(cls) + P::off::UStruct_SuperStruct);
-            }
-            if (!isProp) continue;
-            ++candidates;
-            // Read heavy flag from propData (Fstruct_prop @+0x6C inside propData @+0x0260).
-            const bool isHeavy = *reinterpret_cast<bool*>(
-                reinterpret_cast<uint8_t*>(obj) + P::off::Aprop_propData_heavy);
-            if (isHeavy) ++pr->totalHeavy;
-            // Read location via the K2 BP-callable (works for any AActor subclass).
-            ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
-            const float dx = loc.X - pLoc.X, dy = loc.Y - pLoc.Y, dz = loc.Z - pLoc.Z;
-            const float d2 = dx*dx + dy*dy + dz*dz;
-            if (d2 < bestD2) {
-                bestD2 = d2;
-                pr->prop = obj;
-                pr->cls = R::ClassNameOf(obj);
-            }
-            // Track nearest HEAVY prop separately for the heavy-grab arm.
-            static float sBestHeavyD2;  // re-init below per call
-            // ^ static-in-lambda is process-global; we reset via the outer pr->heavyDist.
-            const float bestHeavyD2 = pr->heavyProp ? (pr->heavyDist * pr->heavyDist) : 1e18f;
-            if (isHeavy && d2 < bestHeavyD2) {
-                pr->heavyProp = obj;
-                pr->heavyCls = R::ClassNameOf(obj);
-                pr->heavyDist = std::sqrt(d2);
-            }
-        }
-        pr->dist = (pr->prop ? std::sqrt(bestD2) : 0.f);
+        // Light scan (any prop). Stage 2 helper handles class-walk +
+        // CDO skip + heavy/static/frozen reads + Key resolve.
+        ue_wrap::prop::ScanStats stats;
+        const auto best = ue_wrap::prop::FindNearest(pLoc, /*wantHeavy=*/false, &stats);
+        pr->prop = best.prop;
+        pr->mesh = best.mesh;
+        pr->dist = best.dist;
+        pr->cls  = best.className;
+        pr->totalHeavy = stats.totalHeavy;
+        UE_LOGI("grab_test: prop scan scanned=%d candidates=%d totalHeavy=%d "
+                "nearest=%p (%ls) dist=%.1f mesh=%p",
+                stats.totalScanned, stats.candidates, stats.totalHeavy,
+                pr->prop, pr->cls.c_str(), pr->dist, pr->mesh);
         if (pr->prop) {
-            pr->mesh = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(pr->prop) + P::off::Aprop_StaticMesh);
+            const auto key = ue_wrap::prop::GetKey(pr->prop);
+            UE_LOGI("grab_test: prop fields -- heavy=%d Static=%d frozen=%d Key='%ls' (idx=%d num=%d)",
+                    best.heavy ? 1 : 0, best.isStatic ? 1 : 0, best.isFrozen ? 1 : 0,
+                    best.keyString.c_str(), key.ComparisonIndex, key.Number);
         }
-        if (pr->heavyProp) {
-            pr->heavyMesh = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(pr->heavyProp) + P::off::Aprop_StaticMesh);
-        }
-        UE_LOGI("grab_test: prop scan scanned=%d candidates=%d totalHeavy=%d nearest=%p (%ls) dist=%.1f mesh=%p",
-                scanned, candidates, pr->totalHeavy, pr->prop, pr->cls.c_str(), pr->dist, pr->mesh);
+        // Second scan: heavy-only. Same helper, different filter (one extra
+        // ~237k UObject walk; the ChunkedFixedUObjectArray walk is cache-
+        // friendly enough that two passes is fine for a one-shot diagnostic).
+        const auto bestHeavy = ue_wrap::prop::FindNearest(pLoc, /*wantHeavy=*/true);
+        pr->heavyProp = bestHeavy.prop;
+        pr->heavyMesh = bestHeavy.mesh;
+        pr->heavyDist = bestHeavy.dist;
+        pr->heavyCls  = bestHeavy.className;
         if (pr->heavyProp) {
             UE_LOGI("grab_test: nearest HEAVY=%p (%ls) dist=%.1f mesh=%p",
                     pr->heavyProp, pr->heavyCls.c_str(), pr->heavyDist, pr->heavyMesh);
         } else {
             UE_LOGI("grab_test: NO heavy props in scene (totalHeavy=0) -- skip heavy-grab arm");
-        }
-        // Stage 2 preview: log the prop's identity + heavy/static/frozen
-        // bools. Validates the propData / Key / Static / frozen offsets that
-        // Stage 4-7 will need for the wire. Aprop_propData_heavy = 0x02CC,
-        // Aprop_Static = 0x02D8, Aprop_frozen = 0x02DA, Aprop_Key = 0x02E0.
-        if (pr->prop) {
-            auto* p = reinterpret_cast<uint8_t*>(pr->prop);
-            const bool heavy  = *reinterpret_cast<bool*>(p + P::off::Aprop_propData_heavy);
-            const bool staticP = *reinterpret_cast<bool*>(p + P::off::Aprop_Static);
-            const bool frozen = *reinterpret_cast<bool*>(p + P::off::Aprop_frozen);
-            const R::FName key = *reinterpret_cast<R::FName*>(p + P::off::Aprop_Key);
-            const std::wstring keyStr = R::ToString(key);
-            UE_LOGI("grab_test: prop fields -- heavy=%d Static=%d frozen=%d Key='%ls' (idx=%d num=%d)",
-                    heavy ? 1 : 0, staticP ? 1 : 0, frozen ? 1 : 0,
-                    keyStr.c_str(), key.ComparisonIndex, key.Number);
         }
         done->store(pr->prop && pr->mesh ? 1 : 2);
     });

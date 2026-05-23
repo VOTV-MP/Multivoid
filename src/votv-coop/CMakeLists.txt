@@ -40,6 +40,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/call.cpp
     src/ue_wrap/puppet.cpp
     src/ue_wrap/hud_feed.cpp
+    src/ue_wrap/prop.cpp
     src/coop/remote_player.cpp
     src/coop/nameplate.cpp
     src/coop/event_feed.cpp
