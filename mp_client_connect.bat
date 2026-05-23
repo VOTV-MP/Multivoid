@@ -52,6 +52,14 @@ if "%PORT%"=="" set "PORT=47621"
 set "NICK=%~3"
 if "%NICK%"=="" set "NICK=Client"
 
+REM Smaller default resolution -- the client typically runs on the user's
+REM SECONDARY (vertical) 1080x1920 monitor, so the host window can keep the
+REM primary landscape monitor while the client fits comfortably on the
+REM portrait one. Override with `set RESX=...` / `set RESY=...` before
+REM running the bat if you want something different (1280x720, etc.).
+if "%RESX%"=="" set "RESX=960"
+if "%RESY%"=="" set "RESY=540"
+
 echo Deploying standalone mod to client copy folder ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone -GameWin64 "%WIN64%"
 if errorlevel 1 (
@@ -86,11 +94,11 @@ set "VOTVCOOP_NET_NICK=%NICK%"
 
 echo.
 echo Launching VOTV CLIENT from %GAMEDIR%
-echo   peer=%PEER%:%PORT%  nick=%NICK%
+echo   peer=%PEER%:%PORT%  nick=%NICK%  window=%RESX%x%RESY%
 echo Make sure the host already ran  mp_host_game.bat  on %PEER%.
 echo.
 
-start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=1920 -ResY=1080
+start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=%RESX% -ResY=%RESY%
 
 echo Running. Press F12 for a screenshot; F2 for the dev pos/cam overlay.
 echo When done, run stop-coop.bat to restore UE4SS in the host folder (the
