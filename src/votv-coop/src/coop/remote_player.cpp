@@ -101,25 +101,56 @@ bool RemotePlayer::Spawn() {
     // visible mesh orientation (typically -90 for "mesh +Y forward" vs UE4
     // actor "+X forward"), data-driven and robust against any attach-parent
     // reshuffle.
-    // Yaw offset is data-driven from the local mesh comp's WORLD forward vector
-    // (vs the actor's world yaw). This is stable: rotation chain composes the
-    // same regardless of the mesh comp's POSE state. The Z offset (meshOffsetZ_)
-    // is left at the safe -halfH default here and REFINED on the puppet's first
-    // Tick via GetActorBounds (which returns the rendered mesh's true world AABB
-    // -- robust against the kerfur skeleton's mixed humanoid/wheel bone layout
-    // and against the local's transient pose state). See Tick() for the
-    // calibration logic.
+    // Both offsets are DATA-DRIVEN from the local's live mesh_playerVisible
+    // sub-component vs the actor centre. RULE 1 root-cause: never assume the
+    // shim equals -halfH; the BP author is free to set RelLoc.Z to ANY value,
+    // and there's no UE-imposed equality between halfH and the visible mesh's
+    // vertical offset. (The 10cm "spawn-then-float" regression was exactly
+    // this: -halfH was 10cm shorter than the actual BP-authored RelLoc.Z, so
+    // the puppet drew correctly at the spawn placement -- which happens to be
+    // 250 cm forward of the local where the LOCAL's own visible body grounds --
+    // but as soon as the first source pose arrived (carrying source.actor.Z,
+    // which is source.mesh.Z + |authored_shim|, not source.mesh.Z + halfH),
+    // our -halfH compensation under-shot by 10 cm and the puppet floated.)
+    //
+    // Z: read GetActorLocation (= root component world Z = capsule centre on
+    // an ACharacter, since the capsule is the root) and GetComponentLocation
+    // on the visible mesh sub-component. Difference = the EXACT actor-to-mesh
+    // vertical offset, in world Z, that the BP-authored RelLoc.Z resolves to
+    // (composed with any parent transform). Apply that same offset on the
+    // puppet at the ACTOR level (the puppet's mesh comp is the actor's root --
+    // no sub-component to host the shim natively).
+    //
+    // Yaw: read mesh comp's WORLD forward vector vs the actor's world yaw.
+    // Stable: the rotation chain composes the same regardless of the mesh's
+    // POSE state.
     if (void* srcMeshComp = Pup::GetMeshPlayerVisibleComponent(local)) {
         const ue_wrap::FRotator localActorRot = E::GetActorRotation(local);
         const ue_wrap::FVector meshFwd = E::GetComponentForwardVector(srcMeshComp);
         const float meshWorldYaw = std::atan2(meshFwd.Y, meshFwd.X) * 57.29577951f;
         meshOffsetYaw_ = ue_wrap::NormalizeAxis(meshWorldYaw - localActorRot.Yaw);
+
+        const ue_wrap::FVector localActorWorld = E::GetActorLocation(local);
+        const ue_wrap::FVector localMeshWorld  = E::GetComponentLocation(srcMeshComp);
+        meshOffsetZ_ = localMeshWorld.Z - localActorWorld.Z;
+        // Diagnostic: compare data-driven value against the old -halfH guess
+        // so a future divergence (different game version / different BP) is
+        // visible in the log. Big delta == BP shim != halfH (the floating
+        // root cause we just fixed).
+        const float halfHGuess = E::GetActorCharacterHalfHeight(local);
+        UE_LOGI("RemotePlayer::Spawn: meshOffsetZ_=%.2f (data-driven from mesh.world.Z-actor.world.Z) "
+                "vs -halfH=%.2f (legacy guess) delta=%.2f cm. meshOffsetYaw_=%.2f",
+                meshOffsetZ_, -halfHGuess, meshOffsetZ_ + halfHGuess, meshOffsetYaw_);
+    } else {
+        // Fallback path: no mesh comp resolved (early-init race). The -halfH
+        // guess is closer than zero for standard ACharacter geometry; log
+        // loudly so this doesn't go unnoticed.
+        const float halfHGuess = E::GetActorCharacterHalfHeight(local);
+        meshOffsetZ_ = -halfHGuess;
+        UE_LOGW("RemotePlayer::Spawn: NO mesh_playerVisible component -- falling back to "
+                "meshOffsetZ_=-halfH=%.2f (puppet may float; data-driven path needed mesh comp)",
+                meshOffsetZ_);
     }
-    const float halfH = E::GetActorCharacterHalfHeight(local);
-    meshOffsetZ_ = -halfH;  // safe initial (mesh-root at source feet); refined on first Tick.
-    UE_LOGI("RemotePlayer::Spawn: initial meshOffsetZ_=%.2f (= -halfH) meshOffsetYaw_=%.2f. "
-            "Z will be calibrated on first Tick via puppet's GetActorBounds.",
-            meshOffsetZ_, meshOffsetYaw_);
 
     // Pre-apply the Z offset to the spawn placement so the puppet appears at
     // the right world Z from SpawnActor onward (avoids a one-tick visual pop
