@@ -33,8 +33,20 @@ if ($Remove) {
 }
 
 if (-not (Test-Path "$BuildDir\xinput1_3.dll")) { throw "build first: cmake --build build/votv-coop --config Release" }
-Copy-Item "$BuildDir\xinput1_3.dll" $proxy   -Force
-Copy-Item "$BuildDir\votv-coop.dll" $payload -Force
+
+# Idempotent copy: skip if the destination is already byte-identical to the source
+# (e.g. a VOTV instance is running and holds the file locked, but we did NOT rebuild
+# since the last deploy -- the lock is fine, the bytes already match). Without this
+# guard a re-run of any mp_*.bat after a launch would fail with "file used by another
+# process" even though there's nothing to actually copy.
+function Copy-IfChanged($src, $dst) {
+    if ((Test-Path $dst) -and ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)) {
+        return  # already up-to-date
+    }
+    Copy-Item $src $dst -Force
+}
+Copy-IfChanged "$BuildDir\xinput1_3.dll" $proxy
+Copy-IfChanged "$BuildDir\votv-coop.dll" $payload
 Remove-Item $marker -ErrorAction SilentlyContinue
 
 if ($Standalone -and (Test-Path $dwm)) { Move-Item $dwm $dwmOff -Force }  # disable UE4SS

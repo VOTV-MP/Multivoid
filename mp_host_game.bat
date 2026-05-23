@@ -1,10 +1,14 @@
 @echo off
 REM mp_host_game.bat -- launch VOTV as the coop HOST (binds the UDP port).
 REM
-REM Deploys the standalone mod, configures the harness via environment variables
-REM (VOTVCOOP_NET_ROLE / _PORT / _NICK) so no ini editing is needed, and launches
-REM VOTV. The host waits for a client; the friend runs mp_client_connect.bat
-REM <YOUR_IP> on their machine (or on this one, for a same-box test).
+REM Deploys the standalone mod into BOTH game folders (Game_0.9.0n for the host
+REM + Game_0.9.0n_copy for the client) so the user only has to run ONE bat after
+REM rebuilding. deploy-loader.ps1 is idempotent (skip-if-identical), so a re-run
+REM while VOTV is still loaded does NOT fail on the locked xinput1_3.dll -- only
+REM a real rebuild changes bytes and then needs the prior instance closed.
+REM
+REM Configures the harness via environment variables (VOTVCOOP_NET_ROLE / _PORT
+REM / _NICK -- harness reads env BEFORE votv-coop.ini), then launches the host.
 REM
 REM Usage:
 REM   mp_host_game.bat                  port=47621, nick=Host
@@ -16,20 +20,34 @@ REM Restore UE4SS after testing: stop-coop.bat
 
 setlocal
 set "ROOT=%~dp0"
-set "WIN64=%ROOT%Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64"
+set "GAMEDIR=%ROOT%Game_0.9.0n"
+set "WIN64=%GAMEDIR%\WindowsNoEditor\VotV\Binaries\Win64"
+set "COPYDIR=%ROOT%Game_0.9.0n_copy"
+set "COPYWIN64=%COPYDIR%\WindowsNoEditor\VotV\Binaries\Win64"
 
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=47621"
 set "NICK=%~2"
 if "%NICK%"=="" set "NICK=Host"
 
-echo Deploying standalone mod (UE4SS disabled)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone
+echo Deploying standalone mod to host folder ...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone -GameWin64 "%WIN64%"
 if errorlevel 1 (
   echo.
   echo Deploy failed. Did you build?  cmake --build build\votv-coop --config Release
   pause
   exit /b 1
+)
+
+REM Also deploy to the client copy folder (if it exists) so the user doesn't have
+REM to remember to redeploy there too. Same idempotent copy -> no-op when bytes
+REM already match. Missing copy folder = skip (user is running cross-machine).
+if exist "%COPYWIN64%\VotV-Win64-Shipping.exe" (
+  echo Deploying standalone mod to client copy folder ...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone -GameWin64 "%COPYWIN64%"
+  if errorlevel 1 (
+    echo WARN: client copy deploy failed -- proceeding with host only.
+  )
 )
 
 REM Write scenario.txt (play = hands-on with you in control). Newline-free.
