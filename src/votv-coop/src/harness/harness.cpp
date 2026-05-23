@@ -258,172 +258,159 @@ bool g_wasConnected = false;
 
 // ---- Physics-prop pickup observers (Stage 1 of [[project-physics-object-pickup]]) ----
 //
-// These observers fire on the BP UFunction dispatches that drive the E-press
-// pickup/drag system. Stage 1 = log only (no wire, no state change). The
-// architecture blueprint at
-// research/findings/physics-object-pickup-architecture-2026-05-23.md
-// specifies the 6 hook points; we register them here once the mainPlayer_C
-// class is reachable, so the observers see every dispatch from session start.
+// Hook surface: engine-native UPhysicsHandleComponent UFunctions + BP-Timeline
+// `grab` auto-functions on mainPlayer_C. The original SDK-header observers
+// (smoothGrab/pickupObject/dropGrabObject/throwHoldingProp/switchToHeavyDrag/
+// pickupObjectDirect/playerTryToGrab/canPickup) were proven non-dispatching by
+// debug build 14d0787 hands-on test 2026-05-23 -- those are BP-pure inline
+// functions on mainPlayer_C, so they never appear as ProcessEvent's `function`
+// arg. Deleted per RULE 2. Full RE in
+// research/findings/votv-physics-interaction-deep-re-2026-05-23.md.
+//
+// Primary observers (engine-native, universal -- catch every grab path):
+//   GrabComponentAtLocation / GrabComponentAtLocationWithRotation  (pickup)
+//   SetTargetLocation / SetTargetLocationAndRotation               (per-tick drive)
+//   ReleaseComponent                                               (drop, PRE)
+//
+// Secondary observers (BP-Timeline level, mainPlayer_C scope -- triangulate):
+//   InpActEvt_use_K2Node_InputActionEvent_41                       (E press)
+//   grab__UpdateFunc (Timeline tick) / grab__FinishedFunc (Timeline end)
+//
+// The first SetTargetLocation observer fire of a new grab is when we LEARN
+// what was grabbed (read mainPlayer.grabbing_actor) and start streaming.
 bool g_grabObserversInstalled = false;
 
-void GrabObserver_smoothGrab(void* self, void* /*function*/, void* /*params*/) {
-    // Per-tick writer of the held prop's world transform. Fires EVERY frame
-    // ReceiveTick runs while holding -- log spammy at info, demote to debug
-    // once the basic hook is verified. Stage 1 reads grabbing_actor to gate
-    // the log noise: if not holding, skip the log entirely.
-    if (!self) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    if (!grabbing) return;
-    // Throttled log: only every ~30th call so we don't drown the file at 60 Hz.
+// --- Primary: engine PhysicsHandle (`self` IS the UPhysicsHandleComponent,
+// owned by mainPlayer_C as `grabHandle`). To learn which prop is held, dereference
+// the OuterPrivate chain or read the owning mainPlayer_C's grabbing_actor.
+
+void GrabObserver_PHC_Grab(void* self, void* /*function*/, void* /*params*/) {
+    UE_LOGI("grab_hook[PHC.Grab]: handle=%p (pickup -- light grab path)", self);
+}
+
+void GrabObserver_PHC_GrabWithRotation(void* self, void* /*function*/, void* /*params*/) {
+    UE_LOGI("grab_hook[PHC.GrabWithRot]: handle=%p (pickup w/ rotation)", self);
+}
+
+void GrabObserver_PHC_SetTarget(void* self, void* /*function*/, void* /*params*/) {
+    // Per-tick driver -- fires every frame the BP graph wants to move the
+    // held prop. Hot. Throttle to every 30th call until we wire it.
     static uint64_t sCount = 0;
     if (((++sCount) % 30) == 0) {
-        UE_LOGI("grab_hook[smoothGrab]: holding=%p (every 30th call)", grabbing);
+        UE_LOGI("grab_hook[PHC.SetTarget]: handle=%p (per-tick, every 30th)", self);
     }
 }
 
-void GrabObserver_pickupObject(void* self, void* /*function*/, void* /*params*/) {
+void GrabObserver_PHC_SetTargetWithRotation(void* self, void* /*function*/, void* /*params*/) {
+    static uint64_t sCount = 0;
+    if (((++sCount) % 30) == 0) {
+        UE_LOGI("grab_hook[PHC.SetTargetWithRot]: handle=%p (per-tick w/ rot, every 30th)", self);
+    }
+}
+
+void GrabObserver_PHC_Release_PRE(void* self, void* /*function*/, void* /*params*/) {
+    // Pre-dispatch: read GrabbedComponent BEFORE PhysX clears it. Offset TBD;
+    // for now just signal the release. Field-mining is Stage 1.1.
+    UE_LOGI("grab_hook[PHC.Release PRE]: handle=%p (drop)", self);
+}
+
+// --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
+// the upstream dispatch path and let us read mainPlayer_C grab-state fields.
+
+void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/) {
+    // Fires on E-press. The BP graph downstream of this event decides
+    // pickup-vs-drop from grabbing_actor and plays the Timeline accordingly.
+    // Reading grabbing_actor here = state AT press time (post-observer fires
+    // AFTER the BP graph, so it'll show NEW state). For PRE-state we'd need
+    // a pre-observer; skipping for Stage 1 -- not actionable yet.
     if (!self) return;
     void* grabbing = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    void* grabComp = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_component);
+    UE_LOGI("grab_hook[InpActEvt.use]: self=%p grabbing_actor(after)=%p", self, grabbing);
+}
+
+void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) {
+    // Per-tick Timeline update. Read held prop + heavy flag once per ~30 ticks.
+    if (!self) return;
+    static uint64_t sCount = 0;
+    if (((++sCount) % 30) != 0) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
     bool grabsHeavy = *reinterpret_cast<bool*>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
     bool heavy = *reinterpret_cast<bool*>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
     float grabLen = *reinterpret_cast<float*>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabLen);
-    UE_LOGI("grab_hook[pickupObject]: actor=%p component=%p grabsHeavy=%d Heavy=%d grabLen=%.1f",
-            grabbing, grabComp, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen);
+    UE_LOGI("grab_hook[grab.Update]: holding=%p grabsHeavy=%d Heavy=%d grabLen=%.1f (every 30th)",
+            grabbing, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen);
 }
 
-void GrabObserver_pickupObjectDirect(void* self, void* /*function*/, void* /*params*/) {
+void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*params*/) {
+    // Pre-dispatch: read held prop BEFORE FinishedFunc clears it.
     if (!self) return;
     void* grabbing = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    UE_LOGI("grab_hook[pickupObjectDirect]: grabbing_actor=%p", grabbing);
+    UE_LOGI("grab_hook[grab.Finished PRE]: was holding=%p", grabbing);
 }
 
-void GrabObserver_dropGrabObject_PRE(void* self, void* /*function*/, void* /*params*/) {
-    // Pre-dispatch: snapshot state BEFORE the BP clears it.
-    if (!self) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    UE_LOGI("grab_hook[dropGrabObject PRE]: about to drop actor=%p", grabbing);
-}
-
-void GrabObserver_throwHoldingProp_PRE(void* self, void* /*function*/, void* /*params*/) {
-    if (!self) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    UE_LOGI("grab_hook[throwHoldingProp PRE]: about to throw actor=%p", grabbing);
-}
-
-void GrabObserver_switchToHeavyDrag(void* self, void* /*function*/, void* /*params*/) {
-    if (!self) return;
-    bool grabsHeavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
-    bool heavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
-    UE_LOGI("grab_hook[switchToHeavyDrag]: grabsHeavy=%d Heavy=%d", grabsHeavy, heavy);
-}
-
-// Upstream entry points -- catch the dispatch BEFORE pickupObject. If
-// pickupObject doesn't fire on E-press, one of these should: playerTryToGrab
-// is the BPI entry; canPickup is the gate check; beginHoldingObject /
-// playerGrabbed are the BPI mid-flow / result events.
-void GrabObserver_playerTryToGrab(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[playerTryToGrab]: self=%p", self);
-}
-void GrabObserver_canPickup(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[canPickup]: self=%p", self);
-}
-void GrabObserver_beginHoldingObject(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[beginHoldingObject]: self=%p", self);
-}
-void GrabObserver_playerGrabbed(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[playerGrabbed]: self=%p", self);
-}
-
-// Diagnostic name-prefix callback: log ANY UFunction whose name starts with
-// the configured prefix. Used to discover the actual dispatch names when our
-// named observers don't fire (the SDK header names may not match the live
-// FName for inlined-BP UFunctions). Throttled per-name so a high-rate
-// dispatch doesn't drown the log; lifetime is a debug session.
-void GrabDiag_logName(void* self, const wchar_t* funcName, void* /*params*/) {
-    // Throttle: only log each unique name once per ~30 calls. Tiny 8-entry
-    // recently-seen cache keyed by first 4 chars of name (cheap hash).
-    static struct { uint64_t key; int count; } sCache[8] = {};
-    if (!funcName) return;
-    const uint64_t key = (static_cast<uint64_t>(funcName[0]) << 48) |
-                         (static_cast<uint64_t>(funcName[1]) << 32) |
-                         (static_cast<uint64_t>(funcName[2]) << 16) |
-                          static_cast<uint64_t>(funcName[3]);
-    int slot = static_cast<int>(key) & 7;
-    if (sCache[slot].key == key) {
-        if (++sCache[slot].count % 30 != 1) return;
-    } else {
-        sCache[slot].key = key;
-        sCache[slot].count = 1;
-    }
-    UE_LOGI("grab_diag: dispatched UFunc '%ls' self=%p", funcName, self);
-}
-
-// One-shot UFunction-pointer resolution + observer install. Idempotent (gated
-// by g_grabObserversInstalled). Called from NetPumpTick the first time
-// g_netLocal resolves, so the observers are live before any user E-press.
-//
-// Resolves each UFunction by name via reflection (FindFunction on the
-// mainPlayer_C UClass), then registers the appropriate observer (post or
-// pre). Post for "read state AFTER BP wrote it"; pre for "snapshot BEFORE
-// BP clears it". Unresolved UFunctions log a warning -- expected if VOTV
-// renames a BP function in a future patch; the failure is localized
-// (other observers still install).
+// One-shot UFunction-pointer resolution + observer install. Idempotent. Two
+// classes involved: UPhysicsHandleComponent (engine, 5 observers) and
+// mainPlayer_C (VOTV BP content, 3 observers). FindFunction does NOT climb
+// to super, so each must be resolved from its own class. Unresolved
+// UFunctions log a warning (BP recooks can renumber the K2Node ordinal in
+// the InpActEvt name -- localized failure, others still install).
 void InstallGrabObservers() {
     if (g_grabObserversInstalled) return;
-    void* cls = R::FindClass(P::name::MainPlayerClass);
-    if (!cls) {
-        UE_LOGW("grab_hook: mainPlayer_C class not found yet -- will retry next tick");
+
+    void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
+    void* playerCls = R::FindClass(P::name::MainPlayerClass);
+    if (!phcCls || !playerCls) {
+        UE_LOGW("grab_hook: class not found yet (PHC=%p, mainPlayer=%p) -- will retry next tick",
+                phcCls, playerCls);
         return;
     }
-    auto reg = [cls](const wchar_t* name, ue_wrap::game_thread::ProcessEventObserverFn cb, bool pre) {
-        void* fn = R::FindFunction(cls, name);
+
+    auto reg = [](void* cls, const wchar_t* clsName, const wchar_t* fnName,
+                  ue_wrap::game_thread::ProcessEventObserverFn cb, bool pre) {
+        void* fn = R::FindFunction(cls, fnName);
         if (!fn) {
-            UE_LOGW("grab_hook: UFunction '%ls' not found on mainPlayer_C", name);
+            UE_LOGW("grab_hook: UFunction '%ls' not found on %ls", fnName, clsName);
             return;
         }
         const bool ok = pre
             ? ue_wrap::game_thread::RegisterPreObserver(fn, cb)
             : ue_wrap::game_thread::RegisterPostObserver(fn, cb);
         if (!ok) {
-            UE_LOGW("grab_hook: register %ls failed (table full or null cb)", name);
+            UE_LOGW("grab_hook: register %ls failed (table full or null cb)", fnName);
         } else {
-            UE_LOGI("grab_hook: registered %s observer for '%ls' @ %p",
-                    pre ? "PRE" : "POST", name, fn);
+            UE_LOGI("grab_hook: registered %s observer for %ls.%ls @ %p",
+                    pre ? "PRE" : "POST", clsName, fnName, fn);
         }
     };
-    reg(P::name::smoothGrabFn,         GrabObserver_smoothGrab,         /*pre=*/false);
-    reg(P::name::pickupObjectFn,       GrabObserver_pickupObject,       /*pre=*/false);
-    reg(P::name::pickupObjectDirectFn, GrabObserver_pickupObjectDirect, /*pre=*/false);
-    reg(P::name::dropGrabObjectFn,     GrabObserver_dropGrabObject_PRE, /*pre=*/true);
-    reg(P::name::throwHoldingPropFn,   GrabObserver_throwHoldingProp_PRE, /*pre=*/true);
-    reg(P::name::switchToHeavyDragFn,  GrabObserver_switchToHeavyDrag,  /*pre=*/false);
-    // Upstream entry points -- catch the dispatch one level above pickupObject.
-    reg(L"playerTryToGrab",   GrabObserver_playerTryToGrab,   /*pre=*/false);
-    reg(L"canPickup",         GrabObserver_canPickup,         /*pre=*/false);
-    // Diagnostic name-prefix sniffer: log ANY UFunction whose name starts
-    // with one of these. Catches the actual dispatch when our SDK-header
-    // names don't match the live FName. Throttled per-name in
-    // GrabDiag_logName so log doesn't drown. Retire this once the actual
-    // entry-point names are confirmed (RULE 2 debug crutch).
-    ue_wrap::game_thread::SetNameDiagnostic(0, L"pickup",     GrabDiag_logName);
-    ue_wrap::game_thread::SetNameDiagnostic(1, L"grab",       GrabDiag_logName);
-    ue_wrap::game_thread::SetNameDiagnostic(2, L"InpActEvt_use", GrabDiag_logName);
-    ue_wrap::game_thread::SetNameDiagnostic(3, L"holdObject", GrabDiag_logName);
-    UE_LOGI("grab_hook: name-prefix diagnostics enabled (pickup/grab/InpActEvt_use/holdObject)");
+
+    // Primary: engine PhysicsHandle (universal -- catches every grab path).
+    reg(phcCls, P::name::PhysicsHandleComponentClass,
+        P::name::GrabComponentAtLocationFn,             GrabObserver_PHC_Grab,                  /*pre=*/false);
+    reg(phcCls, P::name::PhysicsHandleComponentClass,
+        P::name::GrabComponentAtLocationWithRotationFn, GrabObserver_PHC_GrabWithRotation,      /*pre=*/false);
+    reg(phcCls, P::name::PhysicsHandleComponentClass,
+        P::name::SetTargetLocationFn,                   GrabObserver_PHC_SetTarget,             /*pre=*/false);
+    reg(phcCls, P::name::PhysicsHandleComponentClass,
+        P::name::SetTargetLocationAndRotationFn,        GrabObserver_PHC_SetTargetWithRotation, /*pre=*/false);
+    reg(phcCls, P::name::PhysicsHandleComponentClass,
+        P::name::ReleaseComponentFn,                    GrabObserver_PHC_Release_PRE,           /*pre=*/true);
+
+    // Secondary: BP-Timeline + input on mainPlayer_C.
+    reg(playerCls, P::name::MainPlayerClass,
+        P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use,      /*pre=*/false);
+    reg(playerCls, P::name::MainPlayerClass,
+        P::name::MainPlayerGrabUpdateFn,     GrabObserver_grab_Update,        /*pre=*/false);
+    reg(playerCls, P::name::MainPlayerClass,
+        P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
+
     g_grabObserversInstalled = true;
-    UE_LOGI("grab_hook: Stage 1 observers installed -- press E on a prop to see hook lines");
+    UE_LOGI("grab_hook: Stage 1 observers installed (5 PHC + 3 BP-Timeline) -- press E on a prop to see hook lines");
 }
 
 // Game thread, ~send-rate: push the local player's pose to the session and apply
