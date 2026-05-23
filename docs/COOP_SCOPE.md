@@ -70,6 +70,32 @@ items.
   explicit checkbox. The server-browser UI is the already-in-scope multiplayer
   menu's "server browser (future)" element, now given a backing source.
 
+- **Physics-object pickup / drag (E-press interaction)** — sync the
+  player's E-press lift/drag of physics props (the ~540 classes derived
+  from `Aprop_C : AActor`). The holding player streams the held prop's
+  world transform; ownership of the prop transfers to the holder for the
+  duration of the grab; release/throw broadcasts terminal velocity and
+  peers continue their local sim. Owner: per-grab (the player who pressed
+  E owns the prop's pose stream until release); host arbitrates
+  same-frame double-grab conflicts. Mass / heavy threshold is NOT on the
+  wire — `propData.heavy` is loaded from the same DataTable on both
+  peers (deterministic). UI/visual: puppet's arm posture differs in
+  lift vs drag mode (new bool on the AnimBP, set from the GRAB packet's
+  `grabMode`). Wire: 3 packets — reliable GRAB + unreliable HELD-PROP
+  POSE (piggyback on PoseSnapshot, ~33 B trailing record) + reliable
+  RELEASE/THROW. Sequence numbers per-prop reject stale events.
+  Decided 2026-05-23 (user). Reason: a core VOTV interaction loop;
+  without it coop players can't manipulate objects together (e.g.,
+  carrying baggage to the satellite, dragging heavy items between
+  locations). Methodology phase: ~Phase 4.x (post-pose-sync, post-input-
+  sync). Deep-research converged via 3 parallel agents (IDA / SDK-
+  reflection / MTA-fidelity); full plan in
+  `research/findings/physics-object-pickup-coop-plan-2026-05-23.md`.
+  PREREQUISITE: prop-Key cross-peer agreement (`Aprop_C.Key @ +0x02E0`)
+  — spawn paths must route through host so both peers see the same Key
+  for the same prop. This is a separate prerequisite scope item; the
+  physics-pickup feature blocks on it.
+
 <!--
 Template for an entry:
 - **<system>** — replicated <how>. Owner: <host / per-machine>.
