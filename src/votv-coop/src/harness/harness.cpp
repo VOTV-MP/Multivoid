@@ -676,40 +676,73 @@ void RunAutonomousGrabTest() {
     });
     while (done->load() == 0) ::Sleep(5);
 
-    // ---- 5. Hold the prop visible for ~8 seconds so the LAN-test screenshot
-    // captures it being held. Drive SetTargetLocation every 500 ms; between
-    // ticks, take 2 in-process screenshots (host-side) showing the prop
-    // floating in front of the player.
-    UE_LOGI("grab_test: holding prop for 8 sec (taking 2 in-process screenshots mid-hold)");
+    // ---- 5. Hold the prop while TILTING THE CAMERA UPWARD so the suitcase
+    // visibly rises with the look direction (proves it's truly camera-attached,
+    // not pinned to a static world location). Drive SetTargetLocation from
+    // the LIVE camera location + forward each tick. Tilt the controller pitch
+    // up gradually between screenshots so the comparison is unambiguous.
+    UE_LOGI("grab_test: holding + tilting camera up over 8 sec (2 screenshots: before-tilt vs after-tilt)");
 
-    // Helper to push one SetTargetLocation call.
-    auto drive = [&](float zOffset) {
+    // Per-tick: read camera, optionally tilt pitch up, compute target from
+    // CAMERA forward (not actor forward -- camera and actor differ in pitch),
+    // call SetTargetLocation.
+    auto driveTick = [&](float pitchDelta) {
         done->store(0);
-        GT::Post([rsv, handPos, zOffset, done] {
+        GT::Post([rsv, pitchDelta, done] {
+            // Apply camera pitch delta on the controller.
+            void* ctrl = ue_wrap::engine::GetController(rsv->player);
+            if (ctrl && pitchDelta != 0.f) {
+                ue_wrap::FRotator rot = ue_wrap::engine::GetControlRotation(ctrl);
+                rot.Pitch += pitchDelta;
+                // Clamp pitch so we don't roll over backwards into a broken view.
+                if (rot.Pitch >  60.f) rot.Pitch =  60.f;
+                if (rot.Pitch < -60.f) rot.Pitch = -60.f;
+                ue_wrap::engine::SetControlRotation(ctrl, rot);
+            }
+            // Read LIVE camera state (includes the pitch we just set; the
+            // camera manager re-aligns to the controller's view rotation each
+            // tick).
+            const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
+            const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
+            // FRotator -> forward FVector. UE4 convention:
+            //   yaw   rotates around +Z (counter-clockwise from +X)
+            //   pitch rotates around +Y (positive = looking up)
+            //   X = cos(pitch) * cos(yaw)
+            //   Y = cos(pitch) * sin(yaw)
+            //   Z = sin(pitch)
+            const float kDeg2Rad = 3.14159265358979323846f / 180.f;
+            const float py = camRot.Pitch * kDeg2Rad;
+            const float yw = camRot.Yaw   * kDeg2Rad;
+            const float cp = std::cos(py), sp = std::sin(py);
+            const float cy = std::cos(yw), sy = std::sin(yw);
+            ue_wrap::FVector fwd{cp * cy, cp * sy, sp};
+            ue_wrap::FVector target{camLoc.X + fwd.X * 60.f,
+                                    camLoc.Y + fwd.Y * 60.f,
+                                    camLoc.Z + fwd.Z * 60.f};
             std::vector<uint8_t> frame(static_cast<size_t>(rsv->stFrameSize), 0);
-            ue_wrap::FVector newLoc{handPos->X, handPos->Y, handPos->Z + zOffset};
-            *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->stPLoc) = newLoc;
+            *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->stPLoc) = target;
             R::CallFunction(rsv->grabHandle, rsv->setTargetFn, frame.data());
             done->store(1);
         });
         while (done->load() == 0) ::Sleep(5);
     };
 
-    // Drive ticks: 16 calls over 8 seconds at 500 ms each. Between calls, take
-    // 2 screenshots -- one early (prop just lifted into frame), one later
-    // (prop at a slightly different height so it's clearly being driven).
+    // Drive 16 ticks over 8 sec. First 4 ticks: no tilt (let the screenshot
+    // catch the BEFORE state). Ticks 5-12 (8 ticks * +5 deg = +40 deg): tilt
+    // pitch up. Last 4 ticks: hold steady (let screenshot catch AFTER state).
     for (int i = 0; i < 16; ++i) {
         ::Sleep(500);
-        // Sinusoidal Z bob so the prop visibly moves between screenshots.
-        const float z = static_cast<float>(std::sin(i * 0.4f) * 8.f);
-        drive(z);
-        if (i == 4) {
-            const bool ok = harness::screenshot::Capture(L"grab-held-1");
-            UE_LOGI("grab_test: SCREENSHOT 1 (mid-hold) saved=%d -> coop-screenshots/coop-*-grab-held-1.png", ok);
+        const float pitchDelta = (i >= 4 && i < 12) ? 5.f : 0.f;
+        driveTick(pitchDelta);
+        if (i == 3) {
+            // BEFORE tilt: suitcase straight ahead.
+            const bool ok = harness::screenshot::Capture(L"grab-before-tilt");
+            UE_LOGI("grab_test: SCREENSHOT 1 (before tilt, camera level) saved=%d", ok);
         }
-        if (i == 12) {
-            const bool ok = harness::screenshot::Capture(L"grab-held-2");
-            UE_LOGI("grab_test: SCREENSHOT 2 (later-hold) saved=%d -> coop-screenshots/coop-*-grab-held-2.png", ok);
+        if (i == 14) {
+            // AFTER tilt: suitcase has risen with the look direction.
+            const bool ok = harness::screenshot::Capture(L"grab-after-tilt");
+            UE_LOGI("grab_test: SCREENSHOT 2 (after +40deg pitch tilt) saved=%d", ok);
         }
     }
 
