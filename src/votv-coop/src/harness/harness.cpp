@@ -256,6 +256,122 @@ void* g_netLocalController = nullptr;
 // hold the prior session's value across the new Start (audit fix).
 bool g_wasConnected = false;
 
+// ---- Physics-prop pickup observers (Stage 1 of [[project-physics-object-pickup]]) ----
+//
+// These observers fire on the BP UFunction dispatches that drive the E-press
+// pickup/drag system. Stage 1 = log only (no wire, no state change). The
+// architecture blueprint at
+// research/findings/physics-object-pickup-architecture-2026-05-23.md
+// specifies the 6 hook points; we register them here once the mainPlayer_C
+// class is reachable, so the observers see every dispatch from session start.
+bool g_grabObserversInstalled = false;
+
+void GrabObserver_smoothGrab(void* self, void* /*function*/, void* /*params*/) {
+    // Per-tick writer of the held prop's world transform. Fires EVERY frame
+    // ReceiveTick runs while holding -- log spammy at info, demote to debug
+    // once the basic hook is verified. Stage 1 reads grabbing_actor to gate
+    // the log noise: if not holding, skip the log entirely.
+    if (!self) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+    if (!grabbing) return;
+    // Throttled log: only every ~30th call so we don't drown the file at 60 Hz.
+    static uint64_t sCount = 0;
+    if (((++sCount) % 30) == 0) {
+        UE_LOGI("grab_hook[smoothGrab]: holding=%p (every 30th call)", grabbing);
+    }
+}
+
+void GrabObserver_pickupObject(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+    void* grabComp = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_component);
+    bool grabsHeavy = *reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
+    bool heavy = *reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
+    float grabLen = *reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabLen);
+    UE_LOGI("grab_hook[pickupObject]: actor=%p component=%p grabsHeavy=%d Heavy=%d grabLen=%.1f",
+            grabbing, grabComp, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen);
+}
+
+void GrabObserver_pickupObjectDirect(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+    UE_LOGI("grab_hook[pickupObjectDirect]: grabbing_actor=%p", grabbing);
+}
+
+void GrabObserver_dropGrabObject_PRE(void* self, void* /*function*/, void* /*params*/) {
+    // Pre-dispatch: snapshot state BEFORE the BP clears it.
+    if (!self) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+    UE_LOGI("grab_hook[dropGrabObject PRE]: about to drop actor=%p", grabbing);
+}
+
+void GrabObserver_throwHoldingProp_PRE(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+    void* grabbing = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+    UE_LOGI("grab_hook[throwHoldingProp PRE]: about to throw actor=%p", grabbing);
+}
+
+void GrabObserver_switchToHeavyDrag(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+    bool grabsHeavy = *reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
+    bool heavy = *reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
+    UE_LOGI("grab_hook[switchToHeavyDrag]: grabsHeavy=%d Heavy=%d", grabsHeavy, heavy);
+}
+
+// One-shot UFunction-pointer resolution + observer install. Idempotent (gated
+// by g_grabObserversInstalled). Called from NetPumpTick the first time
+// g_netLocal resolves, so the observers are live before any user E-press.
+//
+// Resolves each UFunction by name via reflection (FindFunction on the
+// mainPlayer_C UClass), then registers the appropriate observer (post or
+// pre). Post for "read state AFTER BP wrote it"; pre for "snapshot BEFORE
+// BP clears it". Unresolved UFunctions log a warning -- expected if VOTV
+// renames a BP function in a future patch; the failure is localized
+// (other observers still install).
+void InstallGrabObservers() {
+    if (g_grabObserversInstalled) return;
+    void* cls = R::FindClass(P::name::MainPlayerClass);
+    if (!cls) {
+        UE_LOGW("grab_hook: mainPlayer_C class not found yet -- will retry next tick");
+        return;
+    }
+    auto reg = [cls](const wchar_t* name, ue_wrap::game_thread::ProcessEventObserverFn cb, bool pre) {
+        void* fn = R::FindFunction(cls, name);
+        if (!fn) {
+            UE_LOGW("grab_hook: UFunction '%ls' not found on mainPlayer_C", name);
+            return;
+        }
+        const bool ok = pre
+            ? ue_wrap::game_thread::RegisterPreObserver(fn, cb)
+            : ue_wrap::game_thread::RegisterPostObserver(fn, cb);
+        if (!ok) {
+            UE_LOGW("grab_hook: register %ls failed (table full or null cb)", name);
+        } else {
+            UE_LOGI("grab_hook: registered %s observer for '%ls' @ %p",
+                    pre ? "PRE" : "POST", name, fn);
+        }
+    };
+    reg(P::name::smoothGrabFn,         GrabObserver_smoothGrab,         /*pre=*/false);
+    reg(P::name::pickupObjectFn,       GrabObserver_pickupObject,       /*pre=*/false);
+    reg(P::name::pickupObjectDirectFn, GrabObserver_pickupObjectDirect, /*pre=*/false);
+    reg(P::name::dropGrabObjectFn,     GrabObserver_dropGrabObject_PRE, /*pre=*/true);
+    reg(P::name::throwHoldingPropFn,   GrabObserver_throwHoldingProp_PRE, /*pre=*/true);
+    reg(P::name::switchToHeavyDragFn,  GrabObserver_switchToHeavyDrag,  /*pre=*/false);
+    g_grabObserversInstalled = true;
+    UE_LOGI("grab_hook: Stage 1 observers installed -- press E on a prop to see hook lines");
+}
+
 // Game thread, ~send-rate: push the local player's pose to the session and apply
 // the latest remote pose to the puppet (auto-spawning it on the first packet,
 // methodology 3.5). `displayOffsetX` shifts the rendered puppet sideways so a
@@ -285,6 +401,10 @@ void NetPumpTick(float displayOffsetX) {
         // saves ~250 ProcessEvent dispatches/sec at 125 Hz pump (post-ship audit).
         if (g_netLocalController && !R::IsLive(g_netLocalController)) g_netLocalController = nullptr;
         if (!g_netLocalController) g_netLocalController = ue_wrap::engine::GetController(g_netLocal);
+        // One-shot install of the grab-observer hooks (Stage 1 of [[project-
+        // physics-object-pickup]]). Class is reachable now that local is live;
+        // idempotent on g_grabObserversInstalled.
+        if (!g_grabObserversInstalled) InstallGrabObservers();
         coop::net::PoseSnapshot mine;
         if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
     }

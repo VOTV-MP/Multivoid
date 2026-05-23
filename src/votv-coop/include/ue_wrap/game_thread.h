@@ -64,4 +64,48 @@ using UFunctionInterceptor = bool(*)(void* self, void* params);
 void SetInterceptor(void* targetUFunction, UFunctionInterceptor cb);
 void ClearInterceptor();
 
+// Post-dispatch UFunction observers. Unlike SetInterceptor, observers are
+// SIDE-EFFECT ONLY -- the original UFunction body always runs. Multiple
+// observers can be registered for distinct UFunctions; up to kMaxObservers
+// active simultaneously. Each observer matches on a UFunction pointer
+// (resolved by the caller via reflection::FindFunction at registration);
+// the detour fires every matching observer for the dispatched UFunction.
+//
+// Two variants:
+//   Post-observer: called AFTER the original ProcessEvent. Used to read
+//     state the BP just wrote (e.g. read mainPlayer_C.grabbing_actor in
+//     a pickupObject observer to see what was just grabbed).
+//   Pre-observer:  called BEFORE the original. Used to snapshot state
+//     the BP is about to CLEAR (e.g. read grabbing_actor in a
+//     dropGrabObject observer before the BP nulls it out).
+//
+// Performance: on the hot path, the detour walks a fixed-size 8-entry
+// table comparing the dispatched function pointer against each registered
+// target. Eight pointer compares per dispatch -- same cost class as the
+// existing single-target SetInterceptor pointer compare, and unlike a
+// map lookup involves no allocation or hashing.
+//
+// Thread-safety: registration uses an atomic store so the detour reads a
+// consistent state. The table is fixed-size; no rehash, no realloc. Game-
+// thread-only is NOT required for the observer callback itself, but the
+// ProcessEvent detour always fires on the dispatching thread (usually
+// game thread; sometimes a task-graph worker for parallel anim).
+using ProcessEventObserverFn = void(*)(void* self, void* function, void* params);
+inline constexpr int kMaxObservers = 8;
+
+// Register a POST-dispatch observer for `targetUFunction`. Returns false
+// if the table is full or arguments are null. Safe to call from any
+// thread before or after Install().
+bool RegisterPostObserver(void* targetUFunction, ProcessEventObserverFn cb);
+
+// Register a PRE-dispatch observer for `targetUFunction`. Same shape.
+bool RegisterPreObserver(void* targetUFunction, ProcessEventObserverFn cb);
+
+// Remove ALL observers (post + pre) targeting `targetUFunction`. No-op
+// if not registered. Used at session-end / DLL-unload to detach cleanly.
+void UnregisterObservers(void* targetUFunction);
+
+// Drop the entire observer table (post + pre). Called from Uninstall().
+void ClearAllObservers();
+
 }  // namespace ue_wrap::game_thread

@@ -30,6 +30,66 @@ std::atomic<unsigned long long> g_tasksRun{0};
 std::atomic<void*> g_interceptUFunc{nullptr};
 std::atomic<UFunctionInterceptor> g_interceptCb{nullptr};
 
+// Multi-target POST and PRE observers (fixed-size tables, no allocation).
+// Each entry is {UFunction*, ProcessEventObserverFn}. A null UFunction*
+// entry is a free slot. Writes via SetObserverSlot store the cb FIRST then
+// the function pointer with release ordering; reads in the detour load the
+// function pointer with acquire ordering then the cb with relaxed (same
+// pattern as g_interceptUFunc/g_interceptCb). Fixed size kMaxObservers (8)
+// keeps the detour loop bounded.
+struct ObserverSlot {
+    std::atomic<void*> targetFn{nullptr};
+    std::atomic<ProcessEventObserverFn> cb{nullptr};
+};
+ObserverSlot g_postObservers[kMaxObservers];
+ObserverSlot g_preObservers[kMaxObservers];
+
+// Set a free slot in `table` to (targetFn, cb). Returns false if no free slot
+// or duplicate (we permit overwriting an existing entry for the same target).
+bool SetObserverSlot(ObserverSlot table[], void* targetFn, ProcessEventObserverFn cb) {
+    if (!targetFn || !cb) return false;
+    // First pass: replace existing entry for this target.
+    for (int i = 0; i < kMaxObservers; ++i) {
+        void* cur = table[i].targetFn.load(std::memory_order_relaxed);
+        if (cur == targetFn) {
+            table[i].cb.store(cb, std::memory_order_relaxed);
+            table[i].targetFn.store(targetFn, std::memory_order_release);
+            return true;
+        }
+    }
+    // Second pass: take the first empty slot.
+    for (int i = 0; i < kMaxObservers; ++i) {
+        void* cur = table[i].targetFn.load(std::memory_order_relaxed);
+        if (cur == nullptr) {
+            table[i].cb.store(cb, std::memory_order_relaxed);
+            table[i].targetFn.store(targetFn, std::memory_order_release);
+            return true;
+        }
+    }
+    return false;  // table full
+}
+
+// Clear any slot in `table` matching `targetFn`.
+void ClearObserverSlot(ObserverSlot table[], void* targetFn) {
+    for (int i = 0; i < kMaxObservers; ++i) {
+        if (table[i].targetFn.load(std::memory_order_relaxed) == targetFn) {
+            table[i].targetFn.store(nullptr, std::memory_order_release);
+            table[i].cb.store(nullptr, std::memory_order_relaxed);
+        }
+    }
+}
+
+// Fire all observers in `table` whose target matches `function`.
+inline void FireObservers(const ObserverSlot table[], void* self, void* function, void* params) {
+    for (int i = 0; i < kMaxObservers; ++i) {
+        void* tgt = table[i].targetFn.load(std::memory_order_acquire);
+        if (tgt && tgt == function) {
+            ProcessEventObserverFn cb = table[i].cb.load(std::memory_order_relaxed);
+            if (cb) cb(self, function, params);
+        }
+    }
+}
+
 // The posted-task queue. Pulled out under the lock, then run unlocked so a task
 // may Post() without deadlocking.
 std::mutex g_queueMutex;
@@ -106,7 +166,18 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
         if (cb && cb(self, params)) return;  // skipped: do NOT forward
     }
 
+    // PRE-observers: fire BEFORE the original. Used to snapshot state the BP
+    // is about to clear (drop/throw observers in [[project-physics-object-pickup]]).
+    // The walk is kMaxObservers=8 pointer compares -- same cost class as the
+    // single interceptor compare above. NO observers registered = NO cost
+    // beyond the 8 null loads.
+    FireObservers(g_preObservers, self, function, params);
+
     g_originalPE(self, function, params);
+
+    // POST-observers: fire AFTER the original. Used to read state the BP just
+    // wrote (pickup/smoothGrab observers).
+    FireObservers(g_postObservers, self, function, params);
 }
 
 }  // namespace
@@ -132,6 +203,9 @@ bool Install() {
 
 void Uninstall() {
     if (!g_installed) return;
+    ClearAllObservers();
+    g_interceptUFunc.store(nullptr, std::memory_order_release);
+    g_interceptCb.store(nullptr, std::memory_order_relaxed);
     hook::Uninstall(g_hookTarget);
     g_installed = false;
     g_hookTarget = nullptr;
@@ -165,6 +239,29 @@ void SetInterceptor(void* targetUFunction, UFunctionInterceptor cb) {
 void ClearInterceptor() {
     g_interceptUFunc.store(nullptr, std::memory_order_release);
     g_interceptCb.store(nullptr, std::memory_order_relaxed);
+}
+
+bool RegisterPostObserver(void* targetUFunction, ProcessEventObserverFn cb) {
+    return SetObserverSlot(g_postObservers, targetUFunction, cb);
+}
+
+bool RegisterPreObserver(void* targetUFunction, ProcessEventObserverFn cb) {
+    return SetObserverSlot(g_preObservers, targetUFunction, cb);
+}
+
+void UnregisterObservers(void* targetUFunction) {
+    if (!targetUFunction) return;
+    ClearObserverSlot(g_postObservers, targetUFunction);
+    ClearObserverSlot(g_preObservers, targetUFunction);
+}
+
+void ClearAllObservers() {
+    for (int i = 0; i < kMaxObservers; ++i) {
+        g_postObservers[i].targetFn.store(nullptr, std::memory_order_release);
+        g_postObservers[i].cb.store(nullptr, std::memory_order_relaxed);
+        g_preObservers[i].targetFn.store(nullptr, std::memory_order_release);
+        g_preObservers[i].cb.store(nullptr, std::memory_order_relaxed);
+    }
 }
 
 }  // namespace ue_wrap::game_thread

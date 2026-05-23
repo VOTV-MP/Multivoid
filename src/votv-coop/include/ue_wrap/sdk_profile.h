@@ -203,6 +203,47 @@ inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float 
 // line 17904 for the FProperty descriptor. IDA-confirmed.
 inline constexpr size_t USceneComponent_RelativeLocation = 0x011C;     // FVector  Engine.hpp:17904
 
+// ---- Physics-prop pickup interaction --------------------------------------
+// See research/findings/physics-object-pickup-architecture-2026-05-23.md.
+// Three converging research agents (IDA / SDK-reflection / MTA-fidelity)
+// established: mainPlayer_C grabs ANY of ~540 Aprop_C derivatives via E-press;
+// the lift/drag distinction is DATA-DRIVEN (Fstruct_prop.heavy bool, loaded
+// once from DataTable at prop Init -- NOT a mass comparison), so both peers
+// compute the same answer from the same prop identity. We observe the BP
+// dispatch surface via ProcessEvent name filter; the native PhysicsHandle
+// layer (GrabComponentAtLocation @ 0x1430c64b0 + 4 sibling exec thunks,
+// renamed in IDB) is a clean cross-cut we can also intercept if needed.
+
+// mainPlayer_C grab-state fields (mainPlayer.hpp, all writers BP-only).
+inline constexpr size_t mainPlayer_grabbing_actor       = 0x07D0;  // AActor*
+inline constexpr size_t mainPlayer_grabbing_component   = 0x07D8;  // UPrimitiveComponent*
+inline constexpr size_t mainPlayer_grabsHeavy           = 0x0874;  // bool
+inline constexpr size_t mainPlayer_grabLen              = 0x09D0;  // float
+inline constexpr size_t mainPlayer_holding_actor        = 0x0A20;  // AActor* (inventory hold, NOT physics grab)
+inline constexpr size_t mainPlayer_grabRelativeLocation = 0x0DE4;  // FVector (local anchor on grabbed component)
+inline constexpr size_t mainPlayer_heavyGrabLocation    = 0x0E8C;  // FVector
+inline constexpr size_t mainPlayer_heavyGrabArm         = 0x0E98;  // FVector
+inline constexpr size_t mainPlayer_Heavy                = 0x0EC8;  // bool
+
+// Aprop_C field offsets (prop.hpp).
+//
+// Aprop_C.Key is an FName (8 bytes: ComparisonIndex u32 + Number u32). Its
+// ComparisonIndex is a globally stable index into the GNames pool that is
+// IDENTICAL across peers for the same FName string (because cooked content
+// shares the same name table). This makes the ComparisonIndex our 32-bit
+// cross-peer prop identifier -- though the ASSIGNMENT of a Key value to a
+// specific prop instance still happens at spawn-time on the spawning
+// machine, which is the known prerequisite (spawn-from-craft / spawn-from-
+// menu paths must route through host to agree on which Key goes on which
+// physical prop). See [[project-physics-object-pickup]] for the blocker.
+inline constexpr size_t Aprop_propData      = 0x0260;  // Fstruct_prop (sizeof 0x72)
+inline constexpr size_t Fstruct_prop_heavy  = 0x006C;  // bool inside propData -- THE heavy flag
+inline constexpr size_t Aprop_propData_heavy = Aprop_propData + Fstruct_prop_heavy;  // = 0x02CC
+inline constexpr size_t Aprop_Static        = 0x02D8;  // bool (a Static prop can't be grabbed)
+inline constexpr size_t Aprop_frozen        = 0x02DA;  // bool
+inline constexpr size_t Aprop_Key           = 0x02E0;  // FName (ComparisonIndex @ +0, Number @ +4)
+inline constexpr size_t Aprop_StaticMesh    = 0x0238;  // UStaticMeshComponent*
+
 // ---- HUD / Canvas (screen-space nameplate, MTA-style) --------------------
 // We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
 // off the HUD, project the remote head world->screen and draw the nickname with
@@ -421,6 +462,34 @@ inline constexpr const wchar_t* SetAlignmentInViewportFn = L"SetAlignmentInViewp
 inline constexpr const wchar_t* GetSocketLocationFn = L"GetSocketLocation";  // (FName)->FVector (world)
 inline constexpr const wchar_t* GetNumBonesFn = L"GetNumBones";
 inline constexpr const wchar_t* GetBoneNameFn = L"GetBoneName";              // (int32)->FName
+
+// Physics-prop pickup interaction.
+// BP UFunction names on mainPlayer_C observed via ProcessEvent filter
+// (Stage 1 of [[project-physics-object-pickup]]). mainPlayer_C is pure
+// interpreted Blueprint -- no native exec thunks for these (IDA-confirmed).
+// `smoothGrab` is the per-frame writer of the held prop's world transform
+// from ReceiveTick; the rest are one-shot grab/drop/throw events. The two
+// pickup variants reflect dispatch shape: HitResult-based vs direct
+// Actor+Component.
+inline constexpr const wchar_t* smoothGrabFn         = L"smoothGrab";
+inline constexpr const wchar_t* pickupObjectFn        = L"pickupObject";
+inline constexpr const wchar_t* pickupObjectDirectFn  = L"pickupObjectDirect";
+inline constexpr const wchar_t* dropGrabObjectFn      = L"dropGrabObject";
+inline constexpr const wchar_t* throwHoldingPropFn    = L"throwHoldingProp";
+inline constexpr const wchar_t* switchToHeavyDragFn   = L"switchToHeavyDrag";
+
+// Aprop_C BP class name (for PropKeyRegistry GUObjectArray scan, Stage 4).
+inline constexpr const wchar_t* PropClass             = L"prop_C";
+
+// Native UPrimitiveComponent UFunctions used by the receiver-side puppet
+// path to put a held prop into kinematic mode + apply throw impulse. These
+// ARE ProcessEvent-dispatchable (native exec thunks already RVA'd in IDB by
+// the IDA agent for the PhysicsHandle siblings, but the Primitive
+// SetSimulatePhysics / SetPhysicsLinearVelocity / SetPhysicsAngular* are
+// the canonical ones we drive on the puppet's local prop instance).
+inline constexpr const wchar_t* SetSimulatePhysicsFn               = L"SetSimulatePhysics";
+inline constexpr const wchar_t* SetPhysicsLinearVelocityFn         = L"SetPhysicsLinearVelocity";
+inline constexpr const wchar_t* SetPhysicsAngularVelocityInDegreesFn = L"SetPhysicsAngularVelocityInDegrees";
 }  // namespace name
 
 }  // namespace ue_wrap::profile
