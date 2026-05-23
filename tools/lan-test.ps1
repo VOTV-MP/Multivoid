@@ -34,7 +34,12 @@ param(
     [switch]$NoBuild,
     [switch]$Keep,
     [int]$ResX = 1280,
-    [int]$ResY = 720
+    [int]$ResY = 720,
+    # Run the autonomous host-side grab test (VOTVCOOP_RUN_GRAB_TEST=1) -- finds
+    # nearest physics prop, drives a forced grab via the engine PhysicsHandle
+    # UFunctions to verify the Stage-1 observer pipeline end-to-end without an
+    # E-press. Adds ~25 s to the test (10 s settle + 5 s drive + 10 s tail).
+    [switch]$GrabTest
 )
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
@@ -70,7 +75,7 @@ $hostPose   = @{ X = "-37730"; Y = "69943";  Z = "6420"; Yaw = "-86.8"; Pitch = 
 $clientPose = @{ X = "-37640"; Y = "68532";  Z = "6399"; Yaw = "88.2";  Pitch = "-4.7" }
 
 # --- launch the two instances with per-process env --------------------------
-function Launch-Instance($role, $nick, $logName, $extraEnv, $pose) {
+function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
     $env:VOTVCOOP_SCENARIO = "play"
     $env:VOTVCOOP_NET_ROLE = $role
     $env:VOTVCOOP_NET_PORT = "$Port"
@@ -82,21 +87,23 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose) {
     $env:VOTVCOOP_AUTOTEST_Z     = $pose.Z
     $env:VOTVCOOP_AUTOTEST_YAW   = $pose.Yaw
     $env:VOTVCOOP_AUTOTEST_PITCH = $pose.Pitch
+    if ($grabTest) { $env:VOTVCOOP_RUN_GRAB_TEST = "1" }
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
     Remove-Item Env:VOTVCOOP_SCENARIO,Env:VOTVCOOP_NET_ROLE,Env:VOTVCOOP_NET_PORT,`
                 Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER,`
                 Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
-                Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH -ErrorAction SilentlyContinue
+                Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST `
+                -ErrorAction SilentlyContinue
     return $p
 }
 
-Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host)..."
-$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose
+Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed'}))..."
+$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest
 Start-Sleep -Seconds 4   # let the host process come up first
 Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client)..."
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $false
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------
@@ -147,8 +154,14 @@ while ((Get-Date) -lt $deadline) {
 # puppet mid-snap or before the snap, making it look like the autotest poses
 # don't apply -- they DO, but the screenshot timing is what was wrong.)
 if ($pass) {
-    Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
-    Start-Sleep -Seconds 6
+    if ($GrabTest) {
+        # Grab test: 10 s stabilization + 5 s SetTargetLocation drive + log tail.
+        Step "PASS detected; GRAB TEST armed -- waiting 25 s for grab routine to complete..."
+        Start-Sleep -Seconds 25
+    } else {
+        Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
+        Start-Sleep -Seconds 6
+    }
 }
 
 # --- capture both windows (best-effort) -------------------------------------

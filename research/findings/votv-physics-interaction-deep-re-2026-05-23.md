@@ -121,15 +121,20 @@ Each exec thunk reads its params from `FFrame` (the BP interpreter state), then 
 | `0x142D7D420` | `UPhysicsHandleComponent::SetTargetLocationAndRotation` | Writes `FQuat` at `+224`, `FVector` at `+240`, derived transform at `+256` (from default-transform globals `0x14491FC38`/`0x14491FC40`) |
 | (vtable[130], via thunk `0x142FEA9B0`) | `UPhysicsHandleComponent::ReleaseComponent` | PhysX constraint release; clears `GrabbedComponent` |
 
-### Field offsets (UPhysicsHandleComponent)
+### Field offsets (UPhysicsHandleComponent) — FULLY MAPPED
 
-| Offset | Type | Meaning |
-|---|---|---|
-| `+224` (0xE0) | `FQuat` (16B) | `TargetRotation` |
-| `+240` (0xF0) | `FVector` (12B padded to 16) | `TargetLocation` ← **this is the per-tick driver** |
-| `+256` (0x100) | `FTransform`-like block | Derived/cached transform |
+| Offset | Type | Meaning | Evidence |
+|---|---|---|---|
+| `+176` (0xB0) | `UPrimitiveComponent*` | `GrabbedComponent` | Cleared by ReleaseComponent_Impl (PHC.cpp:336); set by GrabComponentImp |
+| `+184` (0xB8) | `FName` (8B) | `GrabbedBoneName` | Set by GrabComponentImp; cleared by ReleaseComponent_Impl |
+| `+192` (0xC0) | `uint32` | flags (`&=~1` = "bConstrained off") | ReleaseComponent_Impl |
+| `+224` (0xE0) | `FQuat` (16B) | `TargetRotation` | SetTargetLocationAndRotation writes here |
+| `+240` (0xF0) | `FVector` (12B+pad) | `TargetLocation` ← **per-tick driver** | SetTargetLocation writes here; UpdateHandleTransform reads it |
+| `+256` (0x100) | derived transform | cached pose | SetTargetLocationAndRotation writes |
+| `+328` (0x148) | `FPhysicsActorHandle*` | `KinActorData` | Destroyed by ReleaseComponent_Impl |
+| `+336` (0x150) | `FPhysicsConstraintHandle*` | `ConstraintHandle` | Destroyed by ReleaseComponent_Impl; SetKinematicTarget called by UpdateHandleTransform |
 
-These are stock UE4 4.27 field offsets; the names are taken from the public engine source. Field offset for `GrabbedComponent` (UPrimitiveComponent*) is earlier in the struct (~+0x60); not yet pinned in IDB.
+All confirmed by IDA decompile of `ReleaseComponent_Impl` @0x142D7C670 (cites UE4 source PhysicsHandleComponent.cpp:336) and `UpdateHandleTransform` @0x142D7EE30 (cites PHC.cpp:413).
 
 ### Timeline pipeline (engine native)
 
@@ -164,12 +169,77 @@ Hook the **engine-native** UPhysicsHandleComponent UFunctions, not VOTV's BP-pur
 
 This is **universal** — it captures both light grab AND heavy drag (they both go through the same PhysicsHandle component). It avoids guessing which VOTV-specific BP function will be the entry point.
 
-### What we still need (next research)
+### Pass-2 RE findings (this session) — RESOLVED
 
-1. **GrabbedComponent offset** in UPhysicsHandleComponent — for reading the held UPrimitiveComponent* in the SetTargetLocation observer (alternative: read from `mainPlayer_C.grabbing_actor` @0x07D0).
-2. **Which UPhysicsHandleComponent instance is `grabHandle`** on mainPlayer_C — read from `mainPlayer_C.grabHandle` (component property). Offset TBD; find via reflection at runtime.
-3. **Heavy drag path** — does it also go through PhysicsHandle, or does it use AttachToActor + custom drag math? The log showed `grab__UpdateFunc` regardless (Timeline is shared), but no `SetTargetLocation` log entry since the diagnostic was only firing on functions starting with `pickup`/`grab`/`InpActEvt_use`/`holdObject` — none catch `SetTargetLocation`. **Next probe: add a `SetTargetLocation` prefix to the diagnostic to confirm heavy drag also uses PhysicsHandle.**
-4. **Throw path** — `throwHoldingProp` is BP-pure, so it doesn't dispatch. The throw likely (a) reads camera forward, (b) calls `ReleaseComponent`, (c) calls `AddImpulse` on the released UPrimitiveComponent. We'd capture step (b); step (c) is `UPrimitiveComponent::AddImpulse` exec thunk (also ProcessEvent-dispatched). **TBD probe.**
+1. ~~**GrabbedComponent offset**~~ → **+176** (this session, via IDA decompile).
+2. ~~**Which UPhysicsHandleComponent is `grabHandle`**~~ → `mainPlayer_C.grabHandle` @ **+0x0688** (SDK dump mainPlayer.hpp:63).
+3. **Heavy drag uses a SEPARATE component** — `mainPlayer_C.heavyGrab` @ **+0x04F0** is a `UPhysicsConstraintComponent*` (NOT UPhysicsHandleComponent). SDK dump mainPlayer.hpp:12. Our 5 PHC observers MISS heavy drag entirely; need separate UPhysicsConstraintComponent observers (`SetConstrainedComponents` for setup, `BreakConstraint` for release). These ARE ProcessEvent-dispatched (engine UFunctions).
+4. **Throw path** — still TBD. `throwHoldingProp` is BP-pure (proven). The throw likely calls `ReleaseComponent` + `UPrimitiveComponent::AddImpulse`. We'd capture step 1 via our existing observer; AddImpulse is also a ProcessEvent-dispatchable engine UFunction.
+
+### Still open
+
+1. **Throw impulse path** — observe `UPrimitiveComponent::AddImpulse` to confirm throw mechanics.
+2. **dropGrabObject mechanism** — does it just call `grab__FinishedFunc` (Timeline reverse) or call ReleaseComponent directly? Hands-on retest will clarify.
+3. **Drop a small prop vs throw a small prop** — does throw produce DIFFERENT observable activity than drop (e.g. AddImpulse)?
+
+### Autonomous test results (run 1 — pre-throttle-fix)
+
+First run of `lan-test.ps1 -GrabTest` (host nick=Host, autotest pose at КПП):
+
+```
+grab_test: VOTVCOOP_RUN_GRAB_TEST=1 (host) -- spawning grab test thread
+grab_test: starting autonomous grab routine (waiting 10 s for stabilization)
+grab_test: resolve OK  player=0x150475B40C0  grabHandle=0x150505C1780
+           propBase=0x1505E486D00 grabFn=0x150263C76A0 frame=32 (Comp@0 Bone@8 Loc@16)
+           setTargetFn=0x150263CA960 frame=12 (Loc@0)  releaseFn=0x150263C74E0
+grab_test: prop scan scanned=237576 candidates=2060
+           nearest=0x1513B39C940 (prop_container_suitcase_C) dist=85.4
+           mesh=0x1513B4C60A0
+grab_test: teleported prop -> (-37677.8, 69824.8, 6469.7)
+grab_hook[PHC.Grab]: handle=0x150505C1780 (pickup -- light grab path)      <-- observer fired
+grab_test: CallFunction(GrabComponentAtLocation) -> 1
+grab_test: now driving SetTargetLocation 5x (1 sec apart)
+grab_test: tick 0 SetTargetLocation((-37677.8,69824.8,6469.7)) -> 1
+grab_test: tick 1 SetTargetLocation((-37677.8,69824.8,6474.7)) -> 1
+grab_test: tick 2 SetTargetLocation((-37677.8,69824.8,6479.7)) -> 1
+grab_test: tick 3 SetTargetLocation((-37677.8,69824.8,6484.7)) -> 1
+grab_test: tick 4 SetTargetLocation((-37677.8,69824.8,6489.7)) -> 1
+grab_hook[PHC.Release PRE]: handle=0x150505C1780 released_component=0x1513B4C60A0  <-- observer fired
+grab_test: CallFunction(ReleaseComponent) -> 1
+grab_test: DONE -- autonomous grab routine complete
+```
+
+**What this proves:**
+
+1. **Engine-native PhysicsHandle UFunctions ARE ProcessEvent-dispatched.** `reflection::CallFunction(grabHandle, GrabFn, frame)` → our `ProcessEventDetour` observed it → `GrabObserver_PHC_Grab` ran. This validates the hook surface choice for ALL future grab observation (including hands-on user E-press).
+
+2. **GrabbedComponent offset @+176 is correct.** The `released_component` we read from `handle+176` in the Release-PRE observer (`0x1513B4C60A0`) matches the `mesh` pointer we wrote into the GrabComponentAtLocation param frame from the prop's `StaticMesh` field (`0x1513B4C60A0`). Round-trip verified.
+
+3. **Super-chain walk works.** Out of 237,576 UObjects, 2,060 derive from `Aprop_C` — the player spawn point at КПП has 2,060+ physics props in scene. Selected nearest = `prop_container_suitcase_C` (literally "baggage" as the user described) at 85.4 cm.
+
+4. **UFunction param marshaling works for FName + UPrimitiveComponent\* + FVector.** `GrabComponentAtLocation` takes `(comp@0, bone@8, location@16)` in a 32-byte frame, all written via reflected param offsets; CallFunction returned 1 (success).
+
+5. **CallFunction handles zero-param functions.** `ReleaseComponent` (no params, nullptr frame) — CallFunction returned 1, observer fired.
+
+6. **SetTargetLocation observer was suppressed by 1-in-30 throttle.** Only 5 calls made → no log lines. Fixed in next iteration (log first 3 + every 30th).
+
+### Autonomous test (NEW — this session)
+
+A new harness function `RunAutonomousGrabTest()` exercises the FULL Stage-1 observer pipeline end-to-end **without a user E-press**:
+
+1. Find local `mainPlayer_C`
+2. Read its `grabHandle` (+0x0688)
+3. Walk GUObjectArray, super-chain-walk to find all `Aprop_C` derivatives, pick nearest
+4. Teleport that prop to the player's hand (camera + forward × 80 cm)
+5. Reflection-call `grabHandle.GrabComponentAtLocation(propMesh, NAME_None, handPos)`
+6. Per-second × 5: reflection-call `grabHandle.SetTargetLocation(newPos)`
+7. Reflection-call `grabHandle.ReleaseComponent()`
+
+Each step expects matching `grab_hook[PHC.*]` log lines proving the observer pipeline is live.
+
+Gated by env `VOTVCOOP_RUN_GRAB_TEST=1` (host only). Runs from a worker thread; all engine work goes through `GT::Post` for game-thread safety. Wired into `lan-test.ps1 -GrabTest` for one-command CI-style execution.
+
+**Why this matters:** previously, observer firing could ONLY be verified hands-on (user pressed E on a real prop). Now we can verify end-to-end on any code change. The grab UFunctions called via `reflection::CallFunction` route through the same `UObject::ProcessEvent` our detour observes, so the path is functionally identical to a real BP-driven grab.
 
 ### Receiver-side strategy (unchanged)
 

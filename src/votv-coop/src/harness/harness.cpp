@@ -293,18 +293,24 @@ void GrabObserver_PHC_GrabWithRotation(void* self, void* /*function*/, void* /*p
 }
 
 void GrabObserver_PHC_SetTarget(void* self, void* /*function*/, void* /*params*/) {
-    // Per-tick driver -- fires every frame the BP graph wants to move the
-    // held prop. Hot. Throttle to every 30th call until we wire it.
+    // Per-tick driver -- fires every frame the BP graph wants to move the held
+    // prop. Hot. Log first 3 calls + every 30th after, so a short autonomous
+    // test (5 calls) still sees observer activity but a real grab (~60 Hz x
+    // seconds) doesn't drown the log.
     static uint64_t sCount = 0;
-    if (((++sCount) % 30) == 0) {
-        UE_LOGI("grab_hook[PHC.SetTarget]: handle=%p (per-tick, every 30th)", self);
+    const uint64_t n = ++sCount;
+    if (n <= 3 || (n % 30) == 0) {
+        UE_LOGI("grab_hook[PHC.SetTarget]: handle=%p (call #%llu)", self,
+                static_cast<unsigned long long>(n));
     }
 }
 
 void GrabObserver_PHC_SetTargetWithRotation(void* self, void* /*function*/, void* /*params*/) {
     static uint64_t sCount = 0;
-    if (((++sCount) % 30) == 0) {
-        UE_LOGI("grab_hook[PHC.SetTargetWithRot]: handle=%p (per-tick w/ rot, every 30th)", self);
+    const uint64_t n = ++sCount;
+    if (n <= 3 || (n % 30) == 0) {
+        UE_LOGI("grab_hook[PHC.SetTargetWithRot]: handle=%p (call #%llu)", self,
+                static_cast<unsigned long long>(n));
     }
 }
 
@@ -349,10 +355,12 @@ void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/
 }
 
 void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) {
-    // Per-tick Timeline update. Read held prop + heavy flag once per ~30 ticks.
+    // Per-tick Timeline update. Log first 3 + every 30th after (same throttle
+    // policy as PHC.SetTarget so a short autonomous test still sees activity).
     if (!self) return;
     static uint64_t sCount = 0;
-    if (((++sCount) % 30) != 0) return;
+    const uint64_t n = ++sCount;
+    if (n > 3 && (n % 30) != 0) return;
     void* grabbing = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
     bool grabsHeavy = *reinterpret_cast<bool*>(
@@ -361,8 +369,9 @@ void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) 
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
     float grabLen = *reinterpret_cast<float*>(
         reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabLen);
-    UE_LOGI("grab_hook[grab.Update]: holding=%p grabsHeavy=%d Heavy=%d grabLen=%.1f (every 30th)",
-            grabbing, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen);
+    UE_LOGI("grab_hook[grab.Update]: holding=%p grabsHeavy=%d Heavy=%d grabLen=%.1f (call #%llu)",
+            grabbing, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen,
+            static_cast<unsigned long long>(n));
 }
 
 void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*params*/) {
@@ -437,6 +446,205 @@ void InstallGrabObservers() {
 
     g_grabObserversInstalled = true;
     UE_LOGI("grab_hook: Stage 1 observers installed (5 PHC + 2 PCC + 3 BP-Timeline) -- press E on a prop to see hook lines");
+}
+
+// ---- Autonomous grab test (no user E-press required) --------------------
+// Forced-grab routine: find the nearest Aprop_C derivative, teleport it to
+// the player's hand, then drive `grabHandle.GrabComponentAtLocation /
+// SetTargetLocation / ReleaseComponent` via reflection (these UFunctions are
+// ProcessEvent-dispatched and observable -- so this routine exercises the
+// FULL Stage-1 observer pipeline end-to-end without a real keypress).
+//
+// Gated by env VOTVCOOP_RUN_GRAB_TEST="1" + role=Host. Spawned from the
+// netEnabled play loop on a dedicated thread; all engine work goes through
+// GT::Post so we never touch UObject state off the game thread.
+//
+// Expected log lines (on host) after this runs:
+//   grab_hook[PHC.Grab]       (once, at GrabComponentAtLocation call)
+//   grab_hook[PHC.SetTarget]  (once per second, throttled to 1-in-30)
+//   grab_hook[PHC.Release PRE](once, at ReleaseComponent call -- logs the
+//                              GrabbedComponent we read off the handle)
+//
+// Pieces this verifies:
+//   1. FindClass + FindFunction resolution for engine-native UFunctions
+//   2. ProcessEvent dispatch path through reflection::CallFunction
+//   3. Our observer detour catches engine-native UFunctions (not just BP)
+//   4. The +176 GrabbedComponent field read in PHC.Release PRE
+//
+// What this does NOT verify (still requires hands-on or further code):
+//   - VOTV BP-graph reaction to the forced grab (the BP doesn't know we
+//     called the native UFunction so mainPlayer.grabbing_actor stays null)
+//   - Heavy drag path (UPhysicsConstraintComponent) -- different setup
+//   - Receiver-side reception (no wire shipped yet -- Stage 4 blocker)
+
+void RunAutonomousGrabTest() {
+    UE_LOGI("grab_test: starting autonomous grab routine (waiting 10 s for stabilization)");
+    ::Sleep(10000);
+
+    // ---- 1. Resolve actors + components (game thread).
+    struct Resolved {
+        void* player = nullptr;
+        void* grabHandle = nullptr;
+        void* propBase = nullptr;
+        void* phcCls = nullptr;
+        void* grabFn = nullptr;
+        void* setTargetFn = nullptr;
+        void* releaseFn = nullptr;
+        int32_t grabFrameSize = 0;
+        int32_t grabPComp = -1, grabPBone = -1, grabPLoc = -1;
+        int32_t stFrameSize = 0;
+        int32_t stPLoc = -1;
+        bool ok = false;
+    };
+    auto rsv = std::make_shared<Resolved>();
+    auto done = std::make_shared<std::atomic<int>>(0);
+    GT::Post([rsv, done] {
+        rsv->player = R::FindObjectByClass(P::name::MainPlayerClass);
+        if (!rsv->player) { UE_LOGW("grab_test: mainPlayer not found"); done->store(2); return; }
+        rsv->grabHandle = *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabHandle);
+        if (!rsv->grabHandle) { UE_LOGW("grab_test: mainPlayer.grabHandle is null"); done->store(2); return; }
+        rsv->propBase = R::FindClass(P::name::PropClass);
+        if (!rsv->propBase) { UE_LOGW("grab_test: prop_C UClass not found"); done->store(2); return; }
+        rsv->phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
+        rsv->grabFn      = R::FindFunction(rsv->phcCls, P::name::GrabComponentAtLocationFn);
+        rsv->setTargetFn = R::FindFunction(rsv->phcCls, P::name::SetTargetLocationFn);
+        rsv->releaseFn   = R::FindFunction(rsv->phcCls, P::name::ReleaseComponentFn);
+        if (!rsv->grabFn || !rsv->setTargetFn || !rsv->releaseFn) {
+            UE_LOGW("grab_test: PHC UFunction lookup failed (grab=%p set=%p rel=%p)",
+                    rsv->grabFn, rsv->setTargetFn, rsv->releaseFn);
+            done->store(2); return;
+        }
+        rsv->grabFrameSize = R::FunctionFrameSize(rsv->grabFn);
+        rsv->grabPComp = R::FindParamOffset(rsv->grabFn, L"Component");
+        rsv->grabPBone = R::FindParamOffset(rsv->grabFn, L"InBoneName");
+        rsv->grabPLoc  = R::FindParamOffset(rsv->grabFn, L"GrabLocation");
+        rsv->stFrameSize = R::FunctionFrameSize(rsv->setTargetFn);
+        rsv->stPLoc = R::FindParamOffset(rsv->setTargetFn, L"NewLocation");
+        UE_LOGI("grab_test: resolve OK player=%p grabHandle=%p propBase=%p "
+                "grabFn=%p frame=%d (Comp@%d Bone@%d Loc@%d) "
+                "setTargetFn=%p frame=%d (Loc@%d) releaseFn=%p",
+                rsv->player, rsv->grabHandle, rsv->propBase,
+                rsv->grabFn, rsv->grabFrameSize, rsv->grabPComp, rsv->grabPBone, rsv->grabPLoc,
+                rsv->setTargetFn, rsv->stFrameSize, rsv->stPLoc, rsv->releaseFn);
+        rsv->ok = (rsv->grabPComp >= 0 && rsv->grabPBone >= 0 && rsv->grabPLoc >= 0 && rsv->stPLoc >= 0);
+        done->store(rsv->ok ? 1 : 2);
+    });
+    while (done->load() == 0) ::Sleep(5);
+    if (!rsv->ok) { UE_LOGW("grab_test: resolve failed -- aborting"); return; }
+
+    // ---- 2. Find nearest Aprop_C derivative (super-walk over GUObjectArray).
+    struct PropResult { void* prop = nullptr; void* mesh = nullptr; float dist = 0.f; std::wstring cls; };
+    auto pr = std::make_shared<PropResult>();
+    done->store(0);
+    GT::Post([rsv, pr, done] {
+        ue_wrap::FVector pLoc = ue_wrap::engine::GetActorLocation(rsv->player);
+        const int32_t n = R::NumObjects();
+        float bestD2 = 1e18f;
+        int candidates = 0, scanned = 0;
+        for (int32_t i = 0; i < n; ++i) {
+            void* obj = R::ObjectAt(i);
+            if (!obj) continue;
+            ++scanned;
+            // Skip CDOs (Default__*) -- they have no world location and aren't grabbable.
+            std::wstring nm = R::ToString(R::NameOf(obj));
+            if (nm.rfind(L"Default__", 0) == 0) continue;
+            // Walk super chain: is class a descendant of prop_C?
+            void* cls = R::ClassOf(obj);
+            bool isProp = false;
+            for (int hops = 0; hops < 16 && cls; ++hops) {
+                if (cls == rsv->propBase) { isProp = true; break; }
+                cls = *reinterpret_cast<void**>(
+                    reinterpret_cast<uint8_t*>(cls) + P::off::UStruct_SuperStruct);
+            }
+            if (!isProp) continue;
+            ++candidates;
+            // Read location via the K2 BP-callable (works for any AActor subclass).
+            ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+            const float dx = loc.X - pLoc.X, dy = loc.Y - pLoc.Y, dz = loc.Z - pLoc.Z;
+            const float d2 = dx*dx + dy*dy + dz*dz;
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                pr->prop = obj;
+                pr->cls = R::ClassNameOf(obj);
+            }
+        }
+        pr->dist = (pr->prop ? std::sqrt(bestD2) : 0.f);
+        if (pr->prop) {
+            pr->mesh = *reinterpret_cast<void**>(
+                reinterpret_cast<uint8_t*>(pr->prop) + P::off::Aprop_StaticMesh);
+        }
+        UE_LOGI("grab_test: prop scan scanned=%d candidates=%d nearest=%p (%ls) dist=%.1f mesh=%p",
+                scanned, candidates, pr->prop, pr->cls.c_str(), pr->dist, pr->mesh);
+        done->store(pr->prop && pr->mesh ? 1 : 2);
+    });
+    while (done->load() == 0) ::Sleep(5);
+    if (done->load() != 1) { UE_LOGW("grab_test: no suitable prop found -- aborting"); return; }
+
+    // ---- 3. Compute hand position (player + forward * 80 cm + Z+50 cm).
+    auto handPos = std::make_shared<ue_wrap::FVector>();
+    done->store(0);
+    GT::Post([rsv, pr, handPos, done] {
+        ue_wrap::FVector pLoc = ue_wrap::engine::GetActorLocation(rsv->player);
+        ue_wrap::FVector fwd  = ue_wrap::engine::GetActorForwardVector(rsv->player);
+        handPos->X = pLoc.X + fwd.X * 80.f;
+        handPos->Y = pLoc.Y + fwd.Y * 80.f;
+        handPos->Z = pLoc.Z + 50.f;
+        // Teleport the prop to the hand position (physics may fight back but
+        // the kinematic-target will overwrite each tick).
+        ue_wrap::engine::SetActorLocation(pr->prop, *handPos);
+        UE_LOGI("grab_test: teleported prop -> (%.1f, %.1f, %.1f)", handPos->X, handPos->Y, handPos->Z);
+        done->store(1);
+    });
+    while (done->load() == 0) ::Sleep(5);
+
+    // ---- 4. Call grabHandle.GrabComponentAtLocation(propMesh, NAME_None, handPos).
+    done->store(0);
+    GT::Post([rsv, pr, handPos, done] {
+        std::vector<uint8_t> frame(static_cast<size_t>(rsv->grabFrameSize), 0);
+        *reinterpret_cast<void**>(frame.data() + rsv->grabPComp) = pr->mesh;
+        // NAME_None (FName{0,0}).
+        *reinterpret_cast<R::FName*>(frame.data() + rsv->grabPBone) = R::FName{0, 0};
+        *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->grabPLoc) = *handPos;
+        const bool ok = R::CallFunction(rsv->grabHandle, rsv->grabFn, frame.data());
+        UE_LOGI("grab_test: CallFunction(GrabComponentAtLocation) -> %d (expect grab_hook[PHC.Grab] above/below)", ok);
+        done->store(1);
+    });
+    while (done->load() == 0) ::Sleep(5);
+
+    // ---- 5. Per-tick SetTargetLocation for 5 seconds.
+    UE_LOGI("grab_test: now driving SetTargetLocation 5x (1 sec apart)");
+    for (int i = 0; i < 5; ++i) {
+        ::Sleep(1000);
+        done->store(0);
+        const float zJitter = 50.f + static_cast<float>(i) * 5.f;
+        GT::Post([rsv, handPos, zJitter, done, i] {
+            std::vector<uint8_t> frame(static_cast<size_t>(rsv->stFrameSize), 0);
+            ue_wrap::FVector newLoc{handPos->X, handPos->Y, handPos->Z + zJitter - 50.f};
+            *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->stPLoc) = newLoc;
+            const bool ok = R::CallFunction(rsv->grabHandle, rsv->setTargetFn, frame.data());
+            UE_LOGI("grab_test: tick %d SetTargetLocation((%.1f,%.1f,%.1f)) -> %d",
+                    i, newLoc.X, newLoc.Y, newLoc.Z, ok);
+            done->store(1);
+        });
+        while (done->load() == 0) ::Sleep(5);
+    }
+
+    // ---- 6. ReleaseComponent.
+    done->store(0);
+    GT::Post([rsv, done] {
+        const bool ok = R::CallFunction(rsv->grabHandle, rsv->releaseFn, nullptr);
+        UE_LOGI("grab_test: CallFunction(ReleaseComponent) -> %d (expect grab_hook[PHC.Release PRE] above/below)", ok);
+        done->store(1);
+    });
+    while (done->load() == 0) ::Sleep(5);
+
+    UE_LOGI("grab_test: DONE -- autonomous grab routine complete");
+}
+
+DWORD WINAPI AutonomousGrabTestThread(LPVOID) {
+    RunAutonomousGrabTest();
+    return 0;
 }
 
 // Game thread, ~send-rate: push the local player's pose to the session and apply
@@ -862,6 +1070,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
+
+            // Autonomous grab test: env-gated, host-only. Spawn a worker that
+            // waits ~10 s for the world to stabilize then drives a forced
+            // grab-move-release sequence through the engine native PhysicsHandle
+            // UFunctions, to verify the Stage-1 observer pipeline end-to-end
+            // without a user E-press. See RunAutonomousGrabTest() for the
+            // expected log lines and what this verifies.
+            if (netCfg.role == coop::net::Role::Host && ReadEnv("VOTVCOOP_RUN_GRAB_TEST") == "1") {
+                UE_LOGI("harness: VOTVCOOP_RUN_GRAB_TEST=1 (host) -- spawning grab test thread");
+                if (HANDLE h = ::CreateThread(nullptr, 0, AutonomousGrabTestThread, nullptr, 0, nullptr)) {
+                    ::CloseHandle(h);
+                }
+            }
 
             // Autotest CONTINUED CORRECTION: VOTV's player late-init (BeginPlay /
             // possess / save-restore) can revert the autotest teleport AFTER it
