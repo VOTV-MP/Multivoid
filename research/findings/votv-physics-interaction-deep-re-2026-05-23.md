@@ -223,6 +223,42 @@ grab_test: DONE -- autonomous grab routine complete
 
 6. **SetTargetLocation observer was suppressed by 1-in-30 throttle.** Only 5 calls made → no log lines. Fixed in next iteration (log first 3 + every 30th).
 
+### Stage-4 architecture finding: FName.ComparisonIndex is NOT cross-peer stable
+
+The earlier hypothesis ("Aprop_C.Key.ComparisonIndex is our 32-bit cross-peer
+prop ID") **is wrong**. Evidence from runs 2/3/4 of the autonomous grab test:
+
+| Run | Process | Prop FName string         | ComparisonIndex |
+|---|---|---|---|
+| 2 | host   | `Xym5dmnBEzreWaHSkQ9Tew` |  2452225 |
+| 3 | host   | `Xym5dmnBEzreWaHSkQ9Tew` |  2452211 |
+| 4 | host   | `Xym5dmnBEzreWaHSkQ9Tew` |  2452211 |
+| 4 | client | `Q8q9QNQtluxuzLPrp7dvgQ` |  2499115 |
+
+The Key STRING is stable (it's the save-system UUID baked into the .sav file
++ FName pool of cooked content). The ComparisonIndex is **per-process** — UE4
+builds the FName name-pool incrementally as objects load, so the idx depends
+on load order, not on string identity.
+
+**Wire serialization for Stage 4 MUST transmit the Key STRING**, not the idx:
+
+* Reliable GRAB/RELEASE packet: send `uint8 length + utf8 bytes` (22 chars
+  typical for the UUID-style keys = 23 bytes overhead per packet). Receiver
+  resolves to its local UFunction* / Aprop_C* by walking GUObjectArray and
+  matching `ToString(Key) == sent_string` (one-shot at grab start; cache the
+  resolved pointer for the grab duration).
+* Unreliable POSE piggyback: cache the pointer client-side after GRAB; pose
+  packet only needs a small handle (e.g. 8-bit slot id into a fixed-size
+  active-grabs table). Or skip the prop pointer entirely from the pose
+  packet and let the receiver look up the prop from the LAST GRAB packet.
+
+Caveat: the cross-peer test (run 4) showed host and client picked DIFFERENT
+nearest props because their autotest spawn poses are ~14 m apart. To
+*directly* verify "same prop string both peers" we'd pick a prop by a
+known anchor (class + nearest to fixed world coord) on both peers and
+compare. The string stability is high-confidence regardless because the
+strings come from the save UUID which both peers load identically.
+
 ### Autonomous test (NEW — this session)
 
 A new harness function `RunAutonomousGrabTest()` exercises the FULL Stage-1 observer pipeline end-to-end **without a user E-press**:

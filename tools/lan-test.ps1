@@ -99,11 +99,13 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
     return $p
 }
 
-Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed'}))..."
+Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'}))..."
 $hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest
 Start-Sleep -Seconds 4   # let the host process come up first
-Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client)..."
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $false
+Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'}))..."
+# Client also gets VOTVCOOP_RUN_GRAB_TEST=1 -- it runs the prop scan + logs
+# fields for cross-peer Key comparison, but does NOT drive any UFunctions.
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------

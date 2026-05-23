@@ -477,8 +477,16 @@ void InstallGrabObservers() {
 //   - Heavy drag path (UPhysicsConstraintComponent) -- different setup
 //   - Receiver-side reception (no wire shipped yet -- Stage 4 blocker)
 
+// Pass-2 verification: when run on BOTH peers (host AND client), each does
+// a prop scan; comparing their nearest-prop Key.ComparisonIndex tells us
+// whether cooked-content FNames are stable cross-peer (which is the
+// hypothesis Stage 4's wire serialization depends on). Only the HOST does
+// the actual grab/move/release calls -- client is scan-only.
 void RunAutonomousGrabTest() {
-    UE_LOGI("grab_test: starting autonomous grab routine (waiting 10 s for stabilization)");
+    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const bool isHost = (roleEnv != "client");  // default Host if unset
+    const char* roleStr = isHost ? "host" : "client";
+    UE_LOGI("grab_test: starting autonomous routine on %s (waiting 10 s for stabilization)", roleStr);
     ::Sleep(10000);
 
     // ---- 1. Resolve actors + components (game thread).
@@ -596,7 +604,16 @@ void RunAutonomousGrabTest() {
     while (done->load() == 0) ::Sleep(5);
     if (done->load() != 1) { UE_LOGW("grab_test: no suitable prop found -- aborting"); return; }
 
-    // ---- 3. Compute hand position (player + forward * 80 cm + Z+50 cm).
+    // CLIENT: scan + log only. Don't drive any UFunctions -- we're a passive
+    // verifier checking whether the Key.ComparisonIndex matches the host's
+    // (proves cooked-content FNames are stable cross-peer; logged above).
+    if (!isHost) {
+        UE_LOGI("grab_test: CLIENT scan-only complete -- compare prop fields above with HOST log");
+        UE_LOGI("grab_test: DONE (client scan-only)");
+        return;
+    }
+
+    // ---- 3. (HOST) Compute hand position (player + forward * 80 cm + Z+50 cm).
     auto handPos = std::make_shared<ue_wrap::FVector>();
     done->store(0);
     GT::Post([rsv, pr, handPos, done] {
@@ -1086,14 +1103,15 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
 
-            // Autonomous grab test: env-gated, host-only. Spawn a worker that
-            // waits ~10 s for the world to stabilize then drives a forced
-            // grab-move-release sequence through the engine native PhysicsHandle
-            // UFunctions, to verify the Stage-1 observer pipeline end-to-end
-            // without a user E-press. See RunAutonomousGrabTest() for the
-            // expected log lines and what this verifies.
-            if (netCfg.role == coop::net::Role::Host && ReadEnv("VOTVCOOP_RUN_GRAB_TEST") == "1") {
-                UE_LOGI("harness: VOTVCOOP_RUN_GRAB_TEST=1 (host) -- spawning grab test thread");
+            // Autonomous grab test: env-gated, runs on BOTH peers. Host drives
+            // the full grab/move/release routine through engine native
+            // PhysicsHandle UFunctions; client does scan-only (so we can compare
+            // Key.ComparisonIndex cross-peer to verify cooked-content FNames are
+            // stable -- the hypothesis Stage 4's wire serialization depends on).
+            // See RunAutonomousGrabTest() for the expected log lines.
+            if (ReadEnv("VOTVCOOP_RUN_GRAB_TEST") == "1") {
+                UE_LOGI("harness: VOTVCOOP_RUN_GRAB_TEST=1 (%s) -- spawning grab test thread",
+                        netCfg.role == coop::net::Role::Host ? "host" : "client");
                 if (HANDLE h = ::CreateThread(nullptr, 0, AutonomousGrabTestThread, nullptr, 0, nullptr)) {
                     ::CloseHandle(h);
                 }
