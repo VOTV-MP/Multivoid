@@ -31,22 +31,23 @@ void* GetMeshPlayerVisibleAsset(void* mainPlayerPawn);
 // the component, or null.
 void* GetMeshPlayerVisibleComponent(void* mainPlayerPawn);
 
-// The local player's capsule half-height (ACharacter). The pawn's actor origin is
-// the capsule CENTRE; subtract this to get the FEET Z (where a puppet's mesh root
-// must sit so it stands on the ground instead of floating). 0 if unreadable.
-float GetCapsuleHalfHeight(void* mainPlayerPawn);
-
 // Read the AnimBP CLASS the local player's body actually runs, straight off its
 // mesh_playerVisible component (AnimClass @0x6A8) -- the authoritative, always-
 // present class pointer. (Looking the Blueprint-generated class up by leaf name
 // fails; the live component is the source of truth.) Returns the UClass*, or null.
 void* GetMeshPlayerVisibleAnimClass(void* mainPlayerPawn);
 
-// Spawn a puppet (ASkeletalMeshActor) at `loc` wearing `skeletalMeshAsset` and
-// running `animClass` (both copied from the local player's working body), set to
-// always-tick its pose and visible. Returns the actor, or nullptr. Logs a
-// local-vs-puppet AnimBP state diff for diagnosis.
-void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass);
+// Spawn a puppet (ASkeletalMeshActor) at `loc` (= the source actor's world
+// location, NOT a derived feet-Z) wearing `skeletalMeshAsset` and running
+// `animClass`. `srcMeshComp` is the LOCAL mainPlayer_C::mesh_playerVisible
+// component -- the puppet's SkeletalMeshComponent copies its parent-relative
+// transform (RelativeLocation + RelativeRotation) so the puppet's visual body
+// sits exactly where the source's visual body sits (no float-above-ground, no
+// 90 deg sideways pop). Both peers run mainPlayer_C so the local's mesh comp
+// carries the same RelLoc/RelRot the source uses. Returns the spawned actor,
+// or nullptr. Logs a local-vs-puppet AnimBP state diff for diagnosis.
+void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass,
+                  void* srcMeshComp);
 
 // The puppet's USkeletalMeshComponent (first SkeletalMeshComponent child),
 // cached per actor. nullptr if none.

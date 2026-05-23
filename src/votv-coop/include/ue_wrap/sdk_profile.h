@@ -134,6 +134,21 @@ inline constexpr size_t APawn_AIControllerClass = 0x238;    // UClass* (TSubclas
 inline constexpr size_t USkinnedMesh_VisibilityBasedAnimTickOption = 0x604;  // uint8 (set 0)  Engine.hpp:18308
 inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // AnimInstance*  Engine.hpp:18095
 
+// USceneComponent transform-locals (parent-relative). Engine.hpp:17904-17905.
+// The puppet's SkeletalMeshComponent must MIRROR the source mainPlayer_C's
+// `mesh_playerVisible` RelLoc + RelRot, otherwise the visible body floats above
+// the ground (RelLoc.Z carries the BP-authored mesh-to-actor offset, e.g. the
+// kerfur skin's root-bone-vs-feet shim) and faces 90 deg sideways (RelRot.Yaw
+// = -90 is the standard "mesh authored along Y+, actor +X" reconciliation).
+// The wire stays in the source actor's NATIVE frame (actor.Z, actor.Yaw); the
+// per-class visual offset is reconciled once at puppet spawn by copying these
+// two fields off the local mainPlayer's mesh component (both peers run the
+// same mainPlayer_C class, so its mesh component carries the same RelLoc/RelRot
+// the source uses -- pull the truth from the local copy at runtime, no
+// hard-coded compensation).
+inline constexpr size_t USceneComponent_RelativeLocation = 0x011C;  // FVector
+inline constexpr size_t USceneComponent_RelativeRotation = 0x0128;  // FRotator
+
 // ---- skin-puppet (the remote body) ---------------------------------------
 // Root-cause finding (two converging agents, CXX dump): the body AnimBP poses
 // purely from its own public variables; it does NOT require a possessing
@@ -176,11 +191,6 @@ inline constexpr size_t AnimBP_kerfur_isFace = 0x2E48;             // bool
 // We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
 // off the HUD, project the remote head world->screen and draw the nickname with
 // UCanvas::K2_DrawText (takes an FString -> no FText, outline+shadow built in).
-// Ground placement: a spawned puppet's mesh root sits at the actor origin =
-// ACharacter capsule CENTRE, which is half a body above the feet -> it floats.
-// Subtract the local player's capsule half-height to put the feet on the ground.
-inline constexpr size_t ACharacter_CapsuleComponent = 0x0290;          // UCapsuleComponent*  Engine.hpp:6972
-inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float  Engine.hpp:9883
 
 // Freecam gamma fix: a bare ACameraActor renders with default post-process, so the
 // player's exposure/grading is lost and the view goes dark. Copy the player camera's

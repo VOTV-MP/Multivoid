@@ -53,14 +53,15 @@ bool RemotePlayer::Spawn() {
         return false;
     }
 
-    // The pawn actor origin is the capsule CENTRE (~half a body above the feet);
-    // a puppet's mesh root sits at its actor origin, so copying the centre Z makes
-    // it float. Subtract the capsule half-height to land the feet on the ground.
+    // The puppet's actor sits at the SAME world coordinate as the source actor
+    // (capsule centre). The mesh-vs-actor visual offset (RelativeLocation Z) is
+    // copied off the local mainPlayer_C's mesh_playerVisible onto the puppet's
+    // SkeletalMeshComponent inside SpawnPuppet -- which is the BP-authored shim
+    // that puts the visible feet on the ground. No -halfH wire math, no
+    // capsule-centre/feet arithmetic anywhere in coop (RULE 1: replicate the
+    // engine's native frame; let the visual offset belong to the component
+    // where the engine already stores it).
     ue_wrap::FVector loc = E::GetActorLocation(local);
-    const float halfH = Pup::GetCapsuleHalfHeight(local);
-    loc.Z -= halfH;
-    UE_LOGI("RemotePlayer::Spawn: local centreZ=%.1f capsuleHalfH=%.1f -> feetZ=%.1f",
-            loc.Z + halfH, halfH, loc.Z);
 
     // Place the puppet a couple metres in FRONT of the local player so it's
     // immediately in view, then face it back toward the player (so its face --
@@ -75,8 +76,9 @@ bool RemotePlayer::Spawn() {
         return false;
     }
     void* animClass = Pup::GetMeshPlayerVisibleAnimClass(local);
+    void* srcMeshComp = Pup::GetMeshPlayerVisibleComponent(local);
 
-    actor_ = Pup::SpawnPuppet(loc, skin, animClass);
+    actor_ = Pup::SpawnPuppet(loc, skin, animClass, srcMeshComp);
     if (!actor_) {
         UE_LOGE("RemotePlayer::Spawn: SpawnPuppet failed");
         return false;
@@ -146,10 +148,11 @@ bool RemotePlayer::Spawn() {
     }
 
     // Face the puppet toward the local player (yaw = direction from puppet to
-    // player = -forward). atan2 in degrees. NOTE: this yaw is in the SOURCE
-    // ACTOR convention (matches what ReadLocalPose / mainPlayer_C produces),
-    // so the -90 mesh compensation in ApplyToEngine applies cleanly -- no
-    // 90 deg visual pop between Spawn and the first ApplyToEngine (audit fix).
+    // player = -forward). atan2 in degrees. This yaw is in the SOURCE actor
+    // convention (matches what ReadLocalPose / mainPlayer_C produces); the
+    // mesh-asset orientation shim now lives on the puppet's SkeletalMeshComponent
+    // RelativeRotation (copied from the local mesh_playerVisible in SpawnPuppet),
+    // so the actor's yaw goes directly on the wire and out the other side.
     const float yaw = std::atan2(-fwd.Y, -fwd.X) * 57.29578f;
 
     // Seed the interpolation state to the spawn placement so the first network
@@ -166,9 +169,11 @@ bool RemotePlayer::Spawn() {
     interpFinishMs_ = 0;
     lastAlpha_ = 0.f;
     hasPose_ = false;  // the first network pose SNAPS away from this fake placement
-    // Route the initial placement through ApplyToEngine so the -90 yaw mesh
-    // compensation is applied consistently with the streaming path -- no 90 deg
-    // visual pop between Spawn and the first ApplyToEngine on the first pose.
+    // Push the spawn placement (curPos_, curYaw_) to the engine NOW so the
+    // puppet is correctly positioned + oriented before the first network packet
+    // arrives. The mesh-vs-actor visual offset (RelLoc/RelRot) lives on the
+    // puppet's SkeletalMeshComponent (mirrored from the local in SpawnPuppet);
+    // nothing to compensate for in the actor-frame write.
     ApplyToEngine();
     dirty_ = false;     // just pushed it
 
@@ -323,16 +328,13 @@ void RemotePlayer::Destroy() {
 
 void RemotePlayer::ApplyToEngine() {
     E::SetActorLocation(actor_, curPos_);
-    // Yaw compensation for the SkeletalMesh's local orientation: VOTV's mainPlayer_C
-    // (a Character) has its SkeletalMeshComponent rotated -90 yaw inside the actor
-    // (standard UE4 character setup -- imported meshes face Y+, the -90 RelativeRotation
-    // re-aligns them to actor +X). Our puppet is a bare SkeletalMeshActor with NO
-    // mesh-component offset, so applying the source actor's yaw directly leaves the
-    // puppet visually 90 deg sideways (user-confirmed). Subtracting 90 here makes
-    // (puppet visual) == (source visual) without poking the engine's mesh RelativeRotation.
-    constexpr float kPuppetMeshYawCompensationDeg = -90.f;
-    E::SetActorRotation(actor_,
-                        ue_wrap::FRotator{0.f, curYaw_ + kPuppetMeshYawCompensationDeg, 0.f});
+    // The puppet actor yaw equals the source actor yaw directly. The mesh-vs-actor
+    // orientation reconciliation (the BP-authored RelativeRotation, typically
+    // yaw -90 for "mesh +Y forward" vs "actor +X forward" UE4 character setup)
+    // lives on the puppet's SkeletalMeshComponent RelativeRotation -- mirrored
+    // off the local mainPlayer's mesh_playerVisible in SpawnPuppet. No magic
+    // constant here; the actor frame is the wire's frame is the source's frame.
+    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, curYaw_, 0.f});
 
     // Bug 2 Plan B2: drive the satellite Character (the AnimBP Pawn pull source)
     // so its CharacterMovementComponent.Velocity carries the streamed velocity.

@@ -77,13 +77,6 @@ void* GetMeshPlayerVisibleComponent(void* mainPlayerPawn) {
     return ReadPtr(mainPlayerPawn, P::off::AmainPlayer_mesh_playerVisible);
 }
 
-float GetCapsuleHalfHeight(void* mainPlayerPawn) {
-    if (!mainPlayerPawn) return 0.f;
-    void* capsule = ReadPtr(mainPlayerPawn, P::off::ACharacter_CapsuleComponent);
-    if (!capsule) return 0.f;
-    return ReadAt<float>(capsule, P::off::UCapsuleComponent_CapsuleHalfHeight);
-}
-
 void* GetMeshPlayerVisibleAnimClass(void* mainPlayerPawn) {
     if (!mainPlayerPawn) return nullptr;
     void* comp = ReadPtr(mainPlayerPawn, P::off::AmainPlayer_mesh_playerVisible);
@@ -200,7 +193,8 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
             pawn, ctrl, movement, kerfur, useLegIK, isFace, lookingAtPlayer);
 }
 
-void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
+void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass,
+                  void* srcMeshComp) {
     if (!skeletalMeshAsset) {
         UE_LOGE("puppet: SpawnPuppet no skin asset");
         return nullptr;
@@ -220,6 +214,35 @@ void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) 
     if (!comp) {
         UE_LOGE("puppet: spawned actor %p has no SkeletalMeshComponent", actor);
         return actor;
+    }
+
+    // Mirror the LOCAL mainPlayer_C::mesh_playerVisible's parent-relative
+    // transform onto the puppet's SkeletalMeshComponent. The player BP authors
+    // mesh_playerVisible with a non-trivial RelativeLocation (the Z shim between
+    // the actor centre and the mesh asset's root bone -- the source of the
+    // float-above-ground that's existed since the start of the project) AND a
+    // non-trivial RelativeRotation (yaw -90 reconciling the mesh's "mesh +Y
+    // forward" authoring with UE4's actor "+X forward" convention -- what made
+    // puppets visually 90 deg sideways without manual compensation).
+    //
+    // Both peers run mainPlayer_C, so the LOCAL on the receiving machine carries
+    // the same BP-authored RelLoc/RelRot the source's mesh_playerVisible has.
+    // Reading it at runtime makes the puppet visually identical to the source's
+    // body, no hard-coded magic numbers, robust to mesh-asset re-authoring
+    // across game versions. Written here BEFORE the next SetActorLocation in
+    // RemotePlayer::Spawn -> the world transform refresh propagates through
+    // AttachChildren and picks up the new RelLoc/RelRot naturally.
+    if (srcMeshComp) {
+        const FVector srcRelLoc = ReadAt<FVector>(srcMeshComp, P::off::USceneComponent_RelativeLocation);
+        const FRotator srcRelRot = ReadAt<FRotator>(srcMeshComp, P::off::USceneComponent_RelativeRotation);
+        WriteAt<FVector>(comp, P::off::USceneComponent_RelativeLocation, srcRelLoc);
+        WriteAt<FRotator>(comp, P::off::USceneComponent_RelativeRotation, srcRelRot);
+        UE_LOGI("puppet: mirrored src mesh RelLoc=(%.1f,%.1f,%.1f) RelRot=(P=%.1f,Y=%.1f,R=%.1f) onto puppet comp=%p",
+                srcRelLoc.X, srcRelLoc.Y, srcRelLoc.Z,
+                srcRelRot.Pitch, srcRelRot.Yaw, srcRelRot.Roll, comp);
+    } else {
+        UE_LOGW("puppet: no source mesh component -> puppet renders at default mesh RelLoc/RelRot "
+                "(may float above ground / face sideways)");
     }
 
     // Wear the local player's skin + run the body AnimBP. SetAnimClass also flips

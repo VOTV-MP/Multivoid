@@ -126,15 +126,19 @@ std::wstring ReadNickname() {
     return std::wstring(nick.begin(), nick.end());
 }
 
-// Game thread: read the local player's pose into a network snapshot. z carries the
-// FEET (capsule centre - half-height), so the remote machine's mesh-root puppet
-// stands on the ground; yaw is the body facing; speed is horizontal velocity (cm/s).
+// Game thread: read the local player's pose into a network snapshot. x/y/z carry
+// the source actor's NATIVE world location (capsule centre on a Character) -- the
+// engine's own frame, no derived feet-Z or centre-Z arithmetic. The receiver
+// reproduces the visible-body offset by mirroring the source mesh component's
+// RelativeLocation onto the puppet's mesh component (see SpawnPuppet); that is
+// where the BP-authored Z shim between actor centre and visible feet lives, and
+// it stays on the receiver side -- the wire carries one thing (where the actor
+// is), one frame, MTA-style.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
     const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
-    const float halfH = ue_wrap::puppet::GetCapsuleHalfHeight(local);
     // BODY yaw: read from the ACTOR (the real body facing direction). Earlier
     // attempt sent controller yaw -- but VOTV's Character body LAGS the camera
     // (head-leads-body is natural to the source), so sending controller yaw made
@@ -145,7 +149,7 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     // by NetPumpTick to skip re-resolving GetController every tick.
     out.x = loc.X;
     out.y = loc.Y;
-    out.z = loc.Z - halfH;
+    out.z = loc.Z;
     // Normalize yaw and pitch into the canonical FRotator axis range (-180, 180]
     // BEFORE they go on the wire. UE4's AController::GetControlRotation returns
     // the RAW ControlRotation, which the input system accumulates as unnormalized
