@@ -957,6 +957,28 @@ void WriteObjectField(void* target, size_t byteOffset, void* value) {
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(target) + byteOffset) = value;
 }
 
+void LogClassProperties(const wchar_t* className) {
+    void* cls = R::FindClass(className);
+    if (!cls) {
+        UE_LOGW("LogClassProperties: class '%ls' not found", className);
+        return;
+    }
+    UE_LOGI("LogClassProperties: %ls FProperty chain (own props only, no super):", className);
+    auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cls) +
+                                               P::off::UStruct_ChildProperties);
+    int idx = 0;
+    while (field) {
+        const auto name = R::ToString(*reinterpret_cast<const R::FName*>(field + P::off::FField_NamePrivate));
+        const int32_t off = *reinterpret_cast<int32_t*>(field + P::off::FProperty_Offset_Internal);
+        const int32_t sz = *reinterpret_cast<int32_t*>(field + P::off::FProperty_ElementSize) *
+                           *reinterpret_cast<int32_t*>(field + P::off::FProperty_ArrayDim);
+        UE_LOGI("  [%d] %ls @ +0x%X size=%d", idx, name.c_str(), off, sz);
+        ++idx;
+        field = *reinterpret_cast<uint8_t**>(field + P::off::FField_Next);
+    }
+    UE_LOGI("LogClassProperties: %ls -- %d properties listed", className, idx);
+}
+
 bool SetMovementVelocity(void* movementComp, const FVector& velocity) {
     if (!movementComp) return false;
     // Resolve UMovementComponent::Velocity offset ONCE via reflection

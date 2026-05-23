@@ -143,6 +143,13 @@ bool SetComponentTickEnabled(void* component, bool enabled);
 // Game thread only.
 void WriteObjectField(void* target, size_t byteOffset, void* value);
 
+// Diagnostic: log every FProperty on a UClass (name, offset, size). Used to
+// verify a property offset we resolved via reflection (e.g. confirm we got
+// the real UMovementComponent::Velocity offset and not a sibling property
+// of the same FName). Walks the class's own properties only (no SuperStruct
+// climb). Game thread only.
+void LogClassProperties(const wchar_t* className);
+
 // USceneComponent world location (K2_GetComponentLocation) and forward vector
 // (GetForwardVector) -- e.g. the Camera component's eye point + look direction,
 // to place something exactly in the player's view. (0,0,0) on failure.

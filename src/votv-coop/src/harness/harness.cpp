@@ -284,22 +284,6 @@ void NetPumpTick(float displayOffsetX) {
     }
     if (g_orphan.valid()) g_orphan.Tick();
 
-    // Bug 2 deep diagnostic 2026-05-23: hook fires correctly but puppet still
-    // slides. Every ~3 s, dump the live FAnimNode memory regions (BlendSpace
-    // player + 2 state machines) for BOTH local (walking, animates) and puppet
-    // (sliding) so we can diff: find the byte offset within the BlendSpacePlayer
-    // where the walking speed lives on local, and see whether the puppet state
-    // machine is stuck on the idle state index.
-    {
-        static unsigned int sDiagCtr = 0;
-        if (++sDiagCtr % 180 == 0 && g_orphan.valid() && g_netLocal) {
-            void* localMesh = ue_wrap::puppet::GetMeshPlayerVisibleComponent(g_netLocal);
-            void* puppetMesh = ue_wrap::puppet::GetSkeletalMeshComponent(g_orphan.actor());
-            if (localMesh)  ue_wrap::puppet::DumpAnimNodeRegions(L"local",  localMesh);
-            if (puppetMesh) ue_wrap::puppet::DumpAnimNodeRegions(L"puppet", puppetMesh);
-        }
-    }
-
     // Surface session events (joins/disconnects) to the feed + send our Join.
     coop::event_feed::Update(g_session, &g_orphan);
 
@@ -567,6 +551,29 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         bool netEnabled = false;
         const coop::net::Config netCfg = ReadNetConfig(netEnabled);
         if (netEnabled) {
+            // User rule 2026-05-23: client lands at КПП (the host's natural save
+            // spawn), NOT at the per-instance save wakeup spot that puts the two
+            // peers ~14 m apart at different anchors. Teleport once, post-load,
+            // BEFORE the network session starts -- so the first pose the client
+            // sends already carries the КПП position.
+            if (netCfg.role == coop::net::Role::Client) {
+                Post([] {
+                    void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+                    if (!local) {
+                        UE_LOGW("client KPP teleport: local mainPlayer not in world yet");
+                        return;
+                    }
+                    const ue_wrap::FVector kpp{
+                        P::name::kKPPSpawnX,
+                        P::name::kKPPSpawnY,
+                        P::name::kKPPSpawnZ,
+                    };
+                    ue_wrap::engine::SetActorLocation(local, kpp);
+                    UE_LOGI("client KPP teleport: mainPlayer -> (%.0f,%.0f,%.0f)",
+                            kpp.X, kpp.Y, kpp.Z);
+                });
+                ::Sleep(100);  // let the posted task run before session.Start
+            }
             coop::event_feed::SetLocalNickname(ReadNickname());
             g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
             g_session.Start(netCfg);

@@ -113,18 +113,32 @@ bool RemotePlayer::Spawn() {
             // overwrite it each tick otherwise.
             ue_wrap::engine::SetComponentTickEnabled(satelliteCmc_, false);
         }
-        // Wire puppet AnimInstance -> satellite Pawn. Once done, BUA's
-        // velocity-pull path reads from the satellite each tick; no per-tick
-        // override needed (BeginPlay set Pawn=null once, our spawn-time write
-        // overrides it permanently for the puppet's AnimInstance lifetime).
+        // Diagnostic kept for future re-derivation across game versions: the
+        // UMovementComponent::Velocity offset (0xC4 on UE4.27) is the field we
+        // write each tick; LogClassProperties dumps the full FProperty chain
+        // so we can confirm the offset hasn't shifted in a new build. Fires
+        // once at first puppet spawn.
+        ue_wrap::engine::LogClassProperties(L"MovementComponent");
+        // Wire puppet AnimInstance -> satellite Pawn + Movement. Both pointers
+        // must be written: the AnimBP's BlueprintBeginPlay caches both Pawn
+        // and Movement from `TryGetPawnOwner()` at AnimInstance construction.
+        // For our puppet that ran with Pawn=null, so both caches stayed null
+        // -- the per-tick BUA does NOT re-resolve them from Pawn. The
+        // 2026-05-23 velocity-chain diagnostic proved this: setting Pawn alone
+        // left Movement=null, so BUA's spd write (Movement.Velocity.Size())
+        // never executed (puppet.spd stayed at the construction default 400).
+        // Writing BOTH unblocks BUA's per-tick velocity-pull path entirely.
         if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
             void* anim = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(comp) + P::off::USkeletalMesh_AnimScriptInstance);
             if (anim) {
                 puppetAnim_ = anim;
                 ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Pawn, satellite_);
-                UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn -> satellite %p",
-                        anim, satellite_);
+                if (satelliteCmc_) {
+                    ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Movement, satelliteCmc_);
+                }
+                UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn=%p .Movement=%p",
+                        anim, satellite_, satelliteCmc_);
             }
         }
     } else {

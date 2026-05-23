@@ -217,6 +217,19 @@ inline constexpr const wchar_t* WorldClass = L"World";
 inline constexpr const wchar_t* SetActorLocationFn = L"K2_SetActorLocation";
 inline constexpr const wchar_t* GameplayLevel = L"untitled_1";
 
+// КПП (kontrolno-propusknoi punkt / guard-checkpoint) spawn point on the
+// `s_may2026` save -- the visible landmark at the base entrance. Host
+// naturally lands here when the save loads (per the LoadStorySave log:
+// "in gameplay (mainPlayer @ -37695,69978,6420)"). The CLIENT instance
+// loads the same save but lands ~14 m away at a different wakeup spot
+// (per [[project-autotest-spawn-pose]]); the user's "spawn remote on КПП"
+// rule (2026-05-23) wants the client teleported to this known landmark
+// after gameplay loads. Value is the actor center (capsule centre), in
+// world cm. Re-derive per game version.
+inline constexpr float kKPPSpawnX = -37695.f;
+inline constexpr float kKPPSpawnY =  69978.f;
+inline constexpr float kKPPSpawnZ =   6420.f;
+
 // Engine classes/functions we dispatch through (stable engine names, not VOTV
 // content -- but kept here so the porting surface is one file). The persistent
 // GameInstance subclass is VOTV content (the world context that survives a
