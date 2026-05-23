@@ -525,6 +525,14 @@ inline constexpr const wchar_t* SetConstrainedComponentsFn             = L"SetCo
 inline constexpr const wchar_t* BreakConstraintFn                      = L"BreakConstraint";
 inline constexpr const wchar_t* SetDisableCollisionFn                  = L"SetDisableCollision";
 
+// Engine UPrimitiveComponent.AddImpulse (THROW path -- VOTV's throwHoldingProp
+// is BP-pure inline, but it MUST call AddImpulse on the released prop's
+// component to send it flying. AddImpulse IS ProcessEvent-dispatched). Same
+// signature for primary owner UE4 4.27: (FVector impulse, FName BoneName,
+// bool bVelChange). Used as the throw signal.
+inline constexpr const wchar_t* PrimitiveComponentClass                = L"PrimitiveComponent";
+inline constexpr const wchar_t* AddImpulseFn                           = L"AddImpulse";
+
 // Secondary -- BP-Timeline / input level. Useful for triangulation and to
 // learn the grabbed prop's identity (read mainPlayer_C.grabbing_actor from
 // inside the InpActEvt observer just after the BP graph has decided what to

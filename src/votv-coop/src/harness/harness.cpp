@@ -339,6 +339,21 @@ void GrabObserver_PCC_BreakConstraint_PRE(void* self, void* /*function*/, void* 
     UE_LOGI("grab_hook[PCC.BreakConstraint PRE]: constraint=%p (heavy grab END)", self);
 }
 
+// --- Throw signal: UPrimitiveComponent::AddImpulse. Fires whenever the BP
+// throws a held prop (throwHoldingProp BP-pure is inlined and calls this on
+// the released component). Also fires for non-throw impulses (explosions,
+// hit reactions) -- the host disambiguates via context (was a grab active
+// right before this fired? then it's a throw).
+
+void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* params) {
+    if (!self || !params) return;
+    // Param frame: FVector impulse @ 0, FName BoneName @ 12 (?), bool bVelChange.
+    // Layout depends on alignment -- use reflection if we need the values.
+    // For Stage 1 just log self+occurrence; the actual impulse params can be
+    // read once we add their offsets to sdk_profile.
+    UE_LOGI("grab_hook[PrimComp.AddImpulse]: component=%p (throw or impulse event)", self);
+}
+
 // --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
 // the upstream dispatch path and let us read mainPlayer_C grab-state fields.
 
@@ -393,10 +408,11 @@ void InstallGrabObservers() {
 
     void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
     void* pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
+    void* primCls = R::FindClass(P::name::PrimitiveComponentClass);
     void* playerCls = R::FindClass(P::name::MainPlayerClass);
-    if (!phcCls || !pccCls || !playerCls) {
-        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, mainPlayer=%p) -- will retry next tick",
-                phcCls, pccCls, playerCls);
+    if (!phcCls || !pccCls || !primCls || !playerCls) {
+        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, PrimComp=%p, mainPlayer=%p) -- will retry next tick",
+                phcCls, pccCls, primCls, playerCls);
         return;
     }
 
@@ -436,6 +452,10 @@ void InstallGrabObservers() {
     reg(pccCls, P::name::PhysicsConstraintComponentClass,
         P::name::BreakConstraintFn,          GrabObserver_PCC_BreakConstraint_PRE,      /*pre=*/true);
 
+    // Throw signal: engine PrimitiveComponent.AddImpulse.
+    reg(primCls, P::name::PrimitiveComponentClass,
+        P::name::AddImpulseFn,               GrabObserver_PrimComp_AddImpulse,          /*pre=*/false);
+
     // Secondary: BP-Timeline + input on mainPlayer_C.
     reg(playerCls, P::name::MainPlayerClass,
         P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use,      /*pre=*/false);
@@ -445,7 +465,7 @@ void InstallGrabObservers() {
         P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
 
     g_grabObserversInstalled = true;
-    UE_LOGI("grab_hook: Stage 1 observers installed (5 PHC + 2 PCC + 3 BP-Timeline) -- press E on a prop to see hook lines");
+    UE_LOGI("grab_hook: Stage 1 observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 3 BP-Timeline) -- press E on a prop to see hook lines");
 }
 
 // ---- Autonomous grab test (no user E-press required) --------------------
@@ -710,6 +730,34 @@ void RunAutonomousGrabTest() {
     GT::Post([rsv, done] {
         const bool ok = R::CallFunction(rsv->grabHandle, rsv->releaseFn, nullptr);
         UE_LOGI("grab_test: CallFunction(ReleaseComponent) -> %d (expect grab_hook[PHC.Release PRE] above/below)", ok);
+        done->store(1);
+    });
+    while (done->load() == 0) ::Sleep(5);
+
+    // ---- 6b. THROW arm: PrimitiveComponent.AddImpulse on the released
+    // suitcase mesh, to exercise the AddImpulse observer.
+    done->store(0);
+    GT::Post([pr, done] {
+        void* primCls = R::FindClass(P::name::PrimitiveComponentClass);
+        void* addImpulseFn = R::FindFunction(primCls, P::name::AddImpulseFn);
+        if (!addImpulseFn) { UE_LOGW("grab_test: AddImpulse UFunction not found"); done->store(2); return; }
+        const int32_t frameSize = R::FunctionFrameSize(addImpulseFn);
+        // UE4 BP param names are case-preserving and match the SDK dump
+        // literally. AddImpulse uses lowercase `impulse`.
+        const int32_t pImp  = R::FindParamOffset(addImpulseFn, L"impulse");
+        const int32_t pBone = R::FindParamOffset(addImpulseFn, L"BoneName");
+        const int32_t pVel  = R::FindParamOffset(addImpulseFn, L"bVelChange");
+        if (pImp < 0 || pBone < 0 || pVel < 0) {
+            UE_LOGW("grab_test: AddImpulse param offsets missing (imp=%d bone=%d vel=%d)", pImp, pBone, pVel);
+            done->store(2); return;
+        }
+        std::vector<uint8_t> frame(static_cast<size_t>(frameSize), 0);
+        // Impulse = up + forward, scale ~500 (cm/s mass-adjusted). Throw-ish.
+        *reinterpret_cast<ue_wrap::FVector*>(frame.data() + pImp) = ue_wrap::FVector{0.f, 0.f, 500.f};
+        *reinterpret_cast<R::FName*>(frame.data() + pBone) = R::FName{0, 0};
+        *reinterpret_cast<bool*>(frame.data() + pVel) = false;
+        const bool ok = R::CallFunction(pr->mesh, addImpulseFn, frame.data());
+        UE_LOGI("grab_test: CallFunction(AddImpulse on suitcase mesh) -> %d (expect grab_hook[PrimComp.AddImpulse])", ok);
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);

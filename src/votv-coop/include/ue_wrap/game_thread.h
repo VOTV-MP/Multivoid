@@ -91,7 +91,7 @@ void ClearInterceptor();
 // ProcessEvent detour always fires on the dispatching thread (usually
 // game thread; sometimes a task-graph worker for parallel anim).
 using ProcessEventObserverFn = void(*)(void* self, void* function, void* params);
-inline constexpr int kMaxObservers = 8;
+inline constexpr int kMaxObservers = 16;
 
 // Register a POST-dispatch observer for `targetUFunction`. Returns false
 // if the table is full or arguments are null. Safe to call from any
