@@ -19,11 +19,12 @@ constexpr int kMaxRecvPerTick = 64;
 
 // Ping cadence + peer-liveness budget. A peer that hasn't sent ANY packet (pose,
 // ping, anything) for kPeerTimeoutMs is treated as gone (host crash / internet
-// drop -- they couldn't send a graceful Bye). At 30 Hz pose stream + 1 Hz ping
-// the budget should never be approached in healthy steady state; 10 s gives
-// generous slack for transient hiccups before declaring "lost peer".
+// drop -- they couldn't send a graceful Bye). At 60 Hz pose stream + 1 Hz ping
+// the budget is generously above any healthy gap. 3 s = the user wants snappy
+// "they left" feedback (10 s was too long); a real LAN hiccup of 3 s is rare
+// and triggering a respawn-on-reconnect is acceptable.
 constexpr int kPingIntervalMs = 1000;
-constexpr int kPeerTimeoutMs  = 10000;
+constexpr int kPeerTimeoutMs  = 3000;
 
 uint64_t NowMs() {
     using namespace std::chrono;

@@ -38,7 +38,10 @@ struct Config {
     Role role = Role::Host;
     std::string peerIp = "127.0.0.1";  // the OTHER machine (or self, for loopback)
     uint16_t port = kDefaultPort;       // host binds this; client targets it on peerIp
-    int sendHz = 30;                    // pose send rate (methodology 3.4: ~13-30 Hz)
+    int sendHz = 60;                    // pose send rate; 60 Hz = one packet per ~16 ms,
+                                        // matches a 60 fps client's frame interval so the
+                                        // receive cadence stays smooth at the visual rate
+                                        // (28 bytes/packet * 60 Hz = 1.7 KB/s -- trivial).
     // Who opens the handshake. A client always initiates (Hello -> peerIp:port). A
     // real host waits and learns its peer from the first client Hello (peer unknown
     // up front). `initiate` forces the host to also target peerIp -- used for the

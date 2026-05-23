@@ -527,7 +527,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             int tick = 0;
             for (;;) {
                 Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
-                if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz: stats for the LAN test framework
+                if (++tick % 250 == 0) {  // ~every 2 s at 125 Hz: stats for the LAN test framework
                     Post([] {
                         UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
                                 static_cast<int>(g_session.state()),
@@ -536,13 +536,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                                 g_orphan.valid() ? 1 : 0);
                     });
                 }
-                // ~60 Hz pump: RemotePlayer::Tick runs at this rate so the receiver-side
-                // 50 ms LERP window covers ~3 Ticks (smooth without oversampling). NOT
-                // 125 Hz -- a busier harness thread starves the engine under 2-instance
-                // CPU contention and makes story-load drag (seen in LAN testing).
-                // SetLocalPose is cheap; SetTargetPose only fires on NEW packets at 30 Hz.
-                // The NetThread paces the actual SENDS at sendHz independently of this.
-                ::Sleep(16);
+                // 125 Hz pump for MAX SMOOTHNESS: RemotePlayer::Tick advances the
+                // interp at game-frame rate (up to ~120 fps), so the 50 ms LERP
+                // window resolves to ~6 micro-steps -- no visible stepping. The
+                // earlier 60 Hz cap was a workaround for 2-instance same-machine
+                // LAN-test CPU starvation; HANDS-ON play is a single host instance
+                // (the client runs in a separate game folder = separate process =
+                // its own CPU/GPU budget), so the 2-process contention scenario
+                // doesn't apply here. Tick is cheap (~3 UFunction writes per call,
+                // dirty-gated; SetLocalPose lock + 20-byte copy). If a future
+                // multi-instance test surfaces starvation again, the proper fix
+                // is a per-frame engine hook -- not dropping the rate.
+                ::Sleep(8);
             }
         } else {
             SpawnSecondPlayerWhenReady();

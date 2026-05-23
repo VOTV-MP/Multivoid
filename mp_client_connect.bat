@@ -52,12 +52,12 @@ if "%PORT%"=="" set "PORT=47621"
 set "NICK=%~3"
 if "%NICK%"=="" set "NICK=Client"
 
-REM Small compact client window -- the host owns the main view; the client is
-REM just for verifying coop / co-presence and doesn't need a big window. Easy
-REM to tuck away on a second monitor. Override with `set RESX=...` /
-REM `set RESY=...` before running the bat for a custom size.
-if "%RESX%"=="" set "RESX=640"
-if "%RESY%"=="" set "RESY=360"
+REM Smaller client window than the host's full 1920x1080 -- the client is the
+REM secondary view (verifying coop / co-presence), but still readable. 1280x720
+REM is the common "small but legible" windowed default. Override with
+REM `set RESX=...` / `set RESY=...` for a custom size.
+if "%RESX%"=="" set "RESX=1280"
+if "%RESY%"=="" set "RESY=720"
 
 echo Deploying standalone mod to client copy folder ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone -GameWin64 "%WIN64%"

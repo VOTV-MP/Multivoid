@@ -154,8 +154,14 @@ void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) 
 
     // Suppress the floor-trace leg IK (it needs world/owner context a bare actor
     // lacks; left on it splays the legs). Idle by default (spd/walkSpeed = 0).
+    // Also disable the head-look IK: the AnimBP defaults lookingAtPlayer=1 which
+    // makes the head track "the player", but on a puppet there's no valid local
+    // player to read -> the head ends up twisted to the side. The PUPPET's head
+    // should follow the SOURCE PLAYER's view direction (already encoded in the
+    // streamed yaw), not chase a phantom local-player target.
     if (void* anim = LiveAnimInstance(comp)) {
         WriteAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK, false);
+        WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
         WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeedMultiplier, 1.f);
     }
 
