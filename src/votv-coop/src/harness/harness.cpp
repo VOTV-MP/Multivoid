@@ -404,6 +404,12 @@ size_t EnumerateSnapshotCandidates() {
     return g_snapshotCandidates.size();
 }
 
+// Forward-decl for the wire-suppress allowlist predicate; defined further
+// down (with the lifecycle observers). DrainSnapshotChunk + the Init POST
+// observer + event_feed all use the same predicate to keep the
+// host-authoritative allowlist consistent across all broadcast sites.
+bool IsWireSuppressedPropClass(const std::wstring& cls);
+
 // Phase 2 of snapshot (chunked): per-tick, read transform + state for up
 // to kSnapshotChunkSize candidates, build PropSpawnPayload, enqueue.
 // Stops when g_snapshotCandidates is exhausted. Per-tick cost ~5-15 ms
@@ -422,6 +428,17 @@ void DrainSnapshotChunk() {
         if (!obj || !R::IsLive(obj)) continue;
         coop::net::PropSpawnPayload p{};
         const std::wstring cls = R::ClassNameOf(obj);
+        // Audit C-1 (2026-05-24): same wire-suppress allowlist as the
+        // Init POST observer. Intermediate-variant classes (mushroom7_C)
+        // never cross the wire -- host-authoritative. Without this, the
+        // snapshot stream would queue N mushroom7_C entries per reconnect
+        // that the client just drops; reliable stop-and-wait channel
+        // means each wasted entry adds ~10 ms latency to snapshot drain.
+        if (IsWireSuppressedPropClass(cls)) {
+            UE_LOGI("snapshot: skipping intermediate-variant '%ls' actor %p (wire-suppressed)",
+                    cls.c_str(), obj);
+            continue;
+        }
         p.className.len = 0;
         for (size_t j = 0; j < cls.size() && j < 63; ++j) {
             p.className.data[p.className.len++] = static_cast<char>(cls[j]);
@@ -693,38 +710,74 @@ void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*para
 // time (save loads pre-handshake; connected becomes true only after the
 // peer joins). No broadcast bandwidth wasted on save-load.
 // v5 Phase 5N Stream B (2026-05-24): is this prop class an intermediate-
-// variant that should NOT exist on the CLIENT? (Host-authoritative growth
-// pipeline; client only sees the mature variant via wire.) Extend the
-// allowlist as new intermediate-variant cases surface in RE.
-bool IsClientSuppressedPropClass(const std::wstring& cls) {
+// variant that should NEVER be wire-synced? Host-authoritative growth
+// pipeline -- the intermediate state (mushroom7_C growing) stays internal
+// to host; only the mature variant (mushroom_C) is broadcast. Renamed
+// from "ClientSuppressed" to "WireSuppressed" (audit naming clarification
+// 2026-05-24): the predicate gates THREE sites symmetrically:
+//   (1) HOST broadcast in Aprop_C::Init POST -> never send
+//   (2) HOST broadcast in DrainSnapshotChunk -> never enqueue for snapshot
+//   (3) CLIENT local spawn destruction in Aprop_C::Init POST
+//   (4) CLIENT wire-drop in event_feed.cpp PropSpawn handler
+// Extend allowlist as new intermediate-variant cases surface in RE.
+bool IsWireSuppressedPropClass(const std::wstring& cls) {
     return cls == P::name::PropMushroomGrowingClass;
 }
 
-// v5 Phase 5N Stream B: destroy a client-local instance of a suppressed
-// intermediate-variant prop. Uses K2_DestroyActor via reflection (the same
-// path the receiver-side remote_prop::OnDestroy uses for incoming destroys).
-// Idempotent class resolution cached.
-void DestroyLocalProp(void* actor) {
+// v5 Phase 5N Stream B: destroy a wire-suppressed intermediate-variant
+// prop via K2_DestroyActor reflection. Idempotent class resolution cached.
+//
+// IMPORTANT (audit I-3 2026-05-24): when called from inside
+// Aprop_C::Init POST observer, the engine is STILL EXECUTING
+// FinishSpawningActor -- the caller BP graph (e.g. mushroomMaster_C::form)
+// is about to read the FinishSpawningActor return value and call
+// spawnedNaturally() on it. Calling K2_DestroyActor here marks the actor
+// PendingKill BEFORE form() continues. PendingKill actors in UE4 are
+// addressable but flagged for GC; calling spawnedNaturally on a
+// PendingKill is technically safe (no segfault) but burns a UFunction
+// dispatch on a doomed actor.
+//
+// To make destroys clean: caller passes `deferred=true` to schedule the
+// destroy via GT::Post (next-frame on game thread) -- form()'s BP
+// continuation finishes first, THEN we destroy. Adds one frame of
+// "phantom" intermediate-variant on client but eliminates any
+// PendingKill-on-live-BP risk.
+//
+// MarkIncomingDestroy is forward-correct (future host-side suppression
+// extensions would need it); currently dead on client because the PRE
+// observer is host-only-gated.
+void DestroyLocalProp(void* actor, bool deferred) {
     if (!actor) return;
-    static void* sActorCls = nullptr;
-    static void* sDestroyFn = nullptr;
-    if (!sActorCls || !R::IsLive(sActorCls)) {
-        sActorCls = R::FindClass(P::name::ActorClassName);
-        sDestroyFn = nullptr;
+    auto doDestroy = [actor]() {
+        static void* sActorCls = nullptr;
+        static void* sDestroyFn = nullptr;
+        if (!sActorCls || !R::IsLive(sActorCls)) {
+            sActorCls = R::FindClass(P::name::ActorClassName);
+            sDestroyFn = nullptr;
+        }
+        if (sActorCls && !sDestroyFn) {
+            sDestroyFn = R::FindFunction(sActorCls, P::name::DestroyActorFn);
+        }
+        if (!sDestroyFn) {
+            UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", actor);
+            return;
+        }
+        if (!R::IsLive(actor)) {
+            UE_LOGI("spawner-suppress: deferred destroy target %p no longer live (already destroyed elsewhere) -- skip",
+                    actor);
+            return;
+        }
+        // Mark BEFORE calling destroy so OUR PRE-observer skips broadcast
+        // (forward-correct; currently dead on client since the observer is
+        // host-only).
+        coop::remote_prop::MarkIncomingDestroy(actor);
+        R::CallFunction(actor, sDestroyFn, nullptr);
+    };
+    if (deferred) {
+        GT::Post(doDestroy);
+    } else {
+        doDestroy();
     }
-    if (sActorCls && !sDestroyFn) {
-        sDestroyFn = R::FindFunction(sActorCls, P::name::DestroyActorFn);
-    }
-    if (!sDestroyFn) {
-        UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", actor);
-        return;
-    }
-    // Mark BEFORE calling destroy so OUR PRE-observer on K2_DestroyActor
-    // sees it as wire-induced and skips the cross-peer broadcast (the
-    // destruction is a LOCAL host-authoritative cleanup, not an event the
-    // host should be notified about).
-    coop::remote_prop::MarkIncomingDestroy(actor);
-    R::CallFunction(actor, sDestroyFn, nullptr);
 }
 
 void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
@@ -753,17 +806,33 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
     // (mushroom_C) broadcast arrives through normal Inc2 channels.
     const std::wstring cls = R::ClassNameOf(self);
     if (g_session.role() == coop::net::Role::Client) {
-        if (IsClientSuppressedPropClass(cls)) {
-            UE_LOGI("spawner-suppress[client.Init]: destroying local intermediate variant '%ls' actor=%p (host-authoritative; mature variant will arrive via wire)",
+        if (IsWireSuppressedPropClass(cls)) {
+            UE_LOGI("spawner-suppress[client.Init]: scheduling deferred destroy for local intermediate variant '%ls' actor=%p (host-authoritative; mature variant will arrive via wire)",
                     cls.c_str(), self);
-            DestroyLocalProp(self);
+            // Audit I-3 (2026-05-24): defer the destroy via GT::Post so
+            // the engine's FinishSpawningActor + the calling BP graph
+            // (mushroomMaster_C::form's spawnedNaturally call on the
+            // returned actor) complete BEFORE we mark PendingKill.
+            DestroyLocalProp(self, /*deferred=*/true);
             return;
         }
         // Client doesn't broadcast world spawns (host-authoritative).
         return;
     }
 
-    // From here on: role == Host. The rest of the function is the broadcast path.
+    // From here on: role == Host.
+    //
+    // Audit C-2 (2026-05-24): host MUST NOT broadcast intermediate-variant
+    // classes. The receiver drops them anyway but the round-trip wastes
+    // reliable-channel bandwidth (~10 ms per packet on stop-and-wait) per
+    // growing-mushroom spawn. Host-authoritative invariant: the
+    // intermediate state stays internal; only the mature variant
+    // broadcasts when host's growth-timer transforms.
+    if (IsWireSuppressedPropClass(cls)) {
+        UE_LOGI("spawner-suppress[host.Init]: skipping broadcast for intermediate-variant '%ls' actor=%p (host-authoritative; will broadcast mature variant on transform)",
+                cls.c_str(), self);
+        return;
+    }
 
     coop::net::PropSpawnPayload p{};
     // `cls` reused from the Stream-B suppression check above (cached once).
