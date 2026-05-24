@@ -45,10 +45,81 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
     return out;
 }
 
+// Nickname sanitizer (2026-05-25, VT-inspired): trust-boundary defense at
+// the nameplate / hud-feed display surface. Borrowed from VoidTogether-
+// Server's utilityModule.js SimplifyName (regex /^-+|-+$|[^A-Za-z0-9 ]+/g
+// + truncate to 20) -- adjusted for our wchar_t pipeline and to ALLOW
+// internal spaces (single-space runs collapsed; leading/trailing trimmed).
+//
+// Why: a peer's Join reliable payload carries an arbitrary UTF-8 byte
+// string of arbitrary length. Without sanitization, a malicious or buggy
+// peer could inject:
+//   - Control chars (newline / null / ANSI escape) that corrupt our
+//     hud_feed widget text and could in theory escape out of UMG bindings.
+//   - Right-to-left override unicode (U+202E) that visually inverts the
+//     subsequent text in the nameplate.
+//   - Combining diacritics that render glyphs taller than the widget bg.
+//   - Very long strings that overflow the floating nameplate beyond the
+//     screen and waste reliable-channel bandwidth on join.
+//
+// Pattern: keep ASCII alphanumerics + space + the safe punctuation set
+// `[-_.]`. Strip everything else. Collapse multi-space runs to single.
+// Trim leading/trailing whitespace + dashes. Truncate to 20 wchars max.
+// Empty result falls back to "Player" so the nameplate isn't blank.
+//
+// This applies SYMMETRICALLY to both the inbound Join receive (defense
+// against peer-side garbage) AND to our own outbound SetLocalNickname
+// (defense against env-var typos / Windows path leakage / our own
+// future bugs).
+//
+// NOT a profanity filter -- VoidTogether uses obscenity.js for that
+// (450 KB of regexes + transformers). Out of scope for the standalone
+// C++ mod; a strict-character sanitizer + length cap is the trust-
+// boundary fix, profanity moderation is a separate moderation feature
+// pending Phase 6+ (per the VT adoption findings ranked shortlist).
+constexpr size_t kMaxNickLen = 20;
+std::wstring SanitizeNickname(const std::wstring& raw) {
+    std::wstring out;
+    out.reserve(raw.size());
+    bool lastWasSpace = true;  // primes the leading-space trim
+    for (wchar_t c : raw) {
+        const bool isAlnum = (c >= L'0' && c <= L'9') ||
+                             (c >= L'A' && c <= L'Z') ||
+                             (c >= L'a' && c <= L'z');
+        const bool isSafePunct = (c == L'-' || c == L'_' || c == L'.');
+        const bool isSpace = (c == L' ');
+        if (isAlnum || isSafePunct) {
+            out.push_back(c);
+            lastWasSpace = false;
+        } else if (isSpace && !lastWasSpace) {
+            out.push_back(L' ');
+            lastWasSpace = true;
+        }
+        // else: strip silently (control chars, unicode, punctuation, etc.)
+        if (out.size() >= kMaxNickLen) break;
+    }
+    // Trim trailing space.
+    while (!out.empty() && (out.back() == L' ' || out.back() == L'-'))
+        out.pop_back();
+    // Trim leading dashes (the SimplifyName regex's ^-+ rule -- VT
+    // didn't trim leading space because their regex stripped all space
+    // implicitly; we kept internal spaces so leading-space is already
+    // gone via the `lastWasSpace=true` prime).
+    size_t start = 0;
+    while (start < out.size() && out[start] == L'-') ++start;
+    if (start > 0) out.erase(0, start);
+    return out.empty() ? std::wstring(L"Player") : out;
+}
+
 }  // namespace
 
 void SetLocalNickname(const std::wstring& nick) {
-    if (!nick.empty()) g_localNick = nick;
+    // VT-inspired sanitize-on-input (2026-05-25): symmetric defense.
+    // Sanitizing here too means our env-var setup (VOTVCOOP_NET_NICK)
+    // can't accidentally send garbage over the wire that we then
+    // sanitize on the OTHER end -- net is cleaner if both ends agree
+    // on the displayable form.
+    if (!nick.empty()) g_localNick = SanitizeNickname(nick);
 }
 
 void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
@@ -91,6 +162,15 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
                 if (1 + len <= static_cast<int>(msg.payload.size()) && len > 0)
                     nick = FromUtf8(msg.payload.data() + 1, len);
             }
+            // VT-inspired nickname sanitizer (2026-05-25, see
+            // SanitizeNickname doc above). Trust-boundary defense: this
+            // string CAME FROM A PEER over UDP and is going to land in
+            // our floating UMG nameplate + the hud_feed widget. Without
+            // sanitization a hostile peer could newline-inject our
+            // widget text or insert a RLO unicode override to mirror
+            // the rest of the nameplate. Length-cap to 20 wchars caps
+            // the worst-case widget overflow.
+            nick = SanitizeNickname(nick);
             g_remoteNick = nick;
             if (remote) remote->SetNickname(nick);  // label the nameplate too
             ue_wrap::hud_feed::Push(nick + L" joined the game");
