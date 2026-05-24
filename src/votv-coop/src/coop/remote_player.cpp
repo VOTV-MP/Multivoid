@@ -106,10 +106,21 @@ bool RemotePlayer::Spawn() {
         const float meshWorldYaw = std::atan2(meshFwd.Y, meshFwd.X) * 57.29577951f;
         meshOffsetYaw_ = ue_wrap::NormalizeAxis(meshWorldYaw - localActorRot.Yaw);
     }
-    const float halfH = E::GetActorCharacterHalfHeight(local);
-    meshOffsetZ_ = -halfH;
-    UE_LOGI("RemotePlayer::Spawn: meshOffsetZ_=%.2f (= -halfH, capsule HalfHeight @+0x468) "
-            "meshOffsetYaw_=%.2f", meshOffsetZ_, meshOffsetYaw_);
+    // 2026-05-25 puppet rework: meshOffsetZ_ now depends on puppet kind.
+    //   MainPlayer (default): 0 -- the ACharacter's CapsuleComponent IS
+    //     the root, mesh hangs at -halfH below via BP construction; wire
+    //     actor.Z maps directly to puppet.actor.Z.
+    //   SkelMesh (backup): -halfH -- the SkeletalMeshComponent IS the
+    //     root; reconstruct the -halfH shim at the actor transform level.
+    // Helper centralizes the decision; remote_player just consumes the
+    // value at spawn + uses it per-tick in ApplyToEngine.
+    meshOffsetZ_ = Pup::GetSpawnMeshOffsetZ(local);
+    UE_LOGI("RemotePlayer::Spawn: meshOffsetZ_=%.2f (puppet-kind=%ls) "
+            "meshOffsetYaw_=%.2f",
+            meshOffsetZ_,
+            Pup::IsMainPlayerPuppetKind() ? L"MainPlayer (0)"
+                                          : L"SkelMesh (-halfH)",
+            meshOffsetYaw_);
 
     // Spawn-placement Z = actor.Z + meshOffsetZ_, same formula as ApplyToEngine.
     // No visual pop between SpawnActor and the first ApplyToEngine because both

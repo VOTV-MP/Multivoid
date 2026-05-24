@@ -147,6 +147,25 @@ inline constexpr size_t AmainPlayer_mesh_playerVisible = 0x04F8;  // USkeletalMe
 inline constexpr size_t USkinnedMesh_SkeletalMesh = 0x0480;       // USkeletalMesh* (the skin asset)  Engine.hpp:18299
 inline constexpr size_t USkeletalMesh_AnimClass = 0x06A8;         // TSubclassOf<UAnimInstance>  Engine.hpp:18094
 
+// 2026-05-25 puppet rework (mainPlayer_C orphan path, per
+// research/findings/votv-puppet-mainplayer-body-RE-2026-05-25.md): the
+// remote-player puppet now spawns mainPlayer_C directly (inertPawn=true)
+// instead of ASkeletalMeshActor. We need to:
+//   * destroy the per-screen PostProcess components (these affect the
+//     LOCAL camera's color grading -- a puppet must not own them);
+//   * hide the FP-arms viewmodel (camera-space attached, wrong on a
+//     puppet);
+//   * keep mesh_playerVisible visible (the third-person body the local
+//     player sees when they look down + the OTHER peer's puppet body).
+// All offsets from mainPlayer.hpp; verified there.
+inline constexpr size_t AmainPlayer_PostProcess_overlays_OBSOLETE = 0x04C8;  // UPostProcessComponent*  mainPlayer.hpp:9
+inline constexpr size_t AmainPlayer_mic                           = 0x0518;  // UAudioCaptureComponent*  mainPlayer.hpp (mic input; must be destroyed on the orphan to prevent latent device hold)
+inline constexpr size_t AmainPlayer_PostProcess_pl                = 0x0590;  // UPostProcessComponent*  mainPlayer.hpp:50
+inline constexpr size_t AmainPlayer_arms                          = 0x05F8;  // USkeletalMeshComponent*  mainPlayer.hpp:55 (FP viewmodel)
+inline constexpr size_t AmainPlayer_playermodel                   = 0x0638;  // USkeletalMeshComponent*  mainPlayer.hpp:58 (legacy/equipment overlay; review visibility)
+inline constexpr size_t AmainPlayer_GameMode                      = 0x0C80;  // AmainGamemode_C*  mainPlayer.hpp (cached at BeginPlay; nulled on the puppet so subsequent gamemode-interaction BP paths return early)
+inline constexpr size_t mainGamemode_mainPlayer                   = 0x0630;  // AmainPlayer_C*  mainGamemode.hpp (the canonical "the local player" ref the gamemode uses for save/sleep/damage; the orphan's BeginPlay would overwrite it via intComs_gamemodeBeginPlay -- the puppet path captures + restores)
+
 // UAnimBlueprint_kerfurOmega_regular_C public variables (offsets within the live
 // AnimInstance). The locomotion-drive variables are PULL: BlueprintUpdateAnimation
 // (the AnimBP's sole custom writer per the CXX dump) is expected to read the
@@ -169,7 +188,8 @@ inline constexpr size_t AnimBP_kerfur_lookingAtPlayer = 0x2E01;    // bool
 inline constexpr size_t AnimBP_kerfur_kerfur = 0x2E08;             // AkerfurOmega_C* (null for a player body too)
 inline constexpr size_t AnimBP_kerfur_walkSpeedMultiplier = 0x2E18;// float
 inline constexpr size_t AnimBP_kerfur_spd = 0x2E1C;                // float  (live speed; local has 600 while walking -> the BlendSpace X input)
-inline constexpr size_t AnimBP_kerfur_useLegIK = 0x2E39;           // bool (false = skip floor-trace IK)
+inline constexpr size_t AnimBP_kerfur_useLegIK = 0x2E39;           // bool (false = skip floor-trace IK; TRUE on mainPlayer_C orphan: real Character + satellite floor context)
+inline constexpr size_t AnimBP_kerfur_removeArms = 0x2E3A;         // bool (true = hide arms from the body AnimBP blend -- prevents grab-pose arm flail on the puppet)
 inline constexpr size_t AnimBP_kerfur_headLookAt = 0x2E3C;         // FRotator
 inline constexpr size_t AnimBP_kerfur_isFace = 0x2E48;             // bool
 
@@ -186,6 +206,8 @@ inline constexpr size_t AController_ControlRotation = 0x0288;  // FRotator
 // half-height = the distance from the source's actor centre down to source
 // ground (where the source's feet ARE meant to be). See [[project-remote-
 // player-open-issues]] for the full derivation.
+inline constexpr size_t ACharacter_Mesh             = 0x0280;          // USkeletalMeshComponent*  Engine.hpp:6970 (native body slot; mainPlayer_C uses mesh_playerVisible @0x04F8 as the authoritative body and the native slot is typically hidden)
+inline constexpr size_t ACharacter_CharacterMovement = 0x0288;         // UCharacterMovementComponent*  Engine.hpp:6971 (mainPlayer_C orphan: must be tick-disabled on the puppet so the satellite is the only Velocity source)
 inline constexpr size_t ACharacter_CapsuleComponent = 0x0290;          // UCapsuleComponent*  Engine.hpp:6972
 inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float  Engine.hpp:9883
 

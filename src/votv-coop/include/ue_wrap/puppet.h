@@ -37,20 +37,56 @@ void* GetMeshPlayerVisibleComponent(void* mainPlayerPawn);
 // fails; the live component is the source of truth.) Returns the UClass*, or null.
 void* GetMeshPlayerVisibleAnimClass(void* mainPlayerPawn);
 
-// Spawn a puppet (ASkeletalMeshActor) at `loc` wearing `skeletalMeshAsset` and
-// running `animClass` (both copied from the local player's working body), set to
-// always-tick its pose and visible. Returns the actor, or nullptr. Logs a
-// local-vs-puppet AnimBP state diff for diagnosis.
+// Two puppet UClass strategies (controlled by IsMainPlayerPuppetKind() env
+// var below).
 //
-// NOTE: a SkeletalMeshActor has the SkeletalMeshComponent as its ROOT component
-// (no AttachParent). The visible-mesh-vs-actor offset that mainPlayer_C carries
-// on its `mesh_playerVisible` (RelLoc.Z = -halfH-ish, RelRot.Yaw = -90 for the
-// mesh-asset's "+Y forward" convention) CANNOT live as a sub-component offset
-// here -- a root component's RelLoc/RelRot just compose into the world transform
-// that SetActorLocation immediately overwrites. RemotePlayer applies the same
-// shim at the ACTOR transform level instead (puppet.actor.Z = source.actor.Z +
-// localMesh.RelLoc.Z; puppet.actor.Yaw = source.actor.Yaw + localMesh.RelRot.Yaw).
+//   MainPlayer (DEFAULT, 2026-05-25 per
+//   research/findings/votv-puppet-mainplayer-body-RE-2026-05-25.md):
+//     spawn AmainPlayer_C with inertPawn=true (AutoPossessPlayer/AI=0,
+//     bBlockInput=1). The class's built-in mesh_playerVisible carries the
+//     player body skin + IK leg bones; we just neuter the per-screen
+//     systems (DestroyComponent on both PostProcessComponents; hide FP
+//     `arms` viewmodel) and let the existing satellite-ACharacter (Plan B2)
+//     drive the AnimBP. useLegIK can stay TRUE (real ACharacter has the
+//     floor-trace context the IK needs).
+//
+//   SkeletalMeshActor (BACKUP, retiring per RULE 2 once mainPlayer_C path
+//   verified in hands-on test):
+//     spawn ASkeletalMeshActor + SetSkeletalMesh + SetAnimClass with the
+//     local player's skin asset + body AnimBP. Same satellite path. Bare-
+//     actor IK doesn't work (no Character context), so useLegIK is FALSE.
+//
+// Both kinds: returns the actor or nullptr. Logs a local-vs-puppet AnimBP
+// state diff for diagnosis. RemotePlayer's Z convention adapts via
+// puppet::GetSpawnMeshOffsetZ(localPlayer) below.
 void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass);
+
+// Returns true iff the active puppet kind is mainPlayer_C. Reads
+// VOTVCOOP_PUPPET_KIND env var ONCE on first call (cached). Values:
+//   "mainplayer" (default) -> true (mainPlayer_C orphan puppet, IK on)
+//   "skelmesh"             -> false (legacy SkeletalMeshActor puppet)
+// Default chosen on the user directive 2026-05-25: "we need to create
+// remote as a second puppet which local first person player sees when he
+// bends his camera down (body, legs, ik legs). NOT KERFUR. (kerfur we
+// leave as a backup)".
+//
+// Retirement (RULE 2): the SkelMesh path goes when mainPlayer_C path is
+// hands-on-verified working (body visible to other peer with correct
+// orientation + IK legs working + no enemy-targeting regression). At that
+// point this function + the SkelMesh branch in SpawnPuppet + the
+// SkeletalMeshActorClass name constant all go.
+bool IsMainPlayerPuppetKind();
+
+// Z offset to apply at spawn placement so the puppet's visible mesh world Z
+// matches the source actor's mesh world Z. Differs by kind:
+//   * MainPlayer: 0.f (the ACharacter's CapsuleComponent IS the root; the
+//     mesh hangs at -halfH below via BP construction; puppet.actor.Z =
+//     source.actor.Z directly).
+//   * SkelMesh:  -halfH (the SkeletalMeshComponent IS the root; we
+//     reconstruct the -halfH shim at the actor transform level).
+// `localPlayer` is the local mainPlayer_C; used to read CapsuleHalfHeight.
+// Returns 0 if kind == MainPlayer or if localPlayer is null/dead.
+float GetSpawnMeshOffsetZ(void* localPlayer);
 
 // The puppet's USkeletalMeshComponent (first SkeletalMeshComponent child),
 // cached per actor. nullptr if none.

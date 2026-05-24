@@ -6,9 +6,12 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <windows.h>  // GetEnvironmentVariableW
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 
@@ -243,58 +246,236 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
             pawn, ctrl, movement, kerfur, useLegIK, isFace, lookingAtPlayer);
 }
 
-void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
+bool IsMainPlayerPuppetKind() {
+    // Read VOTVCOOP_PUPPET_KIND env var ONCE on first call; cache the result.
+    // Default true (mainPlayer_C path). Any value starting with 's' (skelmesh,
+    // skel, smc) flips to the SkeletalMeshActor backup path.
+    static bool resolved = false;
+    static bool isMainPlayer = true;
+    if (!resolved) {
+        wchar_t buf[64] = {};
+        const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_PUPPET_KIND", buf, 64);
+        if (n > 0 && n < 64) {
+            const wchar_t c = static_cast<wchar_t>(::towlower(buf[0]));
+            if (c == L's') isMainPlayer = false;
+        }
+        UE_LOGI("puppet: puppet-kind = %ls (VOTVCOOP_PUPPET_KIND=%ls)",
+                isMainPlayer ? L"MainPlayer (mainPlayer_C orphan)"
+                             : L"SkelMesh (ASkeletalMeshActor backup)",
+                n > 0 ? buf : L"<unset, default mainplayer>");
+        resolved = true;
+    }
+    return isMainPlayer;
+}
+
+float GetSpawnMeshOffsetZ(void* localPlayer) {
+    if (IsMainPlayerPuppetKind()) return 0.f;
+    if (!localPlayer || !R::IsLive(localPlayer)) return 0.f;
+    return -E::GetActorCharacterHalfHeight(localPlayer);
+}
+
+// Backup path: spawn ASkeletalMeshActor wearing the local player's skin +
+// running the body AnimBP. RULE 2 retirement: this whole function goes when
+// the MainPlayer path is hands-on-verified working (criteria documented in
+// puppet.h).
+static void* SpawnPuppetSkelMesh(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
     if (!skeletalMeshAsset) {
-        UE_LOGE("puppet: SpawnPuppet no skin asset");
+        UE_LOGE("puppet[SkelMesh]: no skin asset");
         return nullptr;
     }
     void* cls = R::FindClass(P::name::SkeletalMeshActorClass);
     if (!cls) {
-        UE_LOGE("puppet: SkeletalMeshActor class not found");
+        UE_LOGE("puppet[SkelMesh]: SkeletalMeshActor class not found");
         return nullptr;
     }
     // A SkeletalMeshActor is NOT a pawn -> no auto-possess, no hijack surface.
     void* actor = E::SpawnActor(cls, loc, /*inertPawn=*/false);
     if (!actor) {
-        UE_LOGE("puppet: SpawnActor(SkeletalMeshActor) failed");
+        UE_LOGE("puppet[SkelMesh]: SpawnActor failed");
         return nullptr;
     }
     void* comp = GetSkeletalMeshComponent(actor);
     if (!comp) {
-        UE_LOGE("puppet: spawned actor %p has no SkeletalMeshComponent", actor);
+        UE_LOGE("puppet[SkelMesh]: spawned actor %p has no SkeletalMeshComponent", actor);
         return actor;
     }
-
-    // Wear the local player's skin + run the body AnimBP. SetAnimClass also flips
-    // AnimationMode to UseAnimBlueprint and instantiates the AnimInstance. animClass
-    // is read off the LOCAL working body (lookup-by-name fails for BP-generated
-    // classes), so it's guaranteed valid.
     E::SetSkeletalMesh(comp, skeletalMeshAsset);
     if (animClass) {
         E::SetAnimClass(comp, animClass);
     } else {
-        UE_LOGW("puppet: no AnimClass -> body renders in reference pose (T-pose)");
+        UE_LOGW("puppet[SkelMesh]: no AnimClass -> body renders in reference pose (T-pose)");
     }
-    E::SetAnimTickAlways(comp);          // pose even when not the rendered viewpoint
+    E::SetAnimTickAlways(comp);
     E::SetComponentVisible(comp, true);
-
-    // Suppress the floor-trace leg IK (it needs world/owner context a bare actor
-    // lacks; left on it splays the legs). Idle by default (spd/walkSpeed = 0).
-    // Also disable the head-look IK: the AnimBP defaults lookingAtPlayer=1 which
-    // makes the head track "the player", but on a puppet there's no valid local
-    // player to read -> the head ends up twisted to the side. The PUPPET's head
-    // should follow the SOURCE PLAYER's view direction (already encoded in the
-    // streamed yaw), not chase a phantom local-player target.
+    // Suppress floor-trace leg IK (needs Character context a bare ASkeletalMesh
+    // Actor lacks; on it splays the legs) + decouple head from local-player
+    // track.
     if (void* anim = LiveAnimInstance(comp)) {
         WriteAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK, false);
         WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
         WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeedMultiplier, 1.f);
     }
-
-    UE_LOGI("puppet: spawned actor=%p comp=%p at (%.0f,%.0f,%.0f)",
+    UE_LOGI("puppet[SkelMesh]: spawned actor=%p comp=%p at (%.0f,%.0f,%.0f)",
             actor, comp, loc.X, loc.Y, loc.Z);
     DumpAnimState(L"puppet", comp);
     return actor;
+}
+
+// New path: spawn mainPlayer_C orphan. The class's built-in mesh_playerVisible
+// carries the player body skin + IK leg bones + the AnimBP all pre-wired by
+// class defaults. We just neuter the per-screen systems (PostProcess
+// components affect the local view; FP arms are camera-space attached) and
+// flip a few AnimBP flags. 2026-05-25 per
+// research/findings/votv-puppet-mainplayer-body-RE-2026-05-25.md.
+static void* SpawnPuppetMainPlayer(const FVector& loc) {
+    void* cls = R::FindClass(P::name::MainPlayerClass);
+    if (!cls) {
+        UE_LOGE("puppet[MainPlayer]: mainPlayer_C class not found");
+        return nullptr;
+    }
+    // 2026-05-25 audit: BEFORE spawning the orphan, capture the running
+    // gamemode's mainPlayer reference. The orphan's BeginPlay runs
+    // intComs_gamemodeBeginPlay which (per the BP pattern) writes
+    // gamemode.mainPlayer = caller. We restore the captured pointer
+    // after spawn so the gamemode's save/sleep/damage paths keep
+    // operating on the REAL local player.
+    void* gamemode = R::FindObjectByClass(P::name::GamemodeClass);
+    void* gmMainPlayerBefore = nullptr;
+    if (gamemode) {
+        gmMainPlayerBefore = ReadPtr(gamemode, P::off::mainGamemode_mainPlayer);
+    } else {
+        UE_LOGW("puppet[MainPlayer]: no live gamemode found -- cannot capture mainPlayer pointer for restore");
+    }
+    // inertPawn=true zeros AutoPossessPlayer/AutoPossessAI/AutoReceiveInput
+    // and sets bBlockInput in the deferred-spawn window BEFORE BeginPlay,
+    // so no 2nd PlayerController auto-possesses and no local input gets
+    // hijacked (RULE 1 root-cause prevention).
+    void* actor = E::SpawnActor(cls, loc, /*inertPawn=*/true);
+    if (!actor) {
+        UE_LOGE("puppet[MainPlayer]: SpawnActor(mainPlayer_C) failed");
+        return nullptr;
+    }
+    // 2026-05-25 audit fix (CRITICAL #1): restore gamemode.mainPlayer if
+    // the orphan's BeginPlay overwrote it (intComs_gamemodeBeginPlay
+    // pattern). Without this, the gamemode's autosave timer would
+    // serialize the orphan's position as the save's player transform,
+    // corrupting the save.
+    if (gamemode) {
+        void* gmMainPlayerAfter = ReadPtr(gamemode, P::off::mainGamemode_mainPlayer);
+        if (gmMainPlayerAfter != gmMainPlayerBefore) {
+            E::WriteObjectField(gamemode, P::off::mainGamemode_mainPlayer, gmMainPlayerBefore);
+            UE_LOGI("puppet[MainPlayer]: gamemode.mainPlayer was overwritten by orphan (%p -> %p); restored to %p",
+                    gmMainPlayerBefore, gmMainPlayerAfter, gmMainPlayerBefore);
+        }
+    }
+    // 2026-05-25 audit fix (CRITICAL #2): null the orphan's cached
+    // GameMode pointer so subsequent ReceiveTick BP graphs that read it
+    // (and the standard VOTV null-check pattern returns early) don't
+    // re-overwrite gamemode.mainPlayer or invoke gamemode methods.
+    E::WriteObjectField(actor, P::off::AmainPlayer_GameMode, nullptr);
+    UE_LOGI("puppet[MainPlayer]: nulled orphan.GameMode @0x0C80 (disconnected from gamemode)");
+
+    // Read mesh_playerVisible by DIRECT OFFSET (not ChildObjectsOf search):
+    // mainPlayer_C has multiple SkeletalMeshComponents (ACharacter::Mesh
+    // @0x0280 + mesh_playerVisible @0x04F8 + arms @0x05F8 + playermodel
+    // @0x0638). Child-search would return whichever loads first -- not
+    // necessarily the body we want.
+    void* meshComp = ReadPtr(actor, P::off::AmainPlayer_mesh_playerVisible);
+    if (!meshComp) {
+        UE_LOGE("puppet[MainPlayer]: actor %p has no mesh_playerVisible @0x04F8", actor);
+        return actor;
+    }
+    // Cache for GetSkeletalMeshComponent (the DriveAnimBP path).
+    g_meshComp[actor] = meshComp;
+
+    // 2026-05-25 audit fix (CRITICAL #3): disable the orphan's
+    // CharacterMovementComponent tick. CMC runs gravity+walking
+    // integration each tick and would fight ApplyToEngine's
+    // SetActorLocation writes (rubber-banding the puppet between our
+    // wire-driven position and CMC's gravity-integrated position).
+    // Mirror the satellite's CMC disable.
+    if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
+        E::SetComponentTickEnabled(cmc, false);
+        UE_LOGI("puppet[MainPlayer]: disabled orphan CMC tick @ %p (puppet driven by SetActorLocation, not physics)", cmc);
+    }
+
+    // Neuter per-screen post-processing -- both PostProcessComponents drive
+    // the LOCAL camera's color/exposure/gamma; leaving them alive on a
+    // puppet would corrupt whichever screen renders the puppet.
+    if (void* pp1 = ReadPtr(actor, P::off::AmainPlayer_PostProcess_overlays_OBSOLETE)) {
+        if (E::DestroyComponent(pp1, actor)) {
+            UE_LOGI("puppet[MainPlayer]: destroyed PostProcess_overlays_OBSOLETE @ %p", pp1);
+        }
+    }
+    if (void* pp2 = ReadPtr(actor, P::off::AmainPlayer_PostProcess_pl)) {
+        if (E::DestroyComponent(pp2, actor)) {
+            UE_LOGI("puppet[MainPlayer]: destroyed PostProcess_pl @ %p", pp2);
+        }
+    }
+    // 2026-05-25 audit fix (HIGH #4): destroy the mic
+    // UAudioCaptureComponent. Without this, the orphan captures audio
+    // from the default input device into a sink nobody reads (latent
+    // device hold + wasted resource).
+    if (void* mic = ReadPtr(actor, P::off::AmainPlayer_mic)) {
+        if (E::DestroyComponent(mic, actor)) {
+            UE_LOGI("puppet[MainPlayer]: destroyed mic UAudioCaptureComponent @ %p", mic);
+        }
+    }
+    // Hide FP arms viewmodel (camera-space attached -- wrong on a 3rd-
+    // person-observed puppet). SetComponentVisible(false) sets BOTH
+    // SetVisibility(false) and SetHiddenInGame(true) (propagated).
+    if (void* arms = ReadPtr(actor, P::off::AmainPlayer_arms)) {
+        E::SetComponentVisible(arms, false);
+        UE_LOGI("puppet[MainPlayer]: hid FP arms @ %p", arms);
+    }
+    // 2026-05-25 audit (HIGH #5): hide playermodel if it carries a
+    // visible mesh asset. This is the legacy equipment-overlay slot;
+    // typically null/hidden on the player but verify per build.
+    if (void* playermodel = ReadPtr(actor, P::off::AmainPlayer_playermodel)) {
+        E::SetComponentVisible(playermodel, false);
+        UE_LOGI("puppet[MainPlayer]: hid playermodel @ %p (legacy equipment overlay)", playermodel);
+    }
+    // Hide the ACharacter native Mesh slot if distinct from mesh_playerVisible.
+    if (void* nativeMesh = ReadPtr(actor, P::off::ACharacter_Mesh)) {
+        if (nativeMesh != meshComp) {
+            E::SetComponentVisible(nativeMesh, false);
+            UE_LOGI("puppet[MainPlayer]: hid ACharacter::Mesh @ %p (the unused native slot)", nativeMesh);
+        }
+    }
+    // mesh_playerVisible: force always-tick + visible. Class default may
+    // have VisibilityBasedAnimTick=OnlyTickPoseWhenRendered which would
+    // collapse the puppet to a stick when not on screen.
+    E::SetAnimTickAlways(meshComp);
+    E::SetComponentVisible(meshComp, true);
+
+    // AnimBP setup: IK legs ON (real Character has floor-trace context via
+    // the satellite Plan B2), removeArms ON (avoid grab-pose arm flail),
+    // head-look-at-player OFF (the streamed yaw via DriveAnimBP drives the
+    // head bone directly).
+    if (void* anim = LiveAnimInstance(meshComp)) {
+        WriteAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK,        true);
+        WriteAt<bool>(anim, P::off::AnimBP_kerfur_removeArms,      true);
+        WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
+        WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeedMultiplier, 1.f);
+    }
+    UE_LOGI("puppet[MainPlayer]: spawned actor=%p mesh_playerVisible=%p at (%.0f,%.0f,%.0f)",
+            actor, meshComp, loc.X, loc.Y, loc.Z);
+    DumpAnimState(L"puppet", meshComp);
+    return actor;
+}
+
+void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
+    // Branch on env-var-controlled puppet kind. Default MainPlayer per user
+    // directive 2026-05-25 (puppet must be full body+legs+IK, not bare
+    // SkeletalMeshActor).
+    if (IsMainPlayerPuppetKind()) {
+        // skin + animClass params unused on this path (class defaults set
+        // them); kept on the public API while SkelMesh backup remains. RULE
+        // 2 retirement drops both params + the SkelMesh branch.
+        (void)skeletalMeshAsset; (void)animClass;
+        return SpawnPuppetMainPlayer(loc);
+    }
+    return SpawnPuppetSkelMesh(loc, skeletalMeshAsset, animClass);
 }
 
 void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float headYawDelta) {
