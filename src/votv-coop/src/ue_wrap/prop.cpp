@@ -253,16 +253,18 @@ void* FindNearbySameClass(const std::wstring& className,
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         if (!IsDescendantOfProp(obj)) continue;
-        // Filter order (audit IMPORTANT-2 2026-05-24): cheapest checks
-        // FIRST. NameOf+CDO check before ClassNameOf wstring compare --
-        // matches the established pattern in FindByKeyString. Saves one
-        // wstring allocation for the few CDO descendants that get past
-        // IsDescendantOfProp.
+        // Filter order (audit IMPORTANT-2 2026-05-24 + audit #5 2026-05-25):
+        // cheapest checks FIRST. IsLive is a pure flag read (FUObjectItem.
+        // Flags @ +0x08) -- cheaper than ClassNameOf which allocates a
+        // wstring per call. So: descendant -> IsLive -> CDO-name -> class-
+        // name. (FindByKeyString has a different ordering for a different
+        // reason -- it needs CDO/name first to skip stale dying-same-key
+        // matches; here we just want the cheapest filter first.)
+        if (!R::IsLive(obj)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
         // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
         if (R::ClassNameOf(obj) != className) continue;
-        if (!R::IsLive(obj)) continue;
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;

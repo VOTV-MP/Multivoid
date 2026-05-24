@@ -489,6 +489,24 @@ void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
 // Currently only the cap mushroom is confirmed; extend if other natural-
 // spawn paths exhibit the same pattern. The check is cheap (single string
 // compare) so calling it in OnSpawn's hot path is fine.
+//
+// ==== RULE №1 RETIREMENT PLAN (audit fix 2026-05-25, issue #4) ====
+// This restore is an INTERIM fix at the SYMPTOM (collision write at
+// OnSpawn-time). The architecturally correct ROOT-CAUSE fix is to suppress
+// AmushroomSpawner_C::Spawn on the client entirely, so the local actor
+// never goes through spawnedNaturally() in the first place (Option B from
+// the RE doc). Gating criteria for retirement:
+//   (1) Phase 5N1 Stream B-Spawners ships -- single BeginDeferredActor
+//       SpawnFromClass observer with a class allowlist that includes
+//       AmushroomSpawner_C (covers all natural spawners simultaneously).
+//   (2) Hands-on test confirms mushrooms sync correctly with this restore
+//       call commented out (the test the user is running now is the
+//       inverse -- with restore IN, verifying no fall-through).
+//   (3) Then remove this helper + the IsCollisionRestoreClass check +
+//       PropFoodMushroomClass constant. Per RULE №2 the kerfur-of-the-day
+//       fix goes when the proper fix lands; no parallel paths.
+// Tracked in [[project-coop-mushroom-state-re]] memory entry under
+// "Stream B-Spawners" follow-up scope.
 inline bool IsCollisionRestoreClass(const std::wstring& cls) {
     return cls == ue_wrap::profile::name::PropFoodMushroomClass;
 }

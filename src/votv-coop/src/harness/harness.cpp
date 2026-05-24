@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 
 namespace harness {
 namespace {
@@ -724,6 +725,39 @@ bool IsWireSuppressedPropClass(const std::wstring& cls) {
     return cls == P::name::PropMushroomGrowingClass;
 }
 
+// 2026-05-25 audit fix (post-ship audit issue #1): the subclass-aware Init
+// observer registers on multiple Init UFunctions in the prop_C lineage (base
+// + each override). If a subclass Init calls super (BP "Parent: ..." node),
+// BOTH the override AND the base observer fire for the same actor with
+// different function pointers but identical self. Without dedupe, host
+// double-broadcasts PropSpawn and client runs DestroyLocalProp twice.
+//
+// Same set also dedupes against a hypothetical "Init called multiple times"
+// path (UE4 doesn't normally do that for a single actor, but defensive).
+//
+// Cap mirrors the remote_prop incoming-set pattern: bounded 256, clear on
+// overflow (a one-shot stale-skip is harmless because by the time the cap
+// trips, all listed actors have either been destroyed or stably broadcast).
+// Game-thread-only access (observer dispatch fires on game thread for BP
+// UFunctions like Init).
+std::unordered_set<void*> g_processedInitActors;
+constexpr size_t kProcessedInitCap = 256;
+
+void MarkProcessedInit(void* actor) {
+    if (!actor) return;
+    if (g_processedInitActors.size() >= kProcessedInitCap) g_processedInitActors.clear();
+    g_processedInitActors.insert(actor);
+}
+
+bool HasProcessedInit(void* actor) {
+    return actor && g_processedInitActors.count(actor) > 0;
+}
+
+void UnmarkProcessedInit(void* actor) {
+    if (!actor) return;
+    g_processedInitActors.erase(actor);
+}
+
 // v5 Phase 5N Stream B: destroy a wire-suppressed intermediate-variant
 // prop via K2_DestroyActor reflection. Idempotent class resolution cached.
 //
@@ -797,6 +831,17 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
     // Defensive: confirm it's actually an Aprop derivative (the hook was
     // installed on PropClass but a fast misregistration would surface here).
     if (!ue_wrap::prop::IsDescendantOfProp(self)) return;
+    // 2026-05-25 audit dedupe: with the subclass-aware Init scan, multiple
+    // observers are registered along the prop_C lineage. If a subclass Init
+    // calls super (BP "Parent" node), we see TWO firings for the same actor
+    // (override + base). Skip the duplicate. Cleared on K2_DestroyActor PRE
+    // so address reuse after GC works correctly.
+    if (HasProcessedInit(self)) {
+        UE_LOGI("grab_hook[Aprop.Init POST]: actor %p already processed -- skip (super-call dedupe)",
+                self);
+        return;
+    }
+    MarkProcessedInit(self);
 
     // v5 Phase 5N Stream B (2026-05-24): host-authoritative client-side
     // suppression for intermediate-variant props (mushroom7_C, etc.). On
@@ -884,6 +929,14 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
 // inside the K2_DestroyActor body).
 void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
+    // 2026-05-25 audit cleanup: evict from the Init-processed dedupe set
+    // BEFORE the role gate so client-side Stream B destroys (deferred
+    // DestroyLocalProp on mushroom7_C) also clear their entries. Otherwise
+    // the set could fill with stale pointers from destroyed actors,
+    // triggering the cap-clear path more often than needed. Cheap
+    // erase-if-present (O(1) hash lookup; no-op for non-prop actor
+    // destroys that were never marked).
+    UnmarkProcessedInit(self);
     // Gate order (audit I-1 2026-05-24): this observer is hooked on AActor
     // base -> fires for EVERY actor destroy in the game (NPCs, projectiles,
     // UI actors, world cleanup, etc.), not just props. Cheapest checks
@@ -1041,12 +1094,19 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 // hands-on testing surfaces a late-load miss, promote to a periodic
 // rescan (cost: one GUObjectArray walk per N seconds; cheap when
 // throttled).
-bool g_propInitObserverInstalled    = false;
+// g_propInitScanDone (renamed 2026-05-25 from g_propInitObserverInstalled,
+// audit #3): records that the one-shot subclass-aware Init UFunction scan
+// has completed. The vector below records WHICH UFunctions were
+// registered; this flag records WHETHER we ran the scan at all (so we
+// don't re-walk GUObjectArray every NetPumpTick). Both states are
+// necessary -- the flag could be derived from "vector non-empty + scan
+// guard latched" but separating them keeps the gate semantics readable.
+bool g_propInitScanDone             = false;
 bool g_propDestroyObserverInstalled = false;
 std::vector<void*> g_registeredPropInitFns;
 
 void InstallPropLifecycleObserversIfReady() {
-    if (!g_propInitObserverInstalled) {
+    if (!g_propInitScanDone) {
         // Gate: wait for prop_C base class to load. IsClassDescendantOfProp
         // returns false until then so the scan would yield zero registrations
         // -- no point doing the GUObjectArray walk before the gate's open.
@@ -1096,7 +1156,7 @@ void InstallPropLifecycleObserversIfReady() {
             // UClass and its UFunctions load together). Keep retrying next
             // tick to be safe.
             if (!g_registeredPropInitFns.empty()) {
-                g_propInitObserverInstalled = true;
+                g_propInitScanDone = true;
             }
         }
     }
@@ -1763,8 +1823,15 @@ void NetPumpTick(float displayOffsetX) {
             g_snapshotCandidates.shrink_to_fit();
             g_snapshotCandidateIdx = 0;
         }
-        UE_LOGI("net: disconnected -- cleared %zu pending PropSpawn(s) + %zu pending PropDestroy(s) + %zu un-enumerated snapshot candidate(s)",
-                droppedSpawns, droppedDestroys, snapPending);
+        // 2026-05-25 audit: clear the Init-processed dedupe set on
+        // disconnect. Stale entries from a previous session would
+        // incorrectly suppress legitimate spawns from the NEXT peer's
+        // snapshot. (The registered observers stay; only the per-actor
+        // state needs reset.)
+        const size_t initProcessedDropped = g_processedInitActors.size();
+        g_processedInitActors.clear();
+        UE_LOGI("net: disconnected -- cleared %zu pending PropSpawn(s) + %zu pending PropDestroy(s) + %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries",
+                droppedSpawns, droppedDestroys, snapPending, initProcessedDropped);
     }
     // Phase 5S0 (snapshot bootstrap): on every false->true transition of
     // Connected, the host enumerates Aprop_C derivatives and broadcasts
