@@ -48,6 +48,7 @@ add_library(votv-coop SHARED
     src/coop/grab_observer.cpp
     src/coop/npc_sync.cpp
     src/coop/prop_lifecycle.cpp
+    src/coop/prop_snapshot.cpp
     src/coop/net/transport.cpp
     src/coop/net/session.cpp
     src/coop/net/reliable_channel.cpp
