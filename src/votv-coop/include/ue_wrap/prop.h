@@ -38,6 +38,13 @@ namespace ue_wrap::prop {
 // hot loop scanning GUObjectArray.
 bool IsDescendantOfProp(void* obj);
 
+// Same SuperStruct-chain check as IsDescendantOfProp but takes the UClass*
+// DIRECTLY (no R::ClassOf step). Used by harness.cpp's subclass-aware Init
+// observer install to test whether a UFunction's Outer (its owning UClass)
+// is in the prop_C lineage. NOT a metaclass check -- pass the UClass you'd
+// pass to FindFunction. Returns false for null inputs.
+bool IsClassDescendantOfProp(void* cls);
+
 // Reads Aprop_C.Key (FName) at +0x02E0. Returns {0,0} for null prop.
 // CALLER must have already established `prop` IS an Aprop_C-derived live actor.
 reflection::FName GetKey(void* prop);
@@ -161,5 +168,27 @@ VelocityState GetPhysicsVelocity(void* prop);
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm);
+
+// Restore the prop's StaticMesh component to QueryAndPhysics collision (the
+// default for movable physics props). Used by remote_prop::OnSpawn to undo
+// the NoCollision state set by spawnedNaturally() in a natural-spawn
+// pipeline on the local peer, when the wire convergence path picks up the
+// existing actor (exact-Key match or Gap-I-1 fuzzy match) and reuses it as
+// the host-authoritative representative. The fresh-spawn path runs Aprop's
+// own Init in FinishSpawningActor which sets the default itself; the
+// convergence paths don't, hence this explicit restore.
+//
+// Currently applied for `prop_food_mushroom_C` (the cap mushroom, whose
+// AmushroomSpawner_C::Spawn calls spawnedNaturally() on every fresh spawn,
+// disabling collision until the BP graph would later restore it — but our
+// fuzzy-match rekey hijacks the actor before that completes).
+// 2026-05-25 RE: research/findings/votv-mushroom-fall-through-RE-2026-05-25.md.
+//
+// Returns true on successful SetCollisionEnabled dispatch, false if any
+// reflection lookup fails (StaticMesh null, PrimitiveComponent class missing,
+// SetCollisionEnabled UFunction missing). Idempotent: writing
+// QueryAndPhysics over an already-QueryAndPhysics state is a no-op in the
+// engine's component-render path beyond a dirty-state flag flip.
+bool ForceRestoreDefaultCollision(void* prop);
 
 }  // namespace ue_wrap::prop

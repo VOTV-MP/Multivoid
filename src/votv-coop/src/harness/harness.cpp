@@ -1023,22 +1023,80 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 // observer): they depend on BP/engine classes that may not be loaded at
 // first InstallGrabObservers call. NetPumpTick retries each tick until
 // the classes appear.
+//
+// 2026-05-25 mushroom RE finding: prop subclasses (prop_food_mushroom_C,
+// other overriders) define their OWN Init UFunction (separate UObject with
+// separate address). Our game_thread detour does pointer-equality dispatch
+// against the registered observer target. Registering ONLY on
+// prop_C::Init means the observer never fires for any subclass instance
+// whose Init is overridden -- Stream B suppression + Inc2 continuous
+// broadcast both silently dead for mushrooms. Fix: walk GUObjectArray
+// ONCE when prop_C first loads, find every UFunction named "Init" whose
+// owning UClass is in the prop_C lineage, register the POST observer on
+// each. The set tracks dedupe so a re-scan (currently not used; documented
+// limitation below) doesn't double-register.
+//
+// Known limitation: BP subclasses that LOAD LATER (e.g. streamed-level
+// content with own Init overrides) are missed by this one-shot scan. If
+// hands-on testing surfaces a late-load miss, promote to a periodic
+// rescan (cost: one GUObjectArray walk per N seconds; cheap when
+// throttled).
 bool g_propInitObserverInstalled    = false;
 bool g_propDestroyObserverInstalled = false;
+std::vector<void*> g_registeredPropInitFns;
 
 void InstallPropLifecycleObserversIfReady() {
     if (!g_propInitObserverInstalled) {
-        if (void* propCls = R::FindClass(P::name::PropClass)) {
-            if (void* fn = R::FindFunction(propCls, P::name::PropInitFn)) {
-                if (ue_wrap::game_thread::RegisterPostObserver(fn, GrabObserver_Aprop_Init_POST)) {
-                    UE_LOGI("grab_hook: registered POST observer for %ls.%ls @ %p (continuous spawn broadcast)",
-                            P::name::PropClass, P::name::PropInitFn, fn);
-                    g_propInitObserverInstalled = true;
+        // Gate: wait for prop_C base class to load. IsClassDescendantOfProp
+        // returns false until then so the scan would yield zero registrations
+        // -- no point doing the GUObjectArray walk before the gate's open.
+        void* propBase = R::FindClass(P::name::PropClass);
+        if (propBase) {
+            // One-shot GUObjectArray scan. Cost profile: ~237k slots, each
+            // with one ClassNameOf wstring allocation + compare with
+            // L"Function" -- O(N) with N total UObjects, ~50-200 ms one-shot
+            // single tick stall during world load. NOT a per-frame cost; runs
+            // exactly once when prop_C first appears in the obj array.
+            const std::wstring kInitName(P::name::PropInitFn);
+            const int32_t n = R::NumObjects();
+            int registered = 0;
+            for (int32_t i = 0; i < n; ++i) {
+                void* obj = R::ObjectAt(i);
+                if (!obj) continue;
+                // Cheap-first: class-name check (exactly L"Function" excludes
+                // DelegateFunction / SparseDelegateFunction); then function-
+                // name check; then SuperStruct walk for the prop lineage.
+                if (R::ClassNameOf(obj) != L"Function") continue;
+                if (R::ToString(R::NameOf(obj)) != kInitName) continue;
+                void* owningCls = R::OuterOf(obj);
+                if (!ue_wrap::prop::IsClassDescendantOfProp(owningCls)) continue;
+                // Dedupe (linear search; expected pop is small ~3-10).
+                bool already = false;
+                for (void* fn : g_registeredPropInitFns) {
+                    if (fn == obj) { already = true; break; }
                 }
-            } else {
-                UE_LOGW("grab_hook: %ls.%ls UFunction not found -- Aprop_C spawn broadcast disabled",
-                        P::name::PropClass, P::name::PropInitFn);
-                g_propInitObserverInstalled = true;  // stop retry loop
+                if (already) continue;
+                if (ue_wrap::game_thread::RegisterPostObserver(obj, GrabObserver_Aprop_Init_POST)) {
+                    const std::wstring owner = R::ToString(R::NameOf(owningCls));
+                    UE_LOGI("grab_hook: registered POST observer for %ls::Init @ %p (subclass-aware)",
+                            owner.c_str(), obj);
+                    g_registeredPropInitFns.push_back(obj);
+                    ++registered;
+                } else {
+                    const std::wstring owner = R::ToString(R::NameOf(owningCls));
+                    UE_LOGW("grab_hook: failed to register Init observer for %ls (observer table full)",
+                            owner.c_str());
+                }
+            }
+            UE_LOGI("grab_hook: subclass-aware Init scan: %d new registrations (total %zu Init UFunctions hooked across prop_C lineage)",
+                    registered, g_registeredPropInitFns.size());
+            // Mark installed once we've found AT LEAST the base prop_C::Init.
+            // If the scan found zero, propBase resolved but the base Init
+            // UFunction isn't in the obj array yet (very unlikely -- the
+            // UClass and its UFunctions load together). Keep retrying next
+            // tick to be safe.
+            if (!g_registeredPropInitFns.empty()) {
+                g_propInitObserverInstalled = true;
             }
         }
     }

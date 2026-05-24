@@ -480,6 +480,37 @@ void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
     qw =  cr * cp * cy + sr * sp * sy;
 }
 
+// True for prop classes whose locally-spawned instance lands with collision
+// disabled (NoCollision) via a natural-spawn pipeline that calls
+// spawnedNaturally(), and whose wire-converged copy therefore needs an
+// explicit SetCollisionEnabled(QueryAndPhysics) restore. Per the mushroom
+// fall-through RE 2026-05-25:
+//   AmushroomSpawner_C::Spawn -> spawnedNaturally() -> NoCollision.
+// Currently only the cap mushroom is confirmed; extend if other natural-
+// spawn paths exhibit the same pattern. The check is cheap (single string
+// compare) so calling it in OnSpawn's hot path is fine.
+inline bool IsCollisionRestoreClass(const std::wstring& cls) {
+    return cls == ue_wrap::profile::name::PropFoodMushroomClass;
+}
+
+// Helper for OnSpawn's three convergence/spawn paths: if the class needs
+// collision restore, call ue_wrap::prop::ForceRestoreDefaultCollision and
+// log the outcome with the path label so a fall-through regression is
+// diagnosable from the log. No-op for classes that don't need restore.
+void RestoreCollisionIfNeeded(const wchar_t* pathLabel,
+                              const std::wstring& classW,
+                              void* actor) {
+    if (!IsCollisionRestoreClass(classW)) return;
+    const bool ok = ue_wrap::prop::ForceRestoreDefaultCollision(actor);
+    if (ok) {
+        UE_LOGI("remote_prop::OnSpawn[%ls]: collision restored (QueryAndPhysics) on '%ls' actor=%p",
+                pathLabel, classW.c_str(), actor);
+    } else {
+        UE_LOGW("remote_prop::OnSpawn[%ls]: collision restore FAILED on '%ls' actor=%p -- prop may fall through ground",
+                pathLabel, classW.c_str(), actor);
+    }
+}
+
 }  // namespace
 
 void OnSpawn(const coop::net::PropSpawnPayload& payload) {
@@ -523,6 +554,13 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(existing,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        // 2026-05-25 mushroom fall-through fix: client's local copy may have
+        // gone through spawnedNaturally() in its own AmushroomSpawner_C::Spawn
+        // path, leaving NoCollision on the StaticMesh. Wire convergence
+        // reuses the actor in-place (skipping a fresh Init); we must
+        // explicitly restore default collision so subsequent host PropPose
+        // releases don't drop the body into the void.
+        RestoreCollisionIfNeeded(L"exact-key", classW, existing);
         return;
     }
     // Phase 5S0 Gap I-1 (2026-05-24): exact-Key match failed. Try fuzzy
@@ -586,6 +624,13 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         } else {
             UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey skipped -- setKey UFunction unresolved");
         }
+        // 2026-05-25 mushroom fall-through fix (Gap-I-1 path): same reason as
+        // exact-key. The fuzzy-matched local actor came from client's own
+        // AmushroomSpawner_C::Spawn -> spawnedNaturally() -> NoCollision.
+        // Without this restore, host's release-edge PropPose-driven mushroom
+        // sits on top of the floor briefly then PhysX drops it through
+        // because the body has NoCollision.
+        RestoreCollisionIfNeeded(L"fuzzy", classW, fuzzy);
         return;
     }
     if (!ResolveSpawnFns()) {
@@ -704,6 +749,15 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         UE_LOGI("remote_prop::OnSpawn: physics applied (sim=%d hasLinVel=%d hasAngVel=%d)",
                 sim ? 1 : 0, hasLinVel ? 1 : 0, hasAngVel ? 1 : 0);
     }
+    // 2026-05-25 mushroom fall-through fix (fresh-spawn path): defensive --
+    // Aprop_food_mushroom_C::Init runs as part of FinishSpawningActor and
+    // CONDITIONALLY writes collision (per Init body: reads, compares to a
+    // default, conditionally writes; exact condition not yet RE'd). On a
+    // pure wire-spawn (no save reference, no spawnedNaturally trigger) it
+    // likely lands correct, but a write here is cheap and idempotent. Keep
+    // the restore call symmetric across all 3 OnSpawn convergence paths so
+    // a future Init-body change can't silently regress only one path.
+    RestoreCollisionIfNeeded(L"fresh-spawn", classW, spawned);
 }
 
 void* GetDriveActor() { return g_drive.actor; }

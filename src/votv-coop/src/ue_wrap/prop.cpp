@@ -44,11 +44,17 @@ inline T ReadField(void* base, size_t off) {
 
 bool IsDescendantOfProp(void* obj) {
     if (!obj) return false;
+    void* cls = R::ClassOf(obj);
+    return IsClassDescendantOfProp(cls);
+}
+
+bool IsClassDescendantOfProp(void* cls) {
+    if (!cls) return false;
     void* base = PropBaseClass();
     if (!base) return false;
-    void* cls = R::ClassOf(obj);
     // Walk SuperStruct chain. ~16 hops covers the deepest VOTV BP class
-    // chain; UE4's own SCENE_COMPONENT_BASE inheritance is shallower.
+    // chain; UE4's own SCENE_COMPONENT_BASE inheritance is shallower. The
+    // base prop_C itself counts (cls == base on the first compare).
     for (int hops = 0; hops < 16 && cls; ++hops) {
         if (cls == base) return true;
         cls = *reinterpret_cast<void**>(
@@ -289,6 +295,77 @@ void* FindByKeyString(const std::wstring& keyString) {
         return obj;
     }
     return nullptr;
+}
+
+namespace {
+
+// Resolved once on first call: the UPrimitiveComponent UClass + the
+// SetCollisionEnabled UFunction + its NewType param offset + frame size.
+// SetCollisionEnabled is a native UFunction on UPrimitiveComponent (engine-
+// stable across UE4.27); no BP override path to consider. Game-thread only.
+struct SetCollisionEnabledResolved {
+    void*   cls           = nullptr;
+    void*   fn            = nullptr;
+    int32_t frameSize     = 0;
+    int32_t newTypeOff    = -1;
+    bool    ok            = false;
+};
+SetCollisionEnabledResolved g_sce;
+
+bool ResolveSetCollisionEnabled() {
+    if (g_sce.ok && R::IsLive(g_sce.cls)) return true;
+    g_sce = {};
+    void* cls = R::FindClass(P::name::PrimitiveComponentClass);
+    if (!cls) {
+        UE_LOGW("prop::ForceRestoreDefaultCollision: PrimitiveComponent class not found");
+        return false;
+    }
+    void* fn = R::FindFunction(cls, P::name::SetCollisionEnabledFn);
+    if (!fn) {
+        UE_LOGW("prop::ForceRestoreDefaultCollision: SetCollisionEnabled UFunction not found");
+        return false;
+    }
+    g_sce.cls       = cls;
+    g_sce.fn        = fn;
+    g_sce.frameSize = R::FunctionFrameSize(fn);
+    g_sce.newTypeOff = R::FindParamOffset(fn, L"NewType");
+    if (g_sce.newTypeOff < 0) {
+        UE_LOGW("prop::ForceRestoreDefaultCollision: NewType param offset not found");
+        g_sce = {};
+        return false;
+    }
+    g_sce.ok = true;
+    return true;
+}
+
+}  // namespace
+
+bool ForceRestoreDefaultCollision(void* prop) {
+    if (!prop) return false;
+    void* mesh = GetStaticMesh(prop);
+    if (!mesh) return false;
+    if (!ResolveSetCollisionEnabled()) return false;
+    // Frame: ECollisionEnabled::Type at `newTypeOff`. The enum is a uint8;
+    // values:
+    //   0 NoCollision, 1 QueryOnly, 2 PhysicsOnly, 3 QueryAndPhysics,
+    //   4 ProbeOnly, 5 QueryAndProbe.
+    // 3 == QueryAndPhysics, the default for movable physics props
+    // (mushroom_C, container_C, etc.).
+    constexpr uint8_t kQueryAndPhysics = 3;
+    // 16 bytes is enough for a single uint8 param + padding. Loud-warn on
+    // overflow so a future UE update enlarging the frame is diagnosable.
+    unsigned char frame[16] = {};
+    if (g_sce.frameSize > static_cast<int32_t>(sizeof(frame))) {
+        UE_LOGW("prop::ForceRestoreDefaultCollision: frame size %d > 16 -- enlarge buffer",
+                g_sce.frameSize);
+        return false;
+    }
+    frame[g_sce.newTypeOff] = kQueryAndPhysics;
+    if (!R::CallFunction(mesh, g_sce.fn, frame)) {
+        UE_LOGW("prop::ForceRestoreDefaultCollision: CallFunction failed on mesh %p", mesh);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace ue_wrap::prop

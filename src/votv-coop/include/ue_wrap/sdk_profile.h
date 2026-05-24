@@ -619,6 +619,19 @@ inline constexpr const wchar_t* GetPhysicsLinearVelocityFn           = L"GetPhys
 inline constexpr const wchar_t* GetPhysicsAngularVelocityInDegreesFn = L"GetPhysicsAngularVelocityInDegrees";
 inline constexpr const wchar_t* SetPhysicsLinearVelocityFn           = L"SetPhysicsLinearVelocity";
 inline constexpr const wchar_t* SetPhysicsAngularVelocityInDegreesFn = L"SetPhysicsAngularVelocityInDegrees";
+// SetCollisionEnabled lives on UPrimitiveComponent; used by remote_prop::OnSpawn
+// to restore default collision (QueryAndPhysics=3) on wire-converged props
+// whose local copy had collision disabled by a natural-spawn pipeline (e.g.
+// Aprop_food_mushroom_C goes through spawnedNaturally() -> NoCollision on the
+// spawning peer). Param is `NewType` (ECollisionEnabled::Type, uint8 enum).
+inline constexpr const wchar_t* SetCollisionEnabledFn                = L"SetCollisionEnabled";
+// The class that overrides Aprop_C::Init AND triggers spawnedNaturally() ->
+// NoCollision on its StaticMesh in the natural-spawn path
+// (AmushroomSpawner_C::Spawn). 2026-05-25 RE
+// (research/findings/votv-mushroom-fall-through-RE-2026-05-25.md): this is
+// the actual cap-mushroom class. mushroom7_C (PropMushroomGrowingClass) grows
+// into prop_puffballMature_C, NOT this -- separate species.
+inline constexpr const wchar_t* PropFoodMushroomClass                = L"prop_food_mushroom_C";
 }  // namespace name
 
 }  // namespace ue_wrap::profile
