@@ -538,23 +538,54 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
             classW,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
             kFuzzyRadiusCm)) {
-        UE_LOGI("remote_prop::OnSpawn: Gap-I-1 FUZZY MATCH '%ls' (wire key '%ls') -> existing actor %p within %.1f cm -- de-duping, converging transform",
+        // Audit C-1 mirror of exact-Key guard (2026-05-24): if the fuzzy
+        // match resolves to the actor currently under active kinematic
+        // drive, skip convergence. Otherwise the SetActorLocation here
+        // would stomp the PropPose stream for one frame -- same
+        // teleport-pop bug as the exact-Key path.
+        if (fuzzy == g_drive.actor) {
+            UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> active drive actor -- skipping (PropPose owns position)",
+                    classW.c_str());
+            return;
+        }
+        UE_LOGI("remote_prop::OnSpawn: Gap-I-1 FUZZY MATCH '%ls' (wire key '%ls') -> existing actor %p within %.1f cm -- de-duping, converging transform + rekeying",
                 classW.c_str(), keyW.c_str(), fuzzy, kFuzzyRadiusCm);
         ue_wrap::engine::SetActorLocation(fuzzy,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(fuzzy,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
-        // NOTE: the fuzzy-matched actor's local Key stays as the client's
-        // original NewGuid; subsequent host PropPose updates carry the
-        // HOST's Key which still won't resolve via FindByKeyString on
-        // client (different keys). Fix in Inc3 via per-class spawner
-        // suppression (host-authoritative spawn -> ONE Key cross-peer).
-        // For now, the host's grab on this mushroom will use the existing
-        // wire path (PropPose stream + FindByKeyString lookup on host's
-        // own Key) -- but since client's actor has a different Key, the
-        // FindByKeyString resolution chain still misses. The fuzzy match
-        // here at least prevents a visible duplicate; tracking the fuzzy
-        // map for subsequent PropPose resolves is Inc3 work.
+        // Audit C-2 (2026-05-24): REKEY the fuzzy-matched actor to the
+        // host's wire Key. Without this, the actor keeps its client-local
+        // NewGuid Key (K_c) while host PropPose packets carry K_h --
+        // FindByKeyString(K_h) on client misses, host's grab/move stream
+        // would be silently dropped (UE_LOGW "no local match"). The
+        // result would be a prop that successfully de-duped (no visible
+        // duplicate) but is permanently invisible to the host's
+        // authoritative position stream -- a worse regression than the
+        // duplicate it prevented. Aprop_C.setKey updates
+        // mainGamemode.keyObj_key/obj cross-peer; the old K_c orphan
+        // entry is harmless (no host packet references it).
+        if (ResolveSpawnFns() && g_propSetKeyFn) {
+            const R::FName keyFName = StringToFName(keyW);
+            if (keyFName.ComparisonIndex != 0) {
+                ParamFrame sk(g_propSetKeyFn);
+                if (sk.SetRaw(L"Key", &keyFName, sizeof(keyFName))) {
+                    if (Call(fuzzy, sk)) {
+                        UE_LOGI("remote_prop::OnSpawn: Gap-I-1 rekey ok -- actor %p now has wire key '%ls' (FName idx=%u); subsequent PropPose resolves correctly",
+                                fuzzy, keyW.c_str(), keyFName.ComparisonIndex);
+                    } else {
+                        UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey setKey ProcessEvent call failed -- prop unreachable via host PropPose");
+                    }
+                } else {
+                    UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey setKey 'Key' param not found");
+                }
+            } else {
+                UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey StringToFName('%ls') -> NAME_None; skipped",
+                        keyW.c_str());
+            }
+        } else {
+            UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey skipped -- setKey UFunction unresolved");
+        }
         return;
     }
     if (!ResolveSpawnFns()) {

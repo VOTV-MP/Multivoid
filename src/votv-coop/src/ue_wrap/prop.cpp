@@ -247,16 +247,15 @@ void* FindNearbySameClass(const std::wstring& className,
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         if (!IsDescendantOfProp(obj)) continue;
-        // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
-        // Cheap string compare vs FindByKeyString's path; here we filter
-        // BEFORE the more expensive transform read.
-        if (R::ClassNameOf(obj) != className) continue;
-        // Default__<Class> CDOs filter via the GetActorLocation no-op
-        // (CDOs have no actor location -- they'd return 0,0,0 which is
-        // far from any reasonable spawn anchor in the КПП area). Still,
-        // do the cheap name-prefix skip to avoid a ProcessEvent dispatch.
+        // Filter order (audit IMPORTANT-2 2026-05-24): cheapest checks
+        // FIRST. NameOf+CDO check before ClassNameOf wstring compare --
+        // matches the established pattern in FindByKeyString. Saves one
+        // wstring allocation for the few CDO descendants that get past
+        // IsDescendantOfProp.
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
+        // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
+        if (R::ClassNameOf(obj) != className) continue;
         if (!R::IsLive(obj)) continue;
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
