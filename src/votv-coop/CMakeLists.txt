@@ -56,6 +56,7 @@ add_library(votv-coop SHARED
     src/dev/freecam.cpp
     src/dev/pos_hud.cpp
     src/harness/harness.cpp
+    src/harness/autotest.cpp
     src/harness/screenshot.cpp
 )
 
