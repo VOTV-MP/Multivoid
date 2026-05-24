@@ -337,6 +337,21 @@ bool g_inventoryObserverInstalled = false;
 // re-entrancy-safe (BP dispatch is linear single-thread, so even if
 // takeObj nested-called itself we'd see PRE->PRE->POST->POST and the
 // flag would still correctly bracket each level).
+//
+// Threading rationale (audit fix 2026-05-25): plain bool, not atomic.
+// Safe because propInventory_C::takeObj is a gameplay BP UFunction (not
+// anim-graph BUA), so its ProcessEvent dispatch always fires on the game
+// thread -- never on a parallel-anim task-graph worker. See
+// game_thread.h:94 ("usually game thread; sometimes a task-graph worker
+// for parallel anim"); the parallel-anim carve-out applies to
+// BlueprintUpdateAnimation only. Other game-thread-only globals in this
+// file (g_wasConnected, g_grabObserversInstalled, g_processedInitActors)
+// follow the same pattern. The sObjectOff std::atomic in the same POST
+// observer body is for a different reason -- it's lazy-resolved on
+// FIRST call, which can in principle happen from any context that
+// dispatches a UFunction observer (per the dispatch contract); a
+// per-call read-vs-set race on a static cache is a different concern
+// from a per-call read-or-write on a session-scoped flag.
 bool g_takeObjInFlight = false;
 
 // Bug C audit C-3 (2026-05-24): bounded retry queue for PropSpawn payloads
