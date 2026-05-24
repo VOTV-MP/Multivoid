@@ -4,6 +4,7 @@
 #include "dev/freecam.h"
 #include "dev/pos_hud.h"
 #include "coop/event_feed.h"
+#include "coop/grab_observer.h"
 #include "coop/nameplate.h"
 #include "coop/net/session.h"
 #include "coop/remote_player.h"
@@ -305,7 +306,8 @@ uint64_t g_propEmitCount = 0;
 //
 // The first SetTargetLocation observer fire of a new grab is when we LEARN
 // what was grabbed (read mainPlayer.grabbing_actor) and start streaming.
-bool g_grabObserversInstalled = false;
+// (Idempotency flag now owned by coop::grab_observer; see coop/grab_observer.cpp.)
+
 // Bug C audit C-2 (2026-05-24): the propInventory_C class may not be loaded
 // at the moment InstallGrabObservers first runs (engine loads BP classes on
 // demand). Track its install separately so NetPumpTick can retry the takeObj
@@ -346,7 +348,7 @@ bool g_inventoryObserverInstalled = false;
 // game_thread.h:94 ("usually game thread; sometimes a task-graph worker
 // for parallel anim"); the parallel-anim carve-out applies to
 // BlueprintUpdateAnimation only. Other game-thread-only globals in this
-// file (g_wasConnected, g_grabObserversInstalled, g_processedInitActors)
+// file (g_wasConnected, g_processedInitActors)
 // follow the same pattern. The sObjectOff std::atomic in the same POST
 // observer body is for a different reason -- it's lazy-resolved on
 // FIRST call, which can in principle happen from any context that
@@ -644,161 +646,6 @@ void DrainPendingPropSpawns() {
                 g_pendingSpawns.size() - 1);
         g_pendingSpawns.pop_front();
     }
-}
-
-// --- Primary: engine PhysicsHandle (`self` IS the UPhysicsHandleComponent,
-// owned by mainPlayer_C as `grabHandle`). To learn which prop is held, dereference
-// the OuterPrivate chain or read the owning mainPlayer_C's grabbing_actor.
-
-void GrabObserver_PHC_Grab(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PHC.Grab]: handle=%p (pickup -- light grab path)", self);
-}
-
-void GrabObserver_PHC_GrabWithRotation(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PHC.GrabWithRot]: handle=%p (pickup w/ rotation)", self);
-}
-
-void GrabObserver_PHC_SetTarget(void* self, void* /*function*/, void* /*params*/) {
-    // Per-tick driver -- fires every frame the BP graph wants to move the held
-    // prop. Hot. Log first 3 calls + every 30th after, so a short autonomous
-    // test (5 calls) still sees observer activity but a real grab (~60 Hz x
-    // seconds) doesn't drown the log. ATOMIC because ProcessEvent CAN dispatch
-    // from a task-graph worker under parallel anim (per game_thread.h:91-92);
-    // the relaxed fetch_add is cheap and the counter semantics tolerate it.
-    static std::atomic<uint64_t> sCount{0};
-    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (n <= 3 || (n % 30) == 0) {
-        UE_LOGI("grab_hook[PHC.SetTarget]: handle=%p (call #%llu)", self,
-                static_cast<unsigned long long>(n));
-    }
-}
-
-void GrabObserver_PHC_SetTargetWithRotation(void* self, void* /*function*/, void* /*params*/) {
-    static std::atomic<uint64_t> sCount{0};
-    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (n <= 3 || (n % 30) == 0) {
-        UE_LOGI("grab_hook[PHC.SetTargetWithRot]: handle=%p (call #%llu)", self,
-                static_cast<unsigned long long>(n));
-    }
-}
-
-void GrabObserver_PHC_Release_PRE(void* self, void* /*function*/, void* /*params*/) {
-    // Pre-dispatch: read GrabbedComponent BEFORE PhysX clears it (offset +176
-    // confirmed by IDA decompile of ReleaseComponent_Impl @0x142D7C670).
-    if (!self) {
-        UE_LOGI("grab_hook[PHC.Release PRE]: handle=null");
-        return;
-    }
-    void* comp = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::UPhysicsHandleComponent_GrabbedComponent);
-    UE_LOGI("grab_hook[PHC.Release PRE]: handle=%p released_component=%p", self, comp);
-}
-
-// --- Primary: UPhysicsConstraintComponent (HEAVY drag path). `self` IS the
-// constraint component, owned by mainPlayer_C as `heavyGrab` (+0x4F0).
-// Confirmed via SDK dump (mainPlayer.hpp:12). VOTV uses a physics CONSTRAINT
-// joint between the player and a heavy prop instead of a kinematic handle.
-
-void GrabObserver_PCC_SetConstrainedComponents(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PCC.SetConstrainedComponents]: constraint=%p (heavy grab START)", self);
-}
-
-void GrabObserver_PCC_BreakConstraint_PRE(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PCC.BreakConstraint PRE]: constraint=%p (heavy grab END)", self);
-}
-
-// --- Throw signal: UPrimitiveComponent::AddImpulse. Fires whenever the BP
-// throws a held prop (throwHoldingProp BP-pure is inlined and calls this on
-// the released component). Also fires for non-throw impulses (explosions,
-// hit reactions) -- the host disambiguates via context (was a grab active
-// right before this fired? then it's a throw).
-
-void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* params) {
-    // Diagnostic-only post-RE 2026-05-24: the release-edge in NetPumpTick
-    // reads the body's inherited velocity directly via prop::GetPhysicsVelocity
-    // (which captures any AddImpulse the engine just applied AS PART OF
-    // that velocity). So we just log here -- no cross-thread cache to populate.
-    if (!self || !params) return;
-    // Param frame layout (verified by autonomous test):
-    //   FVector impulse    @ 0   (12 bytes)
-    //   FName   BoneName   @ 12  (8 bytes)
-    //   bool    bVelChange @ 20  (1 byte) + pad
-    const ue_wrap::FVector imp = *reinterpret_cast<ue_wrap::FVector*>(params);
-    UE_LOGI("grab_hook[PrimComp.AddImpulse]: component=%p impulse=(%.1f, %.1f, %.1f) (diagnostic, not shipped)",
-            self, imp.X, imp.Y, imp.Z);
-}
-
-// "Cheap insurance" PRE-observers for SetPhysicsLinearVelocity +
-// SetPhysicsAngularVelocityInDegrees -- audit issue #3 / 2026-05-24. If BP
-// explicitly calls these on a released prop (instead of relying on inherited
-// PhysX tracking velocity), the param frame carries the LITERAL launch
-// velocity we want -- the GetPhysicsVelocity read in NetPumpTick may then be
-// reading post-step values. These observers DON'T cache cross-thread; they
-// just log. The hands-on test of Bug B confirms via log whether BP uses
-// SetPhysicsLinearVelocity explicitly. If it does, a future commit can switch
-// the wire-capture to the observer (lock-free atomic cache, RELEASE/ACQUIRE
-// fenced -- same shape as the retired g_lastImpulse* pattern).
-//
-// Param frame layout for both:
-//   FVector NewVel/NewAngVel  @ 0   (12 bytes)
-//   bool    bAddToCurrent     @ 12  (1 byte) + pad
-//   FName   BoneName          @ 16  (8 bytes)
-void GrabObserver_PrimComp_SetLinearVelocity_PRE(void* self, void* /*function*/, void* params) {
-    if (!self || !params) return;
-    const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
-    UE_LOGI("grab_hook[PrimComp.SetPhysicsLinearVelocity PRE]: component=%p NewVel=(%.1f, %.1f, %.1f) (diagnostic)",
-            self, v.X, v.Y, v.Z);
-}
-
-void GrabObserver_PrimComp_SetAngularVelocity_PRE(void* self, void* /*function*/, void* params) {
-    if (!self || !params) return;
-    const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
-    UE_LOGI("grab_hook[PrimComp.SetPhysicsAngularVelocityInDegrees PRE]: component=%p NewAngVel=(%.1f, %.1f, %.1f) (diagnostic)",
-            self, v.X, v.Y, v.Z);
-}
-
-// --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
-// the upstream dispatch path and let us read mainPlayer_C grab-state fields.
-
-void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/) {
-    // Fires on E-press. The BP graph downstream of this event decides
-    // pickup-vs-drop from grabbing_actor and plays the Timeline accordingly.
-    // Reading grabbing_actor here = state AT press time (post-observer fires
-    // AFTER the BP graph, so it'll show NEW state). For PRE-state we'd need
-    // a pre-observer; skipping for Stage 1 -- not actionable yet.
-    if (!self) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    UE_LOGI("grab_hook[InpActEvt.use]: self=%p grabbing_actor(after)=%p", self, grabbing);
-}
-
-void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) {
-    // Per-tick Timeline update. Log first 3 + every 30th after (same throttle
-    // policy as PHC.SetTarget so a short autonomous test still sees activity).
-    // Atomic for the same reason as PHC.SetTarget above.
-    if (!self) return;
-    static std::atomic<uint64_t> sCount{0};
-    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (n > 3 && (n % 30) != 0) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    bool grabsHeavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
-    bool heavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
-    float grabLen = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabLen);
-    UE_LOGI("grab_hook[grab.Update]: holding=%p grabsHeavy=%d Heavy=%d grabLen=%.1f (call #%llu)",
-            grabbing, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen,
-            static_cast<unsigned long long>(n));
-}
-
-void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*params*/) {
-    // Pre-dispatch: read held prop BEFORE FinishedFunc clears it.
-    if (!self) return;
-    void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
-    UE_LOGI("grab_hook[grab.Finished PRE]: was holding=%p", grabbing);
 }
 
 // --- v5 Inc2: Aprop_C::Init POST observer -- the universal spawn detector.
@@ -1683,111 +1530,18 @@ void InstallNpcSuppressorIfReady() {
     }
 }
 
-// One-shot UFunction-pointer resolution + observer install. Idempotent. Two
-// classes involved: UPhysicsHandleComponent (engine, 5 observers) and
-// mainPlayer_C (VOTV BP content, 3 observers). FindFunction does NOT climb
-// to super, so each must be resolved from its own class. Unresolved
-// UFunctions log a warning (BP recooks can renumber the K2Node ordinal in
-// the InpActEvt name -- localized failure, others still install).
+// Top-level orchestrator: retried each NetPumpTick. Each subsystem's Install()
+// is idempotent and short-circuits once successful, so this is safe to call
+// every tick. The four subsystems are independent (a late-loading BP class
+// affects only its own subsystem):
+//   - coop::grab_observer::Install -- physics-prop grab/release/throw
+//   - InstallInventoryObserverIfReady -- propInventory_C::takeObj PRE/POST
+//   - InstallPropLifecycleObserversIfReady -- Aprop_C::Init POST + K2_DestroyActor PRE
+//   - InstallNpcSuppressorIfReady -- Phase 5N1 NPC class allowlist + interceptor
 void InstallGrabObservers() {
-    // Always attempt the lifecycle observers (audit C-2 pattern): independent
-    // of the core observers so late-loading BP classes still get hooked.
-    if (g_grabObserversInstalled) {
-        InstallInventoryObserverIfReady();
-        InstallPropLifecycleObserversIfReady();
-        InstallNpcSuppressorIfReady();  // Phase 5N1: NPC class allowlist + interceptor
-        return;
-    }
-
-    void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
-    void* pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
-    void* primCls = R::FindClass(P::name::PrimitiveComponentClass);
-    void* playerCls = R::FindClass(P::name::MainPlayerClass);
-    if (!phcCls || !pccCls || !primCls || !playerCls) {
-        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, PrimComp=%p, mainPlayer=%p) -- will retry next tick",
-                phcCls, pccCls, primCls, playerCls);
-        return;
-    }
-
-    auto reg = [](void* cls, const wchar_t* clsName, const wchar_t* fnName,
-                  ue_wrap::game_thread::ProcessEventObserverFn cb, bool pre) {
-        void* fn = R::FindFunction(cls, fnName);
-        if (!fn) {
-            UE_LOGW("grab_hook: UFunction '%ls' not found on %ls", fnName, clsName);
-            return;
-        }
-        const bool ok = pre
-            ? ue_wrap::game_thread::RegisterPreObserver(fn, cb)
-            : ue_wrap::game_thread::RegisterPostObserver(fn, cb);
-        if (!ok) {
-            UE_LOGW("grab_hook: register %ls failed (table full or null cb)", fnName);
-        } else {
-            UE_LOGI("grab_hook: registered %s observer for %ls.%ls @ %p",
-                    pre ? "PRE" : "POST", clsName, fnName, fn);
-        }
-    };
-
-    // 2026-05-25 audit fix #1 (cross-peer destroy): eager-resolve the
-    // PHC.ReleaseComponent cache used by ue_wrap::engine::ReleaseMainPlayer
-    // GrabIfHolding. Without this, the first wire-received PropDestroy of
-    // a held prop would hit the lazy resolve in remote_prop::OnDestroy --
-    // and if PHC class were somehow not yet loaded, fall through to the
-    // warn-and-clear fallback, leaving PHC.GrabbedComponent dangling.
-    // Eager-resolve here (we already have phcCls confirmed loaded above)
-    // closes that window.
-    ue_wrap::engine::WarmupPhcReleaseCache();
-
-    // Primary: engine PhysicsHandle (LIGHT grab path).
-    reg(phcCls, P::name::PhysicsHandleComponentClass,
-        P::name::GrabComponentAtLocationFn,             GrabObserver_PHC_Grab,                  /*pre=*/false);
-    reg(phcCls, P::name::PhysicsHandleComponentClass,
-        P::name::GrabComponentAtLocationWithRotationFn, GrabObserver_PHC_GrabWithRotation,      /*pre=*/false);
-    reg(phcCls, P::name::PhysicsHandleComponentClass,
-        P::name::SetTargetLocationFn,                   GrabObserver_PHC_SetTarget,             /*pre=*/false);
-    reg(phcCls, P::name::PhysicsHandleComponentClass,
-        P::name::SetTargetLocationAndRotationFn,        GrabObserver_PHC_SetTargetWithRotation, /*pre=*/false);
-    reg(phcCls, P::name::PhysicsHandleComponentClass,
-        P::name::ReleaseComponentFn,                    GrabObserver_PHC_Release_PRE,           /*pre=*/true);
-
-    // Primary: engine PhysicsConstraint (HEAVY grab path -- different class).
-    reg(pccCls, P::name::PhysicsConstraintComponentClass,
-        P::name::SetConstrainedComponentsFn, GrabObserver_PCC_SetConstrainedComponents, /*pre=*/false);
-    reg(pccCls, P::name::PhysicsConstraintComponentClass,
-        P::name::BreakConstraintFn,          GrabObserver_PCC_BreakConstraint_PRE,      /*pre=*/true);
-
-    // Throw signal: engine PrimitiveComponent.AddImpulse.
-    reg(primCls, P::name::PrimitiveComponentClass,
-        P::name::AddImpulseFn,               GrabObserver_PrimComp_AddImpulse,          /*pre=*/false);
-
-    // Diagnostic-only velocity-set observers (audit issue #3, 2026-05-24).
-    // Capture whether BP explicitly calls SetPhysics*Velocity on release.
-    reg(primCls, P::name::PrimitiveComponentClass,
-        P::name::SetPhysicsLinearVelocityFn,           GrabObserver_PrimComp_SetLinearVelocity_PRE,  /*pre=*/true);
-    reg(primCls, P::name::PrimitiveComponentClass,
-        P::name::SetPhysicsAngularVelocityInDegreesFn, GrabObserver_PrimComp_SetAngularVelocity_PRE, /*pre=*/true);
-
-    // Secondary: BP-Timeline + input on mainPlayer_C.
-    reg(playerCls, P::name::MainPlayerClass,
-        P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use,      /*pre=*/false);
-    reg(playerCls, P::name::MainPlayerClass,
-        P::name::MainPlayerGrabUpdateFn,     GrabObserver_grab_Update,        /*pre=*/false);
-    reg(playerCls, P::name::MainPlayerClass,
-        P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
-
-    g_grabObserversInstalled = true;
-    UE_LOGI("grab_hook: Stage 1+ core observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
-
-    // v5 Bug C: try takeObj observer NOW; if propInventory_C isn't loaded
-    // yet, NetPumpTick will retry each tick via this same helper.
+    coop::grab_observer::Install();
     InstallInventoryObserverIfReady();
-    // v5 Inc2: same for the universal Aprop_C::Init POST observer (continuous
-    // spawn broadcast) and AActor::K2_DestroyActor PRE observer (destroy
-    // broadcast).
     InstallPropLifecycleObserversIfReady();
-    // Phase 5N1 (2026-05-25): NPC spawn-suppression interceptor on
-    // UGameplayStatics::BeginDeferredActorSpawnFromClass. Resolves 12 NPC
-    // classes + the UFunction; falls back to next-tick retry if any of those
-    // aren't loaded yet (gameplay-level transition gates VOTV BP class load).
     InstallNpcSuppressorIfReady();
 }
 
@@ -2379,7 +2133,7 @@ void NetPumpTick(float displayOffsetX) {
         // One-shot install of the grab-observer hooks (Stage 1 of [[project-
         // physics-object-pickup]]). Class is reachable now that local is live;
         // idempotent on g_grabObserversInstalled.
-        InstallGrabObservers();  // self-gates on g_grabObserversInstalled + retries inventory observer (audit C-2)
+        InstallGrabObservers();  // each subsystem's Install is idempotent + retries until ready (audit C-2)
         coop::net::PoseSnapshot mine;
         if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
 
@@ -3004,7 +2758,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // (observe THIS instance's own UFunctions); zero wire dependency.
             for (;;) {
                 Post([] {
-                    InstallGrabObservers();  // self-gates on g_grabObserversInstalled + retries inventory observer (audit C-2)
+                    InstallGrabObservers();  // each subsystem's Install is idempotent + retries until ready (audit C-2)
                     coop::nameplate::Update();
                 });
                 ::Sleep(50);

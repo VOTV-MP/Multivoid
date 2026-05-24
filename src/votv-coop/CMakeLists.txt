@@ -45,6 +45,7 @@ add_library(votv-coop SHARED
     src/coop/remote_prop.cpp
     src/coop/nameplate.cpp
     src/coop/event_feed.cpp
+    src/coop/grab_observer.cpp
     src/coop/net/transport.cpp
     src/coop/net/session.cpp
     src/coop/net/reliable_channel.cpp
