@@ -450,22 +450,20 @@ void* GetWorldContext() {
     return R::FindObjectByClass(P::name::WorldClass);
 }
 
-// FTransform layout (UE4.27, 16-byte aligned): FQuat rot (16) + FVector loc
-// (12 + 4 pad) + FVector scale (12 + 4 pad) = 48 bytes. Used inline for the
-// BeginDeferredActorSpawnFromClass / FinishSpawningActor pair.
-#pragma pack(push, 1)
-struct FTransform48 {
-    float rotX, rotY, rotZ, rotW;     // 16  FQuat
-    float locX, locY, locZ;           // 12  FVector
-    float _padLoc;                    //  4
-    float scaleX, scaleY, scaleZ;     // 12  FVector
-    float _padScale;                  //  4
-};
-#pragma pack(pop)
-static_assert(sizeof(FTransform48) == 48, "FTransform48 must be 48 bytes");
-
-// FRotator -> FQuat (UE4 stock formula, ZYX order). Used to convert the
-// wire's FRotator into the FTransform's FQuat slot.
+// FRotator -> FQuat (UE4.27 stock formula, ZYX order, LEFT-HANDED coord
+// system). Match EXACTLY the body of FRotator::Quaternion() from
+// Engine/Source/Runtime/Core/Public/Math/Rotator.h:
+//
+//   RotationQuat.X =  CR*SP*SY - SR*CP*CY;
+//   RotationQuat.Y = -CR*SP*CY - SR*CP*SY;
+//   RotationQuat.Z =  CR*CP*SY - SR*SP*CY;
+//   RotationQuat.W =  CR*CP*CY + SR*SP*SY;
+//
+// Note the negative Y term -- this is UE4's left-handed-Z-up convention
+// (NOT a bug). General right-handed ZYX Euler-to-quat references will show
+// the opposite signs; do NOT "correct" against those without checking the
+// UE4 source. Audit 2026-05-24 flagged this as a critical bug; verified
+// false-positive by reading UE4.27 source directly.
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
                    float& qx, float& qy, float& qz, float& qw) {
     constexpr float kHalfDegToRad = 0.0087266462599716478846184538424431f;  // (pi/180)/2
@@ -512,16 +510,18 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         UE_LOGW("remote_prop::OnSpawn: no world context -- dropping");
         return;
     }
-    // Build FTransform from wire rotation/scale/location.
-    FTransform48 xform{};
+    // Build FTransform from wire rotation/scale/location. ue_wrap::FTransform
+    // (types.h) is the canonical 48-byte layout matching engine FTransform;
+    // RULE 2 (audit issue C-4): no parallel local FTransform48 type.
+    ue_wrap::FTransform xform{};  // ctor defaults: identity rot, zero loc, unit scale
     RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
-                  xform.rotX, xform.rotY, xform.rotZ, xform.rotW);
-    xform.locX   = payload.locX;
-    xform.locY   = payload.locY;
-    xform.locZ   = payload.locZ;
-    xform.scaleX = payload.scaleX;
-    xform.scaleY = payload.scaleY;
-    xform.scaleZ = payload.scaleZ;
+                  xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    xform.TX = payload.locX;
+    xform.TY = payload.locY;
+    xform.TZ = payload.locZ;
+    xform.SX = payload.scaleX;
+    xform.SY = payload.scaleY;
+    xform.SZ = payload.scaleZ;
     // Phase 1: BeginDeferredActorSpawnFromClass -> uninitialized AActor*.
     constexpr uint8_t kAlwaysSpawn = 1;
     void* spawned = nullptr;

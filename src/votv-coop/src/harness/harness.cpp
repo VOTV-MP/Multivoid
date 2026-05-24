@@ -25,7 +25,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cwctype>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace harness {
@@ -302,6 +304,50 @@ uint64_t g_propEmitCount = 0;
 // The first SetTargetLocation observer fire of a new grab is when we LEARN
 // what was grabbed (read mainPlayer.grabbing_actor) and start streaming.
 bool g_grabObserversInstalled = false;
+// Bug C audit C-2 (2026-05-24): the propInventory_C class may not be loaded
+// at the moment InstallGrabObservers first runs (engine loads BP classes on
+// demand). Track its install separately so NetPumpTick can retry the takeObj
+// observer registration each tick until the class appears, without
+// re-attempting the 13 already-installed observers.
+bool g_inventoryObserverInstalled = false;
+
+// Bug C audit C-3 (2026-05-24): bounded retry queue for PropSpawn payloads
+// that couldn't ship immediately because the reliable channel was busy
+// (stop-and-wait: chat or PropRelease in-flight). Drained by NetPumpTick on
+// each tick. Without this queue, a PropSpawn dropped here means the peer
+// permanently has no actor with that Key -- subsequent PropPose updates
+// would log "no local match" forever (FindByKeyString requires the prop
+// to exist).
+std::mutex g_pendingSpawnsMutex;
+std::deque<coop::net::PropSpawnPayload> g_pendingSpawns;
+constexpr size_t kMaxPendingSpawns = 8;  // bounded so a runaway sender + stuck channel can't bloat memory
+
+void EnqueuePropSpawnForRetry(const coop::net::PropSpawnPayload& payload) {
+    std::lock_guard<std::mutex> lk(g_pendingSpawnsMutex);
+    if (g_pendingSpawns.size() >= kMaxPendingSpawns) {
+        UE_LOGW("net: PropSpawn retry queue full (depth %zu / max %zu) -- dropping OLDEST so newer spawns aren't lost",
+                g_pendingSpawns.size(), kMaxPendingSpawns);
+        g_pendingSpawns.pop_front();
+    }
+    g_pendingSpawns.push_back(payload);
+    UE_LOGI("net: PropSpawn enqueued for retry (depth now %zu)", g_pendingSpawns.size());
+}
+
+// Drain pending PropSpawns into the reliable channel. Called per tick from
+// NetPumpTick. Stops at the first SendPropSpawn=false (reliable channel
+// still busy) so order is preserved.
+void DrainPendingPropSpawns() {
+    std::lock_guard<std::mutex> lk(g_pendingSpawnsMutex);
+    while (!g_pendingSpawns.empty()) {
+        const auto& payload = g_pendingSpawns.front();
+        if (!g_session.SendPropSpawn(payload)) {
+            break;  // channel busy; retry next tick. preserves order.
+        }
+        UE_LOGI("net: PropSpawn dequeued + sent (remaining=%zu)",
+                g_pendingSpawns.size() - 1);
+        g_pendingSpawns.pop_front();
+    }
+}
 
 // --- Primary: engine PhysicsHandle (`self` IS the UPhysicsHandleComponent,
 // owned by mainPlayer_C as `grabHandle`). To learn which prop is held, dereference
@@ -548,10 +594,40 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,
             (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
-    const bool ok = g_session.SendPropSpawn(p);
-    if (!ok) {
-        UE_LOGW("grab_hook[takeObj POST]: SendPropSpawn returned false (reliable channel busy) -- spawn won't replicate to peer this time. Stage-4 PropPose updates will eventually try to resolve the missing key.");
+    // Try direct send first; if the reliable channel is busy (chat or
+    // PropRelease in flight), enqueue for NetPumpTick to drain (audit C-3).
+    // Dropping silently would leave the peer with no actor for this Key
+    // forever -- PropPose updates can't resolve a Key that never spawned.
+    if (!g_session.SendPropSpawn(p)) {
+        EnqueuePropSpawnForRetry(p);
     }
+}
+
+// Helper: install ONLY the propInventory_C::takeObj POST observer. Separate
+// from InstallGrabObservers (audit C-2) so NetPumpTick can re-attempt this
+// observer each tick if propInventory_C is loaded later than the core
+// observers. Idempotent via g_inventoryObserverInstalled.
+void InstallInventoryObserverIfReady() {
+    if (g_inventoryObserverInstalled) return;
+    void* invCls = R::FindClass(P::name::PropInventoryClass);
+    if (!invCls) return;  // not loaded yet -- retry next tick
+    void* fn = R::FindFunction(invCls, P::name::PropInventoryTakeObjFn);
+    if (!fn) {
+        // The class exists but the function doesn't -- this is a permanent
+        // mismatch (class renamed or function moved). Log once and stop
+        // retrying so we don't spam the log.
+        UE_LOGW("grab_hook: %ls.%ls UFunction not found -- Bug C disabled permanently this session",
+                P::name::PropInventoryClass, P::name::PropInventoryTakeObjFn);
+        g_inventoryObserverInstalled = true;  // stop the retry loop
+        return;
+    }
+    if (!ue_wrap::game_thread::RegisterPostObserver(fn, GrabObserver_PropInventory_TakeObj_POST)) {
+        UE_LOGW("grab_hook: failed to register takeObj POST observer (table full?)");
+        return;
+    }
+    UE_LOGI("grab_hook: registered POST observer for %ls.%ls @ %p (Bug C inventory drop ready)",
+            P::name::PropInventoryClass, P::name::PropInventoryTakeObjFn, fn);
+    g_inventoryObserverInstalled = true;
 }
 
 // One-shot UFunction-pointer resolution + observer install. Idempotent. Two
@@ -561,7 +637,12 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 // UFunctions log a warning (BP recooks can renumber the K2Node ordinal in
 // the InpActEvt name -- localized failure, others still install).
 void InstallGrabObservers() {
-    if (g_grabObserversInstalled) return;
+    // Always attempt the inventory observer (audit C-2): independent of the
+    // core observers so a late-loading propInventory_C still gets hooked.
+    if (g_grabObserversInstalled) {
+        InstallInventoryObserverIfReady();
+        return;
+    }
 
     void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
     void* pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
@@ -628,20 +709,12 @@ void InstallGrabObservers() {
     reg(playerCls, P::name::MainPlayerClass,
         P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
 
-    // v5 Bug C: UpropInventory_C::takeObj POST -- captures every inventory
-    // drop path through the one bottom call (per RE doc). UpropInventory_C
-    // is a BP class; class lookup may fail before VOTV's content has loaded
-    // -- log a warning but continue (the other observers still install).
-    if (void* invCls = R::FindClass(P::name::PropInventoryClass)) {
-        reg(invCls, P::name::PropInventoryClass,
-            P::name::PropInventoryTakeObjFn, GrabObserver_PropInventory_TakeObj_POST, /*pre=*/false);
-    } else {
-        UE_LOGW("grab_hook: %ls class not found -- Bug C inventory-drop replication disabled this session",
-                P::name::PropInventoryClass);
-    }
-
     g_grabObserversInstalled = true;
-    UE_LOGI("grab_hook: Stage 1+ observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline + 1 takeObj) -- press E on a prop or drop from inventory to see hook lines");
+    UE_LOGI("grab_hook: Stage 1+ core observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
+
+    // v5 Bug C: try takeObj observer NOW; if propInventory_C isn't loaded
+    // yet, NetPumpTick will retry each tick via this same helper.
+    InstallInventoryObserverIfReady();
 }
 
 // ---- Autonomous grab test (no user E-press required) --------------------
@@ -1149,6 +1222,11 @@ void NetPumpTick(float displayOffsetX) {
     }
     g_wasConnected = isConnected;
 
+    // Drain any pending PropSpawn payloads that couldn't ship at observer
+    // fire time because the reliable channel was busy (audit C-3). Cheap
+    // when the queue is empty (mutex lock + size check). Order preserved.
+    if (isConnected) DrainPendingPropSpawns();
+
     if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
     if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
     if (g_netLocal) {
@@ -1160,7 +1238,7 @@ void NetPumpTick(float displayOffsetX) {
         // One-shot install of the grab-observer hooks (Stage 1 of [[project-
         // physics-object-pickup]]). Class is reachable now that local is live;
         // idempotent on g_grabObserversInstalled.
-        if (!g_grabObserversInstalled) InstallGrabObservers();
+        InstallGrabObservers();  // self-gates on g_grabObserversInstalled + retries inventory observer (audit C-2)
         coop::net::PoseSnapshot mine;
         if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
 
@@ -1785,7 +1863,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // (observe THIS instance's own UFunctions); zero wire dependency.
             for (;;) {
                 Post([] {
-                    if (!g_grabObserversInstalled) InstallGrabObservers();
+                    InstallGrabObservers();  // self-gates on g_grabObserversInstalled + retries inventory observer (audit C-2)
                     coop::nameplate::Update();
                 });
                 ::Sleep(50);
