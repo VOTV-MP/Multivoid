@@ -1269,6 +1269,16 @@ void InstallGrabObservers() {
         }
     };
 
+    // 2026-05-25 audit fix #1 (cross-peer destroy): eager-resolve the
+    // PHC.ReleaseComponent cache used by ue_wrap::engine::ReleaseMainPlayer
+    // GrabIfHolding. Without this, the first wire-received PropDestroy of
+    // a held prop would hit the lazy resolve in remote_prop::OnDestroy --
+    // and if PHC class were somehow not yet loaded, fall through to the
+    // warn-and-clear fallback, leaving PHC.GrabbedComponent dangling.
+    // Eager-resolve here (we already have phcCls confirmed loaded above)
+    // closes that window.
+    ue_wrap::engine::WarmupPhcReleaseCache();
+
     // Primary: engine PhysicsHandle (LIGHT grab path).
     reg(phcCls, P::name::PhysicsHandleComponentClass,
         P::name::GrabComponentAtLocationFn,             GrabObserver_PHC_Grab,                  /*pre=*/false);

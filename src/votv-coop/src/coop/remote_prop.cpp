@@ -829,61 +829,6 @@ bool ResolveDestroyFn() {
     return g_destroyActorFn != nullptr;
 }
 
-// Cached PHC class + ReleaseComponent UFunction for the
-// release-before-destroy path. Resolved on first need.
-void* g_phcCls       = nullptr;
-void* g_phcReleaseFn = nullptr;
-
-bool ResolvePhcRelease() {
-    if (g_phcReleaseFn && R::IsLive(g_phcCls)) return true;
-    g_phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
-    if (!g_phcCls) return false;
-    g_phcReleaseFn = R::FindFunction(g_phcCls, P::name::ReleaseComponentFn);
-    return g_phcReleaseFn != nullptr;
-}
-
-// If `localPlayer` is currently grabbing `actor` via grabHandle (PHC),
-// release the grab cleanly + clear mainPlayer.grabbing_actor BEFORE the
-// caller destroys `actor`. Returns true if a release happened.
-//
-// Why this is required (2026-05-25 RE
-// research/findings/votv-food-consumption-and-cross-peer-destroy-RE-2026-05-25.md
-// section C):
-//   K2_DestroyActor marks the actor PendingKill. PHC.GrabbedComponent
-//   (UPrimitiveComponent* @+0xB0) is left pointing at the dying
-//   StaticMesh. mainPlayer.destGrabbed binds an OnDestroyed delegate on
-//   the actor which DOES clear PHC -- but the timing relative to
-//   PhysX body teardown isn't guaranteed safe across the
-//   actor.K2_DestroyActor -> ...InvokeOnDestroyedDelegates -> destGrabbed
-//   chain. The defensive fix is to call PHC.ReleaseComponent FIRST so
-//   PhysX cleanly tears down the constraint, then K2_DestroyActor.
-bool ReleaseLocalGrabIfHoldingActor(void* localPlayer, void* actor) {
-    if (!localPlayer || !actor) return false;
-    void** grabbingSlot = reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabbing_actor);
-    if (*grabbingSlot != actor) return false;
-    if (!ResolvePhcRelease()) {
-        UE_LOGW("remote_prop::ReleaseLocalGrab: PHC.ReleaseComponent UFunction unresolved -- clearing slot only");
-        *grabbingSlot = nullptr;
-        return false;
-    }
-    void* phc = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabHandle);
-    if (phc && R::IsLive(phc)) {
-        R::CallFunction(phc, g_phcReleaseFn, nullptr);
-        UE_LOGI("remote_prop::ReleaseLocalGrab: PHC.ReleaseComponent dispatched on doomed actor=%p",
-                actor);
-    } else {
-        UE_LOGW("remote_prop::ReleaseLocalGrab: PHC pointer null/dead -- only clearing grabbing_actor");
-    }
-    // Mirror the destGrabbed cleanup path so subsequent state reads (e.g.
-    // mainPlayer.grabbing_actor inspected by other observers in the same
-    // frame) don't see the dangling pointer. The BP delegate would have
-    // run this eventually; doing it ourselves removes the timing
-    // uncertainty.
-    *grabbingSlot = nullptr;
-    return true;
-}
 }  // namespace
 
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) {
@@ -918,7 +863,10 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     // food, CLIENT eats it, HOST receives PropDestroy from client and
     // must release before destroy), tear down the PHC grab cleanly
     // first. No-op for the common case where the actor isn't grabbed.
-    ReleaseLocalGrabIfHoldingActor(localPlayer, actor);
+    // Audit fix #3 (2026-05-25): routed through ue_wrap::engine to keep
+    // Principle 7 layering (coop/ does not touch engine struct offsets
+    // directly).
+    ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(localPlayer, actor);
     // Mark BEFORE the engine call so our K2_DestroyActor PRE observer sees
     // it and skips the broadcast (echo suppression).
     MarkIncomingDestroy(actor);

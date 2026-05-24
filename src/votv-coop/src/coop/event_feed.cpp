@@ -224,6 +224,14 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             // actor (resolved via FindByKeyString). Receiver-side
             // K2_DestroyActor is echo-suppressed via the incoming-destroy
             // set so it doesn't bounce back to the sender.
+            //
+            // TRUST BOUNDARY (audit fix #4, 2026-05-25): with bidirectional
+            // destroy, CLIENT can command HOST to destroy any prop by
+            // wire-Key. Acceptable for LAN coop (trusted peers); review
+            // before Internet coop -- a malicious client could replay
+            // crafted Keys to destroy host's quest items. Mitigation if
+            // needed: authority model (host validates destroy requests
+            // against current world state / quest progress).
             if (msg.payload.size() < sizeof(net::PropDestroyPayload)) {
                 UE_LOGW("event_feed: PropDestroy payload too short (%zu < %zu)",
                         msg.payload.size(), sizeof(net::PropDestroyPayload));

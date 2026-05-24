@@ -1090,6 +1090,70 @@ void WriteObjectField(void* target, size_t byteOffset, void* value) {
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(target) + byteOffset) = value;
 }
 
+namespace {
+// Cached PHC class + ReleaseComponent UFunction for the release-before-destroy
+// path. Eager-resolved (audit fix #1, 2026-05-25) so the first cross-peer
+// PropDestroy doesn't hit a not-yet-resolved class on a peer that just
+// connected. The PhysicsHandleComponent UClass is engine-stable and loads
+// with the world; by the time any session connects it is resolvable.
+void* g_phcClsCache       = nullptr;
+void* g_phcReleaseFnCache = nullptr;
+
+bool ResolvePhcReleaseCached() {
+    if (g_phcReleaseFnCache && R::IsLive(g_phcClsCache)) return true;
+    g_phcClsCache = R::FindClass(P::name::PhysicsHandleComponentClass);
+    if (!g_phcClsCache) return false;
+    g_phcReleaseFnCache = R::FindFunction(g_phcClsCache, P::name::ReleaseComponentFn);
+    return g_phcReleaseFnCache != nullptr;
+}
+}  // namespace
+
+bool WarmupPhcReleaseCache() {
+    const bool ok = ResolvePhcReleaseCached();
+    if (ok) {
+        UE_LOGI("engine::WarmupPhcReleaseCache: PHC.ReleaseComponent cached @ %p (cls @ %p)",
+                g_phcReleaseFnCache, g_phcClsCache);
+    } else {
+        UE_LOGW("engine::WarmupPhcReleaseCache: PHC class or UFunction not loaded yet -- will retry on next caller");
+    }
+    return ok;
+}
+
+bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
+    if (!localPlayer || !actor) return false;
+    // 2026-05-25 audit fix #2: validate localPlayer liveness before any field
+    // dereference. mainPlayer_C is normally persistent across the session
+    // but a level unload mid-disconnect could leave the cached pointer
+    // dangling -- IsLive catches it via the FUObjectItem.Flags read.
+    if (!R::IsLive(localPlayer)) return false;
+    void** grabbingSlot = reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabbing_actor);
+    if (*grabbingSlot != actor) return false;
+    if (!ResolvePhcReleaseCached()) {
+        // PHC class still not loaded somehow (defensive). Clear the slot
+        // anyway so subsequent reads don't see a doomed pointer; the BP
+        // destGrabbed delegate will run the PHC teardown via the actor's
+        // OnDestroyed broadcast (less ideal timing but functional).
+        UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent unresolved -- clearing grabbing_actor only; destGrabbed delegate path will run PHC teardown");
+        *grabbingSlot = nullptr;
+        return false;
+    }
+    void* phc = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabHandle);
+    if (phc && R::IsLive(phc)) {
+        R::CallFunction(phc, g_phcReleaseFnCache, nullptr);
+        UE_LOGI("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent dispatched on doomed actor=%p",
+                actor);
+    } else {
+        UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC pointer null/dead on localPlayer=%p -- only clearing grabbing_actor",
+                localPlayer);
+    }
+    // Mirror destGrabbed delegate cleanup so subsequent state reads
+    // (other observers in same frame) don't see the dangling pointer.
+    *grabbingSlot = nullptr;
+    return true;
+}
+
 void LogClassProperties(const wchar_t* className) {
     void* cls = R::FindClass(className);
     if (!cls) {

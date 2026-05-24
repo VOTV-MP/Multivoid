@@ -164,6 +164,29 @@ bool SetComponentTickEnabled(void* component, bool enabled);
 // Game thread only.
 void WriteObjectField(void* target, size_t byteOffset, void* value);
 
+// If `localPlayer` (a live AmainPlayer_C*) is currently grabbing `actor` via
+// the LIGHT-grab path (mainPlayer.grabbing_actor @0x07D0 + grabHandle @0x0688),
+// dispatch UPhysicsHandleComponent::ReleaseComponent on the PHC and clear
+// the grabbing_actor slot. Returns true iff a release happened.
+//
+// 2026-05-25 (cross-peer destroy audit fix #3 -- moved here from
+// coop::remote_prop per Principle 7: coop/ must not directly access engine
+// struct offsets). The release-before-destroy ordering is critical:
+// K2_DestroyActor leaves PHC.GrabbedComponent (@+0xB0) dangling, and
+// UPhysicsHandleComponent::TickComponent dereferences that pointer next
+// frame.
+//
+// Game thread only. No-op (returns false) if any input is null/dead.
+bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor);
+
+// Eager-resolve the PHC.ReleaseComponent UFunction cache used by
+// ReleaseMainPlayerGrabIfHolding. Call once during init when PhysicsHandle
+// Component class is loaded (harness::InstallGrabObservers) so the first
+// cross-peer PropDestroy receive doesn't hit a not-yet-resolved class and
+// fall through to the warn-and-clear fallback. Idempotent. Returns true
+// iff the cache is populated after the call. Game thread only.
+bool WarmupPhcReleaseCache();
+
 // Diagnostic: log every FProperty on a UClass (name, offset, size). Used to
 // verify a property offset we resolved via reflection (e.g. confirm we got
 // the real UMovementComponent::Velocity offset and not a sibling property
