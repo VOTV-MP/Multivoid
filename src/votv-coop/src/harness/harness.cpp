@@ -7,6 +7,7 @@
 #include "coop/grab_observer.h"
 #include "coop/nameplate.h"
 #include "coop/net/session.h"
+#include "coop/npc_sync.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "ue_wrap/hud_feed.h"
@@ -357,69 +358,8 @@ bool g_inventoryObserverInstalled = false;
 // from a per-call read-or-write on a session-scoped flag.
 bool g_takeObjInFlight = false;
 
-// Phase 5N1 (NPC sync foundation, 2026-05-25). State for the engine-level
-// NPC spawn-suppression interceptor.
-//
-//   g_npcSuppressInstalled  -- once the interceptor is wired we stop the
-//                              NetPumpTick retry loop. Set true on either
-//                              successful install OR permanent failure (e.g.
-//                              GameplayStatics class not in this build).
-//   g_npcAllowlist          -- 12 cached UClass* pointers, resolved once at
-//                              install time. Linear scan per spawn (12 ptr
-//                              compares); fast enough that the per-spawn
-//                              cost is well below the rest of the spawn
-//                              path. Marked atomic-via-store-once: written
-//                              under the install path's not-yet-installed
-//                              guard, then never modified -- but the
-//                              interceptor reads from the game thread
-//                              concurrently with the install attempt (which
-//                              ALSO runs on the game thread per the
-//                              NetPumpTick contract), so plain reads are
-//                              safe.
-//   g_npcSpawnFn            -- the resolved BeginDeferredActorSpawnFromClass
-//                              UFunction; used by ClearInterceptor on
-//                              disconnect (Phase 5N1 enable/disable is
-//                              currently session-lifetime, but the slot
-//                              cleanup keeps the symmetric pattern with
-//                              the other observer installs).
-//   g_npcSpawnActorClassParamOff -- cached FFrame offset of the
-//                              `ActorClass` UClass* param in the
-//                              BeginDeferred call. Resolved once at
-//                              install via R::FindParamOffset.
-//   g_npcSpawnReturnParamOff -- FFrame offset of the AActor* return
-//                              value param; we zero it when suppressing
-//                              so the BP graph sees nullptr.
-bool g_npcSuppressInstalled = false;
-// Sized via kNpcAllowlistSize (audit-fix I1, 2026-05-25): the prior hardcoded
-// `[12]` would silently overflow if a new NPC class is added to kNpcAllowlist
-// in sdk_profile.h. The compile-time constexpr binds the two together.
-void* g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize] = {};
-void* g_npcSpawnFn = nullptr;
-int32_t g_npcSpawnActorClassParamOff = -1;
-int32_t g_npcSpawnReturnParamOff = -1;
-
-// Audit-fix C2 (2026-05-25): bypass slot for Inc2's wire-received NPC spawns.
-// Without this, the Phase 5N1 Inc2 client-side dispatcher (which will call
-// BeginDeferredActorSpawnFromClass to materialize a host-streamed NPC) would
-// trip our own suppressor and spawn nothing. Mirrors the prop system's
-// g_incomingSpawns set (see remote_prop.cpp MarkIncomingSpawn /
-// ConsumeIncomingSpawn) but specialized for the engine-level UFunction
-// interceptor: a single-shot UClass* slot.
-//
-// Game-thread-only access pattern: the wire pump (NetPumpTick) sets the
-// slot, then immediately calls BeginDeferredActorSpawnFromClass via the
-// engine path (ParamFrame + Call). The ProcessEvent detour fires the
-// interceptor BEFORE the original UFunction; the interceptor sees the
-// slot matches, clears it, and returns false (allow through). UFunction
-// dispatch is linear single-thread per the game_thread.h contract --
-// there's no race window where another interceptor call lands between
-// the set and the consume.
-//
-// Single-shot (not a set) because the wire dispatcher only spawns ONE
-// actor per packet on the game thread; we don't need to track multiple
-// in-flight spawns. If we ever add batch wire-spawn we'd promote this
-// to a small set.
-void* g_incomingNpcSpawnClass = nullptr;
+// Phase 5N1 NPC sync state is owned by coop/npc_sync.cpp; this TU calls into
+// it via coop::npc_sync::Install(&g_session) each NetPumpTick.
 
 // Bug C audit C-3 (2026-05-24): bounded retry queue for PropSpawn payloads
 // that couldn't ship immediately because the reliable channel was busy
@@ -1256,280 +1196,6 @@ void InstallInventoryObserverIfReady() {
 //
 // The 12 NPC classes are loaded on first gameplay-level transition
 // (not at menu), so we may need NetPumpTick to retry until all 12
-// resolve. Partial-resolution case: log per-class failures and install
-// anyway -- a missing class just won't be suppressed (the unsuppressed
-// NPC will spawn on both peers; visible but not crash-critical).
-// Audit-fix C1 (2026-05-25): subclass-aware allowlist match. The prior
-// exact-pointer compare leaked all 30+ subclass spawns (kerfurOmega has 20
-// subclasses incl. kerfurOmega_mannequin_C -- the actual class spawned by
-// mannequinSpawner -- and npc_zombie has 14 subclasses, etc). Walk the
-// SuperStruct chain like ue_wrap::prop::IsClassDescendantOfProp does. ~16
-// hops max covers the deepest VOTV BP chain; we bound at kSuperStructHops
-// to cap the loop in pathological cases.
-constexpr int kSuperStructHops = 16;
-bool IsClassOrDerivedFromAnyAllowlisted(void* cls) {
-    if (!cls) return false;
-    for (int hops = 0; hops < kSuperStructHops && cls; ++hops) {
-        for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
-            if (g_npcAllowlist[i] && g_npcAllowlist[i] == cls) return true;
-        }
-        cls = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(cls) + P::off::UStruct_SuperStruct);
-    }
-    return false;
-}
-
-// Phase 5N1 Inc2 (2026-05-25): host-side env var gate. Set
-// VOTVCOOP_NPC_SYNC=1 to enable the host-side EntitySpawn broadcast
-// when this interceptor fires on the host for an allowlisted NPC class.
-// Default OFF -- Inc2 ships the wire layer but doesn't activate it
-// until the user verifies hands-on. Inc3 will wire the client-side
-// receiver and we'll likely flip this on by default.
-bool NpcSyncEnabled() {
-    static bool resolved = false;
-    static bool enabled = false;
-    if (!resolved) {
-        wchar_t buf[8] = {};
-        const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_NPC_SYNC", buf, 8);
-        enabled = (n > 0 && buf[0] == L'1');
-        resolved = true;
-        UE_LOGI("npc-sync: VOTVCOOP_NPC_SYNC=%ls -> EntitySpawn broadcast %s",
-                n > 0 ? buf : L"<unset>", enabled ? "ENABLED" : "disabled");
-    }
-    return enabled;
-}
-
-// Phase 5N1 Inc2: host-side monotonic sessionId counter. Reset per
-// session (cleared when net::Session disconnects -- see net-disconnect
-// handler near the bottom of this file). 0 reserved for "invalid";
-// counter starts at 1.
-uint32_t g_nextNpcSessionId = 1;
-
-// Phase 5N1 Inc2: host-side tracked-NPC set. Maps the just-deferred-
-// spawned NPC actor (returned by the original BeginDeferredActorSpawn
-// FromClass after the interceptor lets it through) -> sessionId. Used
-// by the K2_DestroyActor PRE observer to send EntityDestroy with the
-// right sessionId. Empty until the host's first NPC spawn.
-//
-// (For Inc2-detection-only mode the map is populated but EntityDestroy
-// isn't wired yet -- that's Inc3.)
-std::unordered_map<void*, uint32_t> g_npcSessionByActor;
-
-bool NpcSuppress_Interceptor(void* self, void* params) {
-    (void)self;  // self = the UGameplayStatics CDO; we don't use it
-    // Cheapest checks first.
-    if (!params || g_npcSpawnActorClassParamOff < 0) return false;
-    if (!g_session.connected()) return false;  // pre-connect: don't filter
-
-    // Phase 5N1 Inc2: HOST-side broadcast path. When env var is set and
-    // ActorClass is allowlisted, the host emits an EntitySpawn reliable
-    // packet and lets the spawn proceed normally. The interceptor runs
-    // BEFORE the original UFunction; we read the SpawnTransform from
-    // params before the spawn actually happens. Returns FALSE so the
-    // original runs (host wants the NPC to actually spawn locally).
-    //
-    // Inc3 will:
-    //   - track the returned AActor* in g_npcSessionByActor (POST hook)
-    //   - hook K2_DestroyActor PRE to send EntityDestroy
-    //   - wire client-side receiver to materialize a mirror via
-    //     MarkIncomingNpcSpawn + BeginDeferred + FinishSpawning
-    //
-    // For Inc2 (this commit): host detects spawns + sends EntitySpawn.
-    // Client receives the packet but doesn't yet act on it (the
-    // event_feed receiver is wired-to-log-only). Detect-only mode.
-    if (g_session.role() == coop::net::Role::Host) {
-        if (!NpcSyncEnabled()) return false;
-        void* actorClass = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(params) + g_npcSpawnActorClassParamOff);
-        if (!actorClass || !IsClassOrDerivedFromAnyAllowlisted(actorClass)) {
-            return false;  // not an NPC; let it run, no broadcast
-        }
-        // Read the SpawnTransform param. Offset resolved at install time
-        // for both endpoints; for now we read via FindParamOffset each
-        // call (cached statically below).
-        static int32_t sXformOff = -2;
-        if (sXformOff == -2) {
-            sXformOff = R::FindParamOffset(g_npcSpawnFn, L"SpawnTransform");
-        }
-        coop::net::EntitySpawnPayload p{};
-        if (sXformOff >= 0) {
-            // FTransform layout: FQuat Rotation (16B) + FVector Translation (12B)
-            // + FVector Scale3D (12B) -- 48 bytes total, but UE4 also aligns to
-            // 16 so it's typically 48 with internal padding.
-            const uint8_t* xform = reinterpret_cast<const uint8_t*>(params) + sXformOff;
-            // FQuat (XYZW)
-            const float qx = *reinterpret_cast<const float*>(xform + 0);
-            const float qy = *reinterpret_cast<const float*>(xform + 4);
-            const float qz = *reinterpret_cast<const float*>(xform + 8);
-            const float qw = *reinterpret_cast<const float*>(xform + 12);
-            // FVector translation @ +0x10 (16; after the 16-byte FQuat).
-            p.locX = *reinterpret_cast<const float*>(xform + 0x10);
-            p.locY = *reinterpret_cast<const float*>(xform + 0x14);
-            p.locZ = *reinterpret_cast<const float*>(xform + 0x18);
-            // Convert FQuat -> FRotator (in degrees) for wire compatibility
-            // with our existing FRotator-based pose pipeline. Standard UE4
-            // conversion: pitch = asin(2(wy - zx)); yaw = atan2(2(wz + xy),
-            // 1 - 2(yy + zz)); roll = atan2(2(wx + yz), 1 - 2(xx + yy)).
-            // We use a single normalize for sin clamp.
-            const float sinp = 2.f * (qw * qy - qz * qx);
-            const float sinp_clamped = sinp >  1.f ?  1.f
-                                     : sinp < -1.f ? -1.f : sinp;
-            const float pitchRad = std::asin(sinp_clamped);
-            const float yawRad   = std::atan2(2.f * (qw * qz + qx * qy),
-                                              1.f - 2.f * (qy * qy + qz * qz));
-            const float rollRad  = std::atan2(2.f * (qw * qx + qy * qz),
-                                              1.f - 2.f * (qx * qx + qy * qy));
-            constexpr float kRadToDeg = 57.29577951308232f;
-            p.rotPitch = pitchRad * kRadToDeg;
-            p.rotYaw   = yawRad   * kRadToDeg;
-            p.rotRoll  = rollRad  * kRadToDeg;
-        }
-        // Class name -> wire string. actorClass IS a UClass*; NameOf returns
-        // its own FName (e.g., "npc_zombie_C"). (ClassNameOf would return the
-        // class-of-the-class, i.e., "Class" -- wrong.)
-        const std::wstring cls = R::ToString(R::NameOf(actorClass));
-        p.className.len = 0;
-        for (size_t i = 0; i < cls.size() && i < 63; ++i) {
-            p.className.data[p.className.len++] = static_cast<char>(cls[i]);
-        }
-        p.sessionId = g_nextNpcSessionId++;
-        if (g_session.SendEntitySpawn(p)) {
-            UE_LOGI("npc-sync[host]: broadcast EntitySpawn class='%ls' sessionId=%u loc=(%.0f, %.0f, %.0f) rot=(p=%.1f y=%.1f r=%.1f)",
-                    cls.c_str(), p.sessionId, p.locX, p.locY, p.locZ,
-                    p.rotPitch, p.rotYaw, p.rotRoll);
-        } else {
-            UE_LOGW("npc-sync[host]: SendEntitySpawn failed (reliable channel busy?) -- NPC sessionId=%u not broadcast",
-                    p.sessionId);
-        }
-        // ALWAYS let the original spawn proceed on the host. Returning
-        // false from the interceptor = pass-through to the real UFunction.
-        return false;
-    }
-
-    // Host runs spawners normally; only CLIENT suppresses.
-    if (g_session.role() != coop::net::Role::Client) return false;
-
-    // Read the ActorClass UClass* param from the FFrame buffer.
-    void* actorClass = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(params) + g_npcSpawnActorClassParamOff);
-    if (!actorClass) return false;  // BP bug or default; let UE4 handle
-
-    // Audit-fix C2 (2026-05-25): bypass slot for wire-received NPC spawns.
-    // Inc2's client-side dispatcher will set g_incomingNpcSpawnClass = cls
-    // immediately before calling BeginDeferredActorSpawnFromClass to
-    // materialize a host-streamed NPC. We consume the slot here and allow
-    // the original through. Single-shot: cleared on consume so a stray
-    // local spawn of the same class doesn't accidentally pass through.
-    if (g_incomingNpcSpawnClass && g_incomingNpcSpawnClass == actorClass) {
-        UE_LOGI("npc-suppress[client]: allow-through wire-received spawn for class=%p (bypass slot consumed)",
-                actorClass);
-        g_incomingNpcSpawnClass = nullptr;
-        return false;
-    }
-
-    // Subclass-aware allowlist match. See IsClassOrDerivedFromAnyAllowlisted.
-    if (IsClassOrDerivedFromAnyAllowlisted(actorClass)) {
-        UE_LOGI("npc-suppress[client]: skipping BeginDeferredActorSpawnFromClass for class=%p (matches NPC allowlist by hierarchy walk)",
-                actorClass);
-        // Zero the AActor* return so the BP graph receives nullptr
-        // and bails. UE4's K2Node_SpawnActorFromClass emits a null-check
-        // before the FinishSpawningActor call per UE4 engine convention --
-        // NOT YET IDA-confirmed on VOTV spawners; the RE TODO in
-        // research/findings/votv-npc-sync-prereqs-RE-2026-05-24.md
-        // section 4 (lines 559-563) tracks this. Per UE4 standard
-        // emission patterns the risk is low, but if a specific VOTV
-        // spawner BP emits non-null-checking code, we'd see a
-        // FinishSpawningActor(nullptr, ...) crash here.
-        if (g_npcSpawnReturnParamOff >= 0) {
-            *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(params) + g_npcSpawnReturnParamOff) = nullptr;
-        }
-        return true;  // SKIP the original
-    }
-    return false;  // not an NPC; let it run
-}
-
-// Phase 5N1 Inc2 will call this from the wire pump (NetPumpTick reliable
-// dispatch on the client) immediately before invoking
-// BeginDeferredActorSpawnFromClass to materialize a host-streamed NPC.
-// The next NpcSuppress_Interceptor call that sees this class will consume
-// the slot + allow through. Idempotent on multi-call (last set wins; only
-// the slot's value at consume-time matters).
-//
-// Inc1 wires the slot infrastructure; Inc2 will be the first caller.
-// Exposed here so Inc2's wire pump can include this TU's header and call
-// it; for now it's a forward-only API.
-void MarkIncomingNpcSpawn(void* npcClass) {
-    g_incomingNpcSpawnClass = npcClass;
-}
-
-void InstallNpcSuppressorIfReady() {
-    if (g_npcSuppressInstalled) return;
-    void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
-    if (!gsCls) return;  // not loaded yet (loads with /Script/Engine; very early)
-    void* fn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
-    if (!fn) {
-        UE_LOGW("npc-suppress: %ls.%ls UFunction not found -- Phase 5N1 disabled permanently this session",
-                P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn);
-        g_npcSuppressInstalled = true;  // stop retry
-        return;
-    }
-
-    // Resolve the ActorClass param FFrame offset.
-    const int32_t classOff = R::FindParamOffset(fn, L"ActorClass");
-    if (classOff < 0) {
-        UE_LOGW("npc-suppress: %ls.%ls 'ActorClass' param not found (BP recook?) -- disabled",
-                P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn);
-        g_npcSuppressInstalled = true;
-        return;
-    }
-    // ReturnValue is the AActor* the function returns. UE4 convention: param
-    // named "ReturnValue" on the FUNCTION's properties list.
-    const int32_t retOff = R::FindParamOffset(fn, L"ReturnValue");
-    if (retOff < 0) {
-        UE_LOGW("npc-suppress: %ls.%ls 'ReturnValue' param not found -- can't zero the return; disabled",
-                P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn);
-        g_npcSuppressInstalled = true;
-        return;
-    }
-
-    // Resolve the 12 NPC classes. Partial-resolution OK: missing classes
-    // just won't be suppressed. Most VOTV NPC BP classes are loaded with
-    // /Game/Content/blueprints/npc/... -- present on gameplay-level entry.
-    // We retry the WHOLE install until all 12 resolve.
-    size_t resolved = 0;
-    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
-        if (!g_npcAllowlist[i]) {
-            g_npcAllowlist[i] = R::FindClass(P::name::kNpcAllowlist[i]);
-        }
-        if (g_npcAllowlist[i]) ++resolved;
-    }
-    if (resolved < P::name::kNpcAllowlistSize) {
-        // Wait for the rest -- retry next NetPumpTick. Do NOT install yet;
-        // we want all 12 cached before going live, to avoid a window where
-        // some NPCs are suppressed and others aren't.
-        UE_LOGI("npc-suppress: NPC class load partial (%zu/%zu) -- retry next tick",
-                resolved, P::name::kNpcAllowlistSize);
-        return;
-    }
-
-    // All 12 NPC classes resolved. Cache the function pointer + offsets
-    // and install the interceptor. SetInterceptor takes a single slot;
-    // we own it for the whole session.
-    g_npcSpawnFn = fn;
-    g_npcSpawnActorClassParamOff = classOff;
-    g_npcSpawnReturnParamOff = retOff;
-    ue_wrap::game_thread::SetInterceptor(fn, &NpcSuppress_Interceptor);
-    g_npcSuppressInstalled = true;
-    UE_LOGI("npc-suppress: installed interceptor on %ls.%ls @ %p (ActorClass@%d, ReturnValue@%d, 12/12 NPC classes resolved)",
-            P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn,
-            fn, classOff, retOff);
-    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
-        UE_LOGI("npc-suppress: allowlist[%zu] '%ls' = %p",
-                i, P::name::kNpcAllowlist[i], g_npcAllowlist[i]);
-    }
-}
-
 // Top-level orchestrator: retried each NetPumpTick. Each subsystem's Install()
 // is idempotent and short-circuits once successful, so this is safe to call
 // every tick. The four subsystems are independent (a late-loading BP class
@@ -1537,12 +1203,12 @@ void InstallNpcSuppressorIfReady() {
 //   - coop::grab_observer::Install -- physics-prop grab/release/throw
 //   - InstallInventoryObserverIfReady -- propInventory_C::takeObj PRE/POST
 //   - InstallPropLifecycleObserversIfReady -- Aprop_C::Init POST + K2_DestroyActor PRE
-//   - InstallNpcSuppressorIfReady -- Phase 5N1 NPC class allowlist + interceptor
+//   - coop::npc_sync::Install -- Phase 5N1 NPC class allowlist + interceptor
 void InstallGrabObservers() {
     coop::grab_observer::Install();
     InstallInventoryObserverIfReady();
     InstallPropLifecycleObserversIfReady();
-    InstallNpcSuppressorIfReady();
+    coop::npc_sync::Install(&g_session);
 }
 
 // ---- Autonomous grab test (no user E-press required) --------------------
@@ -2084,13 +1750,9 @@ void NetPumpTick(float displayOffsetX) {
         // Init POST broadcasts. The single bool reset is cheap.
         g_takeObjInFlight = false;
         // Phase 5N1 Inc2 (2026-05-25): reset host-side NPC tracking state
-        // on disconnect. sessionId must restart at 1 next session (zero is
-        // reserved for "invalid"). The g_npcSessionByActor map holds stale
-        // actor pointers from the previous session -- not safe to keep,
-        // and the next session's allocator wouldn't recognize them anyway.
-        g_npcSessionByActor.clear();
-        g_nextNpcSessionId = 1;
-        g_incomingNpcSpawnClass = nullptr;  // any in-flight bypass slot
+        // on disconnect (sessionId counter + tracked map + bypass slot --
+        // see coop/npc_sync.cpp OnDisconnect).
+        coop::npc_sync::OnDisconnect();
         UE_LOGI("net: disconnected -- cleared %zu pending PropSpawn(s) + %zu pending PropDestroy(s) + %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 droppedSpawns, droppedDestroys, snapPending, initProcessedDropped);
     }
