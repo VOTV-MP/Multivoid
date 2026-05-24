@@ -88,9 +88,14 @@ inline constexpr size_t UUserWidget_WidgetTree = 0x01D8;       // UWidgetTree*
 inline constexpr size_t UWidgetTree_RootWidget = 0x0028;       // UWidget*
 inline constexpr size_t UTextBlock_Text = 0x0128;              // FText
 inline constexpr size_t UTextBlock_ColorAndOpacity = 0x0150;   // FSlateColor {FLinearColor@0, ColorUseRule(uint8)@0x10}
-inline constexpr size_t UTextBlock_Font = 0x0188;              // FSlateFontInfo {FontObject@0, Size(int32)@0x48}
+inline constexpr size_t UTextBlock_Font = 0x0188;              // FSlateFontInfo {FontObject@0, Size(int32)@0x48, OutlineSettings@0x10 (size 0x20)}
+inline constexpr size_t UTextBlock_ShadowOffset = 0x0268;      // FVector2D (2 floats). UMG.hpp:1447
+inline constexpr size_t UTextBlock_ShadowColorAndOpacity = 0x0270;  // FLinearColor (4 floats RGBA). UMG.hpp:1448
 inline constexpr size_t UTextLayoutWidget_Justification = 0x010B;  // TEnumAsByte<ETextJustify> (1=Center)
 inline constexpr size_t FSlateFontInfo_Size = 0x48;            // within UTextBlock_Font
+inline constexpr size_t FSlateFontInfo_OutlineSettings = 0x10; // FFontOutlineSettings (size 0x20) within FSlateFontInfo. SlateCore.hpp:313
+inline constexpr size_t FFontOutlineSettings_OutlineSize  = 0x00; // int32 within FFontOutlineSettings. SlateCore.hpp:161
+inline constexpr size_t FFontOutlineSettings_OutlineColor = 0x10; // FLinearColor within FFontOutlineSettings. SlateCore.hpp:165
 inline constexpr size_t FSlateColor_ColorUseRule = 0x10;       // within UTextBlock_ColorAndOpacity (0=UseColor_Specified)
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).

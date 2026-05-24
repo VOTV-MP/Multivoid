@@ -503,6 +503,42 @@ BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& 
     *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = color;
     *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
     *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = justification;
+
+    // Visual polish (2026-05-25, VT-comparison-driven): text outline + drop
+    // shadow. These two writes close most of the "VoidTogether widgets look
+    // natural / ours look bare" perception gap surfaced by the user. All three
+    // surfaces benefit:
+    //   - SpawnNameplateWidget (3D floating label over varied terrain).
+    //   - hud_feed (top-right chat, varied background colors behind it).
+    //   - pos_hud (dev HUD overlay on the left-middle).
+    // The polish is unconditional (RULE 2: one path, not opt-in branches; if
+    // we ever need a "raw text" variant for some specialized surface we'll
+    // add a parameter then). For RULE 1: this is a correctness fix at the
+    // legibility level -- white text on a bright sky or a snowy ground was
+    // illegible without the outline.
+    //
+    // FFontOutlineSettings lives at FSlateFontInfo + 0x10 (SlateCore.hpp:313);
+    // OutlineSize @ +0x00 (int32, in pixels) + OutlineColor @ +0x10 (FLinearColor).
+    // 1px outline + black gives a crisp glyph border that respects the text
+    // alpha (FFontOutlineSettings has bSeparateFillAlpha @+0x04 default 0,
+    // which means the outline shares the fill alpha -- if text is 0.22 alpha
+    // for translucent nameplates, the outline is also 0.22 alpha, no
+    // pop-out artifact).
+    {
+        const auto fontBase = tU8 + P::off::UTextBlock_Font;
+        const auto outBase  = fontBase + P::off::FSlateFontInfo_OutlineSettings;
+        *reinterpret_cast<int32_t*>(outBase + P::off::FFontOutlineSettings_OutlineSize)  = 1;
+        FLinearColor outlineCol{0.f, 0.f, 0.f, 1.f};  // fully-opaque black; gated by fill alpha
+        *reinterpret_cast<FLinearColor*>(outBase + P::off::FFontOutlineSettings_OutlineColor) = outlineCol;
+    }
+    // UTextBlock shadow: (1,1)px offset + black 50% alpha. UMG composites the
+    // shadow as a duplicate text pass at the offset, alpha-multiplied by the
+    // shadow color's alpha. Subtle drop-shadow look — like VoidTogether's
+    // nameplate gets from its cooked widget's FSlateFontInfo settings.
+    *reinterpret_cast<FVector2D*>(tU8 + P::off::UTextBlock_ShadowOffset) = FVector2D{1.f, 1.f};
+    FLinearColor shadowCol{0.f, 0.f, 0.f, 0.5f};
+    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ShadowColorAndOpacity) = shadowCol;
+
     SetTextOnBlock(txt, text);
     return {root, txt};
 }
