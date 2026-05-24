@@ -141,6 +141,17 @@ items.
   ACTIVITY (PhysX `IsAnyRigidBodyAwake` for props; AI-active flag for
   NPCs) rather than distance. Events (explosions, projectiles, sounds)
   broadcast unconditionally. Open decision #3 (AOI radii) closed.
+  USER DECISION 2026-05-24: **enemies target BOTH host AND client**, not just
+  host. Forces puppet design: each peer's representation of the OTHER peer
+  must be AI-perceivable as a player. Switch puppet from `ASkeletalMeshActor`
+  back to `mainPlayer_C` orphan (Phase-1 design proven viable). Block input +
+  AI possession via deferred-spawn pattern (AutoPossessPlayer/AI=Disabled,
+  AIControllerClass=null) so the orphan can't act as a real player but
+  keeps the class identity AI relies on. Per-NPC targeting-logic RE
+  (Anpc_zombie_C, AkerfurOmega_C, Akrampus_C, Afunguy_C, ariral family,
+  etc.) listed as pre-Phase-5N1 task to confirm each NPC either uses
+  AIPerception, `Cast to mainPlayer_C`, or `GetPlayerPawn(0)` -- the
+  last hardcodes the first player only and would need per-NPC hook.
 
 <!--
 Template for an entry:

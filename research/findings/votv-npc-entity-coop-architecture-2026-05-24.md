@@ -3,6 +3,12 @@
 **Date:** 2026-05-24
 **Status:** research phase — **NO code yet**. Audit-fixed; awaiting user review of remaining open decisions.
 
+## User-decision changelog (3rd revision)
+
+| Change | Source | Section |
+|---|---|---|
+| Enemies must target BOTH peers, not just host | User 2026-05-24 | New "Enemies target both peers" section. Puppet design changes to mainPlayer_C orphan (per Option A in the memory). Per-NPC targeting-logic RE listed for Phase 5N1. |
+
 ## Final-audit-fix changelog (2nd revision)
 
 | Change | Source | Section |
@@ -225,6 +231,41 @@ Per `feedback_re_related_functions`, before any of Phase 5N1-5N5 is implemented,
 | `AnailProjectile_C / AgrimeProjectile_C / *` | projectile classes | 5N5 | TBD -- lifecycle: spawn → tick → hit/destroy. |
 
 The MTA findings doc has the corresponding MTA file:line refs for each. The VOTV survey has the SDK header field offsets. The Flaws 1-5 RE doc (`research/findings/votv-npc-entity-RE-2026-05-24.md`) has the closed RE items.
+
+### Enemies target both peers (USER DECISION 2026-05-24)
+
+User: **"Also, the enemies should target host and client, not just host"**.
+
+Full design in `memory/project_coop_enemies_target_both.md`. Key implication
+for the architecture: **the puppet (each peer's local representation of the
+OTHER peer) must be AI-perceivable as a player**. Currently the puppet is an
+`ASkeletalMeshActor` (bare visual, not a Pawn) -- host's NPCs don't see it.
+
+**Recommended path:** switch the puppet from `ASkeletalMeshActor` back to a
+`mainPlayer_C` orphan (the design from earlier Phase 1, already proven viable
+with multi-mainPlayer_C spawn). Block input + AI possession via the
+deferred-spawn pattern (`AutoPossessPlayer=Disabled, AutoPossessAI=Disabled,
+AIControllerClass=nullptr`) so the orphan can't act as a real player, but
+keep the player-class identity that AI perception and `Cast to mainPlayer_C`
+checks rely on.
+
+Per-tick local-player-only subsystem suppression (PostProcess gamma stomp,
+inventory tick, input handling) is a SEPARATE task -- much was done for the
+earlier orphan design; revisit the catalog in
+[[project-remote-player-hijack-and-pose]].
+
+**Pre-Phase-5N1 RE TODO:** for each active enemy class, identify the
+target-selection BP logic:
+- AIPerception-based -- works with mainPlayer_C puppet automatically.
+- `Cast to mainPlayer_C` -- works with mainPlayer_C puppet automatically.
+- `GetPlayerPawn(0)` / `Find Player` BP nodes -- if VOTV BPs use only
+  index 0, those NPCs see only the FIRST mainPlayer (the host's). Need to
+  check whether VOTV iterates all players or hardcodes index 0. If hardcoded,
+  per-NPC hook is needed.
+
+Class list to RE: `Anpc_zombie_C`, `AkerfurOmega_C`, `Akrampus_C`,
+`Afunguy_C`, `AgoreSlither_C`, `Ainsomniac_C`, `Afossilhound_C`,
+`Aantibreather_C`, `Aorborb_C`, ariral family, UFO event classes.
 
 ### Scale: 100 entities (USER DECISION 2026-05-24)
 
