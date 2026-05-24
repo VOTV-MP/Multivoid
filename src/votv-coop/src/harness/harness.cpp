@@ -1,6 +1,7 @@
 #include "harness/harness.h"
 
 #include "harness/autotest.h"
+#include "harness/config.h"
 #include "harness/screenshot.h"
 #include "dev/freecam.h"
 #include "dev/pos_hud.h"
@@ -44,98 +45,13 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-// Directory of this mod DLL (scenario.txt lives next to it, like the Lua mod's).
-std::wstring ModuleDir() {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&ModuleDir), &self);
-    wchar_t path[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, path, MAX_PATH);
-    std::wstring p(path);
-    const size_t sep = p.find_last_of(L"\\/");
-    return sep == std::wstring::npos ? L"." : p.substr(0, sep);
-}
+namespace cfg = harness::config;
 
-// Read an environment variable (ASCII). Empty string if unset. Used by the
-// two-instance LAN test framework: both instances load the SAME DLL from the SAME
-// game dir, so they cannot be configured by per-file scenario.txt/votv-coop.ini --
-// the framework passes each instance its role/peer/etc. via the environment instead.
-std::string ReadEnv(const char* name) {
-    char buf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
-    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
-}
-
-std::string ReadScenario() {
-    // Env override first (LAN test framework), then scenario.txt, then default.
-    const std::string env = ReadEnv("VOTVCOOP_SCENARIO");
-    if (!env.empty()) return env;
-    const std::wstring path = ModuleDir() + L"\\scenario.txt";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return "newgame";
-    char line[64] = {};
-    char* got = std::fgets(line, sizeof(line), f);
-    std::fclose(f);
-    if (!got) return "newgame";
-    std::string s(line);
-    // trim whitespace
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
-        s.pop_back();
-    return s.empty() ? "newgame" : s;
-}
-
-// Read a single "key=value" line from votv-coop.ini (section-agnostic). Returns
-// the value (trimmed), or `def` if the key is absent. ASCII.
-std::string ReadIniValue(const char* key, const char* def) {
-    const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return def;
-    const std::string prefix = std::string(key) + "=";
-    std::string result = def;
-    char line[256];
-    while (std::fgets(line, sizeof(line), f)) {
-        std::string s(line);
-        s.erase(std::remove_if(s.begin(), s.end(),
-                               [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
-                s.end());
-        if (s.rfind(prefix, 0) == 0) { result = s.substr(prefix.size()); break; }
-    }
-    std::fclose(f);
-    return result;
-}
-
-// The single coop networking session (Phase 3). Host binds the LAN port; client
-// targets the host. Drives the remote puppet from received pose snapshots and
-// sends the local player's pose. Off unless a scenario starts it.
+// The single coop networking session (Phase 3). Host binds the LAN port;
+// client targets the host. Drives the remote puppet from received pose
+// snapshots and sends the local player's pose. Off unless a scenario
+// starts it.
 coop::net::Session g_session;
-
-// Build the net Config from votv-coop.ini ("net.role=host|client", "net.peer=<ip>",
-// "net.port=<n>"). `enabled` is set false when no role is configured (the default:
-// hands-on play stays single-machine until coop is wired up on a 2nd box).
-coop::net::Config ReadNetConfig(bool& enabled) {
-    coop::net::Config c;
-    // Env first (LAN test framework gives each instance its role), then ini.
-    std::string role = ReadEnv("VOTVCOOP_NET_ROLE");
-    if (role.empty()) role = ReadIniValue("net.role", "");
-    enabled = (role == "host" || role == "client");
-    c.role = (role == "client") ? coop::net::Role::Client : coop::net::Role::Host;
-
-    std::string peer = ReadEnv("VOTVCOOP_NET_PEER");
-    c.peerIp = peer.empty() ? ReadIniValue("net.peer", "127.0.0.1") : peer;
-
-    std::string port = ReadEnv("VOTVCOOP_NET_PORT");
-    if (port.empty()) port = ReadIniValue("net.port", "");
-    if (!port.empty()) c.port = static_cast<uint16_t>(std::strtoul(port.c_str(), nullptr, 10));
-    return c;
-}
-
-// The local player's display nickname (env first, then ini, then default).
-std::wstring ReadNickname() {
-    std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
-    if (nick.empty()) nick = ReadIniValue("net.nick", "Player");
-    return std::wstring(nick.begin(), nick.end());
-}
 
 // Game thread: read the local player's pose into a network snapshot. x/y/z carry
 // the source actor's NATIVE world location (capsule centre on a Character) -- the
@@ -692,7 +608,7 @@ void SpawnSecondPlayerWhenReady() {
 bool BootStorySaveBlocking() {
     // STORY save slot, from votv-coop.ini "save=<slot>" (defaults s_may2026). Coop
     // targets story mode, so we never boot the sandbox map fresh.
-    const std::string slotA = ReadIniValue("save", "s_may2026");
+    const std::string slotA = cfg::ReadIniValue("save", "s_may2026");
     const std::wstring slot(slotA.begin(), slotA.end());  // ASCII slot name
     UE_LOGI("harness: target STORY save '%ls'", slot.c_str());
     for (int i = 0; i < 80; ++i) {  // ~120 s cap (boot + omega + level load)
@@ -810,7 +726,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // network-driven (auto-spawned on the first peer pose) and we send our pose;
         // otherwise the puppet is spawned locally + static (the pre-net behaviour).
         bool netEnabled = false;
-        const coop::net::Config netCfg = ReadNetConfig(netEnabled);
+        const coop::net::Config netCfg = cfg::ReadNetConfig(netEnabled);
         if (netEnabled) {
             // Two post-load teleport paths:
             //   * Autonomous-test mode (env VOTVCOOP_AUTOTEST_X/Y/Z/YAW/PITCH set):
@@ -822,15 +738,15 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             //     so both peers spawn near each other in regular play.
             // Either path teleports ONCE post-load, BEFORE session.Start so the
             // very first pose packet already carries the right position.
-            const std::string xs = ReadEnv("VOTVCOOP_AUTOTEST_X");
-            const std::string ys = ReadEnv("VOTVCOOP_AUTOTEST_Y");
-            const std::string zs = ReadEnv("VOTVCOOP_AUTOTEST_Z");
+            const std::string xs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_X");
+            const std::string ys = cfg::ReadEnv("VOTVCOOP_AUTOTEST_Y");
+            const std::string zs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_Z");
             if (!xs.empty() && !ys.empty() && !zs.empty()) {
                 const float ax = static_cast<float>(std::atof(xs.c_str()));
                 const float ay = static_cast<float>(std::atof(ys.c_str()));
                 const float az = static_cast<float>(std::atof(zs.c_str()));
-                const std::string yaws   = ReadEnv("VOTVCOOP_AUTOTEST_YAW");
-                const std::string pitchs = ReadEnv("VOTVCOOP_AUTOTEST_PITCH");
+                const std::string yaws   = cfg::ReadEnv("VOTVCOOP_AUTOTEST_YAW");
+                const std::string pitchs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_PITCH");
                 const float ayaw   = yaws.empty()   ? 0.f : static_cast<float>(std::atof(yaws.c_str()));
                 const float apitch = pitchs.empty() ? 0.f : static_cast<float>(std::atof(pitchs.c_str()));
                 // RETRY LOOP: K2_SetActorLocation across large distances on an
@@ -893,7 +809,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 });
                 ::Sleep(100);  // let the posted task run before session.Start
             }
-            coop::event_feed::SetLocalNickname(ReadNickname());
+            coop::event_feed::SetLocalNickname(cfg::ReadNickname());
             g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
             // v4: reset held-prop edge state so a session restart doesn't
             // carry a stale prop pointer/key from the prior session (audit
@@ -912,7 +828,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // Key.ComparisonIndex cross-peer to verify cooked-content FNames are
             // stable -- the hypothesis Stage 4's wire serialization depends on).
             // See harness::autotest::RunAutonomousGrabTest for expected log lines.
-            if (ReadEnv("VOTVCOOP_RUN_GRAB_TEST") == "1") {
+            if (cfg::ReadEnv("VOTVCOOP_RUN_GRAB_TEST") == "1") {
                 UE_LOGI("harness: VOTVCOOP_RUN_GRAB_TEST=1 (%s) -- spawning grab test thread",
                         netCfg.role == coop::net::Role::Host ? "host" : "client");
                 if (HANDLE h = ::CreateThread(nullptr, 0, harness::autotest::GrabTestThread, nullptr, 0, nullptr)) {
@@ -931,8 +847,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             const float atx = autotestActive ? static_cast<float>(std::atof(xs.c_str())) : 0.f;
             const float aty = autotestActive ? static_cast<float>(std::atof(ys.c_str())) : 0.f;
             const float atz = autotestActive ? static_cast<float>(std::atof(zs.c_str())) : 0.f;
-            const float atyaw   = autotestActive ? static_cast<float>(std::atof(ReadEnv("VOTVCOOP_AUTOTEST_YAW").c_str()))   : 0.f;
-            const float atpitch = autotestActive ? static_cast<float>(std::atof(ReadEnv("VOTVCOOP_AUTOTEST_PITCH").c_str())) : 0.f;
+            const float atyaw   = autotestActive ? static_cast<float>(std::atof(cfg::ReadEnv("VOTVCOOP_AUTOTEST_YAW").c_str()))   : 0.f;
+            const float atpitch = autotestActive ? static_cast<float>(std::atof(cfg::ReadEnv("VOTVCOOP_AUTOTEST_PITCH").c_str())) : 0.f;
             using namespace std::chrono;
             const auto autotestUntil = steady_clock::now() + seconds(30);
 
@@ -1069,7 +985,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
         cfg.initiate = true;  // host targets itself for the loopback handshake
-        coop::event_feed::SetLocalNickname(ReadNickname());
+        coop::event_feed::SetLocalNickname(cfg::ReadNickname());
         g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
         // Same reset as the play branch -- audit fe68c03 missed this site.
         g_lastHeldProp = nullptr;
@@ -1162,7 +1078,7 @@ void Start() {
     // Dev pos + camera-rotation overlay (F2 toggle). No-op unless ini enables it.
     dev::pos_hud::Init();
 
-    auto* scenario = new std::string(ReadScenario());
+    auto* scenario = new std::string(cfg::ReadScenario());
     if (HANDLE t = ::CreateThread(nullptr, 0, TimelineThread, scenario, 0, nullptr)) {
         ::CloseHandle(t);
     } else {
