@@ -2,14 +2,21 @@
 
 CLAUDE.md RULE 3: the shipping mod is standalone (`xinput1_3.dll` + `votv-coop.dll`, no UE4SS at runtime). **However, UE4SS is explicitly approved as a development tool.** This document captures the workflow we use to leverage UE4SS during reverse-engineering, hypothesis-testing, and rapid iteration — without ever shipping it.
 
-The standalone constraint is preserved by having **two game copies**:
+The standalone constraint is preserved by having **three game copies** (2026-05-25 convention — see `tools/deploy-all.ps1`):
 
-| Path | Role | UE4SS? | Use for |
-|------|------|--------|---------|
-| `Game_0.9.0n/` | DEV copy | yes (xinput1_3.dll proxy IS UE4SS + loads votv-coop.dll alongside) | RE work, Live View, Lua probes, BP graph dumping, hands-on testing of the deployed DLL when convenient |
-| `Game_0.9.0n_copy/` | PROD copy | no | LAN test (`lan-test.ps1` clients), hands-on testing of the truly-standalone shipping path |
+| Path | Role | UE4SS? | Used by | Use for |
+|------|------|--------|---------|---------|
+| `Game_0.9.0n/` | HOST | yes (legacy; coexists with our DLL via the dwmapi.dll.off rename) | user's hands-on host play | user-side hands-on testing as host; running `mp_host_game.bat` |
+| `Game_0.9.0n_copy/` | CLIENT | no | user's hands-on client play | user-side hands-on testing as client; running `mp_client_connect.bat` |
+| `Game_0.9.0n_dev/` | DEV | yes (UE4SS + dwmapi.dll active) | Claude (autonomous) | `lan-test.ps1` autonomous LAN tests, Live View RE work, Lua probes, BP graph dumping, hypothesis-testing via GUIUFunctionCaller |
 
-The `_copy/` Win64 folder has only `xinput1_3.dll` + `votv-coop.dll` — same files we'd distribute to an end user. The DEV copy adds `UE4SS.dll`, `UE4SS-settings.ini`, the Mods/ tree with default UE4SS Lua mods + our own `coopTestHarness`, and `UE4SS.log`.
+Each copy keeps its OWN Saved/ directory (logs, screenshots, save games) so the autonomous LAN test in `_dev/` cannot collide with the user's host or client play state.
+
+The HOST + CLIENT copies have only `xinput1_3.dll` + `votv-coop.dll` (HOST also has UE4SS files left over from earlier setup but UE4SS is currently inactive there — `dwmapi.dll.off` is the disabled proxy). The DEV copy adds the active `dwmapi.dll` UE4SS proxy + `UE4SS.dll` + the Mods/ tree with default UE4SS Lua mods (ActorDumperMod, BPModLoaderMod, CheatManagerEnablerMod, ConsoleEnablerMod, etc.) + our own `coopTestHarness/` probe + `UE4SS.log`.
+
+**Why two UE4SS-equipped copies (HOST + DEV)?** HOST has UE4SS legacy from earlier setup; it's not actively used during host play (dwmapi.dll.off = disabled). DEV's UE4SS IS active (dwmapi.dll present + active). If we ever want to clean HOST to a pure-standalone state, run `tools/deploy-loader.ps1 -GameWin64 .../Game_0.9.0n/Win64 -Standalone` which renames dwmapi.dll → dwmapi.dll.off.
+
+**Deploying the DLL across all 3:** `tools/deploy-all.ps1` is the canonical multi-target script. Builds-then-deploys when run after `cmake --build`. The `lan-test.ps1` script auto-deploys to `_dev/` only.
 
 ## What UE4SS gives us for free
 
@@ -87,13 +94,13 @@ The porting workflow:
 - UE4SS's Lua VM — we don't need scripting in production; if we ever need it for chat commands etc., a tiny embedded interpreter (e.g., MyJS or a custom DSL) keeps the standalone DLL self-contained.
 - UE4SS's UI framework (Dear ImGui via UE4SS) — useful for the future MP menu debug overlay (CLAUDE.md "Mod menu / debug overlay: Dear ImGui (UE4SS ships an ImGui integration)") but that integration is via OUR linked ImGui, not via UE4SS at runtime.
 
-## The "two copies" hygiene rule
+## The "three copies" hygiene rule
 
-**Always deploy to BOTH copies** (`Game_0.9.0n/` and `Game_0.9.0n_copy/`) when iterating on the shipping DLL. The `tools/deploy-loader.ps1` script does this. The DEV copy lets you launch with UE4SS for inspection; the PROD copy lets you sanity-check that the DLL still runs WITHOUT UE4SS (the standalone invariant).
+**Always deploy to all 3 copies via `tools/deploy-all.ps1`** when iterating on the shipping DLL. The script copies the build's xinput1_3.dll + votv-coop.dll into all three Win64 directories. Without it, the user's hands-on host/client play may run a stale DLL while my dev copy has the new one — confusing.
 
-**Never** assume what works in the DEV copy will also work in the PROD copy. UE4SS's presence changes the load order (UE4SS hooks `ProcessEvent` before we do; the global `GUObjectArray` cache is populated by UE4SS at startup; some classes are loaded earlier because UE4SS forces them). The PROD copy is the source of truth for "does our shipping DLL work?".
+**Never** assume what works in the DEV copy will also work in the user-play copies. UE4SS's presence in DEV changes the load order (UE4SS hooks `ProcessEvent` before we do; the global `GUObjectArray` cache is populated by UE4SS at startup; some classes are loaded earlier because UE4SS forces them). The CLIENT copy is the source of truth for "does our shipping DLL work standalone?".
 
-The `lan-test.ps1` autonomous test runs against `Game_0.9.0n_copy/` ONLY for both host and client — by design, so we always validate the standalone path.
+The `lan-test.ps1` autonomous test runs against `Game_0.9.0n_dev/` ONLY for both host and client instances — they share that one Win64 directory and discriminate by env vars. This is intentional: the LAN test is for VERIFYING the coop pipeline works, not for proving the standalone-no-UE4SS path (the user's hands-on play on `Game_0.9.0n_copy/` does that).
 
 ## Future RE sessions: open Live View first
 

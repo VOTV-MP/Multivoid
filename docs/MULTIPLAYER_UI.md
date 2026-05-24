@@ -43,8 +43,17 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 | Approach | Native look | Edits assets? | UE4SS dependency | Verdict |
 |---|---|---|---|---|
 | **Runtime UMG widget via reflection** (our C++ mod constructs a `UUserWidget`, adds a Multiplayer button + panels, adds to the menu/viewport) | yes | no | none (works with or without UE4SS) | **chosen** |
-| BP mod via UE4SS BPModLoader (cooked widget .pak) | yes | adds a new asset (allowed) but needs UE4.27 editor + cook | yes (BPModLoader) | rejected — ties us to UE4SS |
+| BP mod via UE4SS BPModLoader (cooked widget .pak loaded through UE4SS's BPModLoader Lua mod) | yes | adds a new asset (allowed) but needs UE4.27 editor + cook | yes (BPModLoader) | rejected — ties us to UE4SS |
+| Sibling-pak hybrid (cooked widget .pak mounted via UE4's NATIVE auto-mount of `Content/Paks/`) | yes | adds a new asset | **no** (revisited 2026-05-25 — see note below) | deferred to Phase 7+ — toolchain cost not justified for current scope |
 | ImGui overlay | no (debug look) | no | UE4SS's ImGui (or our own) | rejected for the menu — fine for dev/debug overlays only |
+
+**2026-05-25 update (revisited after the user pushed back on "VT mod looks natural; we look dirty"):** the original rejection conflated BPModLoader-dependent paks (which DO require UE4SS) with all paks. UE4 itself auto-mounts every `.pak` it finds under `Content/Paks/` at engine startup — independently of UE4SS. So a sibling `votv-coop-content.pak` we author and ship alongside our DLL would mount cleanly without ANY mod-framework dependency (RULE 3 preserved). VOTV also ships `UPakLoaderLibrary` (Rama's PakLoader) + `URyRuntimePakHelpers` as Blueprint libraries already callable through our existing `ParamFrame` infrastructure, providing explicit `MountPakFile` if we want non-auto-mounted paks. See:
+
+- [research/findings/votv-mp-hybrid-pak-architecture-2026-05-25.md](../research/findings/votv-mp-hybrid-pak-architecture-2026-05-25.md) — architectural verdict (stay all-DLL for now; revisit Phase 7+).
+- [research/findings/votv-mp-pak-mount-feasibility-2026-05-25.md](../research/findings/votv-mp-pak-mount-feasibility-2026-05-25.md) — implementation feasibility (FEASIBLE without UE4SS via auto-mount or UPakLoaderLibrary).
+- [research/findings/votv-mp-hybrid-pak-reality-check-2026-05-25.md](../research/findings/votv-mp-hybrid-pak-reality-check-2026-05-25.md) — reality-check verdict (stay all-DLL; the perceived gap closes with programmatic outline + shadow + UBorder polish).
+
+The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS). A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3 but the 80 GB UE4.27-editor toolchain cost isn't justified until a Phase 7+ widget (server browser with sortable rows, etc.) actually needs it. For now, polish via programmatic UMG (text outline + drop shadow already shipped 2026-05-25; UBorder background panel queued).
 
 So: our C++ mod hooks the menu's construction (`ui_menu_C` BeginPlay /
 construct), creates our own widget tree at runtime via reflection, and
