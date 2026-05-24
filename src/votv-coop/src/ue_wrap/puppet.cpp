@@ -550,15 +550,56 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
             actor, meshComp, loc.X, loc.Y, loc.Z);
     DumpAnimState(L"puppet", meshComp);
 
-    // 2026-05-25 v3 diagnostic: dump the actual component hierarchy +
-    // visibility state of the four meshes (body, FP arms, playermodel,
-    // ACharacter::Mesh) so we can definitively root-cause any future
-    // "puppet invisible" regression. Reads:
-    //   AttachParent @0x00C0 -- the scene-graph parent (= who would
-    //     cascade hide to us if propagated).
-    //   bHiddenInGame  -- bit 2 of byte 0x14D.
-    //   bVisible       -- bit 4 of byte 0x14C.
-    //   SkeletalMesh   -- USkinnedMeshComponent.SkeletalMesh @0x480.
+    // 2026-05-25 v4 ROOT-CAUSE: diagnostic v3 confirmed mesh_playerVisible.
+    // bVisible=0 AFTER SetComponentVisible(meshComp, true). SetHiddenInGame
+    // worked (bHiddenInGame=0 as intended), but bVisible stayed 0 -> mesh
+    // doesn't render even though it has the skin asset + correct hidden
+    // flag. UE4's effective visibility is `bVisible && !bHiddenInGame &&
+    // !parent.bHiddenInGame.cascade` -- bVisible=0 alone hides.
+    //
+    // Hypothesis: either the BP-callable SetVisibility's reflected param
+    // name diverges from the C++ source ("bNewVisibility" was the source
+    // declaration; UHT may have stripped the b prefix to "NewVisibility"
+    // for the FProperty -- matches the SetHiddenInGame -> "NewHidden"
+    // precedent in the same class). OR USceneComponent's class-default
+    // bVisible=0 on this specific component (mainPlayer_C BP-authored
+    // mesh_playerVisible may start hidden) AND SetVisibility silently
+    // no-ops on some condition we don't see.
+    //
+    // RULE 1 root-cause action (this commit):
+    //   (a) Dump SetVisibility's FProperty chain so we KNOW the exact
+    //       param names + offsets. One-shot.
+    //   (b) Dump the visibility/hidden BYTES in hex so we can see all
+    //       bits without depending on bit-position guesses.
+    //   (c) Direct-write bVisible=1 on mesh_playerVisible (OR-in the
+    //       documented bit 4 of byte 0x14C). If the bit assignment is
+    //       right, the byte's bit 4 flips; the renderer picks it up
+    //       next time RecomputeChildren or per-frame visibility is
+    //       evaluated. If wrong bit, the diagnostic hex shows the
+    //       actual changed bits.
+    //   (d) RE-CALL SetComponentVisible(meshComp, true, true) AGAIN at
+    //       the very end (after the direct write) to trigger
+    //       MarkRenderStateDirty via the SetHiddenInGame side -- this
+    //       forces the renderer to re-register the now-visible mesh.
+    {
+        UE_LOGI("--- SetVisibility UFunction FProperty chain (one-shot, root-cause diagnostic) ---");
+        if (void* sceneCls = R::FindClass(L"SceneComponent")) {
+            if (void* setVisFn = R::FindFunction(sceneCls, L"SetVisibility")) {
+                for (const auto& p : R::FunctionParams(setVisFn)) {
+                    UE_LOGI("  SetVisibility param: '%ls' off=%d size=%d flags=0x%llx",
+                            p.name.c_str(), p.offset, p.size, (unsigned long long)p.flags);
+                }
+            } else {
+                UE_LOGW("  SetVisibility UFunction not found on SceneComponent");
+            }
+            if (void* setHiddenFn = R::FindFunction(sceneCls, L"SetHiddenInGame")) {
+                for (const auto& p : R::FunctionParams(setHiddenFn)) {
+                    UE_LOGI("  SetHiddenInGame param: '%ls' off=%d size=%d flags=0x%llx",
+                            p.name.c_str(), p.offset, p.size, (unsigned long long)p.flags);
+                }
+            }
+        }
+    }
     auto dumpMeshComp = [](const wchar_t* label, void* comp) {
         if (!comp) {
             UE_LOGI("puppet-state[%ls]: <null>", label);
@@ -572,13 +613,31 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
         void* skinAsset = ReadPtr(comp, P::off::USkinnedMesh_SkeletalMesh);
         std::wstring parentClass = attachParent ? R::ClassNameOf(attachParent) : L"<null>";
         std::wstring skinClass = skinAsset ? R::ClassNameOf(skinAsset) : L"<null>";
-        UE_LOGI("puppet-state[%ls]: comp=%p AttachParent=%p(%ls) bVisible=%d bHiddenInGame=%d SkelMesh=%p(%ls)",
+        UE_LOGI("puppet-state[%ls]: comp=%p AttachParent=%p(%ls) visByte@0x14C=0x%02x (bVisible bit4=%d) hiddenByte@0x14D=0x%02x (bHiddenInGame bit2=%d) SkelMesh=%p(%ls)",
                 label, comp,
                 attachParent, parentClass.c_str(),
-                (int)bVisible, (int)bHiddenInGame,
+                (unsigned)visByte, (int)bVisible,
+                (unsigned)hiddenByte, (int)bHiddenInGame,
                 skinAsset, skinClass.c_str());
     };
-    dumpMeshComp(L"mesh_playerVisible", meshComp);
+    dumpMeshComp(L"mesh_playerVisible-BEFORE-force-write", meshComp);
+
+    // FORCE bVisible bit 4 to 1 directly + MarkRenderStateDirty by toggling
+    // hidden flag through the UFunction (SetHiddenInGame is known to trigger
+    // the dirty mark internally).
+    {
+        uint8_t* visByte = reinterpret_cast<uint8_t*>(meshComp) + P::off::USceneComponent_VisFlagsByte;
+        const uint8_t before = *visByte;
+        *visByte = before | (1u << 4);  // bVisible
+        UE_LOGI("puppet[MainPlayer]: FORCED bVisible bit4 set: visByte@0x14C 0x%02x -> 0x%02x",
+                (unsigned)before, (unsigned)*visByte);
+    }
+    // Cycle SetHiddenInGame to trigger MarkRenderStateDirty (the engine path
+    // for "tell the renderer the component's visibility changed").
+    E::SetComponentVisible(meshComp, /*visible=*/false, /*propagate=*/false);
+    E::SetComponentVisible(meshComp, /*visible=*/true,  /*propagate=*/false);
+
+    dumpMeshComp(L"mesh_playerVisible-AFTER-force-write", meshComp);
     dumpMeshComp(L"arms",               ReadPtr(actor, P::off::AmainPlayer_arms));
     dumpMeshComp(L"playermodel",        ReadPtr(actor, P::off::AmainPlayer_playermodel));
     dumpMeshComp(L"ACharacter::Mesh",   ReadPtr(actor, P::off::ACharacter_Mesh));
