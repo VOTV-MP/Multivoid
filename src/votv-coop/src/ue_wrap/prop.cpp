@@ -210,14 +210,24 @@ VelocityState GetPhysicsVelocity(void* prop) {
     if (!mesh) return out;
     if (!ResolvePrimVelocity()) return out;
     // Linear -- 32-byte frame covers FName(8) + FVector(12) + padding.
+    // Loud warn on frame overflow so a silent-zero-velocity regression after a
+    // game update is diagnosable from the log (audit issue #5, 2026-05-24).
     unsigned char frameL[32] = {};
-    if (g_pvr.linFrameSize > static_cast<int32_t>(sizeof(frameL))) return out;
+    if (g_pvr.linFrameSize > static_cast<int32_t>(sizeof(frameL))) {
+        UE_LOGW("prop::GetPhysicsVelocity: linear frame size %d > 32 -- enlarge frameL buffer",
+                g_pvr.linFrameSize);
+        return out;
+    }
     *reinterpret_cast<R::FName*>(frameL + g_pvr.linBoneOff) = R::FName{0, 0};
     if (!R::CallFunction(mesh, g_pvr.getLinFn, frameL)) return out;
     out.linearCmS = *reinterpret_cast<FVector*>(frameL + g_pvr.linRetOff);
     // Angular -- same shape, separate frame buffer.
     unsigned char frameA[32] = {};
-    if (g_pvr.angFrameSize > static_cast<int32_t>(sizeof(frameA))) return out;
+    if (g_pvr.angFrameSize > static_cast<int32_t>(sizeof(frameA))) {
+        UE_LOGW("prop::GetPhysicsVelocity: angular frame size %d > 32 -- enlarge frameA buffer",
+                g_pvr.angFrameSize);
+        return out;
+    }
     *reinterpret_cast<R::FName*>(frameA + g_pvr.angBoneOff) = R::FName{0, 0};
     if (!R::CallFunction(mesh, g_pvr.getAngFn, frameA)) return out;
     out.angularDegS = *reinterpret_cast<FVector*>(frameA + g_pvr.angRetOff);

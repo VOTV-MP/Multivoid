@@ -199,6 +199,11 @@ struct PropReleasePayload {
     float   angVelZ;
 };
 static_assert(sizeof(PropReleasePayload) == 56, "PropReleasePayload must be 56 bytes");
+// Reliable-fit guard: if the payload ever grows past one datagram's reliable
+// budget, ReliableChannel::Send silently rejects (returns false) -- catch this
+// at compile time. Audit-added 2026-05-24 (Bug B audit issue #4).
+static_assert(sizeof(PropReleasePayload) <= 256 - 20 - 8,
+              "PropReleasePayload must fit in one reliable datagram (kMaxReliablePayload)");
 
 // Velocity magnitude (cm/s) above which a release is classified as a THROW
 // (vs a passive drop) on the receiver -- fires Aprop_C.thrown(localPlayer) so

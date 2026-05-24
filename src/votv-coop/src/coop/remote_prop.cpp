@@ -131,11 +131,12 @@ bool ResolveUFns() {
                 g_setAngVelPVec, g_setAngVelPBone);
         return false;
     }
-    // Aprop_C.thrown is handled by TryResolvePropThrown() at the top of
-    // this function; it's separate so it can be re-attempted on later
-    // calls if `prop_C` wasn't loaded yet on the first call (audit
-    // 2026-05-24).
-    TryResolvePropThrown();
+    // Aprop_C.thrown is handled by the TryResolvePropThrown() call at the
+    // top of this function (which retries every call to pick up `prop_C`
+    // when it loads after PrimitiveComponent). No second call here -- the
+    // duplicate would be a no-op (TryResolvePropThrown self-gates on
+    // g_propThrownFn != nullptr) and audit-flagged as RULE 2 dual path
+    // (audit fix 2026-05-24 post-Bug-B).
     UE_LOGI("remote_prop: resolved -- SetSimulatePhysics frame=%d (sim@%d), "
             "SetPhysicsLinearVelocity frame=%d (vec@%d bone@%d), "
             "SetPhysicsAngularVelocityInDegrees frame=%d (vec@%d bone@%d), "
@@ -159,9 +160,9 @@ bool ResolveUFns() {
 // null-deref. Audit-found 2026-05-24 (RULE 1: degrade gracefully, never
 // dispatch a known-null into BP we can't statically inspect).
 //
-// Frame buffer matches DriveSimulate/DriveAddImpulse (64 B). PropertiesSize
-// covers params + locals, so a BP event with temporaries can exceed the
-// 8 bytes the `Player` param alone takes.
+// Frame buffer matches DriveSimulate/DriveSetLinearVelocity/DriveSetAngularVelocity
+// (64 B). PropertiesSize covers params + locals, so a BP event with
+// temporaries can exceed the 8 bytes the `Player` param alone takes.
 void DrivePropThrown(void* propActor, void* localPlayer) {
     if (!propActor || !g_propThrownFn || !localPlayer) return;
     unsigned char frame[64] = {};

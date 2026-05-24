@@ -385,6 +385,35 @@ void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* para
             self, imp.X, imp.Y, imp.Z);
 }
 
+// "Cheap insurance" PRE-observers for SetPhysicsLinearVelocity +
+// SetPhysicsAngularVelocityInDegrees -- audit issue #3 / 2026-05-24. If BP
+// explicitly calls these on a released prop (instead of relying on inherited
+// PhysX tracking velocity), the param frame carries the LITERAL launch
+// velocity we want -- the GetPhysicsVelocity read in NetPumpTick may then be
+// reading post-step values. These observers DON'T cache cross-thread; they
+// just log. The hands-on test of Bug B confirms via log whether BP uses
+// SetPhysicsLinearVelocity explicitly. If it does, a future commit can switch
+// the wire-capture to the observer (lock-free atomic cache, RELEASE/ACQUIRE
+// fenced -- same shape as the retired g_lastImpulse* pattern).
+//
+// Param frame layout for both:
+//   FVector NewVel/NewAngVel  @ 0   (12 bytes)
+//   bool    bAddToCurrent     @ 12  (1 byte) + pad
+//   FName   BoneName          @ 16  (8 bytes)
+void GrabObserver_PrimComp_SetLinearVelocity_PRE(void* self, void* /*function*/, void* params) {
+    if (!self || !params) return;
+    const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
+    UE_LOGI("grab_hook[PrimComp.SetPhysicsLinearVelocity PRE]: component=%p NewVel=(%.1f, %.1f, %.1f) (diagnostic)",
+            self, v.X, v.Y, v.Z);
+}
+
+void GrabObserver_PrimComp_SetAngularVelocity_PRE(void* self, void* /*function*/, void* params) {
+    if (!self || !params) return;
+    const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
+    UE_LOGI("grab_hook[PrimComp.SetPhysicsAngularVelocityInDegrees PRE]: component=%p NewAngVel=(%.1f, %.1f, %.1f) (diagnostic)",
+            self, v.X, v.Y, v.Z);
+}
+
 // --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
 // the upstream dispatch path and let us read mainPlayer_C grab-state fields.
 
@@ -488,6 +517,13 @@ void InstallGrabObservers() {
     reg(primCls, P::name::PrimitiveComponentClass,
         P::name::AddImpulseFn,               GrabObserver_PrimComp_AddImpulse,          /*pre=*/false);
 
+    // Diagnostic-only velocity-set observers (audit issue #3, 2026-05-24).
+    // Capture whether BP explicitly calls SetPhysics*Velocity on release.
+    reg(primCls, P::name::PrimitiveComponentClass,
+        P::name::SetPhysicsLinearVelocityFn,           GrabObserver_PrimComp_SetLinearVelocity_PRE,  /*pre=*/true);
+    reg(primCls, P::name::PrimitiveComponentClass,
+        P::name::SetPhysicsAngularVelocityInDegreesFn, GrabObserver_PrimComp_SetAngularVelocity_PRE, /*pre=*/true);
+
     // Secondary: BP-Timeline + input on mainPlayer_C.
     reg(playerCls, P::name::MainPlayerClass,
         P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use,      /*pre=*/false);
@@ -497,7 +533,7 @@ void InstallGrabObservers() {
         P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
 
     g_grabObserversInstalled = true;
-    UE_LOGI("grab_hook: Stage 1 observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 3 BP-Timeline) -- press E on a prop to see hook lines");
+    UE_LOGI("grab_hook: Stage 1+ observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
 }
 
 // ---- Autonomous grab test (no user E-press required) --------------------
