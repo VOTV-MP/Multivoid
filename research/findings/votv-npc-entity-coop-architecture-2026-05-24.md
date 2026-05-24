@@ -1,7 +1,24 @@
 # VOTV NPC / entity coop sync — proposed architecture
 
 **Date:** 2026-05-24
-**Status:** research phase — **NO code yet**. Awaiting user review.
+**Status:** research phase — **NO code yet**. Audit-fixed; awaiting user review of remaining open decisions.
+
+## Audit-fix changelog (this revision)
+
+| Change | Source | Section |
+|---|---|---|
+| AI suppression replaced with deferred-spawn AutoPossessAI=0 + AIControllerClass=null | Flaw 1 + RE doc | Phase 5N1 / Phase 5N2 |
+| Dropped-prop Key policy specified (runtime Key by host) | Flaw 2 + RE doc | Inventory section |
+| Spawner-tick race fixed via per-spawner PRE-observer | Flaw 3 + RE doc | Phase 5N2 + Hook-surface table |
+| kerfur target field made into tagged-union (remote-player / local-player / entity-key) | Flaw 4 + RE doc | NpcState packet spec |
+| Explosion/damage AActors NEVER spawn on client; client spawns only cosmetic VFX+SFX | Flaw 5 + RE doc | Phase 5N5 |
+| Phase 5N3 scope explicitly lists inventory-transition events | Inconsistency A | Phase 5N3 |
+| Phase 5N5 "AOI-cull for transient effects" removed | Inconsistency B + whole-map decision | Phase 5N5 |
+| Wire taxonomy table: EffectFire AOI annotation removed; reliability tier for explosion clarified | Inconsistency D | Wire taxonomy |
+| Bandwidth estimate caveated for swarm worst cases (wisp, goreSlither pack) | Inconsistency C | Whole-map sync |
+| Open decisions #1, #2 confirmed closed | Audit | Decisions section |
+| NpcPose aggregated-bitstream design noted (gap to MTA) | MTA Gap 1 | Wire taxonomy |
+| Re-activation packet on NPC wake-up specified | MTA Gap 2 | NpcState section |
 **Prerequisites read:**
 - `research/findings/mta-npc-entity-sync-2026-05-24.md` — MTA precedent (what to copy / adapt)
 - `research/findings/votv-npc-entity-survey-2026-05-24.md` — VOTV entity inventory + sync-relevant fields
@@ -87,18 +104,18 @@ Building on v4 (PoseSnapshot + PropPose + PropRelease), v5 adds:
 
 | MsgType | Reliability | Direction | Payload |
 |---|---|---|---|
-| `NpcSpawn` | reliable | host → client | spawn an NPC (Key + class FName + spawn pose) |
-| `NpcDespawn` | reliable | host → client | despawn an NPC (Key) |
-| `NpcPose` | unreliable | host → client | per-tick pose stream (Key + transform + anim state) |
-| `NpcState` | reliable | host → client | discrete state change (Key + field bitmask + values: health/mode/target) |
-| `EntityEvent` | reliable | host → client | door opened, button pressed, trigger fired, etc. (Key + event-id + params) |
-| `EffectFire` | unreliable | initiator → peer | one-shot explosion / projectile / sound / particle (class + transform + params) |
+| `NpcSpawn` | reliable | host → client | spawn an NPC (Key + class FName + spawn pose + assigned 4-byte session-id) |
+| `NpcDespawn` | reliable | host → client | despawn an NPC (4-byte session-id) |
+| `EntityPoseBatch` | unreliable | host → client | **AGGREGATED** per-tick pose stream (1 packet for N entities; see 100-entity scale memo). Entry = 4-byte id + quantized transform (~26 B). 100 entries fit in single UDP packet. |
+| `NpcState` | reliable | host → client | discrete state change (4-byte id + field bitmask + values: health / mode / target as tagged-union). Re-activation packet (Gap 2 mitigation) -- when NPC wakes from idle, push a full state snapshot before pose stream resumes. |
+| `EntityEvent` | reliable | host or client | door opened, button pressed, trigger fired, **inventory pickup, inventory drop, item-state with world effect**. Client-initiated requests routed via host arbitration. (Key + event-id + params) |
+| `EffectFire` | reliable | initiator → peer | one-shot explosion / projectile / sound / particle. **Client receivers spawn ONLY cosmetic VFX+SFX (PlaySoundAtLocation + SpawnEmitterAtLocation); the damage-radius AActor is NEVER spawned on non-initiator peers** -- the spawning peer's `Aexplosion_C.ReceiveBeginPlay` is the sole damage application. Per Flaw 5 RE. |
 | `VehicleEnter`/`Exit` | reliable | initiator → host | authority handoff for vehicle |
 | `VehiclePose` | unreliable | driver → others | per-tick vehicle drive |
 
-Reliable for: state changes whose loss would desync world (spawn, despawn, door state, vehicle authority).
-Unreliable for: per-tick pose / per-tick state (latest-wins via RFC1982 seq, same as PoseSnapshot).
-AOI-culled (don't even SEND if peer >100m from event): EffectFire.
+Reliable for: state changes whose loss would desync world (spawn, despawn, door state, vehicle authority, **explosions** -- per Flaw 5 RE, NOT unreliable as the taxonomy table previously listed).
+Unreliable for: per-tick pose batches (latest-wins via RFC1982 seq).
+**No AOI culling anywhere** -- per the whole-map sync user decision.
 
 ### Staging — 5 phases
 
@@ -106,11 +123,13 @@ AOI-culled (don't even SEND if peer >100m from event): EffectFire.
 Goal: a kerfur on host visibly walks around; client sees its puppet kerfur walking the same path.
 
 Scope:
-- HOST: walk GUObjectArray once per tick, find NPCs in `m_nearbyNpcs` set (filtered by class derives from ACharacter AND class FName in {kerfurOmega_C, npc_zombie_C, npc_ariral_*}), emit NpcPose per tick.
-- CLIENT: on first NpcPose for a Key, walk GUObjectArray for matching Aprop-style lookup (need a `FindNpcByKey` helper). If found locally (world-loaded), drive it kinematically. If not (runtime-spawned), receive an NpcSpawn packet first.
-- Anim sync: pass yaw + speed + headLook the way mainPlayer's PoseSnapshot already does.
+- HOST: walk GUObjectArray once per tick, find NPCs (class derives from ACharacter AND class FName in {kerfurOmega_C, npc_zombie_C, npc_ariral_*} + activity-gate per the whole-map sync rule), emit NpcPose per tick.
+- CLIENT (no broad-suppression -- per Flaw 1 RE):
+  Each WORLD-LOADED NPC on the client is "born" with full AI. We disable it AT SPAWN-TIME by writing `actor + 0x231 = 0` (AutoPossessAI::Disabled) and `actor + 0x238 = nullptr` (AIControllerClass) AT THE DEFERRED-SPAWN WINDOW (BeginDeferredActorSpawnFromClass -> write -> FinishSpawningActor). For world-loaded NPCs (already past BeginPlay when we join), we use the existing `DetachFromControllerPendingDestroy` pattern from RemotePlayer.
+  On first NpcPose for a Key, walk GUObjectArray for matching lookup (need a `FindNpcByKey` helper -- sibling of `prop_wrap::FindByKeyString`). Drive transform kinematically; AI is already nulled-out.
+- Anim sync: pass yaw + speed + headLook the way mainPlayer's PoseSnapshot already does. The kerfur AnimBP-satellite pattern (Bug 2 / project_bug2_locomotion_anim) is directly reusable -- NPC puppets share the same anim infrastructure.
 
-This is the user-visible win. Architecture mirrors player pose sync.
+This is the user-visible win. Architecture mirrors player pose sync + already-proven AI-block pattern from RemotePlayer spawn.
 
 **Phase 5N2 — NPC spawn / despawn (host-authoritative)**
 Goal: when an NPC spawns on host (e.g. host's tick spawns insomniac), client also spawns it; when killed, both despawn.
@@ -122,14 +141,19 @@ Scope:
 
 Hook surface needs RE — Stage 5N2 is research-heavy.
 
-**Phase 5N3 — Interactables (doors, switches, triggers, keypads)**
-Goal: opening a door on host opens it on client; pressing a button on host registers on client; client can also initiate (sent to host who arbitrates).
+**Phase 5N3 — Interactables (doors, switches, triggers, keypads) + inventory transitions**
+Goal: opening a door on host opens it on client; pressing a button on host registers on client; client can also initiate (sent to host who arbitrates). Inventory pickups/drops sync as world events without crossing inventory contents.
 
 Scope:
 - Bidirectional: client press → request to host → host applies + broadcasts state.
 - Use the EntityEvent reliable channel.
 - Hook the `fireTrigger` / `runTrigger` BP UFunctions (per VOTV survey) — they ARE BP-dispatched (impure, exec-pin).
 - Multi-peer keypad UX problem: `ApasswordLock_C.isFocused` should be replicated so two players don't type into the same keypad simultaneously.
+- **Inventory transitions (per user decision, Phase 5N3 owns these per Inconsistency A fix):**
+  - World-pickup despawn: `EntityEvent("pickup", propKey)` -- receiver despawns its local copy of the prop.
+  - Inventory-drop spawn: reliable `NpcSpawn`-style packet with class FName + transform + **host-generated runtime Key** (`"rt_<sessionToken>_<counter>"`, per Flaw 2 RE) -- receiver spawns its local copy with the same Key.
+  - In-hand item state with world effect: `EntityEvent("itemState", propKey, bitmask)` -- e.g. flashlight on/off light cone.
+  - Item state with NO world effect: stays local, never on wire.
 
 **Phase 5N4 — Vehicles (ATV, drone)**
 Goal: host driving the ATV; client sees the ATV move + the host puppet on it.
@@ -142,11 +166,17 @@ Scope:
 **Phase 5N5 — Transient events (explosions, projectiles, sound/particle)**
 Goal: when host shoots an alien dart, client sees the dart fly; when an explosion fires, both peers hear/see it.
 
-Scope:
-- AOI-cull: only broadcast events within `MAX_EXPLOSION_SYNC_DISTANCE` of the recipient.
-- Reliable for discrete events (explosion = state change in the world).
-- Unreliable for cosmetic (footstep sound).
-- Reuse the Aprop_C.thrown(player) dispatch pattern shipped for grab.
+Scope (per whole-map decision + Flaw 5 RE):
+- **No AOI cull** -- all events broadcast regardless of distance (per whole-map user decision).
+- Reliable for damage-bearing events (explosions, projectiles that hit).
+- Unreliable for purely-cosmetic (one-shot particle, footstep sound).
+- **Damage authority lives ONLY on the spawning peer** (Flaw 5 RE):
+  - HOST runs the actual `Aexplosion_C` AActor with full damage radius.
+  - CLIENT receives `EffectFire` and spawns ONLY the cosmetic VFX+SFX (PlaySoundAtLocation, SpawnEmitterAtLocation -- both are engine-native ProcessEvent-dispatched UFunctions).
+  - Client NEVER spawns `Aexplosion_C` -- so `ReceiveBeginPlay` never fires on the client side -- so damage never double-applies.
+  - Damage effects on remote actors propagate via `NpcState` health updates.
+- Same pattern for `AlightningStrike_C`, projectile classes (`AnailProjectile_C`, `AgrimeProjectile_C`, `AplungerProjectile_C`, `AalienJump_C`).
+- Reuse the Aprop_C.thrown(player) dispatch pattern shipped for grab where event has a natural prop dispatcher.
 
 ### Implementation patterns to copy from MTA (per the research note)
 
@@ -166,18 +196,65 @@ Scope:
 
 Per `feedback_re_related_functions`, before any of Phase 5N1-5N5 is implemented, RE each of these:
 
-| Function | Class | Phase | RE needed |
+| Function | Class | Phase | RE status |
 |---|---|---|---|
-| `aiTick`, `BehaviourTreeUpdate` | npc_zombie_C, kerfurOmega_C | 5N1 | What ticks the AI? When does it run? Can we observe its outputs (target / mode changes) without intercepting it? |
-| `TakeDamage`, `Die`, `OnDeath` | all NPC classes | 5N2 | Death event dispatch — for despawn replication |
-| `fireTrigger`, `runTrigger`, `setActiveTrigger` | AtriggerBase_C | 5N3 | Are these ProcessEvent-dispatched (impure) or BP-pure? |
-| `doorOpened`, `Open`, `Close` | Adoor_C | 5N3 | Same |
-| `Aexplosion_C.BeginPlay`, `postExplosion` | Aexplosion_C | 5N5 | Engine SpawnActor hook — observe spawn at this class |
-| `mainGamemode_C.spawnPropThroughGamemode` | mainGamemode_C | 5N2 | Hook for host-routed spawn |
-| `AnailProjectile_C / AgrimeProjectile_C` | projectile classes | 5N5 | Lifecycle: spawn → tick → hit/destroy |
-| `AATV_C.input` / occupancy | AATV_C | 5N4 | Driver detection, input replication |
+| AutoPossessAI / AIControllerClass deferred-spawn block | APawn (engine) | 5N1, 5N2 | **DONE (Flaw 1 RE)** -- offsets 0x231/0x238 in sdk_profile.h; engine path confirmed (PostInitializeComponents → SpawnDefaultController). Pattern proven via RemotePlayer puppet. |
+| `launchEvent` (impure) -- ariral spawn fire | AariralRepEventHandler_C | 5N2 | **DONE (Flaw 3 RE)** -- impure BP fn, ProcessEvent-dispatchable, signature verified in SDK dump. |
+| `tickEvent` / per-spawner spawn-fire function | Aticker_*Spawner_C (~14 classes) | 5N2 | **PER-CLASS RE TODO** -- each spawner header needs a quick scan to identify the impure fire-function name (varies). |
+| `TakeDamage`, `Die`, `OnDeath` | all NPC classes | 5N2 | TBD -- impure vs pure determines hookability. |
+| `fireTrigger`, `runTrigger`, `setActiveTrigger` | AtriggerBase_C | 5N3 | TBD -- BP-callable functions usually impure. |
+| `doorOpened`, `Open`, `Close` | Adoor_C | 5N3 | TBD. |
+| `Aexplosion_C.ReceiveBeginPlay` | Aexplosion_C | 5N5 | **DONE (Flaw 5 RE)** -- Damage @ 0x0280, Radius @ 0x027C, BeginPlay is damage trigger. Fix: don't spawn the actor on client, only VFX+SFX. |
+| `mainGamemode_C.spawnPropThroughGamemode` | mainGamemode_C | 5N2 | TBD -- host-routed spawn entry point. |
+| `kerfurOmega.moveToServ`, `kerfur.moveTo @ 0x05D0` (UObject*) | AkerfurOmega_C | 5N1 | **DONE (Flaw 4 RE)** -- moveTo is UObject* (player or world entity). Use tagged-union NpcState target encoding. |
+| `Aprop_inventoryContainer_player_C.extract(int32 Index)` | Aprop_inventoryContainer_player_C | 5N3 | **DONE (Flaw 2 RE)** -- extract returns prop to world; host generates runtime Key + broadcasts spawn. |
+| `AATV_C.input` / occupancy | AATV_C | 5N4 | TBD -- driver detection, input replication. |
+| `AnailProjectile_C / AgrimeProjectile_C / *` | projectile classes | 5N5 | TBD -- lifecycle: spawn → tick → hit/destroy. |
 
-The MTA findings doc has the corresponding MTA file:line refs for each. The VOTV survey has the SDK header field offsets.
+The MTA findings doc has the corresponding MTA file:line refs for each. The VOTV survey has the SDK header field offsets. The Flaws 1-5 RE doc (`research/findings/votv-npc-entity-RE-2026-05-24.md`) has the closed RE items.
+
+### Scale: 100 entities (USER DECISION 2026-05-24)
+
+User: **"When there's 100 entities/npcs during coop - we should be able to handle that"**.
+
+Full design in `memory/project_coop_scale_100_entities.md`. Key forces:
+
+1. **Aggregated bitstream**: 1 `EntityPoseBatch` packet per tick covering N entries; not 1 packet per entity. At 100 entities × 26 B per entry × 30 Hz aggregate = ~78 KB/s. Without aggregation: 6000 packets/sec from host (impossible).
+2. **Activity-rate gating**: per-NPC rate by AI state (5 Hz idle / 15 Hz roam / 30 Hz alert / 60 Hz combat). Typical 100 active = ~12 Hz average.
+3. **WireKey → 4-byte session-id mapping**: after NpcSpawn establishes the Key, subsequent pose entries use the 4-byte id. Saves ~28 B per entry per tick.
+4. **Host-side `g_activeNpcs` set**: event-driven insertion (spawn / state-change observers) -- no per-tick GUObjectArray walk (237k entries is too costly).
+5. **Receiver-side direct-memory transform write** for kinematic NPC puppets (AI nulled, no physics): write USceneComponent.RelativeLocation @+0x011C directly, bypass SetActorLocation's ProcessEvent dispatch. Saves ~32 atomic ops × 100 entities × 30 Hz = 96k atomic ops/sec.
+
+Budget at peak: ~80-150 KB/s wire, ~5% host CPU, ~3% client CPU. Comfortable.
+
+### NPC state encoding (NpcState packet detail per Flaw 4 RE)
+
+`NpcState` packet field `target` is a **tagged union** (per Flaw 4 RE):
+
+```
+struct NpcState {
+    uint32 entityId;        // session-local 4-byte id (NpcSpawn established mapping)
+    uint16 fieldBitmask;    // which fields below are present
+    // FLAG: health
+    [if bit 0] uint16 health;
+    // FLAG: mode (kerfurCommand enum / kerfurState enum / npc_zombie state)
+    [if bit 1] uint8 mode;
+    // FLAG: target tagged-union
+    [if bit 2] uint8 targetTag;       // 0=none, 1=remote-player, 2=local-player, 3=entity-by-key
+                [if targetTag == 3] WireKey targetKey;
+    // FLAG: re-activation snapshot (Gap-2 mitigation: full state when NPC wakes from idle)
+    [if bit 3] FVector lastKnownPos;
+    // ... add fields as needed per NPC class
+};
+```
+
+Receiver resolves the target tag to the right local object:
+- `none` → moveTo = nullptr
+- `remote-player` (host pointing at host-mainPlayer) → moveTo = client's host-puppet (`g_orphan.actor()`)
+- `local-player` (host pointing at host's representation of client) → moveTo = client's local mainPlayer (`g_netLocal`)
+- `entity-by-key` → `prop_wrap::FindByKeyString(targetKey)` → moveTo = resolved actor
+
+This closes the "kerfur chases wrong player on client" bug Flaw 4 identified.
 
 ### Inventory is per-player private (USER DECISION 2026-05-24)
 
@@ -235,12 +312,15 @@ in Phase 5N3 (interactables / world events), NOT a new phase.
 
 ### Decisions needed from user before code starts
 
-1. **Phase ordering**: 5N1 first (NPC pose stream) seems right. Confirm?
-2. **Authority model**: host-always for 5N1-5N3 is the simplest. Driver-authoritative for vehicles in 5N4 OK?
-3. ~~**AOI defaults**~~ -- DECIDED 2026-05-24: whole-map sync, no AOI cull (see "Whole-map sync" section).
-4. **Suppression strategy**: kill client-side AI tick (preferred) vs run AI on both + correct via host stream (more bandwidth but smoother on packet loss)?
-5. **Save persistence**: in/out of scope for 5N?
-6. ~~**Inventory**~~ -- DECIDED 2026-05-24: per-peer private, world-transition events only (see "Inventory is per-player private" section).
+1. ~~**Phase ordering**~~ -- DECIDED (default 5N1 first, no objection).
+2. ~~**Authority model**~~ -- DECIDED (host-always 5N1-5N3, driver-authoritative 5N4, initiator-authoritative damage 5N5 per Flaw 5).
+3. ~~**AOI defaults**~~ -- DECIDED 2026-05-24: whole-map sync, no AOI cull.
+4. ~~**Suppression strategy**~~ -- DECIDED 2026-05-24: block AI possession at deferred-spawn time (Flaw 1 RE). NO broad post-spawn suppression.
+5. **Save persistence**: still open. The Phase-5N3 inventory transitions imply ephemeral session is fine. **Recommendation: OUT of scope** -- pickup/drop replicates within a session; on disconnect, world state diverges per peer (ok).
+6. ~~**Inventory**~~ -- DECIDED 2026-05-24: per-peer private, world-transition events only.
+7. **Scale target** -- DECIDED 2026-05-24 (user): handle 100 entities/NPCs. Architecture forces aggregated bitstream + activity-rate gating + direct-memory writes (see scale section).
+
+Only #5 (save persistence) remains; my recommendation is "out of scope for v5".
 
 ### Cross-refs
 
