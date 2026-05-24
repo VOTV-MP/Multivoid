@@ -471,6 +471,40 @@ void SendPropSnapshotForPeer() {
     EnumerateSnapshotCandidates();  // Phase 1: cheap walk + filter; Phase 2 happens per-tick via DrainSnapshotChunk
 }
 
+// Audit I-2 (2026-05-24): mirror PropSpawn's retry queue for PropDestroy.
+// Without this, a destroy that races a busy reliable channel (e.g. a chat
+// message in flight) leaves a phantom actor on the peer until the next
+// snapshot bootstrap reconciles -- materially worse than a missing spawn
+// because the phantom persists, is interactable, and pollutes the scene.
+// Queue capacity 1024 -- destroys are rarer than spawns (only on
+// consumption / breakage), and each entry is just a WireKey (32 B) so
+// 1024 * 32 = 32 KB max queue memory.
+std::mutex g_pendingDestroysMutex;
+std::deque<coop::net::WireKey> g_pendingDestroys;
+constexpr size_t kMaxPendingDestroys = 1024;
+
+void EnqueuePropDestroyForRetry(const coop::net::WireKey& key) {
+    std::lock_guard<std::mutex> lk(g_pendingDestroysMutex);
+    if (g_pendingDestroys.size() >= kMaxPendingDestroys) {
+        UE_LOGW("net: PropDestroy retry queue full (depth %zu / max %zu) -- dropping OLDEST",
+                g_pendingDestroys.size(), kMaxPendingDestroys);
+        g_pendingDestroys.pop_front();
+    }
+    g_pendingDestroys.push_back(key);
+    UE_LOGI("net: PropDestroy enqueued for retry (depth now %zu)", g_pendingDestroys.size());
+}
+
+void DrainPendingPropDestroys() {
+    std::lock_guard<std::mutex> lk(g_pendingDestroysMutex);
+    while (!g_pendingDestroys.empty()) {
+        const auto& key = g_pendingDestroys.front();
+        if (!g_session.SendPropDestroy(key)) break;  // channel busy; retry next tick
+        UE_LOGI("net: PropDestroy dequeued + sent (remaining=%zu)",
+                g_pendingDestroys.size() - 1);
+        g_pendingDestroys.pop_front();
+    }
+}
+
 // Drain pending PropSpawns into the reliable channel. Called per tick from
 // NetPumpTick. Stops at the first SendPropSpawn=false (reliable channel
 // still busy) so order is preserved.
@@ -660,13 +694,18 @@ void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*para
 // peer joins). No broadcast bandwidth wasted on save-load.
 void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
+    // Gate order (audit L-1 2026-05-24): cheapest checks FIRST so the hot path
+    // short-circuits with minimal work. atomic load -> field read -> hash
+    // lookup -> SuperStruct chain. Save-load fires this observer ~2000 times
+    // pre-handshake; the connected() short-circuit avoids the hash lookup on
+    // every one of those.
+    if (!g_session.connected()) return;                       // pre-handshake save-load -> skip
+    if (g_session.role() != coop::net::Role::Host) return;    // client doesn't broadcast world spawns (host-authoritative)
     if (coop::remote_prop::ConsumeIncomingSpawn(self)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p was wire-received -- skip broadcast (echo suppression)",
                 self);
         return;
     }
-    if (!g_session.connected()) return;                       // pre-handshake save-load -> skip
-    if (g_session.role() != coop::net::Role::Host) return;    // client doesn't broadcast world spawns (host-authoritative)
     if (!R::IsLive(self)) return;
     // Defensive: confirm it's actually an Aprop derivative (the hook was
     // installed on PropClass but a fast misregistration would surface here).
@@ -722,13 +761,18 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
 // inside the K2_DestroyActor body).
 void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
+    // Gate order (audit I-1 2026-05-24): this observer is hooked on AActor
+    // base -> fires for EVERY actor destroy in the game (NPCs, projectiles,
+    // UI actors, world cleanup, etc.), not just props. Cheapest checks
+    // FIRST to short-circuit before the expensive SuperStruct walk:
+    //   atomic load -> field read -> hash lookup -> class chain walk.
+    if (!g_session.connected()) return;
+    if (g_session.role() != coop::net::Role::Host) return;
     if (coop::remote_prop::ConsumeIncomingDestroy(self)) {
         UE_LOGI("grab_hook[K2_DestroyActor PRE]: actor %p was wire-received destroy -- skip broadcast",
                 self);
         return;
     }
-    if (!g_session.connected()) return;
-    if (g_session.role() != coop::net::Role::Host) return;
     if (!ue_wrap::prop::IsDescendantOfProp(self)) return;     // skip non-prop destroys (NPCs etc -- their own phase)
     const std::wstring keyStr = ue_wrap::prop::GetKeyString(self);
     if (keyStr.empty()) return;                               // unkeyed = non-syncable
@@ -739,12 +783,9 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     }
     UE_LOGI("grab_hook[K2_DestroyActor PRE]: HOST broadcasting DESTROY actor=%p key='%ls'",
             self, keyStr.c_str());
-    g_session.SendPropDestroy(wk);
-    // Best-effort: if SendPropDestroy fails (channel busy) it's a small,
-    // unbatched payload -- accept the miss for now. The peer would still
-    // have a phantom actor until the next snapshot bootstrap reconciles.
-    // A retry queue (like PropSpawn's) is a future enhancement if drops
-    // become common in practice.
+    if (!g_session.SendPropDestroy(wk)) {
+        EnqueuePropDestroyForRetry(wk);
+    }
 }
 
 // --- v5 Bug C: UpropInventory_C::takeObj POST observer. THE bottom call all
@@ -1523,11 +1564,16 @@ void NetPumpTick(float displayOffsetX) {
         // now-dead session; shipping them to the NEXT peer (which may be a
         // DIFFERENT machine after IP change) would carry stale or wrong-
         // peer state. A fresh snapshot enqueues on the next connected-edge.
-        size_t dropped;
+        size_t droppedSpawns, droppedDestroys;
         {
             std::lock_guard<std::mutex> lk(g_pendingSpawnsMutex);
-            dropped = g_pendingSpawns.size();
+            droppedSpawns = g_pendingSpawns.size();
             g_pendingSpawns.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_pendingDestroysMutex);
+            droppedDestroys = g_pendingDestroys.size();
+            g_pendingDestroys.clear();
         }
         size_t snapPending = 0;
         if (!g_snapshotCandidates.empty()) {
@@ -1536,8 +1582,8 @@ void NetPumpTick(float displayOffsetX) {
             g_snapshotCandidates.shrink_to_fit();
             g_snapshotCandidateIdx = 0;
         }
-        UE_LOGI("net: disconnected -- cleared %zu pending PropSpawn(s) + %zu un-enumerated snapshot candidate(s)",
-                dropped, snapPending);
+        UE_LOGI("net: disconnected -- cleared %zu pending PropSpawn(s) + %zu pending PropDestroy(s) + %zu un-enumerated snapshot candidate(s)",
+                droppedSpawns, droppedDestroys, snapPending);
     }
     // Phase 5S0 (snapshot bootstrap): on every false->true transition of
     // Connected, the host enumerates Aprop_C derivatives and broadcasts
@@ -1561,7 +1607,11 @@ void NetPumpTick(float displayOffsetX) {
     // Drain any pending PropSpawn payloads that couldn't ship at observer
     // fire time because the reliable channel was busy (audit C-3). Cheap
     // when the queue is empty (mutex lock + size check). Order preserved.
-    if (isConnected) DrainPendingPropSpawns();
+    // Same pattern for PropDestroy (audit I-2 2026-05-24).
+    if (isConnected) {
+        DrainPendingPropSpawns();
+        DrainPendingPropDestroys();
+    }
 
     if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
     if (!g_netLocal) g_netLocal = R::FindObjectByClass(P::name::MainPlayerClass);
