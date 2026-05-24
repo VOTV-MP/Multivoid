@@ -184,6 +184,7 @@ inline constexpr size_t AnimBP_kerfur_Movement = 0x2D80;           // UPawnMovem
 inline constexpr size_t AnimBP_kerfur_animWalkAlpha = 0x2D88;      // float  CONFIRMED NOT the walk gate: spawn-time diagnostic 2026-05-23 showed the LOCAL has animWalkAlpha=0.00 while WALKING. BUA computes it but it does not gate the BlendSpace. Plan B1 leaves it untouched.
 inline constexpr size_t AnimBP_kerfur_animWalkRate = 0x2D8C;       // float  BlendSpace play-rate scalar. BUAInterceptor sets to 1.0 so a default of 0 cannot freeze BlendSpace sample interp.
 inline constexpr size_t AnimBP_kerfur_lookAt = 0x2D90;             // FVector
+inline constexpr size_t AnimBP_kerfur_Character = 0x2DC0;          // ACharacter* (cached at BeginPlay via Cast<ACharacter>(TryGetPawnOwner)). On the mainPlayer_C orphan path the cast succeeds and Character=orphan, so BP graphs that read velocity via Character.GetMovementComponent.Velocity sample the orphan's tick-disabled CMC = 0 -> BlendSpace freezes idle. Plan B2 (mainPlayer_C path) requires writing this to the satellite ACharacter alongside Pawn + Movement so the velocity pull hits the live satellite CMC.
 inline constexpr size_t AnimBP_kerfur_lookingAtPlayer = 0x2E01;    // bool
 inline constexpr size_t AnimBP_kerfur_kerfur = 0x2E08;             // AkerfurOmega_C* (null for a player body too)
 inline constexpr size_t AnimBP_kerfur_walkSpeedMultiplier = 0x2E18;// float

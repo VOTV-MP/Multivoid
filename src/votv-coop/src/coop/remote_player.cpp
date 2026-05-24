@@ -229,15 +229,25 @@ bool RemotePlayer::Spawn() {
         // so we can confirm the offset hasn't shifted in a new build. Fires
         // once at first puppet spawn.
         ue_wrap::engine::LogClassProperties(L"MovementComponent");
-        // Wire puppet AnimInstance -> satellite Pawn + Movement. Both pointers
-        // must be written: the AnimBP's BlueprintBeginPlay caches both Pawn
-        // and Movement from `TryGetPawnOwner()` at AnimInstance construction.
-        // For our puppet that ran with Pawn=null, so both caches stayed null
-        // -- the per-tick BUA does NOT re-resolve them from Pawn. The
-        // 2026-05-23 velocity-chain diagnostic proved this: setting Pawn alone
-        // left Movement=null, so BUA's spd write (Movement.Velocity.Size())
-        // never executed (puppet.spd stayed at the construction default 400).
-        // Writing BOTH unblocks BUA's per-tick velocity-pull path entirely.
+        // Wire puppet AnimInstance -> satellite Pawn + Movement + Character.
+        // All THREE pointers must be written: the AnimBP's BlueprintBeginPlay
+        // caches each from a separate call -- Pawn from TryGetPawnOwner(),
+        // Movement from Cast<UPawnMovementComponent>(Pawn.GetMovementComponent),
+        // Character from Cast<ACharacter>(TryGetPawnOwner). For the SkelMesh
+        // puppet path Pawn=null so all three cached null and writing Pawn +
+        // Movement was sufficient (Character stayed null because the
+        // ACharacter cast on a null Pawn returns null).
+        //
+        // For the mainPlayer_C orphan path (default, 2026-05-25) the orphan
+        // IS an ACharacter, so TryGetPawnOwner returns the orphan and the
+        // Character cast SUCCEEDS at BeginPlay -- Character cached = orphan.
+        // BP graphs that read velocity via Character.GetMovementComponent.
+        // Velocity then sample the orphan's CMC, whose tick is disabled
+        // (puppet.cpp Spawn() parks it) -> Velocity is permanently 0 ->
+        // BlendSpace stays in idle = NO ANIMATIONS user-visible (2026-05-25
+        // hands-on report). Writing Character = satellite alongside the
+        // Pawn + Movement writes redirects the velocity pull to the live
+        // satellite CMC the per-tick code feeds.
         if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
             void* anim = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(comp) + P::off::USkeletalMesh_AnimScriptInstance);
@@ -247,8 +257,9 @@ bool RemotePlayer::Spawn() {
                 if (satelliteCmc_) {
                     ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Movement, satelliteCmc_);
                 }
-                UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn=%p .Movement=%p",
-                        anim, satellite_, satelliteCmc_);
+                ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Character, satellite_);
+                UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn=%p .Movement=%p .Character=%p",
+                        anim, satellite_, satelliteCmc_, satellite_);
             }
         }
     } else {
@@ -453,9 +464,13 @@ void RemotePlayer::Destroy() {
     // (was missed -- left a dangling satellite-CMC pointer that BUA reads
     // via Movement->Velocity.Size() in the one-frame gap between satellite
     // destroy and puppet destroy = use-after-free on PendingKill CMC).
+    // Same reasoning for AnimBP_kerfur_Character (animation-fix commit):
+    // BP graphs that pull velocity via Character.GetMovementComponent would
+    // dereference a freed satellite ACharacter pointer otherwise.
     if (puppetAnim_ && R::IsLive(puppetAnim_)) {
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn,     nullptr);
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Movement, nullptr);
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn,      nullptr);
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Movement,  nullptr);
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Character, nullptr);
     }
     if (satellite_) {
         if (R::IsLive(satellite_)) E::DestroyActor(satellite_);
