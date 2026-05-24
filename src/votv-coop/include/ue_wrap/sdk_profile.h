@@ -405,6 +405,64 @@ inline constexpr const wchar_t* GameInstanceClass = L"mainGameInstance_C";
 // Actor spawning (the BlueprintCallable deferred-spawn pair the K2
 // SpawnActorFromClass node uses) + transform get/set.
 inline constexpr const wchar_t* GameplayStaticsClass = L"GameplayStatics";
+
+// Phase 5N1 (NPC sync foundation, 2026-05-25): UGameplayStatics's
+// BeginDeferredActorSpawnFromClass UFunction is the canonical deferred-
+// spawn entry every BP "spawn actor of class" graph compiles down to.
+// Intercepting it gives us ONE engine-level hook for all NPC + spawner
+// classes; replaces the 14-per-spawner-observer plan (architecture-doc
+// Hook surface table line 222) with 1 observer. See
+// research/findings/votv-npc-sync-prereqs-RE-2026-05-24.md section 4.
+// The constant for this UFunction is `BeginDeferredSpawnFn` (declared
+// further down in this file, alongside the engine-side reuse from
+// remote_prop.cpp + engine.cpp -- RULE 2: one name across all callers).
+
+// Phase 5N1 NPC class allowlist (12 enemy NPC classes per
+// votv-npc-sync-prereqs-RE-2026-05-24.md section 1 verdict). On CLIENT,
+// every BeginDeferredActorSpawnFromClass for a class in this list is
+// SUPPRESSED (interceptor returns true; ActorClass param zeroed so the
+// BP graph receives nullptr and bails per UE4's standard nullptr-check
+// pattern). Host runs spawners normally; client's NPC actors arrive via
+// the EntityPoseBatch wire (Inc2; not implemented yet).
+//
+// All 12 classes are confirmed targeting-compatible with our mainPlayer_C
+// orphan puppet (RE section 1 verdict: "ALL 12 enemy classes either use
+// AIPerception/PawnSensing or generic Cast to AActor / Cast to
+// mainPlayer_C. The orphan puppet -- being a real Pawn of the same class
+// -- is reachable by every targeting path inspected.").
+inline constexpr const wchar_t* NpcClass_Zombie       = L"npc_zombie_C";
+inline constexpr const wchar_t* NpcClass_KerfurOmega  = L"kerfurOmega_C";
+inline constexpr const wchar_t* NpcClass_Krampus      = L"npc_krampus_C";
+inline constexpr const wchar_t* NpcClass_Funguy       = L"npc_funguy_C";
+inline constexpr const wchar_t* NpcClass_GoreSlither  = L"npc_goreSlither_C";
+inline constexpr const wchar_t* NpcClass_Insomniac    = L"insomniac_C";
+inline constexpr const wchar_t* NpcClass_Fossilhound  = L"fossilhound_C";
+inline constexpr const wchar_t* NpcClass_Antibreather = L"antibreather_C";
+inline constexpr const wchar_t* NpcClass_Orborb       = L"npc_orborb_C";
+inline constexpr const wchar_t* NpcClass_ArirFollower = L"npc_arirFollower_C";
+inline constexpr const wchar_t* NpcClass_AriralShooter   = L"npc_ariral_shooter_C";
+inline constexpr const wchar_t* NpcClass_AriralPigBeater = L"npc_ariral_pigBeater_C";
+
+// Compact array for the allowlist resolver (Inc1 of Phase 5N1). Iterated
+// once at install time; each name resolved via R::FindClass + cached. The
+// classes are loaded on first gameplay-level transition (NOT at menu)
+// per VOTV's content-cooking pattern -- so the install retry path must
+// re-attempt until ALL 12 resolve (or log per-class failures).
+inline constexpr const wchar_t* kNpcAllowlist[] = {
+    NpcClass_Zombie,
+    NpcClass_KerfurOmega,
+    NpcClass_Krampus,
+    NpcClass_Funguy,
+    NpcClass_GoreSlither,
+    NpcClass_Insomniac,
+    NpcClass_Fossilhound,
+    NpcClass_Antibreather,
+    NpcClass_Orborb,
+    NpcClass_ArirFollower,
+    NpcClass_AriralShooter,
+    NpcClass_AriralPigBeater,
+};
+inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 inline constexpr const wchar_t* BeginDeferredSpawnFn = L"BeginDeferredActorSpawnFromClass";
 inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 
