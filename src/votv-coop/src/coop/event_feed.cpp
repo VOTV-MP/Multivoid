@@ -8,6 +8,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -103,6 +104,24 @@ void Update(net::Session& session, RemotePlayer* remote) {
             }
             net::PropReleasePayload p{};
             std::memcpy(&p, msg.payload.data(), sizeof(p));
+            // Trust-boundary validation: a NaN/Inf or absurd-magnitude impulse
+            // reaches UPrimitiveComponent::AddImpulse -> PhysX UB. Reject
+            // before dispatch. Audit fix 2026-05-24.
+            if (!std::isfinite(p.impulseX) || !std::isfinite(p.impulseY) || !std::isfinite(p.impulseZ)) {
+                UE_LOGW("event_feed: PropRelease impulse non-finite -- dropping");
+                break;
+            }
+            // kMaxImpulse cap: VOTV's throw mechanic uses impulses on the
+            // order of 100-1000 cm/s * mass; 1e7 is well above any legitimate
+            // throw and below any value that would teleport a body to infinity.
+            constexpr float kMaxImpulse = 1.0e7f;
+            if (std::fabs(p.impulseX) > kMaxImpulse ||
+                std::fabs(p.impulseY) > kMaxImpulse ||
+                std::fabs(p.impulseZ) > kMaxImpulse) {
+                UE_LOGW("event_feed: PropRelease impulse out of bounds (%.1f, %.1f, %.1f) -- dropping",
+                        p.impulseX, p.impulseY, p.impulseZ);
+                break;
+            }
             remote_prop::OnRelease(p);
             break;
         }

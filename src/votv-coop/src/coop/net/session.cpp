@@ -231,13 +231,21 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         if (len < static_cast<int>(sizeof(PropPosePacket))) return;
         PropPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        // Trust-boundary sanity: finite floats + sane bounds + key len in range.
+        // Trust-boundary sanity: finite floats + position AABB + rotation
+        // canonical range + key len in range. Without the rotation bound,
+        // a hostile/buggy sender's pitch=1e30 reaches SetActorRotation ->
+        // PhysX UB (audit-found 2026-05-24).
         const float vals[6] = {pkt.pose.x, pkt.pose.y, pkt.pose.z,
                                pkt.pose.pitch, pkt.pose.yaw, pkt.pose.roll};
         for (float v : vals) if (!std::isfinite(v)) return;
         if (std::fabs(pkt.pose.x) > kMaxCoord ||
             std::fabs(pkt.pose.y) > kMaxCoord ||
             std::fabs(pkt.pose.z) > kMaxCoord) return;
+        // FRotator axes are canonical (-180, 180] after NormalizeAxis at the
+        // send boundary; reject anything outside as malformed/spoofed.
+        if (std::fabs(pkt.pose.pitch) > 180.f ||
+            std::fabs(pkt.pose.yaw)   > 180.f ||
+            std::fabs(pkt.pose.roll)  > 180.f) return;
         if (pkt.pose.key.len > 31) return;  // malformed
 
         std::lock_guard<std::mutex> lk(remoteMutex_);
@@ -411,8 +419,16 @@ void Session::NetThread() {
                 UE_LOGW("net: peer timeout (%llu ms since last recv) -- dropping to Handshaking",
                         static_cast<unsigned long long>(nowMs - lastMs));
                 state_.store(ConnState::Handshaking);
+                // Mirror the Bye path: reset BOTH pose AND prop remote state.
+                // Without the prop reset, lastRemotePropSeq_ holds the prior
+                // session's high seq; the reconnecting peer starts sendSeq_=0
+                // and EVERY new PropPose is stale-dropped by the RFC1982
+                // check -- prop sync silently dead until 32-bit counter wraps
+                // (~828 days at 60 Hz). Audit caught this 2026-05-24.
                 { std::lock_guard<std::mutex> lk(remoteMutex_);
-                  hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0; }
+                  hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0;
+                  hasRemoteProp_ = false; lastRemotePropSeq_ = 0;
+                  remotePropStamp_ = 0; lastReadPropStamp_ = 0; }
                 reliable_.Reset();
                 lastRttMs_.store(0);
                 if (cfg_.role == Role::Host) {

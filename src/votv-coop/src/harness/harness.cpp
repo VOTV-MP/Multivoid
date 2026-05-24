@@ -258,6 +258,15 @@ void* g_netLocalController = nullptr;
 // hold the prior session's value across the new Start (audit fix).
 bool g_wasConnected = false;
 
+// v4 held-prop edge detector: file-scope for the same reason as g_wasConnected.
+// A static-local would carry a stale prop pointer + key across a session stop/
+// restart, causing the next pump to fire SendPropRelease for the OLD session's
+// key on the NEW session -- a real bug found by the audit. Cleared explicitly
+// alongside g_wasConnected on each session.Start (post-ship audit 2026-05-24).
+void* g_lastHeldProp = nullptr;
+coop::net::WireKey g_lastHeldKey{};
+uint64_t g_propEmitCount = 0;
+
 // ---- Physics-prop pickup observers (Stage 1 of [[project-physics-object-pickup]]) ----
 //
 // Hook surface: engine-native UPhysicsHandleComponent UFunctions + BP-Timeline
@@ -708,8 +717,14 @@ void RunAutonomousGrabTest() {
             void* ctrl = ue_wrap::engine::GetController(rsv->player);
             if (ctrl && pitchDelta != 0.f) {
                 ue_wrap::FRotator rot = ue_wrap::engine::GetControlRotation(ctrl);
+                // GetControlRotation returns RAW unnormalized [0, 360): looking
+                // 10 deg DOWN reads back as Pitch=350 not -10. Without this
+                // NormalizeAxis the > 60 clamp fires on the first tick (350 +
+                // any delta > 60) and snaps the camera instead of tilting
+                // gradually -- invalidating the visual proof screenshots.
+                // Audit 2026-05-24.
+                rot.Pitch = ue_wrap::NormalizeAxis(rot.Pitch);
                 rot.Pitch += pitchDelta;
-                // Clamp pitch so we don't roll over backwards into a broken view.
                 if (rot.Pitch >  60.f) rot.Pitch =  60.f;
                 if (rot.Pitch < -60.f) rot.Pitch = -60.f;
                 ue_wrap::engine::SetControlRotation(ctrl, rot);
@@ -938,7 +953,16 @@ void NetPumpTick(float displayOffsetX) {
     // (a chat-feed line that now expires via hud_feed::Tick). If the peer ever
     // reconnects, NetPumpTick auto-spawns a fresh puppet on the first new pose.
     const bool isConnected = (g_session.state() == coop::net::ConnState::Connected);
-    if (g_wasConnected && !isConnected && g_orphan.valid()) g_orphan.Destroy();
+    if (g_wasConnected && !isConnected) {
+        // Peer-gone: drop the puppet AND restore physics on any prop the
+        // receiver was kinematically driving (without this, a remote prop
+        // mid-grab at disconnect would stay frozen in air forever -- the
+        // 500 ms stream-stop timeout fires from inside remote_prop::Tick
+        // but only if Tick keeps running; relying on it solely is fragile.
+        // Audit fix 2026-05-24).
+        if (g_orphan.valid()) g_orphan.Destroy();
+        coop::remote_prop::ForceRelease();
+    }
     g_wasConnected = isConnected;
 
     if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
@@ -961,8 +985,8 @@ void NetPumpTick(float displayOffsetX) {
         // and publish to the net thread. On the edge held -> not-held, send a
         // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
         // never rely solely on the 500 ms stream-stop timeout).
-        static void* sLastHeldProp = nullptr;
-        static coop::net::WireKey sLastHeldKey{};
+        // State is FILE-SCOPE (g_lastHeldProp/Key/g_propEmitCount) -- a
+        // static-local would carry stale state across session restart.
         void* heldActor = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(g_netLocal) + P::off::mainPlayer_grabbing_actor);
         if (heldActor && R::IsLive(heldActor)) {
@@ -976,27 +1000,33 @@ void NetPumpTick(float displayOffsetX) {
             const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
             const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
             pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-            pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
+            // Normalize at the wire boundary: physics-prop rotation accumulates
+            // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
+            // Pitch=-270; receiver's canonical (-180,180] guard would reject.
+            // Mirrors PoseSnapshot's NormalizeAxis at ReadLocalPose (audit
+            // 2026-05-24).
+            pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
+            pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
+            pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
             g_session.SetLocalPropPose(true, pp);
             // Throttled emit log: first 3 + every 60th, matches receiver
             // throttle so the two logs can be diff'd line-for-line.
-            static uint64_t sEmitCount = 0;
-            const uint64_t n = ++sEmitCount;
+            const uint64_t n = ++g_propEmitCount;
             if (n <= 3 || (n % 60) == 0) {
                 UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d",
                         static_cast<unsigned long long>(n),
                         pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
                         static_cast<int>(pp.key.len));
             }
-            sLastHeldProp = heldActor;
-            sLastHeldKey = pp.key;
-        } else if (sLastHeldProp) {
+            g_lastHeldProp = heldActor;
+            g_lastHeldKey = pp.key;
+        } else if (g_lastHeldProp) {
             // Edge: was holding, now not. Stop sending PropPose + tell peer.
             g_session.SetLocalPropPose(false, {});
-            g_session.SendPropRelease(sLastHeldKey, 0.f, 0.f, 0.f);  // drop (no throw impulse yet)
-            UE_LOGI("net: held -> released, sent PropRelease (key.len=%d)", sLastHeldKey.len);
-            sLastHeldProp = nullptr;
-            sLastHeldKey = {};
+            g_session.SendPropRelease(g_lastHeldKey, 0.f, 0.f, 0.f);  // drop (no throw impulse yet -- see scope item)
+            UE_LOGI("net: held -> released, sent PropRelease (key.len=%d)", g_lastHeldKey.len);
+            g_lastHeldProp = nullptr;
+            g_lastHeldKey = {};
         }
     }
 
@@ -1388,6 +1418,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             }
             coop::event_feed::SetLocalNickname(ReadNickname());
             g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
+            // v4: reset held-prop edge state so a session restart doesn't
+            // carry a stale prop pointer/key from the prior session (audit
+            // fix 2026-05-24).
+            g_lastHeldProp = nullptr;
+            g_lastHeldKey = {};
+            g_propEmitCount = 0;
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");

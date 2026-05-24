@@ -95,6 +95,20 @@ items.
   — spawn paths must route through host so both peers see the same Key
   for the same prop. This is a separate prerequisite scope item; the
   physics-pickup feature blocks on it.
+  STATUS 2026-05-24: protocol v4 + sender + receiver SHIPPED (commit
+  `8623991` and audit fixes in subsequent commits); host's autonomous
+  grab propagates to client cross-process (verified numerically + visually
+  via lan-test). KNOWN GAP for full feature completeness:
+  THROW IMPULSE — the host's `SendPropRelease` currently transmits
+  `impulse=(0,0,0)` always (drop semantics only). The receiver path is
+  ready (`DriveAddImpulse` in `remote_prop.cpp`); to complete throw, the
+  host needs to (a) capture the impulse vector at throw time (the
+  `GrabObserver_PrimComp_AddImpulse` observer already fires; needs to
+  cache the impulse), (b) on the next NetPumpTick after a held->released
+  edge, pass the cached impulse to `SendPropRelease` instead of zeros,
+  (c) reset the cache after sending. ~30 lines in harness.cpp +
+  observer; not blocking baseline coop. Tracked here per RULE 2 (no
+  "not yet" comments without a written plan).
 
 <!--
 Template for an entry:
