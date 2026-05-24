@@ -101,16 +101,31 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
         // (UE finalizes sub-objects first). A live actor with a dying cached
         // component must NOT return the dying pointer -- the caller would then
         // read AnimScriptInstance @+0x6B0 on freed memory (AV). Treat as a
-        // cache miss; drop the entry and fall through to re-resolve. Post-ship
-        // audit catch: callers shouldn't have to repeat this guard themselves
-        // (current single caller DriveAnimBP does, but a future caller would
-        // not know to).
+        // cache miss; drop the entry and fall through to re-resolve.
         if (R::IsLive(it->second)) return it->second;
         g_meshComp.erase(it);
     }
+    // 2026-05-25 audit fix (post-ship CRITICAL-3): on cache miss for the
+    // mainPlayer_C puppet path, read mesh_playerVisible @0x04F8
+    // DIRECTLY. mainPlayer_C has FOUR SkeletalMeshComponents (the
+    // ACharacter::Mesh native slot @0x0280, mesh_playerVisible @0x04F8,
+    // arms @0x05F8, playermodel @0x0638); ChildObjectsOf returns
+    // whichever appears first in GUObjectArray order, which on this
+    // class is the native Mesh slot (typically hidden + has no AnimBP).
+    // DriveAnimBP then dispatches to the wrong AnimInstance.
     void* comp = nullptr;
-    for (const auto& c : R::ChildObjectsOf(puppetActor)) {
-        if (c.className == P::name::SkeletalMeshComponentClass) { comp = c.object; break; }
+    if (IsMainPlayerPuppetKind()) {
+        comp = ReadPtr(puppetActor, P::off::AmainPlayer_mesh_playerVisible);
+        if (comp && !R::IsLive(comp)) comp = nullptr;
+    }
+    // Backup path (SkelMesh): single SkeletalMeshComponent at the actor
+    // root; ChildObjectsOf finds it unambiguously.
+    if (!comp) {
+        for (const auto& c : R::ChildObjectsOf(puppetActor)) {
+            if (c.className == P::name::SkeletalMeshComponentClass) {
+                if (R::IsLive(c.object)) { comp = c.object; break; }
+            }
+        }
     }
     if (comp) g_meshComp[puppetActor] = comp;
     return comp;
@@ -340,11 +355,18 @@ static void* SpawnPuppetMainPlayer(const FVector& loc) {
     // after spawn so the gamemode's save/sleep/damage paths keep
     // operating on the REAL local player.
     void* gamemode = R::FindObjectByClass(P::name::GamemodeClass);
+    // 2026-05-25 audit fix (post-ship IMPORTANT-5): IsLive guard before
+    // dereferencing the gamemode pointer. FindObjectByClass scans by
+    // class name without a liveness flag check, so a level-reload edge
+    // could surface a PendingKill gamemode -- reading the mainPlayer
+    // slot off freed memory.
     void* gmMainPlayerBefore = nullptr;
-    if (gamemode) {
+    if (gamemode && R::IsLive(gamemode)) {
         gmMainPlayerBefore = ReadPtr(gamemode, P::off::mainGamemode_mainPlayer);
     } else {
-        UE_LOGW("puppet[MainPlayer]: no live gamemode found -- cannot capture mainPlayer pointer for restore");
+        UE_LOGW("puppet[MainPlayer]: no live gamemode (ptr=%p IsLive=%d) -- cannot capture mainPlayer pointer for restore",
+                gamemode, gamemode ? (int)R::IsLive(gamemode) : 0);
+        gamemode = nullptr;  // unify the post-spawn check
     }
     // inertPawn=true zeros AutoPossessPlayer/AutoPossessAI/AutoReceiveInput
     // and sets bBlockInput in the deferred-spawn window BEFORE BeginPlay,
@@ -398,6 +420,17 @@ static void* SpawnPuppetMainPlayer(const FVector& loc) {
         E::SetComponentTickEnabled(cmc, false);
         UE_LOGI("puppet[MainPlayer]: disabled orphan CMC tick @ %p (puppet driven by SetActorLocation, not physics)", cmc);
     }
+    // 2026-05-25 audit fix (post-ship CRITICAL-2): disable the orphan's
+    // actor-level tick. mainPlayer_C ReceiveTick runs SP logic each
+    // frame (HUD updates, lookAt traces, hunger/thirst countdowns,
+    // wind-sound positioning) we DO NOT want on a puppet. Even with
+    // GameMode nulled, ReceiveTick branches reading other fields can
+    // still execute. Disabling the actor tick stops the BP graph
+    // entirely. The mesh AnimBP keeps ticking (we explicitly
+    // SetAnimTickAlways on mesh_playerVisible below); only the
+    // actor-level BP EventTick is suppressed.
+    E::SetActorTickEnabled(actor, false);
+    UE_LOGI("puppet[MainPlayer]: disabled orphan actor tick (ReceiveTick BP graph suppressed; AnimBP still ticks on mesh)");
 
     // Neuter per-screen post-processing -- both PostProcessComponents drive
     // the LOCAL camera's color/exposure/gamma; leaving them alive on a

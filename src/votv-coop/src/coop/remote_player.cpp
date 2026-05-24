@@ -372,10 +372,13 @@ void RemotePlayer::Tick() {
     }
 
     // Skip the engine write when nothing has changed since the last push (frozen
-    // at target between packets). The puppet's SkeletalMeshActor has no
-    // physics/CharacterMovement -- it cannot move on its own, so a frozen pose
-    // genuinely stays where it is; re-writing the same SetActorLocation/Rotation
-    // dozens of times per second is wasted UFunction dispatch.
+    // at target between packets). The puppet -- whether SkelMesh backup or
+    // mainPlayer_C orphan -- runs no physics integration (SkelMesh has no
+    // CMC; mainPlayer_C orphan's CMC tick is disabled in
+    // puppet::SpawnPuppetMainPlayer + actor tick is also disabled), so a
+    // frozen pose genuinely stays where it is; re-writing the same
+    // SetActorLocation/Rotation dozens of times per second is wasted
+    // UFunction dispatch.
     if (dirty_) {
         ApplyToEngine();
         dirty_ = false;
@@ -384,11 +387,16 @@ void RemotePlayer::Tick() {
 
 void RemotePlayer::Destroy() {
     if (!actor_) return;
-    // Order: clear AnimInstance.Pawn pointer (so BUA can't dereference a freed
-    // satellite next tick), then destroy satellite, then destroy puppet actor,
-    // then nameplate.
+    // Order: clear AnimInstance.Pawn + Movement pointers (so BUA can't
+    // dereference a freed satellite next tick), then destroy satellite,
+    // then destroy puppet actor, then nameplate.
+    // 2026-05-25 audit fix (CRITICAL-1): also null AnimBP_kerfur_Movement
+    // (was missed -- left a dangling satellite-CMC pointer that BUA reads
+    // via Movement->Velocity.Size() in the one-frame gap between satellite
+    // destroy and puppet destroy = use-after-free on PendingKill CMC).
     if (puppetAnim_ && R::IsLive(puppetAnim_)) {
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn, nullptr);
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn,     nullptr);
+        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Movement, nullptr);
     }
     if (satellite_) {
         if (R::IsLive(satellite_)) E::DestroyActor(satellite_);

@@ -264,7 +264,17 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         a[P::off::APawn_AutoPossessAI] = 0;        // we possess explicitly post-spawn
         a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
         a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
-        UE_LOGI("engine: SpawnActor inertPawn -> no player possess, bBlockInput=1");
+        // 2026-05-25 audit fix (puppet audit IMPORTANT-6): also zero
+        // APawn::AIControllerClass. AutoPossessAI=0 blocks AUTO-spawn of
+        // an AI controller but does NOT prevent later code (other BP
+        // systems iterating pawns + calling SpawnDefaultController) from
+        // using the class default to acquire one. Nulling the class
+        // pointer closes that path. Matches the documented invariant
+        // "AI possession blocked at deferred-spawn (AutoPossessPlayer/AI
+        // =Disabled, AIControllerClass=null)" in
+        // [[project-coop-enemies-target-both]].
+        *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
+        UE_LOGI("engine: SpawnActor inertPawn -> no player possess, AIControllerClass=null, bBlockInput=1");
     }
 
     // 2) FinishSpawningActor(actor, transform) -> runs the actor's construction

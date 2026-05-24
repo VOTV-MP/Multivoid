@@ -2,17 +2,25 @@
 //
 // Gameplay/network layer (principle 7). Parallel class hierarchy (principle 3):
 // RemotePlayer owns the network/coop state and a POINTER to the engine entity it
-// renders through -- a "skin-puppet": a bare ASkeletalMeshActor wearing the local
-// player's exact skin (mesh_playerVisible) + the body AnimBP, which WE drive
-// entirely (no pawn, no controller, no CharacterMovement). The engine actor owns
-// rendering/animation; RemotePlayer owns the pose data. (MTA shape:
-// CClientPed::m_pPlayerPed -> CPlayerPed*.)
+// renders through. The engine actor's UClass is chosen at runtime by
+// ue_wrap::puppet::IsMainPlayerPuppetKind:
 //
-// Why a puppet, not a 2nd mainPlayer_C: the protagonist class dragged its whole
-// single-player tick surface along (the hijack/gamma cascade) and its AnimBP
-// posed as a "stick" without a possessing controller. The puppet poses purely
-// from AnimBP variables we set (root-cause finding, two converging agents) and
-// has no hijack surface (RULE 1 root-cause; RULE 3 parallel hierarchy).
+//   * MainPlayer (default, 2026-05-25): a mainPlayer_C orphan spawned with
+//     inertPawn=true. The class's built-in mesh_playerVisible carries the
+//     player body skin + IK leg bones; per-screen systems (PostProcess +
+//     mic + arms) are stripped at spawn, GameMode pointer nulled, CMC tick
+//     disabled, actor tick disabled. The orphan's AnimBP is satellite-
+//     driven (Plan B2) for the locomotion BlendSpace. IK legs work (real
+//     Character has floor-trace context).
+//
+//   * SkelMesh (backup, env var VOTVCOOP_PUPPET_KIND=skelmesh): a bare
+//     ASkeletalMeshActor wearing the local skin + body AnimBP, satellite-
+//     driven for AnimBP. No IK legs (bare-actor has no floor-trace
+//     context). RULE 2 retirement: this path goes when the MainPlayer
+//     path is hands-on-verified working.
+//
+// Both paths: the engine actor owns rendering/animation; RemotePlayer owns
+// the pose data. MTA shape: CClientPed::m_pPlayerPed -> CPlayerPed*.
 //
 // No marshaling/engine-memory access lives here; it all goes through ue_wrap.
 
@@ -107,7 +115,10 @@ private:
     static constexpr float kSnapBaseCm = 1000.f;
     static constexpr float kSnapPerSpeedSec = 0.5f;
 
-    void* actor_ = nullptr;  // the engine ASkeletalMeshActor puppet (owned by the engine)
+    void* actor_ = nullptr;  // the engine puppet actor (owned by the engine). UClass varies:
+                             // mainPlayer_C orphan by default, ASkeletalMeshActor when
+                             // VOTVCOOP_PUPPET_KIND=skelmesh (backup, retiring).
+                             // See puppet.h IsMainPlayerPuppetKind doc.
     void* puppetAnim_ = nullptr;  // the puppet's live UAnimBlueprint_kerfurOmega_regular_C
                                   // AnimInstance; cached at Spawn for later cleanup
                                   // and to track Pawn-pointer write target.
