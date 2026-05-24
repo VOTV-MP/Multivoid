@@ -141,4 +141,25 @@ struct VelocityState {
 };
 VelocityState GetPhysicsVelocity(void* prop);
 
+// Phase 5S0 Gap I-1 (2026-05-24): fuzzy de-dupe for divergent-key spawns
+// from per-peer-divergent natural spawners (AmushroomMaster_C,
+// AmushroomSpawner_C, AundergroundGarbageSpawner_C, etc.). When both
+// peers' independent spawners place the same LOGICAL entity at a slightly
+// different position with a DIFFERENT Key, the receiver's exact-Key
+// FindByKeyString fails -- duplicate ensues. This helper looks for a
+// same-class Aprop within `radiusCm` of `anchor`. Returns the FIRST match
+// (the first encountered in GUObjectArray order), or nullptr if none.
+//
+// IsLive-guarded. Skips Default__ CDOs. Walks GUObjectArray once per call
+// (~237k slots, but the descendant + name check filter the active set to
+// the same ~2000 prop candidates as FindNearest). Class match is by name
+// equality on the actor's UClass leaf name (e.g. "Aprop_food_mushroom_C").
+//
+// Use sparingly: O(GUObjectSize) per call. OnSpawn is rare (mushroom
+// growth ~few/sec at peak) so cost is acceptable. Document any per-tick
+// caller -- not designed for hot paths.
+void* FindNearbySameClass(const std::wstring& className,
+                          const FVector& anchor,
+                          float radiusCm);
+
 }  // namespace ue_wrap::prop

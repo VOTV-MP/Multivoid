@@ -235,6 +235,38 @@ VelocityState GetPhysicsVelocity(void* prop) {
     return out;
 }
 
+void* FindNearbySameClass(const std::wstring& className,
+                          const FVector& anchor,
+                          float radiusCm) {
+    if (className.empty() || radiusCm <= 0.f) return nullptr;
+    void* base = PropBaseClass();
+    if (!base) return nullptr;
+    const float r2 = radiusCm * radiusCm;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        if (!IsDescendantOfProp(obj)) continue;
+        // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
+        // Cheap string compare vs FindByKeyString's path; here we filter
+        // BEFORE the more expensive transform read.
+        if (R::ClassNameOf(obj) != className) continue;
+        // Default__<Class> CDOs filter via the GetActorLocation no-op
+        // (CDOs have no actor location -- they'd return 0,0,0 which is
+        // far from any reasonable spawn anchor in the КПП area). Still,
+        // do the cheap name-prefix skip to avoid a ProcessEvent dispatch.
+        const std::wstring nm = R::ToString(R::NameOf(obj));
+        if (nm.rfind(L"Default__", 0) == 0) continue;
+        if (!R::IsLive(obj)) continue;
+        const FVector loc = engine::GetActorLocation(obj);
+        const float dx = loc.X - anchor.X;
+        const float dy = loc.Y - anchor.Y;
+        const float dz = loc.Z - anchor.Z;
+        if (dx * dx + dy * dy + dz * dz <= r2) return obj;
+    }
+    return nullptr;
+}
+
 void* FindByKeyString(const std::wstring& keyString) {
     if (keyString.empty()) return nullptr;
     void* base = PropBaseClass();

@@ -525,6 +525,38 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
         return;
     }
+    // Phase 5S0 Gap I-1 (2026-05-24): exact-Key match failed. Try fuzzy
+    // de-dupe for divergent-key same-position spawns. Per-peer-divergent
+    // natural spawners (AmushroomMaster_C, AmushroomSpawner_C,
+    // AundergroundGarbageSpawner_C) place same logical entities with
+    // DIFFERENT Keys at slightly-different positions on each peer; without
+    // this, the host's broadcast would spawn a NEW prop adjacent to the
+    // client's pre-existing one. Conservative 30 cm radius + same-class
+    // gate. Mismatches in dense-prop areas surface in the log.
+    constexpr float kFuzzyRadiusCm = 30.f;
+    if (void* fuzzy = ue_wrap::prop::FindNearbySameClass(
+            classW,
+            ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+            kFuzzyRadiusCm)) {
+        UE_LOGI("remote_prop::OnSpawn: Gap-I-1 FUZZY MATCH '%ls' (wire key '%ls') -> existing actor %p within %.1f cm -- de-duping, converging transform",
+                classW.c_str(), keyW.c_str(), fuzzy, kFuzzyRadiusCm);
+        ue_wrap::engine::SetActorLocation(fuzzy,
+            ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
+        ue_wrap::engine::SetActorRotation(fuzzy,
+            ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        // NOTE: the fuzzy-matched actor's local Key stays as the client's
+        // original NewGuid; subsequent host PropPose updates carry the
+        // HOST's Key which still won't resolve via FindByKeyString on
+        // client (different keys). Fix in Inc3 via per-class spawner
+        // suppression (host-authoritative spawn -> ONE Key cross-peer).
+        // For now, the host's grab on this mushroom will use the existing
+        // wire path (PropPose stream + FindByKeyString lookup on host's
+        // own Key) -- but since client's actor has a different Key, the
+        // FindByKeyString resolution chain still misses. The fuzzy match
+        // here at least prevents a visible duplicate; tracking the fuzzy
+        // map for subsequent PropPose resolves is Inc3 work.
+        return;
+    }
     if (!ResolveSpawnFns()) {
         UE_LOGW("remote_prop::OnSpawn: spawn UFunctions unresolved -- dropping");
         return;
