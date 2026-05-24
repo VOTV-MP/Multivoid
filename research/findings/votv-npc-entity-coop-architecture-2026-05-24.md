@@ -43,6 +43,44 @@ VOTV's `Key` FName (already used by props) is the canonical cross-peer entity ID
 
 For runtime-spawned entities, **host = the spawning machine**. Client never spawns; it receives spawn packets from host.
 
+### Whole-map sync (USER DECISION 2026-05-24)
+
+**Rule:** entities (enemies, NPCs) AND objects (props) sync across the
+WHOLE MAP, not bound by any radius. No AOI culling.
+
+This supersedes the AOI radii proposal earlier in this doc. Updated
+rationale:
+
+- VOTV's map is moderate-sized; even with all entities streaming, the
+  cumulative bandwidth fits the LAN budget at typical entity counts.
+- Players legitimately need to see distant events (a kerfur fleeing
+  toward the far side of the map, a UFO crossing the sky) -- AOI culling
+  would make those invisible.
+- Persistent world consistency over bandwidth efficiency: both peers
+  hold the same world state at all times.
+
+Bandwidth back-of-envelope (host-side outgoing):
+- NPCs: assume up to 100 active at peak. Pose stream = 60 Hz x 28 bytes
+  + flag-byte delta state at lower rate = ~1.8 KB/s per NPC = 180 KB/s
+  peak. Fine on LAN; tight on 2 Mbit upstream WAN.
+- Objects: only IN-MOTION props stream (PhysX is deterministic-enough
+  at rest -- a settled crate at host's coords IS at the same coords on
+  client). Per-tick pose only when grabbing/throwing/being-pushed.
+- Events: all explosions / projectiles / one-shot effects ARE
+  broadcast regardless of distance.
+
+Concrete implementation:
+- Replace "AOI cull check" with a "is-this-entity-active check" --
+  active NPCs (ticking, alive, not in cryo) stream; inactive don't.
+- For objects: use PhysX's sleep state. AnyPrimitiveComponent with
+  `IsAnyRigidBodyAwake()` true streams per-tick; sleeping bodies are
+  authoritative-at-rest and need no per-tick wire.
+- For events: broadcast unconditionally.
+
+Optimization later if bandwidth becomes a concern: delta encoding +
+varying-rate (fast NPCs at 60Hz, slow/idle at 10Hz). Out of scope for
+v5 baseline.
+
 ### Wire taxonomy (protocol v5)
 
 Building on v4 (PoseSnapshot + PropPose + PropRelease), v5 adds:
@@ -141,13 +179,55 @@ Per `feedback_re_related_functions`, before any of Phase 5N1-5N5 is implemented,
 
 The MTA findings doc has the corresponding MTA file:line refs for each. The VOTV survey has the SDK header field offsets.
 
+### Inventory is per-player private (USER DECISION 2026-05-24)
+
+**Rule:** each peer's inventory is unique / private. No inventory contents
+ever cross the wire.
+
+VOTV's inventory is an actor (`Aprop_inventoryContainer_player_C : Aprop_container_C`,
+size 0x42A, with `getData`/`loadData` save-system hooks). Each player carries
+their own instance. The host's `inventoryContainer_player` is host-local;
+the client's `inventoryContainer_player` is client-local. **Neither is replicated.**
+
+WHAT DOES need to sync (when inventory state intersects the shared world):
+
+1. **World pickup → inventory transition**: when host picks up a flashlight
+   from the world floor, both peers must see the world flashlight disappear
+   from the shared world. But ONLY host's inventory gets the item.
+   - Wire: reliable `EntityEvent` of "prop X was picked up into a player's
+     inventory" → both peers despawn the world prop.
+   - NOT sent: the receiving player or which inventory slot it went to.
+
+2. **Inventory → world dump transition**: when host drops a flashlight
+   onto the floor, the WORLD gets a new prop. Both peers must see it spawn.
+   - Wire: reliable `NpcSpawn`-style spawn packet (same channel as Phase 5N2)
+     with the spawned prop's Key + class + transform.
+   - NOT sent: the dropping player.
+
+3. **Use / interaction events** (e.g. flashlight click on/off): the held
+   item's STATE if it has world-visible effect (e.g. light cone). For
+   flashlight specifically: just replicate the light-on bool.
+   - Wire: reliable `EntityEvent` with item Key + state.
+
+WHAT STAYS LOCAL (never on the wire):
+
+- Inventory open/close UI
+- Inventory slot reorder, splitting stacks, examining items
+- Reading notes / using consumables that have no world effect
+- Stats, achievements, save-system credits for collecting items
+
+This is the only way a coop-shared world reconciles with private
+inventories. It mirrors MTA's pickup model (server-authoritative world
+pickup events, peer-local "what's in my pockets"). Implementation goes
+in Phase 5N3 (interactables / world events), NOT a new phase.
+
 ### Risks / open questions
 
 1. **AI in two places**: if HOST runs AI for NPCs and CLIENT's local copy also runs AI (because the same blueprint loads on both), the client's NPC will diverge from host's. **Solution:** suppress AI tick on the client's NPC copy via reflection (set `SetActorTickEnabled(false)` on the controller, or null out the AIController), only drive it from the wire. This is the analog of how we disable physics on client-side props during grab.
 
 2. **Save persistence**: when host's NPC dies, the death is persisted in the save. Does the client's save reflect this? Currently the client loads its own save independently — the death wouldn't persist unless we propagate save events. **Likely out of scope** for the initial phase; coop runs are ephemeral.
 
-3. **Mass scale**: VOTV has 1200+ prop subclasses, ~17 NPC classes. Streaming everything is wasteful. **Solution:** AOI radius per entity type — props 50m, NPCs 200m, large vehicles 500m, explosions 300m.
+3. ~~**Mass scale**: VOTV has 1200+ prop subclasses, ~17 NPC classes. Streaming everything is wasteful. **Solution:** AOI radius per entity type — props 50m, NPCs 200m, large vehicles 500m, explosions 300m.~~  **SUPERSEDED 2026-05-24 by user decision: whole-map sync, no AOI**. Bandwidth managed by activity gating (PhysX-sleep for props, AI-active for NPCs) and possible varying-rate per-entity in a future optimisation pass.
 
 4. **Cross-class instantiation parity**: client receiving an NpcSpawn for `Anpc_zombie_C` must have that class registered. Cooked content has them all baked; runtime spawn via FindClass should work, but the BP graph's `BeginPlay` may have side effects we don't want (e.g. NPC plays a spawn sound, decides on a target). **Solution:** spawn the class but suppress its tick + AI until it's been "synced into existence".
 
@@ -157,9 +237,10 @@ The MTA findings doc has the corresponding MTA file:line refs for each. The VOTV
 
 1. **Phase ordering**: 5N1 first (NPC pose stream) seems right. Confirm?
 2. **Authority model**: host-always for 5N1-5N3 is the simplest. Driver-authoritative for vehicles in 5N4 OK?
-3. **AOI defaults**: 200m NPC radius reasonable, or wider/narrower?
+3. ~~**AOI defaults**~~ -- DECIDED 2026-05-24: whole-map sync, no AOI cull (see "Whole-map sync" section).
 4. **Suppression strategy**: kill client-side AI tick (preferred) vs run AI on both + correct via host stream (more bandwidth but smoother on packet loss)?
 5. **Save persistence**: in/out of scope for 5N?
+6. ~~**Inventory**~~ -- DECIDED 2026-05-24: per-peer private, world-transition events only (see "Inventory is per-player private" section).
 
 ### Cross-refs
 

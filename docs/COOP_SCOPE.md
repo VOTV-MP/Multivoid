@@ -127,6 +127,20 @@ items.
   authority model for 5N1-3, AOI radii defaults, client-AI suppression
   strategy, save-persistence in/out of scope. NO CODE until user
   reviews + approves architecture.
+  USER DECISION 2026-05-24: **client inventory is unique/private**. No
+  inventory contents ever cross the wire. World <-> inventory transitions
+  (pickup despawns world prop on both peers; drop spawns world prop on
+  both peers) ARE replicated as world events; inventory contents
+  (`Aprop_inventoryContainer_player_C` actor + child items) stay
+  per-peer local. Item state with world effect (e.g. flashlight on/off
+  light cone) replicates as an EntityEvent with the item's Key + state.
+  Implementation lands in Phase 5N3 (interactables / world events),
+  not a new phase.
+  USER DECISION 2026-05-24: **whole-map sync**, no AOI/radius culling.
+  NPCs and objects sync across the whole map. Bandwidth gated by entity
+  ACTIVITY (PhysX `IsAnyRigidBodyAwake` for props; AI-active flag for
+  NPCs) rather than distance. Events (explosions, projectiles, sounds)
+  broadcast unconditionally. Open decision #3 (AOI radii) closed.
 
 <!--
 Template for an entry:
