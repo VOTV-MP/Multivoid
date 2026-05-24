@@ -235,7 +235,12 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
                 UE_LOGW("event_feed: PropDestroy key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
-            remote_prop::OnDestroy(p);
+            // 2026-05-25 cross-peer destroy: pass localPlayer so OnDestroy
+            // can release a held PHC grab (mainPlayer.grabbing_actor ==
+            // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
+            // Component::TickComponent reading a dangling GrabbedComponent
+            // ptr next frame.
+            remote_prop::OnDestroy(p, localPlayer);
             break;
         }
         }

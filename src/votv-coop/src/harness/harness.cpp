@@ -943,9 +943,27 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     // FIRST to short-circuit before the expensive SuperStruct walk:
     //   atomic load -> field read -> hash lookup -> class chain walk.
     if (!g_session.connected()) return;
-    if (g_session.role() != coop::net::Role::Host) return;
+    // 2026-05-25 cross-peer destroy: REMOVED the role==Host gate. Per the
+    // food-consumption RE, world-state destroys must replicate
+    // BIDIRECTIONALLY:
+    //   * HOST destroy -> broadcast -> CLIENT destroys local
+    //   * CLIENT destroy (eats food, picks up world item to inventory,
+    //     breaks container) -> broadcast -> HOST destroys local + frees
+    //     PHC if holding (via OnDestroy's ReleaseLocalGrabIfHoldingActor).
+    // Echo loop is suppressed by g_incomingDestroys: a wire-received
+    // destroy MarkIncomingDestroy's before calling K2_DestroyActor, and
+    // this observer ConsumeIncomingDestroy's to skip the rebroadcast.
+    //
+    // Known race (acceptable interim, retirement plan): if BOTH peers
+    // eat the same food within the wire RTT (~50 ms), each runs
+    // addFood locally (each gets fed once each, instead of one peer
+    // getting fed). This requires deliberate user coordination and
+    // isn't the reported bug. Retire by escalating to host-authoritative
+    // eat (Option B from
+    // research/findings/votv-food-consumption-and-cross-peer-destroy-RE-2026-05-25.md)
+    // IF hands-on testing surfaces this race in normal play.
     if (coop::remote_prop::ConsumeIncomingDestroy(self)) {
-        UE_LOGI("grab_hook[K2_DestroyActor PRE]: actor %p was wire-received destroy -- skip broadcast",
+        UE_LOGI("grab_hook[K2_DestroyActor PRE]: actor %p was wire-received destroy -- skip rebroadcast",
                 self);
         return;
     }
@@ -957,8 +975,10 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
         wk.data[wk.len++] = static_cast<char>(keyStr[i]);
     }
-    UE_LOGI("grab_hook[K2_DestroyActor PRE]: HOST broadcasting DESTROY actor=%p key='%ls'",
-            self, keyStr.c_str());
+    const char* roleStr =
+        g_session.role() == coop::net::Role::Host ? "HOST" : "CLIENT";
+    UE_LOGI("grab_hook[K2_DestroyActor PRE]: %s broadcasting DESTROY actor=%p key='%ls'",
+            roleStr, self, keyStr.c_str());
     if (!g_session.SendPropDestroy(wk)) {
         EnqueuePropDestroyForRetry(wk);
     }

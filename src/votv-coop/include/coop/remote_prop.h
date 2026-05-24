@@ -96,6 +96,15 @@ bool ConsumeIncomingDestroy(void* actor);
 // doesn't echo), and calls K2_DestroyActor on it. Returns silently if no
 // local actor with that key exists (the prop never replicated to us, or
 // was already destroyed locally).
-void OnDestroy(const coop::net::PropDestroyPayload& payload);
+//
+// 2026-05-25: `localPlayer` added for cross-peer destroy of a held prop.
+// When client eats food that host is holding, host receives PropDestroy
+// and we must call PHC.ReleaseComponent on host's mainPlayer.grabHandle
+// BEFORE K2_DestroyActor -- otherwise UPhysicsHandleComponent::Tick
+// Component reads GrabbedComponent (@+0xB0) as a dangling pointer the
+// next frame and PhysX dereferences a freed body instance. The release
+// path is gated on `mainPlayer.grabbing_actor == actor` so it no-ops
+// for the common case where the destroyed prop isn't grabbed.
+void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer);
 
 }  // namespace coop::remote_prop
