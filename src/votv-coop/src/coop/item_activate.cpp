@@ -48,6 +48,14 @@ bool g_installed = false;
 // + at human-press cadence the doubled wire traffic is negligible).
 void* g_updateFlashlightFn = nullptr;
 void* g_flashlightUpdateFn = nullptr;
+void* g_flashlightInput13Fn = nullptr;
+void* g_flashlightInput14Fn = nullptr;
+
+// Last sent state so the input-event hook doesn't send a packet for
+// the F-RELEASE event (which fires the InpActEvt_14 UFunction but
+// doesn't change `mp.flashlight`). One value per local process is
+// enough; the sender is always the local player. -1 = no send yet.
+std::atomic<int> g_lastSentState{-1};
 
 // Hash of "prop_equipment_flashlight_C" -- the class the wire packet's
 // itemClassHash field carries for flashlight events. Both _a and _b
@@ -84,6 +92,8 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     const char* which =
         (function == g_flashlightUpdateFn) ? "Flashlight_Update" :
         (function == g_updateFlashlightFn) ? "updateFlashlight" :
+        (function == g_flashlightInput13Fn) ? "InpActEvt_13" :
+        (function == g_flashlightInput14Fn) ? "InpActEvt_14" :
         "<unknown>";
 
     // Echo-suppress: a receiver-applied state change going through any
@@ -159,6 +169,18 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
+    // Dedup: if InpActEvt_14 (release) fires after InpActEvt_13 (press),
+    // mp.flashlight didn't change between them -- last-sent-state catches
+    // that and skips the redundant send. Also catches a future BP recook
+    // where some other handler fires repeatedly with the same state.
+    const int newState = flashlight ? 1 : 0;
+    if (g_lastSentState.exchange(newState, std::memory_order_acq_rel) == newState) {
+        if (ProbeLogEnabled()) {
+            UE_LOGI("flashlight: state unchanged (still %d) -- no wire send", newState);
+        }
+        return;
+    }
+
     coop::net::ItemActivatePayload p{};
     p.itemClassHash = g_flashlightClassHash;
     // 1v1 session: host=0, client=1. Once we scale to N peers, this gets
@@ -216,42 +238,50 @@ void Install(coop::net::Session* session) {
     // it and never fires the observer. Registering both is cheap (2 of
     // the 64 observer slots) and survives a future BP recook that might
     // un-inline one or the other.
-    void* fnInner = R::FindFunction(playerCls, P::name::MainPlayerUpdateFlashlightFn);
-    void* fnOuter = R::FindFunction(playerCls, P::name::MainPlayerFlashlightUpdateFn);
-    if (!fnInner && !fnOuter) {
-        UE_LOGW("flashlight: NEITHER UFunction found on %ls (looked for '%ls' and '%ls')",
-                P::name::MainPlayerClass,
-                P::name::MainPlayerUpdateFlashlightFn,
-                P::name::MainPlayerFlashlightUpdateFn);
-        return;
-    }
+    // Try all four candidate UFunctions. The dispatch chain per the RE
+    // doc is:
+    //   InpActEvt_flashlight_K2Node_InputActionEvent_13/14
+    //     -> Flashlight Update()
+    //        -> updateFlashlight()
+    // Hands-on showed both inner functions are BP-inlined into the input
+    // events. We hook the input events too -- they are ProcessEvent-
+    // dispatched by the engine input system (same as grab_observer's
+    // InpActEvt_use, which we already know fires). last-sent-state
+    // dedups duplicates if more than one fires for a single F-press.
+    struct Candidate { const wchar_t* name; void** outPtr; };
+    Candidate cs[] = {
+        { P::name::MainPlayerUpdateFlashlightFn,  &g_updateFlashlightFn  },
+        { P::name::MainPlayerFlashlightUpdateFn,  &g_flashlightUpdateFn  },
+        { P::name::MainPlayerFlashlightInput13Fn, &g_flashlightInput13Fn },
+        { P::name::MainPlayerFlashlightInput14Fn, &g_flashlightInput14Fn },
+    };
     int registered = 0;
-    if (fnInner) {
-        if (GT::RegisterPostObserver(fnInner, &OnUpdateFlashlightPost)) {
-            g_updateFlashlightFn = fnInner;
-            ++registered;
-        } else {
-            UE_LOGW("flashlight: RegisterPostObserver(updateFlashlight) failed");
+    for (auto& c : cs) {
+        void* fn = R::FindFunction(playerCls, c.name);
+        if (!fn) {
+            UE_LOGW("flashlight: UFunction '%ls' not found on %ls", c.name,
+                    P::name::MainPlayerClass);
+            continue;
         }
-    }
-    if (fnOuter) {
-        if (GT::RegisterPostObserver(fnOuter, &OnUpdateFlashlightPost)) {
-            g_flashlightUpdateFn = fnOuter;
-            ++registered;
-        } else {
-            UE_LOGW("flashlight: RegisterPostObserver('Flashlight Update') failed");
+        if (!GT::RegisterPostObserver(fn, &OnUpdateFlashlightPost)) {
+            UE_LOGW("flashlight: RegisterPostObserver(%ls) failed", c.name);
+            continue;
         }
+        *c.outPtr = fn;
+        ++registered;
     }
     if (registered == 0) {
-        UE_LOGW("flashlight: both candidate observers failed to register -- aborting install");
+        UE_LOGW("flashlight: no candidate observers registered -- aborting install");
         return;
     }
 
     g_flashlightClassHash = HashClassName(L"prop_equipment_flashlight_C");
     g_installed = true;
-    UE_LOGI("flashlight: POST observers installed (updateFlashlight=%p, "
-            "'Flashlight Update'=%p, classHash=0x%08X, probe_log=%d)",
-            g_updateFlashlightFn, g_flashlightUpdateFn,
+    UE_LOGI("flashlight: %d POST observer(s) installed (updateFlashlight=%p, "
+            "'Flashlight Update'=%p, InpActEvt_13=%p, InpActEvt_14=%p, "
+            "classHash=0x%08X, probe_log=%d)",
+            registered, g_updateFlashlightFn, g_flashlightUpdateFn,
+            g_flashlightInput13Fn, g_flashlightInput14Fn,
             g_flashlightClassHash, ProbeLogEnabled() ? 1 : 0);
 }
 

@@ -674,6 +674,20 @@ inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K
 inline constexpr const wchar_t* MainPlayerUpdateFlashlightFn = L"updateFlashlight";
 inline constexpr const wchar_t* MainPlayerFlashlightUpdateFn = L"Flashlight Update";
 
+// Phase 5F retest fallback (2026-05-25 NIGHT-3): hands-on showed that
+// BOTH updateFlashlight AND 'Flashlight Update' are BP-inlined into
+// their callers and never dispatch via ProcessEvent. The remaining
+// candidate is the input event itself, which the engine input system
+// always dispatches as a UFunction (the grab_observer relies on the
+// same shape for InpActEvt_use). The K2Node ordinal (_13 / _14) is
+// version-fragile -- a BP recook can renumber it; we follow the same
+// brittleness the grab observer accepted with _use_..._41. Two events
+// per input (press + release); we register on both and dedup at sender
+// via last-sent-state (release fires but the bool didn't change ->
+// no-op).
+inline constexpr const wchar_t* MainPlayerFlashlightInput13Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_13";
+inline constexpr const wchar_t* MainPlayerFlashlightInput14Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_14";
+
 // UTimelineComponent BP-callable methods (used to force the `grab` Timeline
 // from the autonomous test, so the 3 BP-Timeline observers fire without a
 // real E-press). These ARE ProcessEvent-dispatched (BP CallFunction nodes).
