@@ -75,8 +75,11 @@ tooling, not the player-facing menu.
 
 ## Gating
 
-Build order: the menu's **networking** depends on the Phase 3 transport +
-session model, which is gated behind the Phase 2 orphan gate. The menu
-**shell** (buttons/panels/IP entry) could be prototyped earlier, but to
-avoid a non-functional UI lingering (RULE No.1), we build it when the
-session API it drives exists. Tracked in `ROADMAP.md`.
+**Status 2026-05-25:** the Phase 2 orphan + Phase 3 transport + session
+API are all SHIPPED. The menu's prerequisites are met. Build is
+deferred because the env-var `.bat` launchers
+(`mp_host_game.bat` / `mp_client_connect.bat`) cover the hands-on
+workflow adequately while feature work on replication (5N* / 5S* / 5T /
+5D) is the active priority. The menu shell will land once the
+per-feature replication surface stabilises; until then, see the
+launchers + `docs/AUTONOMOUS_TESTING.md` for the runtime entry points.

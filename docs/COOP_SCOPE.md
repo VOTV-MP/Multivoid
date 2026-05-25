@@ -9,9 +9,11 @@ replicate X?" gets a binary answer from this doc. Use the decision tree in
 `docs/COOP_METHODOLOGY.md` ("should we replicate X?") to classify new
 items.
 
-> **Status**: skeleton. Scope is decided as Phase 1 reflection reveals
-> what VOTV's gameplay actually consists of. Do not pre-populate from
-> guesswork — fill in as each system is understood.
+> **Status**: actively maintained (no longer skeleton — most major
+> categories have at least one decision logged). New entries are added
+> as user makes scope decisions during iteration; each entry has a date
+> + reason. Cross-references to live workstreams in `docs/ROADMAP.md`
+> and the `memory/` topic files.
 
 ---
 
@@ -161,7 +163,33 @@ Template for an entry:
 
 ## Out of scope
 
-_(empty — populate as decided, with date + reason)_
+- **Inventory CONTENTS (slot order, stack counts, items in pockets)** —
+  NOT replicated. Per-peer private. World ↔ inventory transitions
+  (pickup despawn, drop spawn, flashlight on/off) DO replicate as world
+  events. Reason: keeps player UI responsive (no wait for host) and
+  per-player progression / equipment unique to each peer.
+  Decided 2026-05-24 (user). Implementation lands in Phase 5N3
+  (interactables / world events).
+
+- **Engine built-in replication** (UE4 `Replicated` UPROPERTYs and RPC
+  attributes). NOT used for gameplay. VOTV blueprints are SP-authored;
+  enabling replication would require editing assets (anti-pattern A6).
+  We drive the engine via reflected UFunction calls + direct state
+  push on our custom UDP layer instead.
+  Decided 2026-05-21 (Phase 0 / feasibility).
+
+- **Outdoor lamp posts (`AlampPost_C`)** — NOT synced. Driven by the
+  game's day/night cycle (mainGamemode tracks `allLampPosts`); both
+  peers run the same local cycle and lamp posts toggle in lockstep
+  without wire traffic. Confirmed via the Phase 5D doors+lights RE
+  pass 2026-05-25.
+
+- **Pak-mounted custom content** — NOT in scope for the coop sync work.
+  All shipping behaviour rides through the standalone DLL; no asset
+  edits, no pak overlays. Revisit Phase 7+ ONLY for the multiplayer
+  menu polish if needed. See the 3 architecture-decision findings docs
+  from 2026-05-25 (votv-mp-pak-mount-feasibility).
+  Decided 2026-05-25 (user, after hybrid-pak survey).
 
 <!--
 - **<system>** — NOT replicated. Reason: <re-derivable locally / breaks no
@@ -271,3 +299,55 @@ Design implications (do NOT build yet; record so the architecture serves it):
 - 2026-05-23 — Added coop chat + session event log (joins/disconnects/errors) to
   In scope; user. Needs a RELIABLE ordered channel (ack+retransmit) over the
   Phase 3 session, distinct from the lossy pose stream; UMG-at-runtime chat widget.
+- 2026-05-23 — Added physics-object pickup / drag (E-press) to In scope; user.
+  3-packet design (GRAB reliable + HELD-PROP-POSE piggyback + RELEASE reliable
+  with throw impulse). SHIPPED 2026-05-24.
+- 2026-05-24 — Added NPC + interactable entity sync to In scope; user. Phase
+  5N1 (NPC pose) → 5N2 (spawn/despawn) → 5N3 (interactables / doors / world
+  events) → 5N4 (vehicles) → 5N5 (transient events).
+- 2026-05-24 — **client inventory is unique/private** (Out of scope; see
+  above). World ↔ inventory transitions DO replicate as world events.
+- 2026-05-24 — **whole-map sync, no AOI culling**. NPCs + objects sync
+  across the whole map. Bandwidth gated by entity ACTIVITY
+  (`IsAnyRigidBodyAwake` for props; AI-active flag for NPCs), not distance.
+- 2026-05-24 — **enemies target BOTH host AND client**, not just host.
+  Forces puppet design: each peer's representation of the OTHER peer must
+  be AI-perceivable as a player (mainPlayer_C orphan with AutoPossess /
+  AIControllerClass disabled).
+- 2026-05-24 — **scale 100 entities active simultaneously**; aggregated
+  `EntityPoseBatch` bitstream (1 packet/tick × N entries), activity-rate
+  gating (5/15/30/60 Hz by AI state), WireKey → 4-byte session-id
+  mapping after spawn.
+- 2026-05-24 — **save host-authoritative** (REVERSED prior "out of
+  scope"); client receives full host snapshot on connect; per-peer
+  inventory exception preserved.
+- 2026-05-25 — **Polish v1** added to In scope: nameplate text outline +
+  drop shadow + sanitization (alnum + space + `[-_.]` allowlist + 20
+  char cap, applied symmetrically inbound + outbound at the nameplate
+  surface).
+- 2026-05-25 LATE — **F3 RestoreVitals + F4 TeleportClient dev features**
+  added (host fires for both peers; client F4 hotkey suppressed;
+  `[dev] devkeys=1` ini-gated). F3 refills food/sleep/health
+  (coffeePower deliberately excluded — triggers screen-shake BP
+  side-effect). F4 uses VOTV's `teleportWObackrooms` UFunction
+  (bypasses CMC constraints).
+- 2026-05-25 LATE — **Story-object terminals (computers/servers/radar/
+  signal-catching) concurrently interactable + analog controls synced**
+  added to In scope; user. Widget atlas (`Uui_consolesAtlas_C`) renders
+  to RT — state sync = visual sync free. 4 wire packet additions
+  planned. Drone deferred to future. RE pass complete; implementation
+  awaiting user direction (currently bumped down the priority list by
+  the doors+lights scope below).
+- 2026-05-25 NIGHT — **Doors (E-press + NPC auto-open) + light switches**
+  added to In scope; user. Replaces terminals as the immediate sync
+  target (simpler protocol surface). Hook/invoke =
+  `Adoor_C::doorOpen/doorClose` + `Atrigger_lightRoot_C::SetActive`.
+  3 new ReliableKind packets (DoorState + LightState + LockState).
+  Symmetric for player-triggered; host-authoritative for
+  NPC-sensor-triggered (NPCs are host-only). RE pass complete
+  (`research/findings/votv-doors-and-lightswitches-RE-2026-05-25.md`);
+  7-increment implementation queued.
+- 2026-05-25 — **Voice chat** parked as future (mention only; out of
+  current scope). Plasmo-Voice-style proximity positional + push-to-
+  talk; would reuse the local player's `UAudioCaptureComponent` for
+  capture and a new VoiceFrame unreliable packet.

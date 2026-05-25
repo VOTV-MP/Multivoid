@@ -5,31 +5,45 @@ stale — that's what `research/findings/` is for).
 
 ## What this is, architecturally
 
-A hook-only mod that runs as an **engine-extension layer on top of UE4.27 +
-VOTV**. It injects via UE4SS, discovers the game's classes/functions
-through UE reflection, and adds a second networked player by driving the
-engine's own `APawn` / `APlayerController` systems. It does not modify any
-original game file (principle 1). It augments single-player; it does not
-replace it (principle 6).
+A **standalone** hook-only mod that runs as an engine-extension layer on
+top of UE4.27 + VOTV. It loads via our own proxy DLL (`xinput1_3.dll`
+forwards XInputGetState/SetState to System32's xinput1_4.dll and
+side-loads `votv-coop.dll`), discovers the game's classes/functions
+through UE reflection (resolved standalone via AOB signatures — no
+UE4SS at runtime), and adds a second networked player by driving the
+engine's own `APawn` / `APlayerController` systems. It does not modify
+any original game file (principle 1). It augments single-player; it
+does not replace it (principle 6).
 
 ## Layer stack (top = closest to gameplay)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ coop/ (gameplay + network layer)                            │
-│   RemotePlayer · session/peer model · packet (de)serialize  │
-│   input buffer · interpolation · entity manifest · RPCs     │
-│   mod menu / debug overlay (ImGui)                          │
+│   RemotePlayer · session/peer · pose/reliable packets       │
+│   interpolation · nameplate · event_feed · prop_lifecycle   │
+│   prop_snapshot · npc_sync · remote_prop · grab_observer    │
 ├─────────────────────────────────────────────────────────────┤
-│ clean API boundary (headers in include/votv-coop/)          │
+│ dev/ (developer-only convenience features, ini-gated)       │
+│   freecam · pos_hud · restore_vitals · teleport_client      │
+├─────────────────────────────────────────────────────────────┤
+│ harness/ (autonomous test driver)                           │
+│   scenario timeline · autotest · sdk_check · screenshot     │
+├─────────────────────────────────────────────────────────────┤
+│ clean API boundary (headers in include/)                    │
 ├─────────────────────────────────────────────────────────────┤
 │ ue_wrap/ (engine-wrapper layer)                             │
-│   one wrapper per UE/VOTV class: APawn, APlayerController,   │
-│   ACharacter, UWorld(SpawnActor), UCharacterMovementComp,   │
-│   VOTV pawn/controller. Reflection access, offsets,         │
-│   UFunction thunks. NO network/gameplay/coop state.         │
+│   reflection · sig_scan · hook · game_thread · call         │
+│   engine{,_pawn,_component,_widget,_bones} · puppet · prop  │
+│   reflected_offset · hud_feed · log                         │
+│   Reflection access, struct offsets, UFunction thunks.      │
+│   NO network/gameplay/coop state.                           │
 ├─────────────────────────────────────────────────────────────┤
-│ UE4SS (injection · UFunction hooks · reflection · ImGui)    │
+│ loader/  (xinput_proxy.cpp -> xinput1_3.dll)                │
+│   Auto-load votv-coop.dll on game start.                    │
+├─────────────────────────────────────────────────────────────┤
+│ third_party/minhook (MIT, MinHook for the game-thread       │
+│   ProcessEvent detour — static-CRT linked)                  │
 ├─────────────────────────────────────────────────────────────┤
 │ UE4.27 + Voices of the Void (unmodified)                    │
 └─────────────────────────────────────────────────────────────┘
@@ -43,8 +57,11 @@ engine memory/reflection AND owns network state is a violation — split it
 
 This mod is **not** an ASI (the GTA/MTA-era native-DLL-via-ASI-loader
 pattern from the methodology's origin). It is a runtime DLL loaded into the
-UE4 process. Today the loader is UE4SS's `dwmapi.dll` proxy; that proxy is
-UE4SS's, not ours. See "Substrate" below for our own loading path later.
+UE4 process via our own `xinput1_3.dll` proxy (VOTV imports only
+`XInputGetState`/`XInputSetState` from xinput1_3.dll; those are forwarded
+to System32's xinput1_4.dll via `/export:` linker directives, and the
+proxy's `DllMain` side-loads `votv-coop.dll`). No injection, no third-
+party loader. See `src/loader/xinput_proxy.cpp` for the loader source.
 
 ## How far we can reach into the engine
 
@@ -66,45 +83,58 @@ So "can a UE4SS mod reach deep core functions?" — yes, both layers. UE4SS
 just makes the reflected layer convenient; the raw layer is always
 available because we are native code in-process.
 
-## Substrate: UE4SS is a swappable dependency, not a permanent one
+## Substrate: standalone (RULE №3 — no UE4SS at runtime)
 
-**Constraint (user, 2026-05-22): the shipping mod must not depend on UE4SS
-long-term.** Using it now (fast iteration, reflection, ImGui, Lua probes)
-is fine; the architecture must let us remove it cleanly later (RULE No.2 —
-when we drop it, it goes fully; no UE4SS-and-not-UE4SS dual paths).
+The shipping mod **does not depend on UE4SS**. UE4SS is a development
+tool only (used in the `Game_0.9.0n_dev/` copy for Live View, Lua probe
+scripting, header dumps, and BP bytecode inspection — see
+`docs/RE_WORKFLOW.md`).
 
-UE4SS provides three separable things, each replaceable by us:
+What UE4SS used to provide vs how we provide it now:
 
-| UE4SS gives | Our replacement when we drop it |
+| Capability | Shipping mod source |
 |---|---|
-| Injection (`dwmapi.dll` proxy) | Our own proxy/loader DLL (same technique) |
-| Reflection access (`GUObjectArray`/`GNames` resolved) | Resolve the globals ourselves via AOB sigs (patternsleuth-style) |
-| `UFunction` hook engine (`ProcessEvent` hook) | Hook `ProcessEvent` ourselves (this is how UE4SS does it) |
-| Lua + ImGui + bundled mods | Only used by **test tooling/probes**, not the shipping mod |
+| Injection (`dwmapi.dll` proxy) | **Our own `xinput1_3.dll` proxy** (`src/loader/xinput_proxy.cpp`) |
+| Reflection access (`GUObjectArray`/`GNames` resolved) | **AOB-resolved standalone** (`ue_wrap/sig_scan.cpp` + `ue_wrap/reflection.cpp`); algorithms adapted from RE-UE4SS (MIT) with attribution |
+| `UFunction` hook engine (`ProcessEvent` hook) | **MinHook detour on `ProcessEvent`** (`ue_wrap/hook.cpp` + `ue_wrap/game_thread.cpp`) — same technique UE4SS uses; static-CRT linked |
+| Lua + ImGui + bundled mods | Test tooling only — `tools/probes/`, `Game_0.9.0n_dev/` |
 
-**The discipline that makes this cheap**: all engine/substrate access lives
-behind `ue_wrap/`. The `coop/` gameplay-network layer never calls UE4SS
-directly. Dropping UE4SS then means reimplementing the substrate *behind
-`ue_wrap`* — `coop/` does not change. The CXX header dump is already, in
-effect, our standalone SDK (the class/offset/signature knowledge we'd need
-without UE4SS).
+**The discipline that makes this clean**: all engine/substrate access
+lives behind `ue_wrap/`. The `coop/` gameplay-network layer never
+touches reflection / GUObjectArray / sig-scan directly. The CXX header
+dump (regenerated per game version) is our standalone SDK — the
+class/offset/signature knowledge we need without UE4SS at runtime.
 
-Test tooling (`tools/probes/*`, the Lua harness) MAY depend on UE4SS freely
-— it is not shipped. Only `src/votv-coop` carries the no-UE4SS constraint.
+Test tooling (`tools/probes/*`, `Game_0.9.0n_dev/`) MAY depend on UE4SS
+freely — it is not shipped. Only `src/votv-coop` carries the no-UE4SS
+constraint, and that constraint is enforced (no UE4SS-named symbols
+appear in the shipping module).
 
-## Networking model (planned — see methodology Phase 3)
+## Networking model (shipped Phase 3 — see `coop/net/`)
 
-- **Transport**: custom UDP, pure I/O at the bottom. Host-authoritative,
-  LAN-first.
+- **Transport**: custom UDP, pure I/O at the bottom (`coop/net/transport.cpp`).
+  Host-authoritative, LAN-first.
 - **Sessions, not connections**: a host listening on a port + zero/one
-  client. Per-session sequence counter.
+  client (`coop/net/session.cpp`). Per-session sequence counter +
+  session-token + peer-lock; bounded drain; NaN/AABB validate; RFC1982
+  sequence numbering.
 - **3-layer split**: transport (bytes) → serialization (struct↔bytes) →
   application (route packets to handlers). Principle 7 applied to network.
-- **Wire format is semantic** (entity class IDs, vec3 positions — never
+- **Wire format is semantic** (FName string keys, vec3 positions — never
   UE memory addresses or vtable pointers; anti-pattern A7).
-- **Replicate input + authoritative state; re-derive the rest locally.**
-  The receiving UE engine replays P2's input on the orphan pawn so anim,
-  weapon, interaction "just work" (MTA keysync pattern, methodology 4.1).
+- **Two channels on one socket** (RULE 1 — one socket, two channels
+  by reliability class, not a second transport):
+  - **Unreliable pose stream**: 60 Hz `PoseSnapshot` + receiver-side
+    50 ms LERP interpolation pump. Newest-wins, freely dropped.
+  - **Reliable channel** (`coop/net/reliable_channel.cpp`):
+    stop-and-wait ARQ + sequence space distinct from the pose stream;
+    250 ms RTO. Carries: Join / Bye / Chat / RestoreVitals /
+    TeleportClient / PropSpawn / PropDestroy / EntityDestroy / (future)
+    DoorState / LightState.
+- **Replicate authoritative state; re-derive the rest locally.** The
+  receiving UE engine plays the streamed pose onto the puppet (a
+  `mainPlayer_C` orphan with AutoPossess disabled) so anim, IK, weapon,
+  and interaction "just work" using the engine's own systems.
 
 ## Parallel class hierarchy (principle 3)
 

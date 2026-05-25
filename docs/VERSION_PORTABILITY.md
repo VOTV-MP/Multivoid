@@ -76,3 +76,32 @@ On a new build, a `[FAIL]` line names the broken primitive and the verdict says
 
 Reference: `research/findings/ue-wrap-reflection-2026-05-22.md` (AOBs, RVAs,
 offsets, and the discovery method for all three primitives).
+
+## Adaptation toolchain (shipped 2026-05-25)
+
+In addition to the boot health check, two artifacts ease cross-version
+porting:
+
+- **`votv-coop-compat-report.txt`** — written next to the DLL on every
+  boot by `harness::sdk_check::Run` (in `src/votv-coop/src/harness/`).
+  Captures: exe FileVersion + size, every resolved AOB address with
+  its computed displacement, every reflection-resolved class /
+  UFunction / property offset, and the PASS/FAIL verdict per
+  primitive. A snapshot of "what the mod sees right now".
+
+- **`tools/sdk_diff.py <old.txt> <new.txt>`** — diffs two compat
+  reports across versions. Flags AOB drift, offset shifts, missing
+  classes / UFunctions. First-pass triage of "what changed in the new
+  build" before reaching for IDA / UE4SS.
+
+Many BP-cooked field offsets (~22 of them — `playerTransform`,
+`save_gameInst`, `takeObj` params, etc.) that were previously
+hardcoded in `sdk_profile.h` are now **reflection-resolved at runtime**
+via `FindPropertyOffset`. This keeps `sdk_profile.h` focused on
+engine-level invariants (UObject layout, AOB sigs, UFunction names)
+that don't move within a UE4.27 patch series, while BP-cooked offsets
+self-heal across game recooks.
+
+See `memory/project_adaptation_strategy.md` for the patch-day workflow
+and the deferred items (JSON override, engine UPROPERTY reflection,
+patternsleuth integration).
