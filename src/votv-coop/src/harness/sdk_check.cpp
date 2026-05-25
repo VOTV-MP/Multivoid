@@ -20,13 +20,118 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <windows.h>
+
 #include <cstdint>
+#include <cstdio>
+#include <ctime>
+#include <sstream>
+#include <string>
 
 namespace harness::sdk_check {
 namespace {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
+
+// ---- compat_report.txt accumulator -------------------------------------
+// Each check function appends its findings here in addition to the live
+// log stream. After all checks run, the buffer is written to a single
+// shareable file beside the mod DLL. Users can paste it verbatim into a
+// GitHub issue when sdk-check reports DEGRADED post-VOTV-update.
+std::ostringstream g_report;
+
+void ReportHeader() {
+    g_report.str({});
+    g_report.clear();
+
+    // Local time stamp.
+    char ts[32] = {};
+    {
+        std::time_t now = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &now);
+        std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
+    }
+    // Game exe identification: walk the running process module list to
+    // pick out VotV-Win64-Shipping.exe (or whatever the exe is named).
+    // The HMODULE for the main exe is GetModuleHandle(nullptr).
+    char exePath[MAX_PATH] = {};
+    ::GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    uint64_t exeSize = 0;
+    {
+        WIN32_FILE_ATTRIBUTE_DATA fad{};
+        if (::GetFileAttributesExA(exePath, GetFileExInfoStandard, &fad)) {
+            exeSize = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+        }
+    }
+
+    g_report << "=== VOTV_MP coop mod -- SDK compatibility report ===\n";
+    g_report << "Generated:        " << ts << "\n";
+    g_report << "Mod target VOTV:  " << P::kTargetGameVersion << "\n";
+    g_report << "Mod target UE:    " << P::kTargetEngineVersion << "\n";
+    g_report << "Running game exe: " << exePath << "\n";
+    g_report << "  size:           " << exeSize << " bytes\n";
+    g_report << "  expected size:  " << P::kExpectedExeSize << " bytes\n";
+    if (P::kExpectedExeSize != 0 && exeSize != P::kExpectedExeSize) {
+        g_report << "  *** SIZE MISMATCH: game build differs from the version this mod was authored for.\n";
+    }
+    g_report << "\n";
+}
+
+void ReportLine(const char* line) {
+    g_report << line << "\n";
+}
+
+void ReportFooter(int ok, int total, int fail, int failPriority) {
+    g_report << "\n=== SUMMARY ===\n";
+    g_report << "  resolved:           " << ok << " / " << total << "\n";
+    g_report << "  total failures:     " << fail << "\n";
+    g_report << "  CRITICAL+IMPORTANT: " << failPriority << "\n";
+    if (failPriority == 0 && fail == 0) {
+        g_report << "Status: HEALTHY (every checked name resolved against the live build)\n";
+    } else if (failPriority == 0) {
+        g_report << "Status: HEALTHY (only cosmetic failures; gameplay subsystems intact)\n";
+    } else {
+        g_report << "Status: DEGRADED -- VOTV likely diverged from the target build.\n\n";
+        g_report << "Next steps:\n";
+        g_report << "  1. Run UE4SS against the current VOTV install -- dump CXX headers.\n";
+        g_report << "  2. Open " << P::kTargetGameVersion << " UE4SS dump (the baseline this mod targets)\n";
+        g_report << "     and diff: tools/sdk_diff.py <old_dump> <new_dump> highlights renames.\n";
+        g_report << "  3. For each CRITICAL/IMPORTANT failure above, locate the new name + update\n";
+        g_report << "     the relevant constant in include/ue_wrap/sdk_profile.h.\n";
+        g_report << "  4. Rebuild + re-boot; this report should show HEALTHY.\n";
+        g_report << "\n";
+        g_report << "Share this file when filing an issue -- it identifies the divergence completely.\n";
+    }
+}
+
+// Find the directory containing the mod DLL so the report lands next to it
+// (same convention as votv-coop.log, votv-coop-loaded.txt, scenario.txt).
+std::wstring ModuleDir() {
+    HMODULE self = nullptr;
+    ::GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&ModuleDir), &self);
+    wchar_t path[MAX_PATH] = {};
+    ::GetModuleFileNameW(self, path, MAX_PATH);
+    std::wstring p(path);
+    const size_t sep = p.find_last_of(L"\\/");
+    return sep == std::wstring::npos ? L"." : p.substr(0, sep);
+}
+
+void WriteReportFile() {
+    const std::wstring path = ModuleDir() + L"\\votv-coop-compat-report.txt";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"w") != 0 || !f) {
+        UE_LOGW("sdk-check: failed to open compat report '%ls' for writing", path.c_str());
+        return;
+    }
+    const std::string content = g_report.str();
+    std::fwrite(content.data(), 1, content.size(), f);
+    std::fclose(f);
+    UE_LOGI("sdk-check: wrote compat report '%ls' (%zu bytes)", path.c_str(), content.size());
+}
 
 enum class Severity { Critical, Important, Cosmetic };
 
@@ -186,8 +291,18 @@ const AssetCheck kAssets[] = {
     {P::name::FontName,                           P::name::FontClassName,                 Severity::Cosmetic,  "Roboto font for widgets (UMG falls back if missing)"},
 };
 
+// Helper: convert a UTF-16 string to a flat narrow string for the report
+// (we only have ASCII names so this lossless-narrows). Newlines stripped.
+std::string Narrow(const wchar_t* w) {
+    std::string out;
+    if (!w) return out;
+    for (; *w; ++w) out.push_back(static_cast<char>(*w < 128 ? *w : '?'));
+    return out;
+}
+
 void RunClassChecks(int& ok, int& fail, int& failPriority) {
     UE_LOGI("sdk-check: --- CLASS resolution ---");
+    g_report << "--- CLASS resolution ---\n";
     for (const auto& c : kClasses) {
         void* cls = R::FindClass(c.name);
         if (cls) {
@@ -197,12 +312,17 @@ void RunClassChecks(int& ok, int& fail, int& failPriority) {
             if (c.sev != Severity::Cosmetic) ++failPriority;
             UE_LOGW("sdk-check[%s]: CLASS '%ls' NOT FOUND -- breaks %s",
                     SevTag(c.sev), c.name, c.purpose);
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "  [%s] CLASS '%s' NOT FOUND -- breaks %s",
+                          SevTag(c.sev), Narrow(c.name).c_str(), c.purpose);
+            ReportLine(buf);
         }
     }
 }
 
 void RunFunctionChecks(int& ok, int& fail, int& failPriority) {
     UE_LOGI("sdk-check: --- UFUNCTION resolution ---");
+    g_report << "--- UFUNCTION resolution ---\n";
     for (const auto& f : kFunctions) {
         void* cls = R::FindClass(f.className);
         if (!cls) {
@@ -218,12 +338,17 @@ void RunFunctionChecks(int& ok, int& fail, int& failPriority) {
             if (f.sev != Severity::Cosmetic) ++failPriority;
             UE_LOGW("sdk-check[%s]: UFUNCTION '%ls.%ls' NOT FOUND -- breaks %s",
                     SevTag(f.sev), f.className, f.fnName, f.purpose);
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "  [%s] UFUNCTION '%s.%s' NOT FOUND -- breaks %s",
+                          SevTag(f.sev), Narrow(f.className).c_str(), Narrow(f.fnName).c_str(), f.purpose);
+            ReportLine(buf);
         }
     }
 }
 
 void RunNpcAllowlistCheck(int& ok, int& fail, int& failPriority) {
     UE_LOGI("sdk-check: --- Phase 5N1 NPC ALLOWLIST (12 classes) ---");
+    g_report << "--- Phase 5N1 NPC ALLOWLIST (12 classes) ---\n";
     constexpr Severity kNpcSev = Severity::Important;
     int npcOk = 0;
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
@@ -233,13 +358,21 @@ void RunNpcAllowlistCheck(int& ok, int& fail, int& failPriority) {
             ++fail; ++failPriority;
             UE_LOGW("sdk-check[%s]: NPC CLASS '%ls' NOT FOUND -- this NPC will spawn on both peers (suppression no-op)",
                     SevTag(kNpcSev), P::name::kNpcAllowlist[i]);
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "  [%s] NPC CLASS '%s' NOT FOUND -- this NPC will spawn on both peers (suppression no-op)",
+                          SevTag(kNpcSev), Narrow(P::name::kNpcAllowlist[i]).c_str());
+            ReportLine(buf);
         }
     }
     UE_LOGI("sdk-check: NPC allowlist: %d/%zu resolved", npcOk, P::name::kNpcAllowlistSize);
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "  NPC allowlist: %d / %zu resolved", npcOk, P::name::kNpcAllowlistSize);
+    ReportLine(buf);
 }
 
 void RunAssetChecks(int& ok, int& fail, int& failPriority) {
     UE_LOGI("sdk-check: --- ASSET resolution ---");
+    g_report << "--- ASSET resolution ---\n";
     for (const auto& a : kAssets) {
         void* obj = R::FindObject(a.objectName, a.className);
         if (obj) {
@@ -249,6 +382,10 @@ void RunAssetChecks(int& ok, int& fail, int& failPriority) {
             if (a.sev != Severity::Cosmetic) ++failPriority;
             UE_LOGW("sdk-check[%s]: ASSET '%ls' (class '%ls') NOT FOUND -- breaks %s",
                     SevTag(a.sev), a.objectName, a.className, a.purpose);
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "  [%s] ASSET '%s' (class '%s') NOT FOUND -- breaks %s",
+                          SevTag(a.sev), Narrow(a.objectName).c_str(), Narrow(a.className).c_str(), a.purpose);
+            ReportLine(buf);
         }
     }
 }
@@ -258,6 +395,7 @@ void RunAssetChecks(int& ok, int& fail, int& failPriority) {
 int Run() {
     UE_LOGI("sdk-check: === self-check START (target VOTV %s, engine %s) ===",
             P::kTargetGameVersion, P::kTargetEngineVersion);
+    ReportHeader();
     int ok = 0, fail = 0, failPriority = 0;
     RunClassChecks(ok, fail, failPriority);
     RunFunctionChecks(ok, fail, failPriority);
@@ -274,7 +412,10 @@ int Run() {
                 ok, total, fail, failPriority);
         UE_LOGE("sdk-check: VOTV build likely diverged from target (%s). Re-run UE4SS SDK dump + diff sdk_profile.h.",
                 P::kTargetGameVersion);
+        UE_LOGE("sdk-check: see votv-coop-compat-report.txt next to the mod DLL for the shareable diff.");
     }
+    ReportFooter(ok, total, fail, failPriority);
+    WriteReportFile();
     return failPriority;
 }
 
