@@ -852,6 +852,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 }
             }
 
+            // Phase 5F autonomous flashlight test. Both peers run it; each
+            // toggles its own local flashlight via reflection 4 times, the
+            // POST observer broadcasts each, and the OTHER peer should
+            // receive + apply to its puppet. Log diff is the proof.
+            if (cfg::ReadEnv("VOTVCOOP_RUN_FLASHLIGHT_TEST") == "1") {
+                UE_LOGI("harness: VOTVCOOP_RUN_FLASHLIGHT_TEST=1 (%s) -- spawning flashlight test thread",
+                        netCfg.role == coop::net::Role::Host ? "host" : "client");
+                if (HANDLE h = ::CreateThread(nullptr, 0, harness::autotest::FlashlightTestThread, nullptr, 0, nullptr)) {
+                    ::CloseHandle(h);
+                }
+            }
+
             // Autotest CONTINUED CORRECTION: VOTV's player late-init (BeginPlay /
             // possess / save-restore) can revert the autotest teleport AFTER it
             // appeared to succeed (user-observed: client lands at the correct

@@ -24,6 +24,8 @@
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
 
+#include <windows.h>
+
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -201,6 +203,79 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
 }
 
 }  // namespace
+
+bool DebugForceToggle(void* mp) {
+    if (!mp) return false;
+
+    // Field flip MUST run on the game thread (UObject memory). The
+    // wire-send retry that follows can sleep, so it CANNOT run on the
+    // game thread or it would block the ack pump and deadlock the
+    // reliable channel. So: GT::Post the flip, wait for it, then
+    // retry the send from THIS (worker) thread.
+    //
+    // The autotest already calls DebugForceToggle from its worker
+    // thread (NOT inside a GT::Post), so this layering works.
+    auto done = std::make_shared<std::atomic<int>>(0);
+    auto newStateOut = std::make_shared<std::atomic<bool>>(false);
+    GT::Post([mp, done, newStateOut] {
+        bool* fl = reinterpret_cast<bool*>(
+            reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_flashlight);
+        const bool newState = !(*fl);
+        *fl = newState;
+        newStateOut->store(newState, std::memory_order_release);
+        UE_LOGI("flashlight: DebugForceToggle wrote flashlight=%d on %p (LAN test path)",
+                newState ? 1 : 0, mp);
+        done->store(1, std::memory_order_release);
+    });
+    while (done->load(std::memory_order_acquire) == 0) ::Sleep(1);
+    const bool newState = newStateOut->load(std::memory_order_acquire);
+
+    // The reliable channel is stop-and-wait (max 1 in-flight). The HOST
+    // has continuous PropSpawn / EntitySpawn traffic from Phase 5S0
+    // continuous-spawn observers, so any SendReliable can land while
+    // the channel is busy and return false. The autonomous test can't
+    // tolerate that -- we need the packet to fly. Retry up to 200x
+    // with 25 ms backoff (5 s max wait per toggle) -- on LAN ack RTT
+    // is ~1-2 ms so a free slot opens within a few tries, but if the
+    // host's PropSpawn snapshot is mid-burst we may need longer.
+    //
+    // Bypass the dedup (last-sent-state) for retry purposes: directly
+    // call SendReliable here with the exact same payload shape the
+    // observer would have sent. The receiver path is identical.
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) {
+        UE_LOGW("flashlight: DebugForceToggle session not connected -- skipping wire send");
+        return newState;
+    }
+
+    coop::net::ItemActivatePayload p{};
+    p.itemClassHash = g_flashlightClassHash;
+    p.peerSessionId = (s->role() == coop::net::Role::Host) ? 0 : 1;
+    p.state = newState ? 1 : 0;
+    p.flags = 0;
+    p._pad = 0;
+    p.actorKeyHash = 0;
+
+    bool sent = false;
+    int attempts = 0;
+    for (; attempts < 200; ++attempts) {
+        sent = s->SendReliable(coop::net::ReliableKind::ItemActivate, &p, sizeof(p));
+        if (sent) break;
+        ::Sleep(25);
+    }
+    if (sent) {
+        // Update the dedup tracker so the regular observer path (if any
+        // BP-driven fire happens later) doesn't re-send the same value.
+        g_lastSentState.store(p.state, std::memory_order_release);
+        UE_LOGI("flashlight: DebugForceToggle sent state=%d (peer=%u, after %d retr%s)",
+                p.state, p.peerSessionId, attempts,
+                attempts == 1 ? "y" : "ies");
+    } else {
+        UE_LOGW("flashlight: DebugForceToggle FAILED to send after 200 retries -- "
+                "reliable channel never freed (state=%d)", p.state);
+    }
+    return newState;
+}
 
 uint32_t HashClassName(const wchar_t* s) {
     // FNV-1a 32-bit. Operates byte-by-byte on the UTF-16 bytes (each

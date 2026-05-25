@@ -39,7 +39,14 @@ param(
     # nearest physics prop, drives a forced grab via the engine PhysicsHandle
     # UFunctions to verify the Stage-1 observer pipeline end-to-end without an
     # E-press. Adds ~25 s to the test (10 s settle + 5 s drive + 10 s tail).
-    [switch]$GrabTest
+    [switch]$GrabTest,
+    # Phase 5F (2026-05-26): run the autonomous flashlight test on BOTH peers
+    # (VOTVCOOP_RUN_FLASHLIGHT_TEST=1). Each peer calls AmainPlayer_C::
+    # `Flashlight Update` 4 times via reflection; the POST observer
+    # broadcasts each, and the OTHER peer should receive + apply to its
+    # puppet. PASS criteria below check for "flashlight: sent" + "flashlight:
+    # applied to puppet" log lines on both sides.
+    [switch]$FlashlightTest
 )
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
@@ -94,7 +101,7 @@ $hostPose   = @{ X = "-37730"; Y = "69943";  Z = "6420"; Yaw = "-86.8"; Pitch = 
 $clientPose = @{ X = "-37640"; Y = "68532";  Z = "6399"; Yaw = "88.2";  Pitch = "-4.7" }
 
 # --- launch the two instances with per-process env --------------------------
-function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
+function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $flashlightTest) {
     $env:VOTVCOOP_SCENARIO = "play"
     $env:VOTVCOOP_NET_ROLE = $role
     $env:VOTVCOOP_NET_PORT = "$Port"
@@ -115,6 +122,9 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
         $env:VOTVCOOP_GRAB_TEST_ANCHOR_Y = $hostPose.Y
         $env:VOTVCOOP_GRAB_TEST_ANCHOR_Z = $hostPose.Z
     }
+    if ($flashlightTest) {
+        $env:VOTVCOOP_RUN_FLASHLIGHT_TEST = "1"
+    }
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
@@ -122,18 +132,21 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest) {
                 Env:VOTVCOOP_NET_NICK,Env:VOTVCOOP_LOG,Env:VOTVCOOP_NET_PEER,`
                 Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
                 Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST,`
-                Env:VOTVCOOP_GRAB_TEST_ANCHOR_X,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Y,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Z `
+                Env:VOTVCOOP_GRAB_TEST_ANCHOR_X,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Y,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Z,`
+                Env:VOTVCOOP_RUN_FLASHLIGHT_TEST `
                 -ErrorAction SilentlyContinue
     return $p
 }
 
-Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'}))..."
-$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest
+Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'}))..."
+$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest $FlashlightTest
 Start-Sleep -Seconds 4   # let the host process come up first
-Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'}))..."
+Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'}))..."
 # Client also gets VOTVCOOP_RUN_GRAB_TEST=1 -- it runs the prop scan + logs
 # fields for cross-peer Key comparison, but does NOT drive any UFunctions.
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest
+# Flashlight test: BOTH peers drive toggles so we verify the wire goes
+# both directions (host->client puppet AND client->host puppet).
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest $FlashlightTest
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------
@@ -198,7 +211,20 @@ function Capture-Pair($labelSuffix) {
 }
 
 if ($pass) {
-    if ($GrabTest) {
+    if ($FlashlightTest) {
+        # Flashlight test timing (matches RunAutonomousFlashlightTest):
+        #   PASS + ~15 s   routine starts (post-stabilization)
+        #   PASS + ~17 s   iteration 0 fires (Flashlight Update + observer + send)
+        #   PASS + ~19 s   iteration 1
+        #   PASS + ~21 s   iteration 2
+        #   PASS + ~23 s   iteration 3
+        #   PASS + ~25 s   routine done
+        Step "PASS detected; FLASHLIGHT TEST armed -- waiting ~30 s for toggles to fly..."
+        Start-Sleep -Seconds 18
+        Capture-Pair "flashlight-mid"
+        Start-Sleep -Seconds 12
+        Capture-Pair "flashlight-end"
+    } elseif ($GrabTest) {
         # Grab test timing (matches RunAutonomousGrabTest()):
         #   PASS + ~10 s    routine starts (post-stabilization)
         #   PASS + ~12 s    teleport + Grab fires; 30-tick hold loop begins
@@ -251,6 +277,43 @@ if ($pass) {
     Write-Host "[lan-test] RESULT: PASS -- two instances connected over UDP and exchanged state cross-process." -ForegroundColor Green
 } else {
     Write-Host "[lan-test] RESULT: FAIL -- see the log lines above (timeout=${TimeoutSec}s)." -ForegroundColor Red
+}
+
+# Phase 5F: separate verdict for the flashlight test (the connect-PASS above
+# only proves the SESSION came up). We need the toggles to actually traverse
+# the wire and apply on the puppet.
+if ($pass -and $FlashlightTest) {
+    function Count-Matches($path, $pattern) {
+        if (-not (Test-Path $path)) { return 0 }
+        return @(Select-String -Path $path -Pattern $pattern -ErrorAction SilentlyContinue).Count
+    }
+    Write-Host ""
+    Step "==== FLASHLIGHT TEST verdict ===="
+    # Match either the observer send ("flashlight: sent state=") or the
+    # autotest send ("flashlight: DebugForceToggle sent state="). Both
+    # end with "sent state=", so a substring match catches both.
+    $hostSent     = Count-Matches $hostLog   "sent state="
+    $hostApplied  = Count-Matches $hostLog   "flashlight: applied to puppet="
+    $clientSent   = Count-Matches $clientLog "sent state="
+    $clientApplied= Count-Matches $clientLog "flashlight: applied to puppet="
+    Step "host   log: sent=$hostSent   applied=$hostApplied"
+    Step "client log: sent=$clientSent applied=$clientApplied"
+    # Expected: each peer sends ~4 (one per toggle iteration; dedup may
+    # reduce). Each peer also applies ~4 (the OTHER peer's toggles).
+    $flpass = ($hostSent -ge 2) -and ($clientSent -ge 2) -and `
+              ($hostApplied -ge 2) -and ($clientApplied -ge 2)
+    if ($flpass) {
+        Write-Host "[lan-test] FLASHLIGHT RESULT: PASS -- both peers sent + applied across the wire." -ForegroundColor Green
+    } else {
+        Write-Host "[lan-test] FLASHLIGHT RESULT: FAIL -- low send/apply counts (expected >=2 each)." -ForegroundColor Red
+        # Dump any flashlight-related log lines to help diagnose.
+        Step "==== HOST flashlight lines ===="
+        Select-String -Path $hostLog -Pattern "flashlight" -ErrorAction SilentlyContinue |
+            Select-Object -Last 12 | ForEach-Object { Write-Host "  $($_.Line)" }
+        Step "==== CLIENT flashlight lines ===="
+        Select-String -Path $clientLog -Pattern "flashlight" -ErrorAction SilentlyContinue |
+            Select-Object -Last 12 | ForEach-Object { Write-Host "  $($_.Line)" }
+    }
 }
 
 # --- teardown ---------------------------------------------------------------

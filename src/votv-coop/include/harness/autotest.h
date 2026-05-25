@@ -25,4 +25,15 @@ void RunAutonomousGrabTest();
 // Pass to ::CreateThread as the start routine.
 DWORD WINAPI GrabTestThread(LPVOID arg);
 
+// Phase 5F: autonomous flashlight-toggle test. Calls
+// AmainPlayer_C::`Flashlight Update` via reflection 4 times with 2 s
+// spacing. The POST observer detour catches each call + sends the
+// ItemActivate wire packet. Both peers run this; the OTHER peer's
+// puppet should reflect the toggles via the receiver path
+// (item_activate::ApplyToPuppet).
+// Blocks the calling thread for ~25 seconds (15 s settle + 4 * 2 s + tail).
+// Gated by env VOTVCOOP_RUN_FLASHLIGHT_TEST="1".
+void RunAutonomousFlashlightTest();
+DWORD WINAPI FlashlightTestThread(LPVOID arg);
+
 }  // namespace harness::autotest
