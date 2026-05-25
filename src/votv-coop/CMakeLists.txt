@@ -63,6 +63,7 @@ add_library(votv-coop SHARED
     src/harness/autotest.cpp
     src/harness/config.cpp
     src/harness/screenshot.cpp
+    src/harness/sdk_check.cpp
 )
 
 target_include_directories(votv-coop PRIVATE include)

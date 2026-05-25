@@ -3,6 +3,7 @@
 #include "harness/autotest.h"
 #include "harness/config.h"
 #include "harness/screenshot.h"
+#include "harness/sdk_check.h"
 #include "dev/freecam.h"
 #include "dev/pos_hud.h"
 #include "coop/event_feed.h"
@@ -722,6 +723,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // up). NOT the sandbox `open`. The puppet spawns the instant gameplay live.
         // (Intro widget dumps already ran during the first ~3 s above.)
         BootStorySaveBlocking();
+        // Verify the SDK profile resolves against the running VOTV build.
+        // Called AFTER BootStorySaveBlocking so VOTV BP classes (loaded on
+        // first gameplay-level transition) are present. Logs a one-line
+        // summary + per-failure detail; result feeds adaptation when VOTV
+        // updates rename/remove content.
+        Post([] { harness::sdk_check::Run(); });
         // Coop networking: if votv-coop.ini configures net.role, the puppet is
         // network-driven (auto-spawned on the first peer pose) and we send our pose;
         // otherwise the puppet is spawned locally + static (the pre-net behaviour).
@@ -983,6 +990,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // pose, offset +250 in X so the mirror is visibly beside the player. Proves
         // transport+serialization+session+interp end-to-end without a 2nd machine.
         BootStorySaveBlocking();
+        Post([] { harness::sdk_check::Run(); });
         coop::net::Config cfg;
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
