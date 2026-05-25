@@ -5,6 +5,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 
 #include <windows.h>  // GetEnvironmentVariableW
 
@@ -236,22 +237,22 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
                 "(would render as a static/reference-pose stick)", label, skeletalMeshComponent);
         return;
     }
-    const float spd = ReadAt<float>(anim, P::off::AnimBP_kerfur_spd);
-    const float walkSpeed = ReadAt<float>(anim, P::off::AnimBP_kerfur_walkSpeed);
+    const float spd = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_spd());
+    const float walkSpeed = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeed());
     // animWalkAlpha + animWalkRate: kept in the dump as observable AnimBP state.
     // The Plan A hypothesis that animWalkAlpha gates idle-vs-walk was DISPROVED
     // by the 2026-05-23 spawn diagnostic -- the LOCAL has animWalkAlpha=0.00
     // while WALKING. spd is the actual locomotion driver (BlendSpace X input),
     // which Plan B1's BUA interceptor pushes from the network speed.
-    const float animWalkAlpha = ReadAt<float>(anim, P::off::AnimBP_kerfur_animWalkAlpha);
-    const float animWalkRate = ReadAt<float>(anim, P::off::AnimBP_kerfur_animWalkRate);
-    void* pawn = ReadPtr(anim, P::off::AnimBP_kerfur_Pawn);
-    void* ctrl = ReadPtr(anim, P::off::AnimBP_kerfur_Controller);
-    void* movement = ReadPtr(anim, P::off::AnimBP_kerfur_Movement);
-    void* kerfur = ReadPtr(anim, P::off::AnimBP_kerfur_kerfur);
-    const bool useLegIK = ReadAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK);
-    const bool isFace = ReadAt<bool>(anim, P::off::AnimBP_kerfur_isFace);
-    const bool lookingAtPlayer = ReadAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer);
+    const float animWalkAlpha = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_animWalkAlpha());
+    const float animWalkRate = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_animWalkRate());
+    void* pawn = ReadPtr(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Pawn());
+    void* ctrl = ReadPtr(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Controller());
+    void* movement = ReadPtr(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Movement());
+    void* kerfur = ReadPtr(anim, ue_wrap::reflected_offset::AnimBP_kerfur_kerfur());
+    const bool useLegIK = ReadAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_useLegIK());
+    const bool isFace = ReadAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_isFace());
+    const bool lookingAtPlayer = ReadAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer());
     UE_LOGI("puppet: [%ls] AnimInstance=%ls(%p) spd=%.1f walkSpeed=%.1f "
             "animWalkAlpha=%.2f animWalkRate=%.2f "
             "Pawn=%p Controller=%p Movement=%p kerfur=%p "
@@ -326,9 +327,9 @@ static void* SpawnPuppetSkelMesh(const FVector& loc, void* skeletalMeshAsset, vo
     // Actor lacks; on it splays the legs) + decouple head from local-player
     // track.
     if (void* anim = LiveAnimInstance(comp)) {
-        WriteAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK, false);
-        WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
-        WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeedMultiplier, 1.f);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_useLegIK(), false);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), false);
+        WriteAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeedMultiplier(), 1.f);
     }
     UE_LOGI("puppet[SkelMesh]: spawned actor=%p comp=%p at (%.0f,%.0f,%.0f)",
             actor, comp, loc.X, loc.Y, loc.Z);
@@ -553,10 +554,10 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     // AnimInstance, so LiveAnimInstance is now the NEW one (the old
     // pointer captured before SetAnimClass is stale).
     if (void* anim = LiveAnimInstance(meshComp)) {
-        WriteAt<bool>(anim, P::off::AnimBP_kerfur_useLegIK,        true);
-        WriteAt<bool>(anim, P::off::AnimBP_kerfur_removeArms,      true);
-        WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
-        WriteAt<float>(anim, P::off::AnimBP_kerfur_walkSpeedMultiplier, 1.f);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_useLegIK(),        true);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_removeArms(),      true);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), false);
+        WriteAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeedMultiplier(), 1.f);
     }
     UE_LOGI("puppet[MainPlayer]: spawned actor=%p mesh_playerVisible=%p at (%.0f,%.0f,%.0f)",
             actor, meshComp, loc.X, loc.Y, loc.Z);
@@ -661,11 +662,11 @@ void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float head
     // Belt-and-braces: zero the AnimBP-property lookingAtPlayer too. It may not
     // gate the LookAt nodes directly, but the BP graph elsewhere might use it
     // (e.g. selecting between target sources). Cheap, no downside.
-    WriteAt<bool>(anim, P::off::AnimBP_kerfur_lookingAtPlayer, false);
+    WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), false);
     // headLookAt remains a useful auxiliary write -- if any other graph path
     // reads it (e.g. additive blend on top of the ModifyBone), the value is
     // consistent with what we wrote to ModifyBone above.
-    WriteAt<FRotator>(anim, P::off::AnimBP_kerfur_headLookAt, FRotator{headPitch, headYawDelta, 0.f});
+    WriteAt<FRotator>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_headLookAt(), FRotator{headPitch, headYawDelta, 0.f});
 }
 
 }  // namespace ue_wrap::puppet

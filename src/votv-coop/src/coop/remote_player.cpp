@@ -6,6 +6,7 @@
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 
 #include <algorithm>
 #include <chrono>
@@ -274,11 +275,11 @@ bool RemotePlayer::Spawn() {
                 reinterpret_cast<uint8_t*>(comp) + P::off::USkeletalMesh_AnimScriptInstance);
             if (anim) {
                 puppetAnim_ = anim;
-                ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Pawn, satellite_);
+                ue_wrap::engine::WriteObjectField(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Pawn(), satellite_);
                 if (satelliteCmc_) {
-                    ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Movement, satelliteCmc_);
+                    ue_wrap::engine::WriteObjectField(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Movement(), satelliteCmc_);
                 }
-                ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Character, satellite_);
+                ue_wrap::engine::WriteObjectField(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Character(), satellite_);
                 // Animation-fix v2 (2026-05-25): also redirect the Controller
                 // cache. c9f0d85's Character-cache fix was necessary but
                 // insufficient -- the BP state-machine idle->walk transition
@@ -304,7 +305,7 @@ bool RemotePlayer::Spawn() {
                     localController_ = *reinterpret_cast<void**>(
                         reinterpret_cast<uint8_t*>(local) + P::off::APawn_Controller);
                     if (localController_) {
-                        ue_wrap::engine::WriteObjectField(anim, P::off::AnimBP_kerfur_Controller, localController_);
+                        ue_wrap::engine::WriteObjectField(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Controller(), localController_);
                     }
                 }
                 UE_LOGI("RemotePlayer::Spawn: wired puppet AnimInstance %p .Pawn=%p .Movement=%p .Character=%p .Controller=%p (local PC)",
@@ -517,14 +518,14 @@ void RemotePlayer::Destroy() {
     // BP graphs that pull velocity via Character.GetMovementComponent would
     // dereference a freed satellite ACharacter pointer otherwise.
     if (puppetAnim_ && R::IsLive(puppetAnim_)) {
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Pawn,       nullptr);
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Movement,   nullptr);
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Character,  nullptr);
+        E::WriteObjectField(puppetAnim_, ue_wrap::reflected_offset::AnimBP_kerfur_Pawn(),       nullptr);
+        E::WriteObjectField(puppetAnim_, ue_wrap::reflected_offset::AnimBP_kerfur_Movement(),   nullptr);
+        E::WriteObjectField(puppetAnim_, ue_wrap::reflected_offset::AnimBP_kerfur_Character(),  nullptr);
         // Animation-fix v2: null the Controller cache too. The local PC may
         // outlive the puppet (it doesn't get destroyed when a peer disconnects),
         // so this isn't a strict UAF concern -- but clearing it keeps the
         // AnimInstance's state machine in a consistent "torn-down" state.
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Controller, nullptr);
+        E::WriteObjectField(puppetAnim_, ue_wrap::reflected_offset::AnimBP_kerfur_Controller(), nullptr);
     }
     localController_ = nullptr;
     if (satellite_) {
@@ -605,7 +606,7 @@ void RemotePlayer::ApplyToEngine() {
     // write per puppet per tick (a few ns each). Localcontroller_ was set at
     // Spawn from local.Controller @0x0258.
     if (puppetAnim_ && R::IsLive(puppetAnim_) && localController_ && R::IsLive(localController_)) {
-        E::WriteObjectField(puppetAnim_, P::off::AnimBP_kerfur_Controller, localController_);
+        E::WriteObjectField(puppetAnim_, ue_wrap::reflected_offset::AnimBP_kerfur_Controller(), localController_);
     }
 
     // Head bone gets the source's full view direction: pitch (look up/down) AND

@@ -23,6 +23,7 @@
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 
 #include <windows.h>
 
@@ -354,7 +355,7 @@ void NetPumpTick(float displayOffsetX) {
         // State is FILE-SCOPE (g_lastHeldProp/Key/g_propEmitCount) -- a
         // static-local would carry stale state across session restart.
         void* heldActor = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(g_netLocal) + P::off::mainPlayer_grabbing_actor);
+            reinterpret_cast<uint8_t*>(g_netLocal) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
         if (heldActor && R::IsLive(heldActor)) {
             const std::wstring keyW = ue_wrap::prop::GetKeyString(heldActor);
             coop::net::PropPoseSnapshot pp{};

@@ -36,6 +36,7 @@
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 #include "ue_wrap/types.h"
 
 #include <atomic>
@@ -90,7 +91,7 @@ void RunAutonomousGrabTest() {
         rsv->player = R::FindObjectByClass(P::name::MainPlayerClass);
         if (!rsv->player) { UE_LOGW("grab_test: mainPlayer not found"); done->store(2); return; }
         rsv->grabHandle = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabHandle);
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabHandle());
         if (!rsv->grabHandle) { UE_LOGW("grab_test: mainPlayer.grabHandle is null"); done->store(2); return; }
         rsv->propBase = R::FindClass(P::name::PropClass);
         if (!rsv->propBase) { UE_LOGW("grab_test: prop_C UClass not found"); done->store(2); return; }
@@ -210,9 +211,9 @@ void RunAutonomousGrabTest() {
         *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->grabPLoc) = *handPos;
         const bool ok = R::CallFunction(rsv->grabHandle, rsv->grabFn, frame.data());
         *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_actor) = pr->prop;
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor()) = pr->prop;
         *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_component) = pr->mesh;
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = pr->mesh;
         UE_LOGI("grab_test: CallFunction(GrabComponentAtLocation) -> %d + wrote mainPlayer.grabbing_{actor,component}", ok);
         done->store(1);
     });
@@ -286,9 +287,9 @@ void RunAutonomousGrabTest() {
         const bool impOk = R::CallFunction(pr->mesh, addImpulseFn, frame.data());
         const bool relOk = R::CallFunction(rsv->grabHandle, rsv->releaseFn, nullptr);
         *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_actor) = nullptr;
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor()) = nullptr;
         *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabbing_component) = nullptr;
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = nullptr;
         UE_LOGI("grab_test: AddImpulse=%d Release=%d (atomic in same game-thread tick)",
                 impOk, relOk);
         done->store(1);
@@ -317,7 +318,7 @@ void RunAutonomousGrabTest() {
         done->store(0);
         GT::Post([rsv, hr, done] {
             hr->heavyGrab = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_heavyGrab);
+                reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_heavyGrab());
             if (!hr->heavyGrab) { UE_LOGW("grab_test: mainPlayer.heavyGrab is null"); done->store(2); return; }
             hr->pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
             hr->setConstrainedFn = R::FindFunction(hr->pccCls, P::name::SetConstrainedComponentsFn);
@@ -375,7 +376,7 @@ void RunAutonomousGrabTest() {
     done->store(0);
     GT::Post([rsv, done] {
         void* timeline = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + P::off::mainPlayer_grabTimeline);
+            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabTimeline());
         if (!timeline) {
             UE_LOGW("grab_test: mainPlayer.grab Timeline is null -- skipping force-play");
             done->store(2); return;

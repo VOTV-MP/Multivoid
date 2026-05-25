@@ -4,6 +4,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 
 #include <cstdint>
 #include <cstring>
@@ -478,7 +479,7 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
     // dangling -- IsLive catches it via the FUObjectItem.Flags read.
     if (!R::IsLive(localPlayer)) return false;
     void** grabbingSlot = reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabbing_actor);
+        reinterpret_cast<uint8_t*>(localPlayer) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
     if (*grabbingSlot != actor) return false;
     if (!ResolvePhcReleaseCached()) {
         // PHC class still not loaded somehow (defensive). Clear the slot
@@ -490,7 +491,7 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
         return false;
     }
     void* phc = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + P::off::mainPlayer_grabHandle);
+        reinterpret_cast<uint8_t*>(localPlayer) + ue_wrap::reflected_offset::MainPlayer_grabHandle());
     if (phc && R::IsLive(phc)) {
         R::CallFunction(phc, g_phcReleaseFnCache, nullptr);
         UE_LOGI("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent dispatched on doomed actor=%p",

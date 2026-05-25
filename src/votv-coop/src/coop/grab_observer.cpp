@@ -13,6 +13,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/reflected_offset.h"
 #include "ue_wrap/types.h"
 
 #include <atomic>
@@ -151,7 +152,7 @@ void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/
     // a pre-observer; skipping for Stage 1 -- not actionable yet.
     if (!self) return;
     void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
     UE_LOGI("grab_hook[InpActEvt.use]: self=%p grabbing_actor(after)=%p", self, grabbing);
 }
 
@@ -164,13 +165,13 @@ void GrabObserver_grab_Update(void* self, void* /*function*/, void* /*params*/) 
     const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n > 3 && (n % 30) != 0) return;
     void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
     bool grabsHeavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabsHeavy);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_grabsHeavy());
     bool heavy = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_Heavy);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_Heavy());
     float grabLen = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabLen);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_grabLen());
     UE_LOGI("grab_hook[grab.Update]: holding=%p grabsHeavy=%d Heavy=%d grabLen=%.1f (call #%llu)",
             grabbing, grabsHeavy ? 1 : 0, heavy ? 1 : 0, grabLen,
             static_cast<unsigned long long>(n));
@@ -180,7 +181,7 @@ void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*para
     // Pre-dispatch: read held prop BEFORE FinishedFunc clears it.
     if (!self) return;
     void* grabbing = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(self) + P::off::mainPlayer_grabbing_actor);
+        reinterpret_cast<uint8_t*>(self) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
     UE_LOGI("grab_hook[grab.Finished PRE]: was holding=%p", grabbing);
 }
 

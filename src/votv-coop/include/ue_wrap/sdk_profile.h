@@ -183,22 +183,12 @@ inline constexpr size_t mainGamemode_mainPlayer                   = 0x0630;  // 
 // whether BlueprintUpdateAnimation early-outs on null Pawn (standard BP pattern
 // = our writes survive) or writes 0 unconditionally (= our writes get clobbered).
 // The DriveAnimBP path read-backs animWalkAlpha each frame to log the truth.
-inline constexpr size_t AnimBP_kerfur_walkSpeed = 0x2D68;          // float  (CONFIG cache: max walk speed; local has 0.0 even while WALKING -> NOT the BlendSpace input)
-inline constexpr size_t AnimBP_kerfur_Pawn = 0x2D70;               // APawn*   (cached owner; null on puppet)
-inline constexpr size_t AnimBP_kerfur_Controller = 0x2D78;         // AController* (cached; null on puppet)
-inline constexpr size_t AnimBP_kerfur_Movement = 0x2D80;           // UPawnMovementComponent* (cached; null on puppet -> BP's Movement->Velocity branch dead)
-inline constexpr size_t AnimBP_kerfur_animWalkAlpha = 0x2D88;      // float  CONFIRMED NOT the walk gate: spawn-time diagnostic 2026-05-23 showed the LOCAL has animWalkAlpha=0.00 while WALKING. BUA computes it but it does not gate the BlendSpace. Plan B1 leaves it untouched.
-inline constexpr size_t AnimBP_kerfur_animWalkRate = 0x2D8C;       // float  BlendSpace play-rate scalar. BUAInterceptor sets to 1.0 so a default of 0 cannot freeze BlendSpace sample interp.
-inline constexpr size_t AnimBP_kerfur_lookAt = 0x2D90;             // FVector
-inline constexpr size_t AnimBP_kerfur_Character = 0x2DC0;          // ACharacter* (cached at BeginPlay via Cast<ACharacter>(TryGetPawnOwner)). On the mainPlayer_C orphan path the cast succeeds and Character=orphan, so BP graphs that read velocity via Character.GetMovementComponent.Velocity sample the orphan's tick-disabled CMC = 0 -> BlendSpace freezes idle. Plan B2 (mainPlayer_C path) requires writing this to the satellite ACharacter alongside Pawn + Movement so the velocity pull hits the live satellite CMC.
-inline constexpr size_t AnimBP_kerfur_lookingAtPlayer = 0x2E01;    // bool
-inline constexpr size_t AnimBP_kerfur_kerfur = 0x2E08;             // AkerfurOmega_C* (null for a player body too)
-inline constexpr size_t AnimBP_kerfur_walkSpeedMultiplier = 0x2E18;// float
-inline constexpr size_t AnimBP_kerfur_spd = 0x2E1C;                // float  (live speed; local has 600 while walking -> the BlendSpace X input)
-inline constexpr size_t AnimBP_kerfur_useLegIK = 0x2E39;           // bool (false = skip floor-trace IK; TRUE on mainPlayer_C orphan: real Character + satellite floor context)
-inline constexpr size_t AnimBP_kerfur_removeArms = 0x2E3A;         // bool (true = hide arms from the body AnimBP blend -- prevents grab-pose arm flail on the puppet)
-inline constexpr size_t AnimBP_kerfur_headLookAt = 0x2E3C;         // FRotator
-inline constexpr size_t AnimBP_kerfur_isFace = 0x2E48;             // bool
+// AnimBP_kerfur_* offsets MOVED to reflection-resolved accessors in
+// ue_wrap/reflected_offset.{h,cpp} (2026-05-25 adapt-5/N). These fields
+// belong to a BP-cooked class (AnimBlueprint_kerfurOmega_regular_C); a
+// VOTV BP recook shifts their offsets while the field NAMES stay
+// stable. FindPropertyOffset(class, fieldName) auto-adapts; no
+// hardcoded offset bracket needed.
 
 // AController::ControlRotation -- the view rotation the input system accumulates
 // (pitch + yaw). Direct write to set the camera direction without going through
@@ -262,18 +252,17 @@ inline constexpr size_t USceneComponent_RelativeLocation = 0x011C;     // FVecto
 // LIGHT grab path is UPhysicsHandleComponent; HEAVY grab path is a DIFFERENT
 // component class (UPhysicsConstraintComponent) -- our PHC observers will NOT
 // fire on heavy drag; needs the constraint observers below.
-inline constexpr size_t mainPlayer_heavyGrab            = 0x04F0;  // UPhysicsConstraintComponent*
-inline constexpr size_t mainPlayer_grabHandle           = 0x0688;  // UPhysicsHandleComponent*  (`self` in PHC observer xref)
-inline constexpr size_t mainPlayer_grabTimeline         = 0x0728;  // UTimelineComponent* (the `grab` Timeline; UpdateFunc fires per-tick, FinishedFunc at end)
-inline constexpr size_t mainPlayer_grabbing_actor       = 0x07D0;  // AActor*
-inline constexpr size_t mainPlayer_grabbing_component   = 0x07D8;  // UPrimitiveComponent*
-inline constexpr size_t mainPlayer_grabsHeavy           = 0x0874;  // bool
-inline constexpr size_t mainPlayer_grabLen              = 0x09D0;  // float
-inline constexpr size_t mainPlayer_holding_actor        = 0x0A20;  // AActor* (inventory hold, NOT physics grab)
-inline constexpr size_t mainPlayer_grabRelativeLocation = 0x0DE4;  // FVector (local anchor on grabbed component)
-inline constexpr size_t mainPlayer_heavyGrabLocation    = 0x0E8C;  // FVector
-inline constexpr size_t mainPlayer_heavyGrabArm         = 0x0E98;  // FVector
-inline constexpr size_t mainPlayer_Heavy                = 0x0EC8;  // bool
+// mainPlayer_* offsets MOVED to reflection-resolved accessors in
+// ue_wrap/reflected_offset.{h,cpp} (2026-05-25 adapt-5/N). The
+// in-shipping ones (heavyGrab, grabHandle, grabTimeline, grabbing_actor,
+// grabbing_component, grabsHeavy, grabLen, Heavy) auto-adapt across
+// VOTV BP recooks via FindPropertyOffset.
+//
+// (Fields formerly listed here but NEVER referenced in shipping code --
+// mainPlayer_holding_actor, mainPlayer_grabRelativeLocation,
+// mainPlayer_heavyGrabLocation, mainPlayer_heavyGrabArm -- have been
+// dropped per RULE 2: no migration baggage. If a future feature needs
+// one, add a reflection-resolved accessor in reflected_offset.{h,cpp}.)
 
 // UPhysicsHandleComponent internal layout (IDA-confirmed via ReleaseComponent
 // + UpdateHandleTransform decompile at 0x142D7C670 / 0x142D7EE30; matches
