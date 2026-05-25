@@ -256,11 +256,6 @@ bool SetWidgetText(void* textBlock, const wchar_t* text);
 bool AddWidgetToViewport(void* userWidget, int zOrder);
 bool RemoveWidgetFromViewport(void* userWidget);
 
-// World location of the skeletal mesh's "head" bone (USceneComponent::GetSocketLocation;
-// the head bone FName is enumerated once + cached). Used to anchor the nameplate to the
-// visible head instead of the actor origin. Returns false if unresolved. Game thread only.
-bool GetHeadWorldLocation(void* skelMeshComp, FVector& out);
-
 // World Z of the LOWEST bone on this skeletal mesh's currently-evaluated pose.
 // NOT suitable for "where the visible feet are" on a skeleton that mixes humanoid
 // + non-humanoid bones (the VOTV kerfur skeleton has both humanoid foot bones

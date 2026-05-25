@@ -1,5 +1,7 @@
-// dev/restore_vitals.h -- F3 dev-key: refill food/sleep/health/coffeePower
-// on both peers' UsaveSlot_C simultaneously.
+// dev/restore_vitals.h -- F3 dev-key: refill food/sleep/health on both peers'
+// UsaveSlot_C simultaneously. (coffeePower is intentionally excluded -- writing
+// it to 100 triggers a screen-shake post-coffee BP side-effect; see commit
+// 5421d6f for the user-retest finding.)
 //
 // Gated by votv-coop.ini ([dev] devkeys=1); OFF by default. While enabled:
 //   F3 -- restore the local player's vitals AND broadcast a RestoreVitals
@@ -26,7 +28,8 @@ void SetSession(coop::net::Session* session);
 // F3 hotkey thread. No-op otherwise. Idempotent -- repeated calls do nothing.
 void Init();
 
-// Receiver: max-out food/sleep/health/coffeePower on the local UsaveSlot_C.
+// Receiver: max-out food/sleep/health on the local UsaveSlot_C (coffeePower
+// intentionally excluded -- see header comment).
 // Called from event_feed.cpp on incoming ReliableKind::RestoreVitals, AND
 // called locally by the F3 hotkey before broadcasting. Game thread only.
 void ApplyLocally();

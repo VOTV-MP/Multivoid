@@ -114,11 +114,14 @@ enum class ReliableKind : uint8_t {
                       //     EntityDestroyPayload (sessionId only -- 8 bytes).
     RestoreVitals = 7, // 2026-05-25 LATE +5h: F3 dev-key triggered by host.
                       //     Host applies vitals max-out locally + broadcasts
-                      //     this packet so both peers' food/sleep/health/
-                      //     coffeePower are restored simultaneously. No
-                      //     payload beyond the ReliableHeader -- the action
-                      //     is fixed (max-out the 4 vitals on the local
-                      //     UsaveSlot_C). [dev] devkeys=1 gated.
+                      //     this packet so both peers' food/sleep/health are
+                      //     restored simultaneously (coffeePower is
+                      //     intentionally excluded -- writing it triggers a
+                      //     screen-shake BP side-effect; user-retest finding
+                      //     2026-05-25 NIGHT, commit 5421d6f). No payload
+                      //     beyond the ReliableHeader -- the action is fixed
+                      //     (max-out the 3 vitals on the local UsaveSlot_C).
+                      //     [dev] devkeys=1 gated.
     TeleportClient = 8, // 2026-05-25 LATE +5h: F4 dev-key triggered by host.
                        //     Host snapshots own pose + sends to client; client
                        //     applies via K2_TeleportTo on its local mainPlayer.

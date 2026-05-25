@@ -28,8 +28,6 @@ namespace P = profile;
 namespace R = reflection;
 
 void* g_numBonesFn = nullptr, *g_boneNameFn = nullptr, *g_socketLocFn = nullptr;
-uint8_t g_headBone[8] = {};       // cached FName of the head bone (ComparisonIndex,Number)
-bool g_headBoneResolved = false;
 
 bool ResolveBoneFns() {
     if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass)) {
@@ -43,35 +41,6 @@ bool ResolveBoneFns() {
 }
 
 }  // namespace
-
-bool GetHeadWorldLocation(void* skelMeshComp, FVector& out) {
-    if (!skelMeshComp || !ResolveBoneFns()) return false;
-    if (!g_headBoneResolved) {
-        // Enumerate bones ONCE; cache the head bone's FName (the player skin
-        // rides the kerfurOmega skeleton -- bone names are stable across
-        // instances).
-        int32_t n = 0;
-        { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
-        for (int32_t i = 0; i < n; ++i) {
-            ParamFrame f(g_boneNameFn); f.Set<int32_t>(L"BoneIndex", i);
-            if (!Call(skelMeshComp, f)) break;
-            uint8_t name[8] = {};
-            f.GetRaw(L"ReturnValue", name, sizeof(name));
-            const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
-            if (s == L"head" || s == L"Head") {
-                std::memcpy(g_headBone, name, sizeof(g_headBone));
-                UE_LOGI("engine: nameplate head bone = '%ls' (index %d/%d)", s.c_str(), i, n);
-                break;
-            }
-        }
-        g_headBoneResolved = true;  // give up after one pass; zero FName ("None") -> actor loc fallback
-    }
-    ParamFrame f(g_socketLocFn);
-    f.SetRaw(L"InSocketName", g_headBone, sizeof(g_headBone));
-    if (!Call(skelMeshComp, f)) return false;
-    out = f.Get<FVector>(L"ReturnValue");
-    return true;
-}
 
 bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ) {
     if (!skelMeshComp || !ResolveBoneFns()) return false;

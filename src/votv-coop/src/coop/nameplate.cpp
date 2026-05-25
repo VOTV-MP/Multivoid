@@ -51,7 +51,7 @@ void Register(RemotePlayer* player) {
                     [&](const Entry& e) { return e.player == player; }))
         return;
 
-    const ue_wrap::FVector at = player->GetHeadPosition();  // anchored to the head bone
+    const ue_wrap::FVector at = player->GetHeadPosition();  // actor pivot + 200 cm Z (see RemotePlayer::GetHeadPosition)
     // Translucent nameplate via a world-space UWidgetComponent (we build our own
     // UMG; the text alpha gives the translucency). 0.22 = quite see-through.
     const std::wstring& nick = player->GetNickname();
@@ -137,7 +137,7 @@ void Update() {
     for (auto& e : g_entries) {
         if (!e.player || !e.player->valid() || !e.textActor) continue;
         if (!R::IsLive(e.textActor)) continue;  // label destroyed (level change)
-        const ue_wrap::FVector at = e.player->GetHeadPosition();  // head-bone anchored
+        const ue_wrap::FVector at = e.player->GetHeadPosition();  // actor pivot + 200 cm Z
         E::SetActorLocation(e.textActor, at);
 
         // Face the viewer: point the WidgetComponent quad's +X toward the
