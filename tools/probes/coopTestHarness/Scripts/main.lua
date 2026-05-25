@@ -216,8 +216,38 @@ local function StateScreenshot(label)
     Screenshot()
 end
 
--- scenario forms: "newgame" | "load:<slot>" | "inspect" | "none"
+-- scenario forms: "newgame" | "load:<slot>" | "inspect" | "none" | "probe_terminals" | "probe_terminals:<slot>"
 local function RunTimeline(scenario)
+    -- Phase 5T terminals probe: load save, then run probe_terminals.lua.
+    -- Form: "probe_terminals" (no save) | "probe_terminals:<slot>" (load that save first).
+    do
+        local probeSlot = scenario:match("^probe_terminals:?(.*)$")
+        if probeSlot ~= nil then
+            local slot = (probeSlot ~= "" and probeSlot) or nil
+            ExecuteWithDelay(20000, function() StateScreenshot("T+20s boot state") end)
+            if slot then
+                ExecuteWithDelay(25000, function()
+                    log("auto: EnterGameplay(" .. slot .. ") for terminals probe"); EnterGameplay(slot)
+                end)
+                ExecuteWithDelay(45000, function()
+                    log("=== loading probe_terminals.lua ===")
+                    local ok, mod = pcall(require, "probe_terminals")
+                    if ok and mod and mod.Run then mod.Run()
+                    else log("probe_terminals load error: " .. tostring(mod)) end
+                end)
+                ExecuteWithDelay(70000, function() StateScreenshot("T+70s post-probe state") end)
+            else
+                ExecuteWithDelay(25000, function()
+                    log("=== loading probe_terminals.lua (no save preload) ===")
+                    local ok, mod = pcall(require, "probe_terminals")
+                    if ok and mod and mod.Run then mod.Run()
+                    else log("probe_terminals load error: " .. tostring(mod)) end
+                end)
+                ExecuteWithDelay(50000, function() StateScreenshot("T+50s post-probe state") end)
+            end
+            return
+        end
+    end
     if scenario == "inspect" then
         ExecuteWithDelay(20000, function() log("=== inspect @20s ==="); InspectWidgets() end)
         ExecuteWithDelay(40000, function() log("=== inspect @40s ==="); InspectWidgets() end)

@@ -21,7 +21,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('newgame','none','inspect','orphan','drive')] [string]$Scenario = 'newgame',
+    [ValidateSet('newgame','none','inspect','orphan','drive','probe_terminals')] [string]$Scenario = 'newgame',
     [string]$Save = '',   # if set, load this save slot (e.g. s_ehehe) instead of -Scenario
     [int]$ResX = 1280,
     [int]$ResY = 720,
