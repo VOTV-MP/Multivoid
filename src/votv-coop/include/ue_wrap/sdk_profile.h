@@ -317,6 +317,14 @@ inline constexpr size_t AmainPlayer_flashlight     = 0x0838;  // bool -- canonic
 inline constexpr size_t AmainPlayer_flashlightMode = 0x0C79;  // uint8 -- beam mode (mainPlayer.hpp:251)
 inline constexpr size_t AmainPlayer_hasFlashlight  = 0x0CC2;  // bool -- equipped guard (mainPlayer.hpp:260)
 inline constexpr size_t AmainPlayer_crankFlashlight = 0x0CC4;  // bool -- _c variant marker (mainPlayer.hpp:262)
+
+// ULightComponentBase Intensity (Engine.hpp:13569). VOTV's flashlight BP
+// almost certainly toggles this between 0 and a saved "on" value instead
+// of bVisible -- the probe log shows bVisible stays 0 across observed
+// toggles while the light visibly flips on/off in-game. Reading this
+// field in the probe gives the new state directly; the receiver mirrors
+// it on the puppet's light_R via SetIntensity (name::SetIntensityFn).
+inline constexpr size_t ULightComponentBase_Intensity = 0x020C;  // float
 inline constexpr size_t ACameraActor_CameraComponent = 0x0228;          // UCameraComponent*  Engine.hpp:6947
 inline constexpr size_t UCameraComponent_PostProcessBlendWeight = 0x0240; // float  Engine.hpp:9762
 inline constexpr size_t UCameraComponent_PostProcessSettings = 0x0270;    // FPostProcessSettings  Engine.hpp (size 0x560)
@@ -673,6 +681,12 @@ inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K
 //   -> updateFlashlight()     <- INLINED; never reaches ProcessEvent
 inline constexpr const wchar_t* MainPlayerUpdateFlashlightFn = L"updateFlashlight";
 inline constexpr const wchar_t* MainPlayerFlashlightUpdateFn = L"Flashlight Update";
+
+// USpotLightComponent inherits ULightComponent::SetIntensity(float)
+// (Engine.hpp:13551). The receiver calls this on the puppet's light_R
+// to mirror the local sender's intensity -- bVisible alone is
+// insufficient (VOTV's BP toggles via Intensity, not bVisible).
+inline constexpr const wchar_t* SetIntensityFn = L"SetIntensity";
 
 // Phase 5F retest fallback (2026-05-25 NIGHT-3): hands-on showed that
 // BOTH updateFlashlight AND 'Flashlight Update' are BP-inlined into
