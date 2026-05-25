@@ -245,21 +245,16 @@ end
 
 -- scenario forms: "newgame" | "load:<slot>" | "inspect" | "none"
 --   | "probe_terminals" | "probe_terminals:<slot>"
---   | "probe_flashlight" | "probe_flashlight:<slot>"
+-- (The Phase 5F flashlight probe was tried via UE4SS Lua and abandoned --
+-- the cls.Children walk on mainPlayer_C segfaulted. We now do the
+-- flashlight probe in our own C++ mod gated on [probe] flashlight=1.
+-- See feedback-prefer-cpp-probes-over-ue4ss memory.)
 local function RunTimeline(scenario)
     -- Phase 5T terminals probe
     do
         local probeSlot = scenario:match("^probe_terminals:?(.*)$")
         if probeSlot ~= nil then
             RunNamedProbe("probe_terminals", probeSlot ~= "" and probeSlot or nil)
-            return
-        end
-    end
-    -- Phase 5F flashlight probe
-    do
-        local probeSlot = scenario:match("^probe_flashlight:?(.*)$")
-        if probeSlot ~= nil then
-            RunNamedProbe("probe_flashlight", probeSlot ~= "" and probeSlot or nil)
             return
         end
     end

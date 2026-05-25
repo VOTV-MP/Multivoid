@@ -65,7 +65,7 @@ Write-Host "UE4SS.log cleared" -ForegroundColor Cyan
 
 # 5) Launch the game
 $exe = Join-Path $dev 'VotV-Win64-Shipping.exe'
-$proc = Start-Process -FilePath $exe -ArgumentList @('-ResX=1280','-ResY=720','-windowed') `
+$proc = Start-Process -FilePath $exe -ArgumentList @('-ResX=1920','-ResY=1080','-windowed') `
                       -WorkingDirectory $dev -PassThru
 Write-Host ""
 Write-Host "Launched PID $($proc.Id)" -ForegroundColor Green
