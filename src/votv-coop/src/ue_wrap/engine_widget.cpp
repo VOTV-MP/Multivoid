@@ -239,14 +239,16 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
 
     // 4) Build OUR widget tree (shared builder): UUserWidget -> UWidgetTree ->
     // UTextBlock(root), translucent-white centred text at font size 56.
-    // Font 56 + actor scale 0.25 (set in step 6) gives the SAME world-quad
-    // size as the original font 14 + scale 1.0, but with 4x linear RT texel
-    // density (= 16x texel count) -- crisp text at the original physical
-    // nameplate size. Progression across retests:
+    // Font 56 + actor scale 0.15 (set in step 6) shrinks the world quad to
+    // ~60% of the original font-14 / scale-1 baseline, with the SAME RT
+    // pixel count as font 56 / scale 0.25 (since scale doesn't touch the
+    // RT). Net: small visible nameplate, very high texel density.
+    // Progression across retests:
     //   font 14, scale 1.00 -> baseline (pixelated; user complaint #1)
     //   font 28, scale 1.00 -> 2x density but 2x physical size ("what is this nameplate" -- complaint #2)
     //   font 28, scale 0.50 -> 2x density, baseline physical size (still "needs more resolution")
-    //   font 56, scale 0.25 -> 4x density, baseline physical size (current)
+    //   font 56, scale 0.25 -> 4x density, baseline physical size
+    //   font 56, scale 0.15 -> 4x density, ~60% baseline size (user: "make the scale smaller", current)
     // bDrawAtDesiredSize=1 still couples RT pixels to widget desired-size, so
     // a larger font yields a larger RT; the actor scale shrinks the visible
     // world quad without touching the RT pixel count.
@@ -262,13 +264,13 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     if (g_npRenderUpdateFn) { ParamFrame f(g_npRenderUpdateFn); Call(comp, f); }
     if (g_npRedrawFn) { ParamFrame f(g_npRedrawFn); Call(comp, f); }
 
-    // 6) Shrink the actor's world scale to quarter the visible quad size
-    // while keeping the WidgetComponent's render-target pixel dimensions
-    // intact (see step 4 comment for the RT-density-vs-world-size
-    // decoupling). 0.25 -> nameplate quad size matches the original font-14
-    // baseline; the font-56 RT renders into the same physical area at 4x
-    // linear density (16x texel count).
-    SetActorScale3D(actor, FVector{0.25f, 0.25f, 0.25f});
+    // 6) Shrink the actor's world scale to make the visible quad small while
+    // keeping the WidgetComponent's render-target pixel dimensions intact
+    // (see step 4 comment for the RT-density-vs-world-size decoupling).
+    // 0.15 -> nameplate quad is ~60% of the original font-14 / scale-1
+    // baseline (user feedback "make the scale smaller"); font-56 RT
+    // renders into that shrunken area at very high texel density.
+    SetActorScale3D(actor, FVector{0.15f, 0.15f, 0.15f});
 
     UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p txt=%p font=%p at (%.0f,%.0f,%.0f)",
             text, actor, comp, root, txt, g_npFont, location.X, location.Y, location.Z);

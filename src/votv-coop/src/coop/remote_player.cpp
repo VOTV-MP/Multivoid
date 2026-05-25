@@ -642,20 +642,29 @@ ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     // movement... jaggy laggy". The bone read also accumulated IK perturbation
     // (Control Rig nudges head transform during walk).
     //
-    // Fix: anchor to the ACTOR pivot + a fixed Z offset. The pivot is moved
-    // by our pose drive (RemotePlayer::ApplyToEngine, same tick as the pose
-    // update) so it stays in lockstep with the visible mesh. The bone-anchor
-    // branch is removed per RULE 2 (no parallel old + new code paths).
+    // Fix: anchor to the ACTOR pivot + a small fixed Z offset. The pivot is
+    // moved by our pose drive (RemotePlayer::ApplyToEngine, same tick as the
+    // pose update) so it stays in lockstep with the visible mesh. The
+    // bone-anchor branch is removed per RULE 2 (no parallel old + new code
+    // paths).
     //
-    // Offset 120 cm: for an ACharacter the actor pivot sits at the CAPSULE
-    // CENTER (capsule half-height ~88 cm for mainPlayer_C, so the pivot is
-    // ~88 cm above the feet). Head crown is ~88 cm above the pivot.
-    // +120 cm puts the nameplate ~32 cm above the head crown -- a clean gap
-    // without floating absurdly high. Pre-fix used +200 cm under the wrong
-    // assumption that the pivot was at feet level; that put the nameplate
-    // ~112 cm above the crown ("way too high" per user retest +4).
+    // Offset 30 cm -- THE puppet's actor pivot coincides with the RENDERED
+    // head crown (not the feet, not the capsule center). The pose drive
+    // sets `puppet.actor.Z = streamed.Z + meshOffsetZ_` (typically +85 cm)
+    // specifically to make the rendered mesh land at the right Z relative
+    // to the source's reported pose. The chain measure log line proves it
+    // empirically: `halfH=85 ... chain=-170 ... meshOffsetZ_=+85`. From the
+    // already-applied puppet.actor.Z:
+    //   puppet.mesh.world.Z = puppet.actor.Z + puppetChain = puppet.actor.Z - 170
+    //   head crown Z        = puppet.mesh.world.Z + kerfur height (~170 cm)
+    //                       = puppet.actor.Z
+    // So +30 cm gives a clean ~30 cm gap above the crown.
+    //
+    // Retest history: +200 (the original feet-pivot guess) and +120 (the
+    // capsule-center guess) were both "way above head" because BOTH were
+    // adding offset on top of the actor pivot which already IS at head level.
     ue_wrap::FVector p = GetLocation();
-    p.Z += 120.f;
+    p.Z += 30.f;
     return p;
 }
 

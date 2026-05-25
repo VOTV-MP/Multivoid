@@ -51,7 +51,7 @@ void Register(RemotePlayer* player) {
                     [&](const Entry& e) { return e.player == player; }))
         return;
 
-    const ue_wrap::FVector at = player->GetHeadPosition();  // actor pivot + 120 cm Z (see RemotePlayer::GetHeadPosition)
+    const ue_wrap::FVector at = player->GetHeadPosition();  // actor pivot + 30 cm Z (see RemotePlayer::GetHeadPosition)
     // Translucent nameplate via a world-space UWidgetComponent (we build our own
     // UMG; the text alpha gives the translucency). 0.22 = quite see-through.
     const std::wstring& nick = player->GetNickname();
@@ -137,12 +137,12 @@ void Update() {
     for (auto& e : g_entries) {
         if (!e.player || !e.player->valid() || !e.textActor) continue;
         if (!R::IsLive(e.textActor)) continue;  // label destroyed (level change)
-        const ue_wrap::FVector at = e.player->GetHeadPosition();  // actor pivot + 120 cm Z
+        const ue_wrap::FVector at = e.player->GetHeadPosition();  // actor pivot + 30 cm Z
         E::SetActorLocation(e.textActor, at);
 
         // Face the viewer: point the WidgetComponent quad's +X toward the
         // viewer (its normal is +X, IDA-confirmed). 2026-05-25 hands-on fix:
-        // use the puppet's ACTOR pivot (stable, capsule center) for the
+        // use the puppet's ACTOR pivot (stable; coincides with head crown per
         // yaw calculation instead of the head BONE position. The head bone
         // oscillates with the AnimBP walk cycle (BlendSpace + IK perturb
         // bone world transforms each tick), which made the yaw jitter and

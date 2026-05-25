@@ -78,8 +78,9 @@ public:
     // Current engine-reported location (for verification / interpolation base).
     ue_wrap::FVector GetLocation() const;
 
-    // World point to anchor the floating nameplate: actor capsule center
-    // (the ACharacter pivot) + a Z offset to float just above the head.
+    // World point to anchor the floating nameplate: puppet actor pivot
+    // (which the pose drive aligns with the RENDERED head crown via
+    // meshOffsetZ_) + a small Z offset to float just above the head.
     ue_wrap::FVector GetHeadPosition() const;
 
     // The raw engine puppet actor pointer (mainPlayer_C or ASkeletalMeshActor
