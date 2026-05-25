@@ -238,8 +238,14 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, 1.f}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }
 
     // 4) Build OUR widget tree (shared builder): UUserWidget -> UWidgetTree ->
-    // UTextBlock(root), translucent-white centred text at font size 14.
-    BuiltText bt = BuildTextWidget(actor, text, FLinearColor{1.f, 1.f, 1.f, opacity}, 14, /*Center*/ 1);
+    // UTextBlock(root), translucent-white centred text at font size 28.
+    // (2026-05-25 NIGHT: bumped 14 -> 28 after user reported pixelated nameplate.
+    // With bDrawAtDesiredSize=1 the WidgetComponent sizes its render target to
+    // the widget's desired size, which scales linearly with font size -- so a
+    // 2x font = 4x the RT texel count. Side effect: the nameplate quad is
+    // physically ~2x larger in world space, which is the explicit tradeoff
+    // chosen over the explicit-DrawSize alternative.)
+    BuiltText bt = BuildTextWidget(actor, text, FLinearColor{1.f, 1.f, 1.f, opacity}, 28, /*Center*/ 1);
     void* root = bt.root;
     void* txt = bt.txt;
     if (!root || !txt) { UE_LOGE("engine: SpawnNameplateWidget -- BuildTextWidget failed"); return actor; }

@@ -632,16 +632,22 @@ ue_wrap::FVector RemotePlayer::GetLocation() const {
 
 ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     if (!valid()) return {};
-    // Anchor to the actual head BONE (the skeletal mesh renders offset from the actor
-    // origin, so origin+Z sits to the side of the visible head). Falls back to the
-    // actor location + a height offset if the bone can't be resolved.
-    if (void* comp = Pup::GetSkeletalMeshComponent(actor_)) {
-        ue_wrap::FVector head;
-        if (E::GetHeadWorldLocation(comp, head)) {
-            head.Z += 45.f;  // float above the crown
-            return head;
-        }
-    }
+    // 2026-05-25 NIGHT (user retest +2): pre-fix this read the puppet's 'head'
+    // BONE world location, which the AnimBP recomputes every animation tick.
+    // The nameplate quad was repositioned via SetActorLocation on a separate
+    // floating actor each tick; if nameplate::Update fired BEFORE the AnimBP
+    // advanced the bone for the frame, the nameplate sat at the previous
+    // frame's head position while the visible mesh had already moved -- the
+    // user reported it as "the nameplate is trying to catch up with the
+    // movement... jaggy laggy". The bone read also accumulated IK perturbation
+    // (Control Rig nudges head transform during walk).
+    //
+    // Fix: anchor to the ACTOR pivot + a fixed Z offset. The pivot is moved
+    // by our pose drive (RemotePlayer::ApplyToEngine, same tick as the pose
+    // update) so it stays in lockstep with the visible mesh. 200 cm above
+    // the pivot (feet) sits just above the head on the mainPlayer_C capsule
+    // (~180 cm tall). The bone-anchor branch is removed per RULE 2 (no
+    // parallel old + new code paths).
     ue_wrap::FVector p = GetLocation();
     p.Z += 200.f;
     return p;

@@ -37,6 +37,12 @@ constexpr float kMaxVital = 100.0f;
 // FindClass) plus four FindPropertyOffset calls -- ~100-300 ms of game-thread
 // blocking per press = the half-second FPS hitch the user reported. With these
 // cached, the hot path is one pointer deref + four float writes.
+// 2026-05-25 NIGHT (user retest +1): user observed that writing coffeePower=100
+// produced a screen-shaking post-coffee vanilla effect (the BP graph keys an
+// effect off coffeePower > 0). Drop coffeePower from the refill -- F3 now only
+// tops up food/sleep/health, leaving coffeePower at whatever the player drank
+// to. (Per RULE 2 the coffeePowerOff cache field is removed entirely rather
+// than left as dead baggage.)
 struct Cache {
     void* mainGameInstance = nullptr;   // live UmainGameInstance_C*
     int32_t saveGameInstOff = -1;       // mainGameInstance_C::save_gameInst (UsaveSlot_C*)
@@ -44,7 +50,6 @@ struct Cache {
     int32_t foodOff = -1;
     int32_t sleepOff = -1;
     int32_t healthOff = -1;
-    int32_t coffeePowerOff = -1;
 };
 Cache g_cache;
 
@@ -89,14 +94,13 @@ bool EnsureResolved() {
             return false;
         }
     }
-    // (4) Four vital field offsets on saveSlot_C. Same BP-cooked rule as (2).
-    if (g_cache.foodOff        < 0) g_cache.foodOff        = R::FindPropertyOffset(g_cache.saveSlotClass, L"food");
-    if (g_cache.sleepOff       < 0) g_cache.sleepOff       = R::FindPropertyOffset(g_cache.saveSlotClass, L"sleep");
-    if (g_cache.healthOff      < 0) g_cache.healthOff      = R::FindPropertyOffset(g_cache.saveSlotClass, L"health");
-    if (g_cache.coffeePowerOff < 0) g_cache.coffeePowerOff = R::FindPropertyOffset(g_cache.saveSlotClass, L"coffeePower");
-    if (g_cache.foodOff < 0 || g_cache.sleepOff < 0 || g_cache.healthOff < 0 || g_cache.coffeePowerOff < 0) {
-        UE_LOGW("restore_vitals: vital offsets unresolved (food=%d sleep=%d health=%d coffeePower=%d)",
-                g_cache.foodOff, g_cache.sleepOff, g_cache.healthOff, g_cache.coffeePowerOff);
+    // (4) Three vital field offsets on saveSlot_C. Same BP-cooked rule as (2).
+    if (g_cache.foodOff   < 0) g_cache.foodOff   = R::FindPropertyOffset(g_cache.saveSlotClass, L"food");
+    if (g_cache.sleepOff  < 0) g_cache.sleepOff  = R::FindPropertyOffset(g_cache.saveSlotClass, L"sleep");
+    if (g_cache.healthOff < 0) g_cache.healthOff = R::FindPropertyOffset(g_cache.saveSlotClass, L"health");
+    if (g_cache.foodOff < 0 || g_cache.sleepOff < 0 || g_cache.healthOff < 0) {
+        UE_LOGW("restore_vitals: vital offsets unresolved (food=%d sleep=%d health=%d)",
+                g_cache.foodOff, g_cache.sleepOff, g_cache.healthOff);
         return false;
     }
     return true;
@@ -128,11 +132,10 @@ void ApplyLocally() {
     auto write = [slot](int32_t off, float v) {
         *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(slot) + off) = v;
     };
-    write(g_cache.foodOff,        kMaxVital);
-    write(g_cache.sleepOff,       kMaxVital);
-    write(g_cache.healthOff,      kMaxVital);
-    write(g_cache.coffeePowerOff, kMaxVital);
-    UE_LOGI("restore_vitals: vitals refilled (slot=%p, food/sleep/health/coffeePower = %.1f)",
+    write(g_cache.foodOff,   kMaxVital);
+    write(g_cache.sleepOff,  kMaxVital);
+    write(g_cache.healthOff, kMaxVital);
+    UE_LOGI("restore_vitals: vitals refilled (slot=%p, food/sleep/health = %.1f)",
             slot, kMaxVital);
 }
 
@@ -181,7 +184,7 @@ void Init() {
     if (HANDLE t = ::CreateThread(nullptr, 0, &HotkeyThread, nullptr, 0, nullptr)) {
         ::CloseHandle(t);  // detached
     }
-    UE_LOGI("restore_vitals: ENABLED (F3 refills food/sleep/health/coffeePower on both peers)");
+    UE_LOGI("restore_vitals: ENABLED (F3 refills food/sleep/health on both peers)");
 }
 
 }  // namespace dev::restore_vitals
