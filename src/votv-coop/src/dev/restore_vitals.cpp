@@ -20,9 +20,6 @@ namespace GT = ue_wrap::game_thread;
 
 namespace {
 
-// Read-once at Init; the hotkey thread checks this before doing anything.
-bool g_iniEnabled = false;
-
 // Cached Session pointer for the broadcast. nullptr-safe at every callsite
 // (a press before Session start is logged + no-op'd, NOT crashed).
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -34,18 +31,75 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // over-stored value that would gate hunger draining differently).
 constexpr float kMaxVital = 100.0f;
 
+// One-time resolution cache. Set lazily on first press. Cleared / re-resolved
+// only if the cached UObject pointer fails IsLive (level transition / hot
+// reload). Pre-fix every press walked GUObjectArray TWICE (FindObjectByClass +
+// FindClass) plus four FindPropertyOffset calls -- ~100-300 ms of game-thread
+// blocking per press = the half-second FPS hitch the user reported. With these
+// cached, the hot path is one pointer deref + four float writes.
+struct Cache {
+    void* mainGameInstance = nullptr;   // live UmainGameInstance_C*
+    int32_t saveGameInstOff = -1;       // mainGameInstance_C::save_gameInst (UsaveSlot_C*)
+    void* saveSlotClass = nullptr;      // UClass* for UsaveSlot_C (offset lookup target)
+    int32_t foodOff = -1;
+    int32_t sleepOff = -1;
+    int32_t healthOff = -1;
+    int32_t coffeePowerOff = -1;
+};
+Cache g_cache;
+
 bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
 
-// Write a single float UPROPERTY on `target` by resolving the field name to
-// an offset via reflection (BP-cooked offsets shift across recompiles --
-// resolve every time, log + skip on miss). Game thread only.
-void WriteFloatField(void* target, void* cls, const wchar_t* fieldName, float value) {
-    const int32_t off = R::FindPropertyOffset(cls, fieldName);
-    if (off < 0) {
-        UE_LOGW("restore_vitals: field '%ls' not found on saveSlot_C", fieldName);
-        return;
+// Lazily resolve the cache. Returns true once every field is filled. Logs a
+// one-line warning on the first failure so the user knows which step blocked.
+// Called from the game thread (the UObject lookups must be game-thread).
+bool EnsureResolved() {
+    // (1) GameInstance: live singleton, never destroyed after world boot. Cache
+    //     it once; refresh only if the slot was reused for another object.
+    if (g_cache.mainGameInstance && !R::IsLive(g_cache.mainGameInstance)) {
+        g_cache.mainGameInstance = nullptr;
     }
-    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(target) + off) = value;
+    if (!g_cache.mainGameInstance) {
+        g_cache.mainGameInstance = R::FindObjectByClass(P::name::GameInstanceClass);
+        if (!g_cache.mainGameInstance) {
+            UE_LOGW("restore_vitals: mainGameInstance_C not yet alive (still booting?)");
+            return false;
+        }
+    }
+    // (2) save_gameInst offset on mainGameInstance_C. BP-cooked offsets shift
+    //     across recooks (per [[project-adaptation-strategy]]); resolve via
+    //     reflection rather than hardcoding 0x01A8 from the SDK dump.
+    if (g_cache.saveGameInstOff < 0) {
+        void* giClass = R::ClassOf(g_cache.mainGameInstance);
+        if (!giClass) {
+            UE_LOGW("restore_vitals: mainGameInstance has no UClass");
+            return false;
+        }
+        g_cache.saveGameInstOff = R::FindPropertyOffset(giClass, L"save_gameInst");
+        if (g_cache.saveGameInstOff < 0) {
+            UE_LOGW("restore_vitals: save_gameInst field not found on mainGameInstance_C");
+            return false;
+        }
+    }
+    // (3) saveSlot_C UClass (target for offset lookups).
+    if (!g_cache.saveSlotClass) {
+        g_cache.saveSlotClass = R::FindClass(P::name::SaveSlotClass);
+        if (!g_cache.saveSlotClass) {
+            UE_LOGW("restore_vitals: saveSlot_C class unresolvable");
+            return false;
+        }
+    }
+    // (4) Four vital field offsets on saveSlot_C. Same BP-cooked rule as (2).
+    if (g_cache.foodOff        < 0) g_cache.foodOff        = R::FindPropertyOffset(g_cache.saveSlotClass, L"food");
+    if (g_cache.sleepOff       < 0) g_cache.sleepOff       = R::FindPropertyOffset(g_cache.saveSlotClass, L"sleep");
+    if (g_cache.healthOff      < 0) g_cache.healthOff      = R::FindPropertyOffset(g_cache.saveSlotClass, L"health");
+    if (g_cache.coffeePowerOff < 0) g_cache.coffeePowerOff = R::FindPropertyOffset(g_cache.saveSlotClass, L"coffeePower");
+    if (g_cache.foodOff < 0 || g_cache.sleepOff < 0 || g_cache.healthOff < 0 || g_cache.coffeePowerOff < 0) {
+        UE_LOGW("restore_vitals: vital offsets unresolved (food=%d sleep=%d health=%d coffeePower=%d)",
+                g_cache.foodOff, g_cache.sleepOff, g_cache.healthOff, g_cache.coffeePowerOff);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -55,26 +109,31 @@ void SetSession(coop::net::Session* session) {
 }
 
 void ApplyLocally() {
-    void* slot = R::FindObjectByClass(P::name::SaveSlotClass);
+    if (!EnsureResolved()) return;
+    // Dereference mainGameInstance.save_gameInst -- the CANONICAL live saveSlot
+    // pointer used by the rest of the BP graph. Pre-fix used
+    // FindObjectByClass(saveSlot_C) which walks GUObjectArray and returns the
+    // first non-CDO; in gameplay there's only one saveSlot_C so the value found
+    // matched, BUT ui_saveSlots.hpp keeps several UsaveSlot_C* arrays
+    // (saves / saves_infront / saves_subslots) that can leave additional
+    // instances live after the menu, and the walk would return whichever
+    // landed at the lower GUObjectArray index. Pointing through GameInstance
+    // bypasses the ambiguity.
+    void* slot = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(g_cache.mainGameInstance) + g_cache.saveGameInstOff);
     if (!slot) {
-        UE_LOGW("restore_vitals: no UsaveSlot_C instance found (not in gameplay yet?)");
+        UE_LOGW("restore_vitals: mainGameInstance.save_gameInst is null (save not registered yet)");
         return;
     }
-    // The UClass for offset resolution is looked up by name; the instance is
-    // a different pointer. FindPropertyOffset wants the CLASS, not the
-    // instance (cf. ue_wrap/reflected_offset.cpp::Resolve for the same shape).
-    void* cls = R::FindClass(P::name::SaveSlotClass);
-    if (!cls) {
-        UE_LOGW("restore_vitals: saveSlot_C class unresolvable");
-        return;
-    }
-    // Four vitals from saveSlot.hpp: food @0x00E4, sleep @0x00E8, health
-    // @0x0428, coffeePower @0x04D0. Offsets reflection-resolved.
-    WriteFloatField(slot, cls, L"food",         kMaxVital);
-    WriteFloatField(slot, cls, L"sleep",        kMaxVital);
-    WriteFloatField(slot, cls, L"health",       kMaxVital);
-    WriteFloatField(slot, cls, L"coffeePower",  kMaxVital);
-    UE_LOGI("restore_vitals: vitals refilled (food/sleep/health/coffeePower = %.1f)", kMaxVital);
+    auto write = [slot](int32_t off, float v) {
+        *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(slot) + off) = v;
+    };
+    write(g_cache.foodOff,        kMaxVital);
+    write(g_cache.sleepOff,       kMaxVital);
+    write(g_cache.healthOff,      kMaxVital);
+    write(g_cache.coffeePowerOff, kMaxVital);
+    UE_LOGI("restore_vitals: vitals refilled (slot=%p, food/sleep/health/coffeePower = %.1f)",
+            slot, kMaxVital);
 }
 
 namespace {
@@ -115,8 +174,7 @@ void Init() {
         UE_LOGI("restore_vitals: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    g_iniEnabled = ::dev::IsIniKeyTrue("devkeys");
-    if (!g_iniEnabled) {
+    if (!::dev::IsIniKeyTrue("devkeys")) {
         UE_LOGI("restore_vitals: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F3)");
         return;
     }

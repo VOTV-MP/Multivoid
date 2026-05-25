@@ -23,10 +23,26 @@ namespace GT = ue_wrap::game_thread;
 
 namespace {
 
-bool g_iniEnabled = false;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
+// Cached local mainPlayer_C pointer. Pre-fix every press did a full
+// GUObjectArray walk via FindObjectByClass (contributing to the same
+// ~100-300 ms hitch documented in restore_vitals.cpp::Cache). Cleared on
+// IsLive miss (level change). NOTE: on a client there are TWO mainPlayer_C
+// in the scene (local + the puppet representing the host); GUObjectArray
+// walk order returns the first non-CDO, which is the LOCAL because it loads
+// from save before the puppet is spawned -- the right one for our teleport
+// target. Same pattern as dev::pos_hud (which validated this empirically).
+void* g_local = nullptr;
+
 bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+// Cache-refresh helper. Returns nullptr if no live mainPlayer (still booting).
+void* GetLocalMainPlayer() {
+    if (g_local && !R::IsLive(g_local)) g_local = nullptr;
+    if (!g_local) g_local = R::FindObjectByClass(P::name::MainPlayerClass);
+    return g_local;
+}
 
 }  // namespace
 
@@ -35,7 +51,7 @@ void SetSession(coop::net::Session* session) {
 }
 
 void ApplyLocally(const ApplyArgs& args) {
-    void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+    void* local = GetLocalMainPlayer();
     if (!local) {
         UE_LOGW("teleport_client: no local mainPlayer_C found (not in gameplay?)");
         return;
@@ -51,8 +67,8 @@ void ApplyLocally(const ApplyArgs& args) {
         E::SetActorLocation(local, loc);
         E::SetActorRotation(local, rot);
     }
-    UE_LOGI("teleport_client: applied (loc=(%.0f,%.0f,%.0f) rot=(p=%.1f y=%.1f r=%.1f))",
-            args.locX, args.locY, args.locZ, args.rotPitch, args.rotYaw, args.rotRoll);
+    UE_LOGI("teleport_client: applied (local=%p loc=(%.0f,%.0f,%.0f) rot=(p=%.1f y=%.1f r=%.1f))",
+            local, args.locX, args.locY, args.locZ, args.rotPitch, args.rotYaw, args.rotRoll);
 }
 
 namespace {
@@ -62,7 +78,7 @@ namespace {
 // game-thread-only); the send_reliable call is wire-thread-safe and called
 // from inside the GT::Post lambda.
 void SnapshotAndSend(coop::net::Session* s) {
-    void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+    void* local = GetLocalMainPlayer();
     if (!local) {
         UE_LOGW("teleport_client: F4 pressed but no local mainPlayer_C");
         return;
@@ -109,8 +125,7 @@ void Init() {
         UE_LOGI("teleport_client: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    g_iniEnabled = ::dev::IsIniKeyTrue("devkeys");
-    if (!g_iniEnabled) {
+    if (!::dev::IsIniKeyTrue("devkeys")) {
         UE_LOGI("teleport_client: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F4)");
         return;
     }
