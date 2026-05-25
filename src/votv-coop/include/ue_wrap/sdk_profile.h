@@ -660,13 +660,19 @@ inline constexpr const wchar_t* MainPlayerGrabUpdateFn       = L"grab__UpdateFun
 inline constexpr const wchar_t* MainPlayerGrabFinishedFn     = L"grab__FinishedFunc";
 inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K2Node_InputActionEvent_41";
 
-// Phase 5F flashlight (item activation sync). updateFlashlight is the BP
-// function that VOTV's input handler calls on F-press; it flips the
-// `flashlight` bool and the `light_R` component visibility, then fires the
-// `flashlightStateChanged` multicast delegate. POST-hooking it = state at
-// dispatch end = what we want to broadcast. Confirmed in
-// mainPlayer.hpp:435 + research/findings/votv-flashlight-RE-2026-05-25.md.
+// Phase 5F flashlight (item activation sync). Two UFunctions in the chain;
+// hands-on testing 2026-05-25 NIGHT-3 showed `updateFlashlight` is BP-INLINED
+// into `Flashlight Update` and never dispatches via ProcessEvent (the inner
+// observer never fired across a session of F-presses), so we register a
+// POST observer on BOTH and whichever actually dispatches wins. The OUTER
+// function name has a LITERAL SPACE -- mainPlayer.hpp:488 emitted
+// `void Flashlight Update();`, and the FName lookup matches that exact
+// string verbatim.
+//   InpActEvt_flashlight_K2Node_InputActionEvent_13/14  (F press/release)
+//   -> Flashlight Update()    <- dispatched via ProcessEvent
+//   -> updateFlashlight()     <- INLINED; never reaches ProcessEvent
 inline constexpr const wchar_t* MainPlayerUpdateFlashlightFn = L"updateFlashlight";
+inline constexpr const wchar_t* MainPlayerFlashlightUpdateFn = L"Flashlight Update";
 
 // UTimelineComponent BP-callable methods (used to force the `grab` Timeline
 // from the autonomous test, so the 3 BP-Timeline observers fire without a

@@ -38,10 +38,16 @@ namespace GT = ue_wrap::game_thread;
 
 bool g_installed = false;
 
-// Resolved once at Install: pointer to the AmainPlayer_C::updateFlashlight
-// UFunction (UClass-level, same for every instance). The observer table
-// uses this pointer as the dispatch key.
+// Resolved once at Install: pointers to BOTH candidate UFunctions in the
+// flashlight call chain. Hands-on 2026-05-25 NIGHT-3 found that
+// `updateFlashlight` is BP-INLINED into `Flashlight Update` and never
+// reaches ProcessEvent -- so we register a POST observer on both, and
+// whichever the BP compiler actually dispatches wins. If both fire in
+// the same press (which the inlining argument says won't happen), the
+// receiver tolerates the duplicate (writing the same bool twice = no-op
+// + at human-press cadence the doubled wire traffic is negligible).
 void* g_updateFlashlightFn = nullptr;
+void* g_flashlightUpdateFn = nullptr;
 
 // Hash of "prop_equipment_flashlight_C" -- the class the wire packet's
 // itemClassHash field carries for flashlight events. Both _a and _b
@@ -71,8 +77,14 @@ bool ProbeLogEnabled() {
     return s_enabled;
 }
 
-void OnUpdateFlashlightPost(void* self, void* /*function*/, void* /*params*/) {
+void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     if (!self) return;
+    // Identify which of the two candidate hooks fired -- diagnostic in
+    // probe mode so we can prove which BP entry actually dispatches.
+    const char* which =
+        (function == g_flashlightUpdateFn) ? "Flashlight_Update" :
+        (function == g_updateFlashlightFn) ? "updateFlashlight" :
+        "<unknown>";
 
     // Echo-suppress: a receiver-applied state change going through any
     // future path that invokes updateFlashlight on the puppet should
@@ -117,8 +129,8 @@ void OnUpdateFlashlightPost(void* self, void* /*function*/, void* /*params*/) {
                 reinterpret_cast<uint8_t*>(light_R) + P::off::USceneComponent_VisFlagsByte);
             lightVisible = (flagsByte & 0x10) != 0;
         }
-        UE_LOGI("flashlight[POST] self=%p flashlight=%d hasFL=%d crankFL=%d "
-                "light_R=%p light.bVisible=%d", self,
+        UE_LOGI("flashlight[POST %s] self=%p flashlight=%d hasFL=%d crankFL=%d "
+                "light_R=%p light.bVisible=%d", which, self,
                 flashlight ? 1 : 0, hasFlashlight ? 1 : 0,
                 crankFlashlight ? 1 : 0, light_R, lightVisible ? 1 : 0);
     }
@@ -195,22 +207,52 @@ void Install(coop::net::Session* session) {
         // wait-and-retry shape.
         return;
     }
-    void* fn = R::FindFunction(playerCls, P::name::MainPlayerUpdateFlashlightFn);
-    if (!fn) {
-        UE_LOGW("flashlight: UFunction '%ls' not found on %ls",
-                P::name::MainPlayerUpdateFlashlightFn, P::name::MainPlayerClass);
+
+    // Register POST observers on BOTH candidate UFunctions. The BP graph
+    // dispatch path is:
+    //   InpActEvt_flashlight_...  -> "Flashlight Update"  -> updateFlashlight
+    // Hands-on 2026-05-25 NIGHT-3 showed that only the OUTER function is
+    // actually ProcessEvent-dispatched; the inner one is BP-inlined into
+    // it and never fires the observer. Registering both is cheap (2 of
+    // the 64 observer slots) and survives a future BP recook that might
+    // un-inline one or the other.
+    void* fnInner = R::FindFunction(playerCls, P::name::MainPlayerUpdateFlashlightFn);
+    void* fnOuter = R::FindFunction(playerCls, P::name::MainPlayerFlashlightUpdateFn);
+    if (!fnInner && !fnOuter) {
+        UE_LOGW("flashlight: NEITHER UFunction found on %ls (looked for '%ls' and '%ls')",
+                P::name::MainPlayerClass,
+                P::name::MainPlayerUpdateFlashlightFn,
+                P::name::MainPlayerFlashlightUpdateFn);
         return;
     }
-    if (!GT::RegisterPostObserver(fn, &OnUpdateFlashlightPost)) {
-        UE_LOGW("flashlight: RegisterPostObserver failed (table full or null cb)");
+    int registered = 0;
+    if (fnInner) {
+        if (GT::RegisterPostObserver(fnInner, &OnUpdateFlashlightPost)) {
+            g_updateFlashlightFn = fnInner;
+            ++registered;
+        } else {
+            UE_LOGW("flashlight: RegisterPostObserver(updateFlashlight) failed");
+        }
+    }
+    if (fnOuter) {
+        if (GT::RegisterPostObserver(fnOuter, &OnUpdateFlashlightPost)) {
+            g_flashlightUpdateFn = fnOuter;
+            ++registered;
+        } else {
+            UE_LOGW("flashlight: RegisterPostObserver('Flashlight Update') failed");
+        }
+    }
+    if (registered == 0) {
+        UE_LOGW("flashlight: both candidate observers failed to register -- aborting install");
         return;
     }
-    g_updateFlashlightFn = fn;
+
     g_flashlightClassHash = HashClassName(L"prop_equipment_flashlight_C");
     g_installed = true;
-    UE_LOGI("flashlight: POST observer installed on mainPlayer_C.updateFlashlight @ %p "
-            "(classHash=0x%08X, probe_log=%d)",
-            fn, g_flashlightClassHash, ProbeLogEnabled() ? 1 : 0);
+    UE_LOGI("flashlight: POST observers installed (updateFlashlight=%p, "
+            "'Flashlight Update'=%p, classHash=0x%08X, probe_log=%d)",
+            g_updateFlashlightFn, g_flashlightUpdateFn,
+            g_flashlightClassHash, ProbeLogEnabled() ? 1 : 0);
 }
 
 void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
