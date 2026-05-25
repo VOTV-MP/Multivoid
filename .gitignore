@@ -90,6 +90,11 @@ desktop.ini
 
 # ===== Claude Code per-machine config (MCP paths etc.) =====
 .claude/
+# User-decision 2026-05-25 NIGHT: CLAUDE.md is a per-user dev notebook
+# (Claude Code reads it as project context) and is now treated as local-only.
+# Existing tracked copy is untracked via `git rm --cached CLAUDE.md` in the
+# same commit that adds this line.
+CLAUDE.md
 
 # ===== Allow-list (override broad bans for our own outputs) =====
 !src/**/*.dll
