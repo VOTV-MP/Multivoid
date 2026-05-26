@@ -221,6 +221,120 @@ offsets after +0x3F8 looking for non-null heap pointers.
   "fix" code present.
 - Wire layer + identity Registry: unchanged, still passes LAN test.
 
+## 2026-05-26 EVENING -- final findings after 4 deep-RE passes
+
+After this initial document, three additional implementation passes
+were attempted, all dead-ended. Final state: ApplyToPuppet reverted
+to a no-op (commit `585b2a1`).
+
+### Pass 2: ProcessEvent call trace (`GT::SetCallTrace`)
+
+Added a global PE-name-trace gated on a thread-local flag. Set before
+invoking `Flashlight Update` via reflection on the puppet. Result:
+the trace captured exactly ONE PE dispatch (the outer `Flashlight Update`
+call itself) + ZERO inner UFunction calls.
+
+**Interpretation (per Agent 2 RE):** the BP function body is a
+bytecode stub that calls `ExecuteUbergraph_mainPlayer(EntryPoint)`
+via the BP VM's `EX_LocalFinalFunction` opcode. The VM dispatches it
+through `UObject::ProcessInternal`, NOT through `UObject::ProcessEvent`.
+So our hook never saw the inner calls. The ubergraph IS the actual
+flashlight-toggle code -- but on a controllerless puppet it
+early-returns at BP guards (`Controller != None`, `hasFlashlight`,
+`inMenu`).
+
+### Pass 3: AddComponentByClass + FinishAddComponent
+
+Per Agent 3's recommendation, this is the only reflection-callable
+path that internally runs `UActorComponent::RegisterComponent`,
+which transitively calls `CreateRenderState_Concurrent` ->
+`CreateSceneProxy`.
+
+Implemented in `item_activate.cpp::ApplyToPuppet`:
+- Spawn fresh `USpotLightComponent` via `AddComponentByClass(deferred=true)`
+- Set properties before Finish: `IntensityUnits=0` Unitless,
+  `bAffectsWorld=1`, `OuterConeAngle=40`, `AttenuationRadius=2000`,
+  `bVisible=1` (direct bit write)
+- `FinishAddComponent(component, manualAttachment=false, identity-+85cm-Z)`
+- Belt-and-braces: also reflection-call `SetVisibility(true, false)`
+
+Diagnostic after FinishAddComponent confirmed: `bRegistered=1`,
+`bVisible=1`, `bAffectsWorld=1`, `Mobility=2 Movable`, `Intensity=100`.
+All flag bits look perfect for proxy creation. BUT the autonomous
+screenshots STILL showed no visible illumination on the puppet
+(daylight ambient + likely +0x3F8 ISN'T the SceneProxy for this
+build's actual layout).
+
+### Pass 4: "Invalid prop" error mesh (USER ROOT-CAUSE FEEDBACK)
+
+User hands-on testing revealed that the orange/red "error mesh"
+visible at the host puppet's position on the client's screen was
+NOT a 3D placeholder mesh -- it was VOTV's in-game error UI
+overlay reading:
+
+```
+Invalid prop: "prop_equipment_flashlight_C"
+World context: "mainPlayer_C 2147480015"
+```
+
+The puppet's index `2147480015` is near `INT32_MAX` -- typical of
+an orphan/unregistered actor. VOTV's BP listener (on flashlight
+state changes OR on prop-lookup queries from anim BP) tries to
+locate the `prop_equipment_flashlight_C` instance in the puppet's
+inventory, finds the puppet has no inventory at all (we strip it
+at spawn), and raises this error.
+
+EVERY puppet-side mutation we attempted (AddComponentByClass
+spawn, `puppet.flashlight=true` bool write, `SetIntensity` on
+`puppet.light_R`) was triggering this error overlay.
+
+### Final state -- commit 585b2a1
+
+`ApplyToPuppet` is now a no-op:
+
+```cpp
+void ApplyToPuppet(...) {
+    // validate puppet + classHash...
+    g_echoSuppress.store(true);
+    // -- NO bool write
+    // -- NO SetIntensity
+    // -- NO AddComponentByClass
+    g_echoSuppress.store(false);
+    UE_LOGI("flashlight: applied to puppet=%p state=%d (no-op...)", ...);
+    // diagnostic readback on original light_R (read-only, observation)
+}
+```
+
+The wire layer + identity registry + per-tick state are all proven
+correct (sent=N applied=N every LAN test). The puppet's flashlight
+state is logically replicated, but the visual rendering on the
+puppet body is OPEN. No reflection mechanism is going to fix this
+without triggering the "Invalid prop" error.
+
+## Remaining options (out of Phase 5F Inc1-4 scope)
+
+1. **Native AOB-resolved `RegisterComponentWithWorld` direct call** --
+   spawn a SpotLight (via NewObject, not AddComponentByClass) and
+   manually invoke RegisterComponent via a function-pointer cast
+   resolved by AOB signature. Bypasses BP listeners that fire on
+   AddComponent. Risk: AOB-fragile.
+
+2. **Suppress the "Invalid prop" BP listener** -- find the BP UFunction
+   raising the error, install a PRE-observer that returns true (skips
+   original dispatch) for puppet world contexts. Pure reflection.
+   The "Invalid prop" text in the screenshot is the hint for the
+   BP function name to search for.
+
+3. **Spawn the `prop_equipment_flashlight_C` actor on the puppet and
+   add it to puppet's inventory** -- mirror what `EnsureFlashlightReady`
+   does for the local player, but on the puppet. Then BP listeners
+   find the prop, no error. Adds inventory-syncing complexity.
+
+4. **Hands-on user verification then ship as wire-only** -- accept
+   the visual limitation, document, move on.
+
+Choice goes to future-session direction.
+
 ## Cross-references
 
 - `[[project-flashlight-cone-deep-re-plan]]` — the plan that
