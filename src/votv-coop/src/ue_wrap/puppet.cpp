@@ -496,37 +496,19 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
         UE_LOGI("puppet[MainPlayer]: hid playermodel @ %p (no propagate)", playermodel);
     }
 
-    // Phase 5F (flashlight): force lag_fl spring arm + light_R visible
-    // at spawn. Two independent agents (code-explorer + code-architect)
-    // converged on the same root cause for "puppet flashlight cone
-    // doesn't render": the spring arm parent of light_R inherits a
-    // class-default hidden state (VOTV authors the flashlight light_R
-    // as off-by-default; lag_fl is treated as FP-camera-attached so
-    // its CDO may also be hidden). USceneComponent::IsVisible() cascades
-    // up the AttachParent chain -- so even when our ApplyToPuppet sets
-    // light_R.bVisible=true + SetIntensity(>0), the cascade leaves it
-    // effectively invisible.
-    //
-    // Forcing both visible HERE (one-shot at spawn) unblocks the cascade.
-    // Subsequent on/off toggles drive light_R.Intensity exclusively (the
-    // BP's actual mechanism per Agent 1's RE) so we never have to touch
-    // bVisible again.
-    if (void* lag_fl = ReadPtr(actor, P::off::AmainPlayer_lag_fl)) {
-        E::SetComponentVisible(lag_fl, /*visible=*/true, /*propagate=*/false);
-        UE_LOGI("puppet[MainPlayer]: shown lag_fl @ %p (spring arm parent of light_R)", lag_fl);
-    }
-    if (void* light_R = ReadPtr(actor, P::off::AmainPlayer_light_R)) {
-        E::SetComponentVisible(light_R, /*visible=*/true, /*propagate=*/false);
-        // Force Intensity=0 at spawn so the CDO-default 0.2 doesn't briefly
-        // render a faint cone before the first ItemActivate packet arrives.
-        // Direct field write is fine here because the next ApplyToPuppet
-        // call will use SetIntensity which DOES mark dirty -- this spawn
-        // write only needs to avoid an initial frame artifact.
-        *reinterpret_cast<float*>(
-            reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity) = 0.f;
-        UE_LOGI("puppet[MainPlayer]: shown light_R @ %p (flashlight; CDO Intensity forced 0)",
-                light_R);
-    }
+    // Phase 5F (flashlight): NO forced visibility writes on lag_fl /
+    // light_R at spawn. Earlier attempts unhid them via SetComponentVisible
+    // -- user reported a "huge ERROR model" appearing on the puppet
+    // (likely a SpringArm debug arrow or a Light BillboardComponent
+    // sprite that has no asset in shipping builds and renders as UE4's
+    // pink/orange error placeholder). RULE 1: identify the real cone-
+    // visibility mechanism rather than crutch around it with unhide
+    // hacks. Subsequent ApplyToPuppet calls drive light_R.Intensity via
+    // the SetIntensity UFunction, which internally MarkRenderStateDirty's
+    // the proxy and (per Agent 1's RE) is the actual mechanism VOTV's BP
+    // uses for the flashlight toggle. If the cone STILL doesn't appear,
+    // the next iteration should examine bAffectsWorld / IntensityUnits
+    // -- NOT force-show visualization components.
     // 2026-05-25 v5 ROOT-CAUSE: do NOT hide ACharacter::Mesh.
     // Diagnostic logs from 95d7d90 proved (after FProperty dump confirmed
     // SetVisibility param name is correct + direct bVisible bit write
