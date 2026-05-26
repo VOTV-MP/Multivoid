@@ -510,14 +510,19 @@ void RunAutonomousFlashlightTest() {
     // have done (flip bool + set Intensity). Visual toggles on the sender,
     // wire packet flies to the peer, receiver applies same intensity to
     // puppet -- end-to-end visual + wire from one entry point.
-    const int kIterations = 4;
+    // 5 iterations so final state is ON (each iter toggles, so odd
+    // count starting from OFF ends ON). This lets the end screenshot
+    // capture BOTH peers with their flashlights ON visually (user
+    // feedback 2026-05-26: 4-iter pattern left both OFF + the staggered
+    // peer-startup made the mid screenshot catch asymmetric states).
+    const int kIterations = 5;
     for (int i = 0; i < kIterations; ++i) {
         UE_LOGI("flashlight_test: iteration %d -- DebugForceToggle (local visual + wire)", i);
         coop::item_activate::DebugForceToggle(rsv->player);
         ::Sleep(2000);
     }
     UE_LOGI("flashlight_test: DONE -- %d iterations on %s (DebugForceToggle path; "
-            "BP reflection paths all gate-blocked)", kIterations, roleStr);
+            "final state should be ON for visual screenshot)", kIterations, roleStr);
 }
 
 DWORD WINAPI FlashlightTestThread(LPVOID /*arg*/) {

@@ -212,17 +212,23 @@ function Capture-Pair($labelSuffix) {
 
 if ($pass) {
     if ($FlashlightTest) {
-        # Flashlight test timing (matches RunAutonomousFlashlightTest):
+        # Flashlight test timing (matches RunAutonomousFlashlightTest's
+        # 5-iteration routine; each peer ends with flashlight ON):
         #   PASS + ~15 s   routine starts (post-stabilization)
-        #   PASS + ~17 s   iteration 0 fires (Flashlight Update + observer + send)
-        #   PASS + ~19 s   iteration 1
-        #   PASS + ~21 s   iteration 2
-        #   PASS + ~23 s   iteration 3
-        #   PASS + ~25 s   routine done
-        Step "PASS detected; FLASHLIGHT TEST armed -- waiting ~30 s for toggles to fly..."
-        Start-Sleep -Seconds 18
+        #   PASS + ~17 s   iter 0 ON
+        #   PASS + ~19 s   iter 1 OFF
+        #   PASS + ~21 s   iter 2 ON
+        #   PASS + ~23 s   iter 3 OFF
+        #   PASS + ~25 s   iter 4 ON  (final state)
+        #   PASS + ~27 s   routine done
+        # Peers can start staggered by up to ~5s (different boot times),
+        # so we wait until BOTH have completed their last iter + the
+        # wire round-trip lands. PASS+35s covers a 5s host-vs-client
+        # stagger + 2s of buffer past the late peer's iter 4.
+        Step "PASS detected; FLASHLIGHT TEST armed -- waiting for both peers' final ON toggle to land..."
+        Start-Sleep -Seconds 22
         Capture-Pair "flashlight-mid"
-        Start-Sleep -Seconds 12
+        Start-Sleep -Seconds 13
         Capture-Pair "flashlight-end"
     } elseif ($GrabTest) {
         # Grab test timing (matches RunAutonomousGrabTest()):

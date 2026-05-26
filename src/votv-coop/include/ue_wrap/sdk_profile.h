@@ -335,6 +335,36 @@ inline constexpr size_t ULightComponentBase_Intensity = 0x020C;  // float
 // mirror the source's scale when applying intensity to the puppet.
 inline constexpr size_t ULocalLightComponent_IntensityUnits = 0x0328;  // uint8 (ELightUnits)
 
+// ULightComponent::SceneProxy raw pointer (IDA-confirmed 2026-05-26 via
+// the SetIntensity decompile: sub_142A930E0 -> sub_142A98430 reads
+// *(QWORD*)(a1 + 0x3F8) as the proxy; the function HARD NO-OPS if
+// it's null (no MarkRenderStateDirty fallback). This is the single
+// most diagnostic field for the Phase 5F cone-doesn't-render problem
+// -- if it's null on the puppet, MarkRenderStateDirty is a no-op and
+// every Set*-on-light UFunction silently does nothing.
+inline constexpr size_t ULightComponent_SceneProxy = 0x03F8;  // FLightSceneProxy*
+
+// UActorComponent bRegistered bit (IDA-confirmed 2026-05-26: the
+// SetIntensity early-out guard at sub_142A930E0:0x142A93112 tests
+// `(*(BYTE*)(a1 + 0x88) & 1) == 0` which matches UE4.27's
+// `IsRegistered()` && Mobility check. So bRegistered = byte 0x0088,
+// bit 0. Note this packed byte ALSO holds bNetAddressable/bReplicates
+// (reflected names) -- the engine union'd them onto the same byte.
+inline constexpr size_t UActorComponent_RegFlagsByte = 0x0088;  // bRegistered @ bit 0
+
+// USceneComponent::Mobility (Engine.hpp:17916). 0=Static, 1=Stationary,
+// 2=Movable. Static lights don't get runtime-mutable SceneProxies, so
+// if a light is mistakenly Static we'd see exactly the puppet symptom.
+inline constexpr size_t USceneComponent_Mobility = 0x014F;  // uint8
+
+// ULightComponentBase flags byte at +0x0214 (bAffectsWorld @ bit 0,
+// CastShadows @ bit 1, bCastVolumetricShadow @ bit 6, bCastDeepShadow
+// @ bit 7). bAffectsWorld=false on the CDO is one of the candidate
+// root causes for "SceneProxy never created" -- the OnRegister path
+// skips proxy creation when bAffectsWorld is false even if bVisible
+// is true.
+inline constexpr size_t ULightComponentBase_FlagsByte = 0x0214;  // bAffectsWorld @ bit 0
+
 // USceneComponent RelativeRotation (Engine.hpp:17900-ish, FRotator at
 // offset 0x0128). FRotator layout is {Pitch, Yaw, Roll} so Pitch is the
 // first float at +0x0128, Yaw at +0x012C, Roll at +0x0130. Used to
