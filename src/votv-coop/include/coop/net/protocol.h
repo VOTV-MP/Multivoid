@@ -42,10 +42,14 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 //     re-enables SimulatePhysics + SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
 //   - WireKey carries the FName string (cross-peer stable, idx is NOT --
 //     see research/findings/votv-physics-interaction-deep-re-2026-05-23.md)
+// v6 (2026-05-26 PM): ItemActivatePayload grew 16 -> 24 bytes -- added float
+// intensity + outerConeAngle + innerConeAngle + uint8 mode so the receiver can
+// mirror the sender's EXACT cone shape (Phase 5F user feedback: puppet's
+// flashlight was too bright AND focused-vs-spread mode wasn't synced).
 // v3 (2026-05-23 PM): PoseSnapshot grew from 24 -> 28 bytes (added headYawDelta).
-// Both peers must run v5; v3/v4 packets are rejected at the header check. No
+// Both peers must run v6; older packets are rejected at the header check. No
 // back-compat layer (RULE 2 -- mod is pre-ship; bump cleanly).
-inline constexpr uint16_t kProtocolVersion = 5;
+inline constexpr uint16_t kProtocolVersion = 6;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -139,7 +143,7 @@ enum class ReliableKind : uint8_t {
                        //     equipment items. Reserved IDs 9-11 are queued for
                        //     Phase 5D DoorState/LightState/LockState (RE doc
                        //     landed earlier; impl pending).
-                       //     Payload: ItemActivatePayload (16 bytes).
+                       //     Payload: ItemActivatePayload (24 bytes -- v6).
 };
 
 #pragma pack(push, 1)
@@ -431,19 +435,28 @@ static_assert(sizeof(TeleportClientPayload) <= 256 - 20 - 8,
 //   "prop_equipment_flashlight_C"). Cross-peer stable because UClass
 //   FNames are deterministic from the cooked content.
 //
-// paramBlob -- spare bytes for class-specific extras (e.g. _c crank
-// lantern energy byte). Initially zeroed for flashlight _a/_b.
+// v6 fields (2026-05-26 PM, Phase 5F user feedback after Option α landed):
+//   intensity, outerConeAngle, innerConeAngle -- snapshot the sender's exact
+//   light_R cone shape AFTER the BP toggle ran. Receiver applies via
+//   SetIntensity / SetOuterConeAngle / SetInnerConeAngle UFunctions so the
+//   puppet mirrors brightness AND focused-vs-spread mode without any
+//   mode-byte-to-cone-angle mapping (data-driven).
+//   mode -- the mp.flashlightMode value AFTER the toggle (puppet does NOT
+//   write this byte to avoid hitting any BP listener tied to the field; mode
+//   is carried for future telemetry / non-cone effects).
 struct ItemActivatePayload {
     uint32_t itemClassHash;   // CRC32 of item UClass FName string (cross-peer stable)
     uint8_t  peerSessionId;   // sender peer id (host=0, joiners 1..)
     uint8_t  state;           // 0 = off / inactive, 1 = on / active
     uint8_t  flags;           // bit0: has_actor_key (1 = use actorKeyHash)
-    uint8_t  _pad;
+    uint8_t  mode;            // v6: mp.flashlightMode (0=default spread, 1=focused, ...)
     uint32_t actorKeyHash;    // CRC32(Aprop_C::Key string) when flags.has_actor_key=1; 0 otherwise
-    uint8_t  paramBlob[4];    // spare; class-specific (e.g. energy for crank lantern)
+    float    intensity;       // v6: light_R.Intensity AFTER BP ran (Unitless scale ~0..10)
+    float    outerConeAngle;  // v6: light_R.OuterConeAngle (degrees; ~40 default, ~12 focused)
+    float    innerConeAngle;  // v6: light_R.InnerConeAngle (degrees; ~0 default, varies)
 };
-static_assert(sizeof(ItemActivatePayload) == 16,
-              "ItemActivatePayload must be exactly 16 bytes (wire-format)");
+static_assert(sizeof(ItemActivatePayload) == 24,
+              "ItemActivatePayload must be exactly 24 bytes (v6 wire-format)");
 static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
               "ItemActivatePayload must fit in one reliable datagram");
 

@@ -484,10 +484,12 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
                 break;
             }
             void* puppet = remote->GetActor();
-            const uint32_t classHash = p.itemClassHash;
-            const uint8_t state = p.state;
-            ue_wrap::game_thread::Post([puppet, classHash, state] {
-                ::coop::item_activate::ApplyToPuppet(puppet, classHash, state);
+            // Copy the parsed payload by value so the GT::Post lambda owns
+            // a stable snapshot (the msg buffer doesn't survive past this
+            // scope). v6 layout carries intensity + cone shape too.
+            net::ItemActivatePayload pCopy = p;
+            ue_wrap::game_thread::Post([puppet, pCopy] {
+                ::coop::item_activate::ApplyToPuppet(puppet, pCopy);
             });
             break;
         }

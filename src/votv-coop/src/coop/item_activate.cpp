@@ -51,16 +51,28 @@ bool g_installed = false;
 // the same press (which the inlining argument says won't happen), the
 // receiver tolerates the duplicate (writing the same bool twice = no-op
 // + at human-press cadence the doubled wire traffic is negligible).
+//
+// 2026-05-26 v6: timerHoldFlashlightFn added for the hold-F mode-change
+// trigger (default-spread <-> focused). The POST observer reads the
+// post-mutation flashlightMode + light_R cone shape and sends a v6
+// ItemActivate packet so the receiver mirrors the cone shape.
 void* g_updateFlashlightFn = nullptr;
 void* g_flashlightUpdateFn = nullptr;
 void* g_flashlightInput13Fn = nullptr;
 void* g_flashlightInput14Fn = nullptr;
+void* g_timerHoldFlashlightFn = nullptr;
 
-// Last sent state so the input-event hook doesn't send a packet for
-// the F-RELEASE event (which fires the InpActEvt_14 UFunction but
-// doesn't change `mp.flashlight`). One value per local process is
-// enough; the sender is always the local player. -1 = no send yet.
-std::atomic<int> g_lastSentState{-1};
+// v6 dedup: track last-sent packet signature (state + mode + intensity +
+// cone angles, encoded as a u64 hash). The hold-F mode change keeps state=on
+// but mutates mode + cone angles, so a state-only dedup would drop the
+// mode-change packet. Sentinel `kNoSendYet` = no packet ever sent. Single
+// atomic so the load is uninterruptible (audit-fix 2026-05-26: prior
+// split-atomic [g_haveLastSent + g_lastSentSig] had a race window where
+// DebugForceToggle on the worker thread could update the bool BEFORE the
+// signature, letting an observer on the GT read haveLastSent=true with the
+// OLD signature and erroneously dedup a fresh mode-change packet).
+inline constexpr uint64_t kNoSendYet = 0xFFFFFFFFFFFFFFFFULL;
+std::atomic<uint64_t> g_lastSentSig{kNoSendYet};
 
 // Latched "on" intensity. Sampled from the LOCAL player's light_R the
 // first time we observe it greater than the off-state default (which
@@ -111,15 +123,66 @@ bool ProbeLogEnabled() {
     return s_enabled;
 }
 
+// v6 helper: snapshot the local mp's flashlight state + cone shape into a
+// ItemActivatePayload. The reads happen on the calling thread (POST observer
+// runs on the game thread; DebugForceToggle calls this inside its GT::Post
+// lambda). All reads are direct memory, no UFunction dispatch. Returns
+// false if light_R is dead (caller skips the send).
+bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::net::Session* session) {
+    if (!mp || !session) return false;
+    void* light_R = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_light_R);
+    if (!light_R || !R::IsLive(light_R)) return false;
+
+    const bool flashlight = *reinterpret_cast<bool*>(
+        reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_flashlight);
+    const uint8_t mode = *reinterpret_cast<uint8_t*>(
+        reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_flashlightMode);
+    const float intensity = *reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity);
+    const float outerCone = *reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(light_R) + P::off::USpotLightComponent_OuterConeAngle);
+    const float innerCone = *reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(light_R) + P::off::USpotLightComponent_InnerConeAngle);
+
+    out = {};
+    out.itemClassHash   = g_flashlightClassHash;
+    out.peerSessionId   = (session->role() == coop::net::Role::Host) ? 0 : 1;
+    out.state           = flashlight ? 1 : 0;
+    out.flags           = 0;  // Case (b) -- no actor key
+    out.mode            = mode;
+    out.actorKeyHash    = 0;
+    out.intensity       = intensity;
+    out.outerConeAngle  = outerCone;
+    out.innerConeAngle  = innerCone;
+    return true;
+}
+
+// FNV1a-ish 64-bit hash of the payload's mutable fields (state, mode,
+// intensity, cones). Used to dedup the observer fires that all happen
+// for the same logical change (press fires InpActEvt_13 + Flashlight Update
+// + updateFlashlight in a chain; hold-F fires timerHoldFlashlight + maybe
+// some of the others).
+uint64_t SignaturePayload(const coop::net::ItemActivatePayload& p) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    auto mix = [&](uint64_t v) { h ^= v; h *= 0x100000001b3ULL; };
+    mix(p.state);
+    mix(p.mode);
+    mix(reinterpret_cast<const uint32_t&>(p.intensity));
+    mix(reinterpret_cast<const uint32_t&>(p.outerConeAngle));
+    mix(reinterpret_cast<const uint32_t&>(p.innerConeAngle));
+    return h;
+}
+
 void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     if (!self) return;
-    // Identify which of the two candidate hooks fired -- diagnostic in
-    // probe mode so we can prove which BP entry actually dispatches.
+    // Identify which hook fired -- diagnostic in probe mode.
     const char* which =
-        (function == g_flashlightUpdateFn) ? "Flashlight_Update" :
-        (function == g_updateFlashlightFn) ? "updateFlashlight" :
-        (function == g_flashlightInput13Fn) ? "InpActEvt_13" :
-        (function == g_flashlightInput14Fn) ? "InpActEvt_14" :
+        (function == g_flashlightUpdateFn)     ? "Flashlight_Update" :
+        (function == g_updateFlashlightFn)     ? "updateFlashlight"  :
+        (function == g_flashlightInput13Fn)    ? "InpActEvt_13"      :
+        (function == g_flashlightInput14Fn)    ? "InpActEvt_14"      :
+        (function == g_timerHoldFlashlightFn)  ? "timerHoldFlashlight" :
         "<unknown>";
 
     // Echo-suppress: a receiver-applied state change going through any
@@ -211,34 +274,37 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
-    // Dedup: if InpActEvt_14 (release) fires after InpActEvt_13 (press),
-    // mp.flashlight didn't change between them -- last-sent-state catches
-    // that and skips the redundant send. Also catches a future BP recook
-    // where some other handler fires repeatedly with the same state.
-    const int newState = flashlight ? 1 : 0;
-    if (g_lastSentState.exchange(newState, std::memory_order_acq_rel) == newState) {
+    coop::net::ItemActivatePayload p{};
+    if (!BuildPayloadFromLocal(self, p, s)) return;
+
+    // v6 dedup: signature includes state + mode + intensity + cone angles.
+    // Press fires InpActEvt_13 + Flashlight Update + updateFlashlight in a
+    // chain (all 3 see the same final state); hold-F fires
+    // timerHoldFlashlight + possibly some of the others. We send ONLY the
+    // first observer of a logical change. SINGLE atomic with sentinel so
+    // the load can never see a torn "have-flag + stale-sig" state (audit
+    // 2026-05-26 fix).
+    const uint64_t sig = SignaturePayload(p);
+    // FNV hash CAN by extraordinary coincidence equal kNoSendYet (1 in 2^64);
+    // avoid the sentinel value to keep "no send yet" disambiguated.
+    const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
+    if (g_lastSentSig.load(std::memory_order_acquire) == storeSig) {
         if (ProbeLogEnabled()) {
-            UE_LOGI("flashlight: state unchanged (still %d) -- no wire send", newState);
+            UE_LOGI("flashlight: payload signature unchanged (sig=%llX) -- no wire send",
+                    static_cast<unsigned long long>(storeSig));
         }
         return;
     }
 
-    coop::net::ItemActivatePayload p{};
-    p.itemClassHash = g_flashlightClassHash;
-    // 1v1 session: host=0, client=1. Once we scale to N peers, this gets
-    // replaced with a real session id allocated by the host.
-    p.peerSessionId = (s->role() == coop::net::Role::Host) ? 0 : 1;
-    p.state = flashlight ? 1 : 0;
-    p.flags = 0;          // Case (b) -- no actor key
-    p._pad = 0;
-    p.actorKeyHash = 0;
-    // p.paramBlob stays zero.
-
     const bool sent = s->SendReliable(coop::net::ReliableKind::ItemActivate, &p, sizeof(p));
     if (!sent) {
-        UE_LOGW("flashlight: SendReliable failed (channel busy or not connected)");
+        UE_LOGW("flashlight: SendReliable failed (channel busy or not connected) [%s]", which);
     } else {
-        UE_LOGI("flashlight: sent state=%d (peer=%u)", p.state, p.peerSessionId);
+        g_lastSentSig.store(storeSig, std::memory_order_release);
+        UE_LOGI("flashlight: sent state=%d mode=%u Intensity=%.2f outerCone=%.1f innerCone=%.1f "
+                "(peer=%u, via %s)",
+                p.state, p.mode, p.intensity, p.outerConeAngle, p.innerConeAngle,
+                p.peerSessionId, which);
     }
 }
 
@@ -324,13 +390,17 @@ bool DebugForceToggle(void* mp) {
         return newState;
     }
 
+    // v6: snapshot the local cone shape into the packet. DebugForceToggle
+    // bypasses the BP (directly writes flashlight bool + SetIntensity), so
+    // outer/inner cone won't reflect a real mode change -- they'll carry
+    // whatever the BP-default values are on the local light_R. That's fine
+    // for the autotest (focused-vs-spread is a hands-on feature; autotest
+    // doesn't exercise hold-F).
     coop::net::ItemActivatePayload p{};
-    p.itemClassHash = g_flashlightClassHash;
-    p.peerSessionId = (s->role() == coop::net::Role::Host) ? 0 : 1;
-    p.state = newState ? 1 : 0;
-    p.flags = 0;
-    p._pad = 0;
-    p.actorKeyHash = 0;
+    if (!BuildPayloadFromLocal(mp, p, s)) {
+        UE_LOGW("flashlight: DebugForceToggle BuildPayloadFromLocal failed (light_R dead?)");
+        return newState;
+    }
 
     bool sent = false;
     int attempts = 0;
@@ -340,11 +410,12 @@ bool DebugForceToggle(void* mp) {
         ::Sleep(25);
     }
     if (sent) {
-        // Update the dedup tracker so the regular observer path (if any
-        // BP-driven fire happens later) doesn't re-send the same value.
-        g_lastSentState.store(p.state, std::memory_order_release);
-        UE_LOGI("flashlight: DebugForceToggle sent state=%d (peer=%u, after %d retr%s)",
-                p.state, p.peerSessionId, attempts,
+        const uint64_t sig = SignaturePayload(p);
+        const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
+        g_lastSentSig.store(storeSig, std::memory_order_release);
+        UE_LOGI("flashlight: DebugForceToggle sent state=%d mode=%u Intensity=%.2f outerCone=%.1f "
+                "(peer=%u, after %d retr%s)",
+                p.state, p.mode, p.intensity, p.outerConeAngle, p.peerSessionId, attempts,
                 attempts == 1 ? "y" : "ies");
     } else {
         UE_LOGW("flashlight: DebugForceToggle FAILED to send after 200 retries -- "
@@ -401,10 +472,11 @@ void Install(coop::net::Session* session) {
     // dedups duplicates if more than one fires for a single F-press.
     struct Candidate { const wchar_t* name; void** outPtr; };
     Candidate cs[] = {
-        { P::name::MainPlayerUpdateFlashlightFn,  &g_updateFlashlightFn  },
-        { P::name::MainPlayerFlashlightUpdateFn,  &g_flashlightUpdateFn  },
-        { P::name::MainPlayerFlashlightInput13Fn, &g_flashlightInput13Fn },
-        { P::name::MainPlayerFlashlightInput14Fn, &g_flashlightInput14Fn },
+        { P::name::MainPlayerUpdateFlashlightFn,    &g_updateFlashlightFn    },
+        { P::name::MainPlayerFlashlightUpdateFn,    &g_flashlightUpdateFn    },
+        { P::name::MainPlayerFlashlightInput13Fn,   &g_flashlightInput13Fn   },
+        { P::name::MainPlayerFlashlightInput14Fn,   &g_flashlightInput14Fn   },
+        { P::name::MainPlayerTimerHoldFlashlightFn, &g_timerHoldFlashlightFn },
     };
     int registered = 0;
     for (auto& c : cs) {
@@ -430,62 +502,133 @@ void Install(coop::net::Session* session) {
     g_installed = true;
     UE_LOGI("flashlight: %d POST observer(s) installed (updateFlashlight=%p, "
             "'Flashlight Update'=%p, InpActEvt_13=%p, InpActEvt_14=%p, "
-            "classHash=0x%08X, probe_log=%d)",
+            "timerHoldFlashlight=%p, classHash=0x%08X, probe_log=%d)",
             registered, g_updateFlashlightFn, g_flashlightUpdateFn,
             g_flashlightInput13Fn, g_flashlightInput14Fn,
-            g_flashlightClassHash, ProbeLogEnabled() ? 1 : 0);
+            g_timerHoldFlashlightFn, g_flashlightClassHash,
+            ProbeLogEnabled() ? 1 : 0);
 }
 
-void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
+void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& payload) {
     if (!puppetActor || !R::IsLive(puppetActor)) {
         UE_LOGW("flashlight: ApplyToPuppet called with invalid puppet=%p", puppetActor);
         return;
     }
-    if (classHash != g_flashlightClassHash) {
-        // Unknown item class -- could be a future radio/torch entry we
-        // don't handle yet. Surface it as a warning rather than silently
-        // dropping.
+    if (payload.itemClassHash != g_flashlightClassHash) {
         UE_LOGW("flashlight: ApplyToPuppet classHash mismatch (got 0x%08X, "
-                "expected 0x%08X = flashlight) -- dropping", classHash,
+                "expected 0x%08X = flashlight) -- dropping", payload.itemClassHash,
                 g_flashlightClassHash);
         return;
     }
 
-    // 2026-05-26 root-cause diagnostic step: writing flashlight bool
-    // on the puppet triggers VOTV's BP error path "Invalid prop:
-    // prop_equipment_flashlight_C" because some BP listener tries
-    // to look up the flashlight prop in the puppet's empty
-    // inventory. Skip all puppet field writes for now to confirm
-    // the trigger source.
-    const bool newState = (state != 0);
+    const bool newState = (payload.state != 0);
 
-    // Toggle the puppet's spot light. Echo-suppress around the call --
-    // SetComponentVisible internally uses reflection UFunctions
-    // (SetVisibility / SetHiddenInGame) which DO dispatch through
-    // ProcessEvent. None of those is updateFlashlight so the observer
-    // wouldn't fire anyway, but the suppress flag is cheap insurance
-    // for future code that calls the higher-level path.
     void* light_R = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(puppetActor) + P::off::AmainPlayer_light_R);
     if (!light_R || !R::IsLive(light_R)) {
-        UE_LOGW("flashlight: puppet light_R missing or dead -- bool written, "
-                "light not toggled (puppet=%p light=%p)", puppetActor, light_R);
+        UE_LOGW("flashlight: puppet light_R missing or dead -- light not toggled "
+                "(puppet=%p light=%p)", puppetActor, light_R);
         return;
     }
+
+    // 2026-05-26 Option α (deep-RE pass-5 convergence after 3 agents):
+    // Drive the EXISTING puppet light_R via SetVisibility + SetIntensity
+    // UFunctions ONLY. Do NOT write the puppet.flashlight bool (that
+    // triggers the BP `updateFlashlight` ubergraph which is A1's
+    // highest-confidence "Invalid prop" emitter). Do NOT
+    // AddComponentByClass (component-attached BP listeners on
+    // mainPlayer_C). Do NOT broadcast flashlightStateChanged
+    // (verified dead delegate by A2 -- zero subscribers).
+    //
+    // Why SetVisibility is the key: it's a USceneComponent UFunction
+    // (ProcessEvent-dispatched native). Its body sets bVisible bit +
+    // calls the OnVisibilityChanged virtual. For ULightComponent the
+    // virtual calls MarkRenderStateDirty (pure native, NOT a UFunction
+    // -- so it CANNOT fire BP observers). MarkRenderStateDirty
+    // schedules RecreateRenderState_Concurrent at end-of-frame which
+    // runs CreateSceneProxy. The puppet light_R's bRegistered=1 +
+    // visByte bit-5 already pass the cascade per diagnostic readout
+    // (regByte=0x2B visByte=0x63 bAffectsWorld=1 Mobility=Movable).
+    // Once the proxy is created, our existing SetIntensity wire path
+    // drives brightness.
+    //
+    // Direct bit writes to bVisible do NOT trigger MarkRenderStateDirty
+    // (just a memory store, no virtual dispatch). That's why the
+    // earlier 0d5bce5/722031e attempts which used direct bit writes
+    // produced no visible change.
     g_echoSuppress.store(true, std::memory_order_release);
 
-    // 2026-05-26 root-cause-isolation step: VOTV displays an in-game
-    // error "Invalid prop: prop_equipment_flashlight_C" with the
-    // puppet as the world context, triggered by some BP listener
-    // when we mutate the puppet's flashlight state. To isolate the
-    // trigger, this step does NO physical mutation on the puppet --
-    // just acknowledges the wire receipt. If the error mesh
-    // disappears with this version, we know our writes triggered it
-    // and can bisect.
+    static void* sSetVisibilityFn      = nullptr;
+    static void* sSetIntensityFn       = nullptr;
+    static void* sSetOuterConeAngleFn  = nullptr;
+    static void* sSetInnerConeAngleFn  = nullptr;
+    if (!sSetVisibilityFn) {
+        if (void* sceneCls = R::FindClass(P::name::SceneComponentClass)) {
+            sSetVisibilityFn = R::FindFunction(sceneCls, P::name::SetVisibilityFn);
+        }
+    }
+    if (!sSetIntensityFn) {
+        if (void* lightCls = R::FindClass(L"LightComponent")) {
+            sSetIntensityFn = R::FindFunction(lightCls, P::name::SetIntensityFn);
+        }
+    }
+    if (!sSetOuterConeAngleFn) {
+        if (void* spotCls = R::FindClass(P::name::SpotLightComponentClass)) {
+            sSetOuterConeAngleFn = R::FindFunction(spotCls, P::name::SetOuterConeAngleFn);
+            sSetInnerConeAngleFn = R::FindFunction(spotCls, P::name::SetInnerConeAngleFn);
+        }
+    }
+
+    // 1) SetVisibility(newState, false) -- triggers MarkRenderStateDirty
+    //    on the FIRST transition (false->true or true->false). Required
+    //    for proxy creation on the orphan puppet (CreateRenderState_
+    //    Concurrent runs on dirty mark; light_R's pre-existing
+    //    bRegistered=1 + visByte bit-5 pass the cascade).
+    if (sSetVisibilityFn) {
+        ue_wrap::ParamFrame f(sSetVisibilityFn);
+        f.Set<bool>(L"bNewVisibility", newState);
+        f.Set<bool>(L"bPropagateToChildren", false);
+        ue_wrap::Call(light_R, f);
+    } else {
+        UE_LOGW("flashlight: SceneComponent::SetVisibility UFunction not resolved");
+    }
+
+    // 2) SetIntensity(packet.intensity) -- mirror sender's exact brightness.
+    //    For OFF state, sender's intensity is the BP's "off" sentinel
+    //    (~0.2 Unitless) which renders as ~no light. No fallback latch
+    //    needed -- the sender sends the truth.
+    const float targetIntensity = newState ? payload.intensity : 0.f;
+    if (sSetIntensityFn) {
+        ue_wrap::ParamFrame f(sSetIntensityFn);
+        f.Set<float>(L"NewIntensity", targetIntensity);
+        ue_wrap::Call(light_R, f);
+    } else {
+        UE_LOGW("flashlight: LightComponent::SetIntensity UFunction not resolved");
+    }
+
+    // 3) SetOuterConeAngle + SetInnerConeAngle -- mirror sender's cone
+    //    shape (default-spread vs focused mode from hold-F). Both
+    //    UFunctions internally MarkRenderStateDirty so the proxy
+    //    refreshes with the new angles next frame. Only apply when ON
+    //    (cone shape on an off light is invisible; saves two UFunction
+    //    dispatches per off toggle).
+    if (newState) {
+        if (sSetOuterConeAngleFn && payload.outerConeAngle > 0.f) {
+            ue_wrap::ParamFrame f(sSetOuterConeAngleFn);
+            f.Set<float>(L"NewOuterConeAngle", payload.outerConeAngle);
+            ue_wrap::Call(light_R, f);
+        }
+        if (sSetInnerConeAngleFn && payload.innerConeAngle >= 0.f) {
+            ue_wrap::ParamFrame f(sSetInnerConeAngleFn);
+            f.Set<float>(L"NewInnerConeAngle", payload.innerConeAngle);
+            ue_wrap::Call(light_R, f);
+        }
+    }
+
     g_echoSuppress.store(false, std::memory_order_release);
-    UE_LOGI("flashlight: applied to puppet=%p state=%d (no-op diagnostic build; "
-            "checking if any puppet field-write causes the 'Invalid prop' error mesh)",
-            puppetActor, newState ? 1 : 0);
+    UE_LOGI("flashlight: applied to puppet=%p state=%d Intensity=%.2f outerCone=%.1f innerCone=%.1f mode=%u",
+            puppetActor, newState ? 1 : 0, targetIntensity,
+            payload.outerConeAngle, payload.innerConeAngle, payload.mode);
 
     // Diagnostic readback: confirm the puppet's light_R actually has the
     // fields we expect AFTER our writes. The 2026-05-26 deep-RE plan

@@ -26,7 +26,7 @@
 
 #include <cstdint>
 
-namespace coop::net { class Session; }
+namespace coop::net { class Session; struct ItemActivatePayload; }
 
 namespace coop::item_activate {
 
@@ -37,12 +37,12 @@ namespace coop::item_activate {
 // observer can SendReliable; nullptr disables broadcasting.
 void Install(coop::net::Session* session);
 
-// Receiver-side apply: peer reported their flashlight changed state.
-// puppetActor = the mainPlayer_C orphan we already spawned for that
-// peer (event_feed::Update has &g_orphan). classHash distinguishes
-// flashlight vs future radio/torch payloads -- mismatched classes
-// no-op. Game thread only.
-void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state);
+// Receiver-side apply: peer reported their flashlight state/cone changed.
+// puppetActor = the mainPlayer_C orphan we already spawned for that peer.
+// Payload carries: state (on/off), intensity, outer/inner cone angles,
+// mode byte. classHash distinguishes flashlight vs future radio/torch
+// payloads -- mismatched classes no-op. Game thread only.
+void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& p);
 
 // FNV-1a 32-bit hash of a wide string. Used for itemClassHash
 // (CRC32 was named in the RE doc but FNV-1a is just as cross-peer

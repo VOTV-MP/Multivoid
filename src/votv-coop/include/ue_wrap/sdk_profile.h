@@ -357,6 +357,16 @@ inline constexpr size_t UActorComponent_RegFlagsByte = 0x0088;  // bRegistered @
 // if a light is mistakenly Static we'd see exactly the puppet symptom.
 inline constexpr size_t USceneComponent_Mobility = 0x014F;  // uint8
 
+// USpotLightComponent cone-angle offsets (Engine.hpp via UE4.27 stock layout).
+// Read directly from sender's local light_R to snapshot the cone shape; the
+// receiver writes them via the SetOuterConeAngle / SetInnerConeAngle UFunctions
+// so the proxy MarkRenderStateDirty is called (direct field writes don't
+// notify the renderer; the cone shape wouldn't update visually until the next
+// proxy recreate). Phase 5F v6 wire-format (2026-05-26 PM).
+inline constexpr size_t USpotLightComponent_InnerConeAngle = 0x0358;  // float (deg)
+inline constexpr size_t USpotLightComponent_OuterConeAngle = 0x035C;  // float (deg)
+inline constexpr size_t UPointLightComponent_AttenuationRadius = 0x0330;  // float (cm)
+
 // ULightComponentBase flags byte at +0x0214 (bAffectsWorld @ bit 0,
 // CastShadows @ bit 1, bCastVolumetricShadow @ bit 6, bCastDeepShadow
 // @ bit 7). bAffectsWorld=false on the CDO is one of the candidate
@@ -741,6 +751,21 @@ inline constexpr const wchar_t* MainPlayerFlashlightUpdateFn = L"Flashlight Upda
 inline constexpr const wchar_t* SetIntensityFn      = L"SetIntensity";
 inline constexpr const wchar_t* SetIntensityUnitsFn = L"SetIntensityUnits";
 
+// USpotLightComponent cone-angle setter UFunctions (Engine.hpp:14080-ish in
+// stock UE4.27). Both call MarkRenderStateDirty internally -- the receiver
+// calls them to mirror sender's cone shape so the proxy refreshes. Direct
+// field writes to OuterConeAngle/InnerConeAngle would NOT update the visible
+// cone (no virtual dispatch -> no MarkRenderStateDirty -> proxy keeps old
+// values until next unrelated recreate). v6 wire-format requirement.
+inline constexpr const wchar_t* SetOuterConeAngleFn = L"SetOuterConeAngle";
+inline constexpr const wchar_t* SetInnerConeAngleFn = L"SetInnerConeAngle";
+
+// SpotLight component class for FindFunction on the cone setters (the
+// setters are declared on USpotLightComponent itself; ULightComponent
+// has SetIntensity, USceneComponent has SetVisibility). FindFunction
+// does NOT walk to super, so each setter is resolved from its OWN class.
+// SpotLightComponentClass already declared further down (re-used here).
+
 // Phase 5F retest fallback (2026-05-25 NIGHT-3): hands-on showed that
 // BOTH updateFlashlight AND 'Flashlight Update' are BP-inlined into
 // their callers and never dispatch via ProcessEvent. The remaining
@@ -754,6 +779,15 @@ inline constexpr const wchar_t* SetIntensityUnitsFn = L"SetIntensityUnits";
 // no-op).
 inline constexpr const wchar_t* MainPlayerFlashlightInput13Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_13";
 inline constexpr const wchar_t* MainPlayerFlashlightInput14Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_14";
+
+// 2026-05-26 PM (v6 cone-shape sync): timerHoldFlashlight fires when the
+// player HOLDS F long enough to switch beam mode (default spread <->
+// focused). The BP body mutates `flashlightMode` byte + `light_R`'s
+// OuterConeAngle/InnerConeAngle/Intensity. POST observer reads the
+// post-mutation light state and sends a v6 ItemActivate packet so the
+// receiver mirrors the new cone shape on the puppet. Same hook style as
+// updateFlashlight / Flashlight Update / InpActEvt_13/14 (mainPlayer.hpp:655).
+inline constexpr const wchar_t* MainPlayerTimerHoldFlashlightFn = L"timerHoldFlashlight";
 
 // 2026-05-26 deep-RE breakthrough: BP graphs for input handlers + the
 // updateFlashlight / 'Flashlight Update' functions all compile to
