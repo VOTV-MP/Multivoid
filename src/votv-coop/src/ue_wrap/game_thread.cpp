@@ -102,6 +102,11 @@ struct NameDiagSlot {
 NameDiagSlot g_nameDiagSlots[kMaxNameDiagnostics];
 std::atomic<int> g_nameDiagAnySet{0};
 
+// 2026-05-26 deep-RE call trace flag. When true, ProcessEventDetour
+// logs every UFunction dispatch. Used as a one-shot probe to capture
+// BP call chains when reflection-invoked BPs appear to no-op.
+std::atomic<bool> g_callTrace{false};
+
 inline void FireNameDiagnostics(void* self, void* function, void* params) {
     if (g_nameDiagAnySet.load(std::memory_order_acquire) == 0) return;
     if (!function) return;
@@ -212,6 +217,17 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
 
     // Diagnostic name-prefix sniffer (zero cost when no slot is set).
     FireNameDiagnostics(self, function, params);
+
+    // 2026-05-26 deep-RE call trace (one-shot diagnostic). When the
+    // trace flag is on, log every ProcessEvent dispatch. Used to
+    // capture BP call chains when reflection-invoked BPs don't appear
+    // to do anything. The atomic load is relaxed (we don't care about
+    // strict ordering -- the trace is best-effort observability).
+    if (g_callTrace.load(std::memory_order_relaxed) && function) {
+        auto fname = reflection::NameOf(function);
+        std::wstring nameStr = reflection::ToString(fname);
+        UE_LOGI("trace: PE self=%p func=%ls", self, nameStr.c_str());
+    }
 
     g_originalPE(self, function, params);
 
@@ -340,6 +356,14 @@ void ClearAllNameDiagnostics() {
         g_nameDiagSlots[i].cb.store(nullptr, std::memory_order_relaxed);
     }
     g_nameDiagAnySet.store(0, std::memory_order_release);
+}
+
+void SetCallTrace(bool enabled) {
+    g_callTrace.store(enabled, std::memory_order_release);
+}
+
+bool GetCallTrace() {
+    return g_callTrace.load(std::memory_order_acquire);
 }
 
 }  // namespace ue_wrap::game_thread

@@ -522,25 +522,55 @@ void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
     // 2026-05-26 "Wow the light is so intense wow") -- it double-drove
     // the field on top of the BP's correct value. Removed per RULE 1
     // (no crutch -- the BP IS the natural mechanism).
-    bool* hasFlashlightPtr = reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(puppetActor) + P::off::AmainPlayer_hasFlashlight);
-    const bool hadFlashlightBefore = *hasFlashlightPtr;
-    *hasFlashlightPtr = true;
-
-    static void* sFlashlightUpdateFn = nullptr;
-    if (!sFlashlightUpdateFn) {
-        void* mpCls = R::FindClass(P::name::MainPlayerClass);
-        if (mpCls) {
-            sFlashlightUpdateFn = R::FindFunction(mpCls, P::name::MainPlayerFlashlightUpdateFn);
-        }
-    }
-    bool bpOk = false;
-    if (sFlashlightUpdateFn) {
-        ue_wrap::ParamFrame f(sFlashlightUpdateFn);
-        bpOk = ue_wrap::Call(puppetActor, f);
-    } else {
-        UE_LOGE("flashlight: 'Flashlight Update' UFunction unresolved -- puppet won't render");
-    }
+    // 2026-05-26 deep-RE final verdict (3 converged agents):
+    //
+    // Three reflection-callable approaches were exhausted and
+    // documented in research/findings/votv-flashlight-cone-deep-RE-
+    // 2026-05-26.md + memory project_flashlight_cone_deep_re_plan:
+    //
+    //   * BP function `Flashlight Update` -- empty stub thunk that
+    //     calls ExecuteUbergraph_mainPlayer(N) via EX_LocalFinalFunction.
+    //     Calling via reflection runs the ubergraph but it early-returns
+    //     on the controllerless puppet (BP guards: Controller!=None,
+    //     hasFlashlight, inMenu, etc).
+    //   * BP function `InpActEvt_flashlight_K2Node_InputActionEvent_13`
+    //     -- same shape, same guard problem.
+    //   * `flashlightStateChanged` multicast delegate broadcast --
+    //     the broadcast helper isn't a UFunction (only
+    //     `__DelegateSignature` is, and it's a type marker). To
+    //     broadcast manually, we'd walk the TMulticastScriptDelegate
+    //     <FWeakObjectPtr> field at +0x0AC8 -- but agent verdict says
+    //     the puppet likely has ZERO subscribers (subscriptions
+    //     gated on Controller!=None during construction script),
+    //     making the broadcast a no-op even if implemented.
+    //
+    // The actual cone-rendering issue is USpotLightComponent::SceneProxy
+    // creation. Per IDA + agents, the only path that creates it is
+    // UPrimitiveComponent::RegisterComponent (native, NOT a UFunction
+    // in UE4.27). To force-register the puppet's light_R we'd need
+    // either:
+    //   (a) AOB-resolve RegisterComponentWithWorld + call it natively
+    //   (b) AddComponentByClass+FinishAddComponent to spawn a FRESH
+    //       USpotLightComponent on the puppet (the reflection-callable
+    //       path that internally runs RegisterComponent)
+    // Both are scope larger than Phase 5F Inc1-4 and require their
+    // own RE pass. Defer to a future session.
+    //
+    // CURRENT state of this function (what does work):
+    //   * Wire: sent=N applied=N (proven both directions in LAN test)
+    //   * puppet.flashlight bool @0x0838 follows the wire (direct write
+    //     above)
+    //   * puppet.light_R.Intensity @+0x20C follows the wire (via
+    //     the optional test-bright SetIntensity below; in normal play
+    //     stays at BP-default)
+    //   * Per-tick state is consistent across peers
+    //
+    // What does NOT work (deferred): the puppet's USpotLightComponent
+    // SceneProxy is null -> SetIntensity writes the field but the
+    // engine's render thread has nothing to update. The puppet light
+    // does not contribute scene illumination. Tracking issue: see
+    // [[project-flashlight-cone-deep-re-plan]] for the next-session
+    // fix direction (AddComponentByClass vs AOB-RegisterComponent).
 
     // AUTOTEST-ONLY bright-puppet override: in normal play we let the
     // BP's natural intensity drive (matches the local). But the
@@ -574,10 +604,8 @@ void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
     }
 
     g_echoSuppress.store(false, std::memory_order_release);
-    UE_LOGI("flashlight: applied to puppet=%p state=%d (BP ok=%d, hadFlashlight=%d->1, "
-            "testBright=%d brightOk=%d)",
-            puppetActor, newState ? 1 : 0, bpOk ? 1 : 0,
-            hadFlashlightBefore ? 1 : 0,
+    UE_LOGI("flashlight: applied to puppet=%p state=%d (testBright=%d brightOk=%d)",
+            puppetActor, newState ? 1 : 0,
             s_testBright ? 1 : 0, brightOk ? 1 : 0);
 
     // Diagnostic readback: confirm the puppet's light_R actually has the

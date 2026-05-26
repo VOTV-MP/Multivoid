@@ -755,6 +755,28 @@ inline constexpr const wchar_t* SetIntensityUnitsFn = L"SetIntensityUnits";
 inline constexpr const wchar_t* MainPlayerFlashlightInput13Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_13";
 inline constexpr const wchar_t* MainPlayerFlashlightInput14Fn = L"InpActEvt_flashlight_K2Node_InputActionEvent_14";
 
+// 2026-05-26 deep-RE breakthrough: BP graphs for input handlers + the
+// updateFlashlight / 'Flashlight Update' functions all compile to
+// tiny bytecode STUBS that call ExecuteUbergraph_mainPlayer via the
+// VM's EX_LocalFinalFunction opcode (which bypasses ProcessEvent's
+// observer hook, hence our trace caught nothing). So none of these
+// stubs are useful to invoke via reflection -- their "real" body is
+// in the ubergraph, locked behind controller / inMenu / inventory
+// guards that fail for the controllerless puppet.
+//
+// THE NATURAL MECHANISM (per architectural-agent verdict + Engine.hpp:
+// mainPlayer.hpp line 184-185): the BP fires the multicast delegate
+// `flashlightStateChanged(USpotLightComponent* Light, bool Visible)`
+// after toggling local state. Subscribers (cooked equipment-flashlight
+// actor + map-side props + global lighting helpers) listen and DO
+// the actual SetVisibility / SetIntensity / MarkRenderStateDirty
+// work on the passed `Light`. Broadcasting this delegate FROM the
+// puppet's mainPlayer_C with the puppet's `light_R` + new state
+// causes the subscribers to apply the SAME work they do on the local
+// peer -- including any side-effects (sound, particles, save-state
+// updates) that match the user-observed local rendering.
+inline constexpr const wchar_t* MainPlayerFlashlightStateChangedFn = L"flashlightStateChanged";
+
 // Phase 5F autotest helpers (2026-05-26): give/equip/battery setup.
 // AmainPlayer_C::addPropToPlayer(FName prop) -- cheat-menu-equivalent
 // path. Spawns the actor + adds to player inventory + (per F-INV-2

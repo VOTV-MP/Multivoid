@@ -133,4 +133,13 @@ inline constexpr int kMaxNameDiagnosticPrefixLen = 32;  // including null termin
 bool SetNameDiagnostic(int slot, const wchar_t* prefix, ProcessEventNameDiagnosticFn cb);
 void ClearAllNameDiagnostics();
 
+// 2026-05-26 deep-RE trace: when SetCallTrace(true) is set, every
+// ProcessEvent dispatch logs its UFunction name + self pointer at INFO
+// level. Used to capture BP call chains when reflection-invocations
+// look like they're not running the BP body. ONE-SHOT diagnostic --
+// set false when done. Spam-volume can be enormous (UE4 dispatches
+// thousands of UFunctions per second).
+void SetCallTrace(bool enabled);
+bool GetCallTrace();
+
 }  // namespace ue_wrap::game_thread
