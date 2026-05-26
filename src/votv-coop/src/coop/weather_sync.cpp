@@ -4,6 +4,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -36,6 +37,29 @@ void* g_setWindParametersFn  = nullptr;
 void* g_intComsTriggerSnowFn = nullptr;
 void* g_spawnFogFn           = nullptr;
 void* g_setFogDensityFn      = nullptr;
+
+// Phase 5W Inc2 lightning. Shared resolution with npc_sync's interceptor
+// target (same UFunction: UGameplayStatics::BeginDeferredActorSpawnFromClass).
+// We attach a POST observer here (independent of npc_sync's interceptor;
+// observers + interceptors fire on different stages of the dispatch). Host
+// only registers; the client's interceptor on timerLightning (Inc1) ensures
+// the BP-internal SpawnActor never fires locally, so this observer never
+// observes a self-spawn that would echo.
+void* g_gameplayStaticsCdo   = nullptr;
+void* g_beginDeferredSpawnFn = nullptr;
+void* g_finishSpawnFn        = nullptr;
+void* g_lightningStrikeClass = nullptr;
+int32_t g_spawnActorClassParamOff = -1;
+int32_t g_spawnTransformParamOff  = -1;
+bool g_lightningObserverRegistered = false;
+// Note: no echo-suppress flag is needed. The host registers
+// OnSpawnPostLightning; the client does NOT (Install gate isHost &&
+// !g_lightningObserverRegistered). When the client's ApplyLightningStrike
+// calls BeginDeferred, no POST observer is registered locally to broadcast
+// an echo. And event_feed.cpp drops LightningStrike packets received on
+// host, so the host never enters ApplyLightningStrike at all. The role
+// gates already make the broadcast path one-directional; an inbound flag
+// would be dead code (RULE 2).
 
 bool g_installed = false;
 bool g_observersRegistered = false;     // host POST observers
@@ -185,7 +209,90 @@ bool OnSchedulerPreSuppress(void* /*self*/, void* /*params*/) {
     return true;
 }
 
+// ---- HOST: POST observer on BeginDeferredActorSpawnFromClass for lightning ---
+// Phase 5W Inc2. Fires on EVERY UGameplayStatics::BeginDeferredActorSpawnFromClass
+// dispatch (which also drives NPC spawns, prop spawns, etc); filtered by
+// ActorClass == lightningStrike_C. The strike's actor location IS the
+// SpawnTransform translation per the RE doc. Host-only sender; receiver's
+// own spawn calls set g_lightningSpawnInbound to suppress echo.
+
+void OnSpawnPostLightning(void* /*self*/, void* /*function*/, void* params) {
+    if (!GT::IsGameThread()) return;       // defensive (see OnSchedulerPost)
+    if (!params) return;
+    if (g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) return;
+    if (!g_lightningStrikeClass) return;
+
+    // ActorClass filter -- exact pointer match (lightningStrike_C has no
+    // subclasses in VOTV; the dump shows only this one). Fast path: pointer
+    // compare, no string walk.
+    void* actorClass = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(params) + g_spawnActorClassParamOff);
+    if (actorClass != g_lightningStrikeClass) return;
+
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    if (s->role() != coop::net::Role::Host) return;  // host-only sender
+
+    // Read SpawnTransform.Translation (16-byte FQuat first, then 12-byte
+    // FVector translation -- same layout as npc_sync uses).
+    const uint8_t* xform = reinterpret_cast<const uint8_t*>(params) + g_spawnTransformParamOff;
+    coop::net::LightningStrikePayload p{};
+    p.peerSessionId = 0;
+    p.locX = *reinterpret_cast<const float*>(xform + 0x10);
+    p.locY = *reinterpret_cast<const float*>(xform + 0x14);
+    p.locZ = *reinterpret_cast<const float*>(xform + 0x18);
+
+    const bool sent = s->SendReliable(
+        coop::net::ReliableKind::LightningStrike, &p, sizeof(p));
+    if (!sent) {
+        UE_LOGW("weather: lightning SendReliable failed (channel busy) -- "
+                "strike at (%.0f, %.0f, %.0f) NOT broadcast", p.locX, p.locY, p.locZ);
+        return;
+    }
+    UE_LOGI("weather: host broadcast LightningStrike at (%.0f, %.0f, %.0f)",
+            p.locX, p.locY, p.locZ);
+}
+
 // ---- common installer ---------------------------------------------------
+
+// Phase 5W Inc2: resolve the lightning spawn observability + receiver
+// path. Independent of the cycle's UFunctions; can succeed even if those
+// haven't yet (the cycle is BP-content, GameplayStatics is engine + always
+// loaded). Returns true if all 3 (CDO + 2 UFunctions + class) are
+// resolved.
+bool TryResolveLightningSpawnPath() {
+    if (!g_gameplayStaticsCdo) {
+        g_gameplayStaticsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    }
+    if (!g_gameplayStaticsCdo) return false;
+
+    if (!g_beginDeferredSpawnFn || !g_finishSpawnFn) {
+        void* gsCls = R::ClassOf(g_gameplayStaticsCdo);
+        if (!gsCls) return false;
+        if (!g_beginDeferredSpawnFn) {
+            g_beginDeferredSpawnFn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
+        }
+        if (!g_finishSpawnFn) {
+            g_finishSpawnFn = R::FindFunction(gsCls, P::name::FinishSpawningActorFn);
+        }
+    }
+    if (!g_beginDeferredSpawnFn || !g_finishSpawnFn) return false;
+
+    if (g_spawnActorClassParamOff < 0) {
+        g_spawnActorClassParamOff = R::FindParamOffset(g_beginDeferredSpawnFn, L"ActorClass");
+    }
+    if (g_spawnTransformParamOff < 0) {
+        g_spawnTransformParamOff = R::FindParamOffset(g_beginDeferredSpawnFn, L"SpawnTransform");
+    }
+    if (g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) return false;
+
+    if (!g_lightningStrikeClass) {
+        g_lightningStrikeClass = R::FindClass(P::name::LightningStrikeClass);
+    }
+    if (!g_lightningStrikeClass) return false;
+
+    return true;
+}
 
 bool TryResolveAllFunctions() {
     void* cls = R::FindClass(P::name::DaynightCycleClass);
@@ -273,7 +380,105 @@ void Install(coop::net::Session* session) {
                 "WeatherState from host instead)", n);
     }
 
+    // Phase 5W Inc2 lightning observability. HOST registers a POST observer
+    // on BeginDeferredActorSpawnFromClass (same UFunction npc_sync intercepts;
+    // observers + interceptors are separate dispatch stages, no conflict).
+    // We use a POST observer because lightning doesn't need to CANCEL spawns
+    // -- the client never spawns lightning locally (timerLightning is
+    // suppressed by Inc1's interceptor on the cycle), so there's nothing to
+    // suppress. Host just needs to OBSERVE the spawn to broadcast the loc.
+    // CLIENT skips this registration -- no observer needed for receive
+    // (event_feed dispatches LightningStrike packets directly).
+    if (isHost && !g_lightningObserverRegistered) {
+        if (TryResolveLightningSpawnPath()) {
+            if (GT::RegisterPostObserver(g_beginDeferredSpawnFn, &OnSpawnPostLightning)) {
+                g_lightningObserverRegistered = true;
+                UE_LOGI("weather: HOST lightning POST observer registered on %ls @ %p "
+                        "(ActorClass@%d, SpawnTransform@%d, lightningStrike_C=%p)",
+                        P::name::BeginDeferredSpawnFn, g_beginDeferredSpawnFn,
+                        g_spawnActorClassParamOff, g_spawnTransformParamOff,
+                        g_lightningStrikeClass);
+            }
+        }
+        // else: GameplayStatics CDO or lightningStrike_C not yet loaded;
+        // retry next NetPumpTick via Install's idempotent re-entry.
+    }
+    // Client also needs the lightning spawn path resolved so ApplyLightningStrike
+    // can call BeginDeferred + FinishSpawning. Resolve it lazily here.
+    if (!isHost) {
+        TryResolveLightningSpawnPath();
+    }
+
     g_installed = true;
+}
+
+void ApplyLightningStrike(const coop::net::LightningStrikePayload& payload) {
+    if (!GT::IsGameThread()) {
+        UE_LOGW("weather: ApplyLightningStrike off-game-thread -- dropping");
+        return;
+    }
+    if (payload.peerSessionId != 0) {
+        UE_LOGW("weather: ApplyLightningStrike peerSessionId=%u != 0 -- dropping",
+                static_cast<unsigned>(payload.peerSessionId));
+        return;
+    }
+    // Defensive: if Install resolved the spawn path failed (would mean
+    // GameplayStatics or lightningStrike_C class wasn't loaded yet) we
+    // can't spawn. Log + drop. The strike is a transient one-shot; missing
+    // a single one is acceptable (no state to recover).
+    if (!g_gameplayStaticsCdo || !g_beginDeferredSpawnFn || !g_finishSpawnFn ||
+        !g_lightningStrikeClass) {
+        UE_LOGW("weather: ApplyLightningStrike spawn path not resolved "
+                "(cdo=%p begin=%p finish=%p cls=%p) -- dropping",
+                g_gameplayStaticsCdo, g_beginDeferredSpawnFn, g_finishSpawnFn,
+                g_lightningStrikeClass);
+        return;
+    }
+
+    // Build FTransform at the received location. FTransform layout:
+    //   FQuat Rotation @ 0x00 (16 B, XYZW)
+    //   FVector Translation @ 0x10 (12 B)
+    //   FVector Scale3D @ 0x20 (12 B; identity = (1,1,1))
+    // Identity quat = (0,0,0,1). Strike orientation isn't meaningful (it's
+    // a vertical lightning bolt; the actor's mesh orients to world up
+    // internally per the RE doc).
+    alignas(16) uint8_t xform[48] = {};
+    *reinterpret_cast<float*>(xform + 0x0C) = 1.f;   // FQuat.W = 1 (identity)
+    *reinterpret_cast<float*>(xform + 0x10) = payload.locX;
+    *reinterpret_cast<float*>(xform + 0x14) = payload.locY;
+    *reinterpret_cast<float*>(xform + 0x18) = payload.locZ;
+    *reinterpret_cast<float*>(xform + 0x20) = 1.f;   // Scale.X
+    *reinterpret_cast<float*>(xform + 0x24) = 1.f;   // Scale.Y
+    *reinterpret_cast<float*>(xform + 0x28) = 1.f;   // Scale.Z
+
+    ue_wrap::ParamFrame f(g_beginDeferredSpawnFn);
+    f.Set<void*>(L"WorldContextObject", coop::players::Registry::Get().Local());
+    f.Set<void*>(L"ActorClass", g_lightningStrikeClass);
+    f.SetRaw(L"SpawnTransform", xform, sizeof(xform));
+    // CollisionHandlingOverride = 1 (AlwaysSpawn). UE4 enum
+    // ESpawnActorCollisionHandlingMethod: 0=Undefined (delegates to class
+    // default), 1=AlwaysSpawn, 2-4 = collision-conditional drops. 0 risks
+    // the strike silently failing if AlightningStrike_C's CDO default is
+    // collision-conditional and the host's strike happened to land on
+    // geometry edge. The host already confirmed the spawn at this loc;
+    // the client should always materialise it (RULE 1 root-cause: don't
+    // let UE4 silently drop our received event).
+    f.Set<uint8_t>(L"CollisionHandlingOverride", 1);
+    ue_wrap::Call(g_gameplayStaticsCdo, f);
+    void* actor = f.Get<void*>(L"ReturnValue");
+    if (!actor) {
+        UE_LOGW("weather: ApplyLightningStrike BeginDeferred returned null "
+                "for loc=(%.0f, %.0f, %.0f) -- skipping",
+                payload.locX, payload.locY, payload.locZ);
+        return;
+    }
+    // FinishSpawningActor(Actor, SpawnTransform).
+    ue_wrap::ParamFrame f2(g_finishSpawnFn);
+    f2.Set<void*>(L"Actor", actor);
+    f2.SetRaw(L"SpawnTransform", xform, sizeof(xform));
+    ue_wrap::Call(g_gameplayStaticsCdo, f2);
+    UE_LOGI("weather: ApplyLightningStrike spawned lightningStrike_C=%p at "
+            "(%.0f, %.0f, %.0f)", actor, payload.locX, payload.locY, payload.locZ);
 }
 
 void QueueConnectBroadcast() {

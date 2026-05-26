@@ -35,7 +35,7 @@
 
 #include <cstdint>
 
-namespace coop::net { class Session; struct WeatherStatePayload; }
+namespace coop::net { class Session; struct WeatherStatePayload; struct LightningStrikePayload; }
 
 namespace coop::weather_sync {
 
@@ -66,5 +66,15 @@ void OnDisconnect();
 // to apply each delta. Validates peerSessionId==0 (host-only sender).
 // Game thread only.
 void ApplyFromHost(const coop::net::WeatherStatePayload& payload);
+
+// Phase 5W Inc2: receiver-side lightning strike apply. Host's POST observer
+// on BeginDeferredActorSpawnFromClass catches AlightningStrike_C spawns
+// (the spawn is BP-internal inside AdaynightCycle_C::timerLightning which
+// is fully suppressed on the client by Inc1's interceptor; the spawn never
+// happens locally on the client). On receive, this spawns AlightningStrike_C
+// at the supplied world location via the standard BeginDeferred/FinishSpawn
+// pair. The actor's own Timeline self-destructs after a few seconds; no
+// teardown wire needed. Game thread only.
+void ApplyLightningStrike(const coop::net::LightningStrikePayload& payload);
 
 }  // namespace coop::weather_sync

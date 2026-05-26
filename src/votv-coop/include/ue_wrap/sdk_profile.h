@@ -992,6 +992,14 @@ inline constexpr const wchar_t* SetPhysicsAngularVelocityInDegreesFn = L"SetPhys
 // instance per session. See research/findings/votv-weather-DESIGN-2026-05-26.md.
 inline constexpr const wchar_t* DaynightCycleClass = L"daynightCycle_C";
 
+// Phase 5W Inc2 (2026-05-27) lightning: AlightningStrike_C is the discrete
+// one-shot strike actor (size 0x280 per the RE doc; 3 audio components +
+// point light + sphere collider + timeline self-destruct). Its location is
+// the actor's own world transform -- there's no separate Location field.
+// Receiver spawns via BeginDeferredActorSpawnFromClass + FinishSpawningActor
+// (same pattern as remote_prop.cpp for inventory drops).
+inline constexpr const wchar_t* LightningStrikeClass = L"lightningStrike_C";
+
 // Scheduler UFunctions -- client INTERCEPTS these (PRE-cancel via the
 // multi-slot interceptor) so the client side never decides "rain now" / etc.
 // Host's POST observer on the same UFunctions reads the post-mutation state

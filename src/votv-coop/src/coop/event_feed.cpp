@@ -494,6 +494,40 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             });
             break;
         }
+        case net::ReliableKind::LightningStrike: {
+            // Phase 5W Inc2 (2026-05-27): discrete strike event. Host's
+            // POST observer on BeginDeferredActorSpawnFromClass caught
+            // an AlightningStrike_C spawn (BP-internal SpawnActor inside
+            // AdaynightCycle_C::timerLightning) and broadcast the
+            // strike's world location. Client suppressed its own
+            // timerLightning via Inc1's interceptor so no local strike
+            // happened; this packet drives the visual.
+            if (msg.payload.size() < sizeof(net::LightningStrikePayload)) {
+                UE_LOGW("event_feed: LightningStrike payload too short (%zu < %zu)",
+                        msg.payload.size(), sizeof(net::LightningStrikePayload));
+                break;
+            }
+            net::LightningStrikePayload p{};
+            std::memcpy(&p, msg.payload.data(), sizeof(p));
+            if (session.role() == net::Role::Host) {
+                UE_LOGI("event_feed: LightningStrike received on host -- dropping");
+                break;
+            }
+            // Trust boundary: validate loc finite + within sane bounds.
+            if (!std::isfinite(p.locX) || !std::isfinite(p.locY) || !std::isfinite(p.locZ) ||
+                std::fabs(p.locX) > coop::net::kMaxCoord ||
+                std::fabs(p.locY) > coop::net::kMaxCoord ||
+                std::fabs(p.locZ) > coop::net::kMaxCoord) {
+                UE_LOGW("event_feed: LightningStrike loc out of bounds (%.0f, %.0f, %.0f) -- dropping",
+                        p.locX, p.locY, p.locZ);
+                break;
+            }
+            net::LightningStrikePayload pCopy = p;
+            ue_wrap::game_thread::Post([pCopy] {
+                ::coop::weather_sync::ApplyLightningStrike(pCopy);
+            });
+            break;
+        }
         case net::ReliableKind::WeatherState: {
             // Phase 5W Inc1 (2026-05-26): host-authoritative weather state.
             // Sender = host. Receiver looks up local AdaynightCycle_C and
