@@ -777,6 +777,15 @@ inline constexpr const wchar_t* MainPlayerFlashlightInput14Fn = L"InpActEvt_flas
 // updates) that match the user-observed local rendering.
 inline constexpr const wchar_t* MainPlayerFlashlightStateChangedFn = L"flashlightStateChanged";
 
+// 2026-05-26 deep-RE puppet light fix: reuse AddComponentByClassFn +
+// FinishAddComponentFn (already defined above for nameplate WidgetComponent
+// spawning). We spawn a FRESH USpotLightComponent on the puppet via
+// this path -- the only reflection-callable mechanism that internally
+// runs UActorComponent::RegisterComponent (which creates the
+// FSceneProxy). The existing class-default light_R has a permanently-
+// null SceneProxy that no reflection-only write can revive.
+inline constexpr const wchar_t* SpotLightComponentClass = L"SpotLightComponent";
+
 // Phase 5F autotest helpers (2026-05-26): give/equip/battery setup.
 // AmainPlayer_C::addPropToPlayer(FName prop) -- cheat-menu-equivalent
 // path. Spawns the actor + adds to player inventory + (per F-INV-2

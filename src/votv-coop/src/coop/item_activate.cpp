@@ -31,6 +31,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 
 namespace coop::item_activate {
 namespace {
@@ -472,141 +473,188 @@ void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
     }
     g_echoSuppress.store(true, std::memory_order_release);
 
-    // 2026-05-26 deep-RE EVIDENCE-BACKED FIX (per RULE feedback-deep-
-    // re-no-iteration -- this is the ONE change after exhausting RE):
+    // 2026-05-26 deep-RE TERMINAL FIX (per 3-agent convergence, see
+    // research/findings/votv-flashlight-cone-deep-RE-2026-05-26.md):
     //
-    // Findings from `research/findings/votv-flashlight-cone-deep-RE-
-    // 2026-05-26.md`:
-    //   * SetIntensity native (sub_142A930E0 -> sub_142A98430) HARD
-    //     no-ops when SceneProxy@+0x3F8 is null. No MarkRenderState
-    //     Dirty fallback in the fast path.
-    //   * The CreateRenderState_Concurrent virtual (sub_142A7B590)
-    //     IS THE ONLY function that writes a non-null +0x3F8. It's
-    //     called by the engine at component-register time, gated by
-    //     a visibility-cascade chain that returns false for the
-    //     local light at idle state -> proxy stays null until the
-    //     BP graph does something to MarkRenderStateDirty and
-    //     trigger end-of-frame proxy recreation.
-    //   * User-confirmed (hands-on, 2026-05-26): local rendering is
-    //     "just lit surfaces, no visible cone in the air" -- so the
-    //     SpotLightComponent IS what illuminates, but the proxy
-    //     creation/recreation path runs THROUGH THE BP, not via
-    //     direct field writes.
+    // Why we don't drive the puppet's class-default light_R: its
+    // SceneProxy@+0x3F8 is permanently null because the engine's
+    // proxy-creation gate (sub_142A7B590 visibility cascade) fails
+    // for the orphan puppet's component chain, and there's no
+    // reflection-callable path to force registration (BP's
+    // `Flashlight Update` and `InpActEvt_13` are inlined-only stubs;
+    // multicast delegate broadcast helper isn't a UFunction;
+    // RegisterComponent is native-only in UE4.27).
     //
-    // The targeted fix: invoke the BP function `Flashlight Update`
-    // (UFunction `MainPlayerFlashlightUpdateFn`) on the puppet via
-    // reflection. That's the EXACT same function the local BP runs
-    // on F-press, which makes the local light render correctly. The
-    // BP graph internally does whatever combination of SetVisibility
-    // / SetIntensity / delegate broadcast / MarkRenderStateDirty is
-    // needed -- we don't have to know the inner steps, we just have
-    // to invoke the proven mechanism.
+    // The ONLY reflection-callable mechanism that internally runs
+    // UActorComponent::RegisterComponent is the AActor BlueprintCallable
+    // pair `AddComponentByClass(deferred=true)` + `FinishAddComponent`.
+    // So we spawn a FRESH USpotLightComponent on the puppet, attach
+    // it to the actor's root with an upward offset (so the light
+    // emanates from head height), and drive its Intensity from the
+    // wire. The original puppet.light_R stays untouched and inert.
     //
-    // Pre-flight spoof: `hasFlashlight @0x0CC2` is FALSE on the puppet
-    // (orphan has no inventory). The BP graph guards on this; if
-    // false, it early-returns and SetIntensity stays the only effect.
-    // Write true to pass the guard. Save+restore so we don't permanently
-    // alter puppet state outside the function (the puppet's actor
-    // pointer is owned by `g_orphan`; mutating its fields is RULE-1-OK
-    // because the puppet is OUR object, not a game-side actor).
-    //
-    // Echo-suppress is already set above. Belt-and-braces: the POST
-    // observer ALSO short-circuits on `!GetController(self)` which
-    // is true for the puppet, so even without echo-suppress this
-    // couldn't bounce back as a wire packet.
-    //
-    // BP-only path now: the BP graph sets light_R's intensity to the
-    // SAME value the local F-press would, matching the user's hands-on
-    // expectation. Our earlier SetIntensity(5.0) fallback was making
-    // the puppet visibly BRIGHTER than the local (user feedback
-    // 2026-05-26 "Wow the light is so intense wow") -- it double-drove
-    // the field on top of the BP's correct value. Removed per RULE 1
-    // (no crutch -- the BP IS the natural mechanism).
-    // 2026-05-26 deep-RE final verdict (3 converged agents):
-    //
-    // Three reflection-callable approaches were exhausted and
-    // documented in research/findings/votv-flashlight-cone-deep-RE-
-    // 2026-05-26.md + memory project_flashlight_cone_deep_re_plan:
-    //
-    //   * BP function `Flashlight Update` -- empty stub thunk that
-    //     calls ExecuteUbergraph_mainPlayer(N) via EX_LocalFinalFunction.
-    //     Calling via reflection runs the ubergraph but it early-returns
-    //     on the controllerless puppet (BP guards: Controller!=None,
-    //     hasFlashlight, inMenu, etc).
-    //   * BP function `InpActEvt_flashlight_K2Node_InputActionEvent_13`
-    //     -- same shape, same guard problem.
-    //   * `flashlightStateChanged` multicast delegate broadcast --
-    //     the broadcast helper isn't a UFunction (only
-    //     `__DelegateSignature` is, and it's a type marker). To
-    //     broadcast manually, we'd walk the TMulticastScriptDelegate
-    //     <FWeakObjectPtr> field at +0x0AC8 -- but agent verdict says
-    //     the puppet likely has ZERO subscribers (subscriptions
-    //     gated on Controller!=None during construction script),
-    //     making the broadcast a no-op even if implemented.
-    //
-    // The actual cone-rendering issue is USpotLightComponent::SceneProxy
-    // creation. Per IDA + agents, the only path that creates it is
-    // UPrimitiveComponent::RegisterComponent (native, NOT a UFunction
-    // in UE4.27). To force-register the puppet's light_R we'd need
-    // either:
-    //   (a) AOB-resolve RegisterComponentWithWorld + call it natively
-    //   (b) AddComponentByClass+FinishAddComponent to spawn a FRESH
-    //       USpotLightComponent on the puppet (the reflection-callable
-    //       path that internally runs RegisterComponent)
-    // Both are scope larger than Phase 5F Inc1-4 and require their
-    // own RE pass. Defer to a future session.
-    //
-    // CURRENT state of this function (what does work):
-    //   * Wire: sent=N applied=N (proven both directions in LAN test)
-    //   * puppet.flashlight bool @0x0838 follows the wire (direct write
-    //     above)
-    //   * puppet.light_R.Intensity @+0x20C follows the wire (via
-    //     the optional test-bright SetIntensity below; in normal play
-    //     stays at BP-default)
-    //   * Per-tick state is consistent across peers
-    //
-    // What does NOT work (deferred): the puppet's USpotLightComponent
-    // SceneProxy is null -> SetIntensity writes the field but the
-    // engine's render thread has nothing to update. The puppet light
-    // does not contribute scene illumination. Tracking issue: see
-    // [[project-flashlight-cone-deep-re-plan]] for the next-session
-    // fix direction (AddComponentByClass vs AOB-RegisterComponent).
+    // RULE 1 root-cause: AddComponent is THE engine-blessed path for
+    // adding a render-state-registered component at runtime. RULE 3:
+    // pure reflection, no UE4SS at runtime. RULE 2: original
+    // light_R reflection-write logic is removed -- proven dead.
+    auto getOrCreateExtraLight = [puppetActor]() -> void* {
+        // Per-puppet cache so we only spawn one extra SpotLight per
+        // orphan. Re-resolved if the actor is destroyed + respawned
+        // (different actor pointer -> different cache entry).
+        static std::unordered_map<void*, void*> sExtraLights;
+        auto it = sExtraLights.find(puppetActor);
+        if (it != sExtraLights.end() && R::IsLive(it->second)) {
+            return it->second;
+        }
+        if (it != sExtraLights.end()) sExtraLights.erase(it);  // stale
 
-    // AUTOTEST-ONLY bright-puppet override: in normal play we let the
-    // BP's natural intensity drive (matches the local). But the
-    // autonomous LAN test screenshots happen at the КПП base entrance
-    // in DAYLIGHT, where the BP's natural intensity is washed out by
-    // ambient and the visual signal in the screenshot is unreliable.
-    // When the autotest env var is set, additionally drive
-    // light_R.Intensity to a Unitless-bright value so the autonomous
-    // screenshot has a clearly-visible surface glow to verify against.
-    // This does NOT affect normal play (env var unset -> BP-natural).
-    // RULE 1: this is NOT a crutch -- it's a TEST AMPLIFIER for an
-    // observable that's hard to assert at the autotest time-of-day.
+        // Resolve UClasses + UFunctions once. AddComponentByClass +
+        // FinishAddComponent live on AActor (BlueprintCallable).
+        static void* sActorCls = nullptr;
+        static void* sSpotCls = nullptr;
+        static void* sAddFn = nullptr;
+        static void* sFinishFn = nullptr;
+        if (!sActorCls) sActorCls = R::FindClass(P::name::ActorClassName);
+        if (!sSpotCls) sSpotCls = R::FindClass(P::name::SpotLightComponentClass);
+        if (sActorCls && !sAddFn) sAddFn = R::FindFunction(sActorCls, P::name::AddComponentByClassFn);
+        if (sActorCls && !sFinishFn) sFinishFn = R::FindFunction(sActorCls, P::name::FinishAddComponentFn);
+        if (!sSpotCls || !sAddFn || !sFinishFn) {
+            UE_LOGE("flashlight: extra-light resolve failed (spotCls=%p addFn=%p finishFn=%p)",
+                    sSpotCls, sAddFn, sFinishFn);
+            return nullptr;
+        }
+
+        // FTransform identity with Z+85cm offset (head height above
+        // the actor pivot at feet). FTransform layout in UE4.27 is
+        // {FQuat Rotation@0, FVector Translation@0x10, FVector
+        // Scale3D@0x20}. Total 0x30 bytes, 16-byte aligned. Quat
+        // identity = (0,0,0,1) -- W last. Scale = (1,1,1).
+        alignas(16) uint8_t xform[0x30] = {};
+        // Quat (0,0,0,1)
+        *reinterpret_cast<float*>(xform + 0x00) = 0.f;
+        *reinterpret_cast<float*>(xform + 0x04) = 0.f;
+        *reinterpret_cast<float*>(xform + 0x08) = 0.f;
+        *reinterpret_cast<float*>(xform + 0x0C) = 1.f;
+        // Translation (0, 0, 85)  -- head-height offset above capsule centre
+        *reinterpret_cast<float*>(xform + 0x10) = 0.f;
+        *reinterpret_cast<float*>(xform + 0x14) = 0.f;
+        *reinterpret_cast<float*>(xform + 0x18) = 85.f;
+        // Scale (1,1,1)
+        *reinterpret_cast<float*>(xform + 0x20) = 1.f;
+        *reinterpret_cast<float*>(xform + 0x24) = 1.f;
+        *reinterpret_cast<float*>(xform + 0x28) = 1.f;
+
+        void* newLight = nullptr;
+        {
+            ue_wrap::ParamFrame f(sAddFn);
+            f.Set<void*>(L"Class", sSpotCls);
+            f.Set<bool>(L"bManualAttachment", false);  // auto-attach to actor root
+            f.SetRaw(L"relativeTransform", xform, sizeof(xform));
+            f.Set<bool>(L"bDeferredFinish", true);  // we'll set properties before Finish
+            if (!ue_wrap::Call(puppetActor, f)) {
+                UE_LOGE("flashlight: AddComponentByClass(SpotLight) Call failed");
+                return nullptr;
+            }
+            newLight = f.Get<void*>(L"ReturnValue");
+        }
+        if (!newLight) {
+            UE_LOGE("flashlight: AddComponentByClass returned null SpotLight");
+            return nullptr;
+        }
+
+        // Set initial properties BEFORE FinishAddComponent (which
+        // registers). Critical: IntensityUnits = 0 (Unitless) before
+        // registration, otherwise the engine default lumens scale
+        // will treat our intensity numbers as enormous values.
+        // Intensity = 0 so the light is OFF until we toggle it. Cone
+        // angles roughly mirror VOTV's flashlight (40deg outer is a
+        // reasonable flashlight cone). bAffectsWorld bit 0 = 1.
+        auto nU8 = reinterpret_cast<uint8_t*>(newLight);
+        *reinterpret_cast<float*>  (nU8 + P::off::ULightComponentBase_Intensity)   = 0.f;
+        *reinterpret_cast<uint8_t*>(nU8 + P::off::ULocalLightComponent_IntensityUnits) = 0;  // Unitless
+        *reinterpret_cast<uint8_t*>(nU8 + P::off::ULightComponentBase_FlagsByte)   |= 0x01;  // bAffectsWorld
+        // SpotLight cone angles (USpotLightComponent + 0x358/0x35C):
+        *reinterpret_cast<float*>  (nU8 + 0x0358) = 12.f;  // InnerConeAngle  (deg)
+        *reinterpret_cast<float*>  (nU8 + 0x035C) = 40.f;  // OuterConeAngle  (deg)
+        // Attenuation radius (UPointLightComponent::AttenuationRadius @+0x0330)
+        *reinterpret_cast<float*>  (nU8 + 0x0330) = 2000.f;
+
+        // Direct bit write: bVisible (bit 4 of byte 0x14C). Some UE4
+        // proxy-creation paths gate on bVisible -- set it true BEFORE
+        // registration so CreateRenderState_Concurrent doesn't early-
+        // out on visibility cascade. propagate-to-children is moot
+        // for a freshly-spawned light with no children.
+        *reinterpret_cast<uint8_t*>(nU8 + P::off::USceneComponent_VisFlagsByte) |= 0x10;
+
+        // FinishAddComponent -> registers the component -> internally
+        // calls UActorComponent::RegisterComponent -> CreateRenderState_
+        // Concurrent -> CreateSceneProxy. This is the moment the
+        // FSceneProxy is allocated and AddedToScene.
+        {
+            ue_wrap::ParamFrame f(sFinishFn);
+            f.Set<void*>(L"Component", newLight);
+            f.Set<bool>(L"bManualAttachment", false);
+            f.SetRaw(L"relativeTransform", xform, sizeof(xform));
+            ue_wrap::Call(puppetActor, f);
+        }
+        // Belt-and-braces: AFTER registration, ALSO call SetVisibility
+        // via reflection. UE4.27's SetVisibility calls MarkRenderState
+        // Dirty which schedules a RecreateRenderState_Concurrent next
+        // frame if the proxy wasn't created during the synchronous
+        // RegisterComponent path.
+        if (void* lightCls = R::FindClass(L"LightComponent")) {
+            if (void* setVisFn = R::FindFunction(R::FindClass(L"SceneComponent"), P::name::SetVisibilityFn)) {
+                ue_wrap::ParamFrame fv(setVisFn);
+                fv.Set<bool>(L"bNewVisibility", true);
+                fv.Set<bool>(L"bPropagateToChildren", false);
+                ue_wrap::Call(newLight, fv);
+            }
+            (void)lightCls;
+        }
+        sExtraLights[puppetActor] = newLight;
+        UE_LOGI("flashlight: SPAWNED extra SpotLight on puppet=%p -> light=%p "
+                "(via AddComponentByClass+Finish; registers + creates SceneProxy)",
+                puppetActor, newLight);
+        return newLight;
+    };
+
+    void* extraLight = getOrCreateExtraLight();
+
+    // AUTOTEST-ONLY bright-puppet override: in normal play we keep
+    // the extra light's intensity at a moderate "natural" value.
+    // For the autonomous-test screenshots in daylight, drive it
+    // brighter so surface illumination is visible against ambient.
     static const bool s_testBright = []() {
         wchar_t buf[8] = {};
         const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_RUN_FLASHLIGHT_TEST", buf, 8);
         return n > 0 && buf[0] == L'1';
     }();
-    bool brightOk = false;
-    if (s_testBright) {
+    bool intOk = false;
+    if (extraLight) {
+        // Resolve SetIntensity on the parent ULightComponent class once.
         static void* sSetIntensityFn = nullptr;
         if (!sSetIntensityFn) {
             void* lightCls = R::FindClass(L"LightComponent");
             if (lightCls) sSetIntensityFn = R::FindFunction(lightCls, P::name::SetIntensityFn);
         }
         if (sSetIntensityFn) {
-            const float bright = newState ? kIntensityOnFallback : kIntensityOffDefault;
+            // 100.0 Unitless is OBVIOUSLY bright -- if the light is
+            // actually rendering, daylight ambient can't hide it. If
+            // the test screenshots still show no change with this
+            // intensity, the light isn't rendering at all (proxy never
+            // created OR component isn't being added to the scene).
+            const float target = newState ? (s_testBright ? 100.f : kIntensityOnFallback)
+                                          : kIntensityOffDefault;
             ue_wrap::ParamFrame f(sSetIntensityFn);
-            f.Set<float>(L"NewIntensity", bright);
-            brightOk = ue_wrap::Call(light_R, f);
+            f.Set<float>(L"NewIntensity", target);
+            intOk = ue_wrap::Call(extraLight, f);
         }
     }
 
     g_echoSuppress.store(false, std::memory_order_release);
-    UE_LOGI("flashlight: applied to puppet=%p state=%d (testBright=%d brightOk=%d)",
-            puppetActor, newState ? 1 : 0,
-            s_testBright ? 1 : 0, brightOk ? 1 : 0);
+    UE_LOGI("flashlight: applied to puppet=%p state=%d (extraLight=%p intOk=%d, testBright=%d)",
+            puppetActor, newState ? 1 : 0, extraLight, intOk ? 1 : 0,
+            s_testBright ? 1 : 0);
 
     // Diagnostic readback: confirm the puppet's light_R actually has the
     // fields we expect AFTER our writes. The 2026-05-26 deep-RE plan
@@ -642,7 +690,8 @@ void ApplyToPuppet(void* puppetActor, uint32_t classHash, uint8_t state) {
                 regByte, visByte, hidByte, worldByte,
                 attachParent);
     };
-    dumpLight(L"puppet", light_R);
+    dumpLight(L"puppet ", light_R);
+    dumpLight(L"extra  ", extraLight);  // the AddComponentByClass-spawned one (SHOULD have SceneProxy non-null)
     // Local player's light_R for differential comparison. Use the
     // Registry (not FindObjectByClass) since FindObjectByClass may
     // return the puppet on its first hit.
