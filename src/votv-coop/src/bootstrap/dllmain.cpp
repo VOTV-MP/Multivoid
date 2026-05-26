@@ -7,6 +7,7 @@
 // (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
 // in later steps, behind ue_wrap/.
 
+#include "coop/shutdown.h"
 #include "harness/harness.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -99,6 +100,16 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         if (HANDLE t = ::CreateThread(nullptr, 0, BootThread, nullptr, 0, nullptr)) {
             ::CloseHandle(t);
         }
+    } else if (reason == DLL_PROCESS_DETACH) {
+        // Last-resort cleanup if WM_CLOSE never reached us (engine quit
+        // via console / fatal-error path). DoShutdown is idempotent --
+        // if our wndproc already ran it, this is a no-op. CRITICAL: do
+        // NOT join any threads or post GT::Post lambdas here (we're
+        // under the loader lock; that deadlocks). DoShutdown only sets
+        // a flag + uninstalls our PE detour, both safe under the lock.
+        // The detached worker threads observe g_shuttingDown and exit
+        // on their own; we don't wait for them.
+        coop::shutdown::DoShutdown();
     }
     return TRUE;
 }

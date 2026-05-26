@@ -1,6 +1,7 @@
 #include "dev/freecam.h"
 
 #include "coop/players_registry.h"
+#include "coop/shutdown.h"
 #include "dev/common.h"
 
 #include "ue_wrap/engine.h"
@@ -203,7 +204,7 @@ DWORD WINAPI WheelHookThread(LPVOID) {
 
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevHome = false, prevMmb = false;
-    for (;;) {
+    while (!coop::shutdown::IsShuttingDown()) {
         // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
         // so HOME pressed in the client's window would otherwise toggle freecam
         // in BOTH host + client. Only react to keys when OUR window is focused.
@@ -232,6 +233,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
 
         ::Sleep(8);
     }
+    return 0;
 }
 
 }  // namespace

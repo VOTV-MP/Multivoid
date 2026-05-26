@@ -1,5 +1,6 @@
 #include "harness/screenshot.h"
 
+#include "coop/shutdown.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -110,7 +111,7 @@ bool CapturePng(HWND hwnd, const std::wstring& path) {
 
 DWORD WINAPI WatcherThread(LPVOID) {
     bool prevDown = false;
-    while (g_running.load(std::memory_order_relaxed)) {
+    while (g_running.load(std::memory_order_relaxed) && !coop::shutdown::IsShuttingDown()) {
         const bool down = (::GetAsyncKeyState(VK_F12) & 0x8000) != 0;
         if (down && !prevDown) Capture(L"f12");
         prevDown = down;

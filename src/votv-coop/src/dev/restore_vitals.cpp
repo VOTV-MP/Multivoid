@@ -2,6 +2,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/shutdown.h"
 #include "dev/common.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -147,7 +148,7 @@ namespace {
 // (the user still gets their refill in solo play).
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF3 = false;
-    for (;;) {
+    while (!coop::shutdown::IsShuttingDown()) {
         // Foreground-window gate per [[feedback-deliver-results-fast]] pattern
         // (also documented in dev::common::IsOurWindowForeground): a same-box
         // host+client test would otherwise fire F3 in BOTH processes from a
@@ -168,6 +169,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
         prevF3 = f3;
         ::Sleep(8);
     }
+    return 0;
 }
 
 }  // namespace

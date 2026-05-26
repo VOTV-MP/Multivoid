@@ -25,6 +25,19 @@ set "WIN64=%GAMEDIR%\WindowsNoEditor\VotV\Binaries\Win64"
 set "COPYDIR=%ROOT%Game_0.9.0n_copy"
 set "COPYWIN64=%COPYDIR%\WindowsNoEditor\VotV\Binaries\Win64"
 
+REM Launch the original VotV-Win64-Shipping.exe (NOT a renamed copy).
+REM An exe-rename attempt (VotV-Host.exe) on 2026-05-26 produced a 16.7
+REM GB RAM / "not responding" hang: UE4.27 derives Saved/ + DDC + Crash
+REM paths from FPlatformProcess::ExecutableName(), so a renamed binary
+REM is treated as a first launch -> rebuilds the entire derived-data
+REM cache + the CrashReportClient retries against a missing matching
+REM exe name, blowing memory. Distinct-process-name identification for
+REM OBS / Task Manager is achieved via DIFFERENT WINDOW TITLES applied
+REM by our DLL (shutdown::UpdateWindowTitle -> "VotV (Host)" /
+REM "VotV (Client)"). OBS Window Capture, Alt-Tab, and Task Manager's
+REM Apps tab all distinguish by title.
+set "HOST_EXE=%WIN64%\VotV-Win64-Shipping.exe"
+
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=47621"
 set "NICK=%~2"
@@ -63,11 +76,12 @@ set "VOTVCOOP_NET_NICK=%NICK%"
 
 echo.
 echo Launching VOTV as HOST (port=%PORT%, nick=%NICK%)
+echo   exe=%HOST_EXE%
 echo Tell your friend to run:  mp_client_connect.bat ^<your-LAN-IP^>
 echo (Find your LAN IP with  ipconfig  -- e.g. 192.168.x.x)
 echo.
 
-start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=1920 -ResY=1080
+start "" "%HOST_EXE%" -windowed -ResX=1920 -ResY=1080
 
 echo Running. Press F12 for a screenshot; F2 for the dev pos/cam overlay.
 echo When done, run stop-coop.bat to restore UE4SS.

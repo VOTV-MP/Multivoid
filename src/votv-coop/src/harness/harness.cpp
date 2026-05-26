@@ -19,6 +19,7 @@
 #include "coop/prop_snapshot.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
+#include "coop/shutdown.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -266,6 +267,20 @@ void InstallGrabObservers() {
     coop::prop_lifecycle::Install(&g_session);
     coop::npc_sync::Install(&g_session);
     coop::item_activate::Install(&g_session);  // Phase 5F flashlight
+    // NOTE: coop::shutdown::Install / UpdateWindowTitle are called from
+    // the timeline tick lambda DIRECTLY (NetPumpTick / play branch /
+    // netloopback branch). They MUST NOT be gated on `g_netLocal` like
+    // this function is -- the HWND subclass + window title must work
+    // BEFORE the local player has been possessed (e.g. on OMEGA splash
+    // screen, where the user might X-close before gameplay).
+    // Audit-fix 2026-05-26 v3.
+}
+
+// Standalone shutdown hooks for the timeline tick. NOT gated on
+// g_netLocal -- runs regardless of local-player state. Idempotent.
+void TickShutdownHooks() {
+    coop::shutdown::Install(&g_session);
+    coop::shutdown::UpdateWindowTitle();
 }
 
 // Autonomous grab test moved to harness/autotest.cpp.
@@ -908,8 +923,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             const auto autotestUntil = steady_clock::now() + seconds(30);
 
             int tick = 0;
-            for (;;) {
-                Post([] { NetPumpTick(0.f); coop::nameplate::Update(); });
+            while (!coop::shutdown::IsShuttingDown()) {
+                Post([] { NetPumpTick(0.f); coop::nameplate::Update(); TickShutdownHooks(); });
                 // Autotest correction tick: every ~250 ms while still inside the
                 // 30 s window, re-check actor position and re-teleport if it
                 // drifted outside the 200-cm tolerance. Catches VOTV's late
@@ -1020,10 +1035,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // the net branch installs them via NetPumpTick, but this branch
             // doesn't run NetPumpTick. The observers are purely local
             // (observe THIS instance's own UFunctions); zero wire dependency.
-            for (;;) {
+            while (!coop::shutdown::IsShuttingDown()) {
                 Post([] {
                     InstallGrabObservers();  // each subsystem's Install is idempotent + retries until ready (audit C-2)
                     coop::nameplate::Update();
+                    TickShutdownHooks();
                 });
                 ::Sleep(50);
             }
@@ -1055,8 +1071,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
-        for (;;) {
-            Post([] { NetPumpTick(250.f); coop::nameplate::Update(); });
+        while (!coop::shutdown::IsShuttingDown()) {
+            Post([] { NetPumpTick(250.f); coop::nameplate::Update(); TickShutdownHooks(); });
             if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz
                 Post([] {
                     UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",
@@ -1144,6 +1160,14 @@ void Start() {
     // just acquire it atomically and broadcast on press.
     dev::restore_vitals::Init();
     dev::teleport_client::Init();
+
+    // Install WM_CLOSE subclass on the game HWND so X-close runs our
+    // cleanup BEFORE the engine's teardown PE calls fire. Without this
+    // the PE detour stays live through UE4 shutdown, faults on
+    // half-destroyed UObjects, and the process hangs at 99% RAM. The
+    // window might not exist yet at this moment -- Install() retries
+    // via TimelineThread's tick loop (see CoopShutdownRetry below).
+    coop::shutdown::Install(&g_session);
 
     auto* scenario = new std::string(cfg::ReadScenario());
     if (HANDLE t = ::CreateThread(nullptr, 0, TimelineThread, scenario, 0, nullptr)) {

@@ -3,6 +3,7 @@
 #include "coop/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/shutdown.h"
 #include "dev/common.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -147,7 +148,7 @@ void SnapshotAndSend(coop::net::Session* s) {
 // time of press; the client applies on receive.
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF4 = false;
-    for (;;) {
+    while (!coop::shutdown::IsShuttingDown()) {
         const bool f4 = ::dev::IsOurWindowForeground() && KeyDown(VK_F4);
         if (f4 && !prevF4) {
             auto* s = g_session.load(std::memory_order_acquire);
@@ -161,6 +162,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
         prevF4 = f4;
         ::Sleep(8);
     }
+    return 0;
 }
 
 }  // namespace

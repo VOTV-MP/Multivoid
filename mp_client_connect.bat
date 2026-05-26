@@ -29,6 +29,17 @@ set "WIN64=%GAMEDIR%\WindowsNoEditor\VotV\Binaries\Win64"
 set "HOSTDIR=%ROOT%Game_0.9.0n"
 set "HOSTWIN64=%HOSTDIR%\WindowsNoEditor\VotV\Binaries\Win64"
 
+REM Launch the original VotV-Win64-Shipping.exe (NOT a renamed copy).
+REM A rename attempt (VotV-Client.exe) was reverted on 2026-05-26 after the
+REM matching host rename produced a 16.7 GB RAM hang -- UE4.27 derives
+REM Saved/ + DDC + Crash paths from FPlatformProcess::ExecutableName(), so
+REM a renamed binary triggers a first-launch DDC rebuild + CrashReportClient
+REM mismatch. Distinct-process identification for OBS / Task Manager is
+REM done via DIFFERENT WINDOW TITLES applied by our DLL (shutdown::
+REM UpdateWindowTitle -> "VotV (Host)" / "VotV (Client)"). OBS Window
+REM Capture, Alt-Tab, Task Manager Apps tab all distinguish by title.
+set "CLIENT_EXE=%WIN64%\VotV-Win64-Shipping.exe"
+
 if not exist "%WIN64%\VotV-Win64-Shipping.exe" (
   echo.
   echo ERROR: client game folder not found at:
@@ -52,12 +63,12 @@ if "%PORT%"=="" set "PORT=47621"
 set "NICK=%~3"
 if "%NICK%"=="" set "NICK=Client"
 
-REM Smaller client window than the host's full 1920x1080 -- the client is the
-REM secondary view (verifying coop / co-presence), but still readable. 1280x720
-REM is the common "small but legible" windowed default. Override with
-REM `set RESX=...` / `set RESY=...` for a custom size.
-if "%RESX%"=="" set "RESX=1280"
-if "%RESY%"=="" set "RESY=720"
+REM Same 1080p window as the host -- per [[feedback-user-prefers-1080-windows]]
+REM the user explicitly rejected the smaller 720p default ("I don't like the
+REM 1280 720 window make it 1080"). Override with `set RESX=...` / `set RESY=...`
+REM for a custom size on a smaller secondary monitor.
+if "%RESX%"=="" set "RESX=1920"
+if "%RESY%"=="" set "RESY=1080"
 
 echo Deploying standalone mod to client copy folder ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\deploy-loader.ps1" -Standalone -GameWin64 "%WIN64%"
@@ -94,10 +105,11 @@ set "VOTVCOOP_NET_NICK=%NICK%"
 echo.
 echo Launching VOTV CLIENT from %GAMEDIR%
 echo   peer=%PEER%:%PORT%  nick=%NICK%  window=%RESX%x%RESY%
+echo   exe=%CLIENT_EXE%
 echo Make sure the host already ran  mp_host_game.bat  on %PEER%.
 echo.
 
-start "" "%WIN64%\VotV-Win64-Shipping.exe" -windowed -ResX=%RESX% -ResY=%RESY%
+start "" "%CLIENT_EXE%" -windowed -ResX=%RESX% -ResY=%RESY%
 
 echo Running. Press F12 for a screenshot; F2 for the dev pos/cam overlay.
 echo When done, run stop-coop.bat to restore UE4SS in the host folder (the

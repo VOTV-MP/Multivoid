@@ -1,6 +1,7 @@
 #include "dev/pos_hud.h"
 
 #include "coop/players_registry.h"
+#include "coop/shutdown.h"
 #include "dev/common.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -144,7 +145,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF2 = false;
     int refreshCounter = 0;
     constexpr int kRefreshEveryN = 12;  // 12 * 8 ms = ~96 ms -> ~10 Hz
-    for (;;) {
+    while (!coop::shutdown::IsShuttingDown()) {
         // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
         // so pressing F2 in the client's window would otherwise fire the hotkey
         // in BOTH host + client (each runs its own pos_hud thread reading the
@@ -168,6 +169,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
 
         ::Sleep(8);
     }
+    return 0;
 }
 
 }  // namespace
