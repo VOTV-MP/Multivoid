@@ -209,6 +209,27 @@ Candidate VOTV systems to classify during Phase 1 (this is a checklist of
 - NPCs / creatures / AI entities (Phase 4.3).
 - Day/night cycle & world time (likely host-authoritative single value).
 - Weather / environment events.
+  STATUS 2026-05-26: Phase 5W Inc1+Inc2 **SHIPPED**. Host-authoritative
+  weather state sync (rain, snow, fog enables, wind via cycle propagation,
+  lightning strikes) lands via two new reliable kinds: `WeatherState` (20 B
+  continuous push on host scheduler state-change + connect-edge replay)
+  and `LightningStrike` (16 B discrete event at strike loc).
+  Authority: `AdaynightCycle_C` singleton. Host POST-observes 5 scheduler
+  UFunctions (`timerRain`/`timerLightning`/`fogEvent`/`superFogEvent`/
+  `permaRain_timer`), FNV1a-dedups state, broadcasts. Client PRE-cancels
+  the same 5 via new multi-slot interceptor in `ue_wrap::game_thread` so
+  the client never rolls weather locally; receives state via wire +
+  applies through cycle mutator UFunctions (`causeRain` /
+  `setRainProperties` / `setWindParameters` / `intComs_triggerSnow`).
+  Lightning: host POST observer on `BeginDeferredActorSpawnFromClass`
+  filtered on `lightningStrike_C`; receiver spawns at received loc via
+  BeginDeferred+FinishSpawning. RE docs:
+  `research/findings/votv-weather-RE-{mainGamemode,effect-actors,scheduler}-2026-05-26.md`,
+  synthesis `votv-weather-DESIGN-2026-05-26.md`. **OUT OF Phase 5W**
+  (deferred to a future `EntityEventPacket` phase): story-event weather
+  spawns (`spawnBlackFog` / `spawnRedSky` / `Spawn Bad Sun` /
+  `event_fleshRain` / `skyFallingEvent`) — sparse one-shots with bespoke
+  assets that warrant per-event packets, not the continuous-state packet.
 - Audio signals / the core signal-processing gameplay loop.
 - Save / world state (host-authoritative — Phase 4.5).
 - Cutscenes / scripted story events (Phase 4.4).
