@@ -944,6 +944,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                     ::CloseHandle(h);
                 }
             }
+            // Phase 5W weather sync autonomous test. Host-only (the routine
+            // self-gates on role; client just observes via wire). Forces
+            // rain ON/OFF cycles via weather_sync::DebugForceRain which
+            // follows the RULE-1 proper invocation sequence (enable_rain
+            // precondition + setRainProperties + causeRain +
+            // setWindParameters) per the 2026-05-27 RE pass.
+            if (cfg::ReadEnv("VOTVCOOP_RUN_WEATHER_TEST") == "1") {
+                UE_LOGI("harness: VOTVCOOP_RUN_WEATHER_TEST=1 (%s) -- spawning weather test thread",
+                        netCfg.role == coop::net::Role::Host ? "host" : "client");
+                if (HANDLE h = ::CreateThread(nullptr, 0, harness::autotest::WeatherTestThread, nullptr, 0, nullptr)) {
+                    ::CloseHandle(h);
+                }
+            }
 
             // Autotest CONTINUED CORRECTION: VOTV's player late-init (BeginPlay /
             // possess / save-restore) can revert the autotest teleport AFTER it

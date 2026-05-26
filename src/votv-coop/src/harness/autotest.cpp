@@ -30,6 +30,7 @@
 #include "harness/autotest.h"
 
 #include "coop/item_activate.h"
+#include "coop/weather_sync.h"
 #include "dev/flashlight_setup.h"
 #include "harness/screenshot.h"
 #include "ue_wrap/engine.h"
@@ -527,6 +528,118 @@ void RunAutonomousFlashlightTest() {
 
 DWORD WINAPI FlashlightTestThread(LPVOID /*arg*/) {
     RunAutonomousFlashlightTest();
+    return 0;
+}
+
+// ---- Phase 5W autonomous weather sync test ------------------------------
+//
+// Host-only. After session-Connected + autotest-pose settle, the host calls
+// coop::weather_sync::DebugForceRain via GT::Post -- which writes
+// enable_rain=true + calls setRainProperties + causeRain + setWindParameters
+// per the proper-invocation RE pass (2026-05-27, RULE 1). Each forced
+// state change broadcasts a WeatherState packet (the host POST observer
+// on setRainProperties / causeRain catches the call). Client receives,
+// applies via mutator UFunctions on its local cycle.
+//
+// Verification (logs only -- visual is for the user / OBS):
+//   - Host log: `weather: DebugForceRain ...` + `weather: host broadcast ...`
+//   - Client log: `weather: applied flags 0x... ...`
+//   - Both peers also log isRaining bool diagnostic each cycle (read by
+//     this routine on host, by a separate per-tick diagnostic on client --
+//     see the periodic state-read in weather_sync.cpp's TickConnect path).
+//
+// 4 cycles: ON / OFF / ON / OFF at 6-second spacing (rain particle
+// systems take ~1-2s to start + audio to ramp; 6s is comfortable for
+// screenshot capture mid-cycle). Final state = OFF so the next test run
+// starts clean.
+void RunAutonomousWeatherTest() {
+    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const bool isHost = (roleEnv != "client");
+    if (!isHost) {
+        UE_LOGI("weather_test: not host -- this routine is host-only "
+                "(client observes via wire). Returning.");
+        return;
+    }
+    UE_LOGI("weather_test: starting autonomous routine on host (waiting "
+            "20 s for stabilization: pose settle + cycle Install + session connect)");
+    ::Sleep(20000);
+
+    // Snapshot pre-test state for diagnostics.
+    {
+        auto found = std::make_shared<std::atomic<int>>(0);
+        auto state = std::make_shared<std::atomic<bool>>(false);
+        GT::Post([found, state] {
+            bool ok = false;
+            const bool rain = coop::weather_sync::ReadLocalIsRaining(&ok);
+            state->store(rain, std::memory_order_release);
+            found->store(ok ? 1 : -1, std::memory_order_release);
+        });
+        while (found->load() == 0) ::Sleep(5);
+        const int code = found->load();
+        if (code < 0) {
+            UE_LOGW("weather_test: cycle not live on host yet -- aborting "
+                    "(retry test after the world finishes loading)");
+            return;
+        }
+        UE_LOGI("weather_test: host pre-test isRaining=%d",
+                state->load() ? 1 : 0);
+    }
+
+    struct Phase { bool on; const char* label; float strength; };
+    const Phase phases[] = {
+        { true,  "ON-1",  1.0f },
+        { false, "OFF-1", 0.0f },
+        { true,  "ON-2",  1.0f },
+        { false, "OFF-2", 0.0f },
+    };
+
+    for (size_t i = 0; i < sizeof(phases) / sizeof(phases[0]); ++i) {
+        const Phase& ph = phases[i];
+        UE_LOGI("weather_test: phase %zu/%zu (%s) -- DebugForceRain(isRaining=%d, strength=%.1f)",
+                i + 1, sizeof(phases) / sizeof(phases[0]),
+                ph.label, ph.on ? 1 : 0, ph.strength);
+
+        auto callDone = std::make_shared<std::atomic<int>>(0);
+        const bool on = ph.on;
+        const float strength = ph.strength;
+        GT::Post([on, strength, callDone] {
+            const bool ok = coop::weather_sync::DebugForceRain(on, strength);
+            callDone->store(ok ? 1 : -1, std::memory_order_release);
+        });
+        while (callDone->load() == 0) ::Sleep(5);
+        if (callDone->load() < 0) {
+            UE_LOGW("weather_test: phase %s failed (DebugForceRain returned false) -- "
+                    "abort", ph.label);
+            return;
+        }
+
+        // 6 s spacing: lets the wire packet land + receiver apply +
+        // particle/audio start on the client + screenshot timing window.
+        ::Sleep(6000);
+
+        // Post-phase state diagnostic on host.
+        auto readDone = std::make_shared<std::atomic<int>>(0);
+        auto readState = std::make_shared<std::atomic<bool>>(false);
+        GT::Post([readDone, readState] {
+            bool ok = false;
+            const bool rain = coop::weather_sync::ReadLocalIsRaining(&ok);
+            readState->store(rain, std::memory_order_release);
+            readDone->store(ok ? 1 : -1, std::memory_order_release);
+        });
+        while (readDone->load() == 0) ::Sleep(5);
+        UE_LOGI("weather_test: phase %s settle -- host isRaining=%d "
+                "(expected=%d after DebugForceRain)",
+                ph.label,
+                readDone->load() > 0 ? (readState->load() ? 1 : 0) : -1,
+                ph.on ? 1 : 0);
+    }
+
+    UE_LOGI("weather_test: DONE -- %zu phases on host (final state should be OFF)",
+            sizeof(phases) / sizeof(phases[0]));
+}
+
+DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
+    RunAutonomousWeatherTest();
     return 0;
 }
 

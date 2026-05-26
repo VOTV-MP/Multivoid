@@ -101,13 +101,17 @@ void UnregisterInterceptor(void* targetUFunction);
 //     PHC.ReleaseComponent observer before PhysX clears it).
 //
 // Performance: on the hot path, the detour walks a fixed-size kMaxObservers
-// table (currently 64) comparing the dispatched function pointer against each
-// registered target. 64 pointer compares per dispatch -- still constant-time,
-// no allocation, no hashing. Bumped from 16 on 2026-05-25 after the
-// subclass-aware Init observer scan (one slot per prop subclass Init
-// override) blew through the prior cap; we register ~10-20 Init UFunctions
-// in addition to the ~9 fixed grab observers + future cross-peer-destroy
-// pre-observers. 64 gives ~30-slot headroom for future hooks.
+// table comparing the dispatched function pointer against each registered
+// target. Still constant-time, no allocation, no hashing. Sizing history:
+//   16 (initial) -> 64 (2026-05-25 after subclass-aware Aprop_C::Init
+//   override scan ran 54 unique BP subclasses through the table)
+//   -> 128 (2026-05-27 after Phase 5W weather added 5 scheduler + 3
+//   mutator observers + 1 lightning POST + the existing flashlight/grab
+//   subsystems all stacked; 64 silently dropped the last ~10
+//   registrations).
+// Memory cost: 128 slots * 16 B/slot * 2 tables (post + pre) = 4 KB. Trivial.
+// Per-dispatch cost: 128 acquire-loads on the hot path; even at 50 k
+// ProcessEvent/s that's well under 1 ms of CPU per second.
 //
 // Thread-safety: registration uses an atomic store so the detour reads a
 // consistent state. The table is fixed-size; no rehash, no realloc. Game-
@@ -115,7 +119,7 @@ void UnregisterInterceptor(void* targetUFunction);
 // ProcessEvent detour always fires on the dispatching thread (usually
 // game thread; sometimes a task-graph worker for parallel anim).
 using ProcessEventObserverFn = void(*)(void* self, void* function, void* params);
-inline constexpr int kMaxObservers = 64;
+inline constexpr int kMaxObservers = 128;
 
 // Register a POST-dispatch observer for `targetUFunction`. Returns false
 // if the table is full or arguments are null. Safe to call from any

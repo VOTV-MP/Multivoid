@@ -67,6 +67,24 @@ void OnDisconnect();
 // Game thread only.
 void ApplyFromHost(const coop::net::WeatherStatePayload& payload);
 
+// Phase 5W test entrypoint (host only). Calls setRainProperties on the
+// local AdaynightCycle_C via reflection with the supplied (isRaining,
+// rainStrength) -- a stronger trigger than causeRain alone because it
+// forces both the bool AND the visible rain-strength scalar. The host's
+// POST observer on setRainProperties catches the call + broadcasts the
+// resulting state to the client. Used by the autonomous LAN test
+// (VOTVCOOP_RUN_WEATHER_TEST=1). Returns false if cycle is not yet live
+// or the UFunction isn't resolved. Game thread only.
+bool DebugForceRain(bool isRaining, float rainStrength);
+
+// Phase 5W diagnostic: read the local AdaynightCycle_C's isRaining bool
+// directly. Used by the autonomous test to verify cross-peer sync on
+// both peers WITHOUT relying on log parsing alone. Returns nullopt-like
+// behaviour: false if cycle is null; otherwise the current bool value.
+// Pass `outFound` to distinguish "false (cycle null)" from "false (not
+// raining)". Game thread only.
+bool ReadLocalIsRaining(bool* outFound);
+
 // Phase 5W Inc2: receiver-side lightning strike apply. Host's POST observer
 // on BeginDeferredActorSpawnFromClass catches AlightningStrike_C spawns
 // (the spawn is BP-internal inside AdaynightCycle_C::timerLightning which

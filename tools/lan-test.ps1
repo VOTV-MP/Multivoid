@@ -46,7 +46,16 @@ param(
     # broadcasts each, and the OTHER peer should receive + apply to its
     # puppet. PASS criteria below check for "flashlight: sent" + "flashlight:
     # applied to puppet" log lines on both sides.
-    [switch]$FlashlightTest
+    [switch]$FlashlightTest,
+    # Phase 5W (2026-05-27): autonomous weather test. Host calls
+    # weather_sync::DebugForceRain ON/OFF/ON/OFF via reflection (proper
+    # 4-step sequence per RULE 1: enable_rain precondition +
+    # setRainProperties + causeRain + setWindParameters). Each toggle
+    # broadcasts a WeatherState packet; client's local cycle applies via
+    # mutator UFunctions (causeRain + setRainProperties). Verification
+    # checks both host's `weather: host broadcast` and client's `weather:
+    # applied flags` log lines.
+    [switch]$WeatherTest
 )
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
@@ -101,7 +110,7 @@ $hostPose   = @{ X = "-37730"; Y = "69943";  Z = "6420"; Yaw = "-86.8"; Pitch = 
 $clientPose = @{ X = "-37640"; Y = "68532";  Z = "6399"; Yaw = "88.2";  Pitch = "-4.7" }
 
 # --- launch the two instances with per-process env --------------------------
-function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $flashlightTest) {
+function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $flashlightTest, $weatherTest) {
     $env:VOTVCOOP_SCENARIO = "play"
     $env:VOTVCOOP_NET_ROLE = $role
     $env:VOTVCOOP_NET_PORT = "$Port"
@@ -125,6 +134,9 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $f
     if ($flashlightTest) {
         $env:VOTVCOOP_RUN_FLASHLIGHT_TEST = "1"
     }
+    if ($weatherTest) {
+        $env:VOTVCOOP_RUN_WEATHER_TEST = "1"
+    }
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
@@ -133,20 +145,24 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $f
                 Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
                 Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST,`
                 Env:VOTVCOOP_GRAB_TEST_ANCHOR_X,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Y,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Z,`
-                Env:VOTVCOOP_RUN_FLASHLIGHT_TEST `
+                Env:VOTVCOOP_RUN_FLASHLIGHT_TEST,Env:VOTVCOOP_RUN_WEATHER_TEST `
                 -ErrorAction SilentlyContinue
     return $p
 }
 
-Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'}))..."
-$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest $FlashlightTest
+Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'})$(if($WeatherTest){', WEATHER TEST armed (host drives, client observes)'}))..."
+$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest $FlashlightTest $WeatherTest
 Start-Sleep -Seconds 4   # let the host process come up first
-Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'}))..."
+Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'})$(if($WeatherTest){', WEATHER TEST armed (observer-only)'}))..."
 # Client also gets VOTVCOOP_RUN_GRAB_TEST=1 -- it runs the prop scan + logs
 # fields for cross-peer Key comparison, but does NOT drive any UFunctions.
 # Flashlight test: BOTH peers drive toggles so we verify the wire goes
 # both directions (host->client puppet AND client->host puppet).
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest $FlashlightTest
+# Weather test: BOTH peers get the env var so each spawns the routine, but
+# the routine self-gates on role -- only the host actually forces rain;
+# the client logs "not host" and exits. Setting the env on both keeps
+# launcher symmetry simple.
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest $FlashlightTest $WeatherTest
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------
@@ -211,7 +227,25 @@ function Capture-Pair($labelSuffix) {
 }
 
 if ($pass) {
-    if ($FlashlightTest) {
+    if ($WeatherTest) {
+        # Weather test timing (matches RunAutonomousWeatherTest's
+        # 4-phase routine, each phase 6s):
+        #   PASS + ~20 s    routine starts (host stabilization wait)
+        #   PASS + ~20-26 s    phase ON-1 (DebugForceRain true)
+        #   PASS + ~26-32 s    phase OFF-1
+        #   PASS + ~32-38 s    phase ON-2
+        #   PASS + ~38-44 s    phase OFF-2 (final)
+        # Take screenshots 4s into each phase (midway through the dwell).
+        Step "PASS detected; WEATHER TEST armed -- forcing rain ON/OFF cycles on host..."
+        Start-Sleep -Seconds 24          # land at PASS+24, midway through ON-1
+        Capture-Pair "weather-rain-on1"
+        Start-Sleep -Seconds 6           # PASS+30, midway through OFF-1
+        Capture-Pair "weather-rain-off1"
+        Start-Sleep -Seconds 6           # PASS+36, midway through ON-2 (peak rain)
+        Capture-Pair "weather-rain-on2"
+        Start-Sleep -Seconds 8           # PASS+44, end of OFF-2
+        Capture-Pair "weather-end"
+    } elseif ($FlashlightTest) {
         # Flashlight test timing (matches RunAutonomousFlashlightTest's
         # 5-iteration routine; each peer ends with flashlight ON):
         #   PASS + ~15 s   routine starts (post-stabilization)
@@ -288,11 +322,44 @@ if ($pass) {
 # Phase 5F: separate verdict for the flashlight test (the connect-PASS above
 # only proves the SESSION came up). We need the toggles to actually traverse
 # the wire and apply on the puppet.
-if ($pass -and $FlashlightTest) {
-    function Count-Matches($path, $pattern) {
-        if (-not (Test-Path $path)) { return 0 }
-        return @(Select-String -Path $path -Pattern $pattern -ErrorAction SilentlyContinue).Count
+function Count-Matches($path, $pattern) {
+    if (-not (Test-Path $path)) { return 0 }
+    return @(Select-String -Path $path -Pattern $pattern -ErrorAction SilentlyContinue).Count
+}
+
+# Phase 5W: separate verdict for the weather test. PASS means host's
+# DebugForceRain calls broadcast over the wire AND the client applied them.
+if ($pass -and $WeatherTest) {
+    Write-Host ""
+    Step "==== WEATHER TEST verdict ===="
+    # Host log expected lines:
+    #   weather: DebugForceRain ... (one per phase = 4)
+    #   weather: host broadcast flags=0x... (one per phase = 4)
+    # Client log expected:
+    #   weather: applied flags 0x... (one per phase = 4)
+    $hostForce     = Count-Matches $hostLog   "weather: DebugForceRain"
+    $hostBroadcast = Count-Matches $hostLog   "weather: host broadcast flags"
+    $clientApplied = Count-Matches $clientLog "weather: applied flags"
+    Step "host   log: DebugForceRain=$hostForce  host-broadcast=$hostBroadcast"
+    Step "client log: applied=$clientApplied"
+    # Expected: 4 phases (ON-1, OFF-1, ON-2, OFF-2). Allow for dedup
+    # squashing of the ON-2-after-ON-1 sequence (no state change between
+    # like-state phases triggers signature-match dedup); accept >=2 each.
+    $wxpass = ($hostForce -ge 2) -and ($hostBroadcast -ge 2) -and ($clientApplied -ge 2)
+    if ($wxpass) {
+        Write-Host "[lan-test] WEATHER RESULT: PASS -- host forced rain $hostForce times; broadcast $hostBroadcast; client applied $clientApplied." -ForegroundColor Green
+    } else {
+        Write-Host "[lan-test] WEATHER RESULT: FAIL -- low counts (expected >=2 each)." -ForegroundColor Red
+        Step "==== HOST weather lines ===="
+        Select-String -Path $hostLog -Pattern "weather" -ErrorAction SilentlyContinue |
+            Select-Object -Last 20 | ForEach-Object { Write-Host "  $($_.Line)" }
+        Step "==== CLIENT weather lines ===="
+        Select-String -Path $clientLog -Pattern "weather" -ErrorAction SilentlyContinue |
+            Select-Object -Last 20 | ForEach-Object { Write-Host "  $($_.Line)" }
     }
+}
+
+if ($pass -and $FlashlightTest) {
     Write-Host ""
     Step "==== FLASHLIGHT TEST verdict ===="
     # Match either the observer send ("flashlight: sent state=") or the

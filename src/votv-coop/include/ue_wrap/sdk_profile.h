@@ -1023,6 +1023,13 @@ inline constexpr const wchar_t* DaynightCycle_setWindParametersFn  = L"setWindPa
 inline constexpr const wchar_t* DaynightCycle_intComsTriggerSnowFn = L"intComs_triggerSnow";
 inline constexpr const wchar_t* DaynightCycle_spawnFogFn           = L"spawnFog";
 inline constexpr const wchar_t* DaynightCycle_setFogDensityFn      = L"SetFogDensity";
+// 2026-05-27 Inc1 fix: setRainParticles is the BP function that DIRECTLY
+// activates / deactivates the UParticleSystemComponent rainEffect on the
+// cycle. causeRain triggers the BP transition (audio + ambient + bool flip)
+// but does NOT always activate the particle system reliably -- the RE doc
+// flagged this as a fallback path. Receiver calls this after causeRain to
+// guarantee the visible particle component matches state.
+inline constexpr const wchar_t* DaynightCycle_setRainParticlesFn   = L"setRainParticles";
 // SetCollisionEnabled lives on UPrimitiveComponent; used by remote_prop::OnSpawn
 // to restore default collision (QueryAndPhysics=3) on wire-converged props
 // whose local copy had collision disabled by a natural-spawn pipeline (e.g.

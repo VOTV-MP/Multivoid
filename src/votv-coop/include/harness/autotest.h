@@ -36,4 +36,18 @@ DWORD WINAPI GrabTestThread(LPVOID arg);
 void RunAutonomousFlashlightTest();
 DWORD WINAPI FlashlightTestThread(LPVOID arg);
 
+// Phase 5W: autonomous weather sync test. Host-only. After stabilization,
+// calls weather_sync::DebugForceRain to force rain on / off / on / off
+// at 5-second intervals. The POST observer on setRainProperties catches
+// each call and broadcasts a WeatherState packet. Verification:
+//   - Host log: at least 2 `weather: host broadcast` lines.
+//   - Client log: at least 2 `weather: applied flags 0x...` lines.
+//   - Cross-peer state read (via a diagnostic log line every cycle on
+//     BOTH peers): host `isRaining` and client `isRaining` should match
+//     after each forced toggle.
+// Blocks the calling thread for ~30 seconds.
+// Gated by env VOTVCOOP_RUN_WEATHER_TEST="1" + role=Host.
+void RunAutonomousWeatherTest();
+DWORD WINAPI WeatherTestThread(LPVOID arg);
+
 }  // namespace harness::autotest
