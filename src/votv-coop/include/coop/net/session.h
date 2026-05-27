@@ -1,32 +1,35 @@
-// coop/net/session.h -- the networking application layer (Phase 3, methodology 3.2/3.5).
+// coop/net/session.h -- the networking application layer (PR-2 GNS edition).
 //
 // "A session is a host listening on a port + zero or one clients connected."
-// Session owns the Transport (pure I/O) and the protocol (serialization), runs a
-// dedicated net thread, and bridges to the game thread via two small pose slots:
+// Session owns the GameNetworkingSockets connection (or the listen socket for
+// the host) and runs a dedicated net thread that drives GNS's RunCallbacks +
+// ReceiveMessagesOnConnection. The game thread <-> net thread bridge stays the
+// same as pre-PR-2: pose slots (mutex-guarded snapshots) + a reliable inbox.
 //
-//   game thread  --SetLocalPose-->  [local slot]  --net thread--> sendto(peer)
-//   game thread <--TryGetRemote--   [remote slot] <--net thread-- recvfrom(peer)
+// PR-2 rewrite (2026-05-28): the hand-rolled Winsock UDP transport, the
+// Hello/HelloAck handshake + session-token anti-spoof, the Ping/Pong RTT,
+// and the stop-and-wait reliable ARQ are all gone. GNS owns connection
+// lifetime + auth (ECDH + AES-GCM) + ordering + reliability + RTT. We carry
+// our existing packet structs (protocol.h) as opaque payloads inside
+// SendMessageToConnection.
 //
-// The net thread NEVER touches the engine; the game thread NEVER touches the
-// socket. All the engine work (read local pose, Drive the puppet) stays on the
-// game thread in the harness/coop integration, which calls Set/TryGet here.
+//   game thread  --SetLocalPose-->  [local slot]  --net thread--> SendMessage(hConn, Unreliable+NoNagle+NoDelay)
+//   game thread <--TryGetRemote--   [remote slot] <--net thread-- ReceiveMessages -> HandleMessage(payload)
 //
-// Host-authoritative (methodology 3.1): the host owns world truth. For Phase 3
-// (position-only) the path is symmetric -- each side sends its own player's pose
-// and renders the other's -- but the role still decides who binds the port and
-// who initiates the handshake, and it is the hook for Phase 4 authority.
+// All public API signatures are preserved -- the 28 caller files
+// (harness, prop_lifecycle, weather_sync, etc.) compile unchanged.
 
 #pragma once
 
 #include "coop/net/protocol.h"
-#include "coop/net/reliable_channel.h"
-#include "coop/net/transport.h"
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace coop::net {
 
@@ -36,179 +39,149 @@ enum class ConnState : uint8_t { Disconnected, Handshaking, Connected };
 
 struct Config {
     Role role = Role::Host;
-    std::string peerIp = "127.0.0.1";  // the OTHER machine (or self, for loopback)
+    std::string peerIp = "127.0.0.1";   // the OTHER machine (or self, for loopback)
     uint16_t port = kDefaultPort;       // host binds this; client targets it on peerIp
-    int sendHz = 60;                    // pose send rate; 60 Hz = one packet per ~16 ms,
-                                        // matches a 60 fps client's frame interval so the
-                                        // receive cadence stays smooth at the visual rate
-                                        // (28 bytes/packet * 60 Hz = 1.7 KB/s -- trivial).
-    // Who opens the handshake. A client always initiates (Hello -> peerIp:port). A
-    // real host waits and learns its peer from the first client Hello (peer unknown
-    // up front). `initiate` forces the host to also target peerIp -- used for the
-    // single-process loopback self-test (peerIp == self), never for a real host.
-    bool initiate = false;
+    int sendHz = 60;                    // pose send rate; 60 Hz matches a 60 fps client
+    // PR-2 dropped the `initiate` flag: GNS connection is always client-driven
+    // (CreateListenSocketIP on host + ConnectByIPAddress on client). Loopback
+    // self-test still works by running host + client in two processes.
 };
 
 class Session {
 public:
+    // Reliable message delivered to the game thread. Replaces the pre-PR-2
+    // ReliableChannel::Message (the standalone ReliableChannel was deleted in
+    // PR-2 -- GNS provides reliable+ordered delivery natively).
+    struct ReliableMessage {
+        ReliableKind kind;
+        std::vector<uint8_t> payload;
+    };
+
     Session() = default;
     ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
-    // Open the socket + start the net thread. Idempotent-safe (returns false if
-    // already running). Host binds cfg.port; client binds an ephemeral port and
-    // targets cfg.peerIp:cfg.port. Returns false if the socket can't open.
+    // Open the GNS endpoint + start the net thread. Idempotent-safe (returns
+    // false if already running). Host calls CreateListenSocketIP(cfg.port);
+    // client calls ConnectByIPAddress(cfg.peerIp:cfg.port). Returns false on
+    // GNS init failure or socket bind failure.
     bool Start(const Config& cfg);
 
-    // Stop the net thread, send a Bye, close the socket.
+    // Close the connection, join the net thread. GNS's library state stays
+    // initialized across Start/Stop cycles so a reconnect is fast.
     void Stop();
 
     bool running() const { return running_.load(); }
     ConnState state() const { return state_.load(); }
     bool connected() const { return state_.load() == ConnState::Connected; }
-    Role role() const { return cfg_.role; }  // host vs client; immutable after Start
+    Role role() const { return cfg_.role; }
 
     // Game thread: publish our local player's pose for the net thread to send.
     void SetLocalPose(const PoseSnapshot& pose);
 
     // Game thread: fetch the most recent remote pose. Returns true and fills
-    // `out` only when connected AND at least one snapshot has arrived. Always
-    // returns the latest (Drive is idempotent); `outIsNew` reports whether it is
-    // newer than the previous TryGet (for skip-if-unchanged callers).
+    // `out` only when connected AND at least one snapshot has arrived.
+    // `outIsNew` reports whether it is newer than the previous TryGet.
     bool TryGetRemotePose(PoseSnapshot& out, bool* outIsNew = nullptr);
 
-    // Game thread: queue a reliable message (chat / system event). Stop-and-wait,
-    // so returns false if one is still in flight. See ReliableChannel.
+    // Game thread: queue a reliable message (chat / system event). PR-2: this
+    // now ALWAYS succeeds at queue time -- GNS handles retransmit + ordering
+    // internally. Returns false only on payload-too-large or no active
+    // connection.
     bool SendReliable(ReliableKind kind, const void* payload, int len);
 
     // Game thread: pop a delivered reliable message, if a new one arrived.
-    bool TryGetReliable(ReliableChannel::Message& out);
+    bool TryGetReliable(ReliableMessage& out);
 
     // v4: publish the held-prop world transform for the net thread to send each
     // tick. While `set==true`, the net thread emits one PropPosePacket per
-    // sendHz interval; pass set=false to stop (host released the prop or
-    // grabbing_actor went null). The Key string is the cross-peer prop ID
-    // (Aprop_C.Key via prop_wrap::GetKeyString); receiver looks up its local
-    // Aprop_C* by walking GUObjectArray + string match.
+    // sendHz interval.
     void SetLocalPropPose(bool set, const PropPoseSnapshot& pose);
 
-    // v4: fetch the most recent remote PropPose. Returns true and fills `out`
-    // when connected AND at least one snapshot has arrived. `outIsNew` reports
-    // whether it is newer than the previous TryGet (the receiver applies only
-    // when new, to skip redundant engine writes when the stream pauses).
+    // v4: fetch the most recent remote PropPose.
     bool TryGetRemotePropPose(PropPoseSnapshot& out, bool* outIsNew = nullptr);
 
     // v5: signal the peer that we released the prop (one-shot, reliable).
-    // linVel = body's PhysX linear velocity in cm/s at release (the body's
-    // INHERITED kinematic-tracking velocity + any AddImpulse the engine just
-    // applied -- ONE number captures everything). angVel = angular velocity
-    // in deg/s. Receiver: re-enable SimulatePhysics + SetPhysicsLinearVelocity
-    // + SetPhysicsAngularVelocityInDegrees; fires Aprop_C.thrown if |linVel|
-    // > kThrownLinVelThreshold so the natural whoosh dispatches.
-    // Returns false if the reliable channel is busy (stop-and-wait queue is
-    // currently carrying another message); caller should retry next tick.
     bool SendPropRelease(const WireKey& key,
                          float linVelX, float linVelY, float linVelZ,
                          float angVelX, float angVelY, float angVelZ);
 
-    // v5: signal the peer that we just spawned a NEW prop in the world from
-    // an inventory drop (POST-hook on UpropInventory_C::takeObj). The
-    // receiver applies the payload by FindClass + BeginDeferredActorSpawn +
-    // setKey(receivedKey) + FinishSpawningActor + SetSimulatePhysics +
-    // optional initial velocity, producing a matching local Aprop_X_C
-    // instance with the same Key so subsequent PropPose updates resolve.
-    // Returns false if the reliable channel is busy; caller should retry.
+    // v5: signal a NEW prop spawn from inventory drop or world generation.
     bool SendPropSpawn(const PropSpawnPayload& payload);
 
-    // v5 Inc2: signal the peer that a prop with the given Key has been
-    // destroyed (host eats food, container breaks, mushroom harvested,
-    // etc.). The receiver does prop_wrap::FindByKeyString + K2_DestroyActor.
-    // Returns false if the reliable channel is busy.
+    // v5 Inc2: signal a prop destruction (eaten food, container break, etc.).
     bool SendPropDestroy(const WireKey& key);
 
-    // Phase 5N1 Inc2 (NPC sync, 2026-05-25): broadcast an NPC spawn the
-    // host's BeginDeferredActorSpawnFromClass PRE observer just witnessed.
-    // sessionId is host-assigned monotonic; transform is the SpawnTransform
-    // the original BeginDeferred was called with. Returns false if the
-    // reliable channel is busy.
+    // Phase 5N1 Inc2: NPC spawn broadcast.
     bool SendEntitySpawn(const EntitySpawnPayload& payload);
 
-    // Phase 5N1 Inc2: broadcast an NPC destruction. Receiver looks up
-    // its mirror by sessionId and K2_DestroyActor's it.
+    // Phase 5N1 Inc2: NPC destruction broadcast.
     bool SendEntityDestroy(uint32_t sessionId);
 
-    // Diagnostics / validation (methodology 5.2: packets sent/received counts).
+    // Diagnostics.
     uint64_t packetsSent() const { return sent_.load(); }
     uint64_t packetsRecv() const { return recv_.load(); }
 
-    // Last measured round-trip time to the peer, in milliseconds. 0 until the
-    // first Pong arrives (or the peer never replies). Updated on every received
-    // Pong; the net thread sends a Ping every kPingIntervalMs while Connected.
-    // Reading is wait-free (atomic load) -- safe from the game thread for HUD use.
+    // Round-trip time in milliseconds, sampled from GNS's
+    // GetConnectionRealTimeStatus. 0 until the first sample post-Connected.
     int lastRttMs() const { return lastRttMs_.load(); }
+
+    // GNS C-callback adapter. Public so the file-local trampoline in
+    // session.cpp (which has the exact FnSteamNetConnectionStatusChanged
+    // signature GNS expects) can forward to it. The instance is found via
+    // the singleton pointer set in Start(). `info` is a
+    // SteamNetConnectionStatusChangedCallback_t*; void* hides the GNS type
+    // from this header.
+    static void OnConnStatusChanged(void* info);
 
 private:
     void NetThread();
-    void HandleDatagram(const void* data, int len, const Endpoint& from);
+    void HandleMessage(const void* data, int len);
+    void HandleConnStatusChanged(void* info);
 
     Config cfg_;
-    Transport transport_;
     std::thread thread_;
     std::atomic<bool> running_{false};
     std::atomic<ConnState> state_{ConnState::Disconnected};
 
-    // Peer address. For the host it is learned from the first Hello; for the
-    // client it is the configured peerIp:port. Once locked, a Hello from a
-    // DIFFERENT address is ignored (no hijack). Guarded by peerMutex_.
-    std::mutex peerMutex_;
-    Endpoint peer_;
-    bool peerLocked_ = false;
-
-    // Session nonce. The host mints a random one at Start; the client learns it
-    // from the host's Hello. Every packet must carry it once known, or it is
-    // dropped (anti-spoof / anti-replay). Guarded by peerMutex_ (set rarely).
-    uint64_t sessionToken_ = 0;
+    // GNS handles. Stored as uint32_t (opaque GNS HSteamNetConnection /
+    // HSteamListenSocket types) so this header doesn't include the GNS
+    // public API. Real types are projected in session.cpp via a cast.
+    std::atomic<uint32_t> hConn_{0};      // 0 == invalid; host: accepted client; client: dialed host
+    std::atomic<uint32_t> hListen_{0};    // host only
 
     // Local pose slot (game thread writes, net thread reads).
     std::mutex localMutex_;
     PoseSnapshot localPose_{};
     bool hasLocal_ = false;
-
-    // v4: local held-prop pose slot (game thread writes, net thread reads).
-    // hasLocalProp_ gates the net thread's per-tick PropPose send.
     PropPoseSnapshot localPropPose_{};
     bool hasLocalProp_ = false;
-    uint32_t lastLocalPropSeq_ = 0;  // distinct per-prop-stream seq for stale-drop
+    uint32_t lastLocalPropSeq_ = 0;
 
     // Remote pose slot (net thread writes, game thread reads).
     std::mutex remoteMutex_;
     PoseSnapshot remotePose_{};
     bool hasRemote_ = false;
-    uint32_t lastRemoteSeq_ = 0;  // highest seq applied (stale-drop reordered UDP)
-    uint64_t remoteStamp_ = 0;    // bumped on each accepted pose (for outIsNew)
-    uint64_t lastReadStamp_ = 0;  // last stamp returned by TryGetRemotePose
-
-    // v4: remote prop pose slot. Same mutex as remotePose_ (low rate, simpler).
+    uint32_t lastRemoteSeq_ = 0;
+    uint64_t remoteStamp_ = 0;
+    uint64_t lastReadStamp_ = 0;
     PropPoseSnapshot remotePropPose_{};
     bool hasRemoteProp_ = false;
     uint32_t lastRemotePropSeq_ = 0;
     uint64_t remotePropStamp_ = 0;
     uint64_t lastReadPropStamp_ = 0;
 
+    // Reliable inbox: net thread enqueues delivered reliable messages; game
+    // thread pops via TryGetReliable. GNS provides FIFO ordering, so a queue
+    // is the right shape (vs the pre-PR-2 single-message inbox + dedup).
+    std::mutex reliableInboxMutex_;
+    std::deque<ReliableMessage> reliableInbox_;
+
     std::atomic<uint32_t> sendSeq_{0};
     std::atomic<uint64_t> sent_{0};
     std::atomic<uint64_t> recv_{0};
-
-    // RTT + peer-liveness tracking. lastRttMs_ is updated on Pong (atomic, so a
-    // game-thread HUD read is wait-free). lastRecvMs_ is the steady_clock millis
-    // of the last received packet from the locked peer -- the net thread uses it
-    // to fire the peer-timeout (host crash / internet drop = no Bye, so we'd
-    // otherwise stay Connected forever).
     std::atomic<int> lastRttMs_{0};
-    std::atomic<uint64_t> lastRecvMs_{0};
-
-    ReliableChannel reliable_;  // reliable sub-channel (chat / system events)
 };
 
 }  // namespace coop::net

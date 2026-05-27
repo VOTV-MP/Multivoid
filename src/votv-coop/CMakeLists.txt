@@ -50,9 +50,12 @@ target_include_directories(minhook PUBLIC ${MINHOOK_DIR}/include)
 # research/findings/votv-gns-integration-plan-2026-05-27.md +
 # research/findings/votv-gns-sandbox-pass-2026-05-28.md (sandbox PASS report).
 #
-# PR-1 (this commit): vendor + link only. No GNS API calls; src/coop/net/
-# gns_smoke.cpp pulls one symbol so the linker must consume the static lib.
-# PR-2 swaps coop::net::Session over to ConnectByIPAddress + lanes.
+# PR-1 vendored + linked the lib behind a /WHOLEARCHIVE smoke. PR-2 wired
+# coop::net::Session (src/coop/net/session.cpp) over GNS's CreateListenSocketIP /
+# ConnectByIPAddress / SendMessageToConnection / ReceiveMessagesOnConnection,
+# deleted the hand-rolled UDP transport + Hello/HelloAck handshake + reliable
+# ARQ + Ping/Pong RTT, dropped the smoke + /WHOLEARCHIVE. PR-3 adds lanes
+# (ConfigureConnectionLanes) + kMaxPeers=4.
 #
 # Static-link configuration (sandbox-verified 2026-05-28):
 #   USE_CRYPTO=BCrypt           Windows-native AES+SHA, no external crypto dep
@@ -87,7 +90,6 @@ add_subdirectory(third_party/GameNetworkingSockets EXCLUDE_FROM_ALL)
 
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
-    src/coop/net/gns_smoke.cpp
     src/ue_wrap/log.cpp
     src/ue_wrap/sig_scan.cpp
     src/ue_wrap/reflection.cpp
@@ -118,9 +120,7 @@ add_library(votv-coop SHARED
     src/coop/prop_snapshot.cpp
     src/coop/garbage_sync.cpp
     src/coop/weather_sync.cpp
-    src/coop/net/transport.cpp
     src/coop/net/session.cpp
-    src/coop/net/reliable_channel.cpp
     src/dev/common.cpp
     src/dev/force_weather.cpp
     src/dev/freecam.cpp
@@ -155,15 +155,10 @@ target_link_libraries(votv-coop PRIVATE
 target_include_directories(votv-coop PRIVATE
     third_party/GameNetworkingSockets/include)
 
-# PR-1 link smoke: /WHOLEARCHIVE forces the linker to consume every object
-# in the GNS static lib, regardless of whether our code references it. This
-# is what makes PR-1 actually verify binary growth + symbol collisions
-# (without it, /OPT:REF drops the entire lib because PR-1 has no real
-# callers yet). PR-2 removes this and lets ordinary linking trim GNS to
-# only the code paths Session uses (~700 KB GNS code per the plan estimate).
-if (MSVC)
-    target_link_options(votv-coop PRIVATE /WHOLEARCHIVE:GameNetworkingSockets_s)
-endif()
+# PR-2 (2026-05-28): /WHOLEARCHIVE removed -- the real GNS callers in
+# src/coop/net/session.cpp now anchor the linker so /OPT:REF can trim unused
+# GNS objects naturally. Final votv-coop.dll shrinks accordingly (the unused
+# WebRTC + p2p_ice + steam_messages code paths fall away).
 
 # Standalone shipping loader: a xinput1_3.dll proxy that auto-loads the payload
 # (votv-coop.dll) on game start, replacing the dev-only inject.ps1. VOTV imports

@@ -1,7 +1,36 @@
+// coop/net/session.cpp -- PR-2 GNS implementation.
+//
+// Lifecycle:
+//   Start():  Init GNS lib (once, refcounted) + register status callback +
+//             host CreateListenSocketIP or client ConnectByIPAddress +
+//             spin NetThread.
+//   NetThread: loop { RunCallbacks (drives the status callback inline);
+//             ReceiveMessagesOnConnection -> HandleMessage; emit pose +
+//             prop pose at sendHz if Connected; sleep(5ms) }
+//   Status callback (called by GNS from RunCallbacks): host accepts
+//             incoming connection, both sides transition state_, both sides
+//             reset their remote tracking on disconnect.
+//   Stop():   close connection + join thread. GNS lib stays inited across
+//             Start/Stop cycles for fast reconnect; killed in OnDllUnload.
+//
+// Wire format inside each GNS message: the pre-PR-2 protocol.h packet
+// structs are sent raw via SendMessageToConnection. The header's `token`
+// field is now always 0 (GNS auth replaces it); `seq` is still used for
+// stale-drop on the unreliable pose streams.
+
 #include "coop/net/session.h"
 
 #include "ue_wrap/log.h"
 
+// GNS headers warn at /W4 (audit-prompt-perf-template item: localize the
+// suppression to this TU, don't whitelist the warnings at project level).
+#pragma warning(push)
+#pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
+#include <steam/steamnetworkingsockets.h>
+#include <steam/isteamnetworkingutils.h>
+#pragma warning(pop)
+
+#include <cstring>
 #include <chrono>
 #include <random>
 
@@ -9,22 +38,17 @@ namespace coop::net {
 
 namespace {
 
-// Cap on datagrams processed per net-thread iteration. This is the rate limiter:
-// the inner recv-drain is bounded so a UDP flood can never make the thread spin a
-// core or starve the send/handshake pacing -- it always falls through to the
-// timers + sleep. ~64 >> the ~2-4 pkt/tick a healthy 30 Hz peer produces; with the
-// post-Connected source-address filter, non-peer flood costs only recvfrom + a
-// compare before being dropped.
-constexpr int kMaxRecvPerTick = 64;
+// One Session per process (PR-3 plans 4 peers but still one Session). The C
+// GNS callback finds the live instance via this pointer.
+std::atomic<Session*> g_session{nullptr};
 
-// Ping cadence + peer-liveness budget. A peer that hasn't sent ANY packet (pose,
-// ping, anything) for kPeerTimeoutMs is treated as gone (host crash / internet
-// drop -- they couldn't send a graceful Bye). At 60 Hz pose stream + 1 Hz ping
-// the budget is generously above any healthy gap. 3 s = the user wants snappy
-// "they left" feedback (10 s was too long); a real LAN hiccup of 3 s is rare
-// and triggering a respawn-on-reconnect is acceptable.
-constexpr int kPingIntervalMs = 1000;
-constexpr int kPeerTimeoutMs  = 3000;
+// GNS lib refcount. GameNetworkingSockets_Init spawns a background thread;
+// per plan-doc §11.2, we MUST NOT call it from DllMain. We init lazily on
+// first Start() and leave it inited so a Stop()+Start() reconnect is fast.
+// Kill is queued for OnDllUnload (TODO once shutdown.cpp catches the
+// DLL_PROCESS_DETACH for this).
+std::mutex g_initMutex;
+bool g_inited = false;
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -32,18 +56,106 @@ uint64_t NowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-// A non-zero random session nonce. Not crypto-grade (adequate for LAN anti-spoof;
-// a WAN phase would want a CSPRNG); seeded from random_device + the clock so two
-// sessions on one machine don't collide.
-uint64_t MintToken() {
-    std::random_device rd;
-    std::mt19937_64 gen(static_cast<uint64_t>(rd()) ^
-                        static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
-    uint64_t t = gen();
-    return t ? t : 1;  // never 0 (0 means "unknown")
+// MTU-sized scratch buffer for the host's outbound packets. PR-2 ships with
+// 256 B max (matches our pre-PR-2 protocol constant); GNS itself supports
+// ~1200 B per message, which PR-4 will exploit for batched reliable bursts.
+constexpr int kSendStaging = kMaxPacketBytes;
+
+bool EnsureGnsInit() {
+    std::lock_guard<std::mutex> lk(g_initMutex);
+    if (g_inited) return true;
+    SteamNetworkingErrMsg err{};
+    if (!GameNetworkingSockets_Init(nullptr, err)) {
+        UE_LOGE("net: GameNetworkingSockets_Init failed: %s", err);
+        return false;
+    }
+    g_inited = true;
+    UE_LOGI("net: GameNetworkingSockets_Init OK");
+    return true;
 }
 
 }  // namespace
+
+// === C callback adapter (GNS calls this from RunCallbacks on our net thread).
+//
+// Session::OnConnStatusChanged keeps a void* signature in the header so the
+// public API doesn't pull in GNS types; the file-local trampoline below has
+// the exact FnSteamNetConnectionStatusChanged signature GNS expects, casts
+// to void*, and forwards.
+void Session::OnConnStatusChanged(void* info) {
+    auto* self = g_session.load(std::memory_order_acquire);
+    if (self) self->HandleConnStatusChanged(info);
+}
+
+namespace {
+void ConnStatusTrampoline(SteamNetConnectionStatusChangedCallback_t* cb) {
+    Session::OnConnStatusChanged(cb);
+}
+}  // namespace
+
+void Session::HandleConnStatusChanged(void* info) {
+    auto* cb = static_cast<SteamNetConnectionStatusChangedCallback_t*>(info);
+    const HSteamNetConnection hConn = cb->m_hConn;
+    const auto oldState = cb->m_eOldState;
+    const auto newState = cb->m_info.m_eState;
+    auto* sockets = SteamNetworkingSockets();
+
+    // --- Host: accept incoming connection requests (one at a time for PR-2;
+    // PR-3 lifts to kMaxPeers=4 with a PollGroup).
+    if (cfg_.role == Role::Host &&
+        oldState == k_ESteamNetworkingConnectionState_None &&
+        newState == k_ESteamNetworkingConnectionState_Connecting) {
+        if (hConn_.load() != 0) {
+            UE_LOGW("net: host rejecting extra connection (already have one peer)");
+            sockets->CloseConnection(hConn, 0, "host already has a peer", false);
+            return;
+        }
+        const EResult rc = sockets->AcceptConnection(hConn);
+        if (rc != k_EResultOK) {
+            UE_LOGW("net: AcceptConnection failed rc=%d", static_cast<int>(rc));
+            sockets->CloseConnection(hConn, 0, "accept failed", false);
+            return;
+        }
+        hConn_.store(hConn);
+        state_.store(ConnState::Handshaking);
+        UE_LOGI("net: host accepted incoming connection (h=0x%08x)",
+                static_cast<unsigned>(hConn));
+        return;  // wait for Connecting -> Connected on a later callback
+    }
+
+    // --- Both roles: client got here via ConnectByIPAddress (state was None on
+    // the Session side but Connecting on the GNS side already). The handle
+    // was stored in Start(); just track state transitions below.
+
+    if (newState == k_ESteamNetworkingConnectionState_Connected) {
+        if (state_.load() != ConnState::Connected) {
+            state_.store(ConnState::Connected);
+            UE_LOGI("net: CONNECTED (%s, h=0x%08x)",
+                    cfg_.role == Role::Host ? "host" : "client",
+                    static_cast<unsigned>(hConn));
+        }
+        return;
+    }
+
+    if (newState == k_ESteamNetworkingConnectionState_ClosedByPeer ||
+        newState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
+        UE_LOGW("net: connection closed (oldState=%d reason='%s')",
+                static_cast<int>(oldState), cb->m_info.m_szEndDebug);
+        if (hConn_.load() == hConn) hConn_.store(0);
+        // GNS requires us to release the handle ourselves on these terminal
+        // states (per header doc on SteamNetConnectionStatusChangedCallback_t).
+        sockets->CloseConnection(hConn, 0, nullptr, false);
+        state_.store(ConnState::Handshaking);
+        // Reset remote tracking so a reconnecting peer's seq=0 isn't stale-
+        // dropped for the rest of the session (audit fix carried from pre-PR-2).
+        { std::lock_guard<std::mutex> lk(remoteMutex_);
+          hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0;
+          hasRemoteProp_ = false; lastRemotePropSeq_ = 0;
+          remotePropStamp_ = 0; lastReadPropStamp_ = 0; }
+        { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
+        lastRttMs_.store(0);
+    }
+}
 
 Session::~Session() { Stop(); }
 
@@ -54,52 +166,76 @@ bool Session::Start(const Config& cfg) {
     }
     cfg_ = cfg;
 
-    // Host binds the well-known port; client binds an ephemeral port (it only
-    // needs to reach the host, which learns the client's addr from recvfrom).
-    const uint16_t bindPort = (cfg_.role == Role::Host) ? cfg_.port : 0;
-    if (!transport_.Open(bindPort)) {
-        UE_LOGE("net: Session::Start -- transport open failed (role=%s)",
-                cfg_.role == Role::Host ? "host" : "client");
-        return false;
-    }
+    if (!EnsureGnsInit()) return false;
 
-    // The client (or an explicit loopback initiator) knows its peer up front; a
-    // real host leaves it invalid and learns it from the first client Hello. The
-    // host mints the session token; the client starts at 0 and learns it from the
-    // host's Hello.
-    {
-        std::lock_guard<std::mutex> lk(peerMutex_);
-        peerLocked_ = false;
-        if (cfg_.role == Role::Client || cfg_.initiate) {
-            // We know our peer up front (the configured host, or self for loopback)
-            // -> lock it so its Hello passes the fromPeer check. A REAL host has no
-            // peer yet and learns + locks it from the first client Hello.
-            peer_ = Transport::Resolve(cfg_.peerIp, cfg_.port);
-            peerLocked_ = true;
+    // Register the status callback (global, picked up by every connection).
+    // Idempotent: GNS overwrites the existing pointer.
+    g_session.store(this, std::memory_order_release);
+    SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
+        &ConnStatusTrampoline);
+
+    auto* sockets = SteamNetworkingSockets();
+    if (cfg_.role == Role::Host) {
+        SteamNetworkingIPAddr addr{};
+        addr.Clear();
+        addr.m_port = cfg_.port;
+        // Listen on all interfaces (IPv4 + IPv6); GNS treats AnyIP as
+        // dual-stack. (addr.m_port==0 with everything else zero == AnyIP.)
+        const HSteamListenSocket hListen = sockets->CreateListenSocketIP(addr, 0, nullptr);
+        if (hListen == k_HSteamListenSocket_Invalid) {
+            UE_LOGE("net: CreateListenSocketIP(port=%u) failed", cfg_.port);
+            g_session.store(nullptr, std::memory_order_release);
+            return false;
         }
-        sessionToken_ = (cfg_.role == Role::Host) ? MintToken() : 0;
+        hListen_.store(hListen);
+        UE_LOGI("net: host listening on port %u (hListen=0x%08x)",
+                cfg_.port, static_cast<unsigned>(hListen));
+    } else {  // Client
+        SteamNetworkingIPAddr addr{};
+        if (!addr.ParseString(cfg_.peerIp.c_str())) {
+            UE_LOGE("net: client peer IP '%s' did not parse", cfg_.peerIp.c_str());
+            g_session.store(nullptr, std::memory_order_release);
+            return false;
+        }
+        addr.m_port = cfg_.port;
+        const HSteamNetConnection hConn = sockets->ConnectByIPAddress(addr, 0, nullptr);
+        if (hConn == k_HSteamNetConnection_Invalid) {
+            UE_LOGE("net: ConnectByIPAddress(%s:%u) failed", cfg_.peerIp.c_str(), cfg_.port);
+            g_session.store(nullptr, std::memory_order_release);
+            return false;
+        }
+        hConn_.store(hConn);
+        UE_LOGI("net: client dialed %s:%u (hConn=0x%08x)",
+                cfg_.peerIp.c_str(), cfg_.port, static_cast<unsigned>(hConn));
     }
 
     state_.store(ConnState::Handshaking);
-    lastRttMs_.store(0);    // fresh session -- no measurement yet
-    lastRecvMs_.store(0);   // no packets yet (timeout check gates on this != 0)
+    lastRttMs_.store(0);
     running_.store(true);
     thread_ = std::thread(&Session::NetThread, this);
-    UE_LOGI("net: session started role=%s peer=%s:%u port=%u sendHz=%d",
-            cfg_.role == Role::Host ? "host" : "client", cfg_.peerIp.c_str(),
-            cfg_.port, cfg_.port, cfg_.sendHz);
+    UE_LOGI("net: session started role=%s peer=%s:%u sendHz=%d",
+            cfg_.role == Role::Host ? "host" : "client",
+            cfg_.peerIp.c_str(), cfg_.port, cfg_.sendHz);
     return true;
 }
 
 void Session::Stop() {
     if (!running_.exchange(false)) return;
-    // The net thread is the SOLE owner of the socket: it observes running_==false,
-    // sends a best-effort Bye in its teardown, and returns. We join FIRST, then
-    // close -- so no thread touches transport_ concurrently (fixes the sock_ race
-    // both audits flagged). No Bye is sent from this thread.
     if (thread_.joinable()) thread_.join();
-    transport_.Close();
+
+    auto* sockets = SteamNetworkingSockets();
+    if (sockets) {
+        const uint32_t hConn = hConn_.exchange(0);
+        if (hConn != 0) {
+            // Linger 200 ms so any queued reliable packets get out.
+            sockets->CloseConnection(hConn, 0, "session stop", true);
+        }
+        const uint32_t hListen = hListen_.exchange(0);
+        if (hListen != 0) sockets->CloseListenSocket(hListen);
+    }
+
     state_.store(ConnState::Disconnected);
+    g_session.store(nullptr, std::memory_order_release);
     UE_LOGI("net: session stopped (sent=%llu recv=%llu)",
             static_cast<unsigned long long>(sent_.load()),
             static_cast<unsigned long long>(recv_.load()));
@@ -115,44 +251,6 @@ void Session::SetLocalPropPose(bool set, const PropPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
     hasLocalProp_ = set;
     if (set) localPropPose_ = pose;
-}
-
-bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
-    return reliable_.Send(kind, payload, len);
-}
-
-bool Session::TryGetReliable(ReliableChannel::Message& out) {
-    return reliable_.TryDrain(out);
-}
-
-bool Session::SendPropRelease(const WireKey& key,
-                              float linVelX, float linVelY, float linVelZ,
-                              float angVelX, float angVelY, float angVelZ) {
-    PropReleasePayload p{};
-    p.key = key;
-    p.linVelX = linVelX; p.linVelY = linVelY; p.linVelZ = linVelZ;
-    p.angVelX = angVelX; p.angVelY = angVelY; p.angVelZ = angVelZ;
-    return reliable_.Send(ReliableKind::PropRelease, &p, sizeof(p));
-}
-
-bool Session::SendPropSpawn(const PropSpawnPayload& payload) {
-    return reliable_.Send(ReliableKind::PropSpawn, &payload, sizeof(payload));
-}
-
-bool Session::SendPropDestroy(const WireKey& key) {
-    PropDestroyPayload p{};
-    p.key = key;
-    return reliable_.Send(ReliableKind::PropDestroy, &p, sizeof(p));
-}
-
-bool Session::SendEntitySpawn(const EntitySpawnPayload& payload) {
-    return reliable_.Send(ReliableKind::EntitySpawn, &payload, sizeof(payload));
-}
-
-bool Session::SendEntityDestroy(uint32_t sessionId) {
-    EntityDestroyPayload p{};
-    p.sessionId = sessionId;
-    return reliable_.Send(ReliableKind::EntityDestroy, &p, sizeof(p));
 }
 
 bool Session::TryGetRemotePose(PoseSnapshot& out, bool* outIsNew) {
@@ -175,73 +273,93 @@ bool Session::TryGetRemotePropPose(PropPoseSnapshot& out, bool* outIsNew) {
     return true;
 }
 
-void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
+bool Session::TryGetReliable(ReliableMessage& out) {
+    std::lock_guard<std::mutex> lk(reliableInboxMutex_);
+    if (reliableInbox_.empty()) return false;
+    out = std::move(reliableInbox_.front());
+    reliableInbox_.pop_front();
+    return true;
+}
+
+bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
+    if (len < 0 || len > kMaxReliablePayload) {
+        UE_LOGW("net: SendReliable rejected (len=%d > %d)", len, kMaxReliablePayload);
+        return false;
+    }
+    const uint32_t hConn = hConn_.load();
+    if (hConn == 0) return false;  // not connected yet; caller decides whether to retry
+
+    // Frame the message the same way the pre-PR-2 reliable channel did:
+    // PacketHeader + ReliableHeader + payload. GNS provides the auth +
+    // ordering + retransmit; we keep the existing layout so the receiver's
+    // dispatch code is unchanged.
+    uint8_t buf[kSendStaging];
+    auto* hdr = reinterpret_cast<PacketHeader*>(buf);
+    WriteHeader(*hdr, MsgType::Reliable, sendSeq_.fetch_add(1), /*token*/0);
+    auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
+    std::memset(rh, 0, sizeof(*rh));
+    rh->kind = static_cast<uint8_t>(kind);
+    rh->payloadLen = static_cast<uint16_t>(len);
+    std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
+    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
+
+    int64 outMsg = 0;
+    const EResult rc = SteamNetworkingSockets()->SendMessageToConnection(
+        hConn, buf, static_cast<uint32>(total),
+        k_nSteamNetworkingSend_Reliable, &outMsg);
+    if (rc != k_EResultOK) {
+        UE_LOGW("net: SendReliable rc=%d kind=%u", static_cast<int>(rc),
+                static_cast<unsigned>(kind));
+        return false;
+    }
+    sent_.fetch_add(1);
+    return true;
+}
+
+bool Session::SendPropRelease(const WireKey& key,
+                              float linVelX, float linVelY, float linVelZ,
+                              float angVelX, float angVelY, float angVelZ) {
+    PropReleasePayload p{};
+    p.key = key;
+    p.linVelX = linVelX; p.linVelY = linVelY; p.linVelZ = linVelZ;
+    p.angVelX = angVelX; p.angVelY = angVelY; p.angVelZ = angVelZ;
+    return SendReliable(ReliableKind::PropRelease, &p, sizeof(p));
+}
+
+bool Session::SendPropSpawn(const PropSpawnPayload& payload) {
+    return SendReliable(ReliableKind::PropSpawn, &payload, sizeof(payload));
+}
+
+bool Session::SendPropDestroy(const WireKey& key) {
+    PropDestroyPayload p{};
+    p.key = key;
+    return SendReliable(ReliableKind::PropDestroy, &p, sizeof(p));
+}
+
+bool Session::SendEntitySpawn(const EntitySpawnPayload& payload) {
+    return SendReliable(ReliableKind::EntitySpawn, &payload, sizeof(payload));
+}
+
+bool Session::SendEntityDestroy(uint32_t sessionId) {
+    EntityDestroyPayload p{};
+    p.sessionId = sessionId;
+    return SendReliable(ReliableKind::EntityDestroy, &p, sizeof(p));
+}
+
+void Session::HandleMessage(const void* data, int len) {
     MsgType type;
     uint32_t seq;
-    uint64_t token;
-    if (!ParseHeader(data, len, type, seq, token)) return;  // not ours / malformed -- drop
+    uint64_t tokenUnused;
+    if (!ParseHeader(data, len, type, seq, tokenUnused)) return;
     recv_.fetch_add(1);
-
-    // Trust-boundary check, done ONCE up front: who may this datagram be from, and
-    // does it carry the right session token? A Hello is the only message allowed to
-    // carry token 0 (a client that hasn't learned the token yet) or to arrive from
-    // an as-yet-unknown peer. Everything else must come from the locked peer and
-    // bear the established token.
-    {
-        std::lock_guard<std::mutex> lk(peerMutex_);
-        const bool fromPeer = peerLocked_ && peer_ == from;
-        if (type == MsgType::Hello) {
-            if (cfg_.role == Role::Host) {
-                if (!peerLocked_) {                      // first contact: lock to this client
-                    peer_ = from;
-                    peerLocked_ = true;
-                    UE_LOGI("net: host locked peer");
-                } else if (!fromPeer) {
-                    return;  // already bound to someone else -- ignore foreign Hello (no hijack)
-                }
-                // Host verifies the client only once the client echoes our token.
-                if (token == sessionToken_ && state_.load() != ConnState::Connected) {
-                    state_.store(ConnState::Connected);
-                    UE_LOGI("net: CONNECTED (host)");
-                }
-            } else {  // client: adopt the token the host advertised
-                if (!fromPeer) return;  // only the configured host may answer
-                if (token != 0) {
-                    sessionToken_ = token;
-                    if (state_.load() != ConnState::Connected) {
-                        state_.store(ConnState::Connected);
-                        UE_LOGI("net: CONNECTED (client)");
-                    }
-                }
-            }
-            return;  // Hello carries no payload
-        }
-        // Non-Hello: must be the locked peer with the right token.
-        if (!fromPeer || token == 0 || token != sessionToken_) return;
-        // A correct token PROVES the peer completed the handshake (the only way it
-        // can know the token is to have received our Hello). So any valid-token
-        // message also confirms Connected -- the host needs this because, once the
-        // client adopts the token, it stops sending Hellos and only sends poses, so
-        // the Hello-only Connected path above would never fire on the host side.
-        if (state_.load() != ConnState::Connected) {
-            state_.store(ConnState::Connected);
-            UE_LOGI("net: CONNECTED (%s, via token'd %s)",
-                    cfg_.role == Role::Host ? "host" : "client",
-                    type == MsgType::PoseSnapshot ? "pose" : "msg");
-        }
-    }
 
     switch (type) {
     case MsgType::PoseSnapshot: {
         if (len < static_cast<int>(sizeof(PosePacket))) return;
         PosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        if (!ValidatePose(pkt.pose)) return;  // reject NaN/Inf/out-of-bounds before the engine sees it
-
+        if (!ValidatePose(pkt.pose)) return;
         std::lock_guard<std::mutex> lk(remoteMutex_);
-        // Stale-drop with RFC-1982 serial comparison: accept only a strictly newer
-        // seq. Signed wrap of (seq - last) handles the 32-bit counter rollover so a
-        // wrap (or a hostile high seq) can't lock out the real peer forever.
         if (hasRemote_ && static_cast<int32_t>(seq - lastRemoteSeq_) <= 0) return;
         remotePose_ = pkt.pose;
         lastRemoteSeq_ = seq;
@@ -250,31 +368,23 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         break;
     }
     case MsgType::PropPose: {
-        // v4: per-tick held-prop world transform.
         if (len < static_cast<int>(sizeof(PropPosePacket))) return;
         PropPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        // Trust-boundary sanity: finite floats + position AABB + rotation
-        // canonical range + key len in range. Without the rotation bound,
-        // a hostile/buggy sender's pitch=1e30 reaches SetActorRotation ->
-        // PhysX UB (audit-found 2026-05-24).
+        // Trust-boundary: finite floats + position AABB + rotation canonical +
+        // key length. Carried verbatim from pre-PR-2; without these a hostile
+        // or buggy sender's NaN/Inf reaches SetActorRotation -> PhysX UB.
         const float vals[6] = {pkt.pose.x, pkt.pose.y, pkt.pose.z,
                                pkt.pose.pitch, pkt.pose.yaw, pkt.pose.roll};
         for (float v : vals) if (!std::isfinite(v)) return;
         if (std::fabs(pkt.pose.x) > kMaxCoord ||
             std::fabs(pkt.pose.y) > kMaxCoord ||
             std::fabs(pkt.pose.z) > kMaxCoord) return;
-        // FRotator axes are canonical (-180, 180] after NormalizeAxis at the
-        // send boundary; reject anything outside as malformed/spoofed.
         if (std::fabs(pkt.pose.pitch) > 180.f ||
             std::fabs(pkt.pose.yaw)   > 180.f ||
             std::fabs(pkt.pose.roll)  > 180.f) return;
-        if (pkt.pose.key.len > 31) return;  // malformed
-
+        if (pkt.pose.key.len > 31) return;
         std::lock_guard<std::mutex> lk(remoteMutex_);
-        // PropPose has its own seq lineage (sender uses the same sendSeq_ counter,
-        // but the order vs PoseSnapshot is independent in semantics). Apply only
-        // strictly newer.
         if (hasRemoteProp_ && static_cast<int32_t>(seq - lastRemotePropSeq_) <= 0) return;
         remotePropPose_ = pkt.pose;
         lastRemotePropSeq_ = seq;
@@ -283,116 +393,58 @@ void Session::HandleDatagram(const void* data, int len, const Endpoint& from) {
         break;
     }
     case MsgType::Reliable: {
-        // Ack to the sender's address; deliver in order via the reliable channel.
-        auto ack = [this, &from](const void* d, int n) { return transport_.SendTo(from, d, n); };
-        reliable_.OnReliable(data, len, token, ack);
-        break;
-    }
-    case MsgType::ReliableAck:
-        reliable_.OnAck(seq);  // the header seq carries the acked relSeq
-        break;
-    case MsgType::Bye: {
-        UE_LOGI("net: peer said Bye");
-        state_.store(ConnState::Handshaking);
-        // Reset remote tracking so a reconnecting peer (whose seq restarts at 0) is
-        // not stale-dropped for the rest of the session, and re-learn the peer.
-        { std::lock_guard<std::mutex> lk(remoteMutex_);
-          hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0;
-          hasRemoteProp_ = false; lastRemotePropSeq_ = 0;
-          remotePropStamp_ = 0; lastReadPropStamp_ = 0; }
-        reliable_.Reset();
-        lastRttMs_.store(0);
-        if (cfg_.role == Role::Host) {
-            std::lock_guard<std::mutex> lk(peerMutex_);
-            peerLocked_ = false;  // host re-learns the peer on the next Hello
-        }
-        break;
-    }
-    case MsgType::Ping: {
-        // Echo the EXACT payload back so the sender can compute RTT from its own
-        // local clock. The sender pegs the timestamp at send time; we don't add
-        // ours (one-way clock skew would corrupt the measurement).
-        if (len < static_cast<int>(sizeof(PingPacket))) return;
-        PingPacket in;
-        std::memcpy(&in, data, sizeof(in));
-        PingPacket out{};
-        WriteHeader(out.header, MsgType::Pong, sendSeq_.fetch_add(1), token);
-        out.senderMs = in.senderMs;
-        // Gate the stats counter on the actual send (matches every other send
-        // site -- audit caught the unconditional fetch_add drifting the stat).
-        if (transport_.SendTo(from, &out, sizeof(out))) sent_.fetch_add(1);
-        break;
-    }
-    case MsgType::Pong: {
-        // Sender's timestamp echoed back -- RTT = our_now - that_timestamp.
-        if (len < static_cast<int>(sizeof(PingPacket))) return;
-        PingPacket p;
-        std::memcpy(&p, data, sizeof(p));
-        const uint32_t now32 = static_cast<uint32_t>(NowMs());
-        const uint32_t rtt = now32 - p.senderMs;  // unsigned subtract wraps cleanly
-        if (rtt < 60000) lastRttMs_.store(static_cast<int>(rtt));  // ignore implausible RTTs
+        // GNS gave us in-order delivery already; we just unwrap the
+        // ReliableHeader and queue for the game thread.
+        if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
+        ReliableHeader rh;
+        std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
+        const int payloadLen = static_cast<int>(rh.payloadLen);
+        if (payloadLen < 0 || payloadLen > kMaxReliablePayload) return;
+        if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
+        ReliableMessage m;
+        m.kind = static_cast<ReliableKind>(rh.kind);
+        m.payload.assign(
+            static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+            static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader) + payloadLen);
+        std::lock_guard<std::mutex> lk(reliableInboxMutex_);
+        reliableInbox_.push_back(std::move(m));
         break;
     }
     default:
-        break;  // Hello handled above
+        // PR-2 dropped Hello / Bye / Ping / Pong / ReliableAck (GNS owns
+        // handshake + RTT + acks). Unknown / dead MsgTypes ignored.
+        break;
     }
-
-    // Touch the peer-liveness clock LAST (after the message was accepted from
-    // the locked peer with a valid token -- i.e. confirmed peer traffic, not a
-    // foreign spoof). The net thread reads this for the timeout-disconnect.
-    lastRecvMs_.store(NowMs());
 }
 
 void Session::NetThread() {
     const auto sendInterval = std::chrono::milliseconds(
         cfg_.sendHz > 0 ? 1000 / cfg_.sendHz : 33);
     auto nextSend = std::chrono::steady_clock::now();
-    auto nextHello = std::chrono::steady_clock::now();
-    auto nextPing = std::chrono::steady_clock::now();
-    char buf[kMaxPacketBytes];
+    auto nextRttSample = std::chrono::steady_clock::now();
+
+    auto* sockets = SteamNetworkingSockets();
 
     while (running_.load()) {
-        // 1) Drain pending datagrams, BOUNDED (kMaxRecvPerTick). The cap is the
-        // rate limiter: a flood can never make this loop run forever / spin the
-        // core or starve the send + handshake pacing below -- we always fall
-        // through to the timers and the sleep.
-        for (int i = 0; i < kMaxRecvPerTick; ++i) {
-            Endpoint from;
-            const int n = transport_.RecvFrom(buf, sizeof(buf), from);
-            if (n <= 0) break;  // 0 = would-block (drained), -1 = error
-            HandleDatagram(buf, n, from);
-        }
+        // 1) Pump GNS internal timers + dispatch any pending status callbacks
+        // (which run inline on THIS thread).
+        sockets->RunCallbacks();
 
-        const auto now = std::chrono::steady_clock::now();
-
-        // Snapshot the peer + token once per iteration (cheap; avoids re-locking).
-        Endpoint peer;
-        uint64_t token;
-        { std::lock_guard<std::mutex> lk(peerMutex_); peer = peer_; token = sessionToken_; }
-
-        // Reliable channel: retransmit the in-flight control message if its RTO
-        // elapsed (sends to the current peer).
-        auto sendToPeer = [this, &peer](const void* d, int n) {
-            return peer.valid() && transport_.SendTo(peer, d, n);
-        };
-        reliable_.Tick(sendToPeer, token);
-
-        // 2) Handshake: until connected, send a Hello carrying our token ~5x/s. The
-        // host advertises its real token; the client sends 0 until it learns one. A
-        // host with no locked peer simply waits (peer invalid).
-        if (state_.load() != ConnState::Connected && now >= nextHello) {
-            if (peer.valid()) {
-                PacketHeader hello{};
-                WriteHeader(hello, MsgType::Hello, sendSeq_.fetch_add(1), token);
-                if (transport_.SendTo(peer, &hello, sizeof(hello))) sent_.fetch_add(1);
+        // 2) Drain inbound messages on our connection (if any).
+        const uint32_t hConn = hConn_.load();
+        if (hConn != 0) {
+            SteamNetworkingMessage_t* msgs[16]{};
+            const int n = sockets->ReceiveMessagesOnConnection(
+                hConn, msgs, static_cast<int>(std::size(msgs)));
+            for (int i = 0; i < n; ++i) {
+                HandleMessage(msgs[i]->m_pData, static_cast<int>(msgs[i]->m_cbSize));
+                msgs[i]->Release();  // critical: GNS owns the buffer
             }
-            nextHello = now + std::chrono::milliseconds(200);
         }
 
-        // 3) Connected: stream the local pose at sendHz (with the session token).
-        // Also stream the held-prop pose if the host is currently grabbing
-        // something (v4: one extra unreliable datagram per tick while held).
-        if (state_.load() == ConnState::Connected && now >= nextSend) {
+        // 3) Connected: stream the local pose at sendHz.
+        const auto now = std::chrono::steady_clock::now();
+        if (state_.load() == ConnState::Connected && now >= nextSend && hConn != 0) {
             PoseSnapshot local;
             bool have;
             PropPoseSnapshot localProp;
@@ -400,81 +452,43 @@ void Session::NetThread() {
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_; }
-            if (have && peer.valid()) {
+            if (have) {
                 PosePacket pkt{};
-                WriteHeader(pkt.header, MsgType::PoseSnapshot, sendSeq_.fetch_add(1), token);
+                WriteHeader(pkt.header, MsgType::PoseSnapshot,
+                            sendSeq_.fetch_add(1), /*token*/0);
                 pkt.pose = local;
-                if (transport_.SendTo(peer, &pkt, sizeof(pkt))) sent_.fetch_add(1);
+                const EResult rc = sockets->SendMessageToConnection(
+                    hConn, &pkt, sizeof(pkt),
+                    k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                if (rc == k_EResultOK) sent_.fetch_add(1);
             }
-            if (haveProp && peer.valid()) {
+            if (haveProp) {
                 PropPosePacket pkt{};
-                WriteHeader(pkt.header, MsgType::PropPose, sendSeq_.fetch_add(1), token);
+                WriteHeader(pkt.header, MsgType::PropPose,
+                            sendSeq_.fetch_add(1), /*token*/0);
                 pkt.pose = localProp;
-                if (transport_.SendTo(peer, &pkt, sizeof(pkt))) sent_.fetch_add(1);
+                const EResult rc = sockets->SendMessageToConnection(
+                    hConn, &pkt, sizeof(pkt),
+                    k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                if (rc == k_EResultOK) sent_.fetch_add(1);
             }
             nextSend = now + sendInterval;
         }
 
-        // 4) Connected: fire a Ping every kPingIntervalMs (1 s). Payload = our
-        // local steady-clock millis; the peer echoes the same bytes back as a
-        // Pong, we compute RTT from now - echo. Cheap (28 bytes, 1 Hz) and
-        // doubles as the peer-liveness heartbeat -- a peer that stops responding
-        // also stops bumping our lastRecvMs_ -> times out below.
-        if (state_.load() == ConnState::Connected && now >= nextPing && peer.valid()) {
-            PingPacket pkt{};
-            WriteHeader(pkt.header, MsgType::Ping, sendSeq_.fetch_add(1), token);
-            pkt.senderMs = static_cast<uint32_t>(NowMs());
-            if (transport_.SendTo(peer, &pkt, sizeof(pkt))) sent_.fetch_add(1);
-            nextPing = now + std::chrono::milliseconds(kPingIntervalMs);
-        }
-
-        // 5) Peer-timeout: if no packet from the peer in kPeerTimeoutMs while we
-        // think we're Connected, declare them gone. Same effect as a Bye: state
-        // drops to Handshaking + remote tracking + reliable channel reset. The
-        // game thread's harness watcher then sees the !Connected edge and runs
-        // Destroy() on the puppet. Without this, a host crash / internet drop
-        // would leave the client stuck in Connected, sending poses to a black
-        // hole forever.
-        if (state_.load() == ConnState::Connected) {
-            const uint64_t nowMs = NowMs();
-            const uint64_t lastMs = lastRecvMs_.load();
-            if (lastMs != 0 && nowMs - lastMs > kPeerTimeoutMs) {
-                UE_LOGW("net: peer timeout (%llu ms since last recv) -- dropping to Handshaking",
-                        static_cast<unsigned long long>(nowMs - lastMs));
-                state_.store(ConnState::Handshaking);
-                // Mirror the Bye path: reset BOTH pose AND prop remote state.
-                // Without the prop reset, lastRemotePropSeq_ holds the prior
-                // session's high seq; the reconnecting peer starts sendSeq_=0
-                // and EVERY new PropPose is stale-dropped by the RFC1982
-                // check -- prop sync silently dead until 32-bit counter wraps
-                // (~828 days at 60 Hz). Audit caught this 2026-05-24.
-                { std::lock_guard<std::mutex> lk(remoteMutex_);
-                  hasRemote_ = false; lastRemoteSeq_ = 0; remoteStamp_ = 0; lastReadStamp_ = 0;
-                  hasRemoteProp_ = false; lastRemotePropSeq_ = 0;
-                  remotePropStamp_ = 0; lastReadPropStamp_ = 0; }
-                reliable_.Reset();
-                lastRttMs_.store(0);
-                if (cfg_.role == Role::Host) {
-                    std::lock_guard<std::mutex> lk(peerMutex_);
-                    peerLocked_ = false;  // host re-learns from the next Hello if peer recovers
+        // 4) Sample RTT every second from GNS (replaces our Ping/Pong).
+        if (state_.load() == ConnState::Connected && hConn != 0 && now >= nextRttSample) {
+            SteamNetConnectionRealTimeStatus_t st{};
+            if (sockets->GetConnectionRealTimeStatus(hConn, &st, 0, nullptr) == k_EResultOK) {
+                if (st.m_nPing >= 0 && st.m_nPing < 60000) {
+                    lastRttMs_.store(st.m_nPing);
                 }
             }
+            nextRttSample = now + std::chrono::milliseconds(1000);
         }
 
-        // Idle a touch so we don't spin a core. ~5 ms keeps recv latency low while
-        // the 30 Hz send / 200 ms hello cadence is paced by the timers above.
+        // 5) Idle. ~5 ms keeps recv latency low while letting the 60 Hz send
+        // cadence be paced by the timer above.
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-
-    // Teardown (we are the sole socket owner here): best-effort Bye to the peer,
-    // then return so Stop() can join + close with no concurrent access.
-    Endpoint peer;
-    uint64_t token;
-    { std::lock_guard<std::mutex> lk(peerMutex_); peer = peer_; token = sessionToken_; }
-    if (peer.valid() && transport_.IsOpen()) {
-        PacketHeader bye{};
-        WriteHeader(bye, MsgType::Bye, sendSeq_.fetch_add(1), token);
-        transport_.SendTo(peer, &bye, sizeof(bye));
     }
 }
 

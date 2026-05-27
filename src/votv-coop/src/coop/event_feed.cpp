@@ -158,7 +158,7 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
     g_lastConnected = connected;
 
     // Drain delivered reliable messages.
-    net::ReliableChannel::Message msg;
+    net::Session::ReliableMessage msg;
     while (session.TryGetReliable(msg)) {
         switch (msg.kind) {
         case net::ReliableKind::Join: {

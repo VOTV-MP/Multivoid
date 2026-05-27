@@ -1114,18 +1114,17 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             }
         }
     } else if (scenario == "netloopback") {
-        // Autonomous Phase 3 plumbing test: ONE process, ONE session in loopback
-        // (role=host, peer=self, initiate=true). The session sends the local
-        // player's pose to itself over real UDP and receives it back; the puppet is
-        // auto-spawned on the first packet (3.5) and Drive()n from the round-tripped
-        // pose, offset +250 in X so the mirror is visibly beside the player. Proves
-        // transport+serialization+session+interp end-to-end without a 2nd machine.
+        // PR-2 (2026-05-28): the single-process loopback scenario no longer
+        // applies. GNS connection topology is host listens / client dials --
+        // one process can't be its own peer through one Session. Autonomous
+        // LAN testing now uses the two-process mp.py smoke flow. This branch
+        // remains so the existing votv-coop.ini scenario= names parse; it
+        // simply starts a host session that waits for a real client.
         BootStorySaveBlocking();
         Post([] { harness::sdk_check::Run(); });
         coop::net::Config cfg;
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
-        cfg.initiate = true;  // host targets itself for the loopback handshake
         coop::event_feed::SetLocalNickname(cfg::ReadNickname());
         g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
         // Same reset as the play branch -- audit fe68c03 missed this site.

@@ -66,22 +66,28 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // v3 (2026-05-23 PM): PoseSnapshot grew from 24 -> 28 bytes (added headYawDelta).
 // Both peers must run v9; older packets are rejected at the header check. No
 // back-compat layer (RULE 2 -- mod is pre-ship; bump cleanly).
-inline constexpr uint16_t kProtocolVersion = 9;
+// v10 (2026-05-28 PR-2): wire layer migrated to GameNetworkingSockets. The
+// custom Hello / HelloAck / Bye / Ping / Pong / ReliableAck dispatch tags are
+// gone (GNS owns handshake, RTT, acks); a pre-PR-2 peer's packet would now
+// land on a dead MsgType branch even if the version check passed, so we bump
+// the version to make the mismatch explicit at ParseHeader time.
+inline constexpr uint16_t kProtocolVersion = 10;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
 
+// PR-2 v10 (2026-05-28): GNS owns handshake (Hello), graceful disconnect
+// (Bye), RTT (Ping/Pong), and reliable acks (ReliableAck). Those five
+// MsgType values are deleted per RULE 2 -- the underlying mechanism
+// moved entirely to GameNetworkingSockets and the wire-byte tags are
+// gone. The remaining MsgType values keep their numeric tags so that
+// PR-2 builds reading a stray pre-PR-2 packet would parse and ignore-
+// dispatch via the default case (the version check rejects them first
+// anyway).
 enum class MsgType : uint8_t {
-    Hello = 1,         // handshake (either direction); no payload beyond the header
-    PoseSnapshot = 2,  // a player pose (unreliable: freely dropped, newest wins)
-    Bye = 3,           // graceful disconnect; no payload
-    Reliable = 4,      // a reliable, ordered, ack'd message (chat / system events)
-    ReliableAck = 5,   // acknowledges a Reliable message by its relSeq
-    Ping = 6,          // RTT probe: payload = sender's local steady_clock millis (uint32)
-    Pong = 7,          // RTT echo:  payload = the SAME millis we received in Ping
-    PropPose = 8,      // v4: held-prop world transform (unreliable; sent per-frame
-                       //     while host holds; receiver finds local prop by Key,
-                       //     SetSimulatePhysics(false), drives transform per packet)
+    PoseSnapshot = 2,  // player pose (unreliable, newest wins)
+    Reliable = 4,      // ordered+delivered message wrapping a ReliableKind payload
+    PropPose = 8,      // held-prop world transform (unreliable, per-frame while held)
 };
 
 // Payload kinds carried inside a Reliable message. The chat/event-feed groundwork:
@@ -290,16 +296,9 @@ struct PosePacket {
 };
 static_assert(sizeof(PosePacket) == 52, "PosePacket must be 52 bytes");
 
-// Ping/Pong: header + a single uint32_t payload (the sender's local steady-clock
-// milliseconds, truncated to 32 bits -- ~49 days of monotonic range, far more
-// than any session). Pong echoes the EXACT bytes from the Ping it answered;
-// the original sender then computes RTT = (now32 - echoedMs).
-struct PingPacket {
-    PacketHeader header;
-    uint32_t senderMs;
-    uint32_t _pad;  // keep 8-byte alignment; reserved for future use
-};
-static_assert(sizeof(PingPacket) == 28, "PingPacket must be 28 bytes");
+// PR-2 (2026-05-28): PingPacket deleted -- GameNetworkingSockets surfaces RTT
+// via GetConnectionRealTimeStatus (sampled once per second from the net thread);
+// the hand-rolled Ping/Pong round-trip went with it.
 
 // A reliable message: standard header (type=Reliable, seq=the reliable seq) +
 // ReliableHeader + variable UTF-8 payload. relSeq is a SEPARATE counter from the
