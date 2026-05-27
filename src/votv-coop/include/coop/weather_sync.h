@@ -77,6 +77,17 @@ void ApplyFromHost(const coop::net::WeatherStatePayload& payload);
 // or the UFunction isn't resolved. Game thread only.
 bool DebugForceRain(bool isRaining, float rainStrength);
 
+// Phase 5W hands-on test entrypoint (host only). Calls intComs_triggerSnow(isSnow)
+// on the local AdaynightCycle_C. This is the visually-unambiguous weather
+// signal (53 BP listeners fan out to snow particles, ground accumulation,
+// sky tint shifts) chosen over rain (subtle particles) and red sky (color
+// curve changes invisible in some lighting). The host's POST observer on
+// intComs_triggerSnow catches the call + broadcasts WeatherState; the
+// receiver's ApplyFromHost path then drives the same UFunction locally for
+// the BP fan-out. Returns false if cycle isn't live or the UFunction
+// hasn't resolved yet. Game thread only.
+bool DebugForceSnow(bool isSnow);
+
 // Phase 5W diagnostic: read the local AdaynightCycle_C's isRaining bool
 // directly. Used by the autonomous test to verify cross-peer sync on
 // both peers WITHOUT relying on log parsing alone. Returns nullopt-like

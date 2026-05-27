@@ -719,6 +719,33 @@ bool DebugForceRain(bool isRaining, float rainStrength) {
     return true;
 }
 
+bool DebugForceSnow(bool isSnow) {
+    if (!GT::IsGameThread()) {
+        UE_LOGW("weather: DebugForceSnow off-game-thread -- caller must wrap in GT::Post");
+        return false;
+    }
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) {
+        UE_LOGW("weather: DebugForceSnow called on non-host or unconfigured session");
+        return false;
+    }
+    if (!g_installed || !g_intComsTriggerSnowFn) {
+        UE_LOGW("weather: DebugForceSnow intComs_triggerSnow not yet resolved -- skipping");
+        return false;
+    }
+    void* cycle = ResolveCycle();
+    if (!cycle || !R::IsLive(cycle)) {
+        UE_LOGW("weather: DebugForceSnow no live daynightCycle_C -- skipping");
+        return false;
+    }
+    ue_wrap::ParamFrame f(g_intComsTriggerSnowFn);
+    f.Set<bool>(L"isSnow", isSnow);
+    ue_wrap::Call(cycle, f);
+    UE_LOGI("weather: DebugForceSnow isSnow=%d -- intComs_triggerSnow dispatched; "
+            "POST observer broadcasts WeatherState to client", isSnow ? 1 : 0);
+    return true;
+}
+
 // Helper: ensure g_redSkyEventSetFn is resolved using a live actor's class
 // (more reliable than FindClass because BP-content classes are loaded
 // lazily and may not exist in the GUObjectArray before the first spawn).
