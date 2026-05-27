@@ -38,9 +38,50 @@ namespace coop::net {
 
 namespace {
 
-// One Session per process (PR-3 plans 4 peers but still one Session). The C
+// One Session per process (PR-4 plans 4 peers but still one Session). The C
 // GNS callback finds the live instance via this pointer.
 std::atomic<Session*> g_session{nullptr};
+
+// PR-3 (2026-05-28): 3-lane priority routing per the integration plan §5.4.
+// Lanes are configured via ConfigureConnectionLanes once a connection reaches
+// Connected; per-message routing uses SendMessages with m_idxLane set.
+//
+// Choice of priorities + weights:
+//   HIGH    (lane 0, weight 4): interactive events where user expects
+//                               instant response -- TeleportClient (F4),
+//                               RestoreVitals (F3), ItemActivate (flashlight
+//                               click). These dominate latency UX.
+//   NORMAL  (lane 1, weight 2): default. Join, PropRelease, PropDestroy,
+//                               EntityDestroy, WeatherState, LightningStrike,
+//                               RedSky -- discrete events that should arrive
+//                               soon but don't carry sub-second latency
+//                               budgets.
+//   BULK    (lane 2, weight 1): snapshot fan-out. PropSpawn + EntitySpawn
+//                               are hundreds of messages during connect-edge
+//                               replay. Without lanes they head-of-line
+//                               block HIGH events -- the exact mode lanes
+//                               exist to solve.
+//
+// PoseSnapshot + PropPose remain on lane 0 implicitly (SendMessageToConnection
+// is lane-0; their per-frame cadence is tiny -- ~7 KB/s combined -- so they
+// don't starve HIGH events even sharing the lane).
+enum class Lane : int {
+    High = 0,
+    Normal = 1,
+    Bulk = 2,
+    Count = 3,
+};
+
+Lane LaneForKind(ReliableKind k) {
+    switch (k) {
+    case ReliableKind::TeleportClient: return Lane::High;
+    case ReliableKind::RestoreVitals:  return Lane::High;
+    case ReliableKind::ItemActivate:   return Lane::High;
+    case ReliableKind::PropSpawn:      return Lane::Bulk;
+    case ReliableKind::EntitySpawn:    return Lane::Bulk;
+    default:                           return Lane::Normal;
+    }
+}
 
 // GNS lib refcount. GameNetworkingSockets_Init spawns a background thread;
 // per plan-doc §11.2, we MUST NOT call it from DllMain. We init lazily on
@@ -133,6 +174,25 @@ void Session::HandleConnStatusChanged(void* info) {
             UE_LOGI("net: CONNECTED (%s, h=0x%08x)",
                     cfg_.role == Role::Host ? "host" : "client",
                     static_cast<unsigned>(hConn));
+
+            // PR-3: enable 3-lane priority routing on this connection. The
+            // priority arg is lane->priority (0=highest); weights are weighted-
+            // fair-queue ratios when lanes of equal priority compete (we have
+            // distinct priorities so weights act as soft starvation guards
+            // for low-priority lanes). MUST happen AFTER Connected because
+            // ConfigureConnectionLanes returns k_EResultInvalidState on
+            // pre-handshake handles.
+            constexpr int kLaneCount = static_cast<int>(Lane::Count);
+            const int priorities[kLaneCount] = { 0, 1, 2 };
+            const uint16 weights[kLaneCount] = { 4, 2, 1 };
+            const EResult rc = sockets->ConfigureConnectionLanes(
+                hConn, kLaneCount, priorities, weights);
+            if (rc != k_EResultOK) {
+                UE_LOGW("net: ConfigureConnectionLanes rc=%d -- reliable sends will collapse to lane 0",
+                        static_cast<int>(rc));
+            } else {
+                UE_LOGI("net: lanes configured (HIGH/NORMAL/BULK, weights 4/2/1)");
+            }
         }
         return;
     }
@@ -289,11 +349,24 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     const uint32_t hConn = hConn_.load();
     if (hConn == 0) return false;  // not connected yet; caller decides whether to retry
 
-    // Frame the message the same way the pre-PR-2 reliable channel did:
-    // PacketHeader + ReliableHeader + payload. GNS provides the auth +
-    // ordering + retransmit; we keep the existing layout so the receiver's
-    // dispatch code is unchanged.
-    uint8_t buf[kSendStaging];
+    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
+
+    // PR-3: allocate a GNS message so we can set m_idxLane per-message.
+    // SendMessageToConnection always uses lane 0; SendMessages with an
+    // AllocateMessage'd message allows the lane index. The allocated buffer
+    // is GNS-owned -- we fill m_pData with our framed bytes and hand it
+    // back via SendMessages (which takes ownership; with
+    // bDeleteFailedMessages=true GNS releases on failure).
+    auto* utils = SteamNetworkingUtils();
+    SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
+    if (!msg) {
+        UE_LOGW("net: AllocateMessage(%d) returned null", total);
+        return false;
+    }
+
+    // Frame inside the GNS-owned buffer: PacketHeader + ReliableHeader +
+    // payload (same layout as PR-2; receiver's HandleMessage is unchanged).
+    auto* buf = static_cast<uint8_t*>(msg->m_pData);
     auto* hdr = reinterpret_cast<PacketHeader*>(buf);
     WriteHeader(*hdr, MsgType::Reliable, sendSeq_.fetch_add(1), /*token*/0);
     auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
@@ -301,15 +374,19 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     rh->kind = static_cast<uint8_t>(kind);
     rh->payloadLen = static_cast<uint16_t>(len);
     std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
-    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
 
-    int64 outMsg = 0;
-    const EResult rc = SteamNetworkingSockets()->SendMessageToConnection(
-        hConn, buf, static_cast<uint32>(total),
-        k_nSteamNetworkingSend_Reliable, &outMsg);
-    if (rc != k_EResultOK) {
-        UE_LOGW("net: SendReliable rc=%d kind=%u", static_cast<int>(rc),
-                static_cast<unsigned>(kind));
+    msg->m_conn = hConn;
+    msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
+    msg->m_idxLane = static_cast<uint16>(LaneForKind(kind));
+
+    int64 outMsgNum = 0;
+    SteamNetworkingSockets()->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
+    // outMsgNum > 0 == message number assigned (success). < 0 == -EResult code
+    // (failure; GNS already released the message via bDeleteFailedMessages).
+    if (outMsgNum < 0) {
+        UE_LOGW("net: SendMessages rc=%lld kind=%u lane=%d",
+                static_cast<long long>(outMsgNum), static_cast<unsigned>(kind),
+                static_cast<int>(LaneForKind(kind)));
         return false;
     }
     sent_.fetch_add(1);
