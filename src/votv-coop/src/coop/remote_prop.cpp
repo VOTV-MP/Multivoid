@@ -370,6 +370,11 @@ void* g_propSetKeyFn     = nullptr;
 void* g_kslCdo           = nullptr;
 void* g_convStrToNameFn  = nullptr;
 bool  g_spawnResolved    = false;
+// Audit H6 (2026-05-27): resolve the Conv_StringToName "InString"/"inString"
+// param name ONCE. Pre-fix the dual-try fired UE_LOGE on every call (29 errors
+// per LAN test run) because SetRaw logs error on every failed param. Resolved
+// name pointer (one of the two constants below) — stable for the session.
+const wchar_t* g_convStrToNameInputParam = nullptr;
 
 bool ResolveSpawnFns() {
     if (g_spawnResolved && R::IsLive(g_gsCdo)) return true;
@@ -397,6 +402,20 @@ bool ResolveSpawnFns() {
             g_convStrToNameFn = R::FindFunction(kc, P::name::ConvStringToNameFn);
         }
     }
+    // Audit H6 (2026-05-27): resolve the param name ONCE here. Probe both
+    // casings via FindParamOffset (which doesn't log on miss, unlike SetRaw).
+    // Stock UE4 is `InString` but some VOTV cooks emit lowercase `inString`
+    // (same drift noted for Conv_StringToText). Whichever resolves wins.
+    if (g_convStrToNameFn && !g_convStrToNameInputParam) {
+        if (R::FindParamOffset(g_convStrToNameFn, L"InString") >= 0) {
+            g_convStrToNameInputParam = L"InString";
+        } else if (R::FindParamOffset(g_convStrToNameFn, L"inString") >= 0) {
+            g_convStrToNameInputParam = L"inString";
+        } else {
+            UE_LOGW("remote_prop: Conv_StringToName has neither 'InString' nor "
+                    "'inString' -- StringToFName will fail every call");
+        }
+    }
     g_spawnResolved = true;
     return true;
 }
@@ -418,15 +437,16 @@ R::FName StringToFName(const std::wstring& s) {
     fs.Num  = static_cast<int32_t>(buf.size()) + 1;
     fs.Max  = fs.Num;
     ParamFrame f(g_convStrToNameFn);
-    // The param name is "InString" (UE4 stock); lowercase 'i' on some builds
-    // (matches Conv_StringToText's "inString" pattern noted in
-    // [[project-nameplate-widgetcomponent-plan]]). Try both for safety:
-    // SetRaw with the lowercase name first, then fall back to UE4 stock case.
-    if (!f.SetRaw(L"InString", &fs, sizeof(fs))) {
-        if (!f.SetRaw(L"inString", &fs, sizeof(fs))) {
-            UE_LOGW("StringToFName: Conv_StringToName param 'InString'/'inString' not found");
-            return R::FName{0, 0};
-        }
+    // Audit H6 (2026-05-27): one resolved name, one SetRaw, no dual-try.
+    // g_convStrToNameInputParam was cached in ResolveSpawnFns via
+    // FindParamOffset (which doesn't UE_LOGE on miss; SetRaw does).
+    if (!g_convStrToNameInputParam) {
+        UE_LOGW("StringToFName: Conv_StringToName input param not resolved (Install incomplete?)");
+        return R::FName{0, 0};
+    }
+    if (!f.SetRaw(g_convStrToNameInputParam, &fs, sizeof(fs))) {
+        UE_LOGW("StringToFName: SetRaw failed on '%ls'", g_convStrToNameInputParam);
+        return R::FName{0, 0};
     }
     if (!Call(g_kslCdo, f)) {
         UE_LOGW("StringToFName: ProcessEvent call failed");

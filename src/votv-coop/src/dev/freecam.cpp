@@ -190,15 +190,29 @@ LRESULT CALLBACK MouseProc(int code, WPARAM wParam, LPARAM lParam) {
     return ::CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
+// Audit H11 (2026-05-27): wheel hook thread ID, captured at thread entry.
+// HotkeyThread observes shutdown + posts WM_QUIT here so GetMessageW unblocks
+// and UnhookWindowsHookEx runs cleanly. Pre-fix the thread blocked in
+// GetMessageW until process termination; Windows force-killed it without
+// running the unhook (LL mouse hooks left registered for ~30s in winhk
+// timeout, which can briefly delay subsequent VOTV launches).
+std::atomic<DWORD> g_wheelHookTid{0};
+
 DWORD WINAPI WheelHookThread(LPVOID) {
+    g_wheelHookTid.store(::GetCurrentThreadId(), std::memory_order_release);
     HHOOK hook = ::SetWindowsHookExW(WH_MOUSE_LL, &MouseProc, ::GetModuleHandleW(nullptr), 0);
-    if (!hook) { UE_LOGW("freecam: wheel hook install failed; speed-by-wheel disabled"); return 0; }
+    if (!hook) {
+        UE_LOGW("freecam: wheel hook install failed; speed-by-wheel disabled");
+        g_wheelHookTid.store(0, std::memory_order_release);
+        return 0;
+    }
     MSG msg;  // LL hooks dispatch on this thread's message queue -> must pump
     while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);
     }
     ::UnhookWindowsHookEx(hook);
+    g_wheelHookTid.store(0, std::memory_order_release);
     return 0;
 }
 
@@ -232,6 +246,12 @@ DWORD WINAPI HotkeyThread(LPVOID) {
         }
 
         ::Sleep(8);
+    }
+    // Audit H11 (2026-05-27): shutdown observed; wake the wheel hook thread.
+    // It's blocked in GetMessageW; without WM_QUIT it would hang until process
+    // termination, denying UnhookWindowsHookEx a clean exit.
+    if (DWORD tid = g_wheelHookTid.load(std::memory_order_acquire)) {
+        ::PostThreadMessageW(tid, WM_QUIT, 0, 0);
     }
     return 0;
 }

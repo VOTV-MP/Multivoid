@@ -2,6 +2,7 @@
 
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/weather_sync.h"
@@ -178,7 +179,15 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             nick = SanitizeNickname(nick);
             g_remoteNick = nick;
             if (remote) remote->SetNickname(nick);  // label the nameplate too
-            ue_wrap::hud_feed::Push(nick + L" joined the game");
+            // Role-aware phrasing (2026-05-27, user feedback): on the CLIENT
+            // the Join packet arrives FROM the host -- saying "<host> joined
+            // the game" reads backwards (the client is the one who joined).
+            // Phrase from the receiver's POV.
+            if (session.role() == net::Role::Client) {
+                ue_wrap::hud_feed::Push(L"Successfully joined " + nick + L"'s game");
+            } else {
+                ue_wrap::hud_feed::Push(nick + L" joined the game");
+            }
             break;
         }
         case net::ReliableKind::PropRelease: {
@@ -486,11 +495,19 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             // Inc5: hand to ApplyToPuppetOrDefer which stashes the
             // payload if the puppet isn't ready; TickConnect drains it
             // once the puppet appears in the registry.
-            void* puppet = (remote && remote->valid()) ? remote->GetActor() : nullptr;
+            //
+            // Audit C1 (2026-05-27): capture peerId only; re-fetch puppet
+            // INSIDE the lambda. Capturing the raw void* here risks UAF
+            // because Destroy() can run on the game thread between this
+            // post and the lambda dispatch, recycling the GUObjectArray
+            // slot.
             net::ItemActivatePayload pCopy = p;
             const uint8_t peerId = p.peerSessionId;
-            ue_wrap::game_thread::Post([peerId, puppet, pCopy] {
-                ::coop::item_activate::ApplyToPuppetOrDefer(peerId, puppet, pCopy);
+            ue_wrap::game_thread::Post([peerId, pCopy] {
+                ::coop::RemotePlayer* rp =
+                    ::coop::players::Registry::Get().Puppet(peerId);
+                void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+                ::coop::item_activate::ApplyToPuppetOrDefer(peerId, puppetNow, pCopy);
             });
             break;
         }

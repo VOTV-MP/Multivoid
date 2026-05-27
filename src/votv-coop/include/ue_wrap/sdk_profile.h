@@ -652,11 +652,10 @@ inline constexpr const wchar_t* DetachFromControllerFn = L"DetachFromControllerP
 // path) WITHOUT a PlayerController's viewport/input/camera -> no local hijack.
 inline constexpr const wchar_t* SpawnDefaultControllerFn = L"SpawnDefaultController";
 
-// Skin-puppet: a bare ASkeletalMeshActor wearing the local player's skin +
-// the body AnimBP. SetSkeletalMesh is owned by USkinnedMeshComponent; SetAnimClass
-// by USkeletalMeshComponent (FindFunction does NOT climb to super, so each is
-// resolved from its OWN class).
-inline constexpr const wchar_t* SkeletalMeshActorClass = L"SkeletalMeshActor";
+// SetSkeletalMesh is owned by USkinnedMeshComponent; SetAnimClass by
+// USkeletalMeshComponent (FindFunction does NOT climb to super, so each is
+// resolved from its OWN class). The SkeletalMeshActorClass name constant
+// was retired with the H9 puppet-kind cleanup (2026-05-27).
 inline constexpr const wchar_t* SkeletalMeshComponentClass = L"SkeletalMeshComponent";
 inline constexpr const wchar_t* SkinnedMeshComponentClass = L"SkinnedMeshComponent";
 inline constexpr const wchar_t* SetSkeletalMeshFn = L"SetSkeletalMesh";   // USkinnedMeshComponent
@@ -675,6 +674,12 @@ inline constexpr const wchar_t* BlueprintUpdateAnimationFn = L"BlueprintUpdateAn
 inline constexpr const wchar_t* CameraActorClass = L"CameraActor";
 inline constexpr const wchar_t* ControllerClassName = L"Controller";
 inline constexpr const wchar_t* GetControlRotationFn = L"GetControlRotation";
+// Audit H4 (2026-05-27): use the BlueprintCallable setter, not a direct field
+// write. UE4's K2_SetControlRotation runs ProcessViewRotation +
+// UpdateRotation in addition to the field assignment -- skipping those caused
+// per-tick view jitter on the puppet controller cache wired in commit
+// 0a44b06.
+inline constexpr const wchar_t* SetControlRotationFn = L"K2_SetControlRotation";
 inline constexpr const wchar_t* PlayerControllerClassName = L"PlayerController";
 inline constexpr const wchar_t* SetViewTargetWithBlendFn = L"SetViewTargetWithBlend";
 inline constexpr const wchar_t* PlayerCameraManagerClass = L"PlayerCameraManager";
@@ -685,6 +690,13 @@ inline constexpr const wchar_t* GetCameraRotationFn = L"GetCameraRotation";
 // third-person body meshes visible on an unpossessed remote pawn.
 inline constexpr const wchar_t* SceneComponentClass = L"SceneComponent";
 inline constexpr const wchar_t* SetVisibilityFn = L"SetVisibility";
+// Audit H7 (2026-05-27): K2_SetRelativeRotation runs the full transform
+// propagation pipeline (UpdateComponentToWorld -> child re-eval). The
+// alternative -- a direct write to RelativeRotation -- skips the pipeline;
+// the spring arm's parent re-eval IS driven by its TickComponent so the
+// direct write isn't a functional bug, but it bypasses any future child
+// dependency on the engine's rotation-changed delegate.
+inline constexpr const wchar_t* SetRelativeRotationFn = L"K2_SetRelativeRotation";
 inline constexpr const wchar_t* SetHiddenInGameFn = L"SetHiddenInGame";
 inline constexpr const wchar_t* GetComponentLocationFn = L"K2_GetComponentLocation";
 inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";

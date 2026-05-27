@@ -4,6 +4,7 @@
 #include "harness/config.h"
 #include "harness/screenshot.h"
 #include "harness/sdk_check.h"
+#include "dev/force_weather.h"
 #include "dev/freecam.h"
 #include "dev/pos_hud.h"
 #include "dev/restore_vitals.h"
@@ -850,31 +851,22 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 const std::string pitchs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_PITCH");
                 const float ayaw   = yaws.empty()   ? 0.f : static_cast<float>(std::atof(yaws.c_str()));
                 const float apitch = pitchs.empty() ? 0.f : static_cast<float>(std::atof(pitchs.c_str()));
-                // RETRY LOOP: K2_SetActorLocation across large distances on an
-                // ACharacter can be silently reverted by VOTV's player constraints
-                // (initial diagnostic showed the client's 14-m autotest teleport
-                // never stuck while the host's 50-cm one did -- the engine snapped
-                // the actor back near the save spawn). K2_TeleportTo is the
-                // engine's proper "cross-world teleport" path that bypasses those
-                // checks; combine it with a polling retry loop that verifies the
-                // actor's actual world position matches the target within 2 m
-                // tolerance, since the BP-callable can also lose to a one-frame
-                // post-init reposition. Up to 5 s of retries; the loop quits
-                // early on success.
+                // Audit H8 (2026-05-27): use VOTV's `teleportWObackrooms` via
+                // dev::teleport_client::ApplyLocally. That path bypasses the
+                // CMC constraints K2_TeleportTo loses to (the same root-cause
+                // fix shipped in teleport_client.cpp:60-71). The retry loop
+                // still wraps it because Registry::Get().Local() can be null
+                // for the first few ticks (local player isn't spawned yet);
+                // once Local() exists, ApplyLocally's teleport sticks on first
+                // try, so the loop exits early.
                 const ue_wrap::FVector target{ax, ay, az};
-                const ue_wrap::FRotator targetRot{apitch, ayaw, 0.f};
                 bool teleported = false;
                 for (int attempt = 0; attempt < 50 && !teleported; ++attempt) {
                     auto okFlag = std::make_shared<std::atomic<int>>(0);  // 0=pending,1=ok,2=nope
-                    Post([target, targetRot, ayaw, okFlag] {
+                    Post([ax, ay, az, ayaw, apitch, target, okFlag] {
                         void* local = coop::players::Registry::Get().Local();
                         if (!local) { okFlag->store(2); return; }
-                        ue_wrap::engine::TeleportTo(local, target, targetRot);
-                        if (void* ctrl = ue_wrap::engine::GetController(local)) {
-                            ue_wrap::engine::SetControlRotation(ctrl, targetRot);
-                        }
-                        // Verify: read back the actor's world position; success
-                        // if within 200 cm of the target on every axis.
+                        dev::teleport_client::ApplyLocally({ax, ay, az, apitch, ayaw, 0.f});
                         const auto cur = ue_wrap::engine::GetActorLocation(local);
                         const float dx = cur.X - target.X, dy = cur.Y - target.Y, dz = cur.Z - target.Z;
                         const bool ok = std::fabs(dx) < 200.f && std::fabs(dy) < 200.f && std::fabs(dz) < 200.f;
@@ -923,6 +915,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             coop::prop_snapshot::SetSession(&g_session);
             dev::restore_vitals::SetSession(&g_session);
             dev::teleport_client::SetSession(&g_session);
+            dev::force_weather::SetSession(&g_session);
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
@@ -974,47 +967,17 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 }
             }
 
-            // Autotest CONTINUED CORRECTION: VOTV's player late-init (BeginPlay /
-            // possess / save-restore) can revert the autotest teleport AFTER it
-            // appeared to succeed (user-observed: client lands at the correct
-            // autotest coords briefly, then VOTV reverts the position once the
-            // instance "fully loads"). The fix is to keep re-applying the
-            // teleport for ~30 s after session start -- each iteration is a
-            // no-op if the actor is already within 200 cm of the target.
-            const bool autotestActive = !xs.empty() && !ys.empty() && !zs.empty();
-            const float atx = autotestActive ? static_cast<float>(std::atof(xs.c_str())) : 0.f;
-            const float aty = autotestActive ? static_cast<float>(std::atof(ys.c_str())) : 0.f;
-            const float atz = autotestActive ? static_cast<float>(std::atof(zs.c_str())) : 0.f;
-            const float atyaw   = autotestActive ? static_cast<float>(std::atof(cfg::ReadEnv("VOTVCOOP_AUTOTEST_YAW").c_str()))   : 0.f;
-            const float atpitch = autotestActive ? static_cast<float>(std::atof(cfg::ReadEnv("VOTVCOOP_AUTOTEST_PITCH").c_str())) : 0.f;
-            using namespace std::chrono;
-            const auto autotestUntil = steady_clock::now() + seconds(30);
+            // Audit H8 (2026-05-27): the 30-second autotest correction loop
+            // was deleted. It existed to fight K2_TeleportTo getting reverted
+            // by VOTV's player constraints during late-init. The initial-
+            // teleport block above now uses dev::teleport_client::ApplyLocally,
+            // which routes through teleportWObackrooms -- VOTV's own
+            // non-revert path. Once the first teleport sticks, no correction
+            // is needed.
 
             int tick = 0;
             while (!coop::shutdown::IsShuttingDown()) {
                 Post([] { NetPumpTick(0.f); coop::nameplate::Update(); TickShutdownHooks(); });
-                // Autotest correction tick: every ~250 ms while still inside the
-                // 30 s window, re-check actor position and re-teleport if it
-                // drifted outside the 200-cm tolerance. Catches VOTV's late
-                // BeginPlay / save-restore reverting our teleport.
-                if (autotestActive && steady_clock::now() < autotestUntil && (tick % 30 == 0)) {
-                    Post([atx, aty, atz, atyaw, atpitch] {
-                        void* local = coop::players::Registry::Get().Local();
-                        if (!local) return;
-                        const auto cur = ue_wrap::engine::GetActorLocation(local);
-                        const float dx = cur.X - atx, dy = cur.Y - aty, dz = cur.Z - atz;
-                        if (std::fabs(dx) > 200.f || std::fabs(dy) > 200.f || std::fabs(dz) > 200.f) {
-                            const ue_wrap::FVector target{atx, aty, atz};
-                            const ue_wrap::FRotator targetRot{atpitch, atyaw, 0.f};
-                            ue_wrap::engine::TeleportTo(local, target, targetRot);
-                            if (void* ctrl = ue_wrap::engine::GetController(local)) {
-                                ue_wrap::engine::SetControlRotation(ctrl, targetRot);
-                            }
-                            UE_LOGI("autotest correction: was (%.0f,%.0f,%.0f), retargeting (%.0f,%.0f,%.0f)",
-                                    cur.X, cur.Y, cur.Z, atx, aty, atz);
-                        }
-                    });
-                }
                 // Z-trace tick: every ~500 ms log the local actor.Z AND the
                 // local mesh_playerVisible.world.Z (the value the source now
                 // streams). This catches the "puppet jumps afloat after init"
@@ -1136,6 +1099,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         coop::prop_snapshot::SetSession(&g_session);
         dev::restore_vitals::SetSession(&g_session);
         dev::teleport_client::SetSession(&g_session);
+        dev::force_weather::SetSession(&g_session);
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
@@ -1222,12 +1186,13 @@ void Start() {
     // Dev pos + camera-rotation overlay (F2 toggle). No-op unless ini enables it.
     dev::pos_hud::Init();
 
-    // Dev F3 (restore stamina/hunger) + F4 (teleport client to host). Both
-    // gated by [dev] devkeys=1; no-op otherwise. SetSession was already
-    // called above for the play / netloopback paths -- the hotkey threads
-    // just acquire it atomically and broadcast on press.
+    // Dev F3 (restore stamina/hunger) + F4 (teleport client to host) + F5
+    // (toggle snow on host). All gated by [dev] devkeys=1; no-op otherwise.
+    // SetSession was already called above for the play / netloopback paths
+    // -- the hotkey threads just acquire it atomically and broadcast on press.
     dev::restore_vitals::Init();
     dev::teleport_client::Init();
+    dev::force_weather::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our
     // cleanup BEFORE the engine's teardown PE calls fire. Without this

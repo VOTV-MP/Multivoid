@@ -310,7 +310,20 @@ void Uninstall() {
     hook::Uninstall(g_hookTarget);
     g_installed = false;
     g_hookTarget = nullptr;
-    g_originalPE = nullptr;
+    // Audit C3 (2026-05-27): DO NOT null g_originalPE here. A worker thread
+    // already inside ProcessEventDetour when MinHook ran Uninstall above is
+    // racing with us -- it loaded g_originalPE before the unhook, but if the
+    // store below lands BEFORE its load completes (out-of-order via cache),
+    // it dereferences null. After hook::Uninstall the original UE4 PE has
+    // been restored at the call site, so ProcessEventDetour is no longer
+    // being entered for new dispatches; the field is no longer read once
+    // in-flight workers drain. Leaving the pointer non-null is harmless
+    // (UAF is not possible because g_originalPE points at the engine's PE,
+    // a process-lifetime entry point that is never unloaded). Add a tiny
+    // drain Sleep so any in-flight detour body finishes before we tear
+    // down g_hookTarget. SC_CLOSE's 100ms worker drain reduces the window
+    // but doesn't close it; this is belt-and-braces.
+    ::Sleep(50);
 }
 
 bool IsInstalled() { return g_installed; }

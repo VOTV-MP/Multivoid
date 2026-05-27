@@ -32,7 +32,18 @@ namespace GT = ue_wrap::game_thread;
 
 // Cached session pointer (set on Install/InstallInventory). Observers read
 // role()/connected()/SendProp*() through this. nullptr until first Install.
-coop::net::Session* g_session_ptr = nullptr;
+//
+// Audit C2 (2026-05-27): atomic Session* (was plain pointer). Observers fire
+// from parallel-anim worker threads per game_thread.cpp's header comment; a
+// plain-pointer deref races with harness calling SetSession(nullptr) on
+// shutdown. item_activate.cpp + weather_sync.cpp already use atomic; this
+// file had diverged. Mirrors item_activate's pattern exactly: helper LoadSession
+// for the read-many sites, .store(memory_order_release) for the set sites.
+std::atomic<coop::net::Session*> g_session_ptr{nullptr};
+
+inline coop::net::Session* LoadSession() {
+    return g_session_ptr.load(std::memory_order_acquire);
+}
 
 // Install idempotency.
 bool g_propInitScanDone = false;
@@ -42,9 +53,16 @@ std::vector<void*> g_registeredPropInitFns;
 
 // Storage-container spawn fix (2026-05-25 RE): bracketed by takeObj PRE
 // (set) and takeObj POST (clear) so the nested Aprop_C::Init POST observer
-// defers its broadcast until loadData has restored the saved Key. Plain
-// bool, game-thread-only (BP UFunction dispatch is linear single-thread).
-bool g_takeObjInFlight = false;
+// defers its broadcast until loadData has restored the saved Key.
+//
+// Audit H12 (2026-05-27): std::atomic<bool> (was plain bool). The PRE/POST
+// observers and the nested Init POST observer all run from parallel-anim
+// worker threads per game_thread.cpp's header comment; plain-bool writes
+// in the PRE + reads in the Init POST race per the C++ memory model. The
+// PRE->POST sequencing within a single ProcessEvent dispatch is preserved
+// by the same-thread execution order; relaxed memory order is sufficient
+// (no other state depends on the bool's visibility ordering).
+std::atomic<bool> g_takeObjInFlight{false};
 
 // Init-processed dedupe set: subclass-aware Init scan registers observers
 // on multiple Init UFunctions in the prop_C lineage. If a subclass Init
@@ -125,10 +143,11 @@ void DestroyLocalProp(void* actor, bool deferred) {
 }
 
 void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
-    if (!self || !g_session_ptr) return;
+    auto* s = LoadSession();
+    if (!self || !s) return;
     // Gate order (audit L-1 2026-05-24): cheapest checks FIRST so the hot path
     // short-circuits with minimal work.
-    if (!g_session_ptr->connected()) return;                      // pre-handshake save-load -> skip
+    if (!s->connected()) return;                      // pre-handshake save-load -> skip
     if (coop::remote_prop::ConsumeIncomingSpawn(self)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p was wire-received -- skip broadcast (echo suppression)",
                 self);
@@ -146,7 +165,7 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
     // Storage-container spawn fix (2026-05-25): defer broadcast for actors
     // spawned from inside a takeObj call. takeObj POST is the canonical
     // broadcaster (sees the saved-Key-restored actor after loadData).
-    if (g_takeObjInFlight) {
+    if (g_takeObjInFlight.load(std::memory_order_relaxed)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p spawned inside takeObj -- defer to takeObj POST (Key not yet restored by loadData)",
                 self);
         return;
@@ -156,7 +175,7 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
     // suppression. Client destroys local intermediate; mature variant
     // will arrive via the wire.
     const std::wstring cls = R::ClassNameOf(self);
-    if (g_session_ptr->role() == coop::net::Role::Client) {
+    if (s->role() == coop::net::Role::Client) {
         if (IsWireSuppressedPropClass(cls)) {
             UE_LOGI("spawner-suppress[client.Init]: scheduling deferred destroy for local intermediate variant '%ls' actor=%p (host-authoritative; mature variant will arrive via wire)",
                     cls.c_str(), self);
@@ -205,7 +224,7 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,
             (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
-    if (!g_session_ptr->SendPropSpawn(p)) {
+    if (!s->SendPropSpawn(p)) {
         EnqueuePropSpawnForRetry(p);
     }
 }
@@ -213,12 +232,13 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
 // K2_DestroyActor PRE -- bidirectional destroy broadcast (host + client),
 // echo-suppressed via the remote_prop incoming-destroy set.
 void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void* /*params*/) {
-    if (!self || !g_session_ptr) return;
+    auto* s = LoadSession();
+    if (!self || !s) return;
     // Evict from the Init-processed dedupe set BEFORE the role gate so
     // client-side Stream B destroys (deferred DestroyLocalProp on
     // mushroom7_C) also clear their entries.
     UnmarkProcessedInit(self);
-    if (!g_session_ptr->connected()) return;
+    if (!s->connected()) return;
     if (coop::remote_prop::ConsumeIncomingDestroy(self)) {
         UE_LOGI("grab_hook[K2_DestroyActor PRE]: actor %p was wire-received destroy -- skip rebroadcast",
                 self);
@@ -233,10 +253,10 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
         wk.data[wk.len++] = static_cast<char>(keyStr[i]);
     }
     const char* roleStr =
-        g_session_ptr->role() == coop::net::Role::Host ? "HOST" : "CLIENT";
+        s->role() == coop::net::Role::Host ? "HOST" : "CLIENT";
     UE_LOGI("grab_hook[K2_DestroyActor PRE]: %s broadcasting DESTROY actor=%p key='%ls'",
             roleStr, self, keyStr.c_str());
-    if (!g_session_ptr->SendPropDestroy(wk)) {
+    if (!s->SendPropDestroy(wk)) {
         EnqueuePropDestroyForRetry(wk);
     }
 }
@@ -245,18 +265,20 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
 // the nested Aprop_C::Init POST observer defers its broadcast (Key is
 // NewGuid pre-loadData).
 void GrabObserver_PropInventory_TakeObj_PRE(void* self, void* /*function*/, void* /*params*/) {
-    if (!self || !g_session_ptr) return;
-    if (!g_session_ptr->connected()) return;
-    g_takeObjInFlight = true;
+    auto* s = LoadSession();
+    if (!self || !s) return;
+    if (!s->connected()) return;
+    g_takeObjInFlight.store(true, std::memory_order_relaxed);
 }
 
 // POST observer for propInventory_C::takeObj -- the canonical broadcaster
 // for container extracts (after loadData restored the saved Key).
 void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* params) {
     // Clear the in-flight flag FIRST regardless of any early returns.
-    g_takeObjInFlight = false;
+    g_takeObjInFlight.store(false, std::memory_order_relaxed);
 
-    if (!self || !params || !function || !g_session_ptr) return;
+    auto* s = LoadSession();
+    if (!self || !params || !function || !s) return;
     // Cache the Object out-param offset. Atomic because the observer can
     // dispatch on either the game thread (typical) or a task-graph worker.
     static std::atomic<int32_t> sObjectOff{-2};
@@ -271,7 +293,7 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     void* spawnedActor = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + off);
     if (!spawnedActor || !R::IsLive(spawnedActor)) return;
-    if (!g_session_ptr->connected()) {
+    if (!s->connected()) {
         UE_LOGI("grab_hook[takeObj POST]: spawned %p but session not connected -- skipping broadcast",
                 spawnedActor);
         return;
@@ -310,7 +332,7 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,
             (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
-    if (!g_session_ptr->SendPropSpawn(p)) {
+    if (!s->SendPropSpawn(p)) {
         EnqueuePropSpawnForRetry(p);
     }
 }
@@ -320,7 +342,7 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 // ---- public API --------------------------------------------------------
 
 void SetSession(coop::net::Session* session) {
-    g_session_ptr = session;
+    g_session_ptr.store(session, std::memory_order_release);
 }
 
 bool IsWireSuppressedPropClass(const std::wstring& cls) {
@@ -349,11 +371,12 @@ void EnqueuePropDestroyForRetry(const coop::net::WireKey& key) {
 }
 
 void DrainPendingPropSpawns() {
-    if (!g_session_ptr) return;
+    auto* s = LoadSession();
+    if (!s) return;
     std::lock_guard<std::mutex> lk(g_pendingSpawnsMutex);
     while (!g_pendingSpawns.empty()) {
         const coop::net::PropSpawnPayload& payload = g_pendingSpawns.front();
-        if (!g_session_ptr->SendPropSpawn(payload)) {
+        if (!s->SendPropSpawn(payload)) {
             break;  // channel busy; retry next tick. preserves order.
         }
         UE_LOGI("net: PropSpawn dequeued + sent (remaining=%zu)",
@@ -363,17 +386,18 @@ void DrainPendingPropSpawns() {
 }
 
 void DrainPendingPropDestroys() {
-    if (!g_session_ptr) return;
+    auto* s = LoadSession();
+    if (!s) return;
     std::lock_guard<std::mutex> lk(g_pendingDestroysMutex);
     while (!g_pendingDestroys.empty()) {
         const coop::net::WireKey& key = g_pendingDestroys.front();
-        if (!g_session_ptr->SendPropDestroy(key)) break;
+        if (!s->SendPropDestroy(key)) break;
         g_pendingDestroys.pop_front();
     }
 }
 
 void Install(coop::net::Session* session) {
-    g_session_ptr = session;
+    g_session_ptr.store(session, std::memory_order_release);
     if (!g_propInitScanDone) {
         // Gate: wait for prop_C base class to load.
         void* propBase = R::FindClass(P::name::PropClass);
@@ -431,7 +455,7 @@ void Install(coop::net::Session* session) {
 }
 
 void InstallInventory(coop::net::Session* session) {
-    g_session_ptr = session;
+    g_session_ptr.store(session, std::memory_order_release);
     if (g_inventoryObserverInstalled) return;
     void* invCls = R::FindClass(P::name::PropInventoryClass);
     if (!invCls) return;  // not loaded yet -- retry next tick
@@ -471,7 +495,7 @@ DisconnectStats OnDisconnect() {
     }
     s.initProcessedDropped = g_processedInitActors.size();
     g_processedInitActors.clear();
-    g_takeObjInFlight = false;
+    g_takeObjInFlight.store(false, std::memory_order_relaxed);
     return s;
 }
 

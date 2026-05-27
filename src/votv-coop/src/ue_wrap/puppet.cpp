@@ -7,7 +7,7 @@
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/reflected_offset.h"
 
-#include <windows.h>  // GetEnvironmentVariableW
+#include <windows.h>
 
 #include <cmath>
 #include <cstdint>
@@ -114,20 +114,12 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
     // whichever appears first in GUObjectArray order, which on this
     // class is the native Mesh slot (typically hidden + has no AnimBP).
     // DriveAnimBP then dispatches to the wrong AnimInstance.
-    void* comp = nullptr;
-    if (IsMainPlayerPuppetKind()) {
-        comp = ReadPtr(puppetActor, P::off::AmainPlayer_mesh_playerVisible);
-        if (comp && !R::IsLive(comp)) comp = nullptr;
-    }
-    // Backup path (SkelMesh): single SkeletalMeshComponent at the actor
-    // root; ChildObjectsOf finds it unambiguously.
-    if (!comp) {
-        for (const auto& c : R::ChildObjectsOf(puppetActor)) {
-            if (c.className == P::name::SkeletalMeshComponentClass) {
-                if (R::IsLive(c.object)) { comp = c.object; break; }
-            }
-        }
-    }
+    // Audit H9 (2026-05-27): MainPlayer is the only puppet kind. Read
+    // mesh_playerVisible @0x04F8 directly. ChildObjectsOf fallback removed
+    // (was the SkelMesh path's single-skel-comp resolver, which can no
+    // longer happen).
+    void* comp = ReadPtr(puppetActor, P::off::AmainPlayer_mesh_playerVisible);
+    if (comp && !R::IsLive(comp)) comp = nullptr;
     if (comp) g_meshComp[puppetActor] = comp;
     return comp;
 }
@@ -262,79 +254,13 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
             pawn, ctrl, movement, kerfur, useLegIK, isFace, lookingAtPlayer);
 }
 
-bool IsMainPlayerPuppetKind() {
-    // Read VOTVCOOP_PUPPET_KIND env var ONCE on first call; cache the result.
-    // Default true (mainPlayer_C path). Any value starting with 's' (skelmesh,
-    // skel, smc) flips to the SkeletalMeshActor backup path.
-    static bool resolved = false;
-    static bool isMainPlayer = true;
-    if (!resolved) {
-        wchar_t buf[64] = {};
-        const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_PUPPET_KIND", buf, 64);
-        if (n > 0 && n < 64) {
-            const wchar_t c = static_cast<wchar_t>(::towlower(buf[0]));
-            if (c == L's') isMainPlayer = false;
-        }
-        UE_LOGI("puppet: puppet-kind = %ls (VOTVCOOP_PUPPET_KIND=%ls)",
-                isMainPlayer ? L"MainPlayer (mainPlayer_C orphan)"
-                             : L"SkelMesh (ASkeletalMeshActor backup)",
-                n > 0 ? buf : L"<unset, default mainplayer>");
-        resolved = true;
-    }
-    return isMainPlayer;
-}
-
-float GetSpawnMeshOffsetZ(void* localPlayer) {
-    if (IsMainPlayerPuppetKind()) return 0.f;
-    if (!localPlayer || !R::IsLive(localPlayer)) return 0.f;
-    return -E::GetActorCharacterHalfHeight(localPlayer);
-}
-
-// Backup path: spawn ASkeletalMeshActor wearing the local player's skin +
-// running the body AnimBP. RULE 2 retirement: this whole function goes when
-// the MainPlayer path is hands-on-verified working (criteria documented in
-// puppet.h).
-static void* SpawnPuppetSkelMesh(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
-    if (!skeletalMeshAsset) {
-        UE_LOGE("puppet[SkelMesh]: no skin asset");
-        return nullptr;
-    }
-    void* cls = R::FindClass(P::name::SkeletalMeshActorClass);
-    if (!cls) {
-        UE_LOGE("puppet[SkelMesh]: SkeletalMeshActor class not found");
-        return nullptr;
-    }
-    // A SkeletalMeshActor is NOT a pawn -> no auto-possess, no hijack surface.
-    void* actor = E::SpawnActor(cls, loc, /*inertPawn=*/false);
-    if (!actor) {
-        UE_LOGE("puppet[SkelMesh]: SpawnActor failed");
-        return nullptr;
-    }
-    void* comp = GetSkeletalMeshComponent(actor);
-    if (!comp) {
-        UE_LOGE("puppet[SkelMesh]: spawned actor %p has no SkeletalMeshComponent", actor);
-        return actor;
-    }
-    E::SetSkeletalMesh(comp, skeletalMeshAsset);
-    if (animClass) {
-        E::SetAnimClass(comp, animClass);
-    } else {
-        UE_LOGW("puppet[SkelMesh]: no AnimClass -> body renders in reference pose (T-pose)");
-    }
-    E::SetAnimTickAlways(comp);
-    E::SetComponentVisible(comp, true);
-    // Suppress floor-trace leg IK (needs Character context a bare ASkeletalMesh
-    // Actor lacks; on it splays the legs) + decouple head from local-player
-    // track.
-    if (void* anim = LiveAnimInstance(comp)) {
-        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_useLegIK(), false);
-        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), false);
-        WriteAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeedMultiplier(), 1.f);
-    }
-    UE_LOGI("puppet[SkelMesh]: spawned actor=%p comp=%p at (%.0f,%.0f,%.0f)",
-            actor, comp, loc.X, loc.Y, loc.Z);
-    DumpAnimState(L"puppet", comp);
-    return actor;
+// Audit H9 (2026-05-27): GetSpawnMeshOffsetZ kept as a stub returning 0
+// because all callers reference it. The legacy SkelMesh code path -- which
+// was the only branch that returned non-zero -- is gone. `localPlayer` is
+// unused now but kept in the signature for ABI stability across the
+// remote_player ↔ puppet boundary.
+float GetSpawnMeshOffsetZ(void* /*localPlayer*/) {
+    return 0.f;
 }
 
 // New path: spawn mainPlayer_C orphan. The class's built-in mesh_playerVisible
@@ -610,19 +536,10 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
 }
 
 void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
-    // Branch on env-var-controlled puppet kind. Default MainPlayer per user
-    // directive 2026-05-25 (puppet must be full body+legs+IK, not bare
-    // SkeletalMeshActor).
-    //
-    // BOTH paths now use the local-player skin + AnimClass params: the
-    // SkelMesh path needs them because the bare actor has no defaults;
-    // the MainPlayer path needs them because VOTV's class default mesh_
-    // playerVisible may not carry a SkeletalMesh asset (v2 hands-on fix
-    // 2026-05-25).
-    if (IsMainPlayerPuppetKind()) {
-        return SpawnPuppetMainPlayer(loc, skeletalMeshAsset, animClass);
-    }
-    return SpawnPuppetSkelMesh(loc, skeletalMeshAsset, animClass);
+    // Audit H9 (2026-05-27): MainPlayer is the only puppet kind (RULE 2
+    // retired the SkelMesh backup + the VOTVCOOP_PUPPET_KIND env var). The
+    // mainPlayer_C path is hands-on-verified working per commit b100e8e.
+    return SpawnPuppetMainPlayer(loc, skeletalMeshAsset, animClass);
 }
 
 void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float headYawDelta) {

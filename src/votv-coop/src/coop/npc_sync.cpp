@@ -14,6 +14,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -27,7 +28,16 @@ namespace R = ue_wrap::reflection;
 
 // Cached session pointer set by Install(). The interceptor reads role()/
 // connected()/SendEntitySpawn() through this. nullptr until first Install.
-coop::net::Session* g_session_ptr = nullptr;
+//
+// Audit C2 (2026-05-27): atomic Session* (was plain pointer). The interceptor
+// fires from parallel-anim worker threads; plain-pointer deref races with
+// harness SetSession(nullptr) on shutdown. Mirrors item_activate.cpp +
+// prop_lifecycle.cpp atomic pattern.
+std::atomic<coop::net::Session*> g_session_ptr{nullptr};
+
+inline coop::net::Session* LoadSession() {
+    return g_session_ptr.load(std::memory_order_acquire);
+}
 
 // Idempotency: once installed (or permanently failed) we short-circuit.
 bool g_installed = false;
@@ -98,7 +108,8 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     (void)self;  // self = the UGameplayStatics CDO; we don't use it
     // Cheapest checks first.
     if (!params || g_npcSpawnActorClassParamOff < 0) return false;
-    if (!g_session_ptr || !g_session_ptr->connected()) return false;  // pre-connect: don't filter
+    auto* s = LoadSession();
+    if (!s || !s->connected()) return false;  // pre-connect: don't filter
 
     // Phase 5N1 Inc2: HOST-side broadcast path. When env var is set and
     // ActorClass is allowlisted, the host emits an EntitySpawn reliable
@@ -116,7 +127,7 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     // For Inc2 (this commit): host detects spawns + sends EntitySpawn.
     // Client receives the packet but doesn't yet act on it (the
     // event_feed receiver is wired-to-log-only). Detect-only mode.
-    if (g_session_ptr->role() == coop::net::Role::Host) {
+    if (s->role() == coop::net::Role::Host) {
         if (!NpcSyncEnabled()) return false;
         void* actorClass = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(params) + g_npcSpawnActorClassParamOff);
@@ -172,7 +183,7 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
             p.className.data[p.className.len++] = static_cast<char>(cls[i]);
         }
         p.sessionId = g_nextNpcSessionId++;
-        if (g_session_ptr->SendEntitySpawn(p)) {
+        if (s->SendEntitySpawn(p)) {
             UE_LOGI("npc-sync[host]: broadcast EntitySpawn class='%ls' sessionId=%u loc=(%.0f, %.0f, %.0f) rot=(p=%.1f y=%.1f r=%.1f)",
                     cls.c_str(), p.sessionId, p.locX, p.locY, p.locZ,
                     p.rotPitch, p.rotYaw, p.rotRoll);
@@ -186,7 +197,7 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     }
 
     // Host runs spawners normally; only CLIENT suppresses.
-    if (g_session_ptr->role() != coop::net::Role::Client) return false;
+    if (s->role() != coop::net::Role::Client) return false;
 
     // Read the ActorClass UClass* param from the FFrame buffer.
     void* actorClass = *reinterpret_cast<void**>(
@@ -231,7 +242,7 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
 }  // namespace
 
 void SetSession(coop::net::Session* session) {
-    g_session_ptr = session;
+    g_session_ptr.store(session, std::memory_order_release);
 }
 
 void MarkIncomingNpcSpawn(void* npcClass) {
@@ -249,7 +260,7 @@ void OnDisconnect() {
 }
 
 void Install(coop::net::Session* session) {
-    g_session_ptr = session;  // cache (caller guarantees outlives us)
+    g_session_ptr.store(session, std::memory_order_release);  // cache (caller guarantees outlives us)
     if (g_installed) return;
     void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
     if (!gsCls) return;  // not loaded yet (loads with /Script/Engine; very early)

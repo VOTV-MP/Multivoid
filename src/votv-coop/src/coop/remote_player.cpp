@@ -1,6 +1,7 @@
 #include "coop/remote_player.h"
 
 #include "coop/nameplate.h"
+#include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
@@ -123,23 +124,18 @@ bool RemotePlayer::Spawn() {
     //       No actor-level offset needed; applying -90 here doubled the
     //       shim and faced the puppet 90 degrees off ("facing sideways"
     //       hands-on 2026-05-25).
-    if (Pup::IsMainPlayerPuppetKind()) {
-        meshOffsetYaw_ = 0.f;
-    } else if (void* srcMeshComp = Pup::GetMeshPlayerVisibleComponent(local)) {
-        const ue_wrap::FRotator localActorRot = E::GetActorRotation(local);
-        const ue_wrap::FVector meshFwd = E::GetComponentForwardVector(srcMeshComp);
-        const float meshWorldYaw = std::atan2(meshFwd.Y, meshFwd.X) * 57.29577951f;
-        meshOffsetYaw_ = ue_wrap::NormalizeAxis(meshWorldYaw - localActorRot.Yaw);
-    }
-    // Z offset: SkelMesh uses the centralized -halfH helper (mesh IS the
-    // root; reconstruct the BP shim at actor level). MainPlayer measures
-    // empirically AFTER spawn so the suppression-vs-BP-mutation question
-    // is settled by direct observation.
-    meshOffsetZ_ = Pup::IsMainPlayerPuppetKind() ? 0.f : Pup::GetSpawnMeshOffsetZ(local);
-    UE_LOGI("RemotePlayer::Spawn: meshOffsetYaw_=%.2f preliminary meshOffsetZ_=%.2f puppet-kind=%ls",
-            meshOffsetYaw_, meshOffsetZ_,
-            Pup::IsMainPlayerPuppetKind() ? L"MainPlayer (yaw=0, Z empirical post-spawn)"
-                                          : L"SkelMesh (-halfH, yaw=mesh-frame-shim)");
+    // Audit H9 (2026-05-27): MainPlayer is the only puppet kind now (RULE 2
+    // retired the SkelMesh path). The +Y-forward shim lives INSIDE
+    // mesh_playerVisible.RelRot.Yaw (-90) via mainPlayer_C's BP construction,
+    // so puppet.actor.Yaw == source.actor.Yaw matches without an actor-level
+    // offset.
+    meshOffsetYaw_ = 0.f;
+    // Z offset is measured empirically AFTER spawn (via the chain block
+    // below); the preliminary value is 0.
+    meshOffsetZ_ = 0.f;
+    UE_LOGI("RemotePlayer::Spawn: meshOffsetYaw_=%.2f preliminary meshOffsetZ_=%.2f "
+            "(MainPlayer puppet: yaw=0, Z empirical post-spawn)",
+            meshOffsetYaw_, meshOffsetZ_);
 
     // Spawn-placement Z = actor.Z + meshOffsetZ_, same formula as ApplyToEngine.
     // No visual pop between SpawnActor and the first ApplyToEngine because both
@@ -166,7 +162,10 @@ bool RemotePlayer::Spawn() {
     //                       = source.actor.Z + offset + puppetChain
     //   source.mesh.world.Z = source.actor.Z + srcChain
     //   => offset = srcChain - puppetChain
-    if (Pup::IsMainPlayerPuppetKind()) {
+    // Audit H9: MainPlayer is the only puppet kind; the conditional gate is
+    // gone, the chain measurement block runs unconditionally for the
+    // mainPlayer_C orphan.
+    {
         // 2026-05-25 hands-on bug: the prior dual-chain measurement read
         // srcChain from local.mesh_playerVisible's world transform. That
         // transform is TRANSIENT during BP construction: on the CLIENT,
@@ -582,17 +581,35 @@ void RemotePlayer::ApplyToEngine() {
     // ground), making the flashlight invisible even when intensity is
     // correctly applied.
     //
-    // Direct field write to lag_fl.RelativeRotation.Pitch (FRotator
-    // layout is {Pitch, Yaw, Roll} so Pitch is the first float at the
-    // RelativeRotation offset). No UFunction call needed -- the spring
-    // arm reads this field on next render. Cost: one float write per
-    // puppet per tick (negligible).
+    // Audit H7 (2026-05-27): call K2_SetRelativeRotation via reflection
+    // instead of the direct field write. Drives UE4's transform propagation
+    // (UpdateComponentToWorld) which is the canonical path. UFunction
+    // resolved once per process via a function-local static.
     if (auto* mp = reinterpret_cast<uint8_t*>(actor_)) {
         if (void* lag_fl = *reinterpret_cast<void**>(mp + P::off::AmainPlayer_lag_fl)) {
             if (R::IsLive(lag_fl)) {
-                *reinterpret_cast<float*>(
-                    reinterpret_cast<uint8_t*>(lag_fl) + P::off::USceneComponent_RelativeRotation) =
-                    curPitch_;
+                static void* sSetRelRotFn = nullptr;
+                if (!sSetRelRotFn) {
+                    if (void* sc = R::FindClass(P::name::SceneComponentClass)) {
+                        sSetRelRotFn = R::FindFunction(sc, P::name::SetRelativeRotationFn);
+                    }
+                }
+                if (sSetRelRotFn) {
+                    ue_wrap::FRotator rot{curPitch_, 0.f, 0.f};
+                    ue_wrap::ParamFrame f(sSetRelRotFn);
+                    f.Set<ue_wrap::FRotator>(L"NewRotation", rot);
+                    f.Set<bool>(L"bSweep", false);
+                    f.Set<bool>(L"bTeleport", true);
+                    ue_wrap::Call(lag_fl, f);
+                } else {
+                    // Fallback: direct write (function-local; if reflection
+                    // can't resolve K2_SetRelativeRotation the pipeline isn't
+                    // available anyway, so the engine wouldn't propagate
+                    // either way -- preserves prior behavior).
+                    *reinterpret_cast<float*>(
+                        reinterpret_cast<uint8_t*>(lag_fl) +
+                        P::off::USceneComponent_RelativeRotation) = curPitch_;
+                }
             }
         }
     }

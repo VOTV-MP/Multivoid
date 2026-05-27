@@ -51,6 +51,7 @@ bool ResolvePawnFns() {
 // Controller + camera caches.
 void* g_controllerClass = nullptr;
 void* g_getControlRotFn = nullptr;
+void* g_setControlRotFn = nullptr;
 void* g_pcClass = nullptr;
 void* g_setViewTargetFn = nullptr;
 void* g_camMgrClass = nullptr;
@@ -86,6 +87,25 @@ void* GetController(void* pawn) {
 
 void SetControlRotation(void* controller, const FRotator& rot) {
     if (!controller) return;
+    // Audit H4 (2026-05-27): call K2_SetControlRotation via reflection
+    // instead of writing the field directly. The UFunction's body runs
+    // ProcessViewRotation + UpdateRotation in addition to the field
+    // assignment; the direct write skipped those. Lazy resolve on first
+    // call (PlayerController is loaded by engine boot, well before any
+    // puppet controller is wired). Falls back to the direct write only
+    // if resolution fails (PlayerController class somehow not loaded --
+    // wouldn't happen in a working build but defensive).
+    if (!g_controllerClass) g_controllerClass = R::FindClass(P::name::ControllerClassName);
+    if (g_controllerClass && !g_setControlRotFn)
+        g_setControlRotFn = R::FindFunction(g_controllerClass, P::name::SetControlRotationFn);
+    if (g_setControlRotFn) {
+        ParamFrame f(g_setControlRotFn);
+        f.Set<FRotator>(L"NewRotation", rot);
+        Call(controller, f);
+        return;
+    }
+    UE_LOGW("engine_pawn: SetControlRotation falling back to direct write "
+            "(K2_SetControlRotation unresolved)");
     *reinterpret_cast<FRotator*>(reinterpret_cast<uint8_t*>(controller)
                                  + P::off::AController_ControlRotation) = rot;
 }
