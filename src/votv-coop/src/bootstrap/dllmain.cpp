@@ -8,6 +8,7 @@
 // in later steps, behind ue_wrap/.
 
 #include "coop/shutdown.h"
+#include "coop/version.h"
 #include "harness/harness.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -61,6 +62,8 @@ DWORD WINAPI BootThread(LPVOID) {
     // ProcessEvent via AOB, then functionally validates them). Logs a PASS/FAIL
     // report to votv-coop.log -- our own SDK access, no UE4SS.
     ue_wrap::log::Init();
+    UE_LOGI("==== %s ====", coop::version::kDisplayLabel);
+    UE_LOGI("boot: version-full=%s", coop::version::kVersionFull);
     ue_wrap::reflection::RunHealthCheck();
 
     // Establish a game-thread execution context: hook ProcessEvent so we have a

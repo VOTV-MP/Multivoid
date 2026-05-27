@@ -1,0 +1,32 @@
+// coop/version.h -- GENERATED from version.h.in by CMake. Do NOT edit by hand.
+//
+// Source of truth for the mod version + the VOTV game version it targets:
+//   src/votv-coop/CMakeLists.txt  --  project(... VERSION X.Y.Z)
+//                                   + set(VOTVCOOP_GAME_TARGET "...")
+//
+// SemVer 2.0 with build metadata: <mod-semver>+votv-<game-version>.
+// The "+" suffix is build metadata and MUST be ignored when comparing
+// versions per the SemVer 2.0 spec -- it identifies the game cook this
+// build was compiled against, not a quality signal.
+
+#pragma once
+
+namespace coop::version {
+
+// Mod-only SemVer (MAJOR.MINOR.PATCH). What changes when MOD code changes.
+inline constexpr const char* kModVersion = "@PROJECT_VERSION@";
+
+// Game version this build targets. Bumps when we adapt to a new VOTV cook.
+// Same code targeting two different cooks produces TWO different DLLs with
+// the SAME kModVersion but different kGameTarget.
+inline constexpr const char* kGameTarget = "@VOTVCOOP_GAME_TARGET@";
+
+// Composite for tags + filenames + log banners. Example: "0.0.1+votv-0.9.0-n".
+inline constexpr const char* kVersionFull = "@PROJECT_VERSION@+votv-@VOTVCOOP_GAME_TARGET@";
+
+// User-facing label. Used for boot banner + future about-screen text.
+// Example: "votv-coop 0.0.1 (for VOTV Alpha 0.9.0-n)".
+inline constexpr const char* kDisplayLabel =
+    "votv-coop @PROJECT_VERSION@ (for VOTV Alpha @VOTVCOOP_GAME_TARGET@)";
+
+}  // namespace coop::version

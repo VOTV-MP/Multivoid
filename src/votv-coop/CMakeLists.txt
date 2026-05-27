@@ -10,7 +10,22 @@
 # behind ue_wrap/ next.
 
 cmake_minimum_required(VERSION 3.20)
-project(votv_coop CXX C)  # C for the MinHook sources (third_party/minhook)
+project(votv_coop VERSION 0.0.1 LANGUAGES CXX C)  # C for the MinHook sources (third_party/minhook)
+
+# Build-metadata suffix per SemVer 2.0 (text after `+`). Identifies the VOTV
+# game version this build targets. Reflection offsets and BP field names shift
+# between cooks, so the mod is incompatible across game versions -- the suffix
+# is the canonical "tested-against" marker in tags + filenames + the boot
+# banner. Update on every game-recook adaptation.
+set(VOTVCOOP_GAME_TARGET "0.9.0-n")
+
+# Materialize PROJECT_VERSION + VOTVCOOP_GAME_TARGET into a generated header
+# that the DLL includes (boot banner + any future feature gates that depend on
+# the build metadata).
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/coop/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/coop/version.h
+    @ONLY)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,7 +91,7 @@ add_library(votv-coop SHARED
     src/harness/sdk_check.cpp
 )
 
-target_include_directories(votv-coop PRIVATE include)
+target_include_directories(votv-coop PRIVATE include ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "votv-coop")
 # version.lib: read the running exe's file version in the health check.
 # minhook: our inline-hook substrate (game-thread dispatcher).
