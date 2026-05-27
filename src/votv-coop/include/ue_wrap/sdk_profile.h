@@ -498,6 +498,23 @@ inline constexpr size_t kKerfurModifyBone_3       = 0x2578;
 inline constexpr size_t kKerfurModifyBone_2       = 0x2680;
 inline constexpr size_t kKerfurModifyBone_1       = 0x2A28;
 inline constexpr size_t kKerfurModifyBone         = 0x2C60;
+
+// AnimBP node-region diagnostic offsets (used by DumpAnimNodeRegions in
+// puppet.cpp). Each pair brackets a contiguous region of the kerfur
+// AnimBP instance memory to scan + log for the Bug 2 puppet-locomotion
+// investigation. Moved here 2026-05-27 (audit M19) from inline magic
+// constants in puppet.cpp.
+inline constexpr size_t kKerfurBlendSpacePlayer_Start = 0x1180;
+inline constexpr size_t kKerfurBlendSpacePlayer_End   = 0x1268;
+inline constexpr size_t kKerfurStateMachine1_Start    = 0x1AC0;
+inline constexpr size_t kKerfurStateMachine1_End      = 0x1B70;
+inline constexpr size_t kKerfurStateMachine_Start     = 0x1CC8;
+inline constexpr size_t kKerfurStateMachine_End       = 0x1D78;
+// AnimBP INSTANCE-LEVEL public vars tail (post-AnimGraphNode block per
+// CXX dump). End-of-class is 0x2E4A; we round to 0x2E50 to cover any
+// trailing padding.
+inline constexpr size_t kKerfurAnimBPVarsAll_Start    = 0x2D60;
+inline constexpr size_t kKerfurAnimBPVarsAll_End      = 0x2E50;
 }  // namespace anim
 
 // ---- content names (change with game content, not the engine) ------------

@@ -145,18 +145,18 @@ void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
     void* anim = LiveAnimInstance(skeletalMeshComponent);
     if (!anim) return;
     struct Region { const char* name; size_t start; size_t end; };
+    // Offsets named in sdk_profile.h::anim (audit M19, 2026-05-27 -- moved
+    // out of inline magic numbers so a future VOTV recook surfaces here
+    // via the same sdk_profile.h::anim block other AnimBP offsets live in).
     const Region regions[] = {
-        {"BlendSpacePlayer", 0x1180, 0x1268},
-        {"StateMachine_1",   0x1AC0, 0x1B70},
-        {"StateMachine",     0x1CC8, 0x1D78},
-        // The AnimBP's INSTANCE-LEVEL public variables block (post-AnimGraphNode
-        // tail, per CXX dump line 82+). Bug 2 deep dive 2026-05-23: the state
-        // machine differs (idx 1 vs 2) between local-walking and puppet-sliding,
-        // but DumpAnimState only logs the KNOWN AnimBP vars from sdk_profile.
-        // Dump the WHOLE block (size_t from 0x2D60 through end-of-class 0x2E4A,
-        // covering ALL kerfur-AnimBP variables + any padding/inherited tail)
-        // so any field difference between local and puppet shows up.
-        {"AnimBP_vars_all", 0x2D60, 0x2E50},
+        {"BlendSpacePlayer", P::anim::kKerfurBlendSpacePlayer_Start, P::anim::kKerfurBlendSpacePlayer_End},
+        {"StateMachine_1",   P::anim::kKerfurStateMachine1_Start,    P::anim::kKerfurStateMachine1_End},
+        {"StateMachine",     P::anim::kKerfurStateMachine_Start,     P::anim::kKerfurStateMachine_End},
+        // AnimBP INSTANCE-LEVEL public variables block (post-AnimGraphNode
+        // tail). Bug 2 deep dive 2026-05-23: state machine differs (idx 1 vs 2)
+        // between local-walking and puppet-sliding; this region covers all
+        // kerfur AnimBP vars + padding so any field difference shows up.
+        {"AnimBP_vars_all",  P::anim::kKerfurAnimBPVarsAll_Start,    P::anim::kKerfurAnimBPVarsAll_End},
     };
     for (const Region& r : regions) {
         std::string out;

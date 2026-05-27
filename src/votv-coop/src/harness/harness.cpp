@@ -647,6 +647,10 @@ void DumpLiveWidgets() {
 void SpawnSecondPlayerWhenReady() {
     UE_LOGI("play: waiting for STORY gameplay, spawn 2nd player the instant it's ready");
     for (int i = 0; i < 1200; ++i) {  // ~120 s safety cap
+        if (coop::shutdown::IsShuttingDown()) {
+            UE_LOGI("play: SpawnSecondPlayerWhenReady aborting -- shutdown signaled");
+            return;
+        }
         auto state = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 not-ready,2 ok,3 failed
         Post([state, i] {
             if (g_orphan.valid()) { state->store(2); return; }
@@ -699,6 +703,10 @@ bool BootStorySaveBlocking() {
     const std::wstring slot(slotA.begin(), slotA.end());  // ASCII slot name
     UE_LOGI("harness: target STORY save '%ls'", slot.c_str());
     for (int i = 0; i < 80; ++i) {  // ~120 s cap (boot + omega + level load)
+        if (coop::shutdown::IsShuttingDown()) {
+            UE_LOGI("harness: BootStorySaveBlocking aborting -- shutdown signaled");
+            return false;
+        }
         auto st = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 retry,2 ok
         Post([slot, st] { st->store(ue_wrap::engine::LoadStorySave(slot.c_str()) ? 2 : 1); });
         while (st->load() == 0) ::Sleep(5);

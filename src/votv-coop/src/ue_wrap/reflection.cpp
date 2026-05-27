@@ -27,7 +27,7 @@ ProcessEventFn g_processEvent = nullptr;
 uintptr_t GUObjectArrayAddr() { return g_objArray; }
 uintptr_t FNameToStringAddr() { return reinterpret_cast<uintptr_t>(g_fnameToString); }
 uintptr_t ProcessEventAddr() { return reinterpret_cast<uintptr_t>(g_processEvent); }
-bool IsResolved() { return g_objArray && g_fnameToString; }
+bool IsResolved() { return g_objArray && g_fnameToString && g_processEvent; }
 
 bool Resolve() {
     if (!g_fnameToString) {

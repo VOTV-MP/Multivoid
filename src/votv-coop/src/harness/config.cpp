@@ -6,6 +6,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "ue_wrap/log.h"
 
 #include <windows.h>
 
@@ -81,7 +82,17 @@ coop::net::Config ReadNetConfig(bool& enabled) {
 
     std::string port = ReadEnv("VOTVCOOP_NET_PORT");
     if (port.empty()) port = ReadIniValue("net.port", "");
-    if (!port.empty()) c.port = static_cast<uint16_t>(std::strtoul(port.c_str(), nullptr, 10));
+    if (!port.empty()) {
+        // strtoul returns unsigned long; a cast to uint16_t silently wraps
+        // values >65535 to the wrong port. Range-check before commit.
+        const unsigned long raw = std::strtoul(port.c_str(), nullptr, 10);
+        if (raw == 0 || raw > 65535) {
+            UE_LOGW("config: VOTVCOOP_NET_PORT/net.port='%s' out of [1,65535] -- "
+                    "ignoring (keeping default %u)", port.c_str(), c.port);
+        } else {
+            c.port = static_cast<uint16_t>(raw);
+        }
+    }
     return c;
 }
 

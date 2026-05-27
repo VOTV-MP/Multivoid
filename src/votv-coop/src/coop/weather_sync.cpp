@@ -1029,6 +1029,38 @@ void OnDisconnect() {
     // Cycle cache may dangle if the session ends mid-level-transition;
     // clear so the next ResolveCycle re-walks via FindObjectByClass.
     g_cycleCache = nullptr;
+
+    // Audit M26 (2026-05-27): unregister observers that are bound to
+    // long-lived engine UFunctions (BeginDeferredActorSpawnFromClass +
+    // redSkyEvent.set) AND scoped to a single session's role. If the next
+    // session reconnects with a different role (host->client or back),
+    // the still-registered host-only observers would fire on the wrong
+    // peer. The 5 scheduler PRE-interceptors and the causeRain
+    // echo-suppress interceptor are KEPT registered -- they're conditional
+    // on g_causeRainEchoSuppress (false outside Apply) and on role
+    // checks inside the observer body, so they stay safe across role
+    // changes; unregistering them would require re-resolving + re-
+    // registering on each connect-edge, which is heavier than the
+    // run-time role check.
+    if (g_lightningObserverRegistered && g_beginDeferredSpawnFn) {
+        GT::UnregisterObservers(g_beginDeferredSpawnFn);
+        g_lightningObserverRegistered = false;
+        UE_LOGI("weather: OnDisconnect unregistered lightning POST observer");
+    }
+    if (g_redSkyObserversRegistered) {
+        if (g_spawnRedSkyFn)    GT::UnregisterObservers(g_spawnRedSkyFn);
+        if (g_redSkyEventSetFn) GT::UnregisterObservers(g_redSkyEventSetFn);
+        g_redSkyObserversRegistered = false;
+        UE_LOGI("weather: OnDisconnect unregistered red-sky POST observers");
+    }
+    // Clear g_installed so the next session's Install() call can re-enter
+    // and re-register lightning + red-sky observers. The other per-feature
+    // flags (g_observersRegistered, g_interceptorsRegistered) stay set --
+    // their observers/interceptors are role-conditional inside the
+    // callback body, so they're safe across role changes without
+    // re-registration churn. UFunction pointers are stable across cycle
+    // recreation (UClass children, not instance state).
+    g_installed = false;
 }
 
 void ApplyFromHost(const coop::net::WeatherStatePayload& payload) {
