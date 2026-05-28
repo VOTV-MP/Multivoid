@@ -6,7 +6,9 @@ detached spawn -> tail caller never sees output until VotV exits).
 
 Subcommands:
   host        deploy + launch HOST peer (Game_0.9.0n/)
-  client      deploy + launch CLIENT peer (Game_0.9.0n_copy/)
+  client      deploy + launch CLIENT #1 peer (Game_0.9.0n_copy/)
+  client2     deploy + launch CLIENT #2 peer (Game_0.9.0n_copy2/) -- 2026-05-28
+              added for 3-peer LAN tests of the GNS multi-peer wire layer.
   smoke       autonomous LAN smoke: deploy + spawn both peers + monitor + kill
   kill        SIGTERM all VotV-Win64-Shipping instances
 
@@ -14,9 +16,9 @@ Every step prints a [mp] line immediately (flushed) so a Bash caller never has
 to guess what the orchestrator is doing. Child VotV is launched DETACHED so
 the parent Python exits cleanly without VotV inheriting our pipes.
 
-Used by mp_host_game.bat / mp_client_connect.bat / mp_smoke.bat which are
-4-line shims at repo root (per the user RULE: "FOR ME TO RUN YOU MUST MAKE A
-BAT AND PUT IT PROJECTS ROOT").
+Used by mp_host_game.bat / mp_client_connect.bat / mp_client2_connect.bat /
+mp_smoke.bat which are thin shims at repo root (per the user RULE: "FOR ME
+TO RUN YOU MUST MAKE A BAT AND PUT IT PROJECTS ROOT").
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WIN64_REL = "WindowsNoEditor/VotV/Binaries/Win64"
 HOST_DIR = ROOT / "Game_0.9.0n" / WIN64_REL
 CLIENT_DIR = ROOT / "Game_0.9.0n_copy" / WIN64_REL
+CLIENT2_DIR = ROOT / "Game_0.9.0n_copy2" / WIN64_REL  # 2026-05-28 PR-4.2+: 2nd client for 3-peer testing
 DEV_DIR = ROOT / "Game_0.9.0n_dev" / WIN64_REL
 DEPLOY_ALL = ROOT / "tools" / "deploy-all.ps1"
 VOTV_EXE = "VotV-Win64-Shipping.exe"
@@ -123,8 +126,16 @@ def host_owns_udp(pid: int, port: int) -> bool:
 
 
 def launch_peer(role: str, port: int, nick: str, peer: str | None,
-                res_x: int, res_y: int) -> int:
-    game_dir = HOST_DIR if role == "host" else CLIENT_DIR
+                res_x: int, res_y: int, peer_slot: int = 1) -> int:
+    # role is the WIRE role (host / client). peer_slot is which CLIENT folder
+    # to launch from when role==client: 1 -> Game_0.9.0n_copy, 2 ->
+    # Game_0.9.0n_copy2. Host always uses Game_0.9.0n.
+    if role == "host":
+        game_dir = HOST_DIR
+    elif peer_slot == 2:
+        game_dir = CLIENT2_DIR
+    else:
+        game_dir = CLIENT_DIR
     exe = game_dir / VOTV_EXE
     if not exe.exists():
         log(f"FATAL: missing exe {exe}")
@@ -169,8 +180,17 @@ def cmd_host(args) -> None:
 def cmd_client(args) -> None:
     deploy_all()
     pid = launch_peer("client", args.port, args.nick or "Client",
-                      peer=args.peer, res_x=args.res_x, res_y=args.res_y)
+                      peer=args.peer, res_x=args.res_x, res_y=args.res_y,
+                      peer_slot=1)
     log(f"client running PID={pid}")
+
+
+def cmd_client2(args) -> None:
+    deploy_all()
+    pid = launch_peer("client", args.port, args.nick or "Client2",
+                      peer=args.peer, res_x=args.res_x, res_y=args.res_y,
+                      peer_slot=2)
+    log(f"client2 running PID={pid}")
 
 
 def cmd_kill(args) -> None:
@@ -286,22 +306,37 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="VOTV coop orchestrator")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    common_res = [
+    # Host window stays 1080p (single big window); clients default to 720p
+    # so multiple client windows can fit on a single monitor for 3-peer
+    # tests (user directive 2026-05-28, supersedes the earlier "always
+    # 1080" rule which assumed only one client window on screen).
+    host_res = [
         ("--res-x", {"type": int, "default": 1920}),
         ("--res-y", {"type": int, "default": 1080}),
+        ("--port", {"type": int, "default": DEFAULT_PORT}),
+    ]
+    client_res = [
+        ("--res-x", {"type": int, "default": 1280}),
+        ("--res-y", {"type": int, "default": 720}),
         ("--port", {"type": int, "default": DEFAULT_PORT}),
     ]
 
     p_host = sub.add_parser("host", help="launch HOST peer")
     p_host.add_argument("--nick", default=None)
-    for flag, kw in common_res: p_host.add_argument(flag, **kw)
+    for flag, kw in host_res: p_host.add_argument(flag, **kw)
     p_host.set_defaults(func=cmd_host)
 
-    p_client = sub.add_parser("client", help="launch CLIENT peer")
+    p_client = sub.add_parser("client", help="launch CLIENT #1 peer")
     p_client.add_argument("--peer", default="127.0.0.1")
     p_client.add_argument("--nick", default=None)
-    for flag, kw in common_res: p_client.add_argument(flag, **kw)
+    for flag, kw in client_res: p_client.add_argument(flag, **kw)
     p_client.set_defaults(func=cmd_client)
+
+    p_client2 = sub.add_parser("client2", help="launch CLIENT #2 peer (3-peer LAN)")
+    p_client2.add_argument("--peer", default="127.0.0.1")
+    p_client2.add_argument("--nick", default=None)
+    for flag, kw in client_res: p_client2.add_argument(flag, **kw)
+    p_client2.set_defaults(func=cmd_client2)
 
     p_kill = sub.add_parser("kill", help="kill all VotV instances")
     p_kill.set_defaults(func=cmd_kill)
@@ -315,7 +350,7 @@ def main() -> None:
                          help="seconds to wait for host UDP bind")
     p_smoke.add_argument("--ram-kill-mb", type=int, default=8000,
                          help="hard kill threshold (born from 19 GB install-loop incident)")
-    for flag, kw in common_res: p_smoke.add_argument(flag, **kw)
+    for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
 
     args = ap.parse_args()

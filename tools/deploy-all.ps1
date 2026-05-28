@@ -1,9 +1,11 @@
-# deploy-all.ps1 -- deploy the standalone loader to all three game copies.
+# deploy-all.ps1 -- deploy the standalone loader to all four game copies.
 #
 # 2026-05-25 (3-copy convention; see docs/RE_WORKFLOW.md):
-#   Game_0.9.0n/     -- HOST  (user's hands-on host play)
-#   Game_0.9.0n_copy/ -- CLIENT (user's hands-on client play)
-#   Game_0.9.0n_dev/  -- DEV    (Claude's autonomous LAN test + RE work)
+#   Game_0.9.0n/     -- HOST    (user's hands-on host play)
+#   Game_0.9.0n_copy/ -- CLIENT  (user's hands-on client play)
+#   Game_0.9.0n_dev/  -- DEV     (Claude's autonomous LAN test + RE work)
+# 2026-05-28 PR-4.2+ (4-copy convention -- 3-peer LAN multi-client tests):
+#   Game_0.9.0n_copy2/ -- CLIENT2 (second hands-on client for 3-peer test)
 #
 # Each gets the same xinput1_3.dll proxy + votv-coop.dll payload. The dev
 # copy ADDITIONALLY has UE4SS installed via the dwmapi.dll alternate proxy
@@ -32,9 +34,10 @@ $root = Split-Path -Parent $PSScriptRoot
 $buildDir = Join-Path $root "build\votv-coop\Release"
 
 $targets = @(
-    @{Name="HOST"  ; Path=Join-Path $root "Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64"},
-    @{Name="CLIENT"; Path=Join-Path $root "Game_0.9.0n_copy\WindowsNoEditor\VotV\Binaries\Win64"},
-    @{Name="DEV"   ; Path=Join-Path $root "Game_0.9.0n_dev\WindowsNoEditor\VotV\Binaries\Win64"}
+    @{Name="HOST"   ; Path=Join-Path $root "Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64"},
+    @{Name="CLIENT" ; Path=Join-Path $root "Game_0.9.0n_copy\WindowsNoEditor\VotV\Binaries\Win64"},
+    @{Name="CLIENT2"; Path=Join-Path $root "Game_0.9.0n_copy2\WindowsNoEditor\VotV\Binaries\Win64"},
+    @{Name="DEV"    ; Path=Join-Path $root "Game_0.9.0n_dev\WindowsNoEditor\VotV\Binaries\Win64"}
 )
 
 $deployScript = Join-Path $PSScriptRoot "deploy-loader.ps1"
