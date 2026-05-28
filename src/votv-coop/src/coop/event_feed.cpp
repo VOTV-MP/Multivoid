@@ -461,11 +461,15 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             }
             // Self-echo guard: if peerSessionId says the sender was US, the
             // packet must be a loopback bounce and applying it would toggle
-            // the WRONG puppet's light (the only puppet is the remote's).
-            // Mirrors TeleportClient self-echo handling above. peerSessionId
-            // convention in 1v1: host=0, client=1.
-            const uint8_t selfId =
-                (session.role() == net::Role::Host) ? 0u : 1u;
+            // the WRONG puppet's light. PR-4.2 fixed the OUTGOING side
+            // (item_activate.cpp now stamps peerSessionId from
+            // Registry::LocalPeerId), but the INGOING guard here still
+            // hardcoded the 1v1 mapping (host=0, client=1). In 3-peer two
+            // clients with LocalPeerId=1 and LocalPeerId=2 would both
+            // hard-code selfId=1 here and client 2 would silently drop
+            // client 1's ItemActivate as a false self-echo. Fix is
+            // symmetric to PR-4.2: read from Registry.
+            const uint8_t selfId = coop::players::Registry::Get().LocalPeerId();
             if (p.peerSessionId == selfId) {
                 UE_LOGI("event_feed: ItemActivate self-echo (peerSessionId=%u) -- dropping",
                         static_cast<unsigned>(p.peerSessionId));
