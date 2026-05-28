@@ -2,6 +2,8 @@
 
 #include "coop/remote_prop.h"
 
+#include "coop/element/prop.h"
+#include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
@@ -17,7 +19,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace coop::remote_prop {
 
@@ -439,6 +444,157 @@ void* g_finishSpawnFn    = nullptr;
 void* g_propSetKeyFn     = nullptr;
 bool  g_spawnResolved    = false;
 
+// A2 (2026-05-29) -- wire-received Prop mirrors. Each entry holds a Prop
+// Element bound (via Registry::RegisterMirror) to the SENDER's elementId.
+// The id is allocation-foreign to this peer (host range when we're client
+// receiving from host; peer range when we're host receiving from client).
+// Mirror destruction routes to Registry::UnregisterMirror (NOT FreeId)
+// because the id belongs to the sender's allocator -- see [[feedback-
+// registry-register-mirror-pattern]].
+//
+// Lifetime:
+//   - Created in OnSpawn when the wire payload carries a non-zero
+//     elementId AND we successfully resolved (or spawned) a local actor.
+//   - Dropped in OnDestroy when the matching destroy packet arrives.
+//   - Drained in ForceRelease() / on full session disconnect (we don't
+//     try per-slot mirror eviction; convergent props persist across
+//     per-slot disconnect just like remote_prop's actors do).
+//
+// Convergence case (local actor existed BEFORE the wire packet, exact-key
+// or fuzzy match): we register a mirror at sender's eid pointing to the
+// existing local actor. That actor may also be tracked by prop_lifecycle's
+// own g_propElementsById in this peer's allocation range (host or peer).
+// Two Elements per actor is acceptable: one is the LOCAL handle (our own
+// alloc range), the other is the MIRROR handle (sender's alloc range).
+// Both resolve to the same actor via GetActor(). The Registry's m_byId
+// slots don't collide because host/peer ranges are disjoint.
+std::mutex g_propMirrorsMutex;
+std::unordered_map<coop::element::ElementId,
+                   std::unique_ptr<coop::element::Prop>> g_propMirrors;
+
+// Lossy-narrow a wstring to ASCII for Element name/typeName storage. The
+// VOTV Key strings + class names are ASCII in practice (BP-minted NewGuid
+// + class identifiers like "Aprop_chipPile_C").
+std::string NarrowAscii(const std::wstring& w) {
+    std::string s; s.reserve(w.size());
+    for (wchar_t c : w) s.push_back(static_cast<char>(c & 0xFF));
+    return s;
+}
+
+// Register a Prop mirror Element at `eid` bound to `actor`. Idempotent:
+// if `eid` already has a mirror in our map, no-op (a re-spawn convergence
+// packet for the same eid is silently absorbed). Validation:
+//   - `eid == 0`: wire sentinel meaning "sender had no Element minted" --
+//     skip (legacy / pre-v12 senders / unminted-on-sender props).
+//   - `eid == kInvalidId`: defensive (the C++ sentinel shouldn't appear
+//     on the wire, but reject loudly if it does).
+//   - Registry::RegisterMirror enforces in-range; we don't pre-check.
+//
+// Mirror pattern (5-step protocol per [[feedback-registry-register-mirror-
+// pattern]]):
+//   1. make_unique<Prop>
+//   2. emplace into our owner map FIRST (under g_propMirrorsMutex)
+//   3. Registry::RegisterMirror SECOND
+//   4. On RegisterMirror failure: drain from owner map outside the lock
+//   5. (Teardown path lives in OnDestroy + ForceRelease)
+void RegisterPropMirror(coop::element::ElementId eid,
+                        void* actor,
+                        const std::wstring& key,
+                        const std::wstring& cls) {
+    if (!actor) return;
+    if (eid == 0u) return;                                  // wire sentinel "no Element"
+    if (eid == coop::element::kInvalidId) {                 // defensive
+        UE_LOGW("remote_prop::RegisterPropMirror: eid == kInvalidId (0x%08x) on wire -- "
+                "rejecting (sender bug?)",
+                static_cast<unsigned>(eid));
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
+        if (g_propMirrors.count(eid) > 0) {
+            UE_LOGI("remote_prop::RegisterPropMirror: eid=%u already mirrored -- "
+                    "skip (re-spawn convergence)", eid);
+            return;
+        }
+    }
+    auto mirror = std::make_unique<coop::element::Prop>();
+    if (!key.empty()) mirror->SetName(NarrowAscii(key));
+    if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
+    mirror->SetActor(actor);
+    coop::element::Prop* raw = nullptr;
+    // Publish into owner map FIRST under lock, then RegisterMirror.
+    // Rationale per the pattern doc: if RegisterMirror succeeds, the
+    // Registry pointer is already accompanied by a valid owner; if it
+    // fails, we drain from the owner map outside the lock and the dtor
+    // early-returns because m_id is still kInvalidId (RegisterMirror
+    // failure path does NOT stamp m_id). ABBA-safe.
+    {
+        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
+        // Re-check (concurrent path may have inserted while we were
+        // building the Element). If yes, the just-built `mirror` is
+        // discarded outside this scope; its dtor early-returns
+        // (m_id == kInvalidId).
+        if (g_propMirrors.count(eid) > 0) return;
+        auto [it, ok] = g_propMirrors.emplace(eid, std::move(mirror));
+        raw = ok ? it->second.get() : nullptr;
+    }
+    if (!raw) return;
+    if (!coop::element::Registry::Get().RegisterMirror(eid, raw)) {
+        UE_LOGE("remote_prop::RegisterPropMirror: Registry::RegisterMirror(eid=%u) FAILED -- "
+                "draining owner map entry (likely slot collision: sender re-used a wire id "
+                "before we tore down the previous mirror)", eid);
+        std::unique_ptr<coop::element::Prop> losing;
+        {
+            std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
+            auto it = g_propMirrors.find(eid);
+            if (it != g_propMirrors.end()) {
+                losing = std::move(it->second);
+                g_propMirrors.erase(it);
+            }
+        }
+        // `losing` destructs outside g_propMirrorsMutex. Since RegisterMirror
+        // failed, m_id is still kInvalidId -> ~Element early-returns (no
+        // Registry mutex acquired). ABBA-safe.
+        return;
+    }
+    UE_LOGI("remote_prop::RegisterPropMirror: eid=%u bound to actor=%p key='%ls' cls='%ls'",
+            eid, actor, key.c_str(), cls.c_str());
+}
+
+// Drop a Prop mirror by sender's eid. Drain pattern (per [[feedback-
+// registry-register-mirror-pattern]]): extract unique_ptr under lock,
+// release lock, let dtor fire outside the lock (dtor dispatches to
+// Registry::UnregisterMirror via the m_mirror=true flag). Idempotent:
+// silent no-op if eid is not in the map.
+void UnregisterPropMirror(coop::element::ElementId eid) {
+    if (eid == 0u || eid == coop::element::kInvalidId) return;
+    std::unique_ptr<coop::element::Prop> drained;
+    {
+        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
+        auto it = g_propMirrors.find(eid);
+        if (it == g_propMirrors.end()) return;
+        drained = std::move(it->second);
+        g_propMirrors.erase(it);
+    }
+    // drained destructor fires here, OUTSIDE g_propMirrorsMutex.
+    UE_LOGI("remote_prop::UnregisterPropMirror: eid=%u drained", eid);
+}
+
+// Bulk-drain on full session teardown. Mirrors all wire-received Prop
+// elements; called from ForceRelease which itself runs on aggregate
+// disconnect / Stop. Uses the same drain-under-lock-then-destruct shape.
+size_t DrainAllPropMirrors() {
+    std::unordered_map<coop::element::ElementId,
+                       std::unique_ptr<coop::element::Prop>> drained;
+    {
+        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
+        drained.swap(g_propMirrors);
+    }
+    return drained.size();
+    // `drained` destructs here -- each Prop's dtor calls
+    // Registry::UnregisterMirror (via m_mirror=true) sequentially.
+}
+
 bool ResolveSpawnFns() {
     if (g_spawnResolved && R::IsLive(g_gsCdo)) return true;
     g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
@@ -596,6 +752,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         if (IsActorUnderAnyDrive(existing)) {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' is under active kinematic drive (some slot) -- skipping convergence (PropPose owns position)",
                     keyW.c_str());
+            // A2 (2026-05-29): still register the mirror so subsequent
+            // PropDestroy from sender resolves via eid (we just declined
+            // to teleport-pop, but the wire identity binding is still
+            // useful).
+            RegisterPropMirror(payload.elementId, existing, keyW, classW);
             return;
         }
         UE_LOGI("remote_prop::OnSpawn: key '%ls' already resolves to live actor %p -- de-duping, converging transform to host (loc=(%.1f,%.1f,%.1f))",
@@ -611,6 +772,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         // explicitly restore default collision so subsequent host PropPose
         // releases don't drop the body into the void.
         RestoreCollisionIfNeeded(L"exact-key", classW, existing);
+        // A2 mirror binding: associate sender's wire eid with the resolved
+        // local actor so future PropDestroy / eid-routed lookups land
+        // correctly.
+        RegisterPropMirror(payload.elementId, existing, keyW, classW);
         return;
     }
     // Phase 5S0 Gap I-1 (2026-05-24): exact-Key match failed. Try fuzzy
@@ -634,6 +799,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         if (IsActorUnderAnyDrive(fuzzy)) {
             UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> active drive actor (some slot) -- skipping (PropPose owns position)",
                     classW.c_str());
+            // A2 audit fix (2026-05-29): mirror binding for the drive-skip
+            // fuzzy path -- symmetric with the exact-key drive-skip path
+            // above. Without this, Registry::Get(eid) on this peer would
+            // never resolve for a fuzzy+drive-skipped prop.
+            RegisterPropMirror(payload.elementId, fuzzy, keyW, classW);
             return;
         }
         UE_LOGI("remote_prop::OnSpawn: Gap-I-1 FUZZY MATCH '%ls' (wire key '%ls') -> existing actor %p within %.1f cm -- de-duping, converging transform + rekeying",
@@ -681,6 +851,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         // sits on top of the floor briefly then PhysX drops it through
         // because the body has NoCollision.
         RestoreCollisionIfNeeded(L"fuzzy", classW, fuzzy);
+        // A2 (2026-05-29) mirror binding: the fuzzy-matched actor was just
+        // rekey'd to the wire Key above, so future PropPose / PropDestroy
+        // from sender resolves via key OR eid lookup.
+        RegisterPropMirror(payload.elementId, fuzzy, keyW, classW);
         return;
     }
     if (!ResolveSpawnFns()) {
@@ -814,6 +988,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
     // the restore call symmetric across all 3 OnSpawn convergence paths so
     // a future Init-body change can't silently regress only one path.
     RestoreCollisionIfNeeded(L"fresh-spawn", classW, spawned);
+    // A2 (2026-05-29) mirror binding: bind sender's wire eid to the freshly
+    // spawned local actor. Subsequent Registry::Get(eid) on this peer
+    // resolves to this actor; PropDestroy with the same eid drains the
+    // mirror + destroys the actor.
+    RegisterPropMirror(payload.elementId, spawned, keyW, classW);
 }
 
 void* GetDriveActor() {
@@ -847,6 +1026,14 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
         UE_LOGW("remote_prop::OnDestroy: empty key -- dropping");
         return;
     }
+    // A2 (2026-05-29): drain the wire-received mirror Element FIRST,
+    // before any actor lookup. The mirror is wire-identity bookkeeping;
+    // it must vacate the Registry regardless of whether the local actor
+    // still exists (e.g. echo bounce where we initiated the destroy and
+    // the actor is already gone). UnregisterPropMirror is silent no-op
+    // for unknown eids (legacy senders with elementId==0, or pre-A2
+    // PropDestroy packets that never registered a mirror).
+    UnregisterPropMirror(payload.elementId);
     void* actor = ue_wrap::prop::FindByKeyString(keyW);
     if (!actor) {
         UE_LOGI("remote_prop::OnDestroy: key '%ls' has no local actor (already destroyed or never spawned here)",
@@ -899,6 +1086,18 @@ void ForceRelease() {
     }
     if (released > 0) {
         UE_LOGI("remote_prop: force-release on disconnect/teardown (%d active drive(s) cleared)", released);
+    }
+    // A2 (2026-05-29): drain wire-received Prop mirrors on full session
+    // teardown. Each mirror's dtor routes through Registry::UnregisterMirror
+    // (m_mirror=true) so the Registry's m_byId slots in the foreign
+    // allocation range are returned to nullptr. Per-slot disconnect does
+    // NOT drain mirrors (mirrors aren't tagged with senderSlot yet -- a
+    // future enhancement); convergent local actors persist across per-slot
+    // disconnect just like remote_prop's drive cache does.
+    const size_t mirrorsDrained = DrainAllPropMirrors();
+    if (mirrorsDrained > 0) {
+        UE_LOGI("remote_prop: force-release drained %zu wire-received Prop mirror(s)",
+                mirrorsDrained);
     }
 }
 

@@ -79,9 +79,17 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + EntityDestroy.sessionId renamed to .elementId (cosmetic; semantics
 // already host-allocated Registry ids since the Tier 3 NPC migration).
 // PropSpawnPayload + PropDestroyPayload gain an `elementId` field
-// (uint32, +4 bytes each) carrying the host-allocated ElementId for the
-// prop. Receivers log it for forward-compat; routing-by-elementId lands
-// in the event_feed collapse (subsequent migration).
+// (uint32, +4 bytes each) carrying the SENDER's allocation-range
+// ElementId for the prop.
+//
+// A2 (2026-05-29) -- payload-compatible: no field changes, but the
+// sender-side rule for PropSpawn/PropDestroy.elementId is now ROLE-
+// AWARE: host minted ids land in host range [1, kHostRangeSize); client
+// minted ids land in peer range [kHostRangeSize, kMaxElements). Receivers
+// call Registry::RegisterMirror at the sender's eid; cross-peer
+// Registry::Get(eid) resolves to the wire-identity's actor on both sides.
+// EntitySpawn / EntityDestroy still host-range only (NPC sync is host-
+// authoritative; clients never broadcast NPC entity packets).
 inline constexpr uint16_t kProtocolVersion = 12;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
@@ -436,7 +444,18 @@ struct PropSpawnPayload {
     uint8_t       _pad[3];          // 4
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- usually (0,0,0)
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
-    uint32_t      elementId;        // 4 -- v12: host-allocated ElementId (0 = sender had no Element)
+    // v12: ElementId of the prop in the SENDER's allocation range.
+    //   Host sender -> elementId in host range [1, kHostRangeSize).
+    //   Client sender (non-Aprop_C interactables only -- chipPile/clump/
+    //     trashBits broadcast client->host; Aprop_C lineage is host-
+    //     authoritative and doesn't broadcast from client) -> elementId
+    //     in peer range [kHostRangeSize, kMaxElements).
+    //   0 = "sender had no Element minted" (legacy / unkeyed / convergence
+    //     window before MarkPropElement fired).
+    // Receiver RegisterMirror()s this id to its Registry (A2 2026-05-29);
+    // the slots are disjoint between ranges so host self-echo bounces
+    // collide-fail RegisterMirror harmlessly (defensive).
+    uint32_t      elementId;        // 4
     uint32_t      _pad2;            // 4 -- 8-byte alignment
 };
 static_assert(sizeof(PropSpawnPayload) == 168, "PropSpawnPayload must be 168 bytes");
@@ -458,7 +477,13 @@ inline constexpr uint8_t kFrozen          = 0x04;
 // incoming-destroy-set so it doesn't bounce back.
 struct PropDestroyPayload {
     WireKey  key;
-    uint32_t elementId;  // 4 -- v12: host-allocated ElementId (0 = sender had no Element)
+    // v12 + A2 (2026-05-29): elementId in the SENDER's allocation range
+    // (host range from host sender, peer range from client sender).
+    // 0 = "sender had no Element" (matches PropSpawnPayload contract).
+    // Receiver UnregisterMirror()s this id to drain the wire-identity
+    // binding made by the matching PropSpawn (the engine actor is
+    // resolved+destroyed via the key path; eid is identity bookkeeping).
+    uint32_t elementId;  // 4
     uint32_t _pad;       // 4 -- 8-byte alignment
 };
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");

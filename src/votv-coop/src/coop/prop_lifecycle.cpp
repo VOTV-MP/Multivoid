@@ -176,17 +176,44 @@ void MarkKnownKeyedProp(void* actor) {
 // (the Aprop_C.Key save-stable id) + m_typeName (the BP class name).
 // Idempotent: if a Prop Element already exists for this actor, no-op.
 //
+// A2 (2026-05-29): role-aware allocation. HOST uses AllocHostId (host range
+// [1, kHostRangeSize) -- authoritative side). CLIENT uses AllocLocalId
+// (peer range [kHostRangeSize, kMaxElements) -- client-local elements).
+// Without this split, both peers were popping from their independent host-
+// range stacks for unrelated actors -- a Registry::Get(host_eid) on the
+// client would resolve to the CLIENT's locally-allocated Prop, not the
+// host's wire-broadcast intent. The mirror Elements created by the wire
+// receivers (remote_prop::OnSpawn) now have a non-conflicting host-range
+// slot to land in.
+//
+// Default-to-peer-range when no session pointer is set (boot/seed window):
+// peer range is the safer default because the local peer's eventual role
+// becomes irrelevant for these early elements -- if we later become host
+// and broadcast PropSpawn for these seed elements, their elementId will be
+// in peer range (clients route them as MIRROR entries which is correct).
+//
 // TOCTOU safety (audit fix 2026-05-28): we hold g_propElementsMutex across
-// the entire check-allocate-commit sequence except for the AllocHostId call
-// (which takes Registry::m_mutex -- nested-lock concern). The double-check
-// pattern on re-acquire handles the race: if a concurrent thread allocated
-// for the same actor while we were inside AllocHostId, we drop our element
-// (its destructor frees our just-allocated eid back to the host stack).
+// the entire check-allocate-commit sequence except for the AllocHostId /
+// AllocLocalId call (which takes Registry::m_mutex -- nested-lock concern).
+// The double-check pattern on re-acquire handles the race: if a concurrent
+// thread allocated for the same actor while we were inside the Registry,
+// we drop our element (its destructor frees our just-allocated eid).
 void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls) {
     if (!actor) return;
+    // Audit fix 2026-05-29: capture role INSIDE the same locked block as the
+    // idempotency check. Reading role after the lock release would race
+    // SetSession / role-change between the two reads -- a seed-time
+    // MarkPropElement could observe role=Client at the check, allocate
+    // peer-range, then become Host by the time the broadcast fires, and
+    // ship a peer-range eid as a host-authoritative broadcast (slot-
+    // collision risk on receivers). g_propElementsMutex is the synchronization
+    // point that owns this commit decision.
+    bool isHost = false;
     {
         std::lock_guard<std::mutex> lk(g_propElementsMutex);
         if (g_actorToPropElementId.count(actor) > 0) return;  // idempotent
+        auto* s = LoadSession();
+        isHost = (s != nullptr && s->role() == coop::net::Role::Host);
     }
     auto el = std::make_unique<coop::element::Prop>();
     auto toStr = [](const std::wstring& w) {
@@ -197,24 +224,26 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
     if (!key.empty()) el->SetName(toStr(key));
     if (!cls.empty()) el->SetTypeName(toStr(cls));
     el->SetActor(actor);
-    const coop::element::ElementId eid =
-        coop::element::Registry::Get().AllocHostId(el.get());
+    const coop::element::ElementId eid = isHost
+        ? coop::element::Registry::Get().AllocHostId(el.get())
+        : coop::element::Registry::Get().AllocLocalId(el.get());
     if (eid == coop::element::kInvalidId) {
-        UE_LOGW("prop_lifecycle: element::Registry::AllocHostId returned kInvalidId for "
-                "actor=%p key='%ls' -- Prop Element not registered", actor, key.c_str());
+        UE_LOGW("prop_lifecycle: element::Registry::Alloc%sId returned kInvalidId for "
+                "actor=%p key='%ls' -- Prop Element not registered",
+                isHost ? "Host" : "Local", actor, key.c_str());
         return;
     }
     std::unique_lock<std::mutex> lk(g_propElementsMutex);
     // Re-check after the lock-release/Registry-call/lock-reacquire window:
     // another thread may have inserted concurrently. If yes, drop ours --
-    // the unique_ptr destructor frees `eid` back to the host stack and
-    // erases m_byId[eid], so no Registry leak.
+    // the unique_ptr destructor frees `eid` back to its origin stack
+    // (host or peer per `isHost`) and erases m_byId[eid], so no leak.
     if (g_actorToPropElementId.count(actor) > 0) {
         // Move ownership of the losing element out, RELEASE the lock, then
         // let the destructor run. The destructor calls Registry::FreeId
         // which acquires Registry::m_mutex; with g_propElementsMutex still
-        // held, that's lock-A→lock-B while AllocHostId above was B→A
-        // (ABBA). Drain-pattern: release g_propElementsMutex first.
+        // held, that's lock-A→lock-B while Alloc{Host,Local}Id above was
+        // B→A (ABBA). Drain-pattern: release g_propElementsMutex first.
         std::unique_ptr<coop::element::Prop> losing = std::move(el);
         lk.unlock();
         // `losing` destructs here, FreeId acquires Registry::m_mutex
@@ -291,7 +320,16 @@ void SeedKnownKeyedProps() {
     // unified late-joiner snapshot path. Class + key resolved per-actor;
     // skip MarkPropElement on actors whose key is empty/None (matches the
     // snapshot DrainChunk's None-key skip).
+    //
+    // Audit fix 2026-05-29: re-check IsLive at the start of phase 2. Phase 1
+    // built `live` without holding any lock; an actor's K2_DestroyActor PRE
+    // observer can fire between phases (e.g., level-streaming unload races
+    // the seed) -- if MarkPropElement then commits a dangling actor pointer
+    // into g_propElementsById, the eid leaks for the session lifetime
+    // because UnmarkKnownKeyedProp already ran for that actor and won't
+    // fire again.
     for (void* obj : live) {
+        if (!R::IsLive(obj)) continue;
         const std::wstring cls = R::ClassNameOf(obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
         if (key.empty() || key == L"None") continue;
