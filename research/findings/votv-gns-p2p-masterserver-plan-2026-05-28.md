@@ -6,6 +6,13 @@ the eventual P2P + master-server work isn't blocked by today's choices.
 **Status:** Forward-looking. Today's mod ships LAN direct-IP only;
 P2P and master-server are post-migration milestones.
 
+**See also:** `votv-master-server-mta-adaptation-2026-05-28.md` -- the
+MTA `reference/mtasa-blue/Client/core/ServerBrowser/` source is our
+adaptation target for the lobby/browser UX side of the master server
+(MTA shipped this exact pattern at multi-thousand-server scale for
+15+ years; we adapt the SHAPE -- JSON aggregator + tabbed browser +
+on-disk cache + redundant masters -- not the wire format).
+
 ## Why this matters now
 
 User directive 2026-05-28 (during PR-4 design): "we should implement gns
