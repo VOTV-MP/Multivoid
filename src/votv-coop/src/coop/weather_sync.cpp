@@ -7,6 +7,7 @@
 #include "coop/players_registry.h"
 #include "coop/ini_config.h"
 #include "coop/weather_lightning.h"
+#include "coop/weather_redsky.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -47,26 +48,19 @@ void* g_setRainParticlesFn   = nullptr;
 // Apply(). The 6 resolved pointers / offsets + observer-registered latch
 // moved with the implementation.
 
-// Phase 5W Inc-fix-2 red sky path. Resolved at install time.
-// `spawnRedSky` is on AmainGamemode_C; `set` is on AredSkyEvent_C (the
-// spawned actor). The two need separate UClass+UFunction resolution.
-void* g_gamemodeCdo            = nullptr;  // UClassDefault for callable spawnRedSky
-void* g_spawnRedSkyFn          = nullptr;  // mainGamemode_C::spawnRedSky
-void* g_redSkyEventSetFn       = nullptr;  // redSkyEvent_C::set
-bool g_redSkyObserversRegistered = false;
-// Receiver-side suppression flag -- when set, our own POST observers on
-// spawnRedSky / redSkyEvent.set skip broadcasting (would echo the host's
-// packet back to it). Same shape as g_causeRainEchoSuppress but for the
-// red-sky path.
-std::atomic<bool> g_redSkyEchoSuppress{false};
-// Note: no echo-suppress flag is needed. The host registers
-// OnSpawnPostLightning; the client does NOT (Install gate isHost &&
-// !g_lightningObserverRegistered). When the client's ApplyLightningStrike
-// calls BeginDeferred, no POST observer is registered locally to broadcast
-// an echo. And event_feed.cpp drops LightningStrike packets received on
-// host, so the host never enters ApplyLightningStrike at all. The role
-// gates already make the broadcast path one-directional; an inbound flag
-// would be dead code (RULE 2).
+// Phase 5W Inc-fix-2 red-sky lives in coop/weather_redsky.{h,cpp}. Install()
+// below calls coop::weather_redsky::TryResolve / RegisterHostObservers;
+// ApplyRedSky / DebugForceRedSky forward to the module. The 3 resolved
+// pointers + observer-registered latch + echo-suppress flag moved with
+// the implementation.
+
+// Note: no echo-suppress flag is needed for lightning. The host registers
+// the spawn observer; the client does NOT. When the client's
+// weather_lightning::Apply calls BeginDeferred, no POST observer is
+// registered locally to broadcast an echo. And event_feed.cpp drops
+// LightningStrike packets received on host, so the host never enters
+// the Apply path at all. The role gates already make the broadcast path
+// one-directional; an inbound flag would be dead code (RULE 2).
 
 bool g_installed = false;
 bool g_observersRegistered = false;     // host POST observers
@@ -253,94 +247,6 @@ bool OnCauseRainPreEchoSuppress(void* /*self*/, void* /*params*/) {
 
 // ---- common installer ---------------------------------------------------
 
-// Phase 5W Inc-fix-2: resolve the red-sky path. spawnRedSky lives on
-// mainGamemode_C (we resolve via the gamemode CDO). The redSkyEvent_C
-// class is loaded lazily (first spawn creates an instance) -- the SET
-// UFunction is resolved at install time IFF the BP class is loaded,
-// otherwise lazily on first call. Returns true if both spawn + class
-// (or set fn) are reachable.
-bool TryResolveRedSkyPath() {
-    if (!g_gamemodeCdo) {
-        g_gamemodeCdo = R::FindClassDefaultObject(P::name::GamemodeClass);
-    }
-    if (!g_gamemodeCdo) return false;
-    if (!g_spawnRedSkyFn) {
-        void* gmCls = R::ClassOf(g_gamemodeCdo);
-        if (gmCls) {
-            g_spawnRedSkyFn = R::FindFunction(gmCls, P::name::MainGamemode_SpawnRedSkyFn);
-        }
-    }
-    if (!g_spawnRedSkyFn) return false;
-    if (!g_redSkyEventSetFn) {
-        // redSkyEvent_C is a content BP class; may not be loaded until
-        // first spawnRedSky call. Try to resolve, but don't gate the
-        // overall install on it -- the host's POST observer on
-        // spawnRedSky still fires + broadcasts even before the set fn
-        // is resolved, and the receiver lazily resolves on first apply.
-        void* cls = R::FindClass(P::name::RedSkyEventClass);
-        if (cls) {
-            g_redSkyEventSetFn = R::FindFunction(cls, P::name::RedSkyEvent_SetFn);
-        }
-    }
-    return true;
-}
-
-// Host POST observer on spawnRedSky -- fires after the gamemode spawns
-// the AredSkyEvent_C actor. The act of spawning IS the "red sky ON"
-// signal. Broadcast a RedSkyPayload with state=1.
-void OnSpawnRedSkyPost(void* self, void* /*function*/, void* /*params*/) {
-    if (!GT::IsGameThread()) return;
-    if (!self) return;
-    if (g_redSkyEchoSuppress.load(std::memory_order_acquire)) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
-    if (s->role() != coop::net::Role::Host) return;
-
-    coop::net::RedSkyPayload p{};
-    p.peerSessionId = 0;
-    p.state = 1;  // spawnRedSky == turning red ON
-    const bool sent = s->SendReliable(
-        coop::net::ReliableKind::RedSky, &p, sizeof(p));
-    if (!sent) {
-        UE_LOGW("weather: RedSky ON SendReliable failed (channel busy)");
-        return;
-    }
-    UE_LOGI("weather: host broadcast RedSky state=1 (spawnRedSky observed)");
-}
-
-// Host POST observer on redSkyEvent.set(bool) -- fires for subsequent
-// on/off toggles after the actor has been spawned.
-void OnRedSkyEventSetPost(void* self, void* /*function*/, void* params) {
-    if (!GT::IsGameThread()) return;
-    if (!self || !params) return;
-    if (g_redSkyEchoSuppress.load(std::memory_order_acquire)) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
-    if (s->role() != coop::net::Role::Host) return;
-
-    // Read the `isred` arg from the param frame. ParamFrame layout: the
-    // first param is at offset 0 unless aligned (for a single bool the
-    // offset IS 0).
-    static int32_t sIsredOff = -2;
-    if (sIsredOff == -2) {
-        sIsredOff = R::FindParamOffset(g_redSkyEventSetFn, L"isred");
-    }
-    if (sIsredOff < 0) return;
-    const bool isred = *reinterpret_cast<const bool*>(
-        reinterpret_cast<const uint8_t*>(params) + sIsredOff);
-
-    coop::net::RedSkyPayload p{};
-    p.peerSessionId = 0;
-    p.state = isred ? 1 : 0;
-    const bool sent = s->SendReliable(
-        coop::net::ReliableKind::RedSky, &p, sizeof(p));
-    if (!sent) {
-        UE_LOGW("weather: RedSky state=%d SendReliable failed", p.state);
-        return;
-    }
-    UE_LOGI("weather: host broadcast RedSky state=%d (set observed)", p.state);
-}
-
 bool TryResolveAllFunctions() {
     void* cls = R::FindClass(P::name::DaynightCycleClass);
     if (!cls) return false;
@@ -481,25 +387,12 @@ void Install(coop::net::Session* session) {
     // suppress. Host just needs to OBSERVE the spawn to broadcast the loc.
     // CLIENT skips this registration -- no observer needed for receive
     // (event_feed dispatches LightningStrike packets directly).
-    // Phase 5W Inc-fix-2 red sky observability (HOST only).
-    if (isHost && !g_redSkyObserversRegistered) {
-        if (TryResolveRedSkyPath() && g_spawnRedSkyFn) {
-            int n = 0;
-            if (GT::RegisterPostObserver(g_spawnRedSkyFn, &OnSpawnRedSkyPost)) ++n;
-            if (g_redSkyEventSetFn) {
-                if (GT::RegisterPostObserver(g_redSkyEventSetFn, &OnRedSkyEventSetPost)) ++n;
-            }
-            g_redSkyObserversRegistered = (n > 0);
-            UE_LOGI("weather: HOST red-sky POST observers registered (%d/2; "
-                    "spawnRedSky=%p set=%p) -- set fn may resolve later if "
-                    "redSkyEvent_C class not yet loaded",
-                    n, g_spawnRedSkyFn, g_redSkyEventSetFn);
-        }
-    }
-    if (!isHost) {
-        // Client also needs the path resolved so ApplyRedSky can invoke
-        // spawnRedSky / set. Resolve lazily.
-        TryResolveRedSkyPath();
+    // Phase 5W Inc-fix-2 red-sky: delegate to coop::weather_redsky module.
+    coop::weather_redsky::SetSession(session);
+    if (isHost) {
+        coop::weather_redsky::RegisterHostObservers();
+    } else {
+        coop::weather_redsky::TryResolve();
     }
 
     // Phase 5W Inc2 lightning: delegate observer registration + path resolve
@@ -626,161 +519,14 @@ bool DebugForceSnow(bool isSnow) {
     return true;
 }
 
-// Helper: ensure g_redSkyEventSetFn is resolved using a live actor's class
-// (more reliable than FindClass because BP-content classes are loaded
-// lazily and may not exist in the GUObjectArray before the first spawn).
-// Returns the set UFunction or nullptr if unresolvable.
-void* ResolveRedSkyEventSetFn(void* redSkyActor) {
-    if (g_redSkyEventSetFn) return g_redSkyEventSetFn;
-    if (!redSkyActor) return nullptr;
-    void* cls = R::ClassOf(redSkyActor);
-    if (!cls) return nullptr;
-    g_redSkyEventSetFn = R::FindFunction(cls, P::name::RedSkyEvent_SetFn);
-    if (g_redSkyEventSetFn) {
-        UE_LOGI("weather: lazily resolved redSkyEvent.set @ %p (from actor's class %p)",
-                g_redSkyEventSetFn, cls);
-    }
-    return g_redSkyEventSetFn;
-}
-
 bool DebugForceRedSky(bool red) {
-    if (!GT::IsGameThread()) {
-        UE_LOGW("weather: DebugForceRedSky off-game-thread -- wrap in GT::Post");
-        return false;
-    }
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host) {
-        UE_LOGW("weather: DebugForceRedSky called on non-host");
-        return false;
-    }
-    if (!TryResolveRedSkyPath() || !g_spawnRedSkyFn) {
-        UE_LOGW("weather: DebugForceRedSky spawnRedSky UFunction not yet resolved");
-        return false;
-    }
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) {
-        UE_LOGW("weather: DebugForceRedSky no live mainGamemode_C");
-        return false;
-    }
-    // Lookup the existing redSky pointer at @0x0888.
-    void* redSky = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-
-    if (red) {
-        // Step 1: spawn the AredSkyEvent_C actor if it doesn't exist.
-        // spawnRedSky's IDA-dump locals show ONLY the spawn chain
-        // (MakeTransform/BeginDeferred/FinishSpawn/IsValid) -- it does
-        // NOT call set internally. The actor stays inert (isred=false,
-        // color curves unchanged) until we explicitly call set(true).
-        if (!redSky) {
-            ue_wrap::ParamFrame f(g_spawnRedSkyFn);
-            ue_wrap::Call(gm, f);
-            UE_LOGI("weather: DebugForceRedSky -- spawnRedSky() called (actor instantiation)");
-            // Re-read the pointer (spawnRedSky stores it at @0x0888).
-            redSky = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-        }
-        // Step 2: call set(true) to swap the color curves to the red set.
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveRedSkyEventSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", true);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: DebugForceRedSky -- redSky.set(true) called -- "
-                        "color curves should swap to red set");
-            } else {
-                UE_LOGW("weather: DebugForceRedSky -- set UFunction unresolvable");
-                return false;
-            }
-        } else {
-            UE_LOGW("weather: DebugForceRedSky -- spawn produced no live actor (gm.redSky=%p)", redSky);
-            return false;
-        }
-    } else {
-        // OFF: revert via set(false). No-op if the actor never existed.
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveRedSkyEventSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", false);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: DebugForceRedSky -- redSky.set(false) called -- color curves revert");
-            }
-        } else {
-            UE_LOGI("weather: DebugForceRedSky red=false but no live redSky actor -- nothing to revert");
-        }
-    }
-    return true;
+    // Body moved to coop::weather_redsky::DebugForce.
+    return coop::weather_redsky::DebugForce(red);
 }
 
 void ApplyRedSky(const coop::net::RedSkyPayload& payload) {
-    if (!GT::IsGameThread()) {
-        UE_LOGW("weather: ApplyRedSky off-game-thread -- dropping");
-        return;
-    }
-    if (payload.peerSessionId != 0) {
-        UE_LOGW("weather: ApplyRedSky peerSessionId=%u != 0 -- dropping",
-                static_cast<unsigned>(payload.peerSessionId));
-        return;
-    }
-    if (!TryResolveRedSkyPath() || !g_spawnRedSkyFn) {
-        UE_LOGW("weather: ApplyRedSky spawnRedSky UFunction not yet resolved -- dropping");
-        return;
-    }
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) {
-        UE_LOGW("weather: ApplyRedSky no live mainGamemode_C -- dropping");
-        return;
-    }
-    const bool wantRed = (payload.state != 0);
-    void* redSky = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-
-    // Echo-suppress: while the receiver invokes spawnRedSky / set, the
-    // local POST observer fires + would broadcast back to the host. The
-    // role gate on the observer already prevents this on the client (role
-    // != host), but the suppress flag is a belt-and-braces for symmetry
-    // with the rain path + future N-peer scenarios where receiver might
-    // also be the host.
-    g_redSkyEchoSuppress.store(true, std::memory_order_release);
-
-    if (wantRed) {
-        // Spawn the actor if absent.
-        if (!redSky) {
-            ue_wrap::ParamFrame f(g_spawnRedSkyFn);
-            ue_wrap::Call(gm, f);
-            UE_LOGI("weather: ApplyRedSky -- spawnRedSky() called (instantiating actor)");
-            redSky = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-        }
-        // Call set(true) to swap the color curves to red. spawnRedSky
-        // alone doesn't apply the effect (IDA RE confirms its body is
-        // pure SpawnActor with no set call).
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveRedSkyEventSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", true);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: ApplyRedSky -- redSky.set(true) called");
-            } else {
-                UE_LOGW("weather: ApplyRedSky -- set UFunction unresolvable; color curves NOT applied");
-            }
-        }
-    } else {
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveRedSkyEventSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", false);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: ApplyRedSky -- redSky.set(false) called");
-            }
-        }
-    }
-
-    g_redSkyEchoSuppress.store(false, std::memory_order_release);
+    // Body moved to coop::weather_redsky::Apply.
+    coop::weather_redsky::Apply(payload);
 }
 
 bool ReadLocalIsRaining(bool* outFound) {
@@ -872,12 +618,7 @@ void OnDisconnect() {
     // registering on each connect-edge, which is heavier than the
     // run-time role check.
     coop::weather_lightning::OnDisconnect();
-    if (g_redSkyObserversRegistered) {
-        if (g_spawnRedSkyFn)    GT::UnregisterObservers(g_spawnRedSkyFn);
-        if (g_redSkyEventSetFn) GT::UnregisterObservers(g_redSkyEventSetFn);
-        g_redSkyObserversRegistered = false;
-        UE_LOGI("weather: OnDisconnect unregistered red-sky POST observers");
-    }
+    coop::weather_redsky::OnDisconnect();
     // Clear g_installed so the next session's Install() call can re-enter
     // and re-register lightning + red-sky observers. The other per-feature
     // flags (g_observersRegistered, g_interceptorsRegistered) stay set --
