@@ -71,7 +71,12 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // gone (GNS owns handshake, RTT, acks); a pre-PR-2 peer's packet would now
 // land on a dead MsgType branch even if the version check passed, so we bump
 // the version to make the mismatch explicit at ParseHeader time.
-inline constexpr uint16_t kProtocolVersion = 10;
+// v11 (2026-05-28 PR-4.2): adds ReliableKind::AssignPeerSlot. Host sends it
+// to each client right after Connected with the slot it was assigned. Closes
+// audit finding #9 (peerSessionId hardcoded 1 on clients was broken for N>2
+// peers -- two clients would silently self-echo each other's ItemActivate
+// because both stamped slot=1).
+inline constexpr uint16_t kProtocolVersion = 11;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -221,6 +226,18 @@ enum class ReliableKind : uint8_t {
                        //     Phase 5D DoorState/LightState/LockState (RE doc
                        //     landed earlier; impl pending).
                        //     Payload: ItemActivatePayload (24 bytes -- v6).
+    AssignPeerSlot = 18, // v11 (2026-05-28 PR-4.2): host-only send right
+                       //     after the Connected callback fires on the
+                       //     host. Tells the freshly-connected client
+                       //     which peer slot (1..kMaxPeers-1) it was
+                       //     assigned by the host's PollGroup
+                       //     bookkeeping. Client receives -> calls
+                       //     coop::players::Registry::SetLocalPeerId
+                       //     so subsequent outbound messages stamp the
+                       //     correct peerSessionId (e.g. ItemActivate's
+                       //     self-echo guard in N-peer scope). Audit
+                       //     finding #9. Payload:
+                       //     AssignPeerSlotPayload (4 bytes).
     // Slots 16/17 (NonPropEntityState/Destroy) retired 2026-05-27 -- the
     // chipPile/clump/trashBitsPile families now ride the existing Aprop_C
     // pipeline (PropSpawn / PropDestroy / PropPose / PropRelease) via the
@@ -562,6 +579,18 @@ static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
 
 // flags bits for ItemActivatePayload.flags
 inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
+
+// PR-4.2 (2026-05-28): host->client slot assignment. Sent once right after
+// the Connected callback fires on host (a Reliable single-target message).
+// Client uses slot to call coop::players::Registry::SetLocalPeerId so the
+// rest of the codebase (item_activate self-echo guard, future per-puppet
+// addressing) sees the real peer id instead of the 1v1-baked-in 1.
+struct AssignPeerSlotPayload {
+    uint8_t slot;   // 1..kMaxPeers-1
+    uint8_t _pad[3];
+};
+static_assert(sizeof(AssignPeerSlotPayload) == 4,
+              "AssignPeerSlotPayload must be exactly 4 bytes");
 
 // Phase 5W Inc1 (2026-05-26): host-authoritative weather state push. The host
 // reads these fields off the live AdaynightCycle_C after its own scheduler

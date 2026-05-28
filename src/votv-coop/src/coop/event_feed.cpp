@@ -601,6 +601,36 @@ void Update(net::Session& session, RemotePlayer* remote, void* localPlayer) {
             });
             break;
         }
+        case net::ReliableKind::AssignPeerSlot: {
+            // PR-4.2: host told us which peer slot we were assigned. Closes
+            // audit finding #9. Replaces the harness.cpp 1v1 hardcode that
+            // always set LocalPeerId=1 for any client (broken in 3-peer:
+            // both clients self-echo-dropped each other's ItemActivate).
+            if (msg.payloadLen < sizeof(net::AssignPeerSlotPayload)) {
+                UE_LOGW("event_feed: AssignPeerSlot payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::AssignPeerSlotPayload));
+                break;
+            }
+            net::AssignPeerSlotPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            // Trust boundary: only the host sends this; reject on host.
+            if (session.role() == net::Role::Host) {
+                UE_LOGW("event_feed: AssignPeerSlot received on host -- dropping "
+                        "(host self-assigns slot 0; no inbound from client)");
+                break;
+            }
+            // Slot must be a valid CLIENT slot (1..kMaxPeers-1). Slot 0 is
+            // the host's reserved local-self slot.
+            if (p.slot < 1 || p.slot >= net::kMaxPeers) {
+                UE_LOGW("event_feed: AssignPeerSlot slot=%u out of range [1..%u) -- dropping",
+                        p.slot, static_cast<unsigned>(net::kMaxPeers));
+                break;
+            }
+            coop::players::Registry::Get().SetLocalPeerId(p.slot);
+            UE_LOGI("event_feed: host assigned us peer slot %u (Registry::LocalPeerId now %u)",
+                    p.slot, coop::players::Registry::Get().LocalPeerId());
+            break;
+        }
         default: {
             // Audit-fix 2026-05-25 LATE +5h: log-and-drop unknown ReliableKind
             // values instead of silently discarding. A peer running a newer

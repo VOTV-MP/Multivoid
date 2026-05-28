@@ -108,6 +108,14 @@ public:
     // when no peers are connected.
     bool SendReliable(ReliableKind kind, const void* payload, int len);
 
+    // PR-4.2: single-target reliable send. peerSlot is the coop::players::
+    // Registry slot index (host=0, clients 1..kMaxPeers-1). Returns false if
+    // peerSlot is out of range, the slot is not connected, or the payload
+    // doesn't fit. Used by AssignPeerSlot (host -> specific newly-connected
+    // client) and the queued per-peer connect-edge broadcast variants
+    // (audit findings #7 / #8 -- follow-up PR).
+    bool SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload, int len);
+
     // Game thread: pop a delivered reliable message. Inbox is shared across
     // peers (FIFO of arrivals); the kind-typed payload tells the drainer what
     // happened, not who sent it. Future work could add a sender peerSlot to

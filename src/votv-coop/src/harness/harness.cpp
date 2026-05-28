@@ -563,10 +563,15 @@ void NetPumpTick(float displayOffsetX) {
                 ? coop::players::kPeerIdHost + 1u  // client #1 == 1
                 : coop::players::kPeerIdHost;       // the host == 0
             coop::players::Registry::Get().RegisterPuppet(puppetPeerId, &g_orphan);
-            coop::players::Registry::Get().SetLocalPeerId(
-                (g_session.role() == coop::net::Role::Host)
-                ? coop::players::kPeerIdHost
-                : static_cast<uint8_t>(coop::players::kPeerIdHost + 1u));
+            // PR-4.2 (closes audit finding #9): host self-assigns slot 0.
+            // Client LocalPeerId is established by the wire-layer AssignPeerSlot
+            // message handled in event_feed.cpp -- the prior client hardcode
+            // (`kPeerIdHost + 1u`) was a 1v1 baked-in fiction that broke in
+            // N-peer (two clients both stamping 1 silently self-echoed each
+            // other's ItemActivate). Retired per RULE 2.
+            if (g_session.role() == coop::net::Role::Host) {
+                coop::players::Registry::Get().SetLocalPeerId(coop::players::kPeerIdHost);
+            }
         }
         // Only RE-BASE the interpolation on a NEW packet; re-pushing the latest
         // every frame would zero `errorPos_` mid-window and freeze motion. The

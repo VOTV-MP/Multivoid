@@ -161,7 +161,12 @@ bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::
 
     out = {};
     out.itemClassHash   = g_flashlightClassHash;
-    out.peerSessionId   = (session->role() == coop::net::Role::Host) ? 0 : 1;
+    // PR-4.2 (closes audit finding #9): peer session id comes from the
+    // central Registry, which the wire layer populates via AssignPeerSlot
+    // on the client and harness on the host. Pre-fix the value was
+    // hardcoded `(role==Host) ? 0 : 1` -- broken in 3-peer because both
+    // clients stamped 1 and silently self-echo-dropped each other.
+    out.peerSessionId   = coop::players::Registry::Get().LocalPeerId();
     out.state           = flashlight ? 1 : 0;
     out.flags           = 0;  // Case (b) -- no actor key
     out.mode            = mode;

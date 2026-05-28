@@ -258,6 +258,19 @@ void Session::HandleConnStatusChanged(void* info) {
         UE_LOGI("net: peer slot %d CONNECTED (%s, h=0x%08x)",
                 slot, cfg_.role == Role::Host ? "host" : "client",
                 static_cast<unsigned>(hConn));
+        // PR-4.2: host tells the freshly-connected client which peer slot
+        // it was assigned. Sent here (status callback runs on the net
+        // thread; SendReliableToSlot is thread-safe via GNS's own queuing).
+        // Closes audit finding #9: clients no longer self-stamp peerSessionId=1.
+        if (cfg_.role == Role::Host) {
+            AssignPeerSlotPayload p{};
+            p.slot = static_cast<uint8_t>(slot);
+            if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
+                UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
+            } else {
+                UE_LOGI("net: sent AssignPeerSlot=%d to client", slot);
+            }
+        }
         return;
     }
 
@@ -486,6 +499,54 @@ bool Session::TryGetReliable(ReliableMessage& out) {
     if (reliableInbox_.empty()) return false;
     out = std::move(reliableInbox_.front());
     reliableInbox_.pop_front();
+    return true;
+}
+
+bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload, int len) {
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    if (len < 0 || len > kMaxReliablePayload) {
+        UE_LOGW("net: SendReliableToSlot rejected (slot=%d len=%d > %d)",
+                peerSlot, len, kMaxReliablePayload);
+        return false;
+    }
+    const uint32_t hConn = peerConns_[peerSlot].load();
+    if (hConn == 0) return false;
+
+    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
+    const uint32_t seq = sendSeq_.fetch_add(1);
+    const int laneIdx = static_cast<int>(LaneForKind(kind));
+
+    auto* sockets = SteamNetworkingSockets();
+    auto* utils = SteamNetworkingUtils();
+
+    SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
+    if (!msg) {
+        UE_LOGW("net: SendReliableToSlot AllocateMessage(%d) returned null", total);
+        return false;
+    }
+    auto* buf = static_cast<uint8_t*>(msg->m_pData);
+    auto* hdr = reinterpret_cast<PacketHeader*>(buf);
+    WriteHeader(*hdr, MsgType::Reliable, seq, /*token*/0);
+    auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
+    std::memset(rh, 0, sizeof(*rh));
+    rh->kind = static_cast<uint8_t>(kind);
+    rh->payloadLen = static_cast<uint16_t>(len);
+    if (len > 0 && payload) {
+        std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
+    }
+
+    msg->m_conn = hConn;
+    msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
+    msg->m_idxLane = static_cast<uint16>(laneIdx);
+
+    int64 outMsgNum = 0;
+    sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
+    if (outMsgNum < 0) {
+        UE_LOGW("net: SendReliableToSlot(slot=%d) rc=%lld kind=%u",
+                peerSlot, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
+        return false;
+    }
+    sent_.fetch_add(1);
     return true;
 }
 
