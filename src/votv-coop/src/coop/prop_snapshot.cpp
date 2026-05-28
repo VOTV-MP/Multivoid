@@ -1,10 +1,8 @@
 // coop/prop_snapshot.cpp -- Phase 5S0 save snapshot bootstrap.
 //
-// Extracted from harness/harness.cpp (2026-05-25 modular refactor).
-// PR-4.5 (2026-05-28): per-slot drain. Snapshot now replays to ONE peer
-// slot at a time via Session::SendReliableToSlot, closing audit finding
-// #7 (late-joiner gets a full snapshot) + agent-mapped Finding D
-// (concurrent late-joiners don't race on a shared candidate index).
+// Per-slot drain: snapshot replays to ONE peer slot at a time via
+// Session::SendReliableToSlot. Late-joiners get a full snapshot;
+// concurrent late-joiners don't race on a shared candidate index.
 // Serial drains: if a second peer connects mid-drain, it queues and
 // drains after the first completes.
 // See coop/prop_snapshot.h for the public interface.
@@ -45,9 +43,9 @@ std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 std::vector<void*> g_snapshotCandidates;
 size_t g_snapshotCandidateIdx = 0;
 
-// PR-4.5: which peer slot is being served by the current drain
-// (-1 = no drain in progress). Plus the queue of slots waiting their turn
-// (e.g. peer 2 connecting while peer 1's drain is still in flight).
+// Which peer slot is being served by the current drain (-1 = no drain
+// in progress). Plus the queue of slots waiting their turn (e.g. peer 2
+// connecting while peer 1's drain is still in flight).
 int g_currentTargetSlot = -1;
 std::vector<int> g_pendingSlots;
 
@@ -62,15 +60,14 @@ constexpr size_t kSnapshotChunkSize = 100;
 // Sets g_currentTargetSlot = peerSlot. Caller (TriggerForSlot or
 // post-completion dequeue) ensures no drain is already in progress.
 //
-// NOTE: the audit findings doc proposes maintaining a tracked set in
-// prop_lifecycle to avoid the ~150k GUObjectArray walk per reconnect
-// (reconnect-storm hazard). A first attempt at that (PR-4.9 H2) shipped
-// then was reverted: prop_lifecycle's existing g_processedInitActors
-// set only tracks props whose Init fired AFTER our observer installed,
-// missing every prop that was constructed before Install() resolved
-// Aprop_C. A correct version requires a one-time GUObjectArray seed
-// PLUS observer-driven maintenance -- a design follow-up; not in
-// PR-4.9 scope.
+// NOTE: maintaining a tracked set in prop_lifecycle would avoid the
+// ~150k GUObjectArray walk per reconnect (reconnect-storm hazard).
+// A first attempt at routing through prop_lifecycle's existing
+// g_processedInitActors set was reverted: that set only tracks props
+// whose Init fired AFTER our observer installed, missing every prop
+// constructed before Install() resolved Aprop_C. A correct version
+// requires a one-time GUObjectArray seed PLUS observer-driven
+// maintenance -- design follow-up.
 void StartEnumerationFor(int peerSlot) {
     g_currentTargetSlot = peerSlot;
     g_snapshotCandidates.clear();

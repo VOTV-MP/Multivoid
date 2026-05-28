@@ -71,11 +71,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload);
 // prop back into normal physics state. Safe to call when not holding.
 void ForceRelease();
 
-// PR-4.7: per-slot variant. Releases ONLY `peerSlot`'s drive when one
-// specific peer disconnects mid-session while others stay connected.
-// Without this, that peer's prop stays kinematically frozen on the
-// remaining peers (no PropPose updates arrive to move it, no PropRelease
-// arrives to re-enable physics). Safe to call when slot has no drive.
+// Per-slot variant of ForceRelease for partial-disconnect (one peer
+// drops mid-session while others stay connected). Without this, that
+// peer's held prop stays kinematically frozen on remaining peers (no
+// PropPose updates arrive to move it, no PropRelease re-enables
+// physics). Safe to call when slot has no drive.
 void OnDisconnectForSlot(int peerSlot);
 
 // Returns the local AActor* currently being kinematically driven by the

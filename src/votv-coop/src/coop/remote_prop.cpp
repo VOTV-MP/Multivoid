@@ -33,11 +33,10 @@ namespace E = ue_wrap::engine;
 // physics ops target). lastKey caches the wire Key we resolved for `actor` so
 // per-tick PropPose with the same Key skips the GUObjectArray walk.
 //
-// PR-4.6 (2026-05-28, closes code-explorer Finding E): one ActiveDrive per
-// peer slot so multiple clients can each kinematically drive their own held
-// prop concurrently. Pre-PR-4.6 this was a single ActiveDrive instance --
-// if two clients held different props at once, their PropPose streams
-// would race-overwrite each other on the host.
+// One ActiveDrive per peer slot so multiple clients can each kinematically
+// drive their own held prop concurrently: if two clients each hold a
+// different prop at once, their PropPose streams must not race-overwrite
+// each other on the host.
 struct ActiveDrive {
     void*        actor = nullptr;
     void*        mesh = nullptr;
@@ -294,9 +293,9 @@ void Tick(coop::net::Session& session) {
         ForceRelease();
         return;
     }
-    // PR-4.6: per-slot drive iteration. On HOST: scan slots 1..kMaxPeers-1
-    // (each connected client can drive its own held prop independently).
-    // On CLIENT: scan slot 0 only (the host's puppet is the only prop-pose
+    // Per-slot drive iteration. On HOST: scan slots 1..kMaxPeers-1 (each
+    // connected client can drive its own held prop independently). On
+    // CLIENT: scan slot 0 only (the host's puppet is the only prop-pose
     // source from the client's POV).
     const bool isHost = (session.role() == coop::net::Role::Host);
     const int firstSlot = isHost ? 1 : 0;
@@ -419,8 +418,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
     }
-    // PR-4.6: clear only the matching slot's drive state (was: clear the
-    // single global g_drive). Leaves other slots' active drives intact.
+    // Clear only the matching slot's drive state -- other slots' active
+    // drives (if any) stay intact.
     if (releasedSlot >= 0) {
         g_drives[releasedSlot].actor = nullptr;
         g_drives[releasedSlot].mesh = nullptr;
@@ -818,12 +817,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
 }
 
 void* GetDriveActor() {
-    // PR-4.6: returns the FIRST slot with an active drive (or nullptr).
-    // Pre-PR-4.6 this returned the single global g_drive.actor; the
-    // public API is unused outside this TU today (snapshot dedupe path
-    // now uses IsActorUnderAnyDrive internally), but kept for header
-    // compatibility -- a future caller can switch to the per-slot
-    // overload below or to IsActorUnderAnyDrive directly.
+    // Returns the FIRST slot with an active drive (or nullptr). Public
+    // API kept for header compatibility -- IsActorUnderAnyDrive inside
+    // this TU is the per-slot-aware replacement.
     for (const auto& d : g_drives) {
         if (d.actor) return d.actor;
     }
@@ -863,9 +859,8 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     }
     UE_LOGI("remote_prop::OnDestroy: key '%ls' -> destroying local actor %p",
             keyW.c_str(), actor);
-    // PR-4.6: if any slot was kinematically driving this prop, clear that
-    // slot's cache so we don't try to drive a destroyed actor next tick.
-    // Pre-PR-4.6 this only checked the single global g_drive.
+    // If any slot was kinematically driving this prop, clear that slot's
+    // cache so we don't try to drive a destroyed actor next tick.
     for (auto& d : g_drives) {
         if (d.actor == actor) {
             UE_LOGI("remote_prop::OnDestroy: actor was under active kinematic drive (slot %td) -- clearing drive cache",
@@ -891,8 +886,8 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
 }
 
 void ForceRelease() {
-    // PR-4.6: force-release on disconnect/teardown clears every slot's
-    // drive. Pre-PR-4.6 only the single g_drive was cleared.
+    // Force-release on aggregate disconnect/teardown clears every slot's
+    // drive. Per-slot disconnect uses OnDisconnectForSlot instead.
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;

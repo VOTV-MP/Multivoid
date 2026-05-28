@@ -53,17 +53,16 @@ void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& p);
 void ApplyToPuppetOrDefer(uint8_t peerSessionId, void* puppetActor,
                           const coop::net::ItemActivatePayload& p);
 
-// PR-4.5: per-slot connect-time flashlight replay. Snapshots the LOCAL
+// Per-slot connect-time flashlight replay. Snapshots the LOCAL
 // mainPlayer's current flashlight state and SENDS IT TO ONE SPECIFIC
-// PEER via Session::SendReliableToSlot. Called from the harness's per-
-// slot connect-edge (was: single global QueueConnectBroadcast that fired
-// once on aggregate first-connect and fan-out to all peers; late-joiners
-// after that never saw the local flashlight state, audit finding #8).
+// PEER via SendReliableToSlot. Called from the harness's per-slot
+// connect-edge -- a single global aggregate broadcast that fired once
+// would skip late-joiners (they'd never see the local flashlight).
 //
 // `peerSlot` is the coop::players::Registry slot of the newly-joined
-// peer (1..kMaxPeers-1 on host; 0 on client). No-op + log if the local
-// flashlight is OFF (puppet default on the receiver is already OFF,
-// saves a redundant packet). Game thread only.
+// peer (1..kMaxPeers-1 on host; 0 on client). No-op + log if local
+// flashlight is OFF (puppet default on receiver is already OFF, saves
+// a redundant packet). Game thread only.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Phase 5F Inc5 per-tick worker. Drains:
@@ -82,10 +81,10 @@ void TickConnect();
 // different machine after IP change) would be wrong.
 void OnDisconnect();
 
-// PR-4.7: per-slot variant for mid-session peer drops. Clears ONLY
-// peerSlot's pending apply (if any). Without this, a stale flashlight
-// payload for a departed peer would re-apply when a NEW peer happens
-// to reuse that slot. Safe to call when no pending apply exists.
+// Per-slot variant of OnDisconnect for mid-session peer drops. Clears
+// ONLY peerSlot's pending apply (if any). Without this, a stale
+// flashlight payload from a departed peer would re-apply when a NEW
+// peer reuses that slot. Safe to call when no pending apply exists.
 void OnDisconnectForSlot(int peerSlot);
 
 // FNV-1a 32-bit hash of a wide string. Used for itemClassHash

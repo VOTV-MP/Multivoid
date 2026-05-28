@@ -26,24 +26,20 @@ namespace coop::event_feed {
 namespace {
 
 std::wstring g_localNick = L"Player";
-// PR-4.4: per-slot nickname + per-slot connection edge. Pre-fix all three
-// were single-peer scalars -- two clients' Joins would overwrite each
-// other's nick (Finding I); the "X left the game" message would fire on
-// the AGGREGATE session disconnect with whoever's nick happened to be in
-// `g_remoteNick` at the time, not the specific departing peer.
-// Placeholder ("Remote player") is shown ONLY in the unusual case where the
-// peer drops before its Join reliable message lands.
+// Per-slot nickname + per-slot connection edge. Single-peer scalars
+// would let two clients' Joins overwrite each other and the "X left"
+// message would fire on the aggregate-disconnect with whoever's nick
+// happened to be cached at the time (NOT the actually-departing peer).
+// Placeholder ("Remote player") is shown ONLY in the rare case where
+// the peer drops before its Join reliable message lands.
 std::array<std::wstring, net::kMaxPeers> g_remoteNickBySlot{
     L"Remote player", L"Remote player", L"Remote player", L"Remote player"
 };
 std::array<bool, net::kMaxPeers> g_lastConnectedBySlot{};
-// PR-4.5: per-slot Join tracking. Pre-fix the Join announcement was sent
-// ONCE via SendReliable (fan-out to whichever peers were connected at the
-// time). Late-joining peers got no Join from us; their event_feed::Update
-// drain saw no Join from this peer and used the placeholder "Remote player"
-// nick forever (no "X joined" line either). Closes audit finding #8 for
-// the Join announcement specifically. Each slot's bit is reset to false
-// on per-slot disconnect so a re-connect re-announces.
+// Per-slot Join tracking: a single global Join-sent bit fan-out gives
+// late-joining peers no Join packet (their event_feed sees nothing from
+// us + sticks with the "Remote player" placeholder forever). Per-slot
+// + reset-on-disconnect means a reconnect re-announces.
 std::array<bool, net::kMaxPeers> g_joinSentBySlot{};
 
 std::vector<uint8_t> ToUtf8(const std::wstring& w) {
@@ -154,14 +150,10 @@ void OnSessionStart() {
 }
 
 void Update(net::Session& session, void* localPlayer) {
-    // PR-4.5: aggregate `connected` was used by the pre-fix global Join
-    // send (g_joinSent). Per-slot Join below makes the aggregate bool
-    // unnecessary -- per-slot session.IsSlotConnected handles each peer.
-
-    // Fan the latest RTT across every live puppet so each nameplate shows
-    // "<nick> (<ping>ms)". The Session today exposes only an aggregate
-    // lastRttMs() (first-connected-peer's RTT) -- per-slot RTT can land in
-    // a later PR; this still beats only updating slot 1 (the pre-fix bug).
+    // Fan the latest RTT across every live puppet so each nameplate
+    // shows "<nick> (<ping>ms)". Session today exposes only an
+    // aggregate lastRttMs() (first-connected-peer's RTT); per-slot
+    // RTT can land later. Fanning beats updating only slot 1.
     const int rtt = session.lastRttMs();
     for (int slot = 0; slot < net::kMaxPeers; ++slot) {
         RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
@@ -210,10 +202,9 @@ void Update(net::Session& session, void* localPlayer) {
     while (session.TryGetReliable(msg)) {
         switch (msg.kind) {
         case net::ReliableKind::Join: {
-            // PR-4.4: Join now writes the per-slot nickname keyed on the
-            // sender's peer slot. Pre-fix g_remoteNick was a single scalar
-            // overwritten by every Join (Finding I) -- two clients on host
-            // would each clobber the other's nick.
+            // Per-slot nickname keyed on the sender's peer slot. A single
+            // global scalar would let two clients on host clobber each
+            // other's nick on every Join.
             const int senderSlot = msg.senderPeerSlot;
             if (senderSlot < 0 || senderSlot >= net::kMaxPeers) {
                 UE_LOGW("event_feed: Join has invalid senderPeerSlot=%d -- dropping",
@@ -521,16 +512,11 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<unsigned>(p.state));
                 break;
             }
-            // Self-echo guard: if peerSessionId says the sender was US, the
-            // packet must be a loopback bounce and applying it would toggle
-            // the WRONG puppet's light. PR-4.2 fixed the OUTGOING side
-            // (item_activate.cpp now stamps peerSessionId from
-            // Registry::LocalPeerId), but the INGOING guard here still
-            // hardcoded the 1v1 mapping (host=0, client=1). In 3-peer two
-            // clients with LocalPeerId=1 and LocalPeerId=2 would both
-            // hard-code selfId=1 here and client 2 would silently drop
-            // client 1's ItemActivate as a false self-echo. Fix is
-            // symmetric to PR-4.2: read from Registry.
+            // Self-echo guard: if peerSessionId == our LocalPeerId,
+            // the packet is a loopback bounce. A hardcoded 1v1 selfId
+            // (host=0, client=1) would let two clients with peer-ids
+            // 1 and 2 both self-echo-drop each other's ItemActivate.
+            // Read from the central Registry instead.
             const uint8_t selfId = coop::players::Registry::Get().LocalPeerId();
             if (p.peerSessionId == selfId) {
                 UE_LOGI("event_feed: ItemActivate self-echo (peerSessionId=%u) -- dropping",
@@ -668,10 +654,12 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::AssignPeerSlot: {
-            // PR-4.2: host told us which peer slot we were assigned. Closes
-            // audit finding #9. Replaces the harness.cpp 1v1 hardcode that
-            // always set LocalPeerId=1 for any client (broken in 3-peer:
-            // both clients self-echo-dropped each other's ItemActivate).
+            // Host tells us which peer slot we were assigned. Without
+            // this the client would self-stamp LocalPeerId=1 from a
+            // hardcoded 1v1 mapping, and a second client with the same
+            // local ID would silently self-echo-drop the first's
+            // ItemActivate as a "loopback bounce" (see Update Join/echo
+            // guard above).
             if (msg.payloadLen < sizeof(net::AssignPeerSlotPayload)) {
                 UE_LOGW("event_feed: AssignPeerSlot payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::AssignPeerSlotPayload));

@@ -39,9 +39,9 @@ void OnSessionStart();
 // so the `Aprop_C.thrown(Player)` dispatch has a non-null player arg (BP graph may
 // null-check). On disconnect it resets the announce flag so a reconnect re-announces.
 //
-// PR-4.4: puppets are looked up per-slot via coop::players::Registry::Puppet(slot)
-// (was: single `RemotePlayer* remote` parameter). Ping update fans across all live
-// puppets; per-slot Join nickname tracking + per-slot "left the game" message.
+// Puppets are looked up per-slot via Registry::Puppet(slot). Ping
+// update fans across all live puppets; per-slot Join nickname tracking
+// + per-slot "left the game" message.
 void Update(net::Session& session, void* localPlayer);
 
 }  // namespace event_feed

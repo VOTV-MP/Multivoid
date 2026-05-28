@@ -7,11 +7,10 @@
 // Without this, our own receiver-applied spawn/destroy would re-broadcast
 // to the original sender = packet ping-pong.
 //
-// Extracted from coop/remote_prop.h (audit closeout PR-4.10): these are
-// implementation details shared by exactly two TUs (prop_lifecycle and
-// remote_prop) and were leaking into remote_prop's public API. Both TUs
-// now include this header; remote_prop's public surface no longer exposes
-// them.
+// These are implementation details shared by exactly two TUs
+// (prop_lifecycle and remote_prop). They live in a dedicated header
+// rather than in coop/remote_prop.h to keep remote_prop's public API
+// surface free of internals.
 //
 // Game-thread-only access. Set capacity is bounded internally; on overflow
 // the set is cleared (a one-shot stale lookup on a never-consumed entry

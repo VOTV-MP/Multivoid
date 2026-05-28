@@ -976,9 +976,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     }
     coop::net::WeatherStatePayload p{};
     if (!ReadCycleState(cycle, p)) return;
-    // PR-4.5: send to ONE slot only. Pre-fix this was SendReliable (fan-out)
-    // which meant late-joiners after the first peer connected never got the
-    // weather state -- they saw a default-weather world even mid-storm.
+    // Send to ONE slot only -- a fan-out send would skip late-joiners
+    // (they'd see default-weather world even mid-storm if the storm
+    // started before they connected).
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WeatherState, &p, sizeof(p));
     const uint64_t sig = SignaturePayload(p);
     const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;

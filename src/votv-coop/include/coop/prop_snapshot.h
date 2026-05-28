@@ -26,15 +26,14 @@ namespace coop::prop_snapshot {
 // at startup from harness.cpp.
 void SetSession(coop::net::Session* session);
 
-// PR-4.5 (closes audit findings #7 + Finding D): per-slot snapshot replay.
-// `peerSlot` is a coop::players::Registry slot index (1..kMaxPeers-1 for
-// clients on host). The function:
+// Per-slot snapshot replay. `peerSlot` is a coop::players::Registry
+// slot index (1..kMaxPeers-1 for clients on host). The function:
 //   - if no drain is currently in progress, enumerates live keyed-
-//     interactable Aprop_C derivatives into the internal candidate vector
-//     and sets the drain target to `peerSlot`;
+//     interactable Aprop_C derivatives into the internal candidate
+//     vector and sets the drain target to `peerSlot`;
 //   - if a drain to a DIFFERENT slot is already in progress, queues
 //     `peerSlot` for after the current drain completes.
-// Host-only sender (no-op + log if called on client). The drain is then
+// Host-only sender (no-op + log if called on client). The drain is
 // pumped one chunk per NetPumpTick frame via DrainChunk().
 void TriggerForSlot(int peerSlot);
 
@@ -44,11 +43,11 @@ void TriggerForSlot(int peerSlot);
 // each frame while connected.
 void DrainChunk();
 
-// PR-4.5: abort any pending or in-progress drain for `peerSlot`. Called
-// from the harness's per-slot disconnect edge so a peer drop mid-drain
+// Abort any pending or in-progress drain for `peerSlot`. Called from
+// the harness's per-slot disconnect edge so a peer drop mid-drain
 // doesn't waste ~1700 SendReliableToSlot calls into a dead connection
-// (Session silently no-ops these but still iterates all candidates).
-// If the in-progress drain target is `peerSlot`, dequeues the next
+// (Session silently no-ops these but still iterates candidates). If
+// the in-progress drain target is `peerSlot`, dequeues the next
 // pending slot if any.
 void CancelForSlot(int peerSlot);
 

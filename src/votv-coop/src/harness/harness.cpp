@@ -204,12 +204,10 @@ void Report(const char* label) {
 // (representing host self); on CLIENT, slots 1..kMaxPeers-1 are unused.
 // Each entry's actor / spawn-retry / Tick state is independent.
 //
-// PR-4.4 (2026-05-28): replaced the singleton `coop::RemotePlayer g_orphan`
-// with this array, closing audit finding #14 (0-arg TryGetRemotePose
-// shadows slots >= 2) + code-explorer Findings A, F. The 1v1 backward-
-// compat alias `g_orphan = g_puppets[1]` lets non-net branches (drive
-// scenario, autotest visuals, show puppet) keep their single-puppet
-// semantics on slot 1 (the canonical "the remote" slot on HOST).
+// One coop::RemotePlayer per peer slot. The `g_orphan = g_puppets[1]`
+// alias keeps non-net branches (drive scenario, autotest visuals, show
+// puppet) using their single-puppet semantics on slot 1 (the canonical
+// "the remote" slot on HOST).
 std::array<coop::RemotePlayer, coop::players::kMaxPeers> g_puppets{};
 auto& g_orphan = g_puppets[1];
 
@@ -223,19 +221,19 @@ void* g_netLocal = nullptr;
 // nulled when g_netLocal is nulled (level change).
 void* g_netLocalController = nullptr;
 
-// Connected-state edge detection for the disconnect cleanup (Destroy the puppet).
-// File-scope (NOT a static-local in NetPumpTick) so a future session restart can
-// reset it explicitly via ResetNetState below -- otherwise the local-static would
-// hold the prior session's value across the new Start (audit fix).
+// Connected-state edge detection for the disconnect cleanup (destroy
+// the puppet). File-scope (NOT a static-local in NetPumpTick) so a
+// session restart can reset them explicitly -- otherwise the local-
+// static would hold the prior session's value across the new Start.
 //
-// AGGREGATE flag (`g_wasConnected`) tracks "any peer connected" -- used to gate
-// global OnDisconnect calls (prop_lifecycle, npc_sync, etc) that today have
-// session-wide state. PR-4.5 will scope those per-slot too.
+// AGGREGATE flag (g_wasConnected) tracks "any peer connected" -- gates
+// global OnDisconnect calls for subsystems with session-wide state
+// (weather_sync, prop_lifecycle).
 //
-// PER-SLOT flags (`g_wasConnectedBySlot`) track per-peer connection edges --
-// used to destroy the corresponding puppet on per-peer disconnect WITHOUT
-// wiping all subsystem state (matters when peer-1 drops while peer-2 stays).
-// PR-4.4 (closes audit-explorer Finding B partial + G partial).
+// PER-SLOT flags (g_wasConnectedBySlot) track per-peer connection
+// edges -- used to destroy the corresponding puppet on per-peer
+// disconnect WITHOUT wiping all subsystem state (matters when peer-1
+// drops while peer-2 stays connected).
 bool g_wasConnected = false;
 std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
 
@@ -354,12 +352,11 @@ void NetPumpTick(float displayOffsetX) {
     // (a chat-feed line that now expires via hud_feed::Tick). If the peer ever
     // reconnects, NetPumpTick auto-spawns a fresh puppet on the first new pose.
     //
-    // PR-4.4 + PR-4.5: per-slot edge tracking. Each slot's disconnect edge
-    // destroys ONLY that slot's puppet (+ cancels its in-progress snapshot
-    // drain); each slot's connect edge replays snapshot + flashlight +
-    // weather to ONLY that slot via Session::SendReliableToSlot. Late-
-    // joiners now get caught up; existing peers see zero redundant traffic
-    // (audit findings #7 + #8).
+    // Per-slot edge tracking: each slot's disconnect edge destroys ONLY
+    // that slot's puppet (+ cancels its in-progress snapshot drain);
+    // each slot's connect edge replays snapshot + flashlight + weather
+    // to ONLY that slot via Session::SendReliableToSlot. Late-joiners
+    // get caught up; existing peers see zero redundant traffic.
     const bool isConnected = (g_session.state() == coop::net::ConnState::Connected);
     const bool isHost = (g_session.role() == coop::net::Role::Host);
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
@@ -377,15 +374,15 @@ void NetPumpTick(float displayOffsetX) {
                 g_puppets[slot].Destroy();
                 UE_LOGI("net: peer slot %d disconnected -- puppet destroyed", slot);
             }
-            // PR-4.5: abort any pending/in-progress snapshot drain to this
-            // slot so we don't iterate ~1700 candidates calling
+            // Abort any pending/in-progress snapshot drain to this slot
+            // so we don't iterate ~1700 candidates calling
             // SendReliableToSlot into a dead connection.
             coop::prop_snapshot::CancelForSlot(slot);
-            // PR-4.7: per-slot subsystem cleanup. Only subsystems with
-            // actual per-slot state get a call here. prop_lifecycle /
-            // npc_sync / weather_sync hold GLOBAL state that the
-            // aggregate OnDisconnect below handles correctly on full
-            // disconnect -- no empty stubs (RULE 1).
+            // Per-slot subsystem cleanup. Only subsystems with actual
+            // per-slot state get a call here. prop_lifecycle / npc_sync /
+            // weather_sync hold GLOBAL state that the aggregate
+            // OnDisconnect below handles correctly on full disconnect --
+            // no empty stubs (RULE 1).
             //  - remote_prop: release this slot's held prop so it
             //    resumes physics on remaining peers (kinematically
             //    frozen otherwise; no PropPose/PropRelease arriving
@@ -400,7 +397,7 @@ void NetPumpTick(float displayOffsetX) {
             coop::item_activate::OnDisconnectForSlot(slot);
         }
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
-            // PR-4.5: per-slot connect-edge replay.
+            // Per-slot connect-edge replay.
             // - HOST -> NEW CLIENT (slot 1..3): full snapshot + flashlight +
             //   weather replay so the new client converges to host state.
             // - CLIENT -> HOST (slot 0): announce LOCAL flashlight state so
@@ -419,40 +416,28 @@ void NetPumpTick(float displayOffsetX) {
         g_wasConnectedBySlot[slot] = slotConnected;
     }
     if (g_wasConnected && !isConnected) {
-        // Aggregate disconnect (all peers gone). Fire the global OnDisconnect
-        // calls. PR-4.5 will scope these per-slot.
+        // Aggregate disconnect (all peers gone). Fire the global
+        // OnDisconnect calls -- the per-slot edge block above already
+        // handled subsystems with per-slot state, this catches
+        // subsystems with session-wide state (weather_sync, npc_sync
+        // host-side counter, prop_lifecycle dedupe set).
+        // Stashed state belongs to the now-dead session; replaying it
+        // on the next session (possibly a different machine after IP
+        // change) would carry wrong-peer state. A fresh snapshot
+        // enqueues on the next connected edge.
         coop::remote_prop::ForceRelease();
-        // Audit C-1 (2026-05-24): clear the pending-spawn queue + any
-        // half-drained snapshot enumeration. Their contents belong to the
-        // now-dead session; shipping them to the NEXT peer (which may be a
-        // DIFFERENT machine after IP change) would carry stale or wrong-
-        // peer state. A fresh snapshot enqueues on the next connected-edge.
         const auto propStats = coop::prop_lifecycle::OnDisconnect();
         const size_t snapPending = coop::prop_snapshot::OnDisconnect();
-        // Phase 5N1 Inc2 (2026-05-25): reset host-side NPC tracking state
-        // on disconnect (sessionId counter + tracked map + bypass slot --
-        // see coop/npc_sync.cpp OnDisconnect).
         coop::npc_sync::OnDisconnect();
-        // Phase 5F Inc5 (2026-05-26): clear any pending connect-replay
-        // broadcast + per-peer pending applies. Their contents belong to
-        // the now-dead session; reapplying onto the next session's peers
-        // (possibly a different machine after IP change) would be wrong.
         coop::item_activate::OnDisconnect();
-        // Phase 5W Inc1 (2026-05-26): clear any pending weather broadcast +
-        // reset the dedup signature so a fresh connect re-snapshots state.
         coop::weather_sync::OnDisconnect();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 snapPending, propStats.initProcessedDropped);
     }
-    // PR-4.5: the aggregate `!g_wasConnected && isConnected` connect-edge
-    // block has been retired (RULE 2). The per-slot connect-edge in the
-    // loop above now fires the snapshot + connect broadcasts targeted at
-    // each newly-joined slot, which is correct for late-joiners too.
     g_wasConnected = isConnected;
 
-    // Per-tick snapshot work (Phase 5S0 audit I-2): process up to ~100
-    // candidates per tick if a snapshot enumeration is in progress.
-    // Cheap when no enumeration is active (no-op on empty vector).
+    // Process up to ~100 snapshot candidates per tick if a snapshot
+    // enumeration is in progress (no-op on empty vector).
     if (isConnected) coop::prop_snapshot::DrainChunk();
 
     // Phase 5F Inc5 (2026-05-26) per-tick drain. Handles:
@@ -584,10 +569,9 @@ void NetPumpTick(float displayOffsetX) {
         }
     }
 
-    // PR-4.4: per-slot pose drive. On HOST, iterate slots 1..kMaxPeers-1
-    // (clients). On CLIENT, iterate slot 0 only (the host). Each slot has
-    // its own RemotePlayer puppet + spawn-retry backoff. Closes audit
-    // finding #14 (0-arg TryGetRemotePose shadows slots >= 2).
+    // Per-slot pose drive. On HOST, iterate slots 1..kMaxPeers-1
+    // (clients). On CLIENT, iterate slot 0 only (the host). Each slot
+    // has its own RemotePlayer puppet + spawn-retry backoff.
     {
         using namespace std::chrono;
         // Per-slot spawn retry timer (static-local: harmless across session
@@ -651,14 +635,10 @@ void NetPumpTick(float displayOffsetX) {
     // thereafter). Stream-stop timeout (>500 ms) treated as implicit release.
     coop::remote_prop::Tick(g_session);
 
-    // Surface session events (joins/disconnects) to the feed + send our Join.
-    // Pass g_netLocal so remote_prop::OnRelease can call Aprop_C.thrown(player)
-    // for the natural throw-sound dispatch (Path B in
-    // research/findings/votv-throw-sound-path-2026-05-24.md).
-    //
-    // PR-4.4: dropped the RemotePlayer* parameter -- event_feed now looks up
-    // puppets per-slot via Registry::Puppet(slot) so it can fan ping updates
-    // across all live puppets (was: only updated slot 1's puppet).
+    // Surface session events (joins/disconnects) to the feed + send our
+    // Join. Pass g_netLocal so remote_prop::OnRelease can call
+    // Aprop_C.thrown(player) for the natural throw-sound dispatch (Path
+    // B in research/findings/votv-throw-sound-path-2026-05-24.md).
     coop::event_feed::Update(g_session, g_netLocal);
 
     // Expire old chat-feed lines (10 s TTL) so a "X joined the game" line

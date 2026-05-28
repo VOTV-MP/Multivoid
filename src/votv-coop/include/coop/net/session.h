@@ -90,13 +90,9 @@ public:
     void SetLocalPropPose(bool set, const PropPoseSnapshot& pose);
 
     // Per-peer accessors. peerSlot is the coop::players::Registry slot
-    // (0 = host, 1..kMaxPeers-1 = clients). Returns false if peerSlot is out
-    // of range, that slot has no remote pose yet, or aggregate state is not
-    // Connected.
-    //
-    // PR-4.4: the 0-arg backward-compat overloads were retired per RULE 2
-    // (they shadowed slots >= 2 -- the original audit-flagged finding #14).
-    // All callers now pass an explicit peerSlot.
+    // (0 = host, 1..kMaxPeers-1 = clients). Returns false if peerSlot is
+    // out of range, that slot has no remote pose yet, or aggregate state
+    // is not Connected.
     bool TryGetRemotePose(int peerSlot, PoseSnapshot& out, bool* outIsNew = nullptr);
     bool TryGetRemotePropPose(int peerSlot, PropPoseSnapshot& out, bool* outIsNew = nullptr);
 
@@ -105,12 +101,13 @@ public:
     // when no peers are connected.
     bool SendReliable(ReliableKind kind, const void* payload, int len);
 
-    // PR-4.2: single-target reliable send. peerSlot is the coop::players::
-    // Registry slot index (host=0, clients 1..kMaxPeers-1). Returns false if
-    // peerSlot is out of range, the slot is not connected, or the payload
-    // doesn't fit. Used by AssignPeerSlot (host -> specific newly-connected
-    // client) and the queued per-peer connect-edge broadcast variants
-    // (audit findings #7 / #8 -- follow-up PR).
+    // Single-target reliable send. peerSlot is the coop::players::
+    // Registry slot index (host=0, clients 1..kMaxPeers-1). Returns
+    // false if peerSlot is out of range, the slot is not connected, or
+    // the payload doesn't fit. Used by AssignPeerSlot (host -> specific
+    // newly-connected client) and per-slot connect-edge replay (each
+    // late-joiner gets caught up without re-broadcasting to peers that
+    // already have the state).
     bool SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload, int len);
 
     // Game thread: pop a delivered reliable message. Inbox is shared across
@@ -133,10 +130,9 @@ public:
     int lastRttMs() const { return lastRttMs_.load(); }
     // Count of currently-connected peers (0..kMaxPeers-1).
     int connectedPeerCount() const;
-    // PR-4.4: true if the given slot has an active GNS connection. Used by
-    // the harness for per-slot connect/disconnect edge detection (replaces
-    // the aggregate g_wasConnected flag that fired global broadcasts on
-    // FIRST connect only).
+    // True if the given slot has an active GNS connection (handle set).
+    // Used by the harness for per-slot connect/disconnect edge detection.
+    // NOT a "ready for app traffic" signal -- see IsSlotReady below.
     bool IsSlotConnected(int peerSlot) const {
         if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
         return peerConns_[peerSlot].load() != 0;

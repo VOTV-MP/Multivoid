@@ -265,10 +265,11 @@ void Session::HandleConnStatusChanged(void* info) {
         UE_LOGI("net: peer slot %d CONNECTED (%s, h=0x%08x)",
                 slot, cfg_.role == Role::Host ? "host" : "client",
                 static_cast<unsigned>(hConn));
-        // PR-4.2: host tells the freshly-connected client which peer slot
-        // it was assigned. Sent here (status callback runs on the net
-        // thread; SendReliableToSlot is thread-safe via GNS's own queuing).
-        // Closes audit finding #9: clients no longer self-stamp peerSessionId=1.
+        // Host tells the freshly-connected client which peer slot it was
+        // assigned (clients no longer self-stamp peerSessionId=1; the
+        // host is the only authority on slot assignment so two clients
+        // can't silently collide). Status callback runs on the net
+        // thread; SendReliableToSlot is thread-safe via GNS's queue.
         if (cfg_.role == Role::Host) {
             AssignPeerSlotPayload p{};
             p.slot = static_cast<uint8_t>(slot);
@@ -403,9 +404,9 @@ bool Session::Start(const Config& cfg) {
 
 void Session::Stop() {
     if (!running_.exchange(false)) return;
-    // Finding #3: pre-PR-4.1 closed connections AFTER joining the net thread,
-    // which left linger=true inoperative -- the linger flush needs RunCallbacks
-    // pumping, and after the join nobody pumps. Sequence now:
+    // The linger flush needs RunCallbacks pumping. Closing connections
+    // AFTER joining the net thread leaves linger=true inoperative -- no
+    // one pumps callbacks once the thread is gone. Sequence is:
     //   1) signal exit + join (~<=5ms; thread exits its sleep window)
     //   2) CloseConnection(linger=true) on every peer
     //   3) RunCallbacks pump loop (~200ms) so GNS flushes lingering data
