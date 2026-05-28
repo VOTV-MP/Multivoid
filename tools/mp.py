@@ -491,13 +491,12 @@ def cmd_smoke(args) -> None:
     deploy_all()
 
     log("--- HOST LAUNCH ---")
-    # center=True avoids the (0,0)+multi-monitor UE4 swap-chain pathology
-    # documented in [[feedback-never-winxy-zero-multimonitor]]. The smoke
-    # would otherwise have inherited the same -WinX=0 -WinY=0 hazard as
-    # the hands-on host launcher had pre-fix.
+    # Host: 1920x1080 centered on the primary monitor. center=True avoids
+    # the (0,0)+multi-monitor UE4 swap-chain pathology documented in
+    # [[feedback-never-winxy-zero-multimonitor]].
     host_pid = launch_peer("host", args.port, "Host",
                            peer=None, res_x=args.res_x, res_y=args.res_y,
-                           center=True)
+                           monitor=1, center=True)
 
     log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
     bound = False
@@ -519,12 +518,14 @@ def cmd_smoke(args) -> None:
         sys.exit(1)
 
     log("--- CLIENT LAUNCH ---")
-    # Also center the smoke client -- same hazard. Both windows will
-    # overlap on the primary monitor; that's fine for autonomous tests
-    # (no human is viewing them).
+    # Client: 720p on secondary monitor (per established hands-on pattern --
+    # see [[feedback-user-prefers-1080-windows]]). If only one monitor is
+    # connected, mp.pick_monitor silently falls back to the primary. Tile
+    # index 0 puts the client at the top of the secondary monitor with a
+    # 40-px title-bar margin.
     client_pid = launch_peer("client", args.port, "Client",
-                             peer="127.0.0.1", res_x=args.res_x, res_y=args.res_y,
-                             center=True)
+                             peer="127.0.0.1", res_x=1280, res_y=720,
+                             monitor=2, tile_index=0)
 
     log(f"--- MONITORING for {args.duration}s (sample every {args.sample_interval}s) ---")
     t0 = time.time()
