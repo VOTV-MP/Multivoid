@@ -923,4 +923,16 @@ void ForceRelease() {
     }
 }
 
+void OnDisconnectForSlot(int peerSlot) {
+    if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    ActiveDrive& d = g_drives[peerSlot];
+    if (!d.actor) return;
+    if (d.mesh) DriveSimulate(d.mesh, true);
+    UE_LOGI("remote_prop: peer slot %d disconnected -- releasing held prop (key='%s')",
+            peerSlot, d.lastKey.c_str());
+    d.actor = nullptr;
+    d.mesh = nullptr;
+    d.lastKey.clear();
+}
+
 }  // namespace coop::remote_prop

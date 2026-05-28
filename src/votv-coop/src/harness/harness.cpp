@@ -374,6 +374,23 @@ void NetPumpTick(float displayOffsetX) {
             // slot so we don't iterate ~1700 candidates calling
             // SendReliableToSlot into a dead connection.
             coop::prop_snapshot::CancelForSlot(slot);
+            // PR-4.7: per-slot subsystem cleanup. Only subsystems with
+            // actual per-slot state get a call here. prop_lifecycle /
+            // npc_sync / weather_sync hold GLOBAL state that the
+            // aggregate OnDisconnect below handles correctly on full
+            // disconnect -- no empty stubs (RULE 1).
+            //  - remote_prop: release this slot's held prop so it
+            //    resumes physics on remaining peers (kinematically
+            //    frozen otherwise; no PropPose/PropRelease arriving
+            //    for a departed peer).
+            //  - item_activate: drop this slot's pending flashlight
+            //    apply so a future peer reusing the slot doesn't
+            //    inherit the departed peer's stashed state.
+            // Wire-layer per-slot state (reliableInbox filter,
+            // peerConns_, remote pose) is already scoped in
+            // Session::OnConnectionStatusChanged.
+            coop::remote_prop::OnDisconnectForSlot(slot);
+            coop::item_activate::OnDisconnectForSlot(slot);
         }
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
             // PR-4.5: per-slot connect-edge replay.

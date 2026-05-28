@@ -82,6 +82,12 @@ void TickConnect();
 // different machine after IP change) would be wrong.
 void OnDisconnect();
 
+// PR-4.7: per-slot variant for mid-session peer drops. Clears ONLY
+// peerSlot's pending apply (if any). Without this, a stale flashlight
+// payload for a departed peer would re-apply when a NEW peer happens
+// to reuse that slot. Safe to call when no pending apply exists.
+void OnDisconnectForSlot(int peerSlot);
+
 // FNV-1a 32-bit hash of a wide string. Used for itemClassHash
 // (CRC32 was named in the RE doc but FNV-1a is just as cross-peer
 // stable, simpler to inline, no table). Exposed so the receiver can

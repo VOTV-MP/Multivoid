@@ -763,4 +763,14 @@ void OnDisconnect() {
     }
 }
 
+void OnDisconnectForSlot(int peerSlot) {
+    if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    if (!g_pendingApplyValid[peerSlot]) return;
+    UE_LOGI("flashlight: peer slot %d disconnected -- clearing pending apply (state=%d intensity=%.2f)",
+            peerSlot, g_pendingApplyPayload[peerSlot].state,
+            g_pendingApplyPayload[peerSlot].intensity);
+    g_pendingApplyValid[peerSlot] = false;
+    g_pendingApplyPayload[peerSlot] = {};
+}
+
 }  // namespace coop::item_activate
