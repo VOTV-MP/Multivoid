@@ -125,6 +125,7 @@ add_library(votv-coop SHARED
     src/coop/weather_redsky.cpp
     src/coop/ini_config.cpp
     src/coop/net/session.cpp
+    src/coop/net_pump.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/freecam.cpp
     src/coop/dev/flashlight_setup.cpp

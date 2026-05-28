@@ -16,6 +16,7 @@
 #include "coop/players_registry.h"
 #include "coop/nameplate.h"
 #include "coop/net/session.h"
+#include "coop/net_pump.h"
 #include "coop/npc_sync.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/prop_snapshot.h"
@@ -65,103 +66,7 @@ namespace cfg = harness::config;
 // starts it.
 coop::net::Session g_session;
 
-// Game thread: read the local player's pose into a network snapshot. x/y/z carry
-// the source actor's NATIVE world location (capsule centre on a Character) -- the
-// engine's own frame, no derived feet-Z or centre-Z arithmetic. The receiver
-// reconstructs the visible-body offset at the PUPPET'S ACTOR TRANSFORM (its
-// SkeletalMeshActor's mesh comp is the root, so a sub-component RelLoc/RelRot
-// shim is impossible). At puppet spawn the receiver measures the local
-// mainPlayer's lowest visible bone Z and mesh world transform, derives the
-// actor-Z + actor-Yaw additive offsets that ground the visible feet AND
-// reconcile the BP-authored mesh-yaw convention, and applies them every
-// ApplyToEngine. The wire carries one thing (where the source's actor is),
-// one frame -- MTA-style.
-bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
-    if (!local) return false;
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
-    const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
-    const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
-    // BODY yaw: read from the ACTOR (the real body facing direction). Earlier
-    // attempt sent controller yaw -- but VOTV's Character body LAGS the camera
-    // (head-leads-body is natural to the source), so sending controller yaw made
-    // the puppet body show the CAMERA direction instead of the BODY direction
-    // = sideways-when-camera-leads (user-confirmed regression).
-    // HEAD pitch: read from the CONTROLLER (actor pitch is always 0 on an
-    // upright character; the controller carries the real view pitch). Cached
-    // by NetPumpTick to skip re-resolving GetController every tick.
-    out.x = loc.X;
-    out.y = loc.Y;
-    // Z = source actor.Z (capsule centre on an ACharacter). This is UE4's
-    // stable physics position -- CMC floor-snap keeps it within ~2 cm of
-    // (ground + halfH), it does NOT swing through the +/-85 cm transient
-    // that mesh_playerVisible.world.Z does during BP construction / save-load
-    // init (Z-trace 2026-05-23 captured `mesh.world.Z = actor.Z + 2.57` for
-    // 1 sec post-teleport, then a drop of 84 cm to settled).
-    //
-    // The receiver does the offset reconstruction at the puppet ACTOR transform:
-    // puppet.actor.Z = wire.z + localMeshRelLocZ, where localMeshRelLocZ is the
-    // raw USceneComponent::RelativeLocation.Z field (offset +0x11C) read ONCE
-    // from the RECEIVER's own mainPlayer_C at puppet spawn. Same BP class on
-    // every peer => identical authored RelLoc.Z constant. RULE 1 root-cause
-    // fix per the code-architect verdict + MTA fidelity (MTA streams the
-    // CEntitySA matrix.vPos = capsule centre, lets the engine reconstruct
-    // visible body offset internally -- exactly the same shape).
-    //
-    // KNOWN LIMITATION (Phase 2 wire bump): when the SOURCE crouches, UE4's
-    // ACharacter::Crouch reduces halfH AND adjusts Mesh.RelLoc.Z upward to
-    // keep the feet pinned. The LOCAL's cached RelLoc.Z reflects standing
-    // state; the puppet's visible mesh will sit ~(crouchedHalfH - standingHalfH)
-    // cm too low when the source is crouched. Fix: stream a `bCrouched` bit
-    // in PoseSnapshot.flags; receiver applies a different cached offset when
-    // crouched. Tracked alongside the ragdoll sync wire change.
-    out.z = loc.Z;
-    // Normalize yaw and pitch into the canonical FRotator axis range (-180, 180]
-    // BEFORE they go on the wire. UE4's AController::GetControlRotation returns
-    // the RAW ControlRotation, which the input system accumulates as unnormalized
-    // [0, 360): looking 10 deg DOWN reads back as Pitch=350 (not -10). Without
-    // this normalize, pitch=350 fails coop::net::ValidatePose's (-90, 90) bound
-    // and the ENTIRE packet is dropped on the receiver, freezing position+yaw+
-    // everything while the source looks below horizontal -- root cause of the
-    // hands-on "puppet freezes when host looks down then teleports on look-up"
-    // bug, two converging agents 2026-05-23. Yaw is normalized too: same
-    // unnormalized risk, and a normalized yaw keeps RemotePlayer::errorYaw_
-    // symmetric around zero for cleaner linear LERP arcs. Mirrors MTA's
-    // SCameraRotationSync bWrapInsteadOfClamp wire policy.
-    out.yaw = ue_wrap::NormalizeAxis(actorRot.Yaw);
-    const ue_wrap::FRotator ctlRot = controller
-        ? ue_wrap::engine::GetControlRotation(controller)
-        : actorRot;
-    out.pitch = ue_wrap::NormalizeAxis(ctlRot.Pitch);
-    // headYawDelta: the source's controller-yaw LEAD over its body yaw, in
-    // (-180, 180]. The puppet's AnimBP headLookAt yaw component reads this so
-    // the puppet's head turns to match where the source's CAMERA is looking
-    // (free-look / camera-lead-body) -- decoupled from the body facing, which
-    // is what makes the head-track-local-player default look glaringly wrong
-    // on a puppet. Normalized for the same wire-boundary reason as yaw/pitch.
-    out.headYawDelta = ue_wrap::NormalizeAxis(ctlRot.Yaw - actorRot.Yaw);
-    out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
-    // 2026-05-27 (v8): pack the source's airborne state. Read
-    // CMC.MovementMode @+0x168; MOVE_Falling=3 means the source is in the air
-    // (jump / fall). The receiver's BUA-POST observer reads this bit to clear
-    // useLegIK on the puppet during the airborne window so the foot-IK trace
-    // doesn't plant the puppet's feet to the satellite's grounded position
-    // (legs-stretch-to-ground-during-jump fix). Reading the CMC subobject by
-    // ACharacter::CharacterMovement @+0x288 (avoids a ChildObjectsOf walk
-    // on the hot pose-send path).
-    out.stateBits = 0;
-    if (auto* lp = reinterpret_cast<uint8_t*>(local)) {
-        void* cmc = *reinterpret_cast<void**>(lp + ue_wrap::profile::off::ACharacter_CharacterMovement);
-        if (cmc) {
-            const uint8_t mode = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(cmc) + ue_wrap::profile::off::UCharacterMovement_MovementMode);
-            if (mode == ue_wrap::profile::off::kMOVE_Falling) {
-                out.stateBits |= coop::net::kStateBitInAir;
-            }
-        }
-    }
-    out._pad[0] = out._pad[1] = out._pad[2] = 0;
-    return true;
-}
+// ReadLocalPose extracted to coop/net_pump.cpp (PR-4.13).
 
 // Runs on the game thread (posted): dump a UFunction's parameter frame so we can
 // verify the FProperty offsets (names/offsets/sizes) against the known UE4.27
@@ -196,137 +101,18 @@ void Report(const char* label) {
     UE_LOGI("harness report [%s]: NumObjects=%d, world=%ls", label, n, worldName.c_str());
 }
 
-// Puppets (replaces the Lua harness's SpawnOrphan/DriveOrphan): one
-// coop::RemotePlayer per peer slot. Indexed by the coop::players::Registry
-// slot convention: slot 0 = host (only used on CLIENT processes to hold the
-// host's puppet); slots 1..kMaxPeers-1 = clients (used on HOST processes to
-// hold each connected client's puppet). On HOST, slot 0 is unused
-// (representing host self); on CLIENT, slots 1..kMaxPeers-1 are unused.
-// Each entry's actor / spawn-retry / Tick state is independent.
-//
-// One coop::RemotePlayer per peer slot. The `g_orphan = g_puppets[1]`
-// alias keeps non-net branches (drive scenario, autotest visuals, show
-// puppet) using their single-puppet semantics on slot 1 (the canonical
-// "the remote" slot on HOST).
-std::array<coop::RemotePlayer, coop::players::kMaxPeers> g_puppets{};
-auto& g_orphan = g_puppets[1];
+// Puppet array + per-slot edge state + held-prop edge detector + the local-
+// pose read + the per-tick observer orchestrator + the main NetPumpTick body
+// extracted to coop/net_pump.cpp (PR-4.13). Harness reaches the puppets via
+// coop::net_pump::Puppet(slot) and calls coop::net_pump::Tick(g_session, ...)
+// from the timeline tick lambdas; coop::net_pump::OnSessionStart() resets
+// edge-detector state on each session.Start.
 
-// Cached local mainPlayer_C for the net pump. coop::players::Registry::Get().Local()
-// already caches + filters puppets via the controller discriminator
-// (per RULE 1 + [[feedback-always-use-user-test-poses]]); we just hold
-// a local cache on top to skip the atomic load in the hot pump path.
-void* g_netLocal = nullptr;
-// Cached controller for the same pawn -- avoids 2 ProcessEvent dispatches per
-// pump tick (GetController + GetControlRotation). Bound to g_netLocal's lifetime:
-// nulled when g_netLocal is nulled (level change).
-void* g_netLocalController = nullptr;
-
-// Connected-state edge detection for the disconnect cleanup (destroy
-// the puppet). File-scope (NOT a static-local in NetPumpTick) so a
-// session restart can reset them explicitly -- otherwise the local-
-// static would hold the prior session's value across the new Start.
-//
-// AGGREGATE flag (g_wasConnected) tracks "any peer connected" -- gates
-// global OnDisconnect calls for subsystems with session-wide state
-// (weather_sync, prop_lifecycle).
-//
-// PER-SLOT flags (g_wasConnectedBySlot) track per-peer connection
-// edges -- used to destroy the corresponding puppet on per-peer
-// disconnect WITHOUT wiping all subsystem state (matters when peer-1
-// drops while peer-2 stays connected).
-bool g_wasConnected = false;
-std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
-
-// v4 held-prop edge detector: file-scope for the same reason as g_wasConnected.
-// A static-local would carry a stale prop pointer + key across a session stop/
-// restart, causing the next pump to fire SendPropRelease for the OLD session's
-// key on the NEW session -- a real bug found by the audit. Cleared explicitly
-// alongside g_wasConnected on each session.Start (post-ship audit 2026-05-24).
-void* g_lastHeldProp = nullptr;
-coop::net::WireKey g_lastHeldKey{};
-uint64_t g_propEmitCount = 0;
-
-// v5 (2026-05-24 post-RE): the v4 throw-impulse cache has been retired per
-// RULE 2. The root-cause RE
-// (research/findings/votv-throw-release-pipeline-RE-2026-05-24.md) showed the
-// dominant launch energy is NOT a discrete AddImpulse call -- it is the
-// kinematic-tracking velocity PhysX accumulates while the player flicks the
-// camera (Bug B). The release-edge in NetPumpTick now reads the body's
-// inherited linear+angular velocity directly via prop::GetPhysicsVelocity
-// AFTER the engine has finished release+optional-AddImpulse on the same
-// tick, so ONE number captures the full launch state. The
-// GrabObserver_PrimComp_AddImpulse stays only as a diagnostic log line (its
-// values are no longer cached or shipped).
-
-// ---- Physics-prop pickup observers (Stage 1 of [[project-physics-object-pickup]]) ----
-//
-// Hook surface: engine-native UPhysicsHandleComponent UFunctions + BP-Timeline
-// `grab` auto-functions on mainPlayer_C. The original SDK-header observers
-// (smoothGrab/pickupObject/dropGrabObject/throwHoldingProp/switchToHeavyDrag/
-// pickupObjectDirect/playerTryToGrab/canPickup) were proven non-dispatching by
-// debug build 14d0787 hands-on test 2026-05-23 -- those are BP-pure inline
-// functions on mainPlayer_C, so they never appear as ProcessEvent's `function`
-// arg. Deleted per RULE 2. Full RE in
-// research/findings/votv-physics-interaction-deep-re-2026-05-23.md.
-//
-// Primary observers (engine-native, universal -- catch every grab path):
-//   GrabComponentAtLocation / GrabComponentAtLocationWithRotation  (pickup)
-//   SetTargetLocation / SetTargetLocationAndRotation               (per-tick drive)
-//   ReleaseComponent                                               (drop, PRE)
-//
-// Secondary observers (BP-Timeline level, mainPlayer_C scope -- triangulate):
-//   InpActEvt_use_K2Node_InputActionEvent_41                       (E press)
-//   grab__UpdateFunc (Timeline tick) / grab__FinishedFunc (Timeline end)
-//
-// The first SetTargetLocation observer fire of a new grab is when we LEARN
-// what was grabbed (read mainPlayer.grabbing_actor) and start streaming.
-// (Idempotency flag now owned by coop::grab_observer; see coop/grab_observer.cpp.)
-
-// Prop wire-sync state (observers, retry queues, takeObj-in-flight flag,
-// processed-Init dedupe set) is owned by coop/prop_lifecycle.cpp;
-// this TU calls into it via coop::prop_lifecycle::Install(&g_session) +
-// InstallInventory(&g_session) each NetPumpTick, and OnDisconnect() on
-// the disconnect edge.
-
-// Phase 5S0 save snapshot bootstrap is owned by coop/prop_snapshot.cpp.
-// harness calls SetSession(&g_session) once at boot, Trigger() on the
-// host-connected edge, DrainChunk() per NetPumpTick while connected, and
-// OnDisconnect() to reset state.
-
-// Retry queues + drainers + IsWireSuppressedPropClass + ProcessedInit set
-// + DestroyLocalProp + Init POST / K2_DestroyActor PRE / takeObj PRE+POST
-// observers + their installers all moved to coop/prop_lifecycle.cpp
-// (2026-05-25 modular refactor; see coop/prop_lifecycle.h).
-
-
-// Top-level observer orchestrator: retried each NetPumpTick. Each
-// subsystem's Install() is idempotent and short-circuits once successful,
-// so this is safe to call every tick. The four subsystems are independent
-// (a late-loading BP class affects only its own subsystem):
-//   - coop::grab_observer::Install -- physics-prop grab/release/throw
-//   - coop::prop_lifecycle::InstallInventory -- propInventory_C::takeObj PRE/POST
-//   - coop::prop_lifecycle::Install -- Aprop_C::Init POST + K2_DestroyActor PRE
-//   - coop::npc_sync::Install -- Phase 5N1 NPC class allowlist + interceptor
-void InstallGrabObservers() {
-    coop::grab_observer::Install();
-    coop::prop_lifecycle::InstallInventory(&g_session);
-    coop::prop_lifecycle::Install(&g_session);
-    coop::npc_sync::Install(&g_session);
-    coop::item_activate::Install(&g_session);  // Phase 5F flashlight
-    coop::weather_sync::Install(&g_session);   // Phase 5W weather (host POST observers OR client PRE interceptors per role)
-    coop::garbage_sync::SetSession(&g_session);
-    coop::garbage_sync::Install();             // Phase 5G Inc1 garbage open-container client-side BP-tick cancel + Inc3 spawner suppress
-    // NOTE: coop::shutdown::Install / UpdateWindowTitle are called from
-    // the timeline tick lambda DIRECTLY (NetPumpTick / play branch /
-    // netloopback branch). They MUST NOT be gated on `g_netLocal` like
-    // this function is -- the HWND subclass + window title must work
-    // BEFORE the local player has been possessed (e.g. on OMEGA splash
-    // screen, where the user might X-close before gameplay).
-    // Audit-fix 2026-05-26 v3.
-}
-
-// Standalone shutdown hooks for the timeline tick. NOT gated on
-// g_netLocal -- runs regardless of local-player state. Idempotent.
+// Standalone shutdown hooks for the timeline tick. NOT gated on the local
+// player being live -- runs regardless of possession state. Idempotent.
+// Kept in harness because the HWND subclass + window title must work
+// BEFORE the local player has been possessed (e.g. on OMEGA splash where
+// the user might X-close before gameplay).
 void TickShutdownHooks() {
     coop::shutdown::Install(&g_session);
     coop::shutdown::UpdateWindowTitle();
@@ -334,317 +120,9 @@ void TickShutdownHooks() {
 
 // Autonomous grab test moved to harness/autotest.cpp.
 
-// Game thread, ~send-rate: push the local player's pose to the session and apply
-// the latest remote pose to the puppet (auto-spawning it on the first packet,
-// methodology 3.5). `displayOffsetX` shifts the rendered puppet sideways so a
-// LOOPBACK mirror (remote pose == our own) is visible next to us; 0 for real coop.
-void NetPumpTick(float displayOffsetX) {
-    // Lazily bring up the on-screen event feed once the GameInstance exists (it is the
-    // persistent widget outer). One-time FindObjectByClass until it succeeds, then it
-    // stops -- never a per-tick walk after init (post-ship audit).
-    if (!ue_wrap::hud_feed::IsInitialized()) {
-        if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) ue_wrap::hud_feed::Init(gi);
-    }
-
-    // Detect peer disconnect (Connected -> Handshaking/Disconnected). DESTROY the
-    // puppet -- a frozen-in-place puppet of a peer who already quit is confusing
-    // and clutters the world. event_feed will also have posted "X left the game"
-    // (a chat-feed line that now expires via hud_feed::Tick). If the peer ever
-    // reconnects, NetPumpTick auto-spawns a fresh puppet on the first new pose.
-    //
-    // Per-slot edge tracking: each slot's disconnect edge destroys ONLY
-    // that slot's puppet (+ cancels its in-progress snapshot drain);
-    // each slot's connect edge replays snapshot + flashlight + weather
-    // to ONLY that slot via Session::SendReliableToSlot. Late-joiners
-    // get caught up; existing peers see zero redundant traffic.
-    const bool isConnected = (g_session.state() == coop::net::ConnState::Connected);
-    const bool isHost = (g_session.role() == coop::net::Role::Host);
-    for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        // IsSlotReady (lanes configured) not IsSlotConnected (just has a
-        // conn handle): connect-edge replay must wait for ConfigureLanes
-        // to land in the Connected callback. Otherwise the snapshot
-        // PropSpawn fan-out + connect-time broadcasts ship on lane 0
-        // (default) instead of their assigned lane mapping. The
-        // disconnect callback clears both flags atomically so the
-        // disconnect-edge also fires correctly off IsSlotReady.
-        const bool slotConnected = g_session.IsSlotReady(slot);
-        if (g_wasConnectedBySlot[slot] && !slotConnected) {
-            if (g_puppets[slot].valid()) {
-                coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
-                g_puppets[slot].Destroy();
-                UE_LOGI("net: peer slot %d disconnected -- puppet destroyed", slot);
-            }
-            // Abort any pending/in-progress snapshot drain to this slot
-            // so we don't iterate ~1700 candidates calling
-            // SendReliableToSlot into a dead connection.
-            coop::prop_snapshot::CancelForSlot(slot);
-            // Per-slot subsystem cleanup. Only subsystems with actual
-            // per-slot state get a call here. prop_lifecycle / npc_sync /
-            // weather_sync hold GLOBAL state that the aggregate
-            // OnDisconnect below handles correctly on full disconnect --
-            // no empty stubs (RULE 1).
-            //  - remote_prop: release this slot's held prop so it
-            //    resumes physics on remaining peers (kinematically
-            //    frozen otherwise; no PropPose/PropRelease arriving
-            //    for a departed peer).
-            //  - item_activate: drop this slot's pending flashlight
-            //    apply so a future peer reusing the slot doesn't
-            //    inherit the departed peer's stashed state.
-            // Wire-layer per-slot state (reliableInbox filter,
-            // peerConns_, remote pose) is already scoped in
-            // Session::OnConnectionStatusChanged.
-            coop::remote_prop::OnDisconnectForSlot(slot);
-            coop::item_activate::OnDisconnectForSlot(slot);
-        }
-        if (!g_wasConnectedBySlot[slot] && slotConnected) {
-            // Per-slot connect-edge replay.
-            // - HOST -> NEW CLIENT (slot 1..3): full snapshot + flashlight +
-            //   weather replay so the new client converges to host state.
-            // - CLIENT -> HOST (slot 0): announce LOCAL flashlight state so
-            //   the host can show it on our puppet. (Weather is host-
-            //   authoritative; snapshot is host->client only.)
-            if (isHost && slot >= 1) {
-                UE_LOGI("net: peer slot %d connect edge -- replaying snapshot + flashlight + weather", slot);
-                coop::prop_snapshot::TriggerForSlot(slot);
-                coop::item_activate::QueueConnectBroadcastForSlot(slot);
-                coop::weather_sync::QueueConnectBroadcastForSlot(slot);
-            } else if (!isHost && slot == 0) {
-                UE_LOGI("net: host (slot 0) connect edge -- replaying local flashlight");
-                coop::item_activate::QueueConnectBroadcastForSlot(slot);
-            }
-        }
-        g_wasConnectedBySlot[slot] = slotConnected;
-    }
-    if (g_wasConnected && !isConnected) {
-        // Aggregate disconnect (all peers gone). Fire the global
-        // OnDisconnect calls -- the per-slot edge block above already
-        // handled subsystems with per-slot state, this catches
-        // subsystems with session-wide state (weather_sync, npc_sync
-        // host-side counter, prop_lifecycle dedupe set).
-        // Stashed state belongs to the now-dead session; replaying it
-        // on the next session (possibly a different machine after IP
-        // change) would carry wrong-peer state. A fresh snapshot
-        // enqueues on the next connected edge.
-        coop::remote_prop::ForceRelease();
-        const auto propStats = coop::prop_lifecycle::OnDisconnect();
-        const size_t snapPending = coop::prop_snapshot::OnDisconnect();
-        coop::npc_sync::OnDisconnect();
-        coop::item_activate::OnDisconnect();
-        coop::weather_sync::OnDisconnect();
-        UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
-                snapPending, propStats.initProcessedDropped);
-    }
-    g_wasConnected = isConnected;
-
-    // Process up to ~100 snapshot candidates per tick if a snapshot
-    // enumeration is in progress (no-op on empty vector).
-    if (isConnected) coop::prop_snapshot::DrainChunk();
-
-    // Phase 5F Inc5 (2026-05-26) per-tick drain. Handles:
-    //   - retrying any queued connect-time broadcast until the reliable
-    //     channel accepts it
-    //   - applying any per-peer ItemActivate payloads that arrived BEFORE
-    //     the corresponding puppet was spawned
-    // Cheap (early-return) when no pending state. Independent of
-    // isConnected: even on disconnect-edge frame TickConnect's broadcast
-    // check is a session->connected() guard, and the per-peer apply only
-    // runs if a puppet is in the registry (which is cleared on disconnect).
-    coop::item_activate::TickConnect();
-
-    // Phase 5W Inc1 (2026-05-26) per-tick weather drain. Retries the
-    // host's queued connect-edge weather broadcast until the reliable
-    // channel accepts it. Same shape as item_activate's TickConnect.
-    coop::weather_sync::TickConnect();
-
-    // Per-feature PropSpawn/PropDestroy drain calls retired 2026-05-27 --
-    // reliable_channel.cpp queues internally + drains as ACKs arrive.
-
-    if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
-    if (!g_netLocal) g_netLocal = coop::players::Registry::Get().Local();
-    if (g_netLocal) {
-        // Re-resolve the controller only when missing or invalidated; the
-        // controller pointer stays stable between possess events. Caching here
-        // saves ~250 ProcessEvent dispatches/sec at 125 Hz pump (post-ship audit).
-        if (g_netLocalController && !R::IsLive(g_netLocalController)) g_netLocalController = nullptr;
-        if (!g_netLocalController) g_netLocalController = ue_wrap::engine::GetController(g_netLocal);
-        // One-shot install of the grab-observer hooks (Stage 1 of [[project-
-        // physics-object-pickup]]). Class is reachable now that local is live;
-        // idempotent on g_grabObserversInstalled.
-        InstallGrabObservers();  // each subsystem's Install is idempotent + retries until ready (audit C-2)
-        coop::net::PoseSnapshot mine;
-        if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) g_session.SetLocalPose(mine);
-
-        // v4: held-prop replication. Read mainPlayer.grabbing_actor; if non-
-        // null, build a PropPoseSnapshot from the prop's current world transform
-        // and publish to the net thread. On the edge held -> not-held, send a
-        // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
-        // never rely solely on the 500 ms stream-stop timeout).
-        // State is FILE-SCOPE (g_lastHeldProp/Key/g_propEmitCount) -- a
-        // static-local would carry stale state across session restart.
-        void* heldActor = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(g_netLocal) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
-        // 2026-05-27: chipPile/clump pickup sets mainPlayer.holding_actor
-        // INSTEAD of grabbing_actor (their morph path doesn't use PhysicsHandle).
-        // Fall back to holding_actor so the PropPose stream covers them too.
-        // Offset resolved via reflected_offset so sdk_check catches drift on
-        // future VOTV recooks (audit IMPORTANT-2 fix, 2026-05-27).
-        if (!heldActor) {
-            const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
-            if (holdingOff >= 0) {
-                void* maybeHolding = *reinterpret_cast<void**>(
-                    reinterpret_cast<uint8_t*>(g_netLocal) + holdingOff);
-                if (maybeHolding && R::IsLive(maybeHolding) &&
-                    ue_wrap::prop::IsKeyedInteractable(maybeHolding)) {
-                    heldActor = maybeHolding;
-                }
-            }
-        }
-        if (heldActor && R::IsLive(heldActor)) {
-            const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
-            // Diagnostic probes retired 2026-05-27 -- OPEN-A confirmed
-            // per-tick SetActorLocation (candidate B); OPEN-D confirmed
-            // fresh clump GetKey == None (handled by prop_lifecycle's
-            // EnsureKeyForBroadcast synth-key helper).
-            coop::net::PropPoseSnapshot pp{};
-            pp.key.len = 0;
-            for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
-                // The save UUIDs are ASCII; this lossless narrowing is fine.
-                pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
-            }
-            const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
-            const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
-            pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-            // Normalize at the wire boundary: physics-prop rotation accumulates
-            // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
-            // Pitch=-270; receiver's canonical (-180,180] guard would reject.
-            // Mirrors PoseSnapshot's NormalizeAxis at ReadLocalPose (audit
-            // 2026-05-24).
-            pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
-            pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
-            pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-            g_session.SetLocalPropPose(true, pp);
-            // Throttled emit log: first 3 + every 60th, matches receiver
-            // throttle so the two logs can be diff'd line-for-line.
-            const uint64_t n = ++g_propEmitCount;
-            if (n <= 3 || (n % 60) == 0) {
-                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d",
-                        static_cast<unsigned long long>(n),
-                        pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
-                        static_cast<int>(pp.key.len));
-            }
-            g_lastHeldProp = heldActor;
-            g_lastHeldKey = pp.key;
-        } else if (g_lastHeldProp) {
-            // Edge: was holding, now not. Stop sending PropPose + tell peer.
-            //
-            // v5: read the body's CURRENT linear+angular velocity via
-            // prop::GetPhysicsVelocity. By the time this branch runs, the
-            // engine has already executed (on this tick): the BP graph
-            // clearing grabbing_actor, the PHC.ReleaseComponent call, and
-            // any post-release AddImpulse the BP issues. PhysX has not
-            // stepped yet, so the body still carries the inherited
-            // kinematic-tracking velocity (the "вжух" mouse-flick launch
-            // energy) PLUS any impulse-derived velocity, summed into ONE
-            // velocity. We forward both linear + angular so the receiver
-            // can SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
-            // for an identical launch.
-            g_session.SetLocalPropPose(false, {});
-            ue_wrap::prop::VelocityState vel{};
-            if (R::IsLive(g_lastHeldProp)) {
-                vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
-            }
-            const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
-                                   vel.linearCmS.Y * vel.linearCmS.Y +
-                                   vel.linearCmS.Z * vel.linearCmS.Z;
-            UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
-                    vel.ok ? 1 : 0,
-                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                    std::sqrt(linMagSq),
-                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            g_session.SendPropRelease(g_lastHeldKey,
-                                      vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                      vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            g_lastHeldProp = nullptr;
-            g_lastHeldKey = {};
-        }
-    }
-
-    // Per-slot pose drive. On HOST, iterate slots 1..kMaxPeers-1
-    // (clients). On CLIENT, iterate slot 0 only (the host). Each slot
-    // has its own RemotePlayer puppet + spawn-retry backoff.
-    {
-        using namespace std::chrono;
-        // Per-slot spawn retry timer (static-local: harmless across session
-        // restarts because the timer is monotonic and a stale "wait until X"
-        // either lets us spawn immediately if X is in the past, or makes us
-        // wait the (bounded) remaining time -- no risk of carrying state
-        // that affects correctness).
-        static std::array<steady_clock::time_point, coop::players::kMaxPeers> sNextSpawnAttempt{};
-        const auto now = steady_clock::now();
-        // isHost defined in the outer scope (per-slot edge tracking). Reuse it.
-        const int firstSlot = isHost ? 1 : 0;
-        const int lastSlot  = isHost ? coop::players::kMaxPeers : 1;
-        // Host self-assigns slot 0 in the registry. Idempotent setter so it's
-        // fine to run every tick. Client LocalPeerId is set asynchronously by
-        // the wire-layer AssignPeerSlot handler (event_feed.cpp).
-        if (isHost) {
-            coop::players::Registry::Get().SetLocalPeerId(coop::players::kPeerIdHost);
-        }
-        for (int slot = firstSlot; slot < lastSlot; ++slot) {
-            coop::net::PoseSnapshot remote;
-            bool isNew = false;
-            if (!g_session.TryGetRemotePose(slot, remote, &isNew)) continue;
-            if (!g_puppets[slot].valid()) {
-                // Spawn-retry backoff: BeginDeferredActorSpawnFromClass refuses if
-                // the world is mid-transition (the OMEGA->story transition under
-                // multi-instance CPU contention can take many seconds; refused
-                // spawns reach hundreds/sec at 60 Hz pump rate -- pure log noise +
-                // wasted reflection calls). Only retry once per second after a
-                // failure (RULE 1: don't crutch the engine, just wait for it).
-                if (now < sNextSpawnAttempt[slot]) continue;
-                UE_LOGI("net: first remote pose on slot %d -> auto-spawning puppet", slot);
-                if (!g_puppets[slot].Spawn()) {
-                    UE_LOGW("net: slot %d puppet spawn failed; will retry in 1 s", slot);
-                    sNextSpawnAttempt[slot] = now + seconds(1);
-                    continue;
-                }
-                // Register with the central Registry. peerId == slot directly
-                // (no 1v1 hardcode anymore).
-                coop::players::Registry::Get().RegisterPuppet(
-                    static_cast<uint8_t>(slot), &g_puppets[slot]);
-            }
-            // Only RE-BASE the interpolation on a NEW packet; re-pushing the latest
-            // every frame would zero `errorPos_` mid-window and freeze motion. The
-            // per-frame advance happens in Tick() below.
-            if (isNew) {
-                coop::net::PoseSnapshot withOffset = remote;
-                withOffset.x += displayOffsetX;  // loopback mirror shift (0 for real coop)
-                g_puppets[slot].SetTargetPose(withOffset);
-            }
-        }
-    }
-    // Tick every live puppet (independent of which slot received pose data
-    // this frame -- the per-puppet interpolation needs Tick every frame even
-    // when no fresh pose arrived).
-    for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        if (g_puppets[slot].valid()) g_puppets[slot].Tick();
-    }
-
-    // v4: receiver-side held-prop driver. Drains the latest PropPose from the
-    // session and applies it (lookup-by-Key on first arrival, transform writes
-    // thereafter). Stream-stop timeout (>500 ms) treated as implicit release.
-    coop::remote_prop::Tick(g_session);
-
-    // Surface session events (joins/disconnects) to the feed + send our
-    // Join. Pass g_netLocal so remote_prop::OnRelease can call
-    // Aprop_C.thrown(player) for the natural throw-sound dispatch (Path
-    // B in research/findings/votv-throw-sound-path-2026-05-24.md).
-    coop::event_feed::Update(g_session, g_netLocal);
-
-    // Expire old chat-feed lines (10 s TTL) so a "X joined the game" line
-    // doesn't linger forever like the early version did.
-    ue_wrap::hud_feed::Tick();
-}
+// NetPumpTick body extracted to coop/net_pump.cpp (PR-4.13). Harness call
+// sites in the timeline tick lambdas dispatch via
+// coop::net_pump::Tick(g_session, displayOffsetX) instead.
 
 // Runs on the game thread: log an actor's default subobjects (its components),
 // so we can find the mesh component(s) that carry the player's visible body.
@@ -743,7 +221,7 @@ void SpawnSecondPlayerWhenReady() {
         }
         auto state = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 not-ready,2 ok,3 failed
         Post([state, i] {
-            if (g_orphan.valid()) { state->store(2); return; }
+            if (coop::net_pump::Puppet(1).valid()) { state->store(2); return; }
             void* local = coop::players::Registry::Get().Local();
             const bool diag = (i % 20 == 0);  // ~every 2 s
             if (!local) {
@@ -766,7 +244,7 @@ void SpawnSecondPlayerWhenReady() {
                 return;
             }
             UE_LOGI("play: mainPlayer_C ready @ (%.0f,%.0f,%.0f) -- spawning puppet", p.X, p.Y, p.Z);
-            state->store(g_orphan.Spawn() ? 2 : 3);
+            state->store(coop::net_pump::Puppet(1).Spawn() ? 2 : 3);
         });
         while (state->load() == 0) ::Sleep(5);  // let the posted check run (~1 frame)
         const int s = state->load();
@@ -872,13 +350,13 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("pre-spawn"); });
         Post([] {
             UE_LOGI("harness: === spawn coop::RemotePlayer (2nd mainPlayer_C) ===");
-            g_orphan.Spawn();
+            coop::net_pump::Puppet(1).Spawn();
         });
         ::Sleep(2000);
         Post([] { Report("post-spawn"); });
         Post([] {
-            if (g_orphan.valid()) {
-                ue_wrap::FVector p = g_orphan.GetLocation();
+            if (coop::net_pump::Puppet(1).valid()) {
+                ue_wrap::FVector p = coop::net_pump::Puppet(1).GetLocation();
                 UE_LOGI("harness: orphan post-spawn pos=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
             }
         });
@@ -887,11 +365,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         for (int i = 1; i <= 5; ++i) {
             ::Sleep(3000);
             Post([i] {
-                if (!g_orphan.valid()) { UE_LOGW("harness: drive %d -- no orphan", i); return; }
-                ue_wrap::FVector p = g_orphan.GetLocation();
+                if (!coop::net_pump::Puppet(1).valid()) { UE_LOGW("harness: drive %d -- no orphan", i); return; }
+                ue_wrap::FVector p = coop::net_pump::Puppet(1).GetLocation();
                 p.X += 150.f;
-                const bool ok = g_orphan.SetLocation(p);
-                ue_wrap::FVector got = g_orphan.GetLocation();
+                const bool ok = coop::net_pump::Puppet(1).SetLocation(p);
+                ue_wrap::FVector got = coop::net_pump::Puppet(1).GetLocation();
                 UE_LOGI("harness: drive step %d set X=%.0f ok=%d -> read (%.0f,%.0f,%.0f)",
                         i, p.X, ok, got.X, got.Y, got.Z);
             });
@@ -992,20 +470,14 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 ::Sleep(100);  // let the posted task run before session.Start
             }
             coop::event_feed::SetLocalNickname(cfg::ReadNickname());
-            g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
-            // Per-slot edge-detector array. Without this reset a future
-            // Session::Stop()/Start() cycle on the same process would see
-            // stale `true` entries from the prior session on the first
-            // pump tick of the new one -- firing a phantom disconnect
-            // edge and suppressing the legitimate connect-edge replay.
-            g_wasConnectedBySlot.fill(false);
             coop::event_feed::OnSessionStart();
-            // v4: reset held-prop edge state so a session restart doesn't
-            // carry a stale prop pointer/key from the prior session (audit
-            // fix 2026-05-24).
-            g_lastHeldProp = nullptr;
-            g_lastHeldKey = {};
-            g_propEmitCount = 0;
+            // Reset net_pump edge-detector state (g_wasConnected[BySlot] +
+            // held-prop pointer/key/count). Without this a session
+            // Stop()/Start() cycle on the same process would carry stale
+            // entries into the new session -- phantom disconnect edge,
+            // suppressed connect-edge replay, or a SendPropRelease for the
+            // OLD session's key on the NEW session (audit fix 2026-05-24).
+            coop::net_pump::OnSessionStart();
             coop::prop_lifecycle::SetSession(&g_session);
             coop::npc_sync::SetSession(&g_session);
             coop::prop_snapshot::SetSession(&g_session);
@@ -1073,7 +545,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
             int tick = 0;
             while (!coop::shutdown::IsShuttingDown()) {
-                Post([] { NetPumpTick(0.f); coop::nameplate::Update(); TickShutdownHooks(); });
+                Post([] { coop::net_pump::Tick(g_session, 0.f); coop::nameplate::Update(); TickShutdownHooks(); });
                 // Z-trace tick: every ~500 ms log the local actor.Z AND the
                 // local mesh_playerVisible.world.Z (the value the source now
                 // streams). This catches the "puppet jumps afloat after init"
@@ -1103,9 +575,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                         // puppet WON'T see, because we don't stream it anymore.
                         UE_LOGI("Z-trace: local actor.Z=%.2f mesh.RelLoc.Z=%.2f mesh.world.Z=%.2f (delta=%.2f)%s",
                                 actorLoc.Z, meshRelZ, meshWorldZ, meshWorldZ - actorLoc.Z,
-                                g_orphan.valid() ? "" : " (puppet not spawned)");
-                        if (g_orphan.valid()) {
-                            const auto pp = g_orphan.GetLocation();
+                                coop::net_pump::Puppet(1).valid() ? "" : " (puppet not spawned)");
+                        if (coop::net_pump::Puppet(1).valid()) {
+                            const auto pp = coop::net_pump::Puppet(1).GetLocation();
                             UE_LOGI("Z-trace: puppet world.Z=%.2f (= wire.actor.Z + cached local mesh.RelLoc.Z)",
                                     pp.Z);
                         }
@@ -1117,7 +589,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                                 static_cast<int>(g_session.state()),
                                 static_cast<unsigned long long>(g_session.packetsSent()),
                                 static_cast<unsigned long long>(g_session.packetsRecv()),
-                                g_orphan.valid() ? 1 : 0);
+                                coop::net_pump::Puppet(1).valid() ? 1 : 0);
                         // Position diagnostic: log the local actor AND the puppet
                         // (if alive) world positions. Lets us see whether the
                         // autotest teleport stuck + whether the pose stream is
@@ -1132,8 +604,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                             UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f) actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
                                     loc.X, loc.Y, loc.Z, rot.Yaw, cRot.Pitch, cRot.Yaw);
                         }
-                        if (g_orphan.valid()) {
-                            const auto p = g_orphan.GetLocation();
+                        if (coop::net_pump::Puppet(1).valid()) {
+                            const auto p = coop::net_pump::Puppet(1).GetLocation();
                             UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
                         }
                     });
@@ -1164,7 +636,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // (observe THIS instance's own UFunctions); zero wire dependency.
             while (!coop::shutdown::IsShuttingDown()) {
                 Post([] {
-                    InstallGrabObservers();  // each subsystem's Install is idempotent + retries until ready (audit C-2)
+                    coop::net_pump::InstallObservers(g_session);  // idempotent; net branch calls the same fn from net_pump::Tick
                     coop::nameplate::Update();
                     TickShutdownHooks();
                 });
@@ -1184,13 +656,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
         coop::event_feed::SetLocalNickname(cfg::ReadNickname());
-        g_wasConnected = false;  // fresh edge-detector for the disconnect cleanup
-        g_wasConnectedBySlot.fill(false);
         coop::event_feed::OnSessionStart();
-        // Same reset as the play branch -- audit fe68c03 missed this site.
-        g_lastHeldProp = nullptr;
-        g_lastHeldKey = {};
-        g_propEmitCount = 0;
+        coop::net_pump::OnSessionStart();
         coop::prop_lifecycle::SetSession(&g_session);
         coop::npc_sync::SetSession(&g_session);
         coop::prop_snapshot::SetSession(&g_session);
@@ -1201,14 +668,14 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
         while (!coop::shutdown::IsShuttingDown()) {
-            Post([] { NetPumpTick(250.f); coop::nameplate::Update(); TickShutdownHooks(); });
+            Post([] { coop::net_pump::Tick(g_session, 250.f); coop::nameplate::Update(); TickShutdownHooks(); });
             if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz
                 Post([] {
                     UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",
                             static_cast<int>(g_session.state()),
                             static_cast<unsigned long long>(g_session.packetsSent()),
                             static_cast<unsigned long long>(g_session.packetsRecv()),
-                            g_orphan.valid() ? 1 : 0);
+                            coop::net_pump::Puppet(1).valid() ? 1 : 0);
                 });
             }
             ::Sleep(16);  // ~60 Hz pump for smooth Tick() interp (see play-net branch)
@@ -1224,26 +691,26 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(2000);
         Post([] {
             UE_LOGI("show: === spawn skin-puppet ===");
-            g_orphan.Spawn();
+            coop::net_pump::Puppet(1).Spawn();
         });
         ::Sleep(3000);
         Post([] {
-            if (!g_orphan.valid()) { UE_LOGW("show: no puppet"); return; }
-            const ue_wrap::FVector at = g_orphan.GetLocation();
+            if (!coop::net_pump::Puppet(1).valid()) { UE_LOGW("show: no puppet"); return; }
+            const ue_wrap::FVector at = coop::net_pump::Puppet(1).GetLocation();
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
             // Same loc/yaw, just bump speed -- the first SetTargetPose since spawn
             // snaps (hasPose_ false), then Tick applies. AnimBP locomotion picks it up.
             coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/200.f};
-            g_orphan.SetTargetPose(s);
-            g_orphan.Tick();
+            coop::net_pump::Puppet(1).SetTargetPose(s);
+            coop::net_pump::Puppet(1).Tick();
         });
         ::Sleep(4000);
         Post([] {
-            if (!g_orphan.valid()) return;
-            const ue_wrap::FVector at = g_orphan.GetLocation();
+            if (!coop::net_pump::Puppet(1).valid()) return;
+            const ue_wrap::FVector at = coop::net_pump::Puppet(1).GetLocation();
             coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/0.f};
-            g_orphan.SetTargetPose(s);
-            g_orphan.Tick();
+            coop::net_pump::Puppet(1).SetTargetPose(s);
+            coop::net_pump::Puppet(1).Tick();
             UE_LOGI("show: back to idle (speed=0)");
         });
         UE_LOGI("harness: ==== SHOW DONE ====");
@@ -1255,10 +722,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             R::DebugProbeSuperStructOffset();
             void* local = coop::players::Registry::Get().Local();
             DumpComponents("local mainPlayer_C", local);
-            g_orphan.Spawn();
+            coop::net_pump::Puppet(1).Spawn();
         });
         ::Sleep(2000);
-        Post([] { DumpComponents("orphan mainPlayer_C", g_orphan.actor()); });
+        Post([] { DumpComponents("orphan mainPlayer_C", coop::net_pump::Puppet(1).actor()); });
         UE_LOGI("harness: ==== SKIN INSPECT DONE ====");
     } else if (scenario == "newgame") {
         ::Sleep(5000);
