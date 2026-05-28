@@ -3,6 +3,7 @@
 #include "coop/remote_prop.h"
 
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -11,6 +12,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -30,13 +32,31 @@ namespace E = ue_wrap::engine;
 // processes); cached.mesh is its StaticMeshComponent (the UPrimitiveComponent
 // physics ops target). lastKey caches the wire Key we resolved for `actor` so
 // per-tick PropPose with the same Key skips the GUObjectArray walk.
+//
+// PR-4.6 (2026-05-28, closes code-explorer Finding E): one ActiveDrive per
+// peer slot so multiple clients can each kinematically drive their own held
+// prop concurrently. Pre-PR-4.6 this was a single ActiveDrive instance --
+// if two clients held different props at once, their PropPose streams
+// would race-overwrite each other on the host.
 struct ActiveDrive {
     void*        actor = nullptr;
     void*        mesh = nullptr;
     std::string  lastKey;        // ASCII (the Aprop_C save UUID format)
     uint64_t     lastApplyMs = 0;
 };
-ActiveDrive g_drive;
+std::array<ActiveDrive, coop::players::kMaxPeers> g_drives{};
+
+// True if `actor` is the cached drive target of ANY slot's drive state.
+// Used by OnSpawn convergence skip + OnDestroy clear paths -- they don't
+// care which slot owns the drive, only that the actor is locked to the
+// PropPose stream and shouldn't be stomped by a snapshot convergence.
+bool IsActorUnderAnyDrive(void* actor) {
+    if (!actor) return false;
+    for (const auto& d : g_drives) {
+        if (d.actor == actor) return true;
+    }
+    return false;
+}
 
 // Cached UFunction pointers for the engine PrimComp ops we call per release.
 // SetSimulatePhysics + SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
@@ -217,106 +237,119 @@ std::wstring KeyToWString(const coop::net::WireKey& k) {
     return s;
 }
 
-// Compare WireKey vs cached ASCII key. Tiny helper -- prop Keys are ASCII
-// (base64-ish save UUIDs), so comparing byte-by-byte vs the cached string
-// is correct.
-bool KeyMatchesCache(const coop::net::WireKey& k) {
-    if (k.len != g_drive.lastKey.size()) return false;
-    return std::memcmp(k.data, g_drive.lastKey.data(), k.len) == 0;
+// Compare WireKey vs the cached ASCII key for the drive at `slot`. Prop
+// Keys are ASCII (base64-ish save UUIDs), so byte-by-byte comparison is
+// correct.
+bool KeyMatchesCache(int slot, const coop::net::WireKey& k) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
+    const auto& d = g_drives[slot];
+    if (k.len != d.lastKey.size()) return false;
+    return std::memcmp(k.data, d.lastKey.data(), k.len) == 0;
 }
 
-void ResolveAndStartDrive(const coop::net::WireKey& k) {
+// Scan all slots for a drive whose cached lastKey matches `k`. Returns the
+// slot index, or -1 if no slot is currently driving a prop with this key.
+// Used by OnRelease (peer's release packet carries a key but not a slot --
+// we find which slot's drive owned it).
+int FindSlotByKey(const coop::net::WireKey& k) {
+    for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
+        if (g_drives[slot].actor && KeyMatchesCache(slot, k)) return slot;
+    }
+    return -1;
+}
+
+void ResolveAndStartDrive(int slot, const coop::net::WireKey& k) {
     const std::wstring keyW = KeyToWString(k);
     void* prop = ue_wrap::prop::FindByKeyString(keyW);
     if (!prop) {
-        UE_LOGW("remote_prop: incoming PropPose key '%ls' (len=%d) -- no local match in GUObjectArray",
-                keyW.c_str(), static_cast<int>(k.len));
+        UE_LOGW("remote_prop: slot %d incoming PropPose key '%ls' (len=%d) -- no local match in GUObjectArray",
+                slot, keyW.c_str(), static_cast<int>(k.len));
         return;
     }
     void* mesh = ue_wrap::prop::GetStaticMesh(prop);
     if (!mesh) {
-        UE_LOGW("remote_prop: prop %p has null StaticMesh -- cannot drive", prop);
+        UE_LOGW("remote_prop: slot %d prop %p has null StaticMesh -- cannot drive", slot, prop);
         return;
     }
-    UE_LOGI("remote_prop: GRAB-IN '%ls' -> local Aprop_C=%p mesh=%p (SetSimulatePhysics false)",
-            keyW.c_str(), prop, mesh);
+    UE_LOGI("remote_prop: slot %d GRAB-IN '%ls' -> local Aprop_C=%p mesh=%p (SetSimulatePhysics false)",
+            slot, keyW.c_str(), prop, mesh);
     // Disable PhysX simulation so SetActorLocation we drive per packet sticks
     // (otherwise PhysX would yank the body back to its falling trajectory).
     DriveSimulate(mesh, false);
-    g_drive.actor = prop;
-    g_drive.mesh  = mesh;
-    g_drive.lastKey.assign(k.data, k.len);
+    g_drives[slot].actor = prop;
+    g_drives[slot].mesh  = mesh;
+    g_drives[slot].lastKey.assign(k.data, k.len);
 }
 
 }  // namespace
 
 void Tick(coop::net::Session& session) {
     if (!session.connected()) {
-        if (g_drive.actor) ForceRelease();
+        ForceRelease();
         return;
     }
-    // PR-4.4: switch to the slot-aware overload (unblocks deletion of the
-    // 0-arg backward-compat overload per RULE 2). Today g_drive is a single
-    // ActiveDrive instance -- only ONE prop can be kinematically driven on
-    // this receiver at a time. We pick the canonical "the remote" slot
-    // (host case: client #1 at slot 1; client case: host at slot 0) to
-    // match pre-PR-4.4 1v1 behavior. The full per-slot DriveState[kMaxPeers]
-    // (audit-explorer Finding E) where multiple clients can concurrently
-    // hold props is a follow-up PR after PR-4.4 lands.
-    const int canonicalSlot = (session.role() == coop::net::Role::Host) ? 1 : 0;
-    coop::net::PropPoseSnapshot pose{};
-    bool isNew = false;
-    const bool have = session.TryGetRemotePropPose(canonicalSlot, pose, &isNew);
+    // PR-4.6: per-slot drive iteration. On HOST: scan slots 1..kMaxPeers-1
+    // (each connected client can drive its own held prop independently).
+    // On CLIENT: scan slot 0 only (the host's puppet is the only prop-pose
+    // source from the client's POV).
+    const bool isHost = (session.role() == coop::net::Role::Host);
+    const int firstSlot = isHost ? 1 : 0;
+    const int lastSlot  = isHost ? static_cast<int>(coop::players::kMaxPeers) : 1;
     const uint64_t nowMs = NowMs();
-    if (have && isNew) {
-        // First snapshot OR key changed -> resolve + SetSimulatePhysics(false).
-        if (!g_drive.actor || !KeyMatchesCache(pose.key)) {
-            if (g_drive.actor) {
-                // The peer switched to a different prop without sending Release
-                // -- treat the prior as implicit release (re-enable physics).
-                UE_LOGI("remote_prop: implicit release (peer switched to a new key)");
-                DriveSimulate(g_drive.mesh, true);
-                g_drive.actor = nullptr;
-                g_drive.mesh = nullptr;
-                g_drive.lastKey.clear();
+    for (int slot = firstSlot; slot < lastSlot; ++slot) {
+        ActiveDrive& drive = g_drives[slot];
+        coop::net::PropPoseSnapshot pose{};
+        bool isNew = false;
+        const bool have = session.TryGetRemotePropPose(slot, pose, &isNew);
+        if (have && isNew) {
+            // First snapshot OR key changed -> resolve + SetSimulatePhysics(false).
+            if (!drive.actor || !KeyMatchesCache(slot, pose.key)) {
+                if (drive.actor) {
+                    // The peer at this slot switched to a different prop
+                    // without sending Release -- implicit release (re-enable
+                    // physics on the prior body).
+                    UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key)", slot);
+                    DriveSimulate(drive.mesh, true);
+                    drive.actor = nullptr;
+                    drive.mesh = nullptr;
+                    drive.lastKey.clear();
+                }
+                ResolveAndStartDrive(slot, pose.key);
             }
-            ResolveAndStartDrive(pose.key);
-        }
-        if (g_drive.actor && R::IsLive(g_drive.actor)) {
-            ue_wrap::FVector  loc{pose.x, pose.y, pose.z};
-            ue_wrap::FRotator rot{pose.pitch, pose.yaw, pose.roll};
-            E::SetActorLocation(g_drive.actor, loc);
-            E::SetActorRotation(g_drive.actor, rot);
-            g_drive.lastApplyMs = nowMs;
-            // Throttled position log: first 3 applies + every 60th after.
-            // Confirms per-tick drive arrival + lets us compare host-vs-client
-            // world coords cross-peer.
-            static uint64_t sApplyCount = 0;
-            const uint64_t n = ++sApplyCount;
-            if (n <= 3 || (n % 60) == 0) {
-                UE_LOGI("remote_prop: drive #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f)",
-                        static_cast<unsigned long long>(n),
-                        loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll);
+            if (drive.actor && R::IsLive(drive.actor)) {
+                ue_wrap::FVector  loc{pose.x, pose.y, pose.z};
+                ue_wrap::FRotator rot{pose.pitch, pose.yaw, pose.roll};
+                E::SetActorLocation(drive.actor, loc);
+                E::SetActorRotation(drive.actor, rot);
+                drive.lastApplyMs = nowMs;
+                // Throttled position log: first 3 applies + every 60th after
+                // per slot. Helps debug cross-peer position parity.
+                static std::array<uint64_t, coop::players::kMaxPeers> sApplyCount{};
+                const uint64_t n = ++sApplyCount[slot];
+                if (n <= 3 || (n % 60) == 0) {
+                    UE_LOGI("remote_prop: slot %d drive #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f)",
+                            slot, static_cast<unsigned long long>(n),
+                            loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll);
+                }
+            } else if (drive.actor) {
+                // The cached actor died (level unload / GC). Drop cleanly.
+                UE_LOGW("remote_prop: slot %d cached actor no longer live -- dropping drive", slot);
+                drive.actor = nullptr;
+                drive.mesh = nullptr;
+                drive.lastKey.clear();
             }
-        } else if (g_drive.actor) {
-            // The cached actor died (level unload / GC). Drop the drive cleanly.
-            UE_LOGW("remote_prop: cached actor no longer live -- dropping drive");
-            g_drive.actor = nullptr;
-            g_drive.mesh = nullptr;
-            g_drive.lastKey.clear();
+            continue;
         }
-        return;
-    }
-    // No new packet -- check the stream-stop timeout (treat as implicit
-    // release: peer stopped sending PropPose, e.g. their grab ended OR they
-    // disconnected without RELEASE).
-    if (g_drive.actor && (nowMs - g_drive.lastApplyMs) > 500) {
-        UE_LOGI("remote_prop: implicit release (%llu ms since last PropPose)",
-                static_cast<unsigned long long>(nowMs - g_drive.lastApplyMs));
-        DriveSimulate(g_drive.mesh, true);
-        g_drive.actor = nullptr;
-        g_drive.mesh = nullptr;
-        g_drive.lastKey.clear();
+        // No new packet for THIS slot -- check the stream-stop timeout
+        // (treat as implicit release: peer stopped sending PropPose).
+        if (drive.actor && (nowMs - drive.lastApplyMs) > 500) {
+            UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
+                    slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
+            DriveSimulate(drive.mesh, true);
+            drive.actor = nullptr;
+            drive.mesh = nullptr;
+            drive.lastKey.clear();
+        }
     }
 }
 
@@ -330,15 +363,19 @@ void OnRelease(const coop::net::PropReleasePayload& payload, void* localPlayer) 
             keyW.c_str(),
             payload.linVelX, payload.linVelY, payload.linVelZ, linSpeed,
             payload.angVelX, payload.angVelY, payload.angVelZ);
-    // If we don't currently drive this prop (e.g. release arrived without a
-    // preceding PropPose stream because we missed/dropped them), resolve fresh
-    // so we can re-enable physics + apply velocity + fire thrown event.
+    // PR-4.6: find which slot's drive owns this key (peer's release packet
+    // carries the prop key but not their peer slot -- the wire didn't add
+    // sender attribution to the payload itself). Pre-PR-4.6 we only had
+    // one global drive; now we scan all slots.
     void* propActor = nullptr;
     void* meshToActOn = nullptr;
-    if (g_drive.actor && KeyMatchesCache(payload.key)) {
-        propActor = g_drive.actor;
-        meshToActOn = g_drive.mesh;
+    const int releasedSlot = FindSlotByKey(payload.key);
+    if (releasedSlot >= 0) {
+        propActor = g_drives[releasedSlot].actor;
+        meshToActOn = g_drives[releasedSlot].mesh;
     } else if (void* prop = ue_wrap::prop::FindByKeyString(keyW)) {
+        // Release arrived without a preceding PropPose stream (we missed/
+        // dropped them) -- resolve fresh.
         propActor = prop;
         meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
     }
@@ -362,9 +399,13 @@ void OnRelease(const coop::net::PropReleasePayload& payload, void* localPlayer) 
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
     }
-    g_drive.actor = nullptr;
-    g_drive.mesh = nullptr;
-    g_drive.lastKey.clear();
+    // PR-4.6: clear only the matching slot's drive state (was: clear the
+    // single global g_drive). Leaves other slots' active drives intact.
+    if (releasedSlot >= 0) {
+        g_drives[releasedSlot].actor = nullptr;
+        g_drives[releasedSlot].mesh = nullptr;
+        g_drives[releasedSlot].lastKey.clear();
+    }
 }
 
 namespace {
@@ -533,8 +574,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         // teleport-pop until the next PropPose Tick corrects it. The
         // PropPose stream is authoritative for held props; let it own
         // position while held.
-        if (existing == g_drive.actor) {
-            UE_LOGI("remote_prop::OnSpawn: key '%ls' is under active kinematic drive -- skipping convergence (PropPose owns position)",
+        if (IsActorUnderAnyDrive(existing)) {
+            UE_LOGI("remote_prop::OnSpawn: key '%ls' is under active kinematic drive (some slot) -- skipping convergence (PropPose owns position)",
                     keyW.c_str());
             return;
         }
@@ -571,8 +612,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
         // drive, skip convergence. Otherwise the SetActorLocation here
         // would stomp the PropPose stream for one frame -- same
         // teleport-pop bug as the exact-Key path.
-        if (fuzzy == g_drive.actor) {
-            UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> active drive actor -- skipping (PropPose owns position)",
+        if (IsActorUnderAnyDrive(fuzzy)) {
+            UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> active drive actor (some slot) -- skipping (PropPose owns position)",
                     classW.c_str());
             return;
         }
@@ -756,7 +797,18 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
     RestoreCollisionIfNeeded(L"fresh-spawn", classW, spawned);
 }
 
-void* GetDriveActor() { return g_drive.actor; }
+void* GetDriveActor() {
+    // PR-4.6: returns the FIRST slot with an active drive (or nullptr).
+    // Pre-PR-4.6 this returned the single global g_drive.actor; the
+    // public API is unused outside this TU today (snapshot dedupe path
+    // now uses IsActorUnderAnyDrive internally), but kept for header
+    // compatibility -- a future caller can switch to the per-slot
+    // overload below or to IsActorUnderAnyDrive directly.
+    for (const auto& d : g_drives) {
+        if (d.actor) return d.actor;
+    }
+    return nullptr;
+}
 
 namespace {
 // v5 Inc2: echo-suppression sets. Populated by OnSpawn / OnDestroy before
@@ -827,14 +879,17 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     }
     UE_LOGI("remote_prop::OnDestroy: key '%ls' -> destroying local actor %p",
             keyW.c_str(), actor);
-    // If we were kinematically driving this prop (host was holding it when
-    // they destroyed it -- unusual but possible), clear the cache so we
-    // don't try to drive a destroyed actor next tick.
-    if (g_drive.actor == actor) {
-        UE_LOGI("remote_prop::OnDestroy: actor was under active kinematic drive -- clearing drive cache");
-        g_drive.actor = nullptr;
-        g_drive.mesh = nullptr;
-        g_drive.lastKey.clear();
+    // PR-4.6: if any slot was kinematically driving this prop, clear that
+    // slot's cache so we don't try to drive a destroyed actor next tick.
+    // Pre-PR-4.6 this only checked the single global g_drive.
+    for (auto& d : g_drives) {
+        if (d.actor == actor) {
+            UE_LOGI("remote_prop::OnDestroy: actor was under active kinematic drive (slot %td) -- clearing drive cache",
+                    std::distance(&g_drives[0], &d));
+            d.actor = nullptr;
+            d.mesh = nullptr;
+            d.lastKey.clear();
+        }
     }
     // 2026-05-25 cross-peer destroy: if this peer's local mainPlayer is
     // currently grabbing the doomed actor (typical case: HOST holds the
@@ -852,12 +907,20 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
 }
 
 void ForceRelease() {
-    if (!g_drive.actor) return;
-    UE_LOGI("remote_prop: force-release on disconnect/teardown");
-    if (g_drive.mesh) DriveSimulate(g_drive.mesh, true);
-    g_drive.actor = nullptr;
-    g_drive.mesh = nullptr;
-    g_drive.lastKey.clear();
+    // PR-4.6: force-release on disconnect/teardown clears every slot's
+    // drive. Pre-PR-4.6 only the single g_drive was cleared.
+    int released = 0;
+    for (auto& d : g_drives) {
+        if (!d.actor) continue;
+        if (d.mesh) DriveSimulate(d.mesh, true);
+        d.actor = nullptr;
+        d.mesh = nullptr;
+        d.lastKey.clear();
+        ++released;
+    }
+    if (released > 0) {
+        UE_LOGI("remote_prop: force-release on disconnect/teardown (%d active drive(s) cleared)", released);
+    }
 }
 
 }  // namespace coop::remote_prop
