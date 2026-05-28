@@ -316,4 +316,26 @@ bool SetAnimClass(void* skeletalMeshComponent, void* animBlueprintClass);
 // object for the engine's auth check (pass the owning actor). Game thread only.
 bool DestroyComponent(void* component, void* contextObject);
 
+// AmainPlayer_C::light_R -- the flashlight USpotLightComponent slot on a
+// mainPlayer pawn. Returns the live component pointer, or nullptr if
+// `mainPlayer` is null/dead OR the light_R slot is empty/dead. Engine-
+// wrapper layer (principle 7): coop/item_activate uses this so the
+// AmainPlayer_light_R offset stays out of gameplay code. Game thread only.
+void* GetMainPlayerLightR(void* mainPlayer);
+
+// Snapshot of a flashlight light's authoritative state -- everything the
+// item_activate wire payload + the local probe diagnostic need.
+struct FlashlightSnapshot {
+    float intensity;
+    float outerConeAngle;
+    float innerConeAngle;
+    bool  visible;
+};
+
+// Read the full snapshot off a USpotLightComponent (typically the
+// AmainPlayer_C::light_R returned by GetMainPlayerLightR above). Returns
+// false if `light` is null/dead. Game thread only (memory reads of an
+// engine struct).
+bool ReadFlashlightSnapshot(void* light, FlashlightSnapshot& out);
+
 }  // namespace ue_wrap::engine

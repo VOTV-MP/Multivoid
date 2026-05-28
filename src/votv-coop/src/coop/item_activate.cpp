@@ -144,20 +144,15 @@ bool ProbeLogEnabled() {
 // false if light_R is dead (caller skips the send).
 bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::net::Session* session) {
     if (!mp || !session) return false;
-    void* light_R = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_light_R);
-    if (!light_R || !R::IsLive(light_R)) return false;
+    void* light_R = ue_wrap::engine::GetMainPlayerLightR(mp);
+    if (!light_R) return false;
 
     const bool flashlight = *reinterpret_cast<bool*>(
         reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_flashlight);
     const uint8_t mode = *reinterpret_cast<uint8_t*>(
         reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_flashlightMode);
-    const float intensity = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity);
-    const float outerCone = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(light_R) + P::off::USpotLightComponent_OuterConeAngle);
-    const float innerCone = *reinterpret_cast<float*>(
-        reinterpret_cast<uint8_t*>(light_R) + P::off::USpotLightComponent_InnerConeAngle);
+    ue_wrap::engine::FlashlightSnapshot snap{};
+    if (!ue_wrap::engine::ReadFlashlightSnapshot(light_R, snap)) return false;
 
     out = {};
     out.itemClassHash   = g_flashlightClassHash;
@@ -170,9 +165,9 @@ bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::
     out.flags           = 0;  // Case (b) -- no actor key
     out.mode            = mode;
     out.actorKeyHash    = 0;
-    out.intensity       = intensity;
-    out.outerConeAngle  = outerCone;
-    out.innerConeAngle  = innerCone;
+    out.intensity       = snap.intensity;
+    out.outerConeAngle  = snap.outerConeAngle;
+    out.innerConeAngle  = snap.innerConeAngle;
     return true;
 }
 
@@ -231,22 +226,15 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
         // in lockstep with the bool. The crank-flashlight (_c) path
         // is logged separately because we currently skip the wire
         // send for it (see below).
-        void* light_R = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(self) + P::off::AmainPlayer_light_R);
-        bool lightVisible = false;
-        float lightIntensity = -1.f;
-        if (light_R && R::IsLive(light_R)) {
-            const uint8_t flagsByte = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(light_R) + P::off::USceneComponent_VisFlagsByte);
-            lightVisible = (flagsByte & 0x10) != 0;
-            lightIntensity = *reinterpret_cast<float*>(
-                reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity);
-        }
+        void* light_R = ue_wrap::engine::GetMainPlayerLightR(self);
+        ue_wrap::engine::FlashlightSnapshot snap{};
+        const bool snapOk = ue_wrap::engine::ReadFlashlightSnapshot(light_R, snap);
         UE_LOGI("flashlight[POST %s] self=%p flashlight=%d hasFL=%d crankFL=%d "
                 "light_R=%p bVisible=%d Intensity=%.1f", which, self,
                 flashlight ? 1 : 0, hasFlashlight ? 1 : 0,
-                crankFlashlight ? 1 : 0, light_R, lightVisible ? 1 : 0,
-                lightIntensity);
+                crankFlashlight ? 1 : 0, light_R,
+                snapOk && snap.visible ? 1 : 0,
+                snapOk ? snap.intensity : -1.f);
     }
 
     // Defer the _c crank lantern variant (its own light components on the
@@ -277,14 +265,12 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     // Agent 1's research). Require >1.0 to filter out the off-state
     // sentinel.
     if (flashlight) {
-        void* light_R = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(self) + P::off::AmainPlayer_light_R);
-        if (light_R && R::IsLive(light_R)) {
-            const float intensity = *reinterpret_cast<float*>(
-                reinterpret_cast<uint8_t*>(light_R) + P::off::ULightComponentBase_Intensity);
-            if (intensity > 1.f && g_latchedOnIntensity.load(std::memory_order_acquire) == 0.f) {
-                g_latchedOnIntensity.store(intensity, std::memory_order_release);
-                UE_LOGI("flashlight: latched local 'on' intensity = %.2f (will drive puppet)", intensity);
+        ue_wrap::engine::FlashlightSnapshot snap{};
+        if (ue_wrap::engine::ReadFlashlightSnapshot(
+                ue_wrap::engine::GetMainPlayerLightR(self), snap)) {
+            if (snap.intensity > 1.f && g_latchedOnIntensity.load(std::memory_order_acquire) == 0.f) {
+                g_latchedOnIntensity.store(snap.intensity, std::memory_order_release);
+                UE_LOGI("flashlight: latched local 'on' intensity = %.2f (will drive puppet)", snap.intensity);
             }
         }
     }
@@ -360,8 +346,7 @@ bool DebugForceToggle(void* mp) {
         // Mirrors the BP's toggle effect so the SENDER also visually
         // toggles. Use the same SetIntensity reflection path the
         // puppet receiver uses (MarkRenderStateDirty internally).
-        void* light_R = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(mp) + P::off::AmainPlayer_light_R);
+        void* light_R = ue_wrap::engine::GetMainPlayerLightR(mp);
         float localTarget = kIntensityOffDefault;
         if (newState) {
             localTarget = g_latchedOnIntensity.load(std::memory_order_acquire);
@@ -372,7 +357,7 @@ bool DebugForceToggle(void* mp) {
             void* lightCls = R::FindClass(L"LightComponent");
             if (lightCls) sLocalSetIntensityFn = R::FindFunction(lightCls, P::name::SetIntensityFn);
         }
-        if (light_R && R::IsLive(light_R) && sLocalSetIntensityFn) {
+        if (light_R && sLocalSetIntensityFn) {
             ue_wrap::ParamFrame f(sLocalSetIntensityFn);
             f.Set<float>(L"NewIntensity", localTarget);
             ue_wrap::Call(light_R, f);
@@ -522,11 +507,10 @@ void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& payl
 
     const bool newState = (payload.state != 0);
 
-    void* light_R = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(puppetActor) + P::off::AmainPlayer_light_R);
-    if (!light_R || !R::IsLive(light_R)) {
+    void* light_R = ue_wrap::engine::GetMainPlayerLightR(puppetActor);
+    if (!light_R) {
         UE_LOGW("flashlight: puppet light_R missing or dead -- light not toggled "
-                "(puppet=%p light=%p)", puppetActor, light_R);
+                "(puppet=%p)", puppetActor);
         return;
     }
 

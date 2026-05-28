@@ -17,10 +17,13 @@
 
 #pragma once
 
+#include "coop/element/element.h"
 #include "coop/net/protocol.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -56,6 +59,26 @@ void InstallInventory(coop::net::Session* session);
 // spawn destroy) use this for symmetry. Public so prop_snapshot can
 // share it.
 bool IsWireSuppressedPropClass(const std::wstring& cls);
+
+// H2-redux 2026-05-28: snapshot-copies the maintained set of live
+// keyed-interactable actors (Aprop_C lineage + chipPile/clump/trashBitsPile)
+// into `out`. The set is seeded ONCE at Install() via a single
+// GUObjectArray walk, then maintained by the Init POST observer (insert)
+// and K2_DestroyActor PRE observer (evict). Replaces prop_snapshot's
+// per-reconnect GUObjectArray walk (~150k objects -> ~2000 pointer copy).
+//
+// Best-effort, not transactional: a returned actor may have been
+// destroyed in the window between snapshot-copy and the caller's use --
+// callers MUST re-validate liveness (R::IsLive) before dereferencing.
+// Returns count copied into `out` (`out` is cleared first).
+size_t SnapshotKnownKeyedProps(std::vector<void*>& out);
+
+// Tier 3 Props migration 2026-05-28: look up the host-allocated ElementId
+// for a live AActor* tracked in the Prop Element shadow. Returns kInvalidId
+// if the actor isn't tracked (e.g. unkeyed prop, or before the seed scan
+// runs). Used by senders to populate `PropSpawnPayload.elementId` and
+// `PropDestroyPayload.elementId` (v12 protocol).
+coop::element::ElementId GetPropElementIdForActor(void* actor);
 
 // Per-session state cleanup on disconnect. Returns counters for the
 // log line. Clears: takeObj-in-flight flag, processed-Init dedupe set.

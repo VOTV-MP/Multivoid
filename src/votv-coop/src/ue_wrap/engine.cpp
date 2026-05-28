@@ -559,5 +559,23 @@ void LogClassProperties(const wchar_t* className) {
     UE_LOGI("LogClassProperties: %ls -- %d properties listed", className, idx);
 }
 
+void* GetMainPlayerLightR(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
+    void* light = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(mainPlayer) + P::off::AmainPlayer_light_R);
+    if (!light || !R::IsLive(light)) return nullptr;
+    return light;
+}
+
+bool ReadFlashlightSnapshot(void* light, FlashlightSnapshot& out) {
+    if (!light || !R::IsLive(light)) return false;
+    auto* base = reinterpret_cast<uint8_t*>(light);
+    out.intensity       = *reinterpret_cast<float*>(base + P::off::ULightComponentBase_Intensity);
+    out.outerConeAngle  = *reinterpret_cast<float*>(base + P::off::USpotLightComponent_OuterConeAngle);
+    out.innerConeAngle  = *reinterpret_cast<float*>(base + P::off::USpotLightComponent_InnerConeAngle);
+    const uint8_t flags = *reinterpret_cast<uint8_t*>(base + P::off::USceneComponent_VisFlagsByte);
+    out.visible         = (flags & 0x10) != 0;
+    return true;
+}
 
 }  // namespace ue_wrap::engine

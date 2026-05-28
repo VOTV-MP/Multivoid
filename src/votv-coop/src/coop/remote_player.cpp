@@ -519,28 +519,18 @@ void RemotePlayer::ApplyToEngine() {
     // bit 0 -- MOVE_Falling (3) while airborne, MOVE_Walking (1) grounded.
     // The kerfur AnimBP's BUA reads Movement.MovementMode to drive the
     // foot-IK alpha (useLegIK / rise) -- same path the LOCAL uses.
-    // Offsets sourced from sdk_profile.h (RE: research/findings/
-    // votv-local-anim-drive-RE-2026-05-27.md).
-    if (auto* mp = reinterpret_cast<uint8_t*>(actor_)) {
-        if (void* cmc = *reinterpret_cast<void**>(mp + P::off::ACharacter_CharacterMovement)) {
-            if (R::IsLive(cmc)) {
-                const float yawRad = curYaw_ * 0.01745329252f;  // PI/180
-                const ue_wrap::FVector vel{
-                    std::cos(yawRad) * curSpeed_,
-                    std::sin(yawRad) * curSpeed_,
-                    0.f,
-                };
-                // UMovementComponent::Velocity @+0xC4 (FVector, Engine.hpp:15427).
-                *reinterpret_cast<ue_wrap::FVector*>(
-                    reinterpret_cast<uint8_t*>(cmc) + 0xC4) = vel;
-                // UCharacterMovementComponent::MovementMode @+0x168
-                // (TEnumAsByte<EMovementMode>, Engine.hpp:9917).
-                const uint8_t mm = (curStateBits_ & coop::net::kStateBitInAir)
-                    ? P::off::kMOVE_Falling
-                    : uint8_t{1};  // MOVE_Walking
-                *(reinterpret_cast<uint8_t*>(cmc) + P::off::UCharacterMovement_MovementMode) = mm;
-            }
-        }
+    // Routed through ue_wrap::puppet (Principle 7): the engine-specific
+    // CMC offsets stay in the wrapper; coop/ sees only the typed API.
+    // (RE: research/findings/votv-local-anim-drive-RE-2026-05-27.md.)
+    {
+        const float yawRad = curYaw_ * 0.01745329252f;  // PI/180
+        const ue_wrap::FVector vel{
+            std::cos(yawRad) * curSpeed_,
+            std::sin(yawRad) * curSpeed_,
+            0.f,
+        };
+        const bool inAir = (curStateBits_ & coop::net::kStateBitInAir) != 0;
+        Pup::DriveCharacterMovement(actor_, vel, inAir);
     }
 
     // Head bone gets the source's full view direction: pitch (look up/down) AND

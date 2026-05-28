@@ -124,6 +124,8 @@ add_library(votv-coop SHARED
     src/coop/weather_lightning.cpp
     src/coop/weather_redsky.cpp
     src/coop/ini_config.cpp
+    src/coop/element/element.cpp
+    src/coop/element/registry.cpp
     src/coop/net/session.cpp
     src/coop/net_pump.cpp
     src/coop/dev/force_weather.cpp

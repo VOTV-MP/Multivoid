@@ -610,4 +610,20 @@ void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float head
     WriteAt<FRotator>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_headLookAt(), FRotator{headPitch, headYawDelta, 0.f});
 }
 
+void DriveCharacterMovement(void* puppetActor,
+                            const FVector& worldVelocity,
+                            bool inAir) {
+    if (!puppetActor || !R::IsLive(puppetActor)) return;
+    void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
+    if (!cmc || !R::IsLive(cmc)) return;
+    // UMovementComponent::Velocity @+0xC4 (FVector, Engine.hpp:15427).
+    // Constant is hardcoded here rather than promoted into sdk_profile.h so
+    // every "raw memory write" stays in the ue_wrap layer; coop/ callers
+    // see only this typed API.
+    constexpr size_t kUMovementComponent_Velocity = 0xC4;
+    WriteAt<FVector>(cmc, kUMovementComponent_Velocity, worldVelocity);
+    const uint8_t mm = inAir ? P::off::kMOVE_Falling : uint8_t{1};  // MOVE_Walking
+    WriteAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode, mm);
+}
+
 }  // namespace ue_wrap::puppet

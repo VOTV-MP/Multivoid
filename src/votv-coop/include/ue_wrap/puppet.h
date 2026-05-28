@@ -103,6 +103,22 @@ void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent);
 // safe on null. One-shot at puppet spawn.
 void DumpKerfurHeadGraph(void* skeletalMeshComponent);
 
+// Write the puppet's UCharacterMovementComponent state (Velocity +
+// MovementMode) from a streamed pose. The CMC drives the AnimBP's BUA
+// path (locomotion blend + foot-IK alpha + falling state). Direct-memory
+// fast path -- no UFunction dispatch on the per-tick interp.
+//   `puppetActor`   -- live ACharacter-derived puppet; no-op if null/dead
+//                      or CMC pointer is null/dead.
+//   `worldVelocity` -- world-space velocity (cm/s). The AnimBP samples
+//                      Velocity.Size() for the locomotion blend.
+//   `inAir`         -- true sets MovementMode=MOVE_Falling, false sets
+//                      MOVE_Walking. Drives the state machine's falling
+//                      transition.
+// Game thread only.
+void DriveCharacterMovement(void* puppetActor,
+                            const FVector& worldVelocity,
+                            bool inAir);
+
 // Bug 2 root-cause fix (Plan B2, 2026-05-23):
 //
 // The AnimBP's BlueprintUpdateAnimation pulls velocity from

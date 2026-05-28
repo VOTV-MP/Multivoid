@@ -9,6 +9,8 @@
 
 #include "coop/prop_snapshot.h"
 
+#include "coop/element/prop.h"
+#include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
@@ -41,6 +43,7 @@ std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 // Enumeration state for the currently-running drain. Game-thread access
 // only; no lock needed.
 std::vector<void*> g_snapshotCandidates;
+std::vector<coop::element::ElementId> g_snapshotEids;  // parallel; same idx as g_snapshotCandidates
 size_t g_snapshotCandidateIdx = 0;
 
 // Which peer slot is being served by the current drain (-1 = no drain
@@ -55,36 +58,48 @@ std::vector<int> g_pendingSlots;
 // wall-clock spread across frames, no single-frame stall).
 constexpr size_t kSnapshotChunkSize = 100;
 
-// Walk GUObjectArray + populate g_snapshotCandidates with live keyed-
-// interactable Aprop_C derivatives. Reset the per-chunk drain index.
+// Populate g_snapshotCandidates from prop_lifecycle's maintained
+// known-keyed-props set (seeded ONCE at Install via a single
+// GUObjectArray walk, then kept current via Init POST insert +
+// K2_DestroyActor PRE evict). Replaces the per-reconnect O(150k
+// GUObjectArray) walk with an O(~2000 pointer copy under mutex).
 // Sets g_currentTargetSlot = peerSlot. Caller (TriggerForSlot or
 // post-completion dequeue) ensures no drain is already in progress.
 //
-// NOTE: maintaining a tracked set in prop_lifecycle would avoid the
-// ~150k GUObjectArray walk per reconnect (reconnect-storm hazard).
-// A first attempt at routing through prop_lifecycle's existing
-// g_processedInitActors set was reverted: that set only tracks props
-// whose Init fired AFTER our observer installed, missing every prop
-// constructed before Install() resolved Aprop_C. A correct version
-// requires a one-time GUObjectArray seed PLUS observer-driven
-// maintenance -- design follow-up.
+// Per-candidate re-validation runs in DrainChunk (IsLive recheck
+// covers the window between snapshot-copy and per-tick drain). The
+// maintained set is best-effort, not transactional -- a freshly
+// destroyed actor may briefly appear here until its K2_DestroyActor
+// PRE fires.
 void StartEnumerationFor(int peerSlot) {
     g_currentTargetSlot = peerSlot;
     g_snapshotCandidates.clear();
+    g_snapshotEids.clear();
     g_snapshotCandidateIdx = 0;
-    int skippedCDO = 0, skippedDying = 0;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        if (!ue_wrap::prop::IsKeyedInteractable(obj)) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) { ++skippedCDO; continue; }
-        if (!R::IsLive(obj)) { ++skippedDying; continue; }
-        g_snapshotCandidates.push_back(obj);
+    int skippedDying = 0, skippedDead = 0;
+    // Tier 3 Props migration 2026-05-28: enumerate via the unified Element
+    // Registry instead of prop_lifecycle's legacy g_knownKeyedProps set.
+    // SnapshotActorsByType extracts (actor*, id) pairs under the Registry
+    // mutex -- no Element* dereferences happen after the mutex releases,
+    // so no use-after-free if another thread frees an Element concurrently.
+    //
+    // Audit fix 2026-05-28: capture the eid alongside the actor pointer so
+    // DrainChunk doesn't re-lock g_propElementsMutex per candidate
+    // (12,500 mutex acquisitions/sec during drain was the prior cost).
+    std::vector<coop::element::Registry::ActorIdPair> pairs;
+    const size_t trackedCount =
+        coop::element::Registry::Get().SnapshotActorsByType(
+            coop::element::ElementType::Prop, pairs);
+    g_snapshotCandidates.reserve(trackedCount);
+    g_snapshotEids.reserve(trackedCount);
+    for (const auto& pr : pairs) {
+        if (!pr.actor) { ++skippedDead; continue; }
+        if (!R::IsLive(pr.actor)) { ++skippedDying; continue; }
+        g_snapshotCandidates.push_back(pr.actor);
+        g_snapshotEids.push_back(pr.id);
     }
-    UE_LOGI("snapshot: enumerated %zu live candidates for slot %d (skipped %d CDOs, %d dying); will drain %zu/tick",
-            g_snapshotCandidates.size(), peerSlot, skippedCDO, skippedDying, kSnapshotChunkSize);
+    UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
+            g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
 }
 
 }  // namespace
@@ -192,6 +207,15 @@ void DrainChunk() {
         if (ue_wrap::prop::IsFrozen(obj)) p.physFlags |= coop::net::propspawn_flags::kFrozen;
         p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
         p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
+        // Use the cached eid from StartEnumerationFor (no per-candidate
+        // g_propElementsMutex acquisition; audit fix 2026-05-28).
+        {
+            const coop::element::ElementId eid =
+                g_snapshotCandidateIdx < g_snapshotEids.size()
+                    ? g_snapshotEids[g_snapshotCandidateIdx]
+                    : coop::element::kInvalidId;
+            p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
+        }
         // Send to ONE slot only. Other peers (already-connected) already
         // have these props from their own connect-edge drain.
         s->SendReliableToSlot(g_currentTargetSlot,
@@ -203,7 +227,7 @@ void DrainChunk() {
         UE_LOGI("snapshot: drain complete for slot %d (%zu candidates processed)",
                 g_currentTargetSlot, g_snapshotCandidates.size());
         g_snapshotCandidates.clear();
-        g_snapshotCandidates.shrink_to_fit();
+        g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
         g_snapshotCandidateIdx = 0;
         g_currentTargetSlot = -1;
         // Dequeue next pending slot if any. This kicks off a fresh
@@ -234,7 +258,7 @@ void CancelForSlot(int peerSlot) {
     // If `peerSlot` was the in-progress drain target, abort + dequeue next.
     if (g_currentTargetSlot != peerSlot) return;
     g_snapshotCandidates.clear();
-    g_snapshotCandidates.shrink_to_fit();
+    g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
     g_snapshotCandidateIdx = 0;
     g_currentTargetSlot = -1;
     if (!g_pendingSlots.empty()) {
@@ -253,7 +277,7 @@ size_t OnDisconnect() {
         pending = g_snapshotCandidates.size() - g_snapshotCandidateIdx;
     }
     g_snapshotCandidates.clear();
-    g_snapshotCandidates.shrink_to_fit();
+    g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
     g_snapshotCandidateIdx = 0;
     g_currentTargetSlot = -1;
     g_pendingSlots.clear();

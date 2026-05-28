@@ -7,12 +7,19 @@
 // FindByKeyString -- existing actors are skipped; missing actors are
 // created; transform mismatches converge to host's truth.
 //
-// Two-phase design (audit I-2 2026-05-24):
-//   Phase 1 (Trigger on host-connected edge): single GUObjectArray walk
-//   collects ~2000 Aprop_C pointers. No ProcessEvent dispatch.
+// Two-phase design (audit I-2 2026-05-24; enumeration source updated
+// 2026-05-28 per H2-redux):
+//   Phase 1 (TriggerForSlot on host-connected edge): snapshot-copies
+//   prop_lifecycle's maintained known-keyed-props set into the local
+//   candidate vector. The set is seeded ONCE at Install via a single
+//   GUObjectArray walk and kept current via Init POST insert +
+//   K2_DestroyActor PRE evict -- per-reconnect cost is O(set-size)
+//   pointer copy (~2000) instead of O(GUObjectArray) walk (~150k).
+//   No ProcessEvent dispatch.
 //   Phase 2 (per NetPumpTick): drain kSnapshotChunkSize=100 candidates,
-//   reading their transforms and enqueueing PropSpawn via the
-//   prop_lifecycle retry queue. ~330-500 ms total, spread across frames.
+//   reading their transforms and calling SendReliableToSlot. The
+//   reliable channel buffers internally; ~330-500 ms total wall-clock,
+//   spread across frames.
 
 #pragma once
 

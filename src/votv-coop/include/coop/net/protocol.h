@@ -75,7 +75,14 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // to each client right after Connected with the slot it was assigned.
 // Without this, clients would self-stamp peerSessionId=1 and two
 // clients would silently self-echo-drop each other's ItemActivate.
-inline constexpr uint16_t kProtocolVersion = 11;
+// v12 (2026-05-28): MTA CClientElement adoption -- EntitySpawn.sessionId
+// + EntityDestroy.sessionId renamed to .elementId (cosmetic; semantics
+// already host-allocated Registry ids since the Tier 3 NPC migration).
+// PropSpawnPayload + PropDestroyPayload gain an `elementId` field
+// (uint32, +4 bytes each) carrying the host-allocated ElementId for the
+// prop. Receivers log it for forward-compat; routing-by-elementId lands
+// in the event_feed collapse (subsequent migration).
+inline constexpr uint16_t kProtocolVersion = 12;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -429,8 +436,10 @@ struct PropSpawnPayload {
     uint8_t       _pad[3];          // 4
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- usually (0,0,0)
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
+    uint32_t      elementId;        // 4 -- v12: host-allocated ElementId (0 = sender had no Element)
+    uint32_t      _pad2;            // 4 -- 8-byte alignment
 };
-static_assert(sizeof(PropSpawnPayload) == 160, "PropSpawnPayload must be 160 bytes");
+static_assert(sizeof(PropSpawnPayload) == 168, "PropSpawnPayload must be 168 bytes");
 static_assert(sizeof(PropSpawnPayload) <= 256 - 20 - 8,
               "PropSpawnPayload must fit in one reliable datagram");
 
@@ -448,31 +457,35 @@ inline constexpr uint8_t kFrozen          = 0x04;
 // K2_DestroyActor call on its local actor is echo-suppressed via the
 // incoming-destroy-set so it doesn't bounce back.
 struct PropDestroyPayload {
-    WireKey key;
+    WireKey  key;
+    uint32_t elementId;  // 4 -- v12: host-allocated ElementId (0 = sender had no Element)
+    uint32_t _pad;       // 4 -- 8-byte alignment
 };
-static_assert(sizeof(PropDestroyPayload) == 32, "PropDestroyPayload must be 32 bytes");
+static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
 static_assert(sizeof(PropDestroyPayload) <= 256 - 20 - 8,
               "PropDestroyPayload must fit in one reliable datagram");
 
-// Phase 5N1 Inc2 (2026-05-25): NPC spawn reliable payload. Host detects an
-// NPC instantiation via the host-side PRE observer on
-// BeginDeferredActorSpawnFromClass (sibling of the existing client-side
-// interceptor from Inc1; same UFunction, different role gate). Payload
-// carries the class name + a host-assigned monotonic sessionId + the
-// spawn world transform. Receiver (Inc3 -- pipeline scaffolded but not
-// yet wired):
+// Phase 5N1 Inc2 (2026-05-25, updated 2026-05-28 Tier 3 PoC): NPC spawn
+// reliable payload. Host detects an NPC instantiation via the host-side
+// PRE interceptor on BeginDeferredActorSpawnFromClass; POST observer on the
+// same UFunction captures the spawned AActor* and binds it to the just-
+// allocated Npc Element. Payload carries the class name + the Npc Element's
+// ElementId + the spawn world transform. Receiver (Inc3 client mirror --
+// not yet wired):
 //   MarkIncomingNpcSpawn(cls)  // bypass the suppressor for this one call
 //   actor = BeginDeferredActorSpawnFromClass(cls, transform)
 //   FinishSpawningActor(actor, transform)  // BeginPlay runs naturally
-//   g_npcMirrorBySessionId[sessionId] = actor
+//   g_npcMirrorByElementId[elementId] = actor  // keyed by ElementId now
 //
-// sessionId is NOT a save-UUID (NPCs are runtime-spawned with no
-// persistent identity). It's host-assigned monotonic counter, reset on
-// session start. Receiver references the same ID for subsequent
-// EntityPose (Inc3) and EntityDestroy.
+// `sessionId` field name retained through this wave for wire compatibility;
+// renamed to `elementId` at the v12 protocol bump. Semantics now:
+// host-allocated via `coop::element::Registry::AllocHostId` from the host
+// range [1, 32768). Value 0 is reserved as the wire-invalid sentinel
+// (Registry will never emit 0). Receiver references the same id for
+// subsequent EntityPose (Inc3) and EntityDestroy.
 struct EntitySpawnPayload {
     WireClassName className;       // 64 -- "npc_zombie_C", "kerfurOmega_mannequin_C", etc.
-    uint32_t      sessionId;       // 4 -- host-assigned monotonic; 0 reserved for "invalid"
+    uint32_t      elementId;       // 4 -- v12 (was `sessionId`): host-allocated, [1, 32768); 0 = invalid
     uint32_t      _pad;            // 4 -- 8-byte alignment for the floats
     float         locX, locY, locZ;            // 12 -- world cm at spawn time
     float         rotPitch, rotYaw, rotRoll;   // 12 -- FRotator
@@ -488,8 +501,8 @@ static_assert(sizeof(EntitySpawnPayload) <= 256 - 20 - 8,
 // g_npcMirrorBySessionId[sessionId] -> K2_DestroyActor on the mirror.
 // Same incoming-destroy-set echo suppression pattern as PropDestroy.
 struct EntityDestroyPayload {
-    uint32_t sessionId;
-    uint32_t _pad;     // 8-byte alignment
+    uint32_t elementId;  // v12 (was `sessionId`): host-allocated, [1, 32768); 0 = invalid
+    uint32_t _pad;       // 8-byte alignment
 };
 static_assert(sizeof(EntityDestroyPayload) == 8, "EntityDestroyPayload must be 8 bytes");
 // Audit-fix Issue 1 (2026-05-25): tripwire for future growth. At 8 bytes

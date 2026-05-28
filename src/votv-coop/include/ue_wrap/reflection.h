@@ -117,6 +117,16 @@ std::vector<ObjectRef> ChildObjectsOf(void* outer);
 // match. Pointer compares only -- safe even if our guess is wrong.
 void DebugProbeSuperStructOffset();
 
+// Walk `cls`'s SuperStruct chain checking each hop against the array
+// `bases[0..nBases)`. Returns true iff `cls` or any ancestor up to
+// `maxHops` levels matches any base. Cache-friendly inner loop (all
+// candidate bases checked per hop -- avoids walking the chain once
+// per base). Use this from gameplay code instead of hand-writing a
+// SuperStruct hop loop so the UStruct_SuperStruct offset stays in the
+// wrapper layer (Principle 7).
+bool IsDescendantOfAny(void* cls, void* const* bases, size_t nBases,
+                       int maxHops = 16);
+
 // ---- UFunction parameter reflection --------------------------------------
 // To call a UFunction via ProcessEvent we must hand it a parameter frame with
 // each argument at the exact byte offset the engine expects. Rather than

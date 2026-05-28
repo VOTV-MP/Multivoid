@@ -16,7 +16,11 @@
 
 #pragma once
 
-namespace coop::net { class Session; }
+namespace coop::net {
+class Session;
+struct EntitySpawnPayload;
+struct EntityDestroyPayload;
+}  // namespace coop::net
 
 namespace coop::npc_sync {
 
@@ -46,5 +50,25 @@ void MarkIncomingNpcSpawn(void* npcClass);
 // 12 cached NPC classes + the UFunction pointer remain valid across
 // disconnect; only the running-session bookkeeping resets).
 void OnDisconnect();
+
+// Inc3 receiver (client-side, host-broadcast NPC materialization). Called
+// from the event_feed dispatcher (via game_thread::Post) when a host
+// EntitySpawn reliable packet arrives. Looks up the actor class by
+// payload.className, validates it against the NPC allowlist, builds the
+// FTransform, calls MarkIncomingNpcSpawn to bypass the suppressor, and
+// invokes BeginDeferredActorSpawnFromClass + FinishSpawningActor to
+// materialize the mirror. Registers the resulting Npc Element with the
+// Registry as a MIRROR bound to the host's ElementId (Registry::
+// RegisterMirror) so subsequent EntityDestroy routes back via lookup.
+//
+// Host echo: defensive no-op when role() == Host (host doesn't receive
+// its own broadcasts; this is paranoia).
+void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
+
+// Inc3 receiver (client-side, host-broadcast NPC teardown). Resolves
+// the mirror Element via Registry::Get(payload.elementId), pulls the
+// AActor* off it, calls K2_DestroyActor, then drops the unique_ptr<Npc>
+// from g_clientMirrors -- the dtor unregisters from the Registry.
+void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload);
 
 }  // namespace coop::npc_sync

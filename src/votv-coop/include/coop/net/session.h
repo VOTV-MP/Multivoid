@@ -120,9 +120,9 @@ public:
                          float linVelX, float linVelY, float linVelZ,
                          float angVelX, float angVelY, float angVelZ);
     bool SendPropSpawn(const PropSpawnPayload& payload);
-    bool SendPropDestroy(const WireKey& key);
+    bool SendPropDestroy(const PropDestroyPayload& payload);
     bool SendEntitySpawn(const EntitySpawnPayload& payload);
-    bool SendEntityDestroy(uint32_t sessionId);
+    bool SendEntityDestroy(uint32_t elementId);
 
     // Diagnostics.
     uint64_t packetsSent() const { return sent_.load(); }

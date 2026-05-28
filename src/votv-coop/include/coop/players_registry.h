@@ -35,8 +35,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 namespace coop { class RemotePlayer; }
+namespace coop::element { class Player; }
 
 namespace coop::players {
 
@@ -94,6 +96,20 @@ public:
     // -> peer session id for `actor`, or kPeerIdUnknown if not in registry.
     uint8_t PeerIdOfActor(void* actor);
 
+    // ---- Element shadow (Tier 3 Players migration 2026-05-28) ----
+
+    // Returns the Player Element for this peer slot, OR nullptr if the slot
+    // is empty (no puppet registered, no local set for this slot). The
+    // Element's `GetId()` is the unified ElementId used for future cross-
+    // subsystem addressing (event_feed dispatch, late-joiner snapshot, etc).
+    // Game thread only.
+    coop::element::Player* GetPlayerElement(uint8_t peerSlot);
+
+private:
+    // Element shadow lifetime helpers (file-local; see .cpp).
+    void EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet);
+    void DropPlayerElement_(uint8_t peerSlot);
+
 private:
     Registry() = default;
     Registry(const Registry&) = delete;
@@ -111,6 +127,12 @@ private:
     // on this peer's process, and slots [2], [3] would carry clients 2/3
     // (when N-peer scope expands beyond 1v1).
     RemotePlayer* puppetByPeer_[kMaxPeers] = {};
+
+    // Player Element shadows -- one per peer slot. nullptr if not allocated.
+    // Owned by the registry. Constructed by RegisterPuppet / SetLocalPeerId
+    // (via EnsurePlayerElement_); destroyed by UnregisterPuppet / replaced
+    // by SetLocalPeerId (via DropPlayerElement_). Game thread only.
+    std::unique_ptr<coop::element::Player> playerBySlot_[kMaxPeers];
 };
 
 }  // namespace coop::players

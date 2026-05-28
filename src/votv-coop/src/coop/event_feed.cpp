@@ -1,7 +1,10 @@
 #include "coop/event_feed.h"
 
+#include "coop/element/registry.h"
+
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
+#include "coop/npc_sync.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
@@ -399,8 +402,11 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::EntitySpawn: {
-            // Phase 5N1 Inc2 NPC spawn dispatch from host. Receiver currently
-            // logs only -- materialization lands in a future Inc.
+            // Inc3 (2026-05-28 NEXT): host-broadcast NPC spawn. Validate
+            // size + className.len at the trust boundary here; npc_sync::
+            // OnEntitySpawn does the full per-field validation (finite +
+            // bounds + allowlist + dedup). UFunction calls inside
+            // OnEntitySpawn are game-thread only, so dispatch via GT::Post.
             if (msg.payloadLen < sizeof(net::EntitySpawnPayload)) {
                 UE_LOGW("event_feed: EntitySpawn payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::EntitySpawnPayload));
@@ -413,15 +419,15 @@ void Update(net::Session& session, void* localPlayer) {
                         p.className.len);
                 break;
             }
-            std::wstring cls(p.className.len, L'\0');
-            for (size_t i = 0; i < p.className.len; ++i)
-                cls[i] = static_cast<wchar_t>(p.className.data[i]);
-            UE_LOGI("event_feed: received EntitySpawn class='%ls' sessionId=%u loc=(%.0f, %.0f, %.0f) rot=(p=%.1f y=%.1f r=%.1f) (no local materialization yet)",
-                    cls.c_str(), p.sessionId, p.locX, p.locY, p.locZ,
-                    p.rotPitch, p.rotYaw, p.rotRoll);
+            net::EntitySpawnPayload pCopy = p;
+            ue_wrap::game_thread::Post([pCopy] {
+                ::coop::npc_sync::OnEntitySpawn(pCopy);
+            });
             break;
         }
         case net::ReliableKind::EntityDestroy: {
+            // Inc3: host-broadcast NPC destroy. Dispatch to npc_sync::
+            // OnEntityDestroy (game-thread UFunction call).
             if (msg.payloadLen < sizeof(net::EntityDestroyPayload)) {
                 UE_LOGW("event_feed: EntityDestroy payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::EntityDestroyPayload));
@@ -429,8 +435,10 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::EntityDestroyPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            UE_LOGI("event_feed: received EntityDestroy sessionId=%u (no local mirror teardown yet)",
-                    p.sessionId);
+            net::EntityDestroyPayload pCopy = p;
+            ue_wrap::game_thread::Post([pCopy] {
+                ::coop::npc_sync::OnEntityDestroy(pCopy);
+            });
             break;
         }
         case net::ReliableKind::RestoreVitals: {

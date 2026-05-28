@@ -223,6 +223,18 @@ std::vector<ObjectRef> ChildObjectsOf(void* outer) {
     return out;
 }
 
+bool IsDescendantOfAny(void* cls, void* const* bases, size_t nBases, int maxHops) {
+    if (!cls || !bases || nBases == 0) return false;
+    for (int hops = 0; hops < maxHops && cls; ++hops) {
+        for (size_t i = 0; i < nBases; ++i) {
+            if (bases[i] && bases[i] == cls) return true;
+        }
+        cls = *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(cls) + O::UStruct_SuperStruct);
+    }
+    return false;
+}
+
 void DebugProbeSuperStructOffset() {
     void* actorCls = FindClass(L"Actor");
     void* objectCls = FindClass(L"Object");

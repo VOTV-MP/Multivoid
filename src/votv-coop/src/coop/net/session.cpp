@@ -600,19 +600,17 @@ bool Session::SendPropSpawn(const PropSpawnPayload& payload) {
     return SendReliable(ReliableKind::PropSpawn, &payload, sizeof(payload));
 }
 
-bool Session::SendPropDestroy(const WireKey& key) {
-    PropDestroyPayload p{};
-    p.key = key;
-    return SendReliable(ReliableKind::PropDestroy, &p, sizeof(p));
+bool Session::SendPropDestroy(const PropDestroyPayload& payload) {
+    return SendReliable(ReliableKind::PropDestroy, &payload, sizeof(payload));
 }
 
 bool Session::SendEntitySpawn(const EntitySpawnPayload& payload) {
     return SendReliable(ReliableKind::EntitySpawn, &payload, sizeof(payload));
 }
 
-bool Session::SendEntityDestroy(uint32_t sessionId) {
+bool Session::SendEntityDestroy(uint32_t elementId) {
     EntityDestroyPayload p{};
-    p.sessionId = sessionId;
+    p.elementId = elementId;
     return SendReliable(ReliableKind::EntityDestroy, &p, sizeof(p));
 }
 
