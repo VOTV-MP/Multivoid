@@ -1,9 +1,9 @@
-#include "dev/force_weather.h"
+#include "coop/dev/force_weather.h"
 
 #include "coop/net/session.h"
 #include "coop/shutdown.h"
 #include "coop/weather_sync.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 
@@ -11,7 +11,7 @@
 
 #include <atomic>
 
-namespace dev::force_weather {
+namespace coop::dev::force_weather {
 
 namespace GT = ue_wrap::game_thread;
 
@@ -31,7 +31,7 @@ bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF5 = false;
     while (!coop::shutdown::IsShuttingDown()) {
-        const bool f5 = ::dev::IsOurWindowForeground() && KeyDown(VK_F5);
+        const bool f5 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F5);
         if (f5 && !prevF5) {
             auto* s = g_session.load(std::memory_order_acquire);
             if (s && s->role() == coop::net::Role::Host) {
@@ -64,11 +64,11 @@ void SetSession(coop::net::Session* session) {
 }
 
 void Init() {
-    if (!::dev::MasterEnabled()) {
+    if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("force_weather: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    if (!::dev::IsIniKeyTrue("devkeys")) {
+    if (!::coop::ini_config::IsIniKeyTrue("devkeys")) {
         UE_LOGI("force_weather: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F5)");
         return;
     }
@@ -78,4 +78,4 @@ void Init() {
     UE_LOGI("force_weather: ENABLED (host F5 -> toggle snow on both peers via intComs_triggerSnow)");
 }
 
-}  // namespace dev::force_weather
+}  // namespace coop::dev::force_weather

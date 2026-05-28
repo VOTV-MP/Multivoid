@@ -1,9 +1,9 @@
-#include "dev/restore_vitals.h"
+#include "coop/dev/restore_vitals.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/shutdown.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -13,7 +13,7 @@
 
 #include <atomic>
 
-namespace dev::restore_vitals {
+namespace coop::dev::restore_vitals {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
@@ -150,11 +150,11 @@ DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF3 = false;
     while (!coop::shutdown::IsShuttingDown()) {
         // Foreground-window gate per [[feedback-deliver-results-fast]] pattern
-        // (also documented in dev::common::IsOurWindowForeground): a same-box
+        // (also documented in coop::ini_config::IsOurWindowForeground): a same-box
         // host+client test would otherwise fire F3 in BOTH processes from a
         // single keypress because GetAsyncKeyState is global. We want the F3
         // press to be peer-attributed to whichever window has focus.
-        const bool f3 = ::dev::IsOurWindowForeground() && KeyDown(VK_F3);
+        const bool f3 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F3);
         if (f3 && !prevF3) {
             // Local apply runs on the game thread (saveSlot writes touch BP
             // state). Broadcast is wire-thread-safe.
@@ -175,11 +175,11 @@ DWORD WINAPI HotkeyThread(LPVOID) {
 }  // namespace
 
 void Init() {
-    if (!::dev::MasterEnabled()) {
+    if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("restore_vitals: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    if (!::dev::IsIniKeyTrue("devkeys")) {
+    if (!::coop::ini_config::IsIniKeyTrue("devkeys")) {
         UE_LOGI("restore_vitals: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F3)");
         return;
     }
@@ -189,4 +189,4 @@ void Init() {
     UE_LOGI("restore_vitals: ENABLED (F3 refills food/sleep/health on both peers)");
 }
 
-}  // namespace dev::restore_vitals
+}  // namespace coop::dev::restore_vitals

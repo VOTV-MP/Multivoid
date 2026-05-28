@@ -1,4 +1,4 @@
-// dev/freecam.h -- developer free-flying camera (dev-only, ini-gated).
+// coop/dev/freecam.h -- developer free-flying camera (dev-only, ini-gated).
 //
 // A debugging tool to fly around the coop scene. Gated by votv-coop.ini
 // ([dev] freecam=1); OFF by default so shipping players can't cheat with it.
@@ -15,11 +15,11 @@
 
 #pragma once
 
-namespace dev::freecam {
+namespace coop::dev::freecam {
 
 // Read votv-coop.ini; if [dev] freecam=1, start the HOME/MMB watcher and install
 // the per-frame movement hook. No-op (and logs "disabled") otherwise. Call once
 // after the game-thread dispatcher is live.
 void Init();
 
-}  // namespace dev::freecam
+}  // namespace coop::dev::freecam

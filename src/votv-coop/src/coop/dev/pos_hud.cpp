@@ -1,8 +1,8 @@
-#include "dev/pos_hud.h"
+#include "coop/dev/pos_hud.h"
 
 #include "coop/players_registry.h"
 #include "coop/shutdown.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -15,7 +15,7 @@
 #include <cstdio>
 #include <string>
 
-namespace dev::pos_hud {
+namespace coop::dev::pos_hud {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
@@ -150,7 +150,7 @@ DWORD WINAPI HotkeyThread(LPVOID) {
         // so pressing F2 in the client's window would otherwise fire the hotkey
         // in BOTH host + client (each runs its own pos_hud thread reading the
         // same global key state). Only react when OUR window is focused.
-        const bool f2 = ::dev::IsOurWindowForeground() && KeyDown(VK_F2);
+        const bool f2 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F2);
         if (f2 && !prevF2) {
             // Rising edge -> flip. Only this thread writes g_active, so plain
             // load+store is race-free (the game-thread Refresh callback reads it
@@ -177,11 +177,11 @@ DWORD WINAPI HotkeyThread(LPVOID) {
 void Init() {
     // Master kill-switch first: [dev] enabled=0 forces every dev feature off
     // regardless of the granular `posinfo=...` line.
-    if (!::dev::MasterEnabled()) {
+    if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("pos_hud: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    g_iniEnabled = ::dev::IsIniKeyTrue("posinfo");
+    g_iniEnabled = ::coop::ini_config::IsIniKeyTrue("posinfo");
     if (!g_iniEnabled) {
         UE_LOGI("pos_hud: disabled (set [dev] posinfo=1 in votv-coop.ini to enable; F2 toggles)");
         return;
@@ -192,4 +192,4 @@ void Init() {
     UE_LOGI("pos_hud: ENABLED (F2 toggles; left-middle of screen)");
 }
 
-}  // namespace dev::pos_hud
+}  // namespace coop::dev::pos_hud

@@ -4,11 +4,11 @@
 #include "harness/config.h"
 #include "harness/screenshot.h"
 #include "harness/sdk_check.h"
-#include "dev/force_weather.h"
-#include "dev/freecam.h"
-#include "dev/pos_hud.h"
-#include "dev/restore_vitals.h"
-#include "dev/teleport_client.h"
+#include "coop/dev/force_weather.h"
+#include "coop/dev/freecam.h"
+#include "coop/dev/pos_hud.h"
+#include "coop/dev/restore_vitals.h"
+#include "coop/dev/teleport_client.h"
 #include "coop/event_feed.h"
 #include "coop/garbage_sync.h"
 #include "coop/grab_observer.h"
@@ -941,7 +941,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 const float ayaw   = yaws.empty()   ? 0.f : static_cast<float>(std::atof(yaws.c_str()));
                 const float apitch = pitchs.empty() ? 0.f : static_cast<float>(std::atof(pitchs.c_str()));
                 // Audit H8 (2026-05-27): use VOTV's `teleportWObackrooms` via
-                // dev::teleport_client::ApplyLocally. That path bypasses the
+                // coop::dev::teleport_client::ApplyLocally. That path bypasses the
                 // CMC constraints K2_TeleportTo loses to (the same root-cause
                 // fix shipped in teleport_client.cpp:60-71). The retry loop
                 // still wraps it because Registry::Get().Local() can be null
@@ -955,7 +955,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                     Post([ax, ay, az, ayaw, apitch, target, okFlag] {
                         void* local = coop::players::Registry::Get().Local();
                         if (!local) { okFlag->store(2); return; }
-                        dev::teleport_client::ApplyLocally({ax, ay, az, apitch, ayaw, 0.f});
+                        coop::dev::teleport_client::ApplyLocally({ax, ay, az, apitch, ayaw, 0.f});
                         const auto cur = ue_wrap::engine::GetActorLocation(local);
                         const float dx = cur.X - target.X, dy = cur.Y - target.Y, dz = cur.Z - target.Z;
                         const bool ok = std::fabs(dx) < 200.f && std::fabs(dy) < 200.f && std::fabs(dz) < 200.f;
@@ -1009,9 +1009,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             coop::prop_lifecycle::SetSession(&g_session);
             coop::npc_sync::SetSession(&g_session);
             coop::prop_snapshot::SetSession(&g_session);
-            dev::restore_vitals::SetSession(&g_session);
-            dev::teleport_client::SetSession(&g_session);
-            dev::force_weather::SetSession(&g_session);
+            coop::dev::restore_vitals::SetSession(&g_session);
+            coop::dev::teleport_client::SetSession(&g_session);
+            coop::dev::force_weather::SetSession(&g_session);
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");
@@ -1066,7 +1066,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // Audit H8 (2026-05-27): the 30-second autotest correction loop
             // was deleted. It existed to fight K2_TeleportTo getting reverted
             // by VOTV's player constraints during late-init. The initial-
-            // teleport block above now uses dev::teleport_client::ApplyLocally,
+            // teleport block above now uses coop::dev::teleport_client::ApplyLocally,
             // which routes through teleportWObackrooms -- VOTV's own
             // non-revert path. Once the first teleport sticks, no correction
             // is needed.
@@ -1194,9 +1194,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         coop::prop_lifecycle::SetSession(&g_session);
         coop::npc_sync::SetSession(&g_session);
         coop::prop_snapshot::SetSession(&g_session);
-        dev::restore_vitals::SetSession(&g_session);
-        dev::teleport_client::SetSession(&g_session);
-        dev::force_weather::SetSession(&g_session);
+        coop::dev::restore_vitals::SetSession(&g_session);
+        coop::dev::teleport_client::SetSession(&g_session);
+        coop::dev::force_weather::SetSession(&g_session);
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
@@ -1278,18 +1278,18 @@ void Start() {
     screenshot::StartHotkeyWatcher();
 
     // Dev free-flying camera (HOME toggle). No-op unless votv-coop.ini enables it.
-    dev::freecam::Init();
+    coop::dev::freecam::Init();
 
     // Dev pos + camera-rotation overlay (F2 toggle). No-op unless ini enables it.
-    dev::pos_hud::Init();
+    coop::dev::pos_hud::Init();
 
     // Dev F3 (restore stamina/hunger) + F4 (teleport client to host) + F5
     // (toggle snow on host). All gated by [dev] devkeys=1; no-op otherwise.
     // SetSession was already called above for the play / netloopback paths
     // -- the hotkey threads just acquire it atomically and broadcast on press.
-    dev::restore_vitals::Init();
-    dev::teleport_client::Init();
-    dev::force_weather::Init();
+    coop::dev::restore_vitals::Init();
+    coop::dev::teleport_client::Init();
+    coop::dev::force_weather::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our
     // cleanup BEFORE the engine's teardown PE calls fire. Without this

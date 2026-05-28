@@ -1,4 +1,4 @@
-// dev/flashlight_setup.h -- Autotest helpers to set up a working flashlight.
+// coop/dev/flashlight_setup.h -- Autotest helpers to set up a working flashlight.
 //
 // Phase 5F autotest needs to programmatically give the player a flashlight,
 // install a charged battery, and (if needed) equip the item so that calls
@@ -11,7 +11,7 @@
 
 #pragma once
 
-namespace dev::flashlight_setup {
+namespace coop::dev::flashlight_setup {
 
 // Spawn an Aprop_equipment_flashlight_C and add it to the local player's
 // inventory via AmainPlayer_C::addPropToPlayer(FName). Whether this also
@@ -32,4 +32,4 @@ bool SetBatteryFull(void* mainPlayer);
 // Logs the verified state. Game thread only.
 bool EnsureFlashlightReady(void* mainPlayer);
 
-}  // namespace dev::flashlight_setup
+}  // namespace coop::dev::flashlight_setup

@@ -31,7 +31,7 @@
 
 #include "coop/item_activate.h"
 #include "coop/weather_sync.h"
-#include "dev/flashlight_setup.h"
+#include "coop/dev/flashlight_setup.h"
 #include "harness/screenshot.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -484,7 +484,7 @@ void RunAutonomousFlashlightTest() {
     // flashlight needs to be properly set up before BP toggle paths will
     // actually flip the light. The s_may2026 save SHOULD have one
     // equipped, but we top off the battery + verify the gate state just
-    // in case. dev::flashlight_setup::EnsureFlashlightReady():
+    // in case. coop::dev::flashlight_setup::EnsureFlashlightReady():
     //   - reads hasFlashlight; if false, calls addPropToPlayer to give
     //     the player a flashlight (the cheat-menu-equivalent path)
     //   - writes saveSlot.battery = 1.0 (full)
@@ -493,7 +493,7 @@ void RunAutonomousFlashlightTest() {
     {
         auto ensureDone = std::make_shared<std::atomic<int>>(0);
         GT::Post([rsv, ensureDone] {
-            if (rsv->player) dev::flashlight_setup::EnsureFlashlightReady(rsv->player);
+            if (rsv->player) coop::dev::flashlight_setup::EnsureFlashlightReady(rsv->player);
             ensureDone->store(1);
         });
         while (ensureDone->load() == 0) ::Sleep(5);

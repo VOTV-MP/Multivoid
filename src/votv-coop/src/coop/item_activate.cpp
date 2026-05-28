@@ -19,7 +19,7 @@
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -104,7 +104,7 @@ inline constexpr float kIntensityOffDefault = 0.f;  // turn light fully off
 uint32_t g_flashlightClassHash = 0;
 
 // Session pointer (atomic so the observer's BG read can't race with
-// a setter on another thread -- same pattern as dev::teleport_client).
+// a setter on another thread -- same pattern as coop::dev::teleport_client).
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // Phase 5F Inc5 (connect-time replay) -- pending receiver-side applies.
@@ -133,7 +133,7 @@ bool ProbeLogEnabled() {
     // Read once; ini parsing is cheap but the observer is hot. Static
     // initialization means we resolve this ONCE per process lifetime,
     // which is acceptable for a dev-only flag (restart to flip it).
-    static const bool s_enabled = ::dev::IsIniKeyTrue("flashlight_log");
+    static const bool s_enabled = ::coop::ini_config::IsIniKeyTrue("flashlight_log");
     return s_enabled;
 }
 

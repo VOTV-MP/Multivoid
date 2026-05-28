@@ -5,7 +5,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -81,7 +81,7 @@ bool g_observersRegistered = false;     // host POST observers
 bool g_interceptorsRegistered = false;  // client PRE interceptors
 
 // Session pointer; atomic so the observer / interceptor reads can't race
-// the harness setter on another thread (matches dev::teleport_client +
+// the harness setter on another thread (matches coop::dev::teleport_client +
 // item_activate pattern).
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -182,7 +182,7 @@ uint64_t SignaturePayload(const coop::net::WeatherStatePayload& p) {
 void OnSchedulerPost(void* self, void* function, void* /*params*/) {
     // Diag flag -- read once per process. Used to trace observer firing
     // when broadcasts go missing. Off by default (ini-only gate).
-    static const bool sLog = ::dev::IsIniKeyTrue("weather_observer_log");
+    static const bool sLog = ::coop::ini_config::IsIniKeyTrue("weather_observer_log");
     if (sLog) {
         UE_LOGI("weather: OnSchedulerPost ENTRY (self=%p function=%p)", self, function);
     }

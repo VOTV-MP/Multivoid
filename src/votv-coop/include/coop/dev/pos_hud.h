@@ -1,4 +1,4 @@
-// dev/pos_hud.h -- developer on-screen pos + camera readout (dev-only, ini-gated).
+// coop/dev/pos_hud.h -- developer on-screen pos + camera readout (dev-only, ini-gated).
 //
 // A small left-middle UMG overlay that shows the local player's world position
 // and the camera rotation in real time. Useful when staging scenes, picking
@@ -14,10 +14,10 @@
 
 #pragma once
 
-namespace dev::pos_hud {
+namespace coop::dev::pos_hud {
 
 // Read votv-coop.ini; if [dev] posinfo=1, start the F2 watcher. No-op otherwise.
 // Call once after the game-thread dispatcher is live.
 void Init();
 
-}  // namespace dev::pos_hud
+}  // namespace coop::dev::pos_hud

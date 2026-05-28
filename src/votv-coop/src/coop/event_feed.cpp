@@ -6,8 +6,8 @@
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/weather_sync.h"
-#include "dev/restore_vitals.h"
-#include "dev/teleport_client.h"
+#include "coop/dev/restore_vitals.h"
+#include "coop/dev/teleport_client.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/log.h"
@@ -437,7 +437,7 @@ void Update(net::Session& session, void* localPlayer) {
             // 2026-05-25 LATE +5h (F3 dev key): peer pressed F3 to refill
             // food/sleep/health/coffeePower. No payload to validate -- the
             // action is fixed. Idempotent so an echo bounce is harmless.
-            ue_wrap::game_thread::Post([] { ::dev::restore_vitals::ApplyLocally(); });
+            ue_wrap::game_thread::Post([] { ::coop::dev::restore_vitals::ApplyLocally(); });
             break;
         }
         case net::ReliableKind::TeleportClient: {
@@ -486,11 +486,11 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGI("event_feed: TeleportClient self-echo on host -- no-op");
                 break;
             }
-            ::dev::teleport_client::ApplyArgs args{
+            ::coop::dev::teleport_client::ApplyArgs args{
                 p.locX, p.locY, p.locZ,
                 p.rotPitch, p.rotYaw, p.rotRoll,
             };
-            ue_wrap::game_thread::Post([args] { ::dev::teleport_client::ApplyLocally(args); });
+            ue_wrap::game_thread::Post([args] { ::coop::dev::teleport_client::ApplyLocally(args); });
             break;
         }
         case net::ReliableKind::ItemActivate: {

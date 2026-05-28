@@ -36,15 +36,6 @@
 - **Master kill switch** in `votv-coop.ini` for ship lockdown
 - **Per-process window titles** (`VotV (Host)`, `VotV (Client)`) for OBS capture
 
-### Dev keys (gated by `[dev] devkeys=1`)
-| Key | Action |
-|--|--|
-| `HOME` | Freecam toggle (WASD + Shift fast + mouse wheel speed + MMB teleport) |
-| `F2`   | On-screen player position HUD |
-| `F3`   | Refill food/sleep/health on both peers |
-| `F4`   | Teleport client to host's location |
-| `F5`   | Toggle snow on both peers (host only) |
-
 ---
 
 ## How it works
@@ -73,7 +64,6 @@ authority transfers for held props.
 The codebase splits cleanly along Principle 7:
 - [`src/votv-coop/src/ue_wrap/`](src/votv-coop/src/ue_wrap/) — engine wrapper (reflection, offsets, hooks)
 - [`src/votv-coop/src/coop/`](src/votv-coop/src/coop/) — gameplay/network layer (RemotePlayer, sessions, UDP)
-- [`src/votv-coop/src/dev/`](src/votv-coop/src/dev/) — opt-in development hotkeys
 - [`src/votv-coop/src/harness/`](src/votv-coop/src/harness/) — boot glue + autonomous test scenarios
 
 ---
@@ -141,7 +131,7 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 | [`docs/`](docs/) | Architecture, roadmap, scope, feasibility, methodology |
 | [`research/findings/`](research/findings/) | Append-only dated RE / reflection findings |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, VoidTogether) |
-| [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `dev` / `harness` / `loader`) |
+| [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader`) |
 | [`tools/`](tools/) | PowerShell helpers — build / deploy / launch / autonomous test |
 | `Game_0.9.0n*/` | Local game install(s). **Gitignored** — never committed |
 

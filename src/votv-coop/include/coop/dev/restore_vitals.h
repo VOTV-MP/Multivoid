@@ -1,4 +1,4 @@
-// dev/restore_vitals.h -- F3 dev-key: refill food/sleep/health on both peers'
+// coop/dev/restore_vitals.h -- F3 dev-key: refill food/sleep/health on both peers'
 // UsaveSlot_C simultaneously. (coffeePower is intentionally excluded -- writing
 // it to 100 triggers a screen-shake post-coffee BP side-effect; see commit
 // 5421d6f for the user-retest finding.)
@@ -18,7 +18,7 @@
 
 namespace coop::net { class Session; }
 
-namespace dev::restore_vitals {
+namespace coop::dev::restore_vitals {
 
 // Cache the Session pointer so F3 can broadcast the RestoreVitals packet.
 // Called once from harness boot, BEFORE Init(). Mirrors prop_lifecycle::SetSession.
@@ -34,4 +34,4 @@ void Init();
 // called locally by the F3 hotkey before broadcasting. Game thread only.
 void ApplyLocally();
 
-}  // namespace dev::restore_vitals
+}  // namespace coop::dev::restore_vitals

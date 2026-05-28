@@ -1,8 +1,8 @@
-// dev/flashlight_setup.cpp -- autotest-only flashlight setup helpers.
-// See dev/flashlight_setup.h and
+// coop/dev/flashlight_setup.cpp -- autotest-only flashlight setup helpers.
+// See coop/dev/flashlight_setup.h and
 // research/findings/votv-inventory-equip-battery-RE-2026-05-26.md.
 
-#include "dev/flashlight_setup.h"
+#include "coop/dev/flashlight_setup.h"
 
 #include "ue_wrap/call.h"
 #include "ue_wrap/log.h"
@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-namespace dev::flashlight_setup {
+namespace coop::dev::flashlight_setup {
 namespace {
 
 namespace P = ue_wrap::profile;
@@ -201,4 +201,4 @@ bool EnsureFlashlightReady(void* mainPlayer) {
     return nowHasFlashlight && nowBattery > 1.f;
 }
 
-}  // namespace dev::flashlight_setup
+}  // namespace coop::dev::flashlight_setup

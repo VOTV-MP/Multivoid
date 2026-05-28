@@ -121,14 +121,14 @@ add_library(votv-coop SHARED
     src/coop/prop_snapshot.cpp
     src/coop/garbage_sync.cpp
     src/coop/weather_sync.cpp
+    src/coop/ini_config.cpp
     src/coop/net/session.cpp
-    src/dev/common.cpp
-    src/dev/force_weather.cpp
-    src/dev/freecam.cpp
-    src/dev/flashlight_setup.cpp
-    src/dev/pos_hud.cpp
-    src/dev/restore_vitals.cpp
-    src/dev/teleport_client.cpp
+    src/coop/dev/force_weather.cpp
+    src/coop/dev/freecam.cpp
+    src/coop/dev/flashlight_setup.cpp
+    src/coop/dev/pos_hud.cpp
+    src/coop/dev/restore_vitals.cpp
+    src/coop/dev/teleport_client.cpp
     src/harness/harness.cpp
     src/harness/autotest.cpp
     src/harness/config.cpp

@@ -1,10 +1,10 @@
-#include "dev/teleport_client.h"
+#include "coop/dev/teleport_client.h"
 
 #include "coop/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/shutdown.h"
-#include "dev/common.h"
+#include "coop/ini_config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -19,7 +19,7 @@
 #include <cmath>
 #include <string>
 
-namespace dev::teleport_client {
+namespace coop::dev::teleport_client {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
@@ -149,7 +149,7 @@ void SnapshotAndSend(coop::net::Session* s) {
 DWORD WINAPI HotkeyThread(LPVOID) {
     bool prevF4 = false;
     while (!coop::shutdown::IsShuttingDown()) {
-        const bool f4 = ::dev::IsOurWindowForeground() && KeyDown(VK_F4);
+        const bool f4 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F4);
         if (f4 && !prevF4) {
             auto* s = g_session.load(std::memory_order_acquire);
             if (s && s->role() == coop::net::Role::Host) {
@@ -168,11 +168,11 @@ DWORD WINAPI HotkeyThread(LPVOID) {
 }  // namespace
 
 void Init() {
-    if (!::dev::MasterEnabled()) {
+    if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("teleport_client: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    if (!::dev::IsIniKeyTrue("devkeys")) {
+    if (!::coop::ini_config::IsIniKeyTrue("devkeys")) {
         UE_LOGI("teleport_client: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F4)");
         return;
     }
@@ -182,4 +182,4 @@ void Init() {
     UE_LOGI("teleport_client: ENABLED (host F4 -> teleport client to host's pose)");
 }
 
-}  // namespace dev::teleport_client
+}  // namespace coop::dev::teleport_client

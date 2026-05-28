@@ -14,8 +14,6 @@ Standalone coop mod DLL for Voices of the Void (UE4.27). Two binaries:
 ```
 include/
   coop/      Gameplay + network layer headers.
-  dev/       Developer-only convenience features (freecam, HUD,
-             F3/F4 keybinds). Ini-gated; off by default.
   harness/   Autonomous test harness scenarios + config + screenshot.
   ue_wrap/   Engine-wrapper layer headers. One module per UE/VOTV
              surface. Reflection access, struct offsets, UFunction
@@ -29,7 +27,6 @@ src/
   coop/        Gameplay + network. RemotePlayer, sessions, transport,
                reliable_channel, prop_lifecycle, nameplate,
                event_feed, npc_sync, etc.
-  dev/         Freecam, pos_hud, restore_vitals, teleport_client.
   harness/     Test harness, autotest, scenario timeline, sdk_check,
                screenshot, config.
 

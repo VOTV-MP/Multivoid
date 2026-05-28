@@ -1,4 +1,4 @@
-// dev/teleport_client.h -- F4 dev-key: teleport the client to the host's pose.
+// coop/dev/teleport_client.h -- F4 dev-key: teleport the client to the host's pose.
 //
 // Gated by votv-coop.ini ([dev] devkeys=1); OFF by default. While enabled:
 //   F4 -- HOST snapshots own mainPlayer Location + Rotation, sends to the
@@ -12,7 +12,7 @@
 
 namespace coop::net { class Session; }
 
-namespace dev::teleport_client {
+namespace coop::dev::teleport_client {
 
 // Cache the Session pointer so F4 can snapshot host pose + broadcast.
 // Called once from harness boot, BEFORE Init().
@@ -31,4 +31,4 @@ struct ApplyArgs {
 };
 void ApplyLocally(const ApplyArgs& args);
 
-}  // namespace dev::teleport_client
+}  // namespace coop::dev::teleport_client

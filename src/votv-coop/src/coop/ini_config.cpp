@@ -1,4 +1,4 @@
-#include "dev/common.h"
+#include "coop/ini_config.h"
 
 #include <windows.h>
 
@@ -8,7 +8,7 @@
 #include <cstring>
 #include <string>
 
-namespace dev {
+namespace coop::ini_config {
 
 namespace {
 
@@ -79,4 +79,4 @@ bool IsOurWindowForeground() {
     return ownerPid == ::GetCurrentProcessId();
 }
 
-}  // namespace dev
+}  // namespace coop::ini_config
