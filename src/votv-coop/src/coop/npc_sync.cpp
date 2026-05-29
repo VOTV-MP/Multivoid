@@ -3,30 +3,27 @@
 // See coop/npc_sync.h for the public interface.
 // Architecture findings: research/findings/votv-npc-sync-prereqs-RE-2026-05-24.md.
 //
-// SIZE NOTE (2026-05-28 post-A1 audit): file is over the 800 LOC soft cap
-// (~1110 LOC after the Inc3 client-receiver landed). Cleanest split per the
-// CLAUDE.md modular rule: extract OnEntitySpawn / OnEntityDestroy /
-// g_clientMirrors / receiver-side g_finishSpawnFn + g_gsCdo into a new
-// coop::npc_mirror translation unit. Blocked today by deep coupling with
-// host-side privates (g_npcAllowlist, IsClassOrDerivedFromAnyAllowlisted,
-// g_npcSpawnFn + param offsets, cached session pointer); the extraction
-// needs ~9 narrow public accessors on npc_sync.h to avoid duplicating
-// the resolution work. Tracked as TIER C follow-up.
+// SPLIT (M-1 2026-05-29): the client-side receivers (OnEntitySpawn /
+// OnEntityDestroy / DrainClientMirrors) moved to coop/npc_mirror.cpp.
+// This TU now owns host-side PRE/POST + the suppress interceptor +
+// resolution + lifecycle bookkeeping; the receivers consume resolved
+// UFunction refs through npc_mirror::SetClientRefs() (called once from
+// Install) and access the shared allowlist + session pointer + bypass
+// slot through the public accessors GetSession / IsAllowlistedClass /
+// MarkIncomingNpcSpawn / ClearIncomingNpcSpawn.
 
 #include "coop/npc_sync.h"
 
-#include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "ue_wrap/call.h"
+#include "coop/npc_mirror.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
 
 #include <atomic>
 #include <cmath>
@@ -35,14 +32,12 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 namespace coop::npc_sync {
 namespace {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
-namespace E = ue_wrap::engine;
 
 // Cached session pointer set by Install(). The interceptor reads role()/
 // connected()/SendEntitySpawn() through this. nullptr until first Install.
@@ -74,14 +69,16 @@ int32_t g_npcSpawnActorClassParamOff = -1;
 int32_t g_npcSpawnReturnParamOff = -1;
 int32_t g_npcSpawnXformParamOff = -1;  // SpawnTransform; cached at Install time
 
-// Cached UFunctions / UObject* for the Inc3 client-side receiver. Resolved
-// during Install() alongside g_npcSpawnFn so the receiver path can skip the
-// resolution lookups on the hot path. All four go nullptr -> set-once-stable;
-// the receiver null-checks and retries via R::IsLive on next packet.
-void* g_finishSpawnFn = nullptr;     // UGameplayStatics::FinishSpawningActor
-void* g_gsCdo = nullptr;             // UGameplayStatics CDO (passed as Self to ProcessEvent)
-void* g_actorCls = nullptr;          // AActor class (re-used for K2_DestroyActor lookup)
-void* g_k2DestroyFn = nullptr;       // AActor::K2_DestroyActor
+// Install bookkeeping for the receiver-side cache (M-1 2026-05-29 split):
+// the client-side UFunction refs LIVE in coop::npc_mirror via
+// SetClientRefs(). These two locals are kept here only because the
+// resolution happens in two stages (GameplayStatics primitives first,
+// then AActor::K2_DestroyActor once the AActor class binds), and we
+// need to push the FULL set together when k2DestroyFn lands. Receivers
+// in npc_mirror DO NOT read these; the canonical copy is on the
+// receiver side.
+void* g_installCacheFinishSpawnFn = nullptr;
+void* g_installCacheGsCdo = nullptr;
 
 // Bypass slot for Inc2/Inc3's wire-received NPC spawns. Set immediately
 // before the client-side BeginDeferred call; consumed by the next
@@ -102,14 +99,10 @@ void* g_k2DestroyFn = nullptr;       // AActor::K2_DestroyActor
 // step window that the plain-pointer version had.
 std::atomic<void*> g_incomingNpcSpawnClass{nullptr};
 
-// CLIENT-side mirror state (Inc3). B2 (2026-05-29): migrated from
-// hand-rolled mutex+map to the generic coop::element::MirrorManager<Npc>
-// template, which encapsulates the 5-step RegisterMirror pattern and
-// ABBA-safe drain. Lifetime: populated by OnEntitySpawn; drained by
-// OnEntityDestroy + OnDisconnect.
-inline coop::element::MirrorManager<coop::element::Npc>& NpcMirrors() {
-    return coop::element::MirrorManager<coop::element::Npc>::Instance();
-}
+// CLIENT-side mirror manager (MirrorManager<Npc>) ownership migrated to
+// coop::npc_mirror (M-1 2026-05-29 split). Lifetime owners on the
+// client side: npc_mirror::OnEntitySpawn (populate), OnEntityDestroy
+// (drain one), DrainClientMirrors (drain all on OnDisconnect).
 
 // Host-side Npc Element ownership + lookup.
 //
@@ -525,39 +518,18 @@ void OnDisconnect() {
     }
 
     // Inc3 receiver (client-side) drain: clean up every mirror Element +
-    // K2_DestroyActor the local mirror actor. Drain into a local map first
-    // (same ABBA shape as the host-side drain), release the mutex, then
-    // call K2_DestroyActor outside the lock + let unique_ptr dtors run.
+    // K2_DestroyActor the local mirror actor. Implementation lives in
+    // coop::npc_mirror; this TU only orchestrates the call ordering
+    // (host elements drained above, then client mirrors, then bypass
+    // slot clear).
     //
     // K2_DestroyActor calls ProcessEvent which is GAME-THREAD ONLY. The
     // caller of OnDisconnect is expected to be on the game thread already
     // (Session::Stop fires from harness's net-pump thread, which is
     // dispatched from the game thread; the smoke test path likewise calls
     // from GT). If a future path calls OnDisconnect off-thread, the
-    // K2_DestroyActor call below would assert -- but the mirror Element
-    // drop itself is thread-safe (Registry::UnregisterMirror is
-    // mutex-guarded).
-    // Snapshot actor pointers FIRST under the manager's mutex (Snapshot
-    // is just a vector<T*> copy), then drain. K2_DestroyActor runs on
-    // each captured actor; the drained map then destructs sequentially
-    // outside the mutex (each Npc dtor -> Registry::UnregisterMirror).
-    std::vector<coop::element::Npc*> mirrorsSnap;
-    NpcMirrors().Snapshot(mirrorsSnap);
-    size_t nMirrorsDestroyed = 0;
-    for (coop::element::Npc* mirror : mirrorsSnap) {
-        if (!mirror) continue;
-        void* actor = mirror->GetActor();
-        if (actor && g_k2DestroyFn && R::IsLive(actor)) {
-            R::CallFunction(actor, g_k2DestroyFn, nullptr);
-            ++nMirrorsDestroyed;
-        }
-    }
-    const size_t nMirrorsTotal = NpcMirrors().DrainAll();
-    if (nMirrorsTotal > 0) {
-        UE_LOGI("npc-sync: OnDisconnect drained %zu client mirror(s) "
-                "(K2_DestroyActor on %zu live actor(s); UnregisterMirror on all elements)",
-                nMirrorsTotal, nMirrorsDestroyed);
-    }
+    // K2_DestroyActor call inside DrainClientMirrors would assert.
+    coop::npc_mirror::DrainClientMirrors();
 
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
 }
@@ -611,10 +583,11 @@ void Install(coop::net::Session* session) {
                     P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn);
             // Don't bail -- position-less spawns still work.
         }
-        // Inc3 receiver side: resolve FinishSpawningActor + GameplayStatics
-        // CDO so OnEntitySpawn can materialize mirrors without re-walking
-        // GUObjectArray on every host broadcast. Non-fatal if missing
-        // (OnEntitySpawn null-checks and logs).
+        // Inc3 receiver side (now in coop::npc_mirror): resolve
+        // FinishSpawningActor + GameplayStatics CDO so OnEntitySpawn can
+        // materialize mirrors without re-walking GUObjectArray on every
+        // host broadcast. Non-fatal if missing (OnEntitySpawn null-checks
+        // each field and logs).
         void* finishFn = R::FindFunction(gsCls, P::name::FinishSpawningActorFn);
         if (!finishFn) {
             UE_LOGW("npc-sync[receiver]: %ls.%ls UFunction not found -- client mirror "
@@ -634,8 +607,19 @@ void Install(coop::net::Session* session) {
         g_npcSpawnActorClassParamOff = classOff;
         g_npcSpawnReturnParamOff = retOff;
         g_npcSpawnXformParamOff = xformOff;
-        g_finishSpawnFn = finishFn;
-        g_gsCdo = gsCdo;
+        // Stash for the second push (where k2DestroyFn lands together);
+        // also push the partial set NOW so the receiver can degrade
+        // gracefully (drop with warning) if the install retries before
+        // K2_DestroyActor resolves.
+        g_installCacheFinishSpawnFn = finishFn;
+        g_installCacheGsCdo         = gsCdo;
+        coop::npc_mirror::ClientRefs refs{};
+        refs.spawnFn             = fn;
+        refs.finishSpawnFn       = finishFn;
+        refs.gsCdo               = gsCdo;
+        refs.spawnReturnParamOff = retOff;
+        refs.k2DestroyFn         = nullptr;  // resolved + re-pushed below
+        coop::npc_mirror::SetClientRefs(refs);
     }
     void* const fn = g_npcSpawnFn;
     const int32_t classOff = g_npcSpawnActorClassParamOff;
@@ -690,11 +674,22 @@ void Install(coop::net::Session* session) {
                     "DISABLED for process lifetime (Element lifecycle cannot close)",
                     P::name::ActorClassName, P::name::DestroyActorFn, actorCls, destroyFn);
         } else {
-            // Promote local resolutions into the module-level Inc3 receiver
-            // cache (OnEntityDestroy reuses K2_DestroyActor on every host
-            // teardown -- skipping the GUObjectArray walk per packet).
-            g_actorCls = actorCls;
-            g_k2DestroyFn = destroyFn;
+            // Promote K2_DestroyActor into the Inc3 receiver-side cache
+            // owned by coop::npc_mirror (OnEntityDestroy reuses it on
+            // every host teardown -- skipping the GUObjectArray walk per
+            // packet). Re-push the full ClientRefs so the receiver sees
+            // spawnFn/finishFn/gsCdo/returnOff (cached during the
+            // GameplayStatics resolution block above) together with the
+            // newly resolved k2DestroyFn.
+            {
+                coop::npc_mirror::ClientRefs refs{};
+                refs.spawnFn             = g_npcSpawnFn;
+                refs.finishSpawnFn       = g_installCacheFinishSpawnFn;
+                refs.gsCdo               = g_installCacheGsCdo;
+                refs.spawnReturnParamOff = g_npcSpawnReturnParamOff;
+                refs.k2DestroyFn         = destroyFn;
+                coop::npc_mirror::SetClientRefs(refs);
+            }
             // POST observer first; if it succeeds, register K2_DestroyActor PRE.
             // If K2 fails, roll back the POST so a half-installed state doesn't
             // burn an observer-table slot.
@@ -744,297 +739,34 @@ void Install(coop::net::Session* session) {
     }
 }
 
-// =====================================================================
-//   Inc3 client-side receivers (A1, 2026-05-28 LATE / NEXT SESSION)
-// =====================================================================
-//
-// The host's NpcSuppress_Interceptor (host role) emits EntitySpawn /
-// EntityDestroy reliable packets carrying the Registry-allocated host
-// ElementId. event_feed dispatches them via game_thread::Post to the
-// two functions below, which run on the GAME THREAD only -- they call
-// UFunctions (BeginDeferred / FinishSpawning / K2_DestroyActor) which
-// are not legal off the game thread.
-//
-// Materialization mirrors remote_prop::OnSpawn architecturally but is
-// simpler: NPCs have no per-class setKey UFunction (the host's
-// ElementId IS the cross-peer identity), no fuzzy dedup (there's no
-// pre-existing local NPC to dedup against -- clients suppress local
-// spawns via the interceptor), no physics restore.
-//
-// Echo guard: clients never SEND EntitySpawn/Destroy, so on the host
-// these packets are loopback bounces if they ever arrive. Drop them
-// defensively (host role).
+// Public accessors used by coop::npc_mirror to share state without a
+// second source of truth (M-1 2026-05-29 split). Each one wraps a
+// single internal global; npc_mirror reads through these instead of
+// keeping its own copy. See coop/npc_mirror.cpp for callers.
 
-void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
-    using ue_wrap::ParamFrame;
-    using ue_wrap::Call;
-    auto* s = LoadSession();
-    if (!s) return;
-    // Defensive host-side echo guard: host never receives its own broadcasts
-    // (lane fan-out is to peer slots only), but if it somehow did the
-    // materialization would create a duplicate actor adjacent to the
-    // original. Drop.
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("npc-sync[client OnSpawn]: received on host -- dropping (loopback bounce)");
-        return;
-    }
-    if (payload.elementId == 0u ||
-        payload.elementId == static_cast<uint32_t>(coop::element::kInvalidId) ||
-        payload.elementId >= coop::element::kHostRangeSize) {
-        UE_LOGW("npc-sync[client OnSpawn]: invalid/out-of-range elementId=%u -- dropping "
-                "(must be in host range [1, %u))",
-                payload.elementId, coop::element::kHostRangeSize);
-        return;
-    }
-    // Wire-string class name -> wstring.
-    if (payload.className.len == 0 || payload.className.len > 63) {
-        UE_LOGW("npc-sync[client OnSpawn]: bad className.len=%u -- dropping",
-                payload.className.len);
-        return;
-    }
-    std::wstring classW;
-    classW.reserve(payload.className.len);
-    for (uint8_t i = 0; i < payload.className.len; ++i) {
-        classW.push_back(static_cast<wchar_t>(static_cast<unsigned char>(payload.className.data[i])));
-    }
-    // Trust-boundary: validate floats finite + within bounds (same magnitude
-    // rule as PropSpawn receiver / coop::net::kMaxCoord).
-    const float vals[6] = {payload.locX, payload.locY, payload.locZ,
-                           payload.rotPitch, payload.rotYaw, payload.rotRoll};
-    for (float v : vals) {
-        if (!std::isfinite(v)) {
-            UE_LOGW("npc-sync[client OnSpawn]: non-finite float in payload -- dropping (eid=%u)",
-                    payload.elementId);
-            return;
-        }
-    }
-    if (std::fabs(payload.locX) > coop::net::kMaxCoord ||
-        std::fabs(payload.locY) > coop::net::kMaxCoord ||
-        std::fabs(payload.locZ) > coop::net::kMaxCoord) {
-        UE_LOGW("npc-sync[client OnSpawn]: loc out of bounds (%.0f, %.0f, %.0f) -- dropping (eid=%u)",
-                payload.locX, payload.locY, payload.locZ, payload.elementId);
-        return;
-    }
-    // Duplicate-eid guard: already mirroring this id? Should not happen
-    // (host allocates each id exactly once across its lifetime, and the
-    // reliable channel doesn't redeliver), but if it does we'd duplicate
-    // the actor -- drop the late one. Note: this is a non-locked early
-    // exit; a concurrent duplicate that races past this check is caught
-    // by the Install false-return path below (the orphan actor gets
-    // K2_DestroyActor'd before this function returns).
-    if (NpcMirrors().Get(payload.elementId) != nullptr) {
-        UE_LOGW("npc-sync[client OnSpawn]: eid=%u already mirrored locally -- dropping duplicate",
-                payload.elementId);
-        return;
-    }
-    // Resolve actor class. NPC BP classes load with the level; if not yet
-    // loaded the packet is dropped (next host broadcast can rebind on a
-    // future spawn, but THIS host spawn is gone). Log + skip.
-    void* actorClass = R::FindClass(classW.c_str());
-    if (!actorClass) {
-        UE_LOGW("npc-sync[client OnSpawn]: class '%ls' not found in GUObjectArray -- dropping "
-                "(BP class not loaded? eid=%u)",
-                classW.c_str(), payload.elementId);
-        return;
-    }
-    // Allowlist gate (trust-boundary defense): a misbehaving / malicious
-    // peer could send EntitySpawn with an arbitrary className. Limit
-    // materialization to subclasses of the 12 NPC bases.
-    if (!IsClassOrDerivedFromAnyAllowlisted(actorClass)) {
-        UE_LOGW("npc-sync[client OnSpawn]: class '%ls' is NOT on NPC allowlist -- "
-                "rejecting (eid=%u; peer is broadcasting non-NPC EntitySpawn?)",
-                classW.c_str(), payload.elementId);
-        return;
-    }
-    // UFunction + CDO must be resolved (Install caches them; receiver
-    // can fire before Install completes on a fast-handshake peer).
-    //
-    // Note: g_npcSpawnXformParamOff < 0
-    // is INTENTIONALLY tolerated here. Install treats missing SpawnTransform
-    // as non-fatal ("position-less spawns still work" -- Install line 606),
-    // so the receiver must too. The FTransform we build below stays at
-    // identity / origin, which mirrors what the host's interceptor also
-    // sends in that degraded case (loc=0,0,0 rot=0,0,0). Visibly wrong but
-    // not a crash; aligns sender + receiver behavior.
-    if (!g_npcSpawnFn || !g_finishSpawnFn || !g_gsCdo ||
-        g_npcSpawnReturnParamOff < 0) {
-        UE_LOGW("npc-sync[client OnSpawn]: receiver UFunctions not yet resolved "
-                "(spawnFn=%p finishFn=%p gsCdo=%p retOff=%d) -- dropping eid=%u",
-                g_npcSpawnFn, g_finishSpawnFn, g_gsCdo,
-                g_npcSpawnReturnParamOff, payload.elementId);
-        return;
-    }
-    void* worldCtx = E::GetWorldContext();
-    if (!worldCtx) {
-        UE_LOGW("npc-sync[client OnSpawn]: no world context -- dropping (eid=%u)",
-                payload.elementId);
-        return;
-    }
-    // Build FTransform from wire pose. NPCs have no scale in EntitySpawn
-    // (scale is a runtime variant signal we don't currently sync; defaults
-    // to unit -- matches host's spawn behavior since the BP rarely sets
-    // non-unit scale on NPCs).
-    ue_wrap::FTransform xform{};
-    E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
-                     xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
-    xform.TX = payload.locX;
-    xform.TY = payload.locY;
-    xform.TZ = payload.locZ;
-    // xform scale stays at unit (constructor default).
-
-    // Mark the bypass slot BEFORE BeginDeferredActorSpawnFromClass so our
-    // own interceptor (client role) allows the spawn through instead of
-    // suppressing it. Single-shot: consumed by the next interceptor fire
-    // matching this class.
-    MarkIncomingNpcSpawn(actorClass);
-
-    constexpr uint8_t kAlwaysSpawn = 1;
-    void* spawned = nullptr;
-    {
-        ParamFrame begin(g_npcSpawnFn);
-        if (!begin.valid()) {
-            UE_LOGE("npc-sync[client OnSpawn]: ParamFrame(BeginDeferred) invalid -- dropping eid=%u",
-                    payload.elementId);
-            // Clear bypass slot defensively -- the spawn we marked won't
-            // happen, so a stray local spawn of the same class shouldn't
-            // accidentally pass through.
-            g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
-            return;
-        }
-        begin.Set<void*>(L"WorldContextObject", worldCtx);
-        begin.Set<void*>(L"ActorClass", actorClass);
-        begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-        begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
-        begin.Set<void*>(L"Owner", nullptr);
-        if (!Call(g_gsCdo, begin)) {
-            UE_LOGE("npc-sync[client OnSpawn]: BeginDeferredActorSpawnFromClass call failed for "
-                    "'%ls' eid=%u", classW.c_str(), payload.elementId);
-            g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
-            return;
-        }
-        spawned = begin.Get<void*>(L"ReturnValue");
-    }
-    if (!spawned) {
-        UE_LOGE("npc-sync[client OnSpawn]: BeginDeferred returned null for '%ls' eid=%u "
-                "(suppressor swallowed it? bypass slot not consumed?)",
-                classW.c_str(), payload.elementId);
-        // Audit critical #2 / 2026-05-28: MarkIncomingNpcSpawn set the slot
-        // unconditionally before BeginDeferred; if Call succeeded but the
-        // engine returned null (e.g. the suppressor consumed an aliased
-        // class via concurrent fire OR a different interceptor swallowed
-        // the spawn), the slot might still be populated. Clear defensively
-        // so a subsequent local NPC spawn of the same class doesn't
-        // accidentally pass through and produce a rogue non-suppressed
-        // duplicate.
-        g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
-        return;
-    }
-    {
-        ParamFrame finish(g_finishSpawnFn);
-        if (!finish.valid()) {
-            UE_LOGE("npc-sync[client OnSpawn]: ParamFrame(FinishSpawning) invalid -- "
-                    "the actor %p is in a half-spawned state (BeginDeferred returned, "
-                    "FinishSpawning never ran). Forcing K2_DestroyActor to clean up.",
-                    spawned);
-            if (g_k2DestroyFn && R::IsLive(spawned)) {
-                R::CallFunction(spawned, g_k2DestroyFn, nullptr);
-            }
-            return;
-        }
-        finish.Set<void*>(L"Actor", spawned);
-        finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-        if (!Call(g_gsCdo, finish)) {
-            UE_LOGE("npc-sync[client OnSpawn]: FinishSpawningActor call failed for "
-                    "%p '%ls' eid=%u -- forcing K2_DestroyActor",
-                    spawned, classW.c_str(), payload.elementId);
-            if (g_k2DestroyFn && R::IsLive(spawned)) {
-                R::CallFunction(spawned, g_k2DestroyFn, nullptr);
-            }
-            return;
-        }
-    }
-
-    // Build mirror Element + hand off to MirrorManager::Install. The
-    // template encapsulates the 5-step pattern (alloc-under-lock +
-    // RegisterMirror + rollback-on-fail). Install returns false on
-    // duplicate-eid race or Registry::RegisterMirror failure -- in
-    // both cases we own the orphan actor and must K2_DestroyActor it.
-    auto mirror = std::make_unique<coop::element::Npc>();
-    std::string typeName8;
-    typeName8.reserve(payload.className.len);
-    for (uint8_t i = 0; i < payload.className.len; ++i) {
-        typeName8.push_back(static_cast<char>(payload.className.data[i]));
-    }
-    mirror->SetTypeName(std::move(typeName8));
-    mirror->SetActor(spawned);
-
-    const coop::element::ElementId eid =
-        static_cast<coop::element::ElementId>(payload.elementId);
-
-    if (!NpcMirrors().Install(eid, std::move(mirror))) {
-        UE_LOGW("npc-sync[client OnSpawn]: MirrorManager::Install(eid=%u) failed "
-                "(duplicate eid race or Registry::RegisterMirror collision) -- "
-                "destroying orphan actor %p",
-                eid, spawned);
-        if (g_k2DestroyFn && R::IsLive(spawned)) {
-            R::CallFunction(spawned, g_k2DestroyFn, nullptr);
-        }
-        return;
-    }
-    UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
-            payload.elementId, classW.c_str(), spawned,
-            payload.locX, payload.locY, payload.locZ);
+coop::net::Session* GetSession() {
+    return g_session_ptr.load(std::memory_order_acquire);
 }
 
-void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
-    auto* s = LoadSession();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("npc-sync[client OnDestroy]: received on host -- dropping (loopback bounce)");
-        return;
-    }
-    if (payload.elementId == 0u ||
-        payload.elementId == static_cast<uint32_t>(coop::element::kInvalidId) ||
-        payload.elementId >= coop::element::kHostRangeSize) {
-        UE_LOGW("npc-sync[client OnDestroy]: invalid/out-of-range elementId=%u -- dropping",
-                payload.elementId);
-        return;
-    }
-    const coop::element::ElementId eid =
-        static_cast<coop::element::ElementId>(payload.elementId);
-    // Drain the mirror from the client table under MirrorManager's own
-    // mutex (Take releases that mutex before returning); THEN call
-    // K2_DestroyActor (game-thread UFunction call cannot legally race
-    // with another thread holding the manager's mutex) and let the
-    // unique_ptr dtor run (which calls Registry::UnregisterMirror with
-    // Registry::m_mutex held -- ABBA-safe because the MirrorManager
-    // mutex is not held at that point).
-    std::unique_ptr<coop::element::Npc> drained = NpcMirrors().Take(eid);
-    if (!drained) {
-        UE_LOGI("npc-sync[client OnDestroy]: eid=%u not in client mirror table -- "
-                "ignoring (destroy without prior spawn, or already-drained)",
-                payload.elementId);
-        return;
-    }
-    void* actor = drained->GetActor();
-    if (actor && g_k2DestroyFn && R::IsLive(actor)) {
-        R::CallFunction(actor, g_k2DestroyFn, nullptr);
-        UE_LOGI("npc-sync[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
-                payload.elementId, actor);
-    } else if (actor && !R::IsLive(actor)) {
-        UE_LOGI("npc-sync[client OnDestroy]: mirror eid=%u actor=%p already not-live -- "
-                "skipping K2_DestroyActor (engine destroyed it elsewhere)",
-                payload.elementId, actor);
-    } else if (!actor) {
-        UE_LOGI("npc-sync[client OnDestroy]: mirror eid=%u has null actor -- nothing to destroy "
-                "(mirror was registered without ever binding an actor)",
-                payload.elementId);
-    } else {
-        UE_LOGW("npc-sync[client OnDestroy]: K2_DestroyActor UFunction unresolved (g_k2DestroyFn=%p) -- "
-                "cannot tear down actor %p; mirror Element will drop but engine actor leaks",
-                g_k2DestroyFn, actor);
-    }
-    // drained's destructor fires here -> Registry::UnregisterMirror(eid).
+bool IsAllowlistedClass(void* cls) {
+    // Same subclass-aware walk used by the host interceptor. Returns
+    // false when cls is null OR not derived from any of the 12 NPC
+    // bases. The allowlist may not be fully resolved yet (Install
+    // gates the interceptor install until all 12 bind, but receivers
+    // can fire from a fast-handshake peer while the host is still
+    // resolving) -- in that case the unresolved slots are null,
+    // IsDescendantOfAny skips them, and the check effectively becomes
+    // "match any of the resolved subset". That's strictly tighter
+    // (false rejects) until the allowlist completes, which is the
+    // safer failure mode.
+    return IsClassOrDerivedFromAnyAllowlisted(cls);
 }
+
+void ClearIncomingNpcSpawn() {
+    g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
+}
+
+// Receiver impls (OnEntitySpawn / OnEntityDestroy) moved to
+// coop/npc_mirror.cpp (M-1 2026-05-29 split).
 
 }  // namespace coop::npc_sync

@@ -5,7 +5,7 @@
 
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
-#include "coop/npc_sync.h"
+#include "coop/npc_mirror.h"
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
@@ -357,7 +357,7 @@ void Update(net::Session& session, void* localPlayer) {
         }
         case net::ReliableKind::EntitySpawn: {
             // Host-broadcast NPC spawn. Validate size + className.len at the
-            // trust boundary here; npc_sync::OnEntitySpawn does the full
+            // trust boundary here; npc_mirror::OnEntitySpawn does the full
             // per-field validation (finite + bounds + allowlist + dedup).
             // UFunction calls inside OnEntitySpawn are game-thread only, so
             // dispatch via GT::Post.
@@ -386,12 +386,12 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::EntitySpawnPayload pCopy = p;
             ue_wrap::game_thread::Post([pCopy] {
-                ::coop::npc_sync::OnEntitySpawn(pCopy);
+                ::coop::npc_mirror::OnEntitySpawn(pCopy);
             });
             break;
         }
         case net::ReliableKind::EntityDestroy: {
-            // Host-broadcast NPC destroy. Dispatch to npc_sync::
+            // Host-broadcast NPC destroy. Dispatch to npc_mirror::
             // OnEntityDestroy (game-thread UFunction call).
             if (msg.payloadLen < sizeof(net::EntityDestroyPayload)) {
                 UE_LOGW("event_feed: EntityDestroy payload too short (%zu < %zu)",
@@ -411,7 +411,7 @@ void Update(net::Session& session, void* localPlayer) {
             std::memcpy(&p, msg.payload, sizeof(p));
             net::EntityDestroyPayload pCopy = p;
             ue_wrap::game_thread::Post([pCopy] {
-                ::coop::npc_sync::OnEntityDestroy(pCopy);
+                ::coop::npc_mirror::OnEntityDestroy(pCopy);
             });
             break;
         }

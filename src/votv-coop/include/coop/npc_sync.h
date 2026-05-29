@@ -13,13 +13,19 @@
 // caches the session pointer + resolves the 12 NPC classes + the
 // BeginDeferred UFunction. Once all are resolved the interceptor is set;
 // further calls short-circuit.
+//
+// SPLIT (M-1 2026-05-29): the client-side receiver functions (OnEntitySpawn /
+// OnEntityDestroy) live in `coop/npc_mirror.h` -- this file owns host-side
+// PRE/POST/interceptor + resolution + lifecycle. The receivers consume the
+// resolved UFunction refs through `npc_mirror::SetClientRefs(...)` (called
+// once by Install when all refs become available) and access the shared
+// allowlist + session pointer + bypass slot through the public accessors
+// below.
 
 #pragma once
 
 namespace coop::net {
 class Session;
-struct EntitySpawnPayload;
-struct EntityDestroyPayload;
 }  // namespace coop::net
 
 namespace coop::npc_sync {
@@ -28,6 +34,12 @@ namespace coop::npc_sync {
 // is installed (so the live interceptor reads through a stable pointer
 // from its first fire). Mirrors prop_snapshot::SetSession.
 void SetSession(coop::net::Session* session);
+
+// Public read accessor for the cached session pointer. Used by the client
+// receivers in coop::npc_mirror so they don't have to mirror a second
+// atomic Session* (single source of truth, no sub-microsecond visible
+// window between two stores).
+coop::net::Session* GetSession();
 
 // Try to install the NPC spawn interceptor. Resolves the GameplayStatics
 // class + the BeginDeferredActorSpawnFromClass UFunction + the 12 NPC
@@ -45,30 +57,23 @@ void Install(coop::net::Session* session);
 // cleared on consume. Safe to call before Install (slot is just a static).
 void MarkIncomingNpcSpawn(void* npcClass);
 
+// Defensive clear of the bypass slot. Used by client receivers on error
+// paths (ParamFrame invalid, BeginDeferred returned null, etc.) so a
+// subsequent local spawn of the same class doesn't accidentally pass
+// through and produce a rogue non-suppressed duplicate.
+void ClearIncomingNpcSpawn();
+
+// Trust-boundary check used by both host (interceptor) and client
+// (receiver) sides: returns true iff `cls` is a UClass* that derives from
+// any of the 12 allowlisted NPC bases (subclass-aware walk via
+// UStruct.SuperStruct chain). Returns false if the allowlist isn't fully
+// resolved yet (Install gates installation until all 12 bind).
+bool IsAllowlistedClass(void* cls);
+
 // Clear all per-session state: tracked-NPC map, sessionId counter, bypass
 // slot. Called on net disconnect. Does NOT uninstall the interceptor (the
 // 12 cached NPC classes + the UFunction pointer remain valid across
 // disconnect; only the running-session bookkeeping resets).
 void OnDisconnect();
-
-// Inc3 receiver (client-side, host-broadcast NPC materialization). Called
-// from the event_feed dispatcher (via game_thread::Post) when a host
-// EntitySpawn reliable packet arrives. Looks up the actor class by
-// payload.className, validates it against the NPC allowlist, builds the
-// FTransform, calls MarkIncomingNpcSpawn to bypass the suppressor, and
-// invokes BeginDeferredActorSpawnFromClass + FinishSpawningActor to
-// materialize the mirror. Registers the resulting Npc Element with the
-// Registry as a MIRROR bound to the host's ElementId (Registry::
-// RegisterMirror) so subsequent EntityDestroy routes back via lookup.
-//
-// Host echo: defensive no-op when role() == Host (host doesn't receive
-// its own broadcasts; this is paranoia).
-void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
-
-// Inc3 receiver (client-side, host-broadcast NPC teardown). Resolves
-// the mirror Element via Registry::Get(payload.elementId), pulls the
-// AActor* off it, calls K2_DestroyActor, then drops the unique_ptr<Npc>
-// from g_clientMirrors -- the dtor unregisters from the Registry.
-void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload);
 
 }  // namespace coop::npc_sync
