@@ -130,7 +130,23 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // (via the lock-free `players::Registry::LocalPlayerSyncContext()`
 // accessor that mirrors LocalPlayerElementId). Receivers fall through
 // (no compare) when senderElementId is the 0 sentinel (boot/seed race).
-inline constexpr uint16_t kProtocolVersion = 14;
+//
+// v15 (2026-05-29) -- audit follow-up E-2: extend B1 syncContext coverage
+// to the prop-lifecycle packets that B1 missed. PropSpawnPayload and
+// PropDestroyPayload already carry `elementId` (sender's allocation-range
+// Prop Element id, v12/A2) but they do NOT carry the SENDER's Player
+// Element generation byte. Same hazard as ItemActivate: a peer that
+// disconnects mid-pickup and reconnects gets a fresh per-process-
+// monotonic context; an in-flight stale PropSpawn/PropDestroy stamped
+// with the previous incarnation's eid could be honored against the new
+// generation. Wire shape: both payloads have spare pad after `elementId`
+// already (PropSpawnPayload had `uint8_t _pad[3]` after physFlags;
+// PropDestroyPayload had a trailing `uint32_t _pad`). Steal one byte
+// for senderContext, keep the rest as pad -- ZERO size change to either
+// payload, just a field rename + protocol bump. ParseHeader rejects
+// pre-v15 packets so a stale ItemActivate-shape PropSpawn (mismatched
+// pad byte meaning) can't slip through.
+inline constexpr uint16_t kProtocolVersion = 15;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -500,7 +516,13 @@ struct PropSpawnPayload {
     float         rotPitch, rotYaw, rotRoll;   // 12 -- FRotator (matches PropPose shape)
     float         scaleX, scaleY, scaleZ;      // 12 -- usually (1,1,1)
     uint8_t       physFlags;        // 1
-    uint8_t       _pad[3];          // 4
+    uint8_t       senderContext;    // v15 (E-2): SENDER's local Player Element::
+                                    //     GetSyncContext byte. Receiver compares
+                                    //     vs stored mirror context; drops on
+                                    //     mismatch. Was first byte of `_pad[3]`
+                                    //     in v14. 0 when sender had no Player
+                                    //     Element yet (boot/seed window).
+    uint8_t       _pad[2];          // 2
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- usually (0,0,0)
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
     // v12: ElementId of the prop in the SENDER's allocation range.
@@ -542,8 +564,14 @@ struct PropDestroyPayload {
     // Receiver UnregisterMirror()s this id to drain the wire-identity
     // binding made by the matching PropSpawn (the engine actor is
     // resolved+destroyed via the key path; eid is identity bookkeeping).
-    uint32_t elementId;  // 4
-    uint32_t _pad;       // 4 -- 8-byte alignment
+    uint32_t elementId;       // 4
+    uint8_t  senderContext;   // v15 (E-2): SENDER's local Player Element::
+                              //     GetSyncContext byte (same semantics as
+                              //     PropSpawnPayload.senderContext). Was the
+                              //     first byte of the v14 `uint32_t _pad`
+                              //     trailer. 0 when sender had no Player
+                              //     Element yet (boot/seed window).
+    uint8_t  _pad[3];         // 3 -- 8-byte alignment
 };
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
 static_assert(sizeof(PropDestroyPayload) <= 256 - 20 - 8,

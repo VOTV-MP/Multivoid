@@ -8,6 +8,7 @@
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
 #include "coop/remote_prop.h"
 #include "ue_wrap/call.h"
@@ -611,9 +612,17 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
     // v12 (2026-05-28): populate elementId from the Prop Element shadow,
     // translating kInvalidId → 0 (wire sentinel per protocol.h contract).
+    // v15 (2026-05-29 E-2): pair with senderContext = local Player
+    // Element::GetSyncContext so receiver can stale-gen drop.
     {
         const coop::element::ElementId eid = GetPropElementIdForActor(self);
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
+        const coop::element::ElementId selfPlayerEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        p.senderContext =
+            (selfPlayerEid == coop::element::kInvalidId)
+                ? 0u
+                : coop::players::Registry::Get().LocalPlayerSyncContext();
     }
     // 2026-05-27 reliable-channel rewrite: Send always succeeds (FIFO queue
     // internal to the channel). The previous EnqueuePropSpawnForRetry fallback
@@ -673,6 +682,15 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     // Translate kInvalidId (C++ sentinel) → 0 (wire sentinel) per the
     // protocol.h contract that "elementId == 0 → sender had no Element".
     dp.elementId = (destroyEid == coop::element::kInvalidId) ? 0u : destroyEid;
+    // v15 (2026-05-29 E-2): stamp local Player Element sync context.
+    {
+        const coop::element::ElementId selfPlayerEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        dp.senderContext =
+            (selfPlayerEid == coop::element::kInvalidId)
+                ? 0u
+                : coop::players::Registry::Get().LocalPlayerSyncContext();
+    }
     UE_LOGI("grab_hook[K2_DestroyActor PRE]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u",
             roleStr, self, keyStr.c_str(), dp.elementId);
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
@@ -752,6 +770,13 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     {
         const coop::element::ElementId eid = GetPropElementIdForActor(spawnedActor);
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
+        // v15 (2026-05-29 E-2): stamp local Player Element sync context.
+        const coop::element::ElementId selfPlayerEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        p.senderContext =
+            (selfPlayerEid == coop::element::kInvalidId)
+                ? 0u
+                : coop::players::Registry::Get().LocalPlayerSyncContext();
     }
     UE_LOGI("grab_hook[takeObj POST]: SPAWN broadcast cls='%ls' key='%ls' loc=(%.1f, %.1f, %.1f) heavy=%d frozen=%d eid=%u",
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,

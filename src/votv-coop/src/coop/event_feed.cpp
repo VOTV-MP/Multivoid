@@ -240,15 +240,50 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropSpawn key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
-            // Audit follow-up E-2 (2026-05-29): PropSpawnPayload carries
-            // elementId (v12/A2) but no senderContext byte (v14/B1 added that
-            // to ItemActivate/Weather/RedSky/Lightning only). Stale-gen
-            // hardening here requires a protocol v14->v15 bump to steal a
-            // pad byte for senderContext. Risk is lower-severity than for
-            // ItemActivate/Weather because PropSpawn dedup is keyed on the
-            // persistent WireKey (not eid), so a stale-gen Spawn with
-            // matching Key idempotently rejects at remote_prop::OnSpawn.
-            // Tracked in research/findings/votv-architecture-audit-2026-05-29.md.
+            // v15 (2026-05-29 E-2): stale-generation defense -- drop
+            // PropSpawn packets whose senderContext doesn't match the
+            // SENDER's current Player Element mirror context. Resolves
+            // the deferred hazard from B1 (added senderContext to 5
+            // packets but missed PropSpawn/PropDestroy). Without this,
+            // an in-flight PropSpawn from a previous incarnation of the
+            // sender can be honored against the new generation; the
+            // WireKey-keyed dedup at remote_prop::OnSpawn idempotently
+            // rejects matching-Key re-spawns but does NOT catch cross-
+            // generation key reuse (possible when world re-seeds).
+            //
+            // PropSpawnPayload.elementId is the PROP's id (allocated by
+            // the sender from its host- or peer-range), NOT the sender's
+            // Player Element id. So we can't use VerifySenderContext
+            // (which keys on Player eid). Route by msg.senderPeerSlot ->
+            // sender's Player Element via Registry::GetPlayerElement,
+            // then compare its context to p.senderContext. Same 0-sentinel
+            // and missing-mirror passthrough as VerifySenderContext.
+            //
+            // CRITICAL: gate on senderPlayer->IsMirror(). A locally-allocated
+            // placeholder Player Element (created by RegisterPuppet before
+            // Join arrived) has its own NextLocalContext_() value, NOT the
+            // sender's. PropSpawn (Bulk lane) can arrive before the sender's
+            // Join (Normal lane) on the same connection -- lane order is
+            // preserved only WITHIN a lane, not across. Without IsMirror()
+            // we'd falsely drop legitimate snapshot-drain packets.
+            // VerifySenderContext (the eid-lookup variant) implicitly avoids
+            // this because Registry::Get(wireEid) returns nullptr until the
+            // mirror is registered. We must replicate that filter here.
+            if (msg.senderPeerSlot >= 0 && p.senderContext != 0u) {
+                const uint8_t senderSlot = static_cast<uint8_t>(msg.senderPeerSlot);
+                auto* senderPlayer =
+                    coop::players::Registry::Get().GetPlayerElement(senderSlot);
+                if (senderPlayer && senderPlayer->IsMirror()) {
+                    const uint8_t mirrorCtx = senderPlayer->GetSyncContext();
+                    if (mirrorCtx != 0u && mirrorCtx != p.senderContext) {
+                        UE_LOGW("event_feed: PropSpawn senderContext mismatch slot=%u wire=0x%02x mirror=0x%02x -- dropping (stale generation)",
+                                static_cast<unsigned>(senderSlot),
+                                static_cast<unsigned>(p.senderContext),
+                                static_cast<unsigned>(mirrorCtx));
+                        break;
+                    }
+                }
+            }
             // intermediate-variant classes that the receiver doesn't want
             // (mushroom7_C growing state). Host-authoritative growth
             // pipeline -- the mature variant (mushroom_C) will arrive when
@@ -294,8 +329,24 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropDestroy key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
-            // E-2 deferred (see PropSpawn case above): protocol v15 will add
-            // senderContext to PropDestroyPayload for stale-gen defense.
+            // v15 (2026-05-29 E-2): stale-generation defense (matches
+            // PropSpawn handler above -- see that case for IsMirror()
+            // rationale). 0-sentinel + non-mirror passthrough.
+            if (msg.senderPeerSlot >= 0 && p.senderContext != 0u) {
+                const uint8_t senderSlot = static_cast<uint8_t>(msg.senderPeerSlot);
+                auto* senderPlayer =
+                    coop::players::Registry::Get().GetPlayerElement(senderSlot);
+                if (senderPlayer && senderPlayer->IsMirror()) {
+                    const uint8_t mirrorCtx = senderPlayer->GetSyncContext();
+                    if (mirrorCtx != 0u && mirrorCtx != p.senderContext) {
+                        UE_LOGW("event_feed: PropDestroy senderContext mismatch slot=%u wire=0x%02x mirror=0x%02x -- dropping (stale generation)",
+                                static_cast<unsigned>(senderSlot),
+                                static_cast<unsigned>(p.senderContext),
+                                static_cast<unsigned>(mirrorCtx));
+                        break;
+                    }
+                }
+            }
             // 2026-05-25 cross-peer destroy: pass localPlayer so OnDestroy
             // can release a held PHC grab (mainPlayer.grabbing_actor ==
             // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
