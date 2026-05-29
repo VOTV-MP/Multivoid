@@ -9,7 +9,17 @@ Subcommands:
   client      deploy + launch CLIENT #1 peer (Game_0.9.0n_copy/)
   client2     deploy + launch CLIENT #2 peer (Game_0.9.0n_copy2/) -- 2026-05-28
               added for 3-peer LAN tests of the GNS multi-peer wire layer.
-  smoke       autonomous LAN smoke: deploy + spawn both peers + monitor + kill
+  client3     deploy + launch CLIENT #3 peer (Game_0.9.0n_dev/) -- 2026-05-30
+              the 4th game folder; completes a 4-peer (host + 3 client) set.
+  smoke       autonomous 2-peer LAN smoke (non-regression quick-check)
+  smoke4      autonomous 4-PEER LAN smoke (Tier 8) -- host + 3 clients, staggered
+              connect, then LOG-DRIVEN cross-peer relay verdict. This is the
+              only scenario that exercises the Tier 2 host-relay end-to-end:
+              with <3 clients the relay fan-out is a no-op (host-only, finds no
+              other client). The verdict proves "client A actually sees client
+              B" by parsing each client's log for a puppet auto-spawned on
+              ANOTHER client's slot -- a marker the old star topology could
+              never produce (a client only ever saw the host at slot 0).
   kill        SIGTERM all VotV-Win64-Shipping instances
 
 Every step prints a [mp] line immediately (flushed) so a Bash caller never has
@@ -24,6 +34,7 @@ TO RUN YOU MUST MAKE A BAT AND PUT IT PROJECTS ROOT").
 from __future__ import annotations
 
 import argparse
+import atexit
 import ctypes
 import json
 import os
@@ -343,9 +354,14 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
                 memory_limit_gb: float = 12.0) -> int:
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
     # to launch from when role==client: 1 -> Game_0.9.0n_copy, 2 ->
-    # Game_0.9.0n_copy2. Host always uses Game_0.9.0n.
+    # Game_0.9.0n_copy2, 3 -> Game_0.9.0n_dev. Host always uses Game_0.9.0n.
+    # NOTE: the _dev folder additionally carries UE4SS (dwmapi.dll proxy slot),
+    # but our standalone xinput1_3.dll + votv-coop.dll are byte-identical to the
+    # other copies (deploy-all.ps1), so as a 4th peer its coop behaviour matches.
     if role == "host":
         game_dir = HOST_DIR
+    elif peer_slot == 3:
+        game_dir = DEV_DIR
     elif peer_slot == 2:
         game_dir = CLIENT2_DIR
     else:
@@ -469,6 +485,135 @@ def tail_log(path: Path, n: int, label: str) -> None:
         log(f"  {label}: {line}")
 
 
+# --- Log-driven verdict markers (Tier 8) ---
+# The 2-peer smoke's liveness-only PASS masked the slow-load flake (a client
+# stuck in the menu at 45s still counted as "alive") and could never prove the
+# Tier 2 host-relay actually moved cross-peer data. These markers are parsed
+# straight out of each peer's votv-coop.log; the exact strings are the UE_LOGI
+# calls in src/votv-coop/src/coop/{net/session_status,net/session,net_pump}.cpp
+# and player_handshake.cpp -- keep them in sync if those log lines change.
+import re  # noqa: E402  (kept local to the verdict feature)
+
+_MARK = {
+    # client: the host assigned us a peer slot == we reached the connected
+    # handshake (session_status state=2). The definitive "this client is in".
+    "assigned_slot":   re.compile(r"host assigned us peer slot (\d+)"),
+    # host: it accepted a client connection at a slot.
+    "host_accepted":   re.compile(r"host accepted client at slot (\d+)"),
+    # THE cross-peer proof: a puppet auto-spawned because a remote pose for
+    # slot N arrived. On a client, N != 0 and N != own-slot can ONLY come via
+    # the relay (host forwarding another client's pose). The pre-Tier-2 star
+    # topology could never log this for a non-host slot.
+    "puppet_slot":     re.compile(r"first remote pose on slot (\d+) -> auto-spawning puppet"),
+    "puppet_fail":     re.compile(r"slot (\d+) puppet spawn failed"),
+    # client: received a relayed PlayerJoined identity for another peer.
+    "xpeer_identity":  re.compile(r"client installed cross-peer identity slot=(\d+)"),
+    # host: it fanned a PlayerJoined out to the other clients.
+    "host_relayed_pj": re.compile(r"host relayed PlayerJoined cross-peer identity"),
+    # host: the per-slot connect edge fired (snapshot + flashlight + peer-state replay).
+    "connect_edge":    re.compile(r"peer slot (\d+) connect edge -- replaying"),
+    "epoch_latched":   re.compile(r"latched senderEpoch=0x[0-9a-fA-F]+ for peer slot (\d+)"),
+    "stale_drop":      re.compile(r"stale-gen drop slot=(\d+)"),
+    "malformed_drop":  re.compile(r"with senderEpoch=0 \(malformed"),
+}
+
+
+def parse_log_markers(path: Path) -> dict:
+    """Extract Tier-2 cross-peer verdict markers from one peer's votv-coop.log.
+
+    Returns a dict; missing/unreadable log -> {'present': False}. Sets of slots
+    are returned for the multi-valued markers so the verdict can reason about
+    WHICH peers a client saw, not just how many lines matched.
+    """
+    res = {
+        "present": False,
+        "assigned_slot": None,        # client: last slot the host gave us
+        "host_accepted": set(),       # host: slots it accepted
+        "puppet_slots": set(),        # slots we auto-spawned a puppet for
+        "puppet_fail": set(),         # slots whose puppet spawn failed
+        "xpeer_identity": set(),      # client: relayed PlayerJoined identities installed
+        "host_relayed_pj": 0,         # host: PlayerJoined relays fired
+        "connect_edges": set(),       # host: per-slot connect edges fired
+        "epoch_latched": set(),       # slots we latched an epoch for
+        "stale_drops": 0,             # stale-gen drops (benign during churn)
+        "malformed_drops": 0,         # senderEpoch=0 drops (a real bug if >0)
+    }
+    if not path.exists():
+        return res
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return res
+    res["present"] = True
+    for m in _MARK["assigned_slot"].finditer(text):
+        res["assigned_slot"] = int(m.group(1))  # last wins (latest assignment)
+    res["host_accepted"] = {int(m.group(1)) for m in _MARK["host_accepted"].finditer(text)}
+    res["puppet_slots"] = {int(m.group(1)) for m in _MARK["puppet_slot"].finditer(text)}
+    res["puppet_fail"] = {int(m.group(1)) for m in _MARK["puppet_fail"].finditer(text)}
+    res["xpeer_identity"] = {int(m.group(1)) for m in _MARK["xpeer_identity"].finditer(text)}
+    res["host_relayed_pj"] = len(_MARK["host_relayed_pj"].findall(text))
+    res["connect_edges"] = {int(m.group(1)) for m in _MARK["connect_edge"].finditer(text)}
+    res["epoch_latched"] = {int(m.group(1)) for m in _MARK["epoch_latched"].finditer(text)}
+    res["stale_drops"] = len(_MARK["stale_drop"].findall(text))
+    res["malformed_drops"] = len(_MARK["malformed_drop"].findall(text))
+    return res
+
+
+def wait_for_client_connect(game_dir: Path, timeout: int, label: str,
+                            pid: int) -> int | None:
+    """Poll a client's votv-coop.log until it logs 'host assigned us peer slot
+    N' (== reached connected). Returns the assigned slot, or None on timeout /
+    process death. Staggering launches behind this both spreads the boot-RSS
+    peaks and gives deterministic slot ordering (client1->1, client2->2, ...),
+    which is what makes the cross-peer verdict legible."""
+    log_path = game_dir / "votv-coop.log"
+    for i in range(timeout):
+        time.sleep(1)
+        if not any(p["PID"] == pid for p in list_votv()):
+            log(f"  {label}: process PID {pid} died before connecting")
+            return None
+        mk = parse_log_markers(log_path)
+        if mk["assigned_slot"] is not None:
+            log(f"  {label}: connected -- host assigned peer slot {mk['assigned_slot']} after {i+1}s")
+            return mk["assigned_slot"]
+    log(f"  {label}: did NOT reach connected within {timeout}s (slow-load or handshake stall)")
+    return None
+
+
+def set_dev_ue4ss(enabled: bool) -> None:
+    """Toggle UE4SS in the _dev folder (CLIENT3's game copy) by parking its
+    dwmapi.dll proxy. The _dev copy is the ONLY one carrying UE4SS; loading it
+    as a 4th game instance crashes at DLL-load (confirmed 2026-05-30 -- the
+    dev peer died with only its log header written), and a 4-peer SHIPPING-
+    behaviour validation must be pure-standalone anyway (RULE 3). smoke4
+    disables UE4SS for the run and RESTORES it on exit so the user's dev RE
+    workflow is untouched. Idempotent; safe if dwmapi.dll is absent."""
+    active = DEV_DIR / "dwmapi.dll"
+    parked = DEV_DIR / "dwmapi.dll.smoke-off"
+    try:
+        if enabled:
+            if parked.exists() and not active.exists():
+                parked.rename(active)
+                log("  dev UE4SS: RESTORED (dwmapi.dll back in place)")
+        else:
+            if active.exists():
+                active.rename(parked)
+                log("  dev UE4SS: disabled for smoke (dwmapi.dll parked as .smoke-off)")
+    except OSError as e:
+        log(f"  dev UE4SS toggle (enabled={enabled}) FAILED: {e} "
+            f"(a _dev VotV may still hold the dll)")
+
+
+def cmd_client3(args) -> None:
+    deploy_all()
+    # Client #3: tile index 2. Launches from the _dev folder (the 4th game copy).
+    pid = launch_peer("client", args.port, args.nick or "Client3",
+                      peer=args.peer, res_x=args.res_x, res_y=args.res_y,
+                      peer_slot=3, monitor=args.monitor, tile_index=2,
+                      memory_limit_gb=args.memory_limit_gb)
+    log(f"client3 running PID={pid}")
+
+
 def cmd_smoke(args) -> None:
     """Autonomous LAN smoke.
 
@@ -565,7 +710,211 @@ def cmd_smoke(args) -> None:
     if len(last_peers) != expected:
         log(f"FAIL: expected {expected} peers at end, got {len(last_peers)}")
         sys.exit(3)
-    log("PASS: both peers stable, no RAM breach, logs tailed")
+    # Liveness alone is NOT connection: the slow-load flake leaves a client
+    # stuck in the menu (alive but state != connected) and the old verdict
+    # PASSed it. Require the client log to prove it reached the connected
+    # handshake AND saw the host's puppet (slot 0).
+    cmk = parse_log_markers(CLIENT_DIR / "votv-coop.log")
+    if cmk["assigned_slot"] is None:
+        log("FAIL: client never reached connected (no 'host assigned us peer slot' "
+            "in its log -- slow-load/handshake stall; re-run with a longer --duration)")
+        sys.exit(4)
+    if 0 not in cmk["puppet_slots"]:
+        log(f"FAIL: client connected (slot {cmk['assigned_slot']}) but never spawned "
+            "the host puppet (no remote pose on slot 0 -- pose stream not flowing)")
+        sys.exit(5)
+    if cmk["malformed_drops"] > 0:
+        log(f"FAIL: client logged {cmk['malformed_drops']} malformed (senderEpoch=0) drop(s)")
+        sys.exit(6)
+    log(f"PASS: both peers stable, client connected (slot {cmk['assigned_slot']}), "
+        f"host puppet spawned, no RAM breach"
+        + (f", {cmk['stale_drops']} benign stale-gen drop(s)" if cmk["stale_drops"] else ""))
+    sys.exit(0)
+
+
+def cmd_smoke4(args) -> None:
+    """Autonomous 4-PEER LAN smoke (Tier 8) -- the scenario that validates the
+    Tier 2 host-relay end-to-end.
+
+    Order:
+      1. Kill stragglers + deploy.
+      2. Launch host; wait for UDP bind.
+      3. Launch the 3 clients ONE AT A TIME, each behind wait_for_client_connect
+         (spreads the boot-RSS peaks that caused the slow-load flake under
+         3-simultaneous-boot contention, and pins deterministic slot ordering).
+      4. Monitor RSS for --duration (steady state). A per-process Job Object cap
+         (launch_peer) is the hard runaway guard; the sampling kill here only
+         arms AFTER --settle-grace so the legitimate prop-snapshot boot peak
+         (~8 GB, settles ~3.5 GB) no longer trips a false kill -- this retires
+         the --ram-kill-mb 12000 workaround.
+      5. LOG-DRIVEN verdict (the point of the whole scenario):
+         - all 4 peers alive at end,
+         - host accepted all 3 clients,
+         - every client reached connected (assigned a slot),
+         - CROSS-PEER: every client auto-spawned a puppet for the host (slot 0)
+           AND for both OTHER clients -- the relay proof,
+         - no puppet-spawn failures, no malformed (epoch=0) drops.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before smoke4")
+
+    deploy_all()
+
+    # CLIENT3 launches from the _dev folder, the only copy carrying UE4SS.
+    # UE4SS as a 4th instance crashes at DLL-load; park it for the run and
+    # restore on exit. atexit fires on normal return AND on sys.exit() (the
+    # verdict path), so the dev folder is always left as we found it.
+    set_dev_ue4ss(False)
+    atexit.register(set_dev_ue4ss, True)
+
+    log("--- HOST LAUNCH ---")
+    host_pid = launch_peer("host", args.port, "Host",
+                           peer=None, res_x=args.res_x, res_y=args.res_y,
+                           monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+    log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s")
+            bound = True
+            break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log(f"HOST DIED before binding UDP (PID {host_pid} gone)")
+            tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+            sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did NOT bind UDP within {args.boot_timeout}s")
+        tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+        kill_all()
+        sys.exit(1)
+
+    # Staggered client launch. Each client waits to reach connected before the
+    # next launches: spreads boot peaks + makes slot assignment deterministic.
+    client_specs = [
+        (1, CLIENT_DIR,  "CLIENT1"),
+        (2, CLIENT2_DIR, "CLIENT2"),
+        (3, DEV_DIR,     "CLIENT3"),
+    ]
+    client_pids: dict[int, int] = {}
+    assigned: dict[int, int | None] = {}
+    for slot_arg, game_dir, label in client_specs:
+        log(f"--- {label} LAUNCH (peer_slot folder {slot_arg}) ---")
+        pid = launch_peer("client", args.port, label.capitalize(),
+                          peer="127.0.0.1", res_x=1280, res_y=720,
+                          peer_slot=slot_arg, monitor=2, tile_index=slot_arg - 1,
+                          memory_limit_gb=args.memory_limit_gb)
+        client_pids[slot_arg] = pid
+        assigned[slot_arg] = wait_for_client_connect(
+            game_dir, args.client_boot_timeout, label, pid)
+
+    log(f"--- MONITORING for {args.duration}s (sample every {args.sample_interval}s, "
+        f"RAM kill arms after {args.settle_grace}s) ---")
+    t0 = time.time()
+    last_peers: list[dict] = []
+    rss_series: dict[int, list[float]] = {}
+    kill_reason: str | None = None
+    while time.time() - t0 < args.duration:
+        time.sleep(args.sample_interval)
+        peers = list_votv()
+        last_peers = peers
+        t = int(time.time() - t0)
+        desc = ", ".join(f"PID{p['PID']}={p['RSS_MB']}MB '{p['Title']}'" for p in peers) or "NONE"
+        log(f"  t={t}s peers={len(peers)}: {desc}")
+        for p in peers:
+            rss_series.setdefault(p["PID"], []).append(p["RSS_MB"])
+        max_rss = max((p["RSS_MB"] for p in peers), default=0)
+        if t >= args.settle_grace and max_rss > args.ram_kill_mb:
+            kill_reason = f"peer RSS={max_rss}MB > kill threshold {args.ram_kill_mb}MB (post-settle)"
+            break
+
+    log("--- FINAL STATE ---")
+    log(f"peers alive at end: {len(last_peers)}")
+    for p in last_peers:
+        log(f"  PID={p['PID']} RSS={p['RSS_MB']}MB title='{p['Title']}'")
+
+    # Tail all four logs.
+    tail_log(HOST_DIR / "votv-coop.log", 20, "HOST")
+    for slot_arg, game_dir, label in client_specs:
+        tail_log(game_dir / "votv-coop.log", 20, label)
+
+    # Parse all four logs for the verdict (after kill is fine -- logs are flushed
+    # on each write; parse BEFORE kill to be safe against a crash-on-exit wipe).
+    host_mk = parse_log_markers(HOST_DIR / "votv-coop.log")
+    client_mks = {slot: parse_log_markers(gd / "votv-coop.log")
+                  for slot, gd, _ in client_specs}
+
+    log("--- KILLING ---")
+    kill_all()
+
+    # --- Log-driven verdict ---
+    log("--- VERDICT (log-driven, 4-peer cross-peer relay) ---")
+    num_clients = len(client_specs)
+    failures: list[str] = []
+    notes: list[str] = []
+
+    if kill_reason:
+        failures.append(kill_reason)
+
+    if len(last_peers) != num_clients + 1:
+        failures.append(f"expected {num_clients + 1} peers alive at end, got {len(last_peers)}")
+
+    # Host side.
+    log(f"host: accepted slots={sorted(host_mk['host_accepted'])} "
+        f"relayed_PlayerJoined={host_mk['host_relayed_pj']} "
+        f"connect_edges={sorted(host_mk['connect_edges'])} "
+        f"epoch_latched={sorted(host_mk['epoch_latched'])}")
+    if len(host_mk["host_accepted"]) < num_clients:
+        failures.append(f"host accepted only {len(host_mk['host_accepted'])} "
+                        f"client(s), expected {num_clients}")
+    if host_mk["host_relayed_pj"] < num_clients - 1:
+        # With N clients the host fires PlayerJoined relays as each later joiner
+        # arrives; <N-1 means cross-peer identity fan-out under-fired.
+        notes.append(f"host relayed PlayerJoined only {host_mk['host_relayed_pj']} "
+                     f"time(s) (expected >= {num_clients - 1})")
+
+    # Per-client side -- the cross-peer relay proof.
+    connected_slots = {s for s, a in assigned.items() if a is not None}
+    for slot_arg, game_dir, label in client_specs:
+        mk = client_mks[slot_arg]
+        own = mk["assigned_slot"]
+        log(f"{label}: assigned_slot={own} puppet_slots={sorted(mk['puppet_slots'])} "
+            f"xpeer_identity={sorted(mk['xpeer_identity'])} "
+            f"puppet_fail={sorted(mk['puppet_fail'])} "
+            f"stale_drops={mk['stale_drops']} malformed_drops={mk['malformed_drops']}")
+        if own is None:
+            failures.append(f"{label} never reached connected (no peer slot assigned)")
+            continue
+        if 0 not in mk["puppet_slots"]:
+            failures.append(f"{label} (slot {own}) never spawned the host puppet (no pose on slot 0)")
+        # Cross-peer puppets: any spawned slot that is neither host(0) nor self.
+        # In the pre-Tier-2 star topology this set was always empty.
+        xpeer = {s for s in mk["puppet_slots"] if s != 0 and s != own}
+        if len(xpeer) < num_clients - 1:
+            failures.append(f"{label} (slot {own}) saw {len(xpeer)} cross-peer puppet(s) "
+                            f"{sorted(xpeer)}, expected {num_clients - 1} "
+                            f"(RELAY GAP -- the other clients are invisible to it)")
+        else:
+            log(f"  {label}: CROSS-PEER OK -- sees host + {sorted(xpeer)} via relay")
+        if mk["puppet_fail"]:
+            failures.append(f"{label} puppet spawn FAILED for slot(s) {sorted(mk['puppet_fail'])}")
+        if mk["malformed_drops"] > 0:
+            failures.append(f"{label} logged {mk['malformed_drops']} malformed (epoch=0) drop(s)")
+        if mk["stale_drops"] > 0:
+            notes.append(f"{label} had {mk['stale_drops']} benign stale-gen drop(s)")
+
+    for n in notes:
+        log(f"NOTE: {n}")
+
+    if failures:
+        log(f"FAIL ({len(failures)} issue(s)):")
+        for f in failures:
+            log(f"  - {f}")
+        sys.exit(2)
+    log(f"PASS: 4 peers stable; host accepted {num_clients} clients; all clients "
+        f"connected {sorted(connected_slots)}; every client sees host + both peers "
+        f"via relay; no spawn failures, no malformed drops.")
     sys.exit(0)
 
 
@@ -627,6 +976,15 @@ def main() -> None:
     for flag, kw in client_res: p_client2.add_argument(flag, **kw)
     p_client2.set_defaults(func=cmd_client2)
 
+    p_client3 = sub.add_parser("client3", help="launch CLIENT #3 peer (4-peer LAN; _dev folder)")
+    p_client3.add_argument("--peer", default="127.0.0.1")
+    p_client3.add_argument("--nick", default=None)
+    p_client3.add_argument("--monitor", type=int, default=2,
+                           help="1-based monitor index; defaults to secondary")
+    _add_mem_limit(p_client3)
+    for flag, kw in client_res: p_client3.add_argument(flag, **kw)
+    p_client3.set_defaults(func=cmd_client3)
+
     p_kill = sub.add_parser("kill", help="kill all VotV instances")
     p_kill.set_defaults(func=cmd_kill)
 
@@ -641,6 +999,27 @@ def main() -> None:
                          help="hard kill threshold (born from 19 GB install-loop incident)")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
+
+    p_smoke4 = sub.add_parser("smoke4",
+                              help="autonomous 4-PEER LAN smoke (Tier 8 cross-peer relay verdict)")
+    p_smoke4.add_argument("--duration", type=int, default=45,
+                          help="seconds to monitor after all peers connect")
+    p_smoke4.add_argument("--sample-interval", type=int, default=5,
+                          help="seconds between RSS samples")
+    p_smoke4.add_argument("--boot-timeout", type=int, default=40,
+                          help="seconds to wait for host UDP bind")
+    p_smoke4.add_argument("--client-boot-timeout", type=int, default=75,
+                          help="per-client seconds to reach connected (staggered)")
+    p_smoke4.add_argument("--settle-grace", type=int, default=25,
+                          help="seconds before the sampling RAM-kill arms (lets the "
+                               "prop-snapshot boot peak pass; Job Object cap is the "
+                               "real runaway guard)")
+    p_smoke4.add_argument("--ram-kill-mb", type=int, default=12000,
+                          help="post-settle hard kill threshold per peer")
+    p_smoke4.add_argument("--memory-limit-gb", type=float, default=12.0,
+                          help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_smoke4.add_argument(flag, **kw)
+    p_smoke4.set_defaults(func=cmd_smoke4)
 
     args = ap.parse_args()
     args.func(args)
