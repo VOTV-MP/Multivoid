@@ -44,6 +44,11 @@ std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 // only; no lock needed.
 std::vector<void*> g_snapshotCandidates;
 std::vector<coop::element::ElementId> g_snapshotEids;  // parallel; same idx as g_snapshotCandidates
+// Parallel to g_snapshotCandidates: each candidate's GUObjectArray InternalIndex
+// captured (in the Element) while the actor was live. DrainChunk re-validates
+// via R::IsLiveByIndex(actor, idx) so a candidate GC-purged between enumeration
+// and its per-tick drain is rejected WITHOUT dereferencing freed actor memory.
+std::vector<int32_t> g_snapshotInternalIdxs;
 size_t g_snapshotCandidateIdx = 0;
 
 // Which peer slot is being served by the current drain (-1 = no drain
@@ -75,6 +80,7 @@ void StartEnumerationFor(int peerSlot) {
     g_currentTargetSlot = peerSlot;
     g_snapshotCandidates.clear();
     g_snapshotEids.clear();
+    g_snapshotInternalIdxs.clear();
     g_snapshotCandidateIdx = 0;
     int skippedDying = 0, skippedDead = 0;
     // Tier 3 Props migration 2026-05-28: enumerate via the unified Element
@@ -92,11 +98,19 @@ void StartEnumerationFor(int peerSlot) {
             coop::element::ElementType::Prop, pairs);
     g_snapshotCandidates.reserve(trackedCount);
     g_snapshotEids.reserve(trackedCount);
+    g_snapshotInternalIdxs.reserve(trackedCount);
     for (const auto& pr : pairs) {
         if (!pr.actor) { ++skippedDead; continue; }
-        if (!R::IsLive(pr.actor)) { ++skippedDying; continue; }
+        // IsLiveByIndex (NOT IsLive): pr.actor may have been GC-purged since the
+        // Element captured it (mass purge doesn't fire K2_DestroyActor, so dying
+        // props linger in the Registry). IsLive would deref the freed pointer and
+        // AV -- the connect-edge crash root-caused 2026-05-30. IsLiveByIndex reads
+        // only the GUObjectArray slot at pr.internalIdx, so a purged actor is
+        // rejected cleanly.
+        if (!R::IsLiveByIndex(pr.actor, pr.internalIdx)) { ++skippedDying; continue; }
         g_snapshotCandidates.push_back(pr.actor);
         g_snapshotEids.push_back(pr.id);
+        g_snapshotInternalIdxs.push_back(pr.internalIdx);
     }
     UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
@@ -174,9 +188,16 @@ void DrainChunk() {
     int sent = 0;
     for (; g_snapshotCandidateIdx < limit; ++g_snapshotCandidateIdx) {
         void* obj = g_snapshotCandidates[g_snapshotCandidateIdx];
-        // Re-validate liveness: an actor that was live during Phase-1
-        // enumeration might have been GC'd in the intervening ticks.
-        if (!obj || !R::IsLive(obj)) continue;
+        // Re-validate liveness: an actor live at enumeration may have been
+        // GC-purged across the intervening ticks. IsLiveByIndex with the cached
+        // index reads only the GUObjectArray slot, never obj's (possibly freed)
+        // memory -- so a purged candidate is skipped without faulting. Once it
+        // passes, obj is live and the subsequent UFunction reads below are safe
+        // (UE4 GC purge runs on the game thread and cannot interleave mid-tick).
+        const int32_t cachedIdx = g_snapshotCandidateIdx < g_snapshotInternalIdxs.size()
+                                      ? g_snapshotInternalIdxs[g_snapshotCandidateIdx]
+                                      : -1;
+        if (!obj || !R::IsLiveByIndex(obj, cachedIdx)) continue;
         coop::net::PropSpawnPayload p{};
         const std::wstring cls = R::ClassNameOf(obj);
         // Same wire-suppress allowlist as the Init POST observer.
@@ -233,6 +254,7 @@ void DrainChunk() {
                 g_currentTargetSlot, g_snapshotCandidates.size());
         g_snapshotCandidates.clear();
         g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
+        g_snapshotInternalIdxs.clear(); g_snapshotInternalIdxs.shrink_to_fit();
         g_snapshotCandidateIdx = 0;
         g_currentTargetSlot = -1;
         // Dequeue next pending slot if any. This kicks off a fresh
@@ -264,6 +286,7 @@ void CancelForSlot(int peerSlot) {
     if (g_currentTargetSlot != peerSlot) return;
     g_snapshotCandidates.clear();
     g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
+    g_snapshotInternalIdxs.clear(); g_snapshotInternalIdxs.shrink_to_fit();
     g_snapshotCandidateIdx = 0;
     g_currentTargetSlot = -1;
     if (!g_pendingSlots.empty()) {
@@ -283,6 +306,7 @@ size_t OnDisconnect() {
     }
     g_snapshotCandidates.clear();
     g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
+    g_snapshotInternalIdxs.clear(); g_snapshotInternalIdxs.shrink_to_fit();
     g_snapshotCandidateIdx = 0;
     g_currentTargetSlot = -1;
     g_pendingSlots.clear();

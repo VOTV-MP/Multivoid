@@ -218,7 +218,10 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
     };
     if (!key.empty()) el->SetName(toStr(key));
     if (!cls.empty()) el->SetTypeName(toStr(cls));
-    el->SetActor(actor);
+    // Capture the GUObjectArray index now, while `actor` is live (Init POST /
+    // discovery), so the late-joiner snapshot can later validate this pointer
+    // via IsLiveByIndex without dereferencing it after a GC purge.
+    el->SetActor(actor, R::InternalIndexOf(actor));
     const coop::element::ElementId eid = isHost
         ? coop::element::Registry::Get().AllocHostId(el.get())
         : coop::element::Registry::Get().AllocLocalId(el.get());

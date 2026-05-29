@@ -530,7 +530,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
     auto mirror = std::make_unique<coop::element::Prop>();
     if (!key.empty()) mirror->SetName(NarrowAscii(key));
     if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
-    mirror->SetActor(actor);
+    mirror->SetActor(actor, R::InternalIndexOf(actor));
     if (PropMirrors().Install(eid, std::move(mirror))) {
         UE_LOGI("remote_prop::RegisterPropMirror: eid=%u bound to actor=%p "
                 "key='%ls' cls='%ls'",

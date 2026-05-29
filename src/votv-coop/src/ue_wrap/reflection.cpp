@@ -90,11 +90,19 @@ bool AddToRoot(void* obj) {
     return true;
 }
 
-bool IsLive(void* obj) {
-    if (!obj) return false;
-    const int32_t idx = *reinterpret_cast<int32_t*>(
+int32_t InternalIndexOf(void* obj) {
+    if (!obj) return -1;
+    // Dereferences obj -- caller guarantees obj is live/mapped (see header).
+    return *reinterpret_cast<int32_t*>(
         reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
-    uint8_t* item = ItemAt(idx);
+}
+
+bool IsLiveByIndex(void* obj, int32_t internalIdx) {
+    if (!obj || internalIdx < 0) return false;
+    // Reads ONLY the GUObjectArray slot at the cached index -- never obj's own
+    // (possibly GC-freed) memory. A purged/recycled slot no longer points back
+    // to obj, so the compare fails cleanly instead of dereferencing freed mem.
+    uint8_t* item = ItemAt(internalIdx);
     if (!item || *reinterpret_cast<void**>(item) != obj) return false;  // slot empty/recycled
     // The slot check alone is NOT enough across a level transition: an actor the
     // engine is tearing down is flagged PendingKill (then Unreachable by GC) yet
@@ -106,6 +114,14 @@ bool IsLive(void* obj) {
     const int32_t flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
     constexpr int32_t kKillFlags = 0x10000000 /*Unreachable*/ | 0x20000000 /*PendingKill*/;
     return (flags & kKillFlags) == 0;
+}
+
+bool IsLive(void* obj) {
+    // Reads obj->InternalIndex (deref of obj) then validates via the slot. Safe
+    // only when obj is at least mapped; for GC-purge-stale cached pointers use
+    // IsLiveByIndex with an index captured while obj was live (see header).
+    if (!obj) return false;
+    return IsLiveByIndex(obj, InternalIndexOf(obj));
 }
 
 const FName& NameOf(void* uobject) {

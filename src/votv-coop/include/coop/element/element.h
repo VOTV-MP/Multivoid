@@ -115,7 +115,22 @@ public:
     // subsystem then destroys the Element. (Principle 3 -- parallel class
     // hierarchy: our state lives alongside the engine actor, not inside it.)
     void* GetActor() const  { return m_actor; }
-    void  SetActor(void* a) { m_actor = a; }
+
+    // `internalIdx` MUST be the actor's GUObjectArray InternalIndex captured
+    // (via ue_wrap::reflection::InternalIndexOf) WHILE the actor is known live
+    // -- i.e. at this publishing moment, right after spawn / when IsLive just
+    // passed. It is cached so a consumer that holds the actor pointer across
+    // ticks (e.g. the connect-edge prop snapshot) can later validate it with
+    // reflection::IsLiveByIndex WITHOUT dereferencing the (possibly GC-purged)
+    // actor memory. The index is part of SetActor (not a separate setter) so it
+    // can never be silently omitted -- a stale/-1 index would make the actor
+    // read as not-live and drop it from snapshots. Pass -1 only for an element
+    // with no engine actor.
+    void  SetActor(void* a, int32_t internalIdx) { m_actor = a; m_internalIdx = internalIdx; }
+
+    // Cached GUObjectArray InternalIndex of m_actor (see SetActor); -1 if none.
+    // Feed to reflection::IsLiveByIndex to validate m_actor after a possible GC.
+    int32_t GetInternalIdx() const { return m_internalIdx; }
 
     // ---- Lifecycle / sync state -----------------------------------------
 
@@ -153,6 +168,7 @@ private:
     std::string m_name;
     std::string m_typeName;
     void*       m_actor        = nullptr;
+    int32_t     m_internalIdx  = -1;     // cached GUObjectArray slot of m_actor
     bool        m_beingDeleted = false;
     bool        m_mirror       = false;
 };

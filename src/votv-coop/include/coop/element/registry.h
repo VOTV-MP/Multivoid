@@ -153,23 +153,27 @@ public:
     size_t HostCount() const;
     size_t LocalCount() const;
 
-    // Snapshot-copy the (actor*, elementId) pair for every currently-
-    // allocated Element of the given ElementType. The actor pointer is
-    // extracted from Element::GetActor() under the internal mutex so
-    // there's no use-after-free risk after the mutex releases (the actor
-    // pointer is engine-owned, not Element-lifetime-bound).
+    // Snapshot-copy the (actor*, elementId, internalIdx) tuple for every
+    // currently-allocated Element of the given ElementType, under the internal
+    // mutex. The mutex protects only the C++ Element lifetime (FreeId takes it
+    // before clearing m_byId), so no Element* dangles after it releases.
     //
-    // Used by the unified late-joiner snapshot path: prop_snapshot reads
-    // actor*+eid pairs at TriggerForSlot time, then DrainChunk fills the
-    // wire payload from each pair without any subsequent Registry mutex
-    // acquisition.
+    // It does NOT protect the engine ACTOR pointer: that is a raw UObject* the
+    // UE4 GC can free independently of any C++ mutex (a mass GC purge flags
+    // ~2000 props PendingKill/Unreachable without firing per-actor
+    // K2_DestroyActor, so their Prop Elements -- and the stale m_actor they
+    // hold -- persist in the Registry). Consumers MUST therefore validate each
+    // actor with reflection::IsLiveByIndex(actor, internalIdx) -- NOT IsLive,
+    // whose first act is to deref the (possibly-purged) actor and AV. The
+    // internalIdx is the Element's cached slot captured while the actor was
+    // live. (Root-caused 2026-05-30: the connect-edge snapshot AV.)
     //
-    // (Audit fix 2026-05-28: prior `vector<Element*>` API returned dangling
-    // pointers if another thread freed an Element between the mutex
-    // release and the caller's GetActor() call.)
+    // Used by the late-joiner snapshot path: prop_snapshot reads the tuples at
+    // TriggerForSlot time, then DrainChunk fills the wire payload across ticks,
+    // re-validating via IsLiveByIndex without re-locking the Registry.
     //
     // Returns count copied (out is cleared first).
-    struct ActorIdPair { void* actor; ElementId id; };
+    struct ActorIdPair { void* actor; ElementId id; int32_t internalIdx; };
     size_t SnapshotActorsByType(ElementType t, std::vector<ActorIdPair>& out) const;
 
     // INTENTIONALLY NO bulk-Reset() API (audited 2026-05-28). Each

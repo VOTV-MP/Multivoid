@@ -52,11 +52,35 @@ int32_t NumObjects();
 // UObjectBase* at object index, or nullptr (slot empty / out of range).
 void* ObjectAt(int32_t index);
 
-// True if `obj` is still a live UObject (its GUObjectArray slot still points back
-// to it). O(1): reads the object's InternalIndex and checks the slot. Use to guard
-// a cached actor/object pointer before touching it -- a destroyed object's slot no
-// longer matches, so this returns false instead of dereferencing freed memory.
+// True if `obj` is still a live UObject (its GUObjectArray slot still points
+// back to it, and it is not PendingKill/Unreachable). O(1).
+//
+// WARNING: IsLive reads obj->InternalIndex from the object's OWN memory as its
+// FIRST step, so it is only safe on a pointer that is at least still MAPPED. On
+// a pointer the engine GC has already PURGED (backing store freed) that read
+// itself access-violates -- IsLive cannot guard against its own argument being
+// freed. For any raw UObject* cached LONGER than the current game-thread slice
+// (the connect-edge prop snapshot held ~2000 actor pointers across ticks; a
+// mass GC purge between ticks freed some without firing K2_DestroyActor), use
+// IsLiveByIndex with an index captured via InternalIndexOf while the object was
+// known live. (Root-caused 2026-05-30: this read was the connect-edge AV; see
+// [[feedback-crash-firewall-requires-eha]] for the related freeze it triggered.)
 bool IsLive(void* obj);
+
+// GC-purge-safe liveness check. `internalIdx` must have been captured (via
+// InternalIndexOf) while `obj` was known live. Validates ONLY through the
+// GUObjectArray slot at that index -- it reads engine array metadata, never
+// `obj`'s own (possibly-freed) memory -- so it is safe to call on a pointer the
+// GC may have purged: a freed/recycled slot no longer equals `obj`, so it
+// returns false WITHOUT faulting. FWeakObjectPtr-style guard for any raw
+// UObject* cached past the current game-thread slice.
+bool IsLiveByIndex(void* obj, int32_t internalIdx);
+
+// Read a UObject's InternalIndex (its stable slot in GUObjectArray). MUST be
+// called only when `obj` is known live (it dereferences `obj`). Returns -1 for
+// null. Cache the result so the pointer can later be validated via
+// IsLiveByIndex after the object may have been GC-purged.
+int32_t InternalIndexOf(void* obj);
 
 // Mark a UObject as part of the root set so UE4 GC never collects it. We pin
 // runtime-constructed UObjects (NewObject / SpawnObject results) we want to

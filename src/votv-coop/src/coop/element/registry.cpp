@@ -238,7 +238,7 @@ size_t Registry::SnapshotActorsByType(ElementType t,
     for (ElementId id = 0; id < kMaxElements; ++id) {
         Element* e = m_byId[id];
         if (e && e->GetType() == t) {
-            out.push_back({e->GetActor(), id});
+            out.push_back({e->GetActor(), id, e->GetInternalIdx()});
         }
     }
     return out.size();

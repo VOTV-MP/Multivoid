@@ -281,7 +281,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         typeName8.push_back(static_cast<char>(payload.className.data[i]));
     }
     mirror->SetTypeName(std::move(typeName8));
-    mirror->SetActor(spawned);
+    mirror->SetActor(spawned, R::InternalIndexOf(spawned));
 
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);

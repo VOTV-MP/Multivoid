@@ -253,7 +253,7 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
                 eid, spawnedActor);
         return;
     }
-    el->SetActor(spawnedActor);
+    el->SetActor(spawnedActor, R::InternalIndexOf(spawnedActor));
     {
         std::lock_guard<std::mutex> lk(g_npcElementsMutex);
         g_actorToNpcId[spawnedActor] = eid;
