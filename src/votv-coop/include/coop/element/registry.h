@@ -89,6 +89,41 @@ public:
     static bool IsHostId(ElementId id)  { return id < kHostRangeSize; }
     static bool IsLocalId(ElementId id) { return id >= kHostRangeSize && id < kMaxElements; }
 
+    // ---- Wire-receiver range validation (PR-FOUNDATION-1, 2026-05-29) ----
+    //
+    // Sender-role-aware validation of an inbound elementId carried over the
+    // wire. Closes the multi-site id-range trust gap surfaced by the
+    // foundation audit (E-1 + D2-1 + D2-2 + the 3 PropSpawn/PropDestroy/Join
+    // range gaps): a packet carrying an elementId in a range its sender
+    // role isn't allowed to allocate from is forged or a relay-loop bug
+    // and must be dropped at the boundary.
+    //
+    // - senderIsHost == true: accept only host-allocated eids,
+    //                         i.e. [1, kHostRangeSize). Rejects 0,
+    //                         kInvalidId, and any peer-range id.
+    // - senderIsHost == false: accept only peer-allocated eids,
+    //                          i.e. [kHostRangeSize, kMaxElements).
+    //
+    // Receivers determine `senderIsHost` from the GNS-stamped
+    // `senderPeerSlot` (slot 0 == host). All receiver sites that ingest
+    // an elementId from a peer MUST gate via this helper before passing
+    // it to RegisterMirror / RegisterPropMirror / Install / etc.
+    //
+    // The two specialised flavors are exposed for sites where the sender
+    // role is unconditional by feature (EntitySpawn / EntityDestroy are
+    // host-only; client-sourced PropSpawn for chipPile/clump/trashBits is
+    // client-only).
+    static bool IsAllowedHostAllocatedEid(ElementId id) {
+        return id != kInvalidId && id >= 1u && id < kHostRangeSize;
+    }
+    static bool IsAllowedPeerAllocatedEid(ElementId id) {
+        return id != kInvalidId && id >= kHostRangeSize && id < kMaxElements;
+    }
+    static bool IsAllowedSenderEid(bool senderIsHost, ElementId id) {
+        return senderIsHost ? IsAllowedHostAllocatedEid(id)
+                            : IsAllowedPeerAllocatedEid(id);
+    }
+
     // Counts: number of currently-allocated elements per range. Used for
     // diagnostic logging + late-joiner snapshot sizing estimates.
     size_t HostCount() const;

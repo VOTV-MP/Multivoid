@@ -239,10 +239,29 @@ bool HandleJoinMessage(net::Session& session,
     // yet"; skip mirror install and fall back to senderPeerSlot
     // routing per the field's contract. v14: pass senderContext so
     // the new mirror is stamped with the sender's generation byte.
+    //
+    // PR-FOUNDATION-1 (2026-05-29): range-validate senderElementId
+    // against the sender's role before installing. A peer whose
+    // role is host MUST send a host-range eid; a peer whose role is
+    // client MUST send a peer-range eid. A mismatch indicates a
+    // forged Join (or relay-loop bug) and we drop the mirror install
+    // rather than corrupt the per-slot Player Element mapping. The
+    // 0-sentinel passthrough (boot/seed race) stays as before.
     if (senderElementId != 0u &&
         senderElementId != coop::element::kInvalidId) {
-        coop::players::Registry::Get().EstablishMirrorForSlot(
-            static_cast<uint8_t>(senderSlot), senderElementId, senderContext);
+        const bool senderIsHost = (senderSlot == 0);
+        if (!coop::element::Registry::IsAllowedSenderEid(
+                senderIsHost, senderElementId)) {
+            UE_LOGW("player_handshake: Join senderElementId=0x%08x out of "
+                    "allowed %s range (senderSlot=%d) -- dropping mirror "
+                    "install; nickname will still display",
+                    senderElementId,
+                    senderIsHost ? "host" : "peer",
+                    senderSlot);
+        } else {
+            coop::players::Registry::Get().EstablishMirrorForSlot(
+                static_cast<uint8_t>(senderSlot), senderElementId, senderContext);
+        }
     }
     // VT-inspired nickname sanitizer (2026-05-25, see
     // SanitizeNickname doc above). Trust-boundary defense: this
@@ -323,7 +342,12 @@ bool HandleAssignPeerSlot(net::Session& session,
     // receiver-side compare.
     if (p.hostElementId != 0u &&
         p.hostElementId != coop::element::kInvalidId) {
-        if (!coop::element::Registry::IsHostId(p.hostElementId)) {
+        // PR-FOUNDATION-1 (2026-05-29): use the canonical helper.
+        // IsAllowedHostAllocatedEid additionally rejects id==0 and
+        // kInvalidId which the outer if-guard above already filters,
+        // so behavior is unchanged -- this is a uniform call-site
+        // refactor so every receiver routes through one validator.
+        if (!coop::element::Registry::IsAllowedHostAllocatedEid(p.hostElementId)) {
             UE_LOGW("player_handshake: AssignPeerSlot hostElementId=0x%08x is "
                     "not in host range -- dropping mirror install",
                     p.hostElementId);

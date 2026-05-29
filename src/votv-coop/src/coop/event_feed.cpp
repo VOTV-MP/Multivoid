@@ -41,11 +41,35 @@ std::array<bool, net::kMaxPeers> g_lastConnectedBySlot{};
 // defense. Returns true when the bytes match. Logs + returns false on
 // mismatch -- caller should drop the packet. Centralized here so every
 // eid-carrying reliable kind uses the same shape.
-bool VerifySenderContext(uint32_t senderElementId, uint8_t senderContext,
+//
+// PR-FOUNDATION-1 (2026-05-29): senderPeerSlot added so we can
+// additionally range-check senderElementId against the sender's role
+// BEFORE the Registry::Get lookup. Without this, a malicious client
+// peer can stamp ItemActivate/RedSky/Lightning/Weather with the HOST's
+// senderElementId; Registry::Get resolves to the host's Player Element,
+// the syncContext compare passes (8 bits trivially guessable, OR 0
+// during boot), and the receiver applies the packet's effect under
+// host identity. The range partition makes that impersonation
+// detectable at the wire boundary: host-role packets MUST carry host-
+// range eids; client-role packets MUST carry peer-range eids.
+bool VerifySenderContext(int senderPeerSlot,
+                          uint32_t senderElementId, uint8_t senderContext,
                           const char* kind) {
     if (senderElementId == 0u ||
         senderElementId == coop::element::kInvalidId) {
         return true;  // 0 sentinel; no compare. peer-slot fallback applies.
+    }
+    if (senderPeerSlot >= 0) {
+        const bool senderIsHost = (senderPeerSlot == 0);
+        if (!coop::element::Registry::IsAllowedSenderEid(
+                senderIsHost, senderElementId)) {
+            UE_LOGW("event_feed: %s senderElementId=0x%08x out of allowed %s "
+                    "range (senderPeerSlot=%d) -- dropping (role impersonation?)",
+                    kind, senderElementId,
+                    senderIsHost ? "host" : "peer",
+                    senderPeerSlot);
+            return false;
+        }
     }
     auto* el = coop::element::Registry::Get().Get(senderElementId);
     if (!el) return true;  // mirror not yet installed (boot/seed race)
@@ -241,6 +265,30 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropSpawn key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
+            // PR-FOUNDATION-1 (2026-05-29): elementId range trust. The
+            // sender's role determines which allocation range its
+            // PropSpawn.elementId is allowed to land in (host -> host
+            // range; client -> peer range per the A2 v12 contract:
+            // chipPile/clump/trashBits broadcast client->host so a
+            // client-sourced PropSpawn carries a peer-range eid). A
+            // packet carrying an eid outside its sender's permitted
+            // range is forged or relay-loop bugged and must be dropped
+            // at the boundary before it reaches RegisterPropMirror and
+            // collides with the receiver's own allocator. Closes
+            // D2-2 / E-1's PropSpawn gap. (The pre-existing inline
+            // host-range check in npc_mirror :: OnEntitySpawn becomes
+            // a call to the same helper below.)
+            if (msg.senderPeerSlot >= 0) {
+                const bool senderIsHost = (msg.senderPeerSlot == 0);
+                if (!coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.elementId)) {
+                    UE_LOGW("event_feed: PropSpawn elementId=0x%08x out of allowed "
+                            "%s range (senderPeerSlot=%d) -- dropping",
+                            p.elementId,
+                            senderIsHost ? "host" : "peer",
+                            msg.senderPeerSlot);
+                    break;
+                }
+            }
             // v15 (2026-05-29 E-2): stale-generation defense -- drop
             // PropSpawn packets whose senderContext doesn't match the
             // SENDER's current Player Element mirror context. Resolves
@@ -329,6 +377,22 @@ void Update(net::Session& session, void* localPlayer) {
             if (p.key.len > 31) {
                 UE_LOGW("event_feed: PropDestroy key.len=%u > 31 -- dropping", p.key.len);
                 break;
+            }
+            // PR-FOUNDATION-1 (2026-05-29): elementId range trust. Same
+            // rule as PropSpawn -- the sender's role determines the
+            // permitted allocation range. PropDestroy with a forged
+            // eid would otherwise reach UnregisterPropMirror with a
+            // host-range eid the sender never legitimately allocated.
+            if (msg.senderPeerSlot >= 0) {
+                const bool senderIsHost = (msg.senderPeerSlot == 0);
+                if (!coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.elementId)) {
+                    UE_LOGW("event_feed: PropDestroy elementId=0x%08x out of allowed "
+                            "%s range (senderPeerSlot=%d) -- dropping",
+                            p.elementId,
+                            senderIsHost ? "host" : "peer",
+                            msg.senderPeerSlot);
+                    break;
+                }
             }
             // v15 (2026-05-29 E-2): stale-generation defense (matches
             // PropSpawn handler above -- see that case for IsMirror()
@@ -584,7 +648,7 @@ void Update(net::Session& session, void* localPlayer) {
             // context doesn't match the mirror Element's context, this
             // packet was minted by a now-disconnected incarnation of the
             // sender and a fresh Element took its id; drop.
-            if (!VerifySenderContext(p.senderElementId, p.senderContext,
+            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
                                       "ItemActivate")) {
                 break;
             }
@@ -658,7 +722,7 @@ void Update(net::Session& session, void* localPlayer) {
                 break;
             }
             // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(p.senderElementId, p.senderContext,
+            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
                                       "RedSky")) {
                 break;
             }
@@ -701,7 +765,7 @@ void Update(net::Session& session, void* localPlayer) {
                 break;
             }
             // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(p.senderElementId, p.senderContext,
+            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
                                       "LightningStrike")) {
                 break;
             }
@@ -750,7 +814,7 @@ void Update(net::Session& session, void* localPlayer) {
                 break;
             }
             // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(p.senderElementId, p.senderContext,
+            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
                                       "WeatherState")) {
                 break;
             }

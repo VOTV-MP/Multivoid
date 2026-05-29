@@ -72,11 +72,15 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         UE_LOGI("npc-sync[client OnSpawn]: received on host -- dropping (loopback bounce)");
         return;
     }
-    if (payload.elementId == 0u ||
-        payload.elementId == static_cast<uint32_t>(coop::element::kInvalidId) ||
-        payload.elementId >= coop::element::kHostRangeSize) {
-        UE_LOGW("npc-sync[client OnSpawn]: invalid/out-of-range elementId=%u -- dropping "
-                "(must be in host range [1, %u))",
+    // PR-FOUNDATION-1 (2026-05-29): EntitySpawn is host-authoritative
+    // (the senderPeerSlot==0 gate at event_feed::EntitySpawn already
+    // rejected non-host senders); the eid must be in the host range.
+    // Canonical helper replaces the inline check that this site had
+    // first (the audit's reference implementation -- D2-1 generalises
+    // it across all receivers).
+    if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
+        UE_LOGW("npc-sync[client OnSpawn]: elementId=%u out of allowed host range "
+                "[1, %u) -- dropping",
                 payload.elementId, coop::element::kHostRangeSize);
         return;
     }
@@ -309,11 +313,11 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
         UE_LOGI("npc-sync[client OnDestroy]: received on host -- dropping (loopback bounce)");
         return;
     }
-    if (payload.elementId == 0u ||
-        payload.elementId == static_cast<uint32_t>(coop::element::kInvalidId) ||
-        payload.elementId >= coop::element::kHostRangeSize) {
-        UE_LOGW("npc-sync[client OnDestroy]: invalid/out-of-range elementId=%u -- dropping",
-                payload.elementId);
+    // PR-FOUNDATION-1 (2026-05-29): canonical host-range helper.
+    if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
+        UE_LOGW("npc-sync[client OnDestroy]: elementId=%u out of allowed host range "
+                "[1, %u) -- dropping",
+                payload.elementId, coop::element::kHostRangeSize);
         return;
     }
     const coop::element::ElementId eid =
