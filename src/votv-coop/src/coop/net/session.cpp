@@ -449,7 +449,8 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     MsgType type;
     uint32_t seq;
     uint32_t senderEpoch;
-    if (!ParseHeader(data, len, type, seq, senderEpoch)) {
+    uint8_t headerSenderSlot;
+    if (!ParseHeader(data, len, type, seq, senderEpoch, headerSenderSlot)) {
         // Distinguish "random garbage / spoofed packet" (silent drop) from
         // "a peer running an older/newer protocol" (close cleanly with a
         // human-readable reason so both ends see WHY they got dropped --
@@ -521,19 +522,45 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
     }
 
+    // PR-FOUNDATION Tier 2 T2-2 (host-relay): determine the LOGICAL origin
+    // slot used to ROUTE pose data into the per-puppet store, distinct from
+    // the connection slot `peerSlot` used for the epoch latch above.
+    //  - HOST: the connection IS the origin (GNS-authenticated m_nConnUserData);
+    //    trust it, ignore the header's (spoofable) senderSlot.
+    //  - CLIENT: all packets arrive on the single host connection (peerSlot 0),
+    //    so the connection can't distinguish originators -- route by the
+    //    host-stamped header senderSlot. The host is trusted to have set it.
+    int routeSlot = peerSlot;
+    if (cfg_.role == Role::Client) {
+        routeSlot = static_cast<int>(headerSenderSlot);
+        if (routeSlot < 0 || routeSlot >= kMaxPeers) {
+            UE_LOGW("net: client received packet with out-of-range senderSlot=%d "
+                    "-- dropping", routeSlot);
+            return;
+        }
+    }
+
     switch (type) {
     case MsgType::PoseSnapshot: {
         if (len < static_cast<int>(sizeof(PosePacket))) return;
         PosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
         if (!ValidatePose(pkt.pose)) return;
-        std::lock_guard<std::mutex> lk(remoteMutex_);
-        if (hasRemote_[peerSlot] &&
-            static_cast<int32_t>(seq - lastRemoteSeq_[peerSlot]) <= 0) return;
-        remotePoses_[peerSlot] = pkt.pose;
-        lastRemoteSeq_[peerSlot] = seq;
-        hasRemote_[peerSlot] = true;
-        ++remoteStamp_[peerSlot];
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemote_[routeSlot] &&
+                static_cast<int32_t>(seq - lastRemoteSeq_[routeSlot]) <= 0) {
+                break;  // stale/duplicate for this origin slot; still relayed? no -- a stale packet need not propagate
+            }
+            remotePoses_[routeSlot] = pkt.pose;
+            lastRemoteSeq_[routeSlot] = seq;
+            hasRemote_[routeSlot] = true;
+            ++remoteStamp_[routeSlot];
+        }
+        // Host relay: forward this client's pose to every OTHER client.
+        if (cfg_.role == Role::Host) {
+            RelayUnreliableToOtherClients(peerSlot, data, len);
+        }
         break;
     }
     case MsgType::PropPose: {
@@ -550,13 +577,21 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             std::fabs(pkt.pose.yaw)   > 180.f ||
             std::fabs(pkt.pose.roll)  > 180.f) return;
         if (pkt.pose.key.len > 31) return;
-        std::lock_guard<std::mutex> lk(remoteMutex_);
-        if (hasRemoteProp_[peerSlot] &&
-            static_cast<int32_t>(seq - lastRemotePropSeq_[peerSlot]) <= 0) return;
-        remotePropPoses_[peerSlot] = pkt.pose;
-        lastRemotePropSeq_[peerSlot] = seq;
-        hasRemoteProp_[peerSlot] = true;
-        ++remotePropStamp_[peerSlot];
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteProp_[routeSlot] &&
+                static_cast<int32_t>(seq - lastRemotePropSeq_[routeSlot]) <= 0) {
+                break;
+            }
+            remotePropPoses_[routeSlot] = pkt.pose;
+            lastRemotePropSeq_[routeSlot] = seq;
+            hasRemoteProp_[routeSlot] = true;
+            ++remotePropStamp_[routeSlot];
+        }
+        // Host relay: forward this client's held-prop pose to every OTHER client.
+        if (cfg_.role == Role::Host) {
+            RelayUnreliableToOtherClients(peerSlot, data, len);
+        }
         break;
     }
     case MsgType::Reliable: {
@@ -599,6 +634,38 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     }
     default:
         break;
+    }
+}
+
+void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, int len) {
+    // Host-relay topology (PR-FOUNDATION Tier 2 T2-2). Forward an unreliable
+    // pose/proppose the host just received from `originSlot` to every OTHER
+    // connected client, so clients see each other (the star has no peer<->peer
+    // path). MTA shape: CGame relays puresync as it arrives.
+    if (cfg_.role != Role::Host) return;
+    if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
+    auto* sockets = SteamNetworkingSockets();
+    if (!sockets) return;
+    // Copy + rewrite ONLY the header's epoch + origin slot. seq + body are
+    // preserved so per-origin-slot seq monotonicity holds on the receiver.
+    // The epoch becomes the HOST's own epoch because, from the receiving
+    // client's POV, this packet rides ITS host connection -- whose epoch it
+    // latched -- so the relayed packet must carry the host epoch to pass the
+    // connection-keyed latch. senderSlot carries the logical origin so the
+    // client routes the pose to originSlot's puppet.
+    uint8_t buf[kMaxPacketBytes];
+    std::memcpy(buf, data, static_cast<size_t>(len));
+    auto* h = reinterpret_cast<PacketHeader*>(buf);
+    h->senderEpoch = ownEpoch_;
+    h->senderSlot = static_cast<uint8_t>(originSlot);
+    h->_reserved2[0] = h->_reserved2[1] = h->_reserved2[2] = 0;
+    for (int i = 1; i < kMaxPeers; ++i) {
+        if (i == originSlot) continue;
+        const uint32_t hConn = peerConns_[i].load();
+        if (hConn == 0) continue;
+        const EResult rc = sockets->SendMessageToConnection(
+            hConn, buf, len, k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+        if (rc == k_EResultOK) sent_.fetch_add(1);
     }
 }
 

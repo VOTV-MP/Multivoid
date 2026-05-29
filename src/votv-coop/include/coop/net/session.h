@@ -171,6 +171,17 @@ private:
     // Per-peer reset (on slot disconnect). Caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
 
+    // Host-relay topology (PR-FOUNDATION Tier 2 T2-2): forward an unreliable
+    // packet the host just received from `originSlot` to every OTHER connected
+    // client. Copies the datagram, rewrites the header's senderEpoch to the
+    // host's own epoch (so the receiving client's connection-keyed epoch latch
+    // passes) and senderSlot to `originSlot` (so the client routes the pose to
+    // the right puppet). seq + body are preserved (per-origin-slot seq
+    // monotonicity holds on the receiver). No-op unless role == Host. Net
+    // thread only (called from HandleMessage). `data`/`len` is the full
+    // received datagram (PacketHeader + body).
+    void RelayUnreliableToOtherClients(int originSlot, const void* data, int len);
+
     Config cfg_;
     std::thread thread_;
     std::atomic<bool> running_{false};

@@ -13,6 +13,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_sync.h"
+#include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/prop_snapshot.h"
@@ -423,6 +424,15 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // Register with the central Registry. peerId == slot directly.
                 coop::players::Registry::Get().RegisterPuppet(
                     static_cast<uint8_t>(slot), &g_puppets[slot]);
+                // Apply the cached nickname now that the puppet exists. The
+                // identity (Join / PlayerJoined) can arrive BEFORE the first
+                // pose spawns the puppet -- in that race the handler cached
+                // the nick but found no puppet to label. Reading the cache
+                // here closes that gap for the host puppet AND cross-peer
+                // puppets (T2-1). Falls back to the placeholder if no
+                // identity has landed yet; the handler re-applies on arrival.
+                g_puppets[slot].SetNickname(
+                    coop::player_handshake::NicknameForSlot(slot));
             }
             // Only RE-BASE the interpolation on a NEW packet; re-pushing the
             // latest every frame would zero `errorPos_` mid-window and freeze

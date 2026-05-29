@@ -203,7 +203,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // wire vocabulary only -- no struct changes. The version bump makes a
 // v16 peer's silent ignore of PlayerJoined (which would leave cross-peer
 // puppets unidentified) a visible ParseHeader mismatch instead.
-inline constexpr uint16_t kProtocolVersion = 17;
+//
+// v18 (2026-05-29) -- PR-FOUNDATION Tier 2 T2-2 (pose relay): carves a
+// `senderSlot` byte out of the header's old `_reserved` (zero size change,
+// header stays 20 B) so the host can RELAY a client's PoseSnapshot /
+// PropPose to other clients tagged with the logical origin slot. Receiving
+// clients route relayed poses by senderSlot. See PacketHeader doc.
+inline constexpr uint16_t kProtocolVersion = 18;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -432,8 +438,22 @@ enum class ReliableKind : uint8_t {
 // each peer slot and rejects subsequent packets whose epoch doesn't match --
 // defends against stale-generation packets after disconnect/reconnect (an in-
 // flight ItemActivate from the previous incarnation can't be honored against
-// the new puppet, etc.). _reserved is the upper 4 bytes of the pre-v16 token
-// field (always 0 on send; kept for future use to avoid another protocol bump).
+// the new puppet, etc.).
+//
+// senderSlot (v18 PR-FOUNDATION Tier 2 T2-2, host-relay topology) is the
+// LOGICAL origin peer slot of this packet's payload. On a DIRECT send it is
+// the sender's own slot (host=0; a client stamps 0 -- don't-care, see below).
+// When the HOST RELAYS a client's pose to other clients it REWRITES senderSlot
+// to the true origin connection slot (and rewrites senderEpoch to the host's
+// own epoch, since the packet now rides the host->client connection whose epoch
+// the receiver latched). The receiving CLIENT routes the pose by senderSlot
+// (all relayed packets arrive on its single host connection, so the connection
+// can't distinguish originators); the receiving HOST ignores senderSlot for its
+// own routing and trusts the GNS connection (m_nConnUserData) -- a client
+// cannot spoof another peer's slot because the host re-derives it from the
+// authenticated connection. The epoch latch ALWAYS keys on the connection slot,
+// never senderSlot. _reserved2 is the remaining 3 bytes of the pre-v16 token
+// field (0 on send; future use).
 struct PacketHeader {
     uint32_t magic;        // kMagic
     uint16_t version;      // kProtocolVersion
@@ -441,7 +461,8 @@ struct PacketHeader {
     uint8_t  _pad;         // reserved
     uint32_t seq;          // per-sender sequence number
     uint32_t senderEpoch;  // v16: SENDER's m_ownEpoch (non-zero; 0 reserved as "not latched" sentinel at receiver)
-    uint32_t _reserved;    // v16: was upper 4 bytes of token (PR-2 GNS migration killed token); reserved for future use
+    uint8_t  senderSlot;   // v18: logical origin peer slot (host rewrites on relay; see doc above)
+    uint8_t  _reserved2[3];// v18: remaining bytes of the pre-v16 token field; 0 on send
 };
 static_assert(sizeof(PacketHeader) == 20, "PacketHeader must be 20 bytes");
 
@@ -930,20 +951,25 @@ inline constexpr float kMaxSpeed = 1.0e5f;  // cm/s (well above any real walk/sp
 // Fill a header in-place. `senderEpoch` is the sender's m_ownEpoch (Session
 // mints non-zero at Start()); the receiver latches on first sighting + rejects
 // mismatches per peer slot (v16 stale-generation defense, see PacketHeader doc).
-inline void WriteHeader(PacketHeader& h, MsgType type, uint32_t seq, uint32_t senderEpoch) {
+// `senderSlot` (v18) is the logical origin slot -- direct sends pass their own
+// slot (host=0; clients pass 0, don't-care since the host re-derives from the
+// connection); the host's relay path passes the true origin slot.
+inline void WriteHeader(PacketHeader& h, MsgType type, uint32_t seq,
+                        uint32_t senderEpoch, uint8_t senderSlot = 0) {
     h.magic = kMagic;
     h.version = kProtocolVersion;
     h.type = static_cast<uint8_t>(type);
     h._pad = 0;
     h.seq = seq;
     h.senderEpoch = senderEpoch;
-    h._reserved = 0;
+    h.senderSlot = senderSlot;
+    h._reserved2[0] = h._reserved2[1] = h._reserved2[2] = 0;
 }
 
 // Validate a received buffer as one of ours: enough bytes + magic + version.
 // Returns the parsed header fields and true if the header is well-formed.
 inline bool ParseHeader(const void* data, int len, MsgType& outType, uint32_t& outSeq,
-                        uint32_t& outSenderEpoch) {
+                        uint32_t& outSenderEpoch, uint8_t& outSenderSlot) {
     if (len < static_cast<int>(sizeof(PacketHeader))) return false;
     PacketHeader h;
     std::memcpy(&h, data, sizeof(h));
@@ -951,6 +977,7 @@ inline bool ParseHeader(const void* data, int len, MsgType& outType, uint32_t& o
     outType = static_cast<MsgType>(h.type);
     outSeq = h.seq;
     outSenderEpoch = h.senderEpoch;
+    outSenderSlot = h.senderSlot;
     return true;
 }
 
