@@ -192,7 +192,22 @@ set_target_properties(xinput1_3 PROPERTIES OUTPUT_NAME "xinput1_3" PREFIX "")
 # process may not have loaded.
 if (MSVC)
     set_property(TARGET votv-coop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(votv-coop PRIVATE /W4 /permissive-)
+    # /EHa (asynchronous EH) -- LOAD-BEARING for the ProcessEvent crash
+    # firewall (ue_wrap/game_thread.cpp). The firewall's outer SEH
+    # __except absorbs any AV that propagates out of a posted task /
+    # observer so the engine keeps running. Under the MSVC default /EHsc,
+    # an SEH unwind does NOT run C++ destructors -- so a std::lock_guard
+    # held by the faulting task (e.g. the element Registry mutex inside
+    # SnapshotActorsByType) leaked LOCKED and the next game-thread tick
+    # deadlocked, permanently freezing the host (diagnosed 2026-05-30 from
+    # the Tier 8 4-peer smoke: host went silent the instant a client's
+    # connect-edge snapshot enumeration AV'd). /EHa makes the unwind run
+    # C++ destructors on the structured-exception path, so locks + RAII
+    # release correctly. NOTE: this overrides CMake's default /EHsc on the
+    # command line (harmless D9025 "overriding /EHsc with /EHa"; /EHa wins).
+    # PRIVATE -> third-party GNS/minhook stay /EHsc (per-TU codegen flag,
+    # mixing in one image is supported).
+    target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa)
 
     # MinHook must match the mod's static CRT or the link fails.
     set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

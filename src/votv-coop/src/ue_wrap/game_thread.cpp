@@ -320,26 +320,27 @@ void Pump() {
             task = std::move(g_queue.front());
             g_queue.pop_front();
         }
-        // R-1 v2 (2026-05-29 post-ship audit): the previous catch(...) here
-        // was a RULE 1 crutch -- silent swallow. The first replacement
-        // (bare task() call) assumed the outer SEH __try/__except would
-        // catch C++ exceptions; that is FALSE under MSVC /EHsc (the project
-        // default -- no /EHa flag in CMakeLists.txt). __except handles
-        // structured exceptions (AVs, div-by-zero) but NOT C++ throw. A
-        // bare-uncaught C++ exception would propagate past Pump(), past
-        // ProcessEventDetour, into UE4, and std::terminate the process.
-        //
-        // RULE 1-correct fix: catch C++ exceptions HERE and LOG them. That
-        // exposes the bug (the original complaint about the silent
-        // swallow) while keeping the engine alive long enough to record
-        // the crash log. The original swallow hid bugs; this version
-        // surfaces them.
+        // The mod is compiled /EHa (CMakeLists.txt) -- so a STRUCTURED
+        // exception (AV, div-by-zero) raised inside task() is both caught by
+        // catch(...) below AND unwinds C++ destructors on the way out, so any
+        // std::lock_guard / RAII the task held is released. This is
+        // load-bearing: posted tasks run gameplay/reflection work that can AV
+        // on a stale engine pointer (e.g. the connect-edge snapshot
+        // enumeration reading a GC'd actor). Before /EHa that AV propagated
+        // to the outer SEH __except WITHOUT running destructors, leaking the
+        // element Registry mutex locked + the t_inPump flag set -> permanent
+        // game-thread freeze (diagnosed 2026-05-30, Tier 8 4-peer smoke).
+        // catch(const std::exception&) still names genuine C++ throws via
+        // what(); catch(...) covers the rest (other C++ throws + absorbed
+        // structured exceptions). The pump LOOP CONTINUES either way, so one
+        // faulting task never stops the others or wedges the tick.
         try {
             task();
         } catch (const std::exception& e) {
             UE_LOGE("game_thread: posted task threw C++ exception: %s", e.what());
         } catch (...) {
-            UE_LOGE("game_thread: posted task threw unknown C++ exception");
+            UE_LOGE("game_thread: posted task raised an exception "
+                    "(C++ throw or absorbed structured exception/AV); skipped, pump continues");
         }
         g_tasksRun.fetch_add(1, std::memory_order_relaxed);
     }
@@ -374,9 +375,16 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
             hasWork = !g_queue.empty();
         }
         if (hasWork) {
+            // RAII so t_inPump is cleared on EVERY exit from Pump(), incl. an
+            // exception path. Under /EHa the dtor runs during a structured-
+            // exception unwind too -- so even if an AV ever escaped Pump's
+            // own catch (e.g. faulting in the queue lock itself), t_inPump
+            // cannot get stuck `true` and silently kill all future draining.
+            // The raw `t_inPump = false` it replaces was skipped on exactly
+            // that path -> the 2026-05-30 permanent host freeze.
+            struct InPumpGuard { ~InPumpGuard() { t_inPump = false; } } pumpGuard;
             t_inPump = true;
             Pump();
-            t_inPump = false;
         }
     }
 
