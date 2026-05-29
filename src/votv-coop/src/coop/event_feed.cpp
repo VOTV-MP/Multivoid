@@ -10,6 +10,7 @@
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
+#include "coop/remote_prop_spawn.h"
 #include "coop/weather_sync.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/teleport_client.h"
@@ -247,7 +248,7 @@ void Update(net::Session& session, void* localPlayer) {
             // packets but missed PropSpawn/PropDestroy). Without this,
             // an in-flight PropSpawn from a previous incarnation of the
             // sender can be honored against the new generation; the
-            // WireKey-keyed dedup at remote_prop::OnSpawn idempotently
+            // WireKey-keyed dedup at remote_prop_spawn::OnSpawn idempotently
             // rejects matching-Key re-spawns but does NOT catch cross-
             // generation key reuse (possible when world re-seeds).
             //
@@ -303,7 +304,7 @@ void Update(net::Session& session, void* localPlayer) {
                     break;
                 }
             }
-            remote_prop::OnSpawn(p);
+            remote_prop_spawn::OnSpawn(p);
             break;
         }
         case net::ReliableKind::PropDestroy: {

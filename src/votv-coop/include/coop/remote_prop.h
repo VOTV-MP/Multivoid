@@ -19,7 +19,10 @@
 
 #pragma once
 
+#include "coop/element/element.h"
 #include "coop/net/protocol.h"
+
+#include <string>
 
 namespace coop::net { class Session; }
 
@@ -54,18 +57,46 @@ void Tick(coop::net::Session& session);
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
 
 // v5: handle an incoming PropSpawn (peer dropped an inventory item into
-// the world). Resolves the class by leaf name, does a deferred SpawnActor
-// at the wire transform, dispatches Aprop_C.setKey(receivedKey) BEFORE
-// FinishSpawningActor (so Aprop_C.Init() doesn't overwrite Key with
-// NewGuid), then FinishSpawningActor, then SetSimulatePhysics + optional
-// initial velocity. Result: a matching local Aprop_X_C instance with
-// the same Key. Subsequent PropPose updates resolve via the existing
-// prop_wrap::FindByKeyString path.
-//
-// NO echo loop: receiver spawns directly through engine::SpawnActor (the
-// deferred-spawn pair), NOT through UpropInventory_C.takeObj, so the
-// takeObj POST observer (which is the sender hook) never fires.
-void OnSpawn(const coop::net::PropSpawnPayload& payload);
+// the world). MOVED (M-1 2026-05-29) to coop::remote_prop_spawn::OnSpawn.
+// See coop/remote_prop_spawn.h for the public interface + design notes;
+// this header retains the public accessors below that the spawn receiver
+// calls back into for drive-state queries and mirror registration.
+
+// Read-only predicate over the drive cache (g_drives). True iff any peer
+// slot is currently kinematically driving `actor` via the PropPose
+// stream. Used by remote_prop_spawn::OnSpawn to skip transform
+// convergence on held props -- otherwise the convergence SetActor
+// Location would stomp the active PropPose stream for one frame
+// (visible teleport-pop until the next PropPose Tick).
+bool IsActorUnderAnyDrive(void* actor);
+
+// Register a wire-received Prop mirror Element at `eid` bound to
+// `actor`. Idempotent for duplicate eids (silent no-op on duplicate).
+// Skips eid==0 (legacy/unminted sender) and eid==kInvalidId (defensive
+// reject). Implements the 5-step RegisterMirror pattern (alloc -> insert
+// under MirrorManager mutex -> RegisterMirror -> rollback on failure).
+// See [[feedback-registry-register-mirror-pattern]] for the contract.
+void RegisterPropMirror(coop::element::ElementId eid,
+                        void* actor,
+                        const std::wstring& key,
+                        const std::wstring& cls);
+
+// Extract null-terminated wstring from a WireKey. Shared utility used
+// by both the drive subsystem (FindSlotByKey, OnRelease, OnDestroy)
+// and the spawn receiver (OnSpawn). Public on this header because the
+// spawn receiver lives in a separate TU after the M-1 2026-05-29 split.
+std::wstring KeyToWString(const coop::net::WireKey& k);
+
+// Drive-subsystem UFunction wrappers (SetSimulatePhysics + linear/
+// angular velocity on UPrimitiveComponent). Used by the drive Tick
+// path (PropPose stream) AND by the spawn receiver's fresh-spawn
+// initial-physics application. Public so remote_prop_spawn doesn't
+// have to duplicate the ~120 LOC of cached-UFunction resolution
+// state these functions share with ResolveUFns(). Game-thread only
+// (ProcessEvent contract).
+void DriveSimulate(void* mesh, bool simulate);
+void DriveSetLinearVelocity(void* mesh, float vx, float vy, float vz);
+void DriveSetAngularVelocity(void* mesh, float wx, float wy, float wz);
 
 // Force-release: called on disconnect / level unload to put any cached
 // prop back into normal physics state. Safe to call when not holding.
