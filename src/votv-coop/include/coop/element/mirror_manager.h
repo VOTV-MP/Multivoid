@@ -1,0 +1,204 @@
+// coop/element/mirror_manager.h -- generic per-type mirror Element manager.
+//
+// Adapted from MTA's `CClient*Manager` family (CClientPlayerManager,
+// CClientPedManager, CClientVehicleManager etc. -- vendored at
+// reference/mtasa-blue/Client/mods/deathmatch/logic/CClient*Manager.h):
+// each entity TYPE has its own manager that owns the per-id mirror map,
+// the lifecycle (RegisterMirror via element::Registry), and the
+// iteration / drain API. MTA does this as one hand-coded class per
+// type; we generalize via a template parameterized on the
+// `Element` subclass (Player / Npc / Prop / future Door / Vehicle).
+//
+// The 5-step RegisterMirror pattern (per [[feedback-registry-register-
+// mirror-pattern]]) is encapsulated here so every per-type manager
+// inherits the same ABBA-safe ordering automatically:
+//   1. make_unique<T> by caller; passed to Install().
+//   2. emplace into the owner map FIRST under m_mutex.
+//   3. element::Registry::RegisterMirror SECOND (outside m_mutex acquire
+//      avoids ABBA with the global registry lock).
+//   4. On RegisterMirror failure: drain from the owner map (still under
+//      m_mutex briefly) so the rolled-back unique_ptr destructs OUTSIDE
+//      the lock; the dtor's ~Element early-returns because m_id stayed
+//      kInvalidId.
+//   5. Teardown via Drop() or DrainAll(): swap-out the unique_ptr under
+//      m_mutex, release the lock, let the dtor fire outside the lock so
+//      Registry::UnregisterMirror runs without holding the type-mutex.
+//
+// Why a template: the per-type managers share 100% of the lifecycle code
+// (only the stored T type changes). MTA's hand-coded duplication is C++03
+// constraints + Lua bindings that varied per type; we have neither, so
+// the template form fits.
+//
+// Game thread vs net thread: Install / Drop / Take / Get / Snapshot /
+// DrainAll all take the per-instance mutex; they're safe from any
+// thread. The dtor work always runs OUTSIDE the mutex (Step 4 + Step 5
+// above). The wrapped element::Registry takes its OWN mutex briefly
+// inside RegisterMirror / UnregisterMirror; the ordering is type-mutex
+// -> registry-mutex, never the other way -- the dtor pattern enforces it.
+//
+// Iteration: use Snapshot to copy raw pointers under lock + iterate
+// without lock. There is intentionally NO ForEach(callback) -- running
+// a callback under the mutex would invite ABBA against the registry
+// mutex if the callback touches Element internals.
+//
+// Lifetime: each per-type manager is a process-lifetime singleton via
+// `static MirrorManager<T>& Instance()`. The singleton is constructed
+// at first call (C++17 thread-safe static init). On Stop the harness
+// calls DrainAll() to release the mirrors before the session goes away.
+
+#pragma once
+
+#include "coop/element/element.h"
+#include "coop/element/registry.h"
+#include "ue_wrap/log.h"
+
+#include <cstddef>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+namespace coop::element {
+
+template <typename T>
+class MirrorManager {
+public:
+    static MirrorManager& Instance() {
+        static MirrorManager s_inst;
+        return s_inst;
+    }
+
+    MirrorManager(const MirrorManager&)            = delete;
+    MirrorManager& operator=(const MirrorManager&) = delete;
+
+    // Register a mirror at `wireEid`. Returns true on success; false on
+    // 0-eid / kInvalidId-eid, duplicate (caller's `mirror` is discarded
+    // outside the lock so the dtor early-returns), or
+    // element::Registry::RegisterMirror failure (rolled back; same
+    // dtor-outside-lock pattern). Logs at each failure case.
+    bool Install(ElementId wireEid, std::unique_ptr<T> mirror) {
+        if (wireEid == 0u) return false;            // wire sentinel "no Element"
+        if (wireEid == kInvalidId) {
+            UE_LOGW("MirrorManager: Install with kInvalidId rejected (sender bug?)");
+            return false;
+        }
+        if (!mirror) {
+            UE_LOGW("MirrorManager: Install eid=0x%08x called with null mirror -- skip",
+                    wireEid);
+            return false;
+        }
+        T* raw = nullptr;
+        // Step 2 + duplicate-check under the per-type mutex. The mutex
+        // is released BEFORE the registry call (Step 3) to keep the
+        // ordering type-mutex -> registry-mutex strict.
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (m_byId.count(wireEid) > 0) {
+                // Idempotent: re-spawn convergence packet for an eid we
+                // already mirror. The local `mirror` falls out of scope
+                // when this function returns; dtor sees m_id==kInvalidId
+                // and early-returns without touching element::Registry.
+                return false;
+            }
+            auto [it, ok] = m_byId.emplace(wireEid, std::move(mirror));
+            if (!ok) return false;
+            raw = it->second.get();
+        }
+        // Step 3: register with the global element::Registry, no
+        // type-mutex held.
+        if (!Registry::Get().RegisterMirror(wireEid, raw)) {
+            UE_LOGE("MirrorManager: Registry::RegisterMirror(eid=0x%08x) FAILED -- "
+                    "draining owner map (slot collision?)",
+                    wireEid);
+            // Step 4: drain the just-inserted entry. The losing
+            // unique_ptr must destruct OUTSIDE m_mutex so the dtor can
+            // safely take the registry mutex if it needs to (it
+            // shouldn't here -- RegisterMirror failure means m_id is
+            // still kInvalidId -- but the pattern is unconditional).
+            std::unique_ptr<T> losing;
+            {
+                std::lock_guard<std::mutex> lk(m_mutex);
+                auto it = m_byId.find(wireEid);
+                if (it != m_byId.end()) {
+                    losing = std::move(it->second);
+                    m_byId.erase(it);
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // Drop the mirror at `wireEid`. Drain-under-lock-then-destruct so
+    // the dtor fires outside m_mutex. Idempotent on missing eid.
+    void Drop(ElementId wireEid) {
+        (void)Take(wireEid);  // discard the returned unique_ptr; dtor fires here
+    }
+
+    // Same as Drop but returns the unique_ptr so the caller can inspect
+    // the Element (e.g. read its actor pointer) BEFORE the dtor fires.
+    // The caller MUST either let the returned unique_ptr fall out of
+    // scope (dtor fires Registry::UnregisterMirror, ABBA-safe because
+    // the type-mutex is no longer held) OR re-Install it. Returns
+    // null unique_ptr on missing eid.
+    std::unique_ptr<T> Take(ElementId wireEid) {
+        if (wireEid == 0u || wireEid == kInvalidId) return {};
+        std::unique_ptr<T> drained;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto it = m_byId.find(wireEid);
+            if (it == m_byId.end()) return {};
+            drained = std::move(it->second);
+            m_byId.erase(it);
+        }
+        // Type-mutex released. Caller now owns `drained`.
+        return drained;
+    }
+
+    // O(1) lookup. Returns nullptr if not present. Game thread or any
+    // thread that doesn't need the pointer to outlive a concurrent
+    // Drop (callers reading actor state should also re-validate via
+    // R::IsLive after Get returns).
+    T* Get(ElementId wireEid) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        auto it = m_byId.find(wireEid);
+        return (it == m_byId.end()) ? nullptr : it->second.get();
+    }
+
+    // Snapshot copy of all mirror raw pointers under lock. Caller
+    // iterates without lock. Use this for any iteration that might do
+    // engine work (UFunction call, K2_DestroyActor) -- holding m_mutex
+    // across engine work invites ABBA against the registry mutex.
+    void Snapshot(std::vector<T*>& out) const {
+        out.clear();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        out.reserve(m_byId.size());
+        for (const auto& kv : m_byId) out.push_back(kv.second.get());
+    }
+
+    // Drain everything on disconnect. Returns count drained. The
+    // unique_ptrs destruct after the lock releases.
+    size_t DrainAll() {
+        std::unordered_map<ElementId, std::unique_ptr<T>> drained;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            drained.swap(m_byId);
+        }
+        return drained.size();
+        // dtors fire here, OUTSIDE m_mutex.
+    }
+
+    size_t Size() const {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        return m_byId.size();
+    }
+
+private:
+    MirrorManager() = default;
+    ~MirrorManager() = default;
+
+    mutable std::mutex m_mutex;
+    std::unordered_map<ElementId, std::unique_ptr<T>> m_byId;
+};
+
+}  // namespace coop::element

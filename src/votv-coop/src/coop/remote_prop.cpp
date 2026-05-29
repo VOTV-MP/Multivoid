@@ -2,6 +2,7 @@
 
 #include "coop/remote_prop.h"
 
+#include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -468,9 +469,15 @@ bool  g_spawnResolved    = false;
 // alloc range), the other is the MIRROR handle (sender's alloc range).
 // Both resolve to the same actor via GetActor(). The Registry's m_byId
 // slots don't collide because host/peer ranges are disjoint.
-std::mutex g_propMirrorsMutex;
-std::unordered_map<coop::element::ElementId,
-                   std::unique_ptr<coop::element::Prop>> g_propMirrors;
+// B2 (2026-05-29): per-type mirror map backed by the generic
+// coop::element::MirrorManager<Prop>. The encapsulated 5-step pattern
+// (alloc-under-lock -> RegisterMirror -> rollback-on-fail) lives in the
+// template; this file's RegisterPropMirror/UnregisterPropMirror/
+// DrainAllPropMirrors become thin wrappers that handle prop-specific
+// concerns (name/typeName/actor stamping, log lines).
+inline coop::element::MirrorManager<coop::element::Prop>& PropMirrors() {
+    return coop::element::MirrorManager<coop::element::Prop>::Instance();
+}
 
 // Lossy-narrow a wstring to ASCII for Element name/typeName storage. The
 // VOTV Key strings + class names are ASCII in practice (BP-minted NewGuid
@@ -502,97 +509,44 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         const std::wstring& key,
                         const std::wstring& cls) {
     if (!actor) return;
-    if (eid == 0u) return;                                  // wire sentinel "no Element"
-    if (eid == coop::element::kInvalidId) {                 // defensive
-        UE_LOGW("remote_prop::RegisterPropMirror: eid == kInvalidId (0x%08x) on wire -- "
-                "rejecting (sender bug?)",
-                static_cast<unsigned>(eid));
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
-        if (g_propMirrors.count(eid) > 0) {
-            UE_LOGI("remote_prop::RegisterPropMirror: eid=%u already mirrored -- "
-                    "skip (re-spawn convergence)", eid);
-            return;
-        }
-    }
+    // Build the Prop mirror with name/typeName/actor populated, then
+    // hand off to MirrorManager::Install. The template encapsulates
+    // the 5-step pattern (alloc-under-lock + RegisterMirror +
+    // rollback-on-fail with dtor outside lock), so the wire-receiver
+    // side just builds and ships.
     auto mirror = std::make_unique<coop::element::Prop>();
     if (!key.empty()) mirror->SetName(NarrowAscii(key));
     if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
     mirror->SetActor(actor);
-    coop::element::Prop* raw = nullptr;
-    // Publish into owner map FIRST under lock, then RegisterMirror.
-    // Rationale per the pattern doc: if RegisterMirror succeeds, the
-    // Registry pointer is already accompanied by a valid owner; if it
-    // fails, we drain from the owner map outside the lock and the dtor
-    // early-returns because m_id is still kInvalidId (RegisterMirror
-    // failure path does NOT stamp m_id). ABBA-safe.
-    {
-        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
-        // Re-check (concurrent path may have inserted while we were
-        // building the Element). If yes, the just-built `mirror` is
-        // discarded outside this scope; its dtor early-returns
-        // (m_id == kInvalidId).
-        if (g_propMirrors.count(eid) > 0) return;
-        auto [it, ok] = g_propMirrors.emplace(eid, std::move(mirror));
-        raw = ok ? it->second.get() : nullptr;
+    if (PropMirrors().Install(eid, std::move(mirror))) {
+        UE_LOGI("remote_prop::RegisterPropMirror: eid=%u bound to actor=%p "
+                "key='%ls' cls='%ls'",
+                eid, actor, key.c_str(), cls.c_str());
     }
-    if (!raw) return;
-    if (!coop::element::Registry::Get().RegisterMirror(eid, raw)) {
-        UE_LOGE("remote_prop::RegisterPropMirror: Registry::RegisterMirror(eid=%u) FAILED -- "
-                "draining owner map entry (likely slot collision: sender re-used a wire id "
-                "before we tore down the previous mirror)", eid);
-        std::unique_ptr<coop::element::Prop> losing;
-        {
-            std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
-            auto it = g_propMirrors.find(eid);
-            if (it != g_propMirrors.end()) {
-                losing = std::move(it->second);
-                g_propMirrors.erase(it);
-            }
-        }
-        // `losing` destructs outside g_propMirrorsMutex. Since RegisterMirror
-        // failed, m_id is still kInvalidId -> ~Element early-returns (no
-        // Registry mutex acquired). ABBA-safe.
-        return;
-    }
-    UE_LOGI("remote_prop::RegisterPropMirror: eid=%u bound to actor=%p key='%ls' cls='%ls'",
-            eid, actor, key.c_str(), cls.c_str());
+    // On false: Install already logged the failure case (rejected
+    // sentinel id, duplicate, or RegisterMirror failure).
 }
 
-// Drop a Prop mirror by sender's eid. Drain pattern (per [[feedback-
-// registry-register-mirror-pattern]]): extract unique_ptr under lock,
-// release lock, let dtor fire outside the lock (dtor dispatches to
-// Registry::UnregisterMirror via the m_mirror=true flag). Idempotent:
-// silent no-op if eid is not in the map.
+// Drop a Prop mirror by sender's eid. Drain pattern lives inside
+// MirrorManager::Take (extract under lock, drained-destructs outside).
+// Idempotent: silent no-op if eid is not in the map. Use Take (not Drop)
+// so the "drained" log line only fires when a mirror actually was
+// present -- avoids a misleading confirmation on PropDestroy bounces
+// for eids that were never registered locally (audit fix 2026-05-29).
 void UnregisterPropMirror(coop::element::ElementId eid) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
-    std::unique_ptr<coop::element::Prop> drained;
-    {
-        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
-        auto it = g_propMirrors.find(eid);
-        if (it == g_propMirrors.end()) return;
-        drained = std::move(it->second);
-        g_propMirrors.erase(it);
-    }
-    // drained destructor fires here, OUTSIDE g_propMirrorsMutex.
+    auto drained = PropMirrors().Take(eid);
+    if (!drained) return;
     UE_LOGI("remote_prop::UnregisterPropMirror: eid=%u drained", eid);
+    // drained falls out of scope here; ~Prop -> ~Element ->
+    // Registry::UnregisterMirror (via m_mirror=true).
 }
 
-// Bulk-drain on full session teardown. Mirrors all wire-received Prop
-// elements; called from ForceRelease which itself runs on aggregate
-// disconnect / Stop. Uses the same drain-under-lock-then-destruct shape.
+// Bulk-drain on full session teardown. Forwards to MirrorManager;
+// each Prop's dtor calls Registry::UnregisterMirror (via m_mirror=true)
+// sequentially as the drained map releases.
 size_t DrainAllPropMirrors() {
-    std::unordered_map<coop::element::ElementId,
-                       std::unique_ptr<coop::element::Prop>> drained;
-    {
-        std::lock_guard<std::mutex> lk(g_propMirrorsMutex);
-        drained.swap(g_propMirrors);
-    }
-    return drained.size();
-    // `drained` destructs here -- each Prop's dtor calls
-    // Registry::UnregisterMirror (via m_mirror=true) sequentially.
+    return PropMirrors().DrainAll();
 }
 
 bool ResolveSpawnFns() {

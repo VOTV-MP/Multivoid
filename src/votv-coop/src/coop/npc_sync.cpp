@@ -15,6 +15,7 @@
 
 #include "coop/npc_sync.h"
 
+#include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -99,17 +100,14 @@ void* g_k2DestroyFn = nullptr;       // AActor::K2_DestroyActor
 // step window that the plain-pointer version had.
 std::atomic<void*> g_incomingNpcSpawnClass{nullptr};
 
-// CLIENT-side mirror state (Inc3). Maps the host's ElementId -> owning
-// unique_ptr<Npc>. The Npc's m_actor points at the local mirror AActor*.
-// Populated by OnEntitySpawn; drained by OnEntityDestroy + OnDisconnect.
-//
-// Mutex order (when this mutex is held alongside coop::element::Registry::
-// m_mutex): like g_npcElementsMutex on the host side, mirror destruction
-// must drain the unique_ptr from this map UNDER the mutex, RELEASE the
-// mutex, then let the destructor run -- so the Element dtor's
-// Registry::UnregisterMirror call doesn't hold both locks at once.
-std::mutex g_clientMirrorMutex;
-std::unordered_map<coop::element::ElementId, std::unique_ptr<coop::element::Npc>> g_clientMirrors;
+// CLIENT-side mirror state (Inc3). B2 (2026-05-29): migrated from
+// hand-rolled mutex+map to the generic coop::element::MirrorManager<Npc>
+// template, which encapsulates the 5-step RegisterMirror pattern and
+// ABBA-safe drain. Lifetime: populated by OnEntitySpawn; drained by
+// OnEntityDestroy + OnDisconnect.
+inline coop::element::MirrorManager<coop::element::Npc>& NpcMirrors() {
+    return coop::element::MirrorManager<coop::element::Npc>::Instance();
+}
 
 // Host-side Npc Element ownership + lookup.
 //
@@ -566,15 +564,14 @@ void OnDisconnect() {
     // K2_DestroyActor call below would assert -- but the mirror Element
     // drop itself is thread-safe (Registry::UnregisterMirror is
     // mutex-guarded).
-    std::unordered_map<coop::element::ElementId, std::unique_ptr<coop::element::Npc>> mirrorsDrained;
-    {
-        std::lock_guard<std::mutex> lk(g_clientMirrorMutex);
-        mirrorsDrained.swap(g_clientMirrors);
-    }
-    const size_t nMirrorsTotal = mirrorsDrained.size();
+    // Snapshot actor pointers FIRST under the manager's mutex (Snapshot
+    // is just a vector<T*> copy), then drain. K2_DestroyActor runs on
+    // each captured actor; the drained map then destructs sequentially
+    // outside the mutex (each Npc dtor -> Registry::UnregisterMirror).
+    std::vector<coop::element::Npc*> mirrorsSnap;
+    NpcMirrors().Snapshot(mirrorsSnap);
     size_t nMirrorsDestroyed = 0;
-    for (auto& kv : mirrorsDrained) {
-        coop::element::Npc* mirror = kv.second.get();
+    for (coop::element::Npc* mirror : mirrorsSnap) {
         if (!mirror) continue;
         void* actor = mirror->GetActor();
         if (actor && g_k2DestroyFn && R::IsLive(actor)) {
@@ -582,7 +579,7 @@ void OnDisconnect() {
             ++nMirrorsDestroyed;
         }
     }
-    mirrorsDrained.clear();  // dtors run here -> UnregisterMirror per Element
+    const size_t nMirrorsTotal = NpcMirrors().DrainAll();
     if (nMirrorsTotal > 0) {
         UE_LOGI("npc-sync: OnDisconnect drained %zu client mirror(s) "
                 "(K2_DestroyActor on %zu live actor(s); UnregisterMirror on all elements)",
@@ -848,14 +845,14 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     // Duplicate-eid guard: already mirroring this id? Should not happen
     // (host allocates each id exactly once across its lifetime, and the
     // reliable channel doesn't redeliver), but if it does we'd duplicate
-    // the actor -- drop the late one.
-    {
-        std::lock_guard<std::mutex> lk(g_clientMirrorMutex);
-        if (g_clientMirrors.find(payload.elementId) != g_clientMirrors.end()) {
-            UE_LOGW("npc-sync[client OnSpawn]: eid=%u already mirrored locally -- dropping duplicate",
-                    payload.elementId);
-            return;
-        }
+    // the actor -- drop the late one. Note: this is a non-locked early
+    // exit; a concurrent duplicate that races past this check is caught
+    // by the Install false-return path below (the orphan actor gets
+    // K2_DestroyActor'd before this function returns).
+    if (NpcMirrors().Get(payload.elementId) != nullptr) {
+        UE_LOGW("npc-sync[client OnSpawn]: eid=%u already mirrored locally -- dropping duplicate",
+                payload.elementId);
+        return;
     }
     // Resolve actor class. NPC BP classes load with the level; if not yet
     // loaded the packet is dropped (next host broadcast can rebind on a
@@ -984,13 +981,11 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         }
     }
 
-    // Build mirror Element + publish into g_clientMirrors BEFORE registering
-    // with the Registry. The owning unique_ptr must always have a home in
-    // g_clientMirrors before any code path can observe the Element via
-    // Registry::Get() (audit critical #3 / 2026-05-28). Otherwise the
-    // Registry slot would point at a moved-from / unowned Element across
-    // the gap, and any concurrent observer following the Registry pointer
-    // would dereference dead memory.
+    // Build mirror Element + hand off to MirrorManager::Install. The
+    // template encapsulates the 5-step pattern (alloc-under-lock +
+    // RegisterMirror + rollback-on-fail). Install returns false on
+    // duplicate-eid race or Registry::RegisterMirror failure -- in
+    // both cases we own the orphan actor and must K2_DestroyActor it.
     auto mirror = std::make_unique<coop::element::Npc>();
     std::string typeName8;
     typeName8.reserve(payload.className.len);
@@ -1003,54 +998,11 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);
 
-    coop::element::Npc* mirrorRaw = nullptr;
-    {
-        std::lock_guard<std::mutex> lk(g_clientMirrorMutex);
-        // Re-check for late-arriving duplicate under the lock (the early
-        // duplicate-eid guard ran without the lock; a parallel game-thread
-        // post is impossible here but a future caller migration could lose
-        // that property).
-        if (g_clientMirrors.find(eid) != g_clientMirrors.end()) {
-            UE_LOGW("npc-sync[client OnSpawn]: eid=%u became mirrored between early-guard and "
-                    "publish (concurrent OnEntitySpawn?) -- destroying just-spawned actor %p",
-                    payload.elementId, spawned);
-            // Release lock before K2_DestroyActor -- ProcessEvent under our
-            // mutex would be ABBA-unsafe with any caller that touches the
-            // Registry then this lock.
-            mirrorRaw = nullptr;
-        } else {
-            auto [it, ok] = g_clientMirrors.emplace(eid, std::move(mirror));
-            mirrorRaw = ok ? it->second.get() : nullptr;
-        }
-    }
-    if (!mirrorRaw) {
-        if (g_k2DestroyFn && R::IsLive(spawned)) {
-            R::CallFunction(spawned, g_k2DestroyFn, nullptr);
-        }
-        return;
-    }
-    // Now register the published mirror with the Registry. If this fails
-    // (slot collision -- another subsystem already owns eid), erase the
-    // mirror from g_clientMirrors (dtor fires OUTSIDE the lock, ABBA-safe
-    // because Registry::m_mutex acquisition happens during dtor only) and
-    // K2_DestroyActor the orphan actor.
-    if (!coop::element::Registry::Get().RegisterMirror(eid, mirrorRaw)) {
-        UE_LOGE("npc-sync[client OnSpawn]: Registry::RegisterMirror(eid=%u) FAILED -- "
-                "rolling back: destroying actor %p + erasing g_clientMirrors entry",
+    if (!NpcMirrors().Install(eid, std::move(mirror))) {
+        UE_LOGW("npc-sync[client OnSpawn]: MirrorManager::Install(eid=%u) failed "
+                "(duplicate eid race or Registry::RegisterMirror collision) -- "
+                "destroying orphan actor %p",
                 eid, spawned);
-        std::unique_ptr<coop::element::Npc> losing;
-        {
-            std::lock_guard<std::mutex> lk(g_clientMirrorMutex);
-            auto it = g_clientMirrors.find(eid);
-            if (it != g_clientMirrors.end()) {
-                losing = std::move(it->second);
-                g_clientMirrors.erase(it);
-            }
-        }
-        // losing's dtor fires here, outside the mutex. Since RegisterMirror
-        // failed (returned false), m_id is still kInvalidId on the Element,
-        // so ~Element() early-returns before calling UnregisterMirror -- no
-        // Registry mutex acquisition. ABBA-safe.
         if (g_k2DestroyFn && R::IsLive(spawned)) {
             R::CallFunction(spawned, g_k2DestroyFn, nullptr);
         }
@@ -1077,26 +1029,21 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);
-    // Drain the mirror from the client table under the mutex; release the
-    // mutex; THEN call K2_DestroyActor (game-thread UFunction call cannot
-    // legally race with another thread holding the mutex) and let the
+    // Drain the mirror from the client table under MirrorManager's own
+    // mutex (Take releases that mutex before returning); THEN call
+    // K2_DestroyActor (game-thread UFunction call cannot legally race
+    // with another thread holding the manager's mutex) and let the
     // unique_ptr dtor run (which calls Registry::UnregisterMirror with
-    // Registry::m_mutex held -- ABBA-safe because g_clientMirrorMutex is
-    // not held at that point).
-    std::unique_ptr<coop::element::Npc> drained;
-    {
-        std::lock_guard<std::mutex> lk(g_clientMirrorMutex);
-        auto it = g_clientMirrors.find(eid);
-        if (it == g_clientMirrors.end()) {
-            UE_LOGI("npc-sync[client OnDestroy]: eid=%u not in client mirror table -- "
-                    "ignoring (destroy without prior spawn, or already-drained)",
-                    payload.elementId);
-            return;
-        }
-        drained = std::move(it->second);
-        g_clientMirrors.erase(it);
+    // Registry::m_mutex held -- ABBA-safe because the MirrorManager
+    // mutex is not held at that point).
+    std::unique_ptr<coop::element::Npc> drained = NpcMirrors().Take(eid);
+    if (!drained) {
+        UE_LOGI("npc-sync[client OnDestroy]: eid=%u not in client mirror table -- "
+                "ignoring (destroy without prior spawn, or already-drained)",
+                payload.elementId);
+        return;
     }
-    void* actor = drained ? drained->GetActor() : nullptr;
+    void* actor = drained->GetActor();
     if (actor && g_k2DestroyFn && R::IsLive(actor)) {
         R::CallFunction(actor, g_k2DestroyFn, nullptr);
         UE_LOGI("npc-sync[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
