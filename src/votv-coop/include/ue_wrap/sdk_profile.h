@@ -210,12 +210,14 @@ inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float 
 
 // UCharacterMovementComponent::MovementMode @ +0x0168 (TEnumAsByte<EMovementMode>).
 // Engine.hpp:9917. Values: MOVE_None=0, MOVE_Walking=1, MOVE_NavWalking=2,
-// MOVE_Falling=3, MOVE_Swimming=4, MOVE_Flying=5, MOVE_Custom=6. Used by
-// harness::ReadLocalPose to pack the source's airborne state into
-// PoseSnapshot.stateBits bit 0 (kStateBitInAir) so the receiver's BUA-POST
-// observer can clear useLegIK during jumps -- the foot-IK trace otherwise
-// plants the puppet's feet to the satellite's grounded position because the
-// satellite ACharacter never leaves ground (its CMC tick is parked).
+// MOVE_Falling=3, MOVE_Swimming=4, MOVE_Flying=5, MOVE_Custom=6. Accessed via
+// ue_wrap::puppet::ReadCharacterIsFalling (read path, called by coop::net_pump::
+// ReadLocalPose) + DriveCharacterMovement (write path) to mirror the source's
+// airborne state into PoseSnapshot.stateBits bit 0 (kStateBitInAir) so the
+// receiver's BUA-POST observer can clear useLegIK during jumps -- the foot-IK
+// trace otherwise plants the puppet's feet to the satellite's grounded
+// position because the satellite ACharacter never leaves ground (its CMC tick
+// is parked).
 inline constexpr size_t UCharacterMovement_MovementMode = 0x0168;
 inline constexpr uint8_t kMOVE_Falling = 3;
 

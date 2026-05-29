@@ -626,4 +626,12 @@ void DriveCharacterMovement(void* puppetActor,
     WriteAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode, mm);
 }
 
+bool ReadCharacterIsFalling(void* actor) {
+    if (!actor || !R::IsLive(actor)) return false;
+    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
+    if (!cmc || !R::IsLive(cmc)) return false;
+    const uint8_t mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
+    return mode == P::off::kMOVE_Falling;
+}
+
 }  // namespace ue_wrap::puppet

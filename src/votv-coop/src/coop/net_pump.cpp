@@ -24,6 +24,7 @@
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
+#include "ue_wrap/puppet.h"
 #include "ue_wrap/reflected_offset.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
@@ -123,21 +124,22 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     // camera-lead-body) -- decoupled from body facing.
     out.headYawDelta = ue_wrap::NormalizeAxis(ctlRot.Yaw - actorRot.Yaw);
     out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
-    // Pack the source's airborne state. CMC.MovementMode @+0x168;
-    // MOVE_Falling=3 means in the air. The receiver's BUA-POST observer
+    // Pack the source's airborne state. The receiver's BUA-POST observer
     // reads this bit to clear useLegIK on the puppet during the airborne
     // window so the foot-IK trace doesn't plant the puppet's feet to
-    // ground while the source is jumping/falling.
+    // ground while the source is jumping/falling. A-2 (2026-05-29 audit):
+    // CMC pointer + MovementMode bytes accessed through ue_wrap::puppet::
+    // ReadCharacterIsFalling -- symmetric with the write-side wrapper
+    // DriveCharacterMovement (Principle 7: gameplay/coop layer reads
+    // engine memory only through ue_wrap). The wrapper also adds IsLive
+    // guards on actor + CMC that the prior inline code lacked -- raw
+    // deref of a PendingKill mainPlayer_C (e.g. mid level transition)
+    // was technically UB; false-positive rate in steady-state gameplay
+    // is zero because the possessed mainPlayer_C never carries
+    // PendingKill/Unreachable flags.
     out.stateBits = 0;
-    if (auto* lp = reinterpret_cast<uint8_t*>(local)) {
-        void* cmc = *reinterpret_cast<void**>(lp + ue_wrap::profile::off::ACharacter_CharacterMovement);
-        if (cmc) {
-            const uint8_t mode = *reinterpret_cast<uint8_t*>(
-                reinterpret_cast<uint8_t*>(cmc) + ue_wrap::profile::off::UCharacterMovement_MovementMode);
-            if (mode == ue_wrap::profile::off::kMOVE_Falling) {
-                out.stateBits |= coop::net::kStateBitInAir;
-            }
-        }
+    if (ue_wrap::puppet::ReadCharacterIsFalling(local)) {
+        out.stateBits |= coop::net::kStateBitInAir;
     }
     out._pad[0] = out._pad[1] = out._pad[2] = 0;
     return true;

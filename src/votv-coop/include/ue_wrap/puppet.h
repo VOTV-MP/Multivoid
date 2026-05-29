@@ -119,6 +119,17 @@ void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir);
 
+// Symmetric read accessor for CMC.MovementMode -- returns true iff `actor`
+// is an ACharacter-derived pawn whose CMC reports MOVE_Falling (the wire
+// `kStateBitInAir` predicate). Wraps the same raw struct-offset read
+// pattern as DriveCharacterMovement so gameplay/coop callers never touch
+// engine offsets directly (Principle 7: cross into engine memory only
+// through ue_wrap). Returns false on null/dead actor or null/dead CMC.
+// Game thread only.
+//   `actor` -- live ACharacter-derived pawn (typically the local
+//              `mainPlayer_C` whose airborne state we mirror to peers).
+bool ReadCharacterIsFalling(void* actor);
+
 // Bug 2 root-cause fix (Plan B2, 2026-05-23):
 //
 // The AnimBP's BlueprintUpdateAnimation pulls velocity from
