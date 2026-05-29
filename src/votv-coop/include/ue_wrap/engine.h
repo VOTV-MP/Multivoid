@@ -390,6 +390,41 @@ bool SetSpotLightInnerConeAngle(void* spotLight, float newAngle);
 // kill the duplicate definitions in those two TUs.
 void* GetWorldContext();
 
+// USoundAttenuation config for SpawnSoundAttenuation below. Field meanings
+// mirror Unreal's USoundAttenuation editor properties; the exact uint8 enum
+// values follow UE4.27's EAttenuationShape / EAttenuationDistanceModel /
+// EAttenuationFalloffMode. Defaults produce VOTV flashlight-click tuning
+// (sphere, 20m full-volume zone, 200m falloff, inverse distance model).
+struct SoundAttenuationConfig {
+    uint8_t shape              = 0;        // 0=Sphere, 1=Box, 2=Capsule, 3=Cone
+    uint8_t distanceAlgorithm  = 2;        // 0=Linear, 1=Logarithmic, 2=Inverse, ...
+    uint8_t falloffMode        = 0;        // 0=Continues, 1=Hold
+    float   extents[3]         = {2000.f, 0.f, 0.f};  // sphere: extents[0] = radius (cm)
+    float   falloffDistance    = 20000.f;             // cm beyond extents until silence
+    float   coneOffset         = 0.f;
+    float   dBAttenuationAtMax = -60.f;
+    bool    attenuate          = true;     // FlagsByte bit 0
+    bool    spatialize         = true;     // FlagsByte bit 1
+};
+
+// Construct + configure a fresh USoundAttenuation via
+// UGameplayStatics::SpawnObject + raw-field writes (Unreal exposes no
+// setter UFunctions for the SoundAttenuationSettings fields; they are
+// edit-time properties otherwise touched only via direct memory). The
+// returned object is AddToRoot'd before return so UE GC never collects
+// it (callers store the pointer in a C++ static which is invisible to
+// UE's reachability scan -- without rooting, the object is reaped on
+// the next GC pass and PlaySoundAtLocation crashes reading freed memory
+// on the subsequent click; this was the 2026-05-26 F-spam crash root
+// cause). Returns the live USoundAttenuation*, or nullptr if any
+// resolution failed (SpawnObject UFunction missing / CDO missing /
+// SpawnObject returns null). Game thread only.
+//
+// Principle 7 (A-3, 2026-05-29): replaces the inline SpawnObject +
+// 8 raw att:: offset writes block that lived in
+// coop::flashlight_click_sound::PlayIfStateChanged.
+void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg);
+
 // FRotator -> FQuat (UE4.27 stock formula, ZYX order, LEFT-HANDED coord
 // system). Matches EXACTLY the body of FRotator::Quaternion() from
 // Engine/Source/Runtime/Core/Public/Math/Rotator.h:

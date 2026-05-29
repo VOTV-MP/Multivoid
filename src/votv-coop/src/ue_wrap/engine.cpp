@@ -673,6 +673,73 @@ void* GetWorldContext() {
     return R::FindObjectByClass(P::name::WorldClass);
 }
 
+namespace {
+// Cached UFunction pointers + UClass for SpawnSoundAttenuation. The 3
+// resolve attempts run lazily on first call; once non-null they stay
+// (GameplayStatics CDO + SoundAttenuation UClass are process-stable).
+void* g_gsCdoForAtt    = nullptr;
+void* g_spawnObjectFn  = nullptr;
+void* g_attClass       = nullptr;
+
+bool ResolveAttSpawn() {
+    if (!g_gsCdoForAtt) g_gsCdoForAtt = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_gsCdoForAtt && !g_spawnObjectFn) {
+        if (void* gsCls = R::ClassOf(g_gsCdoForAtt)) {
+            g_spawnObjectFn = R::FindFunction(gsCls, P::name::SpawnObjectFn);
+        }
+    }
+    if (!g_attClass) g_attClass = R::FindClass(P::name::SoundAttenuationClass);
+    return g_gsCdoForAtt && g_spawnObjectFn && g_attClass;
+}
+}  // namespace
+
+void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg) {
+    if (!ResolveAttSpawn()) return nullptr;
+
+    // 1) SpawnObject(objectClass, Outer) -> UObject*. CASE-SENSITIVE param
+    //    names per UE reflection: lowercase 'objectClass' + 'Outer' (the
+    //    existing pattern in engine_widget.cpp's widget spawn). An
+    //    uppercase-O `ObjectClass` would FName-mismatch -> SetRaw fail ->
+    //    SpawnObject sees a null class -> returns null. Outer = the
+    //    GameplayStatics CDO, which is process-stable.
+    void* obj = nullptr;
+    {
+        ParamFrame f(g_spawnObjectFn);
+        f.Set<void*>(L"objectClass", g_attClass);
+        f.Set<void*>(L"Outer", g_gsCdoForAtt);
+        if (!Call(g_gsCdoForAtt, f)) return nullptr;
+        obj = f.Get<void*>(L"ReturnValue");
+    }
+    if (!obj) return nullptr;
+
+    // 2) Configure via raw memory writes. UE exposes no setter
+    //    UFunctions for these fields (they are edit-time UProperties
+    //    on USoundAttenuation). Offsets cataloged in sdk_profile.h
+    //    `att::` namespace -- the wrapper hides them from gameplay code.
+    auto* p = reinterpret_cast<uint8_t*>(obj);
+    *reinterpret_cast<uint8_t*>(p + P::off::att::AttenuationShape)  = cfg.shape;
+    *reinterpret_cast<uint8_t*>(p + P::off::att::DistanceAlgorithm) = cfg.distanceAlgorithm;
+    *reinterpret_cast<uint8_t*>(p + P::off::att::FalloffMode)       = cfg.falloffMode;
+    float* extents = reinterpret_cast<float*>(p + P::off::att::AttenuationShapeExtents);
+    extents[0] = cfg.extents[0];
+    extents[1] = cfg.extents[1];
+    extents[2] = cfg.extents[2];
+    *reinterpret_cast<float*>(p + P::off::att::FalloffDistance)    = cfg.falloffDistance;
+    *reinterpret_cast<float*>(p + P::off::att::ConeOffset)         = cfg.coneOffset;
+    *reinterpret_cast<float*>(p + P::off::att::dBAttenuationAtMax) = cfg.dBAttenuationAtMax;
+    uint8_t& flags = *reinterpret_cast<uint8_t*>(p + P::off::att::FlagsByte);
+    if (cfg.attenuate)  flags |= 0x01; else flags &= ~static_cast<uint8_t>(0x01);
+    if (cfg.spatialize) flags |= 0x02; else flags &= ~static_cast<uint8_t>(0x02);
+
+    // 3) AddToRoot so UE GC keeps this object alive across collections.
+    //    Caller will hold the pointer in a C++ static (invisible to UE's
+    //    reachability scan) -- without rooting, the object is reaped on
+    //    the next GC pass and PlaySoundAtLocation crashes reading freed
+    //    memory on the next call (2026-05-26 F-spam crash root cause).
+    R::AddToRoot(obj);
+    return obj;
+}
+
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
                    float& qx, float& qy, float& qz, float& qw) {
     constexpr float kHalfDegToRad = 0.0087266462599716478846184538424431f;  // (pi/180)/2

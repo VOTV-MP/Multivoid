@@ -9,6 +9,7 @@
 
 #include "coop/players_registry.h"
 #include "ue_wrap/call.h"
+#include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
@@ -62,18 +63,16 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
     //    retried until non-null so we don't permanently cache nullptr if
     //    an early packet arrives before asset load.
     //
-    //    Resolution order MATTERS: sGameplayStatics MUST be resolved
-    //    BEFORE the !sAttenuation block, because that block needs the
-    //    CDO to look up SpawnObject + to use as Outer for SpawnObject.
-    //    Earlier ordering bug (audit 2026-05-26 v2): sGameplayStatics
-    //    was populated AFTER the attenuation block, so the first
-    //    state-change packet of each session left sAttenuation null
-    //    and the first remote click played 2D until the next packet.
+    //    sGameplayStatics here is the CDO used by section 5
+    //    (PlaySoundAtLocation Call target). Post A-3 (2026-05-29) the
+    //    SpawnSoundAttenuation wrapper resolves its OWN GameplayStatics
+    //    CDO internally (see ResolveAttSpawn in engine.cpp), so the
+    //    !sAttenuation block no longer depends on this static being
+    //    populated first. Order kept stable for readability.
     static void* sGameplayStatics = nullptr;
     static void* sPlaySoundFn     = nullptr;
     static void* sSoundAsset      = nullptr;
     static void* sAttenuation     = nullptr;
-    static void* sGetLocFn        = nullptr;
 
     if (!sGameplayStatics) {
         sGameplayStatics = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
@@ -90,81 +89,30 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
 
     // 3) RULE 1 native path: construct our own USoundAttenuation via
     //    UGameplayStatics::SpawnObject. No coupling to VOTV's cooked
-    //    `att_*` content assets. Configure radii + spatial flags
-    //    directly via reflected field offsets (sdk_profile `att::*`).
+    //    `att_*` content assets. A-3 (2026-05-29) Principle 7: the
+    //    SpawnObject UFunction call + the 8 raw att:: offset writes +
+    //    AddToRoot now live behind ue_wrap::engine::SpawnSoundAttenuation;
+    //    gameplay code holds only the cached pointer.
+    //
+    //    Sphere shape, 20m audible radius, 200m falloff. User feedback
+    //    2026-05-26: 2m/20m was too short -- bumped 10x so the click is
+    //    audible across a meaningful traversal distance on VOTV's
+    //    outdoor map. Defaults of SoundAttenuationConfig match exactly.
     if (!sAttenuation) {
-        static void* sSpawnObjectFn = nullptr;
-        if (!sSpawnObjectFn && sGameplayStatics) {
-            if (void* gsCls = R::ClassOf(sGameplayStatics)) {
-                sSpawnObjectFn = R::FindFunction(gsCls, P::name::SpawnObjectFn);
-            }
-        }
-        void* attCls = R::FindClass(P::name::SoundAttenuationClass);
-        if (sSpawnObjectFn && attCls && sGameplayStatics) {
-            ue_wrap::ParamFrame sf(sSpawnObjectFn);
-            // CASE-SENSITIVE param names per UE reflection: existing
-            // project pattern in engine_widget.cpp:95-96 uses
-            // `objectClass` (lowercase 'o') + `Outer`. An uppercase-O
-            // ObjectClass would silently SetRaw-fail (FName mismatch)
-            // and SpawnObject would receive a null class -> return null
-            // -> 2D sound (which is exactly what we hit on first deploy
-            // 2026-05-26).
-            sf.Set<void*>(L"objectClass", attCls);
-            sf.Set<void*>(L"Outer", sGameplayStatics);
-            if (ue_wrap::Call(sGameplayStatics, sf)) {
-                sAttenuation = sf.Get<void*>(L"ReturnValue");
-            }
-            if (sAttenuation) {
-                // CRITICAL: AddToRoot so UE4 GC never collects this
-                // object. We hold the pointer in a C++ static which is
-                // INVISIBLE to UE's reachability scan -- without rooting
-                // the object gets reaped on the next GC pass and the
-                // static dangles. PlaySoundAtLocation would then crash
-                // reading freed memory on the next click (root cause of
-                // the F-spam crash 2026-05-26).
-                R::AddToRoot(sAttenuation);
-
-                auto* p = reinterpret_cast<uint8_t*>(sAttenuation);
-                // Sphere shape, 20m audible radius, 200m falloff. User
-                // feedback 2026-05-26: 2m/20m was too short -- bumped 10x
-                // so the click is audible across a meaningful traversal
-                // distance on VOTV's outdoor map.
-                *reinterpret_cast<uint8_t*>(p + P::off::att::AttenuationShape)  = 0;   // Sphere
-                *reinterpret_cast<uint8_t*>(p + P::off::att::DistanceAlgorithm) = 2;   // Inverse
-                *reinterpret_cast<uint8_t*>(p + P::off::att::FalloffMode)       = 0;   // Continues
-                float* extents = reinterpret_cast<float*>(p + P::off::att::AttenuationShapeExtents);
-                extents[0] = 2000.f;   // sphere radius (cm) -- 20m full-volume zone
-                extents[1] = 0.f;
-                extents[2] = 0.f;
-                *reinterpret_cast<float*>(p + P::off::att::FalloffDistance)    = 20000.f;  // 200m falloff
-                *reinterpret_cast<float*>(p + P::off::att::ConeOffset)         = 0.f;
-                *reinterpret_cast<float*>(p + P::off::att::dBAttenuationAtMax) = -60.f;
-                // Set bAttenuate + bSpatialize bits (everything else is
-                // a default initialized by the SoundAttenuation CDO copy
-                // when SpawnObject runs).
-                uint8_t& flags = *reinterpret_cast<uint8_t*>(p + P::off::att::FlagsByte);
-                flags |= 0x01;  // bAttenuate
-                flags |= 0x02;  // bSpatialize
-                UE_LOGI("flashlight: constructed native USoundAttenuation %p "
-                        "(sphere r=20m, falloff=200m, inverse)",
-                        sAttenuation);
-            }
+        ue_wrap::engine::SoundAttenuationConfig cfg{};  // VOTV flashlight defaults
+        sAttenuation = ue_wrap::engine::SpawnSoundAttenuation(cfg);
+        if (sAttenuation) {
+            UE_LOGI("flashlight: constructed native USoundAttenuation %p "
+                    "(sphere r=20m, falloff=200m, inverse)", sAttenuation);
         }
     }
 
-    // 4) Read puppet world location via K2_GetActorLocation reflection.
-    static void* sActorCls = nullptr;
-    if (!sActorCls) {
-        sActorCls = R::FindClass(P::name::ActorClass);
-        if (sActorCls) sGetLocFn = R::FindFunction(sActorCls, P::name::GetActorLocationFn);
-    }
-    float loc[3] = {0.f, 0.f, 0.f};
-    float rot[3] = {0.f, 0.f, 0.f};
-    if (sGetLocFn) {
-        ue_wrap::ParamFrame f(sGetLocFn);
-        ue_wrap::Call(puppetActor, f);
-        f.GetRaw(L"ReturnValue", loc, sizeof(loc));
-    }
+    // 4) Read puppet world location via the existing GetActorLocation
+    //    wrapper (replaces the prior local ActorClass + UFunction cache
+    //    duplicate). Rotation stays at zero (PlaySoundAtLocation does
+    //    not use orientation for a non-cone spatialised source).
+    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(puppetActor);
+    const ue_wrap::FRotator rot{};
 
     // 5) Fire PlaySoundAtLocation. Tolerates nullptr attenuation -- plays
     //    2D in that case (e.g. SpawnObject failed at startup). Per-call
@@ -174,8 +122,8 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
         ue_wrap::ParamFrame f(sPlaySoundFn);
         f.Set<void*>(L"WorldContextObject", puppetActor);
         f.Set<void*>(L"Sound", sSoundAsset);
-        f.SetRaw(L"Location", loc, sizeof(loc));
-        f.SetRaw(L"Rotation", rot, sizeof(rot));
+        f.SetRaw(L"Location", &loc, sizeof(loc));
+        f.SetRaw(L"Rotation", &rot, sizeof(rot));
         f.Set<float>(L"VolumeMultiplier", 1.f);
         f.Set<float>(L"PitchMultiplier", 1.f);
         f.Set<float>(L"StartTime", 0.f);
@@ -185,7 +133,7 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
         ue_wrap::Call(sGameplayStatics, f);
         UE_LOGI("flashlight: click sound played at puppet pos (%.0f, %.0f, %.0f) "
                 "attenuation=%p (sphere r=20m falloff=200m)",
-                loc[0], loc[1], loc[2], sAttenuation);
+                loc.X, loc.Y, loc.Z, sAttenuation);
     } else {
         UE_LOGW("flashlight: click sound NOT played -- asset=%p gs=%p fn=%p",
                 sSoundAsset, sGameplayStatics, sPlaySoundFn);
