@@ -19,10 +19,9 @@ namespace {
 // runs on the GNS net thread, not the game thread. Reading through the non-
 // atomic `unique_ptr<Player>` in `playerBySlot_[localPeerId_]` from that
 // thread is data-race UB. Original A4 fix used two separate atomics for
-// (eid, context); B1's audit (2026-05-29 Finding #1) flagged that a
-// game-thread DropPlayerElement_ between the net-thread's TWO loads
-// would stamp a coherent eid with a stale (cleared) context byte.
-// B1 v2 fix: pack (eid:32, ctx:8) into ONE uint64 atomic so a single
+// (eid, context); a game-thread DropPlayerElement_ between the
+// net-thread's TWO loads would stamp a coherent eid with a stale (cleared)
+// context byte. Pack (eid:32, ctx:8) into ONE uint64 atomic so a single
 // load returns a coherent pair, eliminating the inter-load race.
 // Layout: (uint64_t(eid) << 32) | uint64_t(ctx).
 inline constexpr uint64_t kInvalidIdCtxPair =
@@ -212,8 +211,8 @@ uint8_t Registry::LocalPlayerSyncContext() const {
 
 void Registry::LocalPlayerIdentity(coop::element::ElementId& outEid,
                                     uint8_t& outCtx) const {
-    // B1 v2 (audit fix #1): atomic-paired accessor. Use this when both
-    // eid AND context are needed at the same instant -- e.g. the AssignPeerSlot
+    // Atomic-paired accessor. Use this when both eid AND context are
+    // needed at the same instant -- e.g. the AssignPeerSlot
     // stamp on the GNS net thread, where a game-thread DropPlayerElement_
     // between two separate loads could yield an eid/ctx tuple from
     // different generations.
@@ -247,6 +246,19 @@ bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
         if (existing->GetId() == wireEid && existing->IsMirror()) {
             if (existing->GetSyncContext() != wireContext) {
                 existing->SetSyncContext(wireContext);
+                // Defensive (matches the publish path below): if this idempotent
+                // refresh ever covers the LOCAL slot, republish the new context
+                // through the cross-thread atomic so outbound stamps via
+                // LocalPlayerSyncContext() carry the refreshed value. Without
+                // this, a reconnect-with-fresh-context that hits the idempotent
+                // branch (eid matched, ctx differed) leaves the atomic frozen
+                // on the old ctx, causing all outbound weather/redsky/etc. to
+                // mismatch the receiver's just-updated mirror -> silent drops.
+                if (peerSlot == localPeerId_) {
+                    g_localPlayerIdentityAtomic.store(
+                        PackIdentity_(wireEid, wireContext),
+                        std::memory_order_release);
+                }
                 UE_LOGI("players::Registry: refreshed MIRROR Player Element "
                         "eid=0x%08x peerSlot=%u context=0x%02x",
                         wireEid, static_cast<unsigned>(peerSlot),

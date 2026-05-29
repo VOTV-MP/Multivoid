@@ -182,6 +182,11 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
 void OnSlotDisconnected(int slot) {
     if (slot < 0 || slot >= net::kMaxPeers) return;
     g_joinSentBySlot[slot] = false;
+    // N-5 (2026-05-29 audit): clear the stashed nickname so a subsequent peer
+    // reusing the same slot before its Join arrives doesn't display the
+    // departed peer's name in the HUD toasts. NicknameForSlot falls back to
+    // a placeholder when this is empty.
+    g_remoteNickBySlot[slot].clear();
 }
 
 const std::wstring& NicknameForSlot(int slot) {
@@ -205,20 +210,23 @@ bool HandleJoinMessage(net::Session& session,
     // prefix then the existing [uint8 nicklen][nick UTF-8]. The protocol
     // version bump (13->14) at ParseHeader guarantees v13 senders can't
     // misalign through here -- their packets are rejected upstream.
+    //
+    // W-3 (2026-05-29 audit): reject undersized Join instead of degrading to
+    // no-mirror routing. Silent degradation leaves the peer permanently
+    // without senderContext-based stale-gen defense; safer to drop a
+    // malformed Join and let the sender's retry produce a well-formed one.
+    if (msg.payloadLen < 5) {
+        UE_LOGW("player_handshake: Join payload %zu B too short for v14 prefix "
+                "(senderSlot=%d) -- dropping",
+                static_cast<size_t>(msg.payloadLen), senderSlot);
+        return true;
+    }
     uint32_t senderElementId = 0;
     uint8_t  senderContext   = 0;
-    const uint8_t* nickStart = msg.payload;
-    size_t nickRemaining = msg.payloadLen;
-    if (msg.payloadLen >= 5) {
-        std::memcpy(&senderElementId, msg.payload, 4);
-        senderContext = msg.payload[4];
-        nickStart += 5;
-        nickRemaining -= 5;
-    } else {
-        UE_LOGW("player_handshake: Join payload %zu B too short for v14 "
-                "senderElementId+senderContext prefix -- routing fallback",
-                static_cast<size_t>(msg.payloadLen));
-    }
+    std::memcpy(&senderElementId, msg.payload, 4);
+    senderContext = msg.payload[4];
+    const uint8_t* nickStart = msg.payload + 5;
+    size_t nickRemaining = msg.payloadLen - 5;
     std::wstring nick = g_remoteNickBySlot[senderSlot];
     if (nickRemaining > 0) {
         const int len = nickStart[0];
@@ -284,10 +292,10 @@ bool HandleAssignPeerSlot(net::Session& session,
                 "(host self-assigns slot 0; no inbound from client)");
         return true;
     }
-    // B3 audit fix I3: enforce that the SENDER connection is the host
-    // (senderPeerSlot == 0). A malicious client peer could otherwise
-    // craft AssignPeerSlot packets if GNS ever fans out client-to-
-    // client traffic; defending here independent of relay topology.
+    // Enforce that the SENDER connection is the host (senderPeerSlot == 0).
+    // A malicious client peer could otherwise craft AssignPeerSlot packets
+    // if GNS ever fans out client-to-client traffic; defending here
+    // independent of relay topology.
     if (msg.senderPeerSlot != 0) {
         UE_LOGW("player_handshake: AssignPeerSlot from non-host "
                 "senderPeerSlot=%d -- dropping",

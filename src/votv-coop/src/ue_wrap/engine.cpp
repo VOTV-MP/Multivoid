@@ -6,6 +6,7 @@
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/reflected_offset.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -576,6 +577,26 @@ bool ReadFlashlightSnapshot(void* light, FlashlightSnapshot& out) {
     const uint8_t flags = *reinterpret_cast<uint8_t*>(base + P::off::USceneComponent_VisFlagsByte);
     out.visible         = (flags & 0x10) != 0;
     return true;
+}
+
+void* GetWorldContext() {
+    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) return gi;
+    return R::FindObjectByClass(P::name::WorldClass);
+}
+
+void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
+                   float& qx, float& qy, float& qz, float& qw) {
+    constexpr float kHalfDegToRad = 0.0087266462599716478846184538424431f;  // (pi/180)/2
+    const float sp = std::sin(pitchDeg * kHalfDegToRad);
+    const float cp = std::cos(pitchDeg * kHalfDegToRad);
+    const float sy = std::sin(yawDeg   * kHalfDegToRad);
+    const float cy = std::cos(yawDeg   * kHalfDegToRad);
+    const float sr = std::sin(rollDeg  * kHalfDegToRad);
+    const float cr = std::cos(rollDeg  * kHalfDegToRad);
+    qx =  cr * sp * sy - sr * cp * cy;
+    qy = -cr * sp * cy - sr * cp * sy;
+    qz =  cr * cp * sy - sr * sp * cy;
+    qw =  cr * cp * cy + sr * sp * sy;
 }
 
 }  // namespace ue_wrap::engine

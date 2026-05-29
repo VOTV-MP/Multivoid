@@ -91,8 +91,14 @@ Lane LaneForKind(ReliableKind k) {
     case ReliableKind::TeleportClient: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
+    // Spawn + Destroy must share a lane: GNS guarantees in-order delivery WITHIN
+    // a lane but NOT across lanes. If PropDestroy were on Normal while PropSpawn
+    // were on Bulk, a Destroy could drain to the receiver before its Spawn under
+    // backpressure -> phantom actor never cleaned up.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
+    case ReliableKind::PropDestroy:    return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
+    case ReliableKind::EntityDestroy:  return Lane::Bulk;
     default:                           return Lane::Normal;
     }
 }
@@ -168,9 +174,14 @@ void Session::ResetPeerRemoteState(int peerSlot) {
 }
 
 int Session::connectedPeerCount() const {
+    // Count only peers whose lanes are configured (= Connected state). Counting
+    // Connecting-state slots (peerConns_ set in the Connecting callback but
+    // peerLanesConfigured_ not yet set in the Connected callback) delays the
+    // aggregate Disconnected transition and triggers snapshot fan-out toward a
+    // half-open connection.
     int n = 0;
     for (int i = 0; i < kMaxPeers; ++i) {
-        if (peerConns_[i].load() != 0) ++n;
+        if (peerConns_[i].load() != 0 && peerLanesConfigured_[i].load()) ++n;
     }
     return n;
 }
@@ -208,11 +219,11 @@ void Session::HandleConnStatusChanged(void* info) {
             sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
         }
         peerConns_[slot].store(hConn);
-        // Finding #1: only demote to Handshaking if currently Disconnected.
-        // If peer-1 is already Connected and peer-2 starts connecting, the
-        // aggregate state must remain Connected -- otherwise pose fan-out to
-        // peer-1 pauses, TryGetRemotePose returns false, event_feed re-sends
-        // Join, and harness teardown can trigger for ~10-200ms of handshake.
+        // Only demote to Handshaking if currently Disconnected. If peer-1 is
+        // already Connected and peer-2 starts connecting, the aggregate state
+        // must remain Connected -- otherwise pose fan-out to peer-1 pauses,
+        // TryGetRemotePose returns false, event_feed re-sends Join, and
+        // harness teardown can trigger for ~10-200ms of handshake.
         if (state_.load() == ConnState::Disconnected) {
             state_.store(ConnState::Handshaking);
         }
@@ -226,10 +237,10 @@ void Session::HandleConnStatusChanged(void* info) {
 
     if (newState == k_ESteamNetworkingConnectionState_Connected) {
         int slot = FindPeerSlotForConn(hConn);
-        // Finding #6: GNS may skip the None->Connecting transition in rare cases
-        // (per SteamNetConnectionStatusChangedCallback_t header doc). When that
-        // happens on host, the slot is unregistered. Late-register here so the
-        // connection has a known slot and SetConnectionUserData lands.
+        // GNS may skip the None->Connecting transition in rare cases (per
+        // SteamNetConnectionStatusChangedCallback_t header doc). When that
+        // happens on host, the slot is unregistered. Late-register here so
+        // the connection has a known slot and SetConnectionUserData lands.
         if (slot < 0 && cfg_.role == Role::Host) {
             slot = FindFreePeerSlotForClient();
             if (slot < 0) {
@@ -286,9 +297,9 @@ void Session::HandleConnStatusChanged(void* info) {
             // in which case the read returns kInvalidId, and the client
             // receiver falls back to non-mirror routing (the field's
             // contract documents 0/kInvalidId as "sender had no Element").
-            // v14 (B1 v2 audit fix #1): use the atomic-paired accessor so
-            // a game-thread DropPlayerElement_ can't tear (eid, ctx) into
-            // a coherent eid + stale ctx pair on this net-thread read.
+            // Use the atomic-paired accessor so a game-thread
+            // DropPlayerElement_ can't tear (eid, ctx) into a coherent eid +
+            // stale ctx pair on this net-thread read.
             coop::players::Registry::Get().LocalPlayerIdentity(
                 p.hostElementId, p.hostContext);
             if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
@@ -320,10 +331,10 @@ void Session::HandleConnStatusChanged(void* info) {
         { std::lock_guard<std::mutex> lk(remoteMutex_);
           if (slot >= 0) ResetPeerRemoteState(slot); }
 
-        // Finding #11: drop reliable messages still queued from the departing
-        // peer. Without this a PropSpawn from a ghost peer can land in the
-        // game thread AFTER the slot has been cleared, and no future
-        // PropDestroy can ever arrive.
+        // Drop reliable messages still queued from the departing peer.
+        // Without this a PropSpawn from a ghost peer can land in the game
+        // thread AFTER the slot has been cleared, and no future PropDestroy
+        // can ever arrive.
         if (slot >= 0) {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
             for (auto it = reliableInbox_.begin(); it != reliableInbox_.end();) {
@@ -335,7 +346,7 @@ void Session::HandleConnStatusChanged(void* info) {
         // Aggregate state: stay Connected if any peer still up; otherwise
         // downgrade and clear everything.
         if (connectedPeerCount() == 0) {
-            // Finding #2: full disconnect goes to Disconnected, not Handshaking.
+            // Full disconnect goes to Disconnected, not Handshaking.
             // Reconnect UI / harness polling state()==Disconnected was
             // permanently blocked when this said Handshaking.
             state_.store(ConnState::Disconnected);
@@ -710,29 +721,29 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
         ReliableHeader rh;
         std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
-        // Finding #15: payloadLen is uint16_t, can't be negative. Only the
-        // upper bound is a real guard.
+        // payloadLen is uint16_t, can't be negative -- only the upper bound is
+        // a real guard.
         const int payloadLen = static_cast<int>(rh.payloadLen);
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
         {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
-            // Finding #12: cap the inbox so a flooding peer can't grow it
-            // unboundedly on the host's net thread. The 8192 figure provides
-            // ~4x headroom over an observed worst-case connect-time snapshot
-            // burst (~1700 PropSpawn for a fully-populated VOTV world). At
-            // ~232 B per inline message that's ~1.9 MB worst case -- bounded
-            // for DoS while still fitting legitimate fan-outs.
+            // Cap the inbox so a flooding peer can't grow it unboundedly on
+            // the host's net thread. 8192 provides ~4x headroom over an
+            // observed worst-case connect-time snapshot burst (~1700
+            // PropSpawn for a fully-populated VOTV world). At ~232 B per
+            // inline message that's ~1.9 MB worst case -- bounded for DoS
+            // while still fitting legitimate fan-outs.
             constexpr size_t kReliableInboxCap = 8192;
             if (reliableInbox_.size() >= kReliableInboxCap) {
                 UE_LOGW("net: reliableInbox full (%zu) -- dropping kind=%u from peer slot %d",
                         kReliableInboxCap, static_cast<unsigned>(rh.kind), peerSlot);
                 return;
             }
-            // Finding #4: emplace + memcpy avoids the per-receive heap alloc
+            // emplace + memcpy avoids the per-receive heap alloc
             // (vector::assign). ReliableMessage now holds an inline 228 B
-            // payload buffer. Finding #10: stamp senderPeerSlot so drainers
-            // can route per-sender (3-peer correctness).
+            // payload buffer. Stamp senderPeerSlot so drainers can route
+            // per-sender (3-peer correctness).
             reliableInbox_.emplace_back();
             ReliableMessage& m = reliableInbox_.back();
             m.kind = static_cast<ReliableKind>(rh.kind);
@@ -785,12 +796,12 @@ void Session::NetThread() {
             // Client: only ever receives from peerConns_[0] (host).
             int peerSlot;
             if (cfg_.role == Role::Host) {
-                // Finding #5: m_nConnUserData defaults to 0 (or -1 on some
-                // GNS versions) before SetConnectionUserData lands. Narrowing
-                // a default of 0 here would corrupt slot 0 (the host's own
-                // local-self slot) and then the backward-compat 0-arg
-                // TryGetRemotePose would permanently return it. Validate
-                // bounds AND reject slot 0 on host before narrowing.
+                // m_nConnUserData defaults to 0 (or -1 on some GNS versions)
+                // before SetConnectionUserData lands. Narrowing a default of
+                // 0 here would corrupt slot 0 (the host's own local-self
+                // slot) and then the backward-compat 0-arg TryGetRemotePose
+                // would permanently return it. Validate bounds AND reject
+                // slot 0 on host before narrowing.
                 const int64 ud = msgs[i]->m_nConnUserData;
                 if (ud < 1 || ud >= kMaxPeers) {
                     UE_LOGW("net: dropping msg from unregistered conn (ud=%lld)",
@@ -845,22 +856,25 @@ void Session::NetThread() {
             nextSend = now + sendInterval;
         }
 
-        // 4) Sample RTT every second from GNS (carried from PR-2). Picks the
-        // first connected peer's RTT -- good enough for HUD; per-peer RTT is
-        // available via GetConnectionRealTimeStatus(peerConns_[i],...) if a
-        // future HUD wants it.
+        // 4) Sample RTT every second from GNS. The HUD shows ONE number, but
+        // sampling only peer 0 means lastRttMs_ freezes if peer 0 disconnects
+        // while peer 1/2/3 remain connected. Take the minimum across all live
+        // peers so the HUD reflects the best available round-trip.
         if (state_.load() == ConnState::Connected && now >= nextRttSample) {
+            int bestPing = -1;
             for (int i = 0; i < kMaxPeers; ++i) {
                 const uint32_t hConn = peerConns_[i].load();
                 if (hConn == 0) continue;
                 SteamNetConnectionRealTimeStatus_t st{};
                 if (sockets->GetConnectionRealTimeStatus(hConn, &st, 0, nullptr) == k_EResultOK) {
                     if (st.m_nPing >= 0 && st.m_nPing < 60000) {
-                        lastRttMs_.store(st.m_nPing);
+                        if (bestPing < 0 || st.m_nPing < bestPing) {
+                            bestPing = st.m_nPing;
+                        }
                     }
                 }
-                break;  // first connected peer wins for the HUD-level RTT
             }
+            if (bestPing >= 0) lastRttMs_.store(bestPing);
             nextRttSample = now + std::chrono::milliseconds(1000);
         }
 

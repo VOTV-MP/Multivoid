@@ -1,6 +1,7 @@
 #include "coop/remote_player.h"
 
 #include "coop/nameplate.h"
+#include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
@@ -48,8 +49,20 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }  // namespace
 
 bool RemotePlayer::Spawn() {
-    // The local player gives us BOTH the spawn anchor and the skin to copy.
-    void* local = R::FindObjectByClass(P::name::MainPlayerClass);
+    // A-5 v2 (2026-05-29 post-ship audit): use players::Registry::Local()
+    // first (controller-filtered: picks the genuine local in 3-peer
+    // scenarios where puppets are also mainPlayer_C instances). Fall back
+    // to FindObjectByClass during the OMEGA splash / pre-possession window
+    // where Local() returns null because no controller is attached yet --
+    // in that window no puppets exist either, so FindObjectByClass safely
+    // returns the only mainPlayer_C in the GUObjectArray. Without the
+    // fallback, Spawn fails every tick during boot, the net pump retries
+    // once per second, and the pre-existing connect-edge BP-anim SEH
+    // cascade has more time to accumulate -> 4 GB+ client RSS climb.
+    void* local = players::Registry::Get().Local();
+    if (!local) {
+        local = R::FindObjectByClass(P::name::MainPlayerClass);
+    }
     if (!local) {
         UE_LOGW("RemotePlayer::Spawn: no local mainPlayer_C (not in gameplay yet)");
         return false;

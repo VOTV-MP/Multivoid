@@ -39,11 +39,6 @@ std::atomic<bool> g_active{false};
 void* g_root = nullptr;
 void* g_text = nullptr;
 
-// Cached local pawn for Refresh -- never re-walk GUObjectArray per refresh tick
-// (FindObjectByClass is O(NumObjects)~100k). Same pattern as harness::g_netLocal
-// and engine.cpp::CamMgr: resolve once, IsLive-revalidate, re-find only on miss.
-void* g_local = nullptr;
-
 constexpr int kZOrder = 95;  // just below the coop hud_feed (which is at 100)
 
 bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
@@ -106,7 +101,6 @@ void Refresh() {
     // local player. local_player::Get() filters via controller-not-null
     // and caches.
     void* local = coop::players::Registry::Get().Local();
-    g_local = local;  // keep the file-static for legacy diagnostics
     if (local) {
         const ue_wrap::FVector loc = E::GetActorLocation(local);
         const ue_wrap::FRotator cam = E::GetCameraRotation();

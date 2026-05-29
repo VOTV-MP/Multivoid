@@ -198,8 +198,15 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // the disconnect-edge also fires correctly off IsSlotReady.
         const bool slotConnected = session.IsSlotReady(slot);
         if (g_wasConnectedBySlot[slot] && !slotConnected) {
+            // N-3 (2026-05-29 audit): UnregisterPuppet drops the Player Element
+            // from players::Registry. If the puppet was never spawned (peer
+            // disconnected after Join but before any PoseSnapshot), g_puppets[
+            // slot].valid() is false but playerBySlot_[slot] may still hold a
+            // mirror Element installed by EstablishMirrorForSlot. Calling
+            // UnregisterPuppet unconditionally is safe -- DropPlayerElement_
+            // is a no-op when playerBySlot_ is null.
+            coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
             if (g_puppets[slot].valid()) {
-                coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
                 g_puppets[slot].Destroy();
                 UE_LOGI("net: peer slot %d disconnected -- puppet destroyed", slot);
             }

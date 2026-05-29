@@ -98,15 +98,10 @@ void ReportFooter(int ok, int total, int fail, int failPriority, int skipped) {
         g_report << "Status: HEALTHY (only cosmetic failures; gameplay subsystems intact)\n";
     } else {
         g_report << "Status: DEGRADED -- VOTV likely diverged from the target build.\n\n";
-        g_report << "Next steps:\n";
-        g_report << "  1. Run UE4SS against the current VOTV install -- dump CXX headers.\n";
-        g_report << "  2. Open " << P::kTargetGameVersion << " UE4SS dump (the baseline this mod targets)\n";
-        g_report << "     and diff: tools/sdk_diff.py <old_dump> <new_dump> highlights renames.\n";
-        g_report << "  3. For each CRITICAL/IMPORTANT failure above, locate the new name + update\n";
-        g_report << "     the relevant constant in include/ue_wrap/sdk_profile.h.\n";
-        g_report << "  4. Rebuild + re-boot; this report should show HEALTHY.\n";
-        g_report << "\n";
-        g_report << "Share this file when filing an issue -- it identifies the divergence completely.\n";
+        g_report << "Share this report when filing an issue at the mod repository -- it identifies\n";
+        g_report << "the divergence completely. The maintainer will produce an updated SDK profile\n";
+        g_report << "and a new build targeted at the current VOTV release.\n";
+        g_report << "Baseline this mod targets: " << P::kTargetGameVersion << "\n";
     }
 }
 

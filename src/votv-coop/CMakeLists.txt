@@ -75,7 +75,11 @@ set(BUILD_TOOLS              OFF CACHE BOOL   "" FORCE)
 set(USE_CRYPTO               "BCrypt"    CACHE STRING "" FORCE)
 set(USE_CRYPTO25519          "Reference" CACHE STRING "" FORCE)
 set(Protobuf_USE_STATIC_LIBS ON  CACHE BOOL   "" FORCE)
-set(ENABLE_ICE               ON  CACHE BOOL   "" FORCE)
+# ENABLE_ICE compiles GNS's STUN/TURN/ICE client (P2P NAT-punch path) into
+# the static lib. RULE 2 (no migration baggage): we don't ship code for
+# unshipped features. Re-enable in the PR-6 commit that adds the first ICE
+# caller (P2P signaling via the master server).
+set(ENABLE_ICE               OFF CACHE BOOL   "" FORCE)
 set(USE_STEAMWEBRTC          OFF CACHE BOOL   "" FORCE)
 
 # Static-CRT for GNS targets. Note: GNS's own MSVC_CRT_STATIC option does

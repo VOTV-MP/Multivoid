@@ -582,40 +582,8 @@ std::wstring ClassNameToWString(const coop::net::WireClassName& cn) {
     return s;
 }
 
-// World context for the spawn -- the GameInstance is the long-lived UObject.
-void* GetWorldContext() {
-    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) return gi;
-    return R::FindObjectByClass(P::name::WorldClass);
-}
-
-// FRotator -> FQuat (UE4.27 stock formula, ZYX order, LEFT-HANDED coord
-// system). Match EXACTLY the body of FRotator::Quaternion() from
-// Engine/Source/Runtime/Core/Public/Math/Rotator.h:
-//
-//   RotationQuat.X =  CR*SP*SY - SR*CP*CY;
-//   RotationQuat.Y = -CR*SP*CY - SR*CP*SY;
-//   RotationQuat.Z =  CR*CP*SY - SR*SP*CY;
-//   RotationQuat.W =  CR*CP*CY + SR*SP*SY;
-//
-// Note the negative Y term -- this is UE4's left-handed-Z-up convention
-// (NOT a bug). General right-handed ZYX Euler-to-quat references will show
-// the opposite signs; do NOT "correct" against those without checking the
-// UE4 source. Audit 2026-05-24 flagged this as a critical bug; verified
-// false-positive by reading UE4.27 source directly.
-void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
-                   float& qx, float& qy, float& qz, float& qw) {
-    constexpr float kHalfDegToRad = 0.0087266462599716478846184538424431f;  // (pi/180)/2
-    const float sp = std::sin(pitchDeg * kHalfDegToRad);
-    const float cp = std::cos(pitchDeg * kHalfDegToRad);
-    const float sy = std::sin(yawDeg   * kHalfDegToRad);
-    const float cy = std::cos(yawDeg   * kHalfDegToRad);
-    const float sr = std::sin(rollDeg  * kHalfDegToRad);
-    const float cr = std::cos(rollDeg  * kHalfDegToRad);
-    qx =  cr * sp * sy - sr * cp * cy;
-    qy = -cr * sp * cy - sr * cp * sy;
-    qz =  cr * cp * sy - sr * sp * cy;
-    qw =  cr * cp * cy + sr * sp * sy;
-}
+// GetWorldContext + RotatorToQuat moved to ue_wrap/engine (M-3 2026-05-29);
+// call via E::GetWorldContext() / E::RotatorToQuat(...).
 
 // True for prop classes whose locally-spawned instance lands with collision
 // disabled (NoCollision) via a natural-spawn pipeline that calls
@@ -696,7 +664,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
     // mushroom at a different position; snapshot bootstrap teleports
     // client's to match host's). 2026-05-24.
     if (void* existing = ue_wrap::prop::FindByKeyString(keyW)) {
-        // Audit I-1 (2026-05-24): skip the convergence write if THIS prop
+        // Skip the convergence write if THIS prop
         // is currently under active kinematic drive by the PropPose stream
         // (host is holding it). Otherwise the SetActorLocation here would
         // stomp the active drive for one frame, producing a visible
@@ -745,9 +713,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
             classW,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
             kFuzzyRadiusCm)) {
-        // Audit C-1 mirror of exact-Key guard (2026-05-24): if the fuzzy
-        // match resolves to the actor currently under active kinematic
-        // drive, skip convergence. Otherwise the SetActorLocation here
+        // Mirror of the exact-Key guard: if the fuzzy match resolves to the
+        // actor currently under active kinematic drive, skip convergence.
+        // Otherwise the SetActorLocation here
         // would stomp the PropPose stream for one frame -- same
         // teleport-pop bug as the exact-Key path.
         if (IsActorUnderAnyDrive(fuzzy)) {
@@ -766,7 +734,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(fuzzy,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
-        // Audit C-2 (2026-05-24): REKEY the fuzzy-matched actor to the
+        // REKEY the fuzzy-matched actor to the
         // host's wire Key. Without this, the actor keeps its client-local
         // NewGuid Key (K_c) while host PropPose packets carry K_h --
         // FindByKeyString(K_h) on client misses, host's grab/move stream
@@ -821,17 +789,17 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
                 classW.c_str());
         return;
     }
-    void* worldCtx = GetWorldContext();
+    void* worldCtx = E::GetWorldContext();
     if (!worldCtx) {
         UE_LOGW("remote_prop::OnSpawn: no world context -- dropping");
         return;
     }
     // Build FTransform from wire rotation/scale/location. ue_wrap::FTransform
     // (types.h) is the canonical 48-byte layout matching engine FTransform;
-    // RULE 2 (audit issue C-4): no parallel local FTransform48 type.
+    // RULE 2: no parallel local FTransform48 type.
     ue_wrap::FTransform xform{};  // ctor defaults: identity rot, zero loc, unit scale
-    RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
-                  xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
+                     xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = payload.locX;
     xform.TY = payload.locY;
     xform.TZ = payload.locZ;
@@ -947,16 +915,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload) {
     // resolves to this actor; PropDestroy with the same eid drains the
     // mirror + destroys the actor.
     RegisterPropMirror(payload.elementId, spawned, keyW, classW);
-}
-
-void* GetDriveActor() {
-    // Returns the FIRST slot with an active drive (or nullptr). Public
-    // API kept for header compatibility -- IsActorUnderAnyDrive inside
-    // this TU is the per-slot-aware replacement.
-    for (const auto& d : g_drives) {
-        if (d.actor) return d.actor;
-    }
-    return nullptr;
 }
 
 namespace {

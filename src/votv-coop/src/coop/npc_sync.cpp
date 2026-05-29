@@ -21,6 +21,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/call.h"
+#include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -41,6 +42,7 @@ namespace {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
+namespace E = ue_wrap::engine;
 
 // Cached session pointer set by Install(). The interceptor reads role()/
 // connected()/SendEntitySpawn() through this. nullptr until first Install.
@@ -90,10 +92,10 @@ void* g_k2DestroyFn = nullptr;       // AActor::K2_DestroyActor
 //   * READ + CLEAR happens in NpcSuppress_Interceptor, which fires on
 //     ProcessEvent's dispatching thread -- "usually game thread; sometimes
 //     a task-graph worker for parallel anim" per game_thread.h:118-120.
-// The plain-pointer version raced (audit critical #1 / 2026-05-28): a
-// worker-thread interceptor reading the slot mid-store could observe a
-// torn / stale value, fail to consume, and leave the bypass active for
-// the next local spawn (= a duplicated non-suppressed NPC actor).
+// The plain-pointer version raced: a worker-thread interceptor reading the
+// slot mid-store could observe a torn / stale value, fail to consume, and
+// leave the bypass active for the next local spawn (= a duplicated
+// non-suppressed NPC actor).
 //
 // `exchange(nullptr, acquire)` on the consume side gives single-instruction
 // read-and-clear semantics so we don't have the "read-match-clear" three-
@@ -178,33 +180,8 @@ bool IsClassOrDerivedFromAnyAllowlisted(void* cls) {
     return R::IsDescendantOfAny(cls, g_npcAllowlist, P::name::kNpcAllowlistSize);
 }
 
-// World context for client-side BeginDeferredActorSpawnFromClass. The
-// GameInstance is the long-lived UObject. Mirrors remote_prop's lookup
-// exactly; ideally a single shared helper would live in ue_wrap, but
-// duplicating the two-call chain costs ~6 LOC and keeps Principle 7
-// (engine substrate) clean of cross-subsystem dependencies.
-void* GetWorldContext() {
-    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) return gi;
-    return R::FindObjectByClass(P::name::WorldClass);
-}
-
-// FRotator -> FQuat (UE4.27 stock formula, ZYX order, LEFT-HANDED coord
-// system). See remote_prop.cpp:495 for the canonical reference -- the
-// negative Y term is UE4's left-handed convention, NOT a bug.
-void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
-                   float& qx, float& qy, float& qz, float& qw) {
-    constexpr float kHalfDegToRad = 0.0087266462599716478846184538424431f;  // (pi/180)/2
-    const float sp = std::sin(pitchDeg * kHalfDegToRad);
-    const float cp = std::cos(pitchDeg * kHalfDegToRad);
-    const float sy = std::sin(yawDeg   * kHalfDegToRad);
-    const float cy = std::cos(yawDeg   * kHalfDegToRad);
-    const float sr = std::sin(rollDeg  * kHalfDegToRad);
-    const float cr = std::cos(rollDeg  * kHalfDegToRad);
-    qx =  cr * sp * sy - sr * cp * cy;
-    qy = -cr * sp * cy - sr * cp * sy;
-    qz =  cr * cp * sy - sr * sp * cy;
-    qw =  cr * cp * cy + sr * sp * sy;
-}
+// GetWorldContext + RotatorToQuat moved to ue_wrap/engine (M-3 2026-05-29);
+// call via E::GetWorldContext() / E::RotatorToQuat(...).
 
 // POST observer on BeginDeferredSpawnFromClass: when the host PRE interceptor
 // allocated an Npc Element + stashed (eid, params) in t_pendingNpc, this POST
@@ -227,11 +204,11 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
     // Params correlation: only consume t_pendingNpc when the params pointer
     // matches the PRE's. Non-NPC POSTs (different params) return early.
     if (t_pendingNpc.paramsPtr != params) {
-        // Diagnostic for the nested-NPC leak case (re-audit Finding 4 /
-        // 2026-05-28): if t_pendingNpc has a pending eid AND paramsPtr is
-        // non-null but doesn't match, an inner NPC POST stole the slot from
-        // an outer NPC PRE. Outer Element is now orphaned in g_npcElements
-        // (no actor, no g_actorToNpcId entry). Currently believed
+        // Diagnostic for the nested-NPC leak case: if t_pendingNpc has a
+        // pending eid AND paramsPtr is non-null but doesn't match, an inner
+        // NPC POST stole the slot from an outer NPC PRE. Outer Element is
+        // now orphaned in g_npcElements (no actor, no g_actorToNpcId
+        // entry). Currently believed
         // unreachable in VOTV's spawn paths (NPCs come from purchase or
         // events, not from other NPCs' constructors), but log so we'd see
         // it if it ever fires.
@@ -342,18 +319,14 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     // params before the spawn actually happens. Returns FALSE so the
     // original runs (host wants the NPC to actually spawn locally).
     //
-    // Inc3 will:
-    //   - track the returned AActor* in g_npcSessionByActor (POST hook)
-    //   - hook K2_DestroyActor PRE to send EntityDestroy
-    //   - wire client-side receiver to materialize a mirror via
+    // Lifecycle shape (all implemented):
+    //   - POST observer tracks the returned AActor* in g_actorToNpcId
+    //   - K2_DestroyActor PRE sends EntityDestroy
+    //   - client-side receiver materializes a mirror via
     //     MarkIncomingNpcSpawn + BeginDeferred + FinishSpawning
-    //
-    // For Inc2 (this commit): host detects spawns + sends EntitySpawn.
-    // Client receives the packet but doesn't yet act on it (the
-    // event_feed receiver is wired-to-log-only). Detect-only mode.
     if (s->role() == coop::net::Role::Host) {
         // Lifecycle gate: if either lifecycle observer permanently failed
-        // to register (audit fix 2026-05-28), skip the whole host-side
+        // to register, skip the whole host-side
         // sync path. Allocating an Element without a guaranteed POST
         // (which binds the actor pointer) or K2_DestroyActor PRE (which
         // releases the Element) would just leak Elements + leave the
@@ -474,8 +447,8 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     // the original through. Single-shot: cleared on consume so a stray
     // local spawn of the same class doesn't accidentally pass through.
     //
-    // Atomic read-and-clear pattern (audit critical #1 / 2026-05-28):
-    // load + compare_exchange so we get exactly one consumer even when
+    // Atomic read-and-clear pattern: load + compare_exchange so we get
+    // exactly one consumer even when
     // the interceptor fires on a parallel-anim worker thread concurrently
     // with the game-thread OnEntitySpawn setter. compare_exchange clears
     // the slot only when its value equals actorClass -- so an unrelated
@@ -600,8 +573,8 @@ void Install(coop::net::Session* session) {
         --s_installRetryCountdown;
         return;
     }
-    // CACHE intermediate resolutions (re-audit Finding 2 / 2026-05-28):
-    // once gsCls + fn + offsets are resolved, skip them on subsequent retries
+    // CACHE intermediate resolutions: once gsCls + fn + offsets are
+    // resolved, skip them on subsequent retries
     // (partial NPC-class resolution would otherwise re-walk all five every
     // 0.5s tick until the 12 NPC classes finish loading).
     if (!g_npcSpawnFn) {
@@ -696,14 +669,14 @@ void Install(coop::net::Session* session) {
     // Lifecycle observers go in FIRST -- if either RegisterX fails (observer
     // table full), we set g_npcSyncDisabledThisProcess and SKIP the
     // RegisterInterceptor call below, so we don't burn a permanent interceptor
-    // slot for a system that can't function (re-audit Finding 2 / 2026-05-28).
+    // slot for a system that can't function.
     g_npcSpawnFn = fn;
     g_npcSpawnActorClassParamOff = classOff;
     g_npcSpawnReturnParamOff = retOff;
     g_npcSpawnXformParamOff = xformOff;  // may be -1 if param missing; interceptor null-checks
 
-    // ATOMIC two-observer registration (re-audit Finding 1 / 2026-05-28):
-    // if EITHER lifecycle observer registration fails, the other is rolled
+    // ATOMIC two-observer registration: if EITHER lifecycle observer
+    // registration fails, the other is rolled
     // back so we don't burn a permanent slot for a system that's disabled.
     // Pre-resolve K2_DestroyActor's reflection dependencies FIRST -- if they
     // fail, we skip POST entirely (no rollback needed).
@@ -751,7 +724,7 @@ void Install(coop::net::Session* session) {
     // Register the PRE interceptor LAST and only if the lifecycle observers
     // both succeeded. RegisterInterceptor consumes a slot in the 16-slot
     // interceptor table -- if NPC sync is disabled for the session, we leave
-    // the slot free for other subsystems (re-audit Finding 2 / 2026-05-28).
+    // the slot free for other subsystems.
     // The client-side suppression that the interceptor implements is also
     // useless without the host-side broadcast pipeline being functional.
     g_installed.store(true, std::memory_order_release);
@@ -876,7 +849,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     // UFunction + CDO must be resolved (Install caches them; receiver
     // can fire before Install completes on a fast-handshake peer).
     //
-    // Note (audit important #4 / 2026-05-28): g_npcSpawnXformParamOff < 0
+    // Note: g_npcSpawnXformParamOff < 0
     // is INTENTIONALLY tolerated here. Install treats missing SpawnTransform
     // as non-fatal ("position-less spawns still work" -- Install line 606),
     // so the receiver must too. The FTransform we build below stays at
@@ -891,7 +864,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                 g_npcSpawnReturnParamOff, payload.elementId);
         return;
     }
-    void* worldCtx = GetWorldContext();
+    void* worldCtx = E::GetWorldContext();
     if (!worldCtx) {
         UE_LOGW("npc-sync[client OnSpawn]: no world context -- dropping (eid=%u)",
                 payload.elementId);
@@ -902,8 +875,8 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     // to unit -- matches host's spawn behavior since the BP rarely sets
     // non-unit scale on NPCs).
     ue_wrap::FTransform xform{};
-    RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
-                  xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
+                     xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = payload.locX;
     xform.TY = payload.locY;
     xform.TZ = payload.locZ;

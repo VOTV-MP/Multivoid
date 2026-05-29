@@ -27,7 +27,17 @@ namespace R = ue_wrap::reflection;
 
 // File-static: idempotency flag for Install(). NetPumpTick calls every frame
 // until this becomes true. Once installed, the entire body short-circuits.
-bool g_installed = false;
+// Atomic per the project-wide Install() pattern (memory: install-idempotent-
+// o1-steady-state) -- ProcessEvent observers may be invoked from task-graph
+// workers under parallel anim, and any future cross-thread Install caller
+// needs an acquire/release-ordered latch.
+std::atomic<bool> g_installed{false};
+// Retry throttle: when classes haven't resolved yet (OMEGA splash window,
+// 15-30s typical), R::FindClass walks the full GUObjectArray with a wstring
+// alloc per entry. Pumping that at 125 Hz reproduces the install-loop bomb
+// (memory: install-idempotent-o1-steady-state). Wait N ticks between retries.
+// 60 ticks ~= 0.5s at 125 Hz, matching npc_sync::s_installRetryCountdown.
+std::atomic<int> g_installRetryCountdown{0};
 
 // --- Primary: UPhysicsHandleComponent (LIGHT grab path). `self` IS the
 // handle (owned by mainPlayer_C as `grabHandle` @+0x688). To learn which
@@ -113,15 +123,14 @@ void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* para
 }
 
 // "Cheap insurance" PRE-observers for SetPhysicsLinearVelocity +
-// SetPhysicsAngularVelocityInDegrees -- audit issue #3 / 2026-05-24. If BP
-// explicitly calls these on a released prop (instead of relying on inherited
-// PhysX tracking velocity), the param frame carries the LITERAL launch
-// velocity we want -- the GetPhysicsVelocity read in NetPumpTick may then be
-// reading post-step values. These observers DON'T cache cross-thread; they
-// just log. The hands-on test of Bug B confirms via log whether BP uses
-// SetPhysicsLinearVelocity explicitly. If it does, a future commit can switch
-// the wire-capture to the observer (lock-free atomic cache, RELEASE/ACQUIRE
-// fenced -- same shape as the retired g_lastImpulse* pattern).
+// SetPhysicsAngularVelocityInDegrees. If BP explicitly calls these on a
+// released prop (instead of relying on inherited PhysX tracking velocity),
+// the param frame carries the LITERAL launch velocity we want -- the
+// GetPhysicsVelocity read in NetPumpTick may then be reading post-step
+// values. These observers DON'T cache cross-thread; they just log. A future
+// commit can switch the wire-capture to the observer (lock-free atomic
+// cache, RELEASE/ACQUIRE fenced -- same shape as the retired
+// g_lastImpulse* pattern).
 //
 // Param frame layout for both:
 //   FVector NewVel/NewAngVel  @ 0   (12 bytes)
@@ -129,16 +138,26 @@ void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* para
 //   FName   BoneName          @ 16  (8 bytes)
 void GrabObserver_PrimComp_SetLinearVelocity_PRE(void* self, void* /*function*/, void* params) {
     if (!self || !params) return;
+    // remote_prop::DriveSetLinearVelocity calls this UFunction at 125 Hz per
+    // held-prop slot. Unthrottled UE_LOGI here funnels OutputDebugStringW at
+    // hundreds of Hz under multi-peer multi-prop and stalls the render thread.
+    // Same throttle policy as PHC.SetTarget.
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n > 3 && (n % 60) != 0) return;
     const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
-    UE_LOGI("grab_hook[PrimComp.SetPhysicsLinearVelocity PRE]: component=%p NewVel=(%.1f, %.1f, %.1f) (diagnostic)",
-            self, v.X, v.Y, v.Z);
+    UE_LOGI("grab_hook[PrimComp.SetPhysicsLinearVelocity PRE]: component=%p NewVel=(%.1f, %.1f, %.1f) (call #%llu)",
+            self, v.X, v.Y, v.Z, static_cast<unsigned long long>(n));
 }
 
 void GrabObserver_PrimComp_SetAngularVelocity_PRE(void* self, void* /*function*/, void* params) {
     if (!self || !params) return;
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n > 3 && (n % 60) != 0) return;
     const ue_wrap::FVector v = *reinterpret_cast<ue_wrap::FVector*>(params);
-    UE_LOGI("grab_hook[PrimComp.SetPhysicsAngularVelocityInDegrees PRE]: component=%p NewAngVel=(%.1f, %.1f, %.1f) (diagnostic)",
-            self, v.X, v.Y, v.Z);
+    UE_LOGI("grab_hook[PrimComp.SetPhysicsAngularVelocityInDegrees PRE]: component=%p NewAngVel=(%.1f, %.1f, %.1f) (call #%llu)",
+            self, v.X, v.Y, v.Z, static_cast<unsigned long long>(n));
 }
 
 // --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
@@ -188,15 +207,22 @@ void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*para
 }  // namespace
 
 void Install() {
-    if (g_installed) return;
+    if (g_installed.load(std::memory_order_acquire)) return;
+    // Throttle retries to avoid 125 Hz x 4 R::FindClass walks during the
+    // 15-30s pre-possession window (OMEGA splash, loading screen).
+    if (g_installRetryCountdown.load(std::memory_order_relaxed) > 0) {
+        g_installRetryCountdown.fetch_sub(1, std::memory_order_relaxed);
+        return;
+    }
 
     void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
     void* pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
     void* primCls = R::FindClass(P::name::PrimitiveComponentClass);
     void* playerCls = R::FindClass(P::name::MainPlayerClass);
     if (!phcCls || !pccCls || !primCls || !playerCls) {
-        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, PrimComp=%p, mainPlayer=%p) -- will retry next tick",
+        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, PrimComp=%p, mainPlayer=%p) -- retry in 60 ticks",
                 phcCls, pccCls, primCls, playerCls);
+        g_installRetryCountdown.store(60, std::memory_order_relaxed);
         return;
     }
 
@@ -218,9 +244,9 @@ void Install() {
         }
     };
 
-    // 2026-05-25 audit fix #1 (cross-peer destroy): eager-resolve the
-    // PHC.ReleaseComponent cache used by ue_wrap::engine::ReleaseMainPlayer
-    // GrabIfHolding. Without this, the first wire-received PropDestroy of
+    // Cross-peer-destroy fix: eager-resolve the PHC.ReleaseComponent cache
+    // used by ue_wrap::engine::ReleaseMainPlayerGrabIfHolding. Without
+    // this, the first wire-received PropDestroy of
     // a held prop would hit the lazy resolve in remote_prop::OnDestroy --
     // and if PHC class were somehow not yet loaded, fall through to the
     // warn-and-clear fallback, leaving PHC.GrabbedComponent dangling.
@@ -250,8 +276,8 @@ void Install() {
     reg(primCls, P::name::PrimitiveComponentClass,
         P::name::AddImpulseFn,               GrabObserver_PrimComp_AddImpulse,          /*pre=*/false);
 
-    // Diagnostic-only velocity-set observers (audit issue #3, 2026-05-24).
-    // Capture whether BP explicitly calls SetPhysics*Velocity on release.
+    // Diagnostic-only velocity-set observers. Capture whether BP
+    // explicitly calls SetPhysics*Velocity on release.
     reg(primCls, P::name::PrimitiveComponentClass,
         P::name::SetPhysicsLinearVelocityFn,           GrabObserver_PrimComp_SetLinearVelocity_PRE,  /*pre=*/true);
     reg(primCls, P::name::PrimitiveComponentClass,
@@ -265,7 +291,7 @@ void Install() {
     reg(playerCls, P::name::MainPlayerClass,
         P::name::MainPlayerGrabFinishedFn,   GrabObserver_grab_Finished_PRE,  /*pre=*/true);
 
-    g_installed = true;
+    g_installed.store(true, std::memory_order_release);
     UE_LOGI("grab_hook: Stage 1+ core observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
 }
 

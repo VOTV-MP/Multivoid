@@ -49,14 +49,13 @@ bool VerifySenderContext(uint32_t senderElementId, uint8_t senderContext,
     auto* el = coop::element::Registry::Get().Get(senderElementId);
     if (!el) return true;  // mirror not yet installed (boot/seed race)
     const uint8_t mirrorCtx = el->GetSyncContext();
-    // B1 v2 audit fix (Finding #2): treat 0 on EITHER side as "no
-    // context known yet" -- pass through without compare. The sender-
-    // side guard already short-circuits to 0 when the local Element
-    // hasn't been allocated; the mirror may also have been seeded with
-    // 0 if the handshake stamp happened to land in the boot window
-    // (host's first AssignPeerSlot sent before its own
-    // EnsurePlayerElement_ ran -- now atomic-paired, but defense in
-    // depth on the receiver side). Without this short-circuit, a
+    // Treat 0 on EITHER side as "no context known yet" -- pass through
+    // without compare. The sender-side guard short-circuits to 0 when the
+    // local Element hasn't been allocated; the mirror may also have been
+    // seeded with 0 if the handshake stamp happened to land in the boot
+    // window (host's first AssignPeerSlot sent before its own
+    // EnsurePlayerElement_ ran -- now atomic-paired, but defense in depth
+    // on the receiver side). Without this short-circuit, a
     // 0-vs-non-0 compare would drop legitimate first-after-boot
     // packets when sender's local Element finishes allocation.
     if (senderContext == 0u || mirrorCtx == 0u) return true;
@@ -103,13 +102,22 @@ void Update(net::Session& session, void* localPlayer) {
     std::vector<uint8_t> joinPayload;
     bool joinPayloadBuilt = false;
     for (int slot = 0; slot < net::kMaxPeers; ++slot) {
+        // Two distinct edges:
+        // - LEFT toast / disconnect cleanup: IsSlotConnected (cleared in
+        //   the Closed callback) is the right signal.
+        // - Send Join: must wait for IsSlotReady (lanes configured in the
+        //   Connected callback), otherwise SendReliableToSlot's m_idxLane
+        //   rides GNS lane 0 instead of the assigned Normal lane,
+        //   undermining PR-3's head-of-line isolation for the first
+        //   reliable message per peer. N-4 (2026-05-29 audit).
         const bool slotConnected = session.IsSlotConnected(slot);
+        const bool slotReady = session.IsSlotReady(slot);
         if (g_lastConnectedBySlot[slot] && !slotConnected) {
             ue_wrap::hud_feed::Push(
                 coop::player_handshake::NicknameForSlot(slot) + L" left the game");
             coop::player_handshake::OnSlotDisconnected(slot);
         }
-        if (slotConnected) {
+        if (slotReady) {
             coop::player_handshake::MaybeSendJoinToSlot(
                 session, slot, joinPayload, joinPayloadBuilt);
         }
@@ -133,9 +141,9 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<size_t>(msg.payloadLen), sizeof(net::PropReleasePayload));
                 break;
             }
-            // B3 audit fix I4: senderPeerSlot threads into remote_prop::OnRelease
-            // for routing into g_drives[slot]. Range-check before use so a
-            // malformed -1 or out-of-range value can't OOB the slot array.
+            // senderPeerSlot threads into remote_prop::OnRelease for routing
+            // into g_drives[slot]. Range-check before use so a malformed -1
+            // or out-of-range value can't OOB the slot array.
             if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
                 UE_LOGW("event_feed: PropRelease invalid senderPeerSlot=%d -- dropping",
                         msg.senderPeerSlot);
@@ -232,7 +240,15 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropSpawn key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
-            // Phase 5N Stream B (2026-05-24): drop wire-spawns of
+            // Audit follow-up E-2 (2026-05-29): PropSpawnPayload carries
+            // elementId (v12/A2) but no senderContext byte (v14/B1 added that
+            // to ItemActivate/Weather/RedSky/Lightning only). Stale-gen
+            // hardening here requires a protocol v14->v15 bump to steal a
+            // pad byte for senderContext. Risk is lower-severity than for
+            // ItemActivate/Weather because PropSpawn dedup is keyed on the
+            // persistent WireKey (not eid), so a stale-gen Spawn with
+            // matching Key idempotently rejects at remote_prop::OnSpawn.
+            // Tracked in research/findings/votv-architecture-audit-2026-05-29.md.
             // intermediate-variant classes that the receiver doesn't want
             // (mushroom7_C growing state). Host-authoritative growth
             // pipeline -- the mature variant (mushroom_C) will arrive when
@@ -261,13 +277,12 @@ void Update(net::Session& session, void* localPlayer) {
             // K2_DestroyActor is echo-suppressed via the incoming-destroy
             // set so it doesn't bounce back to the sender.
             //
-            // TRUST BOUNDARY (audit fix #4, 2026-05-25): with bidirectional
-            // destroy, CLIENT can command HOST to destroy any prop by
-            // wire-Key. Acceptable for LAN coop (trusted peers); review
-            // before Internet coop -- a malicious client could replay
-            // crafted Keys to destroy host's quest items. Mitigation if
-            // needed: authority model (host validates destroy requests
-            // against current world state / quest progress).
+            // TRUST BOUNDARY: with bidirectional destroy, CLIENT can command
+            // HOST to destroy any prop by wire-Key. Acceptable for LAN coop
+            // (trusted peers); review before Internet coop -- a malicious
+            // client could replay crafted Keys to destroy host's quest items.
+            // Mitigation if needed: authority model (host validates destroy
+            // requests against current world state / quest progress).
             if (msg.payloadLen < sizeof(net::PropDestroyPayload)) {
                 UE_LOGW("event_feed: PropDestroy payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::PropDestroyPayload));
@@ -279,6 +294,8 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropDestroy key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
+            // E-2 deferred (see PropSpawn case above): protocol v15 will add
+            // senderContext to PropDestroyPayload for stale-gen defense.
             // 2026-05-25 cross-peer destroy: pass localPlayer so OnDestroy
             // can release a held PHC grab (mainPlayer.grabbing_actor ==
             // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
@@ -288,21 +305,21 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::EntitySpawn: {
-            // Inc3 (2026-05-28 NEXT): host-broadcast NPC spawn. Validate
-            // size + className.len at the trust boundary here; npc_sync::
-            // OnEntitySpawn does the full per-field validation (finite +
-            // bounds + allowlist + dedup). UFunction calls inside
-            // OnEntitySpawn are game-thread only, so dispatch via GT::Post.
+            // Host-broadcast NPC spawn. Validate size + className.len at the
+            // trust boundary here; npc_sync::OnEntitySpawn does the full
+            // per-field validation (finite + bounds + allowlist + dedup).
+            // UFunction calls inside OnEntitySpawn are game-thread only, so
+            // dispatch via GT::Post.
             if (msg.payloadLen < sizeof(net::EntitySpawnPayload)) {
                 UE_LOGW("event_feed: EntitySpawn payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::EntitySpawnPayload));
                 break;
             }
-            // B3 audit fix C1: EntitySpawn is host-authoritative. Without
-            // a senderPeerSlot trust gate, a malicious client could flood
-            // EntitySpawn packets with crafted className strings, forcing
-            // R::FindClass GUObjectArray walks on the host's game thread
-            // per packet (CPU amplification).
+            // EntitySpawn is host-authoritative. Without a senderPeerSlot
+            // trust gate, a malicious client could flood EntitySpawn packets
+            // with crafted className strings, forcing R::FindClass
+            // GUObjectArray walks on the host's game thread per packet (CPU
+            // amplification).
             if (msg.senderPeerSlot != 0) {
                 UE_LOGW("event_feed: EntitySpawn from non-host senderPeerSlot=%d "
                         "-- dropping (NPC sync is host-only)",
@@ -323,16 +340,16 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::EntityDestroy: {
-            // Inc3: host-broadcast NPC destroy. Dispatch to npc_sync::
+            // Host-broadcast NPC destroy. Dispatch to npc_sync::
             // OnEntityDestroy (game-thread UFunction call).
             if (msg.payloadLen < sizeof(net::EntityDestroyPayload)) {
                 UE_LOGW("event_feed: EntityDestroy payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::EntityDestroyPayload));
                 break;
             }
-            // B3 audit fix C1: host-authoritative -- reject non-host
-            // senders. A malicious client could otherwise destroy any
-            // NPC element id it learned from a legitimate EntitySpawn.
+            // Host-authoritative -- reject non-host senders. A malicious
+            // client could otherwise destroy any NPC element id it learned
+            // from a legitimate EntitySpawn.
             if (msg.senderPeerSlot != 0) {
                 UE_LOGW("event_feed: EntityDestroy from non-host senderPeerSlot=%d "
                         "-- dropping (NPC sync is host-only)",
@@ -351,9 +368,9 @@ void Update(net::Session& session, void* localPlayer) {
             // 2026-05-25 LATE +5h (F3 dev key): peer pressed F3 to refill
             // food/sleep/health/coffeePower. No payload to validate -- the
             // action is fixed. Idempotent so an echo bounce is harmless.
-            // B3 audit fix C3: RestoreVitals is a dev-key path (host
-            // presses F3); receiver must enforce host-only origin or
-            // any peer could trivially nullify hunger/survival tension.
+            // RestoreVitals is a dev-key path (host presses F3); receiver
+            // must enforce host-only origin or any peer could trivially
+            // nullify hunger/survival tension.
             if (msg.senderPeerSlot != 0) {
                 UE_LOGW("event_feed: RestoreVitals from non-host senderPeerSlot=%d "
                         "-- dropping (host-only dev-key origin)",
@@ -372,12 +389,11 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<size_t>(msg.payloadLen), sizeof(net::TeleportClientPayload));
                 break;
             }
-            // B3 audit fix C2: TeleportClient is host-only. Without a
-            // senderPeerSlot trust gate, in a 3-peer session client-slot-1
-            // could craft a TeleportClient targeting client-slot-2
-            // (host's PollGroup fan-out would deliver it) -- a positional
-            // griefing/exploit vector at LAN scale, hard exploit at
-            // internet scale.
+            // TeleportClient is host-only. Without a senderPeerSlot trust
+            // gate, in a 3-peer session client-slot-1 could craft a
+            // TeleportClient targeting client-slot-2 (host's PollGroup
+            // fan-out would deliver it) -- a positional griefing/exploit
+            // vector at LAN scale, hard exploit at internet scale.
             if (msg.senderPeerSlot != 0) {
                 UE_LOGW("event_feed: TeleportClient from non-host senderPeerSlot=%d "
                         "-- dropping (host-only)",
@@ -447,17 +463,17 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<unsigned>(p.state));
                 break;
             }
-            // B3 audit fix I2: reserved flag bits must be zero. A future
-            // bit added in v15+ would otherwise be silently triggerable
-            // by a peer on an older build.
+            // Reserved flag bits must be zero. A future bit added in v15+
+            // would otherwise be silently triggerable by a peer on an older
+            // build.
             if (p.flags & ~coop::net::kItemActivateFlag_HasActorKey) {
                 UE_LOGW("event_feed: ItemActivate flags=0x%02x has reserved bits "
                         "set -- dropping",
                         static_cast<unsigned>(p.flags));
                 break;
             }
-            // B3 audit fix I1: intensity + cone angles are passed directly
-            // to UE light component setters. Without finite + magnitude
+            // Intensity + cone angles are passed directly to UE light
+            // component setters. Without finite + magnitude
             // checks, a peer can send NaN/Inf (UB inside the renderer)
             // or 1e30 (blinding white screen). Matches the validator
             // pattern every other float-bearing reliable kind uses.
@@ -479,18 +495,17 @@ void Update(net::Session& session, void* localPlayer) {
                         p.intensity, p.outerConeAngle, p.innerConeAngle);
                 break;
             }
-            // v13 (A4 2026-05-29): self-echo guard via ElementId equality
-            // (uint32 compare). The wire field is the SENDER's local
-            // Player Element id; if it equals our own local Player
-            // Element id, this packet is a loopback bounce. Audit fix
-            // 2026-05-29 (Finding #2): the peer-slot fallback only fires
-            // when senderElementId is the 0/unset sentinel (boot/seed
+            // Self-echo guard via ElementId equality (uint32 compare). The
+            // wire field is the SENDER's local Player Element id; if it
+            // equals our own local Player Element id, this packet is a
+            // loopback bounce. The peer-slot fallback only fires when
+            // senderElementId is the 0/unset sentinel (boot/seed
             // pre-handshake sender). With a valid senderElementId, the
             // ElementId compare is authoritative -- gating the peer-slot
             // compare on it prevents an N-peer reassignment race from
             // mis-classifying a legitimate cross-peer packet as a self
-            // loopback (e.g. a packet from a peer at slot X arriving
-            // before our own AssignPeerSlot reassigned us off slot X).
+            // loopback (e.g. a packet from a peer at slot X arriving before
+            // our own AssignPeerSlot reassigned us off slot X).
             const auto selfEid =
                 coop::players::Registry::Get().LocalPlayerElementId();
             const bool selfEchoByEid =

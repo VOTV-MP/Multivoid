@@ -338,4 +338,29 @@ struct FlashlightSnapshot {
 // engine struct).
 bool ReadFlashlightSnapshot(void* light, FlashlightSnapshot& out);
 
+// A long-lived UObject suitable as a WorldContextObject for the deferred-spawn
+// pair (BeginDeferredActorSpawnFromClass + FinishSpawningActor). Tries the
+// GameInstance first (lives across map loads) and falls back to the World.
+// Used by remote_prop + npc_sync receivers. M-3 (2026-05-29): extracted to
+// kill the duplicate definitions in those two TUs.
+void* GetWorldContext();
+
+// FRotator -> FQuat (UE4.27 stock formula, ZYX order, LEFT-HANDED coord
+// system). Matches EXACTLY the body of FRotator::Quaternion() from
+// Engine/Source/Runtime/Core/Public/Math/Rotator.h:
+//
+//   RotationQuat.X =  CR*SP*SY - SR*CP*CY;
+//   RotationQuat.Y = -CR*SP*CY - SR*CP*SY;
+//   RotationQuat.Z =  CR*CP*SY - SR*SP*CY;
+//   RotationQuat.W =  CR*CP*CY + SR*SP*SY;
+//
+// Note the negative Y term -- this is UE4's left-handed-Z-up convention
+// (NOT a bug). General right-handed ZYX Euler-to-quat references will show
+// the opposite signs; do NOT "correct" against those without checking the
+// UE4 source. Audit 2026-05-24 flagged this as a critical bug; verified
+// false-positive by reading UE4.27 source directly. M-3 (2026-05-29):
+// extracted to kill the duplicate definitions in remote_prop + npc_sync.
+void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
+                   float& qx, float& qy, float& qz, float& qw);
+
 }  // namespace ue_wrap::engine

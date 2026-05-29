@@ -262,12 +262,26 @@ void Pump() {
             task = std::move(g_queue.front());
             g_queue.pop_front();
         }
-        // A task running engine code can throw nothing we control; if it does,
-        // letting it propagate would corrupt the engine's call. Swallow + log.
+        // R-1 v2 (2026-05-29 post-ship audit): the previous catch(...) here
+        // was a RULE 1 crutch -- silent swallow. The first replacement
+        // (bare task() call) assumed the outer SEH __try/__except would
+        // catch C++ exceptions; that is FALSE under MSVC /EHsc (the project
+        // default -- no /EHa flag in CMakeLists.txt). __except handles
+        // structured exceptions (AVs, div-by-zero) but NOT C++ throw. A
+        // bare-uncaught C++ exception would propagate past Pump(), past
+        // ProcessEventDetour, into UE4, and std::terminate the process.
+        //
+        // RULE 1-correct fix: catch C++ exceptions HERE and LOG them. That
+        // exposes the bug (the original complaint about the silent
+        // swallow) while keeping the engine alive long enough to record
+        // the crash log. The original swallow hid bugs; this version
+        // surfaces them.
         try {
             task();
+        } catch (const std::exception& e) {
+            UE_LOGE("game_thread: posted task threw C++ exception: %s", e.what());
         } catch (...) {
-            UE_LOGE("game_thread: a posted task threw; swallowed");
+            UE_LOGE("game_thread: posted task threw unknown C++ exception");
         }
         g_tasksRun.fetch_add(1, std::memory_order_relaxed);
     }

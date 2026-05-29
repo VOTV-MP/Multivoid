@@ -174,9 +174,9 @@ void DrainChunk() {
         if (!obj || !R::IsLive(obj)) continue;
         coop::net::PropSpawnPayload p{};
         const std::wstring cls = R::ClassNameOf(obj);
-        // Audit C-1 (2026-05-24): same wire-suppress allowlist as the
-        // Init POST observer. Intermediate-variant classes (mushroom7_C)
-        // never cross the wire -- host-authoritative.
+        // Same wire-suppress allowlist as the Init POST observer.
+        // Intermediate-variant classes (mushroom7_C) never cross the wire
+        // -- host-authoritative.
         if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) {
             UE_LOGI("snapshot: skipping intermediate-variant '%ls' actor %p (wire-suppressed)",
                     cls.c_str(), obj);
