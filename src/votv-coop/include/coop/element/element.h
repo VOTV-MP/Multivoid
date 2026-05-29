@@ -126,30 +126,13 @@ public:
     bool IsBeingDeleted() const   { return m_beingDeleted; }
     void SetBeingDeleted(bool b)  { m_beingDeleted = b; }
 
-    // Mirrors MTA's m_ucSyncTimeContext: an 8-bit generation counter bumped
-    // on each sync-relevant state change (grab, release, ownership transfer).
-    // Wire packets carry the context byte they observed at send time; the
-    // receiver drops packets whose context is older than what it last saw,
-    // which makes id-reuse safe (an id reused after destroy gets a fresh
-    // context, so packets meant for the OLD generation are visibly stale).
-    //
-    // v14 (B1, 2026-05-29) -- wire-side adoption: every reliable packet
-    // carrying a senderElementId (or hostElementId for AssignPeerSlot)
-    // also carries the sender's GetSyncContext byte. Receivers compare
-    // against the local mirror's context (set at RegisterMirror via
-    // players::Registry::EstablishMirrorForSlot using the handshake's
-    // context byte). Mismatch -> drop. Fresh local Player Elements get
-    // a per-process-monotonic context via Registry's allocation path so
-    // a disconnect/reconnect on the same eid gets a distinguishable
-    // generation. See coop/net/protocol.h's v14 block for the full
-    // wire-format derivation.
-    uint8_t GetSyncContext() const     { return m_syncContext; }
-    void    BumpSyncContext()          { ++m_syncContext; }
-    // Overwrite the context byte directly. Called by the owning subsystem
-    // at construction (fresh Element: from per-process monotonic counter;
-    // mirror: from the handshake byte). BumpSyncContext is the steady-
-    // state mutator; this is the "stamp at creation" mutator.
-    void SetSyncContext(uint8_t ctx)   { m_syncContext = ctx; }
+    // (v14 m_syncContext / GetSyncContext / BumpSyncContext / SetSyncContext
+    // were the 8-bit per-element generation byte adopted from MTA's
+    // m_ucSyncTimeContext. v16 PR-FOUNDATION-1b retired them: per-peer
+    // stale-generation defense now lives in the packet header's
+    // senderEpoch (32-bit, minted via std::random_device at Session::
+    // Start), latched per peerSlot at the receiver in Session::
+    // HandleMessage. Element no longer carries any wire-context state.)
 
     // True if this Element was created as a CLIENT-SIDE MIRROR of a host-
     // allocated ElementId (registered via Registry::RegisterMirror). The
@@ -172,7 +155,6 @@ private:
     void*       m_actor        = nullptr;
     bool        m_beingDeleted = false;
     bool        m_mirror       = false;
-    uint8_t     m_syncContext  = 0;
 };
 
 }  // namespace coop::element

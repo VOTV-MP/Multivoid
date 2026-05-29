@@ -210,6 +210,14 @@ private:
     std::array<uint32_t, kMaxPeers> lastRemotePropSeq_{};
     std::array<uint64_t, kMaxPeers> remotePropStamp_{};
     std::array<uint64_t, kMaxPeers> lastReadPropStamp_{};
+    // Per-slot expected senderEpoch latched from the first packet arriving
+    // from that slot (PR-FOUNDATION-1b v16). Zero == not yet latched;
+    // subsequent packets whose header epoch doesn't match are dropped at
+    // HandleMessage entry. Cleared on disconnect in ResetPeerRemoteState
+    // so the next connection on the same slot re-latches. Protected by
+    // remoteMutex_ -- updated under the same lock as remoteStamp_ /
+    // hasRemote_ on receive paths.
+    std::array<uint32_t, kMaxPeers> expectedEpoch_{};
 
     // Reliable inbox (shared across peers; FIFO of arrival order).
     std::mutex reliableInboxMutex_;
@@ -219,6 +227,14 @@ private:
     std::atomic<uint64_t> sent_{0};
     std::atomic<uint64_t> recv_{0};
     std::atomic<int> lastRttMs_{0};
+
+    // This peer's own per-process session epoch (PR-FOUNDATION-1b v16).
+    // Minted non-zero via std::random_device at Start(); stamped on the
+    // header of every outbound packet (WriteHeader's senderEpoch arg).
+    // Read on the net thread without a lock -- Start() completes before
+    // the net thread is spawned and the value never changes afterward,
+    // so it's effectively const for the session's lifetime.
+    uint32_t ownEpoch_ = 0;
 };
 
 }  // namespace coop::net

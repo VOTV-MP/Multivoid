@@ -118,24 +118,12 @@ public:
     // could carry kInvalidId, which the caller skips anyway).
     coop::element::ElementId LocalPlayerElementId() const;
 
-    // v14 (B1, 2026-05-29): the LOCAL peer's Player Element syncContext
-    // byte, or 0 if not yet allocated. Lock-free atomic read (published
-    // from the game thread on each EnsurePlayerElement_ / mirror swap).
-    // Use this to stamp `senderContext` on outbound wire packets that
-    // already carry `senderElementId`; receivers compare against their
-    // mirror's stored context for stale-generation detection.
-    uint8_t LocalPlayerSyncContext() const;
-
-    // v14 (B1 v2, 2026-05-29 audit fix): atomic-paired accessor for
-    // (eid, ctx). Use this from CROSS-THREAD senders (notably the GNS
-    // net-thread AssignPeerSlot stamp in session.cpp) where two
-    // separate atomic loads could yield a torn pair if the game
-    // thread runs DropPlayerElement_ between them. Game-thread-only
-    // senders (item_activate, weather_*, player_handshake Join) can
-    // safely use the two single accessors because they ARE the
-    // publisher thread.
-    void LocalPlayerIdentity(coop::element::ElementId& outEid,
-                              uint8_t& outCtx) const;
+    // (v14 LocalPlayerSyncContext / LocalPlayerIdentity were the per-peer
+    // accessors for the 8-bit Element generation byte. v16 PR-FOUNDATION-1b
+    // retired both -- per-peer stale-generation defense now lives in the
+    // PacketHeader's senderEpoch field, stamped by Session at WriteHeader
+    // and latched per peerSlot by Session::HandleMessage. Wire callers no
+    // longer need any Element-context accessor at all.)
 
     // ---- A4 (2026-05-29) mirror exchange for wire-side ElementId ----
 
@@ -158,13 +146,13 @@ public:
     // failed (slot collision -- duplicate handshake or wire-id reuse bug
     // upstream). Game thread only.
     //
-    // v14 (B1, 2026-05-29): `wireContext` is the sender's `Element::
-    // GetSyncContext()` byte carried in the handshake (AssignPeerSlot.
-    // hostContext or Join.senderContext). The mirror is stamped with
-    // this byte so subsequent wire packets bearing the sender's
-    // senderContext pass the receiver-side context match.
-    bool EstablishMirrorForSlot(uint8_t peerSlot, coop::element::ElementId wireEid,
-                                uint8_t wireContext);
+    // v14 added a `wireContext` parameter (handshake byte stamped onto the
+    // mirror's Element::m_syncContext for downstream per-payload compare).
+    // v16 PR-FOUNDATION-1b removed both the parameter and the underlying
+    // Element-context machinery -- the mirror no longer carries any
+    // generation state; stale-gen defense lives entirely in the packet
+    // header's senderEpoch latched at the Session layer.
+    bool EstablishMirrorForSlot(uint8_t peerSlot, coop::element::ElementId wireEid);
 
 private:
     // Element shadow lifetime helpers (file-local; see .cpp).

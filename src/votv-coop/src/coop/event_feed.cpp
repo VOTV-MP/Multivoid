@@ -34,62 +34,44 @@ namespace {
 // the "<X> left the game" hud message on the disconnect transition.
 std::array<bool, net::kMaxPeers> g_lastConnectedBySlot{};
 
-// v14 (B1, 2026-05-29): check the wire-stamped senderContext against the
-// mirror Element's currently-stored syncContext byte. Returns true when
-// no compare is possible (no senderElementId, or no mirror) so the
-// receiver falls back to existing routing without stale-generation
-// defense. Returns true when the bytes match. Logs + returns false on
-// mismatch -- caller should drop the packet. Centralized here so every
-// eid-carrying reliable kind uses the same shape.
+// PR-FOUNDATION-1 (2026-05-29): role-range validation for an inbound
+// eid-carrying packet. Without this, a malicious client peer can stamp
+// ItemActivate/RedSky/Lightning/Weather with the HOST's senderElementId;
+// Registry::Get resolves to the host's Player Element and the receiver
+// applies the packet's effect under host identity. The range partition
+// makes that impersonation detectable at the wire boundary: host-role
+// packets MUST carry host-range eids; client-role packets MUST carry
+// peer-range eids. Returns true when the eid is in-range OR when no
+// compare is possible (0 sentinel / invalid sender slot). Logs +
+// returns false on out-of-range.
 //
-// PR-FOUNDATION-1 (2026-05-29): senderPeerSlot added so we can
-// additionally range-check senderElementId against the sender's role
-// BEFORE the Registry::Get lookup. Without this, a malicious client
-// peer can stamp ItemActivate/RedSky/Lightning/Weather with the HOST's
-// senderElementId; Registry::Get resolves to the host's Player Element,
-// the syncContext compare passes (8 bits trivially guessable, OR 0
-// during boot), and the receiver applies the packet's effect under
-// host identity. The range partition makes that impersonation
-// detectable at the wire boundary: host-role packets MUST carry host-
-// range eids; client-role packets MUST carry peer-range eids.
-bool VerifySenderContext(int senderPeerSlot,
-                          uint32_t senderElementId, uint8_t senderContext,
+// v14 / v15 also performed an 8-bit syncContext compare here (the
+// VerifySenderContext function). v16 PR-FOUNDATION-1b retired that
+// layer entirely: per-peer stale-generation defense now lives in
+// Session::HandleMessage's senderEpoch latch, applied uniformly to
+// EVERY inbound packet by the transport layer (not per-payload by the
+// receiver dispatch). This helper kept the role-range half because
+// it's a wire-format trust boundary (the eid range is the sender's
+// claimed role), independent of the stale-gen defense.
+bool VerifySenderEidRange(int senderPeerSlot,
+                          uint32_t senderElementId,
                           const char* kind) {
     if (senderElementId == 0u ||
         senderElementId == coop::element::kInvalidId) {
         return true;  // 0 sentinel; no compare. peer-slot fallback applies.
     }
-    if (senderPeerSlot >= 0) {
-        const bool senderIsHost = (senderPeerSlot == 0);
-        if (!coop::element::Registry::IsAllowedSenderEid(
-                senderIsHost, senderElementId)) {
-            UE_LOGW("event_feed: %s senderElementId=0x%08x out of allowed %s "
-                    "range (senderPeerSlot=%d) -- dropping (role impersonation?)",
-                    kind, senderElementId,
-                    senderIsHost ? "host" : "peer",
-                    senderPeerSlot);
-            return false;
-        }
+    if (senderPeerSlot < 0) return true;  // unknown sender; skip range check
+    const bool senderIsHost = (senderPeerSlot == 0);
+    if (!coop::element::Registry::IsAllowedSenderEid(
+            senderIsHost, senderElementId)) {
+        UE_LOGW("event_feed: %s senderElementId=0x%08x out of allowed %s "
+                "range (senderPeerSlot=%d) -- dropping (role impersonation?)",
+                kind, senderElementId,
+                senderIsHost ? "host" : "peer",
+                senderPeerSlot);
+        return false;
     }
-    auto* el = coop::element::Registry::Get().Get(senderElementId);
-    if (!el) return true;  // mirror not yet installed (boot/seed race)
-    const uint8_t mirrorCtx = el->GetSyncContext();
-    // Treat 0 on EITHER side as "no context known yet" -- pass through
-    // without compare. The sender-side guard short-circuits to 0 when the
-    // local Element hasn't been allocated; the mirror may also have been
-    // seeded with 0 if the handshake stamp happened to land in the boot
-    // window (host's first AssignPeerSlot sent before its own
-    // EnsurePlayerElement_ ran -- now atomic-paired, but defense in depth
-    // on the receiver side). Without this short-circuit, a
-    // 0-vs-non-0 compare would drop legitimate first-after-boot
-    // packets when sender's local Element finishes allocation.
-    if (senderContext == 0u || mirrorCtx == 0u) return true;
-    if (mirrorCtx == senderContext) return true;
-    UE_LOGW("event_feed: %s senderContext mismatch (wire=0x%02x mirror=0x%02x "
-            "senderElementId=0x%08x) -- dropping stale-generation packet",
-            kind, static_cast<unsigned>(senderContext),
-            static_cast<unsigned>(mirrorCtx), senderElementId);
-    return false;
+    return true;
 }
 
 }  // namespace
@@ -289,50 +271,9 @@ void Update(net::Session& session, void* localPlayer) {
                     break;
                 }
             }
-            // v15 (2026-05-29 E-2): stale-generation defense -- drop
-            // PropSpawn packets whose senderContext doesn't match the
-            // SENDER's current Player Element mirror context. Resolves
-            // the deferred hazard from B1 (added senderContext to 5
-            // packets but missed PropSpawn/PropDestroy). Without this,
-            // an in-flight PropSpawn from a previous incarnation of the
-            // sender can be honored against the new generation; the
-            // WireKey-keyed dedup at remote_prop_spawn::OnSpawn idempotently
-            // rejects matching-Key re-spawns but does NOT catch cross-
-            // generation key reuse (possible when world re-seeds).
-            //
-            // PropSpawnPayload.elementId is the PROP's id (allocated by
-            // the sender from its host- or peer-range), NOT the sender's
-            // Player Element id. So we can't use VerifySenderContext
-            // (which keys on Player eid). Route by msg.senderPeerSlot ->
-            // sender's Player Element via Registry::GetPlayerElement,
-            // then compare its context to p.senderContext. Same 0-sentinel
-            // and missing-mirror passthrough as VerifySenderContext.
-            //
-            // CRITICAL: gate on senderPlayer->IsMirror(). A locally-allocated
-            // placeholder Player Element (created by RegisterPuppet before
-            // Join arrived) has its own NextLocalContext_() value, NOT the
-            // sender's. PropSpawn (Bulk lane) can arrive before the sender's
-            // Join (Normal lane) on the same connection -- lane order is
-            // preserved only WITHIN a lane, not across. Without IsMirror()
-            // we'd falsely drop legitimate snapshot-drain packets.
-            // VerifySenderContext (the eid-lookup variant) implicitly avoids
-            // this because Registry::Get(wireEid) returns nullptr until the
-            // mirror is registered. We must replicate that filter here.
-            if (msg.senderPeerSlot >= 0 && p.senderContext != 0u) {
-                const uint8_t senderSlot = static_cast<uint8_t>(msg.senderPeerSlot);
-                auto* senderPlayer =
-                    coop::players::Registry::Get().GetPlayerElement(senderSlot);
-                if (senderPlayer && senderPlayer->IsMirror()) {
-                    const uint8_t mirrorCtx = senderPlayer->GetSyncContext();
-                    if (mirrorCtx != 0u && mirrorCtx != p.senderContext) {
-                        UE_LOGW("event_feed: PropSpawn senderContext mismatch slot=%u wire=0x%02x mirror=0x%02x -- dropping (stale generation)",
-                                static_cast<unsigned>(senderSlot),
-                                static_cast<unsigned>(p.senderContext),
-                                static_cast<unsigned>(mirrorCtx));
-                        break;
-                    }
-                }
-            }
+            // (v15 added a senderContext compare here for stale-generation
+            // defense; v16 PR-FOUNDATION-1b moved that to the packet
+            // header's senderEpoch latched in Session::HandleMessage.)
             // intermediate-variant classes that the receiver doesn't want
             // (mushroom7_C growing state). Host-authoritative growth
             // pipeline -- the mature variant (mushroom_C) will arrive when
@@ -394,24 +335,8 @@ void Update(net::Session& session, void* localPlayer) {
                     break;
                 }
             }
-            // v15 (2026-05-29 E-2): stale-generation defense (matches
-            // PropSpawn handler above -- see that case for IsMirror()
-            // rationale). 0-sentinel + non-mirror passthrough.
-            if (msg.senderPeerSlot >= 0 && p.senderContext != 0u) {
-                const uint8_t senderSlot = static_cast<uint8_t>(msg.senderPeerSlot);
-                auto* senderPlayer =
-                    coop::players::Registry::Get().GetPlayerElement(senderSlot);
-                if (senderPlayer && senderPlayer->IsMirror()) {
-                    const uint8_t mirrorCtx = senderPlayer->GetSyncContext();
-                    if (mirrorCtx != 0u && mirrorCtx != p.senderContext) {
-                        UE_LOGW("event_feed: PropDestroy senderContext mismatch slot=%u wire=0x%02x mirror=0x%02x -- dropping (stale generation)",
-                                static_cast<unsigned>(senderSlot),
-                                static_cast<unsigned>(p.senderContext),
-                                static_cast<unsigned>(mirrorCtx));
-                        break;
-                    }
-                }
-            }
+            // (v15 also had a senderContext compare here -- moved to
+            // header senderEpoch in v16 PR-FOUNDATION-1b.)
             // 2026-05-25 cross-peer destroy: pass localPlayer so OnDestroy
             // can release a held PHC grab (mainPlayer.grabbing_actor ==
             // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
@@ -644,12 +569,12 @@ void Update(net::Session& session, void* localPlayer) {
                         selfEchoByEid ? "eid" : "peerSlot-fallback");
                 break;
             }
-            // v14 (B1): stale-generation defense. If the sender's wire
-            // context doesn't match the mirror Element's context, this
-            // packet was minted by a now-disconnected incarnation of the
-            // sender and a fresh Element took its id; drop.
-            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
-                                      "ItemActivate")) {
+            // PR-FOUNDATION-1 (2026-05-29): role-range trust boundary on
+            // senderElementId. v16 (PR-FOUNDATION-1b) replaces v14's
+            // syncContext compare with the Session-layer senderEpoch
+            // latch (applied before HandleMessage dispatches here).
+            if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
+                                       "ItemActivate")) {
                 break;
             }
             // Resolve senderElementId -> peer slot via Registry::Get. Falls
@@ -721,9 +646,10 @@ void Update(net::Session& session, void* localPlayer) {
                         msg.senderPeerSlot, p.senderElementId);
                 break;
             }
-            // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
-                                      "RedSky")) {
+            // PR-FOUNDATION-1: role-range trust on senderElementId.
+            // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+            if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
+                                       "RedSky")) {
                 break;
             }
             if (p.state != 0 && p.state != 1) {
@@ -764,9 +690,10 @@ void Update(net::Session& session, void* localPlayer) {
                         msg.senderPeerSlot, p.senderElementId);
                 break;
             }
-            // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
-                                      "LightningStrike")) {
+            // PR-FOUNDATION-1: role-range trust on senderElementId.
+            // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+            if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
+                                       "LightningStrike")) {
                 break;
             }
             // Trust boundary: validate loc finite + within sane bounds.
@@ -813,9 +740,10 @@ void Update(net::Session& session, void* localPlayer) {
                         msg.senderPeerSlot, p.senderElementId);
                 break;
             }
-            // v14 (B1): stale-generation defense.
-            if (!VerifySenderContext(msg.senderPeerSlot, p.senderElementId, p.senderContext,
-                                      "WeatherState")) {
+            // PR-FOUNDATION-1: role-range trust on senderElementId.
+            // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+            if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
+                                       "WeatherState")) {
                 break;
             }
             // Trust-boundary: validate floats finite + within sane range.

@@ -166,20 +166,11 @@ void DrainChunk() {
     // (std::min) parenthesized to defeat windows.h's `min` macro.
     const size_t limit = (std::min)(g_snapshotCandidateIdx + kSnapshotChunkSize,
                                     g_snapshotCandidates.size());
-    // v15 (2026-05-29 E-2 + post-ship audit I-3): hoist the local Player
-    // identity read above the loop. The host's local Player identity does
-    // not change mid-drain (lifecycle events that mutate it happen between
-    // ticks, not within a tick). Reading it once + caching is both more
-    // efficient (~100 atomic-pair loads collapsed to 1) and correctness-
-    // safer (all PropSpawn packets in this chunk stamp the SAME context;
-    // a mid-drain identity flip would otherwise produce some packets with
-    // the old context + the rest with 0, causing a partial false-drop
-    // cascade on the receiver).
-    coop::element::ElementId selfPlayerEid;
-    uint8_t                  selfPlayerSyncCtx;
-    coop::players::Registry::Get().LocalPlayerIdentity(selfPlayerEid, selfPlayerSyncCtx);
-    const uint8_t senderContextSnapshot =
-        (selfPlayerEid == coop::element::kInvalidId) ? 0u : selfPlayerSyncCtx;
+    // (v15 hoisted a paired LocalPlayerIdentity read above the loop to
+    // stamp p.senderContext on every snapshot packet; v16 PR-FOUNDATION-1b
+    // moved per-peer stale-gen defense to the packet header senderEpoch,
+    // stamped uniformly by Session::SendReliableToSlot via WriteHeader.
+    // No per-packet sender state needed at the gameplay layer.)
     int sent = 0;
     for (; g_snapshotCandidateIdx < limit; ++g_snapshotCandidateIdx) {
         void* obj = g_snapshotCandidates[g_snapshotCandidateIdx];
@@ -229,8 +220,6 @@ void DrainChunk() {
                     ? g_snapshotEids[g_snapshotCandidateIdx]
                     : coop::element::kInvalidId;
             p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
-            // v15 (2026-05-29 E-2): use the hoisted snapshot from above.
-            p.senderContext = senderContextSnapshot;
         }
         // Send to ONE slot only. Other peers (already-connected) already
         // have these props from their own connect-edge drain.

@@ -152,19 +152,16 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         return;  // retry next tick
     }
     if (!joinPayloadBuilt) {
-        // v14 prefix: [uint32 senderElementId][uint8 senderContext]
-        // then the existing [uint8 nicklen][nick UTF-8]. Receiver
-        // RegisterMirrors (senderElementId, senderContext) into the
+        // v16 prefix: [uint32 senderElementId] then [uint8 nicklen][nick
+        // UTF-8]. Receiver RegisterMirrors senderElementId into the
         // sender's peer slot so wire packets bearing senderElementId
-        // resolve via Registry::Get on the receiver AND the mirror is
-        // stamped with the right context byte for subsequent
-        // senderContext-compare gating.
+        // resolve via Registry::Get on the receiver. (v14 added an
+        // 8-bit senderContext byte after senderElementId; v16
+        // PR-FOUNDATION-1b moved stale-gen defense to the packet header's
+        // senderEpoch and removed the byte.)
         const uint32_t selfEidWire = selfEidProbe;
-        const uint8_t selfCtxWire =
-            coop::players::Registry::Get().LocalPlayerSyncContext();
-        joinPayload.resize(5);
+        joinPayload.resize(4);
         std::memcpy(joinPayload.data(), &selfEidWire, 4);
-        joinPayload[4] = selfCtxWire;
         std::vector<uint8_t> nickUtf8 = ToUtf8(g_localNick);
         if (nickUtf8.size() > 200) nickUtf8.resize(200);
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
@@ -206,27 +203,25 @@ bool HandleJoinMessage(net::Session& session,
                 senderSlot);
         return true;
     }
-    // v14 (B1 2026-05-29): parse [uint32 senderElementId][uint8 senderContext]
+    // v16 (PR-FOUNDATION-1b 2026-05-29): parse [uint32 senderElementId]
     // prefix then the existing [uint8 nicklen][nick UTF-8]. The protocol
-    // version bump (13->14) at ParseHeader guarantees v13 senders can't
-    // misalign through here -- their packets are rejected upstream.
+    // version bump (v15->v16) at ParseHeader guarantees pre-v16 senders
+    // can't misalign through here -- their packets are rejected upstream.
     //
     // W-3 (2026-05-29 audit): reject undersized Join instead of degrading to
     // no-mirror routing. Silent degradation leaves the peer permanently
-    // without senderContext-based stale-gen defense; safer to drop a
+    // without senderEpoch-based stale-gen defense; safer to drop a
     // malformed Join and let the sender's retry produce a well-formed one.
-    if (msg.payloadLen < 5) {
-        UE_LOGW("player_handshake: Join payload %zu B too short for v14 prefix "
+    if (msg.payloadLen < 4) {
+        UE_LOGW("player_handshake: Join payload %zu B too short for v16 prefix "
                 "(senderSlot=%d) -- dropping",
                 static_cast<size_t>(msg.payloadLen), senderSlot);
         return true;
     }
     uint32_t senderElementId = 0;
-    uint8_t  senderContext   = 0;
     std::memcpy(&senderElementId, msg.payload, 4);
-    senderContext = msg.payload[4];
-    const uint8_t* nickStart = msg.payload + 5;
-    size_t nickRemaining = msg.payloadLen - 5;
+    const uint8_t* nickStart = msg.payload + 4;
+    size_t nickRemaining = msg.payloadLen - 4;
     std::wstring nick = g_remoteNickBySlot[senderSlot];
     if (nickRemaining > 0) {
         const int len = nickStart[0];
@@ -237,8 +232,7 @@ bool HandleJoinMessage(net::Session& session,
     // ItemActivate/Weather/etc. packets bearing senderElementId
     // resolve via Registry::Get on this peer. 0 means "no Element
     // yet"; skip mirror install and fall back to senderPeerSlot
-    // routing per the field's contract. v14: pass senderContext so
-    // the new mirror is stamped with the sender's generation byte.
+    // routing per the field's contract.
     //
     // PR-FOUNDATION-1 (2026-05-29): range-validate senderElementId
     // against the sender's role before installing. A peer whose
@@ -260,7 +254,7 @@ bool HandleJoinMessage(net::Session& session,
                     senderSlot);
         } else {
             coop::players::Registry::Get().EstablishMirrorForSlot(
-                static_cast<uint8_t>(senderSlot), senderElementId, senderContext);
+                static_cast<uint8_t>(senderSlot), senderElementId);
         }
     }
     // VT-inspired nickname sanitizer (2026-05-25, see
@@ -336,10 +330,9 @@ bool HandleAssignPeerSlot(net::Session& session,
     // carrying host's senderElementId resolve via Registry::Get on
     // this client. hostElementId == 0 or kInvalidId means the host
     // hadn't allocated its Element yet -- skip mirror install; the
-    // receivers will fall back to senderPeerSlot routing. v14 (B1):
-    // p.hostContext seeds the mirror's syncContext so subsequent
-    // host packets with senderContext == p.hostContext pass the
-    // receiver-side compare.
+    // receivers will fall back to senderPeerSlot routing. v16
+    // (PR-FOUNDATION-1b): the hostContext byte v14 added is gone;
+    // mirror install no longer carries any generation byte.
     if (p.hostElementId != 0u &&
         p.hostElementId != coop::element::kInvalidId) {
         // PR-FOUNDATION-1 (2026-05-29): use the canonical helper.
@@ -353,7 +346,7 @@ bool HandleAssignPeerSlot(net::Session& session,
                     p.hostElementId);
         } else {
             coop::players::Registry::Get().EstablishMirrorForSlot(
-                coop::players::kPeerIdHost, p.hostElementId, p.hostContext);
+                coop::players::kPeerIdHost, p.hostElementId);
         }
     } else {
         UE_LOGI("player_handshake: AssignPeerSlot host had no Element id yet "

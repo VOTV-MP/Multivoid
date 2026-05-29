@@ -146,7 +146,57 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // payload, just a field rename + protocol bump. ParseHeader rejects
 // pre-v15 packets so a stale ItemActivate-shape PropSpawn (mismatched
 // pad byte meaning) can't slip through.
-inline constexpr uint16_t kProtocolVersion = 15;
+//
+// v16 (2026-05-29) -- PR-FOUNDATION-1b: per-peer 32-bit session epoch in
+// the packet HEADER, replacing the 8-bit per-payload senderContext byte.
+// Two motivating defects in the v14/v15 design:
+//   1. 8-bit aliases at 256 reconnect cycles. MTA shipped this width
+//      for 15+ years and the wrap was masked by per-entity (not per-
+//      peer) granularity + frequent state-change increments. VOTV's
+//      Per-peer-Player-Element scheme increments once per process,
+//      so the wrap was a real hazard within a long session.
+//   2. 0-on-either-side passthrough (the "boot/seed race" gate at
+//      event_feed.cpp:86 + the manual compares at lines 321/400)
+//      defeated the defense entirely whenever the sender's local
+//      Player Element hadn't been minted yet -- an in-flight stale
+//      packet stamped 0 paired with a freshly-minted mirror at the
+//      receiver bypassed every compare. W-1 audit finding.
+//
+// New design:
+//   - PacketHeader.token (uint64_t, ALWAYS 0 since PR-2 GNS migration --
+//     all WriteHeader call sites hardcoded /*token*/0; ParseHeader caller
+//     reads into `uint64_t tokenUnused`) is split: low 4 bytes become
+//     `uint32_t senderEpoch`, high 4 bytes become `uint32_t _reserved`
+//     (kept 0 on send; future use TBD). PacketHeader stays 20 bytes.
+//   - Session mints `ownEpoch_` via std::random_device at Start() --
+//     non-zero (re-rolls on the 1/2^32 zero) so 0 unambiguously means
+//     "not yet latched" at the receiver.
+//   - Sender stamps `ownEpoch_` on every outbound packet header (4
+//     WriteHeader sites: SendReliableToSlot, SendReliable fan-out,
+//     SendMessageToConnection PoseSnapshot, SendMessageToConnection
+//     PropPose).
+//   - Receiver, per peerSlot, maintains `m_expectedEpoch[slot]` --
+//     latched on first packet from the slot when value is 0; subsequent
+//     packets must match exactly; mismatch -> drop with log.
+//   - On disconnect (ResetPeerRemoteState) `m_expectedEpoch[slot] = 0`
+//     so the next packet from the new connection at that slot re-latches.
+//   - No separate epoch-handshake message: the host's AssignPeerSlot
+//     packet's HEADER already carries the host's m_ownEpoch, and the
+//     client's first Join carries the client's m_ownEpoch -- the
+//     receiver latches via the header on the first packet, period.
+//
+// Per RULE 2 (no migration baggage), v14/v15 per-payload senderContext
+// + Element::m_syncContext + players::Registry::LocalPlayerSyncContext
+// + VerifySenderContext + the manual context compares at event_feed.cpp
+// PropSpawn/PropDestroy sites are FULLY DELETED in this bump (not
+// retained as a parallel gate). senderContext fields gone from
+// PropSpawnPayload, PropDestroyPayload, ItemActivatePayload,
+// WeatherStatePayload, RedSkyPayload, LightningStrikePayload, plus
+// hostContext from AssignPeerSlotPayload, plus the Join payload's
+// context byte. Pad bytes coalesced back; LightningStrikePayload
+// shrinks 20->16 (it had no existing pad pre-v14 -- per the v14 comment
+// block above -- so the byte goes with no trailing pad).
+inline constexpr uint16_t kProtocolVersion = 16;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -169,19 +219,16 @@ enum class MsgType : uint8_t {
 // Join announces a player (its nickname) so the peer can post "<nick> joined" and
 // label the remote player. (Chat text is a future ReliableKind.)
 enum class ReliableKind : uint8_t {
-    Join = 1,         // v14 payload: [uint32 senderElementId][uint8 senderContext]
-                      //     [uint8 nicklen][nick UTF-8]. senderElementId is the
-                      //     SENDER's local Player Element id (host range from host;
-                      //     peer range from client). senderContext is the SENDER's
-                      //     local Element::GetSyncContext() byte. Receiver calls
-                      //     players::Registry::EstablishMirrorForSlot(senderSlot,
-                      //     senderElementId, senderContext) so the new mirror is
-                      //     stamped with the sender's current generation, then
-                      //     SetNickname on the puppet. Pre-v14 layout was
-                      //     [uint32 senderElementId][uint8 nicklen][nick]; the
-                      //     protocol bump enforces v14-only at ParseHeader so a
-                      //     stale pre-v14 Join can't slip through with the
-                      //     nicklen byte interpreted as a context.
+    Join = 1,         // v16 payload: [uint32 senderElementId][uint8 nicklen][nick
+                      //     UTF-8]. senderElementId is the SENDER's local Player
+                      //     Element id (host range from host; peer range from
+                      //     client). Receiver calls EstablishMirrorForSlot and
+                      //     SetNickname on the puppet. v14 had a senderContext
+                      //     byte before nicklen; v16 PR-FOUNDATION-1b moved the
+                      //     stale-generation defense to the packet HEADER
+                      //     (senderEpoch), so this byte is gone. ParseHeader
+                      //     rejects pre-v16 packets so a stale pre-v16 Join's
+                      //     senderContext byte cannot be misread as nicklen.
     PropRelease = 2,  // v5: host released a held prop. Payload: PropReleasePayload
                       //     (WireKey + FVector linVel cm/s + FVector angVel deg/s).
                       //     Receiver: SetSimulatePhysics(true) +
@@ -325,8 +372,11 @@ enum class ReliableKind : uint8_t {
                        //     Element id. Client RegisterMirrors that id
                        //     in slot 0 so wire packets stamped with host
                        //     senderElementId resolve to a Player Element
-                       //     via Registry::Get on the client. Payload:
-                       //     AssignPeerSlotPayload (8 bytes).
+                       //     via Registry::Get on the client. v14 added
+                       //     a hostContext byte; v16 PR-FOUNDATION-1b
+                       //     dropped it (stale-gen defense moved to
+                       //     header senderEpoch). Payload:
+                       //     AssignPeerSlotPayload (8 bytes, v16).
     // Slots 16/17 (NonPropEntityState/Destroy) retired 2026-05-27 -- the
     // chipPile/clump/trashBitsPile families now ride the existing Aprop_C
     // pipeline (PropSpawn / PropDestroy / PropPose / PropRelease) via the
@@ -341,18 +391,22 @@ enum class ReliableKind : uint8_t {
 
 // Every datagram starts with this. seq is per-sender, monotonically increasing
 // (ordering + stale-drop on the receiver; never trust an older seq than the last).
-// token is the session nonce: the host mints a random one at session start and
-// hands it out in its Hello; thereafter EVERY packet must carry it or it is
-// dropped. An off-path spoofer never sees the token, so it cannot inject
-// pose/Bye into an established session (anti-hijack / anti-replay). A client's
-// FIRST Hello (before it has learned the token) carries 0.
+// senderEpoch is the SENDER's per-process session epoch (v16 PR-FOUNDATION-1b):
+// minted non-zero by std::random_device at Session::Start(), stamped on every
+// outbound header. The receiver latches the first non-zero epoch it sees from
+// each peer slot and rejects subsequent packets whose epoch doesn't match --
+// defends against stale-generation packets after disconnect/reconnect (an in-
+// flight ItemActivate from the previous incarnation can't be honored against
+// the new puppet, etc.). _reserved is the upper 4 bytes of the pre-v16 token
+// field (always 0 on send; kept for future use to avoid another protocol bump).
 struct PacketHeader {
-    uint32_t magic;    // kMagic
-    uint16_t version;  // kProtocolVersion
-    uint8_t  type;     // MsgType
-    uint8_t  _pad;     // reserved
-    uint32_t seq;      // per-sender sequence number
-    uint64_t token;    // session nonce (0 == "not yet known", client's first Hello)
+    uint32_t magic;        // kMagic
+    uint16_t version;      // kProtocolVersion
+    uint8_t  type;         // MsgType
+    uint8_t  _pad;         // reserved
+    uint32_t seq;          // per-sender sequence number
+    uint32_t senderEpoch;  // v16: SENDER's m_ownEpoch (non-zero; 0 reserved as "not latched" sentinel at receiver)
+    uint32_t _reserved;    // v16: was upper 4 bytes of token (PR-2 GNS migration killed token); reserved for future use
 };
 static_assert(sizeof(PacketHeader) == 20, "PacketHeader must be 20 bytes");
 
@@ -516,13 +570,7 @@ struct PropSpawnPayload {
     float         rotPitch, rotYaw, rotRoll;   // 12 -- FRotator (matches PropPose shape)
     float         scaleX, scaleY, scaleZ;      // 12 -- usually (1,1,1)
     uint8_t       physFlags;        // 1
-    uint8_t       senderContext;    // v15 (E-2): SENDER's local Player Element::
-                                    //     GetSyncContext byte. Receiver compares
-                                    //     vs stored mirror context; drops on
-                                    //     mismatch. Was first byte of `_pad[3]`
-                                    //     in v14. 0 when sender had no Player
-                                    //     Element yet (boot/seed window).
-    uint8_t       _pad[2];          // 2
+    uint8_t       _pad[3];          // 3 (v16: senderContext byte removed, coalesced into pad)
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- usually (0,0,0)
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
     // v12: ElementId of the prop in the SENDER's allocation range.
@@ -565,13 +613,7 @@ struct PropDestroyPayload {
     // binding made by the matching PropSpawn (the engine actor is
     // resolved+destroyed via the key path; eid is identity bookkeeping).
     uint32_t elementId;       // 4
-    uint8_t  senderContext;   // v15 (E-2): SENDER's local Player Element::
-                              //     GetSyncContext byte (same semantics as
-                              //     PropSpawnPayload.senderContext). Was the
-                              //     first byte of the v14 `uint32_t _pad`
-                              //     trailer. 0 when sender had no Player
-                              //     Element yet (boot/seed window).
-    uint8_t  _pad[3];         // 3 -- 8-byte alignment
+    uint32_t _pad;            // 4 -- 8-byte alignment (v16: senderContext + pad coalesced)
 };
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
 static_assert(sizeof(PropDestroyPayload) <= 256 - 20 - 8,
@@ -699,16 +741,14 @@ struct ItemActivatePayload {
     uint8_t  state;           // 0 = off / inactive, 1 = on / active
     uint8_t  flags;           // bit0: has_actor_key (1 = use actorKeyHash)
     uint8_t  mode;            // v6: mp.flashlightMode (0=default spread, 1=focused, ...)
-    uint8_t  senderContext;   // v14 (B1): SENDER's local Player Element::GetSyncContext.
-                              //     Receiver compares vs mirror's stored context;
-                              //     drop on mismatch. Was `_pad` in v13.
+    uint8_t  _pad;            // 1 (v16: senderContext removed; reverted to pad as in v13)
     uint32_t actorKeyHash;    // CRC32(Aprop_C::Key string) when flags.has_actor_key=1; 0 otherwise
     float    intensity;       // v6: light_R.Intensity AFTER BP ran (Unitless scale ~0..10)
     float    outerConeAngle;  // v6: light_R.OuterConeAngle (degrees; ~40 default, ~12 focused)
     float    innerConeAngle;  // v6: light_R.InnerConeAngle (degrees; ~0 default, varies)
 };
 static_assert(sizeof(ItemActivatePayload) == 28,
-              "ItemActivatePayload must be exactly 28 bytes (v14 wire-format)");
+              "ItemActivatePayload must be exactly 28 bytes (v16 wire-format)");
 static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
               "ItemActivatePayload must fit in one reliable datagram");
 
@@ -733,15 +773,11 @@ inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 // can then be routed and trust-validated symmetrically on both peers.
 struct AssignPeerSlotPayload {
     uint8_t  slot;            // 1..kMaxPeers-1
-    uint8_t  hostContext;     // v14 (B1): host's Player Element::GetSyncContext.
-                              //     Client stamps this onto the mirror it
-                              //     creates so subsequent host-stamped packets
-                              //     pass the senderContext compare.
-    uint8_t  _pad[2];
+    uint8_t  _pad[3];         // (v16: hostContext byte removed; reverted to pad as in v13)
     uint32_t hostElementId;   // v13: host's local Player Element id
 };
 static_assert(sizeof(AssignPeerSlotPayload) == 8,
-              "AssignPeerSlotPayload must be exactly 8 bytes (v14)");
+              "AssignPeerSlotPayload must be exactly 8 bytes (v16)");
 
 // Phase 5W Inc1 (2026-05-26): host-authoritative weather state push. The host
 // reads these fields off the live AdaynightCycle_C after its own scheduler
@@ -783,15 +819,13 @@ struct WeatherStatePayload {
     // host trust-boundary; drops if mirror missing OR PeerSlot != 0.
     uint32_t senderElementId;
     uint8_t  flags;              // see bit layout above
-    uint8_t  senderContext;      // v14 (B1): host's Element::GetSyncContext.
-                                 //     Receiver compares vs mirror context.
-    uint8_t  _pad[2];            // 4-byte align the float block
+    uint8_t  _pad[3];            // (v16: senderContext byte removed; coalesced into pad) 4-byte align the float block
     float    rainStrength;        // AdaynightCycle_C::rainStrength @0x0404
     float    rainLightningChance; // AdaynightCycle_C::rainLightningChance @0x0408
     float    rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance @0x040C
     float    rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed @0x041C
 };
-static_assert(sizeof(WeatherStatePayload) == 24, "WeatherStatePayload must be 24 bytes (v14)");
+static_assert(sizeof(WeatherStatePayload) == 24, "WeatherStatePayload must be 24 bytes (v16)");
 static_assert(sizeof(WeatherStatePayload) <= 256 - 20 - 8,
               "WeatherStatePayload must fit in one reliable datagram");
 
@@ -817,10 +851,9 @@ struct RedSkyPayload {
     // local Player Element id; receiver validates PeerSlot()==0.
     uint32_t senderElementId;
     uint8_t  state;          // 0 = revert color curves, 1 = red
-    uint8_t  senderContext;  // v14 (B1): host's Element::GetSyncContext
-    uint8_t  _pad[2];
+    uint8_t  _pad[3];        // (v16: senderContext byte removed; coalesced into pad)
 };
-static_assert(sizeof(RedSkyPayload) == 8, "RedSkyPayload must be 8 bytes (v14)");
+static_assert(sizeof(RedSkyPayload) == 8, "RedSkyPayload must be 8 bytes (v16)");
 static_assert(sizeof(RedSkyPayload) <= 256 - 20 - 8,
               "RedSkyPayload must fit in one reliable datagram");
 
@@ -835,12 +868,12 @@ static_assert(sizeof(RedSkyPayload) <= 256 - 20 - 8,
 struct LightningStrikePayload {
     // v13 (A4 2026-05-29): was uint8_t peerSessionId + 3B pad. Now
     // sender's local Player Element id; receiver validates PeerSlot()==0.
+    // v16: shrunk back 20->16 -- senderContext byte and the alignment
+    // pad that v14 added with it both go (no pre-v14 pad existed).
     uint32_t senderElementId;
-    uint8_t  senderContext;    // v14 (B1): host's Element::GetSyncContext
-    uint8_t  _pad[3];          // 4-byte align the float block (v14: was no pad)
     float    locX, locY, locZ; // world cm
 };
-static_assert(sizeof(LightningStrikePayload) == 20, "LightningStrikePayload must be 20 bytes (v14)");
+static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes (v16)");
 static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
               "LightningStrikePayload must fit in one reliable datagram");
 
@@ -859,27 +892,30 @@ inline constexpr int kMaxReliablePayload = kMaxPacketBytes - 20 - 8;
 inline constexpr float kMaxCoord = 1.0e6f;
 inline constexpr float kMaxSpeed = 1.0e5f;  // cm/s (well above any real walk/sprint)
 
-// Fill a header in-place.
-inline void WriteHeader(PacketHeader& h, MsgType type, uint32_t seq, uint64_t token) {
+// Fill a header in-place. `senderEpoch` is the sender's m_ownEpoch (Session
+// mints non-zero at Start()); the receiver latches on first sighting + rejects
+// mismatches per peer slot (v16 stale-generation defense, see PacketHeader doc).
+inline void WriteHeader(PacketHeader& h, MsgType type, uint32_t seq, uint32_t senderEpoch) {
     h.magic = kMagic;
     h.version = kProtocolVersion;
     h.type = static_cast<uint8_t>(type);
     h._pad = 0;
     h.seq = seq;
-    h.token = token;
+    h.senderEpoch = senderEpoch;
+    h._reserved = 0;
 }
 
 // Validate a received buffer as one of ours: enough bytes + magic + version.
 // Returns the parsed header fields and true if the header is well-formed.
 inline bool ParseHeader(const void* data, int len, MsgType& outType, uint32_t& outSeq,
-                        uint64_t& outToken) {
+                        uint32_t& outSenderEpoch) {
     if (len < static_cast<int>(sizeof(PacketHeader))) return false;
     PacketHeader h;
     std::memcpy(&h, data, sizeof(h));
     if (h.magic != kMagic || h.version != kProtocolVersion) return false;
     outType = static_cast<MsgType>(h.type);
     outSeq = h.seq;
-    outToken = h.token;
+    outSenderEpoch = h.senderEpoch;
     return true;
 }
 

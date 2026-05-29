@@ -131,11 +131,8 @@ bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {
             coop::players::Registry::Get().LocalPlayerElementId();
         out.senderElementId =
             (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
-        // v14 (B1): paired senderContext byte.
-        out.senderContext =
-            (selfEid == coop::element::kInvalidId)
-                ? 0u
-                : coop::players::Registry::Get().LocalPlayerSyncContext();
+        // (v14 stamped a paired senderContext byte; v16 PR-FOUNDATION-1b
+        // moved stale-gen defense to header senderEpoch.)
     }
 
     const uint8_t* base = reinterpret_cast<uint8_t*>(cycle);

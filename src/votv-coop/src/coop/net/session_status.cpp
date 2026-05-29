@@ -86,6 +86,11 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     lastRemotePropSeq_[peerSlot] = 0;
     remotePropStamp_[peerSlot] = 0;
     lastReadPropStamp_[peerSlot] = 0;
+    // PR-FOUNDATION-1b v16: clear the latched senderEpoch so the next
+    // connection on this slot re-latches via HandleMessage's first-packet
+    // path. Without this, a reconnecting peer's fresh epoch would fail
+    // the compare against the dead generation's stored value.
+    expectedEpoch_[peerSlot] = 0;
 }
 
 int Session::connectedPeerCount() const {
@@ -212,17 +217,16 @@ void Session::HandleConnStatusChanged(void* info) {
             // in which case the read returns kInvalidId, and the client
             // receiver falls back to non-mirror routing (the field's
             // contract documents 0/kInvalidId as "sender had no Element").
-            // Use the atomic-paired accessor so a game-thread
-            // DropPlayerElement_ can't tear (eid, ctx) into a coherent eid +
-            // stale ctx pair on this net-thread read.
-            coop::players::Registry::Get().LocalPlayerIdentity(
-                p.hostElementId, p.hostContext);
+            // v16 PR-FOUNDATION-1b: the hostContext byte that v14 added
+            // here is gone; per-peer stale-generation defense moved to the
+            // packet header's senderEpoch, stamped by WriteHeader for this
+            // SendReliableToSlot like every other outbound packet.
+            p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
             if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
                 UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
             } else {
-                UE_LOGI("net: sent AssignPeerSlot slot=%d hostElementId=0x%08x "
-                        "hostContext=0x%02x to client",
-                        slot, p.hostElementId, static_cast<unsigned>(p.hostContext));
+                UE_LOGI("net: sent AssignPeerSlot slot=%d hostElementId=0x%08x to client",
+                        slot, p.hostElementId);
             }
         }
         return;

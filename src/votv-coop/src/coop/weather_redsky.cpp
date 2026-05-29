@@ -67,16 +67,13 @@ void OnSpawnRedSkyPost(void* self, void* /*function*/, void* /*params*/) {
 
     coop::net::RedSkyPayload p{};
     // v13 (A4 2026-05-29): host stamps its own local Player Element id.
-    // v14 (B1): + paired senderContext.
+    // (v14 stamped paired senderContext; v16 PR-FOUNDATION-1b moved
+    // stale-gen defense to header senderEpoch.)
     {
         const coop::element::ElementId selfEid =
             coop::players::Registry::Get().LocalPlayerElementId();
         p.senderElementId =
             (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
-        p.senderContext =
-            (selfEid == coop::element::kInvalidId)
-                ? 0u
-                : coop::players::Registry::Get().LocalPlayerSyncContext();
     }
     p.state = 1;  // spawnRedSky == turning red ON
     const bool sent = s->SendReliable(
@@ -111,16 +108,13 @@ void OnRedSkyEventSetPost(void* self, void* /*function*/, void* params) {
 
     coop::net::RedSkyPayload p{};
     // v13 (A4 2026-05-29): host stamps its own local Player Element id.
-    // v14 (B1): + paired senderContext.
+    // (v14 stamped paired senderContext; v16 PR-FOUNDATION-1b moved
+    // stale-gen defense to header senderEpoch.)
     {
         const coop::element::ElementId selfEid =
             coop::players::Registry::Get().LocalPlayerElementId();
         p.senderElementId =
             (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
-        p.senderContext =
-            (selfEid == coop::element::kInvalidId)
-                ? 0u
-                : coop::players::Registry::Get().LocalPlayerSyncContext();
     }
     p.state = isred ? 1 : 0;
     const bool sent = s->SendReliable(

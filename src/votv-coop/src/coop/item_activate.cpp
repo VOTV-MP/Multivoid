@@ -165,11 +165,9 @@ bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::
             coop::players::Registry::Get().LocalPlayerElementId();
         out.senderElementId =
             (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
-        // v14 (B1): paired senderContext byte. 0 when no Element yet.
-        out.senderContext =
-            (selfEid == coop::element::kInvalidId)
-                ? 0u
-                : coop::players::Registry::Get().LocalPlayerSyncContext();
+        // (v14 stamped a paired senderContext byte here; v16
+        // PR-FOUNDATION-1b moved stale-gen defense to the header
+        // senderEpoch and removed the byte from the payload.)
     }
     out.state           = fl.flashlight ? 1 : 0;
     out.flags           = 0;  // Case (b) -- no actor key

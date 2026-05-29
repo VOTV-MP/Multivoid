@@ -59,6 +59,7 @@
 
 #include <cstring>
 #include <chrono>
+#include <random>
 
 namespace coop::net {
 
@@ -151,6 +152,21 @@ bool Session::Start(const Config& cfg) {
         return false;
     }
     cfg_ = cfg;
+
+    // PR-FOUNDATION-1b v16: mint this peer's per-process session epoch.
+    // Non-zero is required (0 is the receiver-side "not yet latched"
+    // sentinel in expectedEpoch_), so re-roll on the 1/2^32 zero. Random
+    // device gives us a value that's unpredictable to off-path attackers
+    // and effectively guaranteed to differ between the previous and next
+    // generation after a disconnect/reconnect cycle (vs the v14/v15
+    // monotonic 8-bit counter that aliased at 256 cycles).
+    {
+        std::random_device rd;
+        do { ownEpoch_ = rd(); } while (ownEpoch_ == 0);
+    }
+    // Clear any stale latches from a previous Start()/Stop() cycle on
+    // this same Session instance (test harnesses reuse the object).
+    for (int i = 0; i < kMaxPeers; ++i) expectedEpoch_[i] = 0;
 
     if (!EnsureGnsInit()) return false;
 
@@ -321,7 +337,7 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     }
     auto* buf = static_cast<uint8_t*>(msg->m_pData);
     auto* hdr = reinterpret_cast<PacketHeader*>(buf);
-    WriteHeader(*hdr, MsgType::Reliable, seq, /*token*/0);
+    WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch_);
     auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
     std::memset(rh, 0, sizeof(*rh));
     rh->kind = static_cast<uint8_t>(kind);
@@ -371,7 +387,7 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
         }
         auto* buf = static_cast<uint8_t*>(msg->m_pData);
         auto* hdr = reinterpret_cast<PacketHeader*>(buf);
-        WriteHeader(*hdr, MsgType::Reliable, seq, /*token*/0);
+        WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch_);
         auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
         std::memset(rh, 0, sizeof(*rh));
         rh->kind = static_cast<uint8_t>(kind);
@@ -432,8 +448,8 @@ bool Session::SendEntityDestroy(uint32_t elementId) {
 void Session::HandleMessage(int peerSlot, const void* data, int len) {
     MsgType type;
     uint32_t seq;
-    uint64_t tokenUnused;
-    if (!ParseHeader(data, len, type, seq, tokenUnused)) {
+    uint32_t senderEpoch;
+    if (!ParseHeader(data, len, type, seq, senderEpoch)) {
         // Distinguish "random garbage / spoofed packet" (silent drop) from
         // "a peer running an older/newer protocol" (close cleanly with a
         // human-readable reason so both ends see WHY they got dropped --
@@ -462,6 +478,48 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     }
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
     recv_.fetch_add(1);
+
+    // PR-FOUNDATION-1b v16: per-peer stale-generation defense. The first
+    // packet from this slot establishes the expected epoch; subsequent
+    // packets must match exactly or are dropped. ResetPeerRemoteState
+    // clears expectedEpoch_[peerSlot] to 0 on disconnect so the next
+    // connection at the same slot re-latches. Two edge cases:
+    //  - senderEpoch == 0: pre-v16 sender (impossible at v16 since ParseHeader
+    //    rejects mismatched version) OR a buggy sender forgot to mint --
+    //    drop it; never latch 0.
+    //  - expectedEpoch_[slot] == 0 + senderEpoch != 0: first packet from this
+    //    slot, latch it.
+    // Lock ordering: this matches every per-peer state update below (all
+    // take remoteMutex_), so the lock is acquired once here, checked, and
+    // released before falling into the per-type switch which re-acquires
+    // it. Doing the check under the lock keeps the latch atomic with
+    // ResetPeerRemoteState's clear.
+    {
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        if (senderEpoch == 0) {
+            UE_LOGW("net: dropping packet from slot %d with senderEpoch=0 (malformed sender)",
+                    peerSlot);
+            return;
+        }
+        const uint32_t expected = expectedEpoch_[peerSlot];
+        if (expected == 0) {
+            expectedEpoch_[peerSlot] = senderEpoch;
+            UE_LOGI("net: latched senderEpoch=0x%08x for peer slot %d",
+                    static_cast<unsigned>(senderEpoch), peerSlot);
+        } else if (expected != senderEpoch) {
+            // Logged at INFO not WARN: the most common cause is a clean
+            // reconnect race (in-flight packets from the old connection
+            // arrive after the new connection's first packet relatches),
+            // which is benign and self-corrects. A WARN spam during
+            // reconnect churn would be misleading.
+            UE_LOGI("net: stale-gen drop slot=%d expected=0x%08x got=0x%08x kind=%u",
+                    peerSlot,
+                    static_cast<unsigned>(expected),
+                    static_cast<unsigned>(senderEpoch),
+                    static_cast<unsigned>(type));
+            return;
+        }
+    }
 
     switch (type) {
     case MsgType::PoseSnapshot: {
@@ -618,7 +676,7 @@ void Session::NetThread() {
                     if (have) {
                         PosePacket pkt{};
                         WriteHeader(pkt.header, MsgType::PoseSnapshot,
-                                    sendSeq_.fetch_add(1), /*token*/0);
+                                    sendSeq_.fetch_add(1), ownEpoch_);
                         pkt.pose = local;
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
@@ -628,7 +686,7 @@ void Session::NetThread() {
                     if (haveProp) {
                         PropPosePacket pkt{};
                         WriteHeader(pkt.header, MsgType::PropPose,
-                                    sendSeq_.fetch_add(1), /*token*/0);
+                                    sendSeq_.fetch_add(1), ownEpoch_);
                         pkt.pose = localProp;
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
