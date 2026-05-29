@@ -14,6 +14,7 @@
 
 #include "coop/item_activate.h"
 
+#include "coop/element/element.h"
 #include "coop/flashlight_click_sound.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -156,11 +157,18 @@ bool BuildPayloadFromLocal(void* mp, coop::net::ItemActivatePayload& out, coop::
 
     out = {};
     out.itemClassHash   = g_flashlightClassHash;
-    // Peer session id comes from the central Registry, which the wire
-    // layer populates via AssignPeerSlot on the client and harness on
-    // the host -- 3-peer-correct (a hardcoded sender ID would let two
-    // clients silently self-echo-drop each other).
-    out.peerSessionId   = coop::players::Registry::Get().LocalPeerId();
+    // v13 (A4 2026-05-29): sender stamps its own local Player Element id.
+    // Receivers resolve via coop::element::Registry::Get to a Player
+    // Element + read PeerSlot() for routing. 0 == "Element not yet
+    // allocated" (boot/seed race); receiver falls back to senderPeerSlot.
+    // 3-peer-correct -- ids are unique across the host+peer ranges so
+    // two clients can't collide.
+    {
+        const coop::element::ElementId selfEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        out.senderElementId =
+            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    }
     out.state           = flashlight ? 1 : 0;
     out.flags           = 0;  // Case (b) -- no actor key
     out.mode            = mode;
@@ -306,9 +314,9 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     } else {
         g_lastSentSig.store(storeSig, std::memory_order_release);
         UE_LOGI("flashlight: sent state=%d mode=%u Intensity=%.2f outerCone=%.1f innerCone=%.1f "
-                "(peer=%u, via %s)",
+                "(senderElementId=0x%08x, via %s)",
                 p.state, p.mode, p.intensity, p.outerConeAngle, p.innerConeAngle,
-                p.peerSessionId, which);
+                p.senderElementId, which);
     }
 }
 
@@ -400,8 +408,9 @@ bool DebugForceToggle(void* mp) {
         const uint64_t sig = SignaturePayload(p);
         const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
         g_lastSentSig.store(storeSig, std::memory_order_release);
-        UE_LOGI("flashlight: DebugForceToggle sent state=%d mode=%u Intensity=%.2f outerCone=%.1f (peer=%u)",
-                p.state, p.mode, p.intensity, p.outerConeAngle, p.peerSessionId);
+        UE_LOGI("flashlight: DebugForceToggle sent state=%d mode=%u Intensity=%.2f outerCone=%.1f "
+                "(senderElementId=0x%08x)",
+                p.state, p.mode, p.intensity, p.outerConeAngle, p.senderElementId);
     } else {
         UE_LOGW("flashlight: DebugForceToggle SendReliable failed (state=%d)", p.state);
     }
@@ -493,7 +502,8 @@ void Install(coop::net::Session* session) {
             ProbeLogEnabled() ? 1 : 0);
 }
 
-void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& payload) {
+void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& payload,
+                   uint8_t senderPeerSlot) {
     if (!puppetActor || !R::IsLive(puppetActor)) {
         UE_LOGW("flashlight: ApplyToPuppet called with invalid puppet=%p", puppetActor);
         return;
@@ -609,39 +619,43 @@ void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& payl
     }
 
     g_echoSuppress.store(false, std::memory_order_release);
-    UE_LOGI("flashlight: applied to puppet=%p state=%d Intensity=%.2f outerCone=%.1f innerCone=%.1f mode=%u",
+    UE_LOGI("flashlight: applied to puppet=%p state=%d Intensity=%.2f outerCone=%.1f innerCone=%.1f mode=%u "
+            "(senderPeerSlot=%u senderElementId=0x%08x)",
             puppetActor, newState ? 1 : 0, targetIntensity,
-            payload.outerConeAngle, payload.innerConeAngle, payload.mode);
+            payload.outerConeAngle, payload.innerConeAngle, payload.mode,
+            static_cast<unsigned>(senderPeerSlot), payload.senderElementId);
 
     // 3D positional click sound at the puppet -- extracted to its own
     // subsystem (see coop/flashlight_click_sound.h). Gated on state-CHANGE
     // (hold-F mode-change packets don't click). Runtime-constructs its
-    // own USoundAttenuation, AddToRoot's it for GC stability.
+    // own USoundAttenuation, AddToRoot's it for GC stability. Keyed on
+    // the resolved peer slot (per-peer state map).
     coop::flashlight_click_sound::PlayIfStateChanged(
-        puppetActor, payload.peerSessionId, newState);
+        puppetActor, senderPeerSlot, newState);
 }
 
-void ApplyToPuppetOrDefer(uint8_t peerSessionId, void* puppetActor,
+void ApplyToPuppetOrDefer(uint8_t senderPeerSlot, void* puppetActor,
                           const coop::net::ItemActivatePayload& p) {
-    if (peerSessionId >= coop::players::kMaxPeers) {
-        UE_LOGW("flashlight: ApplyToPuppetOrDefer peerSessionId=%u out of range -- dropping",
-                static_cast<unsigned>(peerSessionId));
+    if (senderPeerSlot >= coop::players::kMaxPeers) {
+        UE_LOGW("flashlight: ApplyToPuppetOrDefer senderPeerSlot=%u out of range -- dropping",
+                static_cast<unsigned>(senderPeerSlot));
         return;
     }
     if (puppetActor && R::IsLive(puppetActor)) {
         // Puppet is ready -- clear any stale pending entry (defensive:
         // a fresh apply supersedes a still-pending one) + apply now.
-        g_pendingApplyValid[peerSessionId] = false;
-        ApplyToPuppet(puppetActor, p);
+        g_pendingApplyValid[senderPeerSlot] = false;
+        ApplyToPuppet(puppetActor, p, senderPeerSlot);
         return;
     }
     // Puppet not ready yet -- stash latest-wins. The TickConnect pump
     // will pick it up once the registry has a puppet for this peer.
-    g_pendingApplyPayload[peerSessionId] = p;
-    g_pendingApplyValid[peerSessionId] = true;
-    UE_LOGI("flashlight: ApplyToPuppetOrDefer puppet not ready for peer=%u -- "
-            "stashing (state=%d Intensity=%.2f)",
-            static_cast<unsigned>(peerSessionId), p.state, p.intensity);
+    g_pendingApplyPayload[senderPeerSlot] = p;
+    g_pendingApplyValid[senderPeerSlot] = true;
+    UE_LOGI("flashlight: ApplyToPuppetOrDefer puppet not ready for peerSlot=%u "
+            "(senderElementId=0x%08x) -- stashing (state=%d Intensity=%.2f)",
+            static_cast<unsigned>(senderPeerSlot), p.senderElementId,
+            p.state, p.intensity);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -688,8 +702,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
     g_lastSentSig.store(storeSig, std::memory_order_release);
     UE_LOGI("flashlight: connect-broadcast slot=%d sent state=%d Intensity=%.2f "
-            "outerCone=%.1f mode=%u peer=%u",
-            peerSlot, p.state, p.intensity, p.outerConeAngle, p.mode, p.peerSessionId);
+            "outerCone=%.1f mode=%u senderElementId=0x%08x",
+            peerSlot, p.state, p.intensity, p.outerConeAngle, p.mode, p.senderElementId);
 }
 
 void TickConnect() {
@@ -708,9 +722,11 @@ void TickConnect() {
         if (!puppet || !R::IsLive(puppet)) continue;
         coop::net::ItemActivatePayload p = g_pendingApplyPayload[peer];
         g_pendingApplyValid[peer] = false;
-        UE_LOGI("flashlight: draining deferred apply for peer=%u (state=%d Intensity=%.2f)",
-                static_cast<unsigned>(peer), p.state, p.intensity);
-        ApplyToPuppet(puppet, p);
+        UE_LOGI("flashlight: draining deferred apply for peerSlot=%u "
+                "(senderElementId=0x%08x state=%d Intensity=%.2f)",
+                static_cast<unsigned>(peer), p.senderElementId,
+                p.state, p.intensity);
+        ApplyToPuppet(puppet, p, peer);
     }
 }
 

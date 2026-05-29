@@ -2,6 +2,7 @@
 
 #include "coop/weather_sync.h"
 
+#include "coop/element/element.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
@@ -121,7 +122,16 @@ void* ResolveCycle() {
 bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {
     if (!cycle || !R::IsLive(cycle)) return false;
     out = {};
-    out.peerSessionId = 0;  // host stamps 0 (we're only called on host)
+    // v13 (A4 2026-05-29): stamp host's local Player Element id (we're
+    // only called on host). 0 if host hasn't allocated its Element yet
+    // (boot/seed window before SetLocalPeerId fires); receiver falls back
+    // to msg.senderPeerSlot trust-bound check in that case.
+    {
+        const coop::element::ElementId selfEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        out.senderElementId =
+            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    }
 
     const uint8_t* base = reinterpret_cast<uint8_t*>(cycle);
     const bool isRaining       = *reinterpret_cast<const bool*>(base + P::off::AdaynightCycle_isRaining);
@@ -150,8 +160,9 @@ bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {
 }
 
 uint64_t SignaturePayload(const coop::net::WeatherStatePayload& p) {
-    // FNV1a over the mutable fields (flags + 4 floats). peerSessionId is
-    // constant (= 0); _pad is constant (= 0). Same shape as item_activate's
+    // FNV1a over the mutable fields (flags + 4 floats). senderElementId
+    // is constant for the session (host's local Player Element id);
+    // _pad is constant (= 0). Same shape as item_activate's
     // SignaturePayload.
     uint64_t h = 0xcbf29ce484222325ULL;
     auto mix = [&](uint64_t v) { h ^= v; h *= 0x100000001b3ULL; };
@@ -630,13 +641,12 @@ void OnDisconnect() {
 }
 
 void ApplyFromHost(const coop::net::WeatherStatePayload& payload) {
-    // Defensive: only the host sends weather. A client peer sending one would
-    // mean a protocol violation; drop.
-    if (payload.peerSessionId != 0) {
-        UE_LOGW("weather: ApplyFromHost peerSessionId=%u != 0 (host) -- dropping",
-                static_cast<unsigned>(payload.peerSessionId));
-        return;
-    }
+    // v13 (A4 2026-05-29): the "is the sender host?" trust-bound check
+    // moved up into event_feed::Update's WeatherState dispatcher (it
+    // validates msg.senderPeerSlot == 0 before posting here). The
+    // payload's senderElementId is host's local Player Element id; we
+    // keep it on the payload for cross-cutting (logging, future
+    // syncContext byte under B1).
     // g_installed gate: TryResolveAllFunctions requires all 11 UFunctions
     // (5 scheduler + 6 mutator) to be resolved before flipping g_installed.
     // If a WeatherState packet arrives while we're still resolving (e.g.

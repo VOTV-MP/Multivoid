@@ -8,12 +8,15 @@
 // The Player Element does NOT own the engine actor or the `coop::RemotePlayer`
 // puppet object -- those stay in `coop::players::Registry` and `harness.cpp`
 // respectively. The Element carries:
-//   - `m_peerSlot` (uint8_t): the legacy peer-slot id [0, kMaxPeers). Wire
-//     payloads still use `peerSessionId` (uint8_t) -- this slot is the same
-//     value, kept on the Element for human-readable diagnostic logs +
-//     compatibility while the v12 protocol bump (rename to ElementId) is
-//     still queued. `PeerSlot()` is the accessor; `m_id` (Element::GetId())
-//     is the unified ElementId.
+//   - `m_peerSlot` (uint8_t): the legacy peer-slot id [0, kMaxPeers). Kept on
+//     the Element for diagnostic logs and as the routing key into per-puppet
+//     state maps (item_activate's pending-apply table, flashlight_click_sound's
+//     last-state array, nameplate's nick slots). After A4 (v13 protocol bump
+//     2026-05-29) wire packets carry `senderElementId` (uint32_t) instead of
+//     `peerSessionId`; the receiver resolves senderElementId via
+//     `coop::element::Registry::Get` -> `coop::element::Player*` and reads
+//     `PeerSlot()` to feed those existing per-peerSlot maps. `m_id`
+//     (Element::GetId()) is the wire-side unified ElementId.
 //   - `m_puppet` (RemotePlayer*): the puppet for this peer, OR nullptr for
 //     the local peer's own Player Element (the local doesn't have a puppet
 //     -- it IS the local player).
@@ -40,6 +43,7 @@
 #include <cstdint>
 
 namespace coop { class RemotePlayer; }
+namespace coop::players { class Registry; }
 
 namespace coop::element {
 
@@ -55,6 +59,15 @@ public:
     bool                 IsLocal() const  { return m_puppet == nullptr; }
 
 private:
+    // A4 (2026-05-29): puppet pointer is mutable so the players::Registry
+    // can bind a real puppet onto a MIRROR Player Element that was created
+    // before RegisterPuppet ran. This avoids dropping the mirror (and its
+    // wire-bound ElementId) when the AssignPeerSlot/Join handshake landed
+    // before the puppet's first PoseSnapshot did. Only `Registry` is
+    // expected to drive this transition.
+    friend class coop::players::Registry;
+    void SetPuppet_(coop::RemotePlayer* p) { m_puppet = p; }
+
     uint8_t              m_peerSlot;
     coop::RemotePlayer*  m_puppet;  // nullptr for the local peer
 };

@@ -13,9 +13,13 @@
 //
 // Gated on state CHANGE only: hold-F mode-change packets keep state=on
 // and mutate cones, but MUST NOT produce a click. Per-peer last-applied
-// state tracked in a fixed-size array keyed on peerSessionId
-// (kMaxPeers=4) -- NOT raw puppet pointers (audit fix: would dangle
-// after disconnect+respawn for the same peer slot).
+// state tracked in a fixed-size array keyed on peer slot (kMaxPeers=4) --
+// NOT raw puppet pointers (audit fix: would dangle after disconnect+
+// respawn for the same peer slot). v13 (A4 2026-05-29): the caller now
+// resolves the peer slot from the wire packet's senderElementId via
+// element::Registry::Get -> Player::PeerSlot; this entry point keeps the
+// uint8_t peer-slot interface so the per-peer state map indexing stays
+// O(1) and the dangle-immune semantics unchanged.
 //
 // Game thread only -- the reflection calls (FindObject, ParamFrame,
 // PlaySoundAtLocation) touch UObject memory directly.
@@ -28,10 +32,10 @@ namespace coop::flashlight_click_sound {
 
 // Apply the click sound effect for a wire packet's just-applied state on
 // the given puppet. If `newState` matches the LAST applied state for
-// `peerSessionId`, this is a no-op (the packet was a mode-change, not a
+// `peerSlot`, this is a no-op (the packet was a mode-change, not a
 // state-change). Otherwise resolves cached UFunction pointers + sound
 // asset + attenuation override on first use, then dispatches
 // PlaySoundAtLocation. Game thread only.
-void PlayIfStateChanged(void* puppetActor, uint8_t peerSessionId, bool newState);
+void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState);
 
 }  // namespace coop::flashlight_click_sound

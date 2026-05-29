@@ -41,16 +41,22 @@ void Install(coop::net::Session* session);
 // puppetActor = the mainPlayer_C orphan we already spawned for that peer.
 // Payload carries: state (on/off), intensity, outer/inner cone angles,
 // mode byte. classHash distinguishes flashlight vs future radio/torch
-// payloads -- mismatched classes no-op. Game thread only.
-void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& p);
+// payloads -- mismatched classes no-op. `senderPeerSlot` is the resolved
+// sender peer slot (from event_feed's Registry::Get(senderElementId)
+// lookup, with senderPeerSlot fallback when the mirror isn't yet
+// established); used by the click-sound state map and per-peer logging.
+// Game thread only.
+void ApplyToPuppet(void* puppetActor, const coop::net::ItemActivatePayload& p,
+                   uint8_t senderPeerSlot);
 
 // Phase 5F Inc5 (connect-time replay) receiver entry: if `puppetActor`
 // is valid, applies immediately (= ApplyToPuppet). Otherwise stashes
-// the latest payload in a per-peer slot keyed by `peerSessionId`. The
+// the latest payload in a per-peer slot keyed by `senderPeerSlot`. The
 // stashed payload is drained on the next TickConnect() call once the
 // puppet has been spawned. Latest-wins -- a newer ItemActivate
-// overrides a still-pending older one. Game thread only.
-void ApplyToPuppetOrDefer(uint8_t peerSessionId, void* puppetActor,
+// overrides a still-pending older one. `senderPeerSlot` is the resolved
+// sender peer slot (see ApplyToPuppet above). Game thread only.
+void ApplyToPuppetOrDefer(uint8_t senderPeerSlot, void* puppetActor,
                           const coop::net::ItemActivatePayload& p);
 
 // Per-slot connect-time flashlight replay. Snapshots the LOCAL

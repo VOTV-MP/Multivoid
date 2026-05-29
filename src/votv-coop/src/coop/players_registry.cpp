@@ -10,7 +10,22 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <atomic>
 #include <string>
+
+namespace {
+// A4 audit finding 2026-05-29 (CRITICAL #1): the AssignPeerSlot stamp in
+// coop/net/session.cpp::HandleConnStatusChanged runs on the GNS net thread,
+// not the game thread. Reading through the non-atomic
+// `unique_ptr<Player>` in `playerBySlot_[localPeerId_]` from that thread
+// is data-race UB even though the underlying ElementId is naturally
+// uint32-atomic on x86-64. Fix: mirror the local Element id into an
+// atomic latch, written from the game thread on alloc/free and read
+// lock-free from any thread by `Registry::LocalPlayerElementId()`.
+std::atomic<coop::element::ElementId> g_localPlayerEidAtomic{
+    coop::element::kInvalidId
+};
+}  // namespace
 
 namespace coop::players {
 
@@ -135,6 +150,80 @@ coop::element::Player* Registry::GetPlayerElement(uint8_t peerSlot) {
     return playerBySlot_[peerSlot].get();
 }
 
+coop::element::ElementId Registry::LocalPlayerElementId() const {
+    // Lock-free atomic read so callers from non-game threads (notably the
+    // GNS net-thread AssignPeerSlot stamp in session.cpp) get a well-
+    // defined value. The atomic is published from EnsurePlayerElement_ /
+    // DropPlayerElement_ under the game-thread invariant. See namespace
+    // comment at top of file for the audit context.
+    return g_localPlayerEidAtomic.load(std::memory_order_acquire);
+}
+
+bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
+                                       coop::element::ElementId wireEid) {
+    if (peerSlot >= kMaxPeers) {
+        UE_LOGW("players::Registry: EstablishMirrorForSlot peerSlot=%u out of range "
+                "(max=%u) -- dropping",
+                static_cast<unsigned>(peerSlot), static_cast<unsigned>(kMaxPeers));
+        return false;
+    }
+    if (wireEid == coop::element::kInvalidId || wireEid == 0u) {
+        UE_LOGW("players::Registry: EstablishMirrorForSlot peerSlot=%u "
+                "wireEid=0x%08x is invalid sentinel -- dropping",
+                static_cast<unsigned>(peerSlot), wireEid);
+        return false;
+    }
+    // Idempotent: if the slot already carries an Element whose id matches
+    // wireEid, nothing to do. AssignPeerSlot is sent once but a reconnect
+    // edge could legitimately re-fire; treat duplicates as no-ops.
+    if (auto* existing = playerBySlot_[peerSlot].get()) {
+        if (existing->GetId() == wireEid && existing->IsMirror()) {
+            return true;
+        }
+    }
+    // Snapshot the puppet pointer the OLD Element carried (if any) so the
+    // new MIRROR Player Element preserves the puppet binding for downstream
+    // code (RemotePlayer* lookups via Puppet()). The local-slot mirror call
+    // (puppet was always nullptr for the local) preserves nullptr correctly.
+    coop::RemotePlayer* puppet = nullptr;
+    if (auto* existing = playerBySlot_[peerSlot].get()) {
+        puppet = existing->Puppet();
+    }
+    // Drop the locally-allocated placeholder (returns its eid to the
+    // appropriate free stack via ~Element -> Registry::FreeId).
+    DropPlayerElement_(peerSlot);
+    // Build the mirror element, then register it at wireEid. RegisterMirror
+    // pattern per [[feedback-registry-register-mirror-pattern]]: install in
+    // the slot map FIRST, then RegisterMirror; on failure drain the slot
+    // outside the lock so ~Element early-returns (m_id stayed kInvalidId).
+    auto mirror = std::make_unique<coop::element::Player>(peerSlot, puppet);
+    coop::element::Player* raw = mirror.get();
+    playerBySlot_[peerSlot] = std::move(mirror);
+    auto& reg = coop::element::Registry::Get();
+    if (!reg.RegisterMirror(wireEid, raw)) {
+        UE_LOGW("players::Registry: EstablishMirrorForSlot peerSlot=%u "
+                "RegisterMirror(0x%08x) failed -- dropping placeholder",
+                static_cast<unsigned>(peerSlot), wireEid);
+        // Slot collision or out-of-range. Drain the slot so the failed
+        // mirror's destructor sees m_id == kInvalidId and early-returns
+        // without touching element::Registry (no double-free).
+        playerBySlot_[peerSlot].reset();
+        return false;
+    }
+    // Defensive: if the local slot ever gets mirrored (not done today --
+    // EstablishMirrorForSlot is called for remote slots only), publish
+    // the mirror's wireEid into the cross-thread atomic snapshot for
+    // consistency with EnsurePlayerElement_'s publish.
+    if (peerSlot == localPeerId_) {
+        g_localPlayerEidAtomic.store(wireEid, std::memory_order_release);
+    }
+    UE_LOGI("players::Registry: established MIRROR Player Element eid=0x%08x "
+            "for peerSlot=%u (puppet=%p; isHostRange=%s)",
+            wireEid, static_cast<unsigned>(peerSlot), puppet,
+            coop::element::Registry::IsHostId(wireEid) ? "yes" : "no");
+    return true;
+}
+
 void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet) {
     if (peerSlot >= kMaxPeers) return;
     // Idempotent: if an Element already exists with the same (peerSlot, puppet)
@@ -142,6 +231,19 @@ void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet
     // re-invoke this every tick.
     if (auto* existing = playerBySlot_[peerSlot].get()) {
         if (existing->PeerSlot() == peerSlot && existing->Puppet() == puppet) {
+            return;
+        }
+        // A4 (2026-05-29): mirror Player Elements are wire-authoritative
+        // (bound to the SENDER's allocation id). If the AssignPeerSlot /
+        // Join handshake established a mirror before RegisterPuppet ran,
+        // drop+realloc here would destroy the wire binding and the next
+        // ItemActivate/Weather/etc. packet's Registry::Get(senderElementId)
+        // would fail to resolve. Bind the puppet pointer in place instead.
+        if (existing->IsMirror()) {
+            existing->SetPuppet_(puppet);
+            UE_LOGI("players::Registry: bound puppet=%p to existing MIRROR "
+                    "Player Element eid=0x%08x peerSlot=%u",
+                    puppet, existing->GetId(), static_cast<unsigned>(peerSlot));
             return;
         }
         // Mismatch: same slot but different puppet (e.g. local re-allocated
@@ -171,6 +273,11 @@ void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet
         return;
     }
     playerBySlot_[peerSlot] = std::move(el);
+    // Publish the local-slot eid to the cross-thread atomic snapshot so
+    // net-thread readers (AssignPeerSlot stamp) see it lock-free.
+    if (peerSlot == localPeerId_) {
+        g_localPlayerEidAtomic.store(eid, std::memory_order_release);
+    }
     UE_LOGI("players::Registry: allocated Player Element eid=%u for peerSlot=%u "
             "(puppet=%p; local=%s; role=%s)",
             eid, peerSlot, puppet, puppet ? "no" : "yes",
@@ -181,6 +288,14 @@ void Registry::DropPlayerElement_(uint8_t peerSlot) {
     if (peerSlot >= kMaxPeers) return;
     if (!playerBySlot_[peerSlot]) return;
     const auto eid = playerBySlot_[peerSlot]->GetId();
+    // Clear the cross-thread atomic snapshot BEFORE the dtor fires so a
+    // concurrent net-thread reader can't observe an eid that's about to
+    // be freed. Only the local slot is published; other slots aren't
+    // mirrored into the atomic.
+    if (peerSlot == localPeerId_) {
+        g_localPlayerEidAtomic.store(coop::element::kInvalidId,
+                                     std::memory_order_release);
+    }
     // unique_ptr reset -> destructor -> element::Registry::FreeId.
     // No shared lock with element::Registry; the destructor will acquire
     // element::Registry::m_mutex briefly. Safe here on the game thread.

@@ -2,8 +2,10 @@
 
 #include "coop/weather_redsky.h"
 
+#include "coop/element/element.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -64,7 +66,13 @@ void OnSpawnRedSkyPost(void* self, void* /*function*/, void* /*params*/) {
     if (s->role() != coop::net::Role::Host) return;
 
     coop::net::RedSkyPayload p{};
-    p.peerSessionId = 0;
+    // v13 (A4 2026-05-29): host stamps its own local Player Element id.
+    {
+        const coop::element::ElementId selfEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        p.senderElementId =
+            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    }
     p.state = 1;  // spawnRedSky == turning red ON
     const bool sent = s->SendReliable(
         coop::net::ReliableKind::RedSky, &p, sizeof(p));
@@ -97,7 +105,13 @@ void OnRedSkyEventSetPost(void* self, void* /*function*/, void* params) {
         reinterpret_cast<const uint8_t*>(params) + sIsredOff);
 
     coop::net::RedSkyPayload p{};
-    p.peerSessionId = 0;
+    // v13 (A4 2026-05-29): host stamps its own local Player Element id.
+    {
+        const coop::element::ElementId selfEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        p.senderElementId =
+            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    }
     p.state = isred ? 1 : 0;
     const bool sent = s->SendReliable(
         coop::net::ReliableKind::RedSky, &p, sizeof(p));
@@ -232,11 +246,9 @@ void Apply(const coop::net::RedSkyPayload& payload) {
         UE_LOGW("weather: red-sky Apply off-game-thread -- dropping");
         return;
     }
-    if (payload.peerSessionId != 0) {
-        UE_LOGW("weather: red-sky Apply peerSessionId=%u != 0 -- dropping",
-                static_cast<unsigned>(payload.peerSessionId));
-        return;
-    }
+    // v13 (A4 2026-05-29): the "is sender host?" trust-bound check moved
+    // up into event_feed::Update's RedSky dispatcher (validates
+    // msg.senderPeerSlot == 0 before posting here).
     if (!TryResolve() || !g_spawnRedSkyFn) {
         UE_LOGW("weather: red-sky Apply spawnRedSky UFunction not yet resolved -- dropping");
         return;

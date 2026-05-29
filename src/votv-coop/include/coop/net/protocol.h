@@ -90,7 +90,26 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // Registry::Get(eid) resolves to the wire-identity's actor on both sides.
 // EntitySpawn / EntityDestroy still host-range only (NPC sync is host-
 // authoritative; clients never broadcast NPC entity packets).
-inline constexpr uint16_t kProtocolVersion = 12;
+//
+// v13 (2026-05-29) -- A4 Player Element wire migration:
+//   - AssignPeerSlotPayload gains `hostElementId` (uint32, grows 4->8B).
+//     Host stamps its local Player Element id; client RegisterMirrors
+//     it in slot 0 so subsequent packets bearing host's senderElementId
+//     resolve to a Player on the client side via Registry::Get.
+//   - Join payload prepends `uint32 senderElementId` before the existing
+//     [uint8 nicklen][nick bytes] format (grows by 4 bytes). Receiver
+//     RegisterMirrors that eid in the sender's puppet slot.
+//   - ItemActivatePayload, WeatherStatePayload, RedSkyPayload,
+//     LightningStrikePayload: `peerSessionId` (uint8) field RETIRED in
+//     favor of `senderElementId` (uint32). Sender stamps own local
+//     Player Element id; receivers resolve via
+//     coop::element::Registry::Get -> Player::PeerSlot() for routing,
+//     compare against own local Element id for self-echo guard, and
+//     (Weather/RedSky/Lightning) validate PeerSlot()==0 for host trust-
+//     boundary. Element mirror creation handshake lives in AssignPeerSlot
+//     + Join above. ItemActivatePayload grows 24->28B; WeatherStatePayload
+//     20->24B; RedSky + LightningStrike stay the same total size.
+inline constexpr uint16_t kProtocolVersion = 13;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -113,7 +132,15 @@ enum class MsgType : uint8_t {
 // Join announces a player (its nickname) so the peer can post "<nick> joined" and
 // label the remote player. (Chat text is a future ReliableKind.)
 enum class ReliableKind : uint8_t {
-    Join = 1,         // payload: [uint8 len][len bytes UTF-8 nickname]
+    Join = 1,         // v13 payload: [uint32 senderElementId][uint8 nicklen][nick UTF-8].
+                      //     senderElementId is the SENDER's local Player Element id
+                      //     (host range from host; peer range from client). Receiver
+                      //     RegisterMirrors that id in the sender's puppet slot via
+                      //     players::Registry::EstablishMirrorForSlot, then SetNickname
+                      //     on the puppet. Pre-v13 layout was [uint8 nicklen][nick];
+                      //     the protocol bump enforces v13-only at ParseHeader so a
+                      //     stale pre-v13 Join can't slip through with a misaligned
+                      //     nicklen interpreted as the high byte of a senderElementId.
     PropRelease = 2,  // v5: host released a held prop. Payload: PropReleasePayload
                       //     (WireKey + FVector linVel cm/s + FVector angVel deg/s).
                       //     Receiver: SetSimulatePhysics(true) +
@@ -232,14 +259,16 @@ enum class ReliableKind : uint8_t {
                        //     (Case b per the RE doc -- the world light cone is
                        //     mainPlayer_C::light_R, NOT a component on the item
                        //     actor). itemClassHash distinguishes flashlight vs
-                       //     radio vs torch etc.; peerSessionId identifies the
-                       //     puppet whose state changes; actorKeyHash carries
-                       //     the Aprop_C::Key hash for Case-a world props
-                       //     (radio, torch, lamp) and is 0 for Case-b player-
-                       //     equipment items. Reserved IDs 9-11 are queued for
-                       //     Phase 5D DoorState/LightState/LockState (RE doc
-                       //     landed earlier; impl pending).
-                       //     Payload: ItemActivatePayload (24 bytes -- v6).
+                       //     radio vs torch etc.; senderElementId (v13 -- was
+                       //     peerSessionId) identifies the sender's Player
+                       //     Element via Registry::Get -> PeerSlot for puppet
+                       //     routing; actorKeyHash carries the Aprop_C::Key
+                       //     hash for Case-a world props (radio, torch, lamp)
+                       //     and is 0 for Case-b player-equipment items.
+                       //     Reserved IDs 9-11 are queued for Phase 5D
+                       //     DoorState/LightState/LockState (RE doc landed
+                       //     earlier; impl pending).
+                       //     Payload: ItemActivatePayload (28 bytes -- v13).
     AssignPeerSlot = 18, // v11: host-only send right after the Connected
                        //     callback fires on the host. Tells the
                        //     freshly-connected client which peer slot
@@ -248,10 +277,15 @@ enum class ReliableKind : uint8_t {
                        //     receives -> calls
                        //     coop::players::Registry::SetLocalPeerId
                        //     so subsequent outbound messages stamp the
-                       //     correct peerSessionId (e.g. ItemActivate's
-                       //     self-echo guard in N-peer scope). Audit
-                       //     finding #9. Payload:
-                       //     AssignPeerSlotPayload (4 bytes).
+                       //     correct senderElementId for self-echo guards
+                       //     in N-peer scope. Audit finding #9.
+                       //     v13 (A4 2026-05-29): payload grew to 8B to
+                       //     additionally carry the HOST's local Player
+                       //     Element id. Client RegisterMirrors that id
+                       //     in slot 0 so wire packets stamped with host
+                       //     senderElementId resolve to a Player Element
+                       //     via Registry::Get on the client. Payload:
+                       //     AssignPeerSlotPayload (8 bytes).
     // Slots 16/17 (NonPropEntityState/Destroy) retired 2026-05-27 -- the
     // chipPile/clump/trashBitsPile families now ride the existing Aprop_C
     // pipeline (PropSpawn / PropDestroy / PropPose / PropRelease) via the
@@ -600,17 +634,26 @@ static_assert(sizeof(TeleportClientPayload) <= 256 - 20 - 8,
 //   is carried for future telemetry / non-cone effects).
 struct ItemActivatePayload {
     uint32_t itemClassHash;   // CRC32 of item UClass FName string (cross-peer stable)
-    uint8_t  peerSessionId;   // sender peer id (host=0, joiners 1..)
+    // v13 (A4 2026-05-29): was `uint8_t peerSessionId`. Now sender's
+    // local Player Element id (host range from host, peer range from
+    // client). Receiver resolves via coop::element::Registry::Get ->
+    // coop::element::Player::PeerSlot() for routing into the per-puppet
+    // pending-apply state map; compares to own local Player Element id
+    // for the self-echo guard. 0 = "sender had no Player Element yet"
+    // (boot/seed window before handshake completed); receiver falls
+    // back to msg.senderPeerSlot for routing in that case.
+    uint32_t senderElementId;
     uint8_t  state;           // 0 = off / inactive, 1 = on / active
     uint8_t  flags;           // bit0: has_actor_key (1 = use actorKeyHash)
     uint8_t  mode;            // v6: mp.flashlightMode (0=default spread, 1=focused, ...)
+    uint8_t  _pad;            // v13: alignment for actorKeyHash
     uint32_t actorKeyHash;    // CRC32(Aprop_C::Key string) when flags.has_actor_key=1; 0 otherwise
     float    intensity;       // v6: light_R.Intensity AFTER BP ran (Unitless scale ~0..10)
     float    outerConeAngle;  // v6: light_R.OuterConeAngle (degrees; ~40 default, ~12 focused)
     float    innerConeAngle;  // v6: light_R.InnerConeAngle (degrees; ~0 default, varies)
 };
-static_assert(sizeof(ItemActivatePayload) == 24,
-              "ItemActivatePayload must be exactly 24 bytes (v6 wire-format)");
+static_assert(sizeof(ItemActivatePayload) == 28,
+              "ItemActivatePayload must be exactly 28 bytes (v13 wire-format)");
 static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
               "ItemActivatePayload must fit in one reliable datagram");
 
@@ -623,20 +666,32 @@ inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 // rest of the codebase (item_activate self-echo guard, future
 // per-puppet addressing) sees the real peer id rather than a hardcoded
 // 1v1 default.
+//
+// v13 (A4 2026-05-29): hostElementId added. Carries the HOST's local
+// Player Element id (host range [1, kHostRangeSize)). The client calls
+// players::Registry::EstablishMirrorForSlot(0, hostElementId) so the
+// host's Player Element is materialized as a MIRROR in the client's
+// element::Registry at the same id the host uses. After mirror
+// creation, Registry::Get(hostElementId) on the client resolves to a
+// coop::element::Player whose PeerSlot()==0. Wire packets bearing the
+// host's senderElementId (ItemActivate / Weather / RedSky / Lightning)
+// can then be routed and trust-validated symmetrically on both peers.
 struct AssignPeerSlotPayload {
-    uint8_t slot;   // 1..kMaxPeers-1
-    uint8_t _pad[3];
+    uint8_t  slot;            // 1..kMaxPeers-1
+    uint8_t  _pad[3];
+    uint32_t hostElementId;   // v13: host's local Player Element id
 };
-static_assert(sizeof(AssignPeerSlotPayload) == 4,
-              "AssignPeerSlotPayload must be exactly 4 bytes");
+static_assert(sizeof(AssignPeerSlotPayload) == 8,
+              "AssignPeerSlotPayload must be exactly 8 bytes (v13)");
 
 // Phase 5W Inc1 (2026-05-26): host-authoritative weather state push. The host
 // reads these fields off the live AdaynightCycle_C after its own scheduler
 // UFunction runs; client receives + applies via the cycle's mutator
 // UFunctions. See protocol.h's ReliableKind::WeatherState doc above and
 // research/findings/votv-weather-DESIGN-2026-05-26.md for the field-by-field
-// derivation. peerSessionId is always 0 (host) in v7; receiver validates and
-// drops non-host senders defensively.
+// derivation. v7 stamped peerSessionId=0 for host validation; v13 (A4)
+// switches to senderElementId resolved via Registry::Get -> Player.PeerSlot
+// for the host trust-boundary check.
 //
 // `flags` bits (mapped one-to-one with the AdaynightCycle_C boolean fields).
 // The receiver applies each by:
@@ -663,15 +718,19 @@ static_assert(sizeof(AssignPeerSlotPayload) == 4,
 // updates. A SEPARATE AdirectionalWind_C::setParameters wire path would
 // be a parallel sync mechanism for the same state (RULE 2 violation).
 struct WeatherStatePayload {
-    uint8_t peerSessionId;       // sender peer id (host=0; receiver drops if !=0)
-    uint8_t flags;               // see bit layout above
-    uint16_t _pad;               // 4-byte align the float block
-    float   rainStrength;        // AdaynightCycle_C::rainStrength @0x0404
-    float   rainLightningChance; // AdaynightCycle_C::rainLightningChance @0x0408
-    float   rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance @0x040C
-    float   rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed @0x041C
+    // v13 (A4 2026-05-29): was uint8_t peerSessionId. Now sender's
+    // local Player Element id. Receiver checks
+    // Registry::Get(senderElementId) -> Player::PeerSlot() == 0 for the
+    // host trust-boundary; drops if mirror missing OR PeerSlot != 0.
+    uint32_t senderElementId;
+    uint8_t  flags;              // see bit layout above
+    uint8_t  _pad[3];            // 4-byte align the float block
+    float    rainStrength;        // AdaynightCycle_C::rainStrength @0x0404
+    float    rainLightningChance; // AdaynightCycle_C::rainLightningChance @0x0408
+    float    rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance @0x040C
+    float    rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed @0x041C
 };
-static_assert(sizeof(WeatherStatePayload) == 20, "WeatherStatePayload must be 20 bytes");
+static_assert(sizeof(WeatherStatePayload) == 24, "WeatherStatePayload must be 24 bytes (v13)");
 static_assert(sizeof(WeatherStatePayload) <= 256 - 20 - 8,
               "WeatherStatePayload must fit in one reliable datagram");
 
@@ -693,11 +752,13 @@ inline constexpr uint8_t kPermanentRain   = 0x80;
 // only registered on the host; client's same observer no-ops on the
 // role check).
 struct RedSkyPayload {
-    uint8_t peerSessionId;   // host=0
-    uint8_t state;           // 0 = revert color curves, 1 = red
-    uint8_t _pad[6];
+    // v13 (A4 2026-05-29): was uint8_t peerSessionId. Now sender's
+    // local Player Element id; receiver validates PeerSlot()==0.
+    uint32_t senderElementId;
+    uint8_t  state;          // 0 = revert color curves, 1 = red
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(RedSkyPayload) == 8, "RedSkyPayload must be 8 bytes");
+static_assert(sizeof(RedSkyPayload) == 8, "RedSkyPayload must be 8 bytes (v13)");
 static_assert(sizeof(RedSkyPayload) <= 256 - 20 - 8,
               "RedSkyPayload must fit in one reliable datagram");
 
@@ -710,11 +771,12 @@ static_assert(sizeof(RedSkyPayload) <= 256 - 20 - 8,
 // + FinishSpawningActor pair pattern (see remote_prop.cpp for the reference).
 // The strike's Timeline self-destructs after ~3s -- no cleanup wire needed.
 struct LightningStrikePayload {
-    uint8_t peerSessionId;   // host=0
-    uint8_t _pad[3];
-    float   locX, locY, locZ; // world cm
+    // v13 (A4 2026-05-29): was uint8_t peerSessionId + 3B pad. Now
+    // sender's local Player Element id; receiver validates PeerSlot()==0.
+    uint32_t senderElementId;
+    float    locX, locY, locZ; // world cm
 };
-static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes");
+static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes (v13)");
 static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
               "LightningStrikePayload must fit in one reliable datagram");
 

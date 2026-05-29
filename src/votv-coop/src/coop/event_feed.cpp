@@ -1,5 +1,6 @@
 #include "coop/event_feed.h"
 
+#include "coop/element/player.h"
 #include "coop/element/registry.h"
 
 #include "coop/item_activate.h"
@@ -183,7 +184,30 @@ void Update(net::Session& session, void* localPlayer) {
         }
         // Per-slot connect edge: send our Join to this slot.
         if (slotConnected && !g_joinSentBySlot[slot]) {
+            // v13 (A4 2026-05-29): hold off on the FIRST Join until our
+            // own Player Element is allocated. Otherwise the Join goes
+            // out with senderElementId=0 and the receiver can't install
+            // a mirror, leaving cross-peer Registry::Get(senderElementId)
+            // unable to resolve for the lifetime of the session (only
+            // disconnect+reconnect would re-fire the Join). The wait is
+            // bounded: client side allocates after AssignPeerSlot lands
+            // (~one extra net pump tick at 125 Hz, ~8 ms). Host side has
+            // its Element allocated at net pump startup so this guard
+            // only briefly skips at boot.
+            const coop::element::ElementId selfEidProbe =
+                coop::players::Registry::Get().LocalPlayerElementId();
+            if (selfEidProbe == coop::element::kInvalidId) {
+                continue;  // retry next tick
+            }
             if (!joinPayloadBuilt) {
+                // v13 prefix: [uint32 senderElementId] then the existing
+                // [uint8 nicklen][nick UTF-8]. Receiver RegisterMirrors
+                // senderElementId into the sender's peer slot so wire
+                // packets bearing senderElementId resolve via
+                // Registry::Get on the receiver.
+                const uint32_t selfEidWire = selfEidProbe;
+                joinPayload.resize(4);
+                std::memcpy(joinPayload.data(), &selfEidWire, 4);
                 std::vector<uint8_t> nickUtf8 = ToUtf8(g_localNick);
                 if (nickUtf8.size() > 200) nickUtf8.resize(200);
                 joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
@@ -214,11 +238,39 @@ void Update(net::Session& session, void* localPlayer) {
                         senderSlot);
                 break;
             }
+            // v13 (A4 2026-05-29): parse [uint32 senderElementId] prefix
+            // then the existing [uint8 nicklen][nick UTF-8]. The protocol
+            // version bump (12->13) at ParseHeader guarantees v12 senders
+            // can't misalign through here -- their packets are rejected
+            // upstream so we never see a pre-A4 [uint8 nicklen]-first
+            // payload here.
+            uint32_t senderElementId = 0;
+            const uint8_t* nickStart = msg.payload;
+            size_t nickRemaining = msg.payloadLen;
+            if (msg.payloadLen >= 4) {
+                std::memcpy(&senderElementId, msg.payload, 4);
+                nickStart += 4;
+                nickRemaining -= 4;
+            } else {
+                UE_LOGW("event_feed: Join payload %zu B too short for v13 "
+                        "senderElementId prefix -- routing fallback",
+                        static_cast<size_t>(msg.payloadLen));
+            }
             std::wstring nick = g_remoteNickBySlot[senderSlot];
-            if (msg.payloadLen > 0) {
-                const int len = msg.payload[0];
-                if (1 + len <= static_cast<int>(msg.payloadLen) && len > 0)
-                    nick = FromUtf8(msg.payload + 1, len);
+            if (nickRemaining > 0) {
+                const int len = nickStart[0];
+                if (1 + len <= static_cast<int>(nickRemaining) && len > 0)
+                    nick = FromUtf8(nickStart + 1, len);
+            }
+            // Install mirror Player Element for this sender so future
+            // ItemActivate/Weather/etc. packets bearing senderElementId
+            // resolve via Registry::Get on this peer. 0 means "no Element
+            // yet"; skip mirror install and fall back to senderPeerSlot
+            // routing per the field's contract.
+            if (senderElementId != 0u &&
+                senderElementId != coop::element::kInvalidId) {
+                coop::players::Registry::Get().EstablishMirrorForSlot(
+                    static_cast<uint8_t>(senderSlot), senderElementId);
             }
             // VT-inspired nickname sanitizer (2026-05-25, see
             // SanitizeNickname doc above). Trust-boundary defense: this
@@ -520,37 +572,82 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<unsigned>(p.state));
                 break;
             }
-            // Self-echo guard: if peerSessionId == our LocalPeerId,
-            // the packet is a loopback bounce. A hardcoded 1v1 selfId
-            // (host=0, client=1) would let two clients with peer-ids
-            // 1 and 2 both self-echo-drop each other's ItemActivate.
-            // Read from the central Registry instead.
-            const uint8_t selfId = coop::players::Registry::Get().LocalPeerId();
-            if (p.peerSessionId == selfId) {
-                UE_LOGI("event_feed: ItemActivate self-echo (peerSessionId=%u) -- dropping",
-                        static_cast<unsigned>(p.peerSessionId));
+            // v13 (A4 2026-05-29): self-echo guard via ElementId equality
+            // (uint32 compare). The wire field is the SENDER's local
+            // Player Element id; if it equals our own local Player
+            // Element id, this packet is a loopback bounce. Audit fix
+            // 2026-05-29 (Finding #2): the peer-slot fallback only fires
+            // when senderElementId is the 0/unset sentinel (boot/seed
+            // pre-handshake sender). With a valid senderElementId, the
+            // ElementId compare is authoritative -- gating the peer-slot
+            // compare on it prevents an N-peer reassignment race from
+            // mis-classifying a legitimate cross-peer packet as a self
+            // loopback (e.g. a packet from a peer at slot X arriving
+            // before our own AssignPeerSlot reassigned us off slot X).
+            const auto selfEid =
+                coop::players::Registry::Get().LocalPlayerElementId();
+            const bool selfEchoByEid =
+                (p.senderElementId != 0u &&
+                 p.senderElementId != coop::element::kInvalidId &&
+                 selfEid != coop::element::kInvalidId &&
+                 p.senderElementId == selfEid);
+            const uint8_t selfPeerId = coop::players::Registry::Get().LocalPeerId();
+            const bool senderElementIdMissing =
+                (p.senderElementId == 0u ||
+                 p.senderElementId == coop::element::kInvalidId);
+            const bool selfEchoByPeerSlotFallback =
+                (senderElementIdMissing &&
+                 msg.senderPeerSlot >= 0 &&
+                 static_cast<uint8_t>(msg.senderPeerSlot) == selfPeerId);
+            if (selfEchoByEid || selfEchoByPeerSlotFallback) {
+                UE_LOGI("event_feed: ItemActivate self-echo "
+                        "(senderElementId=0x%08x senderPeerSlot=%d via=%s) -- dropping",
+                        p.senderElementId, msg.senderPeerSlot,
+                        selfEchoByEid ? "eid" : "peerSlot-fallback");
                 break;
             }
-            // 1v1: the puppet is the only remote. May be null if this
-            // packet beat the first PoseSnapshot (the puppet is spawned
-            // lazily on first pose; ItemActivate rides the reliable
-            // channel and CAN arrive first under a connect-edge burst).
-            // Inc5: hand to ApplyToPuppetOrDefer which stashes the
-            // payload if the puppet isn't ready; TickConnect drains it
-            // once the puppet appears in the registry.
+            // Resolve senderElementId -> peer slot via Registry::Get. Falls
+            // back to msg.senderPeerSlot when the mirror hasn't been
+            // established yet (early boot before Join/AssignPeerSlot landed).
+            uint8_t resolvedSlot = coop::players::kPeerIdUnknown;
+            if (p.senderElementId != 0u &&
+                p.senderElementId != coop::element::kInvalidId) {
+                auto* el = coop::element::Registry::Get().Get(p.senderElementId);
+                if (el && el->GetType() == coop::element::ElementType::Player) {
+                    resolvedSlot =
+                        static_cast<coop::element::Player*>(el)->PeerSlot();
+                }
+            }
+            if (resolvedSlot >= net::kMaxPeers) {
+                if (msg.senderPeerSlot >= 0 &&
+                    msg.senderPeerSlot < net::kMaxPeers) {
+                    resolvedSlot = static_cast<uint8_t>(msg.senderPeerSlot);
+                } else {
+                    UE_LOGW("event_feed: ItemActivate could not resolve sender "
+                            "slot (senderElementId=0x%08x senderPeerSlot=%d) -- dropping",
+                            p.senderElementId, msg.senderPeerSlot);
+                    break;
+                }
+            }
+            // The puppet may be null if this packet beat the first
+            // PoseSnapshot (puppet spawned lazily on first pose; ItemActivate
+            // rides the reliable channel and CAN arrive first under a
+            // connect-edge burst). ApplyToPuppetOrDefer stashes the payload
+            // when the puppet isn't ready; TickConnect drains it once the
+            // puppet appears in the registry.
             //
-            // Audit C1 (2026-05-27): capture peerId only; re-fetch puppet
-            // INSIDE the lambda. Capturing the raw void* here risks UAF
-            // because Destroy() can run on the game thread between this
-            // post and the lambda dispatch, recycling the GUObjectArray
-            // slot.
+            // Audit C1 (2026-05-27): capture only resolvedSlot + payload by
+            // value into the lambda; re-fetch puppet INSIDE the lambda. The
+            // raw void* would risk UAF because Destroy() can run on the
+            // game thread between this post and the lambda dispatch,
+            // recycling the GUObjectArray slot.
             net::ItemActivatePayload pCopy = p;
-            const uint8_t peerId = p.peerSessionId;
-            ue_wrap::game_thread::Post([peerId, pCopy] {
+            const uint8_t peerSlotCopy = resolvedSlot;
+            ue_wrap::game_thread::Post([peerSlotCopy, pCopy] {
                 ::coop::RemotePlayer* rp =
-                    ::coop::players::Registry::Get().Puppet(peerId);
+                    ::coop::players::Registry::Get().Puppet(peerSlotCopy);
                 void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
-                ::coop::item_activate::ApplyToPuppetOrDefer(peerId, puppetNow, pCopy);
+                ::coop::item_activate::ApplyToPuppetOrDefer(peerSlotCopy, puppetNow, pCopy);
             });
             break;
         }
@@ -568,6 +665,14 @@ void Update(net::Session& session, void* localPlayer) {
             std::memcpy(&p, msg.payload, sizeof(p));
             if (session.role() == net::Role::Host) {
                 UE_LOGI("event_feed: RedSky received on host -- dropping");
+                break;
+            }
+            // v13 (A4 2026-05-29): host trust-bound. RedSky is host-only;
+            // a non-host senderPeerSlot is a protocol violation.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: RedSky from non-host senderPeerSlot=%d "
+                        "(senderElementId=0x%08x) -- dropping",
+                        msg.senderPeerSlot, p.senderElementId);
                 break;
             }
             if (p.state != 0 && p.state != 1) {
@@ -598,6 +703,14 @@ void Update(net::Session& session, void* localPlayer) {
             std::memcpy(&p, msg.payload, sizeof(p));
             if (session.role() == net::Role::Host) {
                 UE_LOGI("event_feed: LightningStrike received on host -- dropping");
+                break;
+            }
+            // v13 (A4 2026-05-29): host trust-bound. LightningStrike is
+            // host-only; a non-host senderPeerSlot is a protocol violation.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: LightningStrike from non-host "
+                        "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
+                        msg.senderPeerSlot, p.senderElementId);
                 break;
             }
             // Trust boundary: validate loc finite + within sane bounds.
@@ -634,6 +747,14 @@ void Update(net::Session& session, void* localPlayer) {
             if (session.role() == net::Role::Host) {
                 UE_LOGI("event_feed: WeatherState received on host -- dropping "
                         "(host is the authority; no inbound from client)");
+                break;
+            }
+            // v13 (A4 2026-05-29): host trust-bound. WeatherState is
+            // host-only; a non-host senderPeerSlot is a protocol violation.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: WeatherState from non-host "
+                        "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
+                        msg.senderPeerSlot, p.senderElementId);
                 break;
             }
             // Trust-boundary: validate floats finite + within sane range.
@@ -691,6 +812,26 @@ void Update(net::Session& session, void* localPlayer) {
             coop::players::Registry::Get().SetLocalPeerId(p.slot);
             UE_LOGI("event_feed: host assigned us peer slot %u (Registry::LocalPeerId now %u)",
                     p.slot, coop::players::Registry::Get().LocalPeerId());
+            // v13 (A4 2026-05-29): if the host included its Player Element
+            // id, install a mirror in slot 0 so subsequent wire packets
+            // carrying host's senderElementId resolve via Registry::Get on
+            // this client. hostElementId == 0 or kInvalidId means the host
+            // hadn't allocated its Element yet -- skip mirror install; the
+            // receivers will fall back to senderPeerSlot routing.
+            if (p.hostElementId != 0u &&
+                p.hostElementId != coop::element::kInvalidId) {
+                if (!coop::element::Registry::IsHostId(p.hostElementId)) {
+                    UE_LOGW("event_feed: AssignPeerSlot hostElementId=0x%08x is "
+                            "not in host range -- dropping mirror install",
+                            p.hostElementId);
+                } else {
+                    coop::players::Registry::Get().EstablishMirrorForSlot(
+                        coop::players::kPeerIdHost, p.hostElementId);
+                }
+            } else {
+                UE_LOGI("event_feed: AssignPeerSlot host had no Element id yet "
+                        "(boot/seed race) -- routing will use senderPeerSlot");
+            }
             break;
         }
         default: {

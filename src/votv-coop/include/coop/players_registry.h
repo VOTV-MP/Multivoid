@@ -34,6 +34,8 @@
 
 #pragma once
 
+#include "coop/element/element.h"
+
 #include <cstdint>
 #include <memory>
 
@@ -104,6 +106,39 @@ public:
     // subsystem addressing (event_feed dispatch, late-joiner snapshot, etc).
     // Game thread only.
     coop::element::Player* GetPlayerElement(uint8_t peerSlot);
+
+    // Convenience: the LOCAL peer's Player Element id, or
+    // coop::element::kInvalidId if not yet allocated (boot/seed window).
+    // Use this to stamp `senderElementId` on outbound wire packets
+    // (ItemActivate / Weather / RedSky / Lightning under v13). Safe to
+    // call from any thread that touches the registry on the game thread;
+    // intentionally a snapshot read with no internal locking (Element
+    // ids are atomic-write on alloc / atomic-write on free, the worst
+    // tearing window is the boot moment where a half-published Element
+    // could carry kInvalidId, which the caller skips anyway).
+    coop::element::ElementId LocalPlayerElementId() const;
+
+    // ---- A4 (2026-05-29) mirror exchange for wire-side ElementId ----
+
+    // Wire-driven mirror creation. Called by receivers of the connect-edge
+    // handshake (event_feed.cpp's AssignPeerSlot + Join handlers) once the
+    // remote peer's local Player Element id is known. The receiver drops
+    // any locally-allocated placeholder Player Element in `peerSlot` (the
+    // one created by RegisterPuppet or SetLocalPeerId before the handshake
+    // resolved the cross-peer id) and installs a MIRROR Player Element at
+    // `wireEid` via coop::element::Registry::RegisterMirror.
+    //
+    // The puppet pointer for `peerSlot` is preserved (snapshot before
+    // drop / restored after install) so PuppetByPeer_(peerSlot) still
+    // returns the right RemotePlayer*. For the local slot's mirror call
+    // (host eid received by the client), the puppet pointer stays nullptr
+    // (the local has no puppet).
+    //
+    // Returns true on successful mirror install. Returns false if
+    // wireEid is kInvalidId / 0 / out of range, or if Registry::RegisterMirror
+    // failed (slot collision -- duplicate handshake or wire-id reuse bug
+    // upstream). Game thread only.
+    bool EstablishMirrorForSlot(uint8_t peerSlot, coop::element::ElementId wireEid);
 
 private:
     // Element shadow lifetime helpers (file-local; see .cpp).

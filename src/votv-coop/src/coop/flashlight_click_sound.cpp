@@ -21,12 +21,12 @@ namespace {
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 
-// Per-peer last-applied state. Keyed on peerSessionId NOT raw puppet
-// pointer (the pointer would dangle after disconnect + respawn for the
-// same peer slot). Sized to coop::players::kMaxPeers so a future bump
-// of the central constant propagates here automatically (the prior
-// local `kMaxPeers = 4` hardcode silently capped at 4 regardless).
-// -1 = no apply yet (first packet's state always differs -> click plays).
+// Per-peer last-applied state. Keyed on peerSlot NOT raw puppet pointer
+// (the pointer would dangle after disconnect + respawn for the same peer
+// slot). Sized to coop::players::kMaxPeers so a future bump of the central
+// constant propagates here automatically (the prior local `kMaxPeers = 4`
+// hardcode silently capped at 4 regardless). -1 = no apply yet (first
+// packet's state always differs -> click plays).
 //
 // ApplyToPuppet (the only caller) runs on the game thread via GT::Post
 // so plain int is safe -- no atomic needed.
@@ -38,7 +38,7 @@ std::array<int, coop::players::kMaxPeers> g_lastAppliedStateByPeer = []{
 
 }  // namespace
 
-void PlayIfStateChanged(void* puppetActor, uint8_t peerSessionId, bool newState) {
+void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
     if (!puppetActor) return;
 
     // 1) State-change gate: skip if state matches last apply for this peer.
@@ -46,14 +46,14 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSessionId, bool newState)
     //    MUST NOT click. Press-F toggles always pass.
     const int curState = newState ? 1 : 0;
     bool stateChanged = false;
-    if (peerSessionId < coop::players::kMaxPeers) {
-        stateChanged = (g_lastAppliedStateByPeer[peerSessionId] != curState);
-        g_lastAppliedStateByPeer[peerSessionId] = curState;
+    if (peerSlot < coop::players::kMaxPeers) {
+        stateChanged = (g_lastAppliedStateByPeer[peerSlot] != curState);
+        g_lastAppliedStateByPeer[peerSlot] = curState;
     } else {
-        // Out-of-range peer id (defensive). Treat every apply as a state
+        // Out-of-range peer slot (defensive). Treat every apply as a state
         // change so we still click; the array is sized to the central
         // coop::players::kMaxPeers so this branch only fires on a
-        // legitimately invalid peerSessionId.
+        // legitimately invalid peerSlot.
         stateChanged = true;
     }
     if (!stateChanged) return;

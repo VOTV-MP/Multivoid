@@ -47,6 +47,8 @@
 
 #include "coop/net/session.h"
 
+#include "coop/element/element.h"
+#include "coop/players_registry.h"
 #include "ue_wrap/log.h"
 
 #pragma warning(push)
@@ -273,10 +275,24 @@ void Session::HandleConnStatusChanged(void* info) {
         if (cfg_.role == Role::Host) {
             AssignPeerSlotPayload p{};
             p.slot = static_cast<uint8_t>(slot);
+            // v13 (A4 2026-05-29): stamp the host's local Player Element id
+            // so the client can RegisterMirror it in slot 0. Read is from
+            // the net thread (this callback fires off ReceiveMessagesOnPoll
+            // / SteamNetworkingSockets thread), not the game thread; the
+            // host's slot-0 Element is allocated by net_pump.cpp every tick
+            // (idempotent) and stays for the session lifetime, so this read
+            // is well-defined unless the client connects in the
+            // ~tens-of-ms boot window before the first net pump tick --
+            // in which case the read returns kInvalidId, and the client
+            // receiver falls back to non-mirror routing (the field's
+            // contract documents 0/kInvalidId as "sender had no Element").
+            p.hostElementId =
+                coop::players::Registry::Get().LocalPlayerElementId();
             if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
                 UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
             } else {
-                UE_LOGI("net: sent AssignPeerSlot=%d to client", slot);
+                UE_LOGI("net: sent AssignPeerSlot slot=%d hostElementId=0x%08x to client",
+                        slot, p.hostElementId);
             }
         }
         return;

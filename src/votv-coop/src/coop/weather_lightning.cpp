@@ -2,6 +2,7 @@
 
 #include "coop/weather_lightning.h"
 
+#include "coop/element/element.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
@@ -63,7 +64,13 @@ void OnSpawnPostLightning(void* /*self*/, void* /*function*/, void* params) {
     // FVector translation -- same layout as npc_sync uses).
     const uint8_t* xform = reinterpret_cast<const uint8_t*>(params) + g_spawnTransformParamOff;
     coop::net::LightningStrikePayload p{};
-    p.peerSessionId = 0;
+    // v13 (A4 2026-05-29): host stamps its own local Player Element id.
+    {
+        const coop::element::ElementId selfEid =
+            coop::players::Registry::Get().LocalPlayerElementId();
+        p.senderElementId =
+            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    }
     p.locX = *reinterpret_cast<const float*>(xform + 0x10);
     p.locY = *reinterpret_cast<const float*>(xform + 0x14);
     p.locZ = *reinterpret_cast<const float*>(xform + 0x18);
@@ -152,11 +159,9 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
         UE_LOGW("weather: lightning Apply off-game-thread -- dropping");
         return;
     }
-    if (payload.peerSessionId != 0) {
-        UE_LOGW("weather: lightning Apply peerSessionId=%u != 0 -- dropping",
-                static_cast<unsigned>(payload.peerSessionId));
-        return;
-    }
+    // v13 (A4 2026-05-29): the "is sender host?" trust-bound check moved
+    // up into event_feed::Update's LightningStrike dispatcher (validates
+    // msg.senderPeerSlot == 0 before posting here).
     if (!g_gameplayStaticsCdo || !g_beginDeferredSpawnFn || !g_finishSpawnFn ||
         !g_lightningStrikeClass) {
         UE_LOGW("weather: lightning Apply spawn path not resolved "
