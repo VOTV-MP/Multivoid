@@ -102,6 +102,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/engine.cpp
     src/ue_wrap/engine_bones.cpp
     src/ue_wrap/engine_component.cpp
+    src/ue_wrap/engine_mainplayer.cpp
     src/ue_wrap/engine_pawn.cpp
     src/ue_wrap/engine_widget.cpp
     src/ue_wrap/reflected_offset.cpp
