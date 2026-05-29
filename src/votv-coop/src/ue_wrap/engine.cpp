@@ -550,9 +550,24 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
     out.grabbingActor = *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
+    // holding_actor: chipPile / clump morph carry slot. Added in a later VOTV
+    // recook; if reflected_offset returns -1 we leave the field null rather
+    // than dereffing a negative offset.
+    const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
+    if (holdingOff >= 0) {
+        out.holdingActor = *reinterpret_cast<void**>(base + holdingOff);
+    }
     out.grabsHeavy    = *reinterpret_cast<bool*>(base + ue_wrap::reflected_offset::MainPlayer_grabsHeavy());
     out.heavy         = *reinterpret_cast<bool*>(base + ue_wrap::reflected_offset::MainPlayer_Heavy());
     out.grabLen       = *reinterpret_cast<float*>(base + ue_wrap::reflected_offset::MainPlayer_grabLen());
+    return true;
+}
+
+bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
+    *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_actor())     = actor;
+    *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = component;
     return true;
 }
 

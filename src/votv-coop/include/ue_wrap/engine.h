@@ -207,18 +207,36 @@ bool WarmupPhcReleaseCache();
 void* ReadPhysicsHandleGrabbedComponent(void* phc);
 
 // Snapshot of AmainPlayer_C grab-state UPROPERTIES read in a single
-// dispatch from adjacent reflected offsets. The 4 fields drive the
+// dispatch from adjacent reflected offsets. The 5 fields drive the
 // pickup/drop diagnostic logs in coop::grab_observer's E-press / grab
-// Timeline observers; gameplay/coop code never touches these offsets
-// directly (Principle 7). Returns false on null/dead pawn; `out` is
-// then zero-initialised. Game thread only.
+// Timeline observers AND the net_pump held-prop replication path
+// (grabbingActor + holdingActor cover the two morph paths: physics-
+// handle props vs chipPile/clump-style "carry" props). Gameplay/coop
+// code never touches these offsets directly (Principle 7). Returns
+// false on null/dead pawn; `out` is then zero-initialised. `holdingActor`
+// stays null if MainPlayer_holding_actor() isn't resolved in this build
+// (the field was added in a later VOTV recook). Game thread only.
 struct MainPlayerGrabState {
-    void*  grabbingActor;  // AmainPlayer_C::grabbing_actor (held prop, or null)
+    void*  grabbingActor;  // AmainPlayer_C::grabbing_actor (PHC-held prop, or null)
+    void*  holdingActor;   // AmainPlayer_C::holding_actor  (chipPile/clump morph carry, or null)
     bool   grabsHeavy;     // AmainPlayer_C::grabsHeavy     (PCC heavy-grab BP flag)
     bool   heavy;          // AmainPlayer_C::Heavy          (BP-side heavy state mirror)
     float  grabLen;        // AmainPlayer_C::grabLen        (Timeline current grab length)
 };
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
+
+// Write both AmainPlayer_C::grabbing_actor + AmainPlayer_C::grabbing_component
+// in a single dispatch. Used by the autotest harness's synthetic grab path
+// where the test code drives UPhysicsHandleComponent.GrabComponentAtLocation
+// + Release directly and must keep the BP-visible "what am I holding" mirror
+// in sync (the BP layer reads these slots in attach-prop / drop-impulse
+// timelines). Pass nullptr/nullptr for the release/clear case. Returns false
+// on null/dead pawn. Game thread only.
+//
+// Principle 7 (post-A-4 follow-up, 2026-05-29): replaces 4 inline raw
+// struct-offset writes in harness::autotest's grab-pickup + release-throw
+// sequences.
+bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component);
 
 // Diagnostic: log every FProperty on a UClass (name, offset, size). Used to
 // verify a property offset we resolved via reflection (e.g. confirm we got

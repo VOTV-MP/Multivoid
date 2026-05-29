@@ -213,10 +213,7 @@ void RunAutonomousGrabTest() {
         *reinterpret_cast<R::FName*>(frame.data() + rsv->grabPBone) = R::FName{0, 0};
         *reinterpret_cast<ue_wrap::FVector*>(frame.data() + rsv->grabPLoc) = *handPos;
         const bool ok = R::CallFunction(rsv->grabHandle, rsv->grabFn, frame.data());
-        *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor()) = pr->prop;
-        *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = pr->mesh;
+        ue_wrap::engine::WriteMainPlayerGrabbingPair(rsv->player, pr->prop, pr->mesh);
         UE_LOGI("grab_test: CallFunction(GrabComponentAtLocation) -> %d + wrote mainPlayer.grabbing_{actor,component}", ok);
         done->store(1);
     });
@@ -289,10 +286,7 @@ void RunAutonomousGrabTest() {
         *reinterpret_cast<bool*>(frame.data() + pVel) = false;
         const bool impOk = R::CallFunction(pr->mesh, addImpulseFn, frame.data());
         const bool relOk = R::CallFunction(rsv->grabHandle, rsv->releaseFn, nullptr);
-        *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor()) = nullptr;
-        *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(rsv->player) + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = nullptr;
+        ue_wrap::engine::WriteMainPlayerGrabbingPair(rsv->player, nullptr, nullptr);
         UE_LOGI("grab_test: AddImpulse=%d Release=%d (atomic in same game-thread tick)",
                 impOk, relOk);
         done->store(1);

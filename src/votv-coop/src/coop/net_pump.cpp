@@ -25,7 +25,6 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/puppet.h"
-#include "ue_wrap/reflected_offset.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
@@ -291,22 +290,25 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // publish to the net thread. On the edge held -> not-held, send a
         // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
         // never rely solely on the 500 ms stream-stop timeout).
-        void* heldActor = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(g_netLocal) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
-        // 2026-05-27: chipPile/clump pickup sets mainPlayer.holding_actor INSTEAD
-        // of grabbing_actor (their morph path doesn't use PhysicsHandle). Fall
-        // back to holding_actor so the PropPose stream covers them too. Offset
-        // resolved via reflected_offset so sdk_check catches drift on future
-        // VOTV recooks.
-        if (!heldActor) {
-            const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
-            if (holdingOff >= 0) {
-                void* maybeHolding = *reinterpret_cast<void**>(
-                    reinterpret_cast<uint8_t*>(g_netLocal) + holdingOff);
-                if (maybeHolding && R::IsLive(maybeHolding) &&
-                    ue_wrap::prop::IsKeyedInteractable(maybeHolding)) {
-                    heldActor = maybeHolding;
-                }
+        //
+        // 2026-05-29 (post-A-4 follow-up): both fields now read via
+        // ue_wrap::engine::ReadMainPlayerGrabState (Principle 7 -- no inline
+        // raw struct-offset derefs at coop layer). holdingActor stays null
+        // when the offset isn't resolved in the current build (chipPile/clump
+        // morph is a later VOTV recook); same drift-detection coverage as
+        // before because the wrapper still uses reflected_offset internally.
+        ue_wrap::engine::MainPlayerGrabState gs{};
+        void* heldActor = nullptr;
+        if (ue_wrap::engine::ReadMainPlayerGrabState(g_netLocal, gs)) {
+            heldActor = gs.grabbingActor;
+            // 2026-05-27: chipPile/clump pickup sets mainPlayer.holding_actor
+            // INSTEAD of grabbing_actor (their morph path doesn't use the
+            // PhysicsHandle). Fall back to holding_actor so the PropPose
+            // stream covers them too -- gated by IsKeyedInteractable since
+            // holding_actor can also point at non-prop carry targets.
+            if (!heldActor && gs.holdingActor && R::IsLive(gs.holdingActor) &&
+                ue_wrap::prop::IsKeyedInteractable(gs.holdingActor)) {
+                heldActor = gs.holdingActor;
             }
         }
         if (heldActor && R::IsLive(heldActor)) {
