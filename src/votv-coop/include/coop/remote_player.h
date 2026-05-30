@@ -95,6 +95,21 @@ public:
     void SetPing(int ms) { pingMs_ = ms; }
     int GetPing() const { return pingMs_; }
 
+    // v19 vitals (display-only). Each is a [0,1] fraction streamed in every
+    // PoseSnapshot (health = source health/maxHealth; food/sleep = source value
+    // / kVitalScalarMax). SetVitals is called from SetTargetPose on each new
+    // pose; the nameplate reads GetHealth() to draw a health bar. These NEVER
+    // touch a saveSlot -- there is one saveSlot per machine, so a puppet write
+    // would corrupt the LOCAL player's persisted health (see ue_wrap::vitals).
+    void SetVitals(float health01, float food01, float sleep01) {
+        health_ = health01;
+        food_ = food01;
+        sleep_ = sleep01;
+    }
+    float GetHealth() const { return health_; }
+    float GetFood() const { return food_; }
+    float GetSleep() const { return sleep_; }
+
     void* actor() const { return actor_; }
 
 private:
@@ -179,6 +194,11 @@ private:
     // forever in early tests because no refresh path existed.
     std::wstring nickname_ = L"...";
     int pingMs_ = 0;  // last RTT measurement (set by event_feed from Session::lastRttMs)
+    // v19 streamed vitals fractions (display-only; see SetVitals). Default full
+    // so a freshly-spawned puppet shows a full bar until the first pose lands.
+    float health_ = 1.f;
+    float food_ = 1.f;
+    float sleep_ = 1.f;
 
     // Receiver-side interpolation state (game thread only -- the engine path is
     // single-threaded; no mutex). curPos_/curYaw_/curSpeed_ is what was last

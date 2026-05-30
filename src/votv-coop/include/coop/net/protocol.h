@@ -209,7 +209,19 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // header stays 20 B) so the host can RELAY a client's PoseSnapshot /
 // PropPose to other clients tagged with the logical origin slot. Receiving
 // clients route relayed poses by senderSlot. See PacketHeader doc.
-inline constexpr uint16_t kProtocolVersion = 18;
+//
+// v19 (2026-05-30) -- player vitals pillar Inc1 (continuous display vitals):
+// PoseSnapshot's 3 trailing `_pad` bytes become `healthFrac`/`foodFrac`/
+// `sleepFrac` (each a [0,1] fraction quantized 0..255). ZERO wire-size change
+// (PoseSnapshot stays 32 B). Per-peer-authoritative: each peer packs its OWN
+// vitals (host packs host's, each client its own) off this machine's
+// UsaveSlot_C via ue_wrap::vitals. DISPLAY-ONLY on the receiver -- drives the
+// remote puppet's nameplate health bar; NEVER written to any saveSlot (one
+// saveSlot per machine; a write would corrupt the local player's persisted
+// health). Reliable death/ragdoll authority is a later increment (these bytes
+// are continuous, lossy, and intentionally never trigger a DEAD transition).
+// See research/findings/votv-player-vitals-death-RE-2026-05-30.md.
+inline constexpr uint16_t kProtocolVersion = 19;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -499,12 +511,37 @@ struct PoseSnapshot {
     float   headYawDelta;
     float   speed;
     uint8_t stateBits;
-    uint8_t _pad[3];   // keep 4-byte alignment for future floats
+    // v19 (2026-05-30): vitals piggyback in the 3 bytes that were `_pad` (ZERO
+    // size change -- PoseSnapshot stays 32 B). Per-peer-authoritative: each peer
+    // packs its OWN vitals off this machine's UsaveSlot_C (ue_wrap::vitals).
+    // DISPLAY-ONLY on the receiver (puppet nameplate health bar); NEVER written
+    // back to a saveSlot (one per machine -> would corrupt the local player's
+    // persisted health). Continuous + lossy: reliable DEAD/ragdoll authority is
+    // a later increment and these bytes never trigger a state transition.
+    uint8_t healthFrac;  // health / maxHealth, quantized 0..255 (maxHealth is per-peer)
+    uint8_t foodFrac;    // food  / kVitalScalarMax, quantized 0..255
+    uint8_t sleepFrac;   // sleep / kVitalScalarMax, quantized 0..255
 };
 static_assert(sizeof(PoseSnapshot) == 32, "PoseSnapshot must be 32 bytes");
 
 // PoseSnapshot.stateBits flags. Single-byte field; flags assigned bit-by-bit.
 inline constexpr uint8_t kStateBitInAir = 0x01;
+
+// v19: VOTV vital scalars (food, sleep, and the default maxHealth) top out at
+// 100.0. `health` is normalized by the per-peer `maxHealth` (upgrades/story can
+// raise it) BEFORE quantization; food/sleep normalize by this constant.
+inline constexpr float kVitalScalarMax = 100.0f;
+
+// Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact
+// inverse pair lives here so sender + receiver can never drift.
+inline uint8_t QuantizeUnitFraction(float f01) {
+    if (f01 <= 0.f) return 0;
+    if (f01 >= 1.f) return 255;
+    return static_cast<uint8_t>(f01 * 255.f + 0.5f);
+}
+inline float DequantizeUnitFraction(uint8_t b) {
+    return static_cast<float>(b) * (1.f / 255.f);
+}
 
 struct PosePacket {
     PacketHeader header;

@@ -306,6 +306,15 @@ bool RemotePlayer::valid() const {
 
 void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (!valid()) { actor_ = nullptr; return; }
+
+    // v19: vitals ride the pose packet -- snap immediately (not interpolated),
+    // display-only (nameplate health bar). Done before the interp branches so it
+    // applies on the first packet, on a teleport snap, and on the normal path.
+    // Never applied to the engine / a saveSlot (see RemotePlayer::SetVitals).
+    SetVitals(coop::net::DequantizeUnitFraction(snap.healthFrac),
+              coop::net::DequantizeUnitFraction(snap.foodFrac),
+              coop::net::DequantizeUnitFraction(snap.sleepFrac));
+
     const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
 
     // First packet: the puppet sits at the fake spawn placement (250 cm in

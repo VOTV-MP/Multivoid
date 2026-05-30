@@ -34,6 +34,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
+#include "ue_wrap/vitals.h"
 
 #include <array>
 #include <chrono>
@@ -146,7 +147,41 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     if (ue_wrap::puppet::ReadCharacterIsFalling(local)) {
         out.stateBits |= coop::net::kStateBitInAir;
     }
-    out._pad[0] = out._pad[1] = out._pad[2] = 0;
+    // v19: piggyback the LOCAL player's vitals (health fraction + food + sleep)
+    // in the 3 bytes that were `_pad` -- ZERO wire-size change. ue_wrap::vitals
+    // reads THIS machine's UsaveSlot_C (one per machine), so the values are
+    // per-peer-authoritative (host packs host's, each client its own). Default
+    // to full (255) until the save resolves so a booting peer doesn't flash an
+    // empty bar; overwrite per field only on a successful read. The receiver
+    // treats these as DISPLAY-ONLY (puppet nameplate) -- never a saveSlot write.
+    // After the one-time resolution cache fills, each Read is O(1) (a couple of
+    // cheap derefs); 3-4 per pose-send tick is negligible on this hot path.
+    out.healthFrac = out.foodFrac = out.sleepFrac = 255;
+    {
+        namespace V = ue_wrap::vitals;
+        float health = 0.f, maxHealth = coop::net::kVitalScalarMax, food = 0.f, sleep = 0.f;
+        bool gotHealth = false;
+        if (V::Read(V::Field::Health, &health)) {
+            gotHealth = true;
+            V::Read(V::Field::MaxHealth, &maxHealth);  // best-effort; 100 fallback on miss
+            out.healthFrac = coop::net::QuantizeUnitFraction(
+                maxHealth > 0.f ? health / maxHealth : 1.f);
+        }
+        if (V::Read(V::Field::Food, &food))
+            out.foodFrac = coop::net::QuantizeUnitFraction(food * (1.f / coop::net::kVitalScalarMax));
+        if (V::Read(V::Field::Sleep, &sleep))
+            out.sleepFrac = coop::net::QuantizeUnitFraction(sleep * (1.f / coop::net::kVitalScalarMax));
+        // One-shot proof the vitals chain RESOLVED (vs silently defaulting to a
+        // full bar). Latched on the first successful health read so it can't spam
+        // this hot path. Game-thread only -> a plain static latch is safe here.
+        static bool sVitalsLogged = false;
+        if (gotHealth && !sVitalsLogged) {
+            sVitalsLogged = true;
+            UE_LOGI("vitals: first local read OK -- health=%.1f/%.1f food=%.1f sleep=%.1f "
+                    "-> wire bytes h=%u f=%u s=%u", health, maxHealth, food, sleep,
+                    out.healthFrac, out.foodFrac, out.sleepFrac);
+        }
+    }
     return true;
 }
 
