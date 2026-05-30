@@ -16,10 +16,14 @@
 //   - `Element::m_actor`   = the live AActor* (engine-owned; we don't manage
 //                            its lifetime, the engine does).
 //
-// Lifetime: owned by `coop::prop_lifecycle` via a parallel `g_propElements`
-// owner map (mirrors the npc_sync pattern). Allocated when
-// `MarkKnownKeyedProp` fires from Init POST observer or from the seed scan;
-// destroyed when `UnmarkKnownKeyedProp` fires from K2_DestroyActor PRE.
+// Lifetime: owned by the shared `coop::element::MirrorManager<Prop>::Instance()`
+// singleton (PR-FOUNDATION-3 Inc3 2026-05-30 -- the bespoke g_propElementsById
+// owner map was retired). The LOCAL handle is AllocAndInstall'd by
+// `coop::prop_element_tracker::MarkPropElement` (m_mirror=false) when
+// `MarkKnownKeyedProp` fires from the Init POST observer or the seed scan, and
+// Take'n out when `UnmarkKnownKeyedProp` fires from K2_DestroyActor PRE; the
+// MIRROR handle is Install'd by `coop::remote_prop::RegisterPropMirror`
+// (m_mirror=true) for a wire-received prop. Both kinds share the one manager.
 //
 // Per the audit (section 4.3): `CClientObject` is MTA's world-prop equivalent
 // of `Aprop_C`. The Prop Element here is the same architectural shape (id +

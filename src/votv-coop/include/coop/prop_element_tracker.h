@@ -14,18 +14,25 @@
 //      K2_DestroyActor PRE (evict). Replaces the per-reconnect GUObjectArray
 //      walk that the H2-redux work retired on 2026-05-28.
 //
-//   3. PropElements map (the Tier 3 element::Prop shadow)
+//   3. PropElement shadow (the element::Prop owner -- PR-FOUNDATION-3 Inc3)
 //      Each entry in KnownKeyedProps gets a parallel coop::element::Prop
-//      Element. Two maps for O(1) lookup in both directions: by ElementId
-//      (owns the unique_ptr) and by actor* (raw id for the destroy gate).
-//      Lifetime mirrors npc_sync: MarkPropElement creates it,
-//      UnmarkKnownKeyedProp drains both maps + lets the dtor run outside
-//      the lock (ABBA-safe; FreeId acquires element::Registry::m_mutex).
+//      Element. The Element is OWNED by the shared singleton
+//      coop::element::MirrorManager<Prop>::Instance() (the SAME manager
+//      remote_prop uses for wire mirrors) -- the bespoke g_propElementsById
+//      owner map is retired (RULE 2). This module keeps just ONE bespoke map:
+//      g_actorToPropElementId (actor* -> local eid), the reverse lookup the
+//      destroy gate + the Init-POST broadcast elementId stamp need. Lifetime
+//      mirrors npc_sync: MarkPropElement AllocAndInstall's the Element into
+//      the manager (m_mirror=false -> dtor FreeId) + records the reverse
+//      entry; UnmarkKnownKeyedProp erases the reverse entry then Take's the
+//      Element out of the manager + lets the dtor run outside the lock
+//      (ABBA-safe; FreeId acquires element::Registry::m_mutex).
 //
-// Extracted from prop_lifecycle.cpp 2026-05-29 (M-1 follow-up to prop_synth_key).
-// Behavior preserved byte-for-byte: same mutex scopes, same memory orders,
-// same idempotency / cap / overflow-log semantics, same in-lock role-read
-// for the host/peer-range allocator decision in MarkPropElement.
+// Extracted from prop_lifecycle.cpp 2026-05-29 (M-1 follow-up to prop_synth_key);
+// owner-map migrated to MirrorManager<Prop> 2026-05-30 (PR-FOUNDATION-3 Inc3).
+// Behavior preserved: same idempotency / cap / overflow-log semantics, same
+// in-lock role-read for the host/peer-range allocator decision in
+// MarkPropElement, same leaf-mutex lock ordering.
 //
 // Session pointer:
 //   prop_element_tracker holds its OWN cached coop::net::Session* (separate

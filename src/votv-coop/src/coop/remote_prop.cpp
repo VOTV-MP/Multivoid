@@ -471,18 +471,25 @@ namespace {
 //
 // Convergence case (local actor existed BEFORE the wire packet, exact-key
 // or fuzzy match): we register a mirror at sender's eid pointing to the
-// existing local actor. That actor may also be tracked by prop_lifecycle's
-// own g_propElementsById in this peer's allocation range (host or peer).
-// Two Elements per actor is acceptable: one is the LOCAL handle (our own
-// alloc range), the other is the MIRROR handle (sender's alloc range).
-// Both resolve to the same actor via GetActor(). The Registry's m_byId
-// slots don't collide because host/peer ranges are disjoint.
+// existing local actor. That actor is ALSO tracked by prop_element_tracker's
+// LOCAL Prop Element in this peer's allocation range (host or peer). Two
+// Elements per actor is acceptable: one is the LOCAL handle (m_mirror=false,
+// our own alloc range), the other is the MIRROR handle (m_mirror=true,
+// sender's alloc range). Both resolve to the same actor via GetActor(). The
+// Registry's m_byId slots don't collide because host/peer ranges are disjoint.
 // B2 (2026-05-29): per-type mirror map backed by the generic
 // coop::element::MirrorManager<Prop>. The encapsulated 5-step pattern
 // (alloc-under-lock -> RegisterMirror -> rollback-on-fail) lives in the
 // template; this file's RegisterPropMirror/UnregisterPropMirror/
-// DrainAllPropMirrors become thin wrappers that handle prop-specific
+// DrainWirePropMirrors become thin wrappers that handle prop-specific
 // concerns (name/typeName/actor stamping, log lines).
+//
+// PR-FOUNDATION-3 Inc3 (2026-05-30): this is now the SINGLE owner of ALL Prop
+// Elements -- both these wire mirrors AND prop_element_tracker's locals (which
+// it AllocAndInstall's into this same Instance()). So the disconnect drain
+// must be SELECTIVE: DrainWirePropMirrors -> DrainMirrorsOnly() releases just
+// the m_mirror=true entries; the locals (engine-state shadows of persistent
+// world props) stay so they survive a reconnect.
 inline coop::element::MirrorManager<coop::element::Prop>& PropMirrors() {
     return coop::element::MirrorManager<coop::element::Prop>::Instance();
 }
@@ -557,11 +564,15 @@ void UnregisterPropMirror(coop::element::ElementId eid) {
     // Registry::UnregisterMirror (via m_mirror=true).
 }
 
-// Bulk-drain on full session teardown. Forwards to MirrorManager;
-// each Prop's dtor calls Registry::UnregisterMirror (via m_mirror=true)
-// sequentially as the drained map releases.
-size_t DrainAllPropMirrors() {
-    return PropMirrors().DrainAll();
+// Drain the WIRE MIRRORS on full session teardown. Forwards to
+// MirrorManager::DrainMirrorsOnly -- NOT DrainAll: since Inc3 the manager also
+// owns prop_element_tracker's LOCAL Prop Elements (m_mirror=false, shadows of
+// this peer's persistent world props), and DrainAll would wrongly destroy them
+// (they must survive a reconnect -- the keyed-prop seed scan is one-shot per
+// process). Only m_mirror=true entries are released here; each drained mirror's
+// dtor calls Registry::UnregisterMirror sequentially as the vector releases.
+size_t DrainWirePropMirrors() {
+    return PropMirrors().DrainMirrorsOnly();
 }
 
 
@@ -657,7 +668,10 @@ void ForceRelease() {
     // NOT drain mirrors (mirrors aren't tagged with senderSlot yet -- a
     // future enhancement); convergent local actors persist across per-slot
     // disconnect just like remote_prop's drive cache does.
-    const size_t mirrorsDrained = DrainAllPropMirrors();
+    // Inc3 (2026-05-30): mirror-ONLY drain -- the manager now also holds
+    // prop_element_tracker's local Prop Elements, which must NOT be dropped on
+    // disconnect (they shadow persistent world props + survive reconnect).
+    const size_t mirrorsDrained = DrainWirePropMirrors();
     if (mirrorsDrained > 0) {
         UE_LOGI("remote_prop: force-release drained %zu wire-received Prop mirror(s)",
                 mirrorsDrained);

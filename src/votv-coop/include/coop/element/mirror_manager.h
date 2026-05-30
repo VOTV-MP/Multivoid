@@ -163,6 +163,19 @@ public:
     // stays false) XOR Install (m_mirror=true) for type T, the manager holds a
     // pure host-set or pure client-set, so the IsMirror() flag cleanly
     // discriminates the unified drain (DrainAll / DrainClientMirrors).
+    //
+    // EXCEPTION -- Prop legitimately MIXES (PR-FOUNDATION-3 Inc3 2026-05-30):
+    // unlike Npc (host XOR client), every peer runs BOTH owner paths for Prop:
+    // prop_element_tracker::MarkPropElement AllocAndInstall's the peer's own
+    // keyed-interactable world props (m_mirror=false) AND remote_prop::
+    // RegisterPropMirror Install's wire mirrors of the OTHER peer's props
+    // (m_mirror=true). So MirrorManager<Prop> holds both kinds at once. This is
+    // STILL correct because the IsMirror() flag is PER-ELEMENT: every dtor
+    // routes itself (FreeId vs UnregisterMirror), and the selective drains gate
+    // per element. What the mixed case forbids is a BULK DrainAll on disconnect
+    // (it would destroy the persistent local Prop Elements that must survive a
+    // reconnect-within-the-same-process, since the seed scan is one-shot per
+    // process) -- so the Prop disconnect path uses DrainMirrorsOnly() below.
     ElementId AllocAndInstall(std::unique_ptr<T> element, bool isHost) {
         if (!element) return kInvalidId;
         const ElementId eid = isHost ? Registry::Get().AllocHostId(element.get())
@@ -244,11 +257,65 @@ public:
 
     // Drain everything on disconnect. Returns count drained. The
     // unique_ptrs destruct after the lock releases.
+    //
+    // Use this only for a PURE manager (host XOR client -- e.g. Npc). For a
+    // manager that MIXES AllocAndInstall'd locals with Install'd mirrors
+    // (Prop -- see the class doc EXCEPTION), use DrainMirrorsOnly on disconnect
+    // so the persistent locals survive; DrainAll there would wrongly destroy
+    // them.
     size_t DrainAll() {
         std::unordered_map<ElementId, std::unique_ptr<T>> drained;
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             drained.swap(m_byId);
+        }
+        return drained.size();
+        // dtors fire here, OUTSIDE m_mutex.
+    }
+
+    // Drain ONLY the wire-mirror entries (IsMirror() == true), leaving the
+    // AllocAndInstall'd locals (m_mirror == false) in place. Returns count
+    // drained. Selective disconnect drain for a MIXED manager (Prop): the
+    // wire mirrors are session-state (they bind to the remote authority's
+    // elementId and must vacate on disconnect), while the locals are
+    // engine-state -- shadows of this peer's own persistent world props that
+    // must survive a reconnect (the keyed-prop seed scan is one-shot per
+    // process, so a wiped local Prop Element is never re-created).
+    //
+    // ABBA-safe: the drained unique_ptrs are moved out under m_mutex but
+    // destruct OUTSIDE it (each ~Element -> Registry::UnregisterMirror takes
+    // the Registry mutex).
+    //
+    // m_mirror VISIBILITY (review 2026-05-30): the IsMirror() read here is NOT
+    // made safe by m_mutex. m_mirror is written by Install -> Registry::
+    // RegisterMirror (SetMirror_) under the REGISTRY mutex, AFTER Install has
+    // already released THIS manager's m_mutex -- a different lock, so the
+    // manager mutex establishes no happens-before edge to that write. What
+    // makes the read correct is GAME-THREAD SERIALIZATION: for the only mixed
+    // type (Prop), the mirror producer (remote_prop::RegisterPropMirror ->
+    // Install, driven by the wire receiver) and this drain (remote_prop::
+    // ForceRelease) both run on the game thread within net_pump::Tick, so the
+    // flag write program-orders before the drain read on the one thread.
+    // AllocAndInstall'd LOCALS never touch m_mirror (it stays false from
+    // construction, published by the emplace under m_mutex), so ONLY the mirror
+    // case leans on that GT serialization. DO NOT move RegisterPropMirror /
+    // Install off the game thread without first setting m_mirror under m_mutex
+    // (or making it atomic): a cross-thread drain could then observe a
+    // mid-Install mirror as m_mirror==false and wrongly KEEP it -> a wire mirror
+    // leaked past disconnect with a dangling actor (plus a data race on the
+    // non-atomic bool).
+    size_t DrainMirrorsOnly() {
+        std::vector<std::unique_ptr<T>> drained;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            for (auto it = m_byId.begin(); it != m_byId.end();) {
+                if (it->second && it->second->IsMirror()) {
+                    drained.push_back(std::move(it->second));
+                    it = m_byId.erase(it);
+                } else {
+                    ++it;
+                }
+            }
         }
         return drained.size();
         // dtors fire here, OUTSIDE m_mutex.

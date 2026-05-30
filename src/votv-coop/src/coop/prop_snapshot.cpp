@@ -90,7 +90,7 @@ void StartEnumerationFor(int peerSlot) {
     // so no use-after-free if another thread frees an Element concurrently.
     //
     // Audit fix 2026-05-28: capture the eid alongside the actor pointer so
-    // DrainChunk doesn't re-lock g_propElementsMutex per candidate
+    // DrainChunk doesn't re-lock any prop-tracker mutex per candidate
     // (12,500 mutex acquisitions/sec during drain was the prior cost).
     std::vector<coop::element::Registry::ActorIdPair> pairs;
     const size_t trackedCount =
@@ -234,7 +234,7 @@ void DrainChunk() {
         p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
         p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
         // Use the cached eid from StartEnumerationFor (no per-candidate
-        // g_propElementsMutex acquisition; audit fix 2026-05-28).
+        // prop-tracker mutex acquisition; audit fix 2026-05-28).
         {
             const coop::element::ElementId eid =
                 g_snapshotCandidateIdx < g_snapshotEids.size()

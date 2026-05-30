@@ -21,14 +21,16 @@
 
 namespace coop::element {
 
-// Static-destruction-order safety (audit fix 2026-05-28): namespace-scope
-// owner containers in prop_lifecycle (g_propElementsById) and elsewhere
-// destruct AFTER the Registry singleton (Meyers static-local constructed
-// during runtime). When those owners drain at process exit, the Element
-// destructor would call Registry::Get().FreeId() on torn-down storage.
-// This latch flips when the Registry singleton is about to be destroyed
-// (set by Registry's destructor) so subsequent ~Element() calls skip
-// FreeId rather than UAF.
+// Static-destruction-order safety (audit fix 2026-05-28): the Element owner
+// containers -- the MirrorManager<T>::Instance() singletons (Player / Npc /
+// Prop) plus any remaining namespace-scope owners -- are function-local /
+// namespace-scope statics whose teardown order relative to the Registry
+// singleton (also a Meyers static-local) is not guaranteed. If an owner
+// drains AFTER the Registry is destroyed, the Element destructor would call
+// Registry::Get().FreeId()/UnregisterMirror() on torn-down storage. This latch
+// flips when the Registry singleton is about to be destroyed (set by
+// Registry's destructor) so subsequent ~Element() calls skip the Registry
+// call rather than UAF -- order-independent-safe either way.
 std::atomic<bool> g_registryShuttingDown{false};
 
 void NotifyRegistryShuttingDown() {

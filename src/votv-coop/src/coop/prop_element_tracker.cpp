@@ -7,6 +7,7 @@
 
 #include "coop/prop_element_tracker.h"
 
+#include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -73,17 +74,40 @@ std::unordered_set<void*> g_knownKeyedProps;
 constexpr size_t kKnownKeyedPropsCap = 16384;
 std::atomic<bool> g_knownKeyedPropsOverflowLogged{false};
 
-// ---- Prop Element shadow (Tier 3 Props migration 2026-05-28) ------------
-// Each entry in g_knownKeyedProps has a parallel Prop Element owned here.
-// Two maps for O(1) lookup in both directions: by ElementId (owns the
-// unique_ptr) and by actor* (raw id for the K2_DestroyActor PRE gate).
+// ---- Prop Element shadow (PR-FOUNDATION-3 Inc3, 2026-05-30) --------------
+// Each entry in g_knownKeyedProps has a parallel Prop Element. The SOLE
+// canonical OWNER of every Prop Element -- this peer's own keyed-interactable
+// locals AND remote_prop's wire mirrors -- is now the shared singleton
+// coop::element::MirrorManager<Prop>::Instance() (PropMirrors()). The host/
+// seed side here used to keep a bespoke g_propElementsById owner map; that
+// duplicate owner is retired (RULE 2). The local Prop Elements are now
+// AllocAndInstall'd into the SAME manager remote_prop already used for
+// mirrors.
+//
+// Unlike Npc (host XOR client -> pure manager), a Prop manager legitimately
+// MIXES local (m_mirror=false, AllocAndInstall here) and mirror (m_mirror=true,
+// remote_prop::RegisterPropMirror Install) Elements on the same peer. That is
+// correct because the IsMirror() flag is per-element (each dtor self-routes
+// FreeId vs UnregisterMirror, and the disconnect drain selects mirrors only --
+// see DrainMirrorsOnly). See mirror_manager.h class-doc EXCEPTION.
+//
+// We keep ONE bespoke map -- g_actorToPropElementId (actor* -> local eid) --
+// the reverse lookup the K2_DestroyActor PRE gate + the Init-POST broadcast
+// elementId stamp need. It is host/seed-side bookkeeping (not Element
+// identity), so it stays here, mirroring npc_sync's g_actorToNpcId. Its mutex
+// is a LEAF: every path releases it BEFORE calling PropMirrors().AllocAndInstall
+// /Take (type mutex) or destructing a Prop (Registry mutex via FreeId), so it
+// never nests with either -> ABBA-free by construction.
 //
 // We DON'T preserve a thread_local PRE->POST handoff because, unlike NPCs,
 // the Prop Element is created at Init POST time (engine already has the
 // actor) and the actor pointer is bound directly inside MarkPropElement.
 // No params-correlation gymnastics needed.
-std::mutex g_propElementsMutex;
-std::unordered_map<coop::element::ElementId, std::unique_ptr<coop::element::Prop>> g_propElementsById;
+inline coop::element::MirrorManager<coop::element::Prop>& PropMirrors() {
+    return coop::element::MirrorManager<coop::element::Prop>::Instance();
+}
+
+std::mutex g_actorToPropElementIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToPropElementId;
 
 }  // namespace
@@ -150,23 +174,23 @@ void UnmarkKnownKeyedProp(void* actor) {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
         g_knownKeyedProps.erase(actor);
     }
-    // Drain the Prop Element shadow (ABBA-safe: extract under lock, release
-    // lock, let destructor run -- FreeId acquires element::Registry mutex
-    // without g_propElementsMutex held).
-    std::unique_ptr<coop::element::Prop> drained;
+    // Resolve the local eid under the reverse-map mutex, erase the reverse
+    // entry, then RELEASE the mutex before draining the Element out of the
+    // shared manager. ABBA-safe: PropMirrors().Take takes the type mutex (not
+    // nested with the leaf reverse-map mutex) and the drained unique_ptr
+    // destructs OUTSIDE every lock -- ~Prop -> Registry::FreeId acquires the
+    // Registry mutex with nothing else held.
+    coop::element::ElementId eid = coop::element::kInvalidId;
     {
-        std::lock_guard<std::mutex> lk(g_propElementsMutex);
+        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
         auto it = g_actorToPropElementId.find(actor);
         if (it == g_actorToPropElementId.end()) return;
-        const coop::element::ElementId eid = it->second;
+        eid = it->second;
         g_actorToPropElementId.erase(it);
-        auto eit = g_propElementsById.find(eid);
-        if (eit != g_propElementsById.end()) {
-            drained = std::move(eit->second);
-            g_propElementsById.erase(eit);
-        }
     }
-    // drained destructor fires here, OUTSIDE g_propElementsMutex.
+    auto drained = PropMirrors().Take(eid);
+    // drained destructor fires here, OUTSIDE every mutex (FreeId, m_mirror=false).
+    (void)drained;
 }
 
 // ---- Prop Element shadow ------------------------------------------------
@@ -187,12 +211,14 @@ void UnmarkKnownKeyedProp(void* actor) {
 // and broadcast PropSpawn for these seed elements, their elementId will be
 // in peer range (clients route them as MIRROR entries which is correct).
 //
-// TOCTOU safety (audit fix 2026-05-28): we hold g_propElementsMutex across
-// the entire check-allocate-commit sequence except for the AllocHostId /
-// AllocLocalId call (which takes Registry::m_mutex -- nested-lock concern).
-// The double-check pattern on re-acquire handles the race: if a concurrent
-// thread allocated for the same actor while we were inside the Registry,
-// we drop our element (its destructor frees our just-allocated eid).
+// TOCTOU safety (audit fix 2026-05-28, retained through Inc3 2026-05-30): the
+// idempotency check and the commit both hold g_actorToPropElementIdMutex, but
+// the alloc step (PropMirrors().AllocAndInstall -> Registry::Alloc{Host,Local}Id
+// + the manager's type-mutex emplace) runs with that leaf mutex RELEASED to
+// keep the lock order leaf -> {type, Registry} non-nested. The double-check on
+// re-acquire handles the race: if a concurrent thread committed the same actor
+// while we were inside the manager, we drop ours -- Take it back out of the
+// manager + let the destructor FreeId our just-allocated eid.
 void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls) {
     if (!actor) return;
     // Audit fix 2026-05-29: capture role INSIDE the same locked block as the
@@ -201,11 +227,11 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
     // MarkPropElement could observe role=Client at the check, allocate
     // peer-range, then become Host by the time the broadcast fires, and
     // ship a peer-range eid as a host-authoritative broadcast (slot-
-    // collision risk on receivers). g_propElementsMutex is the synchronization
-    // point that owns this commit decision.
+    // collision risk on receivers). g_actorToPropElementIdMutex is the
+    // synchronization point that owns this commit decision.
     bool isHost = false;
     {
-        std::lock_guard<std::mutex> lk(g_propElementsMutex);
+        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
         if (g_actorToPropElementId.count(actor) > 0) return;  // idempotent
         auto* s = LoadSession();
         isHost = (s != nullptr && s->role() == coop::net::Role::Host);
@@ -222,39 +248,42 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
     // discovery), so the late-joiner snapshot can later validate this pointer
     // via IsLiveByIndex without dereferencing it after a GC purge.
     el->SetActor(actor, R::InternalIndexOf(actor));
-    const coop::element::ElementId eid = isHost
-        ? coop::element::Registry::Get().AllocHostId(el.get())
-        : coop::element::Registry::Get().AllocLocalId(el.get());
+    // PR-FOUNDATION-3 Inc3: AllocAndInstall into the canonical PropMirrors()
+    // (host range when host, peer range when client; m_mirror stays false).
+    // Replaces the prior AllocHostId/AllocLocalId + bespoke g_propElementsById
+    // emplace -- ONE owner now. On failure `el` is consumed/dropped inside.
+    const coop::element::ElementId eid =
+        PropMirrors().AllocAndInstall(std::move(el), isHost);
     if (eid == coop::element::kInvalidId) {
-        UE_LOGW("prop_element_tracker: element::Registry::Alloc%sId returned kInvalidId for "
-                "actor=%p key='%ls' -- Prop Element not registered",
-                isHost ? "Host" : "Local", actor, key.c_str());
+        UE_LOGW("prop_element_tracker: PropMirrors().AllocAndInstall returned kInvalidId "
+                "for actor=%p key='%ls' -- Prop Element not registered "
+                "(Registry exhausted / lifetime bug?)",
+                actor, key.c_str());
         return;
     }
-    std::unique_lock<std::mutex> lk(g_propElementsMutex);
-    // Re-check after the lock-release/Registry-call/lock-reacquire window:
-    // another thread may have inserted concurrently. If yes, drop ours --
-    // the unique_ptr destructor frees `eid` back to its origin stack
-    // (host or peer per `isHost`) and erases m_byId[eid], so no leak.
+    // Re-check after the alloc window (the leaf mutex was released across
+    // AllocAndInstall). If a concurrent MarkPropElement committed the same
+    // actor meanwhile, drop ours.
+    std::unique_lock<std::mutex> lk(g_actorToPropElementIdMutex);
     if (g_actorToPropElementId.count(actor) > 0) {
-        // Move ownership of the losing element out, RELEASE the lock, then
-        // let the destructor run. The destructor calls Registry::FreeId
-        // which acquires Registry::m_mutex; with g_propElementsMutex still
-        // held, that's lock-A->lock-B while Alloc{Host,Local}Id above was
-        // B->A (ABBA). Drain-pattern: release g_propElementsMutex first.
-        std::unique_ptr<coop::element::Prop> losing = std::move(el);
+        // Lost the race. Release the leaf mutex, then Take our just-installed
+        // Element back out of the manager and let it destruct -- ~Prop ->
+        // Registry::FreeId returns `eid` to its origin stack and clears
+        // m_byId[eid]. ABBA-safe: Take's type mutex + the dtor's Registry
+        // mutex run with the leaf mutex released. (eid is in [1, kMaxElements)
+        // -- AllocHostId/AllocLocalId never return 0 -- so Take won't treat it
+        // as the wire-sentinel and no-op.)
         lk.unlock();
-        // `losing` destructs here, FreeId acquires Registry::m_mutex
-        // without g_propElementsMutex held -- safe.
+        auto losing = PropMirrors().Take(eid);
+        (void)losing;  // destructs here, FreeId without any lock held
         return;
     }
     g_actorToPropElementId[actor] = eid;
-    g_propElementsById[eid] = std::move(el);
 }
 
 coop::element::ElementId GetPropElementIdForActor(void* actor) {
     if (!actor) return coop::element::kInvalidId;
-    std::lock_guard<std::mutex> lk(g_propElementsMutex);
+    std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
     auto it = g_actorToPropElementId.find(actor);
     if (it == g_actorToPropElementId.end()) return coop::element::kInvalidId;
     return it->second;
@@ -299,9 +328,10 @@ void SeedKnownKeyedProps() {
     // Audit fix 2026-05-29: re-check IsLive at the start of phase 2. Phase 1
     // built `live` without holding any lock; an actor's K2_DestroyActor PRE
     // observer can fire between phases -- if MarkPropElement then commits a
-    // dangling actor pointer into g_propElementsById, the eid leaks for the
-    // session lifetime because UnmarkKnownKeyedProp already ran for that
-    // actor and won't fire again.
+    // dangling actor pointer into the shared PropMirrors() manager + the
+    // g_actorToPropElementId reverse map, the eid leaks for the session
+    // lifetime because UnmarkKnownKeyedProp already ran for that actor and
+    // won't fire again.
     for (void* obj : live) {
         if (!R::IsLive(obj)) continue;
         const std::wstring cls = R::ClassNameOf(obj);
