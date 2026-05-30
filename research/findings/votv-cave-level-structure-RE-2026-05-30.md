@@ -1,134 +1,201 @@
-# VOTV cave / dimensions / dreams / backrooms structure RE — one UWorld + streaming sublevels (2026-05-30)
+# VOTV "other place" structure RE — one UWorld; entry mechanisms unknown (2026-05-30)
 
 ## Question
 
-User (2026-05-30): VOTV has the cave/mine, plus "dimensions" — a procedural
-backrooms you're teleported to when below the main map, a cave-like dimension of
-"stacked overlapping rocks (not a real modeled map)", and (clarified) **sleep
-dreams** = minigames when you sleep in bed (succeed to sleep; fail = wake up
-ragdolled out of bed). The **backrooms is a separate system from the dreams.**
+User (2026-05-30): VOTV has the cave/mine, "dimensions" (a backrooms; a cave-like
+dimension of stacked rocks), **sleep dreams** (sleep -> minigame -> succeed=sleep /
+fail=wake ragdolled out of bed), and **hidden locations physically under the map**.
+The backrooms and dream maps are NOT under the map; the under-map hidden locations
+are separate. Make-or-break coop question: **separate `UWorld` (OpenLevel travel =
+the hard nightmare) or same persistent world (in-world teleport / streaming
+sublevel = no travel machinery)?**
 
-Coop question: how do peers travelling in/out of these sync? The make-or-break
-fact: **separate `UWorld` (OpenLevel map travel = the hard nightmare case) or
-same persistent `UWorld` (in-world teleport / streaming sublevel = no travel
-machinery)?**
-
-## Method + an honest correction trail
+## Method + correction trail (read this before trusting any mechanism claim)
 
 Static RE off the two UE4SS object dumps (`UE4SS_ObjectDump_GAMEPLAY_SAVE.txt`
-~83 MB, player on surface; `..._MAIN_MENU.txt` ~68 MB) **plus string-grep of the
-cooked `.pak`** (`VotV-WindowsNoEditor.pak`, 8.2 GB) to see assets that aren't
-loaded in either snapshot.
+~83 MB, player on surface; `..._MAIN_MENU.txt` ~68 MB) + string-grep of the cooked
+`VotV-WindowsNoEditor.pak` (8.2 GB, asset-path strings only — NO readable BP
+bytecode). Final pass was a 7-agent evidence-locked workflow (5 parallel finders ->
+adversarial verifier -> synthesis); this doc is its corrected output.
 
-This finding was revised TWICE as the user corrected my reads — recorded as a
-caution against trusting one snapshot: (1) I first concluded a blanket "zero
-coop work"; the user noted the procedural dimensions, which a surface snapshot
-never captures. (2) I then conflated the dreams with the backrooms; the user
-clarified dreams = sleep minigames, backrooms = separate. The pak grep then
-revealed the streaming-sublevel layer that neither object dump showed. **Lesson:
-an object dump proves what IS loaded; it cannot disprove on-demand content — for
-that you must read the pak or probe at runtime.**
+**Hard epistemic limits (obeyed):** an object dump proves only what is LOADED — it
+cannot disprove on-demand content (absence = "not loaded in snapshot", never "does
+not exist"). The pak has assets but no BP logic — so HOW a place is entered
+(teleport vs `LoadStreamLevel` vs trigger) and any generation/seed logic are NOT
+knowable statically and are marked UNKNOWN. This finding was revised across the
+session as the user corrected earlier over-claims (a blanket "zero work"; conflating
+dreams with the backrooms; "below-map -> backrooms"; asserting `LoadStreamLevel` as
+fact). Mechanism claims are now status-marked confirmed / inferred / unknown.
 
-## Bedrock fact (CONFIRMED): ONE persistent gameplay UWorld
+---
 
-- Gameplay UWorld instances: **1** — `World /Game/maps/untitled_1.Untitled_1`
-  (menu is its own `/Game/menu`; never simultaneous). ULevel instances: **1**
-  (`untitled_1...:PersistentLevel`, 50,637 placed actors).
-- The only full UWorld swap in the lifecycle is boot/menu->gameplay
-  `open untitled_1` (and a mid-session save-LOAD re-`open`) — both already
-  handled by the dead-Prop-Element reaper + world-change re-seed.
-- The many `/Game/maps/untitled_0..115`, `tutorial*`, `sandbox`, junk-named maps
-  in the pak are dev iterations / other modes, NOT runtime-loaded dimensions.
+## 1. Bedrock (CONFIRMED)
 
-## The four "other place" systems (all inside untitled_1)
+**VOTV gameplay runs in exactly ONE persistent UWorld** — the load-bearing fact.
+- One gameplay UWorld: `World /Game/maps/untitled_1.Untitled_1`.
+- One gameplay ULevel: `untitled_1.Untitled_1:PersistentLevel`, with **50,637
+  placed objects** under it (matches the user's number exactly).
+- Menu is a separate UWorld (`/Game/menu.menu`) in its own dump — not a second
+  *gameplay* world.
+- **No non-CDO `LevelStreaming` instance in either snapshot** (only the
+  `Default__LevelStreaming` CDO). `OpenLevel`/`LoadStreamLevel`/`ServerTravel`
+  appear only as `/Script/Engine` + `VictoryBPLibrary` Function *definitions*
+  (present in every UE build) — not evidence of use.
+- The only world swap is boot/save-load (`open untitled_1`), already handled by the
+  reaper + world-change re-seed (HEAD 63f238d). No second gameplay world anywhere.
 
-### 1. Modeled mine/cave — baked in, ZERO coop work (CONFIRMED)
-60 `caveSegment_*` StaticMeshActors + `elevatorOfDeath` elevator + `cargoLift*` +
-`ladder*`, placed directly in `untitled_1:PersistentLevel`, resident even while
-topside. Descending is moving coordinates within untitled_1. Existing whole-map
-pose/prop sync already covers a peer down the mine. **No work.**
+(Correction banked: an earlier finder's "~49 placed actors" was a grep artifact —
+it matched only the bare class string `Actor`, missing `StaticMeshActor`/`*_C`/
+components. Real count 50,637.)
 
-### 2. Dimension SUBLEVELS — streaming sublevels of untitled_1 (CONFIRMED to exist; load mechanism strongly inferred)
-The pak has `/Game/maps/sublevels/`: **`sl_caves`, `sl_goop`, `sl_woid`,
-`sl_poopDim`, `sl_alexpdim`, `sl_place`, `sl_SaveTest`** (+ deprecated
-`sl_backroomsObsolete`, and `/Game/maps/sl_cavesObsolete`). Each has its own
-`sl_*_C` level blueprint. The user's "cave dimension of stacked rocks" is most
-likely **`sl_caves`** (distinct from the baked mine in system 1).
-- These are UE **streaming sublevels** (the `/maps/sublevels/` convention), loaded
-  on demand via `LoadStreamLevel` (the engine fn IS in our SDK). That is why the
-  surface snapshot showed **0 `ULevelStreaming` instances** — none was active;
-  `untitled_1` does not statically register them, so they're dynamic/Kismet loads
-  whose handle exists only while loaded.
-- **A streaming sublevel loads INTO the persistent UWorld — it is NOT an
-  `OpenLevel` world swap.** The player stays in `untitled_1`; the sublevel's
-  actors are added/removed. So entering a dimension = NO world swap, NO mass
-  purge of persistent props, the reaper/re-seed/world-context machinery is NOT
-  triggered. (Strong inference; runtime-confirm below.)
+## 2. The systems
 
-### 3. Sleep DREAMS — procedural sleep minigames (CONFIRMED)
-`/Game/objects/dreams/dream_*` (`dream_room`, `dream_boulders`/`dreamBoulder`,
-`dream_climb/jump/run/ufo/mann/wend/burger/fill`) are spawnable BP **actors**.
-Flow (matches the user): `mainGamemode_C` `bed`/`bedSleepProb`/`fellAsleep`/
-`isSleep`/`sleepingPawn` -> `createDream`/`processDream` (procedural,
-`RandomIntegerInRange` in the `gen` fns — global RNG, NOT stream-seeded) ->
-succeed = sleep, or fail = `mainPlayer_C::wakeup` + `ragdollMode`/`isRagdoll`/
-`AutoRagdollGetup` (thrown out of bed). Spawned in untitled_1; no world swap.
+### (a) Modeled mine + hidden under-map locations
+The under-map area is RICHER than just the mine. CONFIRMED present in
+`untitled_1:PersistentLevel` (surface snapshot):
+- **Cave**: `caveSegment_straight_*` / `caveSegment_deadend*` (~50 hits, baked);
+  `rocks_rock_L27_abcave*`; `caveEntryCheck` is a real `SphereComponent` on
+  `antibreatherSPawner_2` (EXISTENCE only — not a proven entry mechanism).
+- **Elevator-of-Death** cluster (~56 hits): `elevatorOfDeath_elevatorShaft3`,
+  `_elevatorWalls/Doors/Grate/CeilingFloor/Details`.
+- **Basement / sub-basement** under `Basev2Final_2`: `base3segment_basement`,
+  `_bottomBasement`, `_subBasement`; `misc_box_basement1/2`; `ambLigh_basement`;
+  `waterVolume_basementFlooder_5`; `trigger_lightRoot_basement`.
+- **Alpha Bunker**: `misc_box_alphaBunker`, `ambientLightCurve_alphaBunker`,
+  `bunkerHatch_2`, `doorbunkersw_prot_2`.
+- **Secret wall**: `prop_basementSecretWall_2` (PhysicsConstraint1-4 + break audio
+  + `eff_break` — a breakable barrier, inferred medium).
+- **Tunnels**: `prop_tunnelRock2..6`, `misc_box_tunnel`, `prop_minelight*`.
 
-### 4. The BACKROOMS — separate, below-map, likely procedural (PARTIAL — runtime residual)
-Gated by `mainGamemode_C` `backroomsEnabled`/`canBackrooms`/`backroomsPass`/
-`cheatEnableBackrooms`; entered when below-map (`killZheight` threshold) via
-`mainPlayer_C::teleportWObackrooms` (a **teleport**, not a travel). The only
-baked backrooms sublevel is **`sl_backroomsObsolete`** (deprecated) — consistent
-with the user's "procedural" description: the current backrooms appears to be
-generated, NOT a baked sublevel (no current backrooms map/geometry in the pak
-under a clear name, and no distinctly-named generator blueprint surfaced). The
-current generation mechanism is **not statically visible** (BP bytecode) — this
-is the main RESIDUAL.
+INFERRED: these are distinct discrete locations (cave/elevator/basement/bunker/
+tunnel), not one continuous space (medium-high; naming cohesion, no transforms).
+UNKNOWN: **Z-coordinates** (dumps carry no reliable transforms; "under the map"
+rests on user ground truth + naming, not the dump); how each is entered; whether
+"the cave" a player visits is these baked `caveSegment_*` actors or the `sl_caves`
+sublevel (see 2b) — the two are in tension and the snapshot only proves the baked
+segments exist.
 
-## Coop implications (corrected — bounded work, NOT the level-travel nightmare)
+### (b) Dimension sublevels
+CONFIRMED: **nine `sl_*` packages** under pak `/Game/maps/sublevels/`: `sl_caves`,
+`sl_goop`, `sl_woid`, `sl_poopDim` (+`sl_poopDim_BuiltData` = lighting-bake data,
+NOT a dimension), `sl_alexpdim`, `sl_place`, `sl_SaveTest`, `sl_backroomsObsolete`;
+plus `/Game/maps/sl_cavesObsolete` outside `/sublevels/`. **None loaded in either
+snapshot.** Theme assets exist (caveores/cave ambience; `mat_goopscape`/goop
+footsteps; `mat_void*`/`inst_void*`; `poop_*`).
+INFERRED (theming, asset-level): `sl_caves`=rocky cave, `sl_goop`=slime, `sl_woid`
+≈void, `sl_poopDim`=poop (all high); `sl_SaveTest`=dev/test artifact; `*Obsolete`
+=deprecated earlier impls (high). `sl_alexpdim`/`sl_place` purpose = low/UNKNOWN
+("alexp" reads as a dev name, not "alien").
+UNKNOWN: **the load mechanism** — "streams on demand" is NOT proven (zero
+`LevelStreaming` instances). Confirmed only: "present in pak, not loaded in either
+snapshot." Whether they load via `LoadStreamLevel` (-> same UWorld) vs `OpenLevel`
+(-> world swap) vs never (dev-only) is bytecode-UNKNOWN. (Per-sublevel "12/13
+instances" numbers from an earlier finder were mashed-string artifacts — discarded;
+~3 distinct base refs each.)
 
-Unifying point: **it is all ONE UWorld** (persistent `untitled_1` + in-world
-teleports + streaming sublevels). So there is **NO `OpenLevel` world swap, NO
-mass purge, NO lockstep travel, and NO engine requirement to force-co-locate the
-party.** The feared nightmare (separate-level peers needing the MTA
-Dimension/Interior partitioning we cut) does **not** apply.
+### (c) Sleep dreams (matches user ground truth)
+CONFIRMED classes/members: `mainGamemode_C` `isSleep/dreaming/dreamProbability/
+sleepTime/sleepCam/bed/sleepingPawn/playerPreDream` + fns `sleep(bed,dropItem,
+ignoreRagdoll)/wakeup/bedSleepProb/createDream/processDream/leaveDream` + delegates
+`fellAsleep/sleepTriggered`. `AdreamBase_C : AActor` is **self-contained**
+(`PostProcess`, `SkyLight`, `dream` audio, `sky` mesh, `playerSpawn` billboard,
+`Duration`, `TArray<Fstruct_save> inventory`; `naturalWakeup()/awoken()`); dream
+actors `/Game/objects/dreams/dream_{boulders,burger,climb,dreambase,fill,jump,mann,
+room,run,ufo,wend}`. `mainPlayer_C` `isRagdoll/ragdollMode/ragdollActor/
+AutoRagdollGetup/wakeup/forceWakeup/sleepComfort/sleepDraining`.
+INFERRED (high): dreams run as **contained actors inside the one persistent world**
+(per-dream PostProcess+SkyLight+playerSpawn), NOT as loaded map levels — consistent
+with ground truth; `processDream` does weighted-random selection (`dreamers_C`
+class->float map) + `BeginDeferredActorSpawnFromClass`; inventory carried across via
+`dreamBase_C.inventory`. UNKNOWN: spawn coords/placement; sleep trigger; per-minigame
+success/fail/timeout; whether `sl_alexpdim`/`sl_place` are ever used by dreams (a
+categorical "dreams never use a sublevel" is NOT provable — only "no dream-named map
+found by pattern, none loaded in snapshot").
 
-The real, bounded work — reuses existing actor-spawn/mirror + reliable-event
-machinery:
-1. **Host-authoritative "who is in which place" state** (surface / a dimension /
-   backrooms), pushed to peers over the reliable channel.
-2. **Make the place's geometry exist locally on each client** so a peer there
-   renders correctly (the peer's POSE already syncs — same world):
-   - Baked dimension sublevels (`sl_caves`, etc.): each client `LoadStreamLevel`s
-     the SAME sublevel — geometry is identical, **no procedural replication**.
-     Cleanest case.
-   - Procedural backrooms / sleep dreams: host generates + **replicates the
-     spawned actors** (per-actor spawn sync — can't share a seed since RNG isn't
-     stream-based). Reuses the Prop/Npc `MirrorManager` shape
-     ([[feedback-registry-register-mirror-pattern]]).
-3. **Design decision — shared vs per-player place.** Lean SHARED for
-   dimensions/backrooms (genre + our whole-map/no-AOI choice); sleep dreams may
-   be **personal/paused** (a solo minigame) and might need no sync at all — a
-   gameplay-design call, not an engine constraint (one world either way).
+### (d) Backrooms (separate system; NOT under-map per ground truth)
+CONFIRMED: `mainGamemode_C` `backroomsEnabled [o:8D9]`, `backroomsPass [o:C48]`,
+`cheatEnableBackrooms [o:1240]`; `canBackrooms` fn (structure includes
+`GetCurrentLevelName` + `GetActorUpVector` + `Dot` + `EqualEqual_StrStr` nodes — a
+level-name+orientation check STRUCTURE, not proven semantics), referenced from the
+mainPlayer ubergraph. `mainPlayer_C::teleportWObackrooms` fn uses explicit
+`NewTransform/useRotation/trueRotation` + velocity + grabbed-actor params (explicit
+transforms, not runtime generation). Pak: only `sl_backroomsObsolete` matches;
+textures `backroomsCeiling/_emiss/Floor/Wall` + materials `inst_broom_*`; **no
+backrooms mesh and no generator found by name-pattern grep.**
+INFERRED (medium): entry is a **teleport within the persistent world**
+(`teleportWObackrooms`'s explicit transforms) rather than a procedural generator —
+but the call-site is bytecode. The OLD impl was sublevel-based (`*Obsolete` says it
+was abandoned); the CURRENT mechanism is UNKNOWN (do NOT assert "procedural" — that's
+an absence argument). UNKNOWN: what calls `teleportWObackrooms` + the destination;
+the boolean runtime values; whether current backrooms reuse the obsolete sublevel,
+teleport-to-a-baked-region, or something else.
 
-This is **sublevel-streaming + actor/state-sync scope, NOT level-travel scope.**
+## 3. Coop implications
 
-## Residual RE (runtime/bytecode only — reflection has hit its limit)
+**It is all ONE UWorld** — removes the hardest MP problems: no `OpenLevel` swap, no
+`ServerTravel`, no second gameplay world, and no mass-purge level transition for the
+in-world "other places" (the under-map locations are always-resident baked
+PersistentLevel actors). No forced co-location concept needed for them.
 
-1. **Confirm same-world** for a dimension and the backrooms: enter one
-   (`cheatEnableBackrooms`, or hands-on below-map / sleep) and verify
-   `engine::g_worldContext` + world name are UNCHANGED and the reaper logs NO
-   mass-purge episode. (A world swap would change both.)
-2. **Current backrooms mechanism:** procedural generator vs a (renamed) sublevel;
-   dump the live backrooms actor set, count, parent level, any stored seed.
-3. **Per-dimension load path:** confirm `sl_caves`/`sl_goop`/etc. are
-   `LoadStreamLevel`'d into untitled_1 (vs anything exotic).
-4. **Do sleep dreams need coop sync at all?** (personal-minigame vs shared).
-   Autonomous smoke can't reach below-map/sleep -> dev-probe/hands-on.
+Bounded real work, split by **is the destination baked-in-world or a separate
+sublevel?**
+1. **Baked under-map locations** (cave/elevator/basement/bunker/tunnels): already
+   inside the synced world. Cost = normal pose/prop sync + per-site SP-assumption
+   fixes (principle 4) for interactables there (`prop_basementSecretWall_2`, the
+   elevator, the bunker hatch). No new place-membership machinery.
+2. **Dreams**: actor-based, deferred-spawned in the shared world, inherently a
+   single-player minigame (one sleeper, private). Recommended: **per-player /
+   host-authoritative dream instancing** — do NOT replicate the dream actor as a
+   shared space; replicate only the sleeper's sleep/ragdoll STATE so others see them
+   lying in bed / ragdolled. Treating a dream as shared geometry would force
+   co-presence into a private minigame (out of scope, against ground truth).
+3. **Dimension sublevels + backrooms**: hinges on the entry mechanism. IF a separate
+   **sublevel load** -> need host-authoritative **place-membership** (which peers are
+   "in" the place) + each client loads the SAME baked sublevel client-side (cheap,
+   deterministic geometry — NO procedural replication). IF a **teleport within the
+   persistent world** (what `teleportWObackrooms`'s explicit transforms hint at,
+   unproven) -> collapses into case 1: just movement in the shared world, no new
+   machinery. **This teleport-in-world vs sublevel-load question is the single
+   highest-value unknown** — it decides whether ANY place-membership system is
+   needed.
 
-## Verdict
+Design call to make explicit when picked up: **shared vs per-player** — baked
+under-map = shared by default; dreams = per-player; dimensions/backrooms = undecided
+pending the entry-mechanism RE. No MTA Dimensions-style instancing (RULE 3 scope) is
+needed for the baked locations regardless.
 
-Modeled mine: zero work. Dimensions/backrooms/dreams: **same UWorld, no level
-travel** (sublevel streaming + in-world teleport) — a genuine but BOUNDED future
-coop feature (host-auth place-membership + per-client sublevel load / procedural
-actor replication), reusing existing machinery. NOT a separate-world rewrite.
+## 4. Residual RE (runtime / bytecode-only — reflection has hit its limit)
+
+Confirm via a C++ dev probe (preferred over UE4SS Lua) / hands-on / IDA on the
+specific native call site:
+1. **Backrooms entry call-site (highest value):** what calls `teleportWObackrooms`,
+   with what destination, and is it teleport-within-untitled_1 or a sublevel load?
+   Probe: trace `teleportWObackrooms` + `canBackrooms`; snapshot world+pos
+   before/after.
+2. **Dimension-sublevel load mechanism:** are `sl_caves/goop/woid/poopDim/alexpdim/
+   place` loaded via `LoadStreamLevel`, `OpenLevel`, or never? Trap those calls;
+   watch for any `LevelStreaming` instance appearing.
+3. **Cave: baked vs streamed** — does entering the cave use the baked `caveSegment_*`
+   actors, trigger `sl_caves`, or both? Watch `caveEntryCheck` overlaps + any
+   sublevel load.
+4. **Dream spawn flow:** confirm `processDream` weighted-random pick from
+   `dreamers_C` + deferred-spawn placement relative to the player.
+5. **Dream isolation:** confirm a dream is a self-contained actor in untitled_1
+   (PostProcess/SkyLight swap), NO sublevel load, NO world change -> per-player
+   instancing is safe.
+6. **Backrooms booleans:** runtime values + which gates entry.
+7. **Z-coords of under-map locations:** read live transforms of `caveSegment_*`,
+   `elevatorOfDeath_*`, `base3segment_*`, `alphaBunker` to confirm placement + map
+   their layout.
+8. **`prop_basementSecretWall_2` / elevator interactables:** semantics (break vs
+   open) for per-site coop replication.
+
+## Bottom line
+
+One persistent UWorld with rich baked under-map locations (caves/basement/bunker/
+elevator — confirmed present, Z unknown), an actor-based per-player dream system
+(confirmed surface), a teleport-or-sublevel backrooms (entry UNKNOWN), and nine
+`sl_*` dimension sublevels in the pak (none loaded). The only coop machinery that
+*might* be needed is host-authoritative place-membership for the streamed sublevels/
+backrooms — and whether even that is required hinges on the one unresolved question:
+**teleport-in-world vs sublevel-load.** NOT a separate-world rewrite.
