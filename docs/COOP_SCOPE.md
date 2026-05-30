@@ -177,6 +177,44 @@ items.
   than `GetPlayerPawn(0)`. FUTURE scope (lands with the NPC AI-targeting
   work, Phase 5N1); not built yet.
 
+- **Player health / vitals / death sync** — peers SEE each other's health
+  drop, take damage, ragdoll, and die. Authority: **PER-PEER-AUTHORITATIVE
+  vitals** — each peer computes its OWN health (host-run enemy hits are
+  delivered as a reliable `PlayerDamage` EVENT to the hit peer, which feeds it
+  to its LOCAL SP `Add Player Damage` BP so its own armor/FX/health-decrement
+  run) and STREAMS the resulting health for others' puppet display. Death is a
+  reliable, self-attested event from the dying peer (the only peer that
+  authoritatively knows it died). Self-damage (fall/fire/radiation) is computed
+  locally and shows up in the streamed health with no event. Owner: per-peer
+  for the health number + death; host for enemy hit DELIVERY (host runs the
+  AI/hit per enemies-target-both above, then tells the hit peer). Wire:
+  continuous health/food/sleep piggybacked on `PoseSnapshot` (8-bit, ZERO size
+  change — spends the existing `_pad[3]`; health streamed as the FRACTION
+  `health/maxHealth` since `maxHealth` is per-peer, not shared; `stateBits`
+  bit1=isRagdoll, bit2=isBurning, DISPLAY-ONLY) + reliable `PlayerDamage` (host
+  enemy hit -> owner, host-only-send/not-relayable) + reliable
+  `PlayerRagdollState` (dying/sleeping peer -> all; carries death vs passOut/
+  faint, since VOTV's `ragdollMode`/`isRagdoll` is SHARED by sleep+faint+death
+  — a sleeping peer must show a SLEEPING puppet, not a dead one). The reliable
+  event is the SOLE authority for DEAD/RAGDOLL<->ALIVE; the unreliable stateBits
+  only refresh display within that state (never trigger a transition).
+  Respawn/revive (`PlayerRevive`) DEFERRED pending an RE pass on VOTV's respawn
+  mechanism (no co-op revive in BP today; SP death = load-last-save or
+  ragdoll-getup). Protocol bump v18->v19. Display: health bar on the existing
+  nameplate; ragdoll via the puppet's own `ragdollMode`/`ragdollActor`.
+  RULE-3 (no anti-cheat): a peer is authoritative over its own death — a
+  dishonest peer can refuse to die / under-report health (4 trusted LAN peers;
+  MTA trusts the same at the C++ layer). MTA shape: `CPlayerPuresyncPacket`
+  health stream + reliable `CPlayerWastedPacket` death + `CPlayerSpawnPacket`
+  respawn. Decided 2026-05-30 (user; foundation-audit critical realization #2:
+  vitals UNREPLICATED -> combat/horror loop incoherent across peers).
+  Methodology phase: ~5N1-adjacent (enemy damage delivery depends on the host
+  hitting client puppets). Cross-link: enemies-target-both above (those puppets
+  are what enemies hit; THIS replicates the resulting health/death). RE +
+  design (incl. adversarial-verify must-fixes):
+  `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. NOT built yet
+  (design banked; Inc0 P7 extraction -> Inc1 health-bar is the first increment).
+
 <!--
 Template for an entry:
 - **<system>** — replicated <how>. Owner: <host / per-machine>.
@@ -409,3 +447,18 @@ Design implications (do NOT build yet; record so the architecture serves it):
   selection over all players + replicated chosen-target/pose. Concretizes
   the 2026-05-24 enemies-target-both decision; FUTURE (Phase 5N1 NPC AI
   targeting).
+- 2026-05-30 — **Player health / vitals / death sync** added to In scope;
+  user (foundation-audit critical realization #2). Per-peer-authoritative
+  health (owner computes, others display) + host-delivered enemy hits
+  (reliable `PlayerDamage`, host-only/not-relayable) + self-attested reliable
+  `PlayerRagdollState` (carries death vs passOut/faint — `ragdollMode`/
+  `isRagdoll` is SHARED with sleep, so sleeping shows a sleeping puppet).
+  Continuous health(as fraction)/food/sleep piggybacked on `PoseSnapshot`
+  (8-bit, zero size change via the existing `_pad[3]`). Reliable event is sole
+  DEAD<->ALIVE authority; unreliable stateBits display-only. Protocol v18->v19.
+  Revive/respawn deferred pending respawn-mechanism RE. MTA shape:
+  `CPlayerPuresyncPacket` stream + `CPlayerWastedPacket` death +
+  `CPlayerSpawnPacket` respawn. Design + adversarial-verify must-fixes:
+  `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. Concretizes
+  the enemies-target-both decision (puppets are what enemies hit; this
+  replicates the resulting health/death). NOT built (design banked).
