@@ -198,10 +198,16 @@ items.
   — a sleeping peer must show a SLEEPING puppet, not a dead one). The reliable
   event is the SOLE authority for DEAD/RAGDOLL<->ALIVE; the unreliable stateBits
   only refresh display within that state (never trigger a transition).
-  Respawn/revive (`PlayerRevive`) DEFERRED pending an RE pass on VOTV's respawn
-  mechanism (no co-op revive in BP today; SP death = load-last-save or
-  ragdoll-getup). Protocol bump v18->v19. Display: health bar on the existing
-  nameplate; ragdoll via the puppet's own `ragdollMode`/`ragdollActor`.
+  **Death lifecycle (user decision 2026-05-30): permadeath, rejoinable; host
+  death ends the session.** Both host and peer death use VOTV's NATIVE SP
+  death->menu flow (no death->menu intercept). Host death = session ends for all
+  (== host exit; no migration); peer death = that peer disconnects to menu (host
+  runs existing puppet/mirror teardown; client save already blocked) and may
+  REJOIN the host's ongoing world via the existing late-join snapshot. So
+  **respawn/revive (`PlayerRevive`) is CUT (RULE 2)** — no respawn-in-place, no
+  revive. Protocol bump v18->v19. Display: health bar on the existing nameplate;
+  ragdoll via the puppet's own `ragdollMode`/`ragdollActor` (narrowed to the
+  NON-death faint/sleep/KO states where the player STAYS in the world).
   RULE-3 (no anti-cheat): a peer is authoritative over its own death — a
   dishonest peer can refuse to die / under-report health (4 trusted LAN peers;
   MTA trusts the same at the C++ layer). MTA shape: `CPlayerPuresyncPacket`
@@ -212,8 +218,10 @@ items.
   hitting client puppets). Cross-link: enemies-target-both above (those puppets
   are what enemies hit; THIS replicates the resulting health/death). RE +
   design (incl. adversarial-verify must-fixes):
-  `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. NOT built yet
-  (design banked; Inc0 P7 extraction -> Inc1 health-bar is the first increment).
+  `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. STATUS: Inc0 (P7
+  extraction) + Inc1 (continuous health/food/sleep on PoseSnapshot + nameplate
+  health bar, display-only) SHIPPED (6f5949c); Inc2 (ragdoll/faint sync), Inc3
+  (PlayerDamage enemy-hit delivery) pending; respawn/revive CUT (see above).
 
 <!--
 Template for an entry:
@@ -462,3 +470,14 @@ Design implications (do NOT build yet; record so the architecture serves it):
   `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. Concretizes
   the enemies-target-both decision (puppets are what enemies hit; this
   replicates the resulting health/death). NOT built (design banked).
+- 2026-05-30 — **Death lifecycle policy decided + vitals Inc1 SHIPPED.** User
+  decision: **permadeath, rejoinable; host death ends the session.** Both host
+  and peer death use VOTV's native SP death->menu flow — NO death->menu intercept
+  (principle 6: native behavior is acceptable for coop). Host death = session ends
+  for all (== host exit, no migration); peer death = disconnect to menu (existing
+  teardown; client save already blocked) + REJOIN via existing late-join snapshot.
+  CONSEQUENCE: **respawn/revive CUT (RULE 2)**; Inc2 ragdoll narrows to the
+  non-death faint/sleep/KO states; Inc3 PlayerDamage (combat loop) unchanged.
+  Vitals **Inc1 SHIPPED 6f5949c** (Pelmentor): continuous health/food/sleep on
+  PoseSnapshot `_pad[3]` (zero size change, v18->v19) + display-only nameplate
+  health bar; pre-deploy checklist PASS, sender resolution proven on both peers.

@@ -107,8 +107,9 @@ to `IsClientRelayableReliableKind` (session_lanes.h) + `LaneForKind->High`**, el
 client B's death never reaches client C (breaks at 3+ peers, invisible in 2-peer
 smoke).
 
-**3d. PlayerRevive — DEFERRED to Inc5** (gated on respawn-mechanism RE; cut the wire
-per RULE 2 if VOTV death is load-last-save).
+**3d. PlayerRevive — CUT (user decision 2026-05-30, see 4.5).** Death is permadeath-
+rejoinable via the native SP death->menu flow; there is no respawn/revive, so no
+PlayerRevive/PlayerSpawn wire is built (RULE 2 -- not deferred, removed).
 
 **3e. Bump `kProtocolVersion 18->19`; new ReliableKind `PlayerDamage`,
 `PlayerRagdollState` (fresh IDs, don't reuse retired 16/17).** v19 bump invalidates
@@ -126,6 +127,51 @@ mismatch).
 - Echo/role gate: sender observer fires only when `GetController()!=null` (local);
   self-echo guarded `senderElementId==own`.
 
+## 4.5. Death lifecycle policy (USER DECISION 2026-05-30)
+
+Question raised: VOTV SP death KILLS the session and throws the player to the main
+menu -- what happens in coop when the host or a peer dies? User decision:
+**permadeath, rejoinable; host death ends the session.** Both host and peer death
+use VOTV's NATIVE SP death->menu flow -- we do NOT intercept the death->menu
+transition (principle 6: the native behavior is acceptable for coop here; we
+augment only what's actually broken, and here nothing is).
+
+- **Host death = session ends for ALL.** Native SP flow runs: host saves (host-
+  authoritative canonical world -> persists, desired) then returns to menu; all
+  peers disconnect. This == host exit and is already the model
+  ([[project-coop-no-host-migration]] -- no client is promoted). NO new code.
+- **Peer (client) death = that peer disconnects to menu** (native SP flow). The
+  host observes a normal disconnect and runs the EXISTING teardown (puppet despawn
+  + D1-7 per-slot prop-mirror drain). The dying client's death-save is already
+  BLOCKED by the client save-block ([[project-foundation2-save-safety]]), so it
+  can't write. The peer then REJOINS the host's ongoing world via the EXISTING
+  late-join snapshot path. NO new intercept code.
+- **Rejoinable:** a kicked-to-menu peer reconnects into the still-running host
+  world (existing connect + snapshot). Permadeath = on death they lose their
+  in-progress run / private inventory (SP semantics) and return fresh into the
+  shared world. Optional polish: an event-feed "X died" / "session ended" line.
+
+CONSEQUENCES for the increment plan (this SHRINKS the pillar):
+- **Respawn/revive (old Inc5) is CUT entirely (RULE 2).** No respawn-in-place, no
+  revive interaction, no PlayerRevive/PlayerSpawn wire. Death = leave + rejoin.
+- **Inc2 (ragdoll sync) NARROWS to the NON-death states** -- sleep, faint/passOut,
+  knockdown -- where the player STAYS in the world. The death-vs-faint distinction
+  (must-fix #4, via passOut) keeps a fainted/sleeping peer from looking like it
+  left, vs a peer that actually died (and is about to disconnect). A truly DEAD
+  peer just despawns on disconnect, so a lingering death-ragdoll on its puppet is
+  optional (the puppet is torn down anyway).
+- **Inc3 (PlayerDamage) UNCHANGED and still needed** -- the combat loop: host-auth
+  enemy hits a peer -> reliable PlayerDamage to owner -> owner health drops
+  (visible via the Inc1 bar) -> at 0 native death->menu fires -> rejoin. This is
+  what makes "enemies target both" + the zombie-kerfur pursuit
+  ([[project-coop-enemies-target-both]]) actually threatening to peers.
+- **Inc1 (health bar) UNCHANGED** -- gives the pre-death warning. SHIPPED 6f5949c.
+
+RE still needed (LIGHTER now -- the death->menu intercept is NO LONGER needed):
+confirm the client death->menu path cleanly DISCONNECTS (not a hard crash mid-
+teardown) and that rejoin-after-death works through the existing snapshot. The
+exact death->menu call site no longer needs hooking.
+
 ## 5. Scope text -> docs/COOP_SCOPE.md (added below; see that doc).
 
 ## 6. Increment plan (smallest-first; each smoke-verified per the 6-item checklist)
@@ -133,11 +179,18 @@ mismatch).
   GameInstance->save_gameInst->saveSlot offset resolver out of `coop/dev/
   restore_vitals.cpp` into a new `ue_wrap::vitals` accessor (engine substrate;
   ZERO network/quantization logic — quantize stays coop-side).
-- **Inc1 — health->nameplate bar (display only):** bump v19; repurpose `_pad[3]`;
-  sender packs `health/maxHealth` fraction + food + sleep in ReadLocalPose;
-  receiver `RemotePlayer::SetHealth`; nameplate bar. No damage/death. Smoke: F3
-  refill -> remote bar fills; hunger/fall drop -> remote bar drops; numeric assert
-  puppet health_ tracks source fraction.
+- **Inc1 — health->nameplate bar (display only): SHIPPED 6f5949c (Pelmentor).**
+  v19; `_pad[3]` -> `healthFrac`/`foodFrac`/`sleepFrac` (quantized [0,1] via shared
+  protocol.h Quantize/DequantizeUnitFraction); sender packs in net_pump::ReadLocalPose
+  off ue_wrap::vitals; receiver `RemotePlayer::SetVitals` (display-only health_/food_/
+  sleep_); nameplate draws a 2nd line "HP [|||...] N%" (ASCII text bar, font-safe,
+  change-gated on integer percent). As-built NOTES: (a) text bar not a graphical
+  UProgressBar -- no UProgressBar in the codebase + its UFunction names unverified;
+  text reuses SetWidgetText (zero new unverified reflection), upgradeable later;
+  (b) food/sleep streamed (free) but not shown by default. Pre-deploy checklist PASS;
+  a latched one-shot sender log PROVED the chain resolves real values on both peers
+  (health=100/100 food=96.5 sleep=97.6 -> wire h=255 f=246 s=249). RESIDUAL (hands-on):
+  bar-drops-on-damage / F3-refill dynamic check (autonomous peers take no damage).
 - **Inc2 — reliable PlayerRagdollState + puppet ragdoll:** rising-edge poll of
   `isRagdoll@0x87F` carrying death/passOut; receiver `ragdollMode` on puppet +
   RemotePlayer DEAD/KO state (interp frozen); stateBit1 display-only (gated).
@@ -152,7 +205,10 @@ mismatch).
   the shared saveSlot? If shared, invoking it on a host-side puppet corrupts the
   LOCAL player's saveSlot.** Smoke via `DebugForceHitPuppet`.
 - **Inc4 — flinch/burning display (polish).**
-- **Inc5 — respawn/revive RE + conditional PlayerRevive (or cut per RULE 2).**
+- **~~Inc5 — respawn/revive~~ CUT (user decision 2026-05-30, see 4.5):** permadeath-
+  rejoinable uses VOTV's native death->menu; no respawn/revive feature. Residual
+  (light): confirm client death->menu cleanly disconnects + rejoin-after-death works
+  through the existing snapshot (no death->menu intercept needed).
 
 ## Must-fix / must-verify ledger (from adversarial verify)
 MUST (in design): #1 relay-whitelist PlayerRagdollState; #2 PlayerDamage host-only/
