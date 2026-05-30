@@ -133,6 +133,19 @@ ElementId Registry::AllocHostId(Element* e) {
     }
     const ElementId id = m_hostFree.back();
     m_hostFree.pop_back();
+    if (m_byId[id]) {
+        // Defensive (PR-FOUNDATION-3 review 2026-05-30): a free-stack id whose
+        // m_byId slot is already occupied means the free stack diverged from
+        // m_byId (a lifetime / double-free bug upstream). Do NOT clobber the
+        // existing element or hand out a doubly-owned id -- fail the alloc; the
+        // caller (e.g. MirrorManager::AllocAndInstall) treats kInvalidId as
+        // failure and drops its new element WITHOUT freeing this foreign id. The
+        // corrupt id is dropped (not re-pushed). NEVER fires in correct
+        // operation: FreeId nulls the slot before it pushes the id.
+        UE_LOGE("element::Registry: AllocHostId popped id=%u but its slot is "
+                "occupied (free-stack/m_byId divergence) -- failing alloc", id);
+        return kInvalidId;
+    }
     m_byId[id] = e;
     e->SetId_(id);
     return id;
@@ -148,6 +161,14 @@ ElementId Registry::AllocLocalId(Element* e) {
     }
     const ElementId id = m_localFree.back();
     m_localFree.pop_back();
+    if (m_byId[id]) {
+        // Defensive (PR-FOUNDATION-3 review 2026-05-30): see AllocHostId. A
+        // popped peer-range id whose slot is occupied = free-stack/m_byId
+        // divergence; fail the alloc rather than clobber. Never fires normally.
+        UE_LOGE("element::Registry: AllocLocalId popped id=%u but its slot is "
+                "occupied (free-stack/m_byId divergence) -- failing alloc", id);
+        return kInvalidId;
+    }
     m_byId[id] = e;
     e->SetId_(id);
     return id;

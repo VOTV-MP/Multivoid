@@ -146,6 +146,7 @@ add_library(votv-coop SHARED
     src/coop/dev/flashlight_setup.cpp
     src/coop/dev/pos_hud.cpp
     src/coop/dev/restore_vitals.cpp
+    src/coop/dev/spawn_npc.cpp
     src/coop/dev/teleport_client.cpp
     src/harness/harness.cpp
     src/harness/autotest.cpp

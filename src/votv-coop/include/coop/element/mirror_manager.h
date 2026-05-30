@@ -129,6 +129,72 @@ public:
         return true;
     }
 
+    // AUTHORITATIVE-ROLE ownership path (vs Install, the mirror-role path).
+    // Allocates a FRESH ElementId from the Registry -- host range when
+    // `isHost`, peer range otherwise -- binds `element` to it, and emplaces
+    // under the type mutex. Returns the allocated id, or kInvalidId on null
+    // element / Registry exhaustion / (shouldn't-happen) id collision; in
+    // every failure case `element` is dropped here so the caller's unique_ptr
+    // is consumed.
+    //
+    // Use this where the LOCAL peer is the authority that mints the id
+    // (host-side NPC/Prop spawns; client-local props), as opposed to Install,
+    // which binds an id ALREADY minted by a remote authority (a wire mirror).
+    // The element's m_mirror stays false (AllocHostId/AllocLocalId don't set
+    // it), so its dtor routes to Registry::FreeId -- returning the id to the
+    // free stack -- NOT UnregisterMirror. Install'd mirrors set m_mirror=true
+    // and route to UnregisterMirror. That single flag lets a unified drain
+    // (DrainAll) release both kinds correctly.
+    //
+    // DEADLOCK SAFETY: this path takes the Registry mutex (inside AllocHostId/
+    // AllocLocalId) and the type mutex (the emplace block) but NEVER holds both
+    // at once -- AllocHostId fully releases the Registry mutex before the emplace
+    // block acquires the type mutex. Install is the mirror image (type mutex
+    // released before RegisterMirror takes the Registry mutex), and every drain
+    // path destructs unique_ptrs OUTSIDE the type mutex so ~Element's FreeId
+    // never nests either. With ZERO lock nesting anywhere in the element layer,
+    // classical ABBA is structurally impossible -- regardless of role. (So the
+    // host-XOR-client property below is NOT a deadlock-safety mechanism.) Do NOT
+    // add a path that holds the type mutex across a Registry call (or vice
+    // versa); that would break this by-construction guarantee.
+    //
+    // The host-XOR-client property IS load-bearing, but for OWNERSHIP/ROUTING
+    // correctness, not locks: because a process uses AllocAndInstall (m_mirror
+    // stays false) XOR Install (m_mirror=true) for type T, the manager holds a
+    // pure host-set or pure client-set, so the IsMirror() flag cleanly
+    // discriminates the unified drain (DrainAll / DrainClientMirrors).
+    ElementId AllocAndInstall(std::unique_ptr<T> element, bool isHost) {
+        if (!element) return kInvalidId;
+        const ElementId eid = isHost ? Registry::Get().AllocHostId(element.get())
+                                     : Registry::Get().AllocLocalId(element.get());
+        if (eid == kInvalidId) {
+            // Registry exhausted. AllocHostId/AllocLocalId only set the
+            // element's m_id on SUCCESS, so `element` (destructing at return)
+            // has m_id==kInvalidId and its ~Element skips FreeId. No leak.
+            return kInvalidId;
+        }
+        bool collided = false;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (m_byId.count(eid) == 0)
+                m_byId.emplace(eid, std::move(element));
+            else
+                collided = true;
+        }
+        if (collided) {
+            // A freshly-popped free-stack id already present in the owner map
+            // means free-stack corruption / a lifetime bug upstream. `element`
+            // (still owned -- not moved on this branch) destructs at return
+            // OUTSIDE m_mutex, so its ~Element FreeId(eid) takes the Registry
+            // mutex ABBA-safe. Logged, never silently swallowed.
+            UE_LOGE("MirrorManager: AllocAndInstall fresh eid=%u already in owner "
+                    "map -- dropping new element (free-stack/lifetime bug upstream)",
+                    eid);
+            return kInvalidId;
+        }
+        return eid;
+    }
+
     // Drop the mirror at `wireEid`. Drain-under-lock-then-destruct so
     // the dtor fires outside m_mutex. Idempotent on missing eid.
     void Drop(ElementId wireEid) {

@@ -8,6 +8,7 @@
 #include "coop/dev/freecam.h"
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/restore_vitals.h"
+#include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/event_feed.h"
 #include "coop/garbage_sync.h"
@@ -757,6 +758,12 @@ void Start() {
     coop::dev::restore_vitals::Init();
     coop::dev::teleport_client::Init();
     coop::dev::force_weather::Init();
+
+    // Dev F7 (spawn a kerfurOmega NPC in front of the local player) + the
+    // VOTVCOOP_SPAWN_TRIGGER file watcher (the only programmatic NPC-spawn path;
+    // exercises host AllocAndInstall + broadcast + client mirror Install). No-op
+    // unless [dev] devkeys=1 or the trigger env is set.
+    coop::dev::spawn_npc::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our
     // cleanup BEFORE the engine's teardown PE calls fire. Without this

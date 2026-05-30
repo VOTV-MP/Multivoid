@@ -351,7 +351,8 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
                 res_x: int, res_y: int, peer_slot: int = 1,
                 monitor: int = 1, tile_index: int = 0,
                 center: bool = False,
-                memory_limit_gb: float = 12.0) -> int:
+                memory_limit_gb: float = 12.0,
+                trigger_file: str | None = None) -> int:
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
     # to launch from when role==client: 1 -> Game_0.9.0n_copy, 2 ->
     # Game_0.9.0n_copy2, 3 -> Game_0.9.0n_dev. Host always uses Game_0.9.0n.
@@ -407,6 +408,11 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     env["VOTVCOOP_NET_NICK"] = nick
     if role == "client" and peer:
         env["VOTVCOOP_NET_PEER"] = peer
+    if trigger_file:
+        # dev/spawn_npc watches this file path; when it appears the peer spawns
+        # a kerfurOmega NPC once + deletes it. mp.py npctest creates it after
+        # all peers connect (so the EntitySpawn broadcast reaches everyone).
+        env["VOTVCOOP_SPAWN_TRIGGER"] = trigger_file
     proc = subprocess.Popen(
         [str(exe), "-windowed",
          f"-ResX={res_x}", f"-ResY={res_y}",
@@ -918,6 +924,167 @@ def cmd_smoke4(args) -> None:
     sys.exit(0)
 
 
+def _log_count(log_path: Path, needle: str) -> int:
+    try:
+        return log_path.read_text(errors="replace").count(needle)
+    except OSError:
+        return 0
+
+
+def _wait_for_log(log_path: Path, needle: str, timeout: int, label: str) -> bool:
+    for i in range(timeout):
+        if _log_count(log_path, needle) > 0:
+            log(f"  {label}: '{needle[:42]}' seen after {i+1}s")
+            return True
+        time.sleep(1)
+    log(f"  {label}: '{needle[:42]}' NOT seen within {timeout}s")
+    return False
+
+
+def _capture_window(pid: int, out_path: Path) -> bool:
+    ps = Path(__file__).resolve().parent / "capture_window.ps1"
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", str(ps), "-ProcId", str(pid), "-Out", str(out_path)],
+            capture_output=True, text=True, timeout=40)
+        if r.returncode == 0:
+            log(f"  captured PID {pid} -> {out_path.name}  ({r.stdout.strip()})")
+            return True
+        log(f"  capture FAILED for PID {pid}: {(r.stderr or r.stdout).strip()[:200]}")
+        return False
+    except Exception as e:  # noqa: BLE001 (best-effort capture)
+        log(f"  capture EXC for PID {pid}: {e}")
+        return False
+
+
+def cmd_npctest(args) -> None:
+    """Spawn a kerfurOmega NPC on the HOST and verify it (a) spawns host-side and
+    (b) mirrors to every connected client. The ONLY end-to-end test of the
+    NPC-sync path (host AllocAndInstall + EntitySpawn broadcast + client mirror
+    Install) -- VOTV NPCs never autonomously spawn, so this is how
+    PR-FOUNDATION-3 Inc2 gets RUNTIME-validated. Captures each peer's window to a
+    PNG for visual confirmation. --peers 1 = host-only (spawn + screenshot);
+    --peers 4 = host + 3 clients (full mirror test)."""
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "npctest_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    trigger = str(HOST_DIR / "spawn_npc.trigger")
+    try:
+        Path(trigger).unlink()
+    except OSError:
+        pass
+
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before npctest")
+    deploy_all()
+
+    peers = max(1, min(4, args.peers))
+    if peers >= 4:
+        set_dev_ue4ss(False)
+        atexit.register(set_dev_ue4ss, True)
+
+    log("--- HOST LAUNCH (NPC spawn trigger armed) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb, trigger_file=trigger)
+    log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s")
+            bound = True
+            break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP")
+            tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+            sys.exit(1)
+    if not bound:
+        log("FAIL: host did not bind UDP")
+        kill_all()
+        sys.exit(1)
+
+    client_specs = [(1, CLIENT_DIR, "CLIENT1"), (2, CLIENT2_DIR, "CLIENT2"), (3, DEV_DIR, "CLIENT3")]
+    client_pids: dict[int, int] = {}
+    used_clients: list[tuple[int, Path, str]] = []
+    for slot_arg, game_dir, label in client_specs[:peers - 1]:
+        log(f"--- {label} LAUNCH ---")
+        pid = launch_peer("client", args.port, label.capitalize(), peer="127.0.0.1",
+                          res_x=1280, res_y=720, peer_slot=slot_arg, monitor=2,
+                          tile_index=slot_arg - 1, memory_limit_gb=args.memory_limit_gb)
+        client_pids[slot_arg] = pid
+        wait_for_client_connect(game_dir, args.client_boot_timeout, label, pid)
+        used_clients.append((slot_arg, game_dir, label))
+
+    # Gate the spawn on the host having finished resolving its NPC refs (the
+    # "installed interceptor" line fires only once the gameplay world is up + all
+    # 12 NPC classes resolved -- i.e. DevSpawnNpcInFront's refs are ready). This
+    # is deterministic regardless of peer count (works for solo + 4-peer).
+    host_log = HOST_DIR / "votv-coop.log"
+    _wait_for_log(host_log, "npc-suppress: installed interceptor", args.install_timeout, "HOST")
+    log(f"--- settling {args.settle}s, then firing spawn trigger ---")
+    time.sleep(args.settle)
+    log(f"--- writing spawn trigger {trigger} ---")
+    Path(trigger).write_text("spawn")
+    # Wait for the host to consume the trigger (spawn) + clients to mirror.
+    _wait_for_log(host_log, "spawn_npc: spawned 'kerfurOmega_C'", 20, "HOST")
+    log(f"--- waiting {args.spawn_wait}s for mirror propagation ---")
+    time.sleep(args.spawn_wait)
+
+    log("--- CAPTURING WINDOWS ---")
+    shots: dict[str, Path] = {}
+    suffix = f"_{peers}p" if peers > 1 else "_solo"
+    hp = shots_dir / f"host{suffix}.png"
+    if _capture_window(host_pid, hp):
+        shots["HOST"] = hp
+    for slot_arg, game_dir, label in used_clients:
+        cp = shots_dir / f"client{slot_arg}{suffix}.png"
+        if _capture_window(client_pids[slot_arg], cp):
+            shots[label] = cp
+
+    # Read logs for the verdict (before kill).
+    host_spawned = _log_count(host_log, "spawn_npc: spawned 'kerfurOmega_C'")
+    host_bcast = _log_count(host_log, "broadcast EntitySpawn class='kerfurOmega")
+    host_bound = _log_count(host_log, "[host POST]: bound actor")
+    tail_log(host_log, 14, "HOST")
+    client_mirror: dict[str, int] = {}
+    for slot_arg, game_dir, label in used_clients:
+        client_mirror[label] = _log_count(game_dir / "votv-coop.log", "materialized mirror")
+        tail_log(game_dir / "votv-coop.log", 8, label)
+
+    log("--- KILLING ---")
+    kill_all()
+
+    log("--- NPCTEST VERDICT ---")
+    fails: list[str] = []
+    log(f"host: dev-spawn={host_spawned}, EntitySpawn-broadcast={host_bcast}, POST-bound={host_bound}")
+    if host_spawned < 1:
+        fails.append("host did NOT log a dev-spawn of kerfurOmega_C (spawn primitive failed)")
+    if peers >= 2:
+        if host_bcast < 1:
+            fails.append("host did NOT broadcast EntitySpawn for the kerfur (AllocAndInstall/interceptor path)")
+        if host_bound < 1:
+            fails.append("host POST observer did NOT bind the kerfur actor")
+        for slot_arg, game_dir, label in used_clients:
+            n = client_mirror[label]
+            log(f"{label}: materialized-mirror lines={n}")
+            if n < 1:
+                fails.append(f"{label} did NOT materialize a kerfur mirror")
+    for name, p in shots.items():
+        log(f"  screenshot {name}: {p}")
+    if fails:
+        log(f"FAIL ({len(fails)} issue(s)):")
+        for f in fails:
+            log(f"  - {f}")
+        sys.exit(2)
+    if peers >= 2:
+        log(f"PASS: host spawned kerfurOmega_C + broadcast it; all {len(used_clients)} "
+            f"client(s) materialized the mirror.")
+    else:
+        log("PASS: host spawned kerfurOmega_C (solo -- screenshot captured).")
+    sys.exit(0)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="VOTV coop orchestrator")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1020,6 +1187,25 @@ def main() -> None:
                           help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_smoke4.add_argument(flag, **kw)
     p_smoke4.set_defaults(func=cmd_smoke4)
+
+    p_npc = sub.add_parser("npctest",
+                           help="spawn a kerfurOmega NPC on the host + verify it mirrors to all clients (+ screenshots)")
+    p_npc.add_argument("--peers", type=int, default=4,
+                       help="total peers: 1 = host-only spawn+screenshot, 4 = host + 3 clients (full mirror test)")
+    p_npc.add_argument("--boot-timeout", type=int, default=40,
+                       help="seconds to wait for host UDP bind")
+    p_npc.add_argument("--client-boot-timeout", type=int, default=75,
+                       help="per-client seconds to reach connected (staggered)")
+    p_npc.add_argument("--install-timeout", type=int, default=90,
+                       help="seconds to wait for the host's NPC interceptor to install (gameplay loaded)")
+    p_npc.add_argument("--settle", type=int, default=6,
+                       help="seconds after install before firing the spawn trigger")
+    p_npc.add_argument("--spawn-wait", type=int, default=6,
+                       help="seconds after spawn for mirror propagation before capture")
+    p_npc.add_argument("--memory-limit-gb", type=float, default=12.0,
+                       help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_npc.add_argument(flag, **kw)
+    p_npc.set_defaults(func=cmd_npctest)
 
     args = ap.parse_args()
     args.func(args)

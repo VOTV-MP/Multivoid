@@ -76,4 +76,27 @@ bool IsAllowlistedClass(void* cls);
 // disconnect; only the running-session bookkeeping resets).
 void OnDisconnect();
 
+// Resolved GameplayStatics spawn refs (valid only AFTER Install completes +
+// the 12 NPC classes resolve). Exposed so the dev-spawn tool
+// (coop::dev::spawn_npc) can drive a BeginDeferredActorSpawnFromClass +
+// FinishSpawningActor host NPC spawn through the SAME UFunction the interceptor
+// hooks -- so the host alloc+broadcast path (AllocAndInstall + EntitySpawn) runs
+// exactly as a real spawn would. Returns false if not yet installed/resolved.
+//
+// VALIDATED 2026-05-30 (npctest): host spawn + EntitySpawn broadcast + CLIENT
+// mirror Install all work end-to-end (cross-peer kerfur confirmed by screenshot
+// on 2 clients). KNOWN FOLLOW-UP: the host POST observer (NpcSpawn_POST, which
+// binds the actor into g_actorToNpcId for destroy-tracking) does NOT fire for a
+// reflection-initiated BeginDeferred dispatch, even though the PRE interceptor
+// on the same UFunction does -- so host-side NPC DESTROY-sync is not exercised
+// by a dev-spawn. Root cause is in the ProcessEvent detour's post-observer
+// dispatch (NOT the Inc2 ownership migration); needs FireObservers
+// instrumentation. Spawn + mirror are unaffected.
+struct DevSpawnRefs {
+    void* beginDeferredFn = nullptr;  // GameplayStatics.BeginDeferredActorSpawnFromClass
+    void* finishSpawnFn   = nullptr;  // GameplayStatics.FinishSpawningActor
+    void* gsCdo           = nullptr;  // GameplayStatics CDO (the call self)
+};
+bool GetDevSpawnRefs(DevSpawnRefs& out);
+
 }  // namespace coop::npc_sync

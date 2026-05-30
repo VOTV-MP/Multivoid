@@ -358,6 +358,14 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
 }
 
 void DrainClientMirrors() {
+    // PR-FOUNDATION-3 Inc2 (2026-05-30): this now drains the UNIFIED
+    // MirrorManager<Npc> for BOTH roles (the host's bespoke g_npcElements is
+    // retired). On a CLIENT it holds puppet mirrors (m_mirror=true) -> K2 +
+    // UnregisterMirror; on the HOST it holds the host's real Npc Elements
+    // (m_mirror=false) -> release-only (NO K2 -- the real NPCs stay) + FreeId.
+    // The K2 loop's IsMirror() gate (below) is what makes the dual role correct.
+    // A process holds host XOR client Npc elements, so one branch dominates.
+    //
     // GAME-THREAD SERIALIZATION CONTRACT: this function relies on the
     // caller running synchronously inside the GT pump loop -- between
     // the Snapshot() below and the DrainAll() at the end, the actors
@@ -377,19 +385,41 @@ void DrainClientMirrors() {
     std::vector<coop::element::Npc*> mirrorsSnap;
     NpcMirrors().Snapshot(mirrorsSnap);
     size_t nMirrorsDestroyed = 0;
+    size_t nMirrorElems = 0, nHostElems = 0;
     for (coop::element::Npc* mirror : mirrorsSnap) {
         if (!mirror) continue;
+        // IsMirror() gate (PR-FOUNDATION-3 Inc2): K2_DestroyActor ONLY the
+        // client puppet mirrors (m_mirror=true). Post-migration this single
+        // MirrorManager<Npc> also holds, on the HOST, the host's OWN Npc
+        // Elements (m_mirror=false) whose actors are the REAL world NPCs --
+        // K2'ing those on disconnect would wrongly despawn the host's NPCs.
+        // They release tracking only via DrainAll below (dtor -> FreeId).
+        if (!mirror->IsMirror()) { ++nHostElems; continue; }
+        ++nMirrorElems;
         void* actor = mirror->GetActor();
         if (actor && g_k2DestroyFn && R::IsLive(actor)) {
             R::CallFunction(actor, g_k2DestroyFn, nullptr);
             ++nMirrorsDestroyed;
         }
     }
+    // XOR-invariant guard (review-fix 2026-05-30, finding 6): a process holds
+    // host XOR client Npc elements, so the snapshot should be a PURE host-set or
+    // PURE client-set. If BOTH kinds appear in one drain, the migration's core
+    // invariant is broken -- the IsMirror gate would then silently K2 only the
+    // mirror subset and release the host subset, masking the regression. Surface
+    // it loudly rather than letting the masking hide a future bug.
+    if (nHostElems > 0 && nMirrorElems > 0) {
+        UE_LOGE("npc-mirror: DrainClientMirrors saw BOTH %zu host element(s) AND "
+                "%zu client mirror(s) in one drain -- host-XOR-client invariant "
+                "VIOLATED (MirrorManager<Npc> must be pure per role)",
+                nHostElems, nMirrorElems);
+    }
     const size_t nMirrorsTotal = NpcMirrors().DrainAll();
     if (nMirrorsTotal > 0) {
-        UE_LOGI("npc-mirror: drained %zu client mirror(s) "
-                "(K2_DestroyActor on %zu live actor(s); UnregisterMirror on all elements)",
-                nMirrorsTotal, nMirrorsDestroyed);
+        UE_LOGI("npc-mirror: drained %zu Npc element(s) from MirrorManager "
+                "(%zu host release-only, %zu client mirror(s); K2_DestroyActor on "
+                "%zu live mirror actor(s))",
+                nMirrorsTotal, nHostElems, nMirrorElems, nMirrorsDestroyed);
     }
 }
 

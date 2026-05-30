@@ -14,6 +14,8 @@
 
 #include "coop/npc_sync.h"
 
+#include "coop/element/element_deleter.h"
+#include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -99,36 +101,36 @@ void* g_installCacheGsCdo = nullptr;
 // step window that the plain-pointer version had.
 std::atomic<void*> g_incomingNpcSpawnClass{nullptr};
 
-// CLIENT-side mirror manager (MirrorManager<Npc>) ownership migrated to
-// coop::npc_mirror (M-1 2026-05-29 split). Lifetime owners on the
-// client side: npc_mirror::OnEntitySpawn (populate), OnEntityDestroy
-// (drain one), DrainClientMirrors (drain all on OnDisconnect).
+// Npc Element ownership (PR-FOUNDATION-3 Inc2, 2026-05-30): the SOLE canonical
+// owner of every Npc Element -- host-allocated AND client-mirrored -- is now the
+// shared singleton coop::element::MirrorManager<Npc>::Instance() (NpcMirrors()),
+// which coop::npc_mirror already used for client mirrors. The host side here
+// used to keep a bespoke g_npcElements unordered_map; that duplicate owner is
+// retired (RULE 2). The host now AllocAndInstall's into the SAME manager.
+//
+// A process is host XOR client, so the manager holds either host-AllocAndInstall'd
+// elements (m_mirror=false -> dtor FreeId) OR client-Install'd mirrors
+// (m_mirror=true -> dtor UnregisterMirror), never both. That IsMirror() flag is
+// the discriminator a unified drain uses (npc_mirror::DrainClientMirrors).
+inline coop::element::MirrorManager<coop::element::Npc>& NpcMirrors() {
+    return coop::element::MirrorManager<coop::element::Npc>::Instance();
+}
 
-// Host-side Npc Element ownership + lookup.
+// Reverse lookup: live AActor* -> ElementId. Populated by the POST-spawn
+// observer when it captures the BeginDeferredSpawn ReturnValue; the
+// K2_DestroyActor PRE observer's O(1) hash lookup IS the gate for "is this an
+// NPC we own?". This is host-side bookkeeping (not Element identity), so it
+// stays a dedicated map -- it is NOT something MirrorManager owns. The POST
+// observer + K2_DestroyActor PRE run on parallel-anim worker threads per
+// game_thread.h:118-120, so the map is guarded.
 //
-//   g_npcElements    -- owns the unique_ptr by ElementId. Created by the
-//                       host-side PRE interceptor; destroyed by the
-//                       K2_DestroyActor PRE observer when its actor dies,
-//                       OR by OnDisconnect on session end. O(1) erase by id.
-//   g_actorToNpcId   -- reverse lookup: live AActor* -> ElementId. Populated
-//                       by the POST-spawn observer when it captures the
-//                       BeginDeferredSpawn ReturnValue. K2_DestroyActor PRE
-//                       fires for every actor destroy in the world; the
-//                       O(1) hash lookup IS the gate for "is this an NPC
-//                       we own?".
-//
-// Both maps share `g_npcElementsMutex`. The interceptor + POST observer +
-// K2_DestroyActor PRE all run on parallel-anim worker threads per
-// game_thread.h:118-120 (interceptor) and our own PRE observer dispatch.
-//
-// ABBA hazard with `coop::element::Registry::m_mutex`: the Npc destructor
-// calls Registry::FreeId which acquires m_mutex. The interceptor path
-// acquires m_mutex FIRST (via Registry::AllocHostId) then g_npcElementsMutex
-// SECOND (via the insert). Any code that needs to destroy an Npc must
-// (a) drain the unique_ptr out under g_npcElementsMutex, (b) release the
-// lock, (c) let the destructor run -- so FreeId never holds both locks.
-std::mutex g_npcElementsMutex;
-std::unordered_map<coop::element::ElementId, std::unique_ptr<coop::element::Npc>> g_npcElements;
+// Lock order vs Registry::m_mutex: g_actorToNpcIdMutex is now a LEAF -- the
+// destruction paths release it BEFORE calling NpcMirrors().Take (type mutex)
+// or destructing an Npc (Registry mutex via FreeId / the ElementDeleter Flush),
+// so it never nests with either. The interceptor's AllocAndInstall takes the
+// Registry mutex then the type mutex (documented in mirror_manager.h); it does
+// NOT touch g_actorToNpcIdMutex (the POST observer populates the reverse map).
+std::mutex g_actorToNpcIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToNpcId;
 
 // Thread-local pending-spawn slot: PRE interceptor writes the just-allocated
@@ -200,7 +202,7 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
         // Diagnostic for the nested-NPC leak case: if t_pendingNpc has a
         // pending eid AND paramsPtr is non-null but doesn't match, an inner
         // NPC POST stole the slot from an outer NPC PRE. Outer Element is
-        // now orphaned in g_npcElements (no actor, no g_actorToNpcId
+        // now orphaned in NpcMirrors() (no actor, no g_actorToNpcId
         // entry). Currently believed
         // unreachable in VOTV's spawn paths (NPCs come from purchase or
         // events, not from other NPCs' constructors), but log so we'd see
@@ -220,26 +222,21 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
     void* spawnedActor = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_npcSpawnReturnParamOff);
     if (!spawnedActor) {
-        // Spawn failed (engine returned null). Drain the Element back to
-        // the Registry -- mirrors the PRE allocation path with destructors
-        // running OUTSIDE g_npcElementsMutex (ABBA fix).
-        std::unique_ptr<coop::element::Npc> drained;
-        {
-            std::lock_guard<std::mutex> lk(g_npcElementsMutex);
-            auto it = g_npcElements.find(eid);
-            if (it != g_npcElements.end()) {
-                drained = std::move(it->second);
-                g_npcElements.erase(it);
-            }
-        }
-        // drained destructor fires here, outside the lock -- safe FreeId.
+        // Spawn failed (engine returned null). Drain the Element from the
+        // canonical owner (NpcMirrors) and DEFER its destruction to the
+        // game-thread ElementDeleter Flush: this POST fires on a parallel-anim
+        // worker per game_thread.h:118-120, so Enqueue moves the actual
+        // ~Npc/FreeId to net_pump::Tick's controlled drain point instead of
+        // running it on the worker. Take returns null if the element was
+        // already drained (OnDisconnect race); Enqueue(null) is a no-op.
+        coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
         UE_LOGW("npc-sync[host POST]: BeginDeferredSpawn returned null for eid=%u; "
-                "released Element back to Registry", eid);
+                "released Element back to Registry (deferred to ElementDeleter)", eid);
         return;
     }
     auto* el = coop::element::Registry::Get().Get(eid);
     if (!el) {
-        // Race: OnDisconnect drained g_npcElements between this thread's
+        // Race: OnDisconnect drained NpcMirrors() between this thread's
         // PRE and POST. The Element was destroyed + its id freed. The
         // engine's NPC actor (spawnedActor) is now an ORPHAN: live in
         // the world, no Element, never in g_actorToNpcId, so K2_DestroyActor
@@ -253,9 +250,22 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
                 eid, spawnedActor);
         return;
     }
+    // Deferred-delete gate (review-fix 2026-05-30, finding 9): Registry::Get can
+    // return a NON-null element that a K2_DestroyActor PRE already Take+Enqueued
+    // into the ElementDeleter (out of NpcMirrors, but still in Registry until the
+    // deferred FreeId at Flush). Binding an actor to such a doomed element would
+    // resurrect a half-dead Element the deleter is about to destroy. Honor the
+    // IsBeingDeleted() flag the ElementDeleter sets on Enqueue -- this is the
+    // resolve-site gate the deferred-delete design (element_deleter.h) relies on.
+    if (el->IsBeingDeleted()) {
+        UE_LOGW("npc-sync[host POST]: eid=%u is being-deleted (Take+Enqueued by a "
+                "destroy race) -- skipping bind; actor %p left to its own lifecycle",
+                eid, spawnedActor);
+        return;
+    }
     el->SetActor(spawnedActor, R::InternalIndexOf(spawnedActor));
     {
-        std::lock_guard<std::mutex> lk(g_npcElementsMutex);
+        std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
         g_actorToNpcId[spawnedActor] = eid;
     }
     UE_LOGI("npc-sync[host POST]: bound actor=%p to Npc eid=%u typeName='%s'",
@@ -264,29 +274,30 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
 
 // K2_DestroyActor PRE observer: fires for EVERY actor destroy in the world.
 // The O(1) hash lookup on g_actorToNpcId IS the gate -- non-NPC destroys hit
-// the lock briefly then return. Hits look up the owning Npc Element, drain
-// it from g_npcElements (so its destructor fires outside the lock per ABBA
-// fix), and broadcast an EntityDestroy reliable packet.
+// the lock briefly then return. Hits look up the owning Npc Element, Take it
+// from NpcMirrors() and DEFER its destruction via the ElementDeleter (the
+// actual ~Npc/FreeId runs at the game-thread Flush, off this worker thread),
+// and broadcast an EntityDestroy reliable packet.
 void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
     coop::element::ElementId eid = coop::element::kInvalidId;
-    std::unique_ptr<coop::element::Npc> drained;
     {
-        std::lock_guard<std::mutex> lk(g_npcElementsMutex);
+        std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
         auto it = g_actorToNpcId.find(self);
         if (it == g_actorToNpcId.end()) return;  // not an NPC we track
         eid = it->second;
         g_actorToNpcId.erase(it);
-        auto eit = g_npcElements.find(eid);
-        if (eit != g_npcElements.end()) {
-            drained = std::move(eit->second);
-            g_npcElements.erase(eit);
-        }
     }
-    // drained destructor runs OUTSIDE g_npcElementsMutex -- the Element
-    // destructor calls Registry::FreeId, which acquires Registry::m_mutex.
-    // Releasing g_npcElementsMutex before this avoids the ABBA hazard.
-    UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released", self, eid);
+    // Drain the Element from the canonical owner (NpcMirrors) and DEFER its
+    // destruction to the game-thread ElementDeleter Flush. This PRE fires on
+    // the ProcessEvent-dispatching thread (often a parallel-anim worker per
+    // game_thread.h:118-120); Enqueue moves the actual ~Npc/FreeId off the
+    // worker to net_pump::Tick's one controlled drain point. g_actorToNpcIdMutex
+    // is released above, so Take's type mutex and the deferred FreeId's Registry
+    // mutex never nest with it. Take returns null on an already-drained eid
+    // (double K2 / OnDisconnect race); Enqueue(null) is a no-op.
+    coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+    UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released (deferred)", self, eid);
     // Broadcast EntityDestroy so client mirrors tear down their copy.
     // Client-side receiver materialization lands in a future PR; for now
     // the destroy packet is just logged on the wire side.
@@ -390,24 +401,22 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
             typeName8.push_back(static_cast<char>(cls[i]));
         }
         npc->SetTypeName(std::move(typeName8));
+        // PR-FOUNDATION-3 Inc2: AllocAndInstall into the canonical NpcMirrors()
+        // (host range, m_mirror=false). Replaces the prior AllocHostId + bespoke
+        // g_npcElements emplace -- ONE owner now. The manager takes the Registry
+        // mutex (AllocHostId) then its own type mutex (the host-authoritative
+        // order documented in mirror_manager.h). On failure `npc` is dropped.
         const coop::element::ElementId eid =
-            coop::element::Registry::Get().AllocHostId(npc.get());
+            NpcMirrors().AllocAndInstall(std::move(npc), /*isHost=*/true);
         if (eid == coop::element::kInvalidId) {
-            // Registry exhausted (32768 active elements). Log + skip the
-            // wire broadcast.
-            UE_LOGW("npc-sync[host]: Registry::AllocHostId returned kInvalidId for '%ls' "
-                    "-- skipping EntitySpawn broadcast (element lifecycle bug?)",
+            // Registry exhausted (32768 active elements) or id collision. Log +
+            // skip the wire broadcast.
+            UE_LOGW("npc-sync[host]: NpcMirrors().AllocAndInstall returned kInvalidId for '%ls' "
+                    "-- skipping EntitySpawn broadcast (Registry exhausted / lifecycle bug?)",
                     cls.c_str());
             return false;
         }
         p.elementId = static_cast<uint32_t>(eid);
-        // Move ownership into g_npcElements keyed by ElementId; stash the
-        // id in the thread-local pending-slot for the POST observer to
-        // pick up and bind the returned AActor*.
-        {
-            std::lock_guard<std::mutex> lk(g_npcElementsMutex);
-            g_npcElements.emplace(eid, std::move(npc));
-        }
         // Stash (eid, params) for the matching POST observer (same thread,
         // same UFunction call). Params pointer is the unique correlation
         // token -- POST checks equality to disambiguate nested non-NPC calls.
@@ -492,44 +501,37 @@ void MarkIncomingNpcSpawn(void* npcClass) {
 }
 
 void OnDisconnect() {
-    // Tier 3 PoC 2026-05-28: release every host-allocated Npc Element back
-    // to the Registry. The atomic g_nextNpcSessionId counter is retired
-    // (RULE 2); the unified Registry's free-list replaces it.
+    // PR-FOUNDATION-3 Inc2 (2026-05-30): the host's Npc Elements now live in the
+    // canonical NpcMirrors() (the bespoke g_npcElements is retired, RULE 2), so
+    // releasing them is UNIFIED with the client-mirror drain. One call --
+    // npc_mirror::DrainClientMirrors() -- drains the single MirrorManager<Npc>,
+    // K2_DestroyActor'ing ONLY the IsMirror() elements (client puppet mirrors)
+    // and release-only for the host's real NPC Elements (m_mirror=false -> dtor
+    // FreeId; the real NPC actors stay in the host's world). Role-correct via
+    // the IsMirror() flag, since a process holds host XOR client Npc elements.
     //
-    // ABBA deadlock fix (audited 2026-05-28): the Npc destructors call
-    // Registry::FreeId which acquires Registry::m_mutex. The interceptor
-    // path acquires Registry::m_mutex FIRST (via AllocHostId) then
-    // g_npcElementsMutex SECOND (via the push_back). Inverting that order
-    // here would deadlock with a parallel-anim worker mid-spawn. Drain
-    // into a local vector under g_npcElementsMutex, release the lock,
-    // THEN let the destructors run -- Registry::m_mutex is acquired
-    // without g_npcElementsMutex held.
-    std::unordered_map<coop::element::ElementId, std::unique_ptr<coop::element::Npc>> drained;
-    {
-        std::lock_guard<std::mutex> lk(g_npcElementsMutex);
-        drained.swap(g_npcElements);
-        g_actorToNpcId.clear();  // pure POD; safe to clear under lock
-    }
-    const size_t nReleased = drained.size();
-    drained.clear();  // destructors run here, OUTSIDE g_npcElementsMutex
-    if (nReleased > 0) {
-        UE_LOGI("npc-sync: OnDisconnect released %zu Npc element(s) back to Registry",
-                nReleased);
-    }
-
-    // Inc3 receiver (client-side) drain: clean up every mirror Element +
-    // K2_DestroyActor the local mirror actor. Implementation lives in
-    // coop::npc_mirror; this TU only orchestrates the call ordering
-    // (host elements drained above, then client mirrors, then bypass
-    // slot clear).
+    // ORDER MATTERS (review-fix 2026-05-30, npc-migration-review finding 1):
+    // DRAIN FIRST, then clear the reverse map. DrainClientMirrors destroys the
+    // host Elements -> Registry::Get(eid) becomes null. A NpcSpawn_POST that
+    // races on a parallel-anim worker concurrently with this can resolve+bind an
+    // in-flight eid and RE-INSERT into g_actorToNpcId; clearing the reverse map
+    // AFTER the drain removes any such stale entry, and a POST landing after the
+    // drain hits its existing null-Registry "disconnect-race" guard. (The old
+    // clear-then-drain order left a window where the re-inserted entry survived,
+    // pointing at a freed eid into the next session.) Any Npc already Taken by a
+    // K2_DestroyActor PRE before this sits in the ElementDeleter queue (drained
+    // separately at net_pump::Tick) and is NOT in NpcMirrors -- no double-drain.
     //
-    // K2_DestroyActor calls ProcessEvent which is GAME-THREAD ONLY. The
-    // caller of OnDisconnect is expected to be on the game thread already
-    // (Session::Stop fires from harness's net-pump thread, which is
-    // dispatched from the game thread; the smoke test path likewise calls
-    // from GT). If a future path calls OnDisconnect off-thread, the
-    // K2_DestroyActor call inside DrainClientMirrors would assert.
+    // K2_DestroyActor (inside DrainClientMirrors, for client mirrors only) calls
+    // ProcessEvent which is GAME-THREAD ONLY. OnDisconnect's caller is on the
+    // game thread (Session::Stop fires from the net-pump path dispatched from
+    // the game thread; the smoke path likewise). If a future path calls
+    // OnDisconnect off-thread, that K2_DestroyActor would assert.
     coop::npc_mirror::DrainClientMirrors();
+    {
+        std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+        g_actorToNpcId.clear();
+    }
 
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
 }
@@ -764,6 +766,20 @@ bool IsAllowlistedClass(void* cls) {
 
 void ClearIncomingNpcSpawn() {
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
+}
+
+bool GetDevSpawnRefs(DevSpawnRefs& out) {
+    // Valid only once Install resolved the GameplayStatics UFunctions + CDO
+    // (g_installCacheFinishSpawnFn / g_installCacheGsCdo cached in Install's
+    // resolution block; g_npcSpawnFn is the BeginDeferred the interceptor hooks).
+    if (!g_installed.load(std::memory_order_acquire) || !g_npcSpawnFn ||
+        !g_installCacheFinishSpawnFn || !g_installCacheGsCdo) {
+        return false;
+    }
+    out.beginDeferredFn = g_npcSpawnFn;
+    out.finishSpawnFn   = g_installCacheFinishSpawnFn;
+    out.gsCdo           = g_installCacheGsCdo;
+    return true;
 }
 
 // Receiver impls (OnEntitySpawn / OnEntityDestroy) moved to

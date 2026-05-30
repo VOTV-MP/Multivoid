@@ -69,6 +69,15 @@ public:
     // UnregisterMirror take the Registry mutex). Returns the count flushed.
     // Cheap when empty (a single uncontended mutex acquire + empty check),
     // which is the steady state -- this is the per-tick call in net_pump.
+    //
+    // The ONLY Flush call site is net_pump::Tick. There is deliberately NO
+    // process-exit Flush: on shutdown the net-pump loop stops before a final
+    // tick, so any element still queued is destructed at static-singleton
+    // teardown. That is safe -- ~Registry's NotifyRegistryShuttingDown latch
+    // makes ~Element skip FreeId once the Registry is gone -- but it is NOT the
+    // controlled game-thread point, so do not rely on a queued element's FreeId
+    // actually running at exit. (A handful of host Npc Elements parked in the
+    // last ~8ms before X-close fall in this bucket; harmless.)
     size_t Flush();
 
     // Pending count (diagnostics / self-test). Takes the mutex.
