@@ -74,4 +74,12 @@ DWORD WINAPI RedSkyTestThread(LPVOID arg);
 void RunAutonomousSaveBlockTest();
 DWORD WINAPI SaveBlockTestThread(LPVOID arg);
 
+// PR-FOUNDATION-2 (B part 2): autonomous CLIENT Save-button grey-out test. Client-only.
+// Drives mainPlayer_C::InpActEvt_Escape via reflection (a real ESC press is impossible
+// autonomously) so coop/save_button_disable's POST observer fires and disables the live
+// pause-menu button_Save; the module logs the GetIsEnabled read-back. Proves the disable
+// took; the visual grey needs a human glance. Gated by env VOTVCOOP_RUN_SAVEBTN_TEST="1".
+void RunAutonomousSaveBtnDisableTest();
+DWORD WINAPI SaveBtnDisableTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

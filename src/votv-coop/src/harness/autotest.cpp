@@ -692,79 +692,8 @@ DWORD WINAPI RedSkyTestThread(LPVOID /*arg*/) {
     return 0;
 }
 
-// ---- PR-FOUNDATION-2 (B) autonomous client save-block test ---------------
-//
-// CLIENT-ONLY. Proves the SaveGameToSlot native hook (coop/save_block.cpp)
-// actually CANCELS a world save on the client -- not merely that it installed.
-// Within a short smoke neither autosave (timer, minutes) nor a menu save
-// (needs input) fires, so we drive the exact write path by reflection: resolve
-// the live saveSlot_C world-save object and call its saveToSlot UFunction
-// directly (the BP funnel closest to the hook, with no gamemode-level gates in
-// the way). saveToSlot's body invokes UGameplayStatics::SaveGameToSlot -- our
-// hook target -- once per slot/subsave; on the client the detour returns false
-// WITHOUT calling the trampoline, so nothing reaches disk.
-//
-// Verification (client log): a `saveblock_test: invoking ...` line immediately
-// followed by `save_block: BLOCKED client world-save ...`. The host neither
-// runs this routine nor installs the hook, so its log shows no save_block line
-// at all -- its save path is byte-for-byte untouched.
-// Gated by env VOTVCOOP_RUN_SAVEBLOCK_TEST="1".
-void RunAutonomousSaveBlockTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
-    if (isHost) {
-        UE_LOGI("saveblock_test: not client -- this routine is client-only (the host "
-                "installs no save hook; its save path is untouched). Returning.");
-        return;
-    }
-    UE_LOGI("saveblock_test: starting on client (waiting 18 s: connect + possession + "
-            "world load so saveSlot_C exists and the save_block hook is installed)");
-    ::Sleep(18000);
-
-    auto done = std::make_shared<std::atomic<int>>(0);  // 0=pending 1=invoked -1=resolve-fail
-    GT::Post([done] {
-        void* saveSlot = R::FindObjectByClass(L"saveSlot_C");
-        if (!saveSlot) {
-            UE_LOGW("saveblock_test: no live saveSlot_C instance -- world not fully "
-                    "loaded? cannot exercise the save path");
-            done->store(-1, std::memory_order_release);
-            return;
-        }
-        void* fn = R::FindFunction(R::ClassOf(saveSlot), L"saveToSlot");
-        if (!fn) {
-            UE_LOGW("saveblock_test: saveToSlot UFunction not found on saveSlot_C -- "
-                    "cannot exercise the save path");
-            done->store(-1, std::memory_order_release);
-            return;
-        }
-        // saveToSlot(quicksave, overwriteSubsave, isForcedSave): a zeroed frame =
-        // full, non-forced save -> the body's UGameplayStatics::SaveGameToSlot
-        // calls hit our client hook and are cancelled. Serialization is content-
-        // agnostic (it serializes whatever the live save object holds), and the
-        // write is blocked regardless, so calling it directly is safe.
-        const int32_t frameSize = R::FunctionFrameSize(fn);
-        std::vector<uint8_t> frame(frameSize > 0 ? static_cast<size_t>(frameSize) : 0, 0u);
-        UE_LOGI("saveblock_test: invoking saveSlot.saveToSlot on client (saveSlot=%p, "
-                "frameSize=%d) -- expect a 'save_block: BLOCKED' line next if the hook fired",
-                saveSlot, frameSize);
-        R::CallFunction(saveSlot, fn, frame.empty() ? nullptr : frame.data());
-        done->store(1, std::memory_order_release);
-    });
-
-    for (int i = 0; i < 1000 && done->load(std::memory_order_acquire) == 0; ++i) ::Sleep(5);
-    const int code = done->load(std::memory_order_acquire);
-    if (code == 1) {
-        UE_LOGI("saveblock_test: DONE -- saveToSlot invoked; grep this client log for "
-                "'save_block: BLOCKED' to confirm the write was cancelled");
-    } else {
-        UE_LOGW("saveblock_test: did NOT invoke saveToSlot (resolve failed or task "
-                "did not run) -- inconclusive");
-    }
-}
-
-DWORD WINAPI SaveBlockTestThread(LPVOID /*arg*/) {
-    RunAutonomousSaveBlockTest();
-    return 0;
-}
+// The PR-FOUNDATION-2 save-safety autonomous tests (RunAutonomousSaveBlockTest +
+// RunAutonomousSaveBtnDisableTest and their threads) live in harness/autotest_saveui.cpp
+// (extracted 2026-05-30 for the 800-LOC soft cap). Declared in harness/autotest.h.
 
 }  // namespace harness::autotest

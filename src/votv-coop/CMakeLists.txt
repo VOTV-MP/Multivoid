@@ -115,6 +115,7 @@ add_library(votv-coop SHARED
     src/coop/remote_prop.cpp
     src/coop/save_guard.cpp
     src/coop/save_block.cpp
+    src/coop/save_button_disable.cpp
     src/coop/nameplate.cpp
     src/coop/event_feed.cpp
     src/coop/player_handshake.cpp
@@ -153,6 +154,7 @@ add_library(votv-coop SHARED
     src/harness/harness.cpp
     src/harness/autotest.cpp
     src/harness/autotest_dispatch.cpp
+    src/harness/autotest_saveui.cpp
     src/harness/config.cpp
     src/harness/screenshot.cpp
     src/harness/sdk_check.cpp

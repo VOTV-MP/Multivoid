@@ -44,6 +44,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // PR-FOUNDATION-2 (B) save-block: client-only; drives saveSlot.saveToSlot so
     // the SaveGameToSlot hook's BLOCK is observable in a short smoke.
     SpawnIf("VOTVCOOP_RUN_SAVEBLOCK_TEST", "save-block test", &SaveBlockTestThread, role);
+    // PR-FOUNDATION-2 (B part 2) save-button grey-out: client-only; drives
+    // InpActEvt_Escape so the pause-menu Save button disable is observable.
+    SpawnIf("VOTVCOOP_RUN_SAVEBTN_TEST", "save-button test", &SaveBtnDisableTestThread, role);
 }
 
 }  // namespace harness::autotest

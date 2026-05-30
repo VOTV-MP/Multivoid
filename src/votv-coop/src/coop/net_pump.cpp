@@ -10,6 +10,7 @@
 #include "coop/event_feed.h"
 #include "coop/garbage_sync.h"
 #include "coop/save_block.h"
+#include "coop/save_button_disable.h"
 #include "coop/grab_observer.h"
 #include "coop/item_activate.h"
 #include "coop/net/protocol.h"
@@ -162,6 +163,9 @@ void InstallObservers(coop::net::Session& session) {
     // PR-FOUNDATION-2 (B): client world-save block (host-only persistence).
     // No-op on the host; on the client installs the SaveGameToSlot detour once.
     coop::save_block::Install(&session);
+    // PR-FOUNDATION-2 (B part 2): grey out the client pause-menu "Save Game"
+    // button (honest UX over the hard block). No-op on the host.
+    coop::save_button_disable::Install(&session);
     // NOTE: coop::shutdown::Install / UpdateWindowTitle are called from
     // the timeline tick lambda DIRECTLY in harness.cpp -- they MUST NOT
     // be gated on g_netLocal like this function is (HWND subclass +

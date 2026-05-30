@@ -775,6 +775,16 @@ inline constexpr const wchar_t* WidgetClass = L"Widget";                   // ow
 inline constexpr const wchar_t* WidgetSetVisibilityFn = L"SetVisibility";  // UWidget::SetVisibility(ESlateVisibility); HitTestInvisible=3
 inline constexpr const wchar_t* SetPositionInViewportFn = L"SetPositionInViewport";    // UUserWidget(FVector2D Position, bool bRemoveDPIScale)
 inline constexpr const wchar_t* SetAlignmentInViewportFn = L"SetAlignmentInViewport";  // UUserWidget(FVector2D Alignment)
+// PR-FOUNDATION-2 Inc B part 2: client pause-menu "Save Game" button grey-out.
+// All owned by UWidget -> resolve on WidgetClass ("Widget"), FindFunction = owning class.
+inline constexpr const wchar_t* WidgetSetIsEnabledFn = L"SetIsEnabled";       // UWidget::SetIsEnabled(bool bInIsEnabled) -- blocks input + semantic disable (NOT a raw 0xB4 write: packed bitfield)
+inline constexpr const wchar_t* WidgetSetRenderOpacityFn = L"SetRenderOpacity";  // UWidget::SetRenderOpacity(float InOpacity) -- brush-independent visual dim
+inline constexpr const wchar_t* WidgetGetIsEnabledFn = L"GetIsEnabled";       // UWidget::GetIsEnabled()->bool ReturnValue (read-back diagnostic)
+inline constexpr const wchar_t* UiMenuClass = L"ui_menu_C";                   // VOTV unified main+pause menu widget (GameInstance-owned, one live instance)
+inline constexpr const wchar_t* UiMenuTickFn = L"Tick";                       // ui_menu_C::Tick(FGeometry,float) -- engine ProcessEvent-dispatched while visible (self-heal anchor)
+inline constexpr const wchar_t* UiMenuButtonSaveProp = L"button_Save";        // UButton* @ ui_menu_C+0x2D0 (the "Save Game" button)
+inline constexpr const wchar_t* UiMenuIsPauseProp = L"isPause";               // bool @ ui_menu_C+0x4C0 (true => the in-game pause menu, not the main menu)
+inline constexpr const wchar_t* MainPlayerEscapeFn = L"InpActEvt_Escape_K2Node_InputKeyEvent_0";  // engine input event that opens the pause menu (ProcessEvent-dispatched, same class as the flashlight InpActEvt_* we already observe)
 // Head-bone anchoring (USceneComponent::GetSocketLocation world; enumerate bones to find head).
 inline constexpr const wchar_t* GetSocketLocationFn = L"GetSocketLocation";  // (FName)->FVector (world)
 inline constexpr const wchar_t* GetNumBonesFn = L"GetNumBones";
