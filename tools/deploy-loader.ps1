@@ -39,8 +39,24 @@ if (-not (Test-Path "$BuildDir\xinput1_3.dll")) { throw "build first: cmake --bu
 # since the last deploy -- the lock is fine, the bytes already match). Without this
 # guard a re-run of any mp_*.bat after a launch would fail with "file used by another
 # process" even though there's nothing to actually copy.
+#
+# Hashing uses inline .NET SHA256 rather than Get-FileHash on purpose (2026-05-30):
+# when this script is launched by mp.py's child powershell from a degraded
+# environment (stripped PSModulePath / autoloading off), Get-FileHash --
+# which lives in the auto-loaded Microsoft.PowerShell.Utility module -- fails to
+# resolve ("not recognized as a cmdlet") and aborts the whole deploy (and the
+# smoke that calls it). The .NET type has no module dependency, so the deploy is
+# robust regardless of the ambient PowerShell host/environment.
+function Get-Sha256Hex($path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($path))).Replace('-', '')
+    } finally {
+        $sha.Dispose()
+    }
+}
 function Copy-IfChanged($src, $dst) {
-    if ((Test-Path $dst) -and ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)) {
+    if ((Test-Path $dst) -and ((Get-Sha256Hex $src) -eq (Get-Sha256Hex $dst))) {
         return  # already up-to-date
     }
     Copy-Item $src $dst -Force
