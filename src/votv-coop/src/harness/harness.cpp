@@ -23,6 +23,7 @@
 #include "coop/prop_snapshot.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
+#include "coop/save_guard.h"
 #include "coop/shutdown.h"
 #include "coop/weather_sync.h"
 #include "ue_wrap/call.h"
@@ -485,6 +486,14 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             coop::dev::restore_vitals::SetSession(&g_session);
             coop::dev::teleport_client::SetSession(&g_session);
             coop::dev::force_weather::SetSession(&g_session);
+            // PR-FOUNDATION-2 (A): snapshot the canonical save BEFORE coop starts
+            // injecting state. Host-only -- the host's save is the one written
+            // during coop (clients are blocked from saving). Runs on this bringup
+            // thread (not the game thread), synchronously, so it completes before
+            // Start. Idempotent per process.
+            if (netCfg.role == coop::net::Role::Host) {
+                coop::save_guard::BackupSaveOnSessionStart();
+            }
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
                     netCfg.role == coop::net::Role::Host ? "host" : "client");

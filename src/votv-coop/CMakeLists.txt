@@ -113,6 +113,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/prop.cpp
     src/coop/remote_player.cpp
     src/coop/remote_prop.cpp
+    src/coop/save_guard.cpp
     src/coop/nameplate.cpp
     src/coop/event_feed.cpp
     src/coop/player_handshake.cpp
