@@ -155,6 +155,7 @@ add_library(votv-coop SHARED
     src/harness/harness.cpp
     src/harness/autotest.cpp
     src/harness/autotest_dispatch.cpp
+    src/harness/autotest_vitals.cpp
     src/harness/autotest_saveui.cpp
     src/harness/config.cpp
     src/harness/screenshot.cpp

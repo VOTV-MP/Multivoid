@@ -108,4 +108,12 @@ DWORD WINAPI PropReapTestThread(LPVOID arg);
 void RunAutonomousReSeedTest();
 DWORD WINAPI ReSeedTestThread(LPVOID arg);
 
+// Vitals Inc2a ragdoll probe (2026-05-31, harness/autotest_vitals.cpp). Host-only.
+// Answers MUST-VERIFY #8: fires mainPlayer_C::ragdollMode(1,1,0) on the slot-1
+// UNPOSSESSED puppet and diffs isRagdoll + ragdollActor before/after (then
+// forceGetUp to recover) -- proves whether the BP drives an unpossessed actor
+// before any Inc2 wire is built. Gated by env VOTVCOOP_RUN_RAGDOLL_TEST="1".
+void RunAutonomousRagdollTest();
+DWORD WINAPI RagdollTestThread(LPVOID arg);
+
 }  // namespace harness::autotest
