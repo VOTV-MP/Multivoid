@@ -139,4 +139,13 @@ DWORD WINAPI DamageTestThread(LPVOID arg);
 void RunAutonomousDmgHazardTest();
 DWORD WINAPI DmgHazardTestThread(LPVOID arg);
 
+// Vitals Inc3-WIRE relay e2e (2026-05-31, harness/autotest_vitals.cpp). BOTH peers.
+// The HOST sends synthetic PlayerDamage to slot 1 (player_damage::DebugForceHitPuppet);
+// the CLIENT receives + applies Add Player Damage to its OWN player; the client's
+// streamed health drop flashes the host's slot-1 puppet (reusing the Inc3 hurt-flash).
+// Proves the FULL reliable host->owner damage relay with no real enemy. Gated by env
+// VOTVCOOP_RUN_PLAYERDMG_TEST="1" (host = driver+observer, client = passive receiver).
+void RunAutonomousPlayerDamageTest();
+DWORD WINAPI PlayerDamageTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

@@ -492,6 +492,16 @@ bool SetMainPlayerRagdollMode(void* mainPlayer, bool ragdoll, bool passOut, bool
 // relies on can't run on a tickless orphan).
 bool ForceMainPlayerGetUp(void* mainPlayer);
 
+// AmainPlayer_C::"Add Player Damage"(Damage, damageLocation, fullBody, blood, Source)
+// -- the primary player-damage entry. vitals Inc3-WIRE: the OWNER peer invokes this on
+// its OWN POSSESSED mainPlayer_C when the host relays an enemy hit, so the damage runs
+// through that peer's private armor/inventory BP and drops its shared saveSlot.health
+// (then the existing Inc1 stream + Inc3 flash fire). Only `Damage` is set; the
+// location/fullBody/blood/Source params zero-init. SAFE on a puppet by accident -- the
+// BP early-outs on an unpossessed pawn (#6 probe). Returns false on null/dead pawn or
+// unresolved UFunction. Game thread only.
+bool InvokeAddPlayerDamage(void* mainPlayer, float damage);
+
 // ---- Orphan-puppet faint visual via the puppet's OWN mesh -----------------
 // vitals Inc2b receiver. We do NOT use VOTV's ragdollMode on the puppet: that
 // spawns a separate playerRagdoll_C physics actor whose entire lifecycle

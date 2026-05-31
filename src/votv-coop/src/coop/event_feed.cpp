@@ -5,6 +5,7 @@
 
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
+#include "coop/player_damage.h"
 #include "coop/npc_mirror.h"
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
@@ -419,6 +420,27 @@ void Update(net::Session& session, void* localPlayer) {
                 break;
             }
             ue_wrap::game_thread::Post([] { ::coop::dev::restore_vitals::ApplyLocally(); });
+            break;
+        }
+        case net::ReliableKind::PlayerDamage: {
+            // vitals Inc3-WIRE: the host detected an enemy hitting THIS peer's puppet
+            // and relayed the damage for us to apply to our OWN player. Host-only
+            // origin (only the host runs enemies); a client never legitimately sends
+            // it, and it is not in the relay whitelist so it is never forwarded. The
+            // owner-side targetElementId check + the apply live in player_damage.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: PlayerDamage from non-host senderPeerSlot=%d "
+                        "-- dropping (host-only combat origin)", msg.senderPeerSlot);
+                break;
+            }
+            if (msg.payloadLen < sizeof(net::PlayerDamagePayload)) {
+                UE_LOGW("event_feed: PlayerDamage payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::PlayerDamagePayload));
+                break;
+            }
+            net::PlayerDamagePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            coop::player_damage::OnWireDamage(p);
             break;
         }
         case net::ReliableKind::TeleportClient: {

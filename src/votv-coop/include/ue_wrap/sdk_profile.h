@@ -970,6 +970,15 @@ inline constexpr const wchar_t* MainPlayerFlashlightStateChangedFn = L"flashligh
 inline constexpr const wchar_t* MainPlayerRagdollModeFn = L"ragdollMode";
 inline constexpr const wchar_t* MainPlayerForceGetUpFn  = L"forceGetUp";
 
+// vitals Inc3-WIRE: the primary player-damage entry. The OWNER peer invokes this
+// on its OWN possessed mainPlayer_C when the host relays an enemy hit, so the
+// damage runs through that peer's private armor/inventory BP (per-peer-authoritative)
+// -> its saveSlot.health drops -> the existing Inc1 stream + Inc3 flash fire. The #6
+// probe (VOTVCOOP_RUN_DMGHAZARD_TEST) proved Add Player Damage(5) on the possessed
+// player drops health 100->95.05 (and early-outs harmlessly on an unpossessed puppet).
+// FName has spaces (a BP "Add Player Damage" event keeps them).
+inline constexpr const wchar_t* MainPlayerAddPlayerDamageFn = L"Add Player Damage";
+
 // The player body's ragdoll PhysicsAsset (the protagonist is a kerfurOmega; its
 // visible skin `kerfurOmega_KelSkin` carries NO physics asset of its own --
 // VOTV's real ragdoll is a separate physics-enabled actor). The puppet-own-mesh

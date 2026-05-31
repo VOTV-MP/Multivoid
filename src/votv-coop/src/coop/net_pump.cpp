@@ -13,6 +13,7 @@
 #include "coop/save_button_disable.h"
 #include "coop/grab_observer.h"
 #include "coop/item_activate.h"
+#include "coop/player_damage.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_sync.h"
@@ -209,6 +210,7 @@ void InstallObservers(coop::net::Session& session) {
     coop::prop_lifecycle::Install(&session);
     coop::npc_sync::Install(&session);
     coop::item_activate::Install(&session);  // Phase 5F flashlight
+    coop::player_damage::Install(&session);  // vitals Inc3-WIRE damage relay (send + owner-apply)
     coop::weather_sync::Install(&session);   // Phase 5W weather
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();           // Phase 5G garbage

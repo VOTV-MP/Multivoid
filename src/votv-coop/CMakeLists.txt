@@ -122,6 +122,7 @@ add_library(votv-coop SHARED
     src/coop/player_handshake.cpp
     src/coop/grab_observer.cpp
     src/coop/item_activate.cpp
+    src/coop/player_damage.cpp
     src/coop/flashlight_click_sound.cpp
     src/coop/shutdown.cpp
     src/coop/players_registry.cpp

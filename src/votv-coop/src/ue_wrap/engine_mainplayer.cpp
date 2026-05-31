@@ -103,6 +103,17 @@ void ResolveRagdollFns() {
     if (!g_forceGetUpFn)  g_forceGetUpFn  = R::FindFunction(cls, P::name::MainPlayerForceGetUpFn);
 }
 
+// vitals Inc3-WIRE: cached "Add Player Damage" UFunction (resolves once mainPlayer_C
+// is loaded, like the ragdoll fns above).
+void* g_addPlayerDamageFn = nullptr;
+
+void ResolveAddPlayerDamageFn() {
+    if (g_addPlayerDamageFn) return;
+    void* cls = R::FindClass(P::name::MainPlayerClass);
+    if (!cls) return;
+    g_addPlayerDamageFn = R::FindFunction(cls, P::name::MainPlayerAddPlayerDamageFn);
+}
+
 // Cached physics-disable UFunctions (SetAllBodiesSimulatePhysics on
 // USkeletalMeshComponent; SetSimulatePhysics on UPrimitiveComponent -- resolved
 // from their own classes since FindFunction does not climb super-classes).
@@ -494,6 +505,15 @@ bool ForceMainPlayerGetUp(void* mainPlayer) {
     ResolveRagdollFns();
     if (!g_forceGetUpFn) return false;
     ParamFrame f(g_forceGetUpFn);  // no params
+    return Call(mainPlayer, f);
+}
+
+bool InvokeAddPlayerDamage(void* mainPlayer, float damage) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    ResolveAddPlayerDamageFn();
+    if (!g_addPlayerDamageFn) return false;
+    ParamFrame f(g_addPlayerDamageFn);
+    f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/blood/Source zero-init
     return Call(mainPlayer, f);
 }
 

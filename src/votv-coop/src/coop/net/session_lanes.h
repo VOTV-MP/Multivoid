@@ -34,6 +34,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::TeleportClient: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
+    case ReliableKind::PlayerDamage:   return Lane::High;  // combat event -- prioritize
     // Spawn + Destroy must share a lane: GNS guarantees in-order delivery WITHIN
     // a lane but NOT across lanes. If PropDestroy were on Normal while PropSpawn
     // were on Bulk, a Destroy could drain to the receiver before its Spawn under
@@ -56,10 +57,11 @@ inline Lane LaneForKind(ReliableKind k) {
 //     takeObj-path drop originates client-side and needs cross-peer fan-out).
 // NOT relayed:
 //   - Weather / RedSky / LightningStrike / EntitySpawn / EntityDestroy /
-//     RestoreVitals / TeleportClient: host-authoritative -- they ORIGINATE on
-//     the host and already fan out to all clients via SendReliable; a client
-//     never legitimately sends them (and event_feed trust-gates them on
-//     senderPeerSlot==0).
+//     RestoreVitals / TeleportClient / PlayerDamage: host-authoritative -- they
+//     ORIGINATE on the host and are sent directly to the target client (fan-out
+//     or SendReliableToSlot); a client never legitimately sends them (and
+//     event_feed trust-gates them on senderPeerSlot==0). PlayerDamage is
+//     point-to-point host->owner (Inc3-WIRE combat relay), never client-forwarded.
 //   - Join / AssignPeerSlot / PlayerJoined: handshake. Join is point-to-point
 //     host<->client; AssignPeerSlot + PlayerJoined are host-originated (the
 //     latter IS the cross-peer identity relay from T2-1).

@@ -388,3 +388,116 @@ large-distance teleports — so "frame the puppet by teleporting the host in fro
 of it" only works when host + puppet spawned near each other. When they spawn far
 apart the host snaps back and the puppet stays small/off-frame; user live-watch
 was the reliable signal.
+
+---
+
+## Inc3-WIRE design (2026-05-31) — reliable host->owner PlayerDamage relay
+
+Synthesised from a 3-agent RE (IDA detection / our-infra plumbing / MTA precedent).
+Closes the combat loop: a host-side enemy hits peer N's puppet -> N takes the damage
+on ITS OWN player -> N's health drops -> streams (Inc1) -> N's puppet flashes (Inc3).
+
+### MTA precedent (reference/mtasa-blue/) — CONFIRMS victim-authoritative
+MTA hooks `CEventDamage::AffectsPed` (multiplayer_shotsync.cpp:95/869 -> StaticDamageHandler
+-> CClientGame::DamageHandler, CClientGame.cpp:4274) — the VICTIM'S client detects its
+own hit, applies it locally, and reports its RESULTING health. There is NO standalone
+damage packet: attribution (damagerID + weapon + bodypart) + resulting health ride the
+player puresync (CNetAPI.cpp:1238-1258 write / CPlayerPuresyncPacket.cpp:303-327 read);
+the server TRUSTS the reported health (SetHealth, no recompute) and relays; receiving
+clients SetHealth+LockHealth (display-only). Death is a SEPARATE reliable self-attested
+`CPlayerWastedPacket` (CClientGame::DoWastedCheck:5663). => victim-authoritative is the
+shipped, scaled design. **The ONE inversion for us:** in MTA the victim detects its own
+hit; in our host-relay topology the enemy is host-authoritative and hits the PUPPET on
+the host, so the HOST detects and PUSHES a reliable PlayerDamage event to the owner
+(the piece MTA's puresync-rider replaces). Health still rides our existing Inc1 stream;
+death stays a separate reliable (our death policy = native SP, no respawn).
+
+### Decomposition: RELAY half (buildable now) vs DETECT half (needs a runtime probe)
+The two halves are cleanly separable because the relay is testable via SYNTHETIC
+injection (host sends a PlayerDamage to the owner with no real enemy):
+
+**RELAY half (Inc3-WIRE-relay) — de-risked, MTA-confirmed, autonomously testable:**
+- protocol.h: `ReliableKind::PlayerDamage` (fresh id, NOT the retired 16/17) + a
+  `#pragma pack(1)` `PlayerDamagePayload{ uint32_t targetElementId; float damage; }`
+  (+ the two static_asserts) + bump kProtocolVersion 20->21.
+- session_lanes.h: `LaneForKind: PlayerDamage -> Lane::High`; LEAVE OUT of
+  `IsClientRelayableReliableKind` (default false = non-relayable = must-fix #2 satisfied,
+  host-authoritative; add a doc line).
+- send: host-only `Session::SendReliableToSlot(ownerSlot, PlayerDamage, &p, len, /*sender*/0)`
+  (host knows the owner slot from the hit puppet; no fan-out).
+- receive (event_feed.cpp switch): new `case PlayerDamage` — gate `senderPeerSlot!=0 -> break`
+  (host-only origin), bounds-check, `targetElementId == Registry::LocalPlayerElementId()`,
+  then GT::Post -> run damage on the OWNER's own possessed player. event_feed.cpp is at 797
+  LOC -> keep the case to ~1 line calling `player_damage::OnWireDamage(msg)`; logic lives in
+  the new module.
+- ue_wrap/engine: NEW `InvokeAddPlayerDamage(mainPlayer, damage)` P7 wrapper (replaces the
+  #6 probe's raw ParamFrame: FindFunction "Add Player Damage" -> ParamFrame.Set float Damage
+  -> Call; extra FVector/blood/Source params zero-init). The #6 control PROVED this drops
+  the possessed player's health (100->95.05).
+- NEW coop/player_damage.{h,cpp} (one-feature-per-file): owner-side apply
+  (`OnWireDamage`) + the host send helper (`SendPlayerDamage(ownerSlot, dmg)`) + a
+  `DebugForceHitPuppet(slot, dmg)` for the e2e + `Install(&session)` wired into
+  net_pump InstallObservers.
+- owner/element mapping (players_registry.cpp): host `PeerIdOfActor(puppet)` -> slot ->
+  `GetPlayerElement(slot)->GetId()` = targetElementId; owner resolves its player via
+  `Registry::Get().Local()`.
+- vitals->flash TAIL is ALREADY WIRED: once the owner's saveSlot.health drops, Inc1
+  (net_pump::ReadLocalPose) streams the lower fraction and Inc3 (RemotePlayer::SetVitals
+  drop-detector) flashes the puppet. Inc3-WIRE-relay's job ENDS at causing the owner's
+  local health drop.
+- e2e: `VOTVCOOP_RUN_PLAYERDMG_TEST` — host calls DebugForceHitPuppet(slot1, 20) after
+  settle -> client receives, runs Add Player Damage on its own player -> health drops ->
+  streams -> host confirms its slot-1 puppet `IsHurtFlashing()` (reuses the Inc3 observer).
+  Proves the WHOLE relay minus the real-enemy detection, no enemy needed.
+
+**DETECT half (Inc3-WIRE-detect) — DEFERRED, genuinely un-determined (needs a runtime probe):**
+IDA found the ONLY BP functions with native exec thunks are `impactDamageCPP`/`impactSquishCPP`
+(the PHYSICS-impact path, exec thunk @0x14112CA60). Enemy MELEE routes through pure-BP
+`addDamage` (no native body -> un-MinHookable), and whether the NPC graph dispatches it via
+ProcessEvent (our observer catches it) or ProcessInternal/EX_FinalFunction (our observer
+MISSES it -- the BP->BP-internal rule) is BP-BYTECODE-OPAQUE -- undeterminable statically.
+So detection's hook point CANNOT be chosen from static RE. REQUIRED first step (escalation
+ladder -> UE4SS dev probe, the one case it's warranted): with a real (purchased/triggered)
+enemy hitting a host-side puppet, observe which UFunction fires on the puppet and whether our
+ProcessEvent table sees it. THEN: if engine-dispatched -> ProcessEvent observer on
+addDamage/Add Player Damage (gated GetController()==null && IsPuppet), filtered on the SOURCE
+actor's class (enemy NPC) -- the source actor is the self-vs-enemy discriminator; if
+ProcessInternal/native -> fall back to MinHook `execImpactDamageCPP_mainPlayer`@0x14112CA60
+(physics only -> may miss melee) or MinHook the deeper BP-graph event the thunk re-dispatches
+to. SECOND blocker for the probe: VOTV NPCs don't ambient-spawn (purchase/trigger only) AND
+host enemies must actually TARGET puppets (realization #2's other half: AI-targets-both) --
+both needed before the detect probe can run. Detection calls the SAME `player_damage::
+SendPlayerDamage(ownerSlot, dmg)` the relay half exposes, so it's a localized final add.
+
+### Trust (must-fix #2, MTA-aligned): host-only SEND, receiver gates senderPeerSlot==0,
+PlayerDamage NOT in the relay whitelist (never client-forwarded). A peer could refuse to
+apply its own damage (same accepted trust limit as the vitals fraction + MTA's victim-
+authoritative model — documented, no anti-cheat per RULE 3).
+
+### BUILD STATUS 2026-05-31 — relay half BUILT + WIRE-PROVEN; owner-apply BLOCKED
+Built the relay half (protocol v20->v21 `ReliableKind::PlayerDamage` + 8-byte
+`PlayerDamagePayload`; `ue_wrap::engine::InvokeAddPlayerDamage` P7 wrapper; new
+`coop/player_damage.{h,cpp}`; thin `event_feed` case host-gated on senderPeerSlot==0;
+`net_pump` Install; e2e `VOTVCOOP_RUN_PLAYERDMG_TEST`). **The WIRE RELAY WORKS e2e:**
+host `DebugForceHitPuppet(slot=1)` -> `SendReliableToSlot` -> client receives ->
+`player_damage::OnWireDamage` -> invokes "Add Player Damage" on its OWN possessed player
+(`possessed=1 isPuppet=0`, `ok=1`). Every hop logged + confirmed across a 80 s smoke,
+host RSS 3.5 GB stable.
+**BLOCKER (the e2e does NOT pass): "Add Player Damage" is a NO-OP on the CLIENT's
+possessed player.** Client log, synchronous before/after read around the call:
+`saveSlot.health 100.00 -> 100.00` at damage=18 AND damage=50 (so NOT armor/magnitude;
+NOT regen -- the read is synchronous right after the call). Yet the #6 probe proved the
+SAME call drops the HOST's possessed player (5 -> 4.95). And the existing
+`VOTVCOOP_RUN_DAMAGE_TEST` proves a DIRECT `ue_wrap::vitals::Write(Health)` on the client
+DOES drop+stream+flash. So the gate is specifically the BP "Add Player Damage" entry, and
+it is HOST/CLIENT-ASYMMETRIC. Hypotheses (untested): VOTV's damage BP guards on
+NetMode/Role/HasAuthority (even though we run standalone SP per peer -- something may set
+the client's role differently), or a per-player VOTV flag (godmode/`debugDamage`@0xF5D/
+spawn i-frames) that differs by peer. "Add Player Damage" is PURE BP bytecode (IDA found
+only impactDamageCPP/impactSquishCPP have native bodies), so the guard is NOT
+IDA-decompilable -> RE via the ESCALATION LADDER's last rung: UE4SS BP-graph dump of "Add
+Player Damage" to read the guard, plus a NetMode/Role probe on the client's pawn. NEXT
+STEP before the combat loop can close. (Detection half remains separately deferred.)
+Fallback if the BP can't be made to fire on the client: host computes the resulting
+health and the owner writes it directly (loses per-peer armor mitigation -- weigh vs
+RULE 1). Code committed as a wire-proven checkpoint; owner-apply marked blocked.

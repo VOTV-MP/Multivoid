@@ -70,6 +70,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // runtime) that player health is the shared per-machine saveSlot. Client just
     // connects so the puppet exists.
     SpawnIf("VOTVCOOP_RUN_DMGHAZARD_TEST", "damage-hazard #6 probe", &DmgHazardTestThread, role);
+    // Vitals Inc3-WIRE relay e2e: host sends synthetic PlayerDamage to slot 1; client
+    // applies it to its own player; the streamed health drop flashes the host's slot-1
+    // puppet -- proving the full reliable host->owner damage relay (no real enemy).
+    SpawnIf("VOTVCOOP_RUN_PLAYERDMG_TEST", "PlayerDamage relay e2e", &PlayerDamageTestThread, role);
 }
 
 }  // namespace harness::autotest

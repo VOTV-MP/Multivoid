@@ -239,7 +239,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // correct fit -- it rides the proven per-peer pose relay (no new ReliableKind /
 // relay-whitelist / lane / defer-latch / connect-replay machinery, which existed
 // only to survive the reliable design's permanent-desync failure mode).
-inline constexpr uint16_t kProtocolVersion = 20;
+inline constexpr uint16_t kProtocolVersion = 21;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -448,6 +448,23 @@ enum class ReliableKind : uint8_t {
                        //     validated via IsAllowedPeerAllocatedEid on
                        //     receipt). Stale-gen defense rides the header
                        //     senderEpoch (v16) like every packet.
+    PlayerDamage = 20, // vitals Inc3-WIRE (2026-05-31): host-authoritative combat
+                       //     damage relay. HOST-only send: the host detects a host-
+                       //     side enemy hitting peer N's PUPPET and sends this to
+                       //     slot N (via SendReliableToSlot). N's receiver runs
+                       //     "Add Player Damage" on its OWN possessed mainPlayer_C
+                       //     (per-peer-authoritative: N's private armor/inventory BP
+                       //     mitigates) -> N's saveSlot.health drops -> the existing
+                       //     Inc1 health stream + Inc3 hurt-flash fire automatically.
+                       //     MTA precedent = victim-authoritative damage (the victim
+                       //     applies + reports its own resulting health; server
+                       //     trusts + relays -- CNetAPI.cpp:1238 / CPlayerPuresync
+                       //     Packet.cpp:325). NOT relayable (absent from
+                       //     IsClientRelayableReliableKind) + receiver gates
+                       //     senderPeerSlot==0 (must-fix #2). Payload:
+                       //     PlayerDamagePayload (8 bytes). DETECTION (the real
+                       //     enemy->puppet hook) is deferred behind a runtime probe;
+                       //     the relay path is e2e-tested via DebugForceHitPuppet.
     // Slots 16/17 (NonPropEntityState/Destroy) retired 2026-05-27 -- the
     // chipPile/clump/trashBitsPile families now ride the existing Aprop_C
     // pipeline (PropSpawn / PropDestroy / PropPose / PropRelease) via the
@@ -873,6 +890,22 @@ static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
 
 // flags bits for ItemActivatePayload.flags
 inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
+
+// vitals Inc3-WIRE (2026-05-31): host-authoritative combat damage relay. The host
+// stamps `targetElementId` = the OWNER peer's Player Element id (Registry::
+// GetPlayerElement(ownerSlot)->GetId()) so the receiver self-verifies it is the
+// addressed peer (targetElementId == Registry::LocalPlayerElementId()) before running
+// the damage on its OWN possessed player. `damage` is the raw hit amount; the owner's
+// own "Add Player Damage" BP applies its private armor/mitigation. Host-only send;
+// receiver gates senderPeerSlot==0; not relayable.
+struct PlayerDamagePayload {
+    uint32_t targetElementId;  // the OWNER peer's Player Element id (host-stamped)
+    float    damage;           // raw hit amount; owner BP mitigates per its inventory
+};
+static_assert(sizeof(PlayerDamagePayload) == 8,
+              "PlayerDamagePayload must be exactly 8 bytes (v21 wire-format)");
+static_assert(sizeof(PlayerDamagePayload) <= 256 - 20 - 8,
+              "PlayerDamagePayload must fit in one reliable datagram");
 
 // Host -> client slot assignment. Sent once right after the Connected
 // callback fires on host (a Reliable single-target message). Client
