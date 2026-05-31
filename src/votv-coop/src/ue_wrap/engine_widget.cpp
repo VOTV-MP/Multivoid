@@ -284,6 +284,18 @@ bool SetWidgetText(void* textBlock, const wchar_t* text) {
     return true;
 }
 
+bool SetTextBlockColor(void* textBlock, const FLinearColor& color) {
+    if (!textBlock) return false;
+    // Same write BuildTextWidget uses at construction (lines above): the
+    // FLinearColor at +ColorAndOpacity + the FSlateColor ColorUseRule byte = 0
+    // (UseColor_Specified). The auto-redrawing UWidgetComponent picks it up next
+    // frame; no UFunction dispatch needed.
+    auto* base = reinterpret_cast<uint8_t*>(textBlock);
+    *reinterpret_cast<FLinearColor*>(base + P::off::UTextBlock_ColorAndOpacity) = color;
+    *reinterpret_cast<uint8_t*>(base + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+    return true;
+}
+
 bool AddWidgetToViewport(void* userWidget, int zOrder) {
     if (!userWidget || !ResolveScreenWidgetFns() || !g_addToVpFn) return false;
     ParamFrame f(g_addToVpFn);

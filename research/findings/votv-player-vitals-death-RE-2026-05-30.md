@@ -246,12 +246,32 @@ exact death->menu call site no longer needs hooking.
   autotest (`VOTVCOOP_RUN_RAGDOLL_TEST=1`) — CLIENT drives local ragdollMode/
   forceGetUp, HOST observes its slot-1 puppet flip isRagdoll 0->1->0 purely via the
   pose stream. (Supersedes the Inc2a standalone #8 probe — e2e covers that path.)
-- **Inc3 — reliable PlayerDamage (host enemy hit -> owner):** host observer on
-  damage UFunction on a CLIENT puppet (gated GetController()==null && remote)
-  -> send to owner -> owner runs LOCAL Add Player Damage. **MUST-VERIFY #6
-  BEFORE Inc3: does `addDamage`/`Add Player Damage` read health from the ACTOR or
-  the shared saveSlot? If shared, invoking it on a host-side puppet corrupts the
-  LOCAL player's saveSlot.** Smoke via `DebugForceHitPuppet`.
+- **Inc3-visual SHIPPED 2026-05-31 — puppet damage HURT-FLASH (display side, no new
+  wire).** User asked for a visual when a puppet takes damage. Each peer already
+  streams its health FRACTION (Inc1); a DECREASE on the receiver IS a damage event
+  (MTA `CPedSync` continuous-health + gate-on-change shape, NOT a discrete packet --
+  RE-validated). `RemotePlayer::SetVitals` (now a .cpp def) edge-detects
+  `health01 + kHurtEpsilon < health_` (hasPose_-gated so a late-join puppet of an
+  already-damaged peer doesn't spuriously flash) and arms `hurtFlashEndMs_ =
+  NowMs()+500` (latest-hit-wins). `RemotePlayer::Tick` toggles the nameplate RED on
+  the EDGE of the flash window (one repaint per transition, FPS-independent wall-
+  clock). `nameplate::SetFlash` writes the UTextBlock color via
+  `ue_wrap::engine::SetTextBlockColor` (red on / translucent-white off); the
+  auto-redrawing UWidgetComponent shows it, and SetWidgetText (health-bar refresh)
+  never touches color so they don't fight. Works for ANY health drop (fall/fire now;
+  enemy hits once Inc3-wire lands). e2e autotest (`VOTVCOOP_RUN_DAMAGE_TEST`): client
+  lowers own health -> host puppet `IsHurtFlashing` -> PASS, host RSS stable.
+  RESIDUAL (user's other option): Minecraft-style RED MESH OVERLAY -- DEFERRED behind
+  a runtime probe (kerfur material tint-param names unknown -> silent no-op on a wrong
+  name; a red material asset may not exist in the pak -> creating one edits assets =
+  Principle 1). Would share the same hurtFlashEndMs_ trigger.
+- **Inc3-wire (the combat loop, NOT yet built) — reliable PlayerDamage (host enemy
+  hit -> owner):** host observer on the damage UFunction on a CLIENT puppet (gated
+  GetController()==null && remote) -> send to owner -> owner runs LOCAL Add Player
+  Damage -> its health drops -> streams -> the Inc3-visual flash fires automatically.
+  **MUST-VERIFY #6 BEFORE Inc3-wire: does `addDamage`/`Add Player Damage` read health
+  from the ACTOR or the shared saveSlot? If shared, invoking it on a host-side puppet
+  corrupts the LOCAL player's saveSlot.** Smoke via `DebugForceHitPuppet`.
 - **Inc4 — flinch/burning display (polish).**
 - **~~Inc5 — respawn/revive~~ CUT (user decision 2026-05-30, see 4.5):** permadeath-
   rejoinable uses VOTV's native death->menu; no respawn/revive feature. Residual

@@ -101,14 +101,16 @@ public:
     // pose; the nameplate reads GetHealth() to draw a health bar. These NEVER
     // touch a saveSlot -- there is one saveSlot per machine, so a puppet write
     // would corrupt the LOCAL player's persisted health (see ue_wrap::vitals).
-    void SetVitals(float health01, float food01, float sleep01) {
-        health_ = health01;
-        food_ = food01;
-        sleep_ = sleep01;
-    }
+    // v20 Inc3: SetVitals also EDGE-DETECTS a health DECREASE (this peer took
+    // damage) and arms a hurt-flash (the nameplate flashes red) -- no new wire,
+    // it rides the existing health stream (MTA CPedSync gate-on-change shape).
+    // Defined in the .cpp (needs NowMs + nameplate). Game thread only.
+    void SetVitals(float health01, float food01, float sleep01);
     float GetHealth() const { return health_; }
     float GetFood() const { return food_; }
     float GetSleep() const { return sleep_; }
+    // True while the damage hurt-flash window is active (test/diagnostic seam).
+    bool IsHurtFlashing() const { return hurtFlashActive_; }
 
     void* actor() const { return actor_; }
 
@@ -199,6 +201,15 @@ private:
     float health_ = 1.f;
     float food_ = 1.f;
     float sleep_ = 1.f;
+    // v20 Inc3 damage hurt-flash (nameplate red). Timestamp-based (NowMs deadline)
+    // not frame-count, so the duration is FPS-independent. hurtFlashEndMs_ is armed
+    // on a detected health DROP in SetVitals (latest-hit-wins); Tick toggles the
+    // nameplate color on the edge of (NowMs < hurtFlashEndMs_) vs hurtFlashActive_
+    // (one repaint per transition, no per-frame widget churn). Both reset in Destroy.
+    uint64_t hurtFlashEndMs_ = 0;
+    bool     hurtFlashActive_ = false;
+    static constexpr uint64_t kHurtFlashMs = 500;     // red for ~0.5 s per hit
+    static constexpr float    kHurtEpsilon = 0.006f;  // > 1 wire quantization step (1/255) -- ignore dequant jitter
 
     // Receiver-side interpolation state (game thread only -- the engine path is
     // single-threaded; no mutex). curPos_/curYaw_/curSpeed_ is what was last

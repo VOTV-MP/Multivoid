@@ -235,8 +235,11 @@ items.
   extraction) + Inc1 (continuous health/food/sleep on PoseSnapshot + nameplate
   health bar) SHIPPED (6f5949c); Inc2a (#8 PASS, 4d52d40) + **Inc2b ragdoll/faint
   DISPLAY-bit sync SHIPPED 2026-05-31** (protocol v20, `kStateBitRagdoll`,
-  continuous-bit pivot — see the wire note above); Inc3 (PlayerDamage enemy-hit
-  delivery) pending; respawn/revive CUT (see above).
+  continuous-bit pivot — see the wire note above); **Inc3-visual (puppet damage
+  HURT-FLASH: nameplate flashes red on a streamed health drop, no new wire)
+  SHIPPED 2026-05-31** (mesh red-overlay variant deferred behind a probe); Inc3-wire
+  (host-auth enemy-hit -> owner damage delivery, needs MUST-VERIFY #6) pending;
+  respawn/revive CUT (see above).
 
 <!--
 Template for an entry:

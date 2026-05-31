@@ -37,6 +37,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/vitals.h"
 
 #include <atomic>
 #include <memory>
@@ -222,6 +223,104 @@ void DriveOnClient() {
     UE_LOGI("ragdoll_test[client]: drive sequence DONE");
 }
 
+// ===================== Inc3 damage hurt-flash e2e test =====================
+// CLIENT drives its OWN saveSlot.health DOWN in steps; vitals Inc1 streams the
+// lower fraction; the HOST's slot-1 puppet SetVitals detects the drop, arms the
+// hurt-flash, and Tick flashes the nameplate red -- proven cross-peer by the host
+// reading the puppet's IsHurtFlashing(). No new wire (rides the health stream).
+
+// HOST: poll the slot-1 puppet's hurt-flash state until it goes true (the wire-
+// driven health drop flashed it) then false (the flash window expired).
+void ObserveDamageOnHost() {
+    UE_LOGI("damage_test[host]: observer armed -- polling slot-1 puppet hurt-flash (up to 120 s)");
+    int phase = 0;  // 0 wait puppet, 1 wait flash ON, 2 wait flash OFF
+    bool sawPuppet = false;
+    for (int attempt = 0; attempt < 600 && phase < 3; ++attempt) {  // 600 * 200ms = 120 s
+        auto done = std::make_shared<std::atomic<int>>(0);
+        auto state = std::make_shared<int>(-1);  // -1 no puppet, 0 not flashing, 1 flashing
+        GT::Post([done, state] {
+            coop::RemotePlayer& rp = coop::net_pump::Puppet(1);
+            if (!rp.valid()) { *state = -1; done->store(1); return; }
+            *state = rp.IsHurtFlashing() ? 1 : 0;
+            done->store(1);
+        });
+        WaitDone(done, 8000);
+        const int s = *state;
+        if (phase == 0 && s >= 0) {
+            if (!sawPuppet) { sawPuppet = true;
+                UE_LOGI("damage_test[host]: slot-1 puppet resolved (flashing=%d) -- waiting for a wire-driven hurt flash", s); }
+            phase = 1;
+        }
+        if (phase == 1 && s == 1) {
+            UE_LOGI("damage_test[host]: observed HURT FLASH ON -- puppet nameplate red, driven by the wire-streamed health drop (Inc3 WORKS)");
+            phase = 2;
+        }
+        if (phase == 2 && s == 0) {
+            UE_LOGI("damage_test[host]: observed HURT FLASH OFF -- nameplate restored");
+            phase = 3;
+        }
+        ::Sleep(200);
+    }
+    if (phase >= 3)
+        UE_LOGI("damage_test[host]: VERDICT Inc3 e2e PASS -- a client's health drop flashed its host puppet's nameplate red then restored (no new wire)");
+    else if (!sawPuppet)
+        UE_LOGW("damage_test[host]: VERDICT INCONCLUSIVE -- slot-1 puppet never resolved");
+    else if (phase == 1)
+        UE_LOGW("damage_test[host]: VERDICT FAIL -- puppet resolved but never saw a hurt flash (health-drop detect or flash broken)");
+    else
+        UE_LOGW("damage_test[host]: VERDICT PARTIAL -- saw flash ON but not the restore (flash timer never cleared)");
+    UE_LOGI("damage_test[host]: DONE");
+}
+
+// CLIENT: lower the LOCAL player's saveSlot.health in steps (each a fresh DROP
+// edge -> sustained flashing) so the host has ample window to observe. Writes
+// the SAME saveSlot vitals Inc1 streams; values stay well above 0 (no death).
+void DriveDamageOnClient() {
+    UE_LOGI("damage_test[client]: driver armed -- waiting for the local player + save");
+    namespace V = ue_wrap::vitals;
+    // Wait until the save (saveSlot) resolves so the writes land.
+    auto ready = std::make_shared<std::atomic<int>>(0);
+    auto maxH = std::make_shared<float>(100.f);
+    for (int attempt = 0; attempt < 60 && ready->load() == 0; ++attempt) {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([ready, maxH, done] {
+            float h = 0.f;
+            if (V::Read(V::Field::Health, &h)) {
+                V::Read(V::Field::MaxHealth, maxH.get());
+                if (*maxH <= 0.f) *maxH = 100.f;
+                ready->store(1);
+            }
+            done->store(1);
+        });
+        WaitDone(done, 8000);
+        if (ready->load() == 0) ::Sleep(1000);
+    }
+    if (ready->load() == 0) {
+        UE_LOGW("damage_test[client]: VERDICT INCONCLUSIVE -- saveSlot health never resolved; cannot drive");
+        return;
+    }
+    UE_LOGI("damage_test[client]: save resolved (maxHealth=%.1f) -- waiting 5 s for the host puppet to spawn", *maxH);
+    ::Sleep(5000);  // the host puppet spawns on our first pose (~immediately after connect)
+
+    // Three descending writes (0.6 -> 0.4 -> 0.2 of max), 600 ms apart. Each is a
+    // fresh drop edge -> re-arms the 500 ms flash -> ~1.7 s of flashing for the
+    // host's 200 ms poll to catch.
+    const float steps[3] = {0.6f, 0.4f, 0.2f};
+    for (int i = 0; i < 3; ++i) {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        const float target = *maxH * steps[i];
+        GT::Post([target, done] {
+            const bool ok = V::Write(V::Field::Health, target);
+            UE_LOGI("damage_test[client]: wrote local health=%.1f -> ok=%d (Inc1 streams it; host puppet should flash)", target, ok ? 1 : 0);
+            done->store(1);
+        });
+        WaitDone(done, 8000);
+        ::Sleep(600);
+    }
+    ::Sleep(2000);
+    UE_LOGI("damage_test[client]: drive sequence DONE");
+}
+
 }  // namespace
 
 void RunAutonomousRagdollTest() {
@@ -236,6 +335,21 @@ void RunAutonomousRagdollTest() {
 
 DWORD WINAPI RagdollTestThread(LPVOID) {
     RunAutonomousRagdollTest();
+    return 0;
+}
+
+void RunAutonomousDamageTest() {
+    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const bool isHost = (roleEnv != "client");
+    if (isHost) {
+        ObserveDamageOnHost();
+    } else {
+        DriveDamageOnClient();
+    }
+}
+
+DWORD WINAPI DamageTestThread(LPVOID) {
+    RunAutonomousDamageTest();
     return 0;
 }
 

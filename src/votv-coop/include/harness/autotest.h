@@ -119,4 +119,13 @@ DWORD WINAPI ReSeedTestThread(LPVOID arg);
 void RunAutonomousRagdollTest();
 DWORD WINAPI RagdollTestThread(LPVOID arg);
 
+// Vitals Inc3 damage hurt-flash e2e WIRE test (2026-05-31, harness/autotest_vitals.cpp).
+// BOTH peers: the CLIENT lowers its own saveSlot.health in steps; vitals Inc1 streams
+// the lower fraction; the HOST confirms its slot-1 puppet's nameplate flashes red
+// (RemotePlayer::IsHurtFlashing) -- proving a peer's damage shows on its puppet with
+// NO new wire (the flash rides the existing health stream). Gated by env
+// VOTVCOOP_RUN_DAMAGE_TEST="1" (host = observer, client = driver).
+void RunAutonomousDamageTest();
+DWORD WINAPI DamageTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

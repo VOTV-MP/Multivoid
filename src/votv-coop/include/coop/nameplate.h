@@ -26,5 +26,11 @@ void Unregister(RemotePlayer* player);
 // (the harness posts this every ~50 ms). Cheap; no-op if no labels.
 void Update();
 
+// Vitals Inc3 damage flash: tint this player's whole nameplate RED while `on`,
+// restore to the normal translucent white when off. Driven by RemotePlayer::Tick
+// on the edge of its hurt-flash window (which arms when the streamed health
+// drops). No-op if the player has no label. Game thread.
+void SetFlash(RemotePlayer* player, bool on);
+
 }  // namespace nameplate
 }  // namespace coop

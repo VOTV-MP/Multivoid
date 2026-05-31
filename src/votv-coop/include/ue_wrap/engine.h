@@ -321,6 +321,14 @@ bool SpawnScreenTextWidget(void* outer, int zOrder, FVector2D alignment, FVector
 // updates its line by rebuilding the whole multi-line string. Game thread only.
 bool SetWidgetText(void* textBlock, const wchar_t* text);
 
+// Set a UTextBlock's ColorAndOpacity (@UTextBlock_ColorAndOpacity, with the
+// FSlateColor ColorUseRule forced to UseColor_Specified=0). The owning
+// UWidgetComponent auto-redraws (bManuallyRedraw=0, RedrawTime=0), so the new
+// color shows next frame -- no RequestRedraw needed; SetWidgetText (which only
+// sets the text string) never clobbers it. Used by the nameplate damage-flash
+// (vitals Inc3). Returns false on null textBlock. Game thread only.
+bool SetTextBlockColor(void* textBlock, const FLinearColor& color);
+
 // UUserWidget::AddToViewport(zOrder) / RemoveFromViewport -- re-attach the HUD feed
 // after a level load (the widget object survives with a GameInstance outer, but its
 // Slate viewport tree is torn down with the old world). Game thread only.

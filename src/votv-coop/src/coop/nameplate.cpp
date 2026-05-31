@@ -88,6 +88,30 @@ void Register(RemotePlayer* player) {
     Update();  // place + face immediately
 }
 
+// Vitals Inc3 damage flash. The nameplate is just translucent text (no
+// background), so "the whole nameplate red" = tinting the UTextBlock color. The
+// flash uses a brighter alpha than the resting 0.22 so the hit reads clearly;
+// the restore returns to the spawn opacity. SetWidgetText (health-bar refresh)
+// only touches the text string, never the color, so the two never fight.
+void SetFlash(RemotePlayer* player, bool on) {
+    constexpr float kBaseOpacity = 0.22f;  // matches SpawnNameplateWidget opacity arg (Register)
+    const ue_wrap::FLinearColor color =
+        on ? ue_wrap::FLinearColor{1.f, 0.08f, 0.08f, 0.85f}   // bright red hit pop
+           : ue_wrap::FLinearColor{1.f, 1.f, 1.f, kBaseOpacity};
+    for (auto& e : g_entries) {
+        if (e.player != player) continue;
+        // Mirror Update()/Unregister()'s liveness guard: the nameplate actor (and
+        // its UTextBlock subobject, built into the actor's widget tree) can be
+        // GC-freed on a level change WITHOUT our Unregister running, while the
+        // puppet actor_ that gates SetFlash via RemotePlayer::valid() is still live.
+        // SetTextBlockColor is a RAW memory store, so a freed textBlock would be a
+        // use-after-free -- guard on the actor's liveness (audit 2026-05-31).
+        if (e.textActor && R::IsLive(e.textActor) && e.textBlock)
+            E::SetTextBlockColor(e.textBlock, color);
+        return;
+    }
+}
+
 void Unregister(RemotePlayer* player) {
     for (auto it = g_entries.begin(); it != g_entries.end(); ++it) {
         if (it->player == player) {

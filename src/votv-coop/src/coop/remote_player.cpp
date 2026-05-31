@@ -304,6 +304,33 @@ bool RemotePlayer::valid() const {
     return actor_ != nullptr && R::IsLiveByIndex(actor_, internalIdx_);
 }
 
+void RemotePlayer::SetVitals(float health01, float food01, float sleep01) {
+    // v20 Inc3: edge-detect a health DROP (this peer took damage) BEFORE
+    // overwriting health_, and arm the hurt-flash (Tick toggles the nameplate
+    // red). kHurtEpsilon (> 1 wire quantization step) keeps dequantization
+    // jitter at a steady health from tripping a false flash. Latest-hit-wins:
+    // a fresh drop pushes the deadline out, so rapid hits make one continuous
+    // flash. No new wire -- this rides the existing v19 health stream (MTA
+    // CPedSync gate-on-change shape). Game thread (SetTargetPose).
+    //
+    // Gate on hasPose_: it is false during the FIRST SetVitals (SetTargetPose
+    // sets it AFTER calling us), so a puppet spawning for an ALREADY-damaged peer
+    // (health_ defaults to 1.0, first streamed health < 1.0) seeds health_ WITHOUT
+    // a spurious "just took damage" flash. Real in-session drops flash normally.
+    if (hasPose_ && health01 + kHurtEpsilon < health_) {
+        hurtFlashEndMs_ = NowMs() + kHurtFlashMs;
+        static bool sLoggedOnce = false;
+        if (!sLoggedOnce) {
+            sLoggedOnce = true;
+            UE_LOGI("vitals: puppet took damage (health %.2f -> %.2f) -- hurt flash armed (first hit logged)",
+                    health_, health01);
+        }
+    }
+    health_ = health01;
+    food_ = food01;
+    sleep_ = sleep01;
+}
+
 void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (!valid()) { actor_ = nullptr; return; }
 
@@ -485,6 +512,18 @@ void RemotePlayer::Tick() {
         ApplyToEngine();
         dirty_ = false;
     }
+
+    // v20 Inc3 damage hurt-flash: toggle the nameplate RED on the EDGE of the
+    // flash window. Timestamp-based (NowMs deadline), so the ~0.5 s duration is
+    // FPS-independent; fires exactly ONE nameplate repaint when the flash starts
+    // and one when it ends -- no per-frame widget churn. hurtFlashEndMs_ is armed
+    // by SetVitals on a detected health drop (this peer took damage).
+    const bool wantFlash = (hurtFlashEndMs_ != 0 && NowMs() < hurtFlashEndMs_);
+    if (wantFlash != hurtFlashActive_) {
+        hurtFlashActive_ = wantFlash;
+        nameplate::SetFlash(this, wantFlash);
+        if (!wantFlash) hurtFlashEndMs_ = 0;
+    }
 }
 
 void RemotePlayer::Destroy() {
@@ -508,6 +547,8 @@ void RemotePlayer::Destroy() {
     dirty_ = false;
     ragdollWireState_ = false;   // v20: a recycled puppet starts un-ragdolled + re-converges
     ragdollDispatched_ = false;
+    hurtFlashEndMs_ = 0;         // v20 Inc3: clear the hurt-flash (nameplate already unregistered)
+    hurtFlashActive_ = false;
     UE_LOGI("RemotePlayer::Destroy: puppet + nameplate gone");
 }
 
