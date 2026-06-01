@@ -253,6 +253,17 @@ void Session::Stop() {
         if (hListen != 0) sockets->CloseListenSocket(static_cast<HSteamListenSocket>(hListen));
     }
 
+    // Make net_pump::Tick's per-peer disconnect edge reliable after ANY Stop()
+    // (not just a peer-initiated close). That edge gates on IsSlotReady() ==
+    // peerLanesConfigured_[slot]; those flags are normally cleared by the GNS
+    // ClosedByPeer status callbacks, but those may not have dispatched during the
+    // linger RunCallbacks loop above. Without an explicit clear, a Stop() while peers
+    // were connected (e.g. the local-death disconnect) leaves the flag true ->
+    // IsSlotReady() stays true -> the puppet-destroy edge never fires -> the puppet
+    // actor leaks until full teardown. peerConns_ was already zeroed above; pair the
+    // lanes flags with it. (Audit 2026-06-01, death-handling change.)
+    for (int i = 0; i < kMaxPeers; ++i) peerLanesConfigured_[i].store(false);
+
     state_.store(ConnState::Disconnected);
     g_session.store(nullptr, std::memory_order_release);
     UE_LOGI("net: session stopped (sent=%llu recv=%llu)",

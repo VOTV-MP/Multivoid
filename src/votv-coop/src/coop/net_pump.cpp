@@ -98,6 +98,16 @@ uint64_t g_propEmitCount = 0;
 bool g_wasRagdolling = false;
 uint64_t g_ragdollEmitCount = 0;
 
+// Death policy one-shot (2026-06-01, client-death OOM fix). When the LOCAL player
+// dies, the coop session must LEAVE so VOTV's native death->menu can tear the world
+// down unobstructed -- otherwise the session stays connected with thousands of prop
+// mirrors + puppets referencing the dying world, the teardown jams, the peer stays
+// stuck on the black death screen, and RSS balloons to OOM (MallocBinned2 null ->
+// per-frame AV flood). Latched so we stop the session exactly once per death; reset
+// by OnSessionStart so a rejoin re-arms it. File-scope for the same reason as the
+// edge detectors above.
+bool g_localDeathHandled = false;
+
 // Game thread, ~send-rate: read the local player's pose. Pulled in from
 // harness.cpp 2026-05-28; full rationale comments preserved.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
@@ -243,6 +253,7 @@ void OnSessionStart() {
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
+    g_localDeathHandled = false;
 }
 
 coop::RemotePlayer& Puppet(int slot) {
@@ -455,6 +466,31 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
     if (!g_netLocal) g_netLocal = coop::players::Registry::Get().Local();
     if (g_netLocal) {
+        // DEATH POLICY (2026-06-01 client-death OOM fix). If the local player has
+        // DIED, LEAVE the coop session NOW -- before VOTV's native death sequence
+        // tears the world down. The death screen shows for a beat (game thread still
+        // ticking -> this poll fires) BEFORE the synchronous world reload; if the
+        // session is still up at the reload, our observers + ~3000 prop mirrors +
+        // puppets churn against the dying world, the teardown jams, the peer is stuck
+        // on the black screen, and RSS balloons to OOM. Stopping here = the reload
+        // runs clean (like SP, which has working death) and the peer reaches the menu.
+        // One-shot (g_localDeathHandled), so it stops the session exactly once.
+        // Role-correct via Session::Stop: on a client it leaves that client; on the
+        // host it ends the session for everyone ([[project-coop-no-host-migration]]
+        // "HOST DEATH ENDS SESSION"). Permadeath-rejoinable: reconnect re-Starts +
+        // OnSessionStart re-arms. `dead` is true ONLY on real death (faint/KO/manual
+        // ragdoll leave it false), so a ragdolling-but-alive player is never dropped.
+        if (!g_localDeathHandled && session.connected()) {
+            bool isRagdoll = false, dead = false;
+            if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal, isRagdoll, dead) && dead) {
+                g_localDeathHandled = true;
+                UE_LOGW("net: LOCAL PLAYER DIED -- leaving coop session so VOTV's native death->menu "
+                        "runs unobstructed (role=%s; permadeath-rejoinable)",
+                        session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
+                session.Stop();
+                return;  // session down; subsequent ticks early-out + the disconnect edge tears down puppets/mirrors
+            }
+        }
         // Re-resolve the controller only when missing or invalidated; the
         // controller pointer stays stable between possess events. Caching here
         // saves ~250 ProcessEvent dispatches/sec at 125 Hz pump.
