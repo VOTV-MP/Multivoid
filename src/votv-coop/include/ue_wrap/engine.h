@@ -293,15 +293,19 @@ FVector GetComponentForwardVector(void* component);
 FVector GetComponentRelativeLocation(void* component);
 
 // Spawn a TRANSLUCENT world-space nameplate: an Actor carrying a UWidgetComponent
-// that renders the reused uicomp_helpText_C UMG label. opacity (0..1) drives the
-// whole plate's alpha (TintColorAndOpacity.A) -- real partial transparency, which
-// a TextRender cannot do (its materials are Opaque/Masked). Returns the actor (a
-// host you position/billboard each frame), or nullptr. Game thread only.
-// `outTextBlock` (optional): receives the inner UTextBlock pointer so the caller
-// can re-drive the visible label later (e.g. when the remote nickname arrives
-// via the Join reliable message AFTER the nameplate was already spawned).
-void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity,
-                           void** outTextBlock = nullptr);
+// that renders a UVerticalBox of TWO UTextBlocks -- line 1 = nick (nickColor),
+// line 2 = health bar (barColor) -- so each line carries its OWN colour (a single
+// UTextBlock is one colour). Each colour's alpha is the per-line opacity. Returns
+// the actor (a host you position/billboard each frame), or nullptr. Game thread
+// only. `outNickBlock` / `outBarBlock` (optional): receive the two inner
+// UTextBlock pointers so the caller can re-drive each line independently (nick on
+// the Join reliable; the bar on every vitals stream). In the graceful single-block
+// fallback (VerticalBox class absent), outBarBlock receives nullptr and both lines
+// render in nickColor on the nick block.
+void* SpawnNameplateWidget(const FVector& location,
+                           const wchar_t* nickText, const FLinearColor& nickColor,
+                           const wchar_t* barText, const FLinearColor& barColor,
+                           void** outNickBlock = nullptr, void** outBarBlock = nullptr);
 
 // Build a SCREEN-SPACE HUD widget (a UUserWidget with a single multi-line UTextBlock
 // root) and add it to the viewport. Unlike the world-space nameplate, this renders on

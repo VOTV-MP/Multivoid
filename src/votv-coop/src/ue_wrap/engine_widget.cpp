@@ -51,6 +51,8 @@ void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
 void* g_npGsCdo = nullptr, *g_npSpawnObjFn = nullptr;
 void* g_npUserWidgetClass = nullptr, *g_npWidgetTreeClass = nullptr, *g_npTbClass = nullptr;
 void* g_npTbSetTextFn = nullptr, *g_npFont = nullptr;
+// Two-line nameplate (nick + separately-coloured bar): UVerticalBox root.
+void* g_npVBoxClass = nullptr, *g_npAddChildVBoxFn = nullptr;
 
 bool ResolveNameplateFns() {
     if (!g_npActorClass) g_npActorClass = R::FindClass(P::name::ActorClassName);
@@ -79,6 +81,10 @@ bool ResolveNameplateFns() {
     if (!g_npWidgetTreeClass) g_npWidgetTreeClass = R::FindClass(P::name::WidgetTreeClass);
     if (!g_npTbClass) g_npTbClass = R::FindClass(P::name::TextBlockClass);
     if (g_npTbClass && !g_npTbSetTextFn) g_npTbSetTextFn = R::FindFunction(g_npTbClass, P::name::NameplateSetTextFn);  // UTextBlock::SetText(FText)
+    // Two-line nameplate root (optional -- falls back to a single block if absent).
+    if (!g_npVBoxClass) g_npVBoxClass = R::FindClass(P::name::VerticalBoxClass);
+    if (g_npVBoxClass && !g_npAddChildVBoxFn)
+        g_npAddChildVBoxFn = R::FindFunction(g_npVBoxClass, P::name::AddChildToVerticalBoxFn);
     if (!g_npFont) g_npFont = R::FindObject(P::name::FontName, P::name::FontClassName);
     if (!g_npKtlCdo) g_npKtlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
     if (g_npKtlCdo && !g_npConvFn) {
@@ -114,6 +120,41 @@ void SetTextOnBlock(void* txt, const wchar_t* text) {
 // size / colour / justification and initial text. Shared by the world-space
 // nameplate and the screen-space HUD feed (RULE 2: one UMG-text-build, not two).
 // Returns {root, txt}; {nullptr,nullptr} on failure.
+// Configure a freshly-spawned UTextBlock: font, size, colour (with the
+// FSlateColor ColorUseRule forced to UseColor_Specified), 1px black outline,
+// (1,1)px drop shadow, justification, and initial text. Shared by the
+// single-block builder AND each block of the two-line nameplate (RULE 2: one
+// text-block setup, not duplicated per builder).
+//
+// Visual polish (2026-05-25, VT-comparison-driven): the outline + shadow close
+// most of the "VoidTogether widgets look natural / ours look bare" gap.
+// FFontOutlineSettings lives at FSlateFontInfo + 0x10; OutlineSize @ +0x00
+// (int32 px) + OutlineColor @ +0x10 (FLinearColor). bSeparateFillAlpha (+0x04,
+// default 0) shares the fill alpha, so a 0.22-alpha nameplate gets a 0.22-alpha
+// outline -- no pop-out artifact.
+void ConfigureTextBlock(void* txt, const wchar_t* text, const FLinearColor& color,
+                        int32_t fontSize, uint8_t justification) {
+    auto tU8 = reinterpret_cast<uint8_t*>(txt);
+    if (g_npFont) *reinterpret_cast<void**>(tU8 + P::off::UTextBlock_Font) = g_npFont;
+    *reinterpret_cast<int32_t*>(tU8 + P::off::UTextBlock_Font + P::off::FSlateFontInfo_Size) = fontSize;
+    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = color;
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = justification;
+    {
+        const auto fontBase = tU8 + P::off::UTextBlock_Font;
+        const auto outBase  = fontBase + P::off::FSlateFontInfo_OutlineSettings;
+        *reinterpret_cast<int32_t*>(outBase + P::off::FFontOutlineSettings_OutlineSize)  = 1;
+        FLinearColor outlineCol{0.f, 0.f, 0.f, 1.f};  // fully-opaque black; gated by fill alpha
+        *reinterpret_cast<FLinearColor*>(outBase + P::off::FFontOutlineSettings_OutlineColor) = outlineCol;
+    }
+    *reinterpret_cast<FVector2D*>(tU8 + P::off::UTextBlock_ShadowOffset) = FVector2D{1.f, 1.f};
+    FLinearColor shadowCol{0.f, 0.f, 0.f, 0.5f};
+    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ShadowColorAndOpacity) = shadowCol;
+    SetTextOnBlock(txt, text);
+}
+
+// Build UUserWidget(outer) -> UWidgetTree -> UTextBlock(root). Single block,
+// one colour. Used by the screen-space HUD feed (chat) + dev HUD.
 struct BuiltText { void* root; void* txt; };
 BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& color,
                           int32_t fontSize, uint8_t justification) {
@@ -126,42 +167,46 @@ BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& 
     }
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = txt;
-    auto tU8 = reinterpret_cast<uint8_t*>(txt);
-    if (g_npFont) *reinterpret_cast<void**>(tU8 + P::off::UTextBlock_Font) = g_npFont;
-    *reinterpret_cast<int32_t*>(tU8 + P::off::UTextBlock_Font + P::off::FSlateFontInfo_Size) = fontSize;
-    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ColorAndOpacity) = color;
-    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
-    *reinterpret_cast<uint8_t*>(tU8 + P::off::UTextLayoutWidget_Justification) = justification;
-
-    // Visual polish (2026-05-25, VT-comparison-driven): text outline + drop
-    // shadow. These two writes close most of the "VoidTogether widgets look
-    // natural / ours look bare" perception gap surfaced by the user. All three
-    // surfaces benefit: nameplate (3D label), hud_feed (chat), pos_hud (dev HUD).
-    //
-    // FFontOutlineSettings lives at FSlateFontInfo + 0x10 (SlateCore.hpp:313);
-    // OutlineSize @ +0x00 (int32, in pixels) + OutlineColor @ +0x10 (FLinearColor).
-    // 1px outline + black gives a crisp glyph border that respects the text
-    // alpha (FFontOutlineSettings has bSeparateFillAlpha @+0x04 default 0,
-    // which means the outline shares the fill alpha -- if text is 0.22 alpha
-    // for translucent nameplates, the outline is also 0.22 alpha, no
-    // pop-out artifact).
-    {
-        const auto fontBase = tU8 + P::off::UTextBlock_Font;
-        const auto outBase  = fontBase + P::off::FSlateFontInfo_OutlineSettings;
-        *reinterpret_cast<int32_t*>(outBase + P::off::FFontOutlineSettings_OutlineSize)  = 1;
-        FLinearColor outlineCol{0.f, 0.f, 0.f, 1.f};  // fully-opaque black; gated by fill alpha
-        *reinterpret_cast<FLinearColor*>(outBase + P::off::FFontOutlineSettings_OutlineColor) = outlineCol;
-    }
-    // UTextBlock shadow: (1,1)px offset + black 50% alpha. UMG composites the
-    // shadow as a duplicate text pass at the offset, alpha-multiplied by the
-    // shadow color's alpha. Subtle drop-shadow look — like VoidTogether's
-    // nameplate gets from its cooked widget's FSlateFontInfo settings.
-    *reinterpret_cast<FVector2D*>(tU8 + P::off::UTextBlock_ShadowOffset) = FVector2D{1.f, 1.f};
-    FLinearColor shadowCol{0.f, 0.f, 0.f, 0.5f};
-    *reinterpret_cast<FLinearColor*>(tU8 + P::off::UTextBlock_ShadowColorAndOpacity) = shadowCol;
-
-    SetTextOnBlock(txt, text);
+    ConfigureTextBlock(txt, text, color, fontSize, justification);
     return {root, txt};
+}
+
+// Build UUserWidget(outer) -> UWidgetTree -> UVerticalBox(root) -> two
+// UTextBlocks, so line1 (nick) and line2 (health bar) can carry INDEPENDENT
+// ColorAndOpacity -- a single UTextBlock is one colour. Default UVerticalBoxSlot
+// HAlign=Fill + per-block centre justification centres each line; VAlign stacks
+// them. Returns {root, txt1, txt2}. Graceful degrade: if the VerticalBox class /
+// AddChildToVerticalBox UFunction didn't resolve, builds ONE block with both
+// lines in color1 (txt2=nullptr) so the nameplate still renders.
+struct BuiltTwoLine { void* root; void* txt1; void* txt2; };
+BuiltTwoLine BuildTwoLineWidget(void* outer,
+                                const wchar_t* line1, const FLinearColor& color1,
+                                const wchar_t* line2, const FLinearColor& color2,
+                                int32_t fontSize, uint8_t justification) {
+    if (!g_npVBoxClass || !g_npAddChildVBoxFn) {
+        UE_LOGW("engine: BuildTwoLineWidget -- VerticalBox unresolved (cls=%p addFn=%p); single-block fallback",
+                g_npVBoxClass, g_npAddChildVBoxFn);
+        std::wstring both = line1; both += L"\n"; both += line2;
+        BuiltText bt = BuildTextWidget(outer, both.c_str(), color1, fontSize, justification);
+        return {bt.root, bt.txt, nullptr};
+    }
+    void* root = SpawnObject(g_npUserWidgetClass, outer);
+    void* tree = root ? SpawnObject(g_npWidgetTreeClass, root) : nullptr;
+    void* vbox = tree ? SpawnObject(g_npVBoxClass, tree) : nullptr;
+    void* txt1 = vbox ? SpawnObject(g_npTbClass, tree) : nullptr;
+    void* txt2 = txt1 ? SpawnObject(g_npTbClass, tree) : nullptr;
+    if (!root || !tree || !vbox || !txt1 || !txt2) {
+        UE_LOGE("engine: BuildTwoLineWidget SpawnObject failed (root=%p tree=%p vbox=%p t1=%p t2=%p)",
+                root, tree, vbox, txt1, txt2);
+        return {nullptr, nullptr, nullptr};
+    }
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = vbox;
+    ConfigureTextBlock(txt1, line1, color1, fontSize, justification);
+    ConfigureTextBlock(txt2, line2, color2, fontSize, justification);
+    { ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", txt1); Call(vbox, f); }
+    { ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", txt2); Call(vbox, f); }
+    return {root, txt1, txt2};
 }
 
 // Screen-space (viewport) widget functions, resolved on the UserWidget class.
@@ -186,9 +231,12 @@ bool ResolveScreenWidgetFns() {
 
 }  // namespace
 
-void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float opacity,
-                           void** outTextBlock) {
-    if (outTextBlock) *outTextBlock = nullptr;
+void* SpawnNameplateWidget(const FVector& location,
+                           const wchar_t* nickText, const FLinearColor& nickColor,
+                           const wchar_t* barText, const FLinearColor& barColor,
+                           void** outNickBlock, void** outBarBlock) {
+    if (outNickBlock) *outNickBlock = nullptr;
+    if (outBarBlock) *outBarBlock = nullptr;
     if (!ResolveNameplateFns()) {
         UE_LOGE("engine: SpawnNameplateWidget unresolved (actor=%p comp=%p add=%p fin=%p spawnObj=%p uw=%p tb=%p)",
                 g_npActorClass, g_npCompClass, g_npAddFn, g_npFinishFn, g_npSpawnObjFn, g_npUserWidgetClass, g_npTbClass);
@@ -252,10 +300,10 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     // bDrawAtDesiredSize=1 still couples RT pixels to widget desired-size, so
     // a larger font yields a larger RT; the actor scale shrinks the visible
     // world quad without touching the RT pixel count.
-    BuiltText bt = BuildTextWidget(actor, text, FLinearColor{1.f, 1.f, 1.f, opacity}, 56, /*Center*/ 1);
+    BuiltTwoLine bt = BuildTwoLineWidget(actor, nickText, nickColor, barText, barColor, 56, /*Center*/ 1);
     void* root = bt.root;
-    void* txt = bt.txt;
-    if (!root || !txt) { UE_LOGE("engine: SpawnNameplateWidget -- BuildTextWidget failed"); return actor; }
+    void* txt = bt.txt1;  // nick block (always present); bt.txt2 = bar block (null only in the single-block fallback)
+    if (!root || !txt) { UE_LOGE("engine: SpawnNameplateWidget -- BuildTwoLineWidget failed"); return actor; }
 
     // 5) Attach our widget (re-parents + rebuilds the slate/render-target), then make
     // the runtime-added component tick so it actually draws its RT.
@@ -272,9 +320,10 @@ void* SpawnNameplateWidget(const FVector& location, const wchar_t* text, float o
     // renders into that shrunken area at very high texel density.
     SetActorScale3D(actor, FVector{0.15f, 0.15f, 0.15f});
 
-    UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p txt=%p font=%p at (%.0f,%.0f,%.0f)",
-            text, actor, comp, root, txt, g_npFont, location.X, location.Y, location.Z);
-    if (outTextBlock) *outTextBlock = txt;
+    UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p nick=%p bar=%p font=%p at (%.0f,%.0f,%.0f)",
+            nickText, actor, comp, root, bt.txt1, bt.txt2, g_npFont, location.X, location.Y, location.Z);
+    if (outNickBlock) *outNickBlock = bt.txt1;
+    if (outBarBlock) *outBarBlock = bt.txt2;
     return actor;
 }
 

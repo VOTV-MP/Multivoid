@@ -765,6 +765,13 @@ inline constexpr const wchar_t* MaterialInstanceConstantClass = L"MaterialInstan
 inline constexpr const wchar_t* SpawnObjectFn = L"SpawnObject";        // on GameplayStatics: (objectClass, Outer)->UObject*
 inline constexpr const wchar_t* UserWidgetClass = L"UserWidget";
 inline constexpr const wchar_t* WidgetTreeClass = L"WidgetTree";
+// Two-line nameplate (nick + a separately-coloured health bar): a UVerticalBox
+// root stacks two UTextBlocks so each can carry its OWN ColorAndOpacity (a single
+// UTextBlock is one colour). AddChildToVerticalBox(UWidget*) is the BP-callable
+// add (returns the slot); default slot HAlign=Fill + per-block centre
+// justification centres each line, so no slot-offset writes are needed.
+inline constexpr const wchar_t* VerticalBoxClass = L"VerticalBox";
+inline constexpr const wchar_t* AddChildToVerticalBoxFn = L"AddChildToVerticalBox";  // UVerticalBox::AddChildToVerticalBox(UWidget*)->UVerticalBoxSlot*
 inline constexpr const wchar_t* SetWidgetFn = L"SetWidget";            // UWidgetComponent::SetWidget(UUserWidget*)
 inline constexpr const wchar_t* FontName = L"Roboto";                  // /Engine/EngineFonts/Roboto.Roboto
 inline constexpr const wchar_t* FontClassName = L"Font";
