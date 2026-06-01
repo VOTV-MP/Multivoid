@@ -548,6 +548,10 @@ inline constexpr size_t kKerfurAnimBPVarsAll_End      = 0x2E50;
 namespace name {
 inline constexpr const wchar_t* MainPlayerClass = L"mainPlayer_C";
 inline constexpr const wchar_t* GamemodeClass = L"mainGamemode_C";
+// AmainGamemode_C::transition(FName LevelName) -- VOTV's own level-travel verb
+// (mainGamemode.hpp). Used by the local-death flee with the full path "/Game/menu"
+// to reach the main menu (the short name does not resolve). See engine::ReturnToMainMenu.
+inline constexpr const wchar_t* MainGamemodeTransitionFn = L"transition";
 inline constexpr const wchar_t* ActorClass = L"Actor";
 inline constexpr const wchar_t* WorldClass = L"World";
 inline constexpr const wchar_t* SetActorLocationFn = L"K2_SetActorLocation";

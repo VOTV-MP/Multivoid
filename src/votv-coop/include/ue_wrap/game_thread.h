@@ -30,6 +30,17 @@ void Uninstall();
 
 bool IsInstalled();
 
+// Arm a transparent bypass for `ms` milliseconds (<=0 clears it immediately).
+// While armed, the ProcessEvent detour forwards STRAIGHT to the real engine,
+// skipping all our logic (interceptors, observers, the posted-task pump,
+// diagnostics, and the outer crash-firewall SEH). It auto-expires after `ms` so
+// no thread is needed to clear it. Use to flee a dying world: VOTV's
+// transition("/Game/menu") teardown of the 50k-object untitled_1 world hangs when
+// it dispatches ReceiveEndPlay/EndPlay through our detour per dying actor; arming
+// the bypass for the teardown window lets the travel complete natively, then the
+// fresh menu world runs with our layer fully normal again. Lock-free.
+void SetTransparentBypass(int ms);
+
 // Queue `task` to run on the game thread, inside the next ProcessEvent call.
 // Thread-safe; returns immediately. Tasks run in FIFO order. A task may Post
 // further tasks (they run on a subsequent pump, not the current one).

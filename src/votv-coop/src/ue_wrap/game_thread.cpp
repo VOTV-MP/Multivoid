@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <mutex>
 
@@ -22,6 +23,24 @@ bool g_installed = false;
 
 std::atomic<unsigned long> g_gameThreadId{0};
 std::atomic<unsigned long long> g_tasksRun{0};
+
+// Transparent-bypass deadline (steady_clock ms; 0 = off). While NowMs() < this,
+// ProcessEventDetour forwards STRAIGHT to the original ProcessEvent -- skipping
+// interceptors, observers, the posted-task pump, diagnostics, AND the outer SEH
+// wrapper -- making our DLL fully transparent. Armed during the local-death flee
+// to the menu: VOTV's transition("/Game/menu") tears down the 50k-object
+// untitled_1 world, firing ReceiveEndPlay/EndPlay through our detour per dying
+// actor; our observers + the outer SEH (which catches and does NOT forward,
+// mangling half-run EndPlays) deadlock the swap (proven to hang the teardown).
+// Arming the bypass for the teardown window lets VOTV travel natively, then it
+// auto-expires so the fresh menu world runs with our layer fully normal again.
+std::atomic<long long> g_bypassUntilMs{0};
+
+long long NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 // Multi-slot UFunction-pre-dispatch interceptor table. Same atomic-slot shape
 // as the observer tables; null targetFn = free slot. The detour walks the
@@ -556,6 +575,18 @@ int RunDetourSEH(void* self, void* function, void* params) {
 }
 
 void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
+    // Transparent bypass (local-death flee to menu): forward straight to the engine
+    // and skip ALL our logic (observers, interceptors, pump, diagnostics, the SEH
+    // wrapper) so VOTV's world teardown + menu travel runs exactly as it would with
+    // no DLL present. Auto-expires when the deadline passes -> normal detour resumes.
+    const long long until = g_bypassUntilMs.load(std::memory_order_relaxed);
+    if (until != 0) {
+        if (NowMs() < until) {
+            if (g_originalPE) g_originalPE(self, function, params);
+            return;
+        }
+        g_bypassUntilMs.store(0, std::memory_order_relaxed);  // expired -> resume normal detour
+    }
     if (RunDetourSEH(self, function, params) != 0) {
         // The Impl crashed somewhere -- recover by logging + returning
         // without forwarding to the original PE (the engine's caller frame
@@ -610,6 +641,12 @@ void Uninstall() {
 }
 
 bool IsInstalled() { return g_installed; }
+
+void SetTransparentBypass(int ms) {
+    g_bypassUntilMs.store(ms > 0 ? NowMs() + ms : 0, std::memory_order_relaxed);
+    UE_LOGW("game_thread: transparent bypass %s (ms=%d) -- detour forwards straight to "
+            "the engine (world-teardown flee)", ms > 0 ? "ARMED" : "cleared", ms);
+}
 
 void Post(Task task) {
     if (!task) return;

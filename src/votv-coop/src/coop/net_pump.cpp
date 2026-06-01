@@ -28,6 +28,7 @@
 #include "coop/weather_sync.h"
 
 #include "ue_wrap/engine.h"
+#include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/log.h"
@@ -98,30 +99,31 @@ uint64_t g_propEmitCount = 0;
 bool g_wasRagdolling = false;
 uint64_t g_ragdollEmitCount = 0;
 
-// Death policy one-shot (2026-06-01, client-death OOM fix). When the LOCAL player
-// dies we SYNCHRONOUSLY tear down ALL coop game-side state (destroy puppet actors +
-// drain Element state) + Stop the session, THEN force a return to the MAIN MENU.
-//
-// Two hands-on iterations established the real shape (logs are the truth):
-//   1. Session::Stop() ALONE is insufficient -- our orphan puppet actors + Element
-//      mirrors stayed in the dying world (the deferred disconnect-edge cleanup never
-//      reached) -> teardown must be SYNCHRONOUS on the death frame (below).
-//   2. The forced kick used `disconnect`, which is a NO-OP in VOTV: single-player has
-//      no UE netdriver, so `disconnect` drops a connection that doesn't exist -- it
-//      does NOT browse to a map. The client's log proved it: 14 s after `disconnect`
-//      was issued it was STILL in the `untitled` gameplay world, ragdolling, until the
-//      possessed-player ragdoll leaked to OOM (~34 s post-death; "I'm too injured"
-//      toast on a black screen the whole time -- VOTV's native death never transitions
-//      to menu here, it just leaves you ragdolling). The CORRECT primitive is the SAME
-//      `open <map>` travel we boot with: the menu world is /Game/menu.menu (RE
-//      2026-05-30), so `open menu`. The game thread is NOT blocked during the dead
-//      window (the pump logs fine for 34 s), so a posted `open menu` travels normally
-//      and tears down `untitled` (+ the leaking ragdoll) well before OOM.
-// Latched/armed once per death; reset by OnSessionStart so a rejoin re-arms.
+// Death policy one-shot (2026-06-01, client-death OOM fix). On LOCAL death we
+// SYNCHRONOUSLY tear down ALL coop game-side state (destroy puppet actors + drain
+// Element state) + Stop the session, then FLEE to the main menu with our layer held
+// dormant. The full investigation (4 hands-on + an autonomous probe arc) established:
+//   - The balloon is VOTV's OWN possessed-ragdoll leak in the GAMEPLAY world (~165 MB/s
+//     to OOM). VOTV's native death never leaves the world -- it just leaves you
+//     ragdolling. So the cure is to LEAVE the gameplay world.
+//   - `disconnect` is a no-op (no UE netdriver); raw `open menu` does not travel
+//     (short name unresolved); VOTV travels via its OWN verb mainGamemode_C::transition
+//     ("/Game/menu", full path) -- engine::ReturnToMainMenu. This works for a DEAD/
+//     ragdolling player (a direct call, no pause needed).
+//   - Our ProcessEvent detour HANGS the 50k-actor untitled_1 teardown (it dispatches
+//     ReceiveEndPlay per dying actor through us) AND, after the menu loads, our per-tick
+//     coop logic resuming on stale gameplay prop shadows balloons RAM ~1 min later. The
+//     fix for BOTH is to HOLD the detour in transparent bypass (game_thread::
+//     SetTransparentBypass) over the travel + the time at the menu -> our layer is fully
+//     dormant. Validated: RSS flat + trending DOWN for 160 s (the old world frees).
+// Latched once per death; reset by OnSessionStart so a rejoin (relaunch) re-arms.
 bool g_localDeathHandled = false;
-bool g_menuForced = false;  // we have left the gameplay world post-death (one-shot latch)
-std::chrono::steady_clock::time_point g_deathAt{};  // when the local death was handled
-std::chrono::steady_clock::time_point g_lastMenuOpenAttempt{};  // last `open menu` issue (re-issue throttle)
+
+// How long to hold the transparent bypass after a local-death flee to the menu (our
+// layer stays dormant at the menu). 30 min -- far longer than anyone sits at a dead
+// menu before relaunching to rejoin (permadeath). If it ever expires while still at the
+// menu, the gameplay-world gate on the prop reaper keeps it from churning.
+constexpr int kDeathMenuBypassMs = 30 * 60 * 1000;
 
 // Game thread, ~send-rate: read the local player's pose. Pulled in from
 // harness.cpp 2026-05-28; full rationale comments preserved.
@@ -269,9 +271,6 @@ void OnSessionStart() {
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
     g_localDeathHandled = false;
-    g_menuForced = false;
-    g_deathAt = {};
-    g_lastMenuOpenAttempt = {};
 }
 
 coop::RemotePlayer& Puppet(int slot) {
@@ -346,7 +345,23 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         const auto reapNow = ReapClock::now();
         if (reapNow >= sNextReap) {
             sNextReap = reapNow + std::chrono::seconds(4);
-            const size_t reaped = coop::prop_element_tracker::ReapDeadLocalPropElements(kReapEvictCap);
+            // Gameplay-world gate (2026-06-01, post-flee menu-leak fix). The reaper +
+            // world-change re-seed are GAMEPLAY-only. After a gameplay->menu travel (the
+            // local-death flee to the main menu) the tracker still holds thousands of
+            // now-dead prop-element shadows; running the reaper/re-seed at the MENU reaps
+            // them and then re-seeds on the menu's OWN actors in a vicious allocating loop
+            // that balloons RAM to OOM ~1 min after the flee (user-observed: menu was fine
+            // for a minute, then ballooned -- exactly when the temporary detour bypass
+            // expired and this resumed). At a non-gameplay world we skip BOTH: the shadows
+            // sit inert and the reaper resumes + cleans them on the next gameplay entry.
+            // Gameplay world is untitled_1; the menu is /Game/menu.menu.
+            void* reapWorld = R::FindObjectByClass(P::name::WorldClass);
+            const bool inGameplayWorld =
+                reapWorld && R::ToString(R::NameOf(reapWorld)).find(L"ntitled") != std::wstring::npos;
+            if (!inGameplayWorld) sInPurgeEpisode = false;  // inert at menu; re-arm on gameplay re-entry
+            const size_t reaped = inGameplayWorld
+                ? coop::prop_element_tracker::ReapDeadLocalPropElements(kReapEvictCap)
+                : 0;
             if (reaped >= kReseedPurge) {
                 if (!sInPurgeEpisode) {
                     sInPurgeEpisode = true;
@@ -481,40 +496,11 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     coop::item_activate::TickConnect();
     coop::weather_sync::TickConnect();
 
-    // DEATH POLICY forced-menu (user 2026-06-01; mechanism corrected after the 2nd
-    // hands-on -- see the g_localDeathHandled comment block for the full trail). On a
-    // handled local death we travel to the MAIN MENU via `open menu` (the verified
-    // /Game/menu.menu world; the SAME `open <map>` mechanism we boot gameplay with via
-    // `open untitled_1`). `disconnect` was wrong -- a no-op without a netdriver. Runs
-    // OUTSIDE the g_netLocal gate so it fires even if death unpossessed the player.
-    //
-    // Timing: the native flow demonstrably never recovers (the player just keeps
-    // ragdolling in `untitled`), so there is nothing to wait for -- every extra second
-    // only leaks more ragdoll memory toward the ~34 s OOM. Fire after a short grace (a
-    // brief death beat + lets the synchronous teardown settle), then RE-ISSUE every few
-    // seconds until we actually leave the gameplay world -- robust against a single
-    // dropped console command. Latch g_menuForced ONLY on the definitive answer that we
-    // left `untitled`; a transient null world (travel in flight at the probe instant)
-    // is NOT a latch -> retry next tick.
-    if (g_localDeathHandled && !g_menuForced) {
-        const auto now = std::chrono::steady_clock::now();
-        if (void* w = R::FindObjectByClass(P::name::WorldClass)) {
-            const bool stillInGameplay =
-                R::ToString(R::NameOf(w)).find(L"ntitled") != std::wstring::npos;
-            if (!stillInGameplay) {
-                g_menuForced = true;  // left the gameplay world -> at/loading the menu, done
-                UE_LOGI("net: post-death -- left the gameplay world (menu travel succeeded)");
-            } else if ((now - g_deathAt) >= std::chrono::seconds(4) &&
-                       (now - g_lastMenuOpenAttempt) >= std::chrono::seconds(3)) {
-                g_lastMenuOpenAttempt = now;
-                UE_LOGW("net: post-death + still in gameplay world -- forcing return to "
-                        "main menu via `open menu`");
-                ue_wrap::engine::ExecuteConsoleCommand(L"open menu");
-            }
-            // else: within the grace window or the re-issue cooldown -> wait
-        }
-        // else: world pointer null = travel in flight -> retry next tick (no latch)
-    }
+    // (The local-death flee to the main menu now happens SYNCHRONOUSLY on the death
+    // frame in the teardown block below -- arm the held bypass + engine::ReturnToMainMenu
+    // -- so there is no per-tick backstop here. The old `open menu` / `disconnect`
+    // re-issue backstop was removed: both were no-ops, and our detour is held in bypass
+    // for the travel so nothing of ours runs to "back it up" anyway.)
 
     if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
     if (!g_netLocal) g_netLocal = coop::players::Registry::Get().Local();
@@ -541,9 +527,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal, isRagdoll, dead) && dead) {
                 g_localDeathHandled = true;
-                g_deathAt = std::chrono::steady_clock::now();  // arm the forced-menu (`open menu`) backstop
-                UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + leaving "
-                        "session (role=%s; permadeath-rejoinable)",
+                UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
+                        "to the main menu (role=%s; permadeath-rejoinable)",
                         session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
                 // Per-slot teardown: drop + destroy each puppet ACTOR (Destroy() also tears
                 // down its ragdoll body) + per-slot subsystem state.
@@ -567,6 +552,27 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 g_wasConnected = false;
                 g_wasConnectedBySlot.fill(false);
                 session.Stop();
+                // Flee to the MAIN MENU and HOLD our layer dormant. The balloon is VOTV's
+                // own possessed-ragdoll leak in the GAMEPLAY world (only cure: leave it).
+                // (a) Arm + HOLD the ProcessEvent-detour transparent bypass: our detour
+                //     otherwise HANGS the 50k-actor untitled_1 teardown (ReceiveEndPlay per
+                //     dying actor dispatches through us), and after the menu loads our
+                //     per-tick coop logic resuming on stale gameplay prop shadows balloons
+                //     RAM ~1 min later. Held dormant, RSS stays flat + trends down (probe:
+                //     160 s) as the old world frees. (b) Travel via VOTV's OWN verb
+                //     engine::ReturnToMainMenu (mainGamemode transition("/Game/menu")) --
+                //     works for a DEAD/ragdolling player (no pause menu needed). Order:
+                //     bypass BEFORE the travel so the teardown it triggers is bypassed.
+                ue_wrap::game_thread::SetTransparentBypass(kDeathMenuBypassMs);
+                if (!ue_wrap::engine::ReturnToMainMenu()) {
+                    // Travel did NOT dispatch (gamemode/transition unresolved). The bypass
+                    // stays armed (it still prevents the reaper churn), and the synchronous
+                    // teardown above already removed our actors -- but we did NOT leave the
+                    // gameplay world, so VOTV's native ragdoll balloon continues. Surface it
+                    // loudly so a hands-on death can tell "reached menu" from "stuck dead".
+                    UE_LOGE("net: ReturnToMainMenu FAILED to dispatch -- still in the gameplay "
+                            "world; VOTV ragdoll balloon NOT contained. Relaunch the client.");
+                }
                 return;
             }
         }

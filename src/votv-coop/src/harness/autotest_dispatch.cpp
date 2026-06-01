@@ -79,6 +79,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // ragdollMode body -- decides whether the manual spawn is visible/simulating
     // AND death-free (the whole xray-ragdoll direction hinges on it).
     SpawnIf("VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE", "xray-ragdoll spawn probe", &RagdollSpawnProbeThread, role);
+
+    // Menu-travel command probe: solo, finds which command travels gameplay->menu
+    // (for the client-death flee-to-menu fix). No connection needed.
+    SpawnIf("VOTVCOOP_RUN_MENUTRAVEL_PROBE", "menu-travel probe", &MenuTravelProbeThread, role);
 }
 
 }  // namespace harness::autotest

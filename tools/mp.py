@@ -1232,6 +1232,87 @@ def cmd_ragdollspawn(args) -> None:
     sys.exit(0 if len(shots) >= 1 else 2)
 
 
+def cmd_menutravel(args) -> None:
+    """SOLO SP BYPASS probe: does arming our transparent ProcessEvent-detour bypass
+    let VOTV's transition("/Game/menu") tear down + travel to the menu without our
+    layer hanging the swap? Launches ONE host instance with
+    VOTVCOOP_RUN_MENUTRAVEL_PROBE=1 (no client). The probe settles in gameplay, arms
+    the bypass, issues transition, waits for the fade+teardown+menu load, then logs
+    'MENU-SHOT READY'. We CAPTURE the window there: if the shot shows VOTV's MAIN MENU,
+    the bypass works and the production death-flee design is sound."""
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "menutravel_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before menutravel")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_MENUTRAVEL_PROBE"] = "1"
+
+    log("--- HOST LAUNCH (solo menu-travel BYPASS probe) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "votv-coop.log"
+    shot: Path | None = None
+    t0 = time.time()
+    seen_pause = False
+    seen_ready = False
+    t_shot = 0.0
+    rss_peak = 0.0
+    rss_at_shot = 0.0
+    ram_guard_mb = 14000  # protect the user's RAM -- the leak is the bug under test
+    while time.time() - t0 < args.probe_timeout:
+        time.sleep(3)
+        peers = list_votv()
+        if not peers:
+            log("  (no VotV process -- exited/crashed)")
+            break
+        rss = max((p["RSS_MB"] for p in peers), default=0)
+        rss_peak = max(rss_peak, rss)
+        log(f"  t+{int(time.time()-t0)}s host RSS={rss}MB")
+        if rss > ram_guard_mb:
+            log(f"  RAM GUARD: RSS={rss}MB > {ram_guard_mb}MB -- killing now (LEAK reproduced)")
+            break
+        try:
+            tailtext = host_log.read_text(errors="ignore")[-4000:]
+        except Exception:
+            tailtext = ""
+        if not seen_pause and "PAUSE-SHOT READY" in tailtext:
+            seen_pause = True
+            time.sleep(1)
+            pshot = shots_dir / "menutravel_pause.png"
+            if _capture_window(host_pid, pshot):
+                log(f"  pause shot: {pshot.name} (RSS={rss}MB -- did the pause menu open?)")
+        if not seen_ready and "MENU-SHOT READY" in tailtext:
+            seen_ready = True
+            t_shot = time.time()
+            rss_at_shot = rss
+            time.sleep(1)
+            shot = shots_dir / "menutravel_result.png"
+            if _capture_window(host_pid, shot):
+                log(f"  result shot: {shot.name} (RSS={rss}MB at shot)")
+        if seen_ready and time.time() - t_shot > 12:  # confirm RSS stays flat ~12s at menu
+            break
+    if not seen_ready:
+        log("WARN: never saw 'MENU-SHOT READY' before exit/guard -- travel hung or leaked")
+    tail_log(host_log, 30, "HOST")
+
+    log(f"--- KILLING (rss_peak={rss_peak}MB, rss_at_shot={rss_at_shot}MB) ---")
+    kill_all()
+
+    log("--- MENUTRAVEL VERDICT ---")
+    if shot and shot.exists():
+        log(f"Inspect {shot}: if it shows VOTV's MAIN MENU, the transparent-bypass flee "
+            "WORKS -> wire it into the death path. If it shows a frozen gameplay/black "
+            "screen, the teardown hangs even with our layer bypassed -> menu infeasible, "
+            "fall back to exit-to-desktop.")
+    else:
+        log("No screenshot captured -- the travel hung before MENU-SHOT READY.")
+    sys.exit(0)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="VOTV coop orchestrator")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1375,6 +1456,15 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_ragspawn.add_argument(flag, **kw)
     p_ragspawn.set_defaults(func=cmd_ragdollspawn)
+
+    p_menutravel = sub.add_parser("menutravel",
+                                  help="SOLO SP probe: find which command travels gameplay->menu (for the client-death flee-to-menu fix)")
+    p_menutravel.add_argument("--probe-timeout", type=int, default=200,
+                              help="seconds to wait for 'menutravel: DONE' (boot + 4 candidates x ~6s)")
+    p_menutravel.add_argument("--memory-limit-gb", type=float, default=12.0,
+                              help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_menutravel.add_argument(flag, **kw)
+    p_menutravel.set_defaults(func=cmd_menutravel)
 
     args = ap.parse_args()
     args.func(args)

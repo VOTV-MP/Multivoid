@@ -1,6 +1,7 @@
 #include "ue_wrap/engine.h"
 
 #include "ue_wrap/call.h"
+#include "ue_wrap/fname_utils.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
@@ -210,6 +211,44 @@ bool LoadStorySave(const wchar_t* slot) {
             openCmd.c_str(), slot);
     ExecuteConsoleCommand(openCmd.c_str());
     return false;  // not in gameplay yet -> caller keeps retrying
+}
+
+// Travel to VOTV's MAIN MENU via the game's own level-travel verb,
+// AmainGamemode_C::transition(FName "/Game/menu"). The FULL package path is required
+// -- the short name "menu" does NOT resolve (probed 2026-06-01), unlike `open
+// untitled_1`. Used by the local-death flee: it works regardless of player state (a
+// direct gamemode call -- NO pause menu needed, so a dead/ragdolling player can travel)
+// and, with the ProcessEvent detour held in transparent bypass for the duration, it
+// reaches the menu and tears down the gameplay world WITHOUT our layer hanging the
+// teardown or churning at the menu (validated: RSS flat + decreasing for 160 s).
+// Game thread only.
+bool ReturnToMainMenu() {
+    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
+    if (!gm || !R::IsLive(gm)) {
+        UE_LOGW("engine: ReturnToMainMenu -- no live mainGamemode_C");
+        return false;
+    }
+    void* fn = R::FindFunction(R::ClassOf(gm), P::name::MainGamemodeTransitionFn);
+    if (!fn) {
+        UE_LOGW("engine: ReturnToMainMenu -- mainGamemode_C::transition UFunction not resolved");
+        return false;
+    }
+    R::FName ln = ue_wrap::fname_utils::StringToFName(L"/Game/menu");
+    if (ln.ComparisonIndex == 0 && ln.Number == 0) {
+        // StringToFName failed (Conv_StringToName unresolved) -> NAME_None. Do NOT pass
+        // a None level name to transition (unprobed; could no-op or travel to nowhere).
+        UE_LOGW("engine: ReturnToMainMenu -- StringToFName(\"/Game/menu\") returned NAME_None; abort");
+        return false;
+    }
+    ParamFrame f(fn);
+    if (!f.valid() || !f.SetRaw(L"LevelName", &ln, sizeof(ln))) {
+        UE_LOGW("engine: ReturnToMainMenu -- transition SetRaw(LevelName) failed");
+        return false;
+    }
+    const bool ok = Call(gm, f);
+    UE_LOGI("engine: ReturnToMainMenu -- mainGamemode_C::transition(\"/Game/menu\") dispatched=%d",
+            ok ? 1 : 0);
+    return ok;
 }
 
 // ---- actor spawning + transform -----------------------------------------

@@ -22,6 +22,14 @@ namespace ue_wrap::engine {
 // (cached). Returns false if anything could not be resolved. Game thread only.
 bool ExecuteConsoleCommand(const wchar_t* command);
 
+// Travel to VOTV's MAIN MENU via the game's own verb, AmainGamemode_C::transition(
+// "/Game/menu") (full path -- the short name does not resolve). Works regardless of
+// player state (direct gamemode call, NO pause needed -> dead-player-safe). Pair with
+// game_thread::SetTransparentBypass held over the travel + the time at the menu, so our
+// ProcessEvent detour neither hangs the gameplay-world teardown nor churns at the menu.
+// Used by the local-death flee. Game thread only. Returns false if it can't dispatch.
+bool ReturnToMainMenu();
+
 // Load a VOTV save slot (e.g. a STORY save like "s_may2026") and enter gameplay
 // via the game's own load entry: GameplayStatics::LoadGameFromSlot ->
 // mainGameInstance_C::setSaveSlotObject + loadObjects=true -> open the gameplay

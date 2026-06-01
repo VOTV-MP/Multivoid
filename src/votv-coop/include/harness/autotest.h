@@ -159,4 +159,18 @@ DWORD WINAPI PlayerDamageTestThread(LPVOID arg);
 void RunRagdollSpawnProbe();
 DWORD WINAPI RagdollSpawnProbeThread(LPVOID arg);
 
+// Menu-travel command PROBE (2026-06-01, harness/autotest_menutravel_probe.cpp).
+// SINGLE instance, role-agnostic (plain single-player; NO connection). The client-
+// death OOM fix must flee the leaking gameplay world to the MENU, but three hands-on
+// death tests failed for lack of a working travel command (`disconnect` is a no-op
+// without a netdriver; raw `open menu` never travels). This probe settles in normal
+// gameplay (no death needed) and tries the candidate travel commands SERIALLY --
+// AmainGamemode_C::transition(FName) with "menu" / "/Game/menu", then `open
+// /Game/menu`, then `open menu` -- logging the FIRST that moves the live UWorld off
+// `untitled` as the WINNER. Verifies the menu-travel primitive autonomously before
+// it is wired into the death path. Gated by env VOTVCOOP_RUN_MENUTRAVEL_PROBE=1;
+// launch via `mp.py menutravel` (solo).
+void RunMenuTravelProbe();
+DWORD WINAPI MenuTravelProbeThread(LPVOID arg);
+
 }  // namespace harness::autotest
