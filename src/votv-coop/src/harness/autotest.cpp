@@ -399,27 +399,38 @@ DWORD WINAPI GrabTestThread(LPVOID /*arg*/) {
     return 0;
 }
 
-// --- Autonomous clump-mirror e2e test (VOTVCOOP_RUN_CLUMP_TEST=1) -------------
+// --- Autonomous held-clump ATTACH e2e test (VOTVCOOP_RUN_CLUMP_TEST=1) --------
 //
-// Verifies the v3 NON-Aprop_C kinematic mirror path on a real LAN pair. The
-// actual trash-collect (trashBitsPile::playerTryToCollect) is BP-internal so a
-// UFunction call can't trigger it; instead the HOST spawns a prop_garbageClump_C
-// and writes it to the LOCAL player's grabbing_actor -- net_pump's held-prop
-// send then force-mints a Key + broadcasts it (trash_collect_sync), exactly as a
-// real collect would. The host then sweeps the clump's world position so the
-// CLIENT's kinematic mirror visibly follows. CLIENT is scan-only (mirror spawn +
-// kinematic drive arrive via the wire). PASS = the client logs
-// remote_prop::OnSpawn cls='prop_garbageClump_C' + "GRAB-IN ... kinematic" +
-// drive #N, and NEITHER peer crashes (the whole point after the 2a UAF).
+// Verifies the v25 MTA attach model on a real LAN pair (replaces the dead v3
+// kinematic path -- the clump is non-keyable, autotest 33e7f25, so the keyed
+// mirror can't carry it). The real trash-collect (trashBitsPile::
+// playerTryToCollect) is BP-internal so a UFunction call can't trigger it;
+// instead the HOST spawns a prop_garbageClump_C and writes it to the LOCAL
+// player's grabbing_actor -- net_pump's held-edge then classifies it as a clump
+// (IsAttachClump) and broadcasts HeldClumpGrab (held_clump_sync::SendGrab),
+// exactly as a real grab would. On release (grabbing_actor cleared) it broadcasts
+// HeldClumpRelease. CLIENT is scan-only (the spawn + attach + detach arrive via
+// the wire). PASS = the CLIENT log shows held_clump::ApplyGrab "spawned+attached
+// mirror 'prop_garbageClump_C'" (+ the one-time "attach: ... bone dump" + resolved
+// hand bone) then ApplyRelease, and NEITHER peer crashes (the whole point after
+// the 2a UAF). The HOST log shows "held-clump attach=GRAB-SENT" + "held_clump:
+// SEND grab/release".
 void RunAutonomousClumpTest() {
     const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
     if (!isHost) {
-        UE_LOGI("clump_test: CLIENT scan-only -- verify in THIS log: remote_prop::OnSpawn "
-                "cls='prop_garbageClump_C', 'GRAB-IN ... kinematic', 'drive #N', and NO crash");
+        UE_LOGI("clump_test: CLIENT scan-only -- verify in THIS log: 'attach: ... bone[N]' dump + "
+                "resolved hand bone, 'held_clump: ApplyGrab slot 0 spawned+attached mirror "
+                "prop_garbageClump_C', 'held_clump: ApplyRelease', and NO crash");
         return;
     }
-    UE_LOGI("clump_test: HOST starting (waiting 20 s for world + client connect)");
-    ::Sleep(20000);
+    // Wait long enough for the CLIENT to fully settle, not just connect: a client
+    // that just spawned its host puppet is still draining its ~2300-prop snapshot
+    // (CPU contention) and BeginDeferredActorSpawnFromClass REFUSES mid-transition,
+    // so ApplyGrab's mirror SpawnActor returns null and the grab is dropped (graceful
+    // WARN, no crash -- confirmed 2026-06-02 smoke3). 35 s gives the client time to
+    // drain so the autonomous run deterministically exercises the spawn+attach path.
+    UE_LOGI("clump_test: HOST starting (waiting 35 s for world + client connect + settle)");
+    ::Sleep(35000);
 
     struct Resolved { void* player = nullptr; void* clump = nullptr;
                       ue_wrap::FVector base{}; bool ok = false; };
@@ -440,26 +451,27 @@ void RunAutonomousClumpTest() {
         ue_wrap::engine::WriteMainPlayerGrabbingPair(player, clump, nullptr);
         rsv->ok = true;
         UE_LOGI("clump_test: HOST spawned clump=%p at (%.0f,%.0f,%.0f) + wrote grabbing_actor -- "
-                "expect 'NEW held actor cls=prop_garbageClump_C ... trash-mirror=BROADCAST' next",
+                "expect 'NEW held actor cls=prop_garbageClump_C ... held-clump attach=GRAB-SENT' next",
                 clump, rsv->base.X, rsv->base.Y, rsv->base.Z);
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);
     if (done->load() != 1 || !rsv->ok) { UE_LOGW("clump_test: setup failed -- aborting"); return; }
 
-    UE_LOGI("clump_test: holding + sweeping the clump for 20 s (client mirror should track it)");
+    // Hold for 20 s. In the attach model the CLIENT's mirror follows the host
+    // PUPPET's hand (already pose-synced), NOT the host's local clump position, so
+    // there's nothing to sweep here -- we just RE-ASSERT grabbing_actor each tick
+    // (a cold-written grab can be cleared by the BP, which would fire a spurious
+    // release edge) and let the client hold the attached mirror. Following-the-hand
+    // is a hands-on check (needs the host to walk around); this autonomous run
+    // verifies spawn + attach + clean release + NO CRASH.
+    UE_LOGI("clump_test: holding (grabbing_actor re-asserted) for 20 s -- client keeps the "
+            "attached mirror on the host puppet hand");
     for (int i = 0; i < 200; ++i) {
         auto step = std::make_shared<std::atomic<int>>(0);
-        GT::Post([rsv, i, step] {
+        GT::Post([rsv, step] {
             if (rsv->clump && R::IsLive(rsv->clump) && rsv->player && R::IsLive(rsv->player)) {
-                // Re-assert grabbing_actor (a cold-written grab can be cleared by
-                // the BP) + sweep the clump in a triangle so the follow is visible.
                 ue_wrap::engine::WriteMainPlayerGrabbingPair(rsv->player, rsv->clump, nullptr);
-                const int phase = i % 40;
-                const float dx = (phase < 20 ? phase : 40 - phase) * 6.f;  // 0..120..0
-                ue_wrap::FVector p = rsv->base;
-                p.X += dx;
-                ue_wrap::engine::SetActorLocation(rsv->clump, p);
             }
             step->store(1);
         });
@@ -470,8 +482,8 @@ void RunAutonomousClumpTest() {
         if (rsv->player && R::IsLive(rsv->player))
             ue_wrap::engine::WriteMainPlayerGrabbingPair(rsv->player, nullptr, nullptr);
     });
-    UE_LOGI("clump_test: DONE -- released. PASS if the CLIENT logged OnSpawn 'prop_garbageClump_C' "
-            "+ kinematic drives and neither peer crashed.");
+    UE_LOGI("clump_test: DONE -- released. PASS if the CLIENT logged held_clump::ApplyGrab "
+            "'spawned+attached mirror prop_garbageClump_C' + ApplyRelease and neither peer crashed.");
 }
 
 DWORD WINAPI ClumpTestThread(LPVOID /*arg*/) {

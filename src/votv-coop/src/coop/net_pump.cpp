@@ -13,6 +13,7 @@
 #include "coop/save_block.h"
 #include "coop/save_button_disable.h"
 #include "coop/grab_observer.h"
+#include "coop/held_clump_sync.h"
 #include "coop/ini_config.h"
 #include "coop/item_activate.h"
 #include "coop/player_damage.h"
@@ -94,6 +95,10 @@ std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
 void* g_lastHeldProp = nullptr;
 coop::net::WireKey g_lastHeldKey{};
 uint64_t g_propEmitCount = 0;
+// v25: was the last held actor a non-keyable trash clump (attach model) rather than
+// a keyed Aprop_C (PropPose stream)? Distinguishes the release-edge dispatch
+// (HeldClumpRelease vs PropRelease). Same OnSessionStart reset rationale.
+bool g_lastHeldWasClump = false;
 
 // v22 ragdoll-physics edge detector (same file-scope rationale as g_lastHeldProp:
 // a static-local would carry a stale "was ragdolling" across a session restart and
@@ -296,6 +301,7 @@ void OnSessionStart() {
     g_wasConnectedBySlot.fill(false);
     g_lastHeldProp = nullptr;
     g_lastHeldKey = {};
+    g_lastHeldWasClump = false;
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
@@ -470,6 +476,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             // correctly on full disconnect.
             coop::remote_prop::OnDisconnectForSlot(slot);
             coop::item_activate::OnDisconnectForSlot(slot);
+            coop::held_clump_sync::OnDisconnectForSlot(slot);
         }
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
             // Per-slot connect-edge replay.
@@ -508,6 +515,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         const size_t snapPending = coop::prop_snapshot::OnDisconnect();
         coop::npc_sync::OnDisconnect();
         coop::item_activate::OnDisconnect();
+        coop::held_clump_sync::OnDisconnect();
         coop::weather_sync::OnDisconnect();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 snapPending, propStats.initProcessedDropped);
@@ -597,6 +605,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                     coop::prop_snapshot::CancelForSlot(slot);
                     coop::remote_prop::OnDisconnectForSlot(slot);
                     coop::item_activate::OnDisconnectForSlot(slot);
+                    coop::held_clump_sync::OnDisconnectForSlot(slot);
                 }
                 // Aggregate teardown: session-wide Element/dedup state (mirrors the
                 // g_wasConnected disconnect edge).
@@ -605,6 +614,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::prop_snapshot::OnDisconnect();
                 coop::npc_sync::OnDisconnect();
                 coop::item_activate::OnDisconnect();
+                coop::held_clump_sync::OnDisconnect();
                 coop::weather_sync::OnDisconnect();
                 // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
                 // host-close eject). The balloon is VOTV's own possessed-ragdoll leak in
@@ -685,84 +695,113 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             }
         }
         if (heldActor && R::IsLive(heldActor)) {
-            // New-held edge: if this is a freshly-spawned UNKEYED Aprop_C (a
-            // trash-pile collect auto-grabs one with Key=None), force-mint a Key
-            // + broadcast a PropSpawn so the peer spawns a mirror this stream can
-            // then drive into our hands. playerTryToCollect is BP-internal so no
-            // UFunction observer fires -- grabbing_actor is the reliable detect
-            // point. Aprop_C ONLY (the helper gates it); the transient chip/clump
-            // are never broadcast/driven (the reverted-2a UAF). Idempotent: once
-            // the Key is minted the helper returns false, so it fires once/grab.
+            // A non-Aprop_C keyed interactable is the non-keyable trash CLUMP (the
+            // trash ball / chipPile-clump). It can't ride the keyed PropSpawn/PropPose
+            // path (autotest 33e7f25: setKey doesn't stick) -> use the MTA ATTACH
+            // model: broadcast a grab edge, peers spawn + attach a mirror to this
+            // holder's puppet hand. An Aprop_C held item still uses the keyed path.
+            // [[project-bug-trash-chippile-uaf-crash]]
+            const bool isClump = coop::held_clump_sync::IsAttachClump(heldActor);
             if (heldActor != g_lastHeldProp) {
-                const bool mirrored =
-                    coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
-                // One line per NEW grab so a "didn't mirror" hands-on is
-                // conclusive: shows the held actor's class + key + whether we
-                // force-minted+broadcast it (mirrored) or left it (already
-                // keyed normal prop, or non-Aprop_C transient).
-                UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' -> trash-mirror=%s",
-                        heldActor, R::ClassNameOf(heldActor).c_str(),
-                        ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
-                        mirrored ? "BROADCAST" : "no");
+                // New-held edge.
+                if (isClump) {
+                    const bool sent = coop::held_clump_sync::SendGrab(heldActor, &session);
+                    UE_LOGI("net: NEW held actor %p cls='%ls' -> held-clump attach=%s",
+                            heldActor, R::ClassNameOf(heldActor).c_str(),
+                            sent ? "GRAB-SENT" : "no");
+                } else {
+                    // Freshly-spawned UNKEYED Aprop_C (trash-pile collect auto-grabs
+                    // one with Key=None): force-mint a Key + broadcast a PropSpawn so
+                    // the peer spawns a mirror this stream then drives into our hands.
+                    // playerTryToCollect is BP-internal (no UFunction observer fires) --
+                    // grabbing_actor is the reliable detect point. Idempotent: once the
+                    // Key is minted the helper returns false, so it fires once/grab.
+                    const bool mirrored =
+                        coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
+                    UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' -> trash-mirror=%s",
+                            heldActor, R::ClassNameOf(heldActor).c_str(),
+                            ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
+                            mirrored ? "BROADCAST" : "no");
+                }
             }
-            const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
-            coop::net::PropPoseSnapshot pp{};
-            pp.key.len = 0;
-            for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
-                // The save UUIDs are ASCII; this lossless narrowing is fine.
-                pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
+            if (isClump) {
+                // Mirrored by attach, not by world-pose stream (it's non-keyable; a
+                // PropPose with key='None' is unmatchable). The puppet hand carries it.
+                g_lastHeldProp = heldActor;
+                g_lastHeldKey = {};
+                g_lastHeldWasClump = true;
+            } else {
+                const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
+                coop::net::PropPoseSnapshot pp{};
+                pp.key.len = 0;
+                for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
+                    // The save UUIDs are ASCII; this lossless narrowing is fine.
+                    pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
+                }
+                const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
+                const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
+                pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+                // Normalize at the wire boundary: physics-prop rotation accumulates
+                // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
+                // Pitch=-270; receiver's canonical (-180,180] guard would reject.
+                pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
+                pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
+                pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+                session.SetLocalPropPose(true, pp);
+                // Throttled emit log: first 3 + every 60th, matches receiver
+                // throttle so the two logs can be diff'd line-for-line.
+                const uint64_t n = ++g_propEmitCount;
+                if (n <= 3 || (n % 60) == 0) {
+                    UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d",
+                            static_cast<unsigned long long>(n),
+                            pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
+                            static_cast<int>(pp.key.len));
+                }
+                g_lastHeldProp = heldActor;
+                g_lastHeldKey = pp.key;
+                g_lastHeldWasClump = false;
             }
-            const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
-            const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
-            pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-            // Normalize at the wire boundary: physics-prop rotation accumulates
-            // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
-            // Pitch=-270; receiver's canonical (-180,180] guard would reject.
-            pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
-            pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
-            pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-            session.SetLocalPropPose(true, pp);
-            // Throttled emit log: first 3 + every 60th, matches receiver
-            // throttle so the two logs can be diff'd line-for-line.
-            const uint64_t n = ++g_propEmitCount;
-            if (n <= 3 || (n % 60) == 0) {
-                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d",
-                        static_cast<unsigned long long>(n),
-                        pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
-                        static_cast<int>(pp.key.len));
-            }
-            g_lastHeldProp = heldActor;
-            g_lastHeldKey = pp.key;
         } else if (g_lastHeldProp) {
-            // Edge: was holding, now not. Stop sending PropPose + tell peer.
-            // Read the body's CURRENT linear+angular velocity via
-            // prop::GetPhysicsVelocity. By the time this branch runs, the
-            // engine has executed the BP graph clearing grabbing_actor, the
-            // PHC.ReleaseComponent call, and any post-release AddImpulse the
-            // BP issues. PhysX has not stepped yet, so the body still carries
-            // the inherited kinematic-tracking velocity ("вжух" mouse-flick
-            // launch energy) PLUS any impulse-derived velocity, summed into
-            // ONE velocity. Forward both linear + angular so the receiver
-            // can SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
-            // for an identical launch.
-            session.SetLocalPropPose(false, {});
-            ue_wrap::prop::VelocityState vel{};
-            if (R::IsLive(g_lastHeldProp)) {
-                vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
+            // Edge: was holding, now not.
+            if (g_lastHeldWasClump) {
+                // Non-keyable clump -> tell peers to detach + free-fall their mirror
+                // with the clump's throw velocity ("physics like the mannequin").
+                // SendRelease reads velocity off the LIVE clump (generic root
+                // primitive, never the Aprop_C mesh -> no UAF on the morphing clump).
+                void* releasedClump = R::IsLive(g_lastHeldProp) ? g_lastHeldProp : nullptr;
+                coop::held_clump_sync::SendRelease(releasedClump, &session);
+            } else {
+                // Keyed Aprop_C -> stop the PropPose stream + send PropRelease.
+                // Read the body's CURRENT linear+angular velocity via
+                // prop::GetPhysicsVelocity. By the time this branch runs, the
+                // engine has executed the BP graph clearing grabbing_actor, the
+                // PHC.ReleaseComponent call, and any post-release AddImpulse the
+                // BP issues. PhysX has not stepped yet, so the body still carries
+                // the inherited kinematic-tracking velocity ("вжух" mouse-flick
+                // launch energy) PLUS any impulse-derived velocity, summed into
+                // ONE velocity. Forward both linear + angular so the receiver
+                // can SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
+                // for an identical launch.
+                session.SetLocalPropPose(false, {});
+                ue_wrap::prop::VelocityState vel{};
+                if (R::IsLive(g_lastHeldProp)) {
+                    vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
+                }
+                const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
+                                       vel.linearCmS.Y * vel.linearCmS.Y +
+                                       vel.linearCmS.Z * vel.linearCmS.Z;
+                UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
+                        vel.ok ? 1 : 0,
+                        vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                        std::sqrt(linMagSq),
+                        vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+                session.SendPropRelease(g_lastHeldKey,
+                                        vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                                        vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
             }
-            const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
-                                   vel.linearCmS.Y * vel.linearCmS.Y +
-                                   vel.linearCmS.Z * vel.linearCmS.Z;
-            UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
-                    vel.ok ? 1 : 0,
-                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                    std::sqrt(linMagSq),
-                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            session.SendPropRelease(g_lastHeldKey,
-                                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
             g_lastHeldProp = nullptr;
             g_lastHeldKey = {};
+            g_lastHeldWasClump = false;
         }
 
         // v22 ragdoll PHYSICS stream. While the local player's native ragdoll

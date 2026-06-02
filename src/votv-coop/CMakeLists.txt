@@ -122,6 +122,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/engine_component.cpp
     src/ue_wrap/engine_mainplayer.cpp
     src/ue_wrap/engine_playerragdoll.cpp
+    src/ue_wrap/engine_attach.cpp
     src/ue_wrap/engine_pawn.cpp
     src/ue_wrap/engine_widget.cpp
     src/ue_wrap/reflected_offset.cpp
@@ -155,6 +156,7 @@ add_library(votv-coop SHARED
     src/coop/remote_prop_spawn.cpp
     src/coop/garbage_sync.cpp
     src/coop/trash_collect_sync.cpp
+    src/coop/held_clump_sync.cpp
     src/coop/weather_sync.cpp
     src/coop/weather_fog.cpp
     src/coop/weather_lightning.cpp

@@ -274,7 +274,19 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // client mirror (fogprobe-proven the actor accepts the write + keeps ramping in
 // lockstep) + the cycle's finalFogDensity, and anchors the rain ease target.
 // ParseHeader rejects pre-v24 peers (the 16-byte payload growth would misparse).
-inline constexpr uint16_t kProtocolVersion = 24;
+// v25 (2026-06-02): held-clump ATTACH sync. The trash ball / chipPile-clump
+// (prop_garbageClump_C) is non-Aprop_C AND non-keyable (autotest 33e7f25 proved
+// setKey doesn't stick on it), so it can't ride the keyed PropSpawn/PropPose path
+// the mannequin uses. Instead the holder broadcasts two reliable edges --
+// HeldClumpGrab (=21) when a clump enters its hands, HeldClumpRelease (=22) when
+// it leaves -- and each peer mirrors the clump by SPAWNING a copy and
+// K2_AttachToComponent-ing it to the holder puppet's hand bone (the MTA attach
+// model, same primitive as AttachActorToRagdollBody). The puppet hand is already
+// pose-synced, so the attached clump follows the hand for free; on release the
+// mirror detaches + re-enables physics + inherits the holder's throw velocity
+// ("physics like the mannequin"). No per-tick clump stream, no key needed.
+// ParseHeader rejects pre-v25 peers. [[project-bug-trash-chippile-uaf-crash]]
+inline constexpr uint16_t kProtocolVersion = 25;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -505,6 +517,27 @@ enum class ReliableKind : uint8_t {
                        //     PlayerDamagePayload (8 bytes). DETECTION (the real
                        //     enemy->puppet hook) is deferred behind a runtime probe;
                        //     the relay path is e2e-tested via DebugForceHitPuppet.
+    HeldClumpGrab    = 21, // v25 (2026-06-02): the holder picked up a non-keyable
+                       //     trash clump (prop_garbageClump_C). HOST or CLIENT send
+                       //     (whoever grabbed). Payload: HeldClumpGrabPayload
+                       //     (senderElementId + clump class name). Receiver spawns a
+                       //     mirror of that class + K2_AttachToComponent it to the
+                       //     holder puppet's hand bone (held_clump_sync). The clump
+                       //     is non-keyable (autotest 33e7f25), so it CANNOT ride the
+                       //     keyed PropSpawn/PropPose path -- the attach is how a peer
+                       //     sees the trash ball in the holder's hand. Routed to the
+                       //     holder's puppet via senderElementId -> Registry::Get ->
+                       //     PeerSlot (fallback header senderSlot). 2-peer host<->client
+                       //     direct; client<->client (3-peer) needs host relay -- a
+                       //     follow-up (NOT in the relay whitelist yet).
+    HeldClumpRelease = 22, // v25: the holder dropped/threw the clump. Payload:
+                       //     HeldClumpReleasePayload (senderElementId + linVel + angVel
+                       //     of the real clump at release). Receiver detaches the slot's
+                       //     mirror, re-enables physics, applies the throw velocity
+                       //     ("physics like the mannequin"). The released mirror enters
+                       //     a bounded per-receiver ring (the clump has no key/eid the
+                       //     existing PropDestroy path could carry, so exact despawn-
+                       //     sync is a follow-up; the ring bounds accumulation).
     // Slots 16/17 (NonPropEntityState/Destroy) retired 2026-05-27 -- the
     // chipPile/clump/trashBitsPile families now ride the existing Aprop_C
     // pipeline (PropSpawn / PropDestroy / PropPose / PropRelease) via the
@@ -982,6 +1015,36 @@ static_assert(sizeof(PlayerDamagePayload) == 8,
               "PlayerDamagePayload must be exactly 8 bytes (v21 wire-format)");
 static_assert(sizeof(PlayerDamagePayload) <= 256 - 20 - 8,
               "PlayerDamagePayload must fit in one reliable datagram");
+
+// v25 (2026-06-02): held-clump ATTACH sync. See the ReliableKind::HeldClumpGrab /
+// HeldClumpRelease docs above + coop/held_clump_sync.{h,cpp}. The clump is
+// non-keyable, so identity is carried by senderElementId (-> holder slot ->
+// holder puppet) rather than a WireKey. The mirror is attached to the puppet
+// hand bone (held), then detached + physics-released ("physics like the
+// mannequin"). [[project-bug-trash-chippile-uaf-crash]]
+struct HeldClumpGrabPayload {
+    // Holder's local Player Element id (host range from host, peer range from
+    // client). Receiver resolves via coop::element::Registry::Get -> PeerSlot()
+    // for puppet routing; 0 = "no Element yet" (boot race) -> fall back to the
+    // header senderSlot. Same convention as ItemActivatePayload.senderElementId.
+    uint32_t      senderElementId;
+    // The held clump's BP class (e.g. "prop_garbageClump_C"). Receiver
+    // FindClass()es it + SpawnActor()s a mirror. Fixed-size so the payload
+    // stays at a fixed offset (no var-length parse), like PropSpawnPayload.
+    WireClassName className;
+};
+static_assert(sizeof(HeldClumpGrabPayload) == 68, "HeldClumpGrabPayload must be 68 bytes");
+static_assert(sizeof(HeldClumpGrabPayload) <= 256 - 20 - 8,
+              "HeldClumpGrabPayload must fit in one reliable datagram");
+
+struct HeldClumpReleasePayload {
+    uint32_t senderElementId;             // holder slot routing (as above)
+    float    linVelX, linVelY, linVelZ;   // clump linear velocity at release (cm/s)
+    float    angVelX, angVelY, angVelZ;   // clump angular velocity at release (deg/s)
+};
+static_assert(sizeof(HeldClumpReleasePayload) == 28, "HeldClumpReleasePayload must be 28 bytes");
+static_assert(sizeof(HeldClumpReleasePayload) <= 256 - 20 - 8,
+              "HeldClumpReleasePayload must fit in one reliable datagram");
 
 // Host -> client slot assignment. Sent once right after the Connected
 // callback fires on host (a Reliable single-target message). Client

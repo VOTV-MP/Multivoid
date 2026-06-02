@@ -578,6 +578,38 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
 bool AttachActorToRagdollBody(void* actor, void* body);
 bool DetachActorFromRagdollBody(void* actor);
 
+// ---- Held-clump attach substrate (v25, coop/held_clump_sync) ----
+// Generic actor-attach + root-physics primitives for the held-clump mirror (the
+// trash ball that can't ride the keyed prop path). See ue_wrap/engine_attach.cpp +
+// [[project-bug-trash-chippile-uaf-crash]]. All game-thread only; each IsLive-gates
+// its arguments. Distinct from AttachActorToRagdollBody (which is playerRagdoll_C-
+// specific); these resolve the puppet's mesh_playerVisible @0x4F8 + a hand bone.
+
+// Attach `actor` (its root) to `puppetActor`'s body skeletal mesh (mesh_playerVisible
+// @0x4F8) at the hand bone, KeepWorld, so it rigidly follows the puppet's hand. On the
+// FIRST call this DUMPS the puppet mesh's full bone list to the log (verify-not-guess)
+// and resolves the hand bone from a candidate list; falls back to the mesh root
+// (NAME_None) if no candidate matches (clump follows the body, never crashes). Returns
+// false on failure. Game thread only.
+bool AttachActorToPuppetHand(void* actor, void* puppetActor);
+
+// Detach `actor` from its parent (KeepWorld -- it stays where it was). Generic
+// (any attached actor). Game thread only.
+bool DetachActorFromParent(void* actor);
+
+// SetSimulatePhysics(simulate) on `actor`'s root primitive component (via
+// K2_GetRootComponent). Used to freeze the clump mirror while attached (kinematic
+// follow) and thaw it on release (free-fall). No-op if the root isn't a primitive.
+// Game thread only.
+bool SetActorSimulatePhysics(void* actor, bool simulate);
+
+// Read/overwrite `actor`'s root primitive linear (cm/s) + angular (deg/s) velocity --
+// the throw-energy transfer on clump release ("physics like the mannequin"). Generic
+// (does NOT use the Aprop_C mesh offset, so it works on the non-Aprop_C clump). Returns
+// false on failure. Game thread only.
+bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng);
+bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang);
+
 // Read ragdoll `body`'s pelvis bone WORLD rotation so the caller can drive the kel
 // puppet's TUMBLE each frame -- the pelvis attach follows position but a character keeps
 // its capsule upright, so rotation must be applied explicitly. false on failure. GT only.

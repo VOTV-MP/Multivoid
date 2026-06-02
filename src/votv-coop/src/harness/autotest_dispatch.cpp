@@ -34,9 +34,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // Autonomous grab test: both peers (host drives grab/move/release via native
     // PhysicsHandle UFunctions; client scan-only for cross-peer FName stability).
     SpawnIf("VOTVCOOP_RUN_GRAB_TEST", "grab test", &GrabTestThread, role);
-    // Clump-mirror e2e: HOST spawns + "grabs" a prop_garbageClump_C so the
-    // held-prop send broadcasts it; CLIENT mirrors it kinematically (v3 path).
-    SpawnIf("VOTVCOOP_RUN_CLUMP_TEST", "clump-mirror e2e test", &ClumpTestThread, role);
+    // Held-clump ATTACH e2e (v25): HOST spawns + "grabs" a prop_garbageClump_C so
+    // the held-edge broadcasts HeldClumpGrab; CLIENT spawns a mirror + attaches it
+    // to the host puppet's hand bone (held_clump_sync), then detaches on release.
+    SpawnIf("VOTVCOOP_RUN_CLUMP_TEST", "held-clump attach e2e test", &ClumpTestThread, role);
     // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
     // peer's puppet should reflect it via the ItemActivate wire path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);
