@@ -26,14 +26,20 @@ struct Record {
 std::mutex g_mutex;
 std::unordered_map<std::string, Record> g_bans;  // keyed by IP; guarded by g_mutex
 
-// Banlist lives next to the save backups (save_guard uses the same SaveGames
-// root): %LOCALAPPDATA%\VotV\Saved\coop\banlist.txt. A dedicated `coop` subdir
-// keeps mod-owned host config out of the game's own save namespace.
+// Banlist lives next to the deployed mod binary -- the same Binaries\Win64
+// directory as votv-coop.dll / votv-coop.ini / votv-coop.log (resolved via our
+// own module handle, exactly like ini_config::ModuleDir). Each game copy keeps
+// its OWN banlist; the host copy's file is the canonical one (clients never
+// load it). File name follows the votv-coop-* convention.
 fs::path BanlistPath() {
-    wchar_t buf[MAX_PATH] = {};
-    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    HMODULE self = nullptr;
+    ::GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&BanlistPath), &self);
+    wchar_t path[MAX_PATH] = {};
+    const DWORD n = ::GetModuleFileNameW(self, path, MAX_PATH);
     if (n == 0 || n >= MAX_PATH) return {};
-    return fs::path(buf) / L"VotV" / L"Saved" / L"coop" / L"banlist.txt";
+    return fs::path(path).parent_path() / L"votv-coop-banlist.txt";
 }
 
 // Rewrite the whole file from the in-memory set. Caller holds g_mutex. The file

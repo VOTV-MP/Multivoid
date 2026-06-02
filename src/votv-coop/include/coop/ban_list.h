@@ -11,10 +11,11 @@
 //
 // Persistence: a plain line-based text file (one ban per line:
 //   ip|nick|unixtime
-// ) under %LOCALAPPDATA%\VotV\Saved\coop\banlist.txt -- the host machine's
-// own config area, alongside the save backups save_guard writes. Survives
-// host restarts (the locked decision: BAN is permanent). HOST-ONLY -- a
-// client never accepts incoming connections, so the banlist is meaningless
+// ) named votv-coop-banlist.txt, written NEXT TO THE MOD BINARY (the
+// Binaries\Win64 dir that holds votv-coop.dll / votv-coop.ini / votv-coop.log,
+// resolved via our own module handle). Each game copy keeps its own banlist;
+// survives host restarts (the locked decision: BAN is permanent). HOST-ONLY --
+// a client never accepts incoming connections, so the banlist is meaningless
 // off-host and is simply never loaded there.
 //
 // Thread model: Load() runs once at host session start (boot thread, before
