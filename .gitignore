@@ -88,6 +88,14 @@ desktop.ini
 *.swp
 *~
 
+# ===== Per-machine launcher / helper scripts (local convenience) =====
+# 2026-06-02 (user request): untrack the root LAN-test launchers + play helpers
+# (mp_*.bat, play-coop.bat, shot.bat, stop-coop.bat). They are per-machine
+# convenience scripts (window titles, local paths), not collaborative source.
+# `git rm --cached` runs in the same commit that adds this rule. The
+# `!Game/coop-*.bat` allow-list below still overrides this for those.
+*.bat
+
 # ===== Claude Code per-machine config (MCP paths etc.) =====
 .claude/
 # User-decision 2026-05-25 NIGHT: CLAUDE.md is a per-user dev notebook
