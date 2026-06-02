@@ -3,8 +3,6 @@
 #include "coop/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/shutdown.h"
-#include "coop/ini_config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -12,8 +10,6 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
-
-#include <windows.h>
 
 #include <atomic>
 #include <cmath>
@@ -45,8 +41,6 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // CMC constraints that K2_TeleportTo loses to. Falls back to TeleportTo +
 // SetActorLocation only if the VOTV function can't be resolved.
 void* g_teleportWObackroomsFn = nullptr;  // mainPlayer_C::teleportWObackrooms UFunction*
-
-bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
 
 // Local-vs-puppet lookup + caching now lives in coop::local_player.
 // This module is a thin wrapper that calls Get().
@@ -142,44 +136,18 @@ void SnapshotAndSend(coop::net::Session* s) {
                        loc.X, loc.Y, loc.Z);
 }
 
-// Hotkey: polls F4 (rising edge). Sender-gates to Role::Host only -- F4 on
-// the client is a no-op (per user scope: "Teleport client to host when host
-// presses button"). The packet always identifies the host's pose at the
-// time of press; the client applies on receive.
-DWORD WINAPI HotkeyThread(LPVOID) {
-    bool prevF4 = false;
-    while (!coop::shutdown::IsShuttingDown()) {
-        const bool f4 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F4);
-        if (f4 && !prevF4) {
-            auto* s = g_session.load(std::memory_order_acquire);
-            if (s && s->role() == coop::net::Role::Host) {
-                GT::Post([s] { SnapshotAndSend(s); });
-            } else if (s) {
-                UE_LOGI("teleport_client: F4 pressed but local role is Client -- "
-                        "this keybind is host-only (per scope project-dev-features-F3-F4)");
-            }
-        }
-        prevF4 = f4;
-        ::Sleep(8);
-    }
-    return 0;
-}
-
 }  // namespace
 
-void Init() {
-    if (!::coop::ini_config::MasterEnabled()) {
-        UE_LOGI("teleport_client: disabled by master switch ([dev] enabled=0)");
+void TeleportClientsToHost() {
+    // Sender-gates to Role::Host only -- on a client this is a no-op (per scope:
+    // "teleport clients to the host when the host triggers it"). The snapshot runs
+    // on the game thread; the client applies on receive.
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) {
+        UE_LOGI("teleport_client: ignored -- this action is host-only (local role is not Host)");
         return;
     }
-    if (!::coop::ini_config::IsIniKeyTrue("devkeys")) {
-        UE_LOGI("teleport_client: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F4)");
-        return;
-    }
-    if (HANDLE t = ::CreateThread(nullptr, 0, &HotkeyThread, nullptr, 0, nullptr)) {
-        ::CloseHandle(t);
-    }
-    UE_LOGI("teleport_client: ENABLED (host F4 -> teleport client to host's pose)");
+    GT::Post([s] { SnapshotAndSend(s); });
 }
 
 }  // namespace coop::dev::teleport_client

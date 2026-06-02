@@ -3,6 +3,11 @@
 #include "ui/dev_menu.h"
 
 #include "coop/dev/force_weather.h"
+#include "coop/dev/freecam.h"
+#include "coop/dev/pos_hud.h"
+#include "coop/dev/restore_vitals.h"
+#include "coop/dev/spawn_npc.h"
+#include "coop/dev/teleport_client.h"
 #include "coop/ini_config.h"
 
 #include <vector>
@@ -29,21 +34,53 @@ void RenderSnow() {
     ImGui::TextDisabled("(host-authoritative; clients mirror)");
 }
 
+void RenderTeleportClients() {
+    if (ImGui::Button("Teleport clients to me")) coop::dev::teleport_client::TeleportClientsToHost();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(host only)");
+}
+
+void RenderFreecam() {
+    bool on = coop::dev::freecam::IsActive();
+    if (ImGui::Checkbox("Freecam", &on)) coop::dev::freecam::SetActive(on);
+    ImGui::TextDisabled("HOME also toggles - WASD move, Space/Ctrl up/down,");
+    ImGui::TextDisabled("Shift fast, wheel speed, MMB bring player");
+}
+
+void RenderRestoreVitals() {
+    if (ImGui::Button("Restore vitals (food / sleep / health)")) coop::dev::restore_vitals::Restore();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(both peers)");
+}
+
+void RenderPosHud() {
+    bool on = coop::dev::pos_hud::IsVisible();
+    if (ImGui::Checkbox("Position / camera readout", &on)) coop::dev::pos_hud::SetVisible(on);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(on-screen overlay)");
+}
+
+void RenderSpawnNpc() {
+    if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(host spawns + syncs)");
+}
+
 // ---- the strict nested taxonomy (refined as features land) -------------------
 // Player > Movement/Vitals/HUD ; Game > Weather/Entities/Events ; Network >
-// Stats/Session ; Cosmetics > Skins. Only Weather>Snow is wired so far (the
-// foundation's proof feature); the rest are placeholders migrated in follow-ups.
-// Cosmetics is the one non-dev category (shown to all players).
+// Stats/Session ; Cosmetics > Skins. Network subs + Events + Cosmetics are still
+// placeholders (future panels). Cosmetics is the one non-dev category (shown to
+// all players).
 const std::vector<Cat>& Tree() {
     static const std::vector<Cat> kTree = {
         { "Player", {
-            { "Movement", {}, true },
-            { "Vitals",   {}, true },
-            { "HUD",      {}, true },
+            { "Movement", { { &RenderTeleportClients, true }, { &RenderFreecam, true } }, true },
+            { "Vitals",   { { &RenderRestoreVitals, true } }, true },
+            { "HUD",      { { &RenderPosHud, true } }, true },
         }, true },
         { "Game", {
             { "Weather",  { { &RenderSnow, true } }, true },
-            { "Entities", {}, true },
+            { "Entities", { { &RenderSpawnNpc, true } }, true },
             { "Events",   {}, true },
         }, true },
         { "Network", {
@@ -67,7 +104,11 @@ bool g_devMode = false;
 }  // namespace
 
 void Init() {
-    g_devMode = ::coop::ini_config::IsIniKeyTrue("devkeys");
+    // Dev items show only when the dev switch is on AND the master isn't killed --
+    // [dev] enabled=0 forces every dev feature off (this replaces the per-module
+    // MasterEnabled() checks the migrated dev modules used to do in their Init).
+    g_devMode = ::coop::ini_config::MasterEnabled() &&
+                ::coop::ini_config::IsIniKeyTrue("devkeys");
 }
 
 void Render() {

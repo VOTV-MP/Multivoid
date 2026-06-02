@@ -27,7 +27,6 @@ namespace GT = ue_wrap::game_thread;
 
 namespace {
 
-bool g_enabled = false;                 // from ini (dev switch)
 std::atomic<bool> g_active{false};      // freecam currently on
 std::atomic<bool> g_movePosted{false};  // a MovementTick is already queued (no backlog)
 std::atomic<unsigned long long> g_lastMs{0};
@@ -216,12 +215,15 @@ DWORD WINAPI WheelHookThread(LPVOID) {
     return 0;
 }
 
-DWORD WINAPI HotkeyThread(LPVOID) {
+// Input/movement driver. Polls HOME (toggle -- kept by user request alongside the
+// menu checkbox), the in-freecam controls (MMB bring-player), and drives the
+// per-frame MovementTick while active.
+DWORD WINAPI InputDriverThread(LPVOID) {
     bool prevHome = false, prevMmb = false;
     while (!coop::shutdown::IsShuttingDown()) {
-        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
-        // so HOME pressed in the client's window would otherwise toggle freecam
-        // in BOTH host + client. Only react to keys when OUR window is focused.
+        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes, so
+        // HOME/WASD/MMB in the client's window would otherwise drive THIS instance's
+        // freecam. Only react to keys when OUR window is focused.
         const bool focused = ::coop::ini_config::IsOurWindowForeground();
 
         const bool home = focused && KeyDown(VK_HOME);
@@ -256,27 +258,46 @@ DWORD WINAPI HotkeyThread(LPVOID) {
     return 0;
 }
 
-}  // namespace
-
-void Init() {
-    // Master kill-switch first: [dev] enabled=0 forces every dev feature off
-    // regardless of the granular `freecam=...` line.
-    if (!::coop::ini_config::MasterEnabled()) {
-        UE_LOGI("freecam: disabled by master switch ([dev] enabled=0)");
-        return;
-    }
-    g_enabled = ::coop::ini_config::IsIniKeyTrue("freecam");
-    if (!g_enabled) {
-        UE_LOGI("freecam: disabled (set [dev] freecam=1 in votv-coop.ini to enable)");
-        return;
-    }
-    if (HANDLE t = ::CreateThread(nullptr, 0, &HotkeyThread, nullptr, 0, nullptr)) {
-        ::CloseHandle(t);  // detached; close the handle so it doesn't leak
+// Start the driver + wheel-hook threads once, lazily, on the first activation (no
+// idle worker thread / system-wide LL mouse hook for players who never freecam).
+void EnsureThreads() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+    if (HANDLE t = ::CreateThread(nullptr, 0, &InputDriverThread, nullptr, 0, nullptr)) {
+        ::CloseHandle(t);  // detached
     }
     if (HANDLE t = ::CreateThread(nullptr, 0, &WheelHookThread, nullptr, 0, nullptr)) {
         ::CloseHandle(t);
     }
-    UE_LOGI("freecam: ENABLED (HOME=toggle, WASD/Space/Ctrl=move, Shift=fast, wheel=speed, MMB=teleport)");
+    UE_LOGI("freecam: driver threads started (WASD/Space/Ctrl=move, Shift=fast, wheel=speed, MMB=bring player)");
 }
+
+}  // namespace
+
+void Init() {
+    // Master kill-switch first: [dev] enabled=0 forces every dev feature off.
+    if (!::coop::ini_config::MasterEnabled()) {
+        UE_LOGI("freecam: disabled by master switch ([dev] enabled=0)");
+        return;
+    }
+    if (!::coop::ini_config::IsIniKeyTrue("freecam")) {
+        UE_LOGI("freecam: HOME toggle off at boot (set [dev] freecam=1 to enable it; the "
+                "F1 menu still toggles freecam under [dev] devkeys)");
+        return;
+    }
+    EnsureThreads();  // start HOME polling + movement driver + wheel hook now
+    UE_LOGI("freecam: ENABLED at boot (HOME=toggle, WASD/Space/Ctrl=move, Shift=fast, "
+            "wheel=speed, MMB=bring player; also in the F1 menu)");
+}
+
+void SetActive(bool on) {
+    EnsureThreads();
+    GT::Post([on] {
+        if (on && !g_active.load())       Enable();
+        else if (!on && g_active.load())  Disable();
+    });
+}
+
+bool IsActive() { return g_active.load(std::memory_order_acquire); }
 
 }  // namespace coop::dev::freecam

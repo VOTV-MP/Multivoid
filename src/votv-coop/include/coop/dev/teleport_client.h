@@ -1,12 +1,12 @@
-// coop/dev/teleport_client.h -- F4 dev-key: teleport the client to the host's pose.
+// coop/dev/teleport_client.h -- teleport connected clients to the host's pose.
 //
-// Gated by votv-coop.ini ([dev] devkeys=1); OFF by default. While enabled:
-//   F4 -- HOST snapshots own mainPlayer Location + Rotation, sends to the
-//         client; client applies via K2_TeleportTo on its local pawn.
+// Driven by the ImGui dev menu (Player > Movement > "Teleport clients to me").
+// The legacy F4 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-in-
+// imgui-menu]]: dev features live in the F1 menu, not ad-hoc hotkeys).
 //
-// Direction: HOST -> CLIENT only. F4 pressed on the client is a no-op (the
-// hotkey thread sender-gates on Session::Role::Host). Mirrors VT's `!tphere`
-// chat command but as a direct keybind. [[project-coop-foundation]] cross-ref.
+// Direction: HOST -> CLIENT only. The action is a no-op on a client (it self-
+// gates on Session::Role::Host). Mirrors MTA's `!tphere` chat command but as a
+// menu button. [[project-coop-foundation]] cross-ref.
 
 #pragma once
 
@@ -14,13 +14,15 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::teleport_client {
 
-// Cache the Session pointer so F4 can snapshot host pose + broadcast.
-// Called once from harness boot, BEFORE Init().
+// Cache the Session pointer so the action can snapshot host pose + broadcast.
+// Called once from harness boot.
 void SetSession(coop::net::Session* session);
 
-// Read votv-coop.ini; if [dev] devkeys=1 (and master not killed), start the
-// F4 hotkey thread. No-op otherwise.
-void Init();
+// Menu action (Player > Movement): HOST snapshots its own mainPlayer Location +
+// Rotation and sends it to the clients (they K2_TeleportTo). HOST-only -- on a
+// client this logs + no-ops. Safe to call off the game thread (the snapshot is
+// posted to it).
+void TeleportClientsToHost();
 
 // Receiver: apply the teleport on the local mainPlayer (K2_TeleportTo).
 // Called from event_feed.cpp on incoming ReliableKind::TeleportClient AND

@@ -28,8 +28,6 @@ namespace E  = ue_wrap::engine;
 
 namespace {
 
-bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
-
 // Spawn an allowlisted NPC ~2.5 m in front of the local player, facing them, via
 // BeginDeferredActorSpawnFromClass + FinishSpawningActor. The spawn goes through
 // the very UFunction npc_sync's interceptor hooks, so on the HOST the interceptor
@@ -127,25 +125,16 @@ void PostSpawnKerfur() {
     GT::Post([] { SpawnNpcInFront(P::name::NpcClass_KerfurOmega); });
 }
 
-// F7 hotkey + trigger-file watcher. F7 is foreground-gated (a same-box host+
-// client both seeing the global key state would otherwise both fire from one
-// press; the foreground gate attributes the press to the focused window). The
-// trigger file is the deterministic autonomous path: mp.py creates it once all
-// peers are connected; we spawn + delete it (re-create to spawn again).
-DWORD WINAPI WatcherThread(LPVOID) {
-    bool prevKey = false;
+// Trigger-FILE watcher (autonomous path only). mp.py creates the file once all
+// peers are connected; we spawn + delete it (re-create to spawn again). The
+// hands-on path is the dev menu's SpawnKerfurOmega button -- no key polling here.
+DWORD WINAPI FileTriggerThread(LPVOID) {
     wchar_t triggerPath[512] = {};
     ::GetEnvironmentVariableW(L"VOTVCOOP_SPAWN_TRIGGER", triggerPath, 512);
-    const bool watchFile = (triggerPath[0] != L'\0');
+    if (triggerPath[0] == L'\0') return 0;  // nothing to watch
     int fileTicks = 0;
     while (!coop::shutdown::IsShuttingDown()) {
-        const bool key = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F7);
-        if (key && !prevKey) {
-            UE_LOGI("spawn_npc: F7 -> spawning kerfurOmega_C");
-            PostSpawnKerfur();
-        }
-        prevKey = key;
-        if (watchFile && ++fileTicks >= 32) {  // ~250 ms (32 * 8 ms)
+        if (++fileTicks >= 32) {  // ~250 ms (32 * 8 ms)
             fileTicks = 0;
             if (::GetFileAttributesW(triggerPath) != INVALID_FILE_ATTRIBUTES) {
                 UE_LOGI("spawn_npc: trigger file seen -> spawning kerfurOmega_C (autonomous)");
@@ -160,25 +149,25 @@ DWORD WINAPI WatcherThread(LPVOID) {
 
 }  // namespace
 
+void SpawnKerfurOmega() { PostSpawnKerfur(); }
+
 void Init() {
+    wchar_t probe[8] = {};
+    const bool wantWatch =
+        (::GetEnvironmentVariableW(L"VOTVCOOP_SPAWN_TRIGGER", probe, 8) > 0);
+    if (!wantWatch) {
+        UE_LOGI("spawn_npc: file watcher off (no VOTVCOOP_SPAWN_TRIGGER) -- "
+                "spawn via the F1 menu (Game > Entities)");
+        return;
+    }
     if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("spawn_npc: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    wchar_t probe[8] = {};
-    const bool wantWatch =
-        (::GetEnvironmentVariableW(L"VOTVCOOP_SPAWN_TRIGGER", probe, 8) > 0);
-    const bool devkeys = ::coop::ini_config::IsIniKeyTrue("devkeys");
-    if (!devkeys && !wantWatch) {
-        UE_LOGI("spawn_npc: disabled (set [dev] devkeys=1 for F7, or "
-                "VOTVCOOP_SPAWN_TRIGGER=<file> for the autonomous file trigger)");
-        return;
-    }
-    if (HANDLE t = ::CreateThread(nullptr, 0, &WatcherThread, nullptr, 0, nullptr)) {
+    if (HANDLE t = ::CreateThread(nullptr, 0, &FileTriggerThread, nullptr, 0, nullptr)) {
         ::CloseHandle(t);  // detached; loops until shutdown
     }
-    UE_LOGI("spawn_npc: ENABLED (%s%s) -- spawns kerfurOmega_C in front of local player",
-            devkeys ? "F7" : "", wantWatch ? " + file-trigger" : "");
+    UE_LOGI("spawn_npc: file-trigger ENABLED (VOTVCOOP_SPAWN_TRIGGER) -- spawns kerfurOmega_C");
 }
 
 }  // namespace coop::dev::spawn_npc

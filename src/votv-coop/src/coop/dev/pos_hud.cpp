@@ -2,7 +2,6 @@
 
 #include "coop/players_registry.h"
 #include "coop/shutdown.h"
-#include "coop/ini_config.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -24,24 +23,22 @@ namespace GT = ue_wrap::game_thread;
 
 namespace {
 
-// Read-once at Init; the hotkey thread checks this before doing anything.
-bool g_iniEnabled = false;
-
-// Currently SHOWN on screen? Starts OFF -- F2 toggles it. Atomic because the
-// hotkey thread reads + writes it (the toggle is debounced there); the game
-// thread only reads it inside posted tasks.
+// Currently SHOWN on screen? Starts OFF -- the menu checkbox toggles it. Atomic
+// because the menu (render thread) writes it via SetVisible and the refresh-pump
+// thread reads it; the game thread only reads it inside posted tasks.
 std::atomic<bool> g_active{false};
 
-// Widget pointers. Created lazily on the first toggle-on (the GameInstance must
+// Widget pointers. Created lazily on the first show (the GameInstance must
 // exist by then; before that nothing in the world is meaningful to read anyway).
 // Owned by the engine via the GameInstance outer -- not destroyed on level
 // changes; we just RemoveFromViewport / AddToViewport to hide/show.
 void* g_root = nullptr;
 void* g_text = nullptr;
 
-constexpr int kZOrder = 95;  // just below the coop hud_feed (which is at 100)
+// Refresh-pump thread started once, lazily, on the first show.
+std::atomic<bool> g_pumpStarted{false};
 
-bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
+constexpr int kZOrder = 95;  // just below the coop hud_feed (which is at 100)
 
 // Build the LEFT-MIDDLE overlay widget. Outer must be a persistent UObject (the
 // GameInstance) so it survives level loads; pivot at the widget's left-middle
@@ -130,60 +127,45 @@ void Hide() {
     UE_LOGI("pos_hud: OFF");
 }
 
-// Hotkey + update pump. Polls F2 (rising edge) to toggle visibility, and while
-// visible posts a Refresh() to the game thread every ~100 ms (10 Hz is plenty
-// for a numeric readout; faster updates just burn UFunction calls). Sleeps
-// short between iterations so the toggle response is snappy. Mirrors the
-// freecam::HotkeyThread shape.
-DWORD WINAPI HotkeyThread(LPVOID) {
-    bool prevF2 = false;
+// Refresh pump: while the overlay is visible, post a Refresh() to the game thread
+// every ~100 ms (10 Hz is plenty for a numeric readout; faster just burns UFunction
+// calls). Idles cheaply (one atomic load + sleep) while hidden. No key polling --
+// the menu drives visibility via SetVisible.
+DWORD WINAPI RefreshPumpThread(LPVOID) {
     int refreshCounter = 0;
     constexpr int kRefreshEveryN = 12;  // 12 * 8 ms = ~96 ms -> ~10 Hz
     while (!coop::shutdown::IsShuttingDown()) {
-        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes,
-        // so pressing F2 in the client's window would otherwise fire the hotkey
-        // in BOTH host + client (each runs its own pos_hud thread reading the
-        // same global key state). Only react when OUR window is focused.
-        const bool f2 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F2);
-        if (f2 && !prevF2) {
-            // Rising edge -> flip. Only this thread writes g_active, so plain
-            // load+store is race-free (the game-thread Refresh callback reads it
-            // through atomic load on its side).
-            const bool newState = !g_active.load();
-            g_active.store(newState);
-            if (newState) GT::Post([] { Show(); });
-            else          GT::Post([] { Hide(); });
-        }
-        prevF2 = f2;
-
         if (g_active.load() && ++refreshCounter >= kRefreshEveryN) {
             refreshCounter = 0;
             GT::Post([] { if (g_active.load()) Refresh(); });
         }
-
         ::Sleep(8);
     }
     return 0;
 }
 
+// Start the refresh pump once, on the first show (no idle thread for players who
+// never open this dev tool).
+void EnsurePump() {
+    if (g_pumpStarted.exchange(true)) return;
+    if (HANDLE t = ::CreateThread(nullptr, 0, &RefreshPumpThread, nullptr, 0, nullptr)) {
+        ::CloseHandle(t);  // detached; loops until shutdown
+    }
+}
+
 }  // namespace
 
-void Init() {
-    // Master kill-switch first: [dev] enabled=0 forces every dev feature off
-    // regardless of the granular `posinfo=...` line.
-    if (!::coop::ini_config::MasterEnabled()) {
-        UE_LOGI("pos_hud: disabled by master switch ([dev] enabled=0)");
-        return;
+void SetVisible(bool on) {
+    g_active.store(on, std::memory_order_release);
+    if (on) {
+        EnsurePump();
+        GT::Post([] { Show(); });
+    } else {
+        GT::Post([] { Hide(); });
     }
-    g_iniEnabled = ::coop::ini_config::IsIniKeyTrue("posinfo");
-    if (!g_iniEnabled) {
-        UE_LOGI("pos_hud: disabled (set [dev] posinfo=1 in votv-coop.ini to enable; F2 toggles)");
-        return;
-    }
-    if (HANDLE t = ::CreateThread(nullptr, 0, &HotkeyThread, nullptr, 0, nullptr)) {
-        ::CloseHandle(t);  // detached
-    }
-    UE_LOGI("pos_hud: ENABLED (F2 toggles; left-middle of screen)");
+    UE_LOGI("pos_hud: SetVisible(%d)", on ? 1 : 0);
 }
+
+bool IsVisible() { return g_active.load(std::memory_order_acquire); }
 
 }  // namespace coop::dev::pos_hud

@@ -2,13 +2,9 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/shutdown.h"
-#include "coop/ini_config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/vitals.h"
-
-#include <windows.h>
 
 #include <atomic>
 
@@ -30,14 +26,12 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // over-stored value that would gate hunger draining differently).
 // 2026-05-25 NIGHT (user retest +1): writing coffeePower=100 produced a
 // screen-shaking post-coffee vanilla effect (the BP keys an effect off
-// coffeePower > 0). F3 only tops up food/sleep/health, leaving coffeePower as-is.
+// coffeePower > 0). Restore only tops up food/sleep/health, leaving coffeePower as-is.
 constexpr float kMaxVital = 100.0f;
 
 // The GameInstance->save_gameInst->saveSlot resolution + the cached-offset writes
 // now live in ue_wrap::vitals (extracted 2026-05-30, P7). This file owns only the
-// dev hotkey + the coop broadcast.
-
-bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
+// menu action + the coop broadcast.
 
 }  // namespace
 
@@ -60,53 +54,18 @@ void ApplyLocally() {
     }
 }
 
-namespace {
-
-// Hotkey + dispatch. Polls F3 (rising edge), applies locally on the game
-// thread, and broadcasts a no-payload RestoreVitals reliable. The broadcast
-// is best-effort -- if Session isn't connected, the local apply still works
-// (the user still gets their refill in solo play).
-DWORD WINAPI HotkeyThread(LPVOID) {
-    bool prevF3 = false;
-    while (!coop::shutdown::IsShuttingDown()) {
-        // Foreground-window gate per [[feedback-deliver-results-fast]] pattern
-        // (also documented in coop::ini_config::IsOurWindowForeground): a same-box
-        // host+client test would otherwise fire F3 in BOTH processes from a
-        // single keypress because GetAsyncKeyState is global. We want the F3
-        // press to be peer-attributed to whichever window has focus.
-        const bool f3 = ::coop::ini_config::IsOurWindowForeground() && KeyDown(VK_F3);
-        if (f3 && !prevF3) {
-            // Local apply runs on the game thread (saveSlot writes touch BP
-            // state). Broadcast is wire-thread-safe.
-            GT::Post([] { ApplyLocally(); });
-            auto* s = g_session.load(std::memory_order_acquire);
-            if (s) {
-                // No payload: the action is fixed (max-out the 4 fields).
-                const bool sent = s->SendReliable(coop::net::ReliableKind::RestoreVitals, nullptr, 0);
-                if (!sent) UE_LOGW("restore_vitals: broadcast failed (channel busy or not connected)");
-            }
-        }
-        prevF3 = f3;
-        ::Sleep(8);
+void Restore() {
+    // Local apply runs on the game thread (saveSlot writes touch BP state); the
+    // broadcast is wire-thread-safe, so this is safe to call from the menu (render
+    // thread). Best-effort: if the Session isn't connected, the local apply still
+    // refills the caller's vitals (solo play).
+    GT::Post([] { ApplyLocally(); });
+    if (auto* s = g_session.load(std::memory_order_acquire)) {
+        // No payload: the action is fixed (max-out food/sleep/health on the peer).
+        if (!s->SendReliable(coop::net::ReliableKind::RestoreVitals, nullptr, 0))
+            UE_LOGW("restore_vitals: broadcast failed (channel busy or not connected)");
     }
-    return 0;
-}
-
-}  // namespace
-
-void Init() {
-    if (!::coop::ini_config::MasterEnabled()) {
-        UE_LOGI("restore_vitals: disabled by master switch ([dev] enabled=0)");
-        return;
-    }
-    if (!::coop::ini_config::IsIniKeyTrue("devkeys")) {
-        UE_LOGI("restore_vitals: disabled (set [dev] devkeys=1 in votv-coop.ini to enable F3)");
-        return;
-    }
-    if (HANDLE t = ::CreateThread(nullptr, 0, &HotkeyThread, nullptr, 0, nullptr)) {
-        ::CloseHandle(t);  // detached
-    }
-    UE_LOGI("restore_vitals: ENABLED (F3 refills food/sleep/health on both peers)");
+    UE_LOGI("restore_vitals: Restore triggered (local apply + peer broadcast)");
 }
 
 }  // namespace coop::dev::restore_vitals

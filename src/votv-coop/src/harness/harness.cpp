@@ -7,7 +7,6 @@
 #include "harness/sdk_check.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
-#include "coop/dev/pos_hud.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
@@ -716,18 +715,16 @@ void Start() {
     // independent of the scenario, so it's available during hands-on testing.
     screenshot::StartHotkeyWatcher();
 
-    // Dev free-flying camera (HOME toggle). No-op unless votv-coop.ini enables it.
+    // Dev free-flying camera. HOME toggles it (kept by user request) when
+    // [dev] freecam=1; the F1 menu (Player > Movement) also toggles it under
+    // [dev] devkeys. No-op at boot otherwise.
     coop::dev::freecam::Init();
 
-    // Dev pos + camera-rotation overlay (F2 toggle). No-op unless ini enables it.
-    coop::dev::pos_hud::Init();
-
-    // Dev F3 (restore stamina/hunger) + F4 (teleport client to host). Gated by
-    // [dev] devkeys=1; no-op otherwise. (F5 snow RETIRED -- it moved into the F1
-    // ImGui menu; restore_vitals/teleport migrate next.) SetSession was already
-    // called above; force_weather::SetSession too (its menu action needs the role).
-    coop::dev::restore_vitals::Init();
-    coop::dev::teleport_client::Init();
+    // The other dev features (snow, restore vitals, teleport clients, pos/cam
+    // overlay, spawn NPC) are now driven from the F1 ImGui menu -- their hotkey
+    // threads were RETIRED (RULE feedback-dev-features-in-imgui-menu). SetSession
+    // for restore_vitals / teleport_client / force_weather was already called
+    // above (their menu actions need the Session role).
 
     // Dear ImGui overlay -- the F1 menu host (dev features + future MP server
     // browser). dev_menu::Init reads the dev switch off the render thread; the
@@ -738,10 +735,9 @@ void Start() {
         UE_LOGW("harness: imgui_overlay::Init failed -- F1 menu unavailable this run");
     }
 
-    // Dev F7 (spawn a kerfurOmega NPC in front of the local player) + the
-    // VOTVCOOP_SPAWN_TRIGGER file watcher (the only programmatic NPC-spawn path;
-    // exercises host AllocAndInstall + broadcast + client mirror Install). No-op
-    // unless [dev] devkeys=1 or the trigger env is set.
+    // The VOTVCOOP_SPAWN_TRIGGER file watcher (autonomous NPC-spawn path that
+    // exercises host AllocAndInstall + broadcast + client mirror Install). Hands-on
+    // spawning is the F1 menu (Game > Entities). No-op unless the trigger env is set.
     coop::dev::spawn_npc::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our

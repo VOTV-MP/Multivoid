@@ -1,18 +1,15 @@
-// coop/dev/restore_vitals.h -- F3 dev-key: refill food/sleep/health on both peers'
+// coop/dev/restore_vitals.h -- refill food/sleep/health on both peers'
 // UsaveSlot_C simultaneously. (coffeePower is intentionally excluded -- writing
 // it to 100 triggers a screen-shake post-coffee BP side-effect; see commit
 // 5421d6f for the user-retest finding.)
 //
-// Gated by votv-coop.ini ([dev] devkeys=1); OFF by default. While enabled:
-//   F3 -- restore the local player's vitals AND broadcast a RestoreVitals
-//         reliable packet so the remote peer's vitals are also restored.
+// Driven by the ImGui dev menu (Player > Vitals > "Restore vitals"). The legacy
+// F3 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-in-imgui-menu]]:
+// dev features live in the F1 menu, not ad-hoc hotkeys).
 //
-// Direction: any peer (host OR client) can press F3 -- the packet is
-// broadcast, both ends call ApplyLocally(). Echo is safe: applying max-out
-// twice is idempotent (the field just stays at max).
-//
-// [dev] enabled=0 master-kill still applies; devkeys=1 alone won't enable
-// if the master is off. Mirrors the pos_hud Init pattern.
+// Direction: any peer (host OR client) can trigger it -- Restore() applies
+// locally AND broadcasts a RestoreVitals reliable so the remote peer restores
+// too. Echo is safe: applying max-out twice is idempotent (stays at max).
 
 #pragma once
 
@@ -20,18 +17,20 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::restore_vitals {
 
-// Cache the Session pointer so F3 can broadcast the RestoreVitals packet.
-// Called once from harness boot, BEFORE Init(). Mirrors prop_lifecycle::SetSession.
+// Cache the Session pointer so Restore() can broadcast the RestoreVitals packet.
+// Called once from harness boot. Mirrors prop_lifecycle::SetSession.
 void SetSession(coop::net::Session* session);
 
-// Read votv-coop.ini; if [dev] devkeys=1 (and master not killed), start the
-// F3 hotkey thread. No-op otherwise. Idempotent -- repeated calls do nothing.
-void Init();
+// Menu action (Player > Vitals): refill the local player's vitals AND broadcast
+// a RestoreVitals reliable so the remote peer's vitals refill too. Safe to call
+// off the game thread (the local apply is posted to it; the broadcast is
+// wire-thread-safe).
+void Restore();
 
 // Receiver: max-out food/sleep/health on the local UsaveSlot_C (coffeePower
 // intentionally excluded -- see header comment).
 // Called from event_feed.cpp on incoming ReliableKind::RestoreVitals, AND
-// called locally by the F3 hotkey before broadcasting. Game thread only.
+// by Restore() locally. Game thread only.
 void ApplyLocally();
 
 }  // namespace coop::dev::restore_vitals
