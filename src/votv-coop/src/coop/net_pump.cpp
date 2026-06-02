@@ -9,6 +9,7 @@
 #include "coop/element/element_deleter.h"
 #include "coop/event_feed.h"
 #include "coop/garbage_sync.h"
+#include "coop/trash_collect_sync.h"
 #include "coop/save_block.h"
 #include "coop/save_button_disable.h"
 #include "coop/grab_observer.h"
@@ -274,6 +275,8 @@ void InstallObservers(coop::net::Session& session) {
     coop::weather_sync::Install(&session);   // Phase 5W weather
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();           // Phase 5G garbage
+    coop::trash_collect_sync::SetSession(&session);
+    coop::trash_collect_sync::Install();     // trash-stack press-E collect mirror
     // PR-FOUNDATION-2 (B): client world-save block (host-only persistence).
     // No-op on the host; on the client installs the SaveGameToSlot detour once.
     coop::save_block::Install(&session);

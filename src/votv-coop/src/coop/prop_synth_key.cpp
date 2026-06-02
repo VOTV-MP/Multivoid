@@ -46,10 +46,12 @@ void* ResolveSetKeyFn(void* cls) {
 
 }  // namespace
 
-std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey) {
+std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
+                                   bool mintForAprop) {
     if (!currentKey.empty() && currentKey != L"None") return currentKey;
-    if (ue_wrap::prop::IsDescendantOfProp(self)) {
-        // Aprop_C: trust the BP's own UCS to mint. Skip.
+    if (!mintForAprop && ue_wrap::prop::IsDescendantOfProp(self)) {
+        // Aprop_C: trust the BP's own UCS to mint. Skip. (mintForAprop bypasses
+        // this for the auto-grabbed trash-collect item whose UCS hasn't minted.)
         return currentKey;
     }
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return currentKey;

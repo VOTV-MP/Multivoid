@@ -28,9 +28,19 @@ namespace coop::prop_synth_key {
 // already non-None, returns it unchanged. Otherwise, for non-Aprop_C
 // keyed-interactables, mints a synthetic + calls setKey + returns the
 // minted string. For Aprop_C-derived actors with a None Key, returns
-// "None" unchanged (caller skips; BP UCS will mint on its own pass).
+// "None" unchanged (caller skips; BP UCS will mint on its own pass) --
+// UNLESS `mintForAprop` is true.
+//
+// `mintForAprop`: force-mint even for Aprop_C lineage. Needed for the
+// trash-pile collect (trashBitsPile::playerTryToCollect spawns an Aprop_C
+// item AND auto-grabs it the SAME frame, before the BP UCS has minted a
+// NewGuid Key -- so the held actor reads "None" and would never broadcast
+// or match a held-pose). The item's BP setKey accepts our synth Key the
+// same way the clump/chip classes do. Default false preserves the original
+// "trust the UCS" behaviour for the normal Init-POST broadcast path.
 //
 // Game thread only -- calls ProcessEvent via ue_wrap::Call.
-std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey);
+std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
+                                   bool mintForAprop = false);
 
 }  // namespace coop::prop_synth_key
