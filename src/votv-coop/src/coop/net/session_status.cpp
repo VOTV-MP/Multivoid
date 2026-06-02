@@ -287,6 +287,14 @@ void Session::HandleConnStatusChanged(void* info) {
         const int slot = FindPeerSlotForConn(hConn);
         UE_LOGW("net: peer slot %d closed (oldState=%d reason='%s')",
                 slot, static_cast<int>(oldState), cb->m_info.m_szEndDebug);
+        // Client: the host closed OUR connection (kick / ban / host quit / host
+        // crash). Stash GNS's reason so net_pump can log WHY before fleeing to
+        // the main menu. Host role ignores this (a client leaving is not us being
+        // closed). slot 0 is the host on a client.
+        if (cfg_.role == Role::Client && slot == 0) {
+            std::lock_guard<std::mutex> lk(hostCloseMutex_);
+            hostCloseReason_ = cb->m_info.m_szEndDebug;
+        }
         if (slot >= 0) {
             peerConns_[slot].store(0);
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
@@ -374,6 +382,13 @@ bool Session::Kick(int peerSlot, const char* reason) {
     }
     UE_LOGI("net: kicked peer slot %d (reason='%s')", peerSlot, reason ? reason : "kicked");
     return true;
+}
+
+std::string Session::TakeHostCloseReason() {
+    std::lock_guard<std::mutex> lk(hostCloseMutex_);
+    std::string r = std::move(hostCloseReason_);
+    hostCloseReason_.clear();  // move may leave it valid-but-unspecified; force empty
+    return r;
 }
 
 bool Session::GetPeerAddress(int peerSlot, char* out, int outLen) const {

@@ -43,6 +43,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 namespace coop::net_pump {
 namespace {
@@ -124,6 +125,31 @@ bool g_localDeathHandled = false;
 // menu before relaunching to rejoin (permadeath). If it ever expires while still at the
 // menu, the gameplay-world gate on the prop reaper keeps it from churning.
 constexpr int kDeathMenuBypassMs = 30 * 60 * 1000;
+
+// Terminal local eject to the main menu. The caller has ALREADY torn down coop
+// game-side state (the death handler inline; the client disconnect edge via the
+// OnDisconnect calls) -- this does the common tail: reset the edge detectors +
+// Stop the session, then arm + HOLD the transparent bypass, then travel to the
+// menu via VOTV's own transition verb. Used by BOTH the local-death flee AND the
+// host-kicked/banned/host-gone client flee -- both leave the gameplay world the
+// same way. Order matters: bypass is armed BEFORE the travel so the 50k-actor
+// untitled_1 teardown the travel triggers runs with our ProcessEvent detour
+// dormant (the death-policy rationale above). `why` is a short log tag.
+void FleeToMainMenu(coop::net::Session& session, const char* why) {
+    g_wasConnected = false;
+    g_wasConnectedBySlot.fill(false);
+    session.Stop();
+    ue_wrap::game_thread::SetTransparentBypass(kDeathMenuBypassMs);
+    if (ue_wrap::engine::ReturnToMainMenu()) {
+        UE_LOGI("net: %s -- transition(\"/Game/menu\") dispatched; held dormant", why);
+    } else {
+        // Travel did not dispatch (gamemode/transition unresolved). The bypass
+        // stays armed (still prevents reaper churn) and our actors are already
+        // torn down, but we did NOT leave the gameplay world. Surface it loudly.
+        UE_LOGE("net: %s -- ReturnToMainMenu FAILED to dispatch; still in the gameplay "
+                "world. Relaunch.", why);
+    }
+}
 
 // Game thread, ~send-rate: read the local player's pose. Pulled in from
 // harness.cpp 2026-05-28; full rationale comments preserved.
@@ -482,6 +508,24 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         coop::weather_sync::OnDisconnect();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 snapPending, propStats.initProcessedDropped);
+
+        // CLIENT eject: a client losing the host (KICK / BAN / host quit / host
+        // crash) ends the session -- flee to the main menu so the player isn't
+        // stranded in a now-hostless world (the SAME path as a local-death flee).
+        // HOST role does NOT eject here: a client leaving -- or the host kicking
+        // its last client -- also lands in this aggregate-disconnect block, and
+        // must NOT boot the host to the menu. One-shot via the terminal-eject
+        // latch (g_localDeathHandled, reused: death OR host-close; rejoin re-arms
+        // it in OnSessionStart). The subsystem teardown above already ran, so
+        // FleeToMainMenu just does Stop + bypass + travel.
+        if (!isHost && !g_localDeathHandled) {
+            g_localDeathHandled = true;
+            const std::string reason = session.TakeHostCloseReason();
+            UE_LOGW("net: HOST CLOSED OUR CONNECTION (reason: %s) -- fleeing to the main menu",
+                    reason.empty() ? "connection lost" : reason.c_str());
+            FleeToMainMenu(session, "host closed connection");
+            return;
+        }
     }
     g_wasConnected = isConnected;
 
@@ -547,32 +591,15 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::npc_sync::OnDisconnect();
                 coop::item_activate::OnDisconnect();
                 coop::weather_sync::OnDisconnect();
-                // Reset the edge detectors so the next Tick (if any) doesn't re-run the
-                // disconnect edges against already-cleaned state.
-                g_wasConnected = false;
-                g_wasConnectedBySlot.fill(false);
-                session.Stop();
-                // Flee to the MAIN MENU and HOLD our layer dormant. The balloon is VOTV's
-                // own possessed-ragdoll leak in the GAMEPLAY world (only cure: leave it).
-                // (a) Arm + HOLD the ProcessEvent-detour transparent bypass: our detour
-                //     otherwise HANGS the 50k-actor untitled_1 teardown (ReceiveEndPlay per
-                //     dying actor dispatches through us), and after the menu loads our
-                //     per-tick coop logic resuming on stale gameplay prop shadows balloons
-                //     RAM ~1 min later. Held dormant, RSS stays flat + trends down (probe:
-                //     160 s) as the old world frees. (b) Travel via VOTV's OWN verb
-                //     engine::ReturnToMainMenu (mainGamemode transition("/Game/menu")) --
-                //     works for a DEAD/ragdolling player (no pause menu needed). Order:
-                //     bypass BEFORE the travel so the teardown it triggers is bypassed.
-                ue_wrap::game_thread::SetTransparentBypass(kDeathMenuBypassMs);
-                if (!ue_wrap::engine::ReturnToMainMenu()) {
-                    // Travel did NOT dispatch (gamemode/transition unresolved). The bypass
-                    // stays armed (it still prevents the reaper churn), and the synchronous
-                    // teardown above already removed our actors -- but we did NOT leave the
-                    // gameplay world, so VOTV's native ragdoll balloon continues. Surface it
-                    // loudly so a hands-on death can tell "reached menu" from "stuck dead".
-                    UE_LOGE("net: ReturnToMainMenu FAILED to dispatch -- still in the gameplay "
-                            "world; VOTV ragdoll balloon NOT contained. Relaunch the client.");
-                }
+                // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
+                // host-close eject). The balloon is VOTV's own possessed-ragdoll leak in
+                // the GAMEPLAY world (only cure: leave it); FleeToMainMenu resets the edge
+                // detectors + Stops, then arms the bypass BEFORE travelling so our detour
+                // doesn't HANG the 50k-actor untitled_1 teardown and our per-tick logic
+                // can't resume on stale gameplay shadows at the menu (RSS flat + trending
+                // down, probe: 160 s). Travel uses VOTV's own verb (works for a DEAD/
+                // ragdolling player, no pause needed).
+                FleeToMainMenu(session, "LOCAL PLAYER DIED");
                 return;
             }
         }

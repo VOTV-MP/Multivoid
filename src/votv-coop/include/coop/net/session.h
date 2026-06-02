@@ -199,6 +199,14 @@ public:
     // capture the IP BEFORE the kick zeroes the slot.
     bool GetPeerAddress(int peerSlot, char* out, int outLen) const;
 
+    // Client-only: when the HOST closes our connection (kick / ban / host quit /
+    // host crash), GNS reports a human-readable reason -- the m_szEndDebug string
+    // the host passed to CloseConnection (e.g. "kicked by host" / "banned by
+    // host"). net_pump reads this ONCE on the client's disconnect edge to log WHY
+    // before fleeing to the main menu. Returns the reason and clears it (empty if
+    // none pending). Thread-safe (set on the net thread, taken on the game thread).
+    std::string TakeHostCloseReason();
+
     // GNS C-callback adapter -- public so the file-local trampoline in
     // session.cpp can forward to it.
     static void OnConnStatusChanged(void* info);
@@ -310,6 +318,14 @@ private:
     // Phase 2: the host's accept predicate (ban filter). nullptr = accept all.
     // Set before Start() spawns the net thread; read on the net thread.
     AcceptFilterFn acceptFilter_ = nullptr;
+
+    // Client-only: the reason GNS reported when the host closed our connection
+    // (m_szEndDebug). Written on the net thread in the slot-0 ClosedByPeer/
+    // ProblemDetectedLocally branch; taken (move + clear) on the game thread by
+    // net_pump via TakeHostCloseReason. Tiny dedicated mutex (rare path, no lock-
+    // order entanglement with remoteMutex_ / reliableInboxMutex_).
+    std::mutex  hostCloseMutex_;
+    std::string hostCloseReason_;
 
     // This peer's own per-process session epoch (PR-FOUNDATION-1b v16).
     // Minted non-zero via std::random_device at Start(); stamped on the
