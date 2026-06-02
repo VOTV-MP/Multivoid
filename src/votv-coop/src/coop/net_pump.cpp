@@ -567,7 +567,19 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // Session::Stop (client leaves itself; host ends the session for all -- "HOST
         // DEATH ENDS SESSION"). Permadeath-rejoinable: reconnect re-Starts + OnSessionStart
         // re-arms. `dead` is true ONLY on real death (faint/KO/manual-C leave it false).
-        if (!g_localDeathHandled && session.connected()) {
+        // Death-flee gate. A HOST is "still hosting" in THREE states -- Handshaking
+        // (no client yet), Connected (clients present), Disconnected (clients all
+        // left, listen socket still up; session_status.cpp:325) -- and ALL THREE
+        // balloon on death the same way (VOTV's possessed-ragdoll leak is LOCAL,
+        // independent of client count). So the host gates on running() [Start..Stop],
+        // not connected(): a solo host (or one whose clients had left) gated on
+        // connected() died UNDETECTED and ballooned -- the bug this fixes. The CLIENT
+        // keeps connected(): if it loses the host it is already ejected by the
+        // host-close path above (which latches g_localDeathHandled), so connected() is
+        // its precise window. One relaxed atomic load either way -- same hot-path cost
+        // as the connected() it replaces.
+        const bool sessionLiveForDeath = isHost ? session.running() : session.connected();
+        if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal, isRagdoll, dead) && dead) {
                 g_localDeathHandled = true;
