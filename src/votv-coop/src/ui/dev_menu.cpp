@@ -80,18 +80,32 @@ void Render() {
         return;
     }
 
-    // Left: nav tree (Category > SubCategory).
-    ImGui::BeginChild("##nav", ImVec2(170, 0), ImGuiChildFlags_Borders);
+    // Left: nav tree. A major category renders as a FRAMED, accent-coloured section
+    // bar (solid slate frame + light-blue label + taller row) so it clearly outranks
+    // its plain, indented sub-category items below. NoTreePushOnOpen -> we own the
+    // child indent explicitly (no TreePop bookkeeping).
+    ImGui::BeginChild("##nav", ImVec2(185, 0), ImGuiChildFlags_Borders);
+    bool firstCat = true;
     for (const auto& cat : tree) {
         if (cat.dev && !devMode) continue;
-        if (ImGui::TreeNodeEx(cat.name, ImGuiTreeNodeFlags_DefaultOpen)) {
-            for (const auto& sub : cat.subs) {
-                if (sub.dev && !devMode) continue;
-                const bool selected = (g_selSub == &sub);
-                if (ImGui::Selectable(sub.name, selected)) { g_selCat = &cat; g_selSub = &sub; }
-            }
-            ImGui::TreePop();
+        if (!firstCat) ImGui::Spacing();
+        firstCat = false;
+        ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.18f, 0.20f, 0.25f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.30f, 0.38f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.45f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.55f, 0.82f, 1.00f, 1.00f));
+        const bool open = ImGui::TreeNodeEx(cat.name,
+            ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen |
+            ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+        ImGui::PopStyleColor(4);
+        if (!open) continue;
+        ImGui::Indent(14.0f);
+        for (const auto& sub : cat.subs) {
+            if (sub.dev && !devMode) continue;
+            const bool selected = (g_selSub == &sub);
+            if (ImGui::Selectable(sub.name, selected)) { g_selCat = &cat; g_selSub = &sub; }
         }
+        ImGui::Unindent(14.0f);
     }
     ImGui::EndChild();
 
