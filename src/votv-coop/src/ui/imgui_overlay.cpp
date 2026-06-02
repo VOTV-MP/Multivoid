@@ -9,9 +9,15 @@
 //      exist -- capture them, bring up ImGui + the DX11 backend + a WndProc hook,
 //      then each frame run the ImGui pass and draw the active UI surface.
 //   3. WndProcDetour: F1 toggles; while visible, route input to ImGui + swallow it
-//      so the game doesn't also act on it. UE4 uses RAW INPUT for mouselook and
-//      locks the OS cursor, so we keep a VIRTUAL cursor (accumulated from WM_INPUT
-//      deltas) and feed it to ImGui -- otherwise the software cursor would stick.
+//      so the game doesn't also act on it (we still eat WM_INPUT so UE4's raw-input
+//      mouselook can't spin the camera behind the menu). CURSOR model: ImGui draws
+//      its OWN software cursor (io.MouseDrawCursor=true) -- always visible regardless
+//      of UE4's OS-cursor state (UE4 keeps the OS cursor HIDDEN during play, so a
+//      bare OS cursor would be invisible). To track the real mouse we no-op
+//      SetCursorPos while the menu is up (the SetCursorPos hook) so UE4 can't snap
+//      the cursor back to the window center, and we force-hide the OS cursor on
+//      WM_SETCURSOR so it can never become a second cursor. ONE visible cursor.
+//      Keyboard nav (arrows + Enter) via ImGuiConfigFlags_NavEnableKeyboard.
 // DX12 is detected (GetDevice for ID3D11Device fails) and logged but not yet drawn.
 
 #include "ui/imgui_overlay.h"
@@ -24,7 +30,6 @@
 #include <d3d11.h>
 #include <dxgi.h>
 
-#include <algorithm>
 #include <atomic>
 #include <cstdint>
 
@@ -49,6 +54,13 @@ ResizeBuffersFn g_origResize  = nullptr;
 void*           g_presentTarget = nullptr;
 void*           g_resizeTarget  = nullptr;
 
+// user32!SetCursorPos -- hooked so we can no-op UE4's per-tick cursor recentering
+// while the menu is visible (otherwise the OS cursor is snapped back to the window
+// center every frame and can't track the mouse over the menu).
+using SetCursorPosFn = BOOL(WINAPI*)(int, int);
+SetCursorPosFn  g_origSetCursorPos  = nullptr;
+void*           g_setCursorPosTarget = nullptr;
+
 ID3D11Device*           g_device  = nullptr;
 ID3D11DeviceContext*    g_context = nullptr;
 ID3D11RenderTargetView* g_rtv     = nullptr;
@@ -60,19 +72,6 @@ std::atomic<bool> g_imguiReady{false};  // first-present init done (DX11)
 std::atomic<bool> g_dx12Logged{false};  // logged the DX12-unsupported notice once
 std::atomic<bool> g_visible{false};     // menu shown (F1)
 std::atomic<bool> g_inFrame{false};     // render-thread inside the ImGui pass (shutdown waits on this)
-
-// Virtual cursor in client pixels. UE4 locks the OS cursor (raw-input mouselook),
-// so GetCursorPos returns a fixed point and ImGui's software cursor would stick.
-// We accumulate WM_INPUT relative deltas here (window thread writes, render thread
-// reads) and push it into io.MousePos each frame.
-std::atomic<int> g_vcurX{0};
-std::atomic<int> g_vcurY{0};
-
-void ClientSize(int& w, int& h) {
-    RECT rc{};
-    if (g_hwnd && ::GetClientRect(g_hwnd, &rc)) { w = rc.right - rc.left; h = rc.bottom - rc.top; }
-    else { w = 1920; h = 1080; }
-}
 
 void CreateRTV(IDXGISwapChain* sc) {
     if (g_rtv || !g_device) return;
@@ -90,36 +89,33 @@ void ReleaseRTV() {
     if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
 }
 
+// While the menu owns input, swallow UE4's per-tick cursor recenter so the single
+// real OS cursor tracks the mouse instead of being snapped to the window center.
+BOOL WINAPI SetCursorPosDetour(int x, int y) {
+    if (g_visible.load(std::memory_order_relaxed)) return TRUE;
+    return g_origSetCursorPos(x, y);
+}
+
 LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    // F1 edge -> toggle the menu (consume the key so the game never sees F1). On
-    // OPEN, seed the virtual cursor at the window center so it starts on-screen.
+    // F1 edge -> toggle the menu (consume the key so the game never sees F1). No
+    // ShowCursor: VOTV already shows the OS cursor during play (it's the one that was
+    // stuck at center); io.MouseDrawCursor=false + the SetCursorPos no-op simply lets
+    // that single cursor track instead of being recentered. Touching the ShowCursor
+    // counter here only risks drift across the non-F1 visibility paths (env-open, the
+    // SEH render-fault reset, SetVisible) -- state, not a counter, drives the cursor.
     if (msg == WM_KEYDOWN && wParam == VK_F1) {
-        const bool now = !g_visible.load(std::memory_order_relaxed);
-        if (now) { int w, h; ClientSize(w, h); g_vcurX.store(w / 2, std::memory_order_relaxed); g_vcurY.store(h / 2, std::memory_order_relaxed); }
-        g_visible.store(now, std::memory_order_relaxed);
+        g_visible.store(!g_visible.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return 0;
     }
     if (g_visible.load(std::memory_order_relaxed) && g_imguiReady.load(std::memory_order_acquire)) {
-        // Accumulate raw mouse deltas into the virtual cursor (UE4 mouselook path).
-        if (msg == WM_INPUT) {
-            UINT size = 0;
-            ::GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
-            BYTE buf[64];
-            if (size > 0 && size <= sizeof(buf) &&
-                ::GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, buf, &size, sizeof(RAWINPUTHEADER)) == size) {
-                const RAWINPUT* ri = reinterpret_cast<const RAWINPUT*>(buf);
-                if (ri->header.dwType == RIM_TYPEMOUSE &&
-                    (ri->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
-                    int w, h; ClientSize(w, h);
-                    int nx = g_vcurX.load(std::memory_order_relaxed) + ri->data.mouse.lLastX;
-                    int ny = g_vcurY.load(std::memory_order_relaxed) + ri->data.mouse.lLastY;
-                    g_vcurX.store(std::clamp(nx, 0, w), std::memory_order_relaxed);
-                    g_vcurY.store(std::clamp(ny, 0, h), std::memory_order_relaxed);
-                }
-            }
-        }
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
+        // Force-hide the OS cursor over the client area: ImGui draws its own, so a
+        // visible OS cursor would be a second one. SetCursor(NULL) wins regardless of
+        // UE4's ShowCursor count; return TRUE halts further WM_SETCURSOR processing.
+        if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) { ::SetCursor(nullptr); return TRUE; }
         // Swallow input the game would otherwise act on so clicks/keys go to ImGui.
+        // WM_INPUT is swallowed too: it's UE4's raw-input mouselook feed -- if the
+        // game saw it, the camera would spin while we move the mouse over the menu.
         switch (msg) {
             case WM_INPUT:
             case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
@@ -156,7 +152,10 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     if (!ImGui::GetCurrentContext()) { ImGui::CreateContext(); ctxCreated = true; }
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;     // don't litter a layout .ini next to the game
-    io.MouseDrawCursor = true;    // software cursor -- the game hides the OS cursor
+    io.MouseDrawCursor = true;    // ImGui draws its OWN cursor -- always visible (UE4 keeps
+                                  // the OS cursor hidden during play); the WM_SETCURSOR
+                                  // hide + SetCursorPos no-op keep it the only one + tracking
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // arrow-key move + Enter/Space activate
     ImGui::StyleColorsDark();
 
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
@@ -190,11 +189,7 @@ bool BringUpDX11(IDXGISwapChain* sc) {
 void RenderFrameGuarded() {
     __try {
         ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        // Override the mouse position with our virtual (raw-input) cursor: the
-        // backend's GetCursorPos read is wrong while the game locks the OS cursor.
-        ImGui::GetIO().MousePos = ImVec2(static_cast<float>(g_vcurX.load(std::memory_order_relaxed)),
-                                         static_cast<float>(g_vcurY.load(std::memory_order_relaxed)));
+        ImGui_ImplWin32_NewFrame();  // sets io.MousePos from the real OS cursor (WM_MOUSEMOVE / GetCursorPos)
         ImGui::NewFrame();
 
         ui::dev_menu::Render();
@@ -306,6 +301,21 @@ bool Init() {
         UE_LOGE("imgui_overlay: MinHook Install failed (present=%d resize=%d)", p ? 1 : 0, r ? 1 : 0);
         return false;
     }
+    // Hook user32!SetCursorPos so we can neutralize UE4's per-tick cursor recenter
+    // while the menu is visible (non-fatal if it can't hook -- the menu still works,
+    // the cursor just won't track as cleanly).
+    if (HMODULE u32 = ::GetModuleHandleW(L"user32.dll")) {
+        g_setCursorPosTarget = reinterpret_cast<void*>(::GetProcAddress(u32, "SetCursorPos"));
+        if (g_setCursorPosTarget &&
+            ue_wrap::hook::Install(g_setCursorPosTarget, &SetCursorPosDetour,
+                                   reinterpret_cast<void**>(&g_origSetCursorPos))) {
+            UE_LOGI("imgui_overlay: SetCursorPos hook installed (@%p) -- UE4 cursor recenter is "
+                    "neutralized while the menu is up so the OS cursor tracks the mouse", g_setCursorPosTarget);
+        } else {
+            UE_LOGW("imgui_overlay: could not hook SetCursorPos -- cursor may not track over the menu");
+            g_setCursorPosTarget = nullptr;
+        }
+    }
     g_installed.store(true, std::memory_order_release);
     // Autonomous screenshot test: VOTVCOOP_MENU_OPEN=1 starts the menu visible (the
     // smoke can't press F1). Win32 env read (no CRT getenv -- /W4-clean in a DLL).
@@ -330,6 +340,7 @@ void Shutdown() {
     const bool wasReady = g_imguiReady.exchange(false);
     if (g_presentTarget) ue_wrap::hook::Uninstall(g_presentTarget);
     if (g_resizeTarget)  ue_wrap::hook::Uninstall(g_resizeTarget);
+    if (g_setCursorPosTarget) { ue_wrap::hook::Uninstall(g_setCursorPosTarget); g_setCursorPosTarget = nullptr; }
     // Wait out any render-thread frame in flight before tearing down the context
     // (MinHook re-arms the original but does not join in-flight detour calls).
     for (int i = 0; i < 200 && g_inFrame.load(std::memory_order_acquire); ++i) ::Sleep(1);
