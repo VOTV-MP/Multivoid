@@ -169,6 +169,36 @@ public:
         return peerLanesConfigured_[peerSlot].load(std::memory_order_acquire);
     }
 
+    // --- Phase 2 moderation (host-only host-admin actions) ------------------
+
+    // Accept filter: a predicate the host runs against an incoming connection's
+    // remote IP (dotted-decimal, port excluded) BEFORE AcceptConnection. Return
+    // true to allow, false to reject (the host closes the connection with a
+    // "banned" reason). Wired by the harness to coop::ban_list::IsBanned. Set
+    // ONCE at boot, before Start() spawns the net thread (read on the net thread
+    // without a lock -- the thread-creation in Start() is the happens-before).
+    // MTA precedent: the join-time ban check in CGame::Packet_PlayerJoinData
+    // (reference/mtasa-blue/.../CGame.cpp:1973).
+    using AcceptFilterFn = bool (*)(const char* remoteIp);
+    void SetAcceptFilter(AcceptFilterFn fn) { acceptFilter_ = fn; }
+
+    // Host: forcibly disconnect the client at peerSlot (1..kMaxPeers-1). Closes
+    // the GNS connection (no linger -- an admin kick drops immediately; `reason`
+    // is delivered to the peer's status callback m_szEndDebug so it can show
+    // WHY) and runs the SAME per-slot teardown the ClosedByPeer path does (GNS
+    // delivers no status callback for a connection WE close). Returns false if
+    // the slot is out of range (or 0, the host self) or not connected. Thread-
+    // safe (GNS API calls are; the bookkeeping uses the same atomics/mutexes the
+    // net thread does). MTA precedent: CGame::QuitPlayer(QUIT_KICK).
+    bool Kick(int peerSlot, const char* reason);
+
+    // Query the remote IP (dotted-decimal, port excluded) of the connection at
+    // peerSlot into `out` (recommend >= 48 bytes, SteamNetworkingIPAddr::
+    // k_cchMaxString). Returns false (and out[0]='\0') if the slot isn't
+    // connected or GNS has no remote address yet. Used by the BAN action to
+    // capture the IP BEFORE the kick zeroes the slot.
+    bool GetPeerAddress(int peerSlot, char* out, int outLen) const;
+
     // GNS C-callback adapter -- public so the file-local trampoline in
     // session.cpp can forward to it.
     static void OnConnStatusChanged(void* info);
@@ -276,6 +306,10 @@ private:
     std::atomic<uint64_t> sent_{0};
     std::atomic<uint64_t> recv_{0};
     std::atomic<int> lastRttMs_{0};
+
+    // Phase 2: the host's accept predicate (ban filter). nullptr = accept all.
+    // Set before Start() spawns the net thread; read on the net thread.
+    AcceptFilterFn acceptFilter_ = nullptr;
 
     // This peer's own per-process session epoch (PR-FOUNDATION-1b v16).
     // Minted non-zero via std::random_device at Start(); stamped on the

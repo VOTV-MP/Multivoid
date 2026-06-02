@@ -57,6 +57,31 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     }
 }
 
+// Phase 2 ban filter, shared by BOTH host accept paths (the normal
+// None->Connecting edge AND the late-register path in the Connected branch when
+// GNS skips Connecting). Returns true to ACCEPT the incoming connection.
+//
+// FAIL-CLOSED: when a filter is installed but the remote IP can't be resolved
+// (GetConnectionInfo fails or yields an empty address), we REJECT -- an
+// unverifiable peer must not slip past an active banlist. For direct-UDP
+// connections m_addrRemote is populated by the Connecting edge (the GNS server
+// example reads it there), so this only rejects genuinely-unresolvable peers.
+bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
+                   Session::AcceptFilterFn filter) {
+    if (!filter) return true;  // no banlist installed -> accept all
+    char ip[SteamNetworkingIPAddr::k_cchMaxString] = {};
+    SteamNetConnectionInfo_t cinfo{};
+    if (sockets->GetConnectionInfo(hConn, &cinfo)) {
+        cinfo.m_addrRemote.ToString(ip, sizeof(ip), /*bWithPort*/false);
+    }
+    if (!ip[0]) {
+        UE_LOGW("net: incoming connection has no resolvable remote IP -- "
+                "rejecting (fail-closed ban check)");
+        return false;
+    }
+    return filter(ip);
+}
+
 }  // namespace
 
 int Session::FindFreePeerSlotForClient() {
@@ -123,6 +148,16 @@ void Session::HandleConnStatusChanged(void* info) {
     if (cfg_.role == Role::Host &&
         oldState == k_ESteamNetworkingConnectionState_None &&
         newState == k_ESteamNetworkingConnectionState_Connecting) {
+        // Ban filter (Phase 2): reject a banned (or unverifiable) remote IP
+        // before we accept it. MTA does the equivalent at join time
+        // (CGame.cpp:1973); doing it at the Connecting edge is earlier + cheaper
+        // (no slot consumed, no handshake). Fail-closed (see AcceptAllowed).
+        if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
+            UE_LOGW("net: rejecting incoming connection (banned remote IP)");
+            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                     "banned", /*bEnableLinger*/false);
+            return;
+        }
         const int slot = FindFreePeerSlotForClient();
         if (slot < 0) {
             UE_LOGW("net: host full (%d/%d slots) -- rejecting incoming connection",
@@ -168,6 +203,15 @@ void Session::HandleConnStatusChanged(void* info) {
         // happens on host, the slot is unregistered. Late-register here so
         // the connection has a known slot and SetConnectionUserData lands.
         if (slot < 0 && cfg_.role == Role::Host) {
+            // GNS skipped None->Connecting, so the accept-edge ban filter above
+            // never ran for this connection. Re-run it here (Phase 2 audit fix)
+            // -- otherwise a banned IP that hits this rare path would be admitted.
+            if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
+                UE_LOGW("net: rejecting late-register connection (banned remote IP)");
+                sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                         "banned", /*bEnableLinger*/false);
+                return;
+            }
             slot = FindFreePeerSlotForClient();
             if (slot < 0) {
                 UE_LOGW("net: host full at Connected (Connecting was skipped) -- closing h=0x%08x",
@@ -282,6 +326,68 @@ void Session::HandleConnStatusChanged(void* info) {
             UE_LOGI("net: all peers gone -- session back to Disconnected");
         }
     }
+}
+
+bool Session::Kick(int peerSlot, const char* reason) {
+    // Slot 0 is the host self -- never kickable. Bounds-reject everything else.
+    if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
+    // Atomically claim the slot so a concurrent natural ClosedByPeer on the net
+    // thread and this kick can't both run the teardown (exchange -> 0 means we
+    // own the close; a 0 result means someone already closed it).
+    const uint32_t hConn = peerConns_[peerSlot].exchange(0);
+    if (hConn == 0) return false;
+    peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
+
+    if (auto* sockets = SteamNetworkingSockets()) {
+        // No linger: an admin kick should drop the peer immediately. The reason
+        // string rides to the peer's status callback (m_szEndDebug) so a kicked
+        // client can surface WHY -- same channel as the protocol-mismatch close.
+        sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
+                                 k_ESteamNetConnectionEnd_App_Generic,
+                                 reason ? reason : "kicked", /*bEnableLinger*/false);
+    }
+
+    // GNS does not deliver a status callback to US for a connection we close,
+    // so replicate the ClosedByPeer per-slot teardown here. (Even if a terminal
+    // callback for this handle did race in on the net thread, the exchange(0)
+    // above means FindPeerSlotForConn returns -1 there, so its teardown is
+    // skipped and the only double-action would be a CloseConnection on an
+    // already-closed handle -- which GNS handles idempotently. Teardown runs
+    // exactly once, here.) Reset remote pose/prop/ragdoll state (so a
+    // reconnecting peer's seq-from-0 isn't stale-dropped) and drop any reliable
+    // messages still queued from this slot.
+    { std::lock_guard<std::mutex> lk(remoteMutex_); ResetPeerRemoteState(peerSlot); }
+    { std::lock_guard<std::mutex> lk(reliableInboxMutex_);
+      for (auto it = reliableInbox_.begin(); it != reliableInbox_.end();) {
+          if (it->senderPeerSlot == peerSlot) it = reliableInbox_.erase(it);
+          else ++it;
+      } }
+
+    // Aggregate state: stay Connected if any peer remains; otherwise downgrade
+    // and clear everything (mirrors the ClosedByPeer branch above).
+    if (connectedPeerCount() == 0) {
+        state_.store(ConnState::Disconnected);
+        { std::lock_guard<std::mutex> lk(remoteMutex_);
+          for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
+        { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
+        lastRttMs_.store(0);
+    }
+    UE_LOGI("net: kicked peer slot %d (reason='%s')", peerSlot, reason ? reason : "kicked");
+    return true;
+}
+
+bool Session::GetPeerAddress(int peerSlot, char* out, int outLen) const {
+    if (!out || outLen <= 0) return false;
+    out[0] = '\0';
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    const uint32_t hConn = peerConns_[peerSlot].load();
+    if (hConn == 0) return false;
+    auto* sockets = SteamNetworkingSockets();
+    if (!sockets) return false;
+    SteamNetConnectionInfo_t info{};
+    if (!sockets->GetConnectionInfo(static_cast<HSteamNetConnection>(hConn), &info)) return false;
+    info.m_addrRemote.ToString(out, static_cast<size_t>(outLen), /*bWithPort*/false);
+    return out[0] != '\0';
 }
 
 }  // namespace coop::net

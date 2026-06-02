@@ -1,0 +1,127 @@
+// coop/ban_list.cpp -- see coop/ban_list.h.
+
+#include "coop/ban_list.h"
+
+#include "ue_wrap/log.h"
+
+#include <windows.h>
+
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+namespace fs = std::filesystem;
+
+namespace coop::ban_list {
+namespace {
+
+struct Record {
+    std::string nick;
+    long long   bannedUnix = 0;
+};
+
+std::mutex g_mutex;
+std::unordered_map<std::string, Record> g_bans;  // keyed by IP; guarded by g_mutex
+
+// Banlist lives next to the save backups (save_guard uses the same SaveGames
+// root): %LOCALAPPDATA%\VotV\Saved\coop\banlist.txt. A dedicated `coop` subdir
+// keeps mod-owned host config out of the game's own save namespace.
+fs::path BanlistPath() {
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    return fs::path(buf) / L"VotV" / L"Saved" / L"coop" / L"banlist.txt";
+}
+
+// Rewrite the whole file from the in-memory set. Caller holds g_mutex. The file
+// is small (a banlist, not a log), so a full rewrite on each Add is simplest and
+// keeps disk == memory exactly (no append-only drift / dup lines). Best-effort:
+// a write failure warns but leaves the in-memory ban in force for the session.
+void WriteFileLocked() {
+    const fs::path path = BanlistPath();
+    if (path.empty()) {
+        UE_LOGW("ban_list: LOCALAPPDATA unresolved -- ban not persisted (in-memory only)");
+        return;
+    }
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);  // ok if it already exists
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) {
+        UE_LOGW("ban_list: cannot open '%ls' for write -- ban not persisted", path.c_str());
+        return;
+    }
+    f << "# VOTV coop banlist -- one ban per line: ip|nick|unixtime\n";
+    for (const auto& [ip, rec] : g_bans) {
+        f << ip << '|' << rec.nick << '|' << rec.bannedUnix << '\n';
+    }
+}
+
+}  // namespace
+
+void Load() {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_bans.clear();
+    const fs::path path = BanlistPath();
+    if (path.empty()) return;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) {
+        UE_LOGI("ban_list: no banlist file yet (%ls) -- starting empty", path.c_str());
+        return;
+    }
+    std::ifstream f(path);
+    if (!f) {
+        UE_LOGW("ban_list: cannot open '%ls' for read", path.c_str());
+        return;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        // Parse "ip|nick|unixtime". Be lenient: nick may be empty; a missing
+        // time field defaults to 0. Only the IP (field 0) is required.
+        const size_t p1 = line.find('|');
+        const std::string ip = line.substr(0, p1);
+        if (ip.empty()) continue;
+        std::string nick;
+        long long when = 0;
+        if (p1 != std::string::npos) {
+            const size_t p2 = line.find('|', p1 + 1);
+            nick = line.substr(p1 + 1, (p2 == std::string::npos) ? std::string::npos : p2 - (p1 + 1));
+            if (p2 != std::string::npos) {
+                const std::string t = line.substr(p2 + 1);
+                if (!t.empty()) { try { when = std::stoll(t); } catch (...) { when = 0; } }
+            }
+        }
+        g_bans[ip] = Record{ nick, when };
+    }
+    UE_LOGI("ban_list: loaded %zu banned IP(s) from %ls", g_bans.size(), path.c_str());
+}
+
+bool IsBanned(const char* ip) {
+    if (!ip || !ip[0]) return false;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_bans.find(ip) != g_bans.end();
+}
+
+void Add(const char* ip, const char* nick) {
+    if (!ip || !ip[0]) {
+        UE_LOGW("ban_list: Add called with empty IP -- ignored");
+        return;
+    }
+    std::lock_guard<std::mutex> lk(g_mutex);
+    Record rec;
+    rec.nick = nick ? nick : "";
+    rec.bannedUnix = static_cast<long long>(::time(nullptr));
+    g_bans[ip] = rec;
+    WriteFileLocked();
+    UE_LOGI("ban_list: banned IP %s (nick='%s') -- %zu total", ip, rec.nick.c_str(), g_bans.size());
+}
+
+int Count() {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return static_cast<int>(g_bans.size());
+}
+
+}  // namespace coop::ban_list

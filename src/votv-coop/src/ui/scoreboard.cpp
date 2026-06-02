@@ -2,12 +2,22 @@
 
 #include "ui/scoreboard.h"
 
+#include "coop/moderation.h"
 #include "coop/roster.h"
+#include "ui/dev_menu.h"
 
 #include "imgui.h"
 
+#include <cstdio>
+
 namespace ui::scoreboard {
 namespace {
+
+// Pending permanent-ban confirmation (render-thread only). >=0 == a ban is
+// awaiting the modal's confirm; the nick is copied for the prompt text so the
+// modal survives the row's roster snapshot changing under it.
+int  g_banConfirmSlot = -1;
+char g_banConfirmNick[24] = {};
 
 // A small filled status dot drawn inline before a name (green = connected). Uses
 // the window draw list + a Dummy spacer so the following SameLine() name lands
@@ -63,7 +73,13 @@ void Render() {
         ImGui::Spacing();
 
         // Role is conveyed by NICK COLOUR (host = gold, client = soft white) -- no
-        // separate role text column. "(you)" marks the local player.
+        // separate role text column. "(you)" marks the local player. On the HOST's
+        // interactive board, every OTHER connected client's row is a clickable
+        // Selectable that opens an action popup (Kick / Ban always; Teleport-to-me
+        // under [dev] devkeys). A client's board (and the host's own row) is plain
+        // text -- the client peek is passive (no input capture).
+        const bool host = LocalIsHost();
+        const bool dev  = ui::dev_menu::DevMode();
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
         if (ImGui::BeginTable("##roster", 1, tflags)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
@@ -74,14 +90,70 @@ void Render() {
                                                 : ImVec4(0.86f, 0.89f, 0.94f, 1.0f);  // client = soft white
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
+                ImGui::PushID(r.slot);
                 StatusDot(r.connected);
                 ImGui::SameLine();
-                ImGui::TextColored(nickCol, "%s", nick);
-                if (r.isLocal) { ImGui::SameLine(0.0f, 6.0f); ImGui::TextDisabled("(you)"); }
+
+                const bool actionable = host && !r.isLocal && r.connected && r.slot >= 1;
+                if (actionable) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, nickCol);
+                    // DontClosePopups: clicking the row toggles the popup; the
+                    // selection state itself is meaningless here.
+                    if (ImGui::Selectable(nick, false, ImGuiSelectableFlags_DontClosePopups))
+                        ImGui::OpenPopup("##act");
+                    ImGui::PopStyleColor();
+
+                    if (ImGui::BeginPopup("##act")) {
+                        ImGui::TextDisabled("%s", nick);
+                        ImGui::Separator();
+                        if (dev && ImGui::MenuItem("Teleport to me"))
+                            coop::moderation::TeleportSlotToMe(r.slot);
+                        if (ImGui::MenuItem("Kick"))
+                            coop::moderation::KickSlot(r.slot);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
+                        const bool banClicked = ImGui::MenuItem("Ban (permanent)");
+                        ImGui::PopStyleColor();
+                        if (banClicked) {
+                            g_banConfirmSlot = r.slot;
+                            std::snprintf(g_banConfirmNick, sizeof(g_banConfirmNick), "%s", nick);
+                        }
+                        ImGui::EndPopup();
+                    }
+                } else {
+                    ImGui::TextColored(nickCol, "%s", nick);
+                    if (r.isLocal) { ImGui::SameLine(0.0f, 6.0f); ImGui::TextDisabled("(you)"); }
+                }
+                ImGui::PopID();
             }
             ImGui::EndTable();
         }
         if (s.count == 0) ImGui::TextDisabled("No players.");
+
+        // Permanent-ban confirmation modal (shared across rows; g_banConfirmSlot
+        // carries the pending slot). A ban is destructive + irreversible from the
+        // UI, so it gets an explicit confirm step. Opened once on the transition;
+        // closed by either button.
+        if (g_banConfirmSlot >= 0 && !ImGui::IsPopupOpen("Confirm ban##coop"))
+            ImGui::OpenPopup("Confirm ban##coop");
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Confirm ban##coop", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Permanently ban %s?", g_banConfirmNick);
+            ImGui::TextDisabled("Disconnected now and blocked by IP on reconnect.");
+            ImGui::Spacing();
+            if (ImGui::Button("Ban", ImVec2(110, 0))) {
+                coop::moderation::BanSlot(g_banConfirmSlot);
+                g_banConfirmSlot = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+                g_banConfirmSlot = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
 

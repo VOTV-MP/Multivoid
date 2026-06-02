@@ -119,21 +119,41 @@ void ApplyLocally(const ApplyArgs& args) {
 
 namespace {
 
-void SnapshotAndSend(coop::net::Session* s) {
+// Snapshot the host's own mainPlayer pose into a TeleportClientPayload. Game
+// thread only (reads the live actor). Returns false if there's no local player.
+bool SnapshotHostPose(coop::net::TeleportClientPayload& p) {
     void* local = coop::players::Registry::Get().Local();
     if (!local) {
-        UE_LOGW("teleport_client: F4 pressed but no local mainPlayer_C");
-        return;
+        UE_LOGW("teleport_client: no local mainPlayer_C to snapshot");
+        return false;
     }
     const ue_wrap::FVector  loc = E::GetActorLocation(local);
     const ue_wrap::FRotator rot = E::GetActorRotation(local);
-    coop::net::TeleportClientPayload p{};
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+    return true;
+}
+
+void SnapshotAndSend(coop::net::Session* s) {
+    coop::net::TeleportClientPayload p{};
+    if (!SnapshotHostPose(p)) return;
     const bool sent = s->SendReliable(coop::net::ReliableKind::TeleportClient, &p, sizeof(p));
     if (!sent) UE_LOGW("teleport_client: broadcast failed (channel busy or not connected)");
-    else       UE_LOGI("teleport_client: sent host pose to client (loc=(%.0f,%.0f,%.0f))",
-                       loc.X, loc.Y, loc.Z);
+    else       UE_LOGI("teleport_client: sent host pose to all clients (loc=(%.0f,%.0f,%.0f))",
+                       p.locX, p.locY, p.locZ);
+}
+
+void SnapshotAndSendToSlot(coop::net::Session* s, int slot) {
+    coop::net::TeleportClientPayload p{};
+    if (!SnapshotHostPose(p)) return;
+    // Single-target reliable (default senderSlot=0 -> the receiving client sees
+    // senderPeerSlot==0 == host, passing event_feed's host-only TeleportClient
+    // trust gate). Only this peer moves.
+    const bool sent = s->SendReliableToSlot(slot, coop::net::ReliableKind::TeleportClient,
+                                            &p, sizeof(p));
+    if (!sent) UE_LOGW("teleport_client: per-slot send to slot %d failed (not connected?)", slot);
+    else       UE_LOGI("teleport_client: sent host pose to slot %d (loc=(%.0f,%.0f,%.0f))",
+                       slot, p.locX, p.locY, p.locZ);
 }
 
 }  // namespace
@@ -148,6 +168,19 @@ void TeleportClientsToHost() {
         return;
     }
     GT::Post([s] { SnapshotAndSend(s); });
+}
+
+void TeleportSlotToHost(int peerSlot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) {
+        UE_LOGI("teleport_client: per-slot ignored -- host-only (local role is not Host)");
+        return;
+    }
+    if (peerSlot < 1 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) {
+        UE_LOGW("teleport_client: per-slot TP rejected -- slot %d out of range", peerSlot);
+        return;
+    }
+    GT::Post([s, peerSlot] { SnapshotAndSendToSlot(s, peerSlot); });
 }
 
 }  // namespace coop::dev::teleport_client

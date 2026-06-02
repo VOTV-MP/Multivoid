@@ -177,6 +177,8 @@ add_library(votv-coop SHARED
     src/ui/dev_menu.cpp
     src/ui/scoreboard.cpp
     src/coop/roster.cpp
+    src/coop/ban_list.cpp
+    src/coop/moderation.cpp
     src/harness/harness.cpp
     src/harness/autotest.cpp
     src/harness/autotest_dispatch.cpp

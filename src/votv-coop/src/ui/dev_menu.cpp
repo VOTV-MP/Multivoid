@@ -111,6 +111,8 @@ void Init() {
                 ::coop::ini_config::IsIniKeyTrue("devkeys");
 }
 
+bool DevMode() { return g_devMode; }
+
 void Render() {
     const bool devMode = g_devMode;
     const auto& tree = Tree();

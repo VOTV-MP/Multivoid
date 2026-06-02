@@ -15,6 +15,8 @@
 #include "coop/grab_observer.h"
 #include "coop/item_activate.h"
 #include "coop/players_registry.h"
+#include "coop/ban_list.h"
+#include "coop/moderation.h"
 #include "coop/nameplate.h"
 #include "coop/roster.h"
 #include "coop/net/session.h"
@@ -70,6 +72,15 @@ namespace cfg = harness::config;
 // snapshots and sends the local player's pose. Off unless a scenario
 // starts it.
 coop::net::Session g_session;
+
+// Phase 2 host moderation: the accept predicate wired into the host Session
+// (Session::SetAcceptFilter). Returns true to allow an incoming IP, false to
+// reject a banned one. A plain free function so it converts to the
+// Session::AcceptFilterFn function pointer. Read on the net thread; reads only
+// coop::ban_list's own mutexed state.
+bool BanAcceptFilter(const char* remoteIp) {
+    return !coop::ban_list::IsBanned(remoteIp);
+}
 
 // ReadLocalPose extracted to coop/net_pump.cpp (PR-4.13).
 
@@ -489,6 +500,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             coop::dev::restore_vitals::SetSession(&g_session);
             coop::dev::teleport_client::SetSession(&g_session);
             coop::dev::force_weather::SetSession(&g_session);
+            coop::moderation::SetSession(&g_session);
             // PR-FOUNDATION-2 (A): snapshot the canonical save BEFORE coop starts
             // injecting state. Host-only -- the host's save is the one written
             // during coop (clients are blocked from saving). Runs on this bringup
@@ -496,6 +508,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // Start. Idempotent per process.
             if (netCfg.role == coop::net::Role::Host) {
                 coop::save_guard::BackupSaveOnSessionStart();
+                // Phase 2: load the persistent banlist + install the accept
+                // filter BEFORE Start spawns the net thread (the filter pointer
+                // is read there). Host-only -- a client never accepts incoming
+                // connections, so it has no banlist.
+                coop::ban_list::Load();
+                g_session.SetAcceptFilter(&BanAcceptFilter);
             }
             g_session.Start(netCfg);
             UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
@@ -636,6 +654,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         coop::dev::restore_vitals::SetSession(&g_session);
         coop::dev::teleport_client::SetSession(&g_session);
         coop::dev::force_weather::SetSession(&g_session);
+        coop::moderation::SetSession(&g_session);
+        // netloopback is a host self-test (it dials 127.0.0.1). Load the banlist
+        // + install the accept filter for parity with the real host path; a
+        // banned localhost would be unusual but the wiring is identical.
+        coop::ban_list::Load();
+        g_session.SetAcceptFilter(&BanAcceptFilter);
         g_session.Start(cfg);
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;

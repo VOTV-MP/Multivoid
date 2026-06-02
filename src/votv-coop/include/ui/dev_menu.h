@@ -21,4 +21,9 @@ void Init();
 // Build the menu window (called inside the overlay's ImGui frame, render thread).
 void Render();
 
+// The dev switch state ([dev] devkeys AND master enabled), latched by Init().
+// Lock-free read of a boot-set bool. Other overlay surfaces (the TAB scoreboard)
+// use this to gate dev-only actions (e.g. the host's "Teleport to me" entry).
+bool DevMode();
+
 }  // namespace ui::dev_menu

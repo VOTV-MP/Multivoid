@@ -24,6 +24,13 @@ void SetSession(coop::net::Session* session);
 // posted to it).
 void TeleportClientsToHost();
 
+// Phase 2 host action menu (TAB scoreboard): teleport ONE specific client (the
+// peer at `peerSlot`, 1..kMaxPeers-1) to the host's pose. Same snapshot as
+// TeleportClientsToHost but a single-target SendReliableToSlot instead of a
+// broadcast, so only the clicked client moves. HOST-only; no-ops on a client or
+// for an out-of-range slot. Safe to call off the game thread.
+void TeleportSlotToHost(int peerSlot);
+
 // Receiver: apply the teleport on the local mainPlayer (K2_TeleportTo).
 // Called from event_feed.cpp on incoming ReliableKind::TeleportClient AND
 // gated to client-role receivers (host echo is a no-op). Game thread only.
