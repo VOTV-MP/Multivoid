@@ -86,6 +86,7 @@ inline constexpr int32_t ElemsPerChunk = 64 * 1024;
 inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cluster, serial}
 inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObjectFlags (PendingKill/Unreachable -> dying)
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
+inline constexpr size_t mainGameInstance_GameMode = 0x01E1;  // TEnumAsByte<enum_gamemode::Type> (story/sandbox/...; the menu sets it on load from the slot-name prefix, our LoadStorySave must too) -- mainGameInstance.hpp:11
 inline constexpr size_t UWidgetComponent_WidgetClass = 0x0480;  // TSubclassOf<UUserWidget> (set before register so InitWidget builds it)
 inline constexpr size_t UWidgetComponent_BlendMode = 0x04E4;    // EWidgetBlendMode (uint8): 0=Opaque,1=Masked(ctor DEFAULT!),2=Transparent
 inline constexpr size_t UWidgetComponent_bIsTwoSided = 0x04E5;  // bool

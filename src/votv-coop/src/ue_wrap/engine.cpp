@@ -130,6 +130,71 @@ void* g_storyGsCdo = nullptr;
 void* g_loadGameFn = nullptr;
 void* g_setSaveSlotFn = nullptr;
 void* g_storySave = nullptr;  // cached USaveGame* (LoadGameFromSlot once)
+
+// Story/sandbox GameMode fix (2026-06-03). VOTV stores a save's game mode ONLY in
+// the slot-name PREFIX: getSavePrefix(mode) (on Uui_saveSlots_C) yields the prefix
+// VOTV uses for that mode, and a slot whose name starts with that prefix IS that
+// mode. The menu sets mainGameInstance.GameMode @0x01E1 from this on load; our
+// LoadStorySave bypass did NOT, so a story save loaded in the default (sandbox)
+// mode (user-flagged 2026-06-02). Resolved once, then re-used across the boot poll.
+void* g_saveSlotsUiCdo  = nullptr;  // Uui_saveSlots_C CDO (getSavePrefix is a pure mode->prefix map)
+void* g_getSavePrefixFn = nullptr;  // Uui_saveSlots_C::getSavePrefix(enum_gamemode) -> FString prefix
+bool  g_gameModeApplied = false;    // latch: derive + write GameMode once per session
+constexpr uint8_t kEnumGamemodeCount = 8;  // enum_gamemode::enum_MAX (enum_gamemode_enums.hpp)
+
+// Derive the slot's game mode from its name prefix (exactly as VOTV's menu does --
+// NO hardcoded enum value, so it is correct for story AND sandbox AND any future
+// mode) and write mainGameInstance.GameMode @0x01E1. Retried each boot poll until
+// Uui_saveSlots_C is loaded; runs the derivation once it is, then latches. Game
+// thread only. Logs every getSavePrefix(mode) result so the mapping is verifiable.
+void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
+    if (g_gameModeApplied || !gi || !slot) return;
+    if (!g_saveSlotsUiCdo) g_saveSlotsUiCdo = R::FindClassDefaultObject(L"ui_saveSlots_C");
+    if (g_saveSlotsUiCdo && !g_getSavePrefixFn) {
+        if (void* c = R::ClassOf(g_saveSlotsUiCdo))
+            g_getSavePrefixFn = R::FindFunction(c, L"getSavePrefix");
+    }
+    if (!g_saveSlotsUiCdo || !g_getSavePrefixFn) {
+        // Menu save-slots widget not loaded yet at this boot stage. Retry next poll
+        // (do NOT latch). If it never loads, the warning persists + GameMode stays
+        // as-is (current behaviour) -- a visible signal to pivot.
+        UE_LOGW("engine: ApplyGameModeFromSlot -- ui_saveSlots_C cdo=%p getSavePrefix=%p not loaded yet; "
+                "GameMode left as-is (will retry)", g_saveSlotsUiCdo, g_getSavePrefixFn);
+        return;
+    }
+    const std::wstring slotStr(slot);
+    int    bestMode = -1;
+    size_t bestLen  = 0;
+    for (uint8_t mode = 0; mode < kEnumGamemodeCount; ++mode) {
+        ParamFrame f(g_getSavePrefixFn);
+        f.Set<uint8_t>(L"Index", mode);  // TEnumAsByte<enum_gamemode::Type> = 1 byte
+        if (!Call(g_saveSlotsUiCdo, f)) continue;
+        const R::FString pre = f.Get<R::FString>(L"ReturnValue");
+        std::wstring preStr;
+        if (pre.Data && pre.Num > 1) preStr.assign(pre.Data, pre.Data + (pre.Num - 1));  // Num counts the null
+        UE_LOGI("engine: getSavePrefix(%u) = '%ls'", static_cast<unsigned>(mode), preStr.c_str());
+        // Longest matching prefix wins (defends against one prefix being a prefix of
+        // another, e.g. "" matching everything).
+        if (!preStr.empty() && slotStr.rfind(preStr, 0) == 0 && preStr.size() > bestLen) {
+            bestLen  = preStr.size();
+            bestMode = static_cast<int>(mode);
+        }
+    }
+    // The widget is loaded + getSavePrefix is deterministic -> this is our one shot;
+    // latch regardless of match (re-running would give the identical result).
+    g_gameModeApplied = true;
+    uint8_t* gm = reinterpret_cast<uint8_t*>(gi) + profile::off::mainGameInstance_GameMode;
+    if (bestMode >= 0) {
+        const uint8_t old = *gm;
+        *gm = static_cast<uint8_t>(bestMode);
+        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' prefix-matched GameMode=%d (was %u, prefix len %zu); "
+                "set @0x01E1 (story-loads-as-sandbox fix)",
+                slot, bestMode, static_cast<unsigned>(old), bestLen);
+    } else {
+        UE_LOGW("engine: ApplyGameModeFromSlot -- NO getSavePrefix prefix matched slot '%ls' (GameMode stays %u); "
+                "inspect the getSavePrefix dump above", slot, static_cast<unsigned>(*gm));
+    }
+}
 }  // namespace
 
 // Called repeatedly by the harness boot loop. Returns true ONLY once a mainPlayer_C
@@ -204,6 +269,11 @@ bool LoadStorySave(const wchar_t* slot) {
         UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
     }
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
+
+    // Set the GameMode (story / sandbox / ...) from the slot prefix BEFORE the
+    // travel -- VOTV's menu does this on load; our bypass didn't, so a story save
+    // loaded as sandbox. Retried each poll until the save-slots widget is loaded.
+    ApplyGameModeFromSlot(gi, slot);
 
     std::wstring openCmd = L"open ";
     openCmd += P::name::GameplayLevel;
