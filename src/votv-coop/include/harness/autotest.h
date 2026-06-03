@@ -32,6 +32,12 @@ DWORD WINAPI GrabTestThread(LPVOID arg);
 void RunAutonomousClumpTest();
 DWORD WINAPI ClumpTestThread(LPVOID arg);
 
+// Clump VISIBILITY probe (env VOTVCOOP_RUN_CLUMPVIS_PROBE=1). Solo. Spawns a bare
+// prop_garbageClump_C in front of the player + logs whether its StaticMesh asset is
+// null (empty) or named (visible) -- gates the mannequin-model rework. Launch via mp.py clumpvis.
+void RunClumpVisProbe();
+DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
+
 // Phase 5F: autonomous flashlight-toggle test. Calls
 // AmainPlayer_C::`Flashlight Update` via reflection 4 times with 2 s
 // spacing. The POST observer detour catches each call + sends the

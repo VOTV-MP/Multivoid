@@ -3,7 +3,6 @@
 #include "coop/element/player.h"
 #include "coop/element/registry.h"
 
-#include "coop/held_clump_sync.h"
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
 #include "coop/player_damage.h"
@@ -74,50 +73,6 @@ bool VerifySenderEidRange(int senderPeerSlot,
         return false;
     }
     return true;
-}
-
-// v25 held-clump: resolve a sender-eid-carrying reliable packet to the HOLDER's
-// peer slot, applying the same self-echo + role-range trust + eid->slot resolution
-// the ItemActivate case uses (factored so the two held-clump cases don't duplicate
-// it). Returns the slot in [0, kMaxPeers) to route to, or >= kMaxPeers to DROP
-// (already logged). `kind` labels the log lines.
-uint8_t ResolveHolderSlot(uint32_t senderElementId, int senderPeerSlot,
-                          const char* kind) {
-    const auto selfEid = coop::players::Registry::Get().LocalPlayerElementId();
-    const bool selfEchoByEid =
-        (senderElementId != 0u && senderElementId != coop::element::kInvalidId &&
-         selfEid != coop::element::kInvalidId && senderElementId == selfEid);
-    const uint8_t selfPeerId = coop::players::Registry::Get().LocalPeerId();
-    const bool eidMissing =
-        (senderElementId == 0u || senderElementId == coop::element::kInvalidId);
-    const bool selfEchoBySlot =
-        (eidMissing && senderPeerSlot >= 0 &&
-         static_cast<uint8_t>(senderPeerSlot) == selfPeerId);
-    if (selfEchoByEid || selfEchoBySlot) {
-        UE_LOGI("event_feed: %s self-echo (eid=0x%08x slot=%d) -- dropping",
-                kind, senderElementId, senderPeerSlot);
-        return net::kMaxPeers;
-    }
-    if (!VerifySenderEidRange(senderPeerSlot, senderElementId, kind)) {
-        return net::kMaxPeers;
-    }
-    uint8_t resolved = coop::players::kPeerIdUnknown;
-    if (!eidMissing) {
-        auto* el = coop::element::Registry::Get().Get(senderElementId);
-        if (el && el->GetType() == coop::element::ElementType::Player) {
-            resolved = static_cast<coop::element::Player*>(el)->PeerSlot();
-        }
-    }
-    if (resolved >= net::kMaxPeers) {
-        if (senderPeerSlot >= 0 && senderPeerSlot < net::kMaxPeers) {
-            resolved = static_cast<uint8_t>(senderPeerSlot);
-        } else {
-            UE_LOGW("event_feed: %s could not resolve holder slot (eid=0x%08x slot=%d) "
-                    "-- dropping", kind, senderElementId, senderPeerSlot);
-            return net::kMaxPeers;
-        }
-    }
-    return resolved;
 }
 
 }  // namespace
@@ -686,53 +641,6 @@ void Update(net::Session& session, void* localPlayer) {
                     ::coop::players::Registry::Get().Puppet(peerSlotCopy);
                 void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
                 ::coop::item_activate::ApplyToPuppetOrDefer(peerSlotCopy, puppetNow, pCopy);
-            });
-            break;
-        }
-        case net::ReliableKind::HeldClumpGrab: {
-            // v25: the holder grabbed a non-keyable trash clump. Spawn a mirror +
-            // attach it to the holder puppet's hand bone (held_clump_sync). Routes
-            // to the holder via senderElementId -> slot (fallback header senderSlot),
-            // same as ItemActivate. [[project-bug-trash-chippile-uaf-crash]]
-            if (msg.payloadLen < sizeof(net::HeldClumpGrabPayload)) {
-                UE_LOGW("event_feed: HeldClumpGrab payload too short (%zu < %zu)",
-                        static_cast<size_t>(msg.payloadLen), sizeof(net::HeldClumpGrabPayload));
-                break;
-            }
-            net::HeldClumpGrabPayload p{};
-            std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t slot =
-                ResolveHolderSlot(p.senderElementId, msg.senderPeerSlot, "HeldClumpGrab");
-            if (slot >= net::kMaxPeers) break;
-            // Re-fetch the puppet INSIDE the lambda (Destroy() can recycle the slot
-            // between this post and dispatch -- same UAF guard as ItemActivate).
-            net::HeldClumpGrabPayload pCopy = p;
-            const uint8_t slotCopy = slot;
-            ue_wrap::game_thread::Post([slotCopy, pCopy] {
-                ::coop::RemotePlayer* rp =
-                    ::coop::players::Registry::Get().Puppet(slotCopy);
-                void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
-                ::coop::held_clump_sync::ApplyGrab(slotCopy, puppetNow, pCopy);
-            });
-            break;
-        }
-        case net::ReliableKind::HeldClumpRelease: {
-            // v25: the holder dropped/threw the clump -- detach the slot's mirror,
-            // re-enable physics, apply the throw velocity (held_clump_sync).
-            if (msg.payloadLen < sizeof(net::HeldClumpReleasePayload)) {
-                UE_LOGW("event_feed: HeldClumpRelease payload too short (%zu < %zu)",
-                        static_cast<size_t>(msg.payloadLen), sizeof(net::HeldClumpReleasePayload));
-                break;
-            }
-            net::HeldClumpReleasePayload p{};
-            std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t slot =
-                ResolveHolderSlot(p.senderElementId, msg.senderPeerSlot, "HeldClumpRelease");
-            if (slot >= net::kMaxPeers) break;
-            net::HeldClumpReleasePayload pCopy = p;
-            const uint8_t slotCopy = slot;
-            ue_wrap::game_thread::Post([slotCopy, pCopy] {
-                ::coop::held_clump_sync::ApplyRelease(slotCopy, pCopy);
             });
             break;
         }

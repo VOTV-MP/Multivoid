@@ -48,7 +48,8 @@ namespace E = ue_wrap::engine;
 struct ActiveDrive {
     void*        actor = nullptr;
     void*        mesh = nullptr;
-    std::string  lastKey;        // ASCII (the Aprop_C save UUID format)
+    std::string  lastKey;        // ASCII (the Aprop_C save UUID format); empty for a clump
+    uint32_t     lastEid = 0;    // v26: Prop Element id identity for the non-keyable clump
     uint64_t     lastApplyMs = 0;
 };
 std::array<ActiveDrive, coop::players::kMaxPeers> g_drives{};
@@ -280,32 +281,65 @@ int FindSlotByKey(const coop::net::WireKey& k) {
     return -1;
 }
 
-void ResolveAndStartDrive(int slot, const coop::net::WireKey& k) {
-    const std::wstring keyW = KeyToWString(k);
-    void* prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
+// v26: resolve a Prop Element id to its live mirror actor. The trash clump is
+// non-keyable (setKey doesn't stick), so it's identified by OUR eid instead of the
+// BP Key (PropPoseSnapshot.elementId). null on miss/dead.
+void* ResolveLiveActorByEid(uint32_t eid) {
+    if (eid == 0 || eid == coop::element::kInvalidId) return nullptr;
+    coop::element::Element* e = coop::element::Registry::Get().Get(eid);
+    if (!e) return nullptr;
+    void* actor = e->GetActor();
+    // IsLiveByIndex (NOT IsLive): the mirror actor is engine-GC-owned + unrooted, so a
+    // GC pass between the tick that queued the pose and this one could free it. IsLive
+    // would deref the freed pointer to read its InternalIndex (UAF); IsLiveByIndex reads
+    // only the cached GUObjectArray slot. Index captured at RegisterPropMirror (SetActor).
+    // Audit finding 2026-06-03. [[feedback-islive-unsafe-on-freed-cached-pointer]]
+    return (actor && R::IsLiveByIndex(actor, e->GetInternalIdx())) ? actor : nullptr;
+}
+
+// Toggle physics on a drive target. Aprop_C props go through their StaticMesh
+// (DriveSimulate, the existing path). A non-Aprop_C clump has mesh==null (the
+// GetStaticMesh-null 2a-safety gate) -- it uses the GENERIC root-component physics
+// instead. UAF-safe: the mirror is OUR stable spawn (it never morphs/self-frees like
+// the holder's source clump), so touching its root physics is safe; the gate still
+// protects the SENDER's snapshot path. [[project-bug-trash-chippile-uaf-crash]]
+void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
+    if (mesh) DriveSimulate(mesh, simulate);
+    else if (actor && R::IsLive(actor)) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
+}
+
+void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
+    const std::wstring keyW = KeyToWString(pose.key);
+    // KEY first (Aprop_C), then EID fallback (the non-keyable clump streams key=None).
+    void* prop = nullptr;
+    if (!keyW.empty() && keyW != L"None")
+        prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
+    if (!prop && pose.elementId != 0)
+        prop = ResolveLiveActorByEid(pose.elementId);
     if (!prop) {
-        UE_LOGW("remote_prop: slot %d incoming PropPose key '%ls' (len=%d) -- no local match in GUObjectArray",
-                slot, keyW.c_str(), static_cast<int>(k.len));
+        UE_LOGW("remote_prop: slot %d incoming PropPose key '%ls' eid=%u -- no local match (key or eid)",
+                slot, keyW.c_str(), pose.elementId);
         return;
     }
-    // GetStaticMesh returns null for non-Aprop_C keyed interactables
-    // (garbageClump/chipPile) by design -- they are driven KINEMATICALLY (mesh
-    // null, no physics, just the per-tick SetActorLocation below). Only a true
+    // GetStaticMesh returns null for the non-Aprop_C clump by design (2a safety) --
+    // it's driven via the generic root physics (DriveTogglePhysics). Only a true
     // Aprop_C with a missing mesh is an error worth bailing on.
     void* mesh = ue_wrap::prop::GetStaticMesh(prop);
     if (!mesh && ue_wrap::prop::IsDescendantOfProp(prop)) {
         UE_LOGW("remote_prop: slot %d prop %p (Aprop_C) has null StaticMesh -- cannot drive", slot, prop);
         return;
     }
-    UE_LOGI("remote_prop: slot %d GRAB-IN '%ls' -> local actor=%p mesh=%p (%s)",
-            slot, keyW.c_str(), prop, mesh,
-            mesh ? "physics; SetSimulatePhysics false" : "kinematic (non-Aprop_C)");
-    // Disable PhysX simulation so the per-packet SetActorLocation sticks. No-op
-    // when mesh is null -- the kinematic non-Aprop_C path drives by position only.
-    DriveSimulate(mesh, false);
+    UE_LOGI("remote_prop: slot %d GRAB-IN key='%ls' eid=%u -> local actor=%p mesh=%p (%s)",
+            slot, keyW.c_str(), pose.elementId, prop, mesh,
+            mesh ? "Aprop physics-off" : "clump kinematic (generic physics-off)");
+    // Disable PhysX simulation so the per-packet SetActorLocation sticks (a clean
+    // kinematic follow -- the clump uses the generic root toggle, NOT a fight-the-sim
+    // crutch). The clump floats in front of the puppet exactly like the mannequin.
+    DriveTogglePhysics(prop, mesh, false);
     g_drives[slot].actor = prop;
     g_drives[slot].mesh  = mesh;
-    g_drives[slot].lastKey.assign(k.data, k.len);
+    g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
+    g_drives[slot].lastEid = pose.elementId;
     // Seed the timeout clock with NOW. Without this, lastApplyMs stays at
     // zero (struct default); the stream-stop timeout at Tick() compares
     // (NowMs() - lastApplyMs > 500) and fires immediately, releasing the
@@ -338,19 +372,23 @@ void Tick(coop::net::Session& session) {
         bool isNew = false;
         const bool have = session.TryGetRemotePropPose(slot, pose, &isNew);
         if (have && isNew) {
-            // First snapshot OR key changed -> resolve + SetSimulatePhysics(false).
-            if (!drive.actor || !KeyMatchesCache(slot, pose.key)) {
+            // First snapshot OR identity changed (key OR eid) -> resolve + physics-off.
+            // The eid check catches a re-grab where the clump's key stays None but a
+            // NEW clump (new eid) is held -- otherwise the empty-key cache would keep
+            // driving the OLD released clump.
+            if (!drive.actor || !KeyMatchesCache(slot, pose.key) || drive.lastEid != pose.elementId) {
                 if (drive.actor) {
                     // The peer at this slot switched to a different prop
                     // without sending Release -- implicit release (re-enable
-                    // physics on the prior body).
-                    UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key)", slot);
-                    DriveSimulate(drive.mesh, true);
+                    // physics on the prior body; generic for a clump).
+                    UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
+                    DriveTogglePhysics(drive.actor, drive.mesh, true);
                     drive.actor = nullptr;
                     drive.mesh = nullptr;
                     drive.lastKey.clear();
+                    drive.lastEid = 0;
                 }
-                ResolveAndStartDrive(slot, pose.key);
+                ResolveAndStartDrive(slot, pose);
             }
             if (drive.actor && R::IsLive(drive.actor)) {
                 ue_wrap::FVector  loc{pose.x, pose.y, pose.z};
@@ -373,6 +411,7 @@ void Tick(coop::net::Session& session) {
                 drive.actor = nullptr;
                 drive.mesh = nullptr;
                 drive.lastKey.clear();
+                drive.lastEid = 0;
             }
             continue;
         }
@@ -381,10 +420,11 @@ void Tick(coop::net::Session& session) {
         if (drive.actor && (nowMs - drive.lastApplyMs) > 500) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
-            DriveSimulate(drive.mesh, true);
+            DriveTogglePhysics(drive.actor, drive.mesh, true);
             drive.actor = nullptr;
             drive.mesh = nullptr;
             drive.lastKey.clear();
+            drive.lastEid = 0;
         }
     }
 }
@@ -451,6 +491,17 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) -- launch speed %.1f cm/s > threshold %.1f",
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
+    } else if (propActor && R::IsLive(propActor)) {
+        // Non-Aprop_C clump (null mesh): re-enable physics + apply the throw velocity
+        // via the GENERIC root-component path so it flies + lands like the mannequin
+        // (the user's "physics like the mannequin"). [[project-bug-trash-chippile-uaf-crash]]
+        ue_wrap::engine::SetActorSimulatePhysics(propActor, true);
+        ue_wrap::engine::SetActorRootPhysicsVelocity(
+            propActor,
+            ue_wrap::FVector{payload.linVelX, payload.linVelY, payload.linVelZ},
+            ue_wrap::FVector{payload.angVelX, payload.angVelY, payload.angVelZ});
+        UE_LOGI("remote_prop: clump RELEASE -> generic physics on + velocity |v|=%.1f cm/s (actor=%p)",
+                linSpeed, propActor);
     }
     // Clear only the matching slot's drive state -- other slots' active
     // drives (if any) stay intact.
@@ -458,6 +509,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         g_drives[releasedSlot].actor = nullptr;
         g_drives[releasedSlot].mesh = nullptr;
         g_drives[releasedSlot].lastKey.clear();
+        g_drives[releasedSlot].lastEid = 0;
     }
 }
 
@@ -654,6 +706,7 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
             d.actor = nullptr;
             d.mesh = nullptr;
             d.lastKey.clear();
+            d.lastEid = 0;
         }
     }
     // 2026-05-25 cross-peer destroy: if this peer's local mainPlayer is
@@ -684,6 +737,7 @@ void ForceRelease() {
         d.actor = nullptr;
         d.mesh = nullptr;
         d.lastKey.clear();
+        d.lastEid = 0;
         ++released;
     }
     if (released > 0) {
@@ -731,6 +785,7 @@ void OnDisconnectForSlot(int peerSlot) {
     d.actor = nullptr;
     d.mesh = nullptr;
     d.lastKey.clear();
+    d.lastEid = 0;
 }
 
 }  // namespace coop::remote_prop

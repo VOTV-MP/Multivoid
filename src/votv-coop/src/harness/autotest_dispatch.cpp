@@ -34,10 +34,14 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // Autonomous grab test: both peers (host drives grab/move/release via native
     // PhysicsHandle UFunctions; client scan-only for cross-peer FName stability).
     SpawnIf("VOTVCOOP_RUN_GRAB_TEST", "grab test", &GrabTestThread, role);
-    // Held-clump ATTACH e2e (v25): HOST spawns + "grabs" a prop_garbageClump_C so
-    // the held-edge broadcasts HeldClumpGrab; CLIENT spawns a mirror + attaches it
-    // to the host puppet's hand bone (held_clump_sync), then detaches on release.
-    SpawnIf("VOTVCOOP_RUN_CLUMP_TEST", "held-clump attach e2e test", &ClumpTestThread, role);
+    // Held-clump e2e (v26 mannequin model): HOST spawns + "grabs" a prop_garbageClump_C;
+    // the held-edge broadcasts a PropSpawn + streams PropPose keyed by our EID; the
+    // CLIENT spawns the visible clump mirror + drives it kinematically by eid, physics
+    // on release. Validates the non-keyable clump on the prop pipeline + no crash.
+    SpawnIf("VOTVCOOP_RUN_CLUMP_TEST", "held-clump mannequin e2e test", &ClumpTestThread, role);
+    // Clump VISIBILITY probe: solo. Spawns a bare prop_garbageClump_C + logs its
+    // StaticMesh asset (null vs named) -- gates the mannequin-model clump rework.
+    SpawnIf("VOTVCOOP_RUN_CLUMPVIS_PROBE", "clump visibility probe", &ClumpVisProbeThread, role);
     // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
     // peer's puppet should reflect it via the ItemActivate wire path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);

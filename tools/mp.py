@@ -1313,6 +1313,42 @@ def cmd_menutravel(args) -> None:
     sys.exit(0)
 
 
+def cmd_clumpvis(args) -> None:
+    """SOLO clump-visibility probe. Launches ONE host with VOTVCOOP_RUN_CLUMPVIS_PROBE=1;
+    the probe spawns a bare prop_garbageClump_C ~150cm in front of the player + logs
+    whether its StaticMesh asset is null (empty) or named (visible), then holds it for
+    a screenshot. Gates the mannequin-model clump rework: visible -> no mesh copy
+    needed; empty -> the mirror must copy the source mesh over the wire."""
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "clumpvis_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before clumpvis")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_CLUMPVIS_PROBE"] = "1"
+
+    log("--- HOST LAUNCH (solo clump-visibility probe) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "votv-coop.log"
+    if _wait_for_log(host_log, "CLUMPVIS READY", args.probe_timeout, "HOST"):
+        time.sleep(2)
+        p = shots_dir / "host_clumpvis.png"
+        if _capture_window(host_pid, p):
+            log(f"  clumpvis shot: {p}")
+    else:
+        log("WARN: never saw CLUMPVIS READY")
+    # Surface the decisive 'bare clump ... HAS A MESH / EMPTY' line.
+    time.sleep(2)
+    tail_log(host_log, 12, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+    sys.exit(0)
+
+
 def cmd_fogprobe(args) -> None:
     """SOLO SP fog ON/OFF model + clear-path probe. Launches ONE host instance with
     VOTVCOOP_RUN_FOG_PROBE=1 (no client). The probe forces fog ON via the cycle's own
@@ -1632,6 +1668,15 @@ def main() -> None:
                               help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_menutravel.add_argument(flag, **kw)
     p_menutravel.set_defaults(func=cmd_menutravel)
+
+    p_clumpvis = sub.add_parser("clumpvis",
+                                help="SOLO probe: spawn a bare prop_garbageClump_C + report whether its StaticMesh asset is null (empty) or named (visible)")
+    p_clumpvis.add_argument("--probe-timeout", type=int, default=150,
+                            help="seconds to wait for CLUMPVIS READY (covers boot into gameplay)")
+    p_clumpvis.add_argument("--memory-limit-gb", type=float, default=12.0,
+                            help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_clumpvis.add_argument(flag, **kw)
+    p_clumpvis.set_defaults(func=cmd_clumpvis)
 
     p_fogprobe = sub.add_parser("fogprobe",
                                 help="SOLO SP probe: force fog on, sample density/target/actors, run the RE'd clear sequence -- gates the host-authoritative weather fix")

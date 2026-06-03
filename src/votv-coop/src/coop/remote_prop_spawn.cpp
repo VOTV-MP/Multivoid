@@ -13,6 +13,7 @@
 #include "coop/remote_prop_spawn.h"
 
 #include "coop/element/element.h"
+#include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/prop_echo_suppress.h"
 #include "coop/prop_element_tracker.h"
@@ -140,12 +141,16 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot) {
             payload.locX, payload.locY, payload.locZ,
             payload.rotPitch, payload.rotYaw, payload.rotRoll,
             static_cast<int>(payload.physFlags));
-    if (classW.empty() || keyW.empty() || keyW == L"None") {
-        // "None" = FName(NAME_None) stringified -- host shouldn't send these
-        // (lifecycle + snapshot guards prevent it), but reject defensively
-        // so any legacy/in-flight stragglers don't trigger the dedup spam
-        // loop on the receiver.
-        UE_LOGW("remote_prop::OnSpawn: unkeyed (cls='%ls' key='%ls') -- dropping",
+    // A non-keyable trash CLUMP rides this same pipeline identified by our EID, not a
+    // Key (setKey doesn't stick on it). For the clump, key is None but elementId != 0;
+    // it's deduped + registered + resolved by eid. Aprop_C keeps the keyed path.
+    // [[project-bug-trash-chippile-uaf-crash]]
+    const bool eidOnly = (keyW.empty() || keyW == L"None");
+    if (classW.empty() || (eidOnly && payload.elementId == 0)) {
+        // "None" = FName(NAME_None) stringified. A keyed prop with no key AND no eid is
+        // a legacy/in-flight straggler -- reject defensively so it doesn't trigger the
+        // dedup spam loop on the receiver.
+        UE_LOGW("remote_prop::OnSpawn: unkeyed + no eid (cls='%ls' key='%ls') -- dropping",
                 classW.c_str(), keyW.c_str());
         return;
     }
@@ -158,16 +163,25 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot) {
     // mushroom at a different position; snapshot bootstrap teleports
     // client's to match host's). 2026-05-24.
     bool dedupeFellBack = false;
-    void* existing = coop::prop_element_tracker::ResolveLiveActorByKey(keyW, &dedupeFellBack);
-    if (dedupeFellBack) {
-        // The key index was STALE for this prop (a world-change purged the indexed
-        // actors and the slow steady-state re-seed hasn't caught up) -- this
-        // de-dupe paid an O(N) GUObjectArray scan. During the connect snapshot
-        // ~2300 PropSpawns arrive in a burst; without intervention EACH would scan
-        // -> O(N_props x N_objects) -> the client RSS balloons multi-GB. Self-heal:
-        // drain dead + re-seed the index NOW (throttled to once / 200 ms) so the
-        // rest of this same-tick burst resolves O(1). [[project-bug-prop-resnapshot-leak]]
-        coop::prop_element_tracker::ReconcileIndexThrottled();
+    void* existing = nullptr;
+    if (eidOnly) {
+        // Non-keyable clump: dedup by EID (the Registry mirror binding), not key.
+        if (auto* e = coop::element::Registry::Get().Get(payload.elementId)) {
+            void* a = e->GetActor();
+            if (a && R::IsLive(a)) existing = a;
+        }
+    } else {
+        existing = coop::prop_element_tracker::ResolveLiveActorByKey(keyW, &dedupeFellBack);
+        if (dedupeFellBack) {
+            // The key index was STALE for this prop (a world-change purged the indexed
+            // actors and the slow steady-state re-seed hasn't caught up) -- this
+            // de-dupe paid an O(N) GUObjectArray scan. During the connect snapshot
+            // ~2300 PropSpawns arrive in a burst; without intervention EACH would scan
+            // -> O(N_props x N_objects) -> the client RSS balloons multi-GB. Self-heal:
+            // drain dead + re-seed the index NOW (throttled to once / 200 ms) so the
+            // rest of this same-tick burst resolves O(1). [[project-bug-prop-resnapshot-leak]]
+            coop::prop_element_tracker::ReconcileIndexThrottled();
+        }
     }
     if (existing) {
         // Skip the convergence write if THIS prop
@@ -215,10 +229,13 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot) {
     // client's pre-existing one. Conservative 30 cm radius + same-class
     // gate. Mismatches in dense-prop areas surface in the log.
     constexpr float kFuzzyRadiusCm = 30.f;
-    if (void* fuzzy = ue_wrap::prop::FindNearbySameClass(
+    // Non-keyable clump: skip the key/position fuzzy dedup (it rekeys the match via
+    // setKey, meaningless for the clump) -- go straight to a fresh eid-bound spawn.
+    void* fuzzy = eidOnly ? nullptr : ue_wrap::prop::FindNearbySameClass(
             classW,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
-            kFuzzyRadiusCm)) {
+            kFuzzyRadiusCm);
+    if (fuzzy) {
         // Mirror of the exact-Key guard: if the fuzzy match resolves to the
         // actor currently under active kinematic drive, skip convergence.
         // Otherwise the SetActorLocation here

@@ -48,11 +48,22 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     if (!keyStr.empty() && keyStr != L"None") return false;
 
     const std::wstring cls = R::ClassNameOf(heldActor);
-    keyStr = coop::prop_synth_key::EnsureKeyForBroadcast(heldActor, keyStr, /*mintForAprop=*/true);
+    // Aprop_C trash items get a force-minted Key (their UCS holds it). The non-Aprop_C
+    // trash CLUMP (prop_garbageClump_C) is NON-KEYABLE -- setKey doesn't stick (the
+    // source re-reads None, autotest 33e7f25) -- so it rides the SAME prop pipeline but
+    // is identified by our EID instead: broadcast with key=None + the eid, and the
+    // receiver resolves its mirror by eid (PropPoseSnapshot.elementId, v26). The clump
+    // renders on its own (bare spawn = the 'dirtball' mesh), so no mesh transfer needed.
+    // [[project-bug-trash-chippile-uaf-crash]]
+    const bool isAprop = ue_wrap::prop::IsDescendantOfProp(heldActor);
+    keyStr = coop::prop_synth_key::EnsureKeyForBroadcast(heldActor, keyStr, /*mintForAprop=*/isAprop);
     if (keyStr.empty() || keyStr == L"None") {
-        UE_LOGW("trash_collect: held item %p cls='%ls' Key still None after force-mint -- cannot mirror",
-                heldActor, cls.c_str());
-        return false;
+        if (isAprop) {
+            UE_LOGW("trash_collect: Aprop item %p cls='%ls' Key still None after force-mint -- cannot mirror",
+                    heldActor, cls.c_str());
+            return false;
+        }
+        keyStr.clear();  // clump: wire key stays None; the eid is the cross-peer identity
     }
     // Create the Prop Element shadow + dedupe latch so the item's eventual
     // K2_DestroyActor unwinds it through the normal destroy path.

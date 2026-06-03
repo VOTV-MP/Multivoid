@@ -578,24 +578,12 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
 bool AttachActorToRagdollBody(void* actor, void* body);
 bool DetachActorFromRagdollBody(void* actor);
 
-// ---- Held-clump attach substrate (v25, coop/held_clump_sync) ----
-// Generic actor-attach + root-physics primitives for the held-clump mirror (the
-// trash ball that can't ride the keyed prop path). See ue_wrap/engine_attach.cpp +
-// [[project-bug-trash-chippile-uaf-crash]]. All game-thread only; each IsLive-gates
-// its arguments. Distinct from AttachActorToRagdollBody (which is playerRagdoll_C-
-// specific); these resolve the puppet's mesh_playerVisible @0x4F8 + a hand bone.
-
-// Attach `actor` (its root) to `puppetActor`'s body skeletal mesh (mesh_playerVisible
-// @0x4F8) at the hand bone, KeepWorld, so it rigidly follows the puppet's hand. On the
-// FIRST call this DUMPS the puppet mesh's full bone list to the log (verify-not-guess)
-// and resolves the hand bone from a candidate list; falls back to the mesh root
-// (NAME_None) if no candidate matches (clump follows the body, never crashes). Returns
-// false on failure. Game thread only.
-bool AttachActorToPuppetHand(void* actor, void* puppetActor);
-
-// Detach `actor` from its parent (KeepWorld -- it stays where it was). Generic
-// (any attached actor). Game thread only.
-bool DetachActorFromParent(void* actor);
+// ---- Generic actor root-physics substrate (ue_wrap/engine_attach.cpp) ----
+// Root-component physics primitives used by the held-clump mirror (coop/remote_prop):
+// they operate via K2_GetRootComponent, NEVER the Aprop_C StaticMesh offset, so they
+// work on the non-Aprop_C trash clump (the mannequin model -- kinematic while held,
+// physics + throw velocity on release). Game-thread only; each IsLive-gates its args.
+// [[project-bug-trash-chippile-uaf-crash]]
 
 // SetSimulatePhysics(simulate) on `actor`'s root primitive component (via
 // K2_GetRootComponent). Used to freeze the clump mirror while attached (kinematic
