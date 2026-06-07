@@ -24,8 +24,10 @@
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
+#include "ue_wrap/puppet.h"      // ReadCharacterIsFalling (NPC in-air state bit)
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/types.h"       // NormalizeAxis
 
 #include <atomic>
 #include <cmath>
@@ -537,46 +539,10 @@ void OnDisconnect() {
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
 }
 
-void QueueConnectBroadcastForSlot(int peerSlot) {
-    // HOST-only: re-send EntitySpawn (class + CURRENT transform) for every already-spawned NPC
-    // to the freshly-connected client `peerSlot`, so a joiner mirrors NPCs that spawned BEFORE it
-    // joined (user 2026-06-04). The client's npc_mirror::OnEntitySpawn materializes each; the
-    // MirrorManager::Install is idempotent so a re-send to an already-mirroring peer is a no-op.
-    auto* s = LoadSession();
-    if (!s || s->role() != coop::net::Role::Host) return;
-    if (peerSlot < 1) return;  // SendReliableToSlot range-validates the upper bound
-
-    std::vector<coop::element::Npc*> elems;
-    NpcMirrors().Snapshot(elems);
-    int sent = 0, unbound = 0;
-    for (coop::element::Npc* el : elems) {
-        if (!el) continue;
-        void* actor = el->GetActor();
-        // Skip elements with no bound actor (a dev-spawned NPC whose POST observer didn't fire --
-        // see npc_sync.h follow-up) or a GC-purged actor; a real game-spawned NPC binds in POST.
-        if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
-        coop::net::EntitySpawnPayload p{};
-        const std::string& tn = el->GetTypeName();
-        p.className.len = 0;
-        for (size_t i = 0; i < tn.size() && i < 63; ++i)
-            p.className.data[p.className.len++] = tn[i];
-        p.elementId = static_cast<uint32_t>(el->GetId());
-        const auto loc = ue_wrap::engine::GetActorLocation(actor);
-        const auto rot = ue_wrap::engine::GetActorRotation(actor);
-        p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
-        p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
-        if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
-            ++sent;
-    }
-    UE_LOGI("npc-sync: connect-snapshot -- sent %d existing NPC(s) to slot %d (%zu Npc Element(s), %d unbound-skipped)",
-            sent, peerSlot, elems.size(), unbound);
-}
-
-void TickPoseStream() {
-    // Increment 2 (next): host reads each live Npc Element's current world transform + publishes
-    // an EntityPose batch to the session for the net thread to fan out, so the client mirrors MOVE
-    // (they otherwise sit at the spawn pose). Stubbed until the EntityPose wire path lands.
-}
+// QueueConnectBroadcastForSlot + TickPoseStream (host-side NPC transform egress)
+// -> coop/npc_pose_host.cpp (extracted 2026-06-07 per the 800-LOC soft cap). They
+// share this TU's NpcMirrors() singleton + the GetSession() accessor; the receiver
+// drive lives in npc_mirror.cpp.
 
 void Install(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);  // cache (caller guarantees outlives us)
@@ -822,6 +788,82 @@ bool GetDevSpawnRefs(DevSpawnRefs& out) {
     out.finishSpawnFn   = g_installCacheFinishSpawnFn;
     out.gsCdo           = g_installCacheGsCdo;
     return true;
+}
+
+int RegisterExistingWorldNpcs() {
+    // HOST-only: register pre-existing/level-load NPC actors so the connect-snapshot mirrors them.
+    // See npc_sync.h. Reaches the SAME end state as interceptor+POST for a fresh spawn (Npc Element
+    // alloc + bound live actor + g_actorToNpcId entry) but for an actor that loaded with the level.
+    auto* s = GetSession();
+    if (!s || s->role() != coop::net::Role::Host) return 0;
+    // CRIT-1/HIGH-1 (world-enum audit): only register when the host NPC lifecycle is FULLY armed --
+    // the interceptor + POST + K2_DestroyActor PRE observers installed (g_installed) AND the host
+    // broadcast path was NOT disabled (g_npcSyncDisabledThisProcess, set when the observer table is
+    // full). This is the SAME gate the interceptor uses (line ~343): allocating an Npc Element
+    // without a guaranteed destroy observer would leak it + drain the host-id free-stack (RULE 4 /
+    // RULE 1). Before Install completes the allowlist is also unresolved, so this would no-op anyway.
+    if (!g_installed.load(std::memory_order_acquire) ||
+        g_npcSyncDisabledThisProcess.load(std::memory_order_acquire)) return 0;
+
+    const int32_t n = R::NumObjects();
+    int registered = 0, found = 0, alreadyTracked = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        // Fast filter FIRST (matches prop.cpp's connect-edge walk): the subclass-aware allowlist
+        // check is a few pointer compares over the SuperStruct chain -- most of GUObjectArray
+        // (>99% of ~237k slots) isn't an NPC and never pays for the wstring allocs below.
+        void* cls = R::ClassOf(obj);
+        if (!cls || !IsAllowlistedClass(cls)) continue;
+        // MED-1: GC-liveness guard BEFORE the wstring allocs (skip a purged-but-not-yet-reaped slot
+        // without paying for a NameOf alloc; also required before InternalIndexOf reads obj's mem).
+        if (!R::IsLive(obj)) continue;
+        // Skip CDOs (Default__<Class>) -- the class template, not a world instance.
+        const std::wstring objName = R::ToString(R::NameOf(obj));
+        if (objName.rfind(L"Default__", 0) == 0) continue;
+        ++found;
+        // Skip actors already coop-tracked (interceptor/dev-spawned this session, or a prior connect
+        // re-scan). The reverse map is the O(1) gate -- without it we'd double-register every NPC.
+        {
+            std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+            if (g_actorToNpcId.find(obj) != g_actorToNpcId.end()) { ++alreadyTracked; continue; }
+        }
+        const std::wstring clsName = R::ToString(R::NameOf(cls));
+        auto npc = std::make_unique<coop::element::Npc>();
+        std::string typeName8;
+        for (size_t k = 0; k < clsName.size() && k < 63; ++k)
+            typeName8.push_back(static_cast<char>(clsName[k]));
+        npc->SetTypeName(std::move(typeName8));
+        // AllocAndInstall takes the Registry mutex then the type mutex (host-authoritative order);
+        // g_actorToNpcIdMutex is a LEAF taken separately AFTER, never nested under those.
+        const coop::element::ElementId eid =
+            NpcMirrors().AllocAndInstall(std::move(npc), /*isHost=*/true);
+        if (eid == coop::element::kInvalidId) {
+            UE_LOGW("npc-sync[world-enum]: AllocAndInstall kInvalidId for '%ls' (Registry full?) -- skipping",
+                    clsName.c_str());
+            continue;
+        }
+        // CRIT-2: bind via a null-checked lookup (the POST observer's pattern). If the freshly-alloc'd
+        // Element isn't retrievable, DRAIN it back out + do NOT leave a reverse-map entry pointing at
+        // an unbound Element (which TickPoseStream/QueueConnectBroadcast would then iterate forever).
+        coop::element::Npc* el = NpcMirrors().Get(eid);
+        if (!el) {
+            UE_LOGW("npc-sync[world-enum]: eid=%u not retrievable after AllocAndInstall -- draining (no bind)", eid);
+            coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+            continue;
+        }
+        el->SetActor(obj, R::InternalIndexOf(obj));
+        {
+            std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+            g_actorToNpcId[obj] = eid;
+        }
+        ++registered;
+    }
+    if (found > 0)
+        UE_LOGI("npc-sync[world-enum]: registered %d pre-existing world NPC(s) "
+                "(%d allowlisted instance(s) in world, %d already tracked; scanned %d GUObjectArray slots)",
+                registered, found, alreadyTracked, n);
+    return registered;
 }
 
 // Receiver impls (OnEntitySpawn / OnEntityDestroy) moved to

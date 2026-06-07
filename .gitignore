@@ -104,6 +104,17 @@ desktop.ini
 # same commit that adds this line.
 CLAUDE.md
 
+# ===== Secrets — NEVER COMMIT (per-machine VPS / master-server credentials) =====
+# RULE: the VPS creds file stays LOCAL ONLY, never staged/committed/pushed.
+reference_master_server_vps.md
+*.secret
+*_creds.md
+*credentials*.md
+# VPS SSH ops key (private + public) + pinned host key -- local only.
+vps_id_ed25519
+vps_id_ed25519.pub
+vps_known_hosts
+
 # ===== Allow-list (override broad bans for our own outputs) =====
 !src/**/*.dll
 !tools/**/*.exe
@@ -115,3 +126,7 @@ research/npctest_shots/
 research/menu_shots/
 research/clumpshot_shots/
 research/clumpvis_shots/
+
+# BP reflection RE workspace (binaries + extracted copyrighted game content -- dev/RE only, never shipped)
+research/pak_re/
+research/bp_reflection/

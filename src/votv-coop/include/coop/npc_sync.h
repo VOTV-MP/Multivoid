@@ -86,6 +86,20 @@ void OnDisconnect();
 // not yet bound). Net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
+// HOST-only PRE-EXISTING world-NPC enumeration (2026-06-07, user "two kerfurs on host" -- a kerfur
+// already in the loaded save wasn't synced). Walk GUObjectArray for allowlisted-NPC actors that
+// EXIST but are NOT yet coop-tracked -- i.e. loaded with the level BEFORE the interceptor installed,
+// so they never went through the intercepted BeginDeferred and were never registered. Register each
+// as a host Npc Element (alloc + bind the live actor + reverse-map) -- the same end state the
+// interceptor+POST observer reach for a fresh spawn, but for an actor that loaded with the level.
+// QueueConnectBroadcastForSlot then mirrors them to the joiner + TickPoseStream streams them after.
+// Idempotent (skips already-tracked actors). Called at the host connect edge BEFORE the connect-
+// snapshot. Returns the count newly registered. Game thread. Cold path: one GUObjectArray walk per
+// call (connect-rare), like the prop world-snapshot. Soft-cap note: npc_sync.cpp is at ~800 LOC;
+// this host-side function is a candidate to extract alongside QueueConnectBroadcastForSlot/
+// TickPoseStream into a host-egress TU if npc_sync.cpp grows further.
+int RegisterExistingWorldNpcs();
+
 // HOST-only per-tick NPC pose stream driver: read each live Npc Element's current world
 // transform + publish the batch to the session for the net thread to fan out (EntityPose,
 // unreliable). Makes the client mirrors MOVE (they otherwise sit at spawn). Cheap no-op off
@@ -99,15 +113,20 @@ void TickPoseStream();
 // hooks -- so the host alloc+broadcast path (AllocAndInstall + EntitySpawn) runs
 // exactly as a real spawn would. Returns false if not yet installed/resolved.
 //
-// VALIDATED 2026-05-30 (npctest): host spawn + EntitySpawn broadcast + CLIENT
-// mirror Install all work end-to-end (cross-peer kerfur confirmed by screenshot
-// on 2 clients). KNOWN FOLLOW-UP: the host POST observer (NpcSpawn_POST, which
-// binds the actor into g_actorToNpcId for destroy-tracking) does NOT fire for a
-// reflection-initiated BeginDeferred dispatch, even though the PRE interceptor
-// on the same UFunction does -- so host-side NPC DESTROY-sync is not exercised
-// by a dev-spawn. Root cause is in the ProcessEvent detour's post-observer
-// dispatch (NOT the Inc2 ownership migration); needs FireObservers
-// instrumentation. Spawn + mirror are unaffected.
+// VALIDATED 2026-06-07 (npctest --peers 2): host dev-spawn + EntitySpawn
+// broadcast + the host POST observer BINDING the actor (log "[host POST]: bound
+// actor", POST-bound=1) + CLIENT mirror Install all work end-to-end, mirror at
+// the host's exact spawn loc. host-side NPC DESTROY-sync IS now exercised by a
+// dev-spawn (the bound actor is in g_actorToNpcId, so K2_DestroyActor PRE fires).
+//
+// HISTORY (resolved): a 2026-05-30 12:58 note here claimed NpcSpawn_POST did NOT
+// fire for a reflection-initiated BeginDeferred. That was the dual-POST-observer
+// CLOBBER, not a reflection-vs-engine difference: npc_sync's NpcSpawn_POST AND
+// weather_lightning's OnSpawnPostLightning both target BeginDeferred, and the old
+// one-cb-per-UFunction observer table silently OVERWROTE npc_sync's slot. Commit
+// eb3282d (multi-observer-per-UFunction, 2026-05-30 16:58 -- 4h after that note)
+// gave each (target, cb) its own slot so both fire; the note was never re-checked
+// until the 2026-06-07 npctest above proved POST-bound=1.
 struct DevSpawnRefs {
     void* beginDeferredFn = nullptr;  // GameplayStatics.BeginDeferredActorSpawnFromClass
     void* finishSpawnFn   = nullptr;  // GameplayStatics.FinishSpawningActor

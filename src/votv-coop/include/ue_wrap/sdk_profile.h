@@ -779,6 +779,13 @@ inline constexpr const wchar_t* SetRelativeRotationFn = L"K2_SetRelativeRotation
 inline constexpr const wchar_t* SetHiddenInGameFn = L"SetHiddenInGame";
 inline constexpr const wchar_t* GetComponentLocationFn = L"K2_GetComponentLocation";
 inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
+// v40 kerfur BODY-facing sync: the kerfur actor BP rotates its ACharacter::Mesh component's
+// WORLD rotation each tick to face the LOCAL player (ExecuteUbergraph_kerfurOmega -> floor_lerp);
+// the mirror's actor tick is OFF so that never runs there. We read the resolved component world
+// rotation on the host (K2_GetComponentRotation) + drive it on the mirror (K2_SetWorldRotation).
+// Both are USceneComponent BlueprintCallable (Engine.hpp:17941/17950).
+inline constexpr const wchar_t* GetComponentRotationFn = L"K2_GetComponentRotation";
+inline constexpr const wchar_t* SetWorldRotationFn = L"K2_SetWorldRotation";
 inline constexpr const wchar_t* CameraComponentClass = L"CameraComponent";
 
 // Component destruction (UActorComponent::K2_DestroyComponent(Object)) -- to

@@ -200,4 +200,14 @@ DWORD WINAPI MenuTravelProbeThread(LPVOID arg);
 void RunFogProbe();
 DWORD WINAPI FogProbeThread(LPVOID arg);
 
+// TEST-ONLY local-player movement oscillator (2026-06-06, harness/autotest_move_osc.cpp).
+// Role-agnostic: circles the LOCAL player around a small horizontal circle so the OTHER
+// peer's RemotePlayer interpolation has a MOVING source to track. The verification rig for
+// the interp-starvation fix -- with a static source the receiver's pose-diag `trail=` is
+// trivially ~0 cm (why the bug hid in every prior smoke). Enable on ONE peer, read the
+// OTHER peer's `pose-diag[slot N] ... trail=`: bounded ~ speed*window (~18 cm) == FIXED,
+// hundreds of cm == still starved. Gated by env VOTVCOOP_RUN_MOVE_OSC="1". Never ships.
+void RunAutonomousMoveOsc();
+DWORD WINAPI MoveOscThread(LPVOID arg);
+
 }  // namespace harness::autotest

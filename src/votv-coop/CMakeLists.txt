@@ -93,12 +93,22 @@ set(BUILD_TOOLS              OFF CACHE BOOL   "" FORCE)
 set(USE_CRYPTO               "BCrypt"    CACHE STRING "" FORCE)
 set(USE_CRYPTO25519          "Reference" CACHE STRING "" FORCE)
 set(Protobuf_USE_STATIC_LIBS ON  CACHE BOOL   "" FORCE)
-# ENABLE_ICE compiles GNS's STUN/TURN/ICE client (P2P NAT-punch path) into
-# the static lib. RULE 2 (no migration baggage): we don't ship code for
-# unshipped features. Re-enable in the PR-6 commit that adds the first ICE
-# caller (P2P signaling via the master server).
-set(ENABLE_ICE               OFF CACHE BOOL   "" FORCE)
-set(USE_STEAMWEBRTC          OFF CACHE BOOL   "" FORCE)
+# ENABLE_ICE compiles GNS's STUN/TURN/ICE client (P2P NAT-punch path);
+# USE_STEAMWEBRTC additionally builds Google's libwebrtc-lite (the ICE backend)
+# from the vendored 2020 snapshot. Enabled for the zero-open-ports P2P
+# connectivity ladder (research/findings/
+# votv-zero-ports-connectivity-ladder-design-2026-06-05.md).
+#
+# Stage-0 build spike (2026-06-05) proved the webrtc-from-source build links
+# /MT clean on MSVC 14.50 (abseil, OpenSSL 3.x adapters, /EHs-c-, 138 TUs,
+# GameNetworkingSockets.dll + example_chat.exe linked + ran). The one blocker
+# was a two-abseil CMake ALIAS collision: vcpkg's MODERN protobuf pulls a modern
+# abseil whose target names collide with the 2020 abseil webrtc-lite needs.
+# FIX (vcpkg.json alongside this file): pin protobuf to 3.21.12, the last
+# pre-abseil release -> zero modern abseil -> only the 2020 abseil exists ->
+# no collision, and add_subdirectory(GNS) below still works as-is.
+set(ENABLE_ICE               ON  CACHE BOOL   "" FORCE)
+set(USE_STEAMWEBRTC          ON  CACHE BOOL   "" FORCE)
 
 # Static-CRT for GNS targets. Note: GNS's own MSVC_CRT_STATIC option does
 # `string(REPLACE "/MD" "/MT")` on CMAKE_*_FLAGS, which is a no-op under
@@ -110,6 +120,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_subdirectory(third_party/GameNetworkingSockets EXCLUDE_FROM_ALL)
 
+# nlohmann/json (MIT, header-only, via the vcpkg manifest) -- parses the master
+# server's JSON (lobby list + host/join responses) in coop/net/lobby_*. RULE 13:
+# don't hand-roll a JSON parser for untrusted network input.
+find_package(nlohmann_json CONFIG REQUIRED)
+
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
     src/ue_wrap/log.cpp
@@ -118,17 +133,20 @@ add_library(votv-coop SHARED
     src/ue_wrap/hook.cpp
     src/ue_wrap/game_thread.cpp
     src/ue_wrap/engine.cpp
+    src/ue_wrap/engine_audio.cpp
     src/ue_wrap/engine_bones.cpp
     src/ue_wrap/engine_component.cpp
     src/ue_wrap/engine_mainplayer.cpp
     src/ue_wrap/engine_playerragdoll.cpp
     src/ue_wrap/engine_attach.cpp
     src/ue_wrap/door.cpp
+    src/ue_wrap/daynightcycle.cpp
     src/ue_wrap/lightswitch.cpp
     src/ue_wrap/passwordlock.cpp
     src/ue_wrap/swinger.cpp
     src/ue_wrap/engine_pawn.cpp
     src/ue_wrap/engine_widget.cpp
+    src/ue_wrap/save_browser.cpp
     src/ue_wrap/reflected_offset.cpp
     src/ue_wrap/call.cpp
     src/ue_wrap/fname_utils.cpp
@@ -148,6 +166,7 @@ add_library(votv-coop SHARED
     src/coop/event_feed.cpp
     src/coop/interactable_sync.cpp
     src/coop/keypad_sync.cpp
+    src/coop/time_sync.cpp
     src/coop/player_handshake.cpp
     src/coop/grab_observer.cpp
     src/coop/item_activate.cpp
@@ -157,6 +176,8 @@ add_library(votv-coop SHARED
     src/coop/shutdown.cpp
     src/coop/players_registry.cpp
     src/coop/npc_mirror.cpp
+    src/coop/npc_pose_drive.cpp
+    src/coop/npc_pose_host.cpp
     src/coop/npc_sync.cpp
     src/coop/prop_echo_suppress.cpp
     src/coop/prop_element_tracker.cpp
@@ -175,8 +196,17 @@ add_library(votv-coop SHARED
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
     src/coop/net/session.cpp
+    src/coop/net/session_npc.cpp
+    src/coop/net/session_start.cpp
     src/coop/net/session_status.cpp
     src/coop/net/session_relay.cpp
+    src/coop/net/ice_config.cpp
+    src/coop/net/signaling_client.cpp
+    src/coop/net/http_client.cpp
+    src/coop/net/lobby_client.cpp
+    src/coop/net/lobby_announcer.cpp
+    src/coop/session_manager.cpp
+    src/coop/join_progress.cpp
     src/coop/net_pump.cpp
     src/coop/dev/add_points.cpp
     src/coop/dev/perf_probe.cpp
@@ -184,6 +214,7 @@ add_library(votv-coop SHARED
     src/coop/dev/lightswitch_probe.cpp
     src/coop/dev/keypad_probe.cpp
     src/coop/dev/door_probe.cpp
+    src/coop/dev/save_probe.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/freecam.cpp
     src/coop/dev/flashlight_setup.cpp
@@ -196,16 +227,21 @@ add_library(votv-coop SHARED
     src/ui/dev_menu.cpp
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
+    src/ui/host_save_picker.cpp
+    src/ui/loading_screen.cpp
+    src/ui/console.cpp
     src/coop/roster.cpp
     src/coop/ban_list.cpp
     src/coop/moderation.cpp
     src/harness/harness.cpp
+    src/harness/harness_diag.cpp
     src/harness/autotest.cpp
     src/harness/autotest_dispatch.cpp
     src/harness/autotest_vitals.cpp
     src/harness/autotest_ragdoll_spawn_probe.cpp
     src/harness/autotest_menutravel_probe.cpp
     src/harness/autotest_fog_probe.cpp
+    src/harness/autotest_move_osc.cpp
     src/harness/autotest_saveui.cpp
     src/harness/config.cpp
     src/harness/screenshot.cpp
@@ -221,10 +257,12 @@ target_link_libraries(votv-coop PRIVATE
     version
     minhook
     imgui
+    nlohmann_json::nlohmann_json   # header-only; master-server JSON (coop/net/lobby_*)
     d3d11    # dummy-swapchain creation to read the IDXGISwapChain vtable (ImGui present hook)
     dxgi
     gdiplus
     ws2_32
+    winhttp  # master-server HTTP client (coop/net/http_client)
     # PR-1 GNS link (vendored static lib, BSD-3). bcrypt: Windows SDK provides
     # AES+SHA backend referenced by USE_CRYPTO=BCrypt. crypt32: needed for
     # cert/PKI symbols some GNS modules reference (transitive).

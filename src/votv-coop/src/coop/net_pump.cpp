@@ -16,7 +16,9 @@
 #include "coop/element/element_deleter.h"
 #include "coop/interactable_sync.h"
 #include "coop/keypad_sync.h"
+#include "coop/time_sync.h"
 #include "coop/event_feed.h"
+#include "coop/join_progress.h"
 #include "coop/garbage_sync.h"
 #include "coop/trash_collect_sync.h"
 #include "coop/save_block.h"
@@ -27,6 +29,7 @@
 #include "coop/player_damage.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/npc_mirror.h"
 #include "coop/npc_sync.h"
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
@@ -284,6 +287,7 @@ void InstallObservers(coop::net::Session& session) {
     coop::weather_sync::Install(&session);   // Phase 5W weather
     coop::interactable_sync::Install(&session);  // Phase 5D doors + lights + container lids
     coop::keypad_sync::Install(&session);    // v33 password-keypad mirror (its own module)
+    coop::time_sync::Install(&session);      // v36 host-authoritative world clock (time-of-day / dark-world fix)
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();           // Phase 5G garbage
     coop::balance_sync::SetSession(&session); // v30 shared host-authoritative balance
@@ -334,6 +338,16 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     PP::Init();
     PP::Sample();
     PP::Scope _tickScope{PP::Bucket::NetPumpTick};
+
+    // Pose-apply diagnostic (lag hunt 2026-06-06): the wire is proven clean (net-diag), so
+    // measure the APPLY side. Per remote puppet, accumulate the FRESH-pose count (isNew/sec)
+    // and the latest stream target below, then log once/sec the target vs the puppet's rendered
+    // position + the trailing distance. Healthy = ~sendHz fresh/s + a small trail; a big/growing
+    // trail means the interp/engine apply lags the on-time stream; low fresh/s = upstream
+    // staleness. Game-thread-only Tick -> static locals need no atomics.
+    static std::array<int, coop::players::kMaxPeers> sPoseFresh{};
+    static std::array<coop::net::PoseSnapshot, coop::players::kMaxPeers> sPoseTarget{};
+    static std::chrono::steady_clock::time_point sNextPoseDiag{};
 
     // Deferred-element destruction flush (MTA CElementDeleter shape; see
     // coop/element/element_deleter.h). Drains, on the game thread at one
@@ -506,6 +520,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::weather_sync::QueueConnectBroadcastForSlot(slot);
                 coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
                 coop::keypad_sync::QueueConnectBroadcastForSlot(slot);        // v33 keypad states
+                coop::time_sync::QueueConnectBroadcastForSlot(slot);          // v36 world clock -> joiner immediately (not dark until first push)
+                coop::npc_sync::RegisterExistingWorldNpcs();                  // register pre-existing/level-load NPCs (the save's kerfur) so the next line mirrors them too
                 coop::npc_sync::QueueConnectBroadcastForSlot(slot);           // existing NPCs -> joiner (mirror NPCs that spawned before the join)
                 coop::balance_sync::OnClientConnect(slot);  // v30: send the host's current balance to the joiner
                 // v34: spawn the joiner AT THE HOST (not a fixed КПП). Reuse the existing
@@ -535,6 +551,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // next session (possibly a different machine after IP change) would
         // carry wrong-peer state. A fresh snapshot enqueues on the next
         // connected edge.
+        // v34: if a client lost the host mid-join, drop the loading state so the cover/console
+        // don't hang (no-op on the host / when no join is in progress).
+        coop::join_progress::Reset();
         coop::remote_prop::ForceRelease();
         const auto propStats = coop::prop_lifecycle::OnDisconnect();
         const size_t snapPending = coop::prop_snapshot::OnDisconnect();
@@ -543,6 +562,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         coop::weather_sync::OnDisconnect();
         coop::interactable_sync::OnDisconnect();
         coop::keypad_sync::OnDisconnect();
+        coop::time_sync::OnDisconnect();
         coop::trash_collect_sync::OnDisconnect();
         coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
@@ -566,6 +586,24 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             return;
         }
     }
+    // CLIENT connect-FAILURE edge (regression C/D, 2026-06-06). A browser-join client whose
+    // connect attempt terminated WITHOUT ever reaching Connected -- a dead direct IP, an
+    // unreachable host, the host not up yet. The aggregate-disconnect edge above only fires
+    // once g_wasConnected latched true (a real connection that later dropped), and its client
+    // branch flees on host-close; NEITHER catches a never-connected client. Without this the
+    // loading screen hangs on "Connecting..." until the 90 s failsafe AND net_pump keeps
+    // pumping the full gameplay tick at the menu every frame (the lag + RAM balloon the user
+    // hit on a dead-master native connect). Detect it precisely: client role, a browser join
+    // is Active, we never connected this session (pre-update g_wasConnected), and Start()
+    // already drove state past Handshaking back to Disconnected (session_status's connect-fail
+    // path) -- which for a running client means the attempt is definitively dead. Fail() is a
+    // no-op unless Active + idempotent, so re-firing until the harness drains the abort (Stop +
+    // reopen browser, which ENDS the menu pump) is harmless.
+    if (!isHost && !g_wasConnected && coop::join_progress::Active() &&
+        session.state() == coop::net::ConnState::Disconnected) {
+        const std::string why = session.TakeHostCloseReason();
+        coop::join_progress::Fail(why.empty() ? "could not connect to the host" : why);
+    }
     g_wasConnected = isConnected;
 
     // Process up to ~100 snapshot candidates per tick if a snapshot enumeration
@@ -580,6 +618,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     { PP::Scope _s{PP::Bucket::WeatherConnect}; coop::weather_sync::TickConnect(); }
     { PP::Scope _s{PP::Bucket::Interactable};  coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::time_sync::Tick(); }          // v36 world clock: host throttled poll+broadcast (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_mirror::TickClientNpcs(); }  // v37 CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::trash_collect_sync::TickWatchReleasedClumps(&session); }  // despawn clumps whose unobservable morph-destroy fired
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
@@ -656,6 +697,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::weather_sync::OnDisconnect();
                 coop::interactable_sync::OnDisconnect();
                 coop::keypad_sync::OnDisconnect();
+                coop::time_sync::OnDisconnect();
                 coop::trash_collect_sync::OnDisconnect();
                 coop::balance_sync::OnDisconnect();  // v30: reset balance dedup on death teardown too (else a permadeath-rejoin skips the opening BalanceSync)
                 // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
@@ -897,6 +939,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             coop::net::PoseSnapshot remote;
             bool isNew = false;
             if (!session.TryGetRemotePose(slot, remote, &isNew)) continue;
+            sPoseTarget[slot] = remote;  // pose-diag: latest stored pose (the interp target source)
             if (!g_puppets[slot].valid()) {
                 // Spawn-retry backoff: BeginDeferredActorSpawnFromClass refuses
                 // if the world is mid-transition (OMEGA->story under multi-
@@ -931,6 +974,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::net::PoseSnapshot withOffset = remote;
                 withOffset.x += displayOffsetX;  // loopback mirror shift (0 for real coop)
                 g_puppets[slot].SetTargetPose(withOffset);
+                ++sPoseFresh[slot];  // pose-diag: a fresh target this second
             }
         }
     }
@@ -954,6 +998,31 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     // when no fresh pose arrived).
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
         if (g_puppets[slot].valid()) g_puppets[slot].Tick();
+    }
+
+    // Pose-apply diagnostic emit (once/sec). target = the latest pose received for this slot;
+    // puppet = its rendered location AFTER this frame's interp Tick; trail = how far the
+    // rendered puppet is behind the target it should be converging to.
+    {
+        const auto pdNow = std::chrono::steady_clock::now();
+        if (pdNow >= sNextPoseDiag) {
+            sNextPoseDiag = pdNow + std::chrono::seconds(1);
+            for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
+                if (!g_puppets[slot].valid()) { sPoseFresh[slot] = 0; continue; }
+                const ue_wrap::FVector cur = g_puppets[slot].GetLocation();
+                const float dx = sPoseTarget[slot].x - cur.X, dy = sPoseTarget[slot].y - cur.Y;
+                const float trail = std::sqrt(dx * dx + dy * dy);
+                UE_LOGI("pose-diag[slot %d]: fresh=%d/s targetSpeed=%.0f target=(%.0f,%.0f) "
+                        "puppet=(%.0f,%.0f) trail=%.0fcm", slot, sPoseFresh[slot],
+                        sPoseTarget[slot].speed, sPoseTarget[slot].x, sPoseTarget[slot].y,
+                        cur.X, cur.Y, trail);
+                if (trail > 500.f)
+                    UE_LOGW("pose-diag[slot %d]: puppet TRAILS its target by %.0f cm (fresh=%d/s) "
+                            "-- the apply/interp is behind the on-time pose stream", slot, trail,
+                            sPoseFresh[slot]);
+                sPoseFresh[slot] = 0;
+            }
+        }
     }
 
     // Receiver-side held-prop driver. Drains the latest PropPose from the

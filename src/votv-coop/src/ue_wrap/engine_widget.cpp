@@ -212,6 +212,7 @@ BuiltTwoLine BuildTwoLineWidget(void* outer,
 // Screen-space (viewport) widget functions, resolved on the UserWidget class.
 void* g_addToVpFn = nullptr, *g_removeFromVpFn = nullptr, *g_widgetSetVisFn = nullptr;
 void* g_setPosVpFn = nullptr, *g_setAlignVpFn = nullptr;
+void* g_widgetSetOpacityFn = nullptr;  // UWidget::SetRenderOpacity (resolved lazily)
 bool ResolveScreenWidgetFns() {
     if (!ResolveNameplateFns()) return false;  // UMG classes + SpawnObject + text fns
     if (g_npUserWidgetClass) {
@@ -539,6 +540,27 @@ bool WidgetIsHovered(void* widget) {
     ParamFrame f(g_biIsHoveredFn);
     if (!Call(widget, f)) return false;
     return f.Get<bool>(L"ReturnValue");
+}
+
+bool SetWidgetVisibility(void* widget, uint8_t slateVis) {
+    // ResolveButtonInjectFns resolves g_widgetSetVisFn (UWidget::SetVisibility) as part of
+    // the inject set; reuse it rather than a second resolver for one UFunction.
+    if (!widget || !ResolveButtonInjectFns() || !g_widgetSetVisFn) return false;
+    ParamFrame f(g_widgetSetVisFn);
+    f.Set<uint8_t>(L"InVisibility", slateVis);
+    return Call(widget, f);
+}
+
+bool SetWidgetRenderOpacity(void* widget, float opacity) {
+    if (!widget) return false;
+    if (!g_widgetSetOpacityFn) {
+        if (void* wc = R::FindClass(P::name::WidgetClass))
+            g_widgetSetOpacityFn = R::FindFunction(wc, P::name::WidgetSetRenderOpacityFn);
+    }
+    if (!g_widgetSetOpacityFn) return false;
+    ParamFrame f(g_widgetSetOpacityFn);
+    f.Set<float>(L"InOpacity", opacity);
+    return Call(widget, f);
 }
 
 }  // namespace ue_wrap::engine

@@ -73,5 +73,11 @@ int32_t AnimBP_kerfur_useLegIK();
 int32_t AnimBP_kerfur_removeArms();
 int32_t AnimBP_kerfur_headLookAt();
 int32_t AnimBP_kerfur_isFace();
+// v39 head-look sync: `lookAt` (FVector @0x2D90) = the WORLD location the head/neck
+// FAnimNode_LookAt nodes aim at; `customLookAt` (bool @0x2E49) gates BUA's per-tick
+// auto-recompute (set true on a mirror to make a streamed lookAt stick). See
+// research/findings/votv-kerfur-headlook-AnimBP-RE-and-coop-sync-2026-06-07.md.
+int32_t AnimBP_kerfur_lookAt();
+int32_t AnimBP_kerfur_customLookAt();
 
 }  // namespace ue_wrap::reflected_offset

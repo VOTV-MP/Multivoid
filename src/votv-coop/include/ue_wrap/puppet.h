@@ -130,6 +130,47 @@ void DriveCharacterMovement(void* puppetActor,
 //              `mainPlayer_C` whose airborne state we mirror to peers).
 bool ReadCharacterIsFalling(void* actor);
 
+// ---- kerfur head-look (v39) ----------------------------------------------
+// The kerfur AnimBP (UAnimBlueprint_kerfurOmega_regular_C, shared by NPCs + player
+// puppets) drives the head/neck via two FAnimNode_LookAt nodes that aim at the AnimBP
+// member `lookAt` (FVector @0x2D90, WORLD). BUA recomputes `lookAt` each tick from the
+// LOCAL player camera UNLESS `customLookAt` (bool @0x2E49) is set. So head-look is
+// per-peer by default -- the desync the coop NPC sync fixes by streaming the host's
+// resolved lookAt. RE: research/findings/votv-kerfur-headlook-AnimBP-RE-and-coop-sync-2026-06-07.md.
+// Both are guarded by a kerfur-family-AnimBP class check, so calling them on a non-kerfur
+// actor is a safe no-op (never writes a foreign offset). Game thread only.
+
+// HOST read: the live kerfur NPC's resolved head-look WORLD target (its AnimBP `lookAt`).
+// Resolves the body AnimInstance off ACharacter::Mesh. Returns false (out untouched) if
+// `npcActor` isn't a live kerfur-family NPC / its AnimInstance isn't resolved yet.
+bool ReadKerfurLookAt(void* npcActor, FVector& outWorldTarget);
+
+// CLIENT drive: point a kerfur-family mirror's head at a streamed WORLD target -- writes
+// the AnimBP `lookAt` AND sets `customLookAt=true` so the mirror's own BUA stops
+// overwriting lookAt with its local camera and the native LookAt nodes aim at `worldTarget`.
+// No-op if `npcActor` isn't a live kerfur-family NPC. (Reusable primitive for the queued
+// player-puppet "camera look = head look": the caller derives worldTarget from the streamed
+// view. [[project-puppet-head-from-camera-lookat]].)
+void DriveKerfurLookAt(void* npcActor, const FVector& worldTarget);
+
+// v40 kerfur BODY-facing (the head-then-body tracking's body half). The kerfur actor BP rotates
+// its ACharacter::Mesh component's WORLD yaw to face the LOCAL player (decoupled from the actor
+// root, which we already sync); the mirror's actor tick is off so it never runs there -> the body
+// desyncs. HOST reads the resolved mesh world yaw; CLIENT drives it on the mirror. Class-gated
+// (kerfur-family). DriveKerfurBodyYaw MUST be called after SetActorRotation. Game thread only.
+bool ReadKerfurBodyYaw(void* npcActor, float& outYaw);
+void DriveKerfurBodyYaw(void* npcActor, float yaw);
+
+// Park an ACharacter-derived puppet so a network-driven SetActorLocation drive is
+// authoritative: disable its CharacterMovementComponent tick (no gravity / no Velocity
+// integration fighting the drive) AND its actor tick (suppress the BP ReceiveTick graph --
+// for an NPC mirror that is its AI state machine). The AnimBP still ticks on the mesh, so it
+// reads the per-tick CMC.Velocity we write (DriveCharacterMovement) for locomotion. This is
+// the SAME parking SpawnPuppetMainPlayer applies to the player puppet; reused for the NPC
+// mirror (npc_mirror) so the streamed NPC pose drives it cleanly. No-op on null/dead actor.
+// Game thread only.
+void DisableCharacterTicks(void* actor);
+
 // Bug 2 root-cause fix (Plan B2, 2026-05-23):
 //
 // The AnimBP's BlueprintUpdateAnimation pulls velocity from

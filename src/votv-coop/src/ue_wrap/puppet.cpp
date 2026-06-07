@@ -58,6 +58,63 @@ void* LiveAnimInstance(void* skeletalMeshComponent) {
     return ReadPtr(skeletalMeshComponent, P::off::USkeletalMesh_AnimScriptInstance);
 }
 
+// ---- kerfur head-look (v39) ----------------------------------------------
+// Guard for every lookAt/customLookAt access: is this AnimInstance a kerfur-family AnimBP?
+// A different AnimBP would have unrelated fields at 0x2D90/0x2E49, so an unguarded write
+// there would corrupt foreign state. The class ptr resolves once + caches; re-resolves while
+// still null (the BP class loads with the level, possibly after the first NPC streams).
+bool IsKerfurAnimBP(void* anim) {
+    if (!anim || !R::IsLive(anim)) return false;  // guard the raw ClassOf read against a GC'd AnimInstance
+    static void* kerfurAnimClass = nullptr;
+    if (!kerfurAnimClass) kerfurAnimClass = R::FindClass(P::name::AnimBPKerfurRegularClass);
+    if (!kerfurAnimClass) return false;
+    void* cls = R::ClassOf(anim);
+    if (!cls) return false;
+    if (cls == kerfurAnimClass) return true;
+    void* kerfurBases[1] = { kerfurAnimClass };  // match the codebase's void* const* IsDescendantOfAny pattern
+    return R::IsDescendantOfAny(cls, kerfurBases, 1);  // skerfuro / skeleton AnimBP variants subclass it
+}
+
+// An NPC's body skeletal-mesh COMPONENT: ACharacter::Mesh @0x0280. Real kerfur NPCs run the
+// AnimBP on (and show their visible body as) the native ACharacter mesh slot -- their own
+// component list has no body skeletal mesh, only particles/static/outfits -- unlike mainPlayer_C
+// which uses mesh_playerVisible @0x04F8. Null if not resolvable.
+void* NpcBodyMesh(void* actor) {
+    if (!actor || !R::IsLive(actor)) return nullptr;
+    void* mesh = ReadPtr(actor, P::off::ACharacter_Mesh);
+    if (!mesh || !R::IsLive(mesh)) return nullptr;
+    return mesh;
+}
+
+// That mesh's live AnimInstance (AnimScriptInstance @0x6B0). Null if not resolvable.
+void* NpcBodyAnimInstance(void* actor) {
+    void* mesh = NpcBodyMesh(actor);
+    return mesh ? LiveAnimInstance(mesh) : nullptr;
+}
+
+// Read/write the kerfur head-look on an already-resolved AnimInstance (class-gated; offsets
+// reflection-resolved, recook-proof). WriteLookAtOnAnim also sets customLookAt=true so the
+// AnimInstance's own BUA stops overwriting lookAt with its local player camera.
+bool ReadLookAtOnAnim(void* anim, FVector& out) {
+    if (!IsKerfurAnimBP(anim)) return false;
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_lookAt();
+    if (off < 0) return false;
+    out = ReadAt<FVector>(anim, static_cast<size_t>(off));
+    return true;
+}
+void WriteLookAtOnAnim(void* anim, const FVector& target) {
+    if (!IsKerfurAnimBP(anim)) return;
+    const int32_t lookOff   = ue_wrap::reflected_offset::AnimBP_kerfur_lookAt();
+    const int32_t customOff = ue_wrap::reflected_offset::AnimBP_kerfur_customLookAt();
+    if (lookOff < 0 || customOff < 0) return;
+    WriteAt<FVector>(anim, static_cast<size_t>(lookOff), target);
+    WriteAt<bool>(anim, static_cast<size_t>(customOff), true);
+    static bool s_loggedDrive = false;
+    if (!s_loggedDrive) { s_loggedDrive = true;
+        UE_LOGI("puppet: kerfur head-look drive active -- wrote lookAt=(%.0f,%.0f,%.0f) + customLookAt=true (first; class-gate passed)",
+                target.X, target.Y, target.Z); }
+}
+
 }  // namespace
 
 void* GetMeshPlayerVisibleAsset(void* mainPlayerPawn) {
@@ -610,6 +667,34 @@ void DriveAnimBP(void* puppetActor, float /*speed*/, float headPitch, float head
     WriteAt<FRotator>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_headLookAt(), FRotator{headPitch, headYawDelta, 0.f});
 }
 
+bool ReadKerfurLookAt(void* npcActor, FVector& outWorldTarget) {
+    return ReadLookAtOnAnim(NpcBodyAnimInstance(npcActor), outWorldTarget);
+}
+
+void DriveKerfurLookAt(void* npcActor, const FVector& worldTarget) {
+    WriteLookAtOnAnim(NpcBodyAnimInstance(npcActor), worldTarget);
+}
+
+bool ReadKerfurBodyYaw(void* npcActor, float& outYaw) {
+    // The kerfur actor BP aims the VISIBLE body by rotating ACharacter::Mesh's WORLD rotation
+    // (decoupled from the actor root) -- per-peer toward the local player. Read the resolved mesh
+    // world yaw on the host so the mirror can reproduce it. Class-gated (kerfur-family only).
+    void* mesh = NpcBodyMesh(npcActor);
+    if (!mesh || !IsKerfurAnimBP(LiveAnimInstance(mesh))) return false;
+    outYaw = ue_wrap::engine::GetComponentWorldRotation(mesh).Yaw;
+    return true;
+}
+
+void DriveKerfurBodyYaw(void* npcActor, float yaw) {
+    // Drive a mirror kerfur's body facing: set ACharacter::Mesh WORLD rotation to the streamed
+    // yaw. The mirror's actor tick is OFF (DisableCharacterTicks), so the BP's per-tick mesh
+    // rotation never runs there -> no clobber, no gate flag needed. MUST be called AFTER
+    // SetActorRotation (moving the actor root re-bases this child mesh's world transform).
+    void* mesh = NpcBodyMesh(npcActor);
+    if (!mesh || !IsKerfurAnimBP(LiveAnimInstance(mesh))) return;
+    ue_wrap::engine::SetComponentWorldRotation(mesh, ue_wrap::FRotator{0.f, yaw, 0.f});
+}
+
 void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir) {
@@ -632,6 +717,18 @@ bool ReadCharacterIsFalling(void* actor) {
     if (!cmc || !R::IsLive(cmc)) return false;
     const uint8_t mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
     return mode == P::off::kMOVE_Falling;
+}
+
+void DisableCharacterTicks(void* actor) {
+    if (!actor || !R::IsLive(actor)) return;
+    // CMC tick OFF: stop gravity + Velocity integration so the network SetActorLocation drive
+    // is authoritative (we own CMC.Velocity/MovementMode -- DriveCharacterMovement writes them).
+    if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
+        if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
+    }
+    // Actor tick OFF: suppress the BP ReceiveTick graph (for an NPC mirror that is its AI state
+    // machine). The AnimBP still ticks on the mesh, so it reads our per-tick CMC.Velocity write.
+    E::SetActorTickEnabled(actor, false);
 }
 
 }  // namespace ue_wrap::puppet

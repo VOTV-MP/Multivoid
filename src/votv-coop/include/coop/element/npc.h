@@ -8,33 +8,74 @@
 // to MTA's ElementID free-list; (c) the smallest "before" footprint of the
 // three replicated entity classes.
 //
-// Owned by `coop::npc_sync` -- the interceptor on the host side allocates an
-// Npc per host-spawned NPC class and binds the actor pointer when the spawn
-// POST completes (post-PoC; in PoC the actor pointer stays nullptr because the
-// POST observer isn't yet wired -- the ElementId is allocated for wire
-// addressing only). Destroyed by the same subsystem when the engine
-// K2_DestroyActor PRE observer for the NPC fires (also post-PoC -- in PoC,
-// elements accumulate until OnDisconnect resets the Registry).
-//
-// Future expansion (not in PoC, captured here for design clarity):
-//   - Wire the POST observer on BeginDeferredSpawnFromClass to capture the
-//     returned AActor* and stash it in `Element::SetActor`.
-//   - Wire a K2_DestroyActor PRE observer (gated on `IsClassOrDerivedFromAny
-//     Allowlisted`) to destroy the Npc element when the engine destroys the
-//     actor.
-//   - Replace `EntitySpawnPayload.sessionId` (uint32_t, named for the legacy
-//     scheme) with `EntitySpawnPayload.elementId` semantically (same uint32_t
-//     wire type; rename only) at the v12 protocol bump.
+// Owned by `coop::npc_sync` (all three lifecycle hooks wired + runtime-validated
+// -- npctest 2026-06-07: host POST-bound=1, cross-peer mirror at the host's spawn
+// loc):
+//   - host interceptor on BeginDeferredSpawnFromClass: allocates an Npc per
+//     host-spawned NPC class + broadcasts EntitySpawn (payload.elementId).
+//   - host POST observer on the same UFunction: binds the returned AActor* via
+//     Element::SetActor + records actor->eid for destroy-tracking.
+//   - host K2_DestroyActor PRE observer: destroys the Npc + broadcasts
+//     EntityDestroy when the engine destroys the actor.
+
+// POSE DRIVE (increment 1, 2026-06-07): the Npc gains a receiver-side interpolator +
+// engine drive -- a SUBSET of RemotePlayer's (pos + yaw + speed + stateBits; NO
+// pitch/headYawDelta/vitals/ragdoll/mesh-offset). The CLIENT mirror uses it: each
+// EntityPose batch entry calls SetTargetNpcPose (advance-before-rebase, the proven
+// interp-starvation fix) and net_pump::Tick calls Tick() every frame to drive the mirror's
+// transform + CMC.Velocity so the NPC's OWN AnimBP animates (same native locomotion path as
+// the player puppet). The HOST Npc never interpolates -- it READS the live actor (TickPoseStream).
+// Implementation in src/coop/npc_pose_drive.cpp. The interp TIMING (alpha/dAlpha bookkeeping)
+// is the shared coop::LerpWindow (RULE 2 / WP13 -- RemotePlayer owns one too, extracted
+// 2026-06-07); this class applies the window's dAlpha to its OWN pos+yaw errors.
 
 #pragma once
 
 #include "coop/element/element.h"
+#include "coop/lerp_window.h"
+#include "ue_wrap/types.h"  // FVector
+
+#include <cstdint>
+
+namespace coop::net { struct EntityPoseSnapshot; }
 
 namespace coop::element {
 
 class Npc : public Element {
 public:
     Npc() : Element(ElementType::Npc) {}
+
+    // CLIENT mirror: a fresh EntityPose entry for this eid. Opens a LERP window toward the
+    // new pose (or snaps on the first packet / a teleport). Game thread only.
+    void SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap);
+
+    // CLIENT mirror: every frame -- advance the interp + push the pose to the engine (skips the
+    // engine write when frozen at target between packets). No-op until a pose arrives + the actor
+    // is live. Game thread only.
+    void Tick();
+
+private:
+    void AdvanceInterp();   // advance the open window to now (mirrors RemotePlayer::AdvanceInterp)
+    void ApplyToEngine();   // SetActorLocation + SetActorRotation + DriveCharacterMovement
+
+    // Receiver-side interpolation state (game thread only; the engine path is single-threaded).
+    ue_wrap::FVector curPos_{};
+    float            curYaw_       = 0.f;
+    float            curSpeed_     = 0.f;   // not interpolated -- the AnimBP blends locomotion
+    uint8_t          curStateBits_ = 0;     // not interpolated -- snapped (bit 0 = in air)
+    ue_wrap::FVector targetPos_{};
+    float            targetYaw_      = 0.f;
+    ue_wrap::FVector errorPos_{};            // cached (target - cur) at packet arrival; applied dAlpha/frame
+    float            errorYaw_       = 0.f;
+    float            curBodyYaw_     = 0.f;   // v40: interpolated VISIBLE-body (ACharacter::Mesh) world yaw
+    float            targetBodyYaw_  = 0.f;   //      (driven onto the mirror mesh each frame after SetActorRotation)
+    float            errorBodyYaw_   = 0.f;   //      cached (target-cur) at packet; applied dAlpha/frame (shortest-arc)
+    coop::LerpWindow window_;                // shared interp timing (same one RemotePlayer owns)
+    ue_wrap::FVector curLookAt_{};           // v39: streamed kerfur head-look WORLD target (NOT interpolated --
+    bool             hasLookAt_      = false; //       the native FAnimNode_LookAt smooths it via its own InterpSpeed)
+    bool             hasBodyYaw_     = false; // v40: bodyYaw valid (kerfur-family) -> drive the mesh world yaw
+    bool             hasPose_        = false;  // first packet snaps
+    bool             dirty_          = true;   // unapplied change to push to the engine
 };
 
 }  // namespace coop::element

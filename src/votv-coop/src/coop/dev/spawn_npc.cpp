@@ -59,8 +59,10 @@ void SpawnNpcInFront(const wchar_t* className) {
         UE_LOGW("spawn_npc: no world context -- ignoring");
         return;
     }
-    // Spawn point: ~250 cm ahead of the player's view yaw at the player's Z; the
-    // NPC faces back toward the player (yaw+180) so it is framed in the host's view.
+    // Spawn point: ~250 cm ahead of the player's view yaw at the player's Z. NO turn-to-face:
+    // the NPC spawns at the player's OWN view yaw (the prior +180 "turn to face the host" was a
+    // screenshot convenience that aimed the test kerfur at the host -- removed 2026-06-07 so the
+    // dev-spawn adds zero host-relative rotation; the client mirrors this transform byte-for-byte).
     const ue_wrap::FVector loc = E::GetActorLocation(local);
     float yaw = 0.f;
     if (void* ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
@@ -69,7 +71,7 @@ void SpawnNpcInFront(const wchar_t* className) {
     const float fwdX = std::cos(yaw * kDeg2Rad);
     const float fwdY = std::sin(yaw * kDeg2Rad);
     ue_wrap::FTransform xform{};
-    E::RotatorToQuat(0.f, yaw + 180.f, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    E::RotatorToQuat(0.f, yaw, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = loc.X + fwdX * kDist;
     xform.TY = loc.Y + fwdY * kDist;
     xform.TZ = loc.Z;

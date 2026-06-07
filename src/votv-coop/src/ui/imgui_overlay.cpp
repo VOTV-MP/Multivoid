@@ -31,6 +31,11 @@
 #include "ui/dev_menu.h"
 #include "ui/scoreboard.h"
 #include "ui/server_browser.h"
+#include "ui/host_save_picker.h"
+#include "ui/loading_screen.h"
+#include "ui/console.h"
+#include "coop/join_progress.h"
+#include "coop/session_manager.h"
 #include "coop/dev/perf_probe.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"
@@ -93,11 +98,18 @@ inline bool MenuOpen()    { return g_visible.load(std::memory_order_relaxed); }
 inline bool ScoreOpen()   { return g_scoreboard.load(std::memory_order_relaxed) ||
                                    g_scoreboardForced.load(std::memory_order_relaxed); }
 inline bool BrowserOpen() { return ui::server_browser::IsOpen(); }
-inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen(); }
+inline bool PickerOpen()  { return ui::host_save_picker::IsOpen(); }
+inline bool LoadingOpen() { return ui::loading_screen::IsOpen(); }
+inline bool ConsoleOpen() { return ui::console::IsOpen(); }
+inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
+                                   LoadingOpen() || ConsoleOpen(); }
 inline bool CaptureActive() {
-    // The MULTIPLAYER server browser is interactive (Connect / Host / type an IP),
-    // so it takes the cursor + input like the F1 menu does.
-    return MenuOpen() || BrowserOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
+    // Interactive surfaces take the cursor + input: the F1 menu, the server browser + Host-
+    // Game save picker (Connect / Host / type an IP / pick a save), the loading screen (its
+    // Cancel button), and the console (its command input). The host scoreboard is interactive
+    // too; the client scoreboard is a passive peek.
+    return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
+           (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
 void CreateRTV(IDXGISwapChain* sc) {
@@ -254,6 +266,11 @@ void RenderFrameGuarded() {
         if (MenuOpen())    ui::dev_menu::Render();
         if (ScoreOpen())   ui::scoreboard::Render();
         if (BrowserOpen()) ui::server_browser::Render();
+        if (PickerOpen())  ui::host_save_picker::Render();
+        // The console (bottom log panel) then the loading screen (centered) draw LAST, so the
+        // connecting UI sits on top of everything during a join.
+        if (ConsoleOpen()) ui::console::Render();
+        if (LoadingOpen()) ui::loading_screen::Render();
 
         ImGui::Render();
         if (g_rtv) {
@@ -265,6 +282,13 @@ void RenderFrameGuarded() {
         g_visible.store(false, std::memory_order_relaxed);
         g_scoreboard.store(false, std::memory_order_relaxed);
         ui::server_browser::Close();
+        // CLOSE the picker too: if its Render() faulted, leaving it open re-enters
+        // Render() every frame and re-faults forever (audit HIGH-2 re-fault loop).
+        ui::host_save_picker::Close();
+        // Same re-fault guard for the loading screen (also resets join_progress so a
+        // faulted join can't leave the connecting state stuck) and the console.
+        ui::loading_screen::Close();
+        ui::console::Close();
     }
 }
 
@@ -409,6 +433,61 @@ bool Init() {
         ui::server_browser::Open();
         UE_LOGI("imgui_overlay: VOTVCOOP_BROWSER_OPEN=1 -- server browser starts visible (screenshot test)");
     }
+    // VOTVCOOP_TEST_CONNECT_DIRECT=<host:port> autonomously simulates a browser
+    // "Direct connect" click: queues a LanDirect client Config that the harness
+    // RunPlayLoop consumes (TakePendingStart) + boots g_session -- proving the
+    // browser->session boot path without a real click. TEST-ONLY (never set in play).
+    char cdEnv[64] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_CONNECT_DIRECT", cdEnv, sizeof(cdEnv)) > 0 && cdEnv[0]) {
+        coop::session_manager::ConnectDirect(cdEnv);
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_CONNECT_DIRECT=%s -- queued a browser-path session start (test)", cdEnv);
+    }
+    // VOTVCOOP_TEST_HOST_LOBBY=1 simulates a browser "Host Game" click: POST /v1/host
+    // to the master -> P2P host session (the exact path DoHost() runs). TEST-ONLY.
+    char hlEnv[8] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_LOBBY", hlEnv, sizeof(hlEnv)) > 0 && hlEnv[0] == '1') {
+        coop::session_manager::HostLobby("Test Host", std::string(), /*locked=*/false, /*playersMax=*/4);
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_LOBBY=1 -- fired a browser-path HOST announce (test)");
+    }
+    // VOTVCOOP_TEST_JOIN_LOBBY=<lobbyId> simulates clicking a browser row's Connect:
+    // POST /v1/join -> P2P client session (the exact path JoinLobby() runs). TEST-ONLY.
+    char jlEnv[64] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_JOIN_LOBBY", jlEnv, sizeof(jlEnv)) > 0 && jlEnv[0]) {
+        coop::session_manager::JoinLobby(jlEnv, jlEnv);  // lobbyId doubles as the display label in the test
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_JOIN_LOBBY=%s -- fired a browser-path JOIN (test)", jlEnv);
+    }
+    // VOTVCOOP_TEST_HOST_SAVE=<slot> simulates the Host-Game picker's "Host selected
+    // save": HostWithSave({existing slot}) -> the harness LOADS <slot> then hosts (the
+    // exact path the picker's DoHostExisting runs). VOTVCOOP_TEST_HOST_NEW=<name> is the
+    // "New Game & Host" (story) path. TEST-ONLY (never set in play).
+    char hsEnv[64] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_SAVE", hsEnv, sizeof(hsEnv)) > 0 && hsEnv[0]) {
+        coop::session_manager::SaveChoice c;
+        c.newGame = false;
+        c.slot = hsEnv;
+        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*playersMax=*/4);
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_SAVE=%s -- fired a picker HOST-WITH-SAVE (load existing, test)", hsEnv);
+    }
+    char hnEnv[64] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_NEW", hnEnv, sizeof(hnEnv)) > 0 && hnEnv[0]) {
+        coop::session_manager::SaveChoice c;
+        c.newGame = true;
+        c.newName = hnEnv;
+        c.mode = 0;  // story
+        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*playersMax=*/4);
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_NEW=%s -- fired a picker HOST-WITH-SAVE (new story game, test)", hnEnv);
+    }
+    // VOTVCOOP_TEST_LOADING=1 forces the CLIENT connecting/loading state up (no real connect)
+    // so the loading screen + the menu fade + the console can be screenshotted determin-
+    // istically. Sets a partial determinate bar (1400/2313). TEST-ONLY -- the 90 s failsafe
+    // (join_progress::MaybeTimeout) lifts it on its own.
+    char ldEnv[8] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_LOADING", ldEnv, sizeof(ldEnv)) > 0 && ldEnv[0] == '1') {
+        coop::join_progress::BeginConnect("Test Host");
+        coop::join_progress::BeginSnapshot(2313);
+        for (int i = 0; i < 1400; ++i) coop::join_progress::NotePropApplied();
+        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_LOADING=1 -- forced the loading state (1400/2313) for a screenshot (test)");
+    }
     UE_LOGI("imgui_overlay: present hook installed (present=%p resize=%p) -- ImGui brings up "
             "on the first frame; press F1 in-game for the menu", g_presentTarget, g_resizeTarget);
     return true;
@@ -424,6 +503,10 @@ void Shutdown() {
     g_scoreboard.store(false, std::memory_order_relaxed);
     g_scoreboardForced.store(false, std::memory_order_relaxed);
     ui::server_browser::Close();
+    ui::host_save_picker::Close();
+    ui::loading_screen::Close();
+    ui::console::Close();
+    ui::console::Shutdown();  // unregister the logger sink so no post-teardown log re-enters it
     const bool wasReady = g_imguiReady.exchange(false);
     if (g_presentTarget) ue_wrap::hook::Uninstall(g_presentTarget);
     if (g_resizeTarget)  ue_wrap::hook::Uninstall(g_resizeTarget);

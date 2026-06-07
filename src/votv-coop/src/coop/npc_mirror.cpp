@@ -20,6 +20,7 @@
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
+#include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/types.h"
 
@@ -301,6 +302,12 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         }
         return;
     }
+    // Park the mirror so the streamed pose drive is authoritative: CMC tick OFF (no gravity /
+    // velocity integration fighting SetActorLocation) + actor tick OFF (suppress the BP AI graph).
+    // The AnimBP still ticks on the mesh -> it reads the CMC.Velocity our pose drive writes
+    // (element::Npc::ApplyToEngine) for the walk/run blend. Same parking as the player puppet.
+    ue_wrap::puppet::DisableCharacterTicks(spawned);
+
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             payload.elementId, classW.c_str(), spawned,
             payload.locX, payload.locY, payload.locZ);
@@ -421,6 +428,48 @@ void DrainClientMirrors() {
                 "%zu live mirror actor(s))",
                 nMirrorsTotal, nHostElems, nMirrorElems, nMirrorsDestroyed);
     }
+}
+
+void TickClientNpcs() {
+    auto* s = coop::npc_sync::GetSession();
+    if (!s || s->role() == coop::net::Role::Host) return;  // client-only (the host streams, it doesn't drive mirrors)
+
+    // 1) Apply the latest received batch (if any) -> open an interp window per NPC. Per-entry float
+    //    validation is the trust boundary (a NaN must not reach SetActorLocation).
+    std::vector<coop::net::EntityPoseSnapshot> batch;
+    if (s->TakeRemoteNpcBatch(batch)) {
+        for (const auto& snap : batch) {
+            if (!std::isfinite(snap.x) || !std::isfinite(snap.y) || !std::isfinite(snap.z) ||
+                !std::isfinite(snap.yaw) || !std::isfinite(snap.speed)) continue;
+            if (std::fabs(snap.x) > 1.0e6f || std::fabs(snap.y) > 1.0e6f || std::fabs(snap.z) > 1.0e6f) continue;
+            // v39 head-look target: validate ONLY when the bit marks it meaningful (non-kerfur NPCs
+            // leave lookAt zero + the bit clear -- gating avoids dropping their otherwise-valid pose).
+            // A corrupt lookAt WITH the bit set drops the whole snap (same policy as the pos fields);
+            // it can't reach DriveKerfurLookAt anyway (hasLookAt_ is only set from a validated snap).
+            if (snap.stateBits & coop::net::kEntityPoseBitHasLookAt) {
+                if (!std::isfinite(snap.lookAtX) || !std::isfinite(snap.lookAtY) || !std::isfinite(snap.lookAtZ)) continue;
+                if (std::fabs(snap.lookAtX) > 1.0e6f || std::fabs(snap.lookAtY) > 1.0e6f || std::fabs(snap.lookAtZ) > 1.0e6f) continue;
+            }
+            // v40 body yaw (a degree angle): a NaN/garbage value must not reach K2_SetWorldRotation.
+            if ((snap.stateBits & coop::net::kEntityPoseBitHasBodyYaw) &&
+                (!std::isfinite(snap.bodyYaw) || std::fabs(snap.bodyYaw) > 1.0e6f)) continue;
+            coop::element::Npc* el = NpcMirrors().Get(snap.elementId);
+            if (!el || !el->IsMirror()) continue;  // not materialized yet (connect gap) / defensive
+            el->SetTargetNpcPose(snap);
+        }
+        static bool s_loggedFirst = false;
+        if (!batch.empty() && !s_loggedFirst) { s_loggedFirst = true;
+            UE_LOGI("npc-pose: client applying %zu NPC pose(s) (first batch)", batch.size()); }
+    }
+
+    // 2) Advance the interp + drive EVERY live mirror, every frame (smooth between packets).
+    // Reused scratch (no per-tick heap alloc): Snapshot() clears+fills it; client game thread only.
+    // (`batch` above stays local -- its default ctor never allocates, and the common no-new-batch
+    // tick takes the early `if (!Take)` path, so it adds no per-tick alloc.)
+    static std::vector<coop::element::Npc*> elems;
+    NpcMirrors().Snapshot(elems);
+    for (coop::element::Npc* el : elems)
+        if (el && el->IsMirror()) el->Tick();
 }
 
 }  // namespace coop::npc_mirror

@@ -30,8 +30,10 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <thread>
 
 namespace coop::net {
@@ -47,15 +49,68 @@ enum class Role : uint8_t { Host, Client };
 
 enum class ConnState : uint8_t { Disconnected, Handshaking, Connected };
 
+// Transport topology. The whole session below is topology-blind EXCEPT
+// Session::Start (see the header comment) -- every HSteamNetConnection, once it
+// exists, is driven identically regardless of how it was established.
+enum class Topology : uint8_t {
+    LanDirect,  // rung 0/1: CreateListenSocketIP / ConnectByIPAddress. Host
+                // port-forwards (rung 0) or both peers are on one LAN (rung 1).
+                // The original path -- kept as the no-signaling backup.
+    P2P,        // rungs 1-3: CreateListenSocketP2P / ConnectP2PCustomSignaling +
+                // ICE. Both peers connect OUTBOUND to a signaling server (no host
+                // port-forward); ICE then hole-punches a direct path (rung 2,
+                // STUN) or relays via TURN (rung 3, coturn).
+};
+
 struct Config {
     Role role = Role::Host;
-    std::string peerIp = "127.0.0.1";   // the host's address (LAN direct topology)
+    Topology topology = Topology::LanDirect;
+
+    // --- LanDirect (rung 0/1) ---------------------------------------------
+    std::string peerIp = "127.0.0.1";   // client: the host's address
     uint16_t port = kDefaultPort;
+
+    // --- P2P (rungs 1-3) --------------------------------------------------
+    // Signaling rendezvous: "host:port" of the signaling server (the VPS, or a
+    // local test server). Both peers connect OUTBOUND -- no host port-forward.
+    std::string signalingUrl;
+    // Shared bearer token the signaling server requires in the greeting (gates
+    // the open internet out of the rendezvous channel). Distributed with the
+    // lobby; master-server-issued per-session tokens come later (Stage 6).
+    std::string signalingToken;
+    // This peer's OWN signaling identity (<=31 chars, NO spaces -- the trivial
+    // signaling wire protocol is space-delimited). Host and client each carry a
+    // unique one: the host registers it; the client dials the host's.
+    std::string localIdentity;
+    // The HOST's signaling identity the client dials. Client-only; on the host
+    // it is unused (the host listens under localIdentity). Contract: a client's
+    // hostIdentity must equal the host's localIdentity.
+    std::string hostIdentity;
+    // ICE candidate sources. stunList = rung 2 (hole-punch); turn* = rung 3
+    // (coturn relay, short-lived REST creds). Empty string disables that rung.
+    std::string stunList;    // "host:port,host2:port"
+    std::string turnList;    // "turn:host:port,..."
+    std::string turnUser;    // parallel to turnList
+    std::string turnPass;    // parallel to turnList
+    // ICE candidate policy: "" / "all" (default, share host+reflexive+relay),
+    // "relay" (force the TURN relay path -- privacy, or to validate coturn),
+    // "disable" (no ICE), "default" (leave GNS's default). Mapped to IceEnable
+    // in StartP2P.
+    std::string iceMode;
+    // sessionId / joinSecret (per-lobby uniqueness + the app-layer auth
+    // challenge) arrive with the master-server + auth stage -- not needed for
+    // the raw ICE transport. See the connectivity-ladder design doc s10.
+
     int sendHz = 60;
-    // Future: enum Topology { LanDirect, P2P } topology; std::string peerIdentity;
-    // std::string signalingUrl; etc. -- see the P2P plan doc. Current shape is
-    // LAN-direct only.
 };
+
+// Forward decl: Session holds a SignalingClient (P2P only). Defined in
+// coop/net/signaling_client.h, which pulls in the GNS public API -- kept out of
+// this header so the broad set of session.h includers don't see GNS. Held via
+// shared_ptr: per-connection signaling objects co-own the transport, and
+// shared_ptr's type-erased deleter means this incomplete-type member needs no
+// special handling in the (header-inline) default ctor / out-of-line dtor.
+class SignalingClient;
 
 class Session {
 public:
@@ -94,6 +149,14 @@ public:
     // gate). Net thread fan-outs to all peers only while set.
     void SetLocalRagdollPose(bool set, const RagdollPoseSnapshot& pose);
 
+    // v37: HOST publishes the current NPC pose batch (one EntityPoseSnapshot per live NPC);
+    // the net thread fan-outs ONE EntityPose datagram to all peers each sendHz tick. Called
+    // every game tick by npc_sync::TickPoseStream with the current set; an EMPTY batch clears
+    // it (NPCs gone -> stop sending). Game thread. Takes the batch by const-ref + COPIES into
+    // localNpcBatch_ (reusing its capacity) so the caller can hand a reused scratch vector --
+    // no per-tick heap alloc on either side.
+    void SetLocalNpcPoseBatch(const std::vector<EntityPoseSnapshot>& batch);
+
     // Per-peer accessors. peerSlot is the coop::players::Registry slot
     // (0 = host, 1..kMaxPeers-1 = clients). Returns false if peerSlot is
     // out of range, that slot has no remote pose yet, or aggregate state
@@ -104,6 +167,11 @@ public:
     // fresh ragdoll pose AND aggregate state is Connected. outIsNew distinguishes a
     // newly-arrived packet (apply the velocity) from a re-read of the last one.
     bool TryGetRemoteRagdollPose(int peerSlot, RagdollPoseSnapshot& out, bool* outIsNew = nullptr);
+
+    // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
+    // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
+    // packet motion). Returns false if no new batch since the last take. Net thread fills it.
+    bool TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out);
 
     // Game thread: queue a reliable message. Host fan-outs to all connected
     // clients; client sends to host. Returns false on payload-too-large or
@@ -212,11 +280,26 @@ public:
     static void OnConnStatusChanged(void* info);
 
 private:
+    // Topology dispatch helpers, called by Start() after the common GNS init +
+    // global-callback registration. Each branches on role internally (host
+    // listen / client connect) and returns false on any failure (Start clears
+    // g_session + returns false). Defined in session_start.cpp.
+    bool StartLanDirect();  // rung 0/1: CreateListenSocketIP / ConnectByIPAddress
+    bool StartP2P();        // rungs 1-3: signaling + CreateListenSocketP2P / Connect
+
     void NetThread();
     // Per-peer message dispatch. peerSlot identifies which peer the message
     // came from; on host that's read from msg->m_nConnUserData (set via
     // SetConnectionUserData at AcceptConnection time); on client peerSlot=0.
     void HandleMessage(int peerSlot, const void* data, int len);
+    // v37 NPC pose batch send/receive (defined in session_npc.cpp). Serialize
+    // builds the body (EntityPoseBatchHeader + entries) of the live local batch
+    // into `buf` (>= kNpcPoseDatagramMax) leaving the leading PacketHeader for the
+    // per-peer send loop to stamp; returns the datagram length or 0 if empty
+    // (takes localMutex_). Store parses one received datagram + newest-wins-stores
+    // it for the game thread (takes remoteMutex_).
+    int  SerializeLocalNpcBatch(uint8_t* buf);
+    void StoreRemoteNpcBatch(const void* data, int len, uint32_t seq);
     void HandleConnStatusChanged(void* info);
     // Host-only: find the lowest empty slot in [1..kMaxPeers-1]. Returns -1
     // if all client slots are taken (host is full).
@@ -266,6 +349,17 @@ private:
     // when peerConns_[slot] is zeroed on disconnect. See IsSlotReady().
     std::array<std::atomic<bool>, kMaxPeers> peerLanesConfigured_{};
 
+    // P2P only (cfg_.topology == Topology::P2P): the signaling-server transport.
+    // The out-of-band channel that carries opaque ICE rendezvous blobs between
+    // peers. Created in Start() before the net thread spawns; Poll()'d on the net
+    // thread each loop; reset in Stop() AFTER the net thread joins and the
+    // connections finish lingering (closing a P2P connection may need to send a
+    // final signal). nullptr for LanDirect. shared_ptr because per-connection
+    // signaling objects co-own it (they may outlive our reset() until GNS
+    // Release()s them). The net thread reads it without a lock -- set before the
+    // thread spawns, reset only after it joins (same discipline as ownEpoch_).
+    std::shared_ptr<SignalingClient> signaling_;
+
     // Local pose slot (game thread writes, net thread reads + fan-outs).
     std::mutex localMutex_;
     PoseSnapshot localPose_{};
@@ -277,6 +371,10 @@ private:
     // thread reads + fan-outs). Same held/release shape as localPropPose_.
     RagdollPoseSnapshot localRagdollPose_{};
     bool hasLocalRagdoll_ = false;
+    // v37: host NPC pose batch (game thread writes via SetLocalNpcPoseBatch, net thread reads
+    // + fan-outs ONE EntityPose datagram). Empty vector = nothing to send (NPCs gone).
+    std::vector<EntityPoseSnapshot> localNpcBatch_;
+    bool hasLocalNpcBatch_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -297,6 +395,11 @@ private:
     std::array<uint32_t, kMaxPeers> lastRemoteRagdollSeq_{};
     std::array<uint64_t, kMaxPeers> remoteRagdollStamp_{};
     std::array<uint64_t, kMaxPeers> lastReadRagdollStamp_{};
+    // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
+    // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
+    std::vector<EntityPoseSnapshot> remoteNpcBatch_;
+    bool     hasRemoteNpcBatch_ = false;
+    uint32_t lastRemoteNpcSeq_  = 0;
     // Per-slot expected senderEpoch latched from the first packet arriving
     // from that slot (PR-FOUNDATION-1b v16). Zero == not yet latched;
     // subsequent packets whose header epoch doesn't match are dropped at

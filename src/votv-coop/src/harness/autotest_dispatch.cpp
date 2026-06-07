@@ -96,6 +96,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // finalFogDensity/thickFog/actors, then runs the RE'd clear sequence -- gates
     // the host-authoritative weather fix (client mist while host clear). No connection.
     SpawnIf("VOTVCOOP_RUN_FOG_PROBE", "fog probe", &FogProbeThread, role);
+
+    // TEST-ONLY local-player movement oscillator: circles the local player so the OTHER
+    // peer's interp has a MOVING source. Verification rig for the interp-starvation fix
+    // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the
+    // other peer's `pose-diag[slot N] ... trail=`. Role-agnostic. Never ships.
+    SpawnIf("VOTVCOOP_RUN_MOVE_OSC", "move oscillator (interp verify)", &MoveOscThread, role);
 }
 
 }  // namespace harness::autotest

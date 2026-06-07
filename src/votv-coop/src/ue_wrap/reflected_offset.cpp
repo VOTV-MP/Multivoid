@@ -115,6 +115,8 @@ VC_DEFINE_OFFSET(AnimBP_kerfur_useLegIK,            P::name::AnimBPKerfurRegular
 VC_DEFINE_OFFSET(AnimBP_kerfur_removeArms,          P::name::AnimBPKerfurRegularClass, L"removeArms")
 VC_DEFINE_OFFSET(AnimBP_kerfur_headLookAt,          P::name::AnimBPKerfurRegularClass, L"headLookAt")
 VC_DEFINE_OFFSET(AnimBP_kerfur_isFace,              P::name::AnimBPKerfurRegularClass, L"isFace")
+VC_DEFINE_OFFSET(AnimBP_kerfur_lookAt,              P::name::AnimBPKerfurRegularClass, L"lookAt")        // v39: head-look WORLD target (head/neck LookAt nodes)
+VC_DEFINE_OFFSET(AnimBP_kerfur_customLookAt,        P::name::AnimBPKerfurRegularClass, L"customLookAt")  // v39: gate BUA auto-recompute of lookAt
 
 #undef VC_DEFINE_OFFSET
 

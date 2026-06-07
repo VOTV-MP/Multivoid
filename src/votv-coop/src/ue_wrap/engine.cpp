@@ -142,19 +142,27 @@ void* g_getSavePrefixFn = nullptr;  // Uui_saveSlots_C::getSavePrefix(enum_gamem
 bool  g_gameModeApplied = false;    // latch: derive + write GameMode once per session
 constexpr uint8_t kEnumGamemodeCount = 8;  // enum_gamemode::enum_MAX (enum_gamemode_enums.hpp)
 
-// Derive the slot's game mode from its name prefix (exactly as VOTV's menu does --
-// NO hardcoded enum value, so it is correct for story AND sandbox AND any future
-// mode) and write mainGameInstance.GameMode @0x01E1. Retried each boot poll until
-// Uui_saveSlots_C is loaded; runs the derivation once it is, then latches. Game
-// thread only. Logs every getSavePrefix(mode) result so the mapping is verifiable.
-void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
-    if (g_gameModeApplied || !gi || !slot) return;
+// Resolve the Uui_saveSlots_C CDO + its getSavePrefix UFunction (cached). The widget
+// loads on the first menu / gameplay-level transition; before that this returns false
+// and the caller retries. getSavePrefix is a pure mode->prefix map (no side effects),
+// so the CDO is a valid call target (no live instance needed).
+bool ResolveSavePrefixFn() {
     if (!g_saveSlotsUiCdo) g_saveSlotsUiCdo = R::FindClassDefaultObject(L"ui_saveSlots_C");
     if (g_saveSlotsUiCdo && !g_getSavePrefixFn) {
         if (void* c = R::ClassOf(g_saveSlotsUiCdo))
             g_getSavePrefixFn = R::FindFunction(c, L"getSavePrefix");
     }
-    if (!g_saveSlotsUiCdo || !g_getSavePrefixFn) {
+    return g_saveSlotsUiCdo && g_getSavePrefixFn;
+}
+
+// Derive the slot's game mode from its name prefix (exactly as VOTV's menu does -- NO
+// hardcoded enum value, correct for story AND sandbox AND any future mode) and write
+// mainGameInstance.GameMode @0x01E1. Shares the prefix source with the save browser via
+// DeriveModeFromSlot (RULE 2). Retried each boot poll until Uui_saveSlots_C is loaded;
+// runs once then latches. Game thread only.
+void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
+    if (g_gameModeApplied || !gi || !slot) return;
+    if (!ResolveSavePrefixFn()) {
         // Menu save-slots widget not loaded yet at this boot stage. Retry next poll
         // (do NOT latch). If it never loads, the warning persists + GameMode stays
         // as-is (current behaviour) -- a visible signal to pivot.
@@ -162,24 +170,7 @@ void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
                 "GameMode left as-is (will retry)", g_saveSlotsUiCdo, g_getSavePrefixFn);
         return;
     }
-    const std::wstring slotStr(slot);
-    int    bestMode = -1;
-    size_t bestLen  = 0;
-    for (uint8_t mode = 0; mode < kEnumGamemodeCount; ++mode) {
-        ParamFrame f(g_getSavePrefixFn);
-        f.Set<uint8_t>(L"Index", mode);  // TEnumAsByte<enum_gamemode::Type> = 1 byte
-        if (!Call(g_saveSlotsUiCdo, f)) continue;
-        const R::FString pre = f.Get<R::FString>(L"ReturnValue");
-        std::wstring preStr;
-        if (pre.Data && pre.Num > 1) preStr.assign(pre.Data, pre.Data + (pre.Num - 1));  // Num counts the null
-        UE_LOGI("engine: getSavePrefix(%u) = '%ls'", static_cast<unsigned>(mode), preStr.c_str());
-        // Longest matching prefix wins (defends against one prefix being a prefix of
-        // another, e.g. "" matching everything).
-        if (!preStr.empty() && slotStr.rfind(preStr, 0) == 0 && preStr.size() > bestLen) {
-            bestLen  = preStr.size();
-            bestMode = static_cast<int>(mode);
-        }
-    }
+    const int bestMode = DeriveModeFromSlot(slot);
     // The widget is loaded + getSavePrefix is deterministic -> this is our one shot;
     // latch regardless of match (re-running would give the identical result).
     g_gameModeApplied = true;
@@ -187,15 +178,43 @@ void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
     if (bestMode >= 0) {
         const uint8_t old = *gm;
         *gm = static_cast<uint8_t>(bestMode);
-        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' prefix-matched GameMode=%d (was %u, prefix len %zu); "
-                "set @0x01E1 (story-loads-as-sandbox fix)",
-                slot, bestMode, static_cast<unsigned>(old), bestLen);
+        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' prefix-matched GameMode=%d (was %u); "
+                "set @0x01E1 (story-loads-as-sandbox fix)", slot, bestMode, static_cast<unsigned>(old));
     } else {
-        UE_LOGW("engine: ApplyGameModeFromSlot -- NO getSavePrefix prefix matched slot '%ls' (GameMode stays %u); "
-                "inspect the getSavePrefix dump above", slot, static_cast<unsigned>(*gm));
+        UE_LOGW("engine: ApplyGameModeFromSlot -- NO getSavePrefix prefix matched slot '%ls' "
+                "(GameMode stays %u)", slot, static_cast<unsigned>(*gm));
     }
 }
 }  // namespace
+
+bool GetSavePrefix(uint8_t mode, std::wstring& out) {
+    out.clear();
+    if (!ResolveSavePrefixFn()) return false;
+    ParamFrame f(g_getSavePrefixFn);
+    f.Set<uint8_t>(L"Index", mode);  // TEnumAsByte<enum_gamemode::Type> = 1 byte
+    if (!Call(g_saveSlotsUiCdo, f)) return false;
+    const R::FString pre = f.Get<R::FString>(L"ReturnValue");
+    if (pre.Data && pre.Num > 1) out.assign(pre.Data, pre.Data + (pre.Num - 1));  // Num counts the null
+    return true;
+}
+
+int DeriveModeFromSlot(const wchar_t* slot) {
+    if (!slot || !ResolveSavePrefixFn()) return -1;
+    const std::wstring slotStr(slot);
+    int    bestMode = -1;
+    size_t bestLen  = 0;
+    for (uint8_t mode = 0; mode < kEnumGamemodeCount; ++mode) {
+        std::wstring pre;
+        if (!GetSavePrefix(mode, pre)) continue;
+        // Longest matching prefix wins (defends against one prefix being a prefix of
+        // another, e.g. "" matching everything).
+        if (!pre.empty() && slotStr.rfind(pre, 0) == 0 && pre.size() > bestLen) {
+            bestLen  = pre.size();
+            bestMode = static_cast<int>(mode);
+        }
+    }
+    return bestMode;
+}
 
 // Called repeatedly by the harness boot loop. Returns true ONLY once a mainPlayer_C
 // is in the real level (non-origin) -- i.e. we've reached story gameplay. While
@@ -667,6 +686,36 @@ bool SetActorRotation(void* actor, const FRotator& rotation) {
     return f.Get<bool>(L"ReturnValue");
 }
 
+FRotator GetComponentWorldRotation(void* component) {
+    FRotator rot;
+    if (!component || !R::IsLive(component)) return rot;
+    static void* fn = nullptr;
+    if (!fn) {
+        if (void* sc = R::FindClass(P::name::SceneComponentClass))
+            fn = R::FindFunction(sc, P::name::GetComponentRotationFn);
+    }
+    if (!fn) return rot;
+    ParamFrame f(fn);
+    if (!Call(component, f)) return rot;
+    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    return rot;
+}
+
+bool SetComponentWorldRotation(void* component, const FRotator& rotation) {
+    if (!component || !R::IsLive(component)) return false;
+    static void* fn = nullptr;
+    if (!fn) {
+        if (void* sc = R::FindClass(P::name::SceneComponentClass))
+            fn = R::FindFunction(sc, P::name::SetWorldRotationFn);
+    }
+    if (!fn) return false;
+    ParamFrame f(fn);
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", true);  // K2_SetWorldRotation's FHitResult& out-param frame space is allocated by ParamFrame
+    return Call(component, f);
+}
+
 bool SetActorTickEnabled(void* actor, bool enabled) {
     if (!actor || !ResolveActorFns() || !g_setTickFn) {
         UE_LOGE("engine: SetActorTickEnabled unresolved (fn=%p)", g_setTickFn);
@@ -750,101 +799,10 @@ void* GetWorldContext() {
     return R::FindObjectByClass(P::name::WorldClass);
 }
 
-namespace {
-// Cached UFunction pointers + UClass for SpawnSoundAttenuation. The 3
-// resolve attempts run lazily on first call; once non-null they stay
-// (GameplayStatics CDO + SoundAttenuation UClass are process-stable).
-void* g_gsCdoForAtt    = nullptr;
-void* g_spawnObjectFn  = nullptr;
-void* g_attClass       = nullptr;
-
-bool ResolveAttSpawn() {
-    if (!g_gsCdoForAtt) g_gsCdoForAtt = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    if (g_gsCdoForAtt && !g_spawnObjectFn) {
-        if (void* gsCls = R::ClassOf(g_gsCdoForAtt)) {
-            g_spawnObjectFn = R::FindFunction(gsCls, P::name::SpawnObjectFn);
-        }
-    }
-    if (!g_attClass) g_attClass = R::FindClass(P::name::SoundAttenuationClass);
-    return g_gsCdoForAtt && g_spawnObjectFn && g_attClass;
-}
-}  // namespace
-
-void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg) {
-    if (!ResolveAttSpawn()) return nullptr;
-
-    // 1) SpawnObject(objectClass, Outer) -> UObject*. CASE-SENSITIVE param
-    //    names per UE reflection: lowercase 'objectClass' + 'Outer' (the
-    //    existing pattern in engine_widget.cpp's widget spawn). An
-    //    uppercase-O `ObjectClass` would FName-mismatch -> SetRaw fail ->
-    //    SpawnObject sees a null class -> returns null. Outer = the
-    //    GameplayStatics CDO, which is process-stable.
-    void* obj = nullptr;
-    {
-        ParamFrame f(g_spawnObjectFn);
-        f.Set<void*>(L"objectClass", g_attClass);
-        f.Set<void*>(L"Outer", g_gsCdoForAtt);
-        if (!Call(g_gsCdoForAtt, f)) return nullptr;
-        obj = f.Get<void*>(L"ReturnValue");
-    }
-    if (!obj) return nullptr;
-
-    // 2) Configure via raw memory writes. UE exposes no setter
-    //    UFunctions for these fields (they are edit-time UProperties
-    //    on USoundAttenuation). Offsets cataloged in sdk_profile.h
-    //    `att::` namespace -- the wrapper hides them from gameplay code.
-    auto* p = reinterpret_cast<uint8_t*>(obj);
-    *reinterpret_cast<uint8_t*>(p + P::off::att::AttenuationShape)  = cfg.shape;
-    *reinterpret_cast<uint8_t*>(p + P::off::att::DistanceAlgorithm) = cfg.distanceAlgorithm;
-    *reinterpret_cast<uint8_t*>(p + P::off::att::FalloffMode)       = cfg.falloffMode;
-    float* extents = reinterpret_cast<float*>(p + P::off::att::AttenuationShapeExtents);
-    extents[0] = cfg.extents[0];
-    extents[1] = cfg.extents[1];
-    extents[2] = cfg.extents[2];
-    *reinterpret_cast<float*>(p + P::off::att::FalloffDistance)    = cfg.falloffDistance;
-    *reinterpret_cast<float*>(p + P::off::att::ConeOffset)         = cfg.coneOffset;
-    *reinterpret_cast<float*>(p + P::off::att::dBAttenuationAtMax) = cfg.dBAttenuationAtMax;
-    uint8_t& flags = *reinterpret_cast<uint8_t*>(p + P::off::att::FlagsByte);
-    if (cfg.attenuate)  flags |= 0x01; else flags &= ~static_cast<uint8_t>(0x01);
-    if (cfg.spatialize) flags |= 0x02; else flags &= ~static_cast<uint8_t>(0x02);
-
-    // 3) AddToRoot so UE GC keeps this object alive across collections.
-    //    Caller will hold the pointer in a C++ static (invisible to UE's
-    //    reachability scan) -- without rooting, the object is reaped on
-    //    the next GC pass and PlaySoundAtLocation crashes reading freed
-    //    memory on the next call (2026-05-26 F-spam crash root cause).
-    R::AddToRoot(obj);
-    return obj;
-}
-
-void PlaySoundAtLocation(void* worldContext, void* sound, const FVector& location,
-                         void* attenuation, float volume, float pitch) {
-    if (!worldContext || !sound) return;
-    // UGameplayStatics::PlaySoundAtLocation CDO + UFunction, cached once.
-    static void* sGsCdo  = nullptr;
-    static void* sPlayFn = nullptr;
-    if (!sGsCdo) sGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    if (!sPlayFn && sGsCdo) {
-        if (void* c = R::ClassOf(sGsCdo)) sPlayFn = R::FindFunction(c, P::name::PlaySoundAtLocationFn);
-    }
-    if (!sGsCdo || !sPlayFn) return;
-    // Non-cone source -> orientation unused; pass a zero rotator. Tolerates a
-    // null attenuation (plays 2D in that case). The per-call transient
-    // UAudioComponent is engine-managed (auto-destroy at playback end).
-    const FRotator rot{};
-    ParamFrame f(sPlayFn);
-    f.Set<void*>(L"WorldContextObject", worldContext);
-    f.Set<void*>(L"Sound", sound);
-    f.SetRaw(L"Location", &location, sizeof(location));
-    f.SetRaw(L"Rotation", &rot, sizeof(rot));
-    f.Set<float>(L"VolumeMultiplier", volume);
-    f.Set<float>(L"PitchMultiplier", pitch);
-    f.Set<float>(L"StartTime", 0.f);
-    f.Set<void*>(L"AttenuationSettings", attenuation);
-    f.Set<void*>(L"ConcurrencySettings", nullptr);
-    f.Set<void*>(L"OwningActor", worldContext);
-    Call(sGsCdo, f);
-}
+// SpawnSoundAttenuation + PlaySoundAtLocation extracted to ue_wrap/engine_audio.cpp
+// (2026-06-06 modularity audit: engine.cpp had grown past the 800-LOC soft cap; the
+// audio block is self-contained so it lifts into its own file). Declarations remain in
+// engine.h, so callers are unchanged.
 
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
                    float& qx, float& qy, float& qz, float& qw) {

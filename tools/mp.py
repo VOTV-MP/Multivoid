@@ -352,7 +352,10 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
                 monitor: int = 1, tile_index: int = 0,
                 center: bool = False,
                 memory_limit_gb: float = 12.0,
-                trigger_file: str | None = None) -> int:
+                trigger_file: str | None = None,
+                set_net_role: bool = True,
+                set_scenario: str | None = "play",
+                extra_env: dict | None = None) -> int:
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
     # to launch from when role==client: 1 -> Game_0.9.0n_copy, 2 ->
     # Game_0.9.0n_copy2, 3 -> Game_0.9.0n_dev. Host always uses Game_0.9.0n.
@@ -394,7 +397,14 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     log(f"role={role} dir={game_dir.parent.parent.parent.name} port={port} nick={nick}"
         f" monitor={monitor} win=({win_x},{win_y}) res={res_x}x{res_y}"
         + (f" peer={peer}" if peer else ""))
-    (game_dir / "scenario.txt").write_text("play")
+    # Scenario is driven by the VOTVCOOP_SCENARIO env var (set below) -- NOT a
+    # scenario.txt file. A leftover scenario.txt in the game dir aliased later
+    # NATIVE launches into auto-gameplay (user bug 2026-06-06); the harness no
+    # longer reads it. Proactively delete any stale one this launcher left before.
+    try:
+        (game_dir / "scenario.txt").unlink()
+    except FileNotFoundError:
+        pass
     log_file = game_dir / "votv-coop.log"
     if log_file.exists():
         try:
@@ -402,17 +412,35 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         except PermissionError:
             log(f"WARN: {log_file} locked (another VotV still holds it?)")
     env = os.environ.copy()
-    env["VOTVCOOP_SCENARIO"] = "play"
-    env["VOTVCOOP_NET_ROLE"] = role
+    # set_scenario=None -> NO VOTVCOOP_SCENARIO -> the harness boots to the MENU (the
+    # real native-launch / save-picker context). Default "play" auto-loads the ini save.
+    if set_scenario:
+        env["VOTVCOOP_SCENARIO"] = set_scenario
+    # set_net_role=False boots plain "play" with NO env net role -> the harness non-net
+    # branch runs + RunPlayLoop waits for a browser-initiated start (used by the Tier-2
+    # browser-boot probe, where the session starts via session_manager, not the env).
+    if set_net_role:
+        env["VOTVCOOP_NET_ROLE"] = role
+        if role == "client" and peer:
+            env["VOTVCOOP_NET_PEER"] = peer
     env["VOTVCOOP_NET_PORT"] = str(port)
     env["VOTVCOOP_NET_NICK"] = nick
-    if role == "client" and peer:
-        env["VOTVCOOP_NET_PEER"] = peer
     if trigger_file:
         # dev/spawn_npc watches this file path; when it appears the peer spawns
         # a kerfurOmega NPC once + deletes it. mp.py npctest creates it after
         # all peers connect (so the EntitySpawn broadcast reaches everyone).
         env["VOTVCOOP_SPAWN_TRIGGER"] = trigger_file
+    if extra_env:
+        # Per-peer overrides/additions (e.g. the P2P topology + identity env the
+        # p2p_smoke orchestrator injects). Applied last so they win.
+        for k, v in extra_env.items():
+            env[k] = v
+        # Redact secrets (TURN pass, signaling token) from the log -- they land in
+        # console scrollback / CI capture otherwise.
+        _sens = ("PASS", "TOKEN", "SECRET")
+        _shown = {k: ("***" if any(s in k.upper() for s in _sens) else v)
+                  for k, v in extra_env.items()}
+        log("  extra_env: " + ", ".join(f"{k}={v}" for k, v in _shown.items()))
     proc = subprocess.Popen(
         [str(exe), "-windowed",
          f"-ResX={res_x}", f"-ResY={res_y}",

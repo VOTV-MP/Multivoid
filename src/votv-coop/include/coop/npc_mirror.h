@@ -97,4 +97,10 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload);
 // ProcessEvent is GT-only). Caller is expected to be on the GT.
 void DrainClientMirrors();
 
+// v37 CLIENT pose-stream drive: drain the latest EntityPose batch (Session::TakeRemoteNpcBatch)
+// -> open an interp window per NPC (SetTargetNpcPose), then advance + drive EVERY live mirror
+// (element::Npc::Tick) so the mirrors MOVE + animate. No-op on the host / when no mirrors. Called
+// every net-pump tick on the game thread.
+void TickClientNpcs();
+
 }  // namespace coop::npc_mirror

@@ -9,7 +9,6 @@
 
 #include "ue_wrap/call.h"
 #include "ue_wrap/log.h"
-#include "ue_wrap/passwordlock.h"   // GetKeyString for the passlock dump (door_probe diagnostic)
 #include "ue_wrap/reflection.h"
 
 #include <atomic>
@@ -43,26 +42,25 @@ constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=F
 int32_t g_autocloseOff = -1;       // Adoor_C::autoclose  (Alpha 0.9.0-n: 0x0353)
 int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*) (Alpha 0.9.0-n: 0x0308)
 void*   g_setGenOverlapFn = nullptr; // UPrimitiveComponent::SetGenerateOverlapEvents(bool) (lazy)
-// Lock state (keypad-gated doors). passlocks is a TArray<ApasswordLock_C*>. A passlock
-// gates the door only when it is ARMED (Active==true); an UNARMED ref (Active==false) is
-// present on normal doors but does NOT lock them (door_probe 2026-06-04: basedoor_entrance/
-// garage/upperLift/balcony have Active=1 passlocks = real keypad locks; alphaBunker/security
-// have Active=0 = openable). So LOCKED = an armed passlock that is not yet accepted
-// (Active && !isAcc). jammed is the door's own jam flag.
-int32_t g_passlocksOff  = -1;      // Adoor_C::passlocks (TArray) (Alpha 0.9.0-n: 0x0390)
-int32_t g_jammedOff     = -1;      // Adoor_C::jammed                (Alpha 0.9.0-n: 0x03B0)
-int32_t g_lockIsAccOff  = -1;      // ApasswordLock_C::isAcc         (Alpha 0.9.0-n: 0x037C)
-int32_t g_lockActiveOff = -1;      // ApasswordLock_C::Active (armed) (Alpha 0.9.0-n: 0x0330)
+// Manual-open gate (CanOpen). BYTE-EXACT from the door BP disassembly (2026-06-06): a player's
+// E-press reaches the toggle only past an `Active` (power) check at ubergraph offset 3533, and
+// the toggle's doorOpen needs `!jammed && !superClosed`. So a door opens on E iff
+// `Active && !jammed && !superClosed`. These are all the door's OWN fields (NOT the keypad's --
+// the old IsLocked read the passlock's isAcc, a crosshair-hover flag, and mis-locked powered
+// doors). `Active` is driven by the gamemode power trigger (runTrigger 2/3) + the keypad's
+// setActive (door.Active = keypad.Active) + the save.
+int32_t g_activeOff      = -1;     // Adoor_C::Active (power) (Alpha 0.9.0-n: 0x0352)
+int32_t g_superClosedOff = -1;     // Adoor_C::superClosed    (Alpha 0.9.0-n: 0x0378)
+int32_t g_jammedOff      = -1;     // Adoor_C::jammed         (Alpha 0.9.0-n: 0x03B0)
 
-// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/door.hpp + triggerBase.hpp + passwordLock.hpp).
-constexpr int32_t kKeyOffFallback       = 0x0260;
-constexpr int32_t kIsOpenedOffFallback  = 0x0350;
-constexpr int32_t kAutocloseOffFallback = 0x0353;
-constexpr int32_t kSensorOffFallback    = 0x0308;
-constexpr int32_t kPasslocksOffFallback = 0x0390;
-constexpr int32_t kJammedOffFallback    = 0x03B0;
-constexpr int32_t kLockIsAccOffFallback  = 0x037C;
-constexpr int32_t kLockActiveOffFallback = 0x0330;
+// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/door.hpp + triggerBase.hpp).
+constexpr int32_t kKeyOffFallback         = 0x0260;
+constexpr int32_t kIsOpenedOffFallback    = 0x0350;
+constexpr int32_t kAutocloseOffFallback   = 0x0353;
+constexpr int32_t kSensorOffFallback      = 0x0308;
+constexpr int32_t kActiveOffFallback      = 0x0352;
+constexpr int32_t kSuperClosedOffFallback = 0x0378;
+constexpr int32_t kJammedOffFallback      = 0x03B0;
 
 // Per-door cache so Restore*Autonomy can undo a suppression. Two distinct maps: the
 // CLIENT suppresses every synced door (render-only); the HOST suppresses only the doors a
@@ -139,20 +137,13 @@ bool EnsureResolved() {
         UE_LOGW("door: reflected sensor offset not found -- using fallback 0x%04X", kSensorOffFallback);
         sensorOff = kSensorOffFallback;
     }
-    int32_t passlocksOff = R::FindPropertyOffset(doorCls, L"passlocks");
-    if (passlocksOff < 0) passlocksOff = kPasslocksOffFallback;
+    // CanOpen gate fields -- the door's OWN power/jam/superClosed (door BP disassembly 2026-06-06).
+    int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
+    if (activeOff < 0) activeOff = kActiveOffFallback;
+    int32_t superClosedOff = R::FindPropertyOffset(doorCls, L"superClosed");
+    if (superClosedOff < 0) superClosedOff = kSuperClosedOffFallback;
     int32_t jammedOff = R::FindPropertyOffset(doorCls, L"jammed");
     if (jammedOff < 0) jammedOff = kJammedOffFallback;
-    // isAcc lives on ApasswordLock_C, not the door. Resolve that class's offset; if the
-    // BP class isn't loaded yet, fall back to the documented offset (stable for this build)
-    // so the lock check still works -- it never blocks door resolution.
-    int32_t lockIsAccOff = -1, lockActiveOff = -1;
-    if (void* plCls = R::FindClass(L"passwordLock_C")) {
-        lockIsAccOff  = R::FindPropertyOffset(plCls, L"isAcc");
-        lockActiveOff = R::FindPropertyOffset(plCls, L"Active");
-    }
-    if (lockIsAccOff < 0)  lockIsAccOff  = kLockIsAccOffFallback;
-    if (lockActiveOff < 0) lockActiveOff = kLockActiveOffFallback;
 
     void* openFn  = R::FindFunction(doorCls, L"doorOpen");
     void* closeFn = R::FindFunction(doorCls, L"doorClose");
@@ -174,17 +165,16 @@ bool EnsureResolved() {
     g_isOpenedOff  = isOpenedOff;
     g_autocloseOff = autocloseOff;
     g_sensorOff    = sensorOff;
-    g_passlocksOff  = passlocksOff;
-    g_jammedOff     = jammedOff;
-    g_lockIsAccOff  = lockIsAccOff;
-    g_lockActiveOff = lockActiveOff;
+    g_activeOff      = activeOff;
+    g_superClosedOff = superClosedOff;
+    g_jammedOff      = jammedOff;
     g_doorOpenFn   = openFn;
     g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X autoclose@0x%04X sensor@0x%04X "
-            "passlocks@0x%04X jammed@0x%04X lock.isAcc@0x%04X lock.Active@0x%04X doorOpen=%p doorClose=%p",
-            doorCls, keyOff, isOpenedOff, autocloseOff, sensorOff, passlocksOff, jammedOff,
-            lockIsAccOff, lockActiveOff, openFn, closeFn);
+            "Active@0x%04X superClosed@0x%04X jammed@0x%04X doorOpen=%p doorClose=%p",
+            doorCls, keyOff, isOpenedOff, autocloseOff, sensorOff, activeOff, superClosedOff,
+            jammedOff, openFn, closeFn);
     return true;
 }
 
@@ -214,73 +204,21 @@ bool TryReadOpen(void* door, bool& open) {
     return true;
 }
 
-bool IsLocked(void* door) {
-    if (!door) return false;
-    // Jammed doors can't be opened by the use verb at all.
-    if (g_jammedOff >= 0 &&
-        *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_jammedOff))
-        return true;
-    if (g_passlocksOff < 0 || g_lockIsAccOff < 0 || g_lockActiveOff < 0)
-        return false;  // can't tell -> fail-open (plain doors unaffected)
-    // door->passlocks is a TArray<ApasswordLock_C*> { T* Data; int32 Num; int32 Max; }.
-    const char* arr = reinterpret_cast<const char*>(door) + g_passlocksOff;
-    void* const* data = *reinterpret_cast<void* const* const*>(arr);
-    int32_t num = *reinterpret_cast<const int32_t*>(arr + 8);
-    if (!data || num <= 0) return false;   // no passlocks -> a normal door
-    if (num > 64) num = 64;                 // sanity clamp against a torn read
-    for (int32_t i = 0; i < num; ++i) {
-        void* lock = data[i];
-        if (!lock || !R::IsLive(lock)) continue;
-        // LOCKED iff a passlock is ARMED (Active) but NOT yet accepted. The Active gate is
-        // load-bearing: door_probe 2026-06-04 proved normal doors (alphaBunker/security) carry
-        // passlock refs with isAcc=0 but Active=0 -- the earlier "any isAcc=0 -> locked" marked
-        // those locked too and broke them. Only Active=1+isAcc=0 is a genuine keypad lock.
-        const char* lc = reinterpret_cast<const char*>(lock);
-        const bool active   = *reinterpret_cast<const bool*>(lc + g_lockActiveOff);
-        const bool accepted = *reinterpret_cast<const bool*>(lc + g_lockIsAccOff);
-        if (active && !accepted) return true;  // armed keypad not yet accepted -> LOCKED
-    }
-    return false;  // no armed-unaccepted keypad -> openable
-}
-
-void DumpLockStates() {
-    // door_probe diagnostic (2026-06-04): the staged IsLocked ("any passlock isAcc=false ->
-    // locked") false-positived on normal doors (they carry passlock refs with isAcc=false), so
-    // the real lock condition is unknown. Dump every door's passlocks + each lock's full bool set
-    // so we can SEE which field distinguishes a genuinely keypad-locked door (e.g. the garage)
-    // from a normal door -- then gate the open from data, not a guess. Runs once. Game thread.
-    if (!EnsureResolved()) return;
-    void* lockCls = R::FindClass(L"passwordLock_C");
-    const int32_t accOff  = lockCls ? R::FindPropertyOffset(lockCls, L"isAcc")  : -1;
-    const int32_t actOff  = lockCls ? R::FindPropertyOffset(lockCls, L"Active") : -1;
-    const int32_t denyOff = lockCls ? R::FindPropertyOffset(lockCls, L"isDeny") : -1;
-    const int32_t cardOff = lockCls ? R::FindPropertyOffset(lockCls, L"isCard") : -1;
-    UE_LOGI("[door_probe] passlock offsets: isAcc@0x%X Active@0x%X isDeny@0x%X isCard@0x%X", accOff, actOff, denyOff, cardOff);
-    const int32_t n = R::NumObjects();
-    int dumped = 0;
-    for (int32_t i = 0; i < n; ++i) {
-        void* d = R::ObjectAt(i);
-        if (!d || !IsDoor(d) || !R::IsLive(d)) continue;
-        const bool jammed = (g_jammedOff >= 0) &&
-            *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(d) + g_jammedOff);
-        const char* arr = (g_passlocksOff >= 0) ? reinterpret_cast<const char*>(d) + g_passlocksOff : nullptr;
-        void* const* data = arr ? *reinterpret_cast<void* const* const*>(arr) : nullptr;
-        int32_t num = arr ? *reinterpret_cast<const int32_t*>(arr + 8) : 0;
-        if ((!data || num <= 0) && !jammed) continue;  // only dump doors that have locks or are jammed
-        bool open = false; TryReadOpen(d, open);
-        UE_LOGI("[door_probe] door key='%ls' isOpened=%d jammed=%d passlocks=%d IsLocked=%d (expect 1 for armed/Active locks)",
-                GetKeyString(d).c_str(), open ? 1 : 0, jammed ? 1 : 0, num, IsLocked(d) ? 1 : 0);
-        if (num > 64) num = 64;
-        for (int32_t j = 0; j < num && data; ++j) {
-            void* lk = data[j];
-            if (!lk || !R::IsLive(lk)) { UE_LOGI("[door_probe]   lock[%d]=null/dead", j); continue; }
-            auto rb = [&](int32_t off) -> int { return off >= 0 ? (int)*reinterpret_cast<const bool*>(reinterpret_cast<const char*>(lk) + off) : -1; };
-            UE_LOGI("[door_probe]   lock[%d] key='%ls' isAcc=%d Active=%d isDeny=%d isCard=%d",
-                    j, ue_wrap::passwordlock::GetKeyString(lk).c_str(), rb(accOff), rb(actOff), rb(denyOff), rb(cardOff));
-        }
-        ++dumped;
-    }
-    UE_LOGI("[door_probe] dumped %d door(s) with passlocks/jam (compare a normal door vs the locked garage)", dumped);
+bool CanOpen(void* door) {
+    // BYTE-EXACT door BP gate (disassembly 2026-06-06, research/findings/votv-keypad-door-BP-
+    // disassembly-2026-06-06.md): a player's E-press opens the door iff its OWN power is on
+    // (`Active`, gate at ubergraph offset 3533) AND it is neither jammed nor superClosed (the
+    // doorOpen open-condition). fail-OPEN on null / unresolved so a resolve failure never locks
+    // every door. Reads three bools, no UFunction dispatch -- cheap, call per open-request.
+    // Guard on g_resolved (acquire): once it is set, EnsureResolved has written all three
+    // offsets (reflected or fallback -- never -1), so the reads below are valid. Before it is
+    // set, fail-OPEN. (The caller OnRequest already gates on EnsureResolved; this is belt-and-
+    // suspenders for any other call site.)
+    if (!door || !g_resolved.load(std::memory_order_acquire)) return true;
+    auto rb = [door](int32_t off) -> bool {
+        return off >= 0 && *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + off);
+    };
+    return rb(g_activeOff) && !rb(g_jammedOff) && !rb(g_superClosedOff);
 }
 
 bool CallDoorOpen(void* door, bool bypass) {
@@ -299,11 +237,24 @@ bool CallDoorClose(void* door, bool bypass) {
     return Call(door, f);
 }
 
+void SetActive(void* door, bool on) {
+    if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return;
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_activeOff) = on;
+}
+
 // Snap a door fully to a state, mesh AND flag, proximity-independent. Set the timeline alpha
 // (move_a) to the end + the direction, then call move__UpdateFunc (which LERPS THE DOOR MESH
 // from move_a -> the visual snap -- this was the missing piece: move__FinishedFunc only sets
 // isOpened + stops the timeline, it does NOT move the mesh) then move__FinishedFunc (state).
 static void ForceTo(void* door, bool open) {
+    // IDEMPOTENT: if isOpened already matches the target, do nothing. move__FinishedFunc re-fires the
+    // open/close sound + the doorOpened delegate, so a second force on an already-open door double-
+    // sounds. Two callers can reach the same open door in one/adjacent tick (the keypad accept's
+    // ForceOpen + the door's OWN native chain from the replayed inputNumber); this guard makes both
+    // safe. (The door-channel SmartApply already checks cur!=target; this covers direct callers.)
+    if (g_isOpenedOff >= 0 &&
+        *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
+        return;
     *reinterpret_cast<float*>(reinterpret_cast<char*>(door) + kMoveAlphaOff) = open ? 1.0f : 0.0f;
     *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + kMoveDirOff)  = open ? 0 : 1;  // Forward/Backward
     if (g_moveUpdateFn) { ParamFrame u(g_moveUpdateFn); if (u.valid()) Call(door, u); }  // move the MESH

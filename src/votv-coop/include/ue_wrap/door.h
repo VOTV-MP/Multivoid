@@ -42,21 +42,23 @@ std::wstring GetKeyString(void* door);
 // not be made (null door / not resolved); leaves `open` untouched on failure.
 bool TryReadOpen(void* door, bool& open);
 
-// True iff this door is currently LOCKED against opening: it is `jammed`, OR it is
-// gated by a password keypad (`passlocks` -- TArray<ApasswordLock_C*>) at least one
-// of which is not accepted (`isAcc==false`). A normal door (no passlocks, not
-// jammed) returns false. Used to gate the sync's open-apply: doorOpen(bypassCheck=
-// true) skips the passlock/jam guard, so without this check the coop sync would
-// force a keypad-locked door open. Reads only struct fields (no UFunction dispatch);
-// cheap, call per open-apply. Game thread. Returns false if door is null / the
-// passlock layout could not be resolved (fail-open = no regression for plain doors).
-bool IsLocked(void* door);
-
-// door_probe diagnostic (2026-06-04): log every door's passlocks + each gating keypad's full
-// bool set (isAcc/Active/isDeny/isCard) + the door's jammed/isOpened, so the REAL lock condition
-// (which field distinguishes a keypad-locked door from a normal door that merely carries a
-// passlock ref) can be derived from data rather than guessed. Diagnostic only. Game thread.
-void DumpLockStates();
+// True iff a player's manual E-press would open/toggle this door RIGHT NOW, per the
+// door's OWN engine logic. BYTE-EXACT from the BP disassembly (door CFG, 2026-06-06):
+// the real E-press path gates on the door's `Active` (power) at ubergraph offset 3533
+// BEFORE toggling -- `Active==true` -> toggle (doorOpen/doorClose(bypassCheck=true));
+// `Active==false` -> no open (in the normal story gamemode, `usesp_light==true`). The
+// toggle itself then needs `!jammed && !superClosed` (the doorOpen open-condition). So:
+//   CanOpen == Active && !jammed && !superClosed
+// This REPLACES the prior IsLocked, which read the wrong field: it keyed on the PASSLOCK's
+// `isAcc` -- proven by the disassembly to be a crosshair-HOVER flag, not accept state -- so
+// `IsLocked = passlock.Active && !passlock.isAcc` wrongly reported a POWERED door (Active=1,
+// isAcc=0 when not hovering the accept button) as locked and the host DENIED the client's
+// open (the user's "first E-press doesn't work"). Here we read the DOOR's own `Active`
+// (0x0352), the field the gamemode power trigger + the keypad's setActive actually drive.
+// Reads only struct fields (no UFunction dispatch); cheap, call per open-request. Game
+// thread. Returns true (fail-OPEN) if door is null / offsets unresolved, so a resolution
+// failure never silently locks every door.
+bool CanOpen(void* door);
 
 // Canonical open/close. `bypass` -> the BP's bypassCheck param (skip the
 // keycard/password/jam guards -- always true on the receiver, since the SENDER
@@ -64,6 +66,13 @@ void DumpLockStates();
 // the game thread. Return false on null door / unresolved UFunction.
 bool CallDoorOpen(void* door, bool bypass);
 bool CallDoorClose(void* door, bool bypass);
+
+// Write the door's `Active` (power) flag -- the field CanOpen gates on. The keypad's
+// accept unlocks its door by setting this true (SP: passwordLock.open -> setActive ->
+// door.Active = true). Used by the host-authoritative keypad accept (coop::keypad_sync)
+// so an unlocked door stays openable (CanOpen) after the code, independent of whether
+// the native keypad chain completed. Plain field write; no UFunction. Game thread.
+void SetActive(void* door, bool on);
 
 // The doorOpen / doorClose UFunction pointers (for POST-observer registration by
 // coop::door_sync). nullptr until EnsureResolved succeeds.

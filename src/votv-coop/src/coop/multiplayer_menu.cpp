@@ -10,6 +10,7 @@
 #include "coop/multiplayer_menu.h"
 
 #include "coop/ini_config.h"
+#include "coop/join_progress.h"
 #include "ui/server_browser.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -46,6 +47,12 @@ void* g_button = nullptr;               // our MULTIPLAYER UButton
 bool  g_prevLmb = false;                // VK_LBUTTON state last tick (click-edge detect)
 bool  g_lmbPrimed = false;             // first-tick guard: seed g_prevLmb without firing an edge
 uint64_t g_lastInjectMs = 0;            // throttle inject attempts on failure / self-heal
+// Client loading state: the menu instance + hidden-state we last applied for a join-in-
+// progress fade. Edge-applied so the SetVisibility/SetRenderOpacity UFunctions run only on
+// a change, not per tick. (g_menuFadeMenu is never dereferenced -- pointer compare only --
+// so a destroyed menu is safe.)
+void* g_menuFadeMenu = nullptr;
+bool  g_menuFadeHidden = false;
 
 inline void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off)
@@ -76,6 +83,27 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // NEW GAME button to sit above.
     if (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0) return;
 
+    // Client loading state: while a join is in progress, hide the WHOLE menu widget so only
+    // the 3D menu background remains -- the "clean menu canvas" the connecting screen
+    // (ui/loading_screen) draws its centered progress over -- then restore it when the join
+    // completes/cancels. The hide is BOTH visual AND functional: opacity 0 (invisible) +
+    // HitTestInvisible (the widget and all its children stop receiving clicks, so the user
+    // can't trigger menu options they can't see). HitTestInvisible keeps the menu rendered/
+    // ticking, so this same observer restores it. Edge-applied (no per-tick UFunction).
+    {
+        const bool hideForJoin = coop::join_progress::Active();
+        if (self != g_menuFadeMenu || hideForJoin != g_menuFadeHidden) {
+            // 3 = HitTestInvisible (self + children non-clickable, still rendered); 0 = Visible.
+            E::SetWidgetVisibility(self, hideForJoin ? 3 : 0);
+            E::SetWidgetRenderOpacity(self, hideForJoin ? 0.0f : 1.0f);
+            g_menuFadeMenu = self;
+            g_menuFadeHidden = hideForJoin;
+            UE_LOGI("multiplayer_menu: menu %s for connect (opacity %.0f, hit-test %s)",
+                    hideForJoin ? "HIDDEN" : "restored", hideForJoin ? 0.0f : 1.0f,
+                    hideForJoin ? "off" : "on");
+        }
+    }
+
     // Inject once per menu instance; self-heal if VOTV ever tore our button out
     // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).
     const bool needInject = (self != g_injectedMenu) || !g_button || !R::IsLive(g_button);
@@ -94,6 +122,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     const bool pressEdge = down && !g_prevLmb;
     g_prevLmb = down;
     if (pressEdge && g_button && R::IsLive(g_button) && !ui::server_browser::IsOpen() &&
+        !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
         coop::ini_config::IsOurWindowForeground() && E::WidgetIsHovered(g_button)) {
         UE_LOGI("multiplayer_menu: MULTIPLAYER clicked -> opening server browser");
         ui::server_browser::Open();

@@ -50,6 +50,10 @@ std::vector<coop::element::ElementId> g_snapshotEids;  // parallel; same idx as 
 // and its per-tick drain is rejected WITHOUT dereferencing freed actor memory.
 std::vector<int32_t> g_snapshotInternalIdxs;
 size_t g_snapshotCandidateIdx = 0;
+// v34: running count of PropSpawn messages actually sent this drain (<= candidate count
+// after wire-suppress / unkeyed skips). Reported in SnapshotComplete for the joiner's
+// loading-screen diagnostic. Reset per drain in StartEnumerationFor.
+uint32_t g_snapshotSentTotal = 0;
 
 // Which peer slot is being served by the current drain (-1 = no drain
 // in progress). Plus the queue of slots waiting their turn (e.g. peer 2
@@ -114,6 +118,46 @@ void StartEnumerationFor(int peerSlot) {
     }
     UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
+    g_snapshotSentTotal = 0;
+    // v34: OPEN the joiner's loading-screen bracket. Send the candidate count (the progress
+    // denominator) on Lane::Bulk BEFORE the first PropSpawn, so GNS in-lane ordering puts it
+    // strictly ahead of the prop stream it introduces. Host-only path (TriggerForSlot gated
+    // us to host + IsSlotReady).
+    if (auto* s = g_session_ptr.load(std::memory_order_acquire)) {
+        coop::net::SnapshotBeginPayload b{};
+        b.propTotal = static_cast<uint32_t>(g_snapshotCandidates.size());
+        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::SnapshotBegin, &b, sizeof(b));
+    }
+}
+
+// v34: finish the current drain -- CLOSE the joiner's loading-screen bracket, then clear
+// state + dequeue the next pending slot. SnapshotComplete is the LAST Lane::Bulk message
+// (after every PropSpawn) so the joiner hides its cover only once the whole stream landed.
+// Single completion authority: called from DrainChunk's normal finish AND its 0-candidate
+// early-out, so an empty world can't leave g_currentTargetSlot pinned (queue would stall).
+void CompleteDrainForCurrentSlot(coop::net::Session* s) {
+    if (s && g_currentTargetSlot >= 1) {
+        coop::net::SnapshotEndPayload e{};
+        e.propSent = g_snapshotSentTotal;
+        s->SendReliableToSlot(g_currentTargetSlot, coop::net::ReliableKind::SnapshotComplete,
+                              &e, sizeof(e));
+    }
+    UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent)",
+            g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal);
+    g_snapshotCandidates.clear(); g_snapshotCandidates.shrink_to_fit();
+    g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
+    g_snapshotInternalIdxs.clear(); g_snapshotInternalIdxs.shrink_to_fit();
+    g_snapshotCandidateIdx = 0;
+    g_currentTargetSlot = -1;
+    g_snapshotSentTotal = 0;
+    // Dequeue next pending slot (fresh enumeration -- the world may have changed since this
+    // drain started). Skip a slot that disconnected while it waited.
+    if (!g_pendingSlots.empty()) {
+        const int nextSlot = g_pendingSlots.front();
+        g_pendingSlots.erase(g_pendingSlots.begin());
+        if (s && s->IsSlotConnected(nextSlot)) StartEnumerationFor(nextSlot);
+        else UE_LOGI("snapshot: dequeued slot %d already disconnected -- skipping", nextSlot);
+    }
 }
 
 }  // namespace
@@ -164,7 +208,6 @@ void TriggerForSlot(int peerSlot) {
 
 void DrainChunk() {
     if (g_currentTargetSlot == -1) return;
-    if (g_snapshotCandidateIdx >= g_snapshotCandidates.size()) return;
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     if (!s) return;
     // Bail out early if the target peer disconnected mid-drain. Without
@@ -175,6 +218,13 @@ void DrainChunk() {
         UE_LOGI("snapshot: target slot %d disconnected mid-drain -- aborting (sent %zu/%zu)",
                 g_currentTargetSlot, g_snapshotCandidateIdx, g_snapshotCandidates.size());
         CancelForSlot(g_currentTargetSlot);
+        return;
+    }
+    // v34: nothing to drain (0 candidates, or already drained) -> complete now so the
+    // SnapshotComplete bracket closes + the pending queue advances. A 0-candidate world
+    // previously bare-returned here and pinned g_currentTargetSlot forever.
+    if (g_snapshotCandidateIdx >= g_snapshotCandidates.size()) {
+        CompleteDrainForCurrentSlot(s);
         return;
     }
     // (std::min) parenthesized to defeat windows.h's `min` macro.
@@ -249,27 +299,9 @@ void DrainChunk() {
                               &p, sizeof(p));
         ++sent;
     }
+    g_snapshotSentTotal += static_cast<uint32_t>(sent);
     if (g_snapshotCandidateIdx >= g_snapshotCandidates.size()) {
-        UE_LOGI("snapshot: drain complete for slot %d (%zu candidates processed)",
-                g_currentTargetSlot, g_snapshotCandidates.size());
-        g_snapshotCandidates.clear();
-        g_snapshotCandidates.shrink_to_fit(); g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
-        g_snapshotInternalIdxs.clear(); g_snapshotInternalIdxs.shrink_to_fit();
-        g_snapshotCandidateIdx = 0;
-        g_currentTargetSlot = -1;
-        // Dequeue next pending slot if any. This kicks off a fresh
-        // enumeration (the world may have changed since the prior drain
-        // started -- props spawned/destroyed/moved).
-        if (!g_pendingSlots.empty()) {
-            const int nextSlot = g_pendingSlots.front();
-            g_pendingSlots.erase(g_pendingSlots.begin());
-            if (s->IsSlotConnected(nextSlot)) {
-                StartEnumerationFor(nextSlot);
-            } else {
-                UE_LOGI("snapshot: dequeued slot %d already disconnected -- skipping",
-                        nextSlot);
-            }
-        }
+        CompleteDrainForCurrentSlot(s);  // sends SnapshotComplete + clears + dequeues next
     } else {
         UE_LOGI("snapshot: drained chunk for slot %d -- this tick=%d, processed %zu/%zu",
                 g_currentTargetSlot, sent, g_snapshotCandidateIdx, g_snapshotCandidates.size());

@@ -43,6 +43,12 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::PropDestroy:    return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
+    // v34: the loading-screen brackets MUST share PropSpawn's lane so GNS's in-lane
+    // ordering delivers them strictly Begin -> [every PropSpawn] -> Complete. If
+    // SnapshotComplete rode a different lane it could overtake the prop stream under
+    // backpressure and lift the joiner's cover mid-build.
+    case ReliableKind::SnapshotBegin:    return Lane::Bulk;
+    case ReliableKind::SnapshotComplete: return Lane::Bulk;
     default:                           return Lane::Normal;
     }
 }

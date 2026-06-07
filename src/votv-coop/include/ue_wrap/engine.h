@@ -12,6 +12,7 @@
 
 #include "ue_wrap/types.h"
 
+#include <string>
 #include <vector>
 
 namespace ue_wrap::engine {
@@ -45,6 +46,23 @@ bool LoadStorySave(const wchar_t* slot);
 // the host's whole world onto it with no reconcile-remove. `storyMode` picks story vs sandbox
 // GameMode (the coop target is story). Polled like LoadStorySave. Game thread only.
 bool StartFreshGame(bool storyMode);
+
+// VOTV encodes a save's game MODE only in its slot-name PREFIX (story "s_", infinite
+// "i_", sandbox "b_", halloween "SPOOKY_", ambience "a_", solar "l_"). These wrap
+// Uui_saveSlots_C::getSavePrefix (a pure mode->prefix map on the CDO) so the GameMode-
+// on-load fix AND the save browser share ONE prefix source (RULE 2). enum_gamemode
+// ordinals are NOT the submenu button order (story=0, infinite=1, sandbox=4, ...).
+// Both resolve the widget CDO lazily and return false / -1 until it loads (the menu or
+// a gameplay transition loads it). Game thread only.
+
+// Write VOTV's prefix string for `mode` (a TEnumAsByte<enum_gamemode::Type>) into `out`.
+// Returns false if the save-slots widget CDO / getSavePrefix isn't resolvable yet.
+bool GetSavePrefix(uint8_t mode, std::wstring& out);
+
+// Derive the enum_gamemode ordinal of save slot `slot` from its name prefix (the
+// longest matching getSavePrefix wins). Returns the mode (0..7), or -1 on no match /
+// unresolved widget.
+int DeriveModeFromSlot(const wchar_t* slot);
 
 // Spawn an actor of `actorClass` (a UClass*) at `location` via the deferred
 // GameplayStatics pair (BeginDeferredActorSpawnFromClass + FinishSpawningActor)
@@ -103,6 +121,18 @@ bool SetActorLocation(void* actor, const FVector& location);
 // pose-apply path for orientation, and the diagnostic for whether the remote
 // body follows its OWN rotation vs a global local-player read. Game thread only.
 bool SetActorRotation(void* actor, const FRotator& rotation);
+
+// USceneComponent::K2_GetComponentRotation on `component` (resolved WORLD rotation).
+// Zero on failure. v40: reads the kerfur's ACharacter::Mesh visible body facing (which the
+// actor BP aims at the local player, decoupled from the actor root). Game thread only.
+FRotator GetComponentWorldRotation(void* component);
+
+// USceneComponent::K2_SetWorldRotation on `component` (bSweep=false, bTeleport=true). Returns
+// the dispatch success. v40: drives a mirror kerfur's ACharacter::Mesh WORLD rotation to the
+// host's streamed body facing (the mirror's actor tick is OFF, so nothing overwrites it).
+// Call AFTER SetActorRotation -- moving the actor root re-bases the child mesh's world transform.
+// Game thread only.
+bool SetComponentWorldRotation(void* component, const FRotator& rotation);
 
 // AActor::SetActorTickEnabled. A remote pawn must NOT run the local-player
 // per-frame BP EventTick (which re-applies view/post-process/exposure to the
@@ -386,6 +416,22 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void* refText,
 // if the widget/UFunction is unresolved. Game thread only.
 bool WidgetIsHovered(void* widget);
 
+// UWidget::SetVisibility(ESlateVisibility). The client loading state pairs this (set to
+// HitTestInvisible=3) WITH SetWidgetRenderOpacity(0) on VOTV's whole menu widget so the menu
+// disappears both VISUALLY (opacity 0) and FUNCTIONALLY (HitTestInvisible -> the widget and
+// all its children stop receiving clicks) -- the user can't click invisible menu options.
+// HitTestInvisible (rather than Collapsed/Hidden) is deliberate: it is still a "rendered"
+// Slate state, so the menu KEEPS TICKING and the same per-tick observer can restore it.
+// slateVis: 0=Visible, 1=Collapsed, 2=Hidden, 3=HitTestInvisible, 4=SelfHitTestInvisible.
+// Returns false if the widget / UFunction is unresolved. Game thread only.
+bool SetWidgetVisibility(void* widget, uint8_t slateVis);
+
+// UWidget::SetRenderOpacity(float). The visual half of the menu hide (see SetWidgetVisibility
+// above): opacity 0 fades the whole menu widget out so only the 3D menu background remains --
+// the "clean menu canvas" the connecting screen draws its progress over -- then 1 restores it.
+// Returns false if the widget / UFunction is unresolved. Game thread only.
+bool SetWidgetRenderOpacity(void* widget, float opacity);
+
 // World Z of the LOWEST bone on this skeletal mesh's currently-evaluated pose.
 // NOT suitable for "where the visible feet are" on a skeleton that mixes humanoid
 // + non-humanoid bones (the VOTV kerfur skeleton has both humanoid foot bones
@@ -634,6 +680,15 @@ bool SetActorSimulatePhysics(void* actor, bool simulate);
 // floor (the bare-spawned mirror lacks the collision a real grabbed clump has). Generic
 // (root component, not the Aprop_C mesh offset). Game thread only.
 bool SetActorRootCollisionEnabled(void* actor, uint8_t collisionType);
+
+// SetNotifyRigidBodyCollision(notify) on `actor`'s root primitive component. `false`
+// stops the root's OnComponentHit-bound BP events from firing WITHOUT disabling physical
+// collision -- so a kinematic/physics body still lands, it just doesn't run its ComponentHit
+// handler. Used to silence a MIRROR trash-clump's own ground-hit -> turn-to-pile handler (the
+// client mirror is spawned via FinishSpawningActor, which auto-binds that handler; on landing
+// it would BeginDeferredActorSpawnFromClass a SECOND pile atop the host's authoritative one --
+// the user's clump-dup bug). Generic (root component, not the Aprop_C mesh offset). Game thread.
+bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify);
 
 // Read/overwrite `actor`'s root primitive linear (cm/s) + angular (deg/s) velocity --
 // the throw-energy transfer on clump release ("physics like the mannequin"). Generic

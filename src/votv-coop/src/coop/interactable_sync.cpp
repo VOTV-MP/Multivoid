@@ -94,7 +94,7 @@ struct Adapter {
     bool (*RequestApply)(void* actor, bool on);// HOST applies a client REQUEST honoring real guards (no bypass)
     void (*SuppressHeld)(void* actor);         // HOST: mute its OWN autoclose while a client holds this door open
     void (*ReleaseHeld)(void* actor);          // HOST: restore autoclose + close when the client releases the hold
-    bool (*IsLocked)(void* actor);             // HostAuth: true if the entity is locked against opening (keypad/jam); null = never locked
+    bool (*CanOpen)(void* actor);              // HostAuth: true if a manual E-press would open it now (Active && !jammed && !superClosed); null = always openable
 };
 
 // ---- The generic replication engine --------------------------------------
@@ -258,16 +258,18 @@ public:
         const bool want = ((curMask & bit) == 0);  // toggle: not-yet-held -> open; held -> close
 
         if (want) {
-            // --- LOCK GATE (2026-06-04) ---------------------------------------------------
-            // Refuse a client's open of a keypad-LOCKED door. The request path force-opens
-            // (bypassCheck=true), so without this it bypasses the game's real keypad gating --
-            // the bug "client opened the door despite the RED keypad". IsLocked is the DATA-
-            // derived condition (an ARMED passlock not yet accepted: Active && !isAcc; door_probe
-            // proved Active distinguishes a real lock from a normal door's vestigial passlock
-            // ref). The keypad's isAcc is mirrored cross-peer by keypad_sync, so once the right
-            // code is entered on EITHER peer the host's passlock reads accepted and this opens.
-            if (a_.IsLocked && a_.IsLocked(actor)) {
-                UE_LOGI("%s: client open DENIED key='%ls' slot=%u -- keypad-locked (armed, not accepted)",
+            // --- POWER/LOCK GATE (BYTE-EXACT, door BP disassembly 2026-06-06) ----------------
+            // The request path force-opens (bypassCheck=true), so it skips the door's own gate --
+            // without this check the host would open a door single-player keeps shut. CanOpen
+            // applies the door's REAL E-press condition: Active(power) && !jammed && !superClosed
+            // (the disassembled gate at ubergraph offset 3533 + the doorOpen open-condition). This
+            // REPLACES the old IsLocked, which read the passlock's isAcc (a crosshair-HOVER flag,
+            // disassembly-proven) and wrongly DENIED powered doors with isAcc=0 -- the user's
+            // "client's first E-press doesn't work, host doesn't see the open". A keypad-locked
+            // door is held Active=false (or superClosed) and is correctly refused until the
+            // gamemode/keypad powers it.
+            if (a_.CanOpen && !a_.CanOpen(actor)) {
+                UE_LOGI("%s: client open DENIED key='%ls' slot=%u -- not openable (unpowered/jammed/superClosed)",
                         a_.name, key.c_str(), senderSlot);
                 BroadcastAndPrime(key, false, s);  // correct the requester's optimistic local open
                 return;
@@ -599,8 +601,9 @@ const Adapter g_doorAdapter = {
     // holds this door open; restore + close on release.
     &ue_wrap::door::SuppressHostHeldDoor,
     &ue_wrap::door::ReleaseHostHeldDoor,
-    // Lock gate: a keypad-locked / jammed door must never be force-opened by the sync.
-    &ue_wrap::door::IsLocked,
+    // Open gate: the host applies a client's open only if the door's own engine would (power on,
+    // not jammed, not superClosed) -- so coop never opens a door SP keeps shut.
+    &ue_wrap::door::CanOpen,
 };
 const Adapter g_lightAdapter = {
     // Re-keyed to the SWITCH (was the lightRoot) so the receiver replays use() -> the
@@ -618,7 +621,7 @@ const Adapter g_lightAdapter = {
     &ue_wrap::lightswitch::GetSwitchKeyString,
     &ue_wrap::lightswitch::TryReadSwitchA,
     [](void* a, bool /*on*/) -> bool { return ue_wrap::lightswitch::CallUse(a); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = IsLocked)
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
 const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
@@ -627,7 +630,7 @@ const Adapter g_containerAdapter = {
     &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = IsLocked)
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert -> host-authoritative
 Channel g_light{g_lightAdapter};
@@ -674,7 +677,16 @@ void OnUseInput(void* self, void*, void*) {
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
     if (!ue_wrap::door::EnsureResolved()) return;
     void* door = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the actor under the cursor at press
-    if (!door || !ue_wrap::door::IsDoor(door)) return;             // not aiming at a door -> not ours
+    const bool isDoor = (door && ue_wrap::door::IsDoor(door));
+    // DIAGNOSTIC (gated behind interactable_log -- fires on EVERY E-press, door or not, so it
+    // must NOT be unconditional: log spam on a per-input path costs FPS). Enable it when a door
+    // open misbehaves: no line = observer didn't fire; lookAtActor=0 = the interaction trace had
+    // not populated the aimed actor yet; non-null + isDoor=0 = aiming at a non-door. The
+    // meaningful edges (toggle request sent; host opened/DENIED) are logged unconditionally below
+    // + in OnRequest, so the normal path is visible without this.
+    if (ProbeLog())
+        UE_LOGI("door: use-input fired -- lookAtActor=%p isDoor=%d (role=client, connected)", door, isDoor ? 1 : 0);
+    if (!isDoor) return;             // not aiming at a door -> not ours
     std::wstring key = ue_wrap::door::GetKeyString(door);
     if (key.empty() || key == L"None") return;
     // DEBOUNCE: AmainPlayer_C::InpActEvt_use dispatches on BOTH the press AND the release of one
@@ -772,15 +784,6 @@ void Tick() {
     g_door.Tick();
     g_light.Tick();
     g_container.Tick();
-    // door_probe one-shot (2026-06-04): dump every door's passlock field set once the world has
-    // streamed in, so the REAL keypad-lock condition can be derived from data (the staged IsLocked
-    // guessed "any unaccepted passlock = locked" and false-positived normal doors). Gated off.
-    static const bool s_doorProbe = ::coop::ini_config::IsIniKeyTrue("door_probe");
-    if (s_doorProbe) {
-        static int s_countdown = 600;   // ~10s at 60Hz -- let the world fully stream
-        static bool s_done = false;
-        if (!s_done && --s_countdown <= 0) { s_done = true; ue_wrap::door::DumpLockStates(); }
-    }
 }
 
 void OnDisconnect() {

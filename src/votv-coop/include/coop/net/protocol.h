@@ -333,7 +333,43 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // BalanceDelta (24, client->host signed-delta request, host applies via AddPoints). New
 // 4-byte BalancePayload. Both peers now MIRROR the host's saveSlot.Points; client-side
 // credits (the +1000 dev button) route to the host. [[project-coop-shared-balance]]
-inline constexpr uint16_t kProtocolVersion = 33;
+// v34 (2026-06-06): CLIENT LOADING SCREEN brackets. Two new host->client markers wrap the
+// connect-edge world snapshot so the joiner can show a determinate progress cover (a
+// Source-style loading screen) instead of watching the world build itself: SnapshotBegin
+// (27, sent FIRST in StartEnumerationFor carrying the prop candidate count) + SnapshotComplete
+// (28, sent LAST after the per-tick prop drain finishes). Both ride Lane::Bulk -- the SAME
+// ordered lane as PropSpawn -- so delivery is strictly Begin -> [every PropSpawn] -> Complete,
+// and the cover lifts only after the final prop lands (the Lane::High TeleportClient that
+// places the joiner arrives earlier, behind the cover). MTA precedent: CTransferBox's
+// determinate MAP_DOWNLOAD box (host establishes the total up front, bar fills as the reliable
+// stream drains, snaps complete at the end) -- reference/mtasa-blue/Client/mods/deathmatch/
+// logic/CTransferBox.cpp + CClientGame.cpp:6051 (NotifyBigPacketProgress). Host-originated
+// point-to-point (not relayable). New 4-byte SnapshotBeginPayload + SnapshotEndPayload.
+// [[project-host-game-save-picker]].
+// v39 (2026-06-07): KERFUR HEAD-LOOK sync. EntityPoseSnapshot grows 28 -> 40 (adds the
+// kerfur AnimBP `lookAt` FVector @0x2D90 -- the WORLD location the head/neck FAnimNode_LookAt
+// nodes aim at) + a hasLookAt stateBit. RE (2 agents CONVERGED, byte-exact): the head-look is
+// natively recomputed PER-PEER each tick as GetPlayerCameraManager(self,0).GetActorLocation()
+// (the LOCAL player camera) unless the AnimBP `customLookAt` bool @0x2E49 is set -- so without
+// sync each peer's kerfur stares at its own local player (user hands-on: "looked in another
+// direction on client"). The host streams its kerfur's resolved lookAt; the client writes it
+// onto the mirror's AnimInstance + sets customLookAt=true so the mirror's own BUA stops
+// overwriting it and the native LookAt nodes aim at the host's target. The same native
+// lookAt/customLookAt path is the queued mechanism for the player-puppet "camera look = head
+// look" follow-on. [[project-npc-sync-pose-and-snapshot]] / docs:
+// research/findings/votv-kerfur-headlook-AnimBP-RE-and-coop-sync-2026-06-07.md.
+// v40 (2026-06-07): KERFUR BODY-facing sync (the head-then-body tracking's BODY half).
+// EntityPoseSnapshot grows 40 -> 44 (adds `bodyYaw`) + a hasBodyYaw stateBit. RE (2 agents
+// CONVERGED, byte-exact): the kerfur ACTOR BP (ExecuteUbergraph_kerfurOmega @28614) rotates its
+// ACharacter::Mesh@0x0280 component's WORLD yaw via `floor_lerp`@0x07B8 toward the LOCAL player
+// (idle branch = FindLookAtRotation(self, GetPlayerPawn(0)).Yaw, engaging when the player is past
+// the head clamp -- dot < -0.6). This is DECOUPLED from the actor root yaw we already sync, and
+// the mirror's actor tick is OFF so it never runs there -> the visible body points opposite ways
+// on host vs client (user RE: back-to-keypad on host, front-to-keypad on client). The host streams
+// the resolved mesh world yaw; the client writes it onto the mirror's mesh (after SetActorRotation;
+// no gate flag -- mirror tick off can't clobber it). SEPARATE from the v39 head `lookAt` sync.
+// research/findings/votv-kerfur-bodyfacing-RE-2026-06-07.md (pending).
+inline constexpr uint16_t kProtocolVersion = 40;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -355,6 +391,14 @@ enum class MsgType : uint8_t {
                        //      Sibling of PropPose: the receiver feeds the velocity
                        //      onto its mirror ragdoll body's pelvis so it tracks the
                        //      sender's real ragdoll instead of free-simulating.
+    EntityPose = 32,   // v37 (2026-06-07): HOST->all NPC pose BATCH (unreliable, ~sendHz).
+                       //      Body: EntityPoseBatchHeader (count) + N EntityPoseSnapshot.
+                       //      Makes the client NPC mirrors MOVE (they otherwise sit frozen at
+                       //      spawn). Keyed per-entry by Npc Element id; newest-wins. The host
+                       //      reads each live NPC's transform+CMC velocity (npc_sync::
+                       //      TickPoseStream); the client interpolates + drives the mirror's CMC
+                       //      (npc_mirror, the RemotePlayer-twin element::Npc). One datagram for
+                       //      all NPCs (<=kMaxNpcBatchEntries, MTU-capped).
 };
 
 // Payload kinds carried inside a Reliable message. The chat/event-feed groundwork:
@@ -620,26 +664,21 @@ enum class ReliableKind : uint8_t {
                        //     it via mainGamemode::AddPoints(amount); the host's poll then
                        //     re-broadcasts the new total to all. CLIENT->host only; not
                        //     relayable. Payload: BalancePayload.
-    KeypadState = 25,  // 2026-06-04 (v33): password-keypad mirror (ApasswordLock_C).
-                       //     SYMMETRIC. REDESIGNED from v31 (which polled isAcc + replayed
-                       //     Open(want) -> fail-cycle, because Open is a SUBMIT verb whose
-                       //     accept path is unreachable by us -- 3 autonomous synth rounds
-                       //     2026-06-04 proved Open/open2/SetActive/isButtonUsed/processKeys
-                       //     are ALL inert even with inPassword==password+focusOn). The verbs
-                       //     are BP-internal (bypass our ProcessEvent detour), so the SENDER
-                       //     POLLS each keypad's (inPassword,isAcc,isDeny) each tick and
-                       //     broadcasts on change keyed by AtriggerBase_C::Key. The RECEIVER
-                       //     mirrors: REPLAY inputNumber(digit) for the typed-buffer delta
-                       //     (native display+beep -- proven to fill inPassword) + Reset() on a
-                       //     clear; DIRECT-WRITE isAcc/isDeny (the accept verb is unreachable,
-                       //     the writes stick -- proven); best-effort upd() to repaint. `Active`
-                       //     is NOT mirrored (it drives a light -> purple-light bug 2026-06-04).
-                       //     NEVER calls a submit verb -> the v31 fail-cycle is
-                       //     structurally gone. The gated door converges via the (separate)
-                       //     DoorState channel. Host relays client edges + connect-snapshots.
-                       //     Payload: KeypadSyncPayload (56 B). Own module coop/keypad_sync
-                       //     (NOT the toggle Channel -- input-edge mirror is a different shape).
-                       //     RE: research/findings/votv-keypad-passwordlock-accept-RE-and-coop-sync-2026-06-04.md.
+    KeypadState = 25,  // 2026-06-06 (v35): password-keypad INPUT mirror (ApasswordLock_C). v38: + active (cancel->red).
+                       //     SYMMETRIC, MTA input-replication. The keypad verbs are BP-internal
+                       //     (bypass our ProcessEvent detour), so the SENDER POLLS each keypad's
+                       //     inPassword each tick and broadcasts on a buffer change, keyed by
+                       //     AtriggerBase_C::Key. The RECEIVER REPLAYS inputNumber(digit) for the
+                       //     typed-buffer delta (native display+beep; Reset() on a clear; upd()
+                       //     to repaint) -- which drives the keypad's OWN native validator, so on
+                       //     the HOST a client's correct code is accepted natively (no guessed
+                       //     output mirror, no unreachable submit verb). isAcc/isDeny were REMOVED
+                       //     v35: the door BP disassembly (2026-06-06) proved they are crosshair-
+                       //     HOVER flags, not accept state -- mirroring both was the "PURPLE"; the
+                       //     door lock keys on the door's own `Active` (DoorState/CanOpen). Host
+                       //     relays client edges + connect-snapshots. Payload: KeypadSyncPayload
+                       //     (56 B). Own module coop/keypad_sync.
+                       //     RE: research/findings/votv-keypad-door-BP-disassembly-2026-06-06.md.
     DoorOpenRequest = 26, // 2026-06-04 (v32): CLIENT->host door open/close REQUEST.
                        //     Doors are now HOST-AUTHORITATIVE (MTA single-syncer model):
                        //     a door's isOpened is re-driven each tick by its LOCAL sensor +
@@ -656,6 +695,41 @@ enum class ReliableKind : uint8_t {
                        //     senderPeerSlot!=0. Payload: KeyedTogglePayload (40 B). MTA
                        //     precedent: CUnoccupiedVehicleSync Packet_UnoccupiedVehiclePush
                        //     -> OverrideSyncer. [[project-coop-interactable-state-sync]].
+    SnapshotBegin = 27, // 2026-06-06 (v34): HOST->client connect-snapshot OPEN marker, the
+                       //     bracket that lets the joiner draw a determinate loading-screen
+                       //     cover. Sent FIRST in prop_snapshot::StartEnumerationFor (before
+                       //     the per-tick drain) carrying the enumerated prop candidate count
+                       //     as the progress denominator. Rides Lane::Bulk (the SAME lane as
+                       //     PropSpawn) so it is strictly ordered BEFORE every PropSpawn it
+                       //     introduces. Client (join_progress::BeginSnapshot) flips the cover
+                       //     from "Connecting" to a determinate "Receiving world X/N" bar.
+                       //     HOST-only send; receiver trust-gates senderPeerSlot==0 + role!=Host;
+                       //     NOT relayable. Payload: SnapshotBeginPayload (4 B). MTA precedent:
+                       //     CClientGame::NotifyBigPacketProgress establishes the total up front
+                       //     (AddToDownloadTotalSize) before the MAP_DOWNLOAD CTransferBox shows.
+    SnapshotComplete = 28, // 2026-06-06 (v34): HOST->client connect-snapshot CLOSE marker. Sent
+                       //     LAST -- from prop_snapshot's drain-complete path, AFTER the final
+                       //     PropSpawn -- on Lane::Bulk, so GNS's in-lane ordering guarantees it
+                       //     arrives only once the whole prop stream has landed. THE hide signal:
+                       //     the client (join_progress::Complete) lifts the loading-screen cover
+                       //     here (the joiner was already placed at the host by the earlier
+                       //     Lane::High TeleportClient, behind the cover). Robust against props
+                       //     the host skips mid-drain (wire-suppressed / unkeyed) -- the bar may
+                       //     top out a hair under 100%, then this snaps it complete (MTA's box
+                       //     hides the same way, on the final-fragment edge). HOST-only;
+                       //     senderPeerSlot==0 + role!=Host gated; NOT relayable. Payload:
+                       //     SnapshotEndPayload (4 B). [[project-host-game-save-picker]].
+    TimeSync = 29,     // 2026-06-07 (v36): HOST-authoritative WORLD CLOCK (AdaynightCycle_C).
+                       //     The clock (totalTime/Day/TimeScale) is NOT otherwise replicated, so a
+                       //     fresh joiner free-runs its own day-0/night -> a DARK client world. The
+                       //     host polls its cycle + broadcasts this on a throttle (the clock is
+                       //     continuous, so it pushes periodically, not on-change) + on the connect
+                       //     edge; the client direct-writes the three floats (the cycle's own
+                       //     ReceiveTick then re-derives the sun -- we drive the CLOCK, never the
+                       //     sun/light fields). Writing TimeScale lets the client free-run between
+                       //     pushes so the sun doesn't step. HOST->client; not a client request, not
+                       //     relayed. Payload: TimeSyncPayload (12 B). RE: research/findings/
+                       //     votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -856,6 +930,53 @@ struct PropPosePacket {
 };
 static_assert(sizeof(PropPosePacket) == 80, "PropPosePacket must be 80 bytes");
 
+// v37: ONE NPC's pose in the EntityPose batch. Keyed by the Npc Element id (NPCs have
+// no stable BP key -- their identity is the host-allocated elementId, like EntitySpawn).
+// The host reads it from the live NPC's transform + CMC velocity each send tick; the
+// client interpolates it (the element::Npc RemotePlayer-twin) and drives the mirror's CMC
+// so its own AnimBP animates. Increment 1 = pose; v39 adds head-look (health/isDead are inc2).
+struct EntityPoseSnapshot {
+    uint32_t elementId;   // 4  -- Npc Element id (host range)
+    float    x, y, z;     // 12 -- world cm (actor location = ACharacter capsule centre = pivot)
+    float    yaw;         // 4  -- actor yaw deg (NormalizeAxis'd)
+    float    speed;       // 4  -- horizontal velocity magnitude cm/s (drives the locomotion blend)
+    float    lookAtX, lookAtY, lookAtZ;  // 12 -- v39: kerfur AnimBP `lookAt` WORLD target (head/neck
+                          //      FAnimNode_LookAt aim point). VALID iff stateBits has kEntityPoseBitHasLookAt
+                          //      (only kerfur-family NPCs carry it; non-kerfur NPCs leave it zero + the bit clear).
+    float    bodyYaw;     // 4  -- v40: kerfur VISIBLE body (ACharacter::Mesh) WORLD yaw (deg). The actor BP
+                          //      aims the mesh at the local player decoupled from the actor root; we mirror it.
+                          //      VALID iff stateBits has kEntityPoseBitHasBodyYaw (kerfur-family only).
+    uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw
+    uint8_t  _pad[3];     // 3  -- 4-byte alignment
+};
+static_assert(sizeof(EntityPoseSnapshot) == 44, "EntityPoseSnapshot must be 44 bytes");
+
+// EntityPoseSnapshot.stateBits flags. bit 0 reuses kStateBitInAir (same numeric/meaning as
+// PoseSnapshot). bits 1-2 are EntityPose-specific (the PoseSnapshot 0x02 = kStateBitRagdoll does
+// not apply to NPCs -- distinct struct, distinct meaning).
+inline constexpr uint8_t kEntityPoseBitHasLookAt = 0x02;  // v39: lookAt{X,Y,Z} carries a valid head-look world target
+inline constexpr uint8_t kEntityPoseBitHasBodyYaw = 0x04;  // v40: bodyYaw carries a valid visible-body world yaw
+
+// v37: header of an EntityPose datagram -- N follows. N is derived from the datagram length
+// (count is the authoritative entry count, validated <= kMaxNpcBatchEntries by the receiver).
+struct EntityPoseBatchHeader {
+    uint8_t count;       // 1  -- NPC entries that follow (0..kMaxNpcBatchEntries)
+    uint8_t _pad[3];     // 3
+};
+static_assert(sizeof(EntityPoseBatchHeader) == 4, "EntityPoseBatchHeader must be 4 bytes");
+
+// Max NPCs per EntityPose datagram, MTU-capped: (1400 - PacketHeader(20) - BatchHeader(4)) / 44 = 31.
+// More NPCs than this in one tick truncate (logged); the realistic coop NPC count fits.
+inline constexpr int kMaxNpcBatchEntries = 31;
+
+// Worst-case EntityPose datagram size (full batch). Sizes both the send-loop
+// stack buffer (session.cpp) and Session::SerializeLocalNpcBatch's output
+// contract (session_npc.cpp). PacketHeader(20) + EntityPoseBatchHeader(4) +
+// 31 * EntityPoseSnapshot(44) = 1388 bytes (< 1400 MTU).
+inline constexpr int kNpcPoseDatagramMax =
+    static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
+    kMaxNpcBatchEntries * static_cast<int>(sizeof(EntityPoseSnapshot));
+
 // v22: ragdoll PELVIS physics state. Sent unreliable, ~sendHz, WHILE the sender's
 // AmainPlayer_C::isRagdoll is set (the native C-key/faint/KO ragdoll). The sender
 // reads its own ragdollActor's SkeletalMesh pelvis bone:
@@ -1027,23 +1148,23 @@ static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 b
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
 
-// KeypadSyncPayload -- the password-keypad mirror (KeypadState=25, v33). Carries the
-// full mirror state of ONE keypad: the typed digit buffer + the accept/deny/lock bools.
-// The sender (any peer) polls every indexed ApasswordLock_C each tick and broadcasts
-// this on change; the receiver REPLAYS the buffer via inputNumber(digit) (native
-// display) and DIRECT-WRITES the bools (the accept verb is unreachable -- 3 synth probe
-// rounds 2026-06-04). Identity = AtriggerBase_C::Key. Relayed by the host (symmetric);
-// the connect-snapshot seeds a joiner. RE: votv-keypad-passwordlock-accept-RE-and-coop-
-// sync-2026-06-04.md.
+// KeypadSyncPayload -- the password-keypad INPUT mirror (KeypadState=25, v35). Carries only
+// the typed digit buffer of ONE keypad. The sender (any peer) polls every indexed
+// ApasswordLock_C each tick and broadcasts this on a buffer change; the receiver REPLAYS the
+// buffer via inputNumber(digit), which drives the keypad's OWN native validator (and on the
+// host that is what accepts the code -- MTA input-replication, not a guessed output mirror).
+// Identity = AtriggerBase_C::Key. Relayed by the host (symmetric); the connect-snapshot seeds
+// a joiner. The accept/deny bools that used to ride here (isAcc/isDeny) were REMOVED in v35:
+// the door BP disassembly (2026-06-06) proved isAcc/isDeny are crosshair-HOVER flags, not
+// accept state -- mirroring both onto a keypad produced the non-native green+red "PURPLE" the
+// user reported, and the door lock keys on the door's own `Active`, not the keypad's isAcc.
+// RE: research/findings/votv-keypad-door-BP-disassembly-2026-06-06.md.
 struct KeypadSyncPayload {
     WireKey  key;        // 32 -- the keypad's Key FName (string)
     uint8_t  bufLen;     // 1  -- digits in `buf` (0..16; codes are short)
     uint8_t  buf[16];    // 16 -- the typed digits, one per byte (each 0..9)
-    uint8_t  isAcc;      // 1  -- accepted (green) -- 0/1
-    uint8_t  isDeny;     // 1  -- denied (red) -- 0/1
-    uint8_t  _pad[5];    // 5  -- 8-byte alignment / reserved
-    // NOTE: `Active` is deliberately NOT on the wire -- it drives a light (powerChanged) and
-    // mirroring it turned a host light purple (2026-06-04). We mirror isAcc/isDeny only.
+    uint8_t  active;     // 1  -- v38: keypad `active` @0x0330 (LED selector: 0=red/locked, 1=green/powered; mirrors cancel->red)
+    uint8_t  _pad[6];    // 6  -- 8-byte alignment / reserved (was isAcc/isDeny + pad; removed v35)
 };
 static_assert(sizeof(KeypadSyncPayload) == 56, "KeypadSyncPayload must be 56 bytes");
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
@@ -1310,6 +1431,19 @@ static_assert(sizeof(WeatherStatePayload) == 40, "WeatherStatePayload must be 40
 static_assert(sizeof(WeatherStatePayload) <= 256 - 20 - 8,
               "WeatherStatePayload must fit in one reliable datagram");
 
+// TimeSyncPayload -- the host-authoritative WORLD CLOCK (TimeSync=29, v36). The cycle's
+// totalTime/Day/TimeScale (AdaynightCycle_C) are not otherwise replicated, so a fresh joiner
+// free-runs its own clock -> a dark client world. The host broadcasts this periodically + on
+// connect; the client direct-writes the three floats (its own ReceiveTick re-derives the sun).
+// Writing timeScale lets the client free-run smoothly between pushes. RE: research/findings/
+// votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
+struct TimeSyncPayload {
+    float totalTime;   // absolute elapsed game time (the authoritative continuous clock)
+    float day;         // the day number
+    float timeScale;   // clock advance rate (so the client advances at the host's rate)
+};
+static_assert(sizeof(TimeSyncPayload) == 12, "TimeSyncPayload must be 12 bytes");
+
 namespace weather_flags {
 inline constexpr uint8_t kIsRaining       = 0x01;
 inline constexpr uint8_t kIsSnow          = 0x02;
@@ -1369,6 +1503,20 @@ struct LightningStrikePayload {
 static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes (v16)");
 static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
               "LightningStrikePayload must fit in one reliable datagram");
+
+// v34 (2026-06-06): client loading-screen brackets. SnapshotBegin carries the prop candidate
+// count the host is about to drain (the progress denominator); SnapshotComplete carries the
+// count it actually sent (for the client's diagnostic reconcile -- the bar hides on receipt
+// regardless). See the SnapshotBegin / SnapshotComplete ReliableKind docs above.
+struct SnapshotBeginPayload {
+    uint32_t propTotal;   // enumerated keyed-prop candidates the drain will stream to this slot
+};
+static_assert(sizeof(SnapshotBeginPayload) == 4, "SnapshotBeginPayload must be exactly 4 bytes");
+
+struct SnapshotEndPayload {
+    uint32_t propSent;    // PropSpawn messages actually sent this drain (<= propTotal after skips)
+};
+static_assert(sizeof(SnapshotEndPayload) == 4, "SnapshotEndPayload must be exactly 4 bytes");
 
 #pragma pack(pop)
 

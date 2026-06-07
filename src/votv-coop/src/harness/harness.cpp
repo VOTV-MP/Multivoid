@@ -3,6 +3,7 @@
 #include "harness/autotest.h"
 #include "harness/autotest_dispatch.h"
 #include "harness/config.h"
+#include "harness/harness_diag.h"
 #include "harness/screenshot.h"
 #include "harness/sdk_check.h"
 #include "coop/dev/force_weather.h"
@@ -17,6 +18,8 @@
 #include "coop/players_registry.h"
 #include "coop/ban_list.h"
 #include "coop/moderation.h"
+#include "coop/ini_config.h"
+#include "coop/session_manager.h"
 #include "coop/nameplate.h"
 #include "coop/roster.h"
 #include "coop/net/session.h"
@@ -31,11 +34,16 @@
 #include "coop/weather_sync.h"
 #include "ui/dev_menu.h"
 #include "ui/imgui_overlay.h"
+#include "ui/console.h"
+#include "ui/server_browser.h"
+#include "coop/join_progress.h"
 #include "coop/multiplayer_menu.h"
 #include "coop/dev/menu_proceed.h"
+#include "coop/dev/save_probe.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/hud_feed.h"
 #include "ue_wrap/engine.h"
+#include "ue_wrap/save_browser.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -69,6 +77,10 @@ namespace GT = ue_wrap::game_thread;
 
 namespace cfg = harness::config;
 
+// Diagnostic dumps (Report / DumpComponents / DumpLiveWidgets / DumpParams) live in
+// harness/harness_diag.cpp; bring them into scope so the scenario call sites stay unqualified.
+using namespace harness::diag;
+
 // The single coop networking session (Phase 3). Host binds the LAN port;
 // client targets the host. Drives the remote puppet from received pose
 // snapshots and sends the local player's pose. Off unless a scenario
@@ -86,38 +98,10 @@ bool BanAcceptFilter(const char* remoteIp) {
 
 // ReadLocalPose extracted to coop/net_pump.cpp (PR-4.13).
 
-// Runs on the game thread (posted): dump a UFunction's parameter frame so we can
-// verify the FProperty offsets (names/offsets/sizes) against the known UE4.27
-// signature before we rely on them for marshaling. Temporary validation aid.
-void DumpParams(const wchar_t* className, const wchar_t* funcName) {
-    void* cls = R::FindClass(className);
-    void* fn = cls ? R::FindFunction(cls, funcName) : nullptr;
-    if (!fn) {
-        UE_LOGW("paramdump: %ls::%ls not found (cls=%p)", className, funcName, cls);
-        return;
-    }
-    const int32_t frame = R::FunctionFrameSize(fn);
-    auto params = R::FunctionParams(fn);
-    UE_LOGI("paramdump: %ls::%ls  frameSize=%d  params=%zu", className, funcName,
-            frame, params.size());
-    for (const auto& p : params) {
-        UE_LOGI("    %-28ls off=0x%02x size=%-3d flags=0x%llx%s%s", p.name.c_str(),
-                p.offset, p.size, static_cast<unsigned long long>(p.flags),
-                (p.flags & ue_wrap::profile::cpf::OutParm) ? " OUT" : "",
-                (p.flags & ue_wrap::profile::cpf::ReturnParm) ? " RET" : "");
-    }
-}
-
-// Runs on the game thread (posted): log enough to confirm where we are.
-void Report(const char* label) {
-    // NumObjects is O(1). Avoid CountObjectsByClass here (a full GUObjectArray
-    // walk) -- Report runs in the play path too, and per the post-ship audit we
-    // don't pay a 100k-object scan just for a log line.
-    const int32_t n = R::NumObjects();
-    void* world = R::FindObjectByClass(P::name::WorldClass);
-    std::wstring worldName = world ? R::ToString(R::NameOf(world)) : L"(none)";
-    UE_LOGI("harness report [%s]: NumObjects=%d, world=%ls", label, n, worldName.c_str());
-}
+// Diagnostic dumps (DumpParams / Report / DumpComponents / DumpLiveWidgets, + their
+// ContainsCI / DumpClassFunctions helpers) extracted to harness/harness_diag.cpp
+// (2026-06-06 modular file-size audit). They are reached unqualified here via
+// `using namespace harness::diag` below.
 
 // Puppet array + per-slot edge state + held-prop edge detector + the local-
 // pose read + the per-tick observer orchestrator + the main NetPumpTick body
@@ -142,88 +126,7 @@ void TickShutdownHooks() {
 // sites in the timeline tick lambdas dispatch via
 // coop::net_pump::Tick(g_session, displayOffsetX) instead.
 
-// Runs on the game thread: log an actor's default subobjects (its components),
-// so we can find the mesh component(s) that carry the player's visible body.
-void DumpComponents(const char* label, void* actor) {
-    if (!actor) { UE_LOGW("components [%s]: null actor", label); return; }
-    auto kids = R::ChildObjectsOf(actor);
-    UE_LOGI("components [%s] of %p: %zu", label, actor, kids.size());
-    for (const auto& k : kids) {
-        UE_LOGI("    %-34ls : %ls", k.className.c_str(), k.name.c_str());
-    }
-}
-
 void Post(GT::Task t) { GT::Post(std::move(t)); }
-
-// Case-insensitive substring test (ASCII keywords against a wide string).
-static bool ContainsCI(const std::wstring& hay, const wchar_t* needle) {
-    std::wstring h = hay, n = needle;
-    auto lower = [](std::wstring& s) { for (auto& c : s) c = static_cast<wchar_t>(::towlower(c)); };
-    lower(h); lower(n);
-    return h.find(n) != std::wstring::npos;
-}
-
-// List the callable UFunctions a class (and its parents) expose, so we can see
-// exactly which one to call (e.g. a Proceed/Skip on the OMEGA widget). Functions
-// are UObjects of class "Function" whose Outer is one of the classes in the chain.
-static void DumpClassFunctions(void* cls, const wchar_t* tag) {
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj || R::ClassNameOf(obj) != L"Function") continue;
-        void* outer = R::OuterOf(obj);
-        void* c = cls;
-        for (int d = 0; d < 16 && c; ++d) {
-            if (outer == c) {
-                UE_LOGI("  %ls fn: %ls", tag, R::ToString(R::NameOf(obj)).c_str());
-                break;
-            }
-            c = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(c) + P::off::UStruct_SuperStruct);
-        }
-    }
-}
-
-// Diagnostic: log every live UUserWidget instance (name + class). Used to find
-// the OMEGA WARNING startup widget's class so we can auto-Proceed past it. Fast:
-// resolves the UserWidget UClass once and walks each object's super chain by
-// POINTER compare (no per-object string work). Any widget whose name/class looks
-// like an intro/warning gate is flagged and its UFunctions dumped (to find the
-// Proceed/Skip to call next).
-void DumpLiveWidgets() {
-    void* userWidgetCls = R::FindClass(L"UserWidget");
-    if (!userWidgetCls) { UE_LOGW("widgets: UserWidget class not found"); return; }
-    static const wchar_t* kGateWords[] = {L"omega", L"warning", L"intro", L"disclaimer",
-                                          L"epilepsy", L"splash", L"boot", L"startup",
-                                          L"proceed", L"continue", L"title", L"legal"};
-    const int32_t n = R::NumObjects();
-    int found = 0, flagged = 0;
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        void* c = R::ClassOf(obj);
-        bool isWidget = false;
-        for (int d = 0; d < 16 && c; ++d) {
-            if (c == userWidgetCls) { isWidget = true; break; }
-            c = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(c) + P::off::UStruct_SuperStruct);
-        }
-        if (!isWidget) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDOs
-        const std::wstring cn = R::ClassNameOf(obj);
-        ++found;
-        bool gate = false;
-        for (const wchar_t* w : kGateWords)
-            if (ContainsCI(nm, w) || ContainsCI(cn, w)) { gate = true; break; }
-        if (gate) {
-            UE_LOGI("widget[GATE?]: %ls : %ls -- dumping its UFunctions:", cn.c_str(), nm.c_str());
-            DumpClassFunctions(R::ClassOf(obj), cn.c_str());
-            ++flagged;
-        } else {
-            UE_LOGI("widget: %ls : %ls", cn.c_str(), nm.c_str());
-        }
-    }
-    UE_LOGI("widgets: %d live UserWidget instances (%d flagged as intro/gate candidates)", found, flagged);
-}
 
 // Spawn the 2nd player the INSTANT the local mainPlayer_C exists -- no fixed
 // timer. Polls on the game thread (engine state can only be read there) every
@@ -282,13 +185,14 @@ void SpawnSecondPlayerWhenReady() {
 // each tick while at preLoad/OMEGA/menu (a single early open during preLoad is
 // dropped -> must retry) and returns true once gameplay is reached; ~1.5 s/tick
 // throttles the opens. Blocks (worker thread) until loaded or the ~120 s cap.
-bool BootStorySaveBlocking() {
-    // FRESH-BOOT test gate (2026-06-04, project-ephemeral-client-host-authoritative-world):
-    // `fresh_boot=1` boots a BLANK New Game (StartFreshGame) instead of loading the save slot --
-    // the deterministic baseline for the ephemeral-client world snapshot. Off by default (loads
-    // the save). Isolated test: run a single instance with fresh_boot=1 and confirm gameplay is
-    // reached (no day-0 intro stall) + read the world.
-    const bool freshBoot = (cfg::ReadIniValue("fresh_boot", "0") == "1");
+// `forceFresh` forces the BLANK New Game path regardless of the ini -- the menu-mode
+// browser CLIENT join uses it to fresh-boot the ephemeral-client baseline before connecting.
+bool BootStorySaveBlocking(bool forceFresh = false) {
+    // FRESH-BOOT (2026-06-04, project-ephemeral-client-host-authoritative-world): a BLANK New
+    // Game (StartFreshGame) instead of loading a save slot is the deterministic baseline the
+    // host's connect-snapshot mirrors onto. Driven by `forceFresh` (the menu-mode client join,
+    // 2026-06-06) OR the `fresh_boot=1` ini test gate.
+    const bool freshBoot = forceFresh || (cfg::ReadIniValue("fresh_boot", "0") == "1");
     // STORY save slot, from votv-coop.ini "save=<slot>" (defaults s_may2026). Coop
     // targets story mode, so we never boot the sandbox map fresh.
     const std::string slotA = cfg::ReadIniValue("save", "s_may2026");
@@ -313,6 +217,250 @@ bool BootStorySaveBlocking() {
     return false;
 }
 
+// Bring up a coop session on g_session: reset per-session edge state, wire every sync
+// subsystem, (host) back up the save + install the LanDirect ban filter, then Start.
+// ONE code path for "start a coop session" (RULE 2) -- called by BOTH the env-configured
+// boot (ReadNetConfig) AND a browser action consumed via session_manager::
+// TakePendingStart. Runs on the TimelineThread: g_session.Start spawns the net thread,
+// and the host save-backup is a blocking file copy -- neither belongs on the game thread.
+// Returns Start()'s success: the browser-join path Fails the join (drops the loading
+// screen + reopens the browser) when a synchronous Start failure means no async connect
+// edge will ever arrive. Other callers (env play / host-with-save / netloopback) ignore it.
+bool StartCoopSession(const coop::net::Config& netCfg) {
+    // Never start once teardown has begun: g_session.Start would spawn a net thread
+    // AFTER DoShutdown's single Stop(), to be joined at static destruction -- the
+    // loader-lock join-from-teardown hazard the project forbids (audit P2).
+    if (coop::shutdown::IsShuttingDown()) {
+        UE_LOGW("harness: StartCoopSession ignored -- shutdown in progress");
+        return false;
+    }
+    coop::event_feed::SetLocalNickname(cfg::ReadNickname());
+    coop::event_feed::OnSessionStart();
+    // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
+    // doesn't carry stale "was connected" / "was holding prop" entries into the new
+    // session (phantom disconnect edge / suppressed connect replay / stale prop key).
+    coop::net_pump::OnSessionStart();
+    coop::prop_lifecycle::SetSession(&g_session);
+    coop::npc_sync::SetSession(&g_session);
+    coop::prop_snapshot::SetSession(&g_session);
+    coop::dev::restore_vitals::SetSession(&g_session);
+    coop::dev::teleport_client::SetSession(&g_session);
+    coop::dev::force_weather::SetSession(&g_session);
+    coop::moderation::SetSession(&g_session);
+    if (netCfg.role == coop::net::Role::Host) {
+        // Snapshot the canonical save BEFORE coop injects state (host-only; clients are
+        // save-blocked). Synchronous on this bringup thread -> completes before Start.
+        coop::save_guard::BackupSaveOnSessionStart();
+        // LanDirect ONLY: the IP-keyed ban filter FAIL-CLOSES on P2P (empty remote addr
+        // at the Connecting edge; a peer's public IP is the wrong key anyway). P2P bans
+        // are identity-based (Stage 6).
+        if (netCfg.topology == coop::net::Topology::LanDirect) {
+            coop::ban_list::Load();
+            g_session.SetAcceptFilter(&BanAcceptFilter);
+        }
+    }
+    // NOTE: the CLIENT connecting/loading state (join_progress::BeginConnect) is NOT raised
+    // here. It is raised by the BROWSER connect actions only (session_manager::JoinLobby /
+    // ConnectDirect), so the loading screen is browser-join-only -- the env/.bat/autotest
+    // client boot reaches this function directly and must show nothing (regression A,
+    // 2026-06-06). multiplayer_menu hides the menu widgets while a join is Active and the
+    // console auto-shows the connect log; both key off join_progress, raised at the click.
+    const bool ok = g_session.Start(netCfg);
+    UE_LOGI("harness: ==== COOP SESSION START (%s / %s)%s ====",
+            netCfg.role == coop::net::Role::Host ? "host" : "client",
+            netCfg.topology == coop::net::Topology::P2P ? "p2p" : "lan-direct",
+            ok ? "" : " -- START FAILED");
+    return ok;
+}
+
+// Host-Game save-picker orchestration. If a host-with-save was queued
+// (session_manager::HostWithSave, from the picker's "Host selected save" / "New Game &
+// Host"), LOAD the chosen world (engine::LoadStorySave) or CREATE the new save
+// (save_browser::CreateNamedSave) FIRST -- polling like BootStorySaveBlocking (the
+// `open` re-issue is throttled to ~1.5 s, NOT per-50ms-tick) -- then StartCoopSession.
+// No-op (returns immediately) when nothing is queued. Runs on the TimelineThread (where
+// the blocking load + StartCoopSession belong). The picker fires at the MENU, so the
+// chosen world loads from the menu here, then hosting begins. ONE place owns load->host.
+void DriveHostBootIfPending() {
+    // ALL the per-boot state lives in a shared_ptr-held struct captured BY VALUE into the
+    // posted game-thread task -- so the task can NEVER outlive its backing storage. If a
+    // shutdown breaks the wait below before a queued task has run, this function returns
+    // but the task keeps `b` alive via its captured shared_ptr (no use-after-free of stack
+    // locals; audit CRITICAL-1). `slot`/`created` carry across the retry loop (the new-save
+    // create runs once, then we poll the load).
+    struct Boot {
+        coop::session_manager::PendingHost ph;
+        std::wstring slot;
+        bool created = false;
+        std::atomic<int> st{0};  // 0 pending,1 retry,2 in-gameplay,3 fail
+    };
+    auto b = std::make_shared<Boot>();
+    if (!coop::session_manager::TakePendingHostWithSave(b->ph)) return;
+    if (!b->ph.save.newGame) b->slot.assign(b->ph.save.slot.begin(), b->ph.save.slot.end());  // ASCII
+    b->created = !b->ph.save.newGame;  // existing save: nothing to create
+
+    UE_LOGI("harness: host-with-save -- %s '%s' -> load then host",
+            b->ph.save.newGame ? "NEW story game" : "load",
+            b->ph.save.newGame ? b->ph.save.newName.c_str() : b->ph.save.slot.c_str());
+
+    for (int i = 0; i < 80 && !coop::shutdown::IsShuttingDown(); ++i) {  // ~120 s cap
+        b->st.store(0);
+        Post([b] {
+            if (b->ph.save.newGame && !b->created) {
+                std::wstring wname(b->ph.save.newName.begin(), b->ph.save.newName.end());
+                std::wstring outSlot;
+                if (!ue_wrap::save_browser::CreateNamedSave(wname, b->ph.save.mode, outSlot)) {
+                    b->st.store(3); return;  // create failed (name taken / save system unresolved)
+                }
+                b->slot = outSlot;
+                b->created = true;
+                UE_LOGI("harness: host-with-save created + persisted new save '%ls'", b->slot.c_str());
+            }
+            if (b->slot.empty()) { b->st.store(3); return; }
+            b->st.store(ue_wrap::engine::LoadStorySave(b->slot.c_str()) ? 2 : 1);
+        });
+        while (b->st.load() == 0 && !coop::shutdown::IsShuttingDown()) ::Sleep(5);
+        const int s = b->st.load();
+        if (s == 2) {
+            UE_LOGI("harness: host-with-save world loaded ('%ls') -- starting host session", b->slot.c_str());
+            StartCoopSession(b->ph.cfg);
+            return;
+        }
+        if (s == 3) {
+            UE_LOGW("harness: host-with-save create/load FAILED -- aborting host");
+            // The lobby was already announced (HostWithSave announces before the load) --
+            // cancel it so no phantom lobby lingers on the master (audit HIGH-1). Skip the
+            // /leave HTTP during teardown.
+            if (!coop::shutdown::IsShuttingDown()) coop::session_manager::AbortHost();
+            return;
+        }
+        ::Sleep(1500);  // throttle LoadStorySave's `open` re-issue (matches BootStorySaveBlocking)
+    }
+    if (!coop::shutdown::IsShuttingDown()) {
+        UE_LOGW("harness: host-with-save did not reach gameplay in time -- aborting host");
+        coop::session_manager::AbortHost();  // HIGH-1: don't leave a phantom lobby on timeout
+    }
+}
+
+// The main loop (TimelineThread). Each tick: (1) if no session is running, poll
+// session_manager for a browser-initiated start (Host/Join/Direct) and boot it HERE
+// (Start + host save-backup must not run on the game thread); (2) post the per-tick
+// pump -- net_pump::Tick while a session is running (env- OR browser-booted); (3)
+// ~2 s LAN-test stats while running. ONE loop for the env-configured "play" path AND
+// the native "menu" path (RULE 2).
+//
+// `idleInGameplay` distinguishes the two idle states (when no session is running):
+//   true  ("play" scenario): we booted STRAIGHT INTO gameplay -> the idle state is
+//          solo gameplay, so keep the local observers + nameplate/roster live.
+//   false ("menu" scenario, native launch): the idle state is VOTV's MAIN MENU --
+//          the gameplay BP classes aren't loaded, so installing the gameplay
+//          observers every tick is premature churn. Skip them at the menu; they
+//          install when a session actually starts (net_pump::Tick installs them).
+//          We deliberately do NOT add a per-tick FindObjectByClass(World) "are we
+//          in gameplay" probe here -- a per-frame GUObjectArray scan is the exact
+//          FPS anti-pattern the perf rule forbids; the scenario flag is free.
+void RunPlayLoop(bool idleInGameplay) {
+    int tick = 0;
+    while (!coop::shutdown::IsShuttingDown()) {
+        // Client join ABORT (Cancel button OR a connect failure). Stop the session here
+        // (the timeline thread -- where Stop, which joins the net thread, belongs), drop the
+        // loading state, and reopen the browser so the user can pick again. multiplayer_menu
+        // restores the hidden menu once join_progress goes inactive. ONE drain for both the
+        // user-cancel and the auto-fail paths (regression C, 2026-06-06).
+        if (coop::join_progress::TakeAbortRequest()) {
+            UE_LOGI("harness: join aborted (cancelled or failed) -- stopping session + reopening the browser");
+            if (g_session.running()) g_session.Stop();
+            coop::join_progress::Reset();
+            ui::server_browser::Open();
+            // A failed/cancelled join is a milestone a real user's bug report must capture --
+            // land the whole abort sequence (Fail/aborted/Stop/Reset) on disk now rather than
+            // leaving it in the buffered INFO stream (which a force-kill or a quiet idle menu
+            // would lose). Mirrors the boot-ready Flush. (2026-06-06.)
+            ue_wrap::log::Flush();
+        }
+        if (!g_session.running() && !coop::shutdown::IsShuttingDown()) {
+            // Host-Game save picker: load the chosen world (or create the new save) THEN
+            // host. Blocks here until done; no-op if nothing is queued.
+            DriveHostBootIfPending();
+            // Browser Join / Direct connect: start immediately on the current world.
+            if (!g_session.running()) {
+                coop::net::Config pending;
+                if (coop::session_manager::TakePendingStart(pending)) {
+                    // Stale-start guard (audit Issue 6, 2026-06-06): a browser CLIENT join
+                    // raises join_progress at the click; the async master round-trip can
+                    // finish + QueueStart AFTER the user already Cancelled (or it Failed). If
+                    // the join is no longer Active by the time we consume the queued start,
+                    // DISCARD it instead of ghost-starting a session the user backed out of.
+                    // Host starts carry no join_progress (Active stays false) -> always proceed.
+                    if (pending.role == coop::net::Role::Client && !coop::join_progress::Active()) {
+                        UE_LOGI("harness: discarding stale browser client start -- join no longer active (cancelled/failed)");
+                    } else {
+                        UE_LOGI("harness: browser-initiated coop session");
+                        // Menu-mode CLIENT join (2026-06-06 client world-entry): a client that
+                        // clicked Connect from the MAIN MENU has no gameplay world yet, so the
+                        // host's connect-snapshot would have nowhere to land. Fresh-boot a New
+                        // Game -- the validated ephemeral-client baseline (project-ephemeral-
+                        // client-host-authoritative-world) -- INTO gameplay FIRST, THEN connect;
+                        // the host then streams its whole world onto the fresh client. Blocks
+                        // here (~2 s travel) on the TimelineThread, like DriveHostBootIfPending.
+                        // An already-in-gameplay browser join (idleInGameplay: the env/autotest
+                        // play path, or a future in-game join) skips this -- it has a world.
+                        if (pending.role == coop::net::Role::Client && !idleInGameplay) {
+                            UE_LOGI("harness: menu-mode client join -- fresh-booting into gameplay before connect");
+                            BootStorySaveBlocking(/*forceFresh=*/true);
+                        }
+                        // A synchronous Start failure (bad address / GNS init) means no async
+                        // connect edge will ever arrive to clear the loading screen the browser
+                        // raised -- so Fail the join here (drops the cover + reopens the browser).
+                        // No-op on the host (join_progress not Active). (regression C, 2026-06-06.)
+                        if (!StartCoopSession(pending))
+                            coop::join_progress::Fail("could not start the connection");
+                    }
+                }
+            }
+        }
+        const bool running = g_session.running();
+        Post([running, idleInGameplay] {
+            if (running) {
+                coop::net_pump::Tick(g_session, 0.f);
+            } else if (idleInGameplay) {
+                // Solo gameplay, no session yet: keep the local observers live.
+                coop::net_pump::InstallObservers(g_session);
+            }
+            // nameplate/roster need a live world+player; skip them at the menu.
+            if (running || idleInGameplay) {
+                coop::nameplate::Update();
+                coop::roster::Refresh();
+            }
+            // ALWAYS: the HWND close subclass + window title must work at the menu
+            // too (the user may X-close before ever hosting -- the teardown path).
+            TickShutdownHooks();
+        });
+        if (running && ++tick % 120 == 0) {  // ~every 2 s at 60 Hz: stats for the LAN tests
+            Post([] {
+                UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
+                        static_cast<int>(g_session.state()),
+                        static_cast<unsigned long long>(g_session.packetsSent()),
+                        static_cast<unsigned long long>(g_session.packetsRecv()),
+                        coop::net_pump::Puppet(1).valid() ? 1 : 0);
+                if (void* lp = coop::players::Registry::Get().Local()) {
+                    const auto loc = ue_wrap::engine::GetActorLocation(lp);
+                    const auto rot = ue_wrap::engine::GetActorRotation(lp);
+                    ue_wrap::FRotator cRot{};
+                    if (void* c = ue_wrap::engine::GetController(lp)) cRot = ue_wrap::engine::GetControlRotation(c);
+                    UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f) actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
+                            loc.X, loc.Y, loc.Z, rot.Yaw, cRot.Pitch, cRot.Yaw);
+                }
+                if (coop::net_pump::Puppet(1).valid()) {
+                    const auto p = coop::net_pump::Puppet(1).GetLocation();
+                    UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+                }
+            });
+        }
+        ::Sleep(running ? 16 : 50);  // 60 Hz pump when active; 20 Hz idle poll otherwise
+    }
+}
+
 // Background timeline. Sleeps for pacing; every engine touch is posted to the
 // game thread. Mirrors the Lua harness's newgame timeline.
 DWORD WINAPI TimelineThread(LPVOID param) {
@@ -328,11 +476,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // runs on the game thread as soon as the pump is live (which is while the omega
     // screen ticks UMG), so these land during the intro.
     const bool storyBoot = (scenario == "play" || scenario == "netloopback");
+    const bool menuMode  = (scenario == "menu");
     if (storyBoot) {
+        // Sample widgets across the first ~3 s -- catches the OMEGA gate before we
+        // `open` gameplay. This is an AUTOTEST diagnostic: it logs ~10k widget lines
+        // (walks the whole UObject array 7x) and saturates the game-thread task pump.
+        // It must NOT run on the native MENU path -- log spam + a stalled pump (it
+        // delayed the menu bring-up by ~20 s in the first menu-boot smoke).
         for (int k = 0; k < 7; ++k) {  // ~2.8 s of coverage
             Post([k] { UE_LOGI("widgets: == intro dump pass %d ==", k); DumpLiveWidgets(); });
             ::Sleep(400);
         }
+    } else if (menuMode) {
+        ::Sleep(1500);  // native menu boot: a brief settle, then to RunPlayLoop (quiet log)
     } else {
         ::Sleep(8000);  // other scenarios: let the engine fully init
     }
@@ -485,150 +641,27 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // its own player pose to the joiner (net_pump -> teleport_client::TeleportSlotToHost,
             // ReliableKind::TeleportClient -- the existing teleport-to-host mechanism, reused), and
             // the client applies it on its local player. No КПП constant, no puppet-polling crutch.
-            coop::event_feed::SetLocalNickname(cfg::ReadNickname());
-            coop::event_feed::OnSessionStart();
-            // Reset net_pump edge-detector state (g_wasConnected[BySlot] +
-            // held-prop pointer/key/count). Without this a session
-            // Stop()/Start() cycle on the same process would carry stale
-            // entries into the new session -- phantom disconnect edge,
-            // suppressed connect-edge replay, or a SendPropRelease for the
-            // OLD session's key on the NEW session (audit fix 2026-05-24).
-            coop::net_pump::OnSessionStart();
-            coop::prop_lifecycle::SetSession(&g_session);
-            coop::npc_sync::SetSession(&g_session);
-            coop::prop_snapshot::SetSession(&g_session);
-            coop::dev::restore_vitals::SetSession(&g_session);
-            coop::dev::teleport_client::SetSession(&g_session);
-            coop::dev::force_weather::SetSession(&g_session);
-            coop::moderation::SetSession(&g_session);
-            // PR-FOUNDATION-2 (A): snapshot the canonical save BEFORE coop starts
-            // injecting state. Host-only -- the host's save is the one written
-            // during coop (clients are blocked from saving). Runs on this bringup
-            // thread (not the game thread), synchronously, so it completes before
-            // Start. Idempotent per process.
-            if (netCfg.role == coop::net::Role::Host) {
-                coop::save_guard::BackupSaveOnSessionStart();
-                // Phase 2: load the persistent banlist + install the accept
-                // filter BEFORE Start spawns the net thread (the filter pointer
-                // is read there). Host-only -- a client never accepts incoming
-                // connections, so it has no banlist.
-                coop::ban_list::Load();
-                g_session.SetAcceptFilter(&BanAcceptFilter);
-            }
-            g_session.Start(netCfg);
-            UE_LOGI("harness: ==== PLAY READY (coop net %s) ====",
-                    netCfg.role == coop::net::Role::Host ? "host" : "client");
+            StartCoopSession(netCfg);
 
             // Autonomous autotest dispatch: spawn each VOTVCOOP_RUN_*_TEST worker
-            // thread whose env flag is set (every routine self-gates on role
-            // internally). Extracted to harness/autotest_dispatch.cpp -- the
-            // cluster had grown to five near-identical blocks.
+            // thread whose env flag is set (each self-gates on role internally).
             harness::autotest::SpawnEnvGatedTests(netCfg.role);
-
-            // Audit H8 (2026-05-27): the 30-second autotest correction loop
-            // was deleted. It existed to fight K2_TeleportTo getting reverted
-            // by VOTV's player constraints during late-init. The initial-
-            // teleport block above now uses coop::dev::teleport_client::ApplyLocally,
-            // which routes through teleportWObackrooms -- VOTV's own
-            // non-revert path. Once the first teleport sticks, no correction
-            // is needed.
-
-            int tick = 0;
-            while (!coop::shutdown::IsShuttingDown()) {
-                Post([] { coop::net_pump::Tick(g_session, 0.f); coop::nameplate::Update(); coop::roster::Refresh(); TickShutdownHooks(); });
-                // Z-trace tick: every ~500 ms log the local actor.Z AND the
-                // local mesh_playerVisible.world.Z (the value the source now
-                // streams). This catches the "puppet jumps afloat after init"
-                // signature: if the local's mesh.world.Z changes over the
-                // first few seconds, the streamed Z changes, the puppet's
-                // rendered world Z changes -- the jump moment lives in this
-                // trace. Tight cadence (500 ms) for the first 30 s, then drop
-                // to the 2 s stats interval.
-                using namespace std::chrono;
-                static const auto sTickEpoch = steady_clock::now();
-                const bool tightTrace = (steady_clock::now() - sTickEpoch) < seconds(30);
-                if (tightTrace && (tick % 60 == 0)) {  // ~500 ms at 125 Hz
-                    Post([] {
-                        void* lp = coop::players::Registry::Get().Local();
-                        if (!lp) return;
-                        const auto actorLoc = ue_wrap::engine::GetActorLocation(lp);
-                        float meshWorldZ = NAN, meshRelZ = NAN;
-                        if (void* mc = ue_wrap::puppet::GetMeshPlayerVisibleComponent(lp)) {
-                            meshWorldZ = ue_wrap::engine::GetComponentLocation(mc).Z;
-                            meshRelZ = ue_wrap::engine::GetComponentRelativeLocation(mc).Z;
-                        }
-                        // Option G: the wire carries actor.Z; the receiver applies
-                        // mesh.RelLoc.Z (raw +0x11C, BP-authored static value). The
-                        // raw RelLoc.Z column should STABILIZE within 1-2 sec of
-                        // load. If it keeps drifting beyond that, a BP timeline
-                        // (wakingup, fixCrouch) is still touching it -- which the
-                        // puppet WON'T see, because we don't stream it anymore.
-                        UE_LOGI("Z-trace: local actor.Z=%.2f mesh.RelLoc.Z=%.2f mesh.world.Z=%.2f (delta=%.2f)%s",
-                                actorLoc.Z, meshRelZ, meshWorldZ, meshWorldZ - actorLoc.Z,
-                                coop::net_pump::Puppet(1).valid() ? "" : " (puppet not spawned)");
-                        if (coop::net_pump::Puppet(1).valid()) {
-                            const auto pp = coop::net_pump::Puppet(1).GetLocation();
-                            UE_LOGI("Z-trace: puppet world.Z=%.2f (= wire.actor.Z + cached local mesh.RelLoc.Z)",
-                                    pp.Z);
-                        }
-                    });
-                }
-                if (++tick % 250 == 0) {  // ~every 2 s at 125 Hz: stats for the LAN test framework
-                    Post([] {
-                        UE_LOGI("net stats: state=%d sent=%llu recv=%llu puppet=%d",
-                                static_cast<int>(g_session.state()),
-                                static_cast<unsigned long long>(g_session.packetsSent()),
-                                static_cast<unsigned long long>(g_session.packetsRecv()),
-                                coop::net_pump::Puppet(1).valid() ? 1 : 0);
-                        // Position diagnostic: log the local actor AND the puppet
-                        // (if alive) world positions. Lets us see whether the
-                        // autotest teleport stuck + whether the pose stream is
-                        // updating the puppet position vs leaving it at spawn.
-                        if (void* lp = coop::players::Registry::Get().Local()) {
-                            const auto loc = ue_wrap::engine::GetActorLocation(lp);
-                            const auto rot = ue_wrap::engine::GetActorRotation(lp);
-                            ue_wrap::FRotator cRot{};
-                            if (void* c = ue_wrap::engine::GetController(lp)) {
-                                cRot = ue_wrap::engine::GetControlRotation(c);
-                            }
-                            UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f) actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
-                                    loc.X, loc.Y, loc.Z, rot.Yaw, cRot.Pitch, cRot.Yaw);
-                        }
-                        if (coop::net_pump::Puppet(1).valid()) {
-                            const auto p = coop::net_pump::Puppet(1).GetLocation();
-                            UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
-                        }
-                    });
-                }
-                // 60 Hz pump (user-set 2026-06-04): the earlier 125 Hz bump assumed
-                // "separate process = separate GPU/CPU budget", but two UE4 instances
-                // still share ONE machine's GPU, so 125 Hz just doubled per-tick work +
-                // self-induced ProcessEvent re-entry for no real smoothness gain (the
-                // 15-FPS perf audit measured the mod ~100 FPS regardless; the rate was
-                // not the win it was assumed to be). RemotePlayer::Tick still advances
-                // interp at game-frame rate, so the 50 ms LERP window is smooth at 60 Hz.
-                ::Sleep(16);
-            }
-        } else {
+        } else if (coop::ini_config::IsIniKeyTrue("static_2nd_player")) {
+            // Opt-in dev aid ([dev] static_2nd_player=1): a static slot-1 puppet for solo
+            // visual tests. OFF by default (audit P1) -- it would collide with a browser-
+            // booted HOST session's slot-1 NETWORK puppet (net_pump's auto-spawn is gated
+            // on !Puppet(1).valid(), so the static one would be pose-driven but never
+            // registered in the roster), and a shipping solo game shouldn't show a phantom
+            // player. The real 2nd player arrives via the MULTIPLAYER browser; RunPlayLoop
+            // installs the solo observers regardless.
             SpawnSecondPlayerWhenReady();
-            UE_LOGI("harness: ==== PLAY READY (you have control) ====");
-            // (No auto-screenshot here: GDI can't read the 3D swapchain in-process ->
-            // black. Use the external tools/capture-window.ps1 for gameplay frames.)
-            // Keep the 3D nameplate(s) glued above the head + facing the local player.
-            // Also install the Stage-1 grab observers (idempotent) so single-
-            // instance hands-on play sees the hook lines fire on E-press --
-            // the net branch installs them via NetPumpTick, but this branch
-            // doesn't run NetPumpTick. The observers are purely local
-            // (observe THIS instance's own UFunctions); zero wire dependency.
-            while (!coop::shutdown::IsShuttingDown()) {
-                Post([] {
-                    coop::net_pump::InstallObservers(g_session);  // idempotent; net branch calls the same fn from net_pump::Tick
-                    coop::nameplate::Update(); coop::roster::Refresh();
-                    TickShutdownHooks();
-                });
-                ::Sleep(50);
-            }
         }
+        UE_LOGI("harness: ==== PLAY READY ====");
+        ue_wrap::log::Flush();  // boot-ready milestone: land the boot sequence on disk now
+        // Unified play loop (env- or browser-driven). Replaces the two prior per-branch
+        // loops + the stale Z-trace debug block (RULE 2: one loop, one start path).
+        // idleInGameplay=true: "play" booted straight into gameplay (BootStorySaveBlocking).
+        RunPlayLoop(/*idleInGameplay=*/true);
     } else if (scenario == "netloopback") {
         // PR-2 (2026-05-28): the single-process loopback scenario no longer
         // applies. GNS connection topology is host listens / client dials --
@@ -641,22 +674,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         coop::net::Config cfg;
         cfg.role = coop::net::Role::Host;
         cfg.peerIp = "127.0.0.1";
-        coop::event_feed::SetLocalNickname(cfg::ReadNickname());
-        coop::event_feed::OnSessionStart();
-        coop::net_pump::OnSessionStart();
-        coop::prop_lifecycle::SetSession(&g_session);
-        coop::npc_sync::SetSession(&g_session);
-        coop::prop_snapshot::SetSession(&g_session);
-        coop::dev::restore_vitals::SetSession(&g_session);
-        coop::dev::teleport_client::SetSession(&g_session);
-        coop::dev::force_weather::SetSession(&g_session);
-        coop::moderation::SetSession(&g_session);
-        // netloopback is a host self-test (it dials 127.0.0.1). Load the banlist
-        // + install the accept filter for parity with the real host path; a
-        // banned localhost would be unusual but the wiring is identical.
-        coop::ban_list::Load();
-        g_session.SetAcceptFilter(&BanAcceptFilter);
-        g_session.Start(cfg);
+        StartCoopSession(cfg);  // host LanDirect -- same wiring as the play env path
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
         while (!coop::shutdown::IsShuttingDown()) {
@@ -723,6 +741,19 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(5000);
         Post([] { Report("post-shot"); });
         UE_LOGI("harness: ==== AUTONOMOUS NEWGAME TIMELINE DONE ====");
+    } else if (scenario == "menu") {
+        // NATIVE launch (no test env -> ReadScenario defaults to "menu"). Boot to
+        // VOTV's OWN main menu and let the user drive coop from the MULTIPLAYER
+        // button (server browser + Host-Game save picker). NO auto-load into
+        // gameplay -- that is TEST-only behaviour (mp.py / play-coop.bat set
+        // VOTVCOOP_SCENARIO=play). This fixes the user-reported 2026-06-06 bug:
+        // a native VotV.exe launch was reading a leftover scenario.txt="play" and
+        // booting straight into gameplay. RunPlayLoop(idleInGameplay=false) drains
+        // browser-initiated sessions (Host/Join/Direct) + keeps the shutdown hooks
+        // live while at the menu; gameplay observers install when a session starts.
+        UE_LOGI("harness: ==== MENU mode (native launch) -- MULTIPLAYER button drives coop ====");
+        ue_wrap::log::Flush();  // boot-ready milestone: land the boot sequence on disk now
+        RunPlayLoop(/*idleInGameplay=*/false);
     } else {
         UE_LOGI("harness: scenario '%s' -- no automatic actions", scenario.c_str());
     }
@@ -758,6 +789,9 @@ void Start() {
     if (!ui::imgui_overlay::Init()) {
         UE_LOGW("harness: imgui_overlay::Init failed -- F1 menu unavailable this run");
     }
+    // In-game console: register the logger sink now so it captures the mod log from here on
+    // (the connect log/errors the loading state surfaces). Auto-shows during a client join.
+    ui::console::Init();
 
     // MULTIPLAYER entry point: inject the native button above NEW GAME in VOTV's
     // main menu; clicking it opens the ImGui server browser (a third overlay
@@ -775,6 +809,11 @@ void Start() {
     // exercises host AllocAndInstall + broadcast + client mirror Install). Hands-on
     // spawning is the F1 menu (Game > Entities). No-op unless the trigger env is set.
     coop::dev::spawn_npc::Init();
+
+    // TEST-ONLY (VOTVCOOP_TEST_SAVE_ENUM=1): verify the native save browser
+    // (ue_wrap::save_browser drives VOTV's loadSlots) at the menu before the ImGui
+    // Host-Game picker is layered on it. No-op unless the env is set.
+    coop::dev::save_probe::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our
     // cleanup BEFORE the engine's teardown PE calls fire. Without this

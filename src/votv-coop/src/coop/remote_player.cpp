@@ -270,9 +270,7 @@ bool RemotePlayer::Spawn() {
     targetYaw_ = yaw;
     targetPitch_ = 0.f;
     targetHeadYawDelta_ = 0.f;
-    interpStartMs_ = 0;
-    interpFinishMs_ = 0;
-    lastAlpha_ = 0.f;
+    window_.Close();
     hasPose_ = false;  // the first network pose SNAPS away from this fake placement
     // Push the spawn placement (curPos_=actor.Z, curYaw_) to the engine NOW.
     // ApplyToEngine adds meshOffsetZ_ to curPos_.Z and meshOffsetYaw_ to
@@ -382,8 +380,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
         targetHeadYawDelta_ = snap.headYawDelta;
-        interpFinishMs_ = 0;  // freeze (no interp budget)
-        lastAlpha_ = 0.f;
+        window_.Close();  // freeze (no interp budget)
         hasPose_ = true;
         ApplyToEngine();
         dirty_ = false;  // just pushed it
@@ -407,12 +404,21 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
         targetHeadYawDelta_ = snap.headYawDelta;
-        interpFinishMs_ = 0;  // no active window
-        lastAlpha_ = 0.f;
+        window_.Close();  // no active window
         ApplyToEngine();
         dirty_ = false;  // just pushed it
         return;
     }
+
+    // Advance-before-rebase (MTA: CClientPed::SetTargetPosition's FIRST line is
+    // UpdateTargetPosition()). Bring curPos_ up to NOW using the STILL-OPEN window's
+    // cached error before we overwrite the target / recompute the error below. Without
+    // this, poses arriving ~every frame re-Open the window at now each packet so the
+    // same-frame Tick() reads alpha ~= 0 -> dAlpha ~= 0 -> curPos_ never advances and the
+    // puppet trails a moving source by seconds (the interp-starvation bug, root-caused
+    // 2026-06-06). Must run BEFORE targetPos_/errorPos_ are overwritten -- it consumes the
+    // OLD target/error (its alpha=1 arrival branch snaps curPos_ to the OLD targetPos_).
+    AdvanceInterp();
 
     // Normal path: open a fresh interp window from cur -> new target. The
     // error is cached NOW (target - cur, target's yaw shortest-arc from cur);
@@ -437,11 +443,35 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     // headYawDelta is the camera lead in (-180, 180]; a fast spin can cross
     // 180 -> shortest-arc to avoid the "head whips the long way around" pop.
     errorHeadYawDelta_ = OffsetDegrees(curHeadYawDelta_, snap.headYawDelta);
-    const uint64_t now = NowMs();
-    interpStartMs_ = now;
-    interpFinishMs_ = now + kInterpWindowMs;
-    lastAlpha_ = 0.f;
+    window_.Open(NowMs(), kInterpWindowMs);
     dirty_ = true;  // a new window is open; Tick will start applying motion this frame
+}
+
+void RemotePlayer::AdvanceInterp() {
+    // The shared coop::LerpWindow owns the timing (alpha = clamp((now-start)/window,
+    // 0,1); dAlpha = alpha-lastAlpha); we apply dAlpha to the cached errors here (MTA
+    // linear form, not geometric decay). At alpha=1 the window closes (arrived) and we
+    // snap cur=target. Runs every frame from Tick() AND first thing in SetTargetPose
+    // (advance-before-rebase) -- see the header for why the latter is load-bearing.
+    if (!window_.IsOpen()) return;  // no window open -- frozen at target
+
+    bool arrived = false;
+    const float dAlpha = window_.Advance(NowMs(), &arrived);  // same alpha/dAlpha bookkeeping, shared
+
+    curPos_.X         += errorPos_.X         * dAlpha;
+    curPos_.Y         += errorPos_.Y         * dAlpha;
+    curPos_.Z         += errorPos_.Z         * dAlpha;
+    curYaw_           += errorYaw_           * dAlpha;
+    curPitch_         += errorPitch_         * dAlpha;
+    curHeadYawDelta_  += errorHeadYawDelta_  * dAlpha;
+    dirty_ = true;  // pose moved -> needs an engine push (the caller does it)
+
+    if (arrived) {  // window closed at alpha>=1
+        curPos_ = targetPos_;  // exact arrival (kills any float drift over the window)
+        curYaw_ = targetYaw_;
+        curPitch_ = targetPitch_;
+        curHeadYawDelta_ = targetHeadYawDelta_;
+    }
 }
 
 void RemotePlayer::Tick() {
@@ -455,39 +485,10 @@ void RemotePlayer::Tick() {
     // means the streamed value drops slightly (the visible body actually
     // does descend a few cm in crouch), and the puppet follows along.
 
-    // Advance interpolation if a window is open. MTA shape: error is cached
-    // ONCE at packet arrival (= target - cur at that moment). Each frame:
-    //   alpha    = (now - start) / window   (clamped 0..1)
-    //   dAlpha   = alpha - lastAlpha
-    //   cur     += errorPos * dAlpha        (linear; not geometric decay)
-    //   lastAlpha = alpha
-    // At alpha=1 the puppet has applied the full error; we then freeze
-    // (interpFinishMs_=0) until the next packet rebases the interp.
-    if (interpFinishMs_ != 0) {
-        const uint64_t now = NowMs();
-        const uint64_t span = interpFinishMs_ - interpStartMs_;  // == kInterpWindowMs
-        float alpha = (span == 0) ? 1.f
-                                  : static_cast<float>(now - interpStartMs_) / static_cast<float>(span);
-        alpha = std::clamp(alpha, 0.f, 1.f);
-        const float dAlpha = alpha - lastAlpha_;
-        lastAlpha_ = alpha;
-
-        curPos_.X         += errorPos_.X         * dAlpha;
-        curPos_.Y         += errorPos_.Y         * dAlpha;
-        curPos_.Z         += errorPos_.Z         * dAlpha;
-        curYaw_           += errorYaw_           * dAlpha;
-        curPitch_         += errorPitch_         * dAlpha;
-        curHeadYawDelta_  += errorHeadYawDelta_  * dAlpha;
-        dirty_ = true;  // pose moved this frame -> needs an engine push
-
-        if (alpha >= 1.f) {
-            curPos_ = targetPos_;  // exact arrival (kills any float drift over the window)
-            curYaw_ = targetYaw_;
-            curPitch_ = targetPitch_;
-            curHeadYawDelta_ = targetHeadYawDelta_;
-            interpFinishMs_ = 0;
-        }
-    }
+    // Advance the open interp window to now (MTA: the per-frame UpdateTargetPosition()).
+    // See AdvanceInterp -- the SAME helper runs as the first step of SetTargetPose so a
+    // fresh packet rebases from the up-to-date pose (the interp-starvation fix).
+    AdvanceInterp();
 
     // Skip the engine write when nothing has changed since the last push (frozen
     // at target between packets). The puppet -- whether SkelMesh backup or
@@ -561,8 +562,7 @@ void RemotePlayer::Destroy() {
     actor_ = nullptr;
     internalIdx_ = -1;
     hasPose_ = false;
-    interpFinishMs_ = 0;
-    lastAlpha_ = 0.f;
+    window_.Close();
     dirty_ = false;
     ragdollWireState_ = false;   // a recycled puppet starts un-ragdolled + re-converges
     ragdollActive_ = false;

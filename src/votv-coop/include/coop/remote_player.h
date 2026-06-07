@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "coop/lerp_window.h"
 #include "coop/net/protocol.h"
 #include "ue_wrap/types.h"
 
@@ -137,19 +138,43 @@ private:
     // some other system moved the actor between frames; cheap).
     void ApplyToEngine();
 
+    // Advance the OPEN interp window to NOW (curPos_/curYaw_/... += dAlpha * cached
+    // error). No-op when no window is open (window_.IsOpen() == false). Does NOT push
+    // to the engine -- it only updates the cur* state + sets dirty_; the caller pushes.
+    //
+    // MTA shape (CClientPed::UpdateTargetPosition, reference/mtasa-blue): this is
+    // called BOTH every frame from Tick() AND as the FIRST step of SetTargetPose().
+    // The SetTargetPose pre-advance is load-bearing: poses arrive ~every frame (60 Hz),
+    // so without it each new packet re-Open()s the window at now right before Tick()
+    // reads alpha = (now - start)/window ~= 0 -> dAlpha ~= 0 -> curPos_ never
+    // advances and the puppet trails a MOVING source by 1-2.5 s. Pre-advancing first
+    // applies the motion already due, THEN rebases the error from the up-to-date pos
+    // (MTA: SetTargetPosition's first line is UpdateTargetPosition()). Root-caused
+    // 2026-06-06, see [[project-puppet-lag-interp-starvation]].
+    void AdvanceInterp();
+
     // Ragdoll display lifecycle (xray-actor rework). StartRagdollDisplay: hide the
     // puppet's two kel meshes + spawn a playerRagdoll_C body that flops locally.
     // StopRagdollDisplay: destroy the body + restore the meshes. Both game-thread.
     void StartRagdollDisplay();
     void StopRagdollDisplay();
 
-    // Linear LERP window. At 60 Hz send (~16.7 ms interval) this is ~4.5x the
-    // interval -- a generous jitter buffer that handles LAN noise instantly
-    // AND tolerates WAN jitter (50-150 ms RTT, irregular arrivals). The
-    // visual lag added vs a tight 30 ms window is ~25 ms steady-state, well
-    // below the threshold of "feels laggy" for a peer-view puppet (the local
-    // player's own input is unaffected). Could be made adaptive (track avg
-    // recv interval) later if needed.
+    // Linear LERP window + jitter buffer. At 60 Hz send (~16.7 ms interval) this is
+    // ~4.5x the interval, tolerating ~4 consecutive late/dropped poses before the
+    // puppet reaches target and freezes (a brief stall, not a snap).
+    //
+    // Steady-state trail (corrected 2026-06-06): with advance-before-rebase in place
+    // (AdvanceInterp runs first in SetTargetPose), poses arriving every frame apply a
+    // fraction P/W of the cached error per packet, giving a constant trail of
+    // ~= speed * window: ~9 cm at a 120 cm/s walk, ~45 cm at a 600 cm/s sprint. So the
+    // WINDOW is now the primary lag knob -- shrinking it cuts the trail linearly at the
+    // cost of jitter tolerance. (The earlier "~25 ms steady-state" note was wrong: it
+    // assumed the window COMPLETES each interval, which only holds when poses are spaced
+    // >= W apart; at 60 Hz into a 75 ms window it never completes, so the trail is
+    // speed*W, not the window-completion delay. That mis-estimate is what let the
+    // pre-advance bug hide -- 75 ms looked harmless on paper.) Kept at 75 ms for this
+    // fix so the smoke validates advance-before-rebase in isolation; tune down (or make
+    // adaptive on avg recv interval) as a measured follow-up if sprint trail is felt.
     static constexpr int kInterpWindowMs = 75;
     // Snap thresholds (cm). At sprint ~600 cm/s in VOTV, one window's legal
     // motion is ~30 cm; anything more than (base + 0.5 s * speed) is a real
@@ -291,9 +316,12 @@ private:
     float            errorYaw_ = 0.f;
     float            errorPitch_ = 0.f;
     float            errorHeadYawDelta_ = 0.f;
-    uint64_t         interpStartMs_ = 0;
-    uint64_t         interpFinishMs_ = 0;  // 0 == no active interp window (frozen)
-    float            lastAlpha_ = 0.f;
+    // The interp TIMING (start/finish/lastAlpha + the alpha/dAlpha bookkeeping)
+    // lives in the shared coop::LerpWindow (RULE 2 / WP13 -- element::Npc owns
+    // one too). AdvanceInterp applies the window's dAlpha to errorPos_/errorYaw_/
+    // errorPitch_/errorHeadYawDelta_ above; SetTargetPose Open()s it / Close()s on
+    // a snap.
+    coop::LerpWindow window_;
     bool             hasPose_ = false;  // first packet snaps; spawn placeholder is fake
     bool             dirty_ = true;     // true while there's an unapplied change to push to the engine
 };

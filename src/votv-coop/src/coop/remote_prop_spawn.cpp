@@ -430,6 +430,16 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot) {
     // the wire byte, which morph-timing can leave stale). [[project-bug-trash-chippile-uaf-crash]]
     uint8_t variant = payload.chipType;  // wire fallback (used if no source pile resolves)
     if (classW.find(L"garbageClump") != std::wstring::npos) {
+        // DUP FIX (2026-06-06): silence THIS mirror clump's own ground-hit -> turn-to-pile handler.
+        // FinishSpawningActor (above) auto-binds the StaticMesh OnComponentHit delegate
+        // (prop_garbageClump ubergraph 2702 -> BeginDeferredActorSpawnFromClass(pile)). On release
+        // we re-enable collision+physics+throw velocity so the mirror flies + lands HERE, firing
+        // that handler -> a SECOND pile atop the host's authoritative broadcast one (the user's
+        // "ball -> clump -> another clump"). Disabling the hit-notify lets the mirror still land
+        // visually but never self-convert; the host's BroadcastLandedPileNear stays the sole pile
+        // source. (canConvert=false@0x0248 does NOT work -- the hit handler re-sets it true at its
+        // own entry.) Detail: research/findings/votv-coop-class-clone-migration-roadmap-2026-06-06.md
+        ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(spawned, false);
         float dist = -1.f;
         void* srcPile = ue_wrap::prop::FindNearestChipPile(
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ}, 300.f, &dist);

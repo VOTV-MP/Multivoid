@@ -5,6 +5,7 @@
 
 #include "coop/balance_sync.h"
 #include "coop/interactable_sync.h"
+#include "coop/join_progress.h"
 #include "coop/keypad_sync.h"
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
@@ -15,6 +16,7 @@
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/remote_prop_spawn.h"
+#include "coop/time_sync.h"
 #include "coop/weather_sync.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/teleport_client.h"
@@ -301,6 +303,10 @@ void Update(net::Session& session, void* localPlayer) {
                 }
             }
             remote_prop_spawn::OnSpawn(p, msg.senderPeerSlot);
+            // v34: advance the join loading-screen bar. No-op unless a join snapshot is
+            // in progress (join_progress is in the Receiving phase) -- so live PropSpawns
+            // outside a join cost a single relaxed atomic load and return.
+            coop::join_progress::NotePropApplied();
             break;
         }
         case net::ReliableKind::PropDestroy: {
@@ -545,6 +551,43 @@ void Update(net::Session& session, void* localPlayer) {
             ue_wrap::game_thread::Post([args] { ::coop::dev::teleport_client::ApplyLocally(args); });
             break;
         }
+        case net::ReliableKind::SnapshotBegin: {
+            // v34: host opened the connect-snapshot -- flip the client loading screen from
+            // "Connecting" to a determinate "Receiving world X/N" bar. Host-only, like
+            // TeleportClient: a client peer must not be able to spoof another's loading UI.
+            if (msg.payloadLen < sizeof(net::SnapshotBeginPayload)) {
+                UE_LOGW("event_feed: SnapshotBegin payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::SnapshotBeginPayload));
+                break;
+            }
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: SnapshotBegin from non-host senderPeerSlot=%d -- dropping",
+                        msg.senderPeerSlot);
+                break;
+            }
+            if (session.role() == net::Role::Host) break;  // self-echo guard (host doesn't load-screen)
+            net::SnapshotBeginPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            coop::join_progress::BeginSnapshot(p.propTotal);
+            break;
+        }
+        case net::ReliableKind::SnapshotComplete: {
+            // v34: host finished draining the world snapshot (the LAST Lane::Bulk message
+            // after every PropSpawn) -- lift the loading screen. THE hide edge.
+            if (msg.payloadLen < sizeof(net::SnapshotEndPayload)) {
+                UE_LOGW("event_feed: SnapshotComplete payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::SnapshotEndPayload));
+                break;
+            }
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: SnapshotComplete from non-host senderPeerSlot=%d -- dropping",
+                        msg.senderPeerSlot);
+                break;
+            }
+            if (session.role() == net::Role::Host) break;
+            coop::join_progress::Complete();
+            break;
+        }
         case net::ReliableKind::ItemActivate: {
             // Phase 5F flashlight (and future radio/torch/lamp) -- peer's
             // item state changed and produces a WORLD effect both peers
@@ -715,12 +758,12 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::KeypadState: {
-            // v33 (2026-06-04): password-keypad mirror (ApasswordLock_C). SYMMETRIC -- any
-            // peer polls (inPassword,isAcc,isDeny,Active) + broadcasts on change; the host
-            // relays a client edge (IsClientRelayableReliableKind). The receiver replays
-            // inputNumber for the buffer delta + direct-writes the bools (the accept verb is
-            // unreachable -- 3 synth probe rounds). Own module, richer payload than the toggle.
-            // RE: research/findings/votv-keypad-passwordlock-accept-RE-and-coop-sync-2026-06-04.md.
+            // v35 (2026-06-06): password-keypad INPUT mirror (ApasswordLock_C). SYMMETRIC -- any
+            // peer polls inPassword + broadcasts on a buffer change; the host relays a client
+            // edge (IsClientRelayableReliableKind). The receiver replays inputNumber for the
+            // digit delta, which drives the keypad's own native validator (so the host accepts a
+            // client's code itself -- MTA input-replication). No isAcc/isDeny (hover flags, the
+            // old PURPLE -- removed v35). RE: votv-keypad-door-BP-disassembly-2026-06-06.md.
             if (msg.payloadLen < sizeof(net::KeypadSyncPayload)) {
                 UE_LOGW("event_feed: KeypadState payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::KeypadSyncPayload));
@@ -760,6 +803,34 @@ void Update(net::Session& session, void* localPlayer) {
                     ? static_cast<uint8_t>(msg.senderPeerSlot)
                     : static_cast<uint8_t>(0xFF);
             coop::interactable_sync::OnDoorOpenRequest(p, senderSlot);
+            break;
+        }
+        case net::ReliableKind::TimeSync: {
+            // v36 (2026-06-07): HOST-authoritative world clock (time-of-day). HOST->client; the
+            // client applies it to its cycle (OnReliable no-ops on the host defensively).
+            // Trust gate (like every other host-only kind): only slot 0 (the host) may set the clock.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: TimeSync from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+                break;
+            }
+            if (msg.payloadLen < sizeof(net::TimeSyncPayload)) {
+                UE_LOGW("event_feed: TimeSync payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::TimeSyncPayload));
+                break;
+            }
+            net::TimeSyncPayload tp{};
+            std::memcpy(&tp, msg.payload, sizeof(tp));
+            // Reject NaN/Inf / absurd values before the raw float write into the cycle struct (a NaN
+            // clock -> setSunAndMoonRotation(NaN) -> black sky / FRotator assert). totalTime/day are
+            // monotonic game counters (O(1e4)s per game-day); timeScale is ~1.
+            if (!std::isfinite(tp.totalTime) || !std::isfinite(tp.day) || !std::isfinite(tp.timeScale) ||
+                std::fabs(tp.totalTime) > 1.0e7f || std::fabs(tp.day) > 1.0e7f ||
+                tp.timeScale < 0.0f || tp.timeScale > 1.0e4f) {
+                UE_LOGW("event_feed: TimeSync values out of range (t=%.1f d=%.1f s=%.3f) -- dropping",
+                        tp.totalTime, tp.day, tp.timeScale);
+                break;
+            }
+            coop::time_sync::OnReliable(tp);
             break;
         }
         case net::ReliableKind::RedSky: {

@@ -1,6 +1,7 @@
-// coop/keypad_sync.cpp -- see coop/keypad_sync.h. Password-keypad (ApasswordLock_C)
-// mirror: poll (inPassword, isAcc, isDeny, Active) -> broadcast on change; receiver
-// replays inputNumber for the buffer delta + direct-writes the bools.
+// coop/keypad_sync.cpp -- see coop/keypad_sync.h. Password-keypad (ApasswordLock_C) INPUT
+// mirror: poll inPassword -> broadcast on a buffer change; receiver replays inputNumber for
+// the digit delta (which drives the keypad's own native validator -- MTA input-replication).
+// No isAcc/isDeny mirror (removed 2026-06-06: hover flags, the old PURPLE).
 //
 // Structure borrows the proven interactable_sync Channel patterns (key->actor index
 // with IsLiveByIndex self-heal, throttled rebuild, deferred-apply retry, silent first-
@@ -15,6 +16,7 @@
 #include "coop/net/session.h"
 #include "coop/players_registry.h"  // coop::players::kMaxPeers
 
+#include "ue_wrap/door.h"          // host-authoritative accept drives the gated door open
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/passwordlock.h"
@@ -47,6 +49,7 @@ using State = PL::State;
 std::mutex g_mutex;  // guards the maps below (all access is game-thread-serial; defensive)
 std::unordered_map<std::wstring, Ref>   g_index;      // key -> live keypad
 std::unordered_map<std::wstring, State> g_lastKnown;  // key -> last broadcast/applied state (change-detect + echo-suppress)
+std::unordered_map<std::wstring, bool>  g_accepted;   // GT-only (HOST): key -> accept latched this code-entry (un-latched when the buffer no longer matches)
 struct Pending { State want; std::chrono::steady_clock::time_point deadline; };
 std::unordered_map<std::wstring, Pending> g_pending;  // key -> deferred incoming apply
 
@@ -78,7 +81,7 @@ uint64_t FnvKey(const std::wstring& s) {
 }
 
 bool SameState(const State& a, const State& b) {
-    return a.isAcc == b.isAcc && a.isDeny == b.isDeny && a.buffer == b.buffer;
+    return a.buffer == b.buffer && a.active == b.active;
 }
 
 // State <-> payload. The buffer is digits only (keypad input is 0..9); a non-digit (never
@@ -92,8 +95,7 @@ void StateToPayload(const std::wstring& key, const State& st, coop::net::KeypadS
         if (c >= L'0' && c <= L'9') p.buf[n++] = static_cast<uint8_t>(c - L'0');
     }
     p.bufLen = n;
-    p.isAcc  = st.isAcc ? 1 : 0;
-    p.isDeny = st.isDeny ? 1 : 0;
+    p.active = st.active ? 1 : 0;  // v38: LED selector / door power (cancel -> red)
 }
 State PayloadToState(const coop::net::KeypadSyncPayload& p) {
     State st;
@@ -103,8 +105,7 @@ State PayloadToState(const coop::net::KeypadSyncPayload& p) {
         uint8_t d = p.buf[i]; if (d > 9) d = 9;
         st.buffer.push_back(static_cast<wchar_t>(L'0' + d));
     }
-    st.isAcc  = p.isAcc != 0;
-    st.isDeny = p.isDeny != 0;
+    st.active = (p.active != 0);  // v38
     return st;
 }
 
@@ -148,9 +149,11 @@ size_t RebuildIndex() {
     return found.size();
 }
 
-// RECEIVER apply: drive `actor` to `want` -- replay the typed-buffer delta via
-// inputNumber (native display) + direct-write the state bools. NEVER a submit verb.
-// Updates g_lastKnown[key] to the applied value so this peer's poll never echoes it.
+// RECEIVER apply: drive `actor`'s typed buffer to `want` by replaying the digit delta via
+// inputNumber (native display + beep) -- which also runs the keypad's OWN native validator,
+// so on the HOST replaying a client's correct code makes the host accept it (MTA input-
+// replication). NEVER a submit verb, NEVER an isAcc/isDeny write (those are crosshair-hover
+// flags -> the old PURPLE). Updates g_lastKnown[key] so this peer's poll never echoes it.
 void ApplyState(void* actor, const std::wstring& key, const State& want, unsigned fromSlot) {
     State cur;
     if (!PL::ReadState(actor, cur)) return;
@@ -172,20 +175,25 @@ void ApplyState(void* actor, const std::wstring& key, const State& want, unsigne
             }
         }
     }
-
-    // --- state bools: ONLY isAcc/isDeny (green/red). The accept verb is unreachable, so these
-    // are direct writes (proven to stick); upd() is a best-effort repaint. `Active` is
-    // deliberately NOT mirrored: it is the keypad's power/armed flag and ApasswordLock_C::
-    // powerChanged(...active_light) drives a LIGHT off it -- writing it on the mirror turned a
-    // host-side light PURPLE (hands-on 2026-06-04). RULE 1: a speculative field that broke a
-    // visual is removed, not patched around.
-    PL::WriteAccepted(actor, want.isAcc);
-    PL::WriteDenied(actor, want.isDeny);
+    // active (LED selector @0x0330 + door power) -- mirrors the cancel->red the user reported.
+    // Re-read AFTER the buffer reconcile: replaying a correct/wrong code can fire the keypad's OWN
+    // native validator (open()), which sets `active` itself -- so a wrong-code red the digit replay
+    // already reproduced is NOT double-written here (after.active already == want.active). Only the
+    // EXPLICIT cancel button (no digit typed -> buffer mirror misses it) still diverges, and we close
+    // it with a DIRECT field-write (never the setActive verb -> no powerChanged "purple") + propagate
+    // the same value to the gated door's power so keypad.active == door.active like SP (coop=SP).
+    State after;
+    if (PL::ReadState(actor, after) && after.active != want.active) {
+        PL::WriteActive(actor, want.active);
+        if (void* door = PL::GatedDoor(actor)) ue_wrap::door::SetActive(door, want.active);
+    }
+    // Repaint the digit DISPLAY + the LED (so a native clear wipes the panel and upd() re-selects the
+    // particle template from the freshly-written `active`: eff_glow_red when !active).
     PL::CallUpd(actor);
 
     { std::lock_guard<std::mutex> lk(g_mutex); g_lastKnown[key] = want; }
-    UE_LOGI("keypad: applied key='%ls' buf='%ls' isAcc=%d isDeny=%d (from slot %u)",
-            key.c_str(), want.buffer.c_str(), want.isAcc ? 1 : 0, want.isDeny ? 1 : 0, fromSlot);
+    UE_LOGI("keypad: applied key='%ls' buf='%ls' active=%d (from slot %u)",
+            key.c_str(), want.buffer.c_str(), want.active ? 1 : 0, fromSlot);
 }
 
 // SENDER: poll every indexed keypad for a state change and broadcast deltas. First sight
@@ -218,11 +226,72 @@ void PollAndBroadcast() {
         StateToPayload(r.first, cur, p);
         if (s->SendReliable(coop::net::ReliableKind::KeypadState, &p, sizeof(p))) {
             { std::lock_guard<std::mutex> lk(g_mutex); g_lastKnown[r.first] = cur; }
-            UE_LOGI("keypad: sent key='%ls' buf='%ls' isAcc=%d isDeny=%d",
-                    r.first.c_str(), cur.buffer.c_str(), cur.isAcc ? 1 : 0, cur.isDeny ? 1 : 0);
+            UE_LOGI("keypad: sent key='%ls' buf='%ls'", r.first.c_str(), cur.buffer.c_str());
         } else {
             UE_LOGW("keypad: SendReliable failed key='%ls'", r.first.c_str());
         }
+    }
+}
+
+// HOST-only Phase B: the authoritative keypad ACCEPT. The disassembly proved a correct code runs
+// `open(password==inPassword)` (when Len>=5) whose chain ends at `door.doorOpen(false)` -- but that
+// native open needs the door near the host player to animate (it freezes far away), and runs through
+// fragile latent delays. So the host evaluates the SAME condition against its OWN `password` (never
+// replicated) and drives the gated door itself: SetActive(true) (the unlock CanOpen gates on) +
+// ForceOpen (snaps isOpened reliably at any distance). The door channel's host poll then broadcasts
+// the open to every peer. The keypad's native chain (fired by the replayed inputNumber for display)
+// does the same idempotently (ForceOpen no-ops an already-open door). Latched per keypad until the
+// buffer no longer matches, so it fires once per code-entry. Runs every tick over the (~14) indexed
+// keypads -- a handful of bool/FString reads; only the host does the door writes.
+void HostAcceptPoll() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!ue_wrap::door::EnsureResolved()) return;
+    // Snapshot the index refs (reuse the GT-serial scratch -- PollAndBroadcast already finished with
+    // it this tick) so we never hold g_mutex across the engine reads / door UFunction calls below.
+    auto& refs = g_pollScratch;
+    refs.clear();
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        if (g_index.empty()) return;
+        refs.reserve(g_index.size());
+        for (auto& kv : g_index) refs.emplace_back(kv.first, kv.second);
+    }
+    // Un-latch ONLY a currently-latched key -- never insert/rewrite an entry for an idle keypad
+    // (operator[]=false would write all ~14 keys every tick). Keeps g_accepted to the few keys
+    // that actually accepted.
+    auto unlatch = [](const std::wstring& key) {
+        auto it = g_accepted.find(key);
+        if (it != g_accepted.end() && it->second) it->second = false;
+    };
+    for (auto& r : refs) {
+        void* lock = r.second.actor;
+        if (!R::IsLiveByIndex(lock, r.second.idx)) continue;
+        State cur;
+        if (!PL::ReadState(lock, cur)) continue;
+        // Short-circuit on the BP's own length gate (Len(inPassword)>=5) BEFORE the password /
+        // isReset reads -- on the common idle keypad (empty buffer) this is the only work done.
+        if (cur.buffer.size() < 5) { unlatch(r.first); continue; }  // too short -> un-latch, skip
+        const std::wstring pw = PL::ReadPassword(lock);
+        // accept = a full buffer equal to the password, and NOT in set-new-code mode (isReset
+        // writes the password instead of opening -- skip the auto-open for it).
+        const bool accept = !pw.empty() && cur.buffer == pw && !PL::IsResetMode(lock);
+        if (!accept) { unlatch(r.first); continue; }  // wrong/partial code -> un-latch
+        if (g_accepted[r.first]) continue;            // already handled this code-entry
+        g_accepted[r.first] = true;
+        void* door = PL::GatedDoor(lock);
+        if (!door) { UE_LOGW("keypad: ACCEPT key='%ls' but no gated door resolved", r.first.c_str()); continue; }
+        ue_wrap::door::SetActive(door, true);        // unlock (CanOpen) -- authoritative, independent of the native chain
+        ue_wrap::door::ForceOpen(door);              // open reliably regardless of host-player distance (idempotent if already open)
+        // Mute the host's autoclose + sensor for this door (same proven recipe as a client-held door,
+        // door.h SuppressHostHeldDoor): the host has NO player at the keypad's door (only the typing
+        // client's puppet), so its native checkSensor would find an empty sensor + autoclose and shut
+        // the door it just opened -> open/close oscillation. The door stays open (the keypad unlock
+        // persists, like SP's door.Active=true). NOTE (Phase B scope): the keypad door is not yet
+        // registered in the door channel's hold register, so it is not E-closable and won't auto-close
+        // after walk-through -- a follow-up integrates it with the hold register for those nuances.
+        ue_wrap::door::SuppressHostHeldDoor(door);
+        UE_LOGI("keypad: ACCEPT key='%ls' -- correct code, unlocked + opened the gated door (host-authoritative)", r.first.c_str());
     }
 }
 
@@ -300,6 +369,7 @@ void Tick() {
             if (void* actor = ResolveFast(rdy.first)) ApplyState(actor, rdy.first, rdy.second, 0xFF);
     }
     PollAndBroadcast();
+    HostAcceptPoll();   // HOST: drive the gated door open on a correct code (Phase B)
 }
 
 void OnDisconnect() {
@@ -307,6 +377,7 @@ void OnDisconnect() {
     const size_t n = g_lastKnown.size();
     g_lastKnown.clear();
     g_pending.clear();
+    g_accepted.clear();
     if (n > 0) UE_LOGI("keypad: OnDisconnect cleared %zu last-known", n);
 }
 

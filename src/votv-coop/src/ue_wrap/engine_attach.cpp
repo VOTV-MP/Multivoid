@@ -34,6 +34,7 @@ void* g_getAngFn  = nullptr;  // PrimitiveComponent::GetPhysicsAngularVelocityIn
 void* g_setLinFn  = nullptr;  // PrimitiveComponent::SetPhysicsLinearVelocity
 void* g_setAngFn  = nullptr;  // PrimitiveComponent::SetPhysicsAngularVelocityInDegrees
 void* g_setCollFn = nullptr;  // PrimitiveComponent::SetCollisionEnabled
+void* g_setNotifyHitFn = nullptr;  // PrimitiveComponent::SetNotifyRigidBodyCollision
 
 void* ActorFn(void** cache, const wchar_t* name) {
     if (!*cache) {
@@ -95,6 +96,22 @@ bool SetActorRootCollisionEnabled(void* actor, uint8_t collisionType) {
     if (!fn) { UE_LOGW("engine: SetCollisionEnabled unresolved"); return false; }
     ParamFrame f(fn);
     f.Set<uint8_t>(L"NewType", collisionType);
+    return Call(root, f);
+}
+
+bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify) {
+    // Toggle the root primitive's OnComponentHit notification. Disabling it stops the BP's
+    // ComponentHit-bound events from firing without changing whether the body physically
+    // collides. Used to silence a mirror trash-clump's own ground-hit handler (which would
+    // otherwise BeginDeferredActorSpawnFromClass(pile) on landing -> a DUPLICATE pile on top
+    // of the host's authoritative one). The clump's StaticMesh is its root (the same body the
+    // root-based collision/velocity setters drive on release), so this targets it. Game thread.
+    void* root = RootComponentOf(actor);
+    if (!root) return false;
+    void* fn = PrimFn(&g_setNotifyHitFn, L"SetNotifyRigidBodyCollision");
+    if (!fn) { UE_LOGW("engine: SetNotifyRigidBodyCollision unresolved"); return false; }
+    ParamFrame f(fn);
+    f.Set<bool>(L"bNewNotifyRigidBodyCollision", notify);
     return Call(root, f);
 }
 
