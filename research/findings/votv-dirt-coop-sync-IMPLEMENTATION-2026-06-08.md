@@ -146,18 +146,41 @@ correctness, sizeof asserts.
 
 ---
 
+## The SUPER SPONGE / one-shot wipe (2026-06-08, the former "fast-wipe ghost" — now HANDLED)
+
+User: "there's a super sponge with max strength — sync mirror that too." A max-strength sponge
+ONE-SHOTS a grime decal (`clean()`: `process -= Sub*cleanStrength*1.2` past 0 in a single hit →
+native `K2_DestroyActor`), so the 20 Hz poll never sees the low `process` (the actor is gone before
+the next poll) → the mirror would stay visibly dirty (the correctness audit's H-1, now a confirmed
+reachable case).
+
+The deterministic fix (a `K2_DestroyActor` PRE edge reading `process<0`) is NOT usable: a BP-internal
+`clean()`→`K2_DestroyActor` bypasses the ProcessEvent detour (confirmed by `trash_collect_sync.cpp:190`
+— the trash clump's morph-destroy has the same property). So the catch is a **PROXIMITY-GATED
+death-watch** in `PollAndBroadcast`: a decal that VANISHES from the index (IsLiveByIndex false) was
+either WIPED (the player one-shot-cleaned it) or STREAMED OUT (its sublevel unloaded). They are told
+apart by **proximity to the local camera** (`GetCameraLocation`): within `kWipeProximityCm=800` → a
+wipe (you can only sponge a decal you stand AT; the sponge cleans by contact) → broadcast
+`GrimeState{value=0}` (the mirror MIN-applies 0 → invisible/clean); farther → a stream-out → ignored
+(this is what the original ungated death-watch got wrong — it flooded false destroys on the
+connect-teleport stream-out). The decal's position is recovered from its PosKey (`DecodePosKey`). The
+host also remembers wiped posKeys (`g_wipedKeys`) and re-sends `value=0` for them in the
+connect-snapshot, so a joiner cleans a decal wiped BEFORE it joined. No protocol change (reuses
+`GrimeState`). Broadcasting `value=0` (drive invisible) rather than destroying is deliberate: it
+reuses the proven path and any rare false-fire is recoverable (a spurious clean), not a permanent loss.
+
+VERIFIED: smoke PROVED the critical direction — the connect-teleport streamed out hundreds of decals
+(936→1006 indexed) and the death-watch fired **0 `sent WIPE`** on either peer (the streamed-out decals
+were correctly far-from-camera). 800 cm is far below the ~14 m connect stream-out distance, so the
+margin is large. The actual wipe→mirror (a near-camera vanish → `value=0` → clean) is the proven
+`GrimeState` apply path; the final confirmation (a real super-sponge wipe) is hands-on. Audit: 0
+CRITICAL; thread-safety confirmed (`OnReliable` runs on the GT — `event_feed::Update` is in
+`net_pump::Tick`); radius bumped 500→800 per the audit (a miss silently breaks the sync; a false-fire
+is recoverable, so err loose).
+
 ## DEFERRED / KNOWN GAPS (flagged for follow-up)
 
-1. **Fast-wipe ghost (correctness audit H-1, grime).** A GRADUAL wipe (multiple sponge hits over
-   ~1-2 s) is fine: the 20 Hz poll captures the decreasing `process` and drives the mirror to
-   invisible. But a SINGLE high-strength hit that drives `process` from a high value straight past 0
-   in one poll interval is never captured (the poll's prior value was high, then the actor is gone)
-   → that decal's MIRROR stays VISIBLY DIRTY permanently. Root-cause fix: a `K2_DestroyActor` PRE
-   edge that reads `process<0` just before the actor dies and broadcasts `value=0` (drive the mirror
-   invisible). UNCERTAIN whether that observer fires for the BP-internal `clean()`→`K2_DestroyActor`
-   (needs probing). **Verify hands-on whether a one-shot wipe is even achievable in-game** before
-   prioritizing.
-2. **`applyMaterial` re-creates the dynmat per apply (perf audit M-1).** Cosmetic flicker on a
+1. **`applyMaterial` re-creates the dynmat per apply (perf audit M-1).** Cosmetic flicker on a
    remote wipe (infrequent). The native `clean()` fast-path instead does
    `dynmat.SetScalarParameterValue(cleanParameter, process/maxProcess)` directly on the existing
    instance — switch to that if hands-on shows flicker. (dynmat@0x0258, cleanParameter@0x0260,

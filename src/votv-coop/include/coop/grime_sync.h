@@ -19,21 +19,20 @@
 // snapshots each grime's process (adopt=1). The process stream is inherently STREAM-safe: a
 // streamed-out decal does not change process, so it broadcasts nothing; only a live wipe decreases it.
 //
-// DEFERRED: (1) the FINAL decal removal when a wipe takes process<0 (native K2_DestroyActor). We do
-// NOT infer a destroy from a vanished index entry: grime lives in streamed sublevels and streams
-// out/in as the player moves, so a vanished entry is NOT a reliable destroy signal (the first smoke
-// proved a connect-teleport streams out hundreds of decals at once -> a death-watch flooded false
-// destroys that wrongly removed the peer's still-present decals). For a GRADUAL wipe (multiple
-// sponge hits over ~1-2 s) the 20 Hz poll captures the decreasing process and drives the mirror to
-// process~=0 (invisible) -- correct. The KNOWN GAP (correctness audit H-1): a single high-strength
-// hit that drives process from a high value straight past 0 in one poll interval is never captured
-// (the poll's prior value was high, then the actor is gone) -> that decal's MIRROR stays VISIBLY
-// DIRTY permanently. The root-cause fix is a K2_DestroyActor PRE edge that reads process<0 just
-// before the actor dies and broadcasts value=0 (drive the mirror invisible) -- a separate increment
-// (uncertain whether the observer fires for the BP-internal clean()->K2_DestroyActor; needs probing).
-// Verify hands-on whether a one-shot wipe is even achievable in-game before prioritizing. (2) runtime
-// grimeProjectile splatter grime -- non-deterministic spawn position, not position-identifiable
-// (would need the eid path). Level-placed grime is the stated ask.
+// THE ONE-SHOT / SUPER-SPONGE WIPE (a max-strength sponge drives process past 0 in a SINGLE hit the
+// 20 Hz poll can't see -- the actor self-destructs before the next poll reads the low process) is
+// handled by a PROXIMITY-GATED death-watch in PollAndBroadcast: a decal that VANISHES from the index
+// NEAR the local camera was WIPED (you can only sponge a decal you stand at) -> broadcast value=0 ->
+// the peer's mirror MIN-applies 0 -> invisible (clean); a decal that vanishes FAR was STREAMED OUT (a
+// sublevel unloaded -- a connect-teleport unloads hundreds) -> ignored. (A K2_DestroyActor PRE edge
+// is NOT usable: a BP-internal clean()->K2_DestroyActor bypasses the ProcessEvent detour, like the
+// trash clump's morph-destroy.) A GRADUAL wipe (several hits) is already caught by the normal process
+// poll; the death-watch just adds the one-hit case. The host re-sends value=0 for its wiped decals in
+// the connect-snapshot so a joiner cleans a decal wiped BEFORE it joined.
+//
+// DEFERRED: runtime grimeProjectile splatter grime -- its spawn position is non-deterministic across
+// peers, so it is not position-identifiable (would need the eid/spawn path). Level-placed grime + its
+// cleaning is the stated ask.
 //
 // RE: research/findings/votv-dirt-window-cleaning-RE-and-coop-sync-design-2026-06-07a.md PART A.
 
