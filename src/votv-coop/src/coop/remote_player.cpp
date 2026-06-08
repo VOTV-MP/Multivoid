@@ -1,6 +1,5 @@
 #include "coop/remote_player.h"
 
-#include "coop/nameplate.h"
 #include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -280,9 +279,6 @@ bool RemotePlayer::Spawn() {
     ApplyToEngine();
     dirty_ = false;     // just pushed it
 
-    // Show the floating nameplate above this body (lazily hooks the HUD draw).
-    nameplate::Register(this);
-
     // One-shot head-graph diagnostic (the IDA agent identified 2 FAnimNode_LookAt
     // instances + 7 ModifyBone instances; we need to know which ModifyBone targets
     // 'head' and what the LookAt's BoneToModify is, before we can write the
@@ -511,7 +507,7 @@ void RemotePlayer::Tick() {
     const bool wantFlash = (hurtFlashEndMs_ != 0 && NowMs() < hurtFlashEndMs_);
     if (wantFlash != hurtFlashActive_) {
         hurtFlashActive_ = wantFlash;
-        nameplate::SetFlash(this, wantFlash);  // nameplate red
+        // The ImGui nameplate reads IsHurtFlashing() each Update() -> the label flashes red.
         // Body pulse: swap the puppet mesh to solid red on the rising edge, restore on
         // the falling edge (Minecraft-style hit flash). The puppet's kel mesh stays
         // VISIBLE while ragdolled (pelvis-attached to the invisible ragdoll body), so the
@@ -547,7 +543,6 @@ void RemotePlayer::Destroy() {
     // AnimInstance (the SkeletalMeshComponent is finalized with the actor).
     // No AnimInstance field cleanup needed -- the AnimInstance dies with
     // the actor.
-    nameplate::Unregister(this);  // drops + destroys the floating label
     // Tear down the ragdoll display body FIRST (it's a SEPARATE actor that would
     // otherwise outlive the puppet as an orphan). IsLiveByIndex-guarded so a
     // GC-recycled address isn't mistaken for our body.
@@ -785,23 +780,31 @@ ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     // bone-anchor branch is removed per RULE 2 (no parallel old + new code
     // paths).
     //
-    // Offset 30 cm -- THE puppet's actor pivot coincides with the RENDERED
-    // head crown (not the feet, not the capsule center). The pose drive
-    // sets `puppet.actor.Z = streamed.Z + meshOffsetZ_` (typically +85 cm)
-    // specifically to make the rendered mesh land at the right Z relative
-    // to the source's reported pose. The chain measure log line proves it
-    // empirically: `halfH=85 ... chain=-170 ... meshOffsetZ_=+85`. From the
-    // already-applied puppet.actor.Z:
-    //   puppet.mesh.world.Z = puppet.actor.Z + puppetChain = puppet.actor.Z - 170
-    //   head crown Z        = puppet.mesh.world.Z + kerfur height (~170 cm)
-    //                       = puppet.actor.Z
-    // So +30 cm gives a clean ~30 cm gap above the crown.
+    // Anchor Z to the RENDERED 'head' bone so the label tracks the actual head --
+    // dynamic across crouch (ctrl) / jump / skin height -- not a fixed actor-pivot
+    // offset. The puppet renders on the kerfur skeleton (player skin retargeted), whose
+    // actor pivot sits ~30 cm ABOVE the 'head' bone, so the old `actor.Z + 30` floated
+    // the label ~60 cm too high (user: "way too high"). Measured 2026-06-07:
+    // actor.Z=6271, 'head' bone Z=6242, mesh root=6101.
     //
-    // Retest history: +200 (the original feet-pivot guess) and +120 (the
-    // capsule-center guess) were both "way above head" because BOTH were
-    // adding offset on top of the actor pivot which already IS at head level.
-    ue_wrap::FVector p = GetLocation();
-    p.Z += 30.f;
+    // The 2026-05-25 version ALSO read the head bone but the nameplate was a SEPARATE
+    // floating actor repositioned a frame late -> "jaggy laggy". That skew is gone: the
+    // ImGui projection reads the bone + projects it in the SAME nameplate::Update tick.
+    // X/Y stay on the stable actor pivot (no horizontal bone jitter).
+    ue_wrap::FVector p = GetLocation();  // actor pivot X/Y (stable body centre)
+    // The 'head' bone read iterates the skeleton -- too costly EVERY frame * every
+    // puppet -- so refresh the head-Z OFFSET (relative to the actor pivot) only every
+    // few ticks + reuse it between. Jump/move track exactly (the offset is actor-
+    // relative, both move together); a crouch's lower head lands within ~80 ms.
+    if (--headZRefresh_ <= 0) {
+        headZRefresh_ = 5;  // ~12 Hz at the 60 Hz tick
+        void* mesh = Pup::GetSkeletalMeshComponent(actor_);
+        float headZ = 0.f;
+        if (mesh && R::IsLive(mesh) && E::GetBoneWorldZByName(mesh, L"head", headZ)) {
+            headZOffset_ = (headZ + 33.f) - p.Z;  // 'head' bone (+33 above) relative to actor.Z
+        }
+    }
+    p.Z += headZOffset_;  // default +30 until the first bone read resolves
     return p;
 }
 

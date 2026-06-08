@@ -369,7 +369,44 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // the resolved mesh world yaw; the client writes it onto the mirror's mesh (after SetActorRotation;
 // no gate flag -- mirror tick off can't clobber it). SEPARATE from the v39 head `lookAt` sync.
 // research/findings/votv-kerfur-bodyfacing-RE-2026-06-07.md (pending).
-inline constexpr uint16_t kProtocolVersion = 40;
+// v41 (2026-06-08): BASE-WINDOW DIRT sync (Request 1, Part B -- the base's "main huge window").
+// Adds ReliableKind::WindowCleanState (=30) + the 40-byte WindowCleanPayload. AbaseWindow_C's
+// whole-surface dirt is one scalar `clean`@0x0260 (a SetCustomPrimitiveDataFloat shader slot;
+// higher = dirtier, wiped DOWN to 0, never re-raised). SYMMETRIC cooperative-clean: each peer
+// POLLS every AbaseWindow_C's `clean` each tick (the cleanSponge verb is BP-internal -> bypasses
+// our ProcessEvent detour, same as doors/keypad, so a POST observer can't see it) and broadcasts
+// on a DECREASE, keyed by the window's Aactor_save_C::Key. The receiver applies MIN(local, wire)
+// -- a wire update can only make a window CLEANER, so two peers wiping concurrently converge to
+// the lowest value with NO oscillation/regression (clean is monotone + inert -> no HostAuth /
+// hold-register needed, unlike doors). The host RELAYS a client's wipe to the other clients and,
+// on a new client's connect edge, snapshots each window's current clean with adopt=1 (apply
+// VERBATIM so the joiner adopts the host's world even if its own save was cleaner). Own module
+// coop/window_sync + ue_wrap/base_window. RE: research/findings/votv-dirt-window-cleaning-RE-and-
+// coop-sync-design-2026-06-07a.md. (Part A -- Agrime_C surface grime on walls/ceiling/floor -- is
+// a later bump: it is UNKEYED -> host Element/eid, not this keyed scalar. Part C -- Ad_window_C
+// signal panel render-target stroke replay -- is deferred, not requested.)
+// v42 (2026-06-08): SURFACE GRIME dirt sync (Request 1, Part A -- walls/ceiling/floor). Adds
+// ReliableKind::GrimeState (=31), riding the generalized KeyedScalarPayload (the v41
+// WindowCleanPayload, renamed -- one keyed-scalar payload now serves window clean AND grime
+// process, like KeyedTogglePayload serves 3 bool kinds; RULE 2). Agrime_C is a STATIC level-placed
+// decal (saved transform, never moves) -> both peers load the same save and so place each decal at
+// an IDENTICAL world position; that position IS the cross-peer identity, so grime keys by a
+// QUANTIZED WORLD-POSITION string (no host-allocated eid / Element / spawn-interceptor needed --
+// the decal's own position is its key; smoke-proven: host + client posHash MATCH at 936 decals).
+// SYMMETRIC cooperative-clean like the window: poll each grime's `process`@0x0250, broadcast on a
+// DECREASE keyed by the position string; the receiver applies MIN(local, wire) (`process` is
+// monotone-decreasing + inert -- a sponge/rain only lowers it -> converges, no oscillation) +
+// repaints via applyMaterial(), driving the mirror decal toward process/maxProcess -> 0 (clean).
+// The host RELAYS a client's wipe + connect-snapshots each grime's process (adopt=1). The process
+// stream is STREAM-safe (a streamed-out decal doesn't change process -> broadcasts nothing).
+// DEFERRED: (slot 32) the FINAL decal removal (a wipe takes process<0 -> native K2_DestroyActor) --
+// grime streams in/out of sublevels, so a vanished decal is NOT a reliable destroy signal (an
+// IsLiveByIndex death-watch flooded false destroys on the connect-teleport stream-out, smoke-
+// caught); the true removal needs a K2_DestroyActor PRE edge reading process<0. Also deferred:
+// runtime grimeProjectile splatter (non-deterministic spawn position -> not position-identifiable).
+// Own module coop/grime_sync (+ ue_wrap/grime). RE: research/findings/votv-dirt-window-cleaning-RE-
+// and-coop-sync-design-2026-06-07a.md PART A.
+inline constexpr uint16_t kProtocolVersion = 42;
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -730,6 +767,41 @@ enum class ReliableKind : uint8_t {
                        //     pushes so the sun doesn't step. HOST->client; not a client request, not
                        //     relayed. Payload: TimeSyncPayload (12 B). RE: research/findings/
                        //     votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
+    WindowCleanState = 30, // 2026-06-08 (v41): base-window DIRT scalar sync (AbaseWindow_C::clean
+                       //     @0x0260 -- the "main huge window"). SYMMETRIC cooperative-clean (MTA
+                       //     monotone min-register): each peer POLLS every AbaseWindow_C's clean each
+                       //     tick + broadcasts on a DECREASE (a wipe), keyed by the window's
+                       //     Aactor_save_C::Key. The receiver applies MIN(local, wire) so a wire
+                       //     update only ever makes a window CLEANER -- concurrent wipes from both
+                       //     peers converge to the lowest value, no oscillation/regression (clean is
+                       //     monotone-decreasing + inert: nothing re-raises it locally, unlike a
+                       //     door's autoclose -> no HostAuth needed). The host RELAYS a client's wipe
+                       //     to the other clients (IsClientRelayableReliableKind). On a new client's
+                       //     connect edge the host snapshots each window's current clean with adopt=1
+                       //     (apply VERBATIM: the joiner adopts the host's world even if its own save
+                       //     was cleaner). Sender via POLL (cleanSponge is BP-internal, bypasses our
+                       //     ProcessEvent detour, same as doors/keypad). Payload: WindowCleanPayload
+                       //     (40 B). Own module coop/window_sync (+ ue_wrap/base_window). RE:
+                       //     research/findings/votv-dirt-window-cleaning-RE-and-coop-sync-design-
+                       //     2026-06-07a.md.
+    GrimeState = 31,   // 2026-06-08 (v42): surface grime dirt scalar (Agrime_C::process @0x0250 --
+                       //     walls/ceiling/floor). SYMMETRIC cooperative-clean, MIN-wins, exactly
+                       //     like WindowCleanState but keyed by a QUANTIZED WORLD-POSITION string
+                       //     instead of an FName: Agrime_C is a STATIC decal with a saved transform,
+                       //     so both peers place it at an identical position (same save) -> position
+                       //     IS the cross-peer identity (no eid). Each peer polls every grime's
+                       //     process + broadcasts on a DECREASE keyed by that position string; the
+                       //     receiver applies MIN(local, process) (monotone + inert -> converges,
+                       //     no oscillation) + repaints via applyMaterial(). Host relays a client's
+                       //     wipe + connect-snapshots each grime's process (adopt=1). Payload:
+                       //     KeyedScalarPayload (40 B, shared with WindowCleanState). Own module
+                       //     coop/grime_sync (+ ue_wrap/grime). NOTE: propagating a decal's FINAL
+                       //     removal (a wipe takes process<0 -> native K2_DestroyActor) is DEFERRED
+                       //     (slot 32 reserved): grime lives in streamed sublevels, so a vanished
+                       //     decal is not a reliable destroy signal (an IsLiveByIndex death-watch
+                       //     flooded false destroys on the connect-teleport stream-out). A wiped
+                       //     decal's mirror is driven to process~=0 (invisible) instead; the true
+                       //     removal needs a K2_DestroyActor PRE edge that reads process<0.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -1147,6 +1219,29 @@ struct KeyedTogglePayload {
 static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 bytes");
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
+
+// KeyedScalarPayload -- the SHARED payload for "keyed monotone-decreasing dirt scalar" sync:
+// WindowCleanState (30, v41 -- AbaseWindow_C::clean@0x0260) AND GrimeState/GrimeDestroy (31/32,
+// v42 -- Agrime_C::process@0x0250). One payload for the keyed-float kinds, mirroring how
+// KeyedTogglePayload serves the 3 bool kinds (RULE 2). `key` is the instance's cross-peer-stable
+// string identity (the window's Aactor_save_C::Key FName for windows; a QUANTIZED WORLD-POSITION
+// string for the static, unkeyed grime decals). `value` is the dirt scalar (>= 0; wiped DOWN,
+// never re-raised). SYMMETRIC: every peer polls + broadcasts on a decrease; the host relays a
+// client's wipe. The receiver resolves the instance by `key` and applies MIN(local, value) for a
+// LIVE wipe (adopt==0) so a wire update can only clean, never re-dirty -> concurrent wipes
+// converge with no oscillation. adopt==1 (host connect-snapshot only -- trust-gated to senderSlot
+// 0 at the receiver) overrides MIN and writes VERBATIM so a joiner adopts the host's world.
+// GrimeDestroy reads only `key` (value/adopt ignored). The window/grime modules do the engine
+// read/write through ue_wrap::base_window / ue_wrap::grime.
+struct KeyedScalarPayload {
+    WireKey  key;        // 32 -- instance identity string (FName for windows; quantized position for grime)
+    float    value;      // 4  -- the dirt scalar (>= 0; 0 = fully clean)
+    uint8_t  adopt;      // 1  -- 1 = connect-snapshot, apply VERBATIM (adopt host's world); 0 = live wipe, apply MIN
+    uint8_t  _pad[3];    // 3  -- 8-byte alignment / reserved
+};
+static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 bytes");
+static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
+              "KeyedScalarPayload must fit in one reliable datagram");
 
 // KeypadSyncPayload -- the password-keypad INPUT mirror (KeypadState=25, v35). Carries only
 // the typed digit buffer of ONE keypad. The sender (any peer) polls every indexed

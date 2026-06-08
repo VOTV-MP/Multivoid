@@ -1,36 +1,54 @@
-// coop/nameplate.h -- floating nickname labels above remote players.
+// coop/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
 //
-// Gameplay layer (principle 7). Owns the set of remote players to label and the
-// per-frame draw logic (MTA nametag shape: project the head world point to
-// screen, fade with distance, draw centered outlined text). It draws through
-// ue_wrap::hud only -- no engine memory access, no UFunction marshaling here.
+// Gameplay/network layer (principle 7). The label used to be a 3D world-space
+// UWidgetComponent the ENGINE rendered; it is now drawn by our OWN ImGui overlay
+// as a screen-space PROJECTION -- the proper MTA nametag shape (project the head
+// world point to the screen, fade with distance, draw centred outlined text),
+// finally possible because we control an ImGui canvas (VOTV never runs the stock
+// HUD canvas, which is why the old code had to fall back to a world widget).
+//
+// This module is the GAME-THREAD half: Update() projects each live remote puppet's
+// head world point to viewport-pixel screen coords via the local player's
+// PlayerController (engine::ProjectWorldToScreen -- a UFunction, so game thread)
+// and publishes a thread-safe POD snapshot. The RENDER-THREAD half (ui::hud) copies
+// the snapshot and draws nick + ping + health bar at each screen point. Same split
+// as coop::roster -> ui::scoreboard (game-thread snapshot, render-thread draw).
 
 #pragma once
 
-namespace coop {
+#include "coop/players_registry.h"  // kMaxPeers
 
-class RemotePlayer;
+namespace coop::nameplate {
 
-namespace nameplate {
+// One projected label (plain data; the render thread reads it). nick is a fixed
+// ASCII buffer (peer nicks are sanitized to ASCII upstream in player_handshake).
+struct Plate {
+    float x = 0.f;           // screen px (viewport pixels, top-left origin) -- the head anchor
+    float y = 0.f;
+    float alpha = 0.f;       // distance fade 0..1 (0 => skip)
+    bool  onScreen = false;  // projected in FRONT of the camera AND within fade range
+    bool  flash = false;     // hurt-flash red (read from RemotePlayer::IsHurtFlashing)
+    int   healthPct = 100;   // 0..100 streamed-vitals health (display-only)
+    int   ping = 0;          // ms (0 = unmeasured -> ping suffix hidden)
+    char  nick[24] = {};
+};
 
-// Register a remote player to be labelled -- spawns a 3D text label above its
-// head. Game thread.
-void Register(RemotePlayer* player);
+struct Snapshot {
+    int   count = 0;
+    Plate plates[coop::players::kMaxPeers];
+};
 
-// Stop labelling a player and destroy its label (call before destroying it).
-// Game thread.
-void Unregister(RemotePlayer* player);
-
-// Per-frame-ish update: reposition each label above its player's head and
-// billboard it to face the local player. Call periodically from the game thread
-// (the harness posts this every ~50 ms). Cheap; no-op if no labels.
+// GAME THREAD: project every live remote puppet -> a fresh snapshot, then publish.
+// Cheap no-op when there are no puppets (early-out before the controller resolve) /
+// no local player. Called UNCONDITIONALLY from the harness tick (~60 Hz) so the
+// snapshot self-clears to empty at the menu (the HUD then auto-hides).
 void Update();
 
-// Vitals Inc3 damage flash: tint this player's whole nameplate RED while `on`,
-// restore to the normal translucent white when off. Driven by RemotePlayer::Tick
-// on the edge of its hurt-flash window (which arms when the streamed health
-// drops). No-op if the player has no label. Game thread.
-void SetFlash(RemotePlayer* player, bool on);
+// Copy the latest snapshot. Safe from ANY thread (the render thread reads it).
+void GetSnapshot(Snapshot& out);
 
-}  // namespace nameplate
-}  // namespace coop
+// True if there is at least one label to draw -- the overlay uses this (lock-free)
+// to decide whether to run the always-on HUD pass. Any thread.
+bool HasAny();
+
+}  // namespace coop::nameplate

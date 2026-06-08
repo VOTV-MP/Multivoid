@@ -38,7 +38,7 @@ void* g_text = nullptr;
 // Refresh-pump thread started once, lazily, on the first show.
 std::atomic<bool> g_pumpStarted{false};
 
-constexpr int kZOrder = 95;  // just below the coop hud_feed (which is at 100)
+constexpr int kZOrder = 95;  // dev position HUD -- UMG viewport widget z-order
 
 // Build the LEFT-MIDDLE overlay widget. Outer must be a persistent UObject (the
 // GameInstance) so it survives level loads; pivot at the widget's left-middle

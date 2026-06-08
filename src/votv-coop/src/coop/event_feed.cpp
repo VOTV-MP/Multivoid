@@ -16,12 +16,14 @@
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/remote_prop_spawn.h"
+#include "coop/grime_sync.h"
 #include "coop/time_sync.h"
 #include "coop/weather_sync.h"
+#include "coop/window_sync.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/teleport_client.h"
 #include "ue_wrap/game_thread.h"
-#include "ue_wrap/hud_feed.h"
+#include "coop/chat_feed.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/sdk_profile.h"
 
@@ -94,6 +96,7 @@ void OnSessionStart() {
     // edge-detector input.
     g_lastConnectedBySlot.fill(false);
     coop::player_handshake::Reset();
+    coop::chat_feed::Reset();  // drop any prior session's lingering event lines
 }
 
 void Update(net::Session& session, void* localPlayer) {
@@ -126,7 +129,7 @@ void Update(net::Session& session, void* localPlayer) {
         const bool slotConnected = session.IsSlotConnected(slot);
         const bool slotReady = session.IsSlotReady(slot);
         if (g_lastConnectedBySlot[slot] && !slotConnected) {
-            ue_wrap::hud_feed::Push(
+            coop::chat_feed::Push(
                 coop::player_handshake::NicknameForSlot(slot) + L" left the game");
             coop::player_handshake::OnSlotDisconnected(slot);
             // HostAuth doors: release any door this departing peer was holding open (a door
@@ -776,6 +779,68 @@ void Update(net::Session& session, void* localPlayer) {
                     ? static_cast<uint8_t>(msg.senderPeerSlot)
                     : static_cast<uint8_t>(0xFF);
             coop::keypad_sync::OnReliable(kp, senderSlot);
+            break;
+        }
+        case net::ReliableKind::WindowCleanState: {
+            // v41 (2026-06-08): base-window DIRT scalar (AbaseWindow_C::clean). SYMMETRIC
+            // cooperative-clean -- any peer polls its windows + broadcasts a wipe (a decrease);
+            // the host relays a client edge (IsClientRelayableReliableKind). The receiver applies
+            // MIN(local, clean) (adopt==0) so a wire update only ever cleans, or VERBATIM (adopt==1,
+            // host connect-snapshot only). RE: votv-dirt-window-cleaning-RE-...-2026-06-07a.md.
+            if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
+                UE_LOGW("event_feed: WindowCleanState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));
+                break;
+            }
+            net::KeyedScalarPayload wp{};
+            std::memcpy(&wp, msg.payload, sizeof(wp));
+            // Trust-boundary: value drives SetCustomPrimitiveDataFloat (a shader uniform) -- a
+            // NaN/Inf there is undefined visual output and can trip a device-removed crash on some
+            // GPUs. clean is FMax'd to >= 0 by the engine, so a negative value is also garbage.
+            // (Same isfinite guard every other float payload in this file carries.)
+            if (!std::isfinite(wp.value) || wp.value < 0.0f) {
+                UE_LOGW("event_feed: WindowCleanState value=%.3f invalid -- dropping", wp.value);
+                break;
+            }
+            if (wp.adopt != 0 && wp.adopt != 1) {
+                UE_LOGW("event_feed: WindowCleanState adopt=%u out of range -- dropping",
+                        static_cast<unsigned>(wp.adopt));
+                break;
+            }
+            const uint8_t senderSlot =
+                (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                    ? static_cast<uint8_t>(msg.senderPeerSlot)
+                    : static_cast<uint8_t>(0xFF);
+            coop::window_sync::OnReliable(wp, senderSlot);
+            break;
+        }
+        case net::ReliableKind::GrimeState: {
+            // v42 (2026-06-08): surface grime dirt scalar -- SYMMETRIC cooperative-clean keyed by a
+            // quantized world-position (Agrime_C is a static decal); the host relays a client edge.
+            // The receiver applies MIN(local, process) + repaints. (Decal DESTROY is deferred -- see
+            // grime_sync.h: grime streams in/out, so a vanished decal is NOT a reliable destroy signal.)
+            if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
+                UE_LOGW("event_feed: GrimeState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));
+                break;
+            }
+            net::KeyedScalarPayload gp{};
+            std::memcpy(&gp, msg.payload, sizeof(gp));
+            // value drives applyMaterial's shader param -- guard NaN/negative like the window.
+            if (!std::isfinite(gp.value) || gp.value < 0.0f) {
+                UE_LOGW("event_feed: GrimeState value=%.3f invalid -- dropping", gp.value);
+                break;
+            }
+            if (gp.adopt != 0 && gp.adopt != 1) {  // consistency with WindowCleanState's guard
+                UE_LOGW("event_feed: GrimeState adopt=%u out of range -- dropping",
+                        static_cast<unsigned>(gp.adopt));
+                break;
+            }
+            const uint8_t senderSlot =
+                (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                    ? static_cast<uint8_t>(msg.senderPeerSlot)
+                    : static_cast<uint8_t>(0xFF);
+            coop::grime_sync::OnReliable(gp, senderSlot);
             break;
         }
         case net::ReliableKind::DoorOpenRequest: {

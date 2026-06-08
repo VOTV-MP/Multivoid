@@ -14,9 +14,11 @@
 #include "coop/dev/lightswitch_probe.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element_deleter.h"
+#include "coop/grime_sync.h"
 #include "coop/interactable_sync.h"
 #include "coop/keypad_sync.h"
 #include "coop/time_sync.h"
+#include "coop/window_sync.h"
 #include "coop/event_feed.h"
 #include "coop/join_progress.h"
 #include "coop/garbage_sync.h"
@@ -43,7 +45,6 @@
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/hud_feed.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/puppet.h"
@@ -288,6 +289,8 @@ void InstallObservers(coop::net::Session& session) {
     coop::interactable_sync::Install(&session);  // Phase 5D doors + lights + container lids
     coop::keypad_sync::Install(&session);    // v33 password-keypad mirror (its own module)
     coop::time_sync::Install(&session);      // v36 host-authoritative world clock (time-of-day / dark-world fix)
+    coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
+    coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();           // Phase 5G garbage
     coop::balance_sync::SetSession(&session); // v30 shared host-authoritative balance
@@ -460,13 +463,6 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         }
     }
 
-    // Lazily bring up the on-screen event feed once the GameInstance exists (it
-    // is the persistent widget outer). One-time FindObjectByClass until it
-    // succeeds, then it stops -- never a per-tick walk after init.
-    if (!ue_wrap::hud_feed::IsInitialized()) {
-        if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) ue_wrap::hud_feed::Init(gi);
-    }
-
     // Detect peer disconnect (Connected -> Handshaking/Disconnected). DESTROY
     // the puppet -- a frozen-in-place puppet of a peer who already quit is
     // confusing and clutters the world. event_feed will also have posted
@@ -521,6 +517,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
                 coop::keypad_sync::QueueConnectBroadcastForSlot(slot);        // v33 keypad states
                 coop::time_sync::QueueConnectBroadcastForSlot(slot);          // v36 world clock -> joiner immediately (not dark until first push)
+                coop::window_sync::QueueConnectBroadcastForSlot(slot);        // v41 base-window clean -> joiner adopts host's world (adopt=1)
+                coop::grime_sync::QueueConnectBroadcastForSlot(slot);         // v42 surface grime process -> joiner adopts host's world (adopt=1)
                 coop::npc_sync::RegisterExistingWorldNpcs();                  // register pre-existing/level-load NPCs (the save's kerfur) so the next line mirrors them too
                 coop::npc_sync::QueueConnectBroadcastForSlot(slot);           // existing NPCs -> joiner (mirror NPCs that spawned before the join)
                 coop::balance_sync::OnClientConnect(slot);  // v30: send the host's current balance to the joiner
@@ -563,6 +561,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         coop::interactable_sync::OnDisconnect();
         coop::keypad_sync::OnDisconnect();
         coop::time_sync::OnDisconnect();
+        coop::window_sync::OnDisconnect();
+        coop::grime_sync::OnDisconnect();
         coop::trash_collect_sync::OnDisconnect();
         coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
@@ -619,6 +619,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     { PP::Scope _s{PP::Bucket::Interactable};  coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable};  coop::time_sync::Tick(); }          // v36 world clock: host throttled poll+broadcast (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::window_sync::Tick(); }         // v41 base-window clean: poll for wipes + deferred-apply retry (symmetric)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::grime_sync::Tick(); }          // v42 surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_mirror::TickClientNpcs(); }  // v37 CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::trash_collect_sync::TickWatchReleasedClumps(&session); }  // despawn clumps whose unobservable morph-destroy fired
@@ -698,6 +700,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::interactable_sync::OnDisconnect();
                 coop::keypad_sync::OnDisconnect();
                 coop::time_sync::OnDisconnect();
+                coop::window_sync::OnDisconnect();
+                coop::grime_sync::OnDisconnect();
                 coop::trash_collect_sync::OnDisconnect();
                 coop::balance_sync::OnDisconnect();  // v30: reset balance dedup on death teardown too (else a permadeath-rejoin skips the opening BalanceSync)
                 // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
@@ -1035,10 +1039,6 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     // for the natural throw-sound dispatch (Path B in
     // research/findings/votv-throw-sound-path-2026-05-24.md).
     { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal); }
-
-    // Expire old chat-feed lines (10 s TTL) so a "X joined the game" line
-    // doesn't linger forever.
-    ue_wrap::hud_feed::Tick();
 }
 
 }  // namespace coop::net_pump

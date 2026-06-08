@@ -714,7 +714,6 @@ inline constexpr const wchar_t* GetActorRotationFn = L"K2_GetActorRotation";
 inline constexpr const wchar_t* GetActorVelocityFn = L"GetVelocity";  // AActor::GetVelocity -> FVector (cm/s)
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
-inline constexpr const wchar_t* SetActorScale3DFn = L"SetActorScale3D";  // void(FVector NewScale3D) -- world-space scale, used to shrink the nameplate world quad while keeping the WidgetComponent's RT resolution
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
 inline constexpr const wchar_t* DestroyActorFn = L"K2_DestroyActor";
 inline constexpr const wchar_t* TeleportToFn = L"K2_TeleportTo";  // bool(FVector, FRotator); large-distance teleport that survives Character/CMC constraints
@@ -760,6 +759,10 @@ inline constexpr const wchar_t* GetControlRotationFn = L"GetControlRotation";
 // 0a44b06.
 inline constexpr const wchar_t* SetControlRotationFn = L"K2_SetControlRotation";
 inline constexpr const wchar_t* PlayerControllerClassName = L"PlayerController";
+// APlayerController::ProjectWorldLocationToScreen(FVector World, FVector2D& Screen,
+// bool bPlayerViewportRelative)->bool. World->viewport-pixel projection for the
+// ImGui screen-space nameplates (returns false when the point is behind the camera).
+inline constexpr const wchar_t* ProjectWorldToScreenFn = L"ProjectWorldLocationToScreen";
 inline constexpr const wchar_t* SetViewTargetWithBlendFn = L"SetViewTargetWithBlend";
 inline constexpr const wchar_t* PlayerCameraManagerClass = L"PlayerCameraManager";
 inline constexpr const wchar_t* GetCameraLocationFn = L"GetCameraLocation";

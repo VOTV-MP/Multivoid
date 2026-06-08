@@ -69,6 +69,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // 0->1->0 purely via the pose stream's kStateBitRagdoll + receiver reconcile.
     // (Supersedes the Inc2a #8 standalone probe -- the e2e path covers it.)
     SpawnIf("VOTVCOOP_RUN_RAGDOLL_TEST", "ragdoll e2e test", &RagdollTestThread, role);
+    // Puppet-frame nameplate shot (PROPER, NO ragdoll): host frames the STANDING slot-1
+    // puppet (positions back + aims at its head) + holds it for mp.py puppetshot to grab
+    // the ImGui "Client" nameplate over it. Client just stands.
+    SpawnIf("VOTVCOOP_RUN_PUPPET_FRAME", "puppet-frame nameplate shot", &PuppetFrameThread, role);
     // Vitals Inc3 damage hurt-flash e2e: BOTH peers. Client lowers its own health;
     // host confirms its slot-1 puppet's nameplate flashes red via the streamed
     // health drop (no new wire).

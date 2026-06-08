@@ -14,6 +14,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/players_registry.h"  // coop::players::kMaxPeers
 
 #include "ue_wrap/door.h"          // host-authoritative accept drives the gated door open
@@ -59,26 +60,12 @@ uint64_t g_lastLogHash = 0;
 bool g_indexed = false;
 std::vector<std::pair<std::wstring, Ref>> g_pollScratch;  // GT-only: reused per-tick poll snapshot (no per-tick heap alloc)
 
-// ---- WireKey <-> wstring (keypad Keys are ASCII FNames) -------------------------
-void WireKeyFromString(const std::wstring& key, coop::net::WireKey& out) {
-    std::memset(&out, 0, sizeof(out));
-    size_t n = key.size();
-    if (n > sizeof(out.data)) n = sizeof(out.data);  // 31
-    for (size_t i = 0; i < n; ++i) out.data[i] = static_cast<char>(key[i] & 0xFF);
-    out.len = static_cast<uint8_t>(n);
-}
-std::wstring StringFromWireKey(const coop::net::WireKey& k) {
-    size_t n = k.len;
-    if (n > sizeof(k.data)) n = sizeof(k.data);
-    std::wstring out; out.reserve(n);
-    for (size_t i = 0; i < n; ++i) out.push_back(static_cast<wchar_t>(static_cast<unsigned char>(k.data[i])));
-    return out;
-}
-uint64_t FnvKey(const std::wstring& s) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (wchar_t c : s) { h ^= static_cast<uint8_t>(c & 0xFF); h *= 0x100000001b3ULL; }
-    return h;
-}
+// ---- WireKey <-> wstring + FNV key hash: shared coop::net helpers (RULE 2:
+// extracted to coop/net/wire_key_util.h). Pulled into this anonymous namespace so
+// the existing unqualified call sites resolve unchanged. -------------------------
+using coop::net::WireKeyFromString;
+using coop::net::StringFromWireKey;
+using coop::net::FnvKey;
 
 bool SameState(const State& a, const State& b) {
     return a.buffer == b.buffer && a.active == b.active;

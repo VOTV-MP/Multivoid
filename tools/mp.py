@@ -1544,6 +1544,56 @@ def cmd_scoreshot(args) -> None:
     sys.exit(0 if captured else 2)
 
 
+def cmd_puppetshot(args) -> None:
+    """2-PEER PROPER nameplate shot. Launches host + client with
+    VOTVCOOP_RUN_PUPPET_FRAME=1 so the HOST stands back + aims at the STANDING client
+    puppet (NO ragdoll), then captures the host window -- the shot shows the ImGui
+    'Client' nameplate (nick + dark-red health bar) over the puppet's head."""
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "puppet_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before puppetshot")
+    deploy_all()
+    os.environ["VOTVCOOP_RUN_PUPPET_FRAME"] = "1"
+
+    log("--- HOST LAUNCH (puppet-frame, no ragdoll) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+    host_log = HOST_DIR / "votv-coop.log"
+    log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log("FAIL: host did not bind UDP"); kill_all(); sys.exit(1)
+
+    log("--- CLIENT LAUNCH ---")
+    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                             res_x=1280, res_y=720, peer_slot=1, monitor=2,
+                             tile_index=0, memory_limit_gb=args.memory_limit_gb)
+    wait_for_client_connect(CLIENT_DIR, args.client_boot_timeout, "CLIENT", client_pid)
+
+    shot = shots_dir / "host_puppet_nameplate.png"
+    if _wait_for_log(host_log, "PUPPET-FRAME READY", args.frame_timeout, "HOST"):
+        time.sleep(2)  # let the aim + a HUD tick settle
+        captured = _capture_window(host_pid, shot)
+    else:
+        log("WARN: never saw PUPPET-FRAME READY -- capturing anyway (may be unframed)")
+        captured = _capture_window(host_pid, shot)
+    tail_log(host_log, 16, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+    log("--- PUPPETSHOT VERDICT ---")
+    if captured and shot.exists():
+        log(f"Inspect {shot}: the white 'Client' nick + dark-red health bar should sit over the standing puppet's head.")
+    sys.exit(0 if captured else 2)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="VOTV coop orchestrator")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1736,6 +1786,15 @@ def main() -> None:
                              help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_scoreshot.add_argument(flag, **kw)
     p_scoreshot.set_defaults(func=cmd_scoreshot)
+
+    p_puppetshot = sub.add_parser("puppetshot",
+                                  help="2-PEER PROPER nameplate shot: host frames the STANDING client puppet (no ragdoll) + captures the ImGui 'Client' nameplate over it")
+    p_puppetshot.add_argument("--boot-timeout", type=int, default=40, help="seconds to wait for host UDP bind")
+    p_puppetshot.add_argument("--client-boot-timeout", type=int, default=75, help="seconds for the client to connect")
+    p_puppetshot.add_argument("--frame-timeout", type=int, default=70, help="seconds to wait for PUPPET-FRAME READY")
+    p_puppetshot.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_puppetshot.add_argument(flag, **kw)
+    p_puppetshot.set_defaults(func=cmd_puppetshot)
 
     args = ap.parse_args()
     args.func(args)

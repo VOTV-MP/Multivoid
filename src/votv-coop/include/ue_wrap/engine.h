@@ -140,13 +140,6 @@ bool SetComponentWorldRotation(void* component, const FRotator& rotation);
 // destroy). Game thread only.
 bool SetActorTickEnabled(void* actor, bool enabled);
 
-// AActor::SetActorScale3D. World-space scale of the actor; used to shrink the
-// nameplate world quad WITHOUT shrinking the WidgetComponent's render-target
-// pixel count (bDrawAtDesiredSize=true couples RT pixels with quad cm at the
-// widget's content desired size -- scaling the actor decouples visual size
-// from texel density). Game thread only.
-bool SetActorScale3D(void* actor, const FVector& scale);
-
 // APawn::GetController on `pawn` -- returns the AController* (or nullptr).
 void* GetController(void* pawn);
 
@@ -180,6 +173,17 @@ bool GetActorBounds(void* actor, bool onlyColliding, FVector& outOrigin, FVector
 // the player's view to `newViewTarget` (e.g. a freecam ACameraActor), blending
 // over `blendTime` seconds for a smooth cut. Game thread only.
 bool SetViewTargetWithBlend(void* playerController, void* newViewTarget, float blendTime);
+
+// APlayerController::ProjectWorldLocationToScreen(World, Screen&, bViewportRelative)
+// -- project a WORLD point to VIEWPORT-PIXEL screen coords through the local
+// player's camera. Returns true if the point is in front of the camera (and fills
+// `outScreen`); false if behind it (outScreen left untouched). `playerController`
+// is the LOCAL player's controller (ue_wrap::engine::GetController(localPawn)).
+// Used by the ImGui screen-space nameplates: the projection runs on the game
+// thread (this is a UFunction) and the result is snapshotted for the render
+// thread to draw. Game thread only.
+bool ProjectWorldToScreen(void* playerController, const FVector& world,
+                          FVector2D& outScreen, bool viewportRelative = false);
 
 // Current view camera world location / rotation (APlayerCameraManager::
 // GetCameraLocation / GetCameraRotation on the live manager). Used to seed a
@@ -342,21 +346,6 @@ FVector GetComponentForwardVector(void* component);
 // settled. (0,0,0) on null input -- but the offset itself is real; a true
 // (0,0,0) RelLoc on a non-root component is unusual and worth logging.
 FVector GetComponentRelativeLocation(void* component);
-
-// Spawn a TRANSLUCENT world-space nameplate: an Actor carrying a UWidgetComponent
-// that renders a UVerticalBox of TWO UTextBlocks -- line 1 = nick (nickColor),
-// line 2 = health bar (barColor) -- so each line carries its OWN colour (a single
-// UTextBlock is one colour). Each colour's alpha is the per-line opacity. Returns
-// the actor (a host you position/billboard each frame), or nullptr. Game thread
-// only. `outNickBlock` / `outBarBlock` (optional): receive the two inner
-// UTextBlock pointers so the caller can re-drive each line independently (nick on
-// the Join reliable; the bar on every vitals stream). In the graceful single-block
-// fallback (VerticalBox class absent), outBarBlock receives nullptr and both lines
-// render in nickColor on the nick block.
-void* SpawnNameplateWidget(const FVector& location,
-                           const wchar_t* nickText, const FLinearColor& nickColor,
-                           const wchar_t* barText, const FLinearColor& barColor,
-                           void** outNickBlock = nullptr, void** outBarBlock = nullptr);
 
 // Build a SCREEN-SPACE HUD widget (a UUserWidget with a single multi-line UTextBlock
 // root) and add it to the viewport. Unlike the world-space nameplate, this renders on

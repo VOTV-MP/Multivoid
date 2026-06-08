@@ -21,6 +21,7 @@
 #include "coop/ini_config.h"
 #include "coop/session_manager.h"
 #include "coop/nameplate.h"
+#include "coop/chat_feed.h"
 #include "coop/roster.h"
 #include "coop/net/session.h"
 #include "coop/net_pump.h"
@@ -41,7 +42,6 @@
 #include "coop/dev/menu_proceed.h"
 #include "coop/dev/save_probe.h"
 #include "ue_wrap/call.h"
-#include "ue_wrap/hud_feed.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/save_browser.h"
 #include "ue_wrap/game_thread.h"
@@ -427,11 +427,16 @@ void RunPlayLoop(bool idleInGameplay) {
                 // Solo gameplay, no session yet: keep the local observers live.
                 coop::net_pump::InstallObservers(g_session);
             }
-            // nameplate/roster need a live world+player; skip them at the menu.
+            // roster needs a live world+player; skip it at the menu.
             if (running || idleInGameplay) {
-                coop::nameplate::Update();
                 coop::roster::Refresh();
             }
+            // ALWAYS (self-clearing): re-project the ImGui nameplates -- an empty
+            // snapshot when there are no puppets / no local player, so the HUD
+            // auto-hides at the menu -- and age out the chat feed. Both are cheap
+            // no-ops when idle.
+            coop::nameplate::Update();
+            coop::chat_feed::Tick();
             // ALWAYS: the HWND close subclass + window title must work at the menu
             // too (the user may X-close before ever hosting -- the teardown path).
             TickShutdownHooks();
@@ -678,7 +683,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         UE_LOGI("harness: ==== NETLOOPBACK running (self UDP on %u) ====", cfg.port);
         int tick = 0;
         while (!coop::shutdown::IsShuttingDown()) {
-            Post([] { coop::net_pump::Tick(g_session, 250.f); coop::nameplate::Update(); coop::roster::Refresh(); TickShutdownHooks(); });
+            Post([] { coop::net_pump::Tick(g_session, 250.f); coop::nameplate::Update(); coop::chat_feed::Tick(); coop::roster::Refresh(); TickShutdownHooks(); });
             if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz
                 Post([] {
                     UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",

@@ -716,6 +716,35 @@ bool SetComponentWorldRotation(void* component, const FRotator& rotation) {
     return Call(component, f);
 }
 
+bool ProjectWorldToScreen(void* playerController, const FVector& world,
+                          FVector2D& outScreen, bool viewportRelative) {
+    if (!playerController || !R::IsLive(playerController)) return false;
+    static void* fn = nullptr;
+    if (!fn) {
+        // ProjectWorldLocationToScreen is defined on APlayerController; the local
+        // player's controller is a VOTV subclass but inherits it, so resolve the
+        // UFunction off the engine base class once + ProcessEvent dispatches it on
+        // the real controller.
+        if (void* pc = R::FindClass(P::name::PlayerControllerClassName))
+            fn = R::FindFunction(pc, P::name::ProjectWorldToScreenFn);
+    }
+    if (!fn) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("engine: ProjectWorldToScreen unresolved -- PlayerController / "
+                    "ProjectWorldLocationToScreen not found; nameplates won't project");
+        }
+        return false;
+    }
+    ParamFrame f(fn);
+    f.SetRaw(L"WorldLocation", &world, sizeof(world));
+    f.Set<bool>(L"bPlayerViewportRelative", viewportRelative);
+    if (!Call(playerController, f)) return false;
+    f.GetRaw(L"ScreenLocation", &outScreen, sizeof(outScreen));
+    return f.Get<bool>(L"ReturnValue");
+}
+
 bool SetActorTickEnabled(void* actor, bool enabled) {
     if (!actor || !ResolveActorFns() || !g_setTickFn) {
         UE_LOGE("engine: SetActorTickEnabled unresolved (fn=%p)", g_setTickFn);
@@ -723,17 +752,6 @@ bool SetActorTickEnabled(void* actor, bool enabled) {
     }
     ParamFrame f(g_setTickFn);
     f.Set<bool>(L"bEnabled", enabled);
-    return Call(actor, f);
-}
-
-namespace { void* g_setScaleFn = nullptr; }
-
-bool SetActorScale3D(void* actor, const FVector& scale) {
-    if (!actor || !ResolveActorFns()) return false;
-    if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
-    if (!g_setScaleFn) { UE_LOGE("engine: SetActorScale3D unresolved"); return false; }
-    ParamFrame f(g_setScaleFn);
-    f.SetRaw(L"NewScale3D", &scale, sizeof(scale));
     return Call(actor, f);
 }
 

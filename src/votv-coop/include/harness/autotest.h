@@ -132,6 +132,13 @@ DWORD WINAPI ReSeedTestThread(LPVOID arg);
 void RunAutonomousRagdollTest();
 DWORD WINAPI RagdollTestThread(LPVOID arg);
 
+// Puppet-frame nameplate shot (2026-06-07, harness/autotest_vitals.cpp) -- PROPER
+// non-ragdoll capture. HOST stands ~420u back from the slot-1 STANDING puppet + aims
+// at its head + HOLDS the frame so mp.py puppetshot can grab the ImGui "Client"
+// nameplate over it; CLIENT just stands. Gated by env VOTVCOOP_RUN_PUPPET_FRAME="1".
+void RunAutonomousPuppetFrame();
+DWORD WINAPI PuppetFrameThread(LPVOID arg);
+
 // Vitals Inc3 damage hurt-flash e2e WIRE test (2026-05-31, harness/autotest_vitals.cpp).
 // BOTH peers: the CLIENT lowers its own saveSlot.health in steps; vitals Inc1 streams
 // the lower fraction; the HOST confirms its slot-1 puppet's nameplate flashes red

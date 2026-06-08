@@ -8,7 +8,7 @@
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/hud_feed.h"
+#include "coop/chat_feed.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -60,7 +60,7 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
 // string of arbitrary length. Without sanitization, a malicious or buggy
 // peer could inject:
 //   - Control chars (newline / null / ANSI escape) that corrupt our
-//     hud_feed widget text and could in theory escape out of UMG bindings.
+//     chat-feed / nameplate text rendered by our ImGui HUD.
 //   - Right-to-left override unicode (U+202E) that visually inverts the
 //     subsequent text in the nameplate.
 //   - Combining diacritics that render glyphs taller than the widget bg.
@@ -277,7 +277,7 @@ bool HandleJoinMessage(net::Session& session,
     // VT-inspired nickname sanitizer (2026-05-25, see
     // SanitizeNickname doc above). Trust-boundary defense: this
     // string CAME FROM A PEER over UDP and is going to land in
-    // our floating UMG nameplate + the hud_feed widget. Without
+    // our ImGui nameplate + the chat feed. Without
     // sanitization a hostile peer could newline-inject our
     // widget text or insert a RLO unicode override to mirror
     // the rest of the nameplate. Length-cap to 20 wchars caps
@@ -294,9 +294,9 @@ bool HandleJoinMessage(net::Session& session,
     // the game" reads backwards (the client is the one who joined).
     // Phrase from the receiver's POV.
     if (session.role() == net::Role::Client) {
-        ue_wrap::hud_feed::Push(L"Successfully joined " + nick + L"'s game");
+        coop::chat_feed::Push(L"Successfully joined " + nick + L"'s game");
     } else {
-        ue_wrap::hud_feed::Push(nick + L" joined the game");
+        coop::chat_feed::Push(nick + L" joined the game");
     }
     // PR-FOUNDATION Tier 2 T2-1 (host-relay): if WE are the host, this Join
     // came from a client. Run the MTA InitialDataStream two-way cross-peer
@@ -451,7 +451,7 @@ bool HandlePlayerJoined(net::Session& session,
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(describedSlot)) {
         p->SetNickname(nick);
     }
-    ue_wrap::hud_feed::Push(nick + L" joined the game");
+    coop::chat_feed::Push(nick + L" joined the game");
     UE_LOGI("player_handshake: client installed cross-peer identity slot=%u "
             "eid=0x%08x nick='%ls'", static_cast<unsigned>(describedSlot),
             describedEid, nick.c_str());

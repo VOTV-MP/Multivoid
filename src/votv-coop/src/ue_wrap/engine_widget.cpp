@@ -5,8 +5,6 @@
 // widget-related functions in `namespace ue_wrap::engine`.
 //
 // Builds:
-//   - 3D world-space nameplate (UWidgetComponent on an Actor, translucent
-//     UMG label) -- SpawnNameplateWidget
 //   - Screen-space HUD widgets (UUserWidget added to viewport) --
 //     SpawnScreenTextWidget + AddWidgetToViewport + RemoveWidgetFromViewport
 //   - Shared text-block construction with outline + drop-shadow polish
@@ -39,7 +37,7 @@ void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
 }
 
 // Cached UClasses + UFunctions for the widget pipeline. Resolved on first
-// SpawnNameplateWidget / SpawnScreenTextWidget call. File-private (the
+// SpawnScreenTextWidget call. File-private (the
 // other engine_* TUs have their own independent caches; sharing across
 // files would require globals in a header).
 void* g_npActorClass = nullptr, *g_npCompClass = nullptr;
@@ -171,44 +169,6 @@ BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& 
     return {root, txt};
 }
 
-// Build UUserWidget(outer) -> UWidgetTree -> UVerticalBox(root) -> two
-// UTextBlocks, so line1 (nick) and line2 (health bar) can carry INDEPENDENT
-// ColorAndOpacity -- a single UTextBlock is one colour. Default UVerticalBoxSlot
-// HAlign=Fill + per-block centre justification centres each line; VAlign stacks
-// them. Returns {root, txt1, txt2}. Graceful degrade: if the VerticalBox class /
-// AddChildToVerticalBox UFunction didn't resolve, builds ONE block with both
-// lines in color1 (txt2=nullptr) so the nameplate still renders.
-struct BuiltTwoLine { void* root; void* txt1; void* txt2; };
-BuiltTwoLine BuildTwoLineWidget(void* outer,
-                                const wchar_t* line1, const FLinearColor& color1,
-                                const wchar_t* line2, const FLinearColor& color2,
-                                int32_t fontSize, uint8_t justification) {
-    if (!g_npVBoxClass || !g_npAddChildVBoxFn) {
-        UE_LOGW("engine: BuildTwoLineWidget -- VerticalBox unresolved (cls=%p addFn=%p); single-block fallback",
-                g_npVBoxClass, g_npAddChildVBoxFn);
-        std::wstring both = line1; both += L"\n"; both += line2;
-        BuiltText bt = BuildTextWidget(outer, both.c_str(), color1, fontSize, justification);
-        return {bt.root, bt.txt, nullptr};
-    }
-    void* root = SpawnObject(g_npUserWidgetClass, outer);
-    void* tree = root ? SpawnObject(g_npWidgetTreeClass, root) : nullptr;
-    void* vbox = tree ? SpawnObject(g_npVBoxClass, tree) : nullptr;
-    void* txt1 = vbox ? SpawnObject(g_npTbClass, tree) : nullptr;
-    void* txt2 = txt1 ? SpawnObject(g_npTbClass, tree) : nullptr;
-    if (!root || !tree || !vbox || !txt1 || !txt2) {
-        UE_LOGE("engine: BuildTwoLineWidget SpawnObject failed (root=%p tree=%p vbox=%p t1=%p t2=%p)",
-                root, tree, vbox, txt1, txt2);
-        return {nullptr, nullptr, nullptr};
-    }
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = vbox;
-    ConfigureTextBlock(txt1, line1, color1, fontSize, justification);
-    ConfigureTextBlock(txt2, line2, color2, fontSize, justification);
-    { ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", txt1); Call(vbox, f); }
-    { ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", txt2); Call(vbox, f); }
-    return {root, txt1, txt2};
-}
-
 // Screen-space (viewport) widget functions, resolved on the UserWidget class.
 void* g_addToVpFn = nullptr, *g_removeFromVpFn = nullptr, *g_widgetSetVisFn = nullptr;
 void* g_setPosVpFn = nullptr, *g_setAlignVpFn = nullptr;
@@ -256,102 +216,6 @@ bool ResolveButtonInjectFns() {
 }
 
 }  // namespace
-
-void* SpawnNameplateWidget(const FVector& location,
-                           const wchar_t* nickText, const FLinearColor& nickColor,
-                           const wchar_t* barText, const FLinearColor& barColor,
-                           void** outNickBlock, void** outBarBlock) {
-    if (outNickBlock) *outNickBlock = nullptr;
-    if (outBarBlock) *outBarBlock = nullptr;
-    if (!ResolveNameplateFns()) {
-        UE_LOGE("engine: SpawnNameplateWidget unresolved (actor=%p comp=%p add=%p fin=%p spawnObj=%p uw=%p tb=%p)",
-                g_npActorClass, g_npCompClass, g_npAddFn, g_npFinishFn, g_npSpawnObjFn, g_npUserWidgetClass, g_npTbClass);
-        return nullptr;
-    }
-    void* actor = SpawnActor(g_npActorClass, location);
-    if (!actor) { UE_LOGE("engine: SpawnNameplateWidget -- SpawnActor failed"); return nullptr; }
-
-    uint8_t xform[0x30];
-    MakeIdentityTransform(xform);
-
-    // 1) AddComponentByClass(WidgetComponent, deferred) -- own widget, NOT a cooked one.
-    void* comp = nullptr;
-    {
-        ParamFrame f(g_npAddFn);
-        f.Set<void*>(L"Class", g_npCompClass);
-        f.Set<bool>(L"bManualAttachment", false);
-        f.SetRaw(L"relativeTransform", xform, sizeof(xform));
-        f.Set<bool>(L"bDeferredFinish", true);
-        if (!Call(actor, f)) { UE_LOGE("engine: SpawnNameplateWidget -- AddComponentByClass call failed"); return actor; }
-        comp = f.Get<void*>(L"ReturnValue");
-    }
-    if (!comp) { UE_LOGE("engine: SpawnNameplateWidget -- no WidgetComponent returned"); return actor; }
-    auto cU8 = reinterpret_cast<uint8_t*>(comp);
-
-    // 2) BEFORE register: BlendMode=Transparent(2) + two-sided + draw-at-desired-size.
-    // (IDA: GetMaterial(0) routes by BlendMode; the ctor defaults Masked(1), which
-    // alpha-clips the content -> invisible. Transparent routes to TranslucentMaterial.)
-    // Leave WidgetClass NULL -- we build + SetWidget our OWN UMG (no cooked widget).
-    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_BlendMode) = 2;
-    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bIsTwoSided) = 1;
-    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bDrawAtDesiredSize) = 1;
-
-    // 3) FinishAddComponent -> register.
-    {
-        ParamFrame f(g_npFinishFn);
-        f.Set<void*>(L"Component", comp);
-        f.Set<bool>(L"bManualAttachment", false);
-        f.SetRaw(L"relativeTransform", xform, sizeof(xform));
-        Call(actor, f);
-    }
-    // Component draw config: auto-redraw, the translucent material slot, full tint.
-    *reinterpret_cast<uint8_t*>(cU8 + P::off::UWidgetComponent_bManuallyRedraw) = 0;
-    *reinterpret_cast<float*>(cU8 + P::off::UWidgetComponent_RedrawTime) = 0.f;
-    if (g_npTransMat) *reinterpret_cast<void**>(cU8 + P::off::UWidgetComponent_TranslucentMaterial) = g_npTransMat;
-    if (g_npTransMatOneSided) *reinterpret_cast<void**>(cU8 + P::off::UWidgetComponent_TranslucentMaterialOneSided) = g_npTransMatOneSided;
-    if (g_npTintFn) { ParamFrame f(g_npTintFn); FLinearColor c{1.f, 1.f, 1.f, 1.f}; f.SetRaw(L"NewTintColorAndOpacity", &c, sizeof(c)); Call(comp, f); }
-
-    // 4) Build OUR widget tree (shared builder): UUserWidget -> UWidgetTree ->
-    // UTextBlock(root), translucent-white centred text at font size 56.
-    // Font 56 + actor scale 0.15 (set in step 6) shrinks the world quad to
-    // ~60% of the original font-14 / scale-1 baseline, with the SAME RT
-    // pixel count as font 56 / scale 0.25 (since scale doesn't touch the
-    // RT). Net: small visible nameplate, very high texel density.
-    // Progression across retests:
-    //   font 14, scale 1.00 -> baseline (pixelated; user complaint #1)
-    //   font 28, scale 1.00 -> 2x density but 2x physical size ("what is this nameplate" -- complaint #2)
-    //   font 28, scale 0.50 -> 2x density, baseline physical size (still "needs more resolution")
-    //   font 56, scale 0.25 -> 4x density, baseline physical size
-    //   font 56, scale 0.15 -> 4x density, ~60% baseline size (user: "make the scale smaller", current)
-    // bDrawAtDesiredSize=1 still couples RT pixels to widget desired-size, so
-    // a larger font yields a larger RT; the actor scale shrinks the visible
-    // world quad without touching the RT pixel count.
-    BuiltTwoLine bt = BuildTwoLineWidget(actor, nickText, nickColor, barText, barColor, 56, /*Center*/ 1);
-    void* root = bt.root;
-    void* txt = bt.txt1;  // nick block (always present); bt.txt2 = bar block (null only in the single-block fallback)
-    if (!root || !txt) { UE_LOGE("engine: SpawnNameplateWidget -- BuildTwoLineWidget failed"); return actor; }
-
-    // 5) Attach our widget (re-parents + rebuilds the slate/render-target), then make
-    // the runtime-added component tick so it actually draws its RT.
-    if (g_npSetWidgetFn) { ParamFrame f(g_npSetWidgetFn); f.Set<void*>(L"Widget", root); Call(comp, f); }
-    if (g_npTickFn) { ParamFrame f(g_npTickFn); f.Set<bool>(L"bEnabled", true); Call(comp, f); }
-    if (g_npRenderUpdateFn) { ParamFrame f(g_npRenderUpdateFn); Call(comp, f); }
-    if (g_npRedrawFn) { ParamFrame f(g_npRedrawFn); Call(comp, f); }
-
-    // 6) Shrink the actor's world scale to make the visible quad small while
-    // keeping the WidgetComponent's render-target pixel dimensions intact
-    // (see step 4 comment for the RT-density-vs-world-size decoupling).
-    // 0.15 -> nameplate quad is ~60% of the original font-14 / scale-1
-    // baseline (user feedback "make the scale smaller"); font-56 RT
-    // renders into that shrunken area at very high texel density.
-    SetActorScale3D(actor, FVector{0.15f, 0.15f, 0.15f});
-
-    UE_LOGI("engine: SpawnNameplateWidget(own) '%ls' actor=%p comp=%p root=%p nick=%p bar=%p font=%p at (%.0f,%.0f,%.0f)",
-            nickText, actor, comp, root, bt.txt1, bt.txt2, g_npFont, location.X, location.Y, location.Z);
-    if (outNickBlock) *outNickBlock = bt.txt1;
-    if (outBarBlock) *outBarBlock = bt.txt2;
-    return actor;
-}
 
 bool SetWidgetText(void* textBlock, const wchar_t* text) {
     if (!textBlock || !ResolveNameplateFns()) return false;

@@ -140,6 +140,8 @@ add_library(votv-coop SHARED
     src/ue_wrap/engine_playerragdoll.cpp
     src/ue_wrap/engine_attach.cpp
     src/ue_wrap/door.cpp
+    src/ue_wrap/base_window.cpp
+    src/ue_wrap/grime.cpp
     src/ue_wrap/daynightcycle.cpp
     src/ue_wrap/lightswitch.cpp
     src/ue_wrap/passwordlock.cpp
@@ -151,7 +153,6 @@ add_library(votv-coop SHARED
     src/ue_wrap/call.cpp
     src/ue_wrap/fname_utils.cpp
     src/ue_wrap/puppet.cpp
-    src/ue_wrap/hud_feed.cpp
     src/ue_wrap/economy.cpp
     src/ue_wrap/prop.cpp
     src/ue_wrap/vitals.cpp
@@ -163,10 +164,13 @@ add_library(votv-coop SHARED
     src/coop/save_button_disable.cpp
     src/coop/multiplayer_menu.cpp
     src/coop/nameplate.cpp
+    src/coop/chat_feed.cpp
     src/coop/event_feed.cpp
     src/coop/interactable_sync.cpp
     src/coop/keypad_sync.cpp
     src/coop/time_sync.cpp
+    src/coop/window_sync.cpp
+    src/coop/grime_sync.cpp
     src/coop/player_handshake.cpp
     src/coop/grab_observer.cpp
     src/coop/item_activate.cpp
@@ -230,6 +234,7 @@ add_library(votv-coop SHARED
     src/ui/host_save_picker.cpp
     src/ui/loading_screen.cpp
     src/ui/console.cpp
+    src/ui/hud.cpp
     src/coop/roster.cpp
     src/coop/ban_list.cpp
     src/coop/moderation.cpp

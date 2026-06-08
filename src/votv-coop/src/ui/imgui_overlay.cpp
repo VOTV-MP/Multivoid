@@ -34,6 +34,7 @@
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
 #include "ui/console.h"
+#include "ui/hud.h"
 #include "coop/join_progress.h"
 #include "coop/session_manager.h"
 #include "coop/dev/perf_probe.h"
@@ -263,6 +264,13 @@ void RenderFrameGuarded() {
         ImGui::GetIO().MouseDrawCursor = CaptureActive();
         ImGui::NewFrame();
 
+        // Always-on PASSIVE coop HUD (screen-projected nameplates + the chat/event
+        // feed). Drawn FIRST so the interactive surfaces below sit ON TOP of it. It
+        // never captures input -- nameplates use the background draw list, the chat
+        // window is NoInputs -- so CaptureActive() excludes it and the player keeps
+        // playing while it overlays.
+        if (ui::hud::IsActive()) ui::hud::Render();
+
         if (MenuOpen())    ui::dev_menu::Render();
         if (ScoreOpen())   ui::scoreboard::Render();
         if (BrowserOpen()) ui::server_browser::Render();
@@ -310,7 +318,10 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
         // else: DX12 / not-ready -> just present normally.
     }
 
-    if (g_imguiReady.load(std::memory_order_acquire) && AnyOpen()) {
+    // Render when an interactive surface is open OR the always-on passive HUD has
+    // something to show (a nameplate / chat line) -- so the HUD overlays during play
+    // without needing F1/tilde. HudActive() is a lock-free pair of atomics.
+    if (g_imguiReady.load(std::memory_order_acquire) && (AnyOpen() || ui::hud::IsActive())) {
         g_inFrame.store(true, std::memory_order_release);
         if (!g_rtv) CreateRTV(sc);  // recreate after a resize
         RenderFrameGuarded();

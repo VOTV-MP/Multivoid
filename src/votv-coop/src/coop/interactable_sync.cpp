@@ -14,6 +14,7 @@
 #include "coop/ini_config.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/players_registry.h"  // coop::players::kMaxPeers
 
 #include "ue_wrap/door.h"
@@ -56,28 +57,13 @@ bool ProbeLog() {
     return s_enabled;
 }
 
-// ---- WireKey <-> wstring (interactable Keys are ASCII FNames) -------------
-void WireKeyFromString(const std::wstring& key, coop::net::WireKey& out) {
-    std::memset(&out, 0, sizeof(out));
-    size_t n = key.size();
-    if (n > sizeof(out.data)) n = sizeof(out.data);  // 31
-    for (size_t i = 0; i < n; ++i) out.data[i] = static_cast<char>(key[i] & 0xFF);
-    out.len = static_cast<uint8_t>(n);
-}
-std::wstring StringFromWireKey(const coop::net::WireKey& k) {
-    size_t n = k.len;
-    if (n > sizeof(k.data)) n = sizeof(k.data);
-    std::wstring out;
-    out.reserve(n);
-    for (size_t i = 0; i < n; ++i)
-        out.push_back(static_cast<wchar_t>(static_cast<unsigned char>(k.data[i])));
-    return out;
-}
-uint64_t FnvKey(const std::wstring& s) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (wchar_t c : s) { h ^= static_cast<uint8_t>(c & 0xFF); h *= 0x100000001b3ULL; }
-    return h;
-}
+// ---- WireKey <-> wstring + FNV key hash: shared coop::net helpers (RULE 2:
+// extracted to coop/net/wire_key_util.h; interactable_sync + keypad_sync +
+// window_sync all share the one definition). Pull them into this anonymous
+// namespace so the existing unqualified call sites resolve unchanged. ---------
+using coop::net::WireKeyFromString;
+using coop::net::StringFromWireKey;
+using coop::net::FnvKey;
 
 // ---- Per-feature engine vtable -------------------------------------------
 struct Adapter {

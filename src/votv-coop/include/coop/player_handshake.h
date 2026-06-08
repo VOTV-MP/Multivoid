@@ -26,7 +26,7 @@
 //     a reconnect re-announces.
 //
 // Game thread only (it reads/writes UE engine objects via Puppet().SetNickname,
-// hud_feed::Push, players::Registry, and reads our process-local cfg).
+// chat_feed::Push, players::Registry, and reads our process-local cfg).
 
 #pragma once
 
@@ -80,7 +80,7 @@ const std::wstring& NicknameForSlot(int slot);
 // Handle a delivered reliable Join message. Parses the v13 prefix
 // (senderElementId), then the nickname (UTF-8 length-prefixed),
 // sanitizes the nickname, sets the puppet's nameplate, and posts the
-// hud_feed entry. Returns true if the message was a recognized Join
+// chat_feed entry. Returns true if the message was a recognized Join
 // (regardless of validation outcome); returns false if payloadLen is
 // too short for the header (caller may log).
 bool HandleJoinMessage(coop::net::Session& session,

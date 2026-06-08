@@ -238,6 +238,11 @@ private:
     // because the wire no longer carries them).
     float meshOffsetZ_ = 0.f;    // = local mesh_playerVisible.RelativeLocation.Z (raw, +0x11C)
     float meshOffsetYaw_ = 0.f;  // = atan2(mesh forward) - actor yaw (BP-authored mesh frame shim)
+    // Nameplate head anchor: cached 'head' bone Z relative to the actor pivot,
+    // refreshed every few ticks in GetHeadPosition (the bone read iterates the
+    // skeleton -- too costly per frame * per puppet). Default +30 until first resolve.
+    mutable float headZOffset_ = 30.f;
+    mutable int   headZRefresh_ = 0;
     // Placeholder until the peer's Join reliable message lands (typically within
     // a few RTT of connect). nameplate::Update repaints when SetNickname changes
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"
