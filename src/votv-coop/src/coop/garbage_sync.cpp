@@ -97,15 +97,23 @@ bool OnOpenContainerCheckPickupPre(void* self, void* /*params*/) {
 
 // ---- Inc 3: host-authoritative spawner suppression ---------------------
 //
-// Four periodic / event-driven spawners cancel on the client so only the
-// host rolls garbage spawns; their output rides the Inc 2 non-prop entity
-// broadcast back to the client. Tool_garbageSpawner_C is INTENTIONALLY not
-// suppressed -- toolgun fire is a per-shot local player action (principle
-// 6: augment SP, route per-player inside SP systems), and its spawn output
-// is captured by the Inc 2 Init POST observer for clump/chipPile on the
-// firing peer + broadcast from there.
+// Three spawners whose output is in the trash/keyed sync universe cancel on
+// the client so only the host rolls those spawns; their output rides the
+// prop pipeline back to the client. Tool_garbageSpawner_C is INTENTIONALLY
+// not suppressed -- toolgun fire is a per-shot local player action
+// (principle 6: augment SP, route per-player inside SP systems), and its
+// spawn output is captured by the Init POST observer on the firing peer +
+// broadcast from there.
 //
-// All 4 use RegisterInterceptor with the same shared callback that role-
+// undergroundGarbageSpawner_C deliberately UN-suppressed (Fork C
+// 2026-06-10): bytecode-proven to mint ONLY dirthole_item_C buried-item
+// mounds (NOT chip piles -- the old row's "output rides the broadcast"
+// rationale was falsified: dirthole_item is outside the snapshot +
+// broadcast universe entirely), so suppressing it just deleted the client's
+// per-peer loot mounds with no host replacement. Dirtholes are per-peer
+// LOCAL by doctrine (COOP_SCOPE).
+//
+// All 3 use RegisterInterceptor with the same shared callback that role-
 // gates on client + returns true. Cancel-throttled per-class to keep the
 // log readable while still proving the path fires.
 
@@ -126,8 +134,6 @@ bool fn_name(void* self, void* /*params*/) {                                    
     return true;                                                                    \
 }
 
-MAKE_SPAWNER_CANCEL(OnUndergroundGarbageSpawnerTimerPre,
-                    "undergroundGarbageSpawner.Timer")
 MAKE_SPAWNER_CANCEL(OnEventTrashPilesOverlapPre,
                     "event_trashPiles.BndEvt")
 MAKE_SPAWNER_CANCEL(OnArirTrasherTrashPre,
@@ -159,9 +165,6 @@ bool InstallSpawnerSuppressors() {
     // overridden, FindFunction walks up the SuperStruct chain and returns
     // the parent's UFunction -- same dispatch object.
     const Target targets[] = {
-        {L"undergroundGarbageSpawner_C", L"Timer",
-            &OnUndergroundGarbageSpawnerTimerPre,
-            "undergroundGarbageSpawner.Timer"},
         {L"event_trashPiles_C",
             L"BndEvt__event_funnyGascans_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
             &OnEventTrashPilesOverlapPre,
@@ -192,7 +195,7 @@ bool InstallSpawnerSuppressors() {
         UE_LOGI("garbage_sync[spawner]: PRE-interceptor installed -- %ls::%ls (%s)",
                 t.cls, t.fn, t.tag);
     }
-    // Latch as installed only when ALL 4 targets resolved + registered.
+    // Latch as installed only when ALL targets resolved + registered.
     // A partial install leaves some spawners ungated -> per-peer divergence
     // bug remains. Retry next Install() call until everything's loaded.
     const int total = static_cast<int>(sizeof(targets) / sizeof(targets[0]));

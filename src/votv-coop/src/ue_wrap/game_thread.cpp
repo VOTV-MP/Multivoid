@@ -643,9 +643,10 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
 
     // UFunction interceptors: pre-dispatch hooks on a multi-slot table. If
     // any interceptor for `function` returns true, the original ProcessEvent
-    // is SKIPPED -- the UFunction's body is replaced for this call. The walk
-    // is kMaxInterceptors (16) acquire-loads of a function-pointer, with
-    // the cb load only happening on a target match -- cheap empty-table case.
+    // is SKIPPED -- the UFunction's body is replaced for this call. Cost is
+    // an O(1) Bloom rejection for non-intercepted functions; on a Bloom hit
+    // the walk is count-bounded by g_interceptorActive (D4-2), with the cb
+    // load only happening on a target match.
     if (FireInterceptors(self, function, params)) return;  // intercepted -> drops the sample (rare)
 
     // PRE-observers: fire BEFORE the original. Used to snapshot state the BP

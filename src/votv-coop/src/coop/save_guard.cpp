@@ -16,6 +16,14 @@
 namespace fs = std::filesystem;
 
 namespace coop::save_guard {
+
+fs::path SaveGamesDir() {
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    return fs::path(buf) / L"VotV" / L"Saved" / L"SaveGames";
+}
+
 namespace {
 
 // Once-per-process latch: a process hosts at most one coop session in practice;
@@ -25,13 +33,6 @@ std::atomic<bool> g_done{false};
 
 // Bound disk use: keep only the newest N timestamped backups.
 constexpr int kKeepBackups = 3;
-
-fs::path SaveGamesDir() {
-    wchar_t buf[MAX_PATH] = {};
-    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return {};
-    return fs::path(buf) / L"VotV" / L"Saved" / L"SaveGames";
-}
 
 std::wstring TimestampNow() {
     SYSTEMTIME st{};

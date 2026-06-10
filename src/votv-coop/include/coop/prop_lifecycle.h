@@ -59,6 +59,27 @@ void InstallInventory(coop::net::Session* session);
 // share it.
 bool IsWireSuppressedPropClass(const std::wstring& cls);
 
+// PER-PLAYER state actors, NOT shared world props (2026-06-10): each peer
+// owns its own instance (per-save key, can never claim-bind). Never
+// snapshot-expressed, never live-broadcast, never swept -- but unlike
+// IsWireSuppressedPropClass the LOCAL instance lives (it is the player's
+// own state; the 2026-06-10 smoke swept the client's
+// prop_inventoryContainer_player_C as "unclaimed" and the client fataled
+// at the next GC purge). Call sites: snapshot enumerate-skip, Init POST
+// broadcast-skip, adoption-sweep universe-skip.
+bool IsPerPlayerPropClass(const std::wstring& cls);
+
+// Destroy a local prop via K2_DestroyActor, ECHO-SUPPRESSED: MarkIncomingDestroy
+// runs before the call so our K2_DestroyActor PRE observer does not re-broadcast
+// the destroy to peers. `deferred=true` schedules via game_thread::Post -- required
+// when called from inside Aprop_C::Init POST (the engine is still executing
+// FinishSpawningActor; the calling BP graph's continuation must complete first).
+// `deferred=false` destroys immediately -- safe from plain game-thread context
+// (e.g. the event_feed drain). Used by the client intermediate-variant suppression
+// (Init POST) and the P2 connect-snapshot claim sweep
+// (remote_prop_spawn::DestroyUnclaimedDivergentProps). Game-thread only.
+void DestroyLocalProp(void* actor, bool deferred);
+
 // GetPropElementIdForActor moved to coop::prop_element_tracker (M-1
 // 2026-05-29 follow-up). #include "coop/prop_element_tracker.h" instead.
 

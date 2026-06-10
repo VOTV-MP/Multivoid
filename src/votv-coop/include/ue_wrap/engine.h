@@ -36,8 +36,18 @@ bool ReturnToMainMenu();
 // mainGameInstance_C::setSaveSlotObject + loadObjects=true -> open the gameplay
 // map. The gameplay map is untitled_1 for every mode; the SAVE selects story vs
 // sandbox. Returns false if the slot is missing/empty or load can't dispatch.
+// `forceGameMode` (v56 save-transfer): >=0 writes that enum_gamemode ordinal
+// directly instead of deriving it from the slot-name prefix -- the coop slot
+// `zcoop_<pid>` has no game-known prefix; the mode comes over the wire
+// (SaveTransferBeginPayload.gameMode). -1 = derive from the prefix (default).
 // Game thread only.
-bool LoadStorySave(const wchar_t* slot);
+bool LoadStorySave(const wchar_t* slot, int forceGameMode = -1);
+
+// v56 rejoin (design-workflow B7): drop the cached USaveGame* + the GameMode
+// latch so a SECOND in-process LoadStorySave (browser rejoin with a fresh
+// zcoop_ slot) re-loads from disk instead of re-registering the stale cached
+// object. Game thread only.
+void ResetCachedSave();
 
 // FRESH New-Game boot: like LoadStorySave but with a BLANK saveSlot
 // (GameplayStatics::CreateSaveGameObject(saveSlot_C)) instead of a disk slot -> a fresh New
@@ -98,6 +108,22 @@ bool DebugCheckWorldContextRecovery();
 
 // AActor::K2_GetActorLocation on `actor`. Returns (0,0,0) if it cannot be called.
 FVector GetActorLocation(void* actor);
+
+// AActor::GetActorScale3D on `actor` (root component world scale). Returns
+// UNIT scale (1,1,1) on failure -- callers stamp it straight into spawn
+// transforms, where a zero scale would collapse the mirror invisibly. v54
+// PropSpawn real-scale stamp (SP saves scale inside the object transform;
+// pre-v54 senders hardcoded 1,1,1). Game thread only.
+FVector GetActorScale3D(void* actor);
+
+// UKismetSystemLibrary::CollectGarbage -- schedules a full GC purge at the
+// end of the current frame (the engine's own post-level-transition pattern).
+// The adoption sweep pairs its ~1k-actor destruction burst with this so the
+// pending-kill garbage doesn't sit at a multi-GB plateau until UE's default
+// 61 s periodic purge (smoke-measured 10.6 GB client plateau grazing the
+// process commit cap). Returns false if the library/function is unresolved.
+// Game thread only.
+bool ForceGarbageCollection();
 
 // AActor::GetActorForwardVector on `actor` (unit facing vector). (0,0,0) on
 // failure. Used to place something in front of the actor.
@@ -245,6 +271,14 @@ void WriteObjectField(void* target, size_t byteOffset, void* value);
 //
 // Game thread only. No-op (returns false) if any input is null/dead.
 bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor);
+
+// Read-only twin of ReleaseMainPlayerGrabIfHolding: true iff `localPlayer`'s
+// grabbing_actor slot currently holds `actor`. No mutation, no PHC dispatch.
+// Fork B 2d (2026-06-10): the snapshot bind paths skip physics-reconcile +
+// teleport-converge for a prop the LOCAL player is holding (forcing
+// SimulatePhysics off mid-hold breaks the PhysicsHandle grab at a
+// re-bracket). Game thread only; false for null/dead inputs.
+bool IsMainPlayerGrabbing(void* localPlayer, void* actor);
 
 // Eager-resolve the PHC.ReleaseComponent UFunction cache used by
 // ReleaseMainPlayerGrabIfHolding. Call once during init when PhysicsHandle
@@ -685,6 +719,21 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify);
 // false on failure. Game thread only.
 bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng);
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang);
+
+// True ONLY if positively confirmed `actor`'s root rigid body is at rest (no body
+// awake -- asleep simulating OR non-simulating). Returns false on any resolution
+// failure (NEVER claim an unverifiable rest). The host stamps the kAtRest physFlag
+// from this so the client can mirror the host's rest-state. Generic root component.
+// Game thread only. [[project-fps-physics-wake-kAtRest-2026-06-09]]
+bool IsActorRootBodyAtRest(void* actor);
+
+// Force `actor`'s root rigid body to sleep (PutRigidBodyToSleep, BoneName=None). The
+// client calls this right after teleport-converging a kAtRest prop at connect so it
+// lands at host authority and returns to rest WITHOUT a transient physics settle (the
+// root cause of the client connect-FPS lock: ~1388 RNG-divergent props were teleport-
+// WOKEN and never re-slept -> permanent physics scene). Leaves the body a DYNAMIC,
+// grabbable physics body (NOT SetSimulatePhysics(false)). False on failure. Game thread.
+bool PutActorRootBodyToSleep(void* actor);
 
 // Read ragdoll `body`'s pelvis bone WORLD rotation so the caller can drive the kel
 // puppet's TUMBLE each frame -- the pelvis attach follows position but a character keeps

@@ -88,6 +88,9 @@ void Refresh() {
         r.isLocal = rowIsLocal;
         r.isHost = (slot == 0);
         r.connected = connected;
+        // Per-peer ping for the scoreboard. The local row has no self-ping (-1); a
+        // remote row shows the GNS RTT to that peer (0 on a sub-ms LAN link).
+        r.ping = rowIsLocal ? -1 : s->rttMsForSlot(slot);
         NarrowNick(rowIsLocal ? coop::player_handshake::LocalNickname()
                               : coop::player_handshake::NicknameForSlot(slot),
                    r.nick);

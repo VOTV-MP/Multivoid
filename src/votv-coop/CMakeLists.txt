@@ -143,7 +143,14 @@ add_library(votv-coop SHARED
     src/ue_wrap/base_window.cpp
     src/ue_wrap/grime.cpp
     src/ue_wrap/daynightcycle.cpp
+    src/ue_wrap/skysphere.cpp
+    src/ue_wrap/directionalwind.cpp
     src/ue_wrap/lightswitch.cpp
+    src/ue_wrap/garage.cpp
+    src/ue_wrap/appliance.cpp
+    src/ue_wrap/power_control.cpp
+    src/ue_wrap/atv.cpp
+    src/ue_wrap/drone.cpp
     src/ue_wrap/passwordlock.cpp
     src/ue_wrap/swinger.cpp
     src/ue_wrap/engine_pawn.cpp
@@ -152,8 +159,10 @@ add_library(votv-coop SHARED
     src/ue_wrap/reflected_offset.cpp
     src/ue_wrap/call.cpp
     src/ue_wrap/fname_utils.cpp
+    src/ue_wrap/ftext_utils.cpp
     src/ue_wrap/puppet.cpp
     src/ue_wrap/economy.cpp
+    src/ue_wrap/order_economy.cpp
     src/ue_wrap/prop.cpp
     src/ue_wrap/vitals.cpp
     src/coop/remote_player.cpp
@@ -169,6 +178,12 @@ add_library(votv-coop SHARED
     src/coop/interactable_sync.cpp
     src/coop/keypad_sync.cpp
     src/coop/time_sync.cpp
+    src/coop/sky_sync.cpp
+    src/coop/power_sync.cpp
+    src/coop/atv_sync.cpp
+    src/coop/drone_sync.cpp
+    src/coop/order_sync.cpp
+    src/coop/firefly_sync.cpp
     src/coop/window_sync.cpp
     src/coop/grime_sync.cpp
     src/coop/player_handshake.cpp
@@ -190,7 +205,9 @@ add_library(votv-coop SHARED
     src/coop/prop_synth_key.cpp
     src/coop/remote_prop_spawn.cpp
     src/coop/garbage_sync.cpp
+    src/coop/ambient_spawner_suppress.cpp
     src/coop/trash_collect_sync.cpp
+    src/coop/trash_pile_sync.cpp
     src/coop/weather_sync.cpp
     src/coop/weather_fog.cpp
     src/coop/weather_lightning.cpp
@@ -209,6 +226,7 @@ add_library(votv-coop SHARED
     src/coop/net/http_client.cpp
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
+    src/coop/save_transfer.cpp
     src/coop/session_manager.cpp
     src/coop/join_progress.cpp
     src/coop/net_pump.cpp
@@ -227,6 +245,7 @@ add_library(votv-coop SHARED
     src/coop/dev/spawn_npc.cpp
     src/coop/dev/teleport_client.cpp
     src/coop/dev/menu_proceed.cpp
+    src/coop/dev/object_overlay.cpp
     src/ui/imgui_overlay.cpp
     src/ui/dev_menu.cpp
     src/ui/scoreboard.cpp

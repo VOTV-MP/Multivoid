@@ -10,6 +10,7 @@
 #include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
 #include "coop/prop_element_tracker.h"
+#include "coop/remote_prop_spawn.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -494,14 +495,19 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     } else if (propActor && R::IsLive(propActor)) {
         // Non-Aprop_C clump (null mesh): re-enable physics + throw velocity via the GENERIC
-        // root path so the mirror flies. Enable QueryAndPhysics collision so it LANDS
-        // (doesn't sink through the floor -- the bare mirror lacks a real clump's collision)
-        // during its brief flight; the actual landed PILE is spawned authoritatively by the
-        // owner's landed-pile broadcast when its clump re-piles (trash_collect_sync), so the
-        // mirror itself just needs to look right until it's despawned. (We do NOT prime the
-        // mirror to self-convert: the BP impulse/slope gates made that unreliable ~3/10.)
-        // [[project-bug-trash-chippile-uaf-crash]]
-        ue_wrap::engine::SetActorRootCollisionEnabled(propActor, 3 /*QueryAndPhysics*/);
+        // root path so the mirror flies. Use PhysicsOnly collision (2, NOT QueryAndPhysics):
+        // the PhysX contacts still make it fall + land + rest on the floor during its brief
+        // flight, but the Query facet is DROPPED so the host's grab sphere-trace
+        // (mainPlayer::useArm -> SphereTraceSingle, a query by trace channel) can NOT hit the
+        // resting mirror. DUPE FIX (2026-06-08): a mirror is a PUPPET -- with QueryAndPhysics
+        // the host could grab the resting mirror during the ~3 s window before the owner's
+        // authoritative pile arrives, minting a real held clump ON TOP OF the pile (the user's
+        // repro). The landed PILE is a SEPARATE spawn (trash_collect_sync -> remote_prop_spawn,
+        // never through here) and keeps BP-default QueryAndPhysics, so both peers can still grab
+        // the final pile. (We also do NOT prime the mirror to self-convert: the BP impulse/slope
+        // gates made that unreliable ~3/10.) [[project-bug-trash-chippile-uaf-crash]] +
+        // research/findings/votv-clump-mirror-grab-RE-2026-06-08.md
+        ue_wrap::engine::SetActorRootCollisionEnabled(propActor, 2 /*PhysicsOnly -- lands but ungrabbable*/);
         ue_wrap::engine::SetActorSimulatePhysics(propActor, true);
         ue_wrap::engine::SetActorRootPhysicsVelocity(
             propActor,
@@ -612,6 +618,14 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         const std::wstring& cls,
                         int senderSlot) {
     if (!actor) return;
+    // Fork B 2b (2026-06-10): quiet idempotency. Under the relaxed snapshot
+    // gate the OWNER client re-ingests its own entities at every re-bracket
+    // -- the bind paths resolve its OWN element's actor and re-register the
+    // same (eid, actor) pair. Short-circuit before Install so the manager's
+    // duplicate path doesn't warn once per entity per re-bracket.
+    if (auto* existing = coop::element::Registry::Get().Get(eid)) {
+        if (existing->GetActor() == actor) return;
+    }
     // Tag with the originating peer slot for per-slot disconnect eviction
     // (D1-7). Out-of-range/unknown -> -1 (untagged; only drained on full
     // teardown). kMaxPeers bounds it to the 4-peer slot space.
@@ -683,6 +697,25 @@ bool ResolveDestroyFn() {
 
 }  // namespace
 
+void ClearAnyDriveFor(void* actor) {
+    // Clear every slot's kinematic-drive cache entry for `actor` so nothing
+    // drives a destroyed actor next tick. Extracted from OnDestroy (Fork B
+    // 2e, 2026-06-10) because the adoption sweep destroys actors through the
+    // same teardown contract; one implementation (RULE 2).
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ClearAnyDriveFor)");
+    if (!actor) return;
+    for (auto& d : g_drives) {
+        if (d.actor == actor) {
+            UE_LOGI("remote_prop: actor %p was under active kinematic drive (slot %td) -- clearing drive cache",
+                    actor, std::distance(&g_drives[0], &d));
+            d.actor = nullptr;
+            d.mesh = nullptr;
+            d.lastKey.clear();
+            d.lastEid = 0;
+        }
+    }
+}
+
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) {
     // Clears g_drives[*] if the destroyed actor was under drive (T-10, GT-only).
     // Dispatched from event_feed::Update on the game thread (PropDestroy case).
@@ -725,16 +758,7 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
             keyW.c_str(), payload.elementId, actor);
     // If any slot was kinematically driving this prop, clear that slot's
     // cache so we don't try to drive a destroyed actor next tick.
-    for (auto& d : g_drives) {
-        if (d.actor == actor) {
-            UE_LOGI("remote_prop::OnDestroy: actor was under active kinematic drive (slot %td) -- clearing drive cache",
-                    std::distance(&g_drives[0], &d));
-            d.actor = nullptr;
-            d.mesh = nullptr;
-            d.lastKey.clear();
-            d.lastEid = 0;
-        }
-    }
+    ClearAnyDriveFor(actor);
     // 2026-05-25 cross-peer destroy: if this peer's local mainPlayer is
     // currently grabbing the doomed actor (typical case: HOST holds the
     // food, CLIENT eats it, HOST receives PropDestroy from client and
@@ -748,6 +772,47 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     // it and skips the broadcast (echo suppression).
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);
     R::CallFunction(actor, g_destroyActorFn, nullptr);
+}
+
+void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer, int senderSlot) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnConvert)");
+    // (1) Destroy the mirror BALL by oldEid. Reuse the full OnDestroy eid teardown (drive-cache
+    // clear + PHC release + echo-suppressed K2_DestroyActor + UnregisterPropMirror). The clump is
+    // eid-only (key reads None), so key.len=0 routes OnDestroy down its eid path.
+    if (payload.oldEid != 0 && payload.oldEid != coop::element::kInvalidId) {
+        coop::net::PropDestroyPayload dp{};
+        dp.key.len   = 0;
+        dp.elementId = payload.oldEid;
+        OnDestroy(dp, localPlayer);
+    }
+    // (2) Spawn the authoritative pile by newEid via the existing fresh-spawn path. It spawns as a
+    // SETTLED pile (physFlags=0: not simulating, no velocity) -- a landed pile needs no morph. It
+    // keeps QueryAndPhysics so it is grabbable on both peers; OnSpawn binds the mirror at newEid
+    // (RegisterPropMirror). newEid is a FRESH owner-minted id distinct from oldEid -> no eid
+    // collision, the ball and pile are separate cross-peer entities. (v52: kFreshLanded was retired
+    // -- its only effect was the turnToPile GRAB morph that destroyed the pile; see OnSpawn.)
+    coop::net::PropSpawnPayload p{};
+    p.className = payload.pileClass;
+    p.key.len   = 0;                         // chipPile is eid-only
+    p.locX = payload.locX; p.locY = payload.locY; p.locZ = payload.locZ;
+    p.rotPitch = payload.rotPitch; p.rotYaw = payload.rotYaw; p.rotRoll = payload.rotRoll;
+    p.scaleX = p.scaleY = p.scaleZ = 1.f;
+    p.physFlags = 0;                         // settled landed pile: no sim, no morph
+    p.chipType = payload.chipType;
+    p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
+    p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
+    p.elementId = payload.newEid;
+    // fromConvert=true: a convert-born pile has no local counterpart -- the
+    // position-bind lane must not match it to a nearby unrelated pile.
+    remote_prop_spawn::OnSpawn(p, senderSlot, localPlayer, /*fromConvert=*/true);
+    void* pile = ResolveLiveActorByEid(payload.newEid);
+    UE_LOGI("remote_prop::OnConvert: ball eid=%u -> pile eid=%u cls='%.*s' at (%.1f,%.1f,%.1f) "
+            "variant=%u%s",
+            payload.oldEid, payload.newEid,
+            static_cast<int>(payload.pileClass.len), payload.pileClass.data,
+            payload.locX, payload.locY, payload.locZ,
+            static_cast<unsigned>(payload.chipType), pile ? "" : " [pile spawn FAILED]");
+    return pile;
 }
 
 void ConsumeLocalActor(void* actor) {

@@ -30,6 +30,12 @@ void Install();
 // Per-tick state poll: mainGamemode.drone presence + Active/hasOrder/hasSack/flyingType/
 // pickedUp transitions + saveSlot order/economy dump (throttled) + radarObjects membership.
 // No-op unless `drone_probe=1`. Game thread only.
-void Tick();
+//
+// `connected`/`isHost` come from the session (net_pump). When ALSO `drone_probe_drive=1`, the
+// probe DRIVES the game's own delivery path once, after a settle delay, so it answers its
+// questions autonomously (no hands-on): HOST flies a default delivery (Make Default Order ->
+// laptop.makeAnOrder(order,true)); CLIENT commits a shop order (laptop.addOrderCart). RULE 1 --
+// run the probe ourselves, don't offload the hands-on.
+void Tick(bool connected, bool isHost);
 
 }  // namespace coop::dev::drone_probe

@@ -3,6 +3,7 @@
 #include "ui/hud.h"
 
 #include "coop/chat_feed.h"
+#include "coop/dev/object_overlay.h"
 #include "coop/nameplate.h"
 
 #include "imgui.h"
@@ -14,9 +15,14 @@
 namespace ui::hud {
 namespace {
 
-// Nameplate text size (px). Bigger than ImGui's ~13px default so a nick reads at a
-// few metres + survives the downscale of an autonomous screenshot.
-constexpr float kNickPx = 22.f;
+// Nameplate BASE text size (px) -- the size up CLOSE. The whole plate scales DOWN with
+// distance (p.scale, ~1/distance, computed in coop::nameplate::DistanceScale) so it stays
+// proportional to the peer's on-screen body instead of looming over a far, shrunken
+// character (user 2026-06-08: the old fixed size "grew" relative to a receding peer).
+// 16 px up close reads at a few metres without dominating when a peer stands right next
+// to you (user 2026-06-08: 22 px felt huge up close). Distance also fades OPACITY
+// (DistanceAlpha); p.scale is capped at 1.0 so the plate is never bigger than this.
+constexpr float kNickPx = 16.f;
 
 // Draw `text` at `size` with a cheap 1px outline (4-way offset) so it stays legible
 // over any scene.
@@ -31,8 +37,9 @@ void TextOutlined(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
 
 void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     char line[64];
-    if (p.ping > 0) std::snprintf(line, sizeof(line), "%s (%dms)", p.nick, p.ping);
-    else            std::snprintf(line, sizeof(line), "%s", p.nick);
+    if (p.ping > 0)       std::snprintf(line, sizeof(line), "%s (%dms)", p.nick, p.ping);
+    else if (p.ping == 0) std::snprintf(line, sizeof(line), "%s (<1ms)", p.nick);  // sub-ms LAN
+    else                  std::snprintf(line, sizeof(line), "%s", p.nick);          // -1 = unmeasured
 
     const float a = std::clamp(p.alpha, 0.f, 1.f);
     const ImU32 white   = IM_COL32(255, 255, 255, static_cast<int>(a * 245.f));
@@ -40,28 +47,35 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 215.f));
     const ImU32 textCol = p.flash ? red : white;
 
+    // Distance SIZE scale: the whole plate (text + bar + box + gaps) scales as ONE unit
+    // so a far peer's label stays proportional to their shrunken on-screen body. p.scale
+    // is 1.0 up close (capped) and shrinks ~1/distance to a legible floor far away.
+    const float s = std::clamp(p.scale, 0.20f, 1.f);
+    const float px = kNickPx * s;
+    const float barW = 44.f * s, barH = 5.f * s;
+    const float gap = 10.f * s;    // nick sits sz.y + gap above the head anchor
+    const float barGap = 4.f * s;  // bar sits barGap below the anchor
+
     ImFont* font = ImGui::GetFont();
-    const ImVec2 sz = font->CalcTextSizeA(kNickPx, FLT_MAX, 0.f, line);
-    constexpr float barW = 60.f, barH = 6.f;
+    const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.f, line);
     // Keep the whole nameplate on-screen: a peer in FRONT of you but whose head sits
-    // past a screen edge still shows the label at the edge instead of vanishing. The
-    // nick sits sz.y+10 above the anchor; the bar barH+4 below.
+    // past a screen edge still shows the label at the edge instead of vanishing.
     const ImGuiIO& io = ImGui::GetIO();
     constexpr float m = 6.f;
     const float halfW = std::max(sz.x, barW) * 0.5f;
     const float ax = std::clamp(p.x, m + halfW, io.DisplaySize.x - m - halfW);
-    const float ay = std::clamp(p.y, m + sz.y + 10.f, io.DisplaySize.y - m - barH - 4.f);
-    const ImVec2 textPos(ax - sz.x * 0.5f, ay - sz.y - 10.f);
-    const ImVec2 bp(ax - barW * 0.5f, ay - 4.f);
+    const float ay = std::clamp(p.y, m + sz.y + gap, io.DisplaySize.y - m - barH - barGap);
+    const ImVec2 textPos(ax - sz.x * 0.5f, ay - sz.y - gap);
+    const ImVec2 bp(ax - barW * 0.5f, ay - barGap);
 
     // Readability backing: a translucent rounded box behind the nick + bar so the
     // label reads over ANY scene (bright sky, white wall, foliage).
-    constexpr float padX = 6.f, padY = 3.f;
+    const float padX = 6.f * s, padY = 3.f * s;
     const ImVec2 boxMin(std::min(textPos.x, bp.x) - padX, textPos.y - padY);
     const ImVec2 boxMax(std::max(textPos.x + sz.x, bp.x + barW) + padX, bp.y + barH + padY);
-    dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, static_cast<int>(a * 140.f)), 4.f);
+    dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, static_cast<int>(a * 140.f)), 4.f * s);
 
-    TextOutlined(dl, font, kNickPx, textPos, textCol, outline, line);
+    TextOutlined(dl, font, px, textPos, textCol, outline, line);
 
     // Health bar (dark red).
     const float frac = std::clamp(p.healthPct / 100.f, 0.f, 1.f);
@@ -86,6 +100,64 @@ void DrawNameplates() {
     }
 }
 
+// Dev object-overlay labels (coop::dev::object_overlay snapshot): a small anchor
+// dot at each projected object + up to 3 stacked text lines (names / net identity
+// / physics layers -- empty lines are skipped). Line 1 is tinted by tracking kind
+// so the problem class jumps out at a glance: cyan = wire mirror, green = tracked
+// local, ORANGE = untracked local-only (the objects that cannot mirror-sync).
+void DrawObjectOverlay() {
+    namespace OO = coop::dev::object_overlay;
+    if (!OO::IsEnabled()) return;
+    OO::Snapshot os;
+    OO::GetSnapshot(os);
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const ImGuiIO& io = ImGui::GetIO();
+
+    // Always-on status line (top-right): proves the overlay is live + shows the
+    // in-range tracked/untracked counts even when no label is on screen.
+    if (os.status[0]) {
+        constexpr float kStatusPx = 13.f;
+        const ImVec2 sz = font->CalcTextSizeA(kStatusPx, FLT_MAX, 0.f, os.status);
+        TextOutlined(dl, font, kStatusPx,
+                     ImVec2(io.DisplaySize.x - sz.x - 10.f, 8.f),
+                     IM_COL32(255, 235, 130, 235), IM_COL32(0, 0, 0, 200), os.status);
+    }
+
+    for (int i = 0; i < os.count; ++i) {
+        const auto& L = os.labels[i];
+        if (L.alpha <= 0.02f) continue;
+        // Cull labels projected outside the viewport (small margin keeps a label
+        // attached to an object sliding off the edge from popping).
+        if (L.x < -60.f || L.y < -60.f ||
+            L.x > io.DisplaySize.x + 60.f || L.y > io.DisplaySize.y + 60.f) continue;
+
+        // Same billboard shape as the nameplates: base size up close, ~1/distance
+        // shrink to a legible floor.
+        const float s = (L.dist <= 600.f) ? 1.f : std::max(600.f / L.dist, 0.45f);
+        const float a = std::clamp(L.alpha, 0.f, 1.f);
+
+        ImU32 kindCol;
+        switch (L.kind) {
+            case 0:  kindCol = IM_COL32(110, 205, 255, static_cast<int>(a * 245.f)); break;
+            case 1:  kindCol = IM_COL32(150, 255, 150, static_cast<int>(a * 245.f)); break;
+            default: kindCol = IM_COL32(255, 170, 64,  static_cast<int>(a * 255.f)); break;
+        }
+        const ImU32 grey    = IM_COL32(225, 225, 225, static_cast<int>(a * 225.f));
+        const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 210.f));
+
+        dl->AddCircleFilled(ImVec2(L.x, L.y), 2.5f * s, kindCol);
+
+        const float px1 = 13.f * s, px2 = 11.f * s;
+        float tx = L.x + 7.f * s;
+        float ty = L.y - 6.f * s;
+        if (L.line1[0]) { TextOutlined(dl, font, px1, ImVec2(tx, ty), kindCol, outline, L.line1); ty += px1 + 1.f; }
+        if (L.line2[0]) { TextOutlined(dl, font, px2, ImVec2(tx, ty), grey, outline, L.line2);   ty += px2 + 1.f; }
+        if (L.line3[0]) { TextOutlined(dl, font, px2, ImVec2(tx, ty), grey, outline, L.line3); }
+    }
+}
+
 void DrawChat() {
     coop::chat_feed::Snapshot cs;
     coop::chat_feed::GetSnapshot(cs);
@@ -93,9 +165,12 @@ void DrawChat() {
 
     const ImGuiIO& io = ImGui::GetIO();
     constexpr float pad = 14.f;
-    // Anchor the window's BOTTOM-LEFT corner near the bottom-left of the screen; it
-    // auto-resizes upward as lines stack (newest at the bottom).
-    ImGui::SetNextWindowPos(ImVec2(pad, io.DisplaySize.y - pad), ImGuiCond_Always, ImVec2(0.f, 1.f));
+    // Anchor the window's BOTTOM-LEFT corner at the left edge, RAISED to ~mid-screen height.
+    // The chat used to sit in the bottom-left corner; the user (2026-06-08) wanted it higher,
+    // around the middle. Pivot (0,1) keeps it growing UPWARD as lines stack (newest at the
+    // bottom), so the bottom edge sits at kBottomFrac of the screen height.
+    constexpr float kBottomFrac = 0.5f;  // 0.5 = vertical middle; raise toward 0 / lower toward 1
+    ImGui::SetNextWindowPos(ImVec2(pad, io.DisplaySize.y * kBottomFrac), ImGuiCond_Always, ImVec2(0.f, 1.f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     const ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -125,10 +200,12 @@ void DrawChat() {
 }  // namespace
 
 bool IsActive() {
-    return coop::nameplate::HasAny() || coop::chat_feed::HasAny();
+    return coop::nameplate::HasAny() || coop::chat_feed::HasAny() ||
+           coop::dev::object_overlay::IsEnabled();
 }
 
 void Render() {
+    DrawObjectOverlay();   // first: debug labels sit UNDER the player nameplates
     DrawNameplates();
     DrawChat();
 }

@@ -727,9 +727,9 @@ void Install(coop::net::Session* session) {
     }
 
     // Register the PRE interceptor LAST and only if the lifecycle observers
-    // both succeeded. RegisterInterceptor consumes a slot in the 16-slot
-    // interceptor table -- if NPC sync is disabled for the session, we leave
-    // the slot free for other subsystems.
+    // both succeeded. RegisterInterceptor consumes a slot in the
+    // kMaxInterceptors table -- if NPC sync is disabled for the session, we
+    // leave the slot free for other subsystems.
     // The client-side suppression that the interceptor implements is also
     // useless without the host-side broadcast pipeline being functional.
     g_installed.store(true, std::memory_order_release);

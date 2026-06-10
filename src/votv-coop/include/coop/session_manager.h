@@ -19,10 +19,35 @@
 
 namespace coop::session_manager {
 
-// The master server URL ("host:port") -- env VOTVCOOP_MASTER_URL or a localhost
-// default. Resolved once. The mod version tag (announce + browser display).
-const std::string& MasterUrl();
+// Push the master URL + the host fallback Config from the harness at boot (it
+// owns the env/ini readers, principle 7). Call ONCE before any browser action.
+// The fallback Config is what HostWithSave uses when the master announce fails
+// (RULE 1 decouple -- hosting must not require a reachable master).
+void Configure(const std::string& masterUrl, const coop::net::Config& fallbackHostCfg);
+
+// The master server URL ("host:port") as set by Configure (or the env/localhost
+// default if Configure was not called -- a direct unit probe). The mod version
+// tag (announce + browser display).
+std::string MasterUrl();
 const char* ModVersion();
+
+// Last host-action status, for the browser/picker to surface (empty until a
+// Host action runs). Set by HostWithSave's worker / the harness boot path on
+// success, master-unreachable (unlisted), or hard failure. Thread-safe.
+std::string HostStatus();
+void SetHostStatus(const std::string& status);
+
+// Our OWN announced lobbyId (empty if we are not hosting an announced lobby). The
+// browser filters this row out + JoinLobby refuses it, so a host can never connect
+// to its own server. Set on announce, cleared on AbortHost. Thread-safe.
+std::string OwnLobbyId();
+
+// The local player's display nickname. Seeded from config (env VOTVCOOP_NET_NICK /
+// ini net.nick / "Player") at boot, then overwritten by the SERVER BROWSER (the user
+// sets their name there). Applied to the wire/nameplate at the next StartCoopSession,
+// so the browser value WINS over the config default. Thread-safe.
+std::string Nickname();
+void SetNickname(const std::string& nick);
 
 // --- browser actions (call from the render/game thread; each dispatches any blocking
 //     HTTP onto a worker, so the caller never stalls) ---
@@ -54,7 +79,10 @@ struct SaveChoice {
 // LOADS the chosen world (or CREATES the new save) BEFORE starting the host session.
 // Announces on a worker -> queues a pending host-with-save the harness drains via
 // TakePendingHostWithSave (then loads the world, then StartCoopSession). Non-blocking.
-void HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax);
+// Returns true if ACCEPTED (the caller should raise the host-boot cover + close the
+// picker); false if rejected (another action already in flight) so the caller leaves
+// the picker open and does NOT raise a cover that nothing would drop.
+bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax);
 
 // Join a master lobby by its opaque lobbyId (POST /v1/join on a worker) -> build a P2P
 // client Config + queue a session start. Non-blocking. `displayName` is the lobby's name,
@@ -73,6 +101,16 @@ bool ConnectDirect(const std::string& hostPort);
 
 // Host hide-toggle passthrough (POST /v1/visibility). Session stays live. (design 5.6)
 void SetListed(bool listed);
+
+// v56 env-host plane (user 2026-06-10): announce the CURRENT, already-started
+// env-configured host session to the master as a HIDDEN lobby -- the heartbeat
+// keeps it alive and creds stay fresh, but the public browser never lists it
+// (.bat/test lobbies must not pollute the list; joiners direct-connect by IP).
+// Best-effort on a worker: master down -> logged, hosting continues (RULE 1).
+// NOTE: the lobby is briefly listed between the announce and the async
+// visibility flip (~1 round-trip); an announce-time hidden flag is a master-API
+// addition for later.
+void AnnounceEnvHostHidden(const std::string& name, const std::string& world);
 
 // Cancel an announced-but-never-started host: /leave the master + stop the heartbeat
 // thread, so no phantom lobby lingers when the harness fails to load/create the chosen
@@ -93,6 +131,7 @@ bool TakePendingStart(coop::net::Config& out);
 struct PendingHost {
     coop::net::Config cfg;
     SaveChoice        save;
+    bool              listed = true;  // false = master unreachable, hosting unlisted
 };
 bool TakePendingHostWithSave(PendingHost& out);
 

@@ -50,6 +50,17 @@ std::atomic<bool> g_isClient{false};
 uint8_t   g_lastHostFogBits = 0xFF;
 long long g_lastDetectMs    = 0;
 
+// CLIENT reconcile cache (set by ApplyFromHost, read by TickClientReconcile).
+// ApplyFromHost's clear only runs when the host BROADCASTS; a clear + STATIC host
+// never re-broadcasts, so a rolling-fog actor that leaked during the pre-suppression
+// connect window (before the spawnFog interceptor latched) rides out its Duration
+// while the host is clear -- the user's persistent "balls of fog around the client".
+// The heartbeat continuously re-asserts host-clear (MTA CBlendedWeather::DoPulse),
+// independent of broadcasts. Cheap: a slot pointer read, no GUObjectArray walk.
+bool      g_haveHostFog        = false;  // received >=1 host fog state
+bool      g_lastHostFogActive  = false;  // host's last-known rolling-fog presence (kFogActive)
+long long g_lastReconcileMs    = 0;
+
 // Super-fog presence cache (perf 2026-06-04). The 3 Hz fog-edge detector used to
 // call CountObjectsByClass(SuperFogClass) -- a FULL ~1M-entry GUObjectArray walk
 // with a wstring alloc PER entry -- which measured ~90-150 ms/s on the host (the
@@ -173,6 +184,12 @@ void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload) {
     const bool hostFogActive   = (payload.flags2 & kFogActive)   != 0;
     const bool hostSuperActive = (payload.flags2 & kSuperFogActive) != 0;
 
+    // Cache for the client reconcile heartbeat (TickClientReconcile): a clear +
+    // static host won't re-broadcast, so the heartbeat re-asserts host-clear from
+    // this snapshot to clear a fog actor that leaked the pre-suppression window.
+    g_haveHostFog       = true;
+    g_lastHostFogActive = hostFogActive;
+
     // ---- rolling fog: assert the host's actor presence (MTA DoPulse, no diff-skip).
     void** slot = reinterpret_cast<void**>(b + P::off::AdaynightCycle_fogEventObject);
     const bool clientHasRolling = (*slot != nullptr) && R::IsLive(*slot);
@@ -209,14 +226,8 @@ void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload) {
             *reinterpret_cast<float*>(ab + P::off::WeatherFogController_Alpha)    = payload.fogAlpha;
             *reinterpret_cast<float*>(ab + P::off::WeatherFogController_Strength) = payload.fogStrength;
         }
-        // Snap the visible height-fog density + push it into the ExponentialHeightFog
-        // NOW (the cycle's ReceiveTick would otherwise ease finalFogDensity toward the
-        // freshly-set thickFog over several frames). Both peers then ease in lockstep.
-        *reinterpret_cast<float*>(b + P::off::AdaynightCycle_finalFogDensity) = payload.finalFogDensity;
-        if (g_setFogDensityFn) {
-            ue_wrap::ParamFrame f(g_setFogDensityFn);
-            ue_wrap::Call(cycle, f);
-        }
+        // (The visible height-fog density snap is UNCONDITIONAL below -- a host-clear
+        // apply also pins the client's base haze, not just the fog case.)
         UE_LOGI("weather_fog: host FOG snap -> Alpha=%.4f Strength=%.4f finalFogDensity=%.4f",
                 payload.fogAlpha, payload.fogStrength, payload.finalFogDensity);
     }
@@ -233,11 +244,48 @@ void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload) {
         }
     }
 
+    // ---- base ambient height-fog density: snap to the host's value UNCONDITIONALLY
+    // (also when the host is clear), then push it into the ExponentialHeightFog. The
+    // cycle's clear-weather fog floor is ~0.03; a freshly-joined client reads 0.00
+    // until its own ReceiveTick catches up (host=0.03 vs client=0.00 in the logs), so
+    // without this the client stays a touch clearer than the host even with no fog
+    // actor. In the fog-actor case this is the same value the mirror's ramp targets.
+    *reinterpret_cast<float*>(b + P::off::AdaynightCycle_finalFogDensity) = payload.finalFogDensity;
+    if (g_setFogDensityFn) {
+        ue_wrap::ParamFrame f(g_setFogDensityFn);
+        ue_wrap::Call(cycle, f);
+    }
+
     // ---- config bits: canonical static-config writes (no BP listeners need a
     // UFunction fan-out for these), mirroring the host exactly.
     *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_fog)      = (payload.flags  & kEnableFog)      != 0;
     *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_superfog) = (payload.flags  & kEnableSuperfog) != 0;
     *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_permanentFog)    = (payload.flags2 & kPermanentFog)   != 0;
+}
+
+void TickClientReconcile(void* cycle) {
+    // CLIENT-ONLY backstop: continuously enforce host-clear so a rolling-fog actor
+    // that leaked the pre-suppression connect window (and that a clear + static host
+    // never re-broadcasts to clear) doesn't persist as "balls of fog around the
+    // client". Runs only when (a) we're the client, (b) we've heard >=1 host fog
+    // state, and (c) that state was CLEAR -- when the host HAS fog the legitimate
+    // mirror actor must survive. Cheap: a slot pointer read, no GUObjectArray walk.
+    // Throttled ~3 s (fog is slow; a few seconds of clear latency is invisible).
+    if (!GT::IsGameThread()) return;
+    if (!g_isClient.load(std::memory_order_acquire)) return;
+    if (!g_haveHostFog || g_lastHostFogActive) return;  // act only when host known-CLEAR
+    if (!cycle || !R::IsLive(cycle)) return;
+    const long long now = NowMs();
+    if (now - g_lastReconcileMs < 3000) return;
+    g_lastReconcileMs = now;
+
+    auto* b = reinterpret_cast<uint8_t*>(cycle);
+    void** slot = reinterpret_cast<void**>(b + P::off::AdaynightCycle_fogEventObject);
+    if (*slot && R::IsLive(*slot)) {
+        E::DestroyActor(*slot);
+        *slot = nullptr;
+        UE_LOGI("weather_fog: client reconcile -> destroyed stray rolling-fog actor (host is clear)");
+    }
 }
 
 bool HostFogStateChanged(void* cycle) {
@@ -260,6 +308,9 @@ void OnDisconnect() {
     g_superFogActor   = nullptr;  // session-scoped; a reconnect re-scans
     g_superFogIdx     = -1;
     g_lastSuperScanMs = 0;
+    g_haveHostFog       = false;  // the next session re-learns the host's fog state
+    g_lastHostFogActive = false;
+    g_lastReconcileMs   = 0;
     // g_installed + g_clientInterceptorReg STAY set across sessions: g_spawnFogFn
     // is stable (same UClass) and the interceptor self-gates at runtime on
     // g_isClient -- which Install() refreshes every call -- so a reconnect with a

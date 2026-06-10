@@ -94,11 +94,15 @@ bool IsResetMode(void* lock);
 // -- NOT a submit. False on null / unresolved UFunction / out-of-range digit.
 bool CallInputNumber(void* lock, int32_t digit);
 
-// Clear the typed buffer natively (Reset() -- empties inPassword/Num via the engine's
-// own FString management, so no hand-written FString / leak). Used when the sender's
-// buffer reset (post-submit clear / backspace) before re-mirroring. False on null /
-// unresolved.
-bool CallReset(void* lock);
+// Clear the typed buffer (inPassword -> empty) with NO side effects: a direct FString
+// length-zero (Num=0, the canonical empty TArray<TCHAR>; Data/Max retained as slack and
+// freed by the engine on the next append/reassign, so no leak). This is the SAME direct-
+// field-write philosophy as WriteActive -- deliberately NOT the BP `Reset()` verb, which
+// is the keypad's "set a new code" mode (it sets isReset=true -> BLUE LED). Mirroring a
+// client's CANCEL (which shrinks the buffer) through Reset() turned the HOST blue -- the
+// 2026-06-08 bug (BP disassembly: reset()->ubergraph 3091->isReset=TRUE). The caller
+// repaints the now-empty panel via CallUpd. False on null / unresolved. Game thread.
+bool ClearBuffer(void* lock);
 
 // Best-effort visual refresh after the buffer change: dispatches the keypad's own upd()
 // verb (if present) so a tick/event-driven LED/material can repaint from the freshly-

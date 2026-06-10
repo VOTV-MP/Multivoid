@@ -6,17 +6,27 @@
 #include "coop/balance_sync.h"
 #include "coop/interactable_sync.h"
 #include "coop/join_progress.h"
+#include "coop/atv_sync.h"
+#include "coop/drone_sync.h"
+#include "coop/order_sync.h"
 #include "coop/keypad_sync.h"
 #include "coop/item_activate.h"
 #include "coop/net/session.h"
+#include "coop/power_sync.h"
 #include "coop/player_damage.h"
 #include "coop/npc_mirror.h"
+#include "coop/net_pump.h"
 #include "coop/player_handshake.h"
+#include "coop/save_transfer.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/remote_prop_spawn.h"
+#include "coop/trash_collect_sync.h"
+#include "coop/trash_pile_sync.h"
 #include "coop/grime_sync.h"
+#include "coop/firefly_sync.h"
+#include "coop/sky_sync.h"
 #include "coop/time_sync.h"
 #include "coop/weather_sync.h"
 #include "coop/window_sync.h"
@@ -100,14 +110,13 @@ void OnSessionStart() {
 }
 
 void Update(net::Session& session, void* localPlayer) {
-    // Fan the latest RTT across every live puppet so each nameplate
-    // shows "<nick> (<ping>ms)". Session today exposes only an
-    // aggregate lastRttMs() (first-connected-peer's RTT); per-slot
-    // RTT can land later. Fanning beats updating only slot 1.
-    const int rtt = session.lastRttMs();
+    // Push each peer's OWN RTT to its puppet so the nameplate shows "<nick> (<ping>ms)"
+    // and the scoreboard the per-row ping. Session samples per-slot RTT ~1 Hz from GNS
+    // m_nPing; rttMsForSlot returns -1 until a slot is sampled (nameplate then shows no
+    // ms suffix) and 0 on a sub-millisecond LAN link (shown as "<1ms").
     for (int slot = 0; slot < net::kMaxPeers; ++slot) {
         RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
-        if (p) p->SetPing(rtt);
+        if (p) p->SetPing(session.rttMsForSlot(slot));
     }
 
     // Per-slot Join announcement + per-slot "left the game" hud. The
@@ -149,6 +158,35 @@ void Update(net::Session& session, void* localPlayer) {
         switch (msg.kind) {
         case net::ReliableKind::Join: {
             coop::player_handshake::HandleJoinMessage(session, msg);
+            break;
+        }
+        case net::ReliableKind::SaveTransferRequest: {
+            // v56: a menu-mode joiner asks for the world save. Host-only intake;
+            // the stream itself is pumped by net_pump (save_transfer::TickHost).
+            if (session.role() == net::Role::Host &&
+                msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers) {
+                coop::save_transfer::OnRequest(msg.senderPeerSlot);
+            }
+            break;
+        }
+        case net::ReliableKind::SaveTransferBegin: {
+            // v56: the blob header (client side). Chunks bypass this inbox
+            // entirely (the session bulk sink).
+            if (msg.payloadLen < sizeof(net::SaveTransferBeginPayload)) break;
+            net::SaveTransferBeginPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            coop::save_transfer::OnBegin(p);
+            break;
+        }
+        case net::ReliableKind::ClientWorldReady: {
+            // v56: the joiner's world is up + registry-coherent -- open the
+            // world-ready send gate and run the connect replay NOW (this
+            // replaces the pre-v56 connect-edge replay).
+            if (session.role() == net::Role::Host &&
+                msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers) {
+                session.MarkSlotWorldReady(msg.senderPeerSlot, true);
+                coop::net_pump::RunConnectReplayForSlot(msg.senderPeerSlot);
+            }
             break;
         }
         case net::ReliableKind::PropRelease: {
@@ -269,16 +307,31 @@ void Update(net::Session& session, void* localPlayer) {
             // range is forged or relay-loop bugged and must be dropped
             // at the boundary before it reaches RegisterPropMirror and
             // collides with the receiver's own allocator. Closes
-            // D2-2 / E-1's PropSpawn gap. (The pre-existing inline
-            // host-range check in npc_mirror :: OnEntitySpawn becomes
-            // a call to the same helper below.)
+            // D2-2 / E-1's PropSpawn gap.
+            //
+            // Fork B 2a (2026-06-10): the HOST side is relaxed to EITHER
+            // range. A snapshot bracket RE-EXPRESSES existing entities --
+            // including client-born ones the host holds as mirror Elements
+            // (the drain never filters by origin) -- and a re-bracket
+            // (cave travel / host save-load) must re-express a client's
+            // own dropped items back to it or the widened adoption sweep
+            // would destroy them as unclaimed. Same argument already
+            // shipped for PropDestroy ("a destroy is NOT an allocation --
+            // it references an EXISTING shared entity") and matches the
+            // documented MarkPropElement intent ("clients route them as
+            // MIRROR entries which is correct"). A CLIENT sender may still
+            // only allocate in its own peer range.
             if (msg.senderPeerSlot >= 0) {
                 const bool senderIsHost = (msg.senderPeerSlot == 0);
-                if (!coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.elementId)) {
+                const bool ok = senderIsHost
+                    ? (coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) ||
+                       coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId))
+                    : coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId);
+                if (!ok) {
                     UE_LOGW("event_feed: PropSpawn elementId=0x%08x out of allowed "
                             "%s range (senderPeerSlot=%d) -- dropping",
                             p.elementId,
-                            senderIsHost ? "host" : "peer",
+                            senderIsHost ? "host(any)" : "peer",
                             msg.senderPeerSlot);
                     break;
                 }
@@ -305,7 +358,7 @@ void Update(net::Session& session, void* localPlayer) {
                     break;
                 }
             }
-            remote_prop_spawn::OnSpawn(p, msg.senderPeerSlot);
+            remote_prop_spawn::OnSpawn(p, msg.senderPeerSlot, localPlayer);
             // v34: advance the join loading-screen bar. No-op unless a join snapshot is
             // in progress (join_progress is in the Receiving phase) -- so live PropSpawns
             // outside a join cost a single relaxed atomic load and return.
@@ -335,21 +388,22 @@ void Update(net::Session& session, void* localPlayer) {
                 UE_LOGW("event_feed: PropDestroy key.len=%u > 31 -- dropping", p.key.len);
                 break;
             }
-            // PR-FOUNDATION-1 (2026-05-29): elementId range trust. Same
-            // rule as PropSpawn -- the sender's role determines the
-            // permitted allocation range. PropDestroy with a forged
-            // eid would otherwise reach UnregisterPropMirror with a
-            // host-range eid the sender never legitimately allocated.
-            if (msg.senderPeerSlot >= 0) {
-                const bool senderIsHost = (msg.senderPeerSlot == 0);
-                if (!coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.elementId)) {
-                    UE_LOGW("event_feed: PropDestroy elementId=0x%08x out of allowed "
-                            "%s range (senderPeerSlot=%d) -- dropping",
-                            p.elementId,
-                            senderIsHost ? "host" : "peer",
-                            msg.senderPeerSlot);
-                    break;
-                }
+            // elementId range trust. UNLIKE PropSpawn, a destroy is NOT an allocation -- it
+            // references an EXISTING shared entity, which the OTHER peer may have allocated.
+            // The grab-destroy model is symmetric: whoever grabs a shared chipPile broadcasts
+            // its destroy by eid, and that eid is in the ORIGINAL owner's range, not the
+            // grabber's. So we must accept EITHER range here (was: IsAllowedSenderEid(role) ->
+            // it dropped a client's PropDestroy of a host-owned pile = the cross-grab clump DUPE,
+            // proven 2026-06-09 host log "0x918 out of allowed peer range"). We still reject a
+            // genuinely invalid id (0 / kInvalidId / out of both ranges) so UnregisterPropMirror /
+            // OnDestroy never see a forged out-of-bounds eid. (Trust note above already documents
+            // that a LAN peer can command any prop destroy -- this is consistent with that model.)
+            if (p.elementId != 0 && p.elementId != coop::element::kInvalidId &&
+                !coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) &&
+                !coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId)) {
+                UE_LOGW("event_feed: PropDestroy elementId=0x%08x not a valid allocated id "
+                        "(out of both ranges) -- dropping", p.elementId);
+                break;
             }
             // (v15 also had a senderContext compare here -- moved to
             // header senderEpoch in v16 PR-FOUNDATION-1b.)
@@ -358,7 +412,74 @@ void Update(net::Session& session, void* localPlayer) {
             // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
             // Component::TickComponent reading a dangling GrabbedComponent
             // ptr next frame.
+            // v52: if this destroy targets a pile WE are death-watching (the OTHER peer grabbed the
+            // shared pile), drop our watch entry first so the local teardown below doesn't make our
+            // own liveness sweep re-broadcast the (wire-induced) death back to the origin.
+            if (p.elementId != 0 && p.elementId != coop::element::kInvalidId) {
+                coop::trash_collect_sync::NotifyPileConsumed(p.elementId);
+            }
+            // v57: same echo guard for the trashBitsPile counter channel, keyed -- a wire
+            // destroy of a dispenser pile must not re-broadcast from OUR death-watch.
+            if (p.key.len > 0) {
+                std::wstring dkey;
+                dkey.reserve(p.key.len);
+                for (uint8_t i = 0; i < p.key.len && i < 31; ++i)
+                    dkey.push_back(static_cast<wchar_t>(static_cast<unsigned char>(p.key.data[i])));
+                coop::trash_pile_sync::NotifyWireDestroy(dkey);
+            }
             remote_prop::OnDestroy(p, localPlayer);
+            break;
+        }
+        case net::ReliableKind::PropConvert: {
+            // v52: the ATOMIC trash-clump ball->pile swap. Destroy the mirror ball by oldEid +
+            // spawn the authoritative pile by newEid in one handler (remote_prop::OnConvert), then
+            // enrol the spawned mirror pile in OUR death-watch so a local re-grab of it propagates
+            // the destroy by identity. Same trust-boundary validation as PropSpawn/PropDestroy:
+            // finite transform + in-range eids (both old + new must be within the sender's range).
+            if (msg.payloadLen < sizeof(net::PropConvertPayload)) {
+                UE_LOGW("event_feed: PropConvert payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::PropConvertPayload));
+                break;
+            }
+            net::PropConvertPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            const float cvals[6] = { p.locX, p.locY, p.locZ,
+                                     p.rotPitch, p.rotYaw, p.rotRoll };
+            bool cfinite = true;
+            for (float v : cvals) { if (!std::isfinite(v)) { cfinite = false; break; } }
+            if (!cfinite) {
+                UE_LOGW("event_feed: PropConvert floats non-finite -- dropping");
+                break;
+            }
+            constexpr float kMaxConvCoord = 1.0e6f;
+            if (std::fabs(p.locX) > kMaxConvCoord || std::fabs(p.locY) > kMaxConvCoord ||
+                std::fabs(p.locZ) > kMaxConvCoord) {
+                UE_LOGW("event_feed: PropConvert location out of bounds (%.1f, %.1f, %.1f)",
+                        p.locX, p.locY, p.locZ);
+                break;
+            }
+            if (p.pileClass.len > 63) {
+                UE_LOGW("event_feed: PropConvert pileClass.len=%u > 63 -- dropping", p.pileClass.len);
+                break;
+            }
+            if (msg.senderPeerSlot >= 0) {
+                const bool senderIsHost = (msg.senderPeerSlot == 0);
+                if (!coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.oldEid) ||
+                    !coop::element::Registry::IsAllowedSenderEid(senderIsHost, p.newEid)) {
+                    UE_LOGW("event_feed: PropConvert eids (old=0x%08x new=0x%08x) out of allowed "
+                            "%s range (senderPeerSlot=%d) -- dropping",
+                            p.oldEid, p.newEid, senderIsHost ? "host" : "peer", msg.senderPeerSlot);
+                    break;
+                }
+            }
+            // OnConvert spawns the pile via remote_prop_spawn::OnSpawn, which enrols every
+            // chipPile mirror in the death-watch itself -- so no separate WatchPile here. A null
+            // return = the pile spawn failed (e.g. a transient FindClass miss before the chipPile
+            // BP class loaded); rare, but log it since the re-grab destroy won't propagate.
+            if (!remote_prop::OnConvert(p, localPlayer, msg.senderPeerSlot)) {
+                UE_LOGW("event_feed: PropConvert newEid=%u pile spawn FAILED -- a re-grab of this "
+                        "pile won't propagate its destroy", p.newEid);
+            }
             break;
         }
         case net::ReliableKind::EntitySpawn: {
@@ -572,6 +693,12 @@ void Update(net::Session& session, void* localPlayer) {
             net::SnapshotBeginPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             coop::join_progress::BeginSnapshot(p.propTotal);
+            // P2 (2026-06-10): arm the connect-snapshot claim set. Every
+            // PropSpawn dispatched below (inline, same drain, same lane ->
+            // strictly after this) claims the client actor it binds; the
+            // SnapshotComplete sweep destroys the unclaimed RNG-divergent
+            // locals so the client adopts the host's world layout.
+            coop::remote_prop_spawn::BeginClaimTracking();
             break;
         }
         case net::ReliableKind::SnapshotComplete: {
@@ -589,6 +716,12 @@ void Update(net::Session& session, void* localPlayer) {
             }
             if (session.role() == net::Role::Host) break;
             coop::join_progress::Complete();
+            // P2 (2026-06-10): the snapshot drained -- every host prop has
+            // claimed its client actor. Destroy the unclaimed RNG-divergent
+            // locals (the client's own fresh-New-Game litter the host does
+            // not have). Inline on the GT drain, after ALL claims by lane
+            // ordering.
+            coop::remote_prop_spawn::DestroyUnclaimedDivergentProps(localPlayer);
             break;
         }
         case net::ReliableKind::ItemActivate: {
@@ -730,10 +863,12 @@ void Update(net::Session& session, void* localPlayer) {
         }
         case net::ReliableKind::DoorState:
         case net::ReliableKind::LightState:
-        case net::ReliableKind::ContainerState: {
+        case net::ReliableKind::ContainerState:
+        case net::ReliableKind::GarageDoorState:
+        case net::ReliableKind::ApplianceState: {
             // Phase 5D (v27): a peer toggled a keyed interactable (base door /
-            // light group / container lid). SYMMETRIC -- any peer can send; the host
-            // relays a client-originated edge to the other clients
+            // light group / container lid / garage / appliance). SYMMETRIC -- any peer
+            // can send; the host relays a client-originated edge to the other clients
             // (IsClientRelayableReliableKind) before this drain runs.
             // interactable_sync routes by kind to the right channel, resolves the
             // instance by Key, + idempotently applies on the GT (echo-suppressed).
@@ -779,6 +914,95 @@ void Update(net::Session& session, void* localPlayer) {
                     ? static_cast<uint8_t>(msg.senderPeerSlot)
                     : static_cast<uint8_t>(0xFF);
             coop::keypad_sync::OnReliable(kp, senderSlot);
+            break;
+        }
+        case net::ReliableKind::PowerControlState: {
+            // v46 (2026-06-08): base POWER PANEL breakers (ApowerControl_C). SYMMETRIC -- any peer
+            // polls its panels' 5 press bools + broadcasts on a change; the host relays a client
+            // edge (IsClientRelayableReliableKind). The receiver writes the bools + refreshes the
+            // panel's own visual (the base power EFFECTS sync via their own door/light/server
+            // channels). 5 bools per actor -> its own coop/power_sync module (doesn't fit the
+            // 1-bool toggle Channel). RE: votv-powerControl-panel-sync-RE-2026-06-08.md.
+            if (msg.payloadLen < sizeof(net::PowerPanelPayload)) {
+                UE_LOGW("event_feed: PowerControlState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::PowerPanelPayload));
+                break;
+            }
+            net::PowerPanelPayload pp{};
+            std::memcpy(&pp, msg.payload, sizeof(pp));
+            const uint8_t senderSlot =
+                (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                    ? static_cast<uint8_t>(msg.senderPeerSlot)
+                    : static_cast<uint8_t>(0xFF);
+            coop::power_sync::OnReliable(pp, senderSlot);
+            break;
+        }
+        case net::ReliableKind::AtvState: {
+            // v47 (2026-06-08): ATV body pose (AATV_C). OCCUPANT-authoritative -- the seated driver
+            // streams; the host relays a client driver's pose to the other clients
+            // (IsClientRelayableReliableKind). Trust-the-edge (any peer may legitimately send the
+            // ATV it drives); atv_sync gates the APPLY (ignores a pose for an ATV this peer is
+            // itself driving). RE: votv-ATV-quadbike-RE-and-coop-sync-design-2026-06-08.md.
+            if (msg.payloadLen < sizeof(net::AtvStatePayload)) {
+                UE_LOGW("event_feed: AtvState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::AtvStatePayload));
+                break;
+            }
+            net::AtvStatePayload ap{};
+            std::memcpy(&ap, msg.payload, sizeof(ap));
+            if (!std::isfinite(ap.x) || !std::isfinite(ap.y) || !std::isfinite(ap.z) ||
+                !std::isfinite(ap.pitch) || !std::isfinite(ap.yaw) || !std::isfinite(ap.roll)) {
+                UE_LOGW("event_feed: AtvState non-finite pose -- dropping");
+                break;
+            }
+            const uint8_t senderSlot =
+                (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                    ? static_cast<uint8_t>(msg.senderPeerSlot)
+                    : static_cast<uint8_t>(0xFF);
+            coop::atv_sync::OnReliable(ap, senderSlot);
+            break;
+        }
+        case net::ReliableKind::DroneState: {
+            // v48 (2026-06-08): delivery drone body pose (Adrone_C). HOST-AUTHORITATIVE singleton --
+            // HOST->client only; trust-gated to slot 0 (like SkyState/TimeSync). The client
+            // suppresses its own drone ReceiveTick + mirrors the streamed transform. RE:
+            // votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: DroneState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+                break;
+            }
+            if (msg.payloadLen < sizeof(net::DroneStatePayload)) {
+                UE_LOGW("event_feed: DroneState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::DroneStatePayload));
+                break;
+            }
+            net::DroneStatePayload dp{};
+            std::memcpy(&dp, msg.payload, sizeof(dp));
+            if (!std::isfinite(dp.x) || !std::isfinite(dp.y) || !std::isfinite(dp.z) ||
+                !std::isfinite(dp.pitch) || !std::isfinite(dp.yaw) || !std::isfinite(dp.roll)) {
+                UE_LOGW("event_feed: DroneState non-finite pose -- dropping");
+                break;
+            }
+            coop::drone_sync::OnReliable(dp);
+            break;
+        }
+        case net::ReliableKind::OrderRequest: {
+            // v49 (2026-06-09): delivery-drone ECONOMY -- a CLIENT forwards a laptop shop order to the
+            // HOST (the delivery authority). VARIABLE-LENGTH (OrderRequestHeader + packed items); the
+            // host assembles chunks per (senderSlot, orderId) then re-commits via the native
+            // makeAnOrder. order_sync::OnReliable fully range-checks the payload + no-ops on a client
+            // (host-only ingest). RE: votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+            // OrderRequest is CLIENT->HOST: a valid sender is a CLIENT slot (1..kMaxPeers-1). Slot 0
+            // is the host (which never sends its own order as a request -- it is the delivery
+            // authority); an out-of-range / not-yet-assigned slot must NOT be routed under a 0xFF
+            // sentinel that would create host assembly state in a shared bucket. Drop at the boundary.
+            if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+                UE_LOGW("event_feed: OrderRequest from invalid senderPeerSlot=%d -- dropping",
+                        msg.senderPeerSlot);
+                break;
+            }
+            coop::order_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
+                                         static_cast<uint8_t>(msg.senderPeerSlot));
             break;
         }
         case net::ReliableKind::WindowCleanState: {
@@ -843,6 +1067,50 @@ void Update(net::Session& session, void* localPlayer) {
             coop::grime_sync::OnReliable(gp, senderSlot);
             break;
         }
+        case net::ReliableKind::TrashPileState: {
+            // v57 (2026-06-10): trashBitsPile collect counters -- SYMMETRIC, keyed by the pile's
+            // save Key; host relays a client's collect. Receiver applies per-component MIN for a
+            // live edge / VERBATIM for the host adopt snapshot (trust-gated in OnReliable).
+            if (msg.payloadLen < sizeof(net::TrashPileStatePayload)) {
+                UE_LOGW("event_feed: TrashPileState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::TrashPileStatePayload));
+                break;
+            }
+            net::TrashPileStatePayload tp{};
+            std::memcpy(&tp, msg.payload, sizeof(tp));
+            if (tp.amountA < 0 || tp.amountA > 10000 || tp.amountB < 0 || tp.amountB > 10000) {
+                UE_LOGW("event_feed: TrashPileState amounts (%d,%d) out of range -- dropping",
+                        static_cast<int>(tp.amountA), static_cast<int>(tp.amountB));
+                break;
+            }
+            if (tp.adopt != 0 && tp.adopt != 1) {
+                UE_LOGW("event_feed: TrashPileState adopt=%u out of range -- dropping",
+                        static_cast<unsigned>(tp.adopt));
+                break;
+            }
+            const uint8_t tpSlot =
+                (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                    ? static_cast<uint8_t>(msg.senderPeerSlot)
+                    : static_cast<uint8_t>(0xFF);
+            coop::trash_pile_sync::OnReliable(tp, tpSlot);
+            break;
+        }
+        case net::ReliableKind::FireflySpawn: {
+            // v51 (2026-06-09): PEER-SYMMETRIC ambient firefly. Any peer may originate one
+            // (each runs its own spawner near its OWN camera + shares); the host relays a
+            // client's spawn to the other clients (IsClientRelayableReliableKind). No trust
+            // gate -- a cosmetic transient particle. The origin never receives its own send,
+            // so OnReliable always materialises ANOTHER peer's firefly at its world position.
+            if (msg.payloadLen < sizeof(net::FireflySpawnPayload)) {
+                UE_LOGW("event_feed: FireflySpawn payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::FireflySpawnPayload));
+                break;
+            }
+            net::FireflySpawnPayload fp{};
+            std::memcpy(&fp, msg.payload, sizeof(fp));
+            coop::firefly_sync::OnReliable(fp);
+            break;
+        }
         case net::ReliableKind::DoorOpenRequest: {
             // v32 (2026-06-04): client->host door open/close REQUEST. Doors are HOST-
             // authoritative; only the host honors this. The host applies it (real lock/
@@ -896,6 +1164,32 @@ void Update(net::Session& session, void* localPlayer) {
                 break;
             }
             coop::time_sync::OnReliable(tp);
+            break;
+        }
+        case net::ReliableKind::SkyState: {
+            // v44 (2026-06-08): HOST-authoritative night-sky orientation + moon phase (Anewsky_C).
+            // HOST->client; trust-gated to slot 0 like TimeSync. The client writes the sky mesh
+            // world rotation + moonPhase (sky_sync::OnReliable no-ops on the host defensively).
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: SkyState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+                break;
+            }
+            if (msg.payloadLen < sizeof(net::SkyStatePayload)) {
+                UE_LOGW("event_feed: SkyState payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::SkyStatePayload));
+                break;
+            }
+            net::SkyStatePayload sp{};
+            std::memcpy(&sp, msg.payload, sizeof(sp));
+            // NaN/Inf guard before the raw float writes (SetComponentWorldRotation(NaN) -> FRotator
+            // assert / garbage transform). Rotations are bounded angles; moonPhase is a material
+            // scalar. (sky_sync::OnReliable re-checks defensively too.)
+            if (!std::isfinite(sp.skyPitch) || !std::isfinite(sp.skyYaw) ||
+                !std::isfinite(sp.skyRoll) || !std::isfinite(sp.moonPhase)) {
+                UE_LOGW("event_feed: SkyState non-finite floats -- dropping");
+                break;
+            }
+            coop::sky_sync::OnReliable(sp);
             break;
         }
         case net::ReliableKind::RedSky: {
@@ -1022,23 +1316,28 @@ void Update(net::Session& session, void* localPlayer) {
                                        "WeatherState")) {
                 break;
             }
-            // Trust-boundary: validate floats finite + within sane range.
-            // Rain scalars are unitless in [0, ~10] in BP usage; allow a
-            // generous (-1e3, 1e3) range to catch garbage without
-            // legitimately clamping anything.
-            const float vals[4] = {
-                p.rainStrength, p.rainLightningChance,
-                p.rainDeactivateChance, p.rainWindSpeed
+            // Trust-boundary: validate EVERY float the receiver writes into engine memory
+            // is finite + within a sane range. Rain scalars are unitless [0, ~10] (lc/dc
+            // chance up to ~120 observed); fog density ~[0, 15]; wind ~[0, 50] -- a generous
+            // (-1e3, 1e3) catches garbage/NaN without clamping any legit value. v43 added
+            // the 4 wind floats (written raw into the wind actor via directionalwind::Write)
+            // AND the v24 fog/rain floats that were applied unvalidated before -- same
+            // trust boundary, all in one check now (audit 2026-06-08).
+            const float vals[] = {
+                p.rainStrength, p.rainLightningChance, p.rainDeactivateChance, p.rainWindSpeed,
+                p.rain, p.finalFogDensity, p.fogAlpha, p.fogStrength,
+                p.windSpeedBg, p.windStrengthBg, p.windSpeedRain, p.windStrengthRain
             };
             bool bad = false;
             for (float v : vals) {
                 if (!std::isfinite(v) || std::fabs(v) > 1.0e3f) { bad = true; break; }
             }
             if (bad) {
-                UE_LOGW("event_feed: WeatherState scalars out of bounds (rain=%.2f "
-                        "lc=%.2f dc=%.2f ws=%.2f) -- dropping",
-                        p.rainStrength, p.rainLightningChance,
-                        p.rainDeactivateChance, p.rainWindSpeed);
+                UE_LOGW("event_feed: WeatherState floats out of bounds (rain=%.2f lc=%.2f dc=%.2f "
+                        "ws=%.2f fog=%.2f windBg=%.2f/%.2f windRain=%.2f/%.2f) -- dropping",
+                        p.rainStrength, p.rainLightningChance, p.rainDeactivateChance,
+                        p.rainWindSpeed, p.finalFogDensity, p.windSpeedBg, p.windStrengthBg,
+                        p.windSpeedRain, p.windStrengthRain);
                 break;
             }
             net::WeatherStatePayload pCopy = p;

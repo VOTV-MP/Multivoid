@@ -41,6 +41,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // backpressure -> phantom actor never cleaned up.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
     case ReliableKind::PropDestroy:    return Lane::Bulk;
+    // v52: PropConvert destroys the ball (oldEid) + spawns the pile (newEid). It MUST share the
+    // Spawn/Destroy lane so GNS delivers it strictly after the ball's PropSpawn -- on a different
+    // lane a convert could overtake the ball spawn under backpressure -> the ball mirror spawns
+    // after the convert already ran -> a lingering, never-destroyed ball.
+    case ReliableKind::PropConvert:    return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
     // v34: the loading-screen brackets MUST share PropSpawn's lane so GNS's in-lane
@@ -49,6 +54,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // backpressure and lift the joiner's cover mid-build.
     case ReliableKind::SnapshotBegin:    return Lane::Bulk;
     case ReliableKind::SnapshotComplete: return Lane::Bulk;
+    // v56: the save blob is phase-ordered BEFORE the snapshot bracket (the client
+    // only sends ClientWorldReady after loading the save), so sharing Bulk costs
+    // nothing -- and Begin must precede its chunks in-lane.
+    case ReliableKind::SaveTransferBegin: return Lane::Bulk;
+    case ReliableKind::SaveTransferChunk: return Lane::Bulk;
     default:                           return Lane::Normal;
     }
 }
@@ -80,13 +90,42 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::ItemActivate:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
+    case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
     case ReliableKind::PropRelease:
     case ReliableKind::DoorState:
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
+    case ReliableKind::GarageDoorState:   // v44: garage door is SYMMETRIC -- relay a client's open/close to the others
+    case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
+    case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
+    case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-authoritative -- relay a client DRIVER's pose to the other clients
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others
     case ReliableKind::GrimeState:        // v42: surface grime is SYMMETRIC -- relay a client's wipe
+    case ReliableKind::TrashPileState:    // v57: trash-pile collect counters are SYMMETRIC -- relay a client's collect to the others
+    case ReliableKind::FireflySpawn:      // v51: fireflies are PEER-SYMMETRIC -- each peer spawns near its OWN camera + shares; relay a client's spawn to the others so all peers see everyone's
+        return true;
+    default:
+        return false;
+    }
+}
+
+// v56 pre-world send gate (design-workflow B2, the MTA invariant): a menu-mode
+// joining client is CONNECTED for ~30-60 s before it has a gameplay world
+// (downloading + loading the host save). Host->client reliable kinds that
+// MUTATE/ASSUME a world must not be sent to a slot until its ClientWorldReady --
+// the world-ready connect replay reconstructs all of it by design. This is the
+// allowlist of kinds that may flow BEFORE world-ready: handshake/identity + the
+// save transfer itself.
+inline bool IsPreWorldSendableKind(ReliableKind k) {
+    switch (k) {
+    case ReliableKind::Join:
+    case ReliableKind::AssignPeerSlot:
+    case ReliableKind::PlayerJoined:        // roster identity -- engine-free on the receiver
+    case ReliableKind::SaveTransferRequest:
+    case ReliableKind::SaveTransferBegin:
+    case ReliableKind::SaveTransferChunk:
+    case ReliableKind::ClientWorldReady:
         return true;
     default:
         return false;

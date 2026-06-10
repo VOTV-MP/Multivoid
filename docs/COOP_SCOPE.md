@@ -529,3 +529,21 @@ Design implications (do NOT build yet; record so the architecture serves it):
   client drives local ragdoll, host confirms slot-1 puppet flips isRagdoll + the
   mesh physically flops. Death stays native SP flow (excluded). Inc3 PlayerDamage
   still pending.
+- 2026-06-10 — **Ambient flora/forage spawners host-authoritative-by-suppression
+  on connected clients; dirthole mounds per-peer LOCAL** (Fork C of the snapshot-
+  adoption session). A connected CLIENT PRE-cancels its own
+  `mushroomMaster_C::spawn`, `mushroomSpawner_C::spawn` and
+  `pineconeSpawner_C::ReceiveTick` (new `coop/ambient_spawner_suppress`,
+  runtime-gated on running()+role==Client — SP and post-session solo play
+  unaffected); the HOST's spawn results stream over the existing prop pipeline
+  with v54 identity. Consequence: a connected client loses its local "a shroom
+  grew" hint toasts (never synced anyway). REVERSAL: the
+  `undergroundGarbageSpawner_C::Timer` suppression (Inc 3, 2026-05-27) is
+  DELETED — bytecode-falsified (it mints only `dirthole_item_C` buried-item
+  mounds, which are OUTSIDE the snapshot/broadcast universe; suppressing it
+  deleted the client's loot mounds with no host replacement). Dirthole mounds +
+  their dug loot are now per-peer LOCAL while connected (dug loot becomes shared
+  the moment it is grabbed — normal client-owned prop flow). Same session also
+  widened the adoption sweep to the full expressible universe + keyless chipPile
+  eid expression (protocol v55); RE + verdicts:
+  `research/findings/votv-snapshot-adoption-root-causes-2026-06-10.md`.

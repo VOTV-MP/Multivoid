@@ -39,18 +39,34 @@ enum class Phase : int {
     Receiving,   // BeginSnapshot..Complete: streaming the world, determinate bar
 };
 
+// Whether the cover represents a CLIENT join or a HOST boot. The two share the
+// loading-screen + menu-hide machinery (Active()) but render different text and
+// have different abort semantics: a client join has a Cancel button (-> stop the
+// session + reopen the browser); a host boot has NO cancel (the user waits for
+// their own world to load) and never drives the session-stop abort path.
+enum class Mode : int { Client = 0, Host = 1 };
+
 // Immutable copy for the renderer (one cheap struct, no locks held by the caller).
 struct View {
     Phase    phase = Phase::Idle;
-    std::string host;       // label shown as "Connecting to <host>" (may be empty)
+    Mode     mode = Mode::Client;
+    std::string host;       // label: "Connecting to <host>" (Client) / world name (Host)
     uint32_t applied = 0;   // props applied so far (<= total)
     uint32_t total = 0;     // prop candidate total from SnapshotBegin (0 until Receiving)
     uint64_t elapsedMs = 0; // since BeginConnect (for the failsafe + a subtle "still working")
 };
 
 // --- Driven by the network layer (client only) ---------------------------------
-void BeginConnect(const std::string& hostLabel);  // -> Connecting
+void BeginConnect(const std::string& hostLabel);  // -> Connecting (mode=Client)
 void BeginSnapshot(uint32_t propTotal);            // -> Receiving (determinate)
+
+// --- Driven by the harness (host only) -----------------------------------------
+// Raise the cover for a HOST boot (the Host-Game flow): hides the menu (so the
+// user can't wander into the browser + self-join while the world loads) and shows
+// "Starting your server -- loading <world>". NO Cancel button + no abort path (the
+// harness DriveHostBootIfPending owns the lifecycle and Reset()s this on session
+// start / failure). `worldLabel` is the save/world name shown to the user.
+void BeginHostBoot(const std::string& worldLabel);  // -> Connecting (mode=Host)
 void NotePropApplied();                            // ++applied (clamped); no-op unless Receiving
 void Complete();                                   // -> Idle (cover lifts)
 void Reset();                                       // -> Idle (force hide: disconnect/shutdown/abort)

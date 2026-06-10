@@ -15,6 +15,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/sdk_profile.h"
 
 #include <atomic>
 #include <chrono>
@@ -30,6 +31,7 @@ namespace coop::prop_element_tracker {
 namespace {
 
 namespace R = ue_wrap::reflection;
+namespace P = ue_wrap::profile;
 
 // ---- Cached session pointer (mirrors prop_lifecycle's; see header) ------
 std::atomic<coop::net::Session*> g_session_ptr{nullptr};
@@ -483,7 +485,30 @@ bool ReconcileIndexThrottled() {
 // keyed actors this walk added to g_knownKeyedProps (= the whole set on the first
 // boot seed; the delta on a re-seed).
 namespace {
-struct SeedCounts { int liveFound = 0; int newlyTracked = 0; int cdo = 0; int dying = 0; };
+struct SeedCounts { int liveFound = 0; int newlyTracked = 0; int cdo = 0; int dying = 0; int keylessPiles = 0; };
+
+// ---- World-coherence stamp (Fork A, 2026-06-10) --------------------------
+// SeedWalk_ stamps the live gameplay UWorld it ran against; the snapshot
+// gate (prop_snapshot::TriggerForSlot) refuses to open a bracket unless that
+// world is still the live one. During a world transition the registry holds
+// the dead world's props until the drain-complete re-seed -- a bracket built
+// then is near-empty and the client's adoption sweep destroys against it
+// (the 2026-06-10 1300-actor mass destroy). GT-write (seeds are GT
+// contracts), GT-read (TriggerForSlot/DrainChunk); atomics for the file's
+// sibling-symmetry only.
+std::atomic<bool>     g_seededOnce{false};
+std::atomic<void*>    g_seedWorld{nullptr};
+std::atomic<int32_t>  g_seedWorldIdx{-1};
+std::atomic<uint64_t> g_seedGeneration{0};
+// Purge-episode flag (gate hardening, 2026-06-10 smoke falsification): the
+// reaper detected a mass purge and the registry is draining dead elements
+// until the episode-end re-seed. The world-stamp above is NOT sufficient on
+// its own: VOTV's boot/save-load flow can leave the stamped UWorld ALIVE
+// while the registry is majority-dead (smoke 15:16: stamp live, 1161 dying
+// vs 88 live at enumerate -> the gate passed and the client swept 3067
+// actors against an 88-prop bracket). net_pump owns the detection edges;
+// this is registry-coherence state so the tracker owns the flag.
+std::atomic<bool>     g_inPurgeEpisode{false};
 
 SeedCounts SeedWalk_() {
     const int32_t n = R::NumObjects();
@@ -523,27 +548,109 @@ SeedCounts SeedWalk_() {
         if (!R::IsLive(obj)) continue;
         const std::wstring cls = R::ClassNameOf(obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
-        if (key.empty() || key == L"None") continue;
+        if (key.empty() || key == L"None") {
+            // Fork B HALF 1 (2026-06-10): keyless chipPile -- its cross-peer
+            // identity is the ElementId (the v52 eid lane; precedent
+            // trash_collect_sync::BroadcastConvertNear's idempotent
+            // MarkPropElement). Minting an Element here puts the host's
+            // world piles into the connect snapshot (the keyless skip in
+            // DrainChunk routes them down the eidOnly receiver lane), which
+            // is what lets the client adopt the host's pile set instead of
+            // sweeping its own and receiving nothing. All OTHER keyless
+            // actors (a held clump mid-flight, a pre-Init Aprop_C, a keyless
+            // trashBits straggler) are NOT expressible and stay untracked --
+            // symmetric with the sweep's universe test.
+            if (ue_wrap::prop::IsChipPile(obj)) {
+                MarkPropElement(obj, L"", cls);
+                ++c.keylessPiles;
+            }
+            continue;
+        }
         MarkPropElement(obj, key, cls);  // idempotent
+    }
+    // Stamp the gameplay world this walk expressed. MUST IsLive-filter
+    // (mid-transition the DYING old world sits at a lower GUObjectArray
+    // index) and gameplay-name-filter (matches the reaper's gate in
+    // net_pump -- a menu/preLoad world never opens the snapshot gate).
+    // Perf audit W-2 (2026-06-10): inline pointer-compare walk, NOT
+    // FindObjectsByClass -- that helper allocates a ClassNameOf wstring per
+    // GUObjectArray entry (~250k allocs), doubling every seed walk. The
+    // UWorld UClass resolves once (sticky); per entry this walk is two
+    // pointer reads, with ToString only on actual World instances (a
+    // handful).
+    {
+        static std::atomic<void*> sWorldCls{nullptr};
+        void* worldCls = sWorldCls.load(std::memory_order_acquire);
+        if (!worldCls) {
+            worldCls = R::FindClass(P::name::WorldClass);
+            if (worldCls) sWorldCls.store(worldCls, std::memory_order_release);
+        }
+        void* w = nullptr;
+        if (worldCls) {
+            for (int32_t i = 0; i < n; ++i) {
+                void* cand = R::ObjectAt(i);
+                if (!cand || R::ClassOf(cand) != worldCls) continue;
+                if (!R::IsLive(cand)) continue;
+                if (R::ToString(R::NameOf(cand)).find(L"ntitled") == std::wstring::npos) continue;
+                w = cand;
+                break;
+            }
+        }
+        if (w) {
+            g_seedWorld.store(w, std::memory_order_release);
+            g_seedWorldIdx.store(R::InternalIndexOf(w), std::memory_order_release);
+        }
+        // Bump on EVERY walk (even if no gameplay world resolved): every
+        // coherence-restoring event is a generation bump, and the deferred-
+        // slot flush in prop_snapshot keys on it.
+        g_seedGeneration.fetch_add(1, std::memory_order_release);
     }
     return c;
 }
 }  // namespace
 
 void SeedKnownKeyedProps() {
-    static std::atomic<bool> done{false};
-    if (done.load(std::memory_order_acquire)) return;
+    // Latch promoted to the file-scope g_seededOnce (Fork A) so the snapshot
+    // gate can refuse to bracket before the boot seed has ever run (RULE 2:
+    // one latch, not a function-local twin).
+    if (g_seededOnce.load(std::memory_order_acquire)) return;
     const SeedCounts c = SeedWalk_();
-    UE_LOGI("prop_element_tracker: seeded known-keyed-props set with %d live actors (%d new, %d CDOs, %d dying skipped) -- subsequent snapshots skip GUObjectArray walk",
-            c.liveFound, c.newlyTracked, c.cdo, c.dying);
-    done.store(true, std::memory_order_release);
+    UE_LOGI("prop_element_tracker: seeded known-keyed-props set with %d live actors (%d new, %d keyless chipPile element(s), %d CDOs, %d dying skipped) -- subsequent snapshots skip GUObjectArray walk",
+            c.liveFound, c.newlyTracked, c.keylessPiles, c.cdo, c.dying);
+    g_seededOnce.store(true, std::memory_order_release);
 }
 
 size_t ReSeedKnownKeyedProps() {
     const SeedCounts c = SeedWalk_();
-    UE_LOGI("prop_element_tracker: re-seed found %d live keyed props, added %d NEW to tracking (%d CDOs, %d dying) -- world/level-change reconcile [snapshot-completeness]",
-            c.liveFound, c.newlyTracked, c.cdo, c.dying);
+    UE_LOGI("prop_element_tracker: re-seed found %d live keyed props, added %d NEW to tracking (%d keyless chipPile element(s), %d CDOs, %d dying) -- world/level-change reconcile [snapshot-completeness]",
+            c.liveFound, c.newlyTracked, c.keylessPiles, c.cdo, c.dying);
     return static_cast<size_t>(c.newlyTracked);
+}
+
+bool HasSeededOnce() {
+    return g_seededOnce.load(std::memory_order_acquire);
+}
+
+bool IsRegistrySeededForCurrentWorld() {
+    // O(1): IsLiveByIndex reads ONLY the GUObjectArray slot metadata at the
+    // captured index -- never the (possibly freed) world's memory. The
+    // instant a world swap's GC purge kills the stamped UWorld, this reads
+    // false with zero detection latency; the next SeedWalk_ (episode-end
+    // re-seed / small-travel re-seed / self-heal) re-stamps the new world.
+    void* w = g_seedWorld.load(std::memory_order_acquire);
+    return w && R::IsLiveByIndex(w, g_seedWorldIdx.load(std::memory_order_acquire));
+}
+
+uint64_t SeedGeneration() {
+    return g_seedGeneration.load(std::memory_order_acquire);
+}
+
+void SetInPurgeEpisode(bool active) {
+    g_inPurgeEpisode.store(active, std::memory_order_release);
+}
+
+bool InPurgeEpisode() {
+    return g_inPurgeEpisode.load(std::memory_order_acquire);
 }
 
 // ---- Dead-Element reaper ------------------------------------------------

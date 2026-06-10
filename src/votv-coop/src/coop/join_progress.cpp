@@ -15,6 +15,7 @@ namespace {
 // thread); the host label is a std::string under its own mutex (written rarely in
 // BeginConnect, read once/frame in Snapshot).
 std::atomic<int>      g_phase{static_cast<int>(Phase::Idle)};
+std::atomic<int>      g_mode{static_cast<int>(Mode::Client)};
 std::atomic<uint32_t> g_applied{0};
 std::atomic<uint32_t> g_total{0};
 std::atomic<int64_t>  g_startMs{0};
@@ -23,10 +24,17 @@ std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure 
 std::mutex  g_hostMu;
 std::string g_host;  // guarded by g_hostMu
 
-// Generous failsafe: a real join (handshake + ~2300 props @ 100/tick) finishes in a
-// few seconds even over a TURN relay. 90 s means something is genuinely wrong (lost
-// SnapshotComplete, dead drain) -- reveal the game rather than trap the player.
-constexpr int64_t kMaxJoinMs = 90'000;
+// Generous failsafe: v56 save-transfer joins legitimately spend the cover on a
+// ~17 MB save download (WAN: tens of seconds) + the full world load (~30-60 s)
+// + the true-up bracket. The harness DriveMenuModeJoinWorldBoot owns the real
+// 120 s transfer timeout; this longer cap only fires if that path wedged (a
+// trapped cover is worse than revealing the game).
+constexpr int64_t kMaxJoinMs = 240'000;
+// Host-boot failsafe backstop. The harness DriveHostBootIfPending normally Reset()s
+// this on session-start / its own ~120 s timeout; this longer cap only fires if that
+// path somehow never ran (a stuck cover at the menu is worse than dropping it). Host
+// mode just Resets (no Fail -- there is no client session to Stop).
+constexpr int64_t kMaxHostBootMs = 180'000;
 
 int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -43,6 +51,7 @@ void BeginConnect(const std::string& hostLabel) {
         std::lock_guard<std::mutex> lk(g_hostMu);
         g_host = hostLabel;
     }
+    g_mode.store(static_cast<int>(Mode::Client), std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
@@ -50,6 +59,21 @@ void BeginConnect(const std::string& hostLabel) {
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
     UE_LOGI("join_progress: BeginConnect -- loading screen up (connecting to '%s')",
             hostLabel.c_str());
+}
+
+void BeginHostBoot(const std::string& worldLabel) {
+    {
+        std::lock_guard<std::mutex> lk(g_hostMu);
+        g_host = worldLabel;
+    }
+    g_mode.store(static_cast<int>(Mode::Host), std::memory_order_relaxed);
+    g_applied.store(0, std::memory_order_relaxed);
+    g_total.store(0, std::memory_order_relaxed);
+    g_abortReq.store(false, std::memory_order_relaxed);
+    g_startMs.store(NowMs(), std::memory_order_relaxed);
+    g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
+    UE_LOGI("join_progress: BeginHostBoot -- host loading cover up (loading world '%s'); menu hidden",
+            worldLabel.c_str());
 }
 
 void BeginSnapshot(uint32_t propTotal) {
@@ -60,7 +84,13 @@ void BeginSnapshot(uint32_t propTotal) {
     // console pop up over it mid-walk (the user-reported bug + a per-frame render cost).
     // So if we are not in a browser join (phase != Connecting), ignore the marker entirely.
     // (The earlier 'adopt it anyway' was the bug: it popped the cover for env clients.)
-    if (PhaseOf() != Phase::Connecting) return;
+    // Fork A (2026-06-10): ALSO accept Receiving -- after a mid-drain world-
+    // transition abort (no SnapshotComplete), the deferred re-bracket's
+    // SnapshotBegin must refresh the stale denominator or the bar pegs at a
+    // wrong total for the full ~2300-prop re-stream. Env/autotest clients
+    // are Idle and still ignored (the regression-A target).
+    const Phase ph = PhaseOf();
+    if (ph != Phase::Connecting && ph != Phase::Receiving) return;
     g_total.store(propTotal, std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     if (g_startMs.load(std::memory_order_relaxed) == 0) g_startMs.store(NowMs(), std::memory_order_relaxed);
@@ -117,6 +147,7 @@ bool Active() { return PhaseOf() != Phase::Idle; }
 View Snapshot() {
     View v;
     v.phase = PhaseOf();
+    v.mode = static_cast<Mode>(g_mode.load(std::memory_order_relaxed));
     v.applied = g_applied.load(std::memory_order_relaxed);
     v.total = g_total.load(std::memory_order_relaxed);
     const int64_t start = g_startMs.load(std::memory_order_relaxed);
@@ -132,6 +163,17 @@ void MaybeTimeout() {
     if (!Active()) return;
     const int64_t start = g_startMs.load(std::memory_order_relaxed);
     if (start == 0) return;
+    // HOST boot: the harness owns the lifecycle (Reset on session-start / its own
+    // timeout). This is only a last-resort backstop so a wedged host boot can't trap
+    // the cover forever -- just drop it (no Fail: there is no client session to Stop).
+    if (static_cast<Mode>(g_mode.load(std::memory_order_relaxed)) == Mode::Host) {
+        if (NowMs() - start > kMaxHostBootMs) {
+            UE_LOGW("join_progress: host-boot cover exceeded %llds -- dropping it (failsafe)",
+                    static_cast<long long>(kMaxHostBootMs / 1000));
+            Reset();
+        }
+        return;
+    }
     if (NowMs() - start > kMaxJoinMs) {
         // FAIL, not a bare Reset: Reset hides the cover but never tells the harness to Stop
         // the session, so a stuck/zombie net session keeps net_pump pumping the full gameplay

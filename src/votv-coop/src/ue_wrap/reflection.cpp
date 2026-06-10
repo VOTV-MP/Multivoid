@@ -7,6 +7,10 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cwchar>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ue_wrap::reflection {
@@ -174,19 +178,68 @@ void* OuterOf(void* uobject) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(uobject) + O::UObject_OuterPrivate);
 }
 
-std::wstring ToString(const FName& name) {
-    if (!g_fnameToString) return L"";
+namespace {
+// Render `name` into the per-thread scratch FString and return a pointer to the
+// characters (+ length via lenOut), or nullptr on failure. The buffer is REUSED
+// across calls (engine grows it rarely; we never free UE-allocated memory) --
+// this is the zero-allocation primitive under ToString/NameEquals/NameStartsWith.
+// The returned pointer is valid only until the next render on this thread.
+const wchar_t* RenderNameToScratch(const FName& name, int& lenOut) {
+    lenOut = 0;
+    if (!g_fnameToString) return nullptr;
     // thread_local (not static): the scratch buffer is reused per thread, so two
     // threads calling ToString never race the same FString -- without paying a
     // per-call free of UE-allocated memory we can't release.
     thread_local FString scratch{nullptr, 0, 0};
     scratch.Num = 0;  // reuse the buffer; write from the start (one buffer per thread)
     g_fnameToString(&name, &scratch);
-    if (!scratch.Data || scratch.Num <= 0) return L"";
+    if (!scratch.Data || scratch.Num <= 0) return nullptr;
     int len = scratch.Num;
     if (scratch.Data[len - 1] == L'\0') --len;  // Num counts the null terminator
-    if (len <= 0) return L"";
-    return std::wstring(scratch.Data, scratch.Data + len);
+    if (len <= 0) return nullptr;
+    lenOut = len;
+    return scratch.Data;
+}
+}  // namespace
+
+std::wstring ToString(const FName& name) {
+    int len = 0;
+    const wchar_t* s = RenderNameToScratch(name, len);
+    if (!s) return L"";
+    return std::wstring(s, s + len);
+}
+
+bool NameEquals(const FName& name, const wchar_t* expected) {
+    if (!expected) return false;
+    int len = 0;
+    const wchar_t* s = RenderNameToScratch(name, len);
+    if (!s) return expected[0] == L'\0';
+    const size_t elen = ::wcslen(expected);
+    return elen == static_cast<size_t>(len) && ::wmemcmp(s, expected, elen) == 0;
+}
+
+bool NameStartsWith(const FName& name, const wchar_t* prefix) {
+    if (!prefix) return false;
+    int len = 0;
+    const wchar_t* s = RenderNameToScratch(name, len);
+    if (!s) return prefix[0] == L'\0';
+    const size_t plen = ::wcslen(prefix);
+    return plen <= static_cast<size_t>(len) && ::wmemcmp(s, prefix, plen) == 0;
+}
+
+bool NameContains(const FName& name, const wchar_t* needle) {
+    if (!needle) return false;
+    const size_t nlen = ::wcslen(needle);
+    if (nlen == 0) return true;
+    int len = 0;
+    const wchar_t* s = RenderNameToScratch(name, len);
+    if (!s || static_cast<size_t>(len) < nlen) return false;
+    // Bounded scan (the scratch is not guaranteed null-terminated after the
+    // trim, so no wcsstr) -- needles here are a few chars, rendered names ~16.
+    for (size_t i = 0; i + nlen <= static_cast<size_t>(len); ++i) {
+        if (::wmemcmp(s + i, needle, nlen) == 0) return true;
+    }
+    return false;
 }
 
 std::wstring ClassNameOf(void* uobject) {
@@ -195,14 +248,92 @@ std::wstring ClassNameOf(void* uobject) {
     return ToString(NameOf(cls));
 }
 
+namespace {
+// className -> resolved UClass* cache for the by-class walk helpers. Primed on
+// the first textual match DURING a normal walk (no separate resolve pass);
+// thereafter the walk compares ClassOf(obj) against ONE pointer -- no name
+// render at all (~250k engine renders/walk -> ~250k pointer compares). Entries
+// are revalidated once per walk: a BP UClass dies on world unload and its
+// address can be recycled, so a cached class must still be live AND still carry
+// the expected name before a walk trusts it. Keyed by FNV-1a of the text with
+// the full string stored for exact verification (hash collisions fall back to
+// the uncached slow path -- correct, just slow). Mutex-guarded: walks run on
+// the game thread but nothing forbids net-thread lookups.
+struct CachedClass {
+    std::wstring name;
+    void* cls = nullptr;
+};
+std::mutex g_classCacheMu;
+std::unordered_map<uint64_t, CachedClass> g_classCache;
+
+uint64_t Fnv1a(const wchar_t* s) {
+    uint64_t h = 1469598103934665603ull;
+    for (; *s; ++s) {
+        h ^= static_cast<uint64_t>(*s);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// The (revalidated) cached UClass* for className, or nullptr if unresolved /
+// stale / a hash collision. Call once per walk, NOT per object.
+void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
+    hashOut = Fnv1a(className);
+    void* cls = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_classCacheMu);
+        auto it = g_classCache.find(hashOut);
+        if (it == g_classCache.end()) return nullptr;
+        if (::wcscmp(it->second.name.c_str(), className) != 0) return nullptr;  // collision
+        cls = it->second.cls;
+    }
+    // Revalidate OUTSIDE the lock (IsLive may SEH-probe a freed pointer; NameOf
+    // render touches the engine name table). Stale -> drop so the walk re-primes.
+    // Ordering is load-bearing: IsLive(cls) true means the GUObjectArray slot at
+    // cls's InternalIndex still points back at cls, i.e. cls is live and mapped --
+    // ONLY then is the unguarded NameOf(cls) deref in NameEquals safe (the &&
+    // short-circuit is the use-after-free guard here).
+    if (cls && IsLive(cls) && NameEquals(NameOf(cls), className)) return cls;
+    std::lock_guard<std::mutex> lk(g_classCacheMu);
+    auto it = g_classCache.find(hashOut);
+    if (it != g_classCache.end() && it->second.cls == cls) it->second.cls = nullptr;
+    return nullptr;
+}
+
+void PrimeClassWalk(const wchar_t* className, uint64_t hash, void* cls) {
+    std::lock_guard<std::mutex> lk(g_classCacheMu);
+    auto& e = g_classCache[hash];
+    if (e.name.empty()) e.name = className;
+    else if (::wcscmp(e.name.c_str(), className) != 0) return;  // collision: leave the first owner
+    e.cls = cls;
+}
+
+// Per-object match for the by-class walkers. Fast path: pointer compare against
+// the walk-cached class. Slow path (cache unresolved): render-compare, and
+// prime the cache on the first hit so the REST of this walk and every later
+// walk take the fast path.
+inline bool ObjClassMatches(void* obj, const wchar_t* className, uint64_t hash, void*& want) {
+    void* cls = ClassOf(obj);
+    if (!cls) return false;
+    if (want) return cls == want;
+    if (!NameEquals(NameOf(cls), className)) return false;
+    want = cls;
+    PrimeClassWalk(className, hash, cls);
+    return true;
+}
+}  // namespace
+
 void* FindObject(const wchar_t* name, const wchar_t* className) {
     if (!name) return nullptr;
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
-        if (ToString(NameOf(obj)) != name) continue;
-        if (className && ClassNameOf(obj) != className) continue;
+        if (!NameEquals(NameOf(obj), name)) continue;
+        if (className) {
+            void* cls = ClassOf(obj);
+            if (!cls || !NameEquals(NameOf(cls), className)) continue;
+        }
         return obj;
     }
     return nullptr;
@@ -214,13 +345,14 @@ void* FindClass(const wchar_t* className) {
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
-        if (ToString(NameOf(obj)) != className) continue;
+        if (!NameEquals(NameOf(obj), className)) continue;
         // Its meta-class identifies it as a class object. Every UClass-derived
         // meta-type ends in "Class" (Class, BlueprintGeneratedClass,
         // WidgetBlueprintGeneratedClass, AnimBlueprintGeneratedClass, DynamicClass,
         // LinkerPlaceholderClass, ...). Match the suffix so BP-generated classes
         // (UMG widgets, anim BPs) resolve too -- the exact-name match above already
-        // excludes instances (which carry numeric suffixes).
+        // excludes instances (which carry numeric suffixes). Only runs for the
+        // handful of name matches, so the wstring here is off the hot path.
         const std::wstring meta = ClassNameOf(obj);
         if (meta.size() >= 5 && meta.compare(meta.size() - 5, 5, L"Class") == 0) {
             return obj;
@@ -231,28 +363,31 @@ void* FindClass(const wchar_t* className) {
 
 void* FindFunction(void* owningClass, const wchar_t* funcName) {
     if (!owningClass || !funcName) return nullptr;
+    uint64_t fnHash = 0;
+    void* fnCls = BeginClassWalk(L"Function", fnHash);
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
         if (OuterOf(obj) != owningClass) continue;
-        if (ClassNameOf(obj) != L"Function") continue;
-        if (ToString(NameOf(obj)) == funcName) return obj;
+        if (!ObjClassMatches(obj, L"Function", fnHash, fnCls)) continue;
+        if (NameEquals(NameOf(obj), funcName)) return obj;
     }
     return nullptr;
 }
 
 void* FindObjectByClass(const wchar_t* className) {
     if (!className) return nullptr;
+    uint64_t hash = 0;
+    void* want = BeginClassWalk(className, hash);
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
-        if (ClassNameOf(obj) != className) continue;
+        if (!ObjClassMatches(obj, className, hash, want)) continue;
         // Skip the CDO (the archetype, named "Default__<Class>"); we want a
         // real instance.
-        const std::wstring name = ToString(NameOf(obj));
-        if (name.rfind(L"Default__", 0) == 0) continue;
+        if (NameStartsWith(NameOf(obj), L"Default__")) continue;
         return obj;
     }
     return nullptr;
@@ -309,15 +444,33 @@ void DebugProbeSuperStructOffset() {
 int32_t CountObjectsByClass(const wchar_t* className) {
     if (!className) return 0;
     int32_t count = 0;
+    uint64_t hash = 0;
+    void* want = BeginClassWalk(className, hash);
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
-        if (ClassNameOf(obj) != className) continue;
-        if (ToString(NameOf(obj)).rfind(L"Default__", 0) == 0) continue;  // skip CDO
+        if (!ObjClassMatches(obj, className, hash, want)) continue;
+        if (NameStartsWith(NameOf(obj), L"Default__")) continue;  // skip CDO
         ++count;
     }
     return count;
+}
+
+std::vector<void*> FindObjectsByClass(const wchar_t* className) {
+    std::vector<void*> out;
+    if (!className) return out;
+    uint64_t hash = 0;
+    void* want = BeginClassWalk(className, hash);
+    const int32_t n = NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = ObjectAt(i);
+        if (!obj) continue;
+        if (!ObjClassMatches(obj, className, hash, want)) continue;
+        if (NameStartsWith(NameOf(obj), L"Default__")) continue;  // skip CDO
+        out.push_back(obj);
+    }
+    return out;
 }
 
 // FField (not UObject) carries its name at a different offset than UObject.

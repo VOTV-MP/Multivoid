@@ -11,6 +11,7 @@
 #include "coop/weather_lightning.h"
 #include "coop/weather_redsky.h"
 #include "ue_wrap/call.h"
+#include "ue_wrap/directionalwind.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -68,6 +69,17 @@ void* g_setRainParticlesFn   = nullptr;
 bool g_installed = false;
 bool g_observersRegistered = false;     // host POST observers
 bool g_interceptorsRegistered = false;  // client PRE interceptors
+
+// v50 wind-gust suppression. The client must not run AdirectionalWind_C::changeWindOrigin
+// (its local RNG re-roll of windTarget, every 1-60 s) or it fights the host-synced gust.
+// One PRE-interceptor on that UFunction, runtime-gated on g_windIsClient (refreshed every
+// Install, reset on disconnect) -- the weather_fog::g_isClient pattern, so a client->host
+// reconnect goes inert without re-registration and a disconnected client's local wind
+// resumes rolling. Registered once (latch), on BOTH roles (host = pass-through). The
+// interceptor lives on the directionalWind class, which may load after the cycle, so the
+// registration sits ABOVE Install's cycle-gated g_installed early-out.
+std::atomic<bool> g_windIsClient{false};
+bool g_windOriginInterceptorReg = false;
 
 // Session pointer; atomic so the observer / interceptor reads can't race
 // the harness setter on another thread (matches coop::dev::teleport_client +
@@ -170,6 +182,26 @@ bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {
     // stamps the host's current fog DENSITY + the rolling-fog actor's ramp state so a
     // joiner snaps to the host's fog level instead of ramping from 0.
     coop::weather_fog::ReadHostFogState(cycle, out);
+
+    // v43/v50: stamp the host's directionalWind state. The wind actor is SEPARATE from the
+    // cycle (resolved by class). kWindValid marks the read as valid so the client never
+    // zeros its wind from a (rare) mid-transition unread host -- and calm (all-zero)
+    // wind still syncs because the bit, not the values, gates the apply. v50 also stamps
+    // windTarget (the gust input that drives the leaf-shake `intensity`); gate the bit on
+    // BOTH reads so a null windTarget mid-init never ships a 0 gust that forces the client
+    // calm.
+    ue_wrap::directionalwind::WindState wind;
+    ue_wrap::FVector windTgt{};
+    if (ue_wrap::directionalwind::Read(wind) && ue_wrap::directionalwind::ReadTarget(windTgt)) {
+        out.windSpeedBg      = wind.speedBg;
+        out.windStrengthBg   = wind.strengthBg;
+        out.windSpeedRain    = wind.speedRain;
+        out.windStrengthRain = wind.strengthRain;
+        out.windTargetX      = windTgt.X;
+        out.windTargetY      = windTgt.Y;
+        out.windTargetZ      = windTgt.Z;
+        out.flags2 |= coop::net::fog_flags2::kWindValid;
+    }
     return true;
 }
 
@@ -187,6 +219,19 @@ uint64_t SignaturePayload(const coop::net::WeatherStatePayload& p) {
     mix(reinterpret_cast<const uint32_t&>(p.rainLightningChance));
     mix(reinterpret_cast<const uint32_t&>(p.rainDeactivateChance));
     mix(reinterpret_cast<const uint32_t&>(p.rainWindSpeed));
+    // v43: the 4 wind fields -- else a wind-only change (e.g. the host's background
+    // wind shifts on a day rollover with no rain change) hashes the same + deduplicates
+    // away, so the client never gets the new wind. Same trap v23 flags2 closed for fog.
+    mix(reinterpret_cast<const uint32_t&>(p.windSpeedBg));
+    mix(reinterpret_cast<const uint32_t&>(p.windStrengthBg));
+    mix(reinterpret_cast<const uint32_t&>(p.windSpeedRain));
+    mix(reinterpret_cast<const uint32_t&>(p.windStrengthRain));
+    // v50: windTarget (the gust) -- so a gust-only change on a scheduler/fog-edge send
+    // isn't deduped away. (The ~1.2 s DoPulse re-sends it unconditionally regardless, but
+    // including it keeps the change-driven path honest, matching the v43 field decision.)
+    mix(reinterpret_cast<const uint32_t&>(p.windTargetX));
+    mix(reinterpret_cast<const uint32_t&>(p.windTargetY));
+    mix(reinterpret_cast<const uint32_t&>(p.windTargetZ));
     return h;
 }
 
@@ -256,6 +301,14 @@ bool OnSchedulerPreSuppress(void* /*self*/, void* /*params*/) {
     // on the 5 scheduler UFunctions are this cycle's. Logging this at INFO
     // would spam (each fires on a timer); silent suppression is correct.
     return true;
+}
+
+// v50: cancel AdirectionalWind_C::changeWindOrigin (the per-peer RNG windTarget re-roll)
+// on the CLIENT so the host-synced gust holds. Runtime-gated (registered on both roles;
+// host = pass-through). One wind actor per session -> no `self` filter; changeWindOrigin
+// fires on a 1-60 s timer so silent suppression is correct (no log spam).
+bool OnWindOriginPreSuppress(void* /*self*/, void* /*params*/) {
+    return g_windIsClient.load(std::memory_order_acquire);
 }
 
 // Phase 5W Inc-fix-2: echo-suppress interceptor for causeRain. Cancels
@@ -335,6 +388,40 @@ bool ReadComponentIsActive(void* comp, bool* outOk) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+
+    // v50 wind-gust suppression (ABOVE the g_installed early-out: the directionalWind class
+    // may load after the cycle, and this runs every tick until it registers -- the cycle-
+    // gated path below must not block it). Refresh the role gate every call (so a reconnect
+    // with a different role is handled without re-registration), then register the
+    // changeWindOrigin PRE-interceptor once. Registered on BOTH roles; the host's
+    // g_windIsClient=false makes it a pass-through. Best-effort resolve (retries next tick
+    // if the class/UFunction isn't loaded or the interceptor table is momentarily full).
+    g_windIsClient.store(session && session->role() != coop::net::Role::Host,
+                         std::memory_order_release);
+    if (!g_windOriginInterceptorReg) {
+        // Throttle the resolve to ~1 Hz: R::FindClass walks the ~190k-entry GUObjectArray,
+        // and this block sits ABOVE the g_installed early-out so it would otherwise walk
+        // every net-pump tick until registered (the CLAUDE.md per-frame-scan smell -- the
+        // now-removed ticker_sync hit exactly this and threw the lesson). directionalWind
+        // loads at gamemode BeginPlay, well before Install runs, so this resolves on ~the
+        // first attempt; the throttle only bounds the pathological "class never loads" case.
+        static uint32_t sWindResolveN = 0;
+        if ((sWindResolveN++ % 125) == 0) {
+            if (void* wc = R::FindClass(P::name::DirectionalWindClass)) {
+                if (void* fn = R::FindFunction(wc, L"changeWindOrigin")) {
+                    if (GT::RegisterInterceptor(fn, &OnWindOriginPreSuppress)) {
+                        g_windOriginInterceptorReg = true;
+                        UE_LOGI("weather: changeWindOrigin PRE-interceptor registered (@%p; "
+                                "client-suppressed wind-gust roll, host pass-through)", fn);
+                    } else {
+                        UE_LOGW("weather: changeWindOrigin interceptor registration FAILED "
+                                "(table full?) -- retrying");
+                    }
+                }
+            }
+        }
+    }
+
     if (g_installed) return;
 
     if (!TryResolveAllFunctions()) {
@@ -708,6 +795,52 @@ void TickConnect() {
             }
         }
     }
+
+    // HOST weather DoPulse (MTA CBlendedWeather::DoPulse). Re-assert the FULL weather
+    // state to all clients on a slow heartbeat, INDEPENDENT of change-detection. The
+    // change-driven OnSchedulerPost + the one-shot connect-snapshot do NOT cover a
+    // joined client that fresh-boots its OWN New-Game world: that world's daynightCycle
+    // rolls RNG rain/fog at BeginPlay (intComs_settingsApplied -> fogEvent()/timerRain(),
+    // ~15%/10% per the BP) BEFORE our scheduler PRE-interceptors install -- so the client
+    // paints rain+fog the clear host never had, and a STATIC-clear host emits no weather
+    // CHANGE to ever tell it to clear (the user's "client has rain+fog, host is clear").
+    // This heartbeat re-sends the host's authoritative state every ~150 host-connected
+    // ticks (~1-2 s); the receiver's diff-gated ApplyFromHost then clears the leaked rain
+    // (setRainProperties(false) + causeRain(false)) and fog (weather_fog destroys the
+    // stray actor) within one pulse, and is a convergent no-op thereafter. The
+    // post-connect interceptors stop FURTHER local rolls; this DoPulse mops up the
+    // pre-install BeginPlay leak that the interceptors arrived too late to prevent.
+    // Host-only; a 56 B reliable datagram ~twice a second is negligible. Does NOT touch
+    // g_lastSentSig -- OnSchedulerPost's change-dedup stays intact for the live path.
+    {
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (s && s->connected() && s->role() == coop::net::Role::Host && g_installed) {
+            static uint32_t sPulseN = 0;
+            if ((sPulseN++ % 150) == 0) {
+                void* cycle = ResolveCycle();
+                if (cycle && R::IsLive(cycle)) {
+                    coop::net::WeatherStatePayload p{};
+                    if (ReadCycleState(cycle, p)) {
+                        s->SendReliable(coop::net::ReliableKind::WeatherState, &p, sizeof(p));
+                        // Refresh the change-dedup baseline: without this, a same-tick OnSchedulerPost
+                        // carrying the SAME state would see lastSig != sig and re-send a duplicate, so
+                        // the client runs the UNCONDITIONAL fog apply twice in one tick. A LATER real
+                        // change still differs from this sig -> still sends (dedup is sig-vs-sig).
+                        const uint64_t sig = SignaturePayload(p);
+                        g_lastSentSig.store((sig == kNoSendYet) ? (kNoSendYet - 1) : sig,
+                                            std::memory_order_release);
+                    }
+                }
+            }
+        }
+    }
+
+    // CLIENT fog reconcile heartbeat: clear a rolling-fog actor that leaked the
+    // pre-suppression connect window when the host is known-clear. Self-gates to
+    // client + host-clear + throttles internally; cheap when idle (a slot read).
+    if (g_installed) {
+        coop::weather_fog::TickClientReconcile(ResolveCycle());
+    }
 }
 
 void OnDisconnect() {
@@ -737,6 +870,11 @@ void OnDisconnect() {
     coop::weather_lightning::OnDisconnect();
     coop::weather_redsky::OnDisconnect();
     coop::weather_fog::OnDisconnect();
+    ue_wrap::directionalwind::OnDisconnect();  // drop the cached wind-actor ptr
+    // v50: drop the client gate so the changeWindOrigin interceptor (kept registered for
+    // the process lifetime) goes inert -- a disconnected client's local wind resumes its
+    // own RNG gust rolls instead of staying frozen at the last synced target.
+    g_windIsClient.store(false, std::memory_order_release);
     // Clear g_installed so the next session's Install() call can re-enter
     // and re-register lightning + red-sky observers. The other per-feature
     // flags (g_observersRegistered, g_interceptorsRegistered) stay set --
@@ -908,6 +1046,25 @@ void ApplyFromHost(const coop::net::WeatherStatePayload& payload) {
     // (MTA DoPulse, NOT diff-gated): the connect-edge apply must clear a pre-existing
     // client fog even when the enable bits already match the host.
     coop::weather_fog::ApplyFromHost(cycle, payload);
+
+    // v43/v50 WIND: overwrite the client's directionalWind state with the host's (gated on
+    // kWindValid so an unread host never zeros it; calm wind still syncs because the bit,
+    // not the values, marks validity). The 4 rain/background fields converge the derived
+    // totals + engine speed. v50 ALSO writes windTarget -- the GUST input: the client's own
+    // ReceiveTick springs `intensity` from it next frame, reproducing the host's leaf-shake
+    // (the foliage MPC scalar + engine wind). Tick suppression IS needed here, but only of
+    // the client's local changeWindOrigin RNG roll (registered in Install) -- NOT ReceiveTick,
+    // which must run to drive the outputs from the synced target. RE 2026-06-09.
+    if (payload.flags2 & coop::net::fog_flags2::kWindValid) {
+        ue_wrap::directionalwind::WindState wind;
+        wind.speedBg      = payload.windSpeedBg;
+        wind.strengthBg   = payload.windStrengthBg;
+        wind.speedRain    = payload.windSpeedRain;
+        wind.strengthRain = payload.windStrengthRain;
+        ue_wrap::directionalwind::Write(wind);
+        ue_wrap::directionalwind::WriteTarget(
+            ue_wrap::FVector{ payload.windTargetX, payload.windTargetY, payload.windTargetZ });
+    }
 
     UE_LOGI("weather: applied flags 0x%02X -> 0x%02X flags2=0x%02X rain=%.2f lc=%.2f "
             "dc=%.2f ws=%.2f (rain-tx=%d snow-tx=%d scalars-changed=%d)",

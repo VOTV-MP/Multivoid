@@ -51,6 +51,8 @@ void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, in
         if (i == originSlot) continue;
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
+        // v56 pre-world gate (B2): no pose relays to a joiner still at the menu.
+        if (!IsSlotWorldReady(i)) continue;
         const EResult rc = sockets->SendMessageToConnection(
             hConn, buf, len, k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
         if (rc == k_EResultOK) sent_.fetch_add(1);
@@ -79,6 +81,10 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         if (i == originSlot) continue;
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
+        // v56 pre-world gate (B2): relayed gameplay reliables (all world-mutating
+        // by the relay whitelist's nature) skip a joiner still at the menu -- its
+        // world-ready replay re-derives the state.
+        if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
         // One GNS-owned message per recipient (cannot share across sends).
         SteamNetworkingMessage_t* msg = utils->AllocateMessage(len);
         if (!msg) {

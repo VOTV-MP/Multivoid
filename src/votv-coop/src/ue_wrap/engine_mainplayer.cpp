@@ -225,6 +225,20 @@ bool WarmupPhcReleaseCache() {
     return ok;
 }
 
+bool IsMainPlayerGrabbing(void* localPlayer, void* actor) {
+    // Read-only twin of ReleaseMainPlayerGrabIfHolding (same grabbing_actor
+    // slot, no mutation). Fork B 2d: the snapshot bind paths skip the
+    // physics-reconcile + teleport-converge on a prop the LOCAL player is
+    // holding -- forcing SimulatePhysics off mid-hold breaks the
+    // PhysicsHandle grab at a re-bracket.
+    if (!localPlayer || !actor) return false;
+    if (!R::IsLive(localPlayer)) return false;
+    void* const* grabbingSlot = reinterpret_cast<void* const*>(
+        reinterpret_cast<const uint8_t*>(localPlayer) +
+        ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
+    return *grabbingSlot == actor;
+}
+
 bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
     if (!localPlayer || !actor) return false;
     // 2026-05-25 audit fix #2: validate localPlayer liveness before any field

@@ -28,6 +28,7 @@ struct Row {
     bool isLocal = false;    // this row is YOU
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;
+    int  ping = -1;          // RTT ms to this peer (-1 = local/unmeasured, 0 = sub-ms LAN)
 };
 
 struct Snapshot {

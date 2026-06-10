@@ -62,6 +62,25 @@ bool IsClassDescendantOfProp(void* cls);
 bool IsKeyedInteractable(void* obj);
 bool IsClassKeyedInteractable(void* cls);
 
+// True iff `obj`'s class is actorChipPile_C or a subclass -- the grabbable trash PILE lineage
+// ONLY (NOT the garbageClump held-ball, NOT trashBitsPile). Used by the clump re-grab dupe
+// fix: the InpActEvt_use PRE observer fires PropDestroy(eid) only when the local player is
+// grabbing a tracked PILE (lookAtActor). Class cached via ResolveExtraBases. False for null.
+bool IsChipPile(void* obj);
+
+// AtrashBitsPile_C lineage test + its collect counters (v57 trash_pile_sync).
+// amountA@0x0260 / amountB@0x0264 raw int32 per the CXX dump; the displayed
+// "uses" readout is their SUM, formatted live by lookAt on every look -- raw
+// writes are fully consistent (no refresh verb exists on the class). The
+// Read/Write pair returns false for non-trashBitsPile actors (no stray reads).
+bool IsTrashBitsPile(void* obj);
+bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
+bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
+
+// (IsRngDivergentClass + ResolveRngDivergentBases RETIRED 2026-06-10, Fork B
+// 2e: the adoption sweep's universe is IsClassKeyedInteractable + the keyless
+// chipPile lineage -- the same predicate the host snapshot expresses. RULE 2.)
+
 // Per-class Key reader for keyed-interactable actors. Aprop_C lineage reads
 // the FName field directly @+0x02E0. AtrashBitsPile_C reads @+0x0230 (the
 // Aactor_save_C lineage offset). chipPile/clump have NO native Key field --
@@ -95,6 +114,42 @@ bool IsStatic(void* prop);
 // prop won't move even if grabbed (e.g. quest-locked containers).
 bool IsFrozen(void* prop);
 
+// Reads Aprop_C.sleep at +0x02DD. True = the prop is physics-SLEEPING (settled,
+// not actively simulating). SP parity: Aprop_C::init() =
+// SetSimulatePhysics(NOT(static||frozen||sleep)) -> a save-loaded settled prop has
+// sleep=true and is therefore NON-simulating. The snapshot uses this so a settled
+// host prop mirrors as kinematic on the client (no teleport-wake / penetration).
+// CALLER must have established `prop` is a live Aprop_C-derived actor (the offset
+// is meaningless on a non-Aprop_C keyed interactable -- gate on IsDescendantOfProp).
+bool IsSleeping(void* prop);
+
+// v54: reads the Aprop_C VISUAL IDENTITY -- FName `Name`@0x0258, the row into
+// the list_props DataTable that init() resolves the mesh/mass/collision from
+// (CDO default row = 'cube'; SP's loadData restores it before re-running
+// init()). Returns empty for null / non-Aprop_C lineage (internal gate -- the
+// offset is a stray byte elsewhere). The string crosses the wire in
+// PropSpawnPayload.propName so a mirror constructs as the real prop, not the
+// white cube. Game thread only (FName pool read).
+std::wstring GetPropNameString(void* prop);
+
+// v54: reads Aprop_C.removeWOrespawn at +0x02D9 (despawn-without-respawn;
+// part of the bool set SP's getData/loadData round-trips). Same caller
+// contract as IsStatic/IsSleeping: live Aprop_C-derived actor only.
+bool ReadRemoveWOrespawn(void* prop);
+
+// v54 SP-parity pre-Finish identity write: raw-writes Name@0x0258 (skipped
+// when nameRow is NAME_None, ComparisonIndex==0) + Static/removeWOrespawn/
+// frozen/sleep bools on a DEFERRED-spawned (BeginDeferredActorSpawnFromClass)
+// Aprop_C mirror, BEFORE FinishSpawningActor. Finish then runs the UCS ->
+// init() pass which resolves list_props[Name] into the true mesh/mass/
+// collision/SetSimulatePhysics(!(Static||frozen||sleep)) -- the exact field
+// set + ordering SP's own loadObjects->loadData->init() restore achieves,
+// minus the cube flash (SP writes AFTER Finish and re-runs init()). Returns
+// false (no writes) for null / non-Aprop_C lineage. Game thread only.
+bool WriteSpParityIdentity(void* prop, reflection::FName nameRow,
+                           bool isStatic, bool removeWOrespawn,
+                           bool frozen, bool sleep);
+
 // Reads Aprop_C.StaticMesh at +0x0238. This is the UPrimitiveComponent* the
 // PhysicsHandle / PhysicsConstraint binds to (the param to
 // GrabComponentAtLocation / SetConstrainedComponents).
@@ -117,16 +172,11 @@ uint8_t GetChipType(void* actor);
 // mirrored clump shows the SAME trash variant the owner grabbed.
 void SetChipType(void* actor, uint8_t chipType);
 
-// Dispatch AactorChipPile_C::turnToPile(Velocity) on a freshly-spawned chipPile
-// mirror so it fires the impact dust + landing SOUND -- the same BP entry the real
-// clump->pile landing calls (RE: votv-chippile-clump-morph-RE-2026-05-27.md S2.1;
-// sets spwnd=true, operates on `this`, spawns nothing -> no dupe). `velocity` is the
-// clump's pre-landing velocity (cm/s) driving the dust direction. Per-class UFunction
-// cached (resolved on the actual spawned class, like setTex). No-op + safe on any class
-// without turnToPile (FindFunction null). Game-thread only (dispatches a UFunction).
-// Used by the wire receiver for the v29 owner-authoritative landed pile.
-// [[project-bug-trash-chippile-uaf-crash]]
-void TurnChipPileToPile(void* chipPile, const FVector& velocity);
+// (v52: TurnChipPileToPile RETIRED -- RULE 1+2. It dispatched actorChipPile_C::turnToPile,
+// which the disassembly proves is the pile->clump GRAB morph: it spawns a clump (Max:=2.0),
+// throws it, and K2_DestroyActor's self. The old v29 "landed pile impact sound" call thus
+// DESTROYED the freshly-spawned landed pile + spawned a stray self-converting clump = the
+// persistent clump DUPE. A landed pile needs no morph; it just spawns and sits.)
 
 // Convenience: the prop's UClass name (e.g. "prop_container_suitcase_C")
 // via reflection::ClassNameOf. Used for diagnostics only.
@@ -220,9 +270,15 @@ VelocityState GetPhysicsVelocity(void* prop);
 // Use sparingly: O(GUObjectSize) per call. OnSpawn is rare (mushroom
 // growth ~few/sec at peak) so cost is acceptable. Document any per-tick
 // caller -- not designed for hot paths.
+//
+// v54: `expectedPropName` -- when non-empty, a candidate must ALSO match it
+// against its list_props row Name@0x0258 (same class is not same prop for
+// generic Aprop_C: 'cube' and 'cubicleP_1' are both class prop_C; merging
+// them rekeys the wrong object). Empty = class-only (sender carried no row).
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
-                          float radiusCm);
+                          float radiusCm,
+                          const std::wstring& expectedPropName);
 
 // Find the NEAREST chipPile-family actor (AactorChipPile_C + _erie/_leaves/
 // _wetConcrete subclasses) to `anchor` within `radiusCm`, or null. These are

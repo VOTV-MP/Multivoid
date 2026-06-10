@@ -28,11 +28,24 @@ namespace coop::net_pump {
 // the loopback mirror scenario (0 for real coop).
 void Tick(coop::net::Session& session, float displayOffsetX);
 
+// v56: the HOST's per-joiner connect replay (snapshot bracket + every connect
+// state broadcast). Fired by event_feed on the joiner's ClientWorldReady --
+// the connect edge no longer replays (a menu-mode joiner has no world yet).
+// Game thread.
+void RunConnectReplayForSlot(int slot);
+
 // Called from the harness Start sites (play + netloopback) BEFORE
 // session.Start. Resets edge-detector flags so a session stop/restart
 // doesn't carry stale "was connected" / "was holding prop" state into
 // the new session. Mirrors event_feed::OnSessionStart's contract.
 void OnSessionStart();
+
+// Route a dead session back to the main menu (the user must always know the session
+// ended). Used by the harness on the session running->stopped edge -- covers a HOST
+// session death, which net_pump's own client-side flees don't. Idempotent (one travel
+// per session); reuses the validated transparent-bypass + transition("/Game/menu")
+// path. Game thread only.
+void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why);
 
 // Accessor for scenario branches that drive a single puppet outside the
 // net path (drive / show / skin / autotest visuals / etc). Slot 1 is

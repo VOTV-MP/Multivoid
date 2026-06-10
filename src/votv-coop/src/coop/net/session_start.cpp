@@ -140,7 +140,7 @@ bool Session::Start(const Config& cfg) {
     }
 
     state_.store(ConnState::Handshaking);
-    lastRttMs_.store(0);
+    for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
     running_.store(true);
     thread_ = std::thread(&Session::NetThread, this);
     UE_LOGI("net: session started role=%s topology=%s sendHz=%d",

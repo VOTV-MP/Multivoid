@@ -68,6 +68,15 @@ void ReadHostFogState(void* cycle, coop::net::WeatherStatePayload& out);
 // enable_superfog / permanentFog. Game thread. Called from weather_sync::ApplyFromHost.
 void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload);
 
+// CLIENT per-tick reconcile heartbeat (THROTTLED internally to ~3 s). When the
+// host's last-known fog state was CLEAR, destroys any stray rolling-fog actor in
+// the cycle's fogEventObject slot -- the MTA DoPulse backstop for a fog actor that
+// leaked the pre-suppression connect window and that a clear + static host never
+// re-broadcasts to clear (the user's persistent "balls of fog around the client").
+// Self-gates to the client + host-clear; no-op otherwise. Game thread. Called from
+// weather_sync::TickConnect.
+void TickClientReconcile(void* cycle);
+
 // HOST per-tick fog-edge detector (THROTTLED internally to ~3 Hz -- the super-fog
 // check walks GUObjectArray). Returns true when the host's (kFogActive,
 // kSuperFogActive, kPermanentFog) tuple CHANGED since the last fire, so

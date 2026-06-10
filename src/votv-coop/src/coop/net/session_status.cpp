@@ -330,7 +330,7 @@ void Session::HandleConnStatusChanged(void* info) {
             { std::lock_guard<std::mutex> lk(remoteMutex_);
               for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
             { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
-            lastRttMs_.store(0);
+            for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
             UE_LOGI("net: all peers gone -- session back to Disconnected");
         }
     }
@@ -378,7 +378,7 @@ bool Session::Kick(int peerSlot, const char* reason) {
         { std::lock_guard<std::mutex> lk(remoteMutex_);
           for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
         { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
-        lastRttMs_.store(0);
+        for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
     }
     UE_LOGI("net: kicked peer slot %d (reason='%s')", peerSlot, reason ? reason : "kicked");
     return true;

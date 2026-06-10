@@ -77,4 +77,21 @@ bool AddPoints(int32_t amount) {
     return true;
 }
 
+bool RefreshPointsHud() {
+    // The HUD credit number (mainGamemode.playerInterface.text_points, a UTextBlock) is
+    // push-updated ONLY by the BP credit-writer addPoints via SetText -- nothing re-evaluates
+    // it per frame. The client balance mirror writes saveSlot.Points directly (WritePoints,
+    // deliberately side-effect-free to avoid firing credit-earned UI/email), which leaves the
+    // DISPLAYED number frozen at the old value (the 2026-06-08 "host +1000 didn't show on the
+    // client" bug). Re-run the BP's OWN repaint by adding ZERO: lib_C::addPoints disassembles
+    // to exactly { saveSlot.Points += Add; text_points.SetText(IntToText(Points)); if (Add>=0)
+    // stats.total_points += Add else stats.points_spent += -Add }. With Add=0 the value is
+    // unchanged, the stat write is a no-op (+= 0, and the >=0 branch so points_spent is never
+    // touched), and the ONLY observable effect is the SetText repaint -- matching the native
+    // formatting EXACTLY. The credit-earned side-effects WritePoints avoids are gated on a real
+    // (non-zero) credit, so a zero add is clean. Preferred over hand-rolling Conv_IntToText ->
+    // UTextBlock::SetText, which would risk a grouping/format mismatch + FText marshaling.
+    return AddPoints(0);
+}
+
 }  // namespace ue_wrap::economy

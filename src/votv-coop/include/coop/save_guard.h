@@ -13,7 +13,13 @@
 // gates on role.
 #pragma once
 
+#include <filesystem>
+
 namespace coop::save_guard {
+
+// %LOCALAPPDATA%\VotV\Saved\SaveGames (empty path if LOCALAPPDATA is unset).
+// Shared with coop/save_transfer (v56) -- the one save-dir resolver.
+std::filesystem::path SaveGamesDir();
 
 // Snapshot %LOCALAPPDATA%\VotV\Saved\SaveGames into a timestamped
 // SaveGames\coop_backup\<YYYYMMDD_HHMMSS>\ directory, pruning to the newest few.

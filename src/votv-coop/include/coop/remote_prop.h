@@ -129,12 +129,30 @@ void OnDisconnectForSlot(int peerSlot);
 // for the common case where the destroyed prop isn't grabbed.
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer);
 
-// Echo-suppressed local destroy of an actor we OWN a copy of. Used to CONSUME
-// this peer's own copy of a shared world chipPile when the other peer grabbed
-// theirs (the pile is loaded independently per peer, key=None, no cross-peer id,
-// so it's resolved by POSITION and destroyed directly -- not via a wire eid).
-// MarkIncomingDestroy ensures our K2_DestroyActor PRE observer doesn't re-broadcast
-// it. Game-thread only. No-op for null/dead. [[project-bug-trash-chippile-uaf-crash]]
+// Clear every slot's kinematic-drive cache entry for `actor` (so nothing
+// drives a destroyed actor next tick). Extracted from OnDestroy (Fork B 2e,
+// 2026-06-10): the adoption sweep destroys actors through the same teardown
+// contract -- one implementation. Game thread only; no-op for null.
+void ClearAnyDriveFor(void* actor);
+
+// v52: handle an incoming PropConvert -- the ATOMIC trash-clump ball->pile swap. Destroys the
+// mirror BALL by payload.oldEid (the full OnDestroy eid teardown: drive-cache clear, PHC release,
+// echo-suppressed K2_DestroyActor, UnregisterPropMirror) THEN spawns the authoritative pile by
+// payload.newEid through the existing OnSpawn fresh-spawn path as a settled landed pile (+
+// RegisterPropMirror). Both run in this one handler -> the ball vanishes the exact frame the pile
+// appears: no lingering ball, no double pile (the two eids are distinct by construction). Returns
+// the spawned pile actor so the caller can enroll it in the mirror-pile death-watch (for identity-
+// based re-grab destroy), or null if the spawn failed. Game-thread only.
+// RE: votv-clump-lifecycle-observability-and-robust-design-2026-06-08-pass2.md.
+void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer, int senderSlot);
+
+// Echo-suppressed local destroy of an actor we own a copy of (MarkIncomingDestroy makes
+// our K2_DestroyActor PRE observer skip the re-broadcast). Used by ForceRelease to tear
+// down a null-mesh clump mirror on disconnect/teardown. (The former position-based OnSpawn
+// "consume the co-located source pile" caller was RETIRED 2026-06-08 -- chipPiles are not
+// co-located cross-peer; a re-grabbed pile now drops its mirror by IDENTITY via the
+// trash_collect_sync mirror-pile death-watch -> PropDestroy(eid) / PropConvert, v52.)
+// Game-thread only. No-op for null/dead. [[project-bug-trash-chippile-uaf-crash]]
 void ConsumeLocalActor(void* actor);
 
 }  // namespace coop::remote_prop

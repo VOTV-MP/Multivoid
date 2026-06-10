@@ -11,6 +11,8 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <windows.h>  // GetTickCount64 (the Local() negative-miss TTL clock)
+
 #include <atomic>
 #include <string>
 
@@ -52,13 +54,35 @@ Registry& Registry::Get() {
 }
 
 void* Registry::RescanLocal() {
+    // Allocation-free walk (RAM-balloon root-cause fix 2026-06-10): the old
+    // ClassNameOf/ToString compares constructed TWO strings per UObject
+    // scanned (~250k/walk) -- the wstring bomb every "cold rescan in a
+    // no-player window" balloon traced back to. Class matched by pointer
+    // (primed on the first textual hit); names compared against the
+    // per-thread scratch. The primed UClass* persists across rescans
+    // (game-thread-only static); a BP class dies on world unload and its
+    // address can be recycled, so it is revalidated (live + still named
+    // mainPlayer_C) before each walk trusts it.
+    static void* sMpClass = nullptr;
+    if (sMpClass && (!R::IsLive(sMpClass) ||
+                     !R::NameEquals(R::NameOf(sMpClass), P::name::MainPlayerClass))) {
+        sMpClass = nullptr;
+    }
+    void* mpClass = sMpClass;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        if (R::ClassNameOf(obj) != P::name::MainPlayerClass) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
+        void* cls = R::ClassOf(obj);
+        if (!cls) continue;
+        if (mpClass) {
+            if (cls != mpClass) continue;
+        } else {
+            if (!R::NameEquals(R::NameOf(cls), P::name::MainPlayerClass)) continue;
+            mpClass = cls;
+            sMpClass = cls;
+        }
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // skip CDO
         if (!R::IsLive(obj)) continue;
         // The discriminator: only the LOCAL player has a non-null Controller.
         // Puppets are explicitly unpossessed (AutoPossess + AI disabled at
@@ -72,10 +96,37 @@ void* Registry::RescanLocal() {
 }
 
 void* Registry::Local() {
-    if (localCached_ && R::IsLive(localCached_) && E::GetController(localCached_)) {
+    // Warm-cache validation by IDENTITY, not possession. The local mainPlayer_C
+    // never becomes a puppet, so "alive AND not a registered puppet" is the stable
+    // invariant for a known-good cached pointer. Do NOT re-require a non-null
+    // Controller here: a POSSESSABLE local -- driving the ATV/quadbike or sitting on
+    // a kerfur -- hands its Controller to the vehicle pawn (PlayerController.Possess
+    // unpossesses mainPlayer_C) yet is still the local player. The old GetController
+    // check invalidated this cache EVERY FRAME while seated, so Local() fell through
+    // to RescanLocal() -- a full GUObjectArray walk with a std::wstring alloc per
+    // UObject (hundreds of k) -- per rendered frame via the unconditional
+    // nameplate::Update(), collapsing the host to ~5 fps and ballooning the seated
+    // peer's RAM (the same wstring-bomb shape as the 19 GB Install regression). The
+    // COLD RescanLocal() still uses GetController as the tie-breaker among the
+    // mainPlayer_C instances (local vs puppets); only the re-validation of an
+    // already-resolved cache changed. (quadbike RE 2026-06-08.)
+    if (localCached_ && R::IsLive(localCached_) && !IsPuppet(localCached_)) {
         return localCached_;
     }
+    // Negative-result TTL (v56 menu-window balloon fix, see header): a miss is
+    // DETERMINISTIC while no gameplay world is up -- and a dead cached pawn
+    // mid-travel misses for the whole load window -- so per-tick callers must
+    // not re-walk GUObjectArray at tick rate for it. Worst case the new pawn
+    // is detected kLocalMissTtlMs late, against a multi-second world load.
+    // InvalidateLocal resets both fields -> an explicit level-change re-walks
+    // immediately.
+    localCached_ = nullptr;
+    const unsigned long long now = ::GetTickCount64();
+    if (localMissAtMs_ != 0 && now - localMissAtMs_ < kLocalMissTtlMs) {
+        return nullptr;
+    }
     localCached_ = RescanLocal();
+    localMissAtMs_ = localCached_ ? 0 : now;
     return localCached_;
 }
 
@@ -115,6 +166,7 @@ void Registry::SetLocalPeerId(uint8_t id) {
 
 void Registry::InvalidateLocal() {
     localCached_ = nullptr;
+    localMissAtMs_ = 0;  // explicit invalidation re-walks immediately (no miss TTL)
 }
 
 RemotePlayer* Registry::Puppet(uint8_t peerSessionId) {

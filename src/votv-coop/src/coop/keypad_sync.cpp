@@ -50,7 +50,7 @@ using State = PL::State;
 std::mutex g_mutex;  // guards the maps below (all access is game-thread-serial; defensive)
 std::unordered_map<std::wstring, Ref>   g_index;      // key -> live keypad
 std::unordered_map<std::wstring, State> g_lastKnown;  // key -> last broadcast/applied state (change-detect + echo-suppress)
-std::unordered_map<std::wstring, bool>  g_accepted;   // GT-only (HOST): key -> accept latched this code-entry (un-latched when the buffer no longer matches)
+std::unordered_map<std::wstring, bool>  g_unlocked;   // GT-only (HOST): key -> a correct code has unlocked this keypad's gated door this session. Host-authoritative LED latch: keeps the keypad GREEN (re-asserts active@0x0330 against a stray local open(false)) + holds the unlock, matching SP's persistent unlock (Phase B). Replaces the old per-code-entry g_accepted (RULE 2).
 struct Pending { State want; std::chrono::steady_clock::time_point deadline; };
 std::unordered_map<std::wstring, Pending> g_pending;  // key -> deferred incoming apply
 
@@ -150,8 +150,13 @@ void ApplyState(void* actor, const std::wstring& key, const State& want, unsigne
         const bool append = want.buffer.size() >= cur.buffer.size() &&
                             want.buffer.compare(0, cur.buffer.size(), cur.buffer) == 0;
         if (!append) {
-            // diverged / shrank (post-submit clear, backspace) -> clear then retype
-            PL::CallReset(actor);
+            // diverged / shrank (CANCEL clear, post-submit clear, backspace) -> clear the typed
+            // buffer then retype. ClearBuffer is a direct inPassword length-zero with NO side
+            // effects -- NOT the BP Reset() verb, which is the keypad's "set a new code" mode
+            // (isReset=true -> BLUE LED): mirroring the client's CANCEL (a buffer shrink) through
+            // Reset() turned the HOST blue forever (the 2026-06-08 bug). The red LED is mirrored
+            // separately by the `active` write below; the panel repaint is the CallUpd at the end.
+            PL::ClearBuffer(actor);
             for (wchar_t c : want.buffer)
                 if (c >= L'0' && c <= L'9') PL::CallInputNumber(actor, static_cast<int32_t>(c - L'0'));
         } else {
@@ -244,41 +249,65 @@ void HostAcceptPoll() {
         refs.reserve(g_index.size());
         for (auto& kv : g_index) refs.emplace_back(kv.first, kv.second);
     }
-    // Un-latch ONLY a currently-latched key -- never insert/rewrite an entry for an idle keypad
-    // (operator[]=false would write all ~14 keys every tick). Keeps g_accepted to the few keys
-    // that actually accepted.
-    auto unlatch = [](const std::wstring& key) {
-        auto it = g_accepted.find(key);
-        if (it != g_accepted.end() && it->second) it->second = false;
-    };
     for (auto& r : refs) {
         void* lock = r.second.actor;
         if (!R::IsLiveByIndex(lock, r.second.idx)) continue;
         State cur;
         if (!PL::ReadState(lock, cur)) continue;
-        // Short-circuit on the BP's own length gate (Len(inPassword)>=5) BEFORE the password /
-        // isReset reads -- on the common idle keypad (empty buffer) this is the only work done.
-        if (cur.buffer.size() < 5) { unlatch(r.first); continue; }  // too short -> un-latch, skip
+
+        // (1) ALREADY UNLOCKED -> keep the LED host-authoritatively GREEN. The split-brain the
+        //     user hit: open(password==inPassword) runs on whichever peer presses ENTER, and a
+        //     stray open(false) -- the host (or the typing client) pressing ENTER on the buffer
+        //     the submit already cleared, i.e. open(password=="")==false -- reds active@0x0330
+        //     and nothing put it back -> "host PURPLE forever" (a red LED over a stuck digit
+        //     panel) while the client showed green. Re-assert green here so the host's LED
+        //     matches the green PollAndBroadcast sends every peer. Skip while in set-new-code
+        //     mode (isReset -> upd() shows BLUE; don't clobber it). Matches SP's persistent
+        //     unlock; no door re-drive (SuppressHostHeldDoor already holds it open).
+        if (auto it = g_unlocked.find(r.first); it != g_unlocked.end() && it->second) {
+            // A keypad entering set-new-code (isReset) mode is being RE-LOCKED with a fresh
+            // password -> DROP the unlock latch so that once the new code is set it re-evaluates
+            // accept from scratch (red until the new code is typed), instead of staying pinned
+            // green for the rest of the session. (Re-closing the gated DOOR on a password change
+            // is a Phase B follow-up -- the door hold-register integration noted at the accept.)
+            if (PL::IsResetMode(lock)) { g_unlocked.erase(it); continue; }
+            if (!cur.active) { PL::WriteActive(lock, true); PL::CallUpd(lock); }
+            continue;
+        }
+
+        // (2) Idle keypad: an empty buffer can never equal a non-empty password -- skip the
+        //     password/isReset reads (the only work done on the common idle keypad).
+        if (cur.buffer.empty()) continue;
+
+        // (3) Accept iff the full buffer equals the password and we're NOT setting a new code.
+        //     The old Len>=5 short-circuit was the BP's AUTO-submit gate -- but a manual ENTER
+        //     submits ANY length, so a <5-digit code (the user's 1111 + ENTER) never reached
+        //     here and the host never accepted it host-authoritatively. Match on exact equality
+        //     instead: a partial buffer can't equal the full password, so this only fires on a
+        //     genuinely complete correct code.
         const std::wstring pw = PL::ReadPassword(lock);
-        // accept = a full buffer equal to the password, and NOT in set-new-code mode (isReset
-        // writes the password instead of opening -- skip the auto-open for it).
         const bool accept = !pw.empty() && cur.buffer == pw && !PL::IsResetMode(lock);
-        if (!accept) { unlatch(r.first); continue; }  // wrong/partial code -> un-latch
-        if (g_accepted[r.first]) continue;            // already handled this code-entry
-        g_accepted[r.first] = true;
-        void* door = PL::GatedDoor(lock);
-        if (!door) { UE_LOGW("keypad: ACCEPT key='%ls' but no gated door resolved", r.first.c_str()); continue; }
-        ue_wrap::door::SetActive(door, true);        // unlock (CanOpen) -- authoritative, independent of the native chain
-        ue_wrap::door::ForceOpen(door);              // open reliably regardless of host-player distance (idempotent if already open)
-        // Mute the host's autoclose + sensor for this door (same proven recipe as a client-held door,
-        // door.h SuppressHostHeldDoor): the host has NO player at the keypad's door (only the typing
-        // client's puppet), so its native checkSensor would find an empty sensor + autoclose and shut
-        // the door it just opened -> open/close oscillation. The door stays open (the keypad unlock
-        // persists, like SP's door.Active=true). NOTE (Phase B scope): the keypad door is not yet
-        // registered in the door channel's hold register, so it is not E-closable and won't auto-close
-        // after walk-through -- a follow-up integrates it with the hold register for those nuances.
-        ue_wrap::door::SuppressHostHeldDoor(door);
-        UE_LOGI("keypad: ACCEPT key='%ls' -- correct code, unlocked + opened the gated door (host-authoritative)", r.first.c_str());
+        if (!accept) continue;
+
+        // (4) ACCEPT edge: latch the keypad unlocked, drive the gated door, green the host LED.
+        g_unlocked[r.first] = true;
+        if (void* door = PL::GatedDoor(lock)) {
+            ue_wrap::door::SetActive(door, true);  // unlock (CanOpen gate) -- authoritative, independent of the native chain
+            ue_wrap::door::ForceOpen(door);        // open reliably regardless of host-player distance (idempotent if already open)
+            // Mute the host's autoclose + sensor for this door (same recipe as a client-held door,
+            // door.h SuppressHostHeldDoor): the host has NO player at the keypad's door (only the
+            // typing client's puppet), so its native checkSensor would find an empty sensor +
+            // autoclose and shut the door it just opened -> open/close oscillation. The door stays
+            // open (persistent unlock, like SP's door.Active=true). NOTE (Phase B scope): the keypad
+            // door is not yet in the door channel's hold register, so it is not E-closable / won't
+            // auto-close after walk-through -- a follow-up integrates it for those nuances.
+            ue_wrap::door::SuppressHostHeldDoor(door);
+        } else {
+            UE_LOGW("keypad: ACCEPT key='%ls' but no gated door resolved", r.first.c_str());
+        }
+        PL::WriteActive(lock, true);  // host keypad GREEN, host-authoritative (PollAndBroadcast carries active=1 to peers)
+        PL::CallUpd(lock);            // repaint: upd() selects eff_glow_green from the freshly-written active
+        UE_LOGI("keypad: ACCEPT key='%ls' -- correct code: unlocked door + green LED (host-authoritative)", r.first.c_str());
     }
 }
 
@@ -364,7 +393,7 @@ void OnDisconnect() {
     const size_t n = g_lastKnown.size();
     g_lastKnown.clear();
     g_pending.clear();
-    g_accepted.clear();
+    g_unlocked.clear();  // a new session re-evaluates each keypad's unlock from scratch
     if (n > 0) UE_LOGI("keypad: OnDisconnect cleared %zu last-known", n);
 }
 

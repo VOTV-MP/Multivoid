@@ -169,6 +169,15 @@ private:
     void* RescanLocal();
 
     void* localCached_ = nullptr;       // local mainPlayer_C actor, cached
+    // Negative-result TTL for Local(): at the MENU (no gameplay world) the
+    // cache misses DETERMINISTICALLY, and per-tick callers (net_pump,
+    // nameplate) would re-walk GUObjectArray at 60 Hz -- the v56 menu-window
+    // client balloon (3.1->11 GB before the save Request). A miss is cached
+    // for kLocalMissTtlMs; world-up detection is delayed by at most that
+    // (irrelevant against a multi-second world load). 0 = no cached miss.
+    // Reset by InvalidateLocal so a level change re-walks immediately.
+    static constexpr unsigned long long kLocalMissTtlMs = 500;
+    unsigned long long localMissAtMs_ = 0;
     uint8_t localPeerId_ = kPeerIdUnknown;
     // One puppet slot per peer id. Local is NOT in this array; it's
     // tracked via `localCached_` + `localPeerId_`. So if localPeerId_=1

@@ -81,8 +81,9 @@ void Render() {
         const bool host = LocalIsHost();
         const bool dev  = ui::dev_menu::DevMode();
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
-        if (ImGui::BeginTable("##roster", 1, tflags)) {
+        if (ImGui::BeginTable("##roster", 2, tflags)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 50.0f);
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
@@ -99,7 +100,8 @@ void Render() {
                     ImGui::PushStyleColor(ImGuiCol_Text, nickCol);
                     // DontClosePopups: clicking the row toggles the popup; the
                     // selection state itself is meaningless here.
-                    if (ImGui::Selectable(nick, false, ImGuiSelectableFlags_DontClosePopups))
+                    if (ImGui::Selectable(nick, false,
+                                          ImGuiSelectableFlags_DontClosePopups | ImGuiSelectableFlags_SpanAllColumns))
                         ImGui::OpenPopup("##act");
                     ImGui::PopStyleColor();
 
@@ -122,6 +124,21 @@ void Render() {
                 } else {
                     ImGui::TextColored(nickCol, "%s", nick);
                     if (r.isLocal) { ImGui::SameLine(0.0f, 6.0f); ImGui::TextDisabled("(you)"); }
+                }
+
+                // Ping column: per-peer RTT, right-aligned (remote connected peers only;
+                // you have no self-ping). 0 on a sub-ms LAN shows "<1ms"; -1 (unsampled)
+                // shows "--".
+                ImGui::TableSetColumnIndex(1);
+                if (!r.isLocal && r.connected) {
+                    char pb[16];
+                    if (r.ping > 0)       std::snprintf(pb, sizeof(pb), "%dms", r.ping);
+                    else if (r.ping == 0) std::snprintf(pb, sizeof(pb), "<1ms");
+                    else                  std::snprintf(pb, sizeof(pb), "--");
+                    const float tw = ImGui::CalcTextSize(pb).x;
+                    const float cw = ImGui::GetContentRegionAvail().x;
+                    if (cw > tw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cw - tw));
+                    ImGui::TextDisabled("%s", pb);
                 }
                 ImGui::PopID();
             }

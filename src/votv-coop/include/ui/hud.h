@@ -1,4 +1,5 @@
-// ui/hud.h -- the always-on passive coop HUD surface (nameplates + chat feed).
+// ui/hud.h -- the always-on passive coop HUD surface (nameplates + chat feed +
+// the dev object-overlay labels).
 //
 // A presentation surface on ui::imgui_overlay, like ui::scoreboard -- but PASSIVE
 // and ALWAYS-ON: it draws whenever there is something to show (a remote puppet to
@@ -7,7 +8,8 @@
 // menu, server browser, ...) draw ON TOP of this.
 //
 // Principle 7: pure presentation. The facts come from game-thread snapshots --
-// coop::nameplate (projected screen-space labels) + coop::chat_feed (event lines).
+// coop::nameplate (projected screen-space labels) + coop::chat_feed (event lines)
+// + coop::dev::object_overlay (projected world-object debug labels, dev-toggled).
 // This file only draws them via ImGui.
 
 #pragma once

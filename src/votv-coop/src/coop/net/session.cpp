@@ -169,11 +169,21 @@ bool Session::TryGetReliable(ReliableMessage& out) {
 bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                                  int len, uint8_t senderSlot) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    if (len < 0 || len > kMaxReliablePayload) {
+    // v56: SaveTransferChunk is the one BULK kind -- it bypasses the 228B inbox on
+    // the receiver (bulk sink), so its real bound is ReliableHeader.payloadLen's
+    // uint16 (kSaveChunkBytes + 4 fits with headroom). Everything else keeps the
+    // tight event-datagram cap.
+    const int cap = (kind == ReliableKind::SaveTransferChunk) ? 65000 : kMaxReliablePayload;
+    if (len < 0 || len > cap) {
         UE_LOGW("net: SendReliableToSlot rejected (slot=%d len=%d > %d)",
-                peerSlot, len, kMaxReliablePayload);
+                peerSlot, len, cap);
         return false;
     }
+    // v56 pre-world gate (B2, the MTA invariant): world-mutating kinds don't
+    // flow to a slot that hasn't announced world-ready (a menu-mode joiner is
+    // connected ~30-60 s before it has a world); the world-ready connect replay
+    // reconstructs all of it. Allowlist: handshake/identity + the save transfer.
+    if (!IsSlotWorldReady(peerSlot) && !IsPreWorldSendableKind(kind)) return false;
     const uint32_t hConn = peerConns_[peerSlot].load();
     if (hConn == 0) return false;
 
@@ -207,8 +217,12 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     int64 outMsgNum = 0;
     sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
     if (outMsgNum < 0) {
-        UE_LOGW("net: SendReliableToSlot(slot=%d) rc=%lld kind=%u",
-                peerSlot, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
+        // Chunk sends fail ROUTINELY under send-buffer backpressure -- that IS the
+        // save-transfer pump's pacing signal (it retries next tick); don't spam.
+        if (kind != ReliableKind::SaveTransferChunk) {
+            UE_LOGW("net: SendReliableToSlot(slot=%d) rc=%lld kind=%u",
+                    peerSlot, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
+        }
         return false;
     }
     sent_.fetch_add(1);
@@ -233,6 +247,8 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     for (int i = 0; i < kMaxPeers; ++i) {
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
+        // v56 pre-world gate (B2) -- same rule as SendReliableToSlot, per slot.
+        if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
 
         SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
         if (!msg) {
@@ -500,6 +516,19 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         // payloadLen is uint16_t, can't be negative -- only the upper bound is
         // a real guard.
         const int payloadLen = static_cast<int>(rh.payloadLen);
+        // v56: the save-blob chunk exceeds the fixed inbox payload BY DESIGN --
+        // divert it whole to the registered bulk sink (coop/save_transfer's heap
+        // assembler) right here on the net thread; it never enters the 228B
+        // ReliableMessage ring (and is never relayed -- host->one-client only).
+        if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferChunk) {
+            if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
+            if (BulkSinkFn sink = bulkSink_.load(std::memory_order_acquire)) {
+                sink(peerSlot,
+                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+                     payloadLen);
+            }
+            return;
+        }
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
         {
@@ -739,12 +768,11 @@ void Session::NetThread() {
         // send rate, packets pile up in the send queue and the pose stream is delivered SECONDS
         // late -- which is invisible without this telemetry. Logged as an INFO summary; WARNs
         // fire on high ping / send-queue latency / pending backlog so the events stand out (and
-        // flush to disk). lastRttMs_ still gets the best ping for the HUD.
+        // flush to disk). rttMsBySlot_[i] gets each peer's ping for the nameplate + scoreboard.
         if (state_.load() == ConnState::Connected && now >= nextRttSample) {
-            int bestPing = -1;
             for (int i = 0; i < kMaxPeers; ++i) {
                 const uint32_t hConn = peerConns_[i].load();
-                if (hConn == 0) continue;
+                if (hConn == 0) { rttMsBySlot_[i].store(-1, std::memory_order_relaxed); continue; }
                 SteamNetConnectionRealTimeStatus_t st{};
                 if (sockets->GetConnectionRealTimeStatus(hConn, &st, 0, nullptr) != k_EResultOK) continue;
                 // m_usecQueueTime ("usec until the next send") returns a huge sentinel (~INT64_MAX)
@@ -753,8 +781,10 @@ void Session::NetThread() {
                 // the PENDING BYTES (m_cbPendingReliable/Unreliable), not this field.
                 long long queueMs = static_cast<long long>(st.m_usecQueueTime / 1000);
                 if (queueMs < 0 || queueMs > 60000) queueMs = 0;  // sentinel / no estimate -> 0
-                if (st.m_nPing >= 0 && st.m_nPing < 60000 && (bestPing < 0 || st.m_nPing < bestPing))
-                    bestPing = st.m_nPing;
+                // Store THIS slot's RTT for the per-peer nameplate + scoreboard ping
+                // (event_feed fans it to the slot's puppet; roster reads it per row).
+                rttMsBySlot_[i].store((st.m_nPing >= 0 && st.m_nPing < 60000) ? st.m_nPing : -1,
+                                      std::memory_order_relaxed);
                 UE_LOGI("net-diag[slot %d]: ping=%dms qual=%.0f/%.0f%% in=%.0f out=%.0f pkt/s "
                         "sendRate=%dB/s pendRel=%dB pendUnrel=%dB unacked=%dB queue=%lldms",
                         i, st.m_nPing, st.m_flConnectionQualityLocal * 100.f,
@@ -775,7 +805,6 @@ void Session::NetThread() {
                             i, st.m_cbPendingReliable, st.m_cbPendingUnreliable, kHighPendingBytes,
                             st.m_nSendRateBytesPerSecond, queueMs);
             }
-            if (bestPing >= 0) lastRttMs_.store(bestPing);
             if (sendFails > 0)
                 UE_LOGW("net-diag: %llu outbound send(s) REJECTED by GNS since last sample "
                         "(send buffer full / rate-limited)", static_cast<unsigned long long>(sendFails));

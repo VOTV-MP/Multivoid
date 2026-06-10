@@ -24,10 +24,14 @@
 //            ReliableKind::NonPropEntityState packet. Add Init POST hooks
 //            on the non-Aprop_C trash classes (host-broadcast / client-
 //            reproduce).
-//   Inc 3 -- host-authoritative gating of the 5 garbage spawners
-//            (undergroundGarbageSpawner, event_trashPiles, arirTrasher,
-//            tool_garbageSpawner, baseCleaner_trashBits). Mirror of the
-//            shipped mushroom-spawner client-suppression pattern.
+//   Inc 3 -- host-authoritative gating of the garbage spawners
+//            (event_trashPiles, arirTrasher, baseCleaner_trashBits).
+//            tool_garbageSpawner deliberately allow-through (per-shot
+//            player action, principle 6). The undergroundGarbageSpawner
+//            row was DELETED Fork C 2026-06-10: bytecode-proven to mint
+//            only dirthole_item_C (outside the sync universe) -- the
+//            suppression deleted the client's per-peer loot mounds with
+//            no host replacement; dirtholes are per-peer LOCAL by doctrine.
 //
 // RE source: research/findings/votv-garbage-trash-interaction-RE-2026-05-27.md
 

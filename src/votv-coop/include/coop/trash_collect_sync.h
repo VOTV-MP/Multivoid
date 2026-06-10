@@ -29,6 +29,10 @@
 
 #pragma once
 
+#include <cstdint>
+
+#include "ue_wrap/types.h"  // FVector (the WatchPileAt position overload)
+
 namespace coop::net { class Session; }
 
 namespace coop::trash_collect_sync {
@@ -56,7 +60,39 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* session);
 // set. [[project-bug-trash-chippile-uaf-crash]]
 void TickWatchReleasedClumps(coop::net::Session* session);
 
-// Drop all watched clumps (full session teardown / aggregate disconnect).
+// ---- mirror-pile death-watch (v52: identity-based clump re-grab destroy) -----------------
+//
+// A trash pile (the ball's convert product) exists as TWO cross-peer entities sharing one eid:
+// the owner's authoritative pile + the receiver's mirror pile. When ANY peer grabs the shared
+// pile, the pile morphs into a held clump and self-destructs LOCALLY on the grabber's machine
+// (actorChipPile_C::playerGrabbed -> turnToPile -> K2_DestroyActor, all BP-internal/unobservable).
+// So whoever grabs it, the grabber's machine watches the pile die and broadcasts PropDestroy(eid)
+// -> the other peers drop their mirror. This is the robust, identity-exact replacement for the
+// retired InpActEvt_use lookAtActor grab-guess (which was a single-edge heuristic that fired only
+// on the grabber and only via a fiddly aim+press disambiguation).
+//
+// Register a pile (owner's just-converted pile OR a receiver's freshly-spawned mirror pile) under
+// its cross-peer eid. Idempotent per eid. Game thread.
+void WatchPile(void* pileActor, uint32_t eid);
+
+// Same, with a caller-provided position (perf audit W-3 2026-06-10: the
+// snapshot drain already read the pile's location for the payload -- this
+// overload skips the duplicate GetActorLocation dispatch per expressed pile).
+void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos);
+
+// Per-tick liveness sweep over watched piles. When a watched pile's actor goes dead AND it was
+// NEAR the local camera (a grab happens AT the player) AND we're not in a world-transition window
+// (`suppress` -- the connect-teleport sublevel stream-out makes far piles go dead; the grime
+// super-sponge precedent), broadcast PropDestroy(key=None, eid). Far / transition deaths are
+// stream-outs -> ignored. O(1)/tick over a tiny bounded set. Game thread.
+void TickWatchReleasedPiles(coop::net::Session* session, bool suppress);
+
+// A watched pile was torn down by an INCOMING PropDestroy/PropConvert (the OTHER peer grabbed it):
+// drop its watch entry so the next liveness sweep doesn't re-broadcast its (wire-induced) death
+// back to the origin. Game thread. No-op if the eid isn't watched.
+void NotifyPileConsumed(uint32_t eid);
+
+// Drop all watched clumps + piles (full session teardown / aggregate disconnect).
 void OnDisconnect();
 
 }  // namespace coop::trash_collect_sync

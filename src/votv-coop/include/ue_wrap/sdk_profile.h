@@ -338,8 +338,15 @@ inline constexpr size_t UPhysicsHandleComponent_ConstraintHandle   = 0x0150;  //
 inline constexpr size_t Aprop_propData      = 0x0260;  // Fstruct_prop (sizeof 0x72)
 inline constexpr size_t Fstruct_prop_heavy  = 0x006C;  // bool inside propData -- THE heavy flag
 inline constexpr size_t Aprop_propData_heavy = Aprop_propData + Fstruct_prop_heavy;  // = 0x02CC
+// v54: the Aprop_C VISUAL IDENTITY -- the list_props DataTable row name that
+// init() resolves the mesh/mass/collision from (CDO default row = 'cube').
+// SP's loadData restores it before re-running init(); our mirror spawn writes
+// it pre-FinishSpawningActor. SDK dump prop.hpp:12 `FName Name; // 0x0258`.
+inline constexpr size_t Aprop_Name          = 0x0258;  // FName (ComparisonIndex @ +0, Number @ +4)
 inline constexpr size_t Aprop_Static        = 0x02D8;  // bool (a Static prop can't be grabbed)
+inline constexpr size_t Aprop_removeWOrespawn = 0x02D9;  // bool (despawn-without-respawn; saved by SP getData/loadData)
 inline constexpr size_t Aprop_frozen        = 0x02DA;  // bool
+inline constexpr size_t Aprop_sleep         = 0x02DD;  // bool (prop settled/sleeping -> physics NOT simulating). SDK dump prop.hpp:19 `bool sleep; // 0x02DD`. SP: init() = SetSimulatePhysics(NOT(static||frozen||sleep)).
 inline constexpr size_t Aprop_Key           = 0x02E0;  // FName (ComparisonIndex @ +0, Number @ +4)
 inline constexpr size_t Aprop_StaticMesh    = 0x0238;  // UStaticMeshComponent*
 
@@ -517,6 +524,27 @@ inline constexpr size_t WeatherFogController_Alpha    = 0x023C;  // float (curre
 inline constexpr size_t WeatherFogController_Duration = 0x0240;  // float (total lifetime)
 inline constexpr size_t WeatherFogController_fogPhase = 0x0244;  // float (eased progress 0..1)
 inline constexpr size_t WeatherFogController_Strength = 0x024C;  // float (max density scale)
+
+// AdirectionalWind_C (the wind actor; singleton, held by mainGamemode.directionalWind
+// @0x0F70). The user-visible "strong leaves shaking" is the per-tick spring `intensity`
+// (a low-pass of windTarget's displacement from origin), NOT these 4 fields -- the tick
+// even OVERWRITES windStrength_background = intensity every frame. The gust is energized
+// per-peer by a `changeWindOrigin` RNG timer (random 1-60 s) that re-rolls windTarget's
+// RelativeLocation; each peer rolls its own stream, so host is mid-gust while client is
+// calm. So the real divergence is windTarget (v50, below) -- synced + the client's
+// changeWindOrigin suppressed; the 4 rain/background fields stay (correct for rain-wind +
+// the particle/audio/engine SPEED, which has no leaf-shake term). The totals @0x02F4/0x02F8
+// are derived; the 1 s updateDirWind timer republishes the engine WindDirectionalSource.
+// RE: votv-wind-basefog-RE-2026-06-08.md + votv-wind-event-driver-RE-2026-06-09.md.
+inline constexpr size_t DirectionalWind_windSpeed_rain          = 0x02E4;  // float (= cycle rainWindSpeed)
+inline constexpr size_t DirectionalWind_windStrength_rain       = 0x02E8;  // float (= (rainStrength+0.5)*rain)
+inline constexpr size_t DirectionalWind_windSpeed_background    = 0x02EC;  // float (ambient; default 5.0; day-rollover Ease)
+inline constexpr size_t DirectionalWind_windStrength_background = 0x02F0;  // float (ambient strength; tick rebases to intensity)
+// v50 (2026-06-09): windTarget UBillboardComponent ptr. The spring reads its
+// RelativeLocation (@USceneComponent_RelativeLocation 0x011C) as the gust input -- THE
+// leaf-shake driver. Host reads / client writes that FVector; client suppresses its
+// changeWindOrigin so its local RNG roll stops fighting the synced target.
+inline constexpr size_t DirectionalWind_windTarget             = 0x0238;  // UBillboardComponent* (RelativeLocation @ +0x011C = the gust input)
 
 // Phase 5W Inc-fix-2: AmainGamemode_C::redSky stash pointer for the
 // red-sky discrete event. Lazily filled by the gamemode's first
@@ -712,6 +740,9 @@ inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetAc
 inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
 inline constexpr const wchar_t* GetActorRotationFn = L"K2_GetActorRotation";
 inline constexpr const wchar_t* GetActorVelocityFn = L"GetVelocity";  // AActor::GetVelocity -> FVector (cm/s)
+inline constexpr const wchar_t* GetActorScale3DFn = L"GetActorScale3D";  // AActor -> FVector (v54 PropSpawn real-scale stamp)
+inline constexpr const wchar_t* CollectGarbageFn = L"CollectGarbage";  // KismetSystemLibrary static; schedules a full GC purge end-of-frame (post-sweep plateau collapse). Class constant @ the existing KismetSystemLibraryClass above.
+inline constexpr const wchar_t* PropInventoryContainerPlayerClass = L"prop_inventoryContainer_player_C";  // PER-PLAYER inventory container -- never snapshot-expressed/broadcast/swept (prop_lifecycle::IsPerPlayerPropClass)
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
@@ -1199,6 +1230,11 @@ inline constexpr const wchar_t* LightningStrikeClass = L"lightningStrike_C";
 // NOT stored on the cycle -- its existence IS its active state, so the receiver
 // finds + destroys live instances via FindObjectByClass / CountObjectsByClass.
 inline constexpr const wchar_t* SuperFogClass = L"superFog_C";
+
+// AdirectionalWind_C -- the wind actor (singleton). Resolved by class like the cycle
+// (FindObjectByClass) for the host-authoritative wind sync (coop/weather_sync via
+// ue_wrap/directionalwind). RE: research/findings/votv-wind-basefog-RE-2026-06-08.md.
+inline constexpr const wchar_t* DirectionalWindClass = L"directionalWind_C";
 
 // Scheduler UFunctions -- client INTERCEPTS these (PRE-cancel via the
 // multi-slot interceptor) so the client side never decides "rain now" / etc.

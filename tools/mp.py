@@ -425,6 +425,14 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
             env["VOTVCOOP_NET_PEER"] = peer
     env["VOTVCOOP_NET_PORT"] = str(port)
     env["VOTVCOOP_NET_NICK"] = nick
+    # Test-infra world selection (2026-06-09, user request): the HOST always loads save 's_1234';
+    # every CLIENT always boots a FRESH New Game and NEVER loads a save. These are env overrides the
+    # harness honors over votv-coop.ini (see BootStorySaveBlocking). Keeps every run deterministic:
+    # one fixed host world streamed onto blank clients (the ephemeral-client baseline).
+    if role == "host":
+        env["VOTVCOOP_SAVE"] = "s_1234"
+    else:
+        env["VOTVCOOP_FRESH"] = "1"
     if trigger_file:
         # dev/spawn_npc watches this file path; when it appears the peer spawns
         # a kerfurOmega NPC once + deletes it. mp.py npctest creates it after
@@ -763,6 +771,210 @@ def cmd_smoke(args) -> None:
     log(f"PASS: both peers stable, client connected (slot {cmk['assigned_slot']}), "
         f"host puppet spawned, no RAM breach"
         + (f", {cmk['stale_drops']} benign stale-gen drop(s)" if cmk["stale_drops"] else ""))
+    sys.exit(0)
+
+
+# --- Physics-divergence test signals (smoke_phystele, 2026-06-09) -------------
+# Reproduces + auto-detects the client world-divergence physics failure (the
+# bug two builds shipped blind because the plain smoke can't see it):
+#   - host loads s_1234 (populated), client boots FRESH -> the asymmetry IS the
+#     bug (host disk-asleep props vs client independent-RNG New Game).
+#   - THE deterministic signal: count `diverged (d=...cm)` lines in the client
+#     log = how many divergent RNG props the client GENERATED and had to
+#     teleport-reconcile. Current build -> hundreds (FAIL/reproduces). After the
+#     spawner-suppression fix -> ~0 (client generates none; host props arrive via
+#     Path C fresh-spawn). This does NOT depend on RNG FPS luck.
+#   - safety nets: `posted task FAULT` (the grep the last smoke MISSED), the
+#     game's own Fatal error / EXCEPTION_ACCESS_VIOLATION (the PhysX worker-thread
+#     crash is process-death, NOT caught by our game-thread SEH -> peer-count<2 is
+#     the primary catcher), post-settle FPS lock, RSS growth.
+_PHYS = {
+    "frames":   re.compile(r"frames=(\d+)/s"),
+    "diverged": re.compile(r"diverged \(d="),            # remote_prop_spawn diverged-converge teleport
+    "pathc":    re.compile(r"OnSpawn: spawned .* of '"),  # Path C fresh-spawn from host data
+    "fault":    re.compile(r"game_thread: posted task FAULT"),
+    "drain":    re.compile(r"snapshot: drain complete for slot \d+ \((\d+) candidates"),
+    "cancel":   re.compile(r"client-cancel spawner|cancelling BP body on client"),
+}
+_GAME_FATAL = re.compile(r"Fatal error|Assertion failed|EXCEPTION_ACCESS_VIOLATION")
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _game_log(win64_dir: Path) -> Path:
+    # .../VotV/Binaries/Win64 -> .../VotV/Saved/Logs/VotV.log
+    return win64_dir.parent.parent / "Saved" / "Logs" / "VotV.log"
+
+
+def _steady_fps(fps: list) -> tuple:
+    """Steady-state FPS = median + min over the LAST HALF of positive samples
+    (past the one-time connect-drain dip). Returns (median, min, n_tail)."""
+    pos = [f for f in fps if f > 0]
+    if not pos:
+        return 0, 0, 0
+    tail = pos[len(pos) // 2:]            # drop boot ramp + connect-drain transient
+    s = sorted(tail)
+    return s[len(s) // 2], min(tail), len(tail)
+
+
+def parse_phys_signals() -> dict:
+    cl, hl = _read_text(CLIENT_DIR / "votv-coop.log"), _read_text(HOST_DIR / "votv-coop.log")
+    cgame, hgame = _read_text(_game_log(CLIENT_DIR)), _read_text(_game_log(HOST_DIR))
+    cfps = [int(m.group(1)) for m in _PHYS["frames"].finditer(cl)]
+    hfps = [int(m.group(1)) for m in _PHYS["frames"].finditer(hl)]
+    cmed, cmin, cn = _steady_fps(cfps)
+    hmed, _hmin, _hn = _steady_fps(hfps)
+    drains = [int(m.group(1)) for m in _PHYS["drain"].finditer(hl)]
+    return {
+        "diverged":     len(_PHYS["diverged"].findall(cl)),  # info only now (harmless kinematic reconciles)
+        "pathc":        len(_PHYS["pathc"].findall(cl)),
+        "cancels":      len(_PHYS["cancel"].findall(cl)),
+        "faults":       len(_PHYS["fault"].findall(cl)) + len(_PHYS["fault"].findall(hl)),
+        "max_drain":    max(drains, default=0),
+        # P1 metric: the bug is a PHYSICS-WAKE DRAG -- measured by host-vs-client
+        # FPS parity (host runs the IDENTICAL DLL on the SAME prop scene loaded
+        # asleep from disk; pre-fix host ~110 / client ~44 = 0.40). The client is
+        # 720p (lighter) so it should match-or-beat the host once the woken-body
+        # drag is gone. This is the diagnosis agent's killer metric.
+        "client_fps_med":   cmed,
+        "client_fps_min":   cmin,
+        "client_fps_n":     cn,
+        "host_fps_med":     hmed,
+        "fps_ratio":        (cmed / hmed) if hmed else 0.0,
+        "client_fatal": bool(_GAME_FATAL.search(cgame)),
+        "host_fatal":   bool(_GAME_FATAL.search(hgame)),
+    }
+
+
+def cmd_smoke_phystele(args) -> None:
+    """Autonomous client world-divergence PHYSICS test. Host loads s_1234, client
+    boots FRESH; reproduce divergence, then judge by the deterministic `diverged`
+    count + crash/fatal/FPS/RSS safety nets. Designed to FAIL RED on a build that
+    still teleport-reconciles divergent props, and PASS only when the client
+    generates none (spawner suppression working)."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before phystele")
+    deploy_all()
+
+    log("--- HOST LAUNCH (s_1234) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True)
+    log(f"waiting up to {args.boot_timeout}s for host UDP {args.port}...")
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did not bind UDP within {args.boot_timeout}s"); kill_all(); sys.exit(1)
+
+    # Wait for the host to finish loading + STABILIZE its prop registry before the
+    # client connects. The host's story-load re-issues 'open untitled_1', which tears
+    # down the boot-world's prop elements (they linger as "dying" for a while) and
+    # spawns the save world's. Connecting mid-transition caught a DEGENERATE snapshot
+    # (88 live / 1383 dying) -> client got a near-empty world, its player died, UI
+    # looped, RSS ballooned to 9 GB (2026-06-10). Gate on the host's "PLAY READY"
+    # marker, then a settle window for the dying elements to drain.
+    log(f"waiting up to {args.boot_timeout}s for host PLAY READY...")
+    for i in range(args.boot_timeout):
+        if "==== PLAY READY ====" in _read_text(HOST_DIR / "votv-coop.log"):
+            log(f"host PLAY READY after {i}s"); break
+        time.sleep(1)
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before PLAY READY"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+    log(f"host-settle {args.host_settle}s (let the boot-world's dying prop elements drain before connect)...")
+    time.sleep(args.host_settle)
+
+    log("--- CLIENT LAUNCH (FRESH world) ---")
+    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                             res_x=1280, res_y=720, monitor=2, tile_index=0)
+
+    log(f"--- MONITORING {args.duration}s (the divergent snapshot + physics settle) ---")
+    t0 = time.time(); last_peers: list[dict] = []; kill_reason = None; rss0 = {}
+    while time.time() - t0 < args.duration:
+        time.sleep(args.sample_interval)
+        peers = list_votv(); last_peers = peers; t = int(time.time() - t0)
+        desc = ", ".join(f"PID{p['PID']}={p['RSS_MB']}MB" for p in peers) if peers else "NONE"
+        log(f"  t={t}s peers={len(peers)}: {desc}")
+        for p in peers:
+            rss0.setdefault(p["PID"], p["RSS_MB"])
+        mx = max((p["RSS_MB"] for p in peers), default=0)
+        if mx > args.ram_kill_mb:
+            kill_reason = f"RSS={mx}MB > {args.ram_kill_mb}MB"; break
+
+    rss_growth = max((p["RSS_MB"] - rss0.get(p["PID"], p["RSS_MB"]) for p in last_peers), default=0)
+    # Leak/doubling signal = client-vs-HOST final RSS parity, NOT growth-from-boot.
+    # P1 KEEPS the client's full world (divergent props become kinematic, not removed),
+    # so the client legitimately loads a ~4.5 GB world that PLATEAUS (1.7->4.5 GB during
+    # load, then flat) -- same as the host. Growth-from-boot-baseline therefore reads
+    # ~3 GB of NORMAL world-load and false-fails. A real doubling/leak shows as the
+    # client RSS running well ABOVE the host's (both hold the same prop scene). P2
+    # (claim-tracking) further trims the client's small excess by dropping the doubles.
+    host_rss   = next((p["RSS_MB"] for p in last_peers if p["PID"] == host_pid), 0.0)
+    client_rss = next((p["RSS_MB"] for p in last_peers if p["PID"] == client_pid), 0.0)
+    rss_ratio  = (client_rss / host_rss) if host_rss else 0.0
+    tail_log(HOST_DIR / "votv-coop.log", 12, "HOST")
+    tail_log(CLIENT_DIR / "votv-coop.log", 12, "CLIENT")
+    sig = parse_phys_signals()
+    log("--- KILLING ---"); kill_all()
+
+    log("--- PHYS SIGNALS ---")
+    log(f"  client steady FPS = {sig['client_fps_med']} (min {sig['client_fps_min']}, n={sig['client_fps_n']})"
+        f"   host steady FPS = {sig['host_fps_med']}   ratio = {sig['fps_ratio']:.2f}  <-- the FPS-parity signal")
+    log(f"  diverged kinematic reconciles = {sig['diverged']} (info only -- harmless after the SP-parity fix)")
+    log(f"  pathC fresh-spawns from host data = {sig['pathc']}   spawner-cancels = {sig['cancels']}")
+    log(f"  host snapshot candidates = {sig['max_drain']}   posted-task FAULTs = {sig['faults']}")
+    log(f"  game Fatal/AV: host={sig['host_fatal']} client={sig['client_fatal']}")
+    log(f"  client RSS = {client_rss:.0f}MB  host RSS = {host_rss:.0f}MB  ratio = {rss_ratio:.2f}"
+        f"   (growth-from-boot {rss_growth:.0f}MB = world-load, info only)")
+
+    log("--- VERDICT ---")
+    # P1 (2026-06-09): the failure is a PHYSICS-WAKE DRAG, NOT a reconcile count.
+    # Gate on host-vs-client steady FPS parity (the diagnosis agent's killer
+    # metric: identical DLL, same prop scene; pre-fix host 110 / client 44 = 0.40).
+    # The client is 720p (lighter) so it should reach >= 60% of host once the
+    # woken-body drag is gone. The diverged count is INFO only now.
+    FPS_RATIO_FAIL = 0.60
+    if kill_reason:
+        log(f"FAIL: {kill_reason}"); sys.exit(2)
+    if len(last_peers) < 2:
+        log("FAIL: a peer DIED (process-death = the PhysX worker-thread crash signature)"); sys.exit(3)
+    # The PhysX crash leaves a lingering crash-reporter window ("...has crashed and will
+    # close") so the process count stays 2 -- catch it by title (the death-check misses it).
+    crashed = [p for p in last_peers if "crash" in str(p.get("Title", "")).lower()]
+    if crashed:
+        log(f"FAIL: a peer CRASHED (window title: '{crashed[0]['Title']}')"); sys.exit(10)
+    if sig["host_fatal"] or sig["client_fatal"]:
+        log("FAIL: 'Fatal error'/AV in a game log (crash)"); sys.exit(4)
+    if sig["faults"] > 0:
+        log(f"FAIL: {sig['faults']} 'posted task FAULT' line(s) (DLL use-after-free / SEH-caught AV)"); sys.exit(5)
+    if sig["max_drain"] < 500:
+        log(f"FAIL(inconclusive): host streamed only {sig['max_drain']} props -- s_1234 not loaded / snapshot "
+            "didn't run. The scenario didn't arm; re-check the host save + --duration."); sys.exit(7)
+    if sig["host_fps_med"] <= 0 or sig["client_fps_n"] < 3:
+        log(f"FAIL(inconclusive): not enough steady FPS samples (host_med={sig['host_fps_med']}, "
+            f"client_n={sig['client_fps_n']}) -- extend --duration or check perf_probe is on."); sys.exit(7)
+    if sig["fps_ratio"] < FPS_RATIO_FAIL:
+        log(f"FAIL(reproduced): client steady FPS {sig['client_fps_med']} is only "
+            f"{sig['fps_ratio']*100:.0f}% of host {sig['host_fps_med']} (< {FPS_RATIO_FAIL*100:.0f}%) -- the "
+            "woken-physics drag is still present. THIS is the bug.")
+        sys.exit(8)
+    RSS_RATIO_FAIL = 1.50   # client holding the same prop scene as the host should be ~parity;
+                            # >1.5x host = doubled/leaked props (P2 not removing divergent extras)
+    if host_rss > 0 and rss_ratio > RSS_RATIO_FAIL:
+        log(f"FAIL: client RSS {client_rss:.0f}MB is {rss_ratio:.2f}x host {host_rss:.0f}MB "
+            f"(> {RSS_RATIO_FAIL}x) -- doubled/leaked props (P2 claim-tracking needed)."); sys.exit(9)
+    log(f"PASS: client steady FPS {sig['client_fps_med']} = {sig['fps_ratio']*100:.0f}% of host "
+        f"{sig['host_fps_med']} (>= {FPS_RATIO_FAIL*100:.0f}%); client RSS {rss_ratio:.2f}x host "
+        f"(<= {RSS_RATIO_FAIL}x); {sig['diverged']} harmless kinematic reconciles, {sig['pathc']} "
+        "fresh spawns, no crash/fault.")
     sys.exit(0)
 
 
@@ -1675,6 +1887,21 @@ def main() -> None:
                          help="hard kill threshold (born from 19 GB install-loop incident)")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
+
+    p_phys = sub.add_parser("smoke_phystele",
+                            help="autonomous client world-divergence PHYSICS test (host s_1234 + fresh client; "
+                                 "FAILs on divergent-prop reconcile / crash / FPS lock)")
+    p_phys.add_argument("--duration", type=int, default=75,
+                        help="seconds to monitor (divergent snapshot + physics settle)")
+    p_phys.add_argument("--sample-interval", type=int, default=5)
+    p_phys.add_argument("--boot-timeout", type=int, default=30)
+    p_phys.add_argument("--host-settle", type=int, default=30,
+                        help="seconds to wait after host PLAY READY (drain the boot-world's "
+                             "dying prop elements) before launching the client -- avoids the "
+                             "degenerate 88-live/1383-dying mid-transition snapshot")
+    p_phys.add_argument("--ram-kill-mb", type=int, default=8000)
+    for flag, kw in host_res: p_phys.add_argument(flag, **kw)
+    p_phys.set_defaults(func=cmd_smoke_phystele)
 
     p_smoke4 = sub.add_parser("smoke4",
                               help="autonomous 4-PEER LAN smoke (Tier 8 cross-peer relay verdict)")

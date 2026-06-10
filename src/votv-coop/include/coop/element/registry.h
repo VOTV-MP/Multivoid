@@ -26,6 +26,7 @@
 #include "coop/element/element.h"
 
 #include <cstddef>
+#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -201,8 +202,13 @@ private:
 
     mutable std::mutex m_mutex;
     Element* m_byId[kMaxElements] = {};   // index = ElementId; nullptr = free
-    std::vector<ElementId> m_hostFree;    // LIFO free stack, host range
-    std::vector<ElementId> m_localFree;   // LIFO free stack, ACTIVE peer band
+    // FREE LISTS: deque (not vector). Fresh (never-allocated) ids pop_back from the back; a FREED
+    // id push_front to the FRONT so it is only re-issued after the fresh pool above it drains
+    // (deferred FIFO reuse -- prevents the handle-recycling race where a transient clump grabs a
+    // just-freed eid still bound to another prop's in-flight mirror on a peer). Both ends O(1)
+    // (a vector's insert(begin) was O(n)).
+    std::deque<ElementId> m_hostFree;    // host range: back=fresh, front=deferred-reuse
+    std::deque<ElementId> m_localFree;   // ACTIVE peer band: back=fresh, front=deferred-reuse
     // Which peer-range band m_localFree currently holds (D9-2). 0 == the
     // pre-slot band (boot/seed window, slot not yet known); 1..kMaxPeers-1
     // == the client slot band activated by SetLocalPeerBand. The host never

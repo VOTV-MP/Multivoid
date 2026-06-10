@@ -62,8 +62,12 @@ void Tick() {
         if (!g_havePending.load(std::memory_order_acquire)) return;
         const int32_t total = g_pendingTotal.load(std::memory_order_acquire);
         if (E::WritePoints(total)) {
+            // WritePoints is side-effect-free, so the on-screen HUD credit number stays frozen
+            // (text_points is push-updated only by the BP addPoints->SetText). Re-run that
+            // repaint with a zero add so the mirrored value actually shows. (2026-06-08 fix.)
+            E::RefreshPointsHud();
             g_havePending.store(false, std::memory_order_release);
-            UE_LOGI("balance_sync: mirrored host balance -> Points=%d", total);
+            UE_LOGI("balance_sync: mirrored host balance -> Points=%d (HUD repainted)", total);
         }
         // else: saveSlot still resolving -- silently retry next tick.
     }

@@ -125,6 +125,24 @@ void* FindClassDefaultObject(const wchar_t* className);
 // detect spawn/clobber (e.g. mainPlayer_C count 1 -> 2 after an orphan spawn).
 int32_t CountObjectsByClass(const wchar_t* className);
 
+// All live INSTANCES whose class name == `className` (skips the CDO). Linear
+// GUObjectArray walk -- one-shot / low-rate use only (NOT per-frame). Used by
+// firefly_sync to diff the ParticleSystemComponent set across one firefly tick.
+std::vector<void*> FindObjectsByClass(const wchar_t* className);
+
+// --- allocation-free name compares (RAM-balloon root-cause fix, 2026-06-10) ---
+// ToString() constructs a std::wstring PER CALL (plus the engine FString render);
+// every GUObjectArray walk used it per OBJECT scanned (~250k allocations/walk) --
+// the "wstring bomb" behind the 19 GB Install incident, the seated-quadbike 5 fps
+// collapse, and the v56 menu-window client balloon (3.1->11 GB before the save
+// Request). These compare against the per-thread scratch buffer instead: zero
+// allocations, identical match semantics to `ToString(name) == expected`.
+bool NameEquals(const FName& name, const wchar_t* expected);
+bool NameStartsWith(const FName& name, const wchar_t* prefix);
+// Substring form (the reaper's world-name checks: "ntitled"/"menu" match the
+// gameplay/menu worlds prefix-case-agnostically). Bounded scan, zero alloc.
+bool NameContains(const FName& name, const wchar_t* needle);
+
 // A discovered object (used by the component/child enumerator).
 struct ObjectRef {
     std::wstring name;

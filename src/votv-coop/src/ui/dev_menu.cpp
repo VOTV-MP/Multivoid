@@ -4,6 +4,7 @@
 
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
+#include "coop/dev/object_overlay.h"
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/add_points.h"
 #include "coop/dev/restore_vitals.h"
@@ -61,6 +62,33 @@ void RenderPosHud() {
     ImGui::TextDisabled("(on-screen overlay)");
 }
 
+void RenderObjectOverlay() {
+    namespace OO = coop::dev::object_overlay;
+    bool on = OO::IsEnabled();
+    if (ImGui::Checkbox("World object overlay", &on)) OO::SetEnabled(on);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(labels projected onto nearby objects)");
+    ImGui::Indent(22.f);
+    ImGui::BeginDisabled(!on);
+    bool names = OO::LayerNames();
+    if (ImGui::Checkbox("Object names", &names)) OO::SetLayerNames(names);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(class + prop visual row)");
+    bool net = OO::LayerNet();
+    if (ImGui::Checkbox("Net identity", &net)) OO::SetLayerNet(net);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(eid, mirror/local/untracked, key)");
+    bool phys = OO::LayerPhys();
+    if (ImGui::Checkbox("Physics state", &phys)) OO::SetLayerPhys(phys);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(sim/rest + static/frozen/sleep)");
+    float r = OO::RadiusM();
+    ImGui::SetNextItemWidth(170.f);
+    if (ImGui::SliderFloat("Radius (m)", &r, 5.f, 100.f, "%.0f")) OO::SetRadiusM(r);
+    ImGui::EndDisabled();
+    ImGui::Unindent(22.f);
+}
+
 void RenderSpawnNpc() {
     if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
     ImGui::SameLine();
@@ -83,7 +111,7 @@ const std::vector<Cat>& Tree() {
         { "Player", {
             { "Movement", { { &RenderTeleportClients, true }, { &RenderFreecam, true } }, true },
             { "Vitals",   { { &RenderRestoreVitals, true } }, true },
-            { "HUD",      { { &RenderPosHud, true } }, true },
+            { "HUD",      { { &RenderPosHud, true }, { &RenderObjectOverlay, true } }, true },
         }, true },
         { "Game", {
             { "Weather",  { { &RenderSnow, true } }, true },

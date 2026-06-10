@@ -25,14 +25,29 @@ Snapshot          g_snap;
 std::atomic<int>  g_count{0};
 
 // Distance fade (MTA nametag shape): fully opaque close up, fading to nothing far
-// away so a distant peer's label doesn't clutter the screen. Tuned for the
-// observatory interior (peers usually < 25 m) with a long tail outdoors.
+// away so a distant peer's label doesn't clutter the screen. Pulled in 2026-06-08
+// (user: "make it disappear at less distance") -- opaque within a room, gone just
+// beyond it instead of trailing ~90 m across the whole base/outdoors.
 float DistanceAlpha(float distCm) {
-    constexpr float kFullCm = 2500.f;  // fully opaque within ~25 m
-    constexpr float kGoneCm = 9000.f;  // invisible beyond ~90 m
+    constexpr float kFullCm = 1500.f;  // fully opaque within ~15 m
+    constexpr float kGoneCm = 4000.f;  // invisible beyond ~40 m
     if (distCm <= kFullCm) return 1.f;
     if (distCm >= kGoneCm) return 0.f;
     return 1.f - (distCm - kFullCm) / (kGoneCm - kFullCm);
+}
+
+// Distance SIZE scale (MTA nametag billboard shape). The whole plate scales like a
+// world-anchored billboard (~1/distance) so it stays proportional to the peer's
+// shrinking on-screen body instead of looming ever larger as they recede -- the
+// fixed-size plate "grew" relative to a far, tiny character (user 2026-06-08). Capped
+// at 1.0 up close so a peer right next to you never gets a screen-filling label (the
+// earlier 22->16 "huge up close" complaint), floored so a mid-range plate stays legible
+// while DistanceAlpha fades it out.
+float DistanceScale(float distCm) {
+    constexpr float kRefCm    = 600.f;  // at/under ~6 m the plate is at base (full) size
+    constexpr float kMinScale = 0.40f;  // floor ~6.4 px, reached ~15 m as the alpha fade begins
+    if (distCm <= kRefCm) return 1.f;
+    return std::max(kRefCm / distCm, kMinScale);
 }
 
 void CopyNickAscii(char (&dst)[24], const std::wstring& nick) {
@@ -57,7 +72,10 @@ void Publish(const Snapshot& s) {
 void Update() {
     Snapshot snap;  // default count=0; built locally then published (auto-clears at menu)
     auto& reg = coop::players::Registry::Get();
-    void* lp = reg.Local();
+    void* lp = nullptr;                 // local player -- resolved lazily WITH pc below: at the
+                                        // menu (no puppets) this never touches Registry::Local(),
+                                        // so the per-tick composite can't trigger rescans there
+                                        // (menu-window balloon fix; the TTL bounds the rest)
     void* pc = nullptr;                 // local PlayerController -- resolved lazily (only if a puppet exists)
     ue_wrap::FVector viewer{};
 
@@ -74,6 +92,7 @@ void Update() {
         if (!pc) {
             // First live puppet: we need the local controller to project. No local
             // player (e.g. at the menu) -> nothing to draw; bail to an empty snapshot.
+            lp = reg.Local();
             if (!lp) break;
             pc = E::GetController(lp);
             if (!pc) break;
@@ -88,6 +107,7 @@ void Update() {
         const float dx = head.X - viewer.X, dy = head.Y - viewer.Y, dz = head.Z - viewer.Z;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         pl.alpha = DistanceAlpha(dist);
+        pl.scale = DistanceScale(dist);
         pl.onScreen = inFront && pl.alpha > 0.02f;
         pl.x = screen.X;
         pl.y = screen.Y;

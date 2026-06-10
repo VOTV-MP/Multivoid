@@ -150,6 +150,43 @@ bool IsKeyedInteractable(void* obj) {
     return IsClassKeyedInteractable(R::ClassOf(obj));
 }
 
+bool IsChipPile(void* obj) {
+    if (!obj) return false;
+    ResolveExtraBases();
+    return WalksToBase(R::ClassOf(obj), ActorChipPileCls());
+}
+
+bool IsTrashBitsPile(void* obj) {
+    if (!obj) return false;
+    ResolveExtraBases();
+    return WalksToBase(R::ClassOf(obj), TrashBitsPileCls());
+}
+
+// AtrashBitsPile_C collect counters (v57 trash_pile_sync). Raw int32 fields per
+// the CXX dump: amountA @0x0260, amountB @0x0264 (the displayed "uses" count is
+// their SUM, formatted live by lookAt -- no refresh verb exists or is needed).
+bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b) {
+    if (!actor || !IsTrashBitsPile(actor)) return false;
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(actor);
+    a = *reinterpret_cast<const int32_t*>(base + 0x0260);
+    b = *reinterpret_cast<const int32_t*>(base + 0x0264);
+    return true;
+}
+
+bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b) {
+    if (!actor || !IsTrashBitsPile(actor)) return false;
+    uint8_t* base = reinterpret_cast<uint8_t*>(actor);
+    *reinterpret_cast<int32_t*>(base + 0x0260) = a;
+    *reinterpret_cast<int32_t*>(base + 0x0264) = b;
+    return true;
+}
+
+// (IsRngDivergentClass + ResolveRngDivergentBases + the mushroom class slot
+// were RETIRED 2026-06-10, Fork B 2e: the adoption sweep's universe is now
+// IsClassKeyedInteractable + the keyless chipPile lineage -- the same
+// predicate the host snapshot expresses -- so the separate 4-class
+// "RNG-divergent" notion is gone. RULE 2: deleted fully.)
+
 // ---- GetInteractableKey ------------------------------------------------
 //
 // Aprop_C: direct field @0x02E0.
@@ -237,6 +274,41 @@ bool IsFrozen(void* prop) {
     return ReadField<bool>(prop, P::off::Aprop_frozen);
 }
 
+bool IsSleeping(void* prop) {
+    if (!prop) return false;
+    return ReadField<bool>(prop, P::off::Aprop_sleep);
+}
+
+std::wstring GetPropNameString(void* prop) {
+    // Internal lineage gate (mirrors GetStaticMesh below): Name@0x0258 is a
+    // stray byte on non-Aprop_C keyed interactables.
+    if (!prop || !IsDescendantOfProp(prop)) return {};
+    return R::ToString(ReadField<R::FName>(prop, P::off::Aprop_Name));
+}
+
+bool ReadRemoveWOrespawn(void* prop) {
+    if (!prop) return false;
+    return ReadField<bool>(prop, P::off::Aprop_removeWOrespawn);
+}
+
+bool WriteSpParityIdentity(void* prop, R::FName nameRow,
+                           bool isStatic, bool removeWOrespawn,
+                           bool frozen, bool sleep) {
+    if (!prop || !IsDescendantOfProp(prop)) return false;
+    auto* base = reinterpret_cast<uint8_t*>(prop);
+    // NAME_None means "wire carried no row" (e.g. a pre-v54 peer would, and a
+    // class whose CDO row is correct does) -- leave the CDO/default Name so
+    // init() still resolves SOMETHING rather than an empty row.
+    if (nameRow.ComparisonIndex != 0) {
+        *reinterpret_cast<R::FName*>(base + P::off::Aprop_Name) = nameRow;
+    }
+    *reinterpret_cast<bool*>(base + P::off::Aprop_Static)          = isStatic;
+    *reinterpret_cast<bool*>(base + P::off::Aprop_removeWOrespawn) = removeWOrespawn;
+    *reinterpret_cast<bool*>(base + P::off::Aprop_frozen)          = frozen;
+    *reinterpret_cast<bool*>(base + P::off::Aprop_sleep)           = sleep;
+    return true;
+}
+
 void* GetStaticMesh(void* prop) {
     if (!prop) return nullptr;
     // Aprop_C ONLY. The fixed Aprop_StaticMesh offset (0x0238) is meaningless on
@@ -263,7 +335,6 @@ namespace {
 std::mutex g_chipTypeMutex;
 std::unordered_map<void*, int32_t> g_chipTypeOffByClass;  // UClass* -> offset (-1 = none)
 std::unordered_map<void*, void*>   g_setTexFnByClass;      // UClass* -> setTex UFunction*
-std::unordered_map<void*, void*>   g_turnToPileFnByClass;  // UClass* -> turnToPile UFunction* (chipPile only)
 
 int32_t ResolveChipTypeOffset(void* cls) {
     if (!cls) return -1;
@@ -285,15 +356,6 @@ void* ResolveSetTexFn(void* cls) {
     return fn;
 }
 
-void* ResolveTurnToPileFn(void* cls) {
-    if (!cls) return nullptr;
-    std::lock_guard<std::mutex> lk(g_chipTypeMutex);
-    auto it = g_turnToPileFnByClass.find(cls);
-    if (it != g_turnToPileFnByClass.end()) return it->second;
-    void* fn = R::FindFunction(cls, L"turnToPile");  // chipPile family only (clump has no turnToPile)
-    g_turnToPileFnByClass[cls] = fn;  // cache even null so we don't re-walk a non-chipPile
-    return fn;
-}
 }  // namespace
 
 uint8_t GetChipType(void* actor) {
@@ -315,17 +377,6 @@ void SetChipType(void* actor, uint8_t chipType) {
         ue_wrap::ParamFrame f(fn);
         ue_wrap::Call(actor, f);
     }
-}
-
-void TurnChipPileToPile(void* chipPile, const FVector& velocity) {
-    if (!chipPile || !R::IsLive(chipPile)) return;
-    void* fn = ResolveTurnToPileFn(R::ClassOf(chipPile));
-    if (!fn) return;  // not a chipPile (clump/Aprop/other have no turnToPile) -- safe no-op
-    // turnToPile(FVector Velocity): the chipPile's "I just landed from a clump" entry
-    // (sets spwnd=true + fires impact dust+sound). Velocity drives the dust direction.
-    ue_wrap::ParamFrame f(fn);
-    f.SetRaw(L"Velocity", &velocity, sizeof(velocity));
-    ue_wrap::Call(chipPile, f);
 }
 
 std::wstring GetClassName(void* prop) {
@@ -477,7 +528,8 @@ VelocityState GetPhysicsVelocity(void* prop) {
 
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
-                          float radiusCm) {
+                          float radiusCm,
+                          const std::wstring& expectedPropName) {
     if (className.empty() || radiusCm <= 0.f) return nullptr;
     void* base = PropBaseClass();
     if (!base) return nullptr;
@@ -499,6 +551,14 @@ void* FindNearbySameClass(const std::wstring& className,
         if (nm.rfind(L"Default__", 0) == 0) continue;
         // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
         if (R::ClassNameOf(obj) != className) continue;
+        // v54 identity gate: same CLASS is not same PROP for generic Aprop_C
+        // -- the list_props row `Name` is the identity (a 'cube' and a
+        // 'cubicleP_1' wall panel are both class prop_C). When the wire
+        // carries a row, require it to match, else two co-located DIFFERENT
+        // props would fuzzy-merge and the rekey would bind the wrong object.
+        // Empty expectedPropName = class-only match (pre-v54 sender / the
+        // caller had no row).
+        if (!expectedPropName.empty() && GetPropNameString(obj) != expectedPropName) continue;
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;

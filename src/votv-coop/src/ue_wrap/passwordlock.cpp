@@ -32,7 +32,6 @@ int32_t g_doorOff    = -1;       // ApasswordLock_C::door (Adoor_C*) (0x0338) --
 int32_t g_isResetOff = -1;       // ApasswordLock_C::isReset    (0x0360, bool) -- set-new-code mode
 int32_t g_activeOff  = -1;       // ApasswordLock_C::active     (0x0330, bool) -- LED selector + door power
 void*   g_inputNumFn = nullptr;  // ApasswordLock_C::inputNumber(int32 Num)
-void*   g_resetFn    = nullptr;  // ApasswordLock_C::Reset()
 void*   g_updFn      = nullptr;  // ApasswordLock_C::upd()  (best-effort refresh; may be null)
 
 // Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/passwordLock.hpp + triggerBase.hpp).
@@ -87,7 +86,6 @@ bool EnsureResolved() {
         UE_LOGW("passwordlock: inputNumber UFunction not found -- not ready");
         return false;  // the receiver cannot mirror typing without it -- retry
     }
-    void* resetFn = R::FindFunction(lockCls, L"Reset");  // may be absent on some builds
     void* updFn   = R::FindFunction(lockCls, L"upd");    // best-effort; tolerated null
 
     g_lockCls    = lockCls;
@@ -98,12 +96,11 @@ bool EnsureResolved() {
     g_isResetOff = isResetOff;
     g_activeOff  = activeOff;
     g_inputNumFn = inputNumFn;
-    g_resetFn    = resetFn;
     g_updFn      = updFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("passwordlock: resolved passwordLock_C=%p Key@0x%04X inPassword@0x%04X password@0x%04X "
-            "door@0x%04X isReset@0x%04X active@0x%04X inputNumber=%p Reset=%p upd=%p",
-            lockCls, keyOff, inPwOff, passwordOff, doorOff, isResetOff, activeOff, inputNumFn, resetFn, updFn);
+            "door@0x%04X isReset@0x%04X active@0x%04X inputNumber=%p upd=%p",
+            lockCls, keyOff, inPwOff, passwordOff, doorOff, isResetOff, activeOff, inputNumFn, updFn);
     return true;
 }
 
@@ -155,11 +152,16 @@ bool CallInputNumber(void* lock, int32_t digit) {
     return Call(lock, f);
 }
 
-bool CallReset(void* lock) {
-    if (!lock || !g_resetFn) return false;
-    ParamFrame f(g_resetFn);
-    if (!f.valid()) return false;
-    return Call(lock, f);
+bool ClearBuffer(void* lock) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire) || g_inPwOff < 0) return false;
+    R::FString& s = *reinterpret_cast<R::FString*>(reinterpret_cast<char*>(lock) + g_inPwOff);
+    // Empty the FString the leak-free way: Num=0 is the canonical empty TArray<TCHAR>
+    // (FString::operator* returns TEXT("") when Num==0); Data/Max are retained as slack
+    // and freed by the engine on the next append/reassign (exactly FString::Reset()).
+    // NO verb -> no setActive/powerChanged/isReset side effects; the LED is mirrored
+    // separately by WriteActive, and the caller repaints via CallUpd.
+    if (s.Num > 0) s.Num = 0;
+    return true;
 }
 
 void CallUpd(void* lock) {

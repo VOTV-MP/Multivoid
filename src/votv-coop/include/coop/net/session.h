@@ -195,6 +195,31 @@ public:
     bool SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                             int len, uint8_t senderSlot = 0);
 
+    // v56 save-transfer bulk sink: SaveTransferChunk payloads (~56KB, far over the
+    // fixed inbox slot) are handed to this callback on the NET THREAD instead of
+    // entering the ReliableMessage ring. coop/save_transfer registers its heap
+    // assembler at Install; the sink must be thread-safe and never touch the
+    // engine. Keeps the net core feature-agnostic (principle 7 layering).
+    using BulkSinkFn = void (*)(int senderPeerSlot, const uint8_t* data, int len);
+    void SetBulkSink(BulkSinkFn sink) { bulkSink_.store(sink, std::memory_order_release); }
+
+    // v56 per-slot world-ready send gate (host side): until event_feed marks a
+    // joining slot world-ready (ClientWorldReady), the send paths will drop
+    // world-mutating kinds to it (IsPreWorldSendableKind allowlist in
+    // session_lanes.h) -- the world-ready connect replay reconstructs that state
+    // by design. STAGE-1 NOTE (2026-06-10): accessors land with the dormant
+    // save_transfer module; the send-path gate + the net_pump/event_feed callers
+    // wire in stage 2 together (no half-armed gate that would drop traffic for
+    // the current always-in-world flows).
+    void MarkSlotWorldReady(int peerSlot, bool ready) {
+        if (peerSlot >= 0 && peerSlot < kMaxPeers)
+            slotWorldReady_[peerSlot].store(ready, std::memory_order_release);
+    }
+    bool IsSlotWorldReady(int peerSlot) const {
+        return peerSlot >= 0 && peerSlot < kMaxPeers &&
+               slotWorldReady_[peerSlot].load(std::memory_order_acquire);
+    }
+
     // Game thread: pop a delivered reliable message. Inbox is shared across
     // peers (FIFO of arrivals); the kind-typed payload tells the drainer what
     // happened, not who sent it. Future work could add a sender peerSlot to
@@ -212,7 +237,13 @@ public:
     // Diagnostics.
     uint64_t packetsSent() const { return sent_.load(); }
     uint64_t packetsRecv() const { return recv_.load(); }
-    int lastRttMs() const { return lastRttMs_.load(); }
+    // Per-slot RTT in ms (the GNS link ping to peer `slot`), or -1 if that slot has
+    // no live connection / not yet sampled. Sampled ~1 Hz on the net thread. The
+    // nameplate + scoreboard show this PER PEER (event_feed fans it to each puppet;
+    // roster reads it per row). 0 is a real value on LAN (sub-millisecond RTT).
+    int rttMsForSlot(int slot) const {
+        return (slot >= 0 && slot < kMaxPeers) ? rttMsBySlot_[slot].load() : -1;
+    }
     // Count of currently-connected peers (0..kMaxPeers-1).
     int connectedPeerCount() const;
     // True if the given slot has an active GNS connection (handle set).
@@ -413,10 +444,21 @@ private:
     std::mutex reliableInboxMutex_;
     std::deque<ReliableMessage> reliableInbox_;
 
+    // v56 bulk-chunk diversion target (see SetBulkSink). Written once at install
+    // (game thread), read per-message on the net thread.
+    std::atomic<BulkSinkFn> bulkSink_{nullptr};
+
+    // v56 per-slot world-ready flags (see MarkSlotWorldReady).
+    std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
+
     std::atomic<uint32_t> sendSeq_{0};
     std::atomic<uint64_t> sent_{0};
     std::atomic<uint64_t> recv_{0};
-    std::atomic<int> lastRttMs_{0};
+    // Per-slot RTT (ms), sampled ~1 Hz on the net thread from GNS m_nPing. 0-init;
+    // the sampler sets -1 for a slot with no live connection and the real ping for a
+    // connected one. Replaces the old aggregate lastRttMs_ (RULE 2: event_feed now
+    // fans the PER-PEER ping to each puppet, not one min shared by all).
+    std::array<std::atomic<int>, kMaxPeers> rttMsBySlot_{};
 
     // Phase 2: the host's accept predicate (ban filter). nullptr = accept all.
     // Set before Start() spawns the net thread; read on the net thread.

@@ -78,10 +78,16 @@ void Render() {
 
         // Status line.
         char status[160];
-        if (v.phase == jp::Phase::Connecting) {
-            const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
-            char d[4] = {0};
-            for (int i = 0; i < dots; ++i) d[i] = '.';
+        const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+        char d[4] = {0};
+        for (int i = 0; i < dots; ++i) d[i] = '.';
+        if (v.mode == jp::Mode::Host) {
+            // HOST boot (the Host-Game flow): loading our OWN world before we host.
+            if (!v.host.empty())
+                std::snprintf(status, sizeof(status), "Starting your server -- loading %s%s", v.host.c_str(), d);
+            else
+                std::snprintf(status, sizeof(status), "Starting your server%s", d);
+        } else if (v.phase == jp::Phase::Connecting) {
             if (!v.host.empty())
                 std::snprintf(status, sizeof(status), "Connecting to %s%s", v.host.c_str(), d);
             else
@@ -108,10 +114,20 @@ void Render() {
         }
         ImGui::Dummy(ImVec2(0.0f, 12.0f));
 
-        // Cancel: abort the join (the harness drains the request -> Stop + reopen browser).
-        const float btnW = 120.0f;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - btnW) * 0.5f);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0.0f))) jp::RequestCancel();
+        if (v.mode == jp::Mode::Host) {
+            // HOST boot: NO Cancel button. The user is loading their OWN world to host;
+            // a cancel here used to (via the client abort path) Stop the host session the
+            // instant it started. The host just waits -- a new game can take a moment.
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.64f, 0.72f, 1.0f));
+            CenteredText("A new game can take a moment to load");
+            ImGui::PopStyleColor();
+        } else {
+            // Cancel: abort the CLIENT join (the harness drains the request -> Stop +
+            // reopen browser; a session-death flee then lands us at the main menu).
+            const float btnW = 120.0f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - btnW) * 0.5f);
+            if (ImGui::Button("Cancel", ImVec2(btnW, 0.0f))) jp::RequestCancel();
+        }
     }
     ImGui::End();
 

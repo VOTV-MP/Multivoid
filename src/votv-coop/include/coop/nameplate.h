@@ -26,10 +26,11 @@ struct Plate {
     float x = 0.f;           // screen px (viewport pixels, top-left origin) -- the head anchor
     float y = 0.f;
     float alpha = 0.f;       // distance fade 0..1 (0 => skip)
+    float scale = 1.f;       // distance SIZE scale: 1 = base size up close, shrinks ~1/dist far away
     bool  onScreen = false;  // projected in FRONT of the camera AND within fade range
     bool  flash = false;     // hurt-flash red (read from RemotePlayer::IsHurtFlashing)
     int   healthPct = 100;   // 0..100 streamed-vitals health (display-only)
-    int   ping = 0;          // ms (0 = unmeasured -> ping suffix hidden)
+    int   ping = -1;         // RTT ms (-1 = unmeasured -> no suffix; 0 = sub-ms LAN -> "<1ms")
     char  nick[24] = {};
 };
 

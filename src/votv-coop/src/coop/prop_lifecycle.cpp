@@ -12,6 +12,7 @@
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_synth_key.h"
 #include "coop/remote_prop.h"
+#include "coop/remote_prop_spawn.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -95,41 +96,10 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 // Synth-key minting for non-Aprop_C keyed-interactables (chipPile/clump/
 // trashBits) extracted to coop/prop_synth_key.{h,cpp} (M-1, 2026-05-29).
 
-// Destroy a wire-suppressed intermediate-variant prop via K2_DestroyActor.
-// When called from inside Aprop_C::Init POST, the engine is still
-// executing FinishSpawningActor -- caller passes deferred=true to schedule
-// via GT::Post so the calling BP graph's continuation completes first.
-void DestroyLocalProp(void* actor, bool deferred) {
-    if (!actor) return;
-    auto doDestroy = [actor]() {
-        static void* sActorCls = nullptr;
-        static void* sDestroyFn = nullptr;
-        if (!sActorCls || !R::IsLive(sActorCls)) {
-            sActorCls = R::FindClass(P::name::ActorClassName);
-            sDestroyFn = nullptr;
-        }
-        if (sActorCls && !sDestroyFn) {
-            sDestroyFn = R::FindFunction(sActorCls, P::name::DestroyActorFn);
-        }
-        if (!sDestroyFn) {
-            UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", actor);
-            return;
-        }
-        if (!R::IsLive(actor)) {
-            UE_LOGI("spawner-suppress: deferred destroy target %p no longer live (already destroyed elsewhere) -- skip",
-                    actor);
-            return;
-        }
-        // Mark BEFORE calling destroy so OUR PRE-observer skips broadcast.
-        coop::prop_echo_suppress::MarkIncomingDestroy(actor);
-        R::CallFunction(actor, sDestroyFn, nullptr);
-    };
-    if (deferred) {
-        GT::Post(doDestroy);
-    } else {
-        doDestroy();
-    }
-}
+// DestroyLocalProp promoted to the public coop::prop_lifecycle API 2026-06-10
+// (P2 claim sweep in remote_prop_spawn calls it cross-TU). Definition lives
+// after the anon namespace closes; the anon-namespace callers below see the
+// declaration via prop_lifecycle.h.
 
 // Forward declaration so the GT-thread-defer wrapper can refer to the body.
 void GrabObserver_Aprop_Init_POST_Body(void* self);
@@ -230,6 +200,11 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 cls.c_str(), self);
         return;
     }
+    if (IsPerPlayerPropClass(cls)) {
+        UE_LOGI("grab_hook[Aprop.Init POST]: skipping broadcast for per-player '%ls' actor=%p (each peer owns its own)",
+                cls.c_str(), self);
+        return;
+    }
 
     coop::net::PropSpawnPayload p{};
     p.className.len = 0;
@@ -267,10 +242,27 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    p.scaleX = 1.f; p.scaleY = 1.f; p.scaleZ = 1.f;
+    // v54: real scale + the list_props identity row + SP-parity bools (a
+    // fresh gameplay spawn IS actively simulating -- kSimulatePhysics stays
+    // unconditional per the P1 decision; the parity bits ride along so the
+    // mirror's init() resolves the true mesh/mass/collision, not CDO 'cube').
+    const auto scl = ue_wrap::engine::GetActorScale3D(self);
+    p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
-    if (ue_wrap::prop::IsHeavy(self))  p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-    if (ue_wrap::prop::IsFrozen(self)) p.physFlags |= coop::net::propspawn_flags::kFrozen;
+    p.propName.len = 0;
+    if (ue_wrap::prop::IsDescendantOfProp(self)) {
+        if (ue_wrap::prop::IsHeavy(self))   p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
+        if (ue_wrap::prop::IsFrozen(self))  p.physFlags |= coop::net::propspawn_flags::kFrozen;
+        if (ue_wrap::prop::IsStatic(self))  p.physFlags |= coop::net::propspawn_flags::kStatic;
+        if (ue_wrap::prop::IsSleeping(self)) p.physFlags |= coop::net::propspawn_flags::kSleep;
+        if (ue_wrap::prop::ReadRemoveWOrespawn(self)) {
+            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
+        }
+        const std::wstring nm = ue_wrap::prop::GetPropNameString(self);
+        for (size_t i = 0; i < nm.size() && i < 31; ++i) {
+            p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
+        }
+    }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
     UE_LOGI("grab_hook[Aprop.Init POST]: HOST broadcasting SPAWN cls='%ls' key='%ls' loc=(%.1f,%.1f,%.1f) heavy=%d frozen=%d",
@@ -289,6 +281,9 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // internal to the channel). The previous EnqueuePropSpawnForRetry fallback
     // path retired as RULE 2 baggage.
     s->SendPropSpawn(p);
+    // Fork B 2c: self-claim -- this peer just wire-expressed the spawn; an
+    // open snapshot bracket's sweep must not destroy it as "unclaimed".
+    coop::remote_prop_spawn::RecordClaimIfTracking(self);
 }
 
 // K2_DestroyActor PRE -- bidirectional destroy broadcast (host + client),
@@ -429,10 +424,27 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    p.scaleX = 1.f; p.scaleY = 1.f; p.scaleZ = 1.f;
+    // v54: real scale + identity row + SP-parity bools (same stamp as the
+    // Init POST site; a container extraction is a fresh simulating spawn).
+    // The flag reads are Aprop_C-gated -- pre-v54 this read the heavy/frozen
+    // offsets on non-Aprop_C lineages too, i.e. stray bytes.
+    const auto scl = ue_wrap::engine::GetActorScale3D(spawnedActor);
+    p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
-    if (ue_wrap::prop::IsHeavy(spawnedActor))  p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-    if (ue_wrap::prop::IsFrozen(spawnedActor)) p.physFlags |= coop::net::propspawn_flags::kFrozen;
+    p.propName.len = 0;
+    if (ue_wrap::prop::IsDescendantOfProp(spawnedActor)) {
+        if (ue_wrap::prop::IsHeavy(spawnedActor))   p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
+        if (ue_wrap::prop::IsFrozen(spawnedActor))  p.physFlags |= coop::net::propspawn_flags::kFrozen;
+        if (ue_wrap::prop::IsStatic(spawnedActor))  p.physFlags |= coop::net::propspawn_flags::kStatic;
+        if (ue_wrap::prop::IsSleeping(spawnedActor)) p.physFlags |= coop::net::propspawn_flags::kSleep;
+        if (ue_wrap::prop::ReadRemoveWOrespawn(spawnedActor)) {
+            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
+        }
+        const std::wstring nm = ue_wrap::prop::GetPropNameString(spawnedActor);
+        for (size_t i = 0; i < nm.size() && i < 31; ++i) {
+            p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
+        }
+    }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
 
@@ -452,6 +464,8 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0,
             p.elementId);
     s->SendPropSpawn(p);  // channel queues internally
+    // Fork B 2c: self-claim (see the Init POST site).
+    coop::remote_prop_spawn::RecordClaimIfTracking(spawnedActor);
 }
 
 // Late-load catch for the non-Aprop_C keyed-interactable garbage/trash classes
@@ -564,7 +578,77 @@ void SetSession(coop::net::Session* session) {
 }
 
 bool IsWireSuppressedPropClass(const std::wstring& cls) {
+    // P2 design note (2026-06-10): the litter classes (chipPile/trashBits
+    // Pile) deliberately do NOT go here. This predicate is SYMMETRIC across
+    // its 3 call sites (client Init-destroy, host Init skip-broadcast,
+    // snapshot enumerate-skip) -- adding trashBitsPile would drop the 392
+    // level-PLACED deterministic-key piles from the connect snapshot (they
+    // would then be unclaimed -> the adoption sweep would destroy every one
+    // of them on the client), and adding chipPile would destroy a client's
+    // own v52 ball->pile convert-born piles at Init (same mechanism that
+    // vetoed garbageClump: clump Init fires on the client's legit grab
+    // morph). Connect-time divergence is handled by claim-tracking instead
+    // (remote_prop_spawn::DestroyUnclaimedDivergentProps).
+    //
+    // Fork B 2e (2026-06-10): the adoption SWEEP intentionally does NOT
+    // consult this predicate -- mushroom7 is keyed (in-universe) but never
+    // expressed (enumerate-skip here) AND client-forbidden (the Init-destroy
+    // above + the wire-ingress drop): its authoritative client steady state
+    // is ZERO instances, so the sweep removing stragglers is parity, not a
+    // hole.
     return cls == P::name::PropMushroomGrowingClass;
+}
+
+bool IsPerPlayerPropClass(const std::wstring& cls) {
+    // PER-PLAYER state actors, NOT shared world props (2026-06-10, the
+    // sweep-kills-inventory crash): each peer owns its own instance whose
+    // key differs per save BY DESIGN, so it can never claim-bind. The host
+    // must not snapshot-express it (a mirror of the host's personal
+    // inventory container is wrong on every peer), no peer live-broadcasts
+    // it, and the adoption sweep must never destroy the local one -- the
+    // 2026-06-10 smoke swept the client's prop_inventoryContainer_player_C
+    // as "unclaimed" and the client fataled at the next GC purge (engine
+    // references into the player's own inventory). Distinct from
+    // IsWireSuppressedPropClass: that predicate's client call site DESTROYS
+    // local instances (client-forbidden intermediates); a per-player class
+    // is the opposite -- the local instance is the player's own state and
+    // must live untouched.
+    return cls == P::name::PropInventoryContainerPlayerClass;
+}
+
+// Destroy a local prop via K2_DestroyActor, echo-suppressed (MarkIncomingDestroy
+// BEFORE the call so OUR K2_DestroyActor PRE observer skips the re-broadcast).
+// See prop_lifecycle.h for the deferred-vs-immediate contract.
+void DestroyLocalProp(void* actor, bool deferred) {
+    if (!actor) return;
+    auto doDestroy = [actor]() {
+        static void* sActorCls = nullptr;
+        static void* sDestroyFn = nullptr;
+        if (!sActorCls || !R::IsLive(sActorCls)) {
+            sActorCls = R::FindClass(P::name::ActorClassName);
+            sDestroyFn = nullptr;
+        }
+        if (sActorCls && !sDestroyFn) {
+            sDestroyFn = R::FindFunction(sActorCls, P::name::DestroyActorFn);
+        }
+        if (!sDestroyFn) {
+            UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", actor);
+            return;
+        }
+        if (!R::IsLive(actor)) {
+            UE_LOGI("spawner-suppress: deferred destroy target %p no longer live (already destroyed elsewhere) -- skip",
+                    actor);
+            return;
+        }
+        // Mark BEFORE calling destroy so OUR PRE-observer skips broadcast.
+        coop::prop_echo_suppress::MarkIncomingDestroy(actor);
+        R::CallFunction(actor, sDestroyFn, nullptr);
+    };
+    if (deferred) {
+        GT::Post(doDestroy);
+    } else {
+        doDestroy();
+    }
 }
 
 // GetPropElementIdForActor moved to coop::prop_element_tracker (M-1, 2026-05-29).
@@ -665,6 +749,9 @@ void Install(coop::net::Session* session) {
             }
         }
     }
+    // (v52: the clump re-grab dupe fix moved to trash_collect_sync's mirror-pile death-watch --
+    // identity-exact, fires for whoever grabs the shared pile, not just the grabber's aim edge.
+    // The old InpActEvt_use lookAtActor PRE observer here was retired; see PropConvert.)
     // InstallInventory has its own atomic guard + early-out; not gated here.
     // g_extraKeyedInitDone is part of the latch so Install keeps re-entering until
     // the lazily-loaded garbage Init observers are hooked (else trash-ball sync

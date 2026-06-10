@@ -160,8 +160,20 @@ bool ResolveSavePrefixFn() {
 // mainGameInstance.GameMode @0x01E1. Shares the prefix source with the save browser via
 // DeriveModeFromSlot (RULE 2). Retried each boot poll until Uui_saveSlots_C is loaded;
 // runs once then latches. Game thread only.
-void ApplyGameModeFromSlot(void* gi, const wchar_t* slot) {
+void ApplyGameModeFromSlot(void* gi, const wchar_t* slot, int forceGameMode = -1) {
     if (g_gameModeApplied || !gi || !slot) return;
+    // v56 save-transfer: the coop slot is `zcoop_<pid>` -- a prefix the game's
+    // mode map can't match. The wire carried the HOST's mode
+    // (SaveTransferBeginPayload.gameMode); write it directly, no derive.
+    if (forceGameMode >= 0) {
+        g_gameModeApplied = true;
+        uint8_t* gm = reinterpret_cast<uint8_t*>(gi) + profile::off::mainGameInstance_GameMode;
+        const uint8_t old = *gm;
+        *gm = static_cast<uint8_t>(forceGameMode);
+        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %u; v56 coop slot)",
+                slot, forceGameMode, static_cast<unsigned>(old));
+        return;
+    }
     if (!ResolveSavePrefixFn()) {
         // Menu save-slots widget not loaded yet at this boot stage. Retry next poll
         // (do NOT latch). If it never loads, the warning persists + GameMode stays
@@ -223,7 +235,7 @@ int DeriveModeFromSlot(const wchar_t* slot) {
 // screen (Proceed only loads preLoad, which we DON'T want). A single early open
 // fired during preLoad is silently dropped, hence the retry. It will NOT re-open
 // once the gameplay world is already loading (that would restart the load).
-bool LoadStorySave(const wchar_t* slot) {
+bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
     if (!slot || !*slot) return false;
 
     // (a) Already in gameplay? mainPlayer_C placed in the real level (non-origin).
@@ -292,7 +304,7 @@ bool LoadStorySave(const wchar_t* slot) {
     // Set the GameMode (story / sandbox / ...) from the slot prefix BEFORE the
     // travel -- VOTV's menu does this on load; our bypass didn't, so a story save
     // loaded as sandbox. Retried each poll until the save-slots widget is loaded.
-    ApplyGameModeFromSlot(gi, slot);
+    ApplyGameModeFromSlot(gi, slot, forceGameMode);
 
     std::wstring openCmd = L"open ";
     openCmd += P::name::GameplayLevel;
@@ -300,6 +312,16 @@ bool LoadStorySave(const wchar_t* slot) {
             openCmd.c_str(), slot);
     ExecuteConsoleCommand(openCmd.c_str());
     return false;  // not in gameplay yet -> caller keeps retrying
+}
+
+// v56 rejoin support (design-workflow B7): g_storySave caches the FIRST loaded
+// slot for the boot poll's lifetime -- a second in-process LoadStorySave (browser
+// rejoin loading a fresh zcoop_ slot) would re-register the STALE save object.
+// Clear the cache + the GameMode latch so the next LoadStorySave loads from disk.
+void ResetCachedSave() {
+    if (g_storySave) UE_LOGI("engine: ResetCachedSave -- dropping cached save %p", g_storySave);
+    g_storySave = nullptr;
+    g_gameModeApplied = false;
 }
 
 // FRESH New-Game boot: identical to LoadStorySave but with a BLANK saveSlot
@@ -441,6 +463,7 @@ void* g_getRotFn = nullptr;
 void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
 void* g_setTickFn = nullptr;
+void* g_getScaleFn = nullptr;
 
 // ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
 // (the orphan must exist even if it overlaps geometry).
@@ -466,6 +489,7 @@ bool ResolveActorFns() {
         if (!g_getVelFn) g_getVelFn = R::FindFunction(g_actorClass, P::name::GetActorVelocityFn);
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
+        if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
     }
     return g_actorClass && g_getLocFn && g_setLocFn;
 }
@@ -623,6 +647,39 @@ FVector GetActorLocation(void* actor) {
     if (!Call(actor, f)) return loc;
     f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
     return loc;
+}
+
+FVector GetActorScale3D(void* actor) {
+    // Unit scale on failure -- callers stamp it straight into a spawn
+    // transform, where (0,0,0) would collapse the mirror invisibly.
+    FVector scl{1.f, 1.f, 1.f};
+    if (!actor || !ResolveActorFns() || !g_getScaleFn) return scl;
+    ParamFrame f(g_getScaleFn);
+    if (!Call(actor, f)) return scl;
+    f.GetRaw(L"ReturnValue", &scl, sizeof(scl));
+    return scl;
+}
+
+bool ForceGarbageCollection() {
+    // UKismetSystemLibrary::CollectGarbage -- schedules a full GC purge at
+    // the end of the current frame (the engine's own post-level-transition
+    // pattern). Added 2026-06-10: the adoption sweep destroys ~1k actors at
+    // SnapshotComplete after a ~3k-spawn bracket; UE's default 61 s purge
+    // cadence held that pending-kill garbage at a ~10.6 GB client plateau
+    // (smoke-measured) until the periodic purge freed 4.6 GB -- pairing the
+    // mass destruction with the engine's purge collapses the plateau to
+    // seconds. Game thread only (we run in the event_feed drain).
+    static void* sCdo = nullptr;
+    static void* sFn = nullptr;
+    if (!sCdo) sCdo = R::FindClassDefaultObject(P::name::KismetSystemLibraryClass);
+    if (sCdo && !sFn) {
+        if (void* cls = R::ClassOf(sCdo)) {
+            sFn = R::FindFunction(cls, P::name::CollectGarbageFn);
+        }
+    }
+    if (!sCdo || !sFn) return false;
+    ParamFrame f(sFn);
+    return Call(sCdo, f);
 }
 
 

@@ -3,6 +3,7 @@
 #include "ui/host_save_picker.h"
 
 #include "ui/server_browser.h"
+#include "coop/join_progress.h"
 #include "coop/session_manager.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/save_browser.h"
@@ -43,7 +44,17 @@ void DoHostExisting(const sb::SaveInfo& info) {
     sm::SaveChoice c;
     c.newGame = false;
     c.slot = W2A(info.slot);
-    sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax);
+    const std::string label = W2A(info.displayName.empty() ? info.slot : info.displayName);
+    // Raise the host-boot cover only if the host action is ACCEPTED -- it hides the menu
+    // so the user can't wander into the browser and connect to their own lobby while the
+    // world loads, and gives "Starting your server -- loading <world>" feedback.
+    // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
+    // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax)) {
+        UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
+        return;
+    }
+    coop::join_progress::BeginHostBoot(label);
     UE_LOGI("host_save_picker: HOST existing save '%s'", c.slot.c_str());
     Close();
     ui::server_browser::Close();
@@ -57,7 +68,14 @@ void DoHostNew() {
     c.mode = 0;  // Story (the coop target). Sandbox/Infinite NEW games need the native
                  // map picker (cbox_sboxLevel) -- a later increment; for those, host an
                  // EXISTING save from the list (any mode lists + hosts fine).
-    sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax);
+    // A brand-new game's load is the SLOWEST host boot (the save isn't loadable for tens
+    // of seconds), so the no-feedback window was the worst here -- this is exactly where
+    // the user self-joined. Cover the menu the instant the action is accepted.
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax)) {
+        UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
+        return;
+    }
+    coop::join_progress::BeginHostBoot(g_newName);
     UE_LOGI("host_save_picker: HOST NEW story game '%s'", g_newName);
     Close();
     ui::server_browser::Close();

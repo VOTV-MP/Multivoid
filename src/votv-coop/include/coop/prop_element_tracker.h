@@ -158,6 +158,26 @@ void SeedKnownKeyedProps();
 // cave/level-travel feature needs.
 size_t ReSeedKnownKeyedProps();
 
+// ---- World-coherence stamp (Fork A, 2026-06-10) ---------------------------
+// Every seed walk stamps the live gameplay UWorld it expressed; the snapshot
+// trigger gate refuses to open a bracket (a DESTRUCTIVE contract: the client
+// sweeps unclaimed locals at SnapshotComplete) unless the registry's stamped
+// world is still the live one. GT-read; O(1) (IsLiveByIndex on the captured
+// pointer -- a world swap's GC purge kills the stamp with zero latency).
+bool HasSeededOnce();                   // the boot-seed latch, promoted
+bool IsRegistrySeededForCurrentWorld(); // stamp non-null && IsLiveByIndex(stamp)
+uint64_t SeedGeneration();              // bumps at the tail of EVERY seed walk
+
+// Purge-episode flag (gate hardening, 2026-06-10): true between the reaper's
+// mass-purge detection and the episode-end re-seed -- the registry is
+// draining a dead world's elements and must not be snapshot-expressed. The
+// world-stamp alone is insufficient: VOTV's boot/save-load can leave the
+// stamped UWorld alive while the registry is majority-dead (smoke-proven).
+// net_pump owns the detection edges and calls the setter; the snapshot gate
+// reads it.
+void SetInPurgeEpisode(bool active);
+bool InPurgeEpisode();
+
 // ---- Dead-Element reaper (PR-FOUNDATION, 2026-05-30) ----------------------
 // Reconcile the LOCAL Prop Element shadows against the live world: any local
 // (non-mirror) Prop Element whose backing actor the engine has purged

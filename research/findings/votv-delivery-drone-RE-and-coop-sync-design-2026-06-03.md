@@ -26,6 +26,180 @@ remote_prop, interactable_sync, net_pump).
 
 ---
 
+## BYTECODE-VERIFIED UPDATE (2026-06-08) — static BP-reflection RE resolved 6/10 probes + 2 doc corrections
+
+Two `bp_reflect` passes (drone state machine; economy order path) turned six [PROBE]s from
+runtime-inference into **bytecode-verified fact** and CORRECTED two structural inferences below.
+Method: `tools/bp_reflect.py` + `research/bp_reflection/_cfg.py` / `_fn.py` over
+drone / droneConsole / ui_laptop / orderPlace / mainPlayer / lib disassembly. (VOTV is a STOCK
+non-nativized UE4.27 Shipping build → all BP logic is Kismet bytecode in the `.uasset`, NOT in the
+EXE; IDA cannot read it — `bp_reflect`, not IDA, is the tool for BP functions.)
+
+**RESOLVED:**
+- **[#4] flyingType@0x0300 is a raw `int32` (NOT a UEnum), domain {-1, 0, 1}** — the doc's guessed
+  `{0..4 delivery/pickup/sell}` map was WRONG. **0** = path-following cruise (BOTH outbound-deliver
+  and homebound-return; the `Direction` bool picks which way along the spline); **1** = pickup /
+  approach-and-grab (homes on `pickupLoc`, `AddForce` toward it, grabs within 25 cm); **-1** =
+  idle / arrived-done / dormant (after `sell()` → `active:=false`; also the value `triggerFly` tests
+  to decide a fresh `beginFly`). Persisted in the drone's `Fstruct_save` ints[1] (`loadData`).
+- **[#5]+[#2] Verb dispatch CONFIRMED unobservable.** Every call to `triggerFly`, `beginFly`,
+  `dropSack`, `soundAlarm`, `checkOrders`, `compileOrder`, `sendShop` — INCLUDING the console's
+  cross-object `drone.triggerFly()` — compiles to **`EX_LocalVirtualFunction` → ProcessInternal**,
+  the layer BELOW our `UObject::ProcessEvent` detour. A PRE/POST observer on any of them NEVER fires
+  (the `doorOpen` / flashlight / clump-`playerGrabbed` trap). **The "poll the flags, don't hook the
+  verbs" host design is now bytecode-correct.** Only `ReceiveTick` / `ReceiveBeginPlay` (`FUNC_Event`)
+  are ProcessEvent-observable (→ the client tick-suppression interceptor). `AdroneConsole_C::player_use`
+  is ALSO unobservable → the client call-intercept edge MUST be the proven-observable
+  **`AmainPlayer_C::InpActEvt_use_*` (the `_41` variant), gated by `lookAtActor == the console`** — the
+  exact edge door-sync and clump-grab already settled on.
+- **[#6] Order-commit path:** `Uui_laptop_C::makeAnOrder(order, automatic)` → `addOrderCart(order)`
+  which does **`Array_Add(GameMode.saveSlot.orders@0x0490, order)`** [the ONLY persistent order write]
+  → then **`GameMode.drone.sendShop(orders[0])`** to start the flight. `sendShop` → `beginFly` +
+  `hasOrder:=true` + `checkOrders`. It does NOT write `droneOrder`, NOT call `orderPlace.spawnOrder`,
+  NOT route through `storeMiddleman`.
+
+**CORRECTIONS to the sections below:**
+- **§9.1 `storeMiddleman` was wrong.** `intComs_storeMiddleman` is a **near-empty STUB** on
+  `ui_laptop` — it does NOT resolve the live drone/orderPlace. Its only real use is inside
+  `drone.compileOrder`, invoked on a freshly-spawned cargo prop as a "this item expands into N
+  objects" interface hook (cargo assembly), not a resolver. The actual resolver is the cached
+  `laptop.GameMode` pointer chain; `lib::getMainGamemode` = `UGameplayStatics::GetGameMode` (the
+  LOCAL world's GameMode).
+- **§9.2 `droneOrder` was wrong.** `saveSlot.droneOrder@0x01F0` is **never written by any drone
+  function**. The active queue is purely `saveSlot.orders@0x0490`; `checkOrders` reads `orders[0]`.
+
+**DECISIVE VERDICT — a CLIENT laptop order is 100% CLIENT-LOCAL.** The resolver is `GetGameMode()`
+and VOTV has no UE replication, so a client's `makeAnOrder` `Array_Add`s into the CLIENT's own
+`saveSlot.orders` and calls `sendShop` on the CLIENT's own mirror drone. It NEVER reaches the host's
+authoritative drone/queue. **→ a new reliable client→host `OrderRequest(Fstruct_storeOrder)` edge IS
+REQUIRED** (high confidence, bytecode-settled; the only residual is the runtime [#7] UI half — can a
+client open the shop at all).
+
+### ECONOMY BUILD PLAN (bytecode-grounded — build NEXT session, after the probe confirms [#7]/[#3]/drain)
+1. **Client interception = POLL, don't hook** (`makeAnOrder` is unobservable): poll the CLIENT's
+   `saveSlot.orders.Num` each GT tick; on an INCREMENT, take the new order(s), emit reliable
+   `OrderRequest` to the host, and **REMOVE them from the local queue** (so the client's
+   suppressed-tick mirror drone never tries to fly + no phantom local order persists). The local
+   `sendShop` already ran, but `drone_sync` suppresses the client drone's tick so it cannot actually
+   fly — the probe's `Active` edge log confirms whether the stray local `Active:=true` causes any FX
+   that need clearing.
+2. **Wire payload `OrderRequest` = one `Fstruct_storeOrder`:** `items` TArray<`Fstruct_store`>, each
+   { `price` i32, `name` FName-as-string, **`object` TSubclassOf serialized AS A CLASS PATH/NAME —
+   the load-bearing field** (`spawnOrder`/`dropSack`/`compileOrder` spawn exactly `items[i].object`),
+   `asProp` FName-string, `category` u8, `size` i32, `parseRowNameToObject` bool } + `time` f32.
+   Cosmetic fields (`subcategory` FText, `achievementUnlock` FName) omitted — re-derivable host-side
+   from `name`. The probe's `ORDER PLACED` line dumps `obj0` via `R::NameOf` to prove the TSubclassOf
+   reads cleanly for the wire.
+3. **Host ingest:** on `OrderRequest`, re-resolve each `items[i].object` UClass by the wired class
+   name (`FindClass` — both peers load the same cooked classes, so it round-trips),
+   `Array_Add(host saveSlot.orders, order)`, then host `drone.sendShop(orders[0])` to launch. Cargo
+   then flows back via the EXISTING prop pipeline (PropSpawn) + the already-shipped DroneState/
+   DronePose body stream. HOST-AUTH; clients never spawn cargo.
+4. **Drain:** the probe's `ORDER QUEUE DRAINED` edge reveals where `orders` is consumed (no
+   `Array_Remove` was found in any drone fn) → needed to avoid a host re-fly loop.
+
+OUT (host-only / host-save-only, per §9.6 / §9.8): sell points + email, gifts / task rewards, the
+auto-morning schedule — all on the host's clock/save; clients see only the delivered `Aprop_C` box.
+
+### PROBE RESULTS — RESOLVED AUTONOMOUSLY (2026-06-09, RULE 1: ran the probe ourselves, no hands-on)
+Added an ini-gated (`drone_probe_drive=1`) one-shot auto-drive to `coop/dev/drone_probe` that, on the
+game thread ~10 s after connect, calls the game's OWN delivery path via ProcessEvent (the verbs are
+unobservable to a PASSIVE hook but freely CALLABLE — all `FUNC_BlueprintEvent|Callable`): HOST
+`Make Default Order`(out) → `laptop.makeAnOrder(order, true)` (== `func_newHour`, a real delivery);
+CLIENT `Make Default Order` → `laptop.addOrderCart(order)` (commit-only). A 90 s LAN smoke (no crash,
+RSS stable) captured the answers on BOTH peers:
+- **[#7] CLIENT SHOP REACHABLE + ORDER IS CLIENT-LOCAL ✓ (the gating question).** Client log:
+  `DRIVE(client): addOrderCart(default) ok=1` → `ORDER PLACED: saveSlot.orders.Num 0->1 (order[0]:
+  items=7 obj0='prop_reelbox_C')`. A client CAN commit a shop order locally; it stays in the CLIENT's
+  own queue (the host never sees it). → the `OrderRequest` client→host edge is REQUIRED and BUILDABLE
+  (poll the client's `orders.Num` for the increment, forward to host, clear the local entry).
+- **TSubclassOf serialization ✓.** `obj0='prop_reelbox_C'` read cleanly via `NameOf` on BOTH peers →
+  the order's `object` class round-trips by name for the wire.
+- **flyingType {-1,0,1} CONFIRMED at runtime ✓.** Host cycled `-1` (dormant) → `0` (cruise, on the
+  trigger) → `1` (approach), matching the bytecode.
+- **The DRAIN POINT (the static RE couldn't find it) ✓.** `orders.Num 1->0` at ARRIVAL (with
+  `flyingType=1, hasOrder=0`) → the queue is consumed on delivery (the host's own `removeOrderCart`).
+  So the economy build injects via the native `makeAnOrder`/`addOrderCart` commit and the native drain
+  handles cleanup → no manual queue management / re-fly loop.
+- **[#1] singleton ✓** (drone_C resolves once and stays stable — initially NULL pre-spawn, then bound).
+  **[#10] radar ✓** (the drone is in `mainGamemode.radarObjects`, Num=16/17 → the mirror blips).
+- **[#3] cargo partial:** the host delivery assembled cargo into the drone's
+  `prop_inventoryContainer_drone_C` (Aprop_C) at arrival; the FREE-box drop is the manual `dropSack`
+  (action-option 7) not auto-tested, but the cargo IS Aprop_C → rides the existing prop pipeline. Not
+  blocking the economy.
+
+**⇒ THE ECONOMY IS GREENLIT.** Every gating question is resolved; the build plan above stands. Next:
+build `OrderRequest` (client poll-and-forward + host ingest via the native `makeAnOrder` commit) + the
+drone state edges. The probe (`coop/dev/drone_probe.{h,cpp}`) stays as ini-gated dev tooling
+(`drone_probe=1` observe, `drone_probe_drive=1` self-drive a delivery/order); both disarmed after this run.
+
+### ECONOMY BUILT + e2e-VALIDATED (2026-06-09, protocol v49)
+Shipped exactly the build plan above. New code:
+- `ue_wrap/ftext_utils.{h,cpp}` -- a PINNED valid empty FText (via Kismet `Conv_StringToText("")`, ref never
+  released) so the hand-built `Fstruct_store.subcategory` slot is never a null-TSharedRef (deref-safe even if
+  the host opens the laptop orders UI; bytecode says commit/deliver never reads subcategory, but be robust).
+- `ue_wrap/order_economy.{h,cpp}` -- engine substrate: `OrderCount`/`ReadOrder` (poll the local queue),
+  `CommitOrder` (HOST: hand-build the native `Fstruct_storeOrder` -- items buffer the native deep-copies then
+  we free; objects via `FindClass`; pinned empty FText -- then dispatch `Uui_laptop_C::makeAnOrder(order,
+  automatic=true)`), `CanCommit` (drone+radiotower+laptop+sellLocation present; BUSY is fine -- native queues),
+  `QuietLocalDrone` (CLIENT: reset Active@0x0370:=false/flyingType@0x0300:=-1/hasOrder@0x0360:=false after
+  forwarding so the locally-run sendShop can't fake a takeoff -- RE Q2).
+- `coop/order_sync.{h,cpp}` -- CLIENT polls saveSlot.orders.Num (a WATERMARK; the commit verb is BP-internal/
+  unobservable), serializes each new order (each item's `object` CLASS NAME + price/size/category + time),
+  CHUNKS it across reliable datagrams (kMaxReliablePayload=228 B; header `OrderRequestHeader`=16 B), forwards;
+  HOST assembles per (senderSlot, orderId) then commits via order_economy. Wire is client->host only (NOT
+  relayed). protocol v48->v49, `ReliableKind::OrderRequest=39`. event_feed dispatch + net_pump Install/Tick/
+  OnDisconnect.
+- The CLIENT does NOT remove its forwarded order (the only heap-safe remover, `removeOrderCart`, needs the
+  laptop UI + is host-only -- RE Q3); the watermark means it's never re-forwarded, and the ephemeral client
+  never saves, so the retained local entry is harmless + leak-free.
+
+RE Q1-Q5 (the 5-question commit/remove/charge agent pass, this session) confirmed: `makeAnOrder(automatic=true)`
+charges NO money (charging lives in the laptop Button_order graph, not makeAnOrder); the spawn uses
+`items[i].object` DIRECTLY (no row-name->class lookup); subcategory is UI-cosmetic; the native arrival drain
+(`removeOrderCart`/`Array_Remove(orders,0)`) cleans the host queue.
+
+**e2e LAN smoke PASSED (2026-06-09):** client auto-placed a 7-item order -> `order_sync: forwarded order id=1
+items=7 in 1 chunk(s)` -> host `order assembled (slot=1 id=1 items=7)` -> `ftext_utils: pinned one empty FText`
+-> `order_economy: CommitOrder -- makeAnOrder(items=7, automatic=1) ok=1` -> shared drone flew the delivery ->
+`ORDER QUEUE DRAINED: orders.Num 1->0`. items=7 both ways VALIDATES the 0x50 Fstruct_store stride (a wrong
+stride would garble items 1-6 into FindClass failures). 2 agent audits: perf 0-CRIT/0-WARN (all per-tick paths
+O(1) cached); correctness fixed C-1 (drop OrderRequest from an out-of-range senderPeerSlot, no 0xFF sentinel
+bucket) + reverted a wrong I-2 (Install is the PER-TICK ensure path -> must NOT reset the watermark; OnDisconnect
+resets, like all sibling subsystems). Build clean, 4-folder hash-MATCH. UNCOMMITTED. Drone-state-edge FX
+(rotor dust + delivery-signal sound) were DEFERRED here but the user hit them hands-on 2026-06-09 -> now being
+built (separate RE pass: the client's drone tick is suppressed, so the FX must be driven directly off synced
+state edges).
+
+### DRONE FX + INTERACTION MIRROR (2026-06-09, stateBits bit0=dust / bit1=canTakeOff / bit2=hasSack)
+The CLIENT suppresses the drone ReceiveTick (so it can't fly), which also kills the tick-driven FX + leaves the
+interaction-gate fields stale. RE (2 agents): the **dust** (`eff_droneDust`@0x0278) is driven by a downward
+ground raycast (active iff near ground) + a `'dust'` float intensity param; the **arrival cue**
+(`audio_alarm`@0x0230 + `light_alarm`@0x0240) fires on the `canTakeOff`@0x0500 false->true edge; the **interaction
+gate** is `actionOptionIndex: IFNOT(canTakeOff) -> "the drone is in motion"`, and `getActionOptions` needs
+`hasSack`@0x0501 for the open-inv/drop options; the inventory is `container`@0x04F8 =
+`Aprop_inventoryContainer_drone_C` (a keyed Aprop_C the prop pipeline already mirrors as 'droneContainer').
+BUILD: host `ReadFxBits` packs dust(IsActive)/canTakeOff/hasSack into stateBits; client (drone_sync OnReliable)
+replays `SetDust`(SetActive + SetFloatParameter('dust',1.0)) on the dust-bit change, `PlayArrivalCue`
+(audio_alarm.Activate) + `SetSignalLight`(light_alarm.SetVisibility) on the canTakeOff rising edge, and
+`WriteGateFields`(writes canTakeOff+hasSack onto the mirror) + `RepointContainer`(points container@0x04F8 at the
+prop-mirrored actor). All component UFunctions resolved on their OWNING class (FindFunction doesn't climb supers):
+SetActive/Activate/IsActive on `ActorComponent`, SetVisibility on `SceneComponent`, **SetFloatParameter on
+`FXSystemComponent`** (NOT ParticleSystemComponent -- the audit caught this; resolving on the subclass returned
+NULL -> the 'dust' param was never set -> invisible dust = the user's "no dust" bug; FIXED).
+- **STATUS:** code FIRES (smoke logs: client `dust ON`, `arrival cue + signal light ON`, FX resolved + economy
+  re-validated, no crash). HANDS-ON of the CORRECTED build (the SetFloatParameter fix) is PENDING -- the user's
+  "drone dust/signaling not synced" report may predate the fix.
+- **OPEN (next session):** (1) if the dust is STILL invisible after the param fix -> the tick-suppressed mirror
+  may not RENDER its particle/light components at all (SetActorTickEnabled(false) may stop component
+  emission/render) -> may need to NOT suppress the whole tick (neutralize only the flight integrator) or
+  re-enable/re-register the specific FX components. (2) **Drone SACK INVENTORY contents sync** (the user's "items
+  inside sack not synced"): the container ACTOR mirrors via the prop pipeline, but the ITEMS INSIDE it
+  (`Aprop_container_C.propInventory`) are a SEPARATE sync gap -- RE whether the prop getData/loadData Fstruct_save
+  already carries the inventory or it needs its own packet.
+
+---
+
 ## 0. The cast (verified lineage)
 
 | Class | Base | Role |

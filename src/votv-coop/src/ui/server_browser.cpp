@@ -14,6 +14,7 @@
 
 #include "ui/host_save_picker.h"
 #include "coop/session_manager.h"
+#include "harness/config.h"   // local-only ini persistence for the name + last direct address
 #include "ue_wrap/log.h"
 
 #include "imgui.h"
@@ -38,6 +39,7 @@ std::vector<Row> g_rows;
 int  g_selected = -1;
 char g_directIp[64] = "127.0.0.1:7777";
 char g_hostName[64] = "My VOTV Server";
+char g_nick[64] = "Player";   // local display name; loaded from session_manager on open
 bool g_hostLocked = false;
 
 }  // namespace
@@ -53,9 +55,15 @@ bool IsOpen(){ return g_open.load(std::memory_order_relaxed); }
 void Render() {
     if (!IsOpen()) return;
 
-    // Auto-refresh once when the browser is opened (so the list isn't stale/empty).
+    // Auto-refresh once when the browser is opened (so the list isn't stale/empty) + load
+    // the current nickname (config default, or whatever the user last set) into the field.
     if (g_justOpened.exchange(false, std::memory_order_relaxed)) {
         sm::Refresh();
+        std::snprintf(g_nick, sizeof(g_nick), "%s", sm::Nickname().c_str());
+        // Restore the last direct-connect address the user typed (persisted locally
+        // in votv-coop.ini). Falls back to the loopback default on a fresh install.
+        std::snprintf(g_directIp, sizeof(g_directIp), "%s",
+                      harness::config::ReadIniValue("browser.lastdirect", "127.0.0.1:7777").c_str());
     }
     // Pull the latest fetched rows (cheap copy of a small list; render thread only).
     sm::CopyRows(g_rows);
@@ -81,6 +89,17 @@ void Render() {
         ImGui::TextDisabled("(Voices of the Void  -  Coop %s)", sm::ModVersion());
         ImGui::Spacing();
 
+        // Your display name -- sent on Join + shown on your nameplate/scoreboard. Applies
+        // to the NEXT Host/Join (persisted in session_manager; wins over the config default).
+        ImGui::TextUnformatted("Your name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##nick", g_nick, sizeof(g_nick))) sm::SetNickname(g_nick);
+        // Persist the name once the user finishes editing (not per-keystroke) so it
+        // sticks across relaunches via votv-coop.ini's net.nick (the same key boot reads).
+        if (ImGui::IsItemDeactivatedAfterEdit()) harness::config::WriteIniValue("net.nick", g_nick);
+        ImGui::Spacing();
+
         // Host controls row.
         ImGui::SetNextItemWidth(220.0f);
         ImGui::InputText("##hostname", g_hostName, sizeof(g_hostName));
@@ -101,6 +120,8 @@ void Render() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
         ImGui::InputText("##directip", g_directIp, sizeof(g_directIp));
+        // Remember the typed address across relaunches (votv-coop.ini browser.lastdirect).
+        if (ImGui::IsItemDeactivatedAfterEdit()) harness::config::WriteIniValue("browser.lastdirect", g_directIp);
         ImGui::SameLine();
         // Close the browser only if the action was ACCEPTED (good address, not busy) so a
         // rejected click leaves the browser open instead of stranding the user on a clean
@@ -110,6 +131,11 @@ void Render() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
+
+        // Our own announced lobby: SHOWN in the list (so the host can confirm their
+        // server is live + visible to clients) but tagged "(your server)" and gated from
+        // self-connect -- you can see it, you just can't join yourself.
+        const std::string ownLobby = sm::OwnLobbyId();
 
         // Server table (MTA column model; "Age" replaces MTA's pre-listed ping).
         const float footer = ImGui::GetFrameHeightWithSpacing() * 2.2f;
@@ -128,21 +154,29 @@ void Render() {
 
             for (int i = 0; i < static_cast<int>(g_rows.size()); ++i) {
                 const Row& r = g_rows[i];
+                const bool isOwn = !ownLobby.empty() && r.lobbyId == ownLobby;
                 ImGui::TableNextRow();
                 ImGui::PushID(i);
 
                 ImGui::TableSetColumnIndex(0);
-                if (r.locked) ImGui::TextColored(ImVec4(1.00f, 0.78f, 0.35f, 1.0f), "L");
+                if (isOwn) ImGui::TextColored(ImVec4(0.55f, 0.95f, 0.65f, 1.0f), "*");       // your server
+                else if (r.locked) ImGui::TextColored(ImVec4(1.00f, 0.78f, 0.35f, 1.0f), "L");
 
                 ImGui::TableSetColumnIndex(1);
-                // Whole row is selectable (spans columns); double-click connects.
-                if (ImGui::Selectable(r.name.c_str(), g_selected == i,
+                // Whole row is selectable (spans columns); double-click connects -- EXCEPT
+                // your OWN server (you host it: visible here so you know it's up, but not joinable).
+                const std::string label = isOwn ? (r.name + "   (your server)") : r.name;
+                if (isOwn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.92f, 0.70f, 1.0f));
+                if (ImGui::Selectable(label.c_str(), g_selected == i,
                                       ImGuiSelectableFlags_SpanAllColumns |
                                       ImGuiSelectableFlags_AllowDoubleClick)) {
                     g_selected = i;
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        if (sm::JoinLobby(r.lobbyId, r.name)) Close();
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
+                        else if (sm::JoinLobby(r.lobbyId, r.name)) Close();
+                    }
                 }
+                if (isOwn) ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%d/%d", r.playersCur, r.playersMax);
@@ -159,16 +193,33 @@ void Render() {
         }
 
         // Footer: selection-aware Connect (join the selected master lobby) + status.
+        // The host's OWN selected server shows a disabled "Your server" instead of Connect.
         const bool hasSel = g_selected >= 0 && g_selected < static_cast<int>(g_rows.size());
-        if (!hasSel) ImGui::BeginDisabled();
-        if (ImGui::Button("Connect", ImVec2(120.0f, 0.0f)) && hasSel)
+        const bool selOwn = hasSel && !ownLobby.empty() && g_rows[g_selected].lobbyId == ownLobby;
+        const bool canConnect = hasSel && !selOwn;
+        if (!canConnect) ImGui::BeginDisabled();
+        if (ImGui::Button(selOwn ? "Your server" : "Connect", ImVec2(120.0f, 0.0f)) && canConnect)
             if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name)) Close();
-        if (!hasSel) ImGui::EndDisabled();
+        if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Close", ImVec2(90.0f, 0.0f))) open = false;
         ImGui::SameLine(0.0f, 18.0f);
         const std::string status = sm::Status();
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.00f, 1.0f), "%s", status.c_str());
+
+        // Host-action result (set by the Host-Game flow). Green = listed, amber =
+        // hosting but master unreachable (unlisted), red = hard failure. Empty until
+        // a Host action runs. This is the non-silent feedback for "Host did nothing".
+        const std::string hostStatus = sm::HostStatus();
+        if (!hostStatus.empty()) {
+            const bool failed = hostStatus.rfind("Host failed", 0) == 0;
+            const bool unlisted = hostStatus.find("not listed") != std::string::npos ||
+                                  hostStatus.find("NOT listed") != std::string::npos;
+            const ImVec4 col = failed   ? ImVec4(1.00f, 0.45f, 0.40f, 1.0f)
+                              : unlisted ? ImVec4(1.00f, 0.80f, 0.35f, 1.0f)
+                                         : ImVec4(0.55f, 0.95f, 0.65f, 1.0f);
+            ImGui::TextColored(col, "Host: %s", hostStatus.c_str());
+        }
     }
     ImGui::End();
 

@@ -84,10 +84,11 @@ unsigned long long TasksRun();
 //     all unchanged. The multi-slot table lets one subsystem own multiple
 //     slots without a global mutex or rendezvous between subsystems.
 //
-// Performance: the detour walks the table linearly; cost is O(kMaxInterceptors)
-// pointer compares per dispatch. With kMaxInterceptors=16 and ProcessEvent at
-// ~thousands/sec the loop is well under 1 us. Empty slots null-check out
-// before the (rare) match path.
+// Performance: since the D4-2 count-bounded walk + Bloom presence probe, the
+// per-dispatch cost is an O(1) Bloom rejection for non-intercepted functions
+// and a count-bounded (g_interceptorActive) walk on a Bloom hit -- the
+// kMaxInterceptors constant only sizes the cold-path static array (16 B per
+// slot), not the hot path.
 //
 // Thread-safety: registration uses an atomic store so the detour reads a
 // consistent state. Game-thread-only is NOT required for the interceptor cb
@@ -95,7 +96,9 @@ unsigned long long TasksRun();
 // recursively without re-entrancy care; the detour's t_inPump guard does NOT
 // shield interceptor execution from re-entry.
 using UFunctionInterceptor = bool(*)(void* self, void* params);
-inline constexpr int kMaxInterceptors = 16;
+// 16 -> 24 (Fork C, 2026-06-10): the client census stood at 15/16 before the
+// 3 ambient-spawner suppressors (-1 for the deleted dirthole row) = 17 live.
+inline constexpr int kMaxInterceptors = 24;
 
 // Register a PRE-dispatch interceptor for `targetUFunction`. Returns false if
 // the table is full or arguments are null. Multiple distinct interceptors may

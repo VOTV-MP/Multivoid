@@ -49,9 +49,7 @@ constexpr ElementId BandEnd(uint8_t band) {
 void NotifyRegistryShuttingDown();
 
 Registry::Registry() {
-    m_hostFree.reserve(kHostRangeSize);
-    m_localFree.reserve(kSlotBandSize);
-    RefillFreeStacks_();
+    RefillFreeStacks_();  // m_hostFree/m_localFree are deques -- no reserve needed
 }
 
 Registry::~Registry() {
@@ -115,7 +113,6 @@ void Registry::SetLocalPeerBand(uint8_t slot) {
     m_activeBand = slot;
     const ElementId base = BandBase(slot);
     const ElementId end  = BandEnd(slot);
-    m_localFree.reserve(end - base);
     for (ElementId id = end; id-- > base;) {
         m_localFree.push_back(id);
     }
@@ -182,10 +179,22 @@ void Registry::FreeId(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
+    // FIFO REUSE (v52, 2026-06-09): push the freed id to the FRONT (bottom) of the stack, NOT the
+    // back. Alloc pops the back, so a freed id is only re-issued AFTER the entire never-allocated
+    // pool above it is exhausted (~28k host / ~8k peer ids). This DEFERS reuse by hours of normal
+    // allocation -- long enough that every in-flight cross-peer message referencing the old id
+    // (the unreliable PropPose stream, a reliable PropDestroy/PropConvert) has drained before the
+    // id is handed to a new entity. The prior LIFO push_back re-issued a just-freed id IMMEDIATELY,
+    // which let a transient trash CLUMP grab a low eid (e.g. 126) still bound to another prop's
+    // mirror on the peer -> the held-clump pose stream drove the WRONG actor = the "grabbed pile
+    // turns into a bottle then a cassette then a clump" morphing + cross-peer dupes (proven from
+    // the 2026-06-09 logs: GRAB-IN eid=126 resolved to an Aprop mirror, not the clump).
+    // push_front on the std::deque free-list is O(1) (perf audit W-1 2026-06-10: an earlier
+    // comment described a discarded vector-shift iteration).
     if (IsHostId(id)) {
-        m_hostFree.push_back(id);
+        m_hostFree.push_front(id);
     } else {
-        m_localFree.push_back(id);
+        m_localFree.push_front(id);
     }
 }
 

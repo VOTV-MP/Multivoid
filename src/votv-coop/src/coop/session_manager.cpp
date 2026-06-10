@@ -25,7 +25,12 @@ namespace net = coop::net;
 namespace lobby = coop::net::lobby;
 
 constexpr const char* kModVersion = "0.9.0-n";
-constexpr const char* kDefaultMaster = "127.0.0.1:10001";
+// Pre-Configure seed only: the harness calls Configure() at boot with
+// cfg::ReadMasterUrl() (the canonical source -> the built-in VPS endpoint or the
+// net.master.custom gate), which overwrites g_masterUrl before any host/join. This
+// VPS default just makes a read before Configure() (shouldn't happen) reach the right
+// place instead of localhost. Keep in sync with config.cpp kBuiltinMasterUrl.
+constexpr const char* kDefaultMaster = "87.121.218.33:10001";
 
 std::string ReadEnvA(const char* name) {
     char buf[256] = {};
@@ -41,8 +46,17 @@ std::string ReadEnvA(const char* name) {
 lobby::LobbyClient& Client() { static auto* c = new lobby::LobbyClient(); return *c; }
 lobby::LobbyAnnouncer& Announcer() { static auto* a = new lobby::LobbyAnnouncer(); return *a; }
 
-std::string g_masterUrl;
-std::once_flag g_masterOnce;
+// Config pushed from the harness at boot (Configure): the master URL + the host
+// fallback Config (used when the master announce fails). g_hostStatus is the last
+// host-action result the browser surfaces. All under g_cfgMu (low contention --
+// a boot write, then occasional worker-set / UI-read).
+std::mutex g_cfgMu;
+std::string g_masterUrl = kDefaultMaster;  // overwritten by Configure
+bool g_configured = false;
+net::Config g_fallbackHostCfg;
+std::string g_hostStatus;
+std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
+std::string g_nickname = "Player";  // local display nickname (seeded from config; browser overwrites)
 
 // One queued session start (last action wins until the harness consumes it).
 std::mutex g_pendMu;
@@ -86,14 +100,58 @@ bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
 
 }  // namespace
 
-const std::string& MasterUrl() {
-    std::call_once(g_masterOnce, [] {
+void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg) {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    g_masterUrl = masterUrl.empty() ? std::string(kDefaultMaster) : masterUrl;
+    g_fallbackHostCfg = fallbackHostCfg;
+    g_configured = true;
+    UE_LOGI("session_manager: configured -- master='%s' fallback(signaling='%s' identity='%s')",
+            g_masterUrl.c_str(), g_fallbackHostCfg.signalingUrl.c_str(),
+            g_fallbackHostCfg.localIdentity.c_str());
+}
+
+std::string MasterUrl() {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    if (!g_configured) {
+        // Not yet Configure()'d (e.g. a direct unit probe) -- fall back to the
+        // env var / localhost default so the value is still sane.
         const std::string m = ReadEnvA("VOTVCOOP_MASTER_URL");
-        g_masterUrl = m.empty() ? kDefaultMaster : m;
-        UE_LOGI("session_manager: master server = %s", g_masterUrl.c_str());
-    });
+        return m.empty() ? std::string(kDefaultMaster) : m;
+    }
     return g_masterUrl;
 }
+
+void SetHostStatus(const std::string& status) {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    g_hostStatus = status;
+}
+
+std::string HostStatus() {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    return g_hostStatus;
+}
+
+std::string OwnLobbyId() {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    return g_ownLobbyId;
+}
+
+void SetNickname(const std::string& nick) {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    if (!nick.empty()) g_nickname = nick;  // ignore empty (keep the last good name)
+}
+
+std::string Nickname() {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    return g_nickname;
+}
+
+namespace {
+void SetOwnLobbyId(const std::string& id) {
+    std::lock_guard<std::mutex> lk(g_cfgMu);
+    g_ownLobbyId = id;
+}
+}  // namespace
 
 const char* ModVersion() { return kModVersion; }
 
@@ -125,6 +183,7 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
                 cfg.turnList = info.turnUri;
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
+                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
                 QueueStart(cfg);
                 UE_LOGI("session_manager: HOST ready -- lobby=%s identity=%s (session boot = harness Tier 2)",
                         info.lobbyId.c_str(), info.hostIdentity.c_str());
@@ -138,24 +197,59 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
     }).detach();
 }
 
-void HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax) {
-    if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return; }
+void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
+    if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- env announce skipped"); return; }
     const std::string masterUrl = MasterUrl();
-    std::thread([masterUrl, choice, name, locked, playersMax] {
+    std::thread([masterUrl, name, world] {
         // try/catch: an exception escaping a detached thread is std::terminate. The
         // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
-            // The P2P Config's signaling/TURN come from the master's announce response,
-            // so we MUST announce first (to build the Config) -> queue {Config, choice}
-            // -> the harness loads the world THEN StartCoopSession. The lobby is listed
-            // during the host's brief world-load window (acceptable; a joiner just retries
-            // until the host session is up).
+            const lobby::HostInfo info =
+                Announcer().Host(masterUrl, name, ModVersion(), world,
+                                 /*locked=*/false, /*playersMax=*/4, 8000);
+            if (info.ok) {
+                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
+                Announcer().SetListed(false); // the hide-from-list flag, immediately
+                SetHostStatus("Hosting '" + name + "' -- announced (hidden from list)");
+                UE_LOGI("session_manager: env host announced HIDDEN -- lobby=%s world='%s'",
+                        info.lobbyId.c_str(), world.c_str());
+            } else {
+                UE_LOGW("session_manager: env hidden announce failed (master unreachable) -- "
+                        "hosting direct-only");
+            }
+        } catch (const std::exception& e) {
+            UE_LOGW("session_manager: env announce worker exception: %s", e.what());
+        }
+        g_actionBusy.store(false);
+    }).detach();
+}
+
+bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax) {
+    if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
+    const std::string masterUrl = MasterUrl();
+    net::Config fallback;
+    { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
+    std::thread([masterUrl, fallback, choice, name, locked, playersMax] {
+        // try/catch: an exception escaping a detached thread is std::terminate. The
+        // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
+        try {
+            if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
+            // RULE 1 -- hosting must NOT depend on a reachable master. We announce
+            // (best-effort) to LIST the lobby + collect master-issued signaling/TURN,
+            // but EITHER WAY we queue the boot: announce-ok -> the master's P2P Config
+            // (listed); announce-fail -> the LOCAL fallback Config (the deployed ini
+            // -> the VPS signaling, identity "votvhost"), UNLISTED but still in-game
+            // (never a silent dead-end). MTA precedent: the server runs regardless of
+            // the master list. The harness then loads the world THEN StartCoopSession.
             const std::string world = choice.newGame ? choice.newName : choice.slot;
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, ModVersion(), world, locked, playersMax, 8000);
-            if (info.ok && !coop::shutdown::IsShuttingDown()) {
-                net::Config cfg;
+            if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
+
+            net::Config cfg;
+            const bool listed = info.ok;
+            if (listed) {
                 cfg.role = net::Role::Host;
                 cfg.topology = net::Topology::P2P;
                 cfg.localIdentity = info.hostIdentity;
@@ -165,25 +259,46 @@ void HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 cfg.turnList = info.turnUri;
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
-                {
-                    std::lock_guard<std::mutex> lk(g_pendHostMu);
-                    g_pendingHost.cfg = cfg;
-                    g_pendingHost.save = choice;
-                    g_hasPendingHost = true;
-                }
-                UE_LOGI("session_manager: HOST-WITH-SAVE ready -- lobby=%s %s='%s' (harness loads then hosts)",
+            } else {
+                cfg = fallback;
+                cfg.role = net::Role::Host;        // belt-and-suspenders (fallback is already host)
+                cfg.topology = net::Topology::P2P;
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_pendHostMu);
+                g_pendingHost.cfg = cfg;
+                g_pendingHost.save = choice;
+                g_pendingHost.listed = listed;
+                g_hasPendingHost = true;
+            }
+            if (listed) {
+                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
+                SetHostStatus("Hosting '" + name + "' -- lobby listed");
+                UE_LOGI("session_manager: HOST-WITH-SAVE ready (LISTED) -- lobby=%s %s='%s' (harness loads then hosts)",
                         info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
-            } else if (!info.ok) {
-                UE_LOGW("session_manager: HostWithSave failed (master announce -- master reachable?)");
+            } else {
+                SetHostStatus("Hosting -- master server unreachable, lobby NOT listed (LAN/direct only)");
+                UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
+                        "-- hosting via local config (signaling='%s' identity='%s')",
+                        masterUrl.c_str(), cfg.signalingUrl.c_str(), cfg.localIdentity.c_str());
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());
+            SetHostStatus(std::string("Host failed: ") + e.what());
         }
         g_actionBusy.store(false);
     }).detach();
+    return true;  // accepted -- the picker raises the host-boot cover + closes
 }
 
 bool JoinLobby(const std::string& lobbyId, const std::string& displayName) {
+    // FIX 3 -- never connect to our OWN lobby (the 2026-06-08 repro: the host clicked its
+    // own listed server + self-joined). Reject before raising any loading state.
+    if (!lobbyId.empty() && lobbyId == OwnLobbyId()) {
+        UE_LOGW("session_manager: refusing to join our OWN lobby '%s' -- you are the host", lobbyId.c_str());
+        SetHostStatus("That's your own server -- you're already hosting it.");
+        return false;
+    }
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Join ignored"); return false; }
     // Raise the BROWSER-ONLY loading state NOW (before the master round-trip) so the user
     // gets immediate "Connecting to <name>" feedback while the worker talks to the master.
@@ -254,6 +369,7 @@ void AbortHost() {
         std::lock_guard<std::mutex> lk(g_pendHostMu);
         g_hasPendingHost = false;
     }
+    SetOwnLobbyId(std::string());  // no longer hosting -> clear the own-lobby self-join guard
     UE_LOGI("session_manager: AbortHost -- announced lobby cancelled (/leave + heartbeat stopped)");
 }
 
