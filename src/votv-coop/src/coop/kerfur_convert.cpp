@@ -36,6 +36,7 @@
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/sdk_profile.h"  // P::name::GameplayStaticsClass / BeginDeferredSpawnFn (WCO offset resolve)
 
 #include <atomic>
 #include <cstdint>
@@ -49,6 +50,7 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
+namespace P  = ue_wrap::profile;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool> g_installed{false};
@@ -63,11 +65,21 @@ coop::net::Session* LoadSession() {
 void* g_kerfurNpcClass  = nullptr;  // kerfurOmega_C (the NPC base; ~20 data-only skin subclasses)
 void* g_kerfurPropClass = nullptr;  // prop_kerfurOmega_C (the prop base; skins likewise)
 void* g_floppyClass     = nullptr;  // prop_floppyDisc_C (dropKerfurProp may also drop the carried floppy)
-void* g_actionNameFn    = nullptr;  // kerfurOmega_C::actionName (the PE-visible menu dispatcher)
-void* g_actionIdxFn     = nullptr;  // prop_kerfurOmega_C::actionOptionIndex (ditto, prop side)
+void* g_actionNameFn    = nullptr;  // kerfurOmega_C::actionName -- NOTE: dispatched EX_LocalVirtualFunction
+void* g_actionIdxFn     = nullptr;  // prop_kerfurOmega_C::actionOptionIndex -- ditto; BOTH are PE-INVISIBLE
+                                    // to our ProcessEvent detour (the menu dispatch is the v44 EX_Local*
+                                    // trap, votv-npc-action-menu-RE-2026-06-11.md 1.7), so the interceptors
+                                    // registered on them NEVER FIRE. The conversion is detected instead at
+                                    // the PE-VISIBLE BeginDeferred sub-call (OnBeginDeferredSpawn) the
+                                    // handler invokes -- where WorldContextObject == the kerfur. (RULE-2
+                                    // debt: the dead actionName/actionOptionIndex interceptors + the
+                                    // kerfur_command state-verb relay that rode them should be removed and
+                                    // the state verbs re-detected via State-byte poll-diff -- a follow-up.)
 int32_t g_nameParamOff  = -1;       // actionName 'name' FString param offset
 int32_t g_actionParamOff = -1;      // actionOptionIndex 'action' byte param offset
 int32_t g_killOff       = -1;       // kerfurOmega_C::kill bool (the BP's own turn_off guard)
+int32_t g_beginDeferredWcoOff = -1; // BeginDeferredActorSpawnFromClass 'WorldContextObject' param offset
+                                    // (the kerfur self -- the real, PE-visible conversion seam)
 // The verb DECLARERS. dropKerfurProp is overridden by kerfurOmega_col_C and
 // kerfurOmega_col_gamer_C (CXXHeaderDump); ProcessEvent executes exactly the
 // UFunction we pass (no re-virtualization), so the host-exec path picks the
@@ -344,6 +356,76 @@ void SendQueuedRequest(const PendingAction& pa) {
 
 }  // namespace
 
+bool OnBeginDeferredSpawn(void* params, void* actorClass, bool isClient, bool isHost) {
+    // THE conversion seam (votv-npc-action-menu-RE-2026-06-11.md 4.2). The radial
+    // menu's actionName/actionOptionIndex dispatch is EX_LocalVirtualFunction =
+    // PE-INVISIBLE, so the interceptors registered on them never fire (logs: two
+    // full sessions, zero firings). But the menu HANDLER's actor spawn is an
+    // EX_CallMath BeginDeferredActorSpawnFromClass, which IS visible -- and it
+    // passes WorldContextObject == the kerfur self. So:
+    //   turn_off: kerfurOmega (WCO) dropping its prop  -> spawn class is prop_kerfurOmega/floppy
+    //   turn_on:  prop_kerfurOmega (WCO) spawning its NPC -> spawn class is kerfurOmega
+    // CLIENT: VETO the local spawn (return true -> npc-suppress zeroes the BP's
+    //   ReturnValue, so the handler's cast fails and it does NOT K2_DestroyActor
+    //   the mirror -- killing the ghost-prop + dead-mirror dupe) and forward a
+    //   host-auth request (Tick -> SendQueuedRequest). HOST: do NOT veto (return
+    //   false; the real conversion proceeds locally); record a converge so the
+    //   BP-internal prop spawn / NPC destroy mirror to peers (Tick).
+    // Interceptor contract: reflection reads + the leaf pending mutex + the leaf-
+    // mutex actor->eid maps only -- no engine calls / Post / registry walk. Called
+    // from npc_sync::NpcSuppress_Interceptor (the BeginDeferred detour).
+    if (!params || !actorClass || g_beginDeferredWcoOff < 0 ||
+        !g_kerfurNpcClass || !g_kerfurPropClass) return false;
+    auto* s = LoadSession();
+    if (!s || !s->running() || !s->connected()) return false;  // SP / pre-connect untouched
+    void* wco = *reinterpret_cast<void* const*>(
+        reinterpret_cast<const uint8_t*>(params) + g_beginDeferredWcoOff);
+    if (!wco) return false;
+    void* wcoCls = R::ClassOf(wco);
+    if (!wcoCls) return false;
+
+    // turn_off: WCO is a kerfurOmega NPC, spawn class is its dropProp (prop_kerfurOmega lineage)
+    // or the carried floppy.
+    const bool wcoIsNpc   = R::IsDescendantOfAny(wcoCls, &g_kerfurNpcClass, 1);
+    const bool spawnIsProp = R::IsDescendantOfAny(actorClass, &g_kerfurPropClass, 1) ||
+                             (g_floppyClass && R::IsDescendantOfAny(actorClass, &g_floppyClass, 1));
+    if (wcoIsNpc && spawnIsProp) {
+        PendingAction pa{};
+        pa.actor       = wco;
+        pa.internalIdx = R::InternalIndexOf(wco);
+        pa.toProp      = 1;
+        pa.isRequest   = isClient;
+        pa.hostEid     = isHost ? coop::npc_sync::GetNpcIdForActor(wco)
+                                : coop::element::kInvalidId;
+        PushPending(pa);
+        UE_LOGI("kerfur_convert: turn_off detected at BeginDeferred (WCO kerfurOmega -> prop) %s actor=%p",
+                isClient ? "[client: VETO local prop + request host]" : "[host: converge]", wco);
+        return isClient;  // client vetoes the local ghost prop; host lets the real drop proceed
+    }
+
+    // turn_on: WCO is a prop_kerfurOmega, spawn class is the kerfurOmega NPC.
+    const bool wcoIsProp  = R::IsDescendantOfAny(wcoCls, &g_kerfurPropClass, 1);
+    const bool spawnIsNpc = R::IsDescendantOfAny(actorClass, &g_kerfurNpcClass, 1);
+    if (wcoIsProp && spawnIsNpc) {
+        PendingAction pa{};
+        pa.actor       = wco;
+        pa.internalIdx = R::InternalIndexOf(wco);
+        pa.toProp      = 0;
+        pa.isRequest   = isClient;
+        pa.hostEid     = isHost ? PT::GetPropElementIdForActor(wco)
+                                : coop::element::kInvalidId;
+        PushPending(pa);
+        UE_LOGI("kerfur_convert: turn-on detected at BeginDeferred (WCO prop -> kerfurOmega) %s actor=%p",
+                isClient ? "[client: VETO local NPC + request host]" : "[host: broadcast new NPC + converge]", wco);
+        // CLIENT: veto the local NPC spawn (npc-suppress's allowlist would too; explicit here so the
+        // suppressor needs no kerfur-specific branch). HOST: return false so the host path allocates
+        // the eid + broadcasts EntitySpawn for the genuinely-new NPC (the converge handles the prop
+        // destroy; its NPC re-register is idempotent via g_actorToNpcId).
+        return isClient;
+    }
+    return false;
+}
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed.load(std::memory_order_acquire)) return;
@@ -359,6 +441,20 @@ void Install(coop::net::Session* session) {
     if (!g_kerfurNpcClass)  g_kerfurNpcClass  = R::FindClass(L"kerfurOmega_C");
     if (!g_kerfurPropClass) g_kerfurPropClass = R::FindClass(L"prop_kerfurOmega_C");
     if (!g_kerfurNpcClass || !g_kerfurPropClass) return;  // BP classes not loaded yet
+
+    // The REAL conversion seam: resolve the BeginDeferredActorSpawnFromClass
+    // 'WorldContextObject' offset (the kerfur self). The floppy class is
+    // resolved below (optional). Done here, before the dead actionName/
+    // actionOptionIndex resolution, so OnBeginDeferredSpawn works even if those
+    // (PE-invisible, never-firing) lookups lag -- the detection no longer depends
+    // on them. Gated by g_kerfurNpcClass/g_kerfurPropClass + this offset, not by
+    // g_installed (which still waits on the dead interceptors).
+    if (g_beginDeferredWcoOff < 0) {
+        void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
+        void* bdFn  = gsCls ? R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn) : nullptr;
+        if (bdFn) g_beginDeferredWcoOff = R::FindParamOffset(bdFn, L"WorldContextObject");
+    }
+    if (!g_floppyClass) g_floppyClass = R::FindClass(L"prop_floppyDisc_C");
 
     if (!g_actionNameFn) {
         g_actionNameFn = R::FindFunction(g_kerfurNpcClass, L"actionName");
@@ -387,7 +483,8 @@ void Install(coop::net::Session* session) {
         g_dropPropFnCol = R::FindFunction(g_colClass, L"dropKerfurProp");
     if (g_colGamerClass && !g_dropPropFnColGamer)
         g_dropPropFnColGamer = R::FindFunction(g_colGamerClass, L"dropKerfurProp");
-    if (!g_floppyClass)   g_floppyClass   = R::FindClass(L"prop_floppyDisc_C");
+    // (g_floppyClass is resolved earlier, in the WCO block, so OnBeginDeferredSpawn's
+    // turn_off floppy-drop detection does not depend on this latch.)
 
     if (!g_actionNameFn || g_nameParamOff < 0 || !g_actionIdxFn ||
         g_actionParamOff < 0 || !g_dropPropFnBase || !g_spawnKerfuroFn) {

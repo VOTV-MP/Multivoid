@@ -18,6 +18,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
+#include "coop/kerfur_convert.h"  // OnBeginDeferredSpawn -- kerfur turn_off/on detected at this PE-visible seam
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_mirror.h"
@@ -320,6 +321,35 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     if (!params || g_npcSpawnActorClassParamOff < 0) return false;
     auto* s = LoadSession();
     if (!s || !s->connected()) return false;  // pre-connect: don't filter
+
+    // KERFUR CONVERSION SEAM (votv-npc-action-menu-RE-2026-06-11.md 4.2). The radial
+    // menu's actionName/actionOptionIndex dispatch is EX_LocalVirtualFunction =
+    // PE-invisible, so kerfur_convert's interceptors on them never fire. The
+    // turn_off/turn_on HANDLER's actor spawn IS this BeginDeferred, and its
+    // WorldContextObject == the kerfur self -- so kerfur_convert classifies the
+    // conversion here, records the host-auth request (client) / converge (host),
+    // and on a CLIENT turn_off/on returns true = VETO this local spawn (the ghost-
+    // prop + dead-mirror dupe source). Runs for BOTH roles BEFORE the host/client
+    // NPC logic below; the host is never vetoed (it lets the real conversion run +
+    // mirrors it via converge). Cheap: one WCO read + a lineage prefilter that
+    // fast-rejects every non-kerfur spawn before any record.
+    {
+        void* kac = *reinterpret_cast<void**>(
+            reinterpret_cast<uint8_t*>(params) + g_npcSpawnActorClassParamOff);
+        if (kac && coop::kerfur_convert::OnBeginDeferredSpawn(
+                       params, kac,
+                       s->role() == coop::net::Role::Client,
+                       s->role() == coop::net::Role::Host)) {
+            // Client turn_off/on: null the BP's spawn ReturnValue so its DynamicCast
+            // fails and the handler does NOT K2_DestroyActor the mirror (no ghost
+            // prop, no local death) -- the host runs the real verb and it mirrors back.
+            if (g_npcSpawnReturnParamOff >= 0) {
+                *reinterpret_cast<void**>(
+                    reinterpret_cast<uint8_t*>(params) + g_npcSpawnReturnParamOff) = nullptr;
+            }
+            return true;
+        }
+    }
 
     // Phase 5N1 Inc2: HOST-side broadcast path. When env var is set and
     // ActorClass is allowlisted, the host emits an EntitySpawn reliable
