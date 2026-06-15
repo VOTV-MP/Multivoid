@@ -15,6 +15,7 @@
 #include "coop/prop_stick_sync.h"
 #include "coop/trash_collect_sync.h"
 
+#include "ue_wrap/atv.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -205,6 +206,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             heldActor = gs.holdingActor;
         }
     }
+    // v76: the ATV is owned by coop::atv_sync (occupant-OR-grabber pose stream + AtvRelease), NOT the
+    // held-prop pipeline -- exclude it so a grabbed ATV doesn't emit zero-key PropPose packets here
+    // (it is not a keyed interactable: EnsureHeldItemBroadcast fails, so receivers would just drop
+    // them as "no local match"). One concept, one pipeline (RULE 2).
+    if (heldActor && ue_wrap::atv::IsAtv(heldActor)) heldActor = nullptr;
     // [probe] garbage-ball pickup diagnostic (2026-05-31, ini
     // garbage_pickup_probe=1): resolves whether a chipPile/clump pickup sets
     // grabbing_actor or holding_actor (the open Candidate-A-vs-B question)

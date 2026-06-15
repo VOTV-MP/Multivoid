@@ -694,8 +694,11 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 75;  // v75: EntitySpawn drops WireKey, carries a savePersisted flag instead
-                                                  // (NPC adoption is now class-match via a deferred poll, NOT key-equality:
+inline constexpr uint16_t kProtocolVersion = 76;  // v76: ATV grab-carry sync -- AtvRelease=71 (grab-release/throw
+                                                  // edge: re-enable receiver physics + inherit velocity) + ATV authority
+                                                  // widened to occupant-OR-grabber. AtvState stateBits gains bit2=grabbed.
+                                                  // (v75: EntitySpawn drops WireKey, carries a savePersisted flag instead;
+                                                  // NPC adoption is class-match via a deferred poll, NOT key-equality:
                                                   // kerfurOmega::loadData drops the int_save key restore so the key is RANDOM
                                                   // per-peer -- bytecode-proven; only is-a-save-object is portable).
                                                   // v74: EntitySpawn carried the int_save Key (FAILED -- key non-deterministic)
@@ -1568,6 +1571,17 @@ enum class ReliableKind : uint8_t {
                        //     no pawn for remote players). turn_off stays in KerfurConvertRequest.
                        //     Module: coop/kerfur_command. RE: votv-kerfurOmega-coop-double-and-camera-
                        //     RE-2026-06-14.md sec 7 + the menu-command RE agent.
+    AtvRelease = 71,   // 2026-06-15 (v76): ATV grab-carry RELEASE edge (companion to AtvState=37).
+                       //     ATV authority widened from "seated occupant" to "occupant OR grav-hand
+                       //     GRABBER" (atv_sync IsLocalAuthority): a peer that E-grabs an ATV streams
+                       //     its airborne pose like a driver; receivers PrepareMirror (physics off) +
+                       //     interp. On the grab-release/throw edge the grabber sends AtvReleasePayload
+                       //     {key, lin/ang velocity}; the receiver ReleaseMirror (physics ON) THEN sets
+                       //     velocity (kinematic body ignores velocity writes -- order matters, the
+                       //     PropRelease apply pair) so the ATV un-freezes + arcs + lands instead of
+                       //     hanging at last pose. Same lane as AtvState (Normal, in-order: last pose
+                       //     before release) + relayed to other clients. RE: votv-ATV-grab + the design
+                       //     in research/findings (ATV grab/air-move + purchased-ATV brief 2026-06-15).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2440,11 +2454,31 @@ struct AtvStatePayload {
     float    x, y, z;      // 12 -- root body world location (cm; the root Mesh == the actor)
     float    pitch, yaw, roll;  // 12 -- full rotation (the ATV tips/flips, unlike a biped)
     uint8_t  occupantSlot; // 1  -- the driver's peer slot (0xFF = unoccupied) [Phase 1.5 seating]
-    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=brake (Phase 2 adds broken/health)
+    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=brake, bit2=grabbed (grav-hand carried, not seated)
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (snap verbatim), 0 = live stream
     uint8_t  _pad;         // 1
 };
 static_assert(sizeof(AtvStatePayload) == 60, "AtvStatePayload must be 60 bytes");
+
+// v76 (2026-06-15): ATV grab-carry RELEASE -- sent ONCE on the grab-release/throw edge by the peer
+// that was the grav-hand grabber (atv_sync). The receiver re-enables the mirror's physics
+// (ReleaseMirror) and THEN writes the inherited PhysX velocity (lin + ang) so the ATV un-freezes
+// and arcs/lands under its own simulation instead of hanging at the last streamed pose. Order
+// (simulate-on BEFORE velocity) + the payload shape mirror PropReleasePayload exactly -- a kinematic
+// body ignores a velocity write, so the re-enable must precede it. Carries the Key so an out-of-order
+// release still finds the right ATV. coop/atv_sync.
+struct AtvReleasePayload {
+    WireKey key;       // 32 -- the ATV's Key@0x0618
+    float   linVelX;   // cm/s   -- GetActorRootPhysicsVelocity linear at release
+    float   linVelY;
+    float   linVelZ;
+    float   angVelX;   // deg/s  -- GetActorRootPhysicsVelocity angular at release
+    float   angVelY;
+    float   angVelZ;
+};
+static_assert(sizeof(AtvReleasePayload) == 56, "AtvReleasePayload must be 56 bytes");
+static_assert(sizeof(AtvReleasePayload) <= 256 - 20 - 8,
+              "AtvReleasePayload must fit in one reliable datagram (kMaxReliablePayload)");
 
 // v48 (2026-06-08): delivery drone (Adrone_C) Phase 1 body pose. HOST-AUTHORITATIVE singleton
 // transform mirror (the drone is host-simulated; the client suppresses its own ReceiveTick + drives

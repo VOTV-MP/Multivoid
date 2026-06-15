@@ -141,6 +141,31 @@ void HandleStateEvent(net::Session& session,
         coop::atv_sync::OnReliable(ap, senderSlot);
         break;
     }
+    case net::ReliableKind::AtvRelease: {
+        // v76 (2026-06-15): ATV grab-carry RELEASE/throw edge (companion to AtvState). The peer that
+        // was the grav-hand grabber sends this once when the grab ends; the receiver re-enables the
+        // mirror's physics + inherits the launch velocity (atv_sync gates the apply: a peer that is
+        // itself the authority ignores it). Host relays a client grabber's release to the other
+        // clients (IsClientRelayableReliableKind), same as AtvState.
+        if (msg.payloadLen < sizeof(net::AtvReleasePayload)) {
+            UE_LOGW("event_feed: AtvRelease payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvReleasePayload));
+            break;
+        }
+        net::AtvReleasePayload arp{};
+        std::memcpy(&arp, msg.payload, sizeof(arp));
+        if (!std::isfinite(arp.linVelX) || !std::isfinite(arp.linVelY) || !std::isfinite(arp.linVelZ) ||
+            !std::isfinite(arp.angVelX) || !std::isfinite(arp.angVelY) || !std::isfinite(arp.angVelZ)) {
+            UE_LOGW("event_feed: AtvRelease non-finite velocity -- dropping");
+            break;
+        }
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::atv_sync::OnAtvRelease(arp, senderSlot);
+        break;
+    }
     case net::ReliableKind::DroneState: {
         // v48 (2026-06-08): delivery drone body pose (Adrone_C). HOST-AUTHORITATIVE singleton --
         // HOST->client only; trust-gated to slot 0 (like SkyState/TimeSync). The client

@@ -17,6 +17,7 @@
 #include "coop/players_registry.h"   // Registry::Local / LocalPeerId / kMaxPeers
 
 #include "ue_wrap/atv.h"
+#include "ue_wrap/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity (release)
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/types.h"           // FVector, FRotator, NormalizeAxis
@@ -60,6 +61,7 @@ struct AtvEntry {
     bool     hasPose         = false;
     bool     dirty           = false;
     bool     preparedAsMirror = false;   // we disabled this ATV's physics/tick to mirror it
+    bool     wasGrabber      = false;    // we were the grav-hand grabber last tick (release-edge detect)
 };
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -80,15 +82,37 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// True iff THIS peer's local player is currently seated in `actor` -- i.e. we are the authority
-// (driver) for this ATV and must STREAM it, not mirror it.
+// True iff THIS peer's local player is currently seated in `actor` -- i.e. we are the driver.
 bool IsLocalOccupant(void* actor, void* localPlayer) {
     return localPlayer && A::IsDriven(actor) && A::GetOccupantPlayer(actor) == localPlayer;
 }
 
-// Fill an AtvStatePayload from a live ATV read. False if the transform read fails.
+// True iff THIS peer's local player is currently grav-hand GRABBING `actor` (carrying it in the
+// air like an object -- NOT seated). The ATV has no grabbed/held flag of its own (isDriven stays
+// false, Player stays null during a grab -- those are written only on the seating path), so the
+// grabber identity lives entirely on the player side: mainPlayer.grabbing_actor / holding_actor.
+// Dual-field test (mirrors local_streams.cpp's held-prop discipline): the light PhysicsHandle grab
+// stamps grabbing_actor; we also accept holding_actor so the predicate can't be wrong-footed by
+// which field the engine populates for the ATV's simulating root.
+bool IsLocalGrabber(void* actor, void* localPlayer) {
+    if (!localPlayer || !actor) return false;
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    if (!ue_wrap::engine::ReadMainPlayerGrabState(localPlayer, gs)) return false;
+    return gs.grabbingActor == actor || gs.holdingActor == actor;
+}
+
+// THIS peer is the single authority for `actor` -- it must STREAM it, not mirror it -- iff its
+// local player is the driver OR the grav-hand grabber. The two are mutually exclusive (you cannot
+// be seated and grav-hand-holding the same ATV at once), so there is still exactly one authority.
+bool IsLocalAuthority(void* actor, void* localPlayer) {
+    return IsLocalOccupant(actor, localPlayer) || IsLocalGrabber(actor, localPlayer);
+}
+
+// Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
+// the authority as the grav-hand grabber (stateBits bit2) rather than a seated driver -- informational
+// for receivers (the explicit AtvRelease drives the un-freeze, not this bit).
 bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, bool adopt,
-                 coop::net::AtvStatePayload& p) {
+                 coop::net::AtvStatePayload& p, bool grabbed = false) {
     FVector loc; FRotator rot;
     if (!A::GetRootTransform(actor, loc, rot)) return false;
     std::memset(&p, 0, sizeof(p));
@@ -99,6 +123,7 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, boo
     uint8_t sb = 0;
     if (A::IsDriven(actor)) sb |= 0x1;
     if (A::GetBrake(actor)) sb |= 0x2;
+    if (grabbed)            sb |= 0x4;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
     return true;
@@ -222,12 +247,43 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     if (it == g_atvs.end()) return;  // not indexed yet -- the throttled rebuild will pick it up
     AtvEntry& e = it->second;
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
-    // If WE are the occupant of this ATV, we are the authority -- ignore the incoming pose so a
-    // relayed/echoed copy can't fight our live driving.
-    if (IsLocalOccupant(e.actor, coop::players::Registry::Get().Local())) return;
+    // If WE are the AUTHORITY of this ATV (driving OR grav-hand grabbing it), ignore the incoming
+    // pose so a relayed/echoed copy can't fight our live driving/carrying.
+    if (IsLocalAuthority(e.actor, coop::players::Registry::Get().Local())) return;
     // Mirror: disable the local rig once (so it can't fight the stream), then open the interp.
     if (!e.preparedAsMirror) { A::PrepareMirror(e.actor); e.preparedAsMirror = true; }
     SetTarget(e, payload, /*snap*/ payload.adopt != 0);
+}
+
+void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderPeerSlot*/) {
+    std::wstring key = StringFromWireKey(payload.key);
+    if (key.empty()) { UE_LOGW("atv: OnAtvRelease empty key -- dropping"); return; }
+    if (!A::EnsureResolved()) return;
+    // NaN/Inf guard before the kinematic-off + velocity engine writes (event_feed also guards).
+    if (!std::isfinite(payload.linVelX) || !std::isfinite(payload.linVelY) || !std::isfinite(payload.linVelZ) ||
+        !std::isfinite(payload.angVelX) || !std::isfinite(payload.angVelY) || !std::isfinite(payload.angVelZ)) {
+        UE_LOGW("atv: OnAtvRelease non-finite velocity -- dropping key='%ls'", key.c_str());
+        return;
+    }
+    auto it = g_atvs.find(key);
+    if (it == g_atvs.end()) return;  // not indexed yet -- nothing to un-freeze
+    AtvEntry& e = it->second;
+    if (!R::IsLiveByIndex(e.actor, e.idx)) return;
+    // If WE are the authority (driving OR grabbing this ATV), we own its physics -- ignore a stale
+    // or echoed release so it can't perturb our live carry.
+    if (IsLocalAuthority(e.actor, coop::players::Registry::Get().Local())) return;
+    // Re-enable physics FIRST, THEN write the launch velocity: a kinematic body (mirror) ignores a
+    // velocity write, so the simulate-on must precede it (the PropRelease apply order). Stop driving
+    // the interp so the ATV's own simulation carries it from here (arc + land).
+    if (e.preparedAsMirror) { A::ReleaseMirror(e.actor); e.preparedAsMirror = false; }
+    e.hasPose = false;
+    e.window.Close();
+    e.dirty = false;
+    const FVector lin{ payload.linVelX, payload.linVelY, payload.linVelZ };
+    const FVector ang{ payload.angVelX, payload.angVelY, payload.angVelZ };
+    ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, lin, ang);
+    UE_LOGI("atv: OnAtvRelease key='%ls' -- physics re-enabled + launch velocity applied (|lin|=%.0f cm/s)",
+            key.c_str(), std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -267,9 +323,33 @@ void Tick() {
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
-        if (IsLocalOccupant(e.actor, localPlayer)) {
-            // We are the driver/authority. If this ATV had been a mirror (physics off), restore
-            // its rig so our local driving works again -- and stop applying any stale interp.
+        const bool occupant  = IsLocalOccupant(e.actor, localPlayer);
+        const bool grabber   = !occupant && IsLocalGrabber(e.actor, localPlayer);  // mutually exclusive
+        const bool authority = occupant || grabber;
+
+        // Grab-release / throw edge: we were the grav-hand grabber last tick and are now neither
+        // grabber nor occupant. Tell receivers to re-enable the ATV's physics and inherit its launch
+        // velocity (the un-freeze) -- without this the ATV would hang at its last streamed pose on
+        // every mirror. (An occupant EXIT is intentionally NOT a release: driving behavior is
+        // unchanged; only the new grab-carry adds a release. The final pose streamed last tick rides
+        // the same Normal lane, so GNS delivers pose-then-release in order -- no settle delay needed.)
+        if (e.wasGrabber && !grabber && !occupant) {
+            FVector lin{}, ang{};
+            ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);  // best-effort; zero on fail
+            coop::net::AtvReleasePayload rp{};
+            WireKeyFromString(kv.first, rp.key);
+            rp.linVelX = lin.X; rp.linVelY = lin.Y; rp.linVelZ = lin.Z;
+            rp.angVelX = ang.X; rp.angVelY = ang.Y; rp.angVelZ = ang.Z;
+            s->SendReliable(coop::net::ReliableKind::AtvRelease, &rp, sizeof(rp));
+            UE_LOGI("atv: grab released key='%ls' -- AtvRelease |linVel|=%.0f cm/s",
+                    kv.first.c_str(),
+                    std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
+        }
+        e.wasGrabber = grabber;
+
+        if (authority) {
+            // We own this ATV (driving OR grabbing). If it had been a mirror (physics off), restore
+            // its rig so our local driving/carrying works again -- and stop applying any stale interp.
             if (e.preparedAsMirror) {
                 A::ReleaseMirror(e.actor);
                 e.preparedAsMirror = false;
@@ -279,7 +359,8 @@ void Tick() {
             if (nowMs - e.lastSentMs >= kSendIntervalMs) {
                 e.lastSentMs = nowMs;
                 coop::net::AtvStatePayload p{};
-                if (ReadPayload(e.actor, kv.first, localSlot, /*adopt*/false, p))
+                const uint8_t occSlot = occupant ? localSlot : uint8_t{0xFF};  // grabber: no seated driver
+                if (ReadPayload(e.actor, kv.first, occSlot, /*adopt*/false, p, /*grabbed*/grabber))
                     s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
             }
         } else if (e.hasPose) {

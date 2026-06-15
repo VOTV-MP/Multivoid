@@ -68,6 +68,12 @@ inline Lane LaneForKind(ReliableKind k) {
     // pairing against a future single-kind lane move (the Spawn/Destroy rule above).
     case ReliableKind::PropStickState: return Lane::Normal;
     case ReliableKind::PropRelease:    return Lane::Normal;
+    // v76: AtvState + AtvRelease are ORDER-PAIRED for the same reason -- the grabber streams pose
+    // then emits AtvRelease one pass later; a release overtaking the last pose would re-enable
+    // physics on a mirror that then snaps to a stale pose. Both land on Normal via default: anyway;
+    // pin them so a future single-kind lane move can't split the pair.
+    case ReliableKind::AtvState:       return Lane::Normal;
+    case ReliableKind::AtvRelease:     return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -109,7 +115,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
     case ReliableKind::LockerDoorState:   // v62: locker/console doors are SYMMETRIC -- relay a client's toggle to the others
     case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
-    case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-authoritative -- relay a client DRIVER's pose to the other clients
+    case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-OR-GRABBER-authoritative -- relay a client driver's/grabber's pose to the other clients
+    case ReliableKind::AtvRelease:        // v76: ATV grab-release/throw edge -- relay a client grabber's release to the other clients (companion to AtvState)
     case ReliableKind::DeskState:         // v64: desk scalars are CLAIM-OWNER-authoritative (+ any-peer button edges) -- relay a client's edge to the others
     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:

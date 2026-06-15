@@ -31,6 +31,7 @@
 namespace coop::net {
 class Session;
 struct AtvStatePayload;
+struct AtvReleasePayload;
 }  // namespace coop::net
 
 namespace coop::atv_sync {
@@ -41,8 +42,15 @@ void Install(coop::net::Session* session);
 
 // Receiver entry: an AtvState packet arrived (payload already memcpy'd + range-checked by
 // event_feed). Resolves the ATV by Key and pushes the pose into its interp window (deferring if it
-// has not streamed in yet), UNLESS this peer is the occupant of that ATV. Called from event_feed.
+// has not streamed in yet), UNLESS this peer is the LOCAL AUTHORITY (occupant OR grav-hand grabber)
+// of that ATV. Called from event_feed.
 void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlot);
+
+// Receiver entry: an AtvRelease packet arrived (the grab-carry release/throw edge, v76). Resolves
+// the ATV by Key, re-enables its mirror physics (ReleaseMirror) and THEN applies the inherited
+// linear+angular velocity so it un-freezes and arcs/lands under its own simulation -- UNLESS this
+// peer is the local authority (then it owns the physics and ignores it). Called from event_feed.
+void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPeerSlot);
 
 // HOST-only: snapshot the current pose of every indexed ATV to a freshly connected client
 // `peerSlot` (adopt=1 -> the joiner snaps to it). Net-pump connect edge. Game thread.
