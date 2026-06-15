@@ -1,7 +1,28 @@
 # Live host-world save on join (root-cause kerfur save-transfer dupe fix) -- RE + AS BUILT (2026-06-15)
 
-> **REVERTED (`68767d25`) THEN RE-ENABLED WITH THE FIX (`145dab9e` re-apply + `f5397a4e` fix;
-> deployed SHA `66DBFF0F`).** First hands-on lost ~2979 props. Root cause (logs): the divergence
+> **UPDATE 3 (`38a41dfc`, deployed SHA `CE7E5666`) -- the sweep-SKIP was itself a crutch that
+> brought the dupe BACK; the real fix is an NPC-aware reconcile, NOT skipping it.** The
+> `f5397a4e` "skip the divergence sweep on a live-capture join" (UPDATE 2 below) stopped the
+> world-wipe but RE-INTRODUCED the kerfur dupe on the next hands-on ("active kerfurs + the kerfur
+> objects still exist"). LOG-PROVEN root cause: skipping ArmDivergenceSweep leaves `g_sweepPending`
+> false forever, so `HasLoadTailQuiesced()` (`g_sweepFired`) NEVER signals on a live-capture join.
+> The NPC adoption's `HasLoadTailQuiesced() || 8s` gate then collapses to the bare 8 s timeout --
+> which fires BEFORE the async ~19 MB `loadObjects` pass materialises the kerfur twins (the host's
+> save kerfurs load over ~60 s; the client's over ~12-15 s; only 1 of 3 adopted by the 8 s deadline,
+> the other 2 fresh-spawned then duped the late blob twins; the stale blob objects the host's live
+> snapshot no longer claims were never swept). The live-save blob (captured at instant T) and the
+> connect snapshot (enumerated at world-ready, drained async) INHERENTLY diverge -- that divergence
+> is exactly what the claim-set + sweep reconcile is for. **FIX: run the reconcile for EVERY join
+> incl. live-capture, and make load-tail quiescence NPC-AWARE** (the probe `CountLoadTailUnsettled_`
+> now also counts live allowlisted NPCs, so the sweep + the adoption's fresh-spawn wait for the slow
+> kerfur load -- the prop-only probe settled while the kerfurs were still loading). The 8 s adoption
+> timeout becomes a 60 s last-resort; `kSweepDeadlineMs` 8->45 s and `kSweepQuiesceScans` 3->10 so
+> the backstop can't pre-empt the slow load. The `liveCaptured` wire flag + `WasLiveCaptured` are
+> retired (reconcile is uniform now). The >50% safety valve stays as the world-wipe backstop. See
+> section 8 below for the AS-BUILT. HANDS-ON PENDING on SHA CE7E5666.
+>
+> **UPDATE 2 (`145dab9e` re-apply + `f5397a4e`; deployed SHA `66DBFF0F`) -- SUPERSEDED by UPDATE 3.**
+> First hands-on lost ~2979 props. Root cause (logs): the divergence
 > sweep destroys props the connect-snapshot doesn't claim, but it fires on the CLIENT's load-tail
 > quiescence while the HOST streams the snapshot in chunks over many ticks -- AND the host sent a
 > PARTIAL first bracket (88 props, `SnapshotBegin.propTotal=88`) then re-seeded. The sweep ran with
@@ -152,5 +173,68 @@ no divergence-sweep ghost).
 - Confirm the objectsData.Num probe reads M~N on the first hands-on (the rebuild assumption).
 - If a fully-live transfer is wanted later, the player-state populates (day/time/signals) are
   currently left at last-autosave and corrected by their live channels -- fine for now.
-- The reconcile layer (remote_prop_spawn divergence sweep 1176 LOC >800, npc_adoption) stays as
-  the fallback; the session-18 prop_divergence_sweep.{h,cpp} extraction flag still stands.
+- The reconcile layer (remote_prop_spawn divergence sweep ~1248 LOC >800, npc_adoption) is now the
+  LOAD-BEARING reconcile (not a fallback -- see section 8); the prop_divergence_sweep.{h,cpp}
+  extraction flag still stands.
+
+## 8. AS BUILT -- UPDATE 3 (`38a41dfc`, SHA `CE7E5666`): the NPC-aware reconcile
+
+### Why UPDATE 2's sweep-skip was wrong (log-proven, client `Game_0.9.0n_copy` 17:13 join)
+
+The live capture works PERFECTLY (host `save_capture: objectsData repopulated 3287 -> 3309`, 19 MB
+streamed, every prop converges d=0.00 cm). The dupe was the RECONCILE being disabled:
+
+- Host had 3 live ON kerfurs at snapshot (`npc-sync[world-enum]: registered 3 ... world NPC`).
+- Client `event_feed: SnapshotBegin -- live-capture join, SKIPPING claim tracking + the divergence
+  sweep`. -> `ArmDivergenceSweep` never called -> `g_sweepPending` false -> `TickClientReconcile`
+  early-returns -> `g_sweepFired` (`HasLoadTailQuiesced()`) STAYS FALSE the whole join.
+- `npc-adopt: armed deferred adoption eid=5256/5257/5258`. The gate
+  `HasLoadTailQuiesced() || MsSince(armedAt) >= 8000` had its first operand wedged false, so it
+  reduced to the 8 s timeout. Only eid 5256 found a twin in time (`bound LOCAL save NPC`); 5257/5258
+  hit `no local twin (8s fallback timeout); fresh-spawning a mirror`. The async loadObjects pass had
+  NOT yet materialised their twins -> fresh mirror + late blob twin = the user's dupe. The stale
+  blob OFF-objects the host's live snapshot did not claim were never swept (`npc-adopt: live-capture
+  join -- skipping the post-snapshot NPC ghost sweep`).
+
+The blob (instant T) and the snapshot (world-ready, async drain) inherently diverge over the join;
+disabling the reconcile is what let that divergence become a permanent dupe.
+
+### The fix (the reconcile runs for every join; quiescence waits for the NPC load too)
+
+- `event_feed` SnapshotBegin/Complete: call `BeginClaimTracking()` + `ArmDivergenceSweep()` +
+  `npc_adoption::OnSnapshotComplete()` UNCONDITIONALLY (the `WasLiveCaptured()` skips deleted).
+- `remote_prop_spawn::CountLoadTailUnsettled_` (renamed from `CountKeylessUnclaimedInUniverse_`):
+  the quiescence probe now ALSO counts live allowlisted NPCs (`coop::npc_sync::IsAllowlistedClass`).
+  The kerfur twins respawn SECONDS after the props' keys mint, so the prop-only probe settled while
+  the kerfurs were still loading -> adoption fresh-spawned prematurely. With the NPC half, quiescence
+  fires only when BOTH the keyless-prop and the allowlisted-NPC populations stop changing = the
+  async load has fully drained. Adoption/binding does not perturb the NPC count (the actor stays
+  live + allowlisted); only loadObjects materialising a new twin does -> the count settles exactly
+  when the load finishes. A genuinely-absent twin (a host kerfur turned on AFTER capture) has no
+  local actor, so it never blocks quiescence -> it fresh-spawns at quiescence, correctly.
+- `npc_adoption`: fresh-spawn still gates on `HasLoadTailQuiesced()` (now NPC-aware); the 8 s hard
+  timeout is now a 60 s last-resort backstop (> the sweep's 45 s deadline, so quiescence always wins
+  first). The ghost sweep (Tick) runs for every join, gated on `g_pending` empty so a still-loading
+  twin is adopted, never swept.
+- `kSweepDeadlineMs` 8000 -> 45000, `kSweepQuiesceScans` 3 -> 10 (~2 s stable): the backstop
+  deadline / short stable-window were tuned for the fast fresh-boot load; a ~19 MB live-save loads
+  async over ~12-15 s, so they must not pre-empt quiescence.
+- The `>50%` safety valve in `RunDivergenceSweep_` STAYS -- it is now the sole world-wipe backstop
+  (a partial/racing snapshot bracket that would destroy more than half the in-universe set aborts
+  the sweep; the loaded world is kept, a later fuller bracket reconciles).
+- Retired the `liveCaptured` wire flag + `save_transfer::WasLiveCaptured` + `g_cliLiveCaptured` +
+  `OnSnapshotComplete(bool)` (RULE 2 -- the reconcile is uniform across joins now).
+  `SaveTransferBeginPayload` stays 16 B (`liveCaptured` -> `pad[3]`).
+
+### Hands-on (SHA CE7E5666, no ini change, automatic)
+1. Host: load a save, turn ONE kerfur ON, do NOT re-save. 2. Client: join. 3. Expect: exactly ONE
+active kerfur matching the host, ZERO leftover object, no dupe.
+- Client log PASS markers: `divergence sweep ARMED -- deferring to load-tail quiescence (keyless-
+  prop + allowlisted-NPC population stable ...)`, then `divergence sweep FIRING (load tail quiesced
+  (props+NPCs settled); ...ms after arm)`, and each kerfur `npc-adopt: bound LOCAL save NPC ...
+  (class-match, NO duplicate spawn)` -- NOT `fresh-spawning a mirror` / NOT `last-resort timeout`.
+- If a leftover object survives: check the sweep's `claim sweep -- N live, M claimed, K unclaimed
+  locals destroyed` line (K should include the stale kerfur objects) and that it did NOT `ABORT`
+  (>50% valve = the snapshot raced; a re-seed should follow).
+- World-wipe regression guard: the sweep must NOT report destroying a large fraction; the
+  `claim sweep ABORTED -- would destroy >50%` line is the valve doing its job (world kept).
