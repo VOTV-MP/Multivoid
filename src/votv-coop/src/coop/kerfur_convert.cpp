@@ -30,9 +30,11 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/npc_mirror.h"     // DestroyUntrackedClientNpcs -- the turn-on ghost-NPC reconcile
 #include "coop/npc_sync.h"
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
+#include "coop/remote_prop_spawn.h"  // HasLoadTailQuiesced -- gate the client poll past the join reconcile
 #include "ue_wrap/engine.h"      // GetActorLocation -- the conversion poll's ghost-sweep radius
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -433,6 +435,21 @@ void PollKerfurConversions() {
 
     const bool isHost   = s->role() == coop::net::Role::Host;
     const bool isClient = s->role() == coop::net::Role::Client;
+    // SYMPTOM-1 FIX (connect dupe, 2026-06-15 hands-on). This poll is a STEADY-STATE
+    // detector: "kerfur mirror Element present + its actor died == the local game just
+    // converted it." That invariant only holds once the world is settled. On a JOINING
+    // client the world churns for ~tens of seconds (live-save load, multi-bracket
+    // snapshot, divergence/claim sweeps, Gap-I-1 fuzzy de-dup) and mirror actors are
+    // spawned then destroyed by the RECONCILE, not by a player operating a radial menu.
+    // Reading those reconcile deaths as conversions fired spurious turn-on requests at
+    // connect (client log 19:32:43: prop eid 3471/3472/3473 "died invisibly" -- BEFORE
+    // load-tail quiescence at 19:33:26) and the host dutifully turned its lying props into
+    // live NPCs ("the object turned into a live kerfur on connect"). Gate on the SAME
+    // load-tail quiescence the divergence sweep + npc_adoption already use. CLIENT-only:
+    // the host never arms that sweep (HasLoadTailQuiesced is permanently false there), and
+    // the host has no transferred-save load tail -- its own kerfurs are stable from boot,
+    // so it polls immediately and only ever sees real host-side conversions.
+    if (isClient && !coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
     std::unordered_set<uint32_t> seen;
 
     // turn_OFF: a kerfur NPC mirror whose actor died.
@@ -479,10 +496,24 @@ void PollKerfurConversions() {
         if (it == g_kerfurWatch.end() || it->second.handled) continue;
         UE_LOGI("kerfur_convert: POLL turn-on (kerfur prop eid=%u died invisibly) -> %s",
                 eid, isClient ? "client requests host" : "host broadcasts destroy+npc");
-        if (isClient) SendConvertRequestDirect(eid, 0);
-        else if (isHost)
+        if (isClient) {
+            SendConvertRequestDirect(eid, 0);
+            // SYMPTOM-2 FIX (turn-on dupe, 2026-06-15 hands-on). The local turn-on spawned a
+            // kerfur NPC through the PE-invisible EX_CallMath BeginDeferred -- npc-suppress never
+            // saw it, so it is a live UNTRACKED ghost sitting next to the host's authoritative
+            // mirror ("two kerfurs out of one lying object"); left alive it gets toggled/grabbed
+            // and cascades into the multi-dupe the user hit. Enforce the client NPC invariant
+            // ("the only allowlisted NPCs on a client are host mirrors") with the EXISTING host-
+            // auth reconcile: it destroys every untracked allowlisted NPC and KEEPS tracked
+            // mirrors, order-independent of when the host's mirror arrives -- so it also clears
+            // any ghosts that already accumulated. (The symmetric turn_off ghost PROP is swept by
+            // SweepGhostKerfurProp: props can be client-OWNED, so they get a targeted radius sweep
+            // rather than a blanket one. NPCs are always host-authoritative -- blanket is correct.)
+            coop::npc_mirror::DestroyUntrackedClientNpcs();
+        } else if (isHost) {
             ConvergeAfterConversion(actor, el->GetInternalIdx(),
                                     static_cast<coop::element::ElementId>(eid), /*toProp=*/0);
+        }
         it->second.handled = true;
     }
 
