@@ -341,14 +341,15 @@ bool HandleJoinMessage(net::Session& session,
             static_cast<uint8_t>(senderSlot))) {
         p->SetNickname(nick);
     }
-    // Role-aware phrasing (2026-05-27, user feedback): on the CLIENT
-    // the Join packet arrives FROM the host -- saying "<host> joined
-    // the game" reads backwards (the client is the one who joined).
-    // Phrase from the receiver's POV.
+    // Two-phase, role-aware phrasing (2026-06-15, user feedback): the Join handshake means the
+    // peer is CONNECTING -- it has not loaded the world / spawned yet. Announce "connecting" here;
+    // the "<nick> joined the game" line fires later from net_pump when the peer's PUPPET actually
+    // spawns (AnnouncePeerSpawned). On the CLIENT the Join arrives FROM the host, so phrase it from
+    // the receiver's POV ("Connecting to <host>'s game", not "<host> is connecting").
     if (session.role() == net::Role::Client) {
-        coop::chat_feed::Push(L"Successfully joined " + nick + L"'s game");
+        coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...");
     } else {
-        coop::chat_feed::Push(nick + L" joined the game");
+        coop::chat_feed::Push(nick + L" is connecting to the game...");
     }
     // PR-FOUNDATION Tier 2 T2-1 (host-relay): if WE are the host, this Join
     // came from a client. Run the MTA InitialDataStream two-way cross-peer
@@ -503,11 +504,26 @@ bool HandlePlayerJoined(net::Session& session,
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(describedSlot)) {
         p->SetNickname(nick);
     }
-    coop::chat_feed::Push(nick + L" joined the game");
+    // Cross-peer: another client is CONNECTING (its puppet spawns later -> AnnouncePeerSpawned
+    // fires the "joined the game" line then).
+    coop::chat_feed::Push(nick + L" is connecting to the game...");
     UE_LOGI("player_handshake: client installed cross-peer identity slot=%u "
             "eid=0x%08x nick='%ls'", static_cast<unsigned>(describedSlot),
             describedEid, nick.c_str());
     return true;
+}
+
+void AnnouncePeerSpawned(net::Role role, int slot) {
+    // Called from net_pump the moment a remote peer's PUPPET spawns (= the peer is actually in the
+    // world, past the connect/load phase). Pairs with the "is connecting to the game" handshake
+    // line. Role-aware: on a CLIENT, slot 0 is the HOST whose game WE joined ("Joined <host>'s
+    // game"), not a peer who joined ours.
+    const std::wstring nick = NicknameForSlot(static_cast<uint8_t>(slot));
+    if (role == net::Role::Client && slot == 0) {
+        coop::chat_feed::Push(L"Joined " + nick + L"'s game");
+    } else {
+        coop::chat_feed::Push(nick + L" joined the game");
+    }
 }
 
 bool HandleAssignPeerSlot(net::Session& session,

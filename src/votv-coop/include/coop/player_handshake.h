@@ -94,6 +94,13 @@ void OnSlotDisconnected(int slot);
 // hud message ("<X> left the game").
 const std::wstring& NicknameForSlot(int slot);
 
+// Two-phase join announcement (2026-06-15): the Join handshake announces "<nick> is connecting
+// to the game" (the peer has connected but not loaded/spawned yet); net_pump calls THIS the moment
+// the peer's puppet actually spawns (= the peer is in the world) to announce "<nick> joined the
+// game". Role-aware: on a CLIENT, slot 0 is the HOST whose game WE joined ("Joined <host>'s game").
+// Game thread (chat_feed push).
+void AnnouncePeerSpawned(net::Role role, int slot);
+
 // Handle a delivered reliable Join message. Parses the v13 prefix
 // (senderElementId), then the nickname (UTF-8 length-prefixed),
 // sanitizes the nickname, sets the puppet's nameplate, and posts the

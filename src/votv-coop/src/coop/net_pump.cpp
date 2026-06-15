@@ -772,6 +772,11 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // identity has landed yet; the handler re-applies on arrival.
                 g_puppets[slot].SetNickname(
                     coop::player_handshake::NicknameForSlot(slot));
+                // Two-phase join announcement (user 2026-06-15): the handshake said "<nick> is
+                // connecting to the game"; the puppet just spawned -> the peer is actually IN the
+                // world now -> "<nick> joined the game". This block runs once per join (gated on
+                // !valid above), so it fires exactly once. Role-aware inside AnnouncePeerSpawned.
+                coop::player_handshake::AnnouncePeerSpawned(session.role(), slot);
             }
             // Only RE-BASE the interpolation on a NEW packet; re-pushing the
             // latest every frame would zero `errorPos_` mid-window and freeze
