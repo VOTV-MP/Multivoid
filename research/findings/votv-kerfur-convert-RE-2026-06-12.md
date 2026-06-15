@@ -25,6 +25,30 @@
 > wire/protocol change -- only the broken DETECTION moved from interceptor to poll. The
 > dead actionName/actionOptionIndex interceptors + kerfur_command (state verbs, display-
 > only) remain RULE-2 debt -> follow-up: remove them, detect state verbs via State-poll.
+>
+> **HANDS-ON UPDATE (2026-06-15, commit `53fdcfcc`, SHA 8f285afd): the poll as shipped
+> (d8bfe0ea) STILL duped -- ~7 kerfurs, plus a lying prop turning into a live NPC the
+> instant a client joined. Two holes, both log-proven, fixed by reusing existing infra
+> (no wire change):**
+> - **HOLE 1 -- connect dupe.** The poll's "Element present + actor dead == local
+>   conversion" invariant only holds in STEADY STATE. On a joining client the world
+>   churns for ~tens of seconds (live-save load, multi-bracket snapshot, divergence/claim
+>   sweeps, Gap-I-1 fuzzy de-dup) and mirror actors are spawned then destroyed by the
+>   RECONCILE. Client log 19:32:43 read prop eid 3471/3472/3473 deaths (`OnDestroy ...
+>   already destroyed`) as conversions -- BEFORE load-tail quiescence at 19:33:26 -- and
+>   the host turned its lying props into live NPCs. FIX: gate the CLIENT poll on
+>   `remote_prop_spawn::HasLoadTailQuiesced()` (the same signal the divergence sweep +
+>   npc_adoption use; the host never arms that sweep / has no transferred-save load tail,
+>   so it polls immediately and only sees real host-side conversions).
+> - **HOLE 2 -- turn-on dupe ("two kerfurs out of one lying object").** turn_off swept the
+>   ghost PROP but turn_on swept NOTHING, so the client's PE-invisible local turn-on left a
+>   live UNTRACKED ghost NPC beside the host's authoritative mirror; toggled/grabbed it
+>   cascaded into the multi-dupe. FIX: the turn_on client branch calls the existing host-
+>   auth reconcile `npc_mirror::DestroyUntrackedClientNpcs()` -- it enforces the client
+>   invariant "the only allowlisted NPCs are host mirrors", keeps tracked mirrors order-
+>   independent of arrival, and clears any ghosts that already accumulated. (turn_off keeps
+>   its targeted radius PROP sweep: props can be client-OWNED, so a blanket sweep is wrong
+>   there; NPCs are always host-authoritative -> blanket is correct.)
 
 
 Date: 2026-06-12 (session 12, post-compact). Trigger: user dupe report --
