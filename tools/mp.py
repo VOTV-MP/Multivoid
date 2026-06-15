@@ -1495,6 +1495,67 @@ def cmd_kerfurtoggle(args) -> None:
     sys.exit(0)
 
 
+def cmd_spawnmenutest(args) -> None:
+    """Autonomous diagnosis of the story-mode Q spawn-menu dev feature. Launches a HOST in
+    STORY mode (s_1234) with the spawn-menu file trigger, fires OpenNow() once the world is up,
+    and reports spawn_menu::Open's diagnostics (activeInterface state + dispatch result) + a
+    screenshot -- so 'the menu doesn't appear' is root-caused without a physical Q press."""
+    trigger = str(HOST_DIR / "spawnmenu.trigger")
+    try:
+        Path(trigger).unlink()
+    except OSError:
+        pass
+    if kill_all() > 0:
+        log("note: pre-existing VotV killed before spawnmenutest")
+    deploy_all()
+    log("--- HOST LAUNCH (story s_1234, spawn-menu trigger armed) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb,
+                           extra_env={"VOTVCOOP_SPAWNMENU_TRIGGER": trigger})
+    host_log = HOST_DIR / "votv-coop.log"
+    log(f"waiting up to {args.boot_timeout}s for host PLAY READY...")
+    ready = False
+    for i in range(args.boot_timeout):
+        if "==== PLAY READY ====" in _read_text(host_log):
+            log(f"host PLAY READY after {i}s"); ready = True; break
+        time.sleep(1)
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before PLAY READY"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not ready:
+        log("FAIL: host never PLAY READY"); kill_all(); sys.exit(1)
+    _wait_for_log(host_log, "spawn_menu_unlock: file-trigger ENABLED", 10, "HOST")
+    log(f"--- settling {args.settle}s, then firing the spawn-menu trigger ---")
+    time.sleep(args.settle)
+    shots_dir0 = Path(__file__).resolve().parent.parent / "research" / "npctest_shots"
+    shots_dir0.mkdir(parents=True, exist_ok=True)
+    _capture_window(host_pid, shots_dir0 / "spawnmenu_host_BEFORE.png")
+    Path(trigger).write_text("open")
+    _wait_for_log(host_log, "spawn_menu_unlock: trigger file seen", 10, "HOST")
+    log("--- waiting 3s for the open dispatch + diagnostics ---")
+    time.sleep(3)
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "npctest_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    _capture_window(host_pid, shots_dir / "spawnmenu_host.png")
+    text = _read_text(host_log)
+    diag = [ln for ln in text.splitlines() if "spawn_menu" in ln]
+    log("--- SPAWN-MENU DIAGNOSTICS (all spawn_menu log lines) ---")
+    for ln in diag[-30:]:
+        log(f"  {ln}")
+    log("--- KILLING ---"); kill_all()
+    dispatched = _log_count(host_log, "spawn menu open requested")
+    iface_set = _log_count(host_log, "activeInterface is SET")
+    iface_clear = _log_count(host_log, "activeInterface is null")
+    no_player = _log_count(host_log, "no local mainPlayer")
+    no_fn = _log_count(host_log, "could not resolve mainPlayer")
+    refused = _log_count(host_log, "OpenNow REFUSED")
+    log("--- SPAWNMENUTEST VERDICT (diagnostic) ---")
+    log(f"dispatched={dispatched} activeInterface_SET={iface_set} activeInterface_clear={iface_clear} "
+        f"no_player={no_player} no_fn={no_fn} refused={refused}")
+    log(f"screenshot: {shots_dir / 'spawnmenu_host.png'}")
+    sys.exit(0)
+
+
 def cmd_ragdollshot(args) -> None:
     """Force the CLIENT's player into ragdoll over the wire (leak-safe -- the test
     driver flips isRagdoll directly, no real ragdollMode / no playerRagdoll_C) and
@@ -2126,6 +2187,14 @@ def main() -> None:
     p_kt.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_kt.add_argument(flag, **kw)
     p_kt.set_defaults(func=cmd_kerfurtoggle)
+
+    p_sm = sub.add_parser("spawnmenutest",
+                          help="diagnose the story-mode Q spawn-menu dev feature: host fires OpenNow + reports activeInterface/dispatch + screenshot")
+    p_sm.add_argument("--boot-timeout", type=int, default=120, help="seconds to wait for host PLAY READY")
+    p_sm.add_argument("--settle", type=int, default=8, help="seconds after PLAY READY before firing the trigger")
+    p_sm.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_sm.add_argument(flag, **kw)
+    p_sm.set_defaults(func=cmd_spawnmenutest)
 
     p_rag = sub.add_parser("ragdollshot",
                            help="force the client's player into ragdoll + capture 2 host screenshots of the puppet falling")

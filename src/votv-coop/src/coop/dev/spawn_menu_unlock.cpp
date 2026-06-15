@@ -80,12 +80,46 @@ void EnsureThread() {
     UE_LOGI("spawn_menu_unlock: Q-key watcher thread started (story-mode prop spawn menu)");
 }
 
+// Trigger-FILE watcher (autonomous diagnosis path only). mp.py's spawnmenutest creates the
+// file; we call OpenNow() (the same path the F1 button uses) + delete it. Lets the spawn-menu
+// open be exercised + its diagnostics (activeInterface state / dispatch result) read from the
+// log WITHOUT a physical Q press (which needs foreground + a key). No-op unless the env is set.
+DWORD WINAPI FileTriggerThread(LPVOID) {
+    wchar_t triggerPath[512] = {};
+    ::GetEnvironmentVariableW(L"VOTVCOOP_SPAWNMENU_TRIGGER", triggerPath, 512);
+    if (triggerPath[0] == L'\0') return 0;  // nothing to watch
+    int ticks = 0;
+    while (!coop::shutdown::IsShuttingDown()) {
+        if (++ticks >= 16) {  // ~250 ms
+            ticks = 0;
+            if (::GetFileAttributesW(triggerPath) != INVALID_FILE_ATTRIBUTES) {
+                UE_LOGI("spawn_menu_unlock: trigger file seen -> OpenNow() (autonomous diagnosis)");
+                OpenNow();
+                ::DeleteFileW(triggerPath);  // one-shot per file creation
+            }
+        }
+        ::Sleep(16);
+    }
+    return 0;
+}
+
 }  // namespace
 
 void Init() {
     if (!::coop::ini_config::MasterEnabled()) {
         UE_LOGI("spawn_menu_unlock: disabled by master switch ([dev] enabled=0)");
         return;
+    }
+    // Autonomous-diagnosis file trigger (VOTVCOOP_SPAWNMENU_TRIGGER): start the watcher so a
+    // test can fire OpenNow() without a physical Q press. Independent of the Q-watcher ini gate.
+    {
+        wchar_t probe[8] = {};
+        if (::GetEnvironmentVariableW(L"VOTVCOOP_SPAWNMENU_TRIGGER", probe, 8) > 0) {
+            if (HANDLE t = ::CreateThread(nullptr, 0, &FileTriggerThread, nullptr, 0, nullptr)) {
+                ::CloseHandle(t);  // detached
+            }
+            UE_LOGI("spawn_menu_unlock: file-trigger ENABLED (VOTVCOOP_SPAWNMENU_TRIGGER) -- OpenNow on file");
+        }
     }
     if (!::coop::ini_config::IsIniKeyTrue("spawn_menu_unlock")) {
         UE_LOGI("spawn_menu_unlock: off at boot (set [dev] spawn_menu_unlock=1 to "

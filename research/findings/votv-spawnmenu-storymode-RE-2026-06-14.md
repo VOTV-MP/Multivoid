@@ -167,3 +167,52 @@ linked. Only pre-existing opus/CRT link warnings (LNK4098/LNK4217), unrelated.
    the doc can record the input-mapping truth.
 3. **Client lock:** as a joined client, the toggle/button must be hidden (dev menu
    gates clients out) and refuse if somehow triggered (logged "REFUSED ... client").
+
+---
+
+## 6. RUNTIME ROOT-CAUSE + FIX (2026-06-15) -- the v1 InpActEvt approach was a NO-OP
+
+The user reported the feature "not working". Diagnosed autonomously via a new file-trigger
+(`VOTVCOOP_SPAWNMENU_TRIGGER` in `spawn_menu_unlock`) + `mp.py spawnmenutest` (launches a
+story-mode host, fires `OpenNow()`, reports the open-state diagnostics + a screenshot --
+no physical Q press). Findings, each proven live:
+
+1. **The widget EXISTS in story** (so 1b's static conclusion was right): the live
+   `ui_spawnmenu_C` instance is present at `Visibility=1` (Collapsed) before any open.
+2. **Calling the native input-event UFunction directly is a NO-OP.** Dispatching
+   `InpActEvt_spawnmenu_..._2` on the local mainPlayer via ProcessEvent left the widget
+   Collapsed (`visibility 1 -> 1`). The engine's input system wires the InputAction ->
+   ubergraph forward; the event-stub BODY does not, so calling it does nothing. (This is
+   why the v1 implementation "did nothing".)
+3. **`ExecuteUbergraph_mainPlayer(EntryPoint=12077)` is also a no-op.** The kismet
+   disassembler's offset (`@12077`) is NOT the runtime EntryPoint value (the VM's entry IDs
+   differ from the analyzer's byte offsets), so the VM didn't reach the open block. Getting
+   the real ID needs IDA/UE4SS -- not needed (see the fix).
+4. **`UWidget::SetVisibility` is not reachable via `FindFunction` on the BP class** (it's a
+   native UFunction on `UWidget`); a raw byte write to `Visibility` flips the property
+   (`1 -> 0`) but the cached SWidget stays collapsed (the menu still didn't render).
+
+**THE FIX (works, screenshot-verified in story): drive the widget's OWN open path directly.**
+`ue_wrap::spawn_menu::Open()` now:
+- resolves the live `ui_spawnmenu_C` instance (skip the CDO),
+- `UWidget::SetVisibility(Visible)` resolved on the NATIVE `"Widget"` UClass (propagates to
+  Slate -- the byte write alone does not),
+- the widget's own `opened()` (content/page setup),
+- `WidgetBlueprintLibrary::SetInputMode_GameAndUIEx(PC, widget, DoNotLock, keepCursor)` +
+  `PC.bShowMouseCursor=1` (the `@12494` input-mode step -- so the menu is CLICKABLE, not just
+  visible),
+- honours the vanilla `activeInterface` guard (don't stack over another UI).
+
+Verified: `mp.py spawnmenutest` -> `visibility 1 -> 0` and the screenshot shows the full menu
+open in STORY mode (tabs Props/Dynamic/Entities/Signal objects/Food/Misc/Tools/All + the
+populated prop grid + the tool panel). No asset edit (RULE 3); reuses the game's own widget +
+opened() + input-mode library.
+
+Files changed: `src/ue_wrap/spawn_menu.cpp` (rewrote `Open()` per above);
+`src/coop/dev/spawn_menu_unlock.cpp` (added the `VOTVCOOP_SPAWNMENU_TRIGGER` file watcher for
+autonomous diagnosis); `tools/mp.py` (added the `spawnmenutest` scenario). The Q-watcher + F1
+button paths are unchanged -- they post `Open()`, which now works.
+
+OPEN (minor, follow-up): the menu's CLOSE path (Q is open-only here; vanilla uses Q-release
+`@11555`). The user can close via Escape / the menu's own controls; a dedicated close was not
+wired. No-op for the "make it open in story" goal.
