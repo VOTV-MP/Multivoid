@@ -584,15 +584,6 @@ inline constexpr size_t DirectionalWind_windTarget             = 0x0238;  // UBi
 // instantiate.
 inline constexpr size_t AmainGamemode_redSky                = 0x0888;  // AredSkyEvent_C*
 
-// AmainGamemode_C::saveSlot -- the live world-save container (UsaveSlot_C*), the
-// object saveObjects()/saveTriggers() repopulate and SaveGameToSlot serializes.
-// save_capture reads it to emit a LIVE host-world blob for a joiner (mainGamemode.hpp).
-inline constexpr size_t AmainGamemode_saveSlot              = 0x04B0;  // UsaveSlot_C*
-
-// UsaveSlot_C::objectsData -- TArray<Fstruct_save> of every world object (saveSlot.hpp).
-// save_capture's rebuild-vs-append safety probe reads its Num (TArray Num @ +0x8).
-inline constexpr size_t UsaveSlot_objectsData              = 0x0300;  // TArray<Fstruct_save>
-
 // AmainGamemode_C::daynightCycle is the cycle singleton pointer. We RESOLVE
 // this via R::FindObjectByClass(L"daynightCycle_C") rather than dereferencing
 // off the gamemode -- saves needing the gamemode offset and matches the
@@ -824,15 +815,6 @@ inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 // The gameplay map is untitled_1 for ALL modes; the SAVE selects story vs sandbox.
 inline constexpr const wchar_t* LoadGameFromSlotFn = L"LoadGameFromSlot";
 inline constexpr const wchar_t* SetSaveSlotObjectFn = L"setSaveSlotObject";
-
-// Live host-world capture (save_capture.cpp): repopulate the world save from LIVE
-// actors, then serialize it to a SCRATCH slot for a joiner -- the proper fix for
-// save-transfer staleness (a kerfur the host turned on after its last autosave is
-// captured live as an NPC, so the joiner's native load needs no reconcile).
-// All on AmainGamemode_C except SaveGameToSlot (UGameplayStatics, the serializer).
-inline constexpr const wchar_t* MainGamemodeSaveObjectsFn  = L"saveObjects";   // saveObjects(bool quicksave)
-inline constexpr const wchar_t* MainGamemodeSaveTriggersFn = L"saveTriggers";  // saveTriggers()
-inline constexpr const wchar_t* SaveGameToSlotFn           = L"SaveGameToSlot";  // (USaveGame*, FString slot, int32 idx) -> bool
 inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetActorLocation
 inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
 inline constexpr const wchar_t* GetActorRotationFn = L"K2_GetActorRotation";

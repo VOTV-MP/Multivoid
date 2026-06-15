@@ -151,7 +151,6 @@ add_library(votv-coop SHARED
     src/ue_wrap/hook.cpp
     src/ue_wrap/game_thread.cpp
     src/ue_wrap/engine.cpp
-    src/ue_wrap/save_capture.cpp
     src/ue_wrap/engine_audio.cpp
     src/ue_wrap/engine_bones.cpp
     src/ue_wrap/engine_component.cpp
