@@ -1,18 +1,26 @@
 # Live host-world save on join (root-cause kerfur save-transfer dupe fix) -- RE + AS BUILT (2026-06-15)
 
-> **REVERTED 2026-06-15 (commit `68767d25`) -- a connect-snapshot TIMING regression, NOT a flaw
-> in the live capture itself.** On the live-save hands-on the client lost ~2979 props: the divergence
-> sweep fires on the CLIENT's load-tail quiescence, but the HOST's connect-snapshot streams ~3000
-> PropSpawns over many ticks. The live save loaded faster/fewer props (2900 vs the stale build's
-> 3316), so the client quiesced and the sweep FIRED before the host's snapshot finished -- only 88
-> props were claimed when it ran (vs 3050 in the stale build), so it destroyed the 2979 not-yet-
-> re-expressed locals. The host capture worked PERFECTLY (`objectsData repopulated 3287 -> 3319`,
-> 19MB, every prop converged `d=0.00cm`). **THE PROPER FIX before re-enabling: gate the divergence
-> sweep on the HOST's snapshot COMPLETION (all PropSpawns delivered + the SnapshotComplete signal),
-> not just client load-tail quiescence -- a latent bug the live save merely exposed (the stale build
-> also destroys ~1020, some likely timing-victims the host happens to re-mirror).** Section 5/6 below
-> describe the AS-BUILT-then-reverted live capture; it is correct and re-usable once the sweep gate
-> is fixed. The save_capture.{h,cpp} code lives in git at `de10514c`.
+> **REVERTED (`68767d25`) THEN RE-ENABLED WITH THE FIX (`145dab9e` re-apply + `f5397a4e` fix;
+> deployed SHA `66DBFF0F`).** First hands-on lost ~2979 props. Root cause (logs): the divergence
+> sweep destroys props the connect-snapshot doesn't claim, but it fires on the CLIENT's load-tail
+> quiescence while the HOST streams the snapshot in chunks over many ticks -- AND the host sent a
+> PARTIAL first bracket (88 props, `SnapshotBegin.propTotal=88`) then re-seeded. The sweep ran with
+> 88 claimed and ate the other 2979 just-loaded props (`claim sweep -- 3229 live, 88 claimed, 2979
+> destroyed`). The stale build got lucky on timing (3050 claimed first, only 1020 swept). The host
+> capture itself was PERFECT (`objectsData 3287 -> 3319`, 19MB, every prop converged `d=0.00cm`).
+>
+> **THE FIX (`f5397a4e`), deeper than timing:** the divergence sweep was built for the FRESH-BOOT
+> join model (client New-Games -> has its own litter to remove). For a SAVE-TRANSFER join the client
+> loads the host's world via the game's own loadObjects -- it has NO litter; with a LIVE save it
+> loaded the host's EXACT current world, so there is ZERO divergent baseline and the sweep is
+> reconciling nothing. So: a `liveCaptured` flag on SaveTransferBegin (reuses a pad byte, no size
+> change); on a live-capture join the client SKIPS claim tracking + the prop divergence sweep + the
+> NPC ghost sweep (`npc_adoption::OnSnapshotComplete(skipGhostSweep=true)` latches the sweep done --
+> ADOPTION still binds the kerfur twin). The host's ongoing PropDestroy/PropPose streams keep it in
+> sync; convergence still runs. PLUS a SAFETY VALVE in the sweep for every OTHER path (stale/fresh):
+> abort if it would destroy >50% of in-universe props (a legit divergence is a small delta; >50% =
+> an incomplete/racing snapshot, not divergence). Section 5/6 below describe the live capture itself
+> (unchanged, correct). HANDS-ON PENDING on SHA 66DBFF0F.
 
 Session 18 (post-compact). Shipped commit `de10514c`, deployed SHA `806699DB`, REVERTED `68767d25`.
 Supersedes the session-18 client-side reconcile (deferred divergence sweep, commit `52b1d94d`)
