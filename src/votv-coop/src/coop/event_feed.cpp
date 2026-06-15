@@ -397,6 +397,8 @@ void Update(net::Session& session, void* localPlayer) {
         case net::ReliableKind::PowerControlState:
         case net::ReliableKind::AtvState:
         case net::ReliableKind::AtvRelease:
+        case net::ReliableKind::AtvSpawn:
+        case net::ReliableKind::AtvDestroy:
         case net::ReliableKind::DroneState:
         case net::ReliableKind::OrderRequest:
         case net::ReliableKind::WindowCleanState:

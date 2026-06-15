@@ -5,12 +5,15 @@
 
 #include "ue_wrap/atv.h"
 
+#include "ue_wrap/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 namespace ue_wrap::atv {
 namespace {
@@ -130,6 +133,91 @@ void ReleaseMirror(void* atv) {
     engine::SetActorSimulatePhysics(atv, true);           // restore the local physics rig (this peer drives now)
     engine::SetActorTickEnabled(atv, true);               // restore the ATV BP tick (its own driving logic)
     engine::SetActorRootNotifyRigidBodyCollision(atv, true);
+}
+
+void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot) {
+    if (!EnsureResolved() || className.empty()) return nullptr;
+    void* actorClass = R::FindClass(className.c_str());
+    if (!actorClass) {
+        UE_LOGW("atv: SpawnMirror class '%ls' not found in GUObjectArray", className.c_str());
+        return nullptr;
+    }
+    // Trust boundary: the className arrives over the wire -- only spawn ATV-lineage classes.
+    void* bases[1] = { g_cls };
+    if (!R::IsDescendantOfAny(actorClass, bases, 1)) {
+        UE_LOGW("atv: SpawnMirror '%ls' is NOT an ATV subclass -- refusing", className.c_str());
+        return nullptr;
+    }
+    // GameplayStatics spawn refs (resolved once; same pair npc_mirror drives).
+    static void* sGsCdo   = nullptr;
+    static void* sBeginFn = nullptr;
+    static void* sFinishFn = nullptr;
+    if (!sGsCdo) sGsCdo = R::FindClassDefaultObject(L"GameplayStatics");
+    if (sGsCdo && (!sBeginFn || !sFinishFn)) {
+        if (void* gc = R::FindClass(L"GameplayStatics")) {
+            sBeginFn  = R::FindFunction(gc, L"BeginDeferredActorSpawnFromClass");
+            sFinishFn = R::FindFunction(gc, L"FinishSpawningActor");
+        }
+    }
+    if (!sGsCdo || !sBeginFn || !sFinishFn) {
+        static bool sWarned = false;
+        if (!sWarned) { sWarned = true;
+            UE_LOGW("atv: SpawnMirror -- GameplayStatics BeginDeferred/Finish unresolved; cannot spawn purchased ATV"); }
+        return nullptr;
+    }
+    void* worldCtx = engine::GetWorldContext();
+    if (!worldCtx) return nullptr;
+
+    FTransform xform{};
+    engine::RotatorToQuat(rot.Pitch, rot.Yaw, rot.Roll, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    xform.TX = loc.X; xform.TY = loc.Y; xform.TZ = loc.Z;  // scale stays unit (ctor default)
+
+    void* spawned = nullptr;
+    {
+        ParamFrame begin(sBeginFn);
+        if (!begin.valid()) return nullptr;
+        begin.Set<void*>(L"WorldContextObject", worldCtx);
+        begin.Set<void*>(L"ActorClass", actorClass);
+        begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+        begin.Set<uint8_t>(L"CollisionHandlingOverride", uint8_t{1});  // AlwaysSpawn
+        begin.Set<void*>(L"Owner", nullptr);
+        if (!Call(sGsCdo, begin)) return nullptr;
+        spawned = begin.Get<void*>(L"ReturnValue");
+    }
+    if (!spawned) {
+        UE_LOGW("atv: SpawnMirror BeginDeferred returned null for '%ls'", className.c_str());
+        return nullptr;
+    }
+    {
+        ParamFrame finish(sFinishFn);
+        if (!finish.valid()) {
+            // The BeginDeferred actor was created but never finished -- UE does NOT GC it (it lingers
+            // in the world). Destroy the orphan, exactly as npc_mirror does on the same failure.
+            DestroyMirror(spawned);
+            return nullptr;
+        }
+        finish.Set<void*>(L"Actor", spawned);
+        finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+        if (!Call(sGsCdo, finish)) {
+            UE_LOGW("atv: SpawnMirror FinishSpawning failed for %p '%ls' -- destroying orphan", spawned, className.c_str());
+            DestroyMirror(spawned);  // don't leak the half-spawned actor
+            return nullptr;
+        }
+    }
+    return spawned;  // physics LEFT ON -- a native idle ATV (grabbable). atv_sync owns lifetime/sync.
+}
+
+void DestroyMirror(void* atv) {
+    if (!atv || !g_cls || !R::IsLive(atv)) return;
+    static void* sK2 = nullptr;
+    if (!sK2) sK2 = R::FindFunction(g_cls, L"K2_DestroyActor");  // AActor method, inherited by ATV_C
+    if (!sK2) {
+        static bool sWarned = false;
+        if (!sWarned) { sWarned = true;
+            UE_LOGW("atv: K2_DestroyActor unresolved -- cannot tear down purchased-ATV mirror %p", atv); }
+        return;
+    }
+    R::CallFunction(atv, sK2, nullptr);
 }
 
 }  // namespace ue_wrap::atv

@@ -68,12 +68,15 @@ inline Lane LaneForKind(ReliableKind k) {
     // pairing against a future single-kind lane move (the Spawn/Destroy rule above).
     case ReliableKind::PropStickState: return Lane::Normal;
     case ReliableKind::PropRelease:    return Lane::Normal;
-    // v76: AtvState + AtvRelease are ORDER-PAIRED for the same reason -- the grabber streams pose
-    // then emits AtvRelease one pass later; a release overtaking the last pose would re-enable
-    // physics on a mirror that then snaps to a stale pose. Both land on Normal via default: anyway;
-    // pin them so a future single-kind lane move can't split the pair.
+    // v76/v77: AtvState + AtvRelease + AtvSpawn + AtvDestroy are ORDER-PAIRED -- the grabber streams
+    // pose then emits AtvRelease one pass later, and a purchased ATV must AtvSpawn (client fresh-spawn)
+    // before its first AtvState pose / after its last before AtvDestroy. A release/destroy overtaking
+    // the last pose would re-enable physics / tear down on a mirror mid-update. All land on Normal via
+    // default: anyway; pin them so a future single-kind lane move can't split the group.
     case ReliableKind::AtvState:       return Lane::Normal;
     case ReliableKind::AtvRelease:     return Lane::Normal;
+    case ReliableKind::AtvSpawn:       return Lane::Normal;
+    case ReliableKind::AtvDestroy:     return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

@@ -694,7 +694,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 76;  // v76: ATV grab-carry sync -- AtvRelease=71 (grab-release/throw
+inline constexpr uint16_t kProtocolVersion = 77;  // v77: ATVs are full shared physics entities -- purchased ATVs
+                                                  // (host-only delivery) get AtvSpawn=72/AtvDestroy=73 host-announce +
+                                                  // client fresh-spawn (native, grabbable); authority release generalized
+                                                  // to occupant-exit too (idle ATV = physics ON everywhere, grabbable);
+                                                  // AtvState stateBits gains bit3=authored (connect-snapshot: freeze only
+                                                  // an actively-authored ATV, leave idle ones physics-on).
+                                                  // (v76: ATV grab-carry sync -- AtvRelease=71 (grab-release/throw
                                                   // edge: re-enable receiver physics + inherit velocity) + ATV authority
                                                   // widened to occupant-OR-grabber. AtvState stateBits gains bit2=grabbed.
                                                   // (v75: EntitySpawn drops WireKey, carries a savePersisted flag instead;
@@ -1582,6 +1588,22 @@ enum class ReliableKind : uint8_t {
                        //     hanging at last pose. Same lane as AtvState (Normal, in-order: last pose
                        //     before release) + relayed to other clients. RE: votv-ATV-grab + the design
                        //     in research/findings (ATV grab/air-move + purchased-ATV brief 2026-06-15).
+    AtvSpawn = 72,     // 2026-06-15 (v77): HOST->ALL purchased-ATV announce. A bought ATV is delivered
+                       //     by the HOST's order economy ONLY (order_sync is host-authoritative: a
+                       //     client's order is forwarded + re-committed on the host; the client resets
+                       //     its mirror drone so its local delivery never spawns). So the joining/other
+                       //     clients have NO local twin of a purchased ATV -- the host fresh-spawns it
+                       //     for them: AtvSpawnPayload{synthKey, className, pose}. The client BeginDeferred
+                       //     -spawns the AATV_C (physics ON = a native idle ATV, grabbable by anyone) and
+                       //     registers it under the host-assigned SYNTHETIC wire key (a purchased ATV's
+                       //     own int_save Key is minted RANDOM per peer -- the kerfur trap -- so it is
+                       //     NEVER used cross-peer; the synth key is the stable identity). The existing
+                       //     AtvState/AtvRelease key-stream then drives it unchanged. Default save-placed
+                       //     ATVs (deterministic key, both peers loaded them) stay on the real-key path.
+    AtvDestroy = 73,   // 2026-06-15 (v77): HOST->ALL purchased-ATV teardown. The host's synthetic-keyed
+                       //     ATV vanished (sold/removed) -> AtvDestroyPayload{synthKey}; the client
+                       //     K2_DestroyActors its fresh-spawned mirror + drops the index entry. Same
+                       //     Normal lane as AtvSpawn/AtvState (spawn->pose->destroy in order).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2454,11 +2476,35 @@ struct AtvStatePayload {
     float    x, y, z;      // 12 -- root body world location (cm; the root Mesh == the actor)
     float    pitch, yaw, roll;  // 12 -- full rotation (the ATV tips/flips, unlike a biped)
     uint8_t  occupantSlot; // 1  -- the driver's peer slot (0xFF = unoccupied) [Phase 1.5 seating]
-    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=brake, bit2=grabbed (grav-hand carried, not seated)
+    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=brake, bit2=grabbed (grav-hand carried), bit3=authored
+                           //      (v77: SOME peer is actively driving/grabbing this ATV -- set on the
+                           //      connect-snapshot so a joiner freezes only authored ATVs; idle ones stay
+                           //      physics-on + grabbable. A live stream is always from an authority, so the
+                           //      bit is informational there.)
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (snap verbatim), 0 = live stream
     uint8_t  _pad;         // 1
 };
 static_assert(sizeof(AtvStatePayload) == 60, "AtvStatePayload must be 60 bytes");
+
+// v77 (2026-06-15): purchased-ATV host announce (see ReliableKind::AtvSpawn). The host fresh-spawns
+// a bought ATV for the clients that lack a local twin (host-only economy). Carries the className so
+// the client BeginDeferred-spawns the exact AATV_C skin, and the host-assigned synthetic wire key
+// (the purchased ATV's own int_save key is random per peer -> useless cross-peer). coop/atv_sync.
+struct AtvSpawnPayload {
+    WireKey       synthKey;   // 32 -- host-assigned stable identity ("coopatv#N")
+    WireClassName className;   // 64 -- "ATV_C" or a skin subclass
+    float         x, y, z;     // 12 -- spawn pose (cm)
+    float         pitch, yaw, roll;  // 12
+};
+static_assert(sizeof(AtvSpawnPayload) == 120, "AtvSpawnPayload must be 120 bytes");
+static_assert(sizeof(AtvSpawnPayload) <= 256 - 20 - 8,
+              "AtvSpawnPayload must fit in one reliable datagram (kMaxReliablePayload)");
+
+// v77 (2026-06-15): purchased-ATV host teardown (ReliableKind::AtvDestroy). coop/atv_sync.
+struct AtvDestroyPayload {
+    WireKey synthKey;  // 32
+};
+static_assert(sizeof(AtvDestroyPayload) == 32, "AtvDestroyPayload must be 32 bytes");
 
 // v76 (2026-06-15): ATV grab-carry RELEASE -- sent ONCE on the grab-release/throw edge by the peer
 // that was the grav-hand grabber (atv_sync). The receiver re-enables the mirror's physics

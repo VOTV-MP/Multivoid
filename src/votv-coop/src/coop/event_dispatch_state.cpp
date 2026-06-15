@@ -166,6 +166,39 @@ void HandleStateEvent(net::Session& session,
         coop::atv_sync::OnAtvRelease(arp, senderSlot);
         break;
     }
+    case net::ReliableKind::AtvSpawn: {
+        // v77: HOST->client purchased-ATV announce. The client fresh-spawns a native AATV_C it has no
+        // save-twin of (host-only economy delivery). HOST-AUTHORITATIVE -- trust only slot 0.
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: AtvSpawn from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AtvSpawnPayload)) {
+            UE_LOGW("event_feed: AtvSpawn payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvSpawnPayload));
+            break;
+        }
+        net::AtvSpawnPayload asp{};
+        std::memcpy(&asp, msg.payload, sizeof(asp));
+        coop::atv_sync::OnAtvSpawn(asp, 0);
+        break;
+    }
+    case net::ReliableKind::AtvDestroy: {
+        // v77: HOST->client purchased-ATV teardown. HOST-AUTHORITATIVE -- trust only slot 0.
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: AtvDestroy from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AtvDestroyPayload)) {
+            UE_LOGW("event_feed: AtvDestroy payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvDestroyPayload));
+            break;
+        }
+        net::AtvDestroyPayload adp{};
+        std::memcpy(&adp, msg.payload, sizeof(adp));
+        coop::atv_sync::OnAtvDestroy(adp, 0);
+        break;
+    }
     case net::ReliableKind::DroneState: {
         // v48 (2026-06-08): delivery drone body pose (Adrone_C). HOST-AUTHORITATIVE singleton --
         // HOST->client only; trust-gated to slot 0 (like SkyState/TimeSync). The client

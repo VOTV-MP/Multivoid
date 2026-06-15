@@ -32,6 +32,8 @@ namespace coop::net {
 class Session;
 struct AtvStatePayload;
 struct AtvReleasePayload;
+struct AtvSpawnPayload;
+struct AtvDestroyPayload;
 }  // namespace coop::net
 
 namespace coop::atv_sync {
@@ -46,11 +48,22 @@ void Install(coop::net::Session* session);
 // of that ATV. Called from event_feed.
 void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlot);
 
-// Receiver entry: an AtvRelease packet arrived (the grab-carry release/throw edge, v76). Resolves
+// Receiver entry: an AtvRelease packet arrived (the authority-release/throw edge, v76/v77). Resolves
 // the ATV by Key, re-enables its mirror physics (ReleaseMirror) and THEN applies the inherited
-// linear+angular velocity so it un-freezes and arcs/lands under its own simulation -- UNLESS this
-// peer is the local authority (then it owns the physics and ignores it). Called from event_feed.
+// linear+angular velocity so it un-freezes to an idle, grabbable state under its own simulation --
+// UNLESS this peer is the local authority (then it owns the physics and ignores it). From event_feed.
 void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPeerSlot);
+
+// Receiver entry (CLIENT-only): an AtvSpawn arrived (v77). The host announces a PURCHASED ATV the
+// client has no save-twin of (host-only economy delivery). Fresh-spawns a native AATV_C
+// (ue_wrap::atv::SpawnMirror, physics ON = grabbable) at the host pose and registers it under the
+// host's synthetic wire key so the existing AtvState/AtvRelease key-stream drives it. Idempotent on
+// the synthetic key (re-announce / connect dup -> no-op). From event_feed.
+void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t senderPeerSlot);
+
+// Receiver entry (CLIENT-only): an AtvDestroy arrived (v77). The host's synthetic-keyed (purchased)
+// ATV is gone -> K2_DestroyActor the fresh-spawned mirror + drop the index entry. From event_feed.
+void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t senderPeerSlot);
 
 // HOST-only: snapshot the current pose of every indexed ATV to a freshly connected client
 // `peerSlot` (adopt=1 -> the joiner snaps to it). Net-pump connect edge. Game thread.

@@ -29,6 +29,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -61,7 +62,8 @@ struct AtvEntry {
     bool     hasPose         = false;
     bool     dirty           = false;
     bool     preparedAsMirror = false;   // we disabled this ATV's physics/tick to mirror it
-    bool     wasGrabber      = false;    // we were the grav-hand grabber last tick (release-edge detect)
+    bool     wasAuthority    = false;    // we were the authority (driver OR grabber) last tick (release-edge detect)
+    bool     isClientSpawnedMirror = false;  // v77: a purchased ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
 };
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -76,6 +78,65 @@ std::chrono::steady_clock::time_point g_lastRebuild{};
 size_t   g_lastLogCount = SIZE_MAX;
 uint64_t g_lastLogHash  = 0;
 bool     g_installed    = false;  // latch the one-time index+log (Install is the per-tick ensure path)
+
+// ---- v77 purchased-ATV identity (GAP B) --------------------------------------------------------
+// A bought ATV is delivered ONLY on the host (order_sync is host-authoritative; the client's mirror
+// drone is reset so its local delivery never spawns), so the other peers have NO save-twin of it.
+// Its OWN int_save Key is minted RANDOM per peer (the kerfur trap) -> useless cross-peer. The host
+// gives each such ATV a SYNTHETIC stable wire key ("coopatv#N") and announces it (AtvSpawn); clients
+// fresh-spawn a native AATV_C under that key. Default SAVE-PLACED ATVs (deterministic key, both peers
+// loaded them) stay on the real-key path untouched.
+std::unordered_set<std::wstring>     g_savePlacedKeys;       // HOST: real keys seen BEFORE any client connected = save-placed (a joiner loads them)
+std::unordered_set<void*>            g_savePlacedActors;     // HOST: ATV ACTORS present before any client connected -- so a save ATV that mints its UCS key LATE (after connect) is recognised by its actor, not misread as a purchase (-> client dupe)
+std::unordered_map<void*, std::wstring> g_synthForActor;     // actor -> synthetic wire key (host purchased + client mirror)
+uint32_t                             g_synthCounter = 0;     // HOST: monotonic synth-key id
+
+const wchar_t* const kSynthPrefix = L"coopatv#";  // distinguishes synth keys from real ATV keys ("atv"/base64)
+
+bool IsSynthKey(const std::wstring& k) {
+    return k.compare(0, 8, kSynthPrefix) == 0;  // "coopatv#" is 8 chars
+}
+
+// Fill a WireClassName from a wide class name (ASCII; VOTV class names are ASCII). Truncates at 63.
+void FillWireClassName(coop::net::WireClassName& out, const std::wstring& name) {
+    out.len = 0;
+    for (size_t i = 0; i < name.size() && i < sizeof(out.data); ++i)
+        out.data[out.len++] = static_cast<char>(name[i]);
+}
+std::wstring WireClassNameToString(const coop::net::WireClassName& in) {
+    std::wstring s;
+    const uint8_t n = in.len <= sizeof(in.data) ? in.len : static_cast<uint8_t>(sizeof(in.data));
+    s.reserve(n);
+    for (uint8_t i = 0; i < n; ++i) s.push_back(static_cast<wchar_t>(static_cast<unsigned char>(in.data[i])));
+    return s;
+}
+
+// HOST: announce a purchased ATV so clients (that have no save-twin) fresh-spawn a native mirror.
+// slot < 0 -> broadcast to all (a NEW purchased ATV appearing mid-session); slot >= 0 -> send to one
+// joiner (connect-snapshot). Reads the actor's class + current pose.
+void SendAtvSpawn(const std::wstring& synthKey, void* actor, int slot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || !actor) return;
+    void* cls = R::ClassOf(actor);
+    if (!cls) return;
+    FVector loc; FRotator rot;
+    if (!A::GetRootTransform(actor, loc, rot)) return;
+    coop::net::AtvSpawnPayload p{};
+    WireKeyFromString(synthKey, p.synthKey);
+    FillWireClassName(p.className, R::ToString(R::NameOf(cls)));
+    p.x = loc.X; p.y = loc.Y; p.z = loc.Z;
+    p.pitch = rot.Pitch; p.yaw = rot.Yaw; p.roll = rot.Roll;
+    if (slot < 0) s->SendReliable(coop::net::ReliableKind::AtvSpawn, &p, sizeof(p));
+    else          s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvSpawn, &p, sizeof(p));
+}
+
+void SendAtvDestroy(const std::wstring& synthKey) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    coop::net::AtvDestroyPayload p{};
+    WireKeyFromString(synthKey, p.synthKey);
+    s->SendReliable(coop::net::ReliableKind::AtvDestroy, &p, sizeof(p));
+}
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -109,10 +170,12 @@ bool IsLocalAuthority(void* actor, void* localPlayer) {
 }
 
 // Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
-// the authority as the grav-hand grabber (stateBits bit2) rather than a seated driver -- informational
-// for receivers (the explicit AtvRelease drives the un-freeze, not this bit).
+// the authority as the grav-hand grabber (stateBits bit2). `authored` marks that SOME peer is
+// actively driving/grabbing this ATV (bit3) -- set on the connect-snapshot so a joiner freezes only
+// authored ATVs and leaves idle ones physics-on + grabbable (a live stream is always from an
+// authority, so passing authored=true there is just consistent).
 bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, bool adopt,
-                 coop::net::AtvStatePayload& p, bool grabbed = false) {
+                 coop::net::AtvStatePayload& p, bool grabbed = false, bool authored = false) {
     FVector loc; FRotator rot;
     if (!A::GetRootTransform(actor, loc, rot)) return false;
     std::memset(&p, 0, sizeof(p));
@@ -124,6 +187,7 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, boo
     if (A::IsDriven(actor)) sb |= 0x1;
     if (A::GetBrake(actor)) sb |= 0x2;
     if (grabbed)            sb |= 0x4;
+    if (authored)           sb |= 0x8;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
     return true;
@@ -179,11 +243,22 @@ void ApplyMirror(AtvEntry& e) {
     e.dirty = false;
 }
 
-// Full GUObjectArray walk -> refresh the key->actor index, PRESERVING interp/sender state for keys
-// that persist (only actor/idx are updated). Game thread. Logs a keys-hash on change.
+// Full GUObjectArray walk -> refresh the WIRE-key->actor index, PRESERVING interp/sender state for
+// keys that persist (only actor/idx are updated). Classifies each ATV's identity (v77): a save-placed
+// ATV (real key, both peers loaded it) keeps its real key; a HOST-side mid-session PURCHASED ATV gets
+// a synthetic key + an AtvSpawn announce so clients fresh-spawn it. Game thread. Logs a keys-hash.
 size_t RebuildIndex() {
     if (!A::EnsureResolved()) return 0;
-    std::vector<std::pair<std::wstring, std::pair<void*, int32_t>>> found;
+    auto* s = g_session.load(std::memory_order_acquire);
+    const bool isHost = s && s->role() == coop::net::Role::Host;
+    // Baseline-capture window: before any client is connected, EVERY keyed ATV the host has is
+    // save-placed (a joiner will load it from the save). After a client connects, a newly-appearing
+    // key is a runtime purchase. (Accumulated -- not a single-frame latch -- so a default ATV that is
+    // a few seconds slow to mint its UCS key still lands in the save-set before the first joiner.)
+    const bool capturing = isHost && (!s || !s->connected());
+
+    struct Found { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };
+    std::vector<Found> found;
     found.reserve(4);
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
@@ -192,23 +267,50 @@ size_t RebuildIndex() {
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
         if (!R::IsLive(obj)) continue;
-        std::wstring key = A::GetKeyString(obj);
-        if (key.empty() || key == L"None") continue;
-        found.push_back({ std::move(key), { obj, R::InternalIndexOf(obj) } });
+        if (capturing) g_savePlacedActors.insert(obj);  // capture the ACTOR (even before it mints its key)
+        std::wstring realKey = A::GetKeyString(obj);
+        if (realKey.empty() || realKey == L"None") continue;  // not yet keyed -- next rebuild picks it up
+        std::wstring wireKey;
+        auto sf = g_synthForActor.find(obj);
+        if (sf != g_synthForActor.end()) {
+            wireKey = sf->second;                              // already synth (host purchased / client mirror)
+        } else if (capturing) {
+            g_savePlacedKeys.insert(realKey);                 // baseline: a save-placed ATV
+            wireKey = realKey;
+        } else if (isHost && g_savePlacedKeys.find(realKey) == g_savePlacedKeys.end() &&
+                   g_savePlacedActors.find(obj) == g_savePlacedActors.end()) {
+            // HOST: a mid-session ATV not in the save-set = a PURCHASED ATV (host-only delivery). Mint
+            // a synthetic stable wire key + announce so the clients (no save-twin) fresh-spawn a native
+            // mirror. (Its own int_save key is random per peer -- never used cross-peer.)
+            wireKey = std::wstring(kSynthPrefix) + std::to_wstring(++g_synthCounter);
+            g_synthForActor[obj] = wireKey;
+            SendAtvSpawn(wireKey, obj, /*slot*/ -1);          // broadcast to all connected clients
+            UE_LOGI("atv: purchased ATV detected -- synthKey='%ls' class='%ls' (host-announced AtvSpawn)",
+                    wireKey.c_str(), R::ToString(R::NameOf(R::ClassOf(obj))).c_str());
+        } else {
+            wireKey = realKey;                                 // save-placed default ATV (both peers have it)
+        }
+        found.push_back({ std::move(wireKey), obj, R::InternalIndexOf(obj), std::move(realKey) });
     }
-    // Drop entries whose ATV vanished (preserve the rest).
+    // Drop entries whose ATV vanished. A HOST synth (purchased) ATV that's gone -> AtvDestroy so the
+    // clients tear down their fresh-spawned mirror; clean its synth map entry.
     for (auto it = g_atvs.begin(); it != g_atvs.end();) {
         bool present = false;
-        for (auto& f : found) if (f.first == it->first) { present = true; break; }
-        it = present ? std::next(it) : g_atvs.erase(it);
+        for (auto& f : found) if (f.wireKey == it->first) { present = true; break; }
+        if (present) { ++it; continue; }
+        if (IsSynthKey(it->first)) {
+            if (isHost) SendAtvDestroy(it->first);
+            if (it->second.actor) g_synthForActor.erase(it->second.actor);
+        }
+        it = g_atvs.erase(it);
     }
-    // Update/add (preserve interp/sender state for an existing key).
+    // Update/add (preserve interp/sender state for an existing wire key).
     uint64_t keysHash = 0;
     for (auto& f : found) {
-        keysHash ^= FnvKey(f.first);
-        AtvEntry& e = g_atvs[f.first];
-        e.actor = f.second.first;
-        e.idx   = f.second.second;
+        keysHash ^= FnvKey(f.wireKey);
+        AtvEntry& e = g_atvs[f.wireKey];
+        e.actor = f.obj;
+        e.idx   = f.idx;
     }
     if (g_atvs.size() != g_lastLogCount || keysHash != g_lastLogHash) {
         g_lastLogCount = g_atvs.size();
@@ -250,7 +352,21 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     // If WE are the AUTHORITY of this ATV (driving OR grav-hand grabbing it), ignore the incoming
     // pose so a relayed/echoed copy can't fight our live driving/carrying.
     if (IsLocalAuthority(e.actor, coop::players::Registry::Get().Local())) return;
-    // Mirror: disable the local rig once (so it can't fight the stream), then open the interp.
+    // v77: a connect-snapshot (adopt=1) of an IDLE ATV (bit3 authored clear -- no peer is driving/
+    // grabbing it) must NOT freeze it: place it at the host pose but keep physics ON so the local
+    // player can grab/drive it like a native ATV. (A live stream always comes from an authority, so
+    // it never has this combination -- it always freezes + interps below.) For a save ATV this just
+    // corrects drift; for a fresh purchased mirror it snaps it to the host pose.
+    const bool authored = (payload.stateBits & 0x8) != 0;
+    if (payload.adopt && !authored) {
+        if (e.preparedAsMirror) { A::ReleaseMirror(e.actor); e.preparedAsMirror = false; }
+        A::DriveMirrorTransform(e.actor, FVector{ payload.x, payload.y, payload.z },
+                                FRotator{ payload.pitch, payload.yaw, payload.roll });
+        e.hasPose = false; e.window.Close(); e.dirty = false;
+        return;
+    }
+    // Mirror an actively-authored ATV: disable the local rig once (so it can't fight the stream),
+    // then open the interp.
     if (!e.preparedAsMirror) { A::PrepareMirror(e.actor); e.preparedAsMirror = true; }
     SetTarget(e, payload, /*snap*/ payload.adopt != 0);
 }
@@ -286,23 +402,76 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderP
             key.c_str(), std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
 }
 
+void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerSlot*/) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() == coop::net::Role::Host) return;  // client-only (the host owns the real ATV)
+    if (!A::EnsureResolved()) return;
+    std::wstring synthKey = StringFromWireKey(payload.synthKey);
+    if (synthKey.empty()) { UE_LOGW("atv: OnAtvSpawn empty synthKey -- dropping"); return; }
+    if (g_atvs.find(synthKey) != g_atvs.end()) return;  // already spawned (re-announce / connect dup) -- idempotent
+    if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
+        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll)) {
+        UE_LOGW("atv: OnAtvSpawn non-finite pose synthKey='%ls' -- dropping", synthKey.c_str());
+        return;
+    }
+    std::wstring className = WireClassNameToString(payload.className);
+    if (className.empty()) { UE_LOGW("atv: OnAtvSpawn empty className synthKey='%ls' -- dropping", synthKey.c_str()); return; }
+    const FVector loc{ payload.x, payload.y, payload.z };
+    const FRotator rot{ payload.pitch, payload.yaw, payload.roll };
+    void* spawned = A::SpawnMirror(className, loc, rot);  // physics LEFT ON -- a native idle grabbable ATV
+    if (!spawned) {
+        UE_LOGW("atv: OnAtvSpawn SpawnMirror failed synthKey='%ls' class='%ls'", synthKey.c_str(), className.c_str());
+        return;
+    }
+    AtvEntry e{};
+    e.actor = spawned;
+    e.idx = R::InternalIndexOf(spawned);
+    e.isClientSpawnedMirror = true;
+    g_atvs[synthKey] = std::move(e);
+    g_synthForActor[spawned] = synthKey;
+    UE_LOGI("atv: spawned purchased-ATV mirror synthKey='%ls' class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
+            synthKey.c_str(), className.c_str(), spawned, loc.X, loc.Y, loc.Z);
+}
+
+void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderPeerSlot*/) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() == coop::net::Role::Host) return;  // client-only
+    std::wstring synthKey = StringFromWireKey(payload.synthKey);
+    if (synthKey.empty()) return;
+    auto it = g_atvs.find(synthKey);
+    if (it == g_atvs.end()) return;
+    void* actor = it->second.actor;
+    if (it->second.isClientSpawnedMirror) A::DestroyMirror(actor);  // K2_DestroyActor our fresh spawn
+    if (actor) g_synthForActor.erase(actor);
+    g_atvs.erase(it);
+    UE_LOGI("atv: destroyed purchased-ATV mirror synthKey='%ls'", synthKey.c_str());
+}
+
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
     RebuildIndex();
-    int sent = 0;
+    void* localPlayer = coop::players::Registry::Get().Local();
+    int sent = 0, spawns = 0;
     for (auto& kv : g_atvs) {
-        if (!R::IsLiveByIndex(kv.second.actor, kv.second.idx)) continue;
+        AtvEntry& e = kv.second;
+        if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
+        // GAP B: a PURCHASED (synth-keyed) ATV -- the joiner has NO save-twin of it -> announce it
+        // FIRST so the joiner fresh-spawns it. Same Normal lane as AtvState, so the AtvSpawn arrives
+        // before the pose below (spawn-then-pose, in order).
+        if (IsSynthKey(kv.first)) { SendAtvSpawn(kv.first, e.actor, peerSlot); ++spawns; }
+        // authored = SOME peer is actively driving/grabbing this ATV NOW (host occupant/grabber, or
+        // the host is itself mirroring a client's stream). The joiner freezes only an authored ATV;
+        // an idle one stays physics-on + grabbable (occupantSlot 0xFF; adopt=1 snaps the body).
+        const bool authored = IsLocalAuthority(e.actor, localPlayer) || e.preparedAsMirror;
         coop::net::AtvStatePayload p{};
-        // occupantSlot is Phase-1.5 seating -- send 0xFF here; the joiner snaps the BODY pose
-        // (adopt=1). If a client is driving at connect time, its live stream takes over at once.
-        if (!ReadPayload(kv.second.actor, kv.first, 0xFF, /*adopt*/true, p)) continue;
+        if (!ReadPayload(e.actor, kv.first, 0xFF, /*adopt*/true, p, /*grabbed*/false, /*authored*/authored)) continue;
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
         ++sent;
     }
-    UE_LOGI("atv: connect-snapshot -- sent %d ATV pose(s) to slot %d (of %zu indexed)",
-            sent, peerSlot, g_atvs.size());
+    UE_LOGI("atv: connect-snapshot -- sent %d ATV pose(s) (%d purchased-ATV announce(s)) to slot %d (of %zu indexed)",
+            sent, spawns, peerSlot, g_atvs.size());
 }
 
 void Tick() {
@@ -327,13 +496,14 @@ void Tick() {
         const bool grabber   = !occupant && IsLocalGrabber(e.actor, localPlayer);  // mutually exclusive
         const bool authority = occupant || grabber;
 
-        // Grab-release / throw edge: we were the grav-hand grabber last tick and are now neither
-        // grabber nor occupant. Tell receivers to re-enable the ATV's physics and inherit its launch
-        // velocity (the un-freeze) -- without this the ATV would hang at its last streamed pose on
-        // every mirror. (An occupant EXIT is intentionally NOT a release: driving behavior is
-        // unchanged; only the new grab-carry adds a release. The final pose streamed last tick rides
-        // the same Normal lane, so GNS delivers pose-then-release in order -- no settle delay needed.)
-        if (e.wasGrabber && !grabber && !occupant) {
+        // AUTHORITY-LOST edge (v77, generalizes the grab-release): we were the authority last tick
+        // (driver OR grabber) and are now neither. Tell receivers to re-enable the ATV's physics and
+        // inherit its launch velocity (the un-freeze) -- WITHOUT this the ATV hangs frozen at its
+        // last streamed pose on every mirror, which is exactly the "can't grab an ATV someone drove"
+        // bug. This makes an idle ATV physics-ON + grabbable on every peer (the proven prop-release
+        // model). The final pose streamed last tick rides the same Normal lane, so GNS delivers
+        // pose-then-release in order -- no settle delay needed.
+        if (e.wasAuthority && !authority) {
             FVector lin{}, ang{};
             ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);  // best-effort; zero on fail
             coop::net::AtvReleasePayload rp{};
@@ -341,11 +511,11 @@ void Tick() {
             rp.linVelX = lin.X; rp.linVelY = lin.Y; rp.linVelZ = lin.Z;
             rp.angVelX = ang.X; rp.angVelY = ang.Y; rp.angVelZ = ang.Z;
             s->SendReliable(coop::net::ReliableKind::AtvRelease, &rp, sizeof(rp));
-            UE_LOGI("atv: grab released key='%ls' -- AtvRelease |linVel|=%.0f cm/s",
+            UE_LOGI("atv: authority released key='%ls' -- AtvRelease |linVel|=%.0f cm/s (mirrors un-freeze + inherit)",
                     kv.first.c_str(),
                     std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
         }
-        e.wasGrabber = grabber;
+        e.wasAuthority = authority;
 
         if (authority) {
             // We own this ATV (driving OR grabbing). If it had been a mirror (physics off), restore
@@ -373,13 +543,21 @@ void Tick() {
 
 void OnDisconnect() {
     for (auto& kv : g_atvs) {
-        if (kv.second.preparedAsMirror && R::IsLiveByIndex(kv.second.actor, kv.second.idx))
-            A::ReleaseMirror(kv.second.actor);  // don't leave a streamed ATV frozen in single-player
+        const bool live = R::IsLiveByIndex(kv.second.actor, kv.second.idx);
+        if (kv.second.isClientSpawnedMirror) {
+            if (live) A::DestroyMirror(kv.second.actor);   // a fresh-spawned PURCHASED mirror is a coop artifact -> remove
+        } else if (kv.second.preparedAsMirror && live) {
+            A::ReleaseMirror(kv.second.actor);             // un-freeze a streamed save-ATV mirror back to single-player
+        }
     }
     const size_t n = g_atvs.size();
     g_atvs.clear();
+    g_synthForActor.clear();
+    g_savePlacedKeys.clear();
+    g_savePlacedActors.clear();
+    g_synthCounter = 0;
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
-    if (n > 0) UE_LOGI("atv: OnDisconnect -- released mirrors + cleared %zu ATV(s)", n);
+    if (n > 0) UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (released save mirrors; destroyed purchased mirrors)", n);
 }
 
 }  // namespace coop::atv_sync

@@ -63,8 +63,22 @@ bool DriveMirrorTransform(void* atv, const FVector& loc, const FRotator& rot);
 void PrepareMirror(void* atv);
 
 // The inverse of PrepareMirror: re-enable physics sim + actor tick + rigid-body notify. Called
-// when a peer that was mirroring an ATV BECOMES its occupant (so its own driving rig runs again),
+// when a peer that was mirroring an ATV BECOMES its authority (driver/grabber, so its own rig runs
+// again), when an authority releases (the ATV un-freezes to an idle physics-on grabbable state),
 // and on disconnect so a streamed ATV is not left frozen in single-player. Game thread.
 void ReleaseMirror(void* atv);
+
+// v77 purchased-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
+// via GameplayStatics BeginDeferred + FinishSpawning, leaving physics ON -- the result is a NATIVE
+// idle ATV the local player can grab/drive (NOT a frozen mirror). coop::atv_sync uses this when the
+// host announces a purchased ATV (AtvSpawn) that this client has no save-twin of (the order economy
+// delivers only on the host). `className` is validated to descend from ATV_C (trust boundary -- a
+// peer could send any string). Returns the spawned actor, or nullptr on resolve/spawn failure.
+// Game thread only.
+void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot);
+
+// v77: tear down a SpawnMirror'd purchased-ATV mirror (K2_DestroyActor on the actor) when the host
+// announces it gone (AtvDestroy) or on disconnect. No-op-safe on null/already-dead. Game thread.
+void DestroyMirror(void* atv);
 
 }  // namespace ue_wrap::atv
