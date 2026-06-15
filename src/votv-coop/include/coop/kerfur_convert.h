@@ -70,20 +70,6 @@ namespace coop::kerfur_convert {
 // classes for the converge walk. Caches `session`.
 void Install(coop::net::Session* session);
 
-// THE conversion detector -- called from npc_sync::NpcSuppress_Interceptor (the
-// PE-visible BeginDeferredActorSpawnFromClass detour) with the spawn's params
-// frame + ActorClass + the caller's role. The kerfur radial menu's actionName/
-// actionOptionIndex dispatch is EX_LocalVirtualFunction = PE-INVISIBLE (so the
-// interceptors on them never fire); the conversion is detected here instead, by
-// the handler's BeginDeferred whose WorldContextObject == the kerfur self
-// (WCO=kerfurOmega + spawn=prop => turn_off; WCO=prop + spawn=kerfurOmega =>
-// turn_on). Records the host-auth request (client) / converge (host) for Tick().
-// RETURNS true iff the CLIENT should VETO this local spawn (the ghost-prop /
-// duplicate-NPC dupe source) -- the caller then zeroes the BP ReturnValue. Host
-// always returns false (the real conversion runs locally + mirrors via converge).
-// Interceptor-safe: reflection reads + leaf mutex only. No-op until installed.
-bool OnBeginDeferredSpawn(void* params, void* actorClass, bool isClient, bool isHost);
-
 // HOST-only receiver for KerfurConvertRequest (wired in event_dispatch_state).
 // Validates + executes the verb + converges, all on the game thread (the
 // event_feed drain). senderPeerSlot is log-only.
