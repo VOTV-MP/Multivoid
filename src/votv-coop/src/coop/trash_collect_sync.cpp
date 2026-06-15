@@ -156,6 +156,20 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // of the reverted-2a UAF). [[project-bug-trash-chippile-uaf-crash]]
     if (!ue_wrap::prop::IsKeyedInteractable(heldActor)) return false;
 
+    // A divergence sweep is pending and this held actor is one of its candidates
+    // (an in-universe, unclaimed save-loaded local the host did NOT express -- a
+    // ghost awaiting adjudication, e.g. the save-transfer kerfur the host turned
+    // ON before this client joined). Do NOT express it: a SendPropSpawn below
+    // would fresh-spawn a host duplicate, and the RecordClaimIfTracking after it
+    // would claim the ghost past the pending sweep (permanently rescuing it). Let
+    // the deferred sweep destroy it. A genuinely client-originated drop is claimed
+    // via the takeObj path, so it is NOT a candidate and streams normally here.
+    if (coop::remote_prop_spawn::IsPendingSweepCandidate(heldActor)) {
+        UE_LOGI("trash_collect: held item %p is a pending divergence-sweep candidate "
+                "(unclaimed ghost) -- NOT expressing (the deferred sweep will destroy it)", heldActor);
+        return false;
+    }
+
     // Express-if-unknown (ghost-twin fix, 2026-06-10 hands-on forensics). The
     // old predicate skipped ANY keyed held actor as "a normal world prop the
     // peer already has" -- but "has a key" is NOT "peer has it": a prop that

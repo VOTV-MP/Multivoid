@@ -373,15 +373,20 @@ void Update(net::Session& session, void* localPlayer) {
             if (session.role() == net::Role::Host) break;
             coop::join_progress::Complete();
             // P2 (2026-06-10): the snapshot drained -- every host prop has
-            // claimed its client actor. Destroy the unclaimed RNG-divergent
-            // locals (the client's own fresh-New-Game litter the host does
-            // not have). Inline on the GT drain, after ALL claims by lane
-            // ordering.
-            coop::remote_prop_spawn::DestroyUnclaimedDivergentProps(localPlayer);
+            // claimed its client actor. The unclaimed RNG-divergent locals (the
+            // client's own fresh-New-Game litter the host does not have) are
+            // swept -- but NOT inline here. A save-loaded-but-host-converted-away
+            // prop (the kerfur the host turned ON before this client joined) has
+            // its key restored on a LATE loadData tail that finishes after this
+            // point, so an inline sweep would keyless-skip it into a ghost. ARM
+            // a deferred, load-tail-quiescence-gated sweep (TickClientReconcile
+            // fires it once keys have all minted) instead. localPlayer is
+            // re-resolved at sweep time.
+            coop::remote_prop_spawn::ArmDivergenceSweep();
             // v75: the connect snapshot is fully delivered, so every save-persisted EntitySpawn
             // (the kerfur) has arrived + armed its deferred adoption. Tell npc_adoption: once those
             // pending adoptions converge it may run its one-shot ghost sweep (the NPC analogue of
-            // DestroyUnclaimedDivergentProps above) without risking a not-yet-armed local twin.
+            // the prop divergence sweep armed above) without risking a not-yet-armed local twin.
             coop::npc_adoption::OnSnapshotComplete();
             break;
         }

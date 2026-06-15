@@ -17,6 +17,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"  // v75: deferred class-match adoption for save-persisted NPCs
+#include "coop/remote_prop_spawn.h"  // TickClientReconcile (deferred prop divergence sweep)
 #include "coop/npc_sync.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -585,6 +586,12 @@ void TickClientNpcs() {
     // connect-snapshot-delivered + converged timing). NO-OP (single integer compare) once adoption
     // has converged and the sweep has run -- zero steady-state cost. Game thread only.
     coop::npc_adoption::Tick();
+
+    // 4) Drive the deferred PROP divergence sweep (the save-transfer kerfur-ghost fix): it waits for
+    // the save load's late key-minting tail to quiesce before adjudicating, so a host-converted-away
+    // save prop is destroyed with its real key instead of keyless-skipped into a ghost. NO-OP (single
+    // bool read) when no sweep is armed -- the same client tick already gated to non-host above.
+    coop::remote_prop_spawn::TickClientReconcile();
 }
 
 }  // namespace coop::npc_mirror

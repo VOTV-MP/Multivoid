@@ -25,6 +25,7 @@
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
+#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
@@ -32,6 +33,7 @@
 #include "ue_wrap/types.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -200,6 +202,20 @@ void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags) {
 // in remote_prop_spawn.h.
 std::unordered_set<void*> g_claimedActors;
 bool g_claimTrackingActive = false;
+
+// ---- Deferred divergence sweep (quiescence-gated; the kerfur-savetransfer
+// ghost fix 2026-06-15). The sweep no longer runs inline at SnapshotComplete --
+// see ArmDivergenceSweep/TickClientReconcile + the design note in the header.
+// All game-thread-only (the client tick + the event_feed drain), no mutex.
+bool g_sweepPending = false;                          // armed at SnapshotComplete; cleared when the sweep runs
+bool g_sweepFired   = false;                          // sticky: set when the sweep runs, until re-armed (HasLoadTailQuiesced)
+std::chrono::steady_clock::time_point g_sweepArmedAt{};
+std::chrono::steady_clock::time_point g_sweepLastScan{};  // {} (epoch 0) => not yet scanned this arm
+int  g_sweepLastKeylessCount = -1;
+int  g_sweepStableScans      = 0;
+constexpr int kSweepScanIntervalMs = 200;   // 5 Hz quiescence probe while pending (matches npc_adoption)
+constexpr int kSweepQuiesceScans   = 3;     // keyless population stable across 3 scans (~600 ms) = tail drained
+constexpr int kSweepDeadlineMs     = 8000;  // hard cap: sweep regardless (parity with npc_adoption::kAdoptTimeoutMs)
 
 // Record that the host snapshot bound `actor` (exact-key, fuzzy, or fresh
 // spawn) -- the actor is accounted-for by the host's world and must survive
@@ -895,6 +911,14 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
 void BeginClaimTracking() {
     g_claimedActors.clear();
     g_claimTrackingActive = true;
+    // A fresh bracket supersedes any sweep still pending from a prior bracket
+    // (the two-level-load case): cancel it so it can't fire against this new
+    // claim set; SnapshotComplete re-arms it. Clear the sticky fired latch too
+    // (the new world's load tail has not quiesced yet).
+    g_sweepPending = false;
+    g_sweepFired = false;
+    g_sweepStableScans = 0;
+    g_sweepLastKeylessCount = -1;
     // A fresh bracket re-enumerates pile-bind candidates (a re-bracket runs
     // against the post-sweep world; stale entries would be dead pointers).
     ResetPileBindIndex();
@@ -902,7 +926,10 @@ void BeginClaimTracking() {
             "unclaimed in-universe locals will be destroyed at SnapshotComplete");
 }
 
-void DestroyUnclaimedDivergentProps(void* localPlayer) {
+// The one real sweep. Driven (deferred) by TickClientReconcile once the load
+// tail has quiesced -- NOT inline at SnapshotComplete (see ArmDivergenceSweep).
+// Internal linkage: the only callers are ArmDivergenceSweep's tick driver.
+static void RunDivergenceSweep_(void* localPlayer) {
     if (!g_claimTrackingActive) {
         // A SnapshotComplete without its Begin (wire anomaly / disconnect race)
         // must NOT sweep with an empty claim set -- that would destroy every
@@ -960,13 +987,17 @@ void DestroyUnclaimedDivergentProps(void* localPlayer) {
     std::vector<void*> doomed;
     doomed.reserve(pending.size());
     std::unordered_map<std::wstring, int> doomedByClass;
-    // Ghost-twin probe (2026-06-10 forensics): the keyless-skip below is the
-    // ADOPTION HOLE -- "keyless" is a TRANSIENT pre-Init state, and the world
-    // load's late tail (+872 keyed actors appeared AFTER the sweep in the
-    // hands-on run) turns skipped actors into keyed, interactive, never-
-    // adjudicated ghosts (the wall-panel dupe). Until the structural fix
-    // (deferred adjudication or a load-quiescence gate) lands, NAME what the
-    // sweep skipped so every join quantifies the exposure.
+    // Keyless-skip: a keyless actor is a TRANSIENT (a held clump mid-flight, a
+    // pre-Init Aprop_C) the host cannot have expressed a binding for, so it is
+    // NOT swept. This WAS the "adoption hole" (2026-06-10 forensics): the world
+    // load's late tail mints keys AFTER an INLINE SnapshotComplete sweep, so a
+    // save-loaded-but-host-converted-away prop (the kerfur) read Key=None here,
+    // was skipped, then minted its key -> a keyed untracked ghost. The deferred
+    // quiescence gate (ArmDivergenceSweep/TickClientReconcile) closes that: this
+    // sweep now runs only AFTER the keyless population has stabilized, so every
+    // load-tail straggler already has its final key and lands in `doomed` below.
+    // The skip now catches only genuinely-never-keyed transients -- the WARN at
+    // the end is a regression tripwire that should read ~0 on a healthy join.
     std::unordered_map<std::wstring, int> keylessSkippedByClass;
     for (void* a : pending) {
         if (!R::IsLive(a)) continue;
@@ -1008,8 +1039,8 @@ void DestroyUnclaimedDivergentProps(void* localPlayer) {
             if (v > topCnt) { topCnt = v; topCls = k; }
         }
         UE_LOGW("remote_prop_spawn: sweep SKIPPED %zu keyless unclaimed actor(s) across %zu class(es) "
-                "(top: %d x '%ls') -- pre-Init late-tail stragglers; these become untracked ghosts "
-                "if their keys mint later (adoption hole, fix pending)",
+                "(top: %d x '%ls') -- expected ~0 post-quiescence; a non-zero keyed-later count would "
+                "mean the quiescence gate fired too early (regression tripwire)",
                 skippedTotal, keylessSkippedByClass.size(), topCnt, topCls.c_str());
     }
     // Phase 3: destroy with OnDestroy-parity teardown. Echo-suppressed
@@ -1055,6 +1086,112 @@ void DestroyUnclaimedDivergentProps(void* localPlayer) {
     }
 }
 
+// Quiescence probe for the deferred sweep: count in-universe (keyed-interactable
+// class), live, UNCLAIMED, non-per-player, non-chipPile actors that currently
+// read Key=None. This is exactly the population the sweep's keyless-skip would
+// spare. While the save load's late tail is still restoring keys this count
+// CHANGES (a keyless straggler that mints its key leaves the set); when it stops
+// changing the tail has drained and every survivor has its final key. ONE
+// GUObjectArray walk (the SeedWalk_ shape; pure pointer-compare class filters
+// before any key read), throttled to 5 Hz and only while a sweep is pending.
+static int CountKeylessUnclaimedInUniverse_() {
+    const int32_t n = R::NumObjects();
+    int keyless = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        if (!ue_wrap::prop::IsClassKeyedInteractable(R::ClassOf(obj))) continue;
+        if (!R::IsLive(obj)) continue;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO (alloc-free)
+        if (g_claimedActors.count(obj)) continue;                       // claimed: never a sweep candidate
+        if (ue_wrap::prop::IsChipPile(obj)) continue;                   // chipPile is expressible keyless (not skipped)
+        if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) continue;
+        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
+        if (key.empty() || key == L"None") ++keyless;
+    }
+    return keyless;
+}
+
+void ArmDivergenceSweep() {
+    if (!g_claimTrackingActive) {
+        // SnapshotComplete without its Begin (wire anomaly / disconnect race) --
+        // do not arm a sweep with no claim set behind it.
+        UE_LOGW("remote_prop_spawn: divergence sweep arm requested but tracking not armed -- skipping");
+        return;
+    }
+    // Defer the one real sweep. Claim tracking stays armed (NOT disarmed here) so
+    // any host PropSpawn / client self-announce during the quiesce window still
+    // claims its actor via RecordClaim and is spared.
+    g_sweepPending = true;
+    g_sweepFired = false;
+    g_sweepArmedAt = std::chrono::steady_clock::now();
+    g_sweepLastScan = {};            // force a quiescence scan on the next tick
+    g_sweepLastKeylessCount = -1;
+    g_sweepStableScans = 0;
+    UE_LOGI("remote_prop_spawn: divergence sweep ARMED -- deferring to load-tail quiescence "
+            "(keyless population stable x%d scans @%dms, or %dms hard deadline)",
+            kSweepQuiesceScans, kSweepScanIntervalMs, kSweepDeadlineMs);
+}
+
+void TickClientReconcile() {
+    if (!g_sweepPending) return;  // zero cost when disarmed (the steady state)
+    UE_ASSERT_GAME_THREAD("remote_prop_spawn::TickClientReconcile");  // no-mutex: all sweep state is GT-only
+    const auto now = std::chrono::steady_clock::now();
+    const auto msSince = [now](std::chrono::steady_clock::time_point t) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - t).count();
+    };
+    // Throttle to ~5 Hz (skip the throttle on the very first scan after arming,
+    // when g_sweepLastScan is the default-constructed epoch).
+    if (g_sweepLastScan.time_since_epoch().count() != 0 &&
+        msSince(g_sweepLastScan) < kSweepScanIntervalMs) return;
+    g_sweepLastScan = now;
+
+    const bool deadlineHit = msSince(g_sweepArmedAt) >= kSweepDeadlineMs;
+    if (!deadlineHit) {
+        const int keyless = CountKeylessUnclaimedInUniverse_();
+        if (keyless != g_sweepLastKeylessCount) {
+            g_sweepLastKeylessCount = keyless;
+            g_sweepStableScans = 0;
+            return;  // population still changing -> load tail not drained, keep waiting
+        }
+        if (++g_sweepStableScans < kSweepQuiesceScans) return;  // stable, but not for long enough yet
+    }
+
+    // Gate satisfied (quiesced or deadline) -- run the one real sweep. Re-resolve
+    // the live local player here (a pointer stashed at arm time could go stale; the
+    // sweep needs it to release the grav-hand if a doomed actor is being held --
+    // exactly the kerfur-ghost-grab case). Cold path, one FindObjectByClass.
+    void* localPlayer = R::FindObjectByClass(P::name::MainPlayerClass);
+    UE_LOGI("remote_prop_spawn: divergence sweep FIRING (%s; %lldms after arm)",
+            deadlineHit ? "hard deadline" : "load tail quiesced", static_cast<long long>(msSince(g_sweepArmedAt)));
+    g_sweepPending = false;
+    g_sweepFired = true;  // load tail drained -> npc_adoption may now fresh-spawn no-twin save NPCs
+    RunDivergenceSweep_(localPlayer);
+}
+
+bool IsPendingSweepCandidate(void* actor) {
+    if (!g_sweepPending || !actor) return false;
+    if (g_claimedActors.count(actor)) return false;  // host-expressed / self-claimed legit drop -> not a ghost
+    void* cls = R::ClassOf(actor);
+    if (!ue_wrap::prop::IsClassKeyedInteractable(cls)) return false;  // out of the divergence universe
+    if (!R::IsLive(actor)) return false;
+    if (ue_wrap::prop::IsChipPile(actor)) return false;  // pile has its own collect/share + death-watch path
+    if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(actor))) return false;  // per-player: never swept
+    return true;  // unclaimed in-universe keyed Aprop while a sweep is pending = a ghost awaiting adjudication
+}
+
+bool HasLoadTailQuiesced() { return g_sweepFired; }
+
+void OnClientWorldReadyResetSweep() {
+    if (g_sweepPending)
+        UE_LOGI("remote_prop_spawn: client world-ready -- cancelling a pending divergence sweep "
+                "from the prior world (the new snapshot bracket will re-arm it)");
+    g_sweepPending = false;
+    g_sweepFired = false;
+    g_sweepStableScans = 0;
+    g_sweepLastKeylessCount = -1;
+}
+
 void ResetClaimTracking() {
     if (g_claimTrackingActive) {
         UE_LOGI("remote_prop_spawn: claim tracking reset mid-snapshot (disconnect) -- "
@@ -1062,6 +1199,12 @@ void ResetClaimTracking() {
     }
     g_claimedActors.clear();
     g_claimTrackingActive = false;
+    // A mid-snapshot drop must also cancel any deferred sweep armed this session
+    // (the tick driver would otherwise fire it against a torn-down world).
+    g_sweepPending = false;
+    g_sweepFired = false;
+    g_sweepStableScans = 0;
+    g_sweepLastKeylessCount = -1;
     ResetPileBindIndex();  // dangling-pointer hygiene across sessions (mirrors the claim set)
 }
 

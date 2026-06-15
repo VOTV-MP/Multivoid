@@ -23,6 +23,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"  // OnClientWorldReady (v75 deferred-adoption per-world reset)
+#include "coop/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/prop_element_tracker.h"
@@ -537,6 +538,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // re-adopts its save-NPCs + re-sweeps orphans (the ghost sweep itself fires from
                 // npc_adoption::Tick, gated on SnapshotComplete + adoption convergence).
                 coop::npc_adoption::OnClientWorldReady();
+                // Same per-world reset for the deferred PROP divergence sweep -- a sweep armed for
+                // the prior world must not fire against this fresh one (save-transfer = two loads).
+                coop::remote_prop_spawn::OnClientWorldReadyResetSweep();
                 UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent%s)",
                         reAnnounce ? " -- re-announce after world-change" : "");
             }

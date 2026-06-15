@@ -77,7 +77,7 @@ bool IsPerPlayerPropClass(const std::wstring& cls);
 // `deferred=false` destroys immediately -- safe from plain game-thread context
 // (e.g. the event_feed drain). Used by the client intermediate-variant suppression
 // (Init POST) and the P2 connect-snapshot claim sweep
-// (remote_prop_spawn::DestroyUnclaimedDivergentProps). Game-thread only.
+// (remote_prop_spawn deferred divergence sweep). Game-thread only.
 void DestroyLocalProp(void* actor, bool deferred);
 
 // Express a freshly-spawned KEYED prop on the wire -- the SAME canonical keyed

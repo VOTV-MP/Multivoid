@@ -96,13 +96,60 @@ void BeginClaimTracking();
 // is disarmed (one bool read). Game-thread only.
 void RecordClaimIfTracking(void* actor);
 
-// Sweep: destroy every live unclaimed actor of the expressible universe,
-// then disarm tracking. `localPlayer` feeds the OnDestroy-parity teardown
-// (PHC release if a doomed actor is somehow held). No-op (with a WARN) if
-// tracking was never armed -- a SnapshotComplete without its Begin must not
-// mass-destroy with an empty claim set. Called from the client's
-// SnapshotComplete handler. Game-thread only.
-void DestroyUnclaimedDivergentProps(void* localPlayer);
+// Arm the deferred divergence sweep. Called from the client's SnapshotComplete
+// handler INSTEAD of sweeping inline. The inline sweep was wrong: a save-loaded-
+// but-host-converted-away prop (the kerfur turned ON by the host before this
+// client joined) has its Aprop_Key restored on a LATE loadData tail that
+// finishes AFTER SnapshotComplete, so an inline sweep read Key=None, hit the
+// keyless-skip, and let it survive as a keyed untracked ghost (the
+// save-transfer kerfur dupe). Arming defers the one real sweep to
+// TickClientReconcile, which fires it only once the load tail has quiesced (the
+// keyless in-universe population is stable) or an 8 s hard deadline elapses.
+// Claim tracking STAYS armed until the sweep runs, so a host PropSpawn (or a
+// client self-announce) arriving during the quiesce window still claims its
+// actor and is not swept. No-op (with a WARN) if tracking was never armed.
+// Game-thread only. (Mirrors npc_adoption::OnSnapshotComplete + Tick's
+// convergence gate -- the proven v75 NPC-side shape, now on the prop channel.)
+void ArmDivergenceSweep();
+
+// Per-client-tick driver for the deferred sweep. NO-OP (single bool read) when
+// no sweep is armed -- zero steady-state cost. While armed, a throttled 5 Hz
+// quiescence probe counts keyless in-universe unclaimed actors; when that count
+// is stable across a few scans (load tail drained -> every survivor has its
+// final key) OR the hard deadline fires, it runs the one real sweep and
+// disarms. Called from npc_mirror::TickClientNpcs (client-only). Game-thread only.
+void TickClientReconcile();
+
+// Cancel any pending deferred sweep on a client world-ready edge. A save-transfer
+// join does TWO level loads; a sweep armed for world-1 must not fire against
+// world-2's actor set. Called from the net-pump's per-ClientWorldReady hook
+// (next to npc_adoption::OnClientWorldReady); the new world's snapshot bracket
+// re-arms it. Game-thread only.
+void OnClientWorldReadyResetSweep();
+
+// True while a deferred sweep is pending AND `actor` is one of its candidates:
+// an in-universe (keyed-interactable Aprop), live, UNCLAIMED local prop the host
+// did NOT express -- a divergent ghost awaiting adjudication (e.g. the
+// save-transfer kerfur the host turned ON before this client joined, which the
+// client's stale save still has as an OFF prop). The client held-prop broadcast
+// (trash_collect_sync::EnsureHeldItemBroadcast) calls this to REFUSE to re-announce
+// such a ghost when the player grabs it in the pre-sweep window: a PropSpawn would
+// fresh-spawn a host duplicate AND a claim would rescue the ghost past the pending
+// sweep (permanently). A genuinely client-originated drop is claimed via the takeObj
+// path, so it is NOT a candidate here and streams normally. chipPile lineage is
+// excluded (it has its own pre-existing collect/share + death-watch path).
+// Game-thread only.
+bool IsPendingSweepCandidate(void* actor);
+
+// True once the deferred divergence sweep has FIRED for the current connect
+// bracket -- i.e. the save load's late key-minting tail has drained (or the hard
+// deadline elapsed). npc_adoption uses this to fresh-spawn a save-persisted NPC
+// mirror that has NO local twin AS SOON AS the load is done (the kerfur the host
+// turned ON before this client joined: the stale save has no NPC to adopt, and
+// once the load tail is drained none will ever appear), instead of waiting its own
+// fixed 8 s fallback timeout. Reset on each new bracket / world / disconnect.
+// Game-thread only.
+bool HasLoadTailQuiesced();
 
 // Disarm + clear without sweeping. Called on session disconnect so a
 // mid-snapshot drop does not leave dangling actor pointers armed across

@@ -646,7 +646,7 @@ bool IsWireSuppressedPropClass(const std::wstring& cls) {
     // own v52 ball->pile convert-born piles at Init (same mechanism that
     // vetoed garbageClump: clump Init fires on the client's legit grab
     // morph). Connect-time divergence is handled by claim-tracking instead
-    // (remote_prop_spawn::DestroyUnclaimedDivergentProps).
+    // (remote_prop_spawn's deferred divergence sweep).
     //
     // Fork B 2e (2026-06-10): the adoption SWEEP intentionally does NOT
     // consult this predicate -- mushroom7 is keyed (in-universe) but never
