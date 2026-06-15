@@ -76,7 +76,7 @@ bool ResolveGs() {
 
 // ---- saveSlot_C metadata offsets (reflection-resolved, recook-safe; cached). -----
 struct SlotOffsets {
-    int32_t day = -1, points = -1, health = -1, maxHealth = -1, version = -1, lastDate = -1;
+    int32_t savedtime = -1, points = -1, health = -1, maxHealth = -1, version = -1, lastDate = -1;
     bool tried = false;
 };
 SlotOffsets g_off;
@@ -85,7 +85,12 @@ void ResolveSlotOffsets() {
     if (g_off.tried) return;
     void* cls = R::FindClass(L"saveSlot_C");
     if (!cls) return;  // not loaded yet -- retry next call (tried stays false)
-    g_off.day       = R::FindPropertyOffset(cls, L"Day");
+    // The DAY shown on the game's own save rows is savedtime.Z + 1 (uicomp_saveSlot::upd
+    // bytecode: days := save.savedtime.Z; SetText(Conv_IntToText(Add_IntInt(days, 1)))).
+    // `savedtime` is an FIntVector {h, m, day}. The float `Day` property is the raw
+    // elapsed-TIME accumulator (== daynightCycle.totalTime) -- displaying it raw was the
+    // "Day 3566" bug (2026-06-10 user report).
+    g_off.savedtime = R::FindPropertyOffset(cls, L"savedtime");
     g_off.points    = R::FindPropertyOffset(cls, L"Points");
     g_off.health    = R::FindPropertyOffset(cls, L"health");
     g_off.maxHealth = R::FindPropertyOffset(cls, L"maxHealth");
@@ -94,15 +99,15 @@ void ResolveSlotOffsets() {
     // Latch ONLY when every field resolved, so a partial/recook miss (one field renamed)
     // doesn't stick at -1 forever and silently read 0 for that field (audit I-2). Until
     // then we retry each call (cheap; the class loads once on a gameplay/menu transition).
-    const bool all = g_off.day >= 0 && g_off.points >= 0 && g_off.health >= 0 &&
+    const bool all = g_off.savedtime >= 0 && g_off.points >= 0 && g_off.health >= 0 &&
                      g_off.maxHealth >= 0 && g_off.version >= 0 && g_off.lastDate >= 0;
     if (all) {
         g_off.tried = true;
-        UE_LOGI("save_browser: saveSlot_C offsets Day=%d Points=%d health=%d maxHealth=%d Version=%d lastDate=%d",
-                g_off.day, g_off.points, g_off.health, g_off.maxHealth, g_off.version, g_off.lastDate);
+        UE_LOGI("save_browser: saveSlot_C offsets savedtime=%d Points=%d health=%d maxHealth=%d Version=%d lastDate=%d",
+                g_off.savedtime, g_off.points, g_off.health, g_off.maxHealth, g_off.version, g_off.lastDate);
     } else {
-        UE_LOGW("save_browser: saveSlot_C offsets incomplete Day=%d Points=%d health=%d maxHealth=%d "
-                "Version=%d lastDate=%d -- will retry", g_off.day, g_off.points, g_off.health,
+        UE_LOGW("save_browser: saveSlot_C offsets incomplete savedtime=%d Points=%d health=%d maxHealth=%d "
+                "Version=%d lastDate=%d -- will retry", g_off.savedtime, g_off.points, g_off.health,
                 g_off.maxHealth, g_off.version, g_off.lastDate);
     }
 }
@@ -207,7 +212,12 @@ bool EnumerateSaves(std::vector<SaveInfo>& out) {
             info.displayName = slot;
         }
         if (so && R::IsLive(so)) {
-            info.day            = static_cast<int>(ReadField<float>(so, g_off.day));
+            // The game's own display formula (uicomp_saveSlot::upd bytecode):
+            // day = savedtime.Z + 1. savedtime is an FIntVector {X, Y, Z=day}; Z
+            // sits at +8 within the 12-byte struct.
+            if (g_off.savedtime >= 0) {
+                info.day = ReadField<int32_t>(so, g_off.savedtime + 8) + 1;
+            }
             info.points         = ReadField<int32_t>(so, g_off.points);
             info.health         = ReadField<float>(so, g_off.health);
             info.maxHealth      = ReadField<float>(so, g_off.maxHealth);

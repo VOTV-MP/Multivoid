@@ -226,6 +226,28 @@ public:
     // ReliableMessage if per-sender routing is needed.
     bool TryGetReliable(ReliableMessage& out);
 
+    // v66 voice: send one VoiceFrame datagram (kVoiceFrameHeadBytes +
+    // frame.opusLen body bytes) to every world-ready peer (client: the host).
+    // Game thread (the GNS send API is thread-safe -- SendReliable's calling
+    // convention). Fire-and-forget: per-frame send failures drop silently,
+    // the receiver's jitter buffer + PLC cover gaps.
+    bool SendVoiceFrame(const VoiceFramePayload& frame);
+
+    // v66 voice inbox: one received frame. A per-sender FIFO STREAM, not the
+    // newest-wins pose model -- every arrival is queued; ordering and loss
+    // live in the per-payload voice seq handled by the jitter buffer.
+    // senderSlot is the relay-rewritten logical origin.
+    struct VoiceFrameMsg {
+        int8_t senderSlot = -1;
+        VoiceFramePayload frame{};
+    };
+    // Ring depth per sender slot (~320 ms of one speaker). Public: it sizes the
+    // caller's drain buffer (kMaxPeers * kVoiceRingPerSlot covers a full inbox).
+    static constexpr int kVoiceRingPerSlot = 16;
+    // Drain every queued voice frame in one call (game thread; ONE lock per
+    // tick -- audit I-3/M-3). Returns the count written to out[0..maxCount).
+    int DrainVoiceFrames(VoiceFrameMsg* out, int maxCount);
+
     bool SendPropRelease(const WireKey& key,
                          float linVelX, float linVelY, float linVelZ,
                          float angVelX, float angVelY, float angVelZ);
@@ -244,6 +266,16 @@ public:
     int rttMsForSlot(int slot) const {
         return (slot >= 0 && slot < kMaxPeers) ? rttMsBySlot_[slot].load() : -1;
     }
+    // The session's transport topology (LanDirect listen vs P2P/ICE). Display
+    // surfaces (the tilde scoreboard's connection column) read it for the
+    // local-host "how am I hosting" label.
+    Topology topology() const { return cfg_.topology; }
+    // Short human label of the transport carrying `peerSlot`'s LIVE connection:
+    // "LAN" (direct UDP) / "P2P" (ICE direct or STUN-punched) / "P2P RELAY"
+    // (TURN). Returns false (out empty) without a live conn. Display-only (the
+    // tilde scoreboard); relay-vs-direct parses the GNS connection description,
+    // which names the active ICE path. Any thread (GNS API is thread-safe).
+    bool LinkLabelForSlot(int peerSlot, char* out, int outLen) const;
     // Count of currently-connected peers (0..kMaxPeers-1).
     int connectedPeerCount() const;
     // True if the given slot has an active GNS connection (handle set).
@@ -331,6 +363,9 @@ private:
     // it for the game thread (takes remoteMutex_).
     int  SerializeLocalNpcBatch(uint8_t* buf);
     void StoreRemoteNpcBatch(const void* data, int len, uint32_t seq);
+    // v66 voice receive-side store (defined in session_voice.cpp): validate one
+    // VoiceFrame datagram, queue it on the voice inbox, host-relay. Net thread.
+    void StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int len);
     void HandleConnStatusChanged(void* info);
     // Host-only: find the lowest empty slot in [1..kMaxPeers-1]. Returns -1
     // if all client slots are taken (host is full).
@@ -443,6 +478,18 @@ private:
     // Reliable inbox (shared across peers; FIFO of arrival order).
     std::mutex reliableInboxMutex_;
     std::deque<ReliableMessage> reliableInbox_;
+
+    // v66 voice inbox (audit I-3): per-SLOT fixed rings -- zero net-thread heap
+    // alloc (the old shared deque allocated per frame) and per-sender fairness
+    // (a spammer overwrites only their own oldest audio, not everyone's).
+    // Drop-oldest per slot on overflow; the jitter buffer treats the loss as
+    // ordinary gaps. head/tail are monotonic (tail - head <= kVoiceRingPerSlot).
+    struct VoiceSlotRing {
+        VoiceFrameMsg ring[kVoiceRingPerSlot];
+        uint32_t head = 0, tail = 0;
+    };
+    std::mutex voiceInboxMutex_;
+    VoiceSlotRing voiceRings_[kMaxPeers];
 
     // v56 bulk-chunk diversion target (see SetBulkSink). Written once at install
     // (game thread), read per-message on the net thread.

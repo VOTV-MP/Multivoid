@@ -166,6 +166,9 @@ bool Session::TryGetReliable(ReliableMessage& out) {
     return true;
 }
 
+// (v66 voice send/inbox live in session_voice.cpp -- the session_npc.cpp
+// extraction precedent; session.cpp had crossed the 800-LOC soft cap.)
+
 bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                                  int len, uint8_t senderSlot) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
@@ -508,6 +511,12 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
+        break;
+    case MsgType::VoiceFrame:
+        // v66 voice: a STREAM -- queue every arrival (no header-seq stale-drop;
+        // the per-payload voice seq orders at the jitter buffer). Store + host
+        // relay live in session_voice.cpp.
+        StoreVoiceFrame(routeSlot, peerSlot, data, len);
         break;
     case MsgType::Reliable: {
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;

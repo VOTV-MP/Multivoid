@@ -5,6 +5,8 @@
 #include "coop/chat_feed.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/nameplate.h"
+#include "coop/voice/voice_chat.h"
+#include "ui/voice_icons.h"
 
 #include "imgui.h"
 
@@ -83,16 +85,27 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const ImU32 fillCol = p.flash ? red : IM_COL32(190, 30, 30, static_cast<int>(a * 235.f));
     dl->AddRectFilled(bp, ImVec2(bp.x + barW * frac, bp.y + barH), fillCol);
     dl->AddRect(bp, ImVec2(bp.x + barW, bp.y + barH), IM_COL32(0, 0, 0, static_cast<int>(a * 200.f)));
+
+    // Voice badge (v66): right of the plate backing, scaled+faded with it
+    // (the SVC nameplate icon placement, design SS3.1).
+    if (p.voiceIcon != 0) {
+        const float ih = 13.f * s;
+        ui::voice_icons::Draw(dl, ImVec2(boxMax.x + 4.f * s + ih * 0.5f,
+                                         (boxMin.y + boxMax.y) * 0.5f),
+                              ih, static_cast<coop::voice_chat::VoiceIcon>(p.voiceIcon), a);
+    }
 }
 
 void DrawNameplates() {
     coop::nameplate::Snapshot ns;
     coop::nameplate::GetSnapshot(ns);
     if (ns.count <= 0) return;
-    // FOREGROUND draw list: drawn ON TOP of the scene (and any ImGui window); never
-    // hit-tests input. (Was the background list -- foreground guarantees it's never
-    // occluded + is captured by the screenshot grab like every other ImGui surface.)
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    // BACKGROUND draw list: over the game scene but UNDER every ImGui window
+    // (user 2026-06-12: nameplates are the lowest-priority layer -- the scoreboard /
+    // voice panel / browser must never be overdrawn by a plate). It renders in the
+    // same ImDrawData as everything else, so the screenshot grab still captures it;
+    // it never hit-tests input.
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < ns.count; ++i) {
         const auto& p = ns.plates[i];
         if (!p.onScreen || p.alpha <= 0.02f) continue;
@@ -111,7 +124,7 @@ void DrawObjectOverlay() {
     OO::Snapshot os;
     OO::GetSnapshot(os);
 
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();  // under windows, like the nameplates
     ImFont* font = ImGui::GetFont();
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -201,13 +214,33 @@ void DrawChat() {
 
 bool IsActive() {
     return coop::nameplate::HasAny() || coop::chat_feed::HasAny() ||
-           coop::dev::object_overlay::IsEnabled();
+           coop::dev::object_overlay::IsEnabled() ||
+           coop::voice_chat::Enabled();  // v66: the local mic indicator works pre-join too
+}
+
+// The local voice indicator (v66): bottom-left 18 px icon, the SVC HUD chain
+// (talking / whispering / muted / disconnected; PTT idle shows nothing). Reads
+// the published UiSnapshot -- this runs on the RENDER thread, and the live
+// chain (LocalHudIcon) walks game-thread state (audit I-1).
+void DrawLocalVoiceIcon() {
+    coop::voice_chat::UiSnapshot vs;
+    coop::voice_chat::GetUiSnapshot(vs);
+    if (!vs.enabled || !vs.started) return;
+    const auto icon = static_cast<coop::voice_chat::VoiceIcon>(vs.localIcon);
+    if (icon == coop::voice_chat::VoiceIcon::None) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();  // under windows, like the nameplates
+    // Offset right of the far-left edge so it clears VOTV's native bottom-left vitals
+    // column (food / stamina icons + their numbers), which the old x=26 fought with
+    // (user, 2026-06-13). ~110 px clears icon+4-digit readout at 1080p.
+    ui::voice_icons::Draw(dl, ImVec2(110.f, io.DisplaySize.y - 30.f), 18.f, icon, 0.9f);
 }
 
 void Render() {
     DrawObjectOverlay();   // first: debug labels sit UNDER the player nameplates
     DrawNameplates();
     DrawChat();
+    DrawLocalVoiceIcon();
 }
 
 }  // namespace ui::hud

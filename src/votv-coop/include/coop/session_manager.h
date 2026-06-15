@@ -82,7 +82,19 @@ struct SaveChoice {
 // Returns true if ACCEPTED (the caller should raise the host-boot cover + close the
 // picker); false if rejected (another action already in flight) so the caller leaves
 // the picker open and does NOT raise a cover that nothing would drop.
-bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax);
+// `directConnection` (Host-Game "Connection" selector, user 2026-06-11): false =
+// AUTO (recommended) -- master-brokered P2P/ICE, direct when NAT allows, TURN
+// relay as the automatic fallback (TURN is NOT a separate user choice; it lives
+// inside AUTO). AUTO games are ALWAYS LISTED at host time: the master is a
+// relay game's ONLY rendezvous, so a hidden one would be unjoinable (the in-
+// game scoreboard's Hide toggle is the right place to hide once friends are
+// in). true = DIRECT -- a LanDirect UDP listen on net.port (the host forwarded
+// it); the announce carries conn=direct + the port, the master advertises the
+// announce's source ip, and /v1/join hands joiners "ip:port" for a plain UDP
+// connect. `hideFromBrowser` (DIRECT only): announce then immediately hide --
+// heartbeat lives, friends Direct Connect by IP; ignored for AUTO.
+bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
+                  bool directConnection = false, bool hideFromBrowser = false);
 
 // Join a master lobby by its opaque lobbyId (POST /v1/join on a worker) -> build a P2P
 // client Config + queue a session start. Non-blocking. `displayName` is the lobby's name,
@@ -91,7 +103,11 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
 // (join_progress::Fail). Returns true if the action was accepted (the browser should
 // Close); false if it was rejected (another action already in flight) so the browser
 // stays open. (regression A/B/C, 2026-06-06.)
-bool JoinLobby(const std::string& lobbyId, const std::string& displayName);
+// `hostProto` (v59) = the row's announced kProtocolVersion: a non-zero mismatch is
+// rejected HERE with an "update your mod" HostStatus message (the user-chosen
+// "show normally, reject on Join" browser policy); 0 = unknown (pre-field host),
+// the wire-level protocol-mismatch close stays the backstop.
+bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto = 0);
 
 // Direct-IP connect (rung 0 / LanDirect; works with the master down). "host" or
 // "host:port". Builds a LanDirect client Config + queues a session start. Raises the
@@ -99,8 +115,25 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName);
 // should Close); false on a bad address or a busy action (browser stays open).
 bool ConnectDirect(const std::string& hostPort);
 
+// v59 launch toast: kick ONE async GET /v1/latest per process (Configure calls it
+// at boot; safe to call again -- latched). The verdict line is readable via
+// LatestVersionLine: empty until the check completes successfully; the overlay
+// polls it and toasts once. Unreachable master / pre-v59 master = stays empty
+// (never nag an offline player).
+void CheckLatestVersionAsync();
+std::string LatestVersionLine(bool* outdated);
+
 // Host hide-toggle passthrough (POST /v1/visibility). Session stays live. (design 5.6)
+// Also mirrors the state for ListedState() (the scoreboard's Hide checkbox).
 void SetListed(bool listed);
+
+// The lobby's current listed state as last set by HostWithSave/SetListed (UI
+// mirror only -- the master owns the truth). True when not hosting a lobby.
+bool ListedState();
+
+// The UDP port a DIRECT host will listen on (env/ini net.port or the default).
+// The picker's port check probes THIS port. Thread-safe.
+uint16_t HostListenPort();
 
 // v56 env-host plane (user 2026-06-10): announce the CURRENT, already-started
 // env-configured host session to the master as a HIDDEN lobby -- the heartbeat

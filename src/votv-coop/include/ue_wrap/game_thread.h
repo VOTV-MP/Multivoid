@@ -41,6 +41,17 @@ bool IsInstalled();
 // fresh menu world runs with our layer fully normal again. Lock-free.
 void SetTransparentBypass(int ms);
 
+// Condition-based variant: hold the bypass dormant over the world teardown, but
+// RESUME the instant ProcessEvent dispatches `resumeOnFunction` (a UFunction*).
+// For the death-flee that is ui_menu_C::Tick -- the first menu-widget tick means
+// the menu world is up + teardown is past, so the detour resumes on THAT call
+// and the MULTIPLAYER-injection POST observer runs on the very first menu frame
+// (no fixed-timer UX gap where the death-menu shows without MULTIPLAYER). `maxMs`
+// is a SAFETY CEILING only: if the function never dispatches (e.g. it was never
+// resolved) the bypass still auto-expires after maxMs. A null resumeOnFunction
+// makes this behave exactly like SetTransparentBypass(maxMs). Lock-free.
+void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs);
+
 // Queue `task` to run on the game thread, inside the next ProcessEvent call.
 // Thread-safe; returns immediately. Tasks run in FIFO order. A task may Post
 // further tasks (they run on a subsequent pump, not the current one).

@@ -66,6 +66,13 @@ bool fn_name(void* self, void* /*params*/) {                                    
 MAKE_AMBIENT_CANCEL(OnMushroomMasterSpawnPre,  "mushroomMaster.spawn")
 MAKE_AMBIENT_CANCEL(OnMushroomSpawnerSpawnPre, "mushroomSpawner.spawn")
 MAKE_AMBIENT_CANCEL(OnPineconeTickPre,         "pineconeSpawner.ReceiveTick")
+// v72 Killer Wisp coop: the lethal YELLOW wisp (killerwisp_C) is host-authoritative
+// (npc_sync mirror), so the client must NOT run its OWN ticker_yellowWispSpawner_C
+// (SDK-verified: Aticker_yellowWispSpawner_C::ReceiveTick). NOTE: the regular
+// ticker_wispSpawner_C (color wisps) is intentionally NOT suppressed -- those wisps are
+// not in kNpcAllowlist (per-peer ambient), so suppressing the client's would leave it
+// wisp-less vs the host. Only the synced yellow killer wisp is gated.
+MAKE_AMBIENT_CANCEL(OnYellowWispTickPre,        "ticker_yellowWispSpawner.ReceiveTick")
 
 #undef MAKE_AMBIENT_CANCEL
 
@@ -80,9 +87,13 @@ struct Target {
 // lowercases them, and reflection::FindFunction compares names
 // case-SENSITIVELY (the 2026-06-10 smoke caught 'spawn' never resolving).
 Target g_targets[] = {
-    {L"mushroomMaster_C",  L"Spawn",       &OnMushroomMasterSpawnPre,  false},
-    {L"mushroomSpawner_C", L"Spawn",       &OnMushroomSpawnerSpawnPre, false},
-    {L"pineconeSpawner_C", L"ReceiveTick", &OnPineconeTickPre,         false},
+    {L"mushroomMaster_C",            L"Spawn",       &OnMushroomMasterSpawnPre,  false},
+    {L"mushroomSpawner_C",           L"Spawn",       &OnMushroomSpawnerSpawnPre, false},
+    {L"pineconeSpawner_C",           L"ReceiveTick", &OnPineconeTickPre,         false},
+    // Late-game class: resolves only once the yellow-wisp spawner loads, so the all-done
+    // latch (and its 1 Hz FindClass retry) stays open until then -- the same retry the
+    // per-target `registered` flag makes idempotent. Cheap (one extra FindClass/sec).
+    {L"ticker_yellowWispSpawner_C",  L"ReceiveTick", &OnYellowWispTickPre,       false},
 };
 
 }  // namespace
@@ -118,9 +129,10 @@ void Install(coop::net::Session* session) {
     }
     if (done == static_cast<int>(std::size(g_targets))) {
         g_installed.store(true, std::memory_order_release);
-        UE_LOGI("ambient_spawner_suppress: 3/3 ambient spawner suppressors registered "
-                "(mushroomMaster.spawn, mushroomSpawner.spawn, pineconeSpawner.ReceiveTick); "
-                "cancel active only while a client session is running");
+        UE_LOGI("ambient_spawner_suppress: %zu/%zu ambient spawner suppressors registered "
+                "(mushroomMaster.spawn, mushroomSpawner.spawn, pineconeSpawner.ReceiveTick, "
+                "ticker_yellowWispSpawner.ReceiveTick); cancel active only while a client "
+                "session is running", std::size(g_targets), std::size(g_targets));
     }
 }
 

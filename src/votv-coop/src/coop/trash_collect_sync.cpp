@@ -63,7 +63,11 @@ std::vector<WatchedPile> g_watchedPiles;
 // stationary so there's no per-tick UFunction call. Shedding the oldest on
 // overflow silently breaks that pile's re-grab destroy, so the cap stays well
 // above any realistic pile count and the shed WARNs.
-constexpr size_t kMaxWatchedPiles = 1024;
+// 2026-06-13: bumped 1024 -> 2048 for the host EAGER enroll (prop_snapshot::
+// StartEnumerationFor enrolls EVERY live chipPile up front -- ~870 on a heavy
+// save -- so the cap needs clear headroom over the full pile count, not just
+// "hundreds"). Per-tick cost stays O(n) IsLiveByIndex (no UFunction dispatch).
+constexpr size_t kMaxWatchedPiles = 2048;
 // Proximity radius (cm) for the grab-vs-stream-out discriminator: a grab happens AT the local
 // player; a sublevel stream-out is far. 800 cm mirrors the grime super-sponge death-watch (which
 // smoke-proved 0 false-fire on the connect stream-out). Erring loose: a miss silently breaks one
@@ -291,12 +295,12 @@ void TickWatchReleasedClumps(coop::net::Session* s) {
 
 // ---- mirror-pile death-watch (v52) -----------------------------------------------------
 
-void WatchPile(void* pileActor, uint32_t eid) {
+void WatchPile(void* pileActor, uint32_t eid, bool quiet) {
     if (!pileActor || eid == 0 || eid == coop::element::kInvalidId) return;
-    WatchPileAt(pileActor, eid, ue_wrap::engine::GetActorLocation(pileActor));
+    WatchPileAt(pileActor, eid, ue_wrap::engine::GetActorLocation(pileActor), quiet);
 }
 
-void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos) {
+void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos, bool quiet) {
     // Perf audit W-3 (2026-06-10): the snapshot drain already read the pile's
     // location for the payload -- this overload skips the duplicate
     // GetActorLocation ProcessEvent dispatch per expressed pile.
@@ -314,8 +318,9 @@ void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos) {
         g_watchedPiles.erase(g_watchedPiles.begin());
     }
     g_watchedPiles.push_back(WatchedPile{pileActor, idx, eid, pos});
-    UE_LOGI("trash_collect: watching pile eid=%u actor=%p at (%.1f,%.1f,%.1f) for re-grab destroy",
-            eid, pileActor, pos.X, pos.Y, pos.Z);
+    if (!quiet)
+        UE_LOGI("trash_collect: watching pile eid=%u actor=%p at (%.1f,%.1f,%.1f) for re-grab destroy",
+                eid, pileActor, pos.X, pos.Y, pos.Z);
 }
 
 void NotifyPileConsumed(uint32_t eid) {

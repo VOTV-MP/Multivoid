@@ -30,6 +30,7 @@ std::atomic<bool> g_resolved{false};
 void*   g_doorCls      = nullptr;  // door_C UClass
 int32_t g_keyOff       = -1;       // AtriggerBase_C::Key  (Alpha 0.9.0-n: 0x0260)
 int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened    (Alpha 0.9.0-n: 0x0350)
+int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving    (Alpha 0.9.0-n: 0x0351) -- swing in progress
 void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
 void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
@@ -56,6 +57,7 @@ int32_t g_jammedOff      = -1;     // Adoor_C::jammed         (Alpha 0.9.0-n: 0x
 // Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/door.hpp + triggerBase.hpp).
 constexpr int32_t kKeyOffFallback         = 0x0260;
 constexpr int32_t kIsOpenedOffFallback    = 0x0350;
+constexpr int32_t kIsMovingOffFallback    = 0x0351;
 constexpr int32_t kAutocloseOffFallback   = 0x0353;
 constexpr int32_t kSensorOffFallback      = 0x0308;
 constexpr int32_t kActiveOffFallback      = 0x0352;
@@ -127,6 +129,11 @@ bool EnsureResolved() {
         UE_LOGW("door: reflected isOpened offset not found -- using fallback 0x%04X", kIsOpenedOffFallback);
         isOpenedOff = kIsOpenedOffFallback;
     }
+    int32_t isMovingOff = R::FindPropertyOffset(doorCls, L"isMoving");
+    if (isMovingOff < 0) {
+        UE_LOGW("door: reflected isMoving offset not found -- using fallback 0x%04X", kIsMovingOffFallback);
+        isMovingOff = kIsMovingOffFallback;
+    }
     int32_t autocloseOff = R::FindPropertyOffset(doorCls, L"autoclose");
     if (autocloseOff < 0) {
         UE_LOGW("door: reflected autoclose offset not found -- using fallback 0x%04X", kAutocloseOffFallback);
@@ -163,6 +170,7 @@ bool EnsureResolved() {
     g_doorCls      = doorCls;
     g_keyOff       = keyOff;
     g_isOpenedOff  = isOpenedOff;
+    g_isMovingOff  = isMovingOff;
     g_autocloseOff = autocloseOff;
     g_sensorOff    = sensorOff;
     g_activeOff      = activeOff;
@@ -204,6 +212,30 @@ bool TryReadOpen(void* door, bool& open) {
     return true;
 }
 
+bool TryReadOpenIntent(void* door, bool& open) {
+    if (!door || g_isOpenedOff < 0) return false;
+    const char* base = reinterpret_cast<const char*>(door);
+    const bool isOpened = *reinterpret_cast<const bool*>(base + g_isOpenedOff);
+    // While the door is mid-swing, report the DESTINATION (move__Direction, set
+    // at swing-START: 0=Forward/open, 1=Backward/close) instead of isOpened (set
+    // ~0.5 s later at swing-END). The host poll thus broadcasts an open/close the
+    // instant it begins -- frame-symmetric with the client's input-edge request.
+    // A settled door (isMoving=false) reads isOpened; move__Direction then holds
+    // the last completed swing's value, which agrees, but isOpened is the
+    // authoritative settled state so we prefer it. doorOpen/doorClose set isMoving
+    // + the direction synchronously within the press dispatch, so the very next
+    // poll tick (same/next frame) catches the intent.
+    const bool moving = (g_isMovingOff >= 0) &&
+        *reinterpret_cast<const bool*>(base + g_isMovingOff);
+    if (moving) {
+        const uint8_t dir = *reinterpret_cast<const uint8_t*>(base + kMoveDirOff);
+        open = (dir == 0);  // 0 = Forward = opening
+    } else {
+        open = isOpened;
+    }
+    return true;
+}
+
 bool CanOpen(void* door) {
     // BYTE-EXACT door BP gate (disassembly 2026-06-06, research/findings/votv-keypad-door-BP-
     // disassembly-2026-06-06.md): a player's E-press opens the door iff its OWN power is on
@@ -242,6 +274,11 @@ void SetActive(void* door, bool on) {
     *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_activeOff) = on;
 }
 
+bool GetActive(void* door) {
+    if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return true;
+    return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_activeOff);
+}
+
 // Snap a door fully to a state, mesh AND flag, proximity-independent. Set the timeline alpha
 // (move_a) to the end + the direction, then call move__UpdateFunc (which LERPS THE DOOR MESH
 // from move_a -> the visual snap -- this was the missing piece: move__FinishedFunc only sets
@@ -273,6 +310,20 @@ void SmartApply(void* door, bool open) {
     const bool moving = *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + 0x0351);  // isMoving
     const uint8_t dir = *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + kMoveDirOff);  // 0=Forward/open
     if (moving && ((open && dir == 0) || (!open && dir == 1))) return;  // already going the right way -> no re-trigger, no double sound
+    // IDEMPOTENT: a SETTLED door already at the target is left alone. Re-running the BP
+    // chain on a matching door is DESTRUCTIVE, not just wasteful: doorOpen's swing is
+    // ADDITIVE (target = current pose + delta), so re-opening an already-open door drives
+    // it PAST its frame into the wall -- the user-reported join-time clipping (every
+    // connect-snapshot re-applied ON to saved-open doors, pushing them further each join,
+    // 2026-06-12 round 2). The mid-swing case stays NON-idempotent on purpose: isOpened
+    // lags the animation, so cur==target while moving the WRONG way means the authority
+    // wants the swing reversed -- fall through and re-command it. (The old HostAuth
+    // always-apply existed for the client's native-press echo race; the use-input PRE
+    // observer's Active-gate killed that race at its source -- the client door no longer
+    // moves from local presses at all.)
+    if (!moving && g_isOpenedOff >= 0 &&
+        *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
+        return;
     // Play the native animated swing (smooth wherever the door ticks -- any distance up to its
     // real tick range, no magic radius).
     if (open) CallDoorOpen(door, true); else CallDoorClose(door, true);

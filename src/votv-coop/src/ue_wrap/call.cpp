@@ -105,7 +105,13 @@ ParamFrame::ParamFrame(void* function) : fn_(function) {
 int32_t ParamFrame::OffsetOf(const wchar_t* name) const {
     if (!meta_) return -1;
     for (const auto& o : meta_->offsets) {
-        if (o.first == name) return o.second;
+        // Case-INSENSITIVE: param names are FNames (engine compares by
+        // ComparisonIndex; the rendered casing is whatever got registered
+        // FIRST in this process) -- the same load-order roulette as
+        // reflection::NameEquals. Found via the email mirror's addEmail
+        // frame: "unknown param 'item'" while the BP param rendered under a
+        // different first-registered casing (smoke 2026-06-12).
+        if (::_wcsicmp(o.first.c_str(), name) == 0) return o.second;
     }
     return -1;
 }

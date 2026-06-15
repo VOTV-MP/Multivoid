@@ -24,6 +24,8 @@
 
 #pragma once
 
+#include "coop/element/element.h"  // ElementId (GetNpcIdForActor)
+
 namespace coop::net {
 class Session;
 }  // namespace coop::net
@@ -51,6 +53,23 @@ coop::net::Session* GetSession();
 // Session is created once at boot and lives for the process lifetime).
 void Install(coop::net::Session* session);
 
+// True once Install()'s attempt has completed (it stops retrying). On the
+// HAPPY path this means the subclass-aware allowlist (IsAllowlistedClass) is
+// FULLY resolved -- a partial resolve early-returns WITHOUT latching, so a
+// latched-true install that resolved the allowlist resolved ALL of it -- and
+// the host lifecycle path may still be disabled (g_npcSyncDisabledThisProcess)
+// without affecting that. On a BROKEN build (BeginDeferred UFunction / its
+// params unresolvable) Install latches true with a NULL allowlist to stop
+// retrying; IsInstalled() is then true with NOTHING resolved. That is safe for
+// the only caller (the client reconcile sweep): IsAllowlistedClass returns
+// false for unresolved slots, so the sweep classifies nothing and destroys
+// nothing -- a benign no-op on a build where NPC sync is dead anyway. A caller
+// MUST NOT gate broader world-ready logic on the interceptor being live
+// (NPC-class load timing must never block prop/door replay). Used by net_pump
+// to time the client-NPC reconcile sweep (npc_mirror::DestroyUntrackedClient-
+// Npcs). Game thread.
+bool IsInstalled();
+
 // Bypass slot: the wire-received NPC spawn dispatcher (Inc3) will call
 // this immediately before BeginDeferredActorSpawnFromClass to mark the
 // next interceptor fire as "allow through, don't suppress". Single-shot;
@@ -62,6 +81,20 @@ void MarkIncomingNpcSpawn(void* npcClass);
 // subsequent local spawn of the same class doesn't accidentally pass
 // through and produce a rogue non-suppressed duplicate.
 void ClearIncomingNpcSpawn();
+
+// Reverse lookup: live (or just-destroyed) NPC actor -> ElementId, from the
+// same map the K2_DestroyActor PRE gates on. kInvalidId when untracked.
+// Mutex-guarded; safe from any thread (coop::kerfur_convert reads it inside
+// a ProcessEvent interceptor on a parallel-anim worker).
+coop::element::ElementId GetNpcIdForActor(void* actor);
+
+// Explicit destroy-sync for an NPC actor whose K2_DestroyActor our PRE
+// observer could NOT see (BP-internal by-name call -- kerfurOmega_C::
+// dropKerfurProp, v67). Exactly the PRE body: erase the reverse-map entry,
+// drain the Element (deferred), broadcast EntityDestroy. `actor` is used as
+// a map key only (never dereferenced) -- callable on a PendingKill/purged
+// pointer; no-ops when the actor is untracked (double-call safe).
+void SyncDestroyedNpcActor(void* actor);
 
 // Trust-boundary check used by both host (interceptor) and client
 // (receiver) sides: returns true iff `cls` is a UClass* that derives from

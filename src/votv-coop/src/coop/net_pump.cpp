@@ -3,67 +3,45 @@
 // Extracted from harness.cpp 2026-05-28 to keep harness.cpp at its
 // boot/scenario glue role and bring net_pump.cpp under the modular
 // soft cap (audit deferred-plan PR-4.13).
+//
+// 2026-06-12 (modular soft cap, 1290 LOC): the sync-module fan-out lists
+// moved to coop/subsystems.cpp (the wiring registry every new feature edits)
+// and the outbound pose/held-prop/ragdoll streams moved to
+// coop/local_streams.cpp. This file is the per-tick ORCHESTRATOR: connection
+// edges, death policy, the reaper, the puppet drive.
 
 #include "coop/net_pump.h"
 
-#include "coop/balance_sync.h"
-#include "coop/dev/drone_probe.h"
-#include "coop/ambient_spawner_suppress.h"  // Fork C: client ambient flora/forage spawner suppression
-#include "coop/dev/teleport_client.h"  // TeleportSlotToHost: spawn a joiner at the host pose (connect edge)
-#include "coop/dev/keypad_probe.h"
-#include "coop/dev/door_probe.h"
-#include "coop/dev/lightswitch_probe.h"
+#include "coop/dev/leak_probe.h"
+#include "coop/dev/heap_probe.h"
 #include "coop/dev/perf_probe.h"
-#include "coop/save_transfer.h"
 #include "coop/element/element_deleter.h"
-#include "coop/grime_sync.h"
-#include "coop/interactable_sync.h"
-#include "coop/atv_sync.h"
-#include "coop/drone_sync.h"
-#include "coop/order_sync.h"
-#include "coop/firefly_sync.h"
-#include "coop/keypad_sync.h"
-#include "coop/power_sync.h"
-#include "coop/sky_sync.h"
-#include "coop/time_sync.h"
-#include "coop/window_sync.h"
 #include "coop/event_feed.h"
 #include "coop/join_progress.h"
-#include "coop/garbage_sync.h"
-#include "coop/trash_collect_sync.h"
-#include "coop/trash_pile_sync.h"
-#include "coop/save_block.h"
-#include "coop/save_button_disable.h"
-#include "coop/grab_observer.h"
-#include "coop/ini_config.h"
-#include "coop/item_activate.h"
-#include "coop/player_damage.h"
+#include "coop/local_streams.h"
+#include "coop/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/npc_mirror.h"
-#include "coop/npc_sync.h"
+#include "coop/npc_adoption.h"  // OnClientWorldReady (v75 deferred-adoption per-world reset)
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/prop_element_tracker.h"
-#include "coop/prop_lifecycle.h"
 #include "coop/prop_snapshot.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
-#include "coop/remote_prop_spawn.h"
-#include "coop/weather_sync.h"
+#include "coop/save_transfer.h"
+#include "coop/subsystems.h"
 
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"
 #include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
-#include "ue_wrap/vitals.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -109,21 +87,6 @@ void* g_netLocalController = nullptr;
 bool g_wasConnected = false;
 std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
 
-// Held-prop edge detector: file-scope for the same reason as g_wasConnected.
-// A static-local would carry a stale prop pointer + key across a session stop/
-// restart, causing the next pump to fire SendPropRelease for the OLD session's
-// key on the NEW session -- a real bug found by the audit. Cleared by
-// OnSessionStart on each session.Start.
-void* g_lastHeldProp = nullptr;
-coop::net::WireKey g_lastHeldKey{};
-uint64_t g_propEmitCount = 0;
-
-// v22 ragdoll-physics edge detector (same file-scope rationale as g_lastHeldProp:
-// a static-local would carry a stale "was ragdolling" across a session restart and
-// emit a spurious recover-edge false on the next session). Cleared by OnSessionStart.
-bool g_wasRagdolling = false;
-uint64_t g_ragdollEmitCount = 0;
-
 // Death policy one-shot (2026-06-01, client-death OOM fix). On LOCAL death we
 // SYNCHRONOUSLY tear down ALL coop game-side state (destroy puppet actors + drain
 // Element state) + Stop the session, then FLEE to the main menu with our layer held
@@ -144,11 +107,33 @@ uint64_t g_ragdollEmitCount = 0;
 // Latched once per death; reset by OnSessionStart so a rejoin (relaunch) re-arms.
 bool g_localDeathHandled = false;
 
-// How long to hold the transparent bypass after a local-death flee to the menu (our
-// layer stays dormant at the menu). 30 min -- far longer than anyone sits at a dead
-// menu before relaunching to rejoin (permadeath). If it ever expires while still at the
-// menu, the gameplay-world gate on the prop reaper keeps it from churning.
-constexpr int kDeathMenuBypassMs = 30 * 60 * 1000;
+// How long to hold the transparent bypass after a local-death flee to the menu. This
+// covers ONLY the world-teardown window -- the bypass exists so VOTV's 50k-actor
+// untitled_1 teardown + menu travel runs with our ProcessEvent detour dormant (our
+// observers + the outer SEH otherwise hang the per-actor EndPlay swap -- game_thread.cpp
+// :34-37, which documents the bypass as a TEARDOWN-window tool that "auto-expires so the
+// fresh menu world runs with our layer fully normal again"). Once the menu world is up
+// the detour MUST resume, because:
+//   - the menu's MULTIPLAYER button is injected by a POST observer on ui_menu_C::Tick
+//     (multiplayer_menu.cpp) dispatched THROUGH the detour; a held bypass starves it, so
+//     the death-menu loses MULTIPLAYER and the player can't rejoin -- which the
+//     permadeath-REJOINABLE death policy explicitly depends on (vitals-death RE 4.5).
+//   - resuming at the menu is SAFE: TickGameplay is world-up-gated (Local()==null at the
+//     menu) and the prop reaper is gameplay-world-gated (inert at the menu) -- the v56/v57
+//     churn fix (2026-06-10) is the REAL menu-safety, not this bypass. The old 30-min hold
+//     PREDATED those gates and only kept our layer dormant to dodge the reaper churn; with
+//     the gate in place that hold is RULE-2 baggage (this file's own reaper comment already
+//     notes "the gameplay-world gate on the prop reaper keeps it from churning" if the
+//     bypass expires at the menu). So we resume right after teardown instead.
+// The bypass now RESUMES on a CONDITION, not this timer: FleeToMainMenu arms it with
+// the menu's ui_menu_C::Tick as the release function, so the detour resumes the instant
+// the menu world is up (teardown past) and re-injects MULTIPLAYER on that very frame --
+// no fixed-timer window where the death-menu shows without MULTIPLAYER (the prior 15 s
+// gap; a user who quit inside it never saw the button). This is only a SAFETY CEILING for
+// the case where ui_menu_C::Tick never resolves/dispatches; kept generous so a slow
+// teardown is never cut short. (If a death->rejoin black-screens/hangs, the menu tick
+// signal failed -- investigate that, do NOT restore the 30-min hold.)
+constexpr int kDeathMenuBypassMs = 30 * 1000;
 
 // Terminal local eject to the main menu. The caller has ALREADY torn down coop
 // game-side state (the death handler inline; the client disconnect edge via the
@@ -177,7 +162,12 @@ void FleeToMainMenu(coop::net::Session& session, const char* why) {
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     session.Stop();
-    ue_wrap::game_thread::SetTransparentBypass(kDeathMenuBypassMs);
+    // Hold the detour dormant over the world teardown, but RESUME the instant the
+    // menu's ui_menu_C::Tick first dispatches (menu world up) so MULTIPLAYER is
+    // injected on the first menu frame. kDeathMenuBypassMs is only the safety
+    // ceiling (used as-is if MenuTickFn() is null -- menu class never resolved).
+    ue_wrap::game_thread::SetTransparentBypassUntil(coop::multiplayer_menu::MenuTickFn(),
+                                                    kDeathMenuBypassMs);
     if (ue_wrap::engine::ReturnToMainMenu()) {
         UE_LOGI("net: %s -- transition(\"/Game/menu\") dispatched; held dormant", why);
     } else {
@@ -189,170 +179,15 @@ void FleeToMainMenu(coop::net::Session& session, const char* why) {
     }
 }
 
-// Game thread, ~send-rate: read the local player's pose. Pulled in from
-// harness.cpp 2026-05-28; full rationale comments preserved.
-bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
-    if (!local) return false;
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
-    const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
-    const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
-    // BODY yaw: read from the ACTOR (the real body facing direction). Earlier
-    // attempt sent controller yaw -- but VOTV's Character body LAGS the camera
-    // (head-leads-body is natural to the source), so sending controller yaw made
-    // the puppet body show the CAMERA direction instead of the BODY direction
-    // = sideways-when-camera-leads (user-confirmed regression).
-    // HEAD pitch: read from the CONTROLLER (actor pitch is always 0 on an
-    // upright character; the controller carries the real view pitch). Cached
-    // by Tick to skip re-resolving GetController every tick.
-    out.x = loc.X;
-    out.y = loc.Y;
-    // Z = source actor.Z (capsule centre on an ACharacter). Receiver
-    // reconstructs visible body offset from its own mainPlayer_C's
-    // RelLoc.Z at puppet spawn -- same BP class on every peer so the
-    // authored constant matches. MTA-fidelity shape (CEntitySA streams
-    // matrix.vPos = capsule centre).
-    out.z = loc.Z;
-    // Normalize yaw and pitch into the canonical FRotator axis range (-180, 180]
-    // BEFORE they go on the wire. UE4's AController::GetControlRotation returns
-    // RAW ControlRotation unnormalized: looking 10 deg DOWN reads back as
-    // Pitch=350. Without this normalize, pitch=350 fails coop::net::ValidatePose's
-    // (-90, 90) bound and the ENTIRE packet is dropped on the receiver -- root
-    // cause of the "puppet freezes when host looks below horizontal" bug.
-    out.yaw = ue_wrap::NormalizeAxis(actorRot.Yaw);
-    const ue_wrap::FRotator ctlRot = controller
-        ? ue_wrap::engine::GetControlRotation(controller)
-        : actorRot;
-    out.pitch = ue_wrap::NormalizeAxis(ctlRot.Pitch);
-    // headYawDelta: the source's controller-yaw LEAD over its body yaw, in
-    // (-180, 180]. The puppet's AnimBP headLookAt yaw reads this so the puppet's
-    // head turns to match where the source's CAMERA is looking (free-look /
-    // camera-lead-body) -- decoupled from body facing.
-    out.headYawDelta = ue_wrap::NormalizeAxis(ctlRot.Yaw - actorRot.Yaw);
-    out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
-    // Pack the source's airborne state. The receiver's BUA-POST observer
-    // reads this bit to clear useLegIK on the puppet during the airborne
-    // window so the foot-IK trace doesn't plant the puppet's feet to
-    // ground while the source is jumping/falling. A-2 (2026-05-29 audit):
-    // CMC pointer + MovementMode bytes accessed through ue_wrap::puppet::
-    // ReadCharacterIsFalling -- symmetric with the write-side wrapper
-    // DriveCharacterMovement (Principle 7: gameplay/coop layer reads
-    // engine memory only through ue_wrap). The wrapper also adds IsLive
-    // guards on actor + CMC that the prior inline code lacked -- raw
-    // deref of a PendingKill mainPlayer_C (e.g. mid level transition)
-    // was technically UB; false-positive rate in steady-state gameplay
-    // is zero because the possessed mainPlayer_C never carries
-    // PendingKill/Unreachable flags.
-    out.stateBits = 0;
-    if (ue_wrap::puppet::ReadCharacterIsFalling(local)) {
-        out.stateBits |= coop::net::kStateBitInAir;
-    }
-    // v20 (Inc2b): piggyback the LOCAL player's ragdoll/faint state. isRagdoll
-    // is the AnimBP gate flipped by EVERY ragdoll cause (manual C-key, exhaustion
-    // faint, KO); we sync it as a per-peer DISPLAY flag so each peer's puppet
-    // flops on the others' screens. Death is EXCLUDED -- a death-ragdoll routes
-    // through VOTV's native SP menu flow + ends the session ([[project-coop-no-
-    // host-migration]]), so it must not show as a recoverable faint on a puppet
-    // that's about to be torn down. One wrapper read (a couple of derefs after
-    // the offset cache fills) on this hot path -- same cost class as the
-    // ReadCharacterIsFalling above it.
-    {
-        bool isRagdoll = false, dead = false;
-        if (ue_wrap::engine::ReadMainPlayerRagdollState(local, isRagdoll, dead) &&
-            isRagdoll && !dead) {
-            out.stateBits |= coop::net::kStateBitRagdoll;
-        }
-    }
-    // v19: piggyback the LOCAL player's vitals (health fraction + food + sleep)
-    // in the 3 bytes that were `_pad` -- ZERO wire-size change. ue_wrap::vitals
-    // reads THIS machine's UsaveSlot_C (one per machine), so the values are
-    // per-peer-authoritative (host packs host's, each client its own). Default
-    // to full (255) until the save resolves so a booting peer doesn't flash an
-    // empty bar; overwrite per field only on a successful read. The receiver
-    // treats these as DISPLAY-ONLY (puppet nameplate) -- never a saveSlot write.
-    // After the one-time resolution cache fills, each Read is O(1) (a couple of
-    // cheap derefs); 3-4 per pose-send tick is negligible on this hot path.
-    out.healthFrac = out.foodFrac = out.sleepFrac = 255;
-    {
-        namespace V = ue_wrap::vitals;
-        float health = 0.f, maxHealth = coop::net::kVitalScalarMax, food = 0.f, sleep = 0.f;
-        bool gotHealth = false;
-        if (V::Read(V::Field::Health, &health)) {
-            gotHealth = true;
-            V::Read(V::Field::MaxHealth, &maxHealth);  // best-effort; 100 fallback on miss
-            out.healthFrac = coop::net::QuantizeUnitFraction(
-                maxHealth > 0.f ? health / maxHealth : 1.f);
-        }
-        if (V::Read(V::Field::Food, &food))
-            out.foodFrac = coop::net::QuantizeUnitFraction(food * (1.f / coop::net::kVitalScalarMax));
-        if (V::Read(V::Field::Sleep, &sleep))
-            out.sleepFrac = coop::net::QuantizeUnitFraction(sleep * (1.f / coop::net::kVitalScalarMax));
-        // One-shot proof the vitals chain RESOLVED (vs silently defaulting to a
-        // full bar). Latched on the first successful health read so it can't spam
-        // this hot path. Game-thread only -> a plain static latch is safe here.
-        static bool sVitalsLogged = false;
-        if (gotHealth && !sVitalsLogged) {
-            sVitalsLogged = true;
-            UE_LOGI("vitals: first local read OK -- health=%.1f/%.1f food=%.1f sleep=%.1f "
-                    "-> wire bytes h=%u f=%u s=%u", health, maxHealth, food, sleep,
-                    out.healthFrac, out.foodFrac, out.sleepFrac);
-        }
-    }
-    return true;
-}
-
 }  // namespace
-
-void InstallObservers(coop::net::Session& session) {
-    coop::grab_observer::Install();
-    coop::prop_lifecycle::InstallInventory(&session);
-    coop::prop_lifecycle::Install(&session);
-    coop::npc_sync::Install(&session);
-    coop::item_activate::Install(&session);  // Phase 5F flashlight
-    coop::player_damage::Install(&session);  // vitals Inc3-WIRE damage relay (send + owner-apply)
-    coop::weather_sync::Install(&session);   // Phase 5W weather
-    coop::interactable_sync::Install(&session);  // Phase 5D doors + lights + container lids
-    coop::keypad_sync::Install(&session);    // v33 password-keypad mirror (its own module)
-    coop::time_sync::Install(&session);      // v36 host-authoritative world clock (time-of-day / dark-world fix)
-    coop::sky_sync::Install(&session);       // v44 host-authoritative night-sky orientation + moon phase
-    coop::power_sync::Install(&session);     // v46 base power-panel breakers (its own module -- 5 bools)
-    coop::atv_sync::Install(&session);       // v47 ATV body pose (occupant-authoritative keyed stream)
-    coop::drone_sync::Install(&session);     // v48 delivery drone body pose (host-authoritative singleton)
-    coop::order_sync::Install(&session);     // v49 delivery-drone economy: client->host shop-order forward
-    coop::firefly_sync::Install(&session);   // v51 peer-symmetric ambient firefly mirror (each peer captures+shares its own)
-    coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
-    coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
-    coop::trash_pile_sync::Install(&session);  // v57 trashBitsPile collect counters (uses 6/7)
-    coop::garbage_sync::SetSession(&session);
-    coop::garbage_sync::Install();           // Phase 5G garbage
-    coop::ambient_spawner_suppress::Install(&session);  // Fork C: client ambient flora/forage spawner suppression (host results stream)
-    coop::balance_sync::SetSession(&session); // v30 shared host-authoritative balance
-    // (trash_collect_sync has no observer to install -- playerTryToCollect is
-    // BP-internal; it acts on the held-prop edge below, see EnsureHeldItemBroadcast.)
-    // PR-FOUNDATION-2 (B): client world-save block (host-only persistence).
-    // No-op on the host; on the client installs the SaveGameToSlot detour once.
-    coop::save_block::Install(&session);
-    // PR-FOUNDATION-2 (B part 2): grey out the client pause-menu "Save Game"
-    // button (honest UX over the hard block). No-op on the host.
-    coop::save_button_disable::Install(&session);
-    // NOTE: coop::shutdown::Install / UpdateWindowTitle are called from
-    // the timeline tick lambda DIRECTLY in harness.cpp -- they MUST NOT
-    // be gated on g_netLocal like this function is (HWND subclass +
-    // window title must work BEFORE the local player has been possessed,
-    // e.g. on the OMEGA splash where the user might X-close before
-    // gameplay).
-}
 
 void OnSessionStart() {
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
-    g_lastHeldProp = nullptr;
-    g_lastHeldKey = {};
-    g_propEmitCount = 0;
-    g_wasRagdolling = false;
-    g_ragdollEmitCount = 0;
     g_localDeathHandled = false;
     g_fleeing = false;  // re-arm the one-shot flee for this new session
     g_everInGameplayThisSession = false;
+    coop::local_streams::OnSessionStart();  // held-prop + ragdoll edge detectors
 }
 
 void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why) {
@@ -376,37 +211,24 @@ coop::RemotePlayer& Puppet(int slot) {
 // spawn actors into the MENU world. Reset when the connection drops.
 static std::atomic<bool> g_worldReadyAnnounced{false};
 
-// v56: the HOST's per-joiner connect replay (snapshot bracket + every state
-// broadcast), fired by the joiner's ClientWorldReady (event_feed) -- NOT by the
-// connect edge: a menu-mode joiner is connected long before it has a world to
-// land this on. Body unchanged from the pre-v56 connect-edge block (RULE 2: the
-// trigger moved, the replay didn't fork). Game thread (event_feed drain).
-void RunConnectReplayForSlot(int slot) {
-    if (slot < 1 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    UE_LOGI("net: slot %d world-ready -- replaying snapshot + flashlight + weather + peer states", slot);
-    coop::prop_snapshot::TriggerForSlot(slot);
-    coop::item_activate::QueueConnectBroadcastForSlot(slot);
-    coop::weather_sync::QueueConnectBroadcastForSlot(slot);
-    coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
-    coop::keypad_sync::QueueConnectBroadcastForSlot(slot);        // v33 keypad states
-    coop::time_sync::QueueConnectBroadcastForSlot(slot);          // v36 world clock -> joiner immediately
-    coop::sky_sync::QueueConnectBroadcastForSlot(slot);           // v44 night-sky orientation + moon phase
-    coop::power_sync::QueueConnectBroadcastForSlot(slot);         // v46 base power-panel breakers
-    coop::atv_sync::QueueConnectBroadcastForSlot(slot);           // v47 ATV body pose (adopt=1)
-    coop::drone_sync::QueueConnectBroadcastForSlot(slot);         // v48 delivery drone pose (adopt=1)
-    coop::window_sync::QueueConnectBroadcastForSlot(slot);        // v41 base-window clean (adopt=1)
-    coop::grime_sync::QueueConnectBroadcastForSlot(slot);         // v42 surface grime process (adopt=1)
-    coop::trash_pile_sync::QueueConnectBroadcastForSlot(slot);    // v57 pile counters (adopt=1) + depleted-key replay
-    coop::npc_sync::RegisterExistingWorldNpcs();                  // pre-existing/level-load NPCs (the save's kerfur)
-    coop::npc_sync::QueueConnectBroadcastForSlot(slot);           // existing NPCs -> joiner
-    coop::balance_sync::OnClientConnect(slot);                    // v30: host's current balance
-    // v34: spawn the joiner AT THE HOST -- reuse the existing teleport-to-host
-    // pose mechanism (the client applies it on its local player, which is in
-    // world by construction now: WorldReady is what fired this).
-    coop::dev::teleport_client::TeleportSlotToHost(slot);
-    // T2-4: catch the new client up to EXISTING peers' current item state.
-    coop::item_activate::ReplayPeerStatesToSlot(slot);
-}
+// Re-announce request: set true (client-side) when a world-change re-seed
+// completes, so the world-ready announce below FIRES AGAIN for the newly
+// settled world. A save-transfer join goes through TWO level loads (the
+// premature first announce binds props to actors the second load destroys);
+// the re-announce drives the host's ConnectReplayForSlot to re-assert every
+// host-authoritative state into the final world -- the only way the client's
+// keyless chipPiles (eid-only identity, no key to re-match on) re-acquire
+// their host eid after the re-seed mints fresh local ones. Distinct from
+// g_worldReadyAnnounced (which stays latched-true for the puppet-spawn gate
+// across world-changes). Reset on send + on disconnect.
+static std::atomic<bool> g_reAnnounceWorldReady{false};
+
+// v75: the save-transfer kerfur-ghost reconcile moved into coop/npc_adoption (the deferred
+// class-match adoption owns the timing now). net_pump only NOTIFIES npc_adoption at the
+// ClientWorldReady announce (OnClientWorldReady) so it can reset per-world state; the ghost sweep
+// itself fires from npc_adoption::Tick, gated on SnapshotComplete + adoption convergence (NOT a
+// fixed delay -- v74's 2 s delay was the crutch that, combined with the impossible key-match, let
+// the double persist).
 
 void Tick(coop::net::Session& session, float displayOffsetX) {
     // This whole body is game-thread-only: it drives g_puppets (a GT-only-by-
@@ -422,6 +244,18 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     PP::Init();
     PP::Sample();
     PP::Scope _tickScope{PP::Bucket::NetPumpTick};
+
+    // Leak-attribution probe (ini leak_probe=1, dev-only). Self-gated + self-
+    // throttled (~4 s GUObjectArray census). Names the UObject class(es) growing
+    // over time -> the RAM-balloon's source (or proves the leak is raw heap, not
+    // UObjects, when the total count stays flat). Game thread by the assert above.
+    coop::dev::leak_probe::Tick();
+
+    // Raw-heap leak-attribution probe (ini heap_probe=1, dev-only). When the
+    // UObject census above is flat but RAM still climbs, this names the OUR-module
+    // CRT call site responsible (engine GMalloc bypasses the CRT). Self-gated +
+    // self-throttled; installs ucrtbase malloc/free detours on its first armed tick.
+    coop::dev::heap_probe::Tick();
 
     // v56: pump pending save-transfer chunk sends (host). No-op without an
     // active stream (one bool per slot).
@@ -594,6 +428,12 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
                 UE_LOGI("net_pump: world-change re-seed added %zu live keyed prop(s) (snapshot-completeness)", added);
                 if (added > 0) retriggerReadySlots();
+                // CLIENT: the world just changed under us -> re-announce world-ready
+                // so the host re-replays its authoritative state into the new world
+                // (re-binds our keyless chipPiles to host eids). Gate on role here;
+                // the announce block re-checks registry coherence before sending.
+                if (session.role() != coop::net::Role::Host)
+                    g_reAnnounceWorldReady.store(true, std::memory_order_relaxed);
             } else if (inGameplayWorld &&
                        coop::prop_element_tracker::HasSeededOnce() &&
                        !coop::prop_element_tracker::IsRegistrySeededForCurrentWorld()) {
@@ -613,6 +453,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
                 UE_LOGI("net_pump: world changed without a mass purge -- re-seeded (%zu new keyed)", added);
                 if (added > 0) retriggerReadySlots();
+                if (session.role() != coop::net::Role::Host)
+                    g_reAnnounceWorldReady.store(true, std::memory_order_relaxed);
             }
         }
     }
@@ -645,42 +487,25 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 g_puppets[slot].Destroy();
                 UE_LOGI("net: peer slot %d disconnected -- puppet destroyed", slot);
             }
-            // Abort any pending/in-progress snapshot drain to this slot so we
-            // don't iterate ~1700 candidates calling SendReliableToSlot into a
-            // dead connection.
-            coop::prop_snapshot::CancelForSlot(slot);
-            // v56: drop any in-flight save stream + close the world-ready send
-            // gate for the departed slot (a rejoin re-opens both fresh).
-            coop::save_transfer::CancelForSlot(slot);
-            session.MarkSlotWorldReady(slot, false);
-            // Per-slot subsystem cleanup. Only subsystems with actual per-slot
-            // state get a call here. prop_lifecycle / npc_sync / weather_sync
-            // hold GLOBAL state that the aggregate OnDisconnect below handles
-            // correctly on full disconnect.
-            coop::remote_prop::OnDisconnectForSlot(slot);
-            coop::item_activate::OnDisconnectForSlot(slot);
+            coop::subsystems::DisconnectSlot(session, slot);
         }
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
             // Per-slot connect edge.
             // - HOST side (slot 1..3): v56 -- the replay no longer fires here. A
             //   menu-mode joiner is connected ~30-60 s BEFORE it has a world
             //   (save download + load); the replay now fires on its
-            //   ClientWorldReady (event_feed -> RunConnectReplayForSlot). An
-            //   already-in-world joiner (env flow / current browser flow)
+            //   ClientWorldReady (event_feed -> subsystems::ConnectReplayForSlot).
+            //   An already-in-world joiner (env flow / current browser flow)
             //   announces world-ready within a tick of connecting, so the replay
             //   timing is unchanged for them.
-            // - CLIENT -> HOST (slot 0): announce LOCAL flashlight state so
-            //   the host can show it on our puppet; send the save-transfer
-            //   request if this join armed one (menu-mode browser join).
+            // - CLIENT -> HOST (slot 0): announce LOCAL flashlight state +
+            //   save-transfer request + open our world-ready send gate
+            //   (subsystems::ClientConnectEdge).
             if (isHost && slot >= 1) {
                 UE_LOGI("net: peer slot %d connect edge -- awaiting ClientWorldReady before the replay", slot);
             } else if (!isHost && slot == 0) {
                 UE_LOGI("net: host (slot 0) connect edge -- replaying local flashlight");
-                coop::item_activate::QueueConnectBroadcastForSlot(slot);
-                coop::save_transfer::ClientNoteConnected();
-                // v56: the HOST always has a world -- open OUR send gate toward
-                // it immediately (the gate exists for host->joiner traffic).
-                session.MarkSlotWorldReady(0, true);
+                coop::subsystems::ClientConnectEdge(session);
             }
         }
         g_wasConnectedBySlot[slot] = slotConnected;
@@ -692,7 +517,13 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     // announce would arm the host bracket against an unseeded client and re-open
     // the fuzzy-fallback balloon). The menu world can never pass: the seed stamp
     // only ever points at a live gameplay ('ntitled') world.
-    if (!isHost && isConnected && !g_worldReadyAnnounced.load(std::memory_order_relaxed)) {
+    // Fire on the FIRST announce of a connection OR on a re-announce request
+    // (a world-change re-seed completed -> the host must re-replay into the new
+    // world). The coherence gate is identical either way: a menu/stale-world
+    // announce would arm the host bracket against an unseeded client.
+    const bool reAnnounce = g_reAnnounceWorldReady.load(std::memory_order_relaxed);
+    if (!isHost && isConnected &&
+        (!g_worldReadyAnnounced.load(std::memory_order_relaxed) || reAnnounce)) {
         if (worldUp &&
             coop::prop_element_tracker::HasSeededOnce() &&
             coop::prop_element_tracker::IsRegistrySeededForCurrentWorld() &&
@@ -700,49 +531,34 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             if (session.SendReliableToSlot(0, coop::net::ReliableKind::ClientWorldReady,
                                            nullptr, 0)) {
                 g_worldReadyAnnounced.store(true, std::memory_order_relaxed);
-                UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent)");
+                g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
+                // v75: a fresh connect replay (this world's EntitySpawns + SnapshotComplete) is
+                // about to arrive -- reset the deferred-adoption per-world state so the new world
+                // re-adopts its save-NPCs + re-sweeps orphans (the ghost sweep itself fires from
+                // npc_adoption::Tick, gated on SnapshotComplete + adoption convergence).
+                coop::npc_adoption::OnClientWorldReady();
+                UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent%s)",
+                        reAnnounce ? " -- re-announce after world-change" : "");
             }
         }
     }
-    if (!isConnected) g_worldReadyAnnounced.store(false, std::memory_order_relaxed);  // re-announce next connection
+
+    if (!isConnected) {
+        g_worldReadyAnnounced.store(false, std::memory_order_relaxed);   // re-announce next connection
+        g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
+    }
 
     if (g_wasConnected && !isConnected) {
         // Aggregate disconnect (all peers gone). Fire the global OnDisconnect
         // calls -- the per-slot edge block above already handled subsystems
         // with per-slot state, this catches subsystems with session-wide state
         // (weather_sync, npc_sync host-side counter, prop_lifecycle dedupe set).
-        // Stashed state belongs to the now-dead session; replaying it on the
-        // next session (possibly a different machine after IP change) would
-        // carry wrong-peer state. A fresh snapshot enqueues on the next
-        // connected edge.
         // v34: if a client lost the host mid-join, drop the loading state so the cover/console
         // don't hang (no-op on the host / when no join is in progress).
         coop::join_progress::Reset();
-        coop::remote_prop::ForceRelease();
-        // P2: a disconnect mid-snapshot must drop the armed claim set (dangling
-        // actor pointers must not survive into the next session); no sweep.
-        coop::remote_prop_spawn::ResetClaimTracking();
-        const auto propStats = coop::prop_lifecycle::OnDisconnect();
-        const size_t snapPending = coop::prop_snapshot::OnDisconnect();
-        coop::npc_sync::OnDisconnect();
-        coop::item_activate::OnDisconnect();
-        coop::weather_sync::OnDisconnect();
-        coop::interactable_sync::OnDisconnect();
-        coop::keypad_sync::OnDisconnect();
-        coop::time_sync::OnDisconnect();
-        coop::sky_sync::OnDisconnect();
-        coop::power_sync::OnDisconnect();
-        coop::atv_sync::OnDisconnect();
-        coop::drone_sync::OnDisconnect();
-        coop::order_sync::OnDisconnect();
-        coop::firefly_sync::OnDisconnect();
-        coop::window_sync::OnDisconnect();
-        coop::grime_sync::OnDisconnect();
-        coop::trash_pile_sync::OnDisconnect();
-        coop::trash_collect_sync::OnDisconnect();
-        coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
+        const auto stats = coop::subsystems::DisconnectAll();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
-                snapPending, propStats.initProcessedDropped);
+                stats.snapPending, stats.initProcessedDropped);
 
         // CLIENT eject: a client losing the host (KICK / BAN / host quit / host
         // crash) ends the session -- flee to the main menu so the player isn't
@@ -786,51 +602,18 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     // is in progress (no-op on empty vector).
     if (isConnected && worldUp) { PP::Scope _s{PP::Bucket::SnapshotDrain}; coop::prop_snapshot::DrainChunk(); }
 
-    // Per-tick drains for subsystems that internally retry until the reliable
-    // channel accepts a queued connect-time broadcast (item_activate +
-    // weather_sync) and apply any per-peer payloads that arrived BEFORE the
-    // corresponding puppet was spawned. Cheap early-return when no pending state.
+    // Per-tick gameplay subsystem chain (connect-broadcast drains, module
+    // polls/applies, NPC streams, trash death-watches, dev probes).
     //
     // The whole chain is world-up-gated (menu-window balloon fix): every one of
     // these acts on gameplay-world state that cannot exist at the menu, and
     // several poll/ensure against BP classes that only load with the gameplay
     // world. Queued connect broadcasts (e.g. the client's own flashlight from
-    // the slot-0 connect edge) simply WAIT here until the world is up -- they
+    // the slot-0 connect edge) simply WAIT there until the world is up -- they
     // describe in-world state, so sending them earlier was never meaningful.
     if (worldUp) {
-    { PP::Scope _s{PP::Bucket::ItemConnect};   coop::item_activate::TickConnect(); }
-    { PP::Scope _s{PP::Bucket::WeatherConnect}; coop::weather_sync::TickConnect(); }
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::time_sync::Tick(); }          // v36 world clock: host throttled poll+broadcast (host-only, no-op on client)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::sky_sync::Tick(); }           // v44 night-sky: host throttled push (host-only, no-op on client)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::power_sync::Tick(); }          // v46 base power panel: poll breaker edges + deferred-apply retry (symmetric)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::atv_sync::Tick(); }            // v47 ATV: occupant streams its pose / mirror drives the interp (host+client)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::drone_sync::Tick(); }          // v48 delivery drone: host streams transform / client suppresses tick + mirrors
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::order_sync::Tick(); }           // v49 drone economy: client polls+forwards orders / host commits assembled orders
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::window_sync::Tick(); }         // v41 base-window clean: poll for wipes + deferred-apply retry (symmetric)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::grime_sync::Tick(); }          // v42 surface grime: poll wipes + death-watch destroy + deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)
-    { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_mirror::TickClientNpcs(); }  // v37 CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
-    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::trash_collect_sync::TickWatchReleasedClumps(&session); }  // emit atomic PropConvert (or PropDestroy) when a watched clump's unobservable morph-destroy fires
-    // v52: mirror-pile death-watch -- a watched pile that dies NEAR the local camera was grabbed
-    // (the morph-destroy is unobservable) -> broadcast PropDestroy(eid) so peers drop their mirror.
-    // Suppressed during a world-transition window (connect-teleport sublevel stream-out makes far
-    // piles go dead = stream-out, not a grab; the grime super-sponge precedent).
-    { PP::Scope _s{PP::Bucket::TrashWatch};
-      const bool inTransition = g_fleeing || coop::join_progress::Active();
-      coop::trash_collect_sync::TickWatchReleasedPiles(&session, inTransition);
-      coop::trash_pile_sync::Tick(inTransition); }  // v57: counter poll + depletion death-watch (same transition gate)
-    { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
-    coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
-    coop::dev::drone_probe::Tick(isConnected, isHost);  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
-    coop::dev::lightswitch_probe::Install();  // dev-only light-switch sync RE probe (ini lightswitch_probe=1)
-    coop::dev::lightswitch_probe::Tick();     // one-shot synthetic flip -> is SetActive BP-internal + does use() flip both switch+lights
-    coop::dev::keypad_probe::Install();        // dev-only keypad digit-entry RE probe (ini keypad_probe=1)
-    coop::dev::keypad_probe::Tick();           // synthetic inputNumber sequence -> does it append inPassword + flip isAcc (increment-2 design)
-    coop::dev::door_probe::Install();          // dev-only door state-machine RE probe (ini door_probe=1)
-    coop::dev::door_probe::Tick();             // scripted doorOpen/suppress/settime experiment -> what re-closes a host door?
-    }  // worldUp (the gameplay subsystem chain)
+        coop::subsystems::TickGameplay(session, isConnected, isHost, g_fleeing);
+    }
 
     // (The local-death flee to the main menu now happens SYNCHRONOUSLY on the death
     // frame in the teardown block below -- arm the held bypass + engine::ReturnToMainMenu
@@ -883,33 +666,11 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
                     coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
                     if (g_puppets[slot].valid()) g_puppets[slot].Destroy();
-                    coop::prop_snapshot::CancelForSlot(slot);
-                    coop::remote_prop::OnDisconnectForSlot(slot);
-                    coop::item_activate::OnDisconnectForSlot(slot);
+                    coop::subsystems::DisconnectSlot(session, slot);
                 }
                 // Aggregate teardown: session-wide Element/dedup state (mirrors the
                 // g_wasConnected disconnect edge).
-                coop::remote_prop::ForceRelease();
-                coop::remote_prop_spawn::ResetClaimTracking();  // P2: mirrors the disconnect edge
-                coop::prop_lifecycle::OnDisconnect();
-                coop::prop_snapshot::OnDisconnect();
-                coop::npc_sync::OnDisconnect();
-                coop::item_activate::OnDisconnect();
-                coop::weather_sync::OnDisconnect();
-                coop::interactable_sync::OnDisconnect();
-                coop::keypad_sync::OnDisconnect();
-                coop::time_sync::OnDisconnect();
-                coop::sky_sync::OnDisconnect();
-                coop::power_sync::OnDisconnect();
-                coop::atv_sync::OnDisconnect();
-                coop::drone_sync::OnDisconnect();
-                coop::order_sync::OnDisconnect();
-                coop::firefly_sync::OnDisconnect();
-                coop::window_sync::OnDisconnect();
-                coop::grime_sync::OnDisconnect();
-                coop::trash_pile_sync::OnDisconnect();
-                coop::trash_collect_sync::OnDisconnect();
-                coop::balance_sync::OnDisconnect();  // v30: reset balance dedup on death teardown too (else a permadeath-rejoin skips the opening BalanceSync)
+                coop::subsystems::DisconnectAll();
                 // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
                 // host-close eject). The balloon is VOTV's own possessed-ragdoll leak in
                 // the GAMEPLAY world (only cure: leave it); FleeToMainMenu resets the edge
@@ -928,191 +689,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         if (g_netLocalController && !R::IsLive(g_netLocalController)) g_netLocalController = nullptr;
         if (!g_netLocalController) g_netLocalController = ue_wrap::engine::GetController(g_netLocal);
         // One-shot install of the per-subsystem observers (idempotent).
-        { PP::Scope _s{PP::Bucket::InstallObs}; InstallObservers(session); }
-        coop::net::PoseSnapshot mine;
-        { PP::Scope _s{PP::Bucket::LocalSend};
-          if (ReadLocalPose(g_netLocal, g_netLocalController, mine)) session.SetLocalPose(mine); }
-
-        // Held-prop replication. Read mainPlayer.grabbing_actor; if non-null,
-        // build a PropPoseSnapshot from the prop's current world transform and
-        // publish to the net thread. On the edge held -> not-held, send a
-        // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
-        // never rely solely on the 500 ms stream-stop timeout).
-        //
-        // 2026-05-29 (post-A-4 follow-up): both fields read via
-        // ue_wrap::engine::ReadMainPlayerGrabState (Principle 7 -- no inline raw
-        // struct-offset derefs at coop layer). The wrapper resolves
-        // mainPlayer.holding_actor via reflected_offset (MainPlayer_holding_actor
-        // IS defined), so holdingActor is populated whenever the field exists.
-        // Whether picking up a chipPile/clump actually SETS holding_actor (vs the
-        // clump self-driving off its own holdPlayer) is a live-BP question
-        // (Candidate A vs B); the [probe] below answers it from a real hands-on.
-        ue_wrap::engine::MainPlayerGrabState gs{};
-        void* heldActor = nullptr;
-        if (ue_wrap::engine::ReadMainPlayerGrabState(g_netLocal, gs)) {
-            heldActor = gs.grabbingActor;
-            // 2026-05-27: chipPile/clump pickup sets mainPlayer.holding_actor
-            // INSTEAD of grabbing_actor (their morph path doesn't use the
-            // PhysicsHandle). Fall back to holding_actor so the PropPose
-            // stream covers them too -- gated by IsKeyedInteractable since
-            // holding_actor can also point at non-prop carry targets.
-            if (!heldActor && gs.holdingActor && R::IsLive(gs.holdingActor) &&
-                ue_wrap::prop::IsKeyedInteractable(gs.holdingActor)) {
-                heldActor = gs.holdingActor;
-            }
-        }
-        // [probe] garbage-ball pickup diagnostic (2026-05-31, ini
-        // garbage_pickup_probe=1): resolves whether a chipPile/clump pickup sets
-        // grabbing_actor or holding_actor (the open Candidate-A-vs-B question)
-        // from a real hands-on carry, plus the held actor's class + key +
-        // keyed-interactable verdict, proving the held-pose path can see the
-        // clump. Only fires while something is held, throttled ~4 Hz; gated off
-        // by default so steady-state cost is one atomic-bool load.
-        static const bool sProbeGarbage =
-            ::coop::ini_config::IsIniKeyTrue("garbage_pickup_probe");
-        if (sProbeGarbage && (gs.grabbingActor || gs.holdingActor)) {
-            static uint32_t sN = 0;
-            if ((sN++ % 30) == 0) {
-                void* ga = gs.grabbingActor;
-                void* ha = gs.holdingActor;
-                const bool gaLive = ga && R::IsLive(ga);
-                const bool haLive = ha && R::IsLive(ha);
-                const int haKeyed =
-                    haLive ? (int)ue_wrap::prop::IsKeyedInteractable(ha) : -1;
-                const std::wstring hKey = (haKeyed == 1)
-                    ? ue_wrap::prop::GetInteractableKeyString(ha)
-                    : std::wstring(L"-");
-                UE_LOGI("[probe garbage_pickup]: grabbing_actor=%p(%ls) "
-                        "holding_actor=%p(%ls) holdingKeyed=%d holdingKey='%ls'",
-                        ga, gaLive ? R::ClassNameOf(ga).c_str() : L"-",
-                        ha, haLive ? R::ClassNameOf(ha).c_str() : L"-",
-                        haKeyed, hKey.c_str());
-            }
-        }
-        if (heldActor && R::IsLive(heldActor)) {
-            // New-held edge: broadcast a PropSpawn so each peer spawns a mirror. Aprop_C
-            // items get a force-minted Key; the NON-KEYABLE trash CLUMP rides the SAME
-            // prop pipeline identified by our EID (key=None -- setKey doesn't stick on
-            // it). The clump renders on its own (a bare spawn = the 'dirtball' mesh),
-            // floats in front of the puppet via this pose stream (like the mannequin),
-            // and gets physics on release. [[project-bug-trash-chippile-uaf-crash]]
-            if (heldActor != g_lastHeldProp) {
-                const bool mirrored =
-                    coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
-                const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(heldActor);
-                UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' eid=%u -> prop-mirror=%s",
-                        heldActor, R::ClassNameOf(heldActor).c_str(),
-                        ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
-                        (eid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(eid),
-                        mirrored ? "BROADCAST" : "no");
-            }
-            // Stream the held world transform. key (None for the clump) + eid (the
-            // clump's cross-peer identity); the receiver resolves the mirror by key,
-            // falling back to eid.
-            const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
-            coop::net::PropPoseSnapshot pp{};
-            pp.key.len = 0;
-            for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
-                // The save UUIDs are ASCII; this lossless narrowing is fine.
-                pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
-            }
-            {
-                const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(heldActor);
-                pp.elementId = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
-            }
-            const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
-            const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
-            pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-            // Normalize at the wire boundary: physics-prop rotation accumulates
-            // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
-            // Pitch=-270; receiver's canonical (-180,180] guard would reject.
-            pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
-            pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
-            pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-            session.SetLocalPropPose(true, pp);
-            // Throttled emit log: first 3 + every 60th, matches receiver
-            // throttle so the two logs can be diff'd line-for-line.
-            const uint64_t n = ++g_propEmitCount;
-            if (n <= 3 || (n % 60) == 0) {
-                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u",
-                        static_cast<unsigned long long>(n),
-                        pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
-                        static_cast<int>(pp.key.len), pp.elementId);
-            }
-            g_lastHeldProp = heldActor;
-            g_lastHeldKey = pp.key;
-        } else if (g_lastHeldProp) {
-            // Edge: was holding, now not. Stop the PropPose stream + send PropRelease.
-            // Read the body's CURRENT linear+angular velocity. By the time this branch
-            // runs, the engine has executed the BP graph clearing grabbing_actor, the
-            // PHC.ReleaseComponent call, and any post-release AddImpulse the BP issues.
-            // PhysX has not stepped yet, so the body still carries the inherited
-            // kinematic-tracking velocity ("вжух" mouse-flick launch energy) PLUS any
-            // impulse-derived velocity, summed into ONE velocity. prop::GetPhysicsVelocity
-            // returns 0 for the non-Aprop_C clump (GetStaticMesh is null on it) -- fall
-            // back to the GENERIC root-component velocity so the clump throws too.
-            session.SetLocalPropPose(false, {});
-            ue_wrap::prop::VelocityState vel{};
-            if (R::IsLive(g_lastHeldProp)) {
-                vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
-                if (!vel.ok) {
-                    ue_wrap::FVector lin{}, ang{};
-                    if (ue_wrap::engine::GetActorRootPhysicsVelocity(g_lastHeldProp, lin, ang)) {
-                        vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
-                    }
-                }
-            }
-            const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
-                                   vel.linearCmS.Y * vel.linearCmS.Y +
-                                   vel.linearCmS.Z * vel.linearCmS.Z;
-            UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
-                    vel.ok ? 1 : 0,
-                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                    std::sqrt(linMagSq),
-                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            session.SendPropRelease(g_lastHeldKey,
-                                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            g_lastHeldProp = nullptr;
-            g_lastHeldKey = {};
-        }
-
-        // v22 ragdoll PHYSICS stream. While the local player's native ragdoll
-        // exists (C-key/faint/KO), read its pelvis world transform + linear+angular
-        // velocity and publish so each peer's mirror body slaves its pelvis to the
-        // real ragdoll (instead of free-simulating its own flop). Mirrors the held-
-        // prop stream above: publish each frame while active, one false-edge on
-        // recover. ReadLocalRagdollPelvisPhysics returns false when not ragdolling,
-        // so the active->idle transition is the recover edge.
-        {
-            ue_wrap::FVector rdLoc{}, rdLin{}, rdAng{};
-            ue_wrap::FRotator rdRot{};
-            if (ue_wrap::engine::ReadLocalRagdollPelvisPhysics(g_netLocal, rdLoc, rdRot, rdLin, rdAng)) {
-                coop::net::RagdollPoseSnapshot rp{};
-                rp.x = rdLoc.X; rp.y = rdLoc.Y; rp.z = rdLoc.Z;
-                // Normalize the rotation at the wire boundary (the receiver drives
-                // SetActorRotation off it + the canonical FRotator guard expects
-                // (-180,180]); velocities are magnitudes, sent raw.
-                rp.pitch = ue_wrap::NormalizeAxis(rdRot.Pitch);
-                rp.yaw   = ue_wrap::NormalizeAxis(rdRot.Yaw);
-                rp.roll  = ue_wrap::NormalizeAxis(rdRot.Roll);
-                rp.linVelX = rdLin.X; rp.linVelY = rdLin.Y; rp.linVelZ = rdLin.Z;
-                rp.angVelX = rdAng.X; rp.angVelY = rdAng.Y; rp.angVelZ = rdAng.Z;
-                session.SetLocalRagdollPose(true, rp);
-                g_wasRagdolling = true;
-                const uint64_t n = ++g_ragdollEmitCount;
-                if (n <= 3 || (n % 60) == 0) {
-                    const float linMag = std::sqrt(rdLin.X * rdLin.X + rdLin.Y * rdLin.Y + rdLin.Z * rdLin.Z);
-                    UE_LOGI("net: RagdollPose emit #%llu -> pelvis(%.0f, %.0f, %.0f) rot(%.0f, %.0f, %.0f) |linVel|=%.0f cm/s",
-                            static_cast<unsigned long long>(n),
-                            rp.x, rp.y, rp.z, rp.pitch, rp.yaw, rp.roll, linMag);
-                }
-            } else if (g_wasRagdolling) {
-                session.SetLocalRagdollPose(false, {});
-                g_wasRagdolling = false;
-                UE_LOGI("net: RagdollPose stream STOP (local player recovered)");
-            }
-        }
+        { PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
+        // Outbound local streams: pose + held-prop + ragdoll (coop/local_streams).
+        coop::local_streams::Tick(session, g_netLocal, g_netLocalController);
     }
 
     // Per-slot pose drive. Iterate ALL peer slots [0, kMaxPeers) and skip

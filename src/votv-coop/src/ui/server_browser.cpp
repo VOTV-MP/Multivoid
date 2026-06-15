@@ -13,6 +13,7 @@
 #include "ui/server_browser.h"
 
 #include "ui/host_save_picker.h"
+#include "coop/net/protocol.h"  // kProtocolVersion (the v59 "Ver" mismatch tint)
 #include "coop/session_manager.h"
 #include "harness/config.h"   // local-only ini persistence for the name + last direct address
 #include "ue_wrap/log.h"
@@ -173,7 +174,7 @@ void Render() {
                     g_selected = i;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
-                        else if (sm::JoinLobby(r.lobbyId, r.name)) Close();
+                        else if (sm::JoinLobby(r.lobbyId, r.name, r.proto)) Close();
                     }
                 }
                 if (isOwn) ImGui::PopStyleColor();
@@ -185,7 +186,17 @@ void Render() {
                 ImGui::TableSetColumnIndex(4);
                 ImGui::TextUnformatted(r.world.c_str());
                 ImGui::TableSetColumnIndex(5);
-                ImGui::TextDisabled("%s", r.version.c_str());
+                // v59: amber Ver + a (!) when the host's announced protocol mismatches
+                // ours ("show normally, reject on Join" -- the click explains in the
+                // footer status). Unknown proto (pre-field host) renders plain.
+                const bool verMismatch =
+                    r.proto > 0 &&
+                    r.proto != static_cast<int>(coop::net::kProtocolVersion);
+                if (verMismatch)
+                    ImGui::TextColored(ImVec4(1.00f, 0.78f, 0.35f, 1.0f), "%s (!)",
+                                       r.version.c_str());
+                else
+                    ImGui::TextDisabled("%s", r.version.c_str());
 
                 ImGui::PopID();
             }
@@ -199,7 +210,8 @@ void Render() {
         const bool canConnect = hasSel && !selOwn;
         if (!canConnect) ImGui::BeginDisabled();
         if (ImGui::Button(selOwn ? "Your server" : "Connect", ImVec2(120.0f, 0.0f)) && canConnect)
-            if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name)) Close();
+            if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name,
+                              g_rows[g_selected].proto)) Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Close", ImVec2(90.0f, 0.0f))) open = false;

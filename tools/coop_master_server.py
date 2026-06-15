@@ -14,7 +14,8 @@ the DLL never holds a static TURN password -- it fetches a short-lived
 HMAC-derived cred here, per session, refreshed on the heartbeat.
 
 Endpoints (JSON over HTTP/1.1, one request per connection, Connection: close):
-  POST /v1/host       {name,version,world,locked,players_max}
+  POST /v1/host       {name,version,proto,world,locked,players_max}
+GET  /v1/latest     -> {proto,mod,url}  (v59: the launch toast / update check)
                       -> {sessionId, lobbyId, hostIdentity, signalingUrl,
                           signalingToken, token, stun, turn{user,pass,ttl,uris}}
   POST /v1/heartbeat  {sessionId, token, players_cur, listed}  (30s cadence)
@@ -109,6 +110,15 @@ RL_JOIN = (60.0, 20)          # POST /v1/join  (a NAT'd household joins together
                               # reconnects; short TURN cred -> looser than host, bounded)
 RL_MUTATE = (60.0, 240)       # heartbeat/leave/visibility (heartbeats are frequent)
 
+# A standalone /v1/portcheck endpoint (have the master UDP-probe the requester's
+# forwarded port) was DESIGNED + audited 2026-06-11 and DEFERRED: a master that
+# emits outbound UDP on request is a reflection/amplification surface its provider
+# can flag, and per-IP rate limits don't bound aggregate UDP across a distributed
+# source set (audit S1-S3). The SAFE shape, for when the DIRECT-host port-check UI
+# lands: FOLD the probe into the /v1/host direct announce (already RL_CREATE-capped
+# + tied to a real, just-validated session), send ONE nonce datagram, have the
+# host echo-confirm on the socket it just bound. No standalone reflector.
+
 # Trust a forwarded client IP ONLY from a loopback peer (a local reverse proxy, e.g.
 # xray fronting :443). Never from a remote peer -> a remote client cannot spoof its
 # rate-limit identity via X-Forwarded-For. (Audit H1: the rate-IP would otherwise
@@ -121,13 +131,21 @@ MAX_NAME = 63
 MAX_WORLD = 39
 MAX_VERSION = 23
 
+# ---- latest released mod (v59: the launch toast + the browser join gate) ----
+# OPERATOR-MAINTAINED: bump on each mod release (part of the VPS deploy step).
+# Served verbatim by GET /v1/latest; hosts also announce their own `proto`
+# (kProtocolVersion) which the browser uses for the reject-on-Join gate.
+LATEST_PROTO = 66
+LATEST_MOD = "0.9.0-n"
+LATEST_URL = "https://github.com/pelmentor/VOTV_MP/releases"
+
 # ---- state ------------------------------------------------------------------
 
 
 class Lobby:
     __slots__ = ("session_id", "lobby_id", "token", "host_identity", "name",
-                 "version", "world", "locked", "players_cur", "players_max",
-                 "listed", "last_seen", "ip")
+                 "version", "proto", "world", "locked", "players_cur", "players_max",
+                 "listed", "last_seen", "ip", "conn", "direct_port")
 
     def __init__(self, ip: str):
         self.session_id = secrets.token_hex(16)       # 32 chars, secret
@@ -136,6 +154,7 @@ class Lobby:
         self.host_identity = "h" + secrets.token_hex(8)   # 17 chars (<=31 for GNS)
         self.name = ""
         self.version = ""
+        self.proto = 0       # host's kProtocolVersion (v59 join gate; 0 = not announced)
         self.world = ""
         self.locked = False
         self.players_cur = 0
@@ -143,6 +162,12 @@ class Lobby:
         self.listed = True
         self.last_seen = time.monotonic()
         self.ip = ip
+        # Connection type (2026-06-11 direct-lobby support): "p2p" (default;
+        # join returns signaling/ICE creds) or "direct" (the host runs a plain
+        # UDP listen on a FORWARDED port; join returns addr "ip:port" -- the ip
+        # is what the HOST's announce arrived from, never client-supplied).
+        self.conn = "p2p"
+        self.direct_port = 0
 
 
 lobbies: dict[str, Lobby] = {}            # sessionId -> Lobby
@@ -172,16 +197,31 @@ def clamp_str(v: object, maxlen: int) -> str:
 
 
 def resolve_client_ip(peer_ip: str, headers: dict) -> str:
-    """The rate-limit / lobby-cap key. Trust a forwarded header ONLY from a loopback
-    peer (a local reverse proxy); otherwise the raw socket peer IP. A remote client
-    cannot spoof X-Forwarded-For to dodge its own rate limit."""
+    """The trusted client IP. Used as the rate-limit / lobby-cap key AND (2026-06-11)
+    as an ACTION TARGET: the direct-lobby advertised address (lo.ip) and the
+    /v1/portcheck UDP probe destination -- so it MUST be spoof-proof, not merely
+    spoof-resistant.
+
+    Trust a forwarded header ONLY from a loopback peer (our single co-located reverse
+    proxy, e.g. xray fronting :443 per the deployment design). X-Real-IP is the proxy's
+    OVERWRITTEN single value (a client-sent one is replaced) -> trusted as-is. For
+    X-Forwarded-For we take the RIGHTMOST entry -- the one OUR trusted proxy appended
+    (= the peer IP it actually observed). Audit C-1 (2026-06-11): the prior code took
+    the LEFTMOST entry, which is the value the CLIENT sent and our proxy merely appended
+    after -> a client could forge `X-Forwarded-For: <victim>` and make the master probe
+    or advertise the victim's address. (Single trusted hop assumed, matching the
+    deployment; a multi-proxy chain would need to peel exactly the trusted-hop count.)
+    A non-loopback peer's forwarded headers are ignored entirely -> the raw TCP peer
+    (handshake-validated, unspoofable off-path) wins."""
     if peer_ip in TRUSTED_PROXY_PEERS:
         xr = headers.get("x-real-ip")
         if xr:
             return xr.strip()
         xff = headers.get("x-forwarded-for")
         if xff:
-            return xff.split(",")[0].strip()
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                return parts[-1]  # rightmost = what the trusted proxy observed
     return peer_ip
 
 
@@ -268,6 +308,10 @@ def h_host(ip: str, body: dict) -> tuple[int, dict]:
     lo = Lobby(ip)
     lo.name = clamp_str(body.get("name"), MAX_NAME) or "VOTV Coop"
     lo.version = clamp_str(body.get("version"), MAX_VERSION) or "0.0.0"
+    try:  # v59: the host's wire-protocol version (the browser join gate)
+        lo.proto = max(0, min(65535, int(body.get("proto", 0))))
+    except (TypeError, ValueError):
+        lo.proto = 0
     lo.world = clamp_str(body.get("world"), MAX_WORLD)
     lo.locked = bool(body.get("locked", False))
     try:
@@ -275,6 +319,24 @@ def h_host(ip: str, body: dict) -> tuple[int, dict]:
     except (TypeError, ValueError):
         pm = 4
     lo.players_max = max(1, min(4, pm))
+    # Direct-lobby announce (2026-06-11): conn="direct" + the host's LISTEN
+    # port. The advertised ADDRESS is always this request's source ip (the
+    # host's public address as the master sees it) -- a client cannot announce
+    # someone else's ip. Port clamped to the unprivileged range.
+    if body.get("conn") == "direct":
+        try:
+            dp = int(body.get("direct_port", 0))
+        except (TypeError, ValueError):
+            dp = -1
+        if not (1024 <= dp <= 65535):
+            # REJECT, do NOT silently downgrade to p2p (audit R1): the client
+            # already chose a LanDirect topology locally, so a silent p2p
+            # listing would hand joiners ICE creds the host can't speak ->
+            # every join breaks with no diagnostic. Fail the announce loudly
+            # BEFORE the lobby is registered (the dict inserts are below).
+            return 400, {"error": "direct_port out of range (1024-65535)"}
+        lo.conn = "direct"
+        lo.direct_port = dp
     lo.players_cur = 1
     lo.last_seen = time.monotonic()
 
@@ -288,8 +350,15 @@ def h_host(ip: str, body: dict) -> tuple[int, dict]:
         "lobbyId": lo.lobby_id,
         "hostIdentity": lo.host_identity,
         "token": lo.token,
+        "conn": lo.conn,  # audit R1: reflect the ACCEPTED conn so the client can
+                          # confirm its direct request was honored (a p2p reflection
+                          # means the client must not run a LanDirect listen).
     }
-    resp.update(ice_block(lo.host_identity))
+    # A DIRECT host runs a plain UDP listen and never touches signaling/ICE, so
+    # it gets NO signaling token / STUN / TURN creds (don't hand out the shared
+    # signaling bearer to a host that won't use it). P2P hosts get the full block.
+    if lo.conn != "direct":
+        resp.update(ice_block(lo.host_identity))
     return 200, resp
 
 
@@ -366,6 +435,12 @@ def h_join(ip: str, body: dict) -> tuple[int, dict]:
     # (design 10) -- a secret the master never sees, so it cannot (and must not) gate
     # on it. A master-side lock check would give false assurance + the public lobbyId
     # already leaks nothing sensitive; the host reclaims an unproven slot after connect.
+    # Direct lobby (2026-06-11): the join capability is simply the host's
+    # address -- the client UDP-connects straight to it (the host forwarded
+    # the port). No signaling/ICE creds minted (nothing to relay).
+    if lo.conn == "direct" and lo.direct_port:
+        log(f"join {lo.lobby_id} DIRECT -> {lo.ip}:{lo.direct_port} from {ip}")
+        return 200, {"conn": "direct", "addr": f"{lo.ip}:{lo.direct_port}"}
     # A fresh, unguessable identity per joiner (the signaling rendezvous key).
     peer_identity = "c" + secrets.token_hex(8)
     log(f"join {lo.lobby_id} as {peer_identity} from {ip}")
@@ -373,6 +448,7 @@ def h_join(ip: str, body: dict) -> tuple[int, dict]:
         "sessionId": lo.session_id,
         "peerIdentity": peer_identity,
         "hostIdentity": lo.host_identity,
+        "conn": "p2p",
     }
     resp.update(ice_block(peer_identity))
     return 200, resp
@@ -391,11 +467,13 @@ def _build_rows() -> list:
             "lobbyId": lo.lobby_id,
             "name": lo.name,
             "version": lo.version,
+            "proto": lo.proto,  # v59: the browser's reject-on-Join gate key
             "world": lo.world,
             "locked": lo.locked,
             "players_cur": lo.players_cur,
             "players_max": lo.players_max,
             "age": int(now - lo.last_seen),
+            "conn": lo.conn,  # "p2p" | "direct" -- browser badge + join routing
         })
     return rows
 
@@ -520,6 +598,12 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 if kv.startswith("version="):
                     vf = clamp_str(kv[len("version="):], MAX_VERSION)
             write_response(writer, 200, h_lobbies(vf))
+        elif method == "GET" and path == "/v1/latest":
+            # v59 launch toast: the latest released mod (operator-maintained
+            # constants). Static + tiny -- no rate class needed beyond the
+            # connection cap (same exposure as /healthz).
+            write_response(writer, 200, json_bytes(
+                {"proto": LATEST_PROTO, "mod": LATEST_MOD, "url": LATEST_URL}))
         elif method == "GET" and path == "/healthz":
             write_response(writer, 200, json_bytes({"ok": True, "lobbies": len(lobbies)}))
         elif method == "POST" and path in POST_ROUTES:

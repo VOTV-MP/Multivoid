@@ -88,4 +88,55 @@ void ApplyClock(float totalTime, float day, float timeScale) {
     *reinterpret_cast<float*>(base + g_timeScaleOff) = timeScale;
 }
 
+void WriteTimeScale(float scale) {
+    void* cyc = Cycle();
+    if (!cyc || g_timeScaleOff < 0) return;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(cyc) + g_timeScaleOff) = scale;
+}
+
+namespace {
+// dailyDelivery latch substrate (gamemode -> saveSlot -> the bool). The
+// gamemode pointer is cached + liveness-revalidated (the email.cpp shape);
+// the walk only re-runs after a loss, never per call.
+void* g_gmCls = nullptr;
+int32_t g_offGmSaveSlot = -1;
+void* g_saveSlotCls = nullptr;
+int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery (@0x0E40)
+void* g_gm = nullptr;
+int32_t g_gmIdx = -1;
+}  // namespace
+
+bool LatchDailyDelivery() {
+    if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
+    if (!g_gmCls) return false;
+    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(g_gmCls, L"saveSlot");
+    if (!g_saveSlotCls) g_saveSlotCls = R::FindClass(L"saveSlot_C");
+    if (g_saveSlotCls && g_offDailyDelivery < 0)
+        g_offDailyDelivery = R::FindPropertyOffset(g_saveSlotCls, L"dailyDelivery");
+    if (g_offGmSaveSlot < 0 || g_offDailyDelivery < 0) return false;
+    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
+        // Throttle the miss-path GUObjectArray walk (audit I-4: this is
+        // caller-rate-driven at every 2 s clock correction; a world
+        // transition would otherwise re-scan on each one -- the Cycle()
+        // throttle pattern).
+        static std::chrono::steady_clock::time_point s_lastScan{};
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_lastScan < std::chrono::seconds(2)) return false;
+        s_lastScan = now;
+        g_gm = nullptr;
+        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
+            if (obj && R::IsLive(obj)) {
+                g_gm = obj;
+                g_gmIdx = R::InternalIndexOf(obj);
+                break;
+            }
+        }
+        if (!g_gm) return false;
+    }
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm) + g_offGmSaveSlot);
+    if (!slot || !R::IsLive(slot)) return false;
+    *(reinterpret_cast<uint8_t*>(slot) + g_offDailyDelivery) = 1;
+    return true;
+}
+
 }  // namespace ue_wrap::daynightcycle

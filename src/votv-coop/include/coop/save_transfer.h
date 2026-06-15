@@ -56,6 +56,10 @@ void Install(coop::net::Session* session);
 // set this). The transfer reads `<SaveGames>\<slot>.sav` fresh per request.
 void SetHostSlot(const std::wstring& slot);
 
+// Read the host slot name (v73 per-player inventory: keys the per-save
+// <SaveGames>\<slot>\coop_players\ dir). Empty until SetHostSlot runs. Game thread.
+const std::wstring& HostSlot();
+
 // A client asked for the save (event_feed SaveTransferRequest). Arms the slot's
 // stream; the actual FILE READ happens in TickHost under the torn-read guard
 // (VOTV writes saves non-atomically in place -- save_guard.h: 4 in-place writes,

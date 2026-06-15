@@ -3,6 +3,7 @@
 #include "coop/net/lobby_announcer.h"
 
 #include "coop/net/http_client.h"
+#include "coop/net/protocol.h"  // kProtocolVersion -- announced for the v59 browser join gate
 #include "coop/shutdown.h"
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
 #include "ue_wrap/log.h"
@@ -22,7 +23,7 @@ LobbyAnnouncer::~LobbyAnnouncer() { Stop(); }
 
 HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& name,
                               const std::string& version, const std::string& world,
-                              bool locked, int playersMax, int timeoutMs) {
+                              bool locked, int playersMax, int timeoutMs, int directPort) {
     HostInfo info;
     Stop();  // retire any prior lobby first (sends /leave, joins) -- on a worker, safe
 
@@ -32,11 +33,17 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     J::Json b;
     b["name"] = name;
     b["version"] = version;
+    b["proto"] = static_cast<int>(coop::net::kProtocolVersion);  // v59: the REAL compat key
     b["world"] = world;
     b["locked"] = locked;
     b["players_max"] = playersMax;
+    if (directPort > 0) {  // DIRECT lobby (see header): master advertises src-ip:port
+        b["conn"] = "direct";
+        b["direct_port"] = directPort;
+    }
     const http::Response resp = http::Post(masterUrl, "/v1/host", J::Dump(b), timeoutMs);
-    if (!resp.ok) { UE_LOGW("lobby: host announce -- master unreachable (%s)", masterUrl.c_str()); return info; }
+    // No raw master URL (console-visible line; the official server shows as "DEFAULT").
+    if (!resp.ok) { UE_LOGW("lobby: host announce -- master unreachable"); return info; }
     if (resp.status != 200) { UE_LOGW("lobby: host announce -- master returned %d", resp.status); return info; }
 
     J::Json j;

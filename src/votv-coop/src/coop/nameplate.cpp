@@ -2,6 +2,7 @@
 
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
+#include "coop/voice/voice_chat.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/types.h"
 
@@ -115,6 +116,7 @@ void Update() {
         const float h = std::clamp(p->GetHealth(), 0.f, 1.f);
         pl.healthPct = static_cast<int>(std::lround(h * 100.f));
         pl.ping = p->GetPing();
+        pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         CopyNickAscii(pl.nick, p->GetNickname());
 
         ++snap.count;

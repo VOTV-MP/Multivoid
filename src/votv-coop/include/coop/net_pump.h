@@ -1,10 +1,12 @@
-// coop/net_pump.h -- main per-tick net pump.
+// coop/net_pump.h -- main per-tick net pump ORCHESTRATOR.
 //
-// Owns the local-pose read + peer puppet array + held-prop edge detector +
-// per-slot connect/disconnect edge logic + the per-tick drains of every
-// reliable-channel subsystem (item_activate / weather_sync / prop_snapshot /
-// remote_prop / event_feed). Driven from the harness timeline tick at the
-// game-thread post rate.
+// Owns the peer puppet array, the per-slot connect/disconnect edge logic,
+// the death policy + flee-to-menu, the dead-prop reaper, and the puppet
+// pose/ragdoll drive. The sync-module fan-out lists live in coop/subsystems
+// (the wiring registry) and the outbound local pose/held-prop/ragdoll
+// streams in coop/local_streams -- net_pump calls both at the right tick
+// moments. Driven from the harness timeline tick at the game-thread post
+// rate.
 //
 // State previously lived in harness.cpp as file-scope globals; extracted
 // per the audit (`research/findings/votv-coop-audit-post-pr4-7-2026-05-28.md`)
@@ -28,12 +30,6 @@ namespace coop::net_pump {
 // the loopback mirror scenario (0 for real coop).
 void Tick(coop::net::Session& session, float displayOffsetX);
 
-// v56: the HOST's per-joiner connect replay (snapshot bracket + every connect
-// state broadcast). Fired by event_feed on the joiner's ClientWorldReady --
-// the connect edge no longer replays (a menu-mode joiner has no world yet).
-// Game thread.
-void RunConnectReplayForSlot(int slot);
-
 // Called from the harness Start sites (play + netloopback) BEFORE
 // session.Start. Resets edge-detector flags so a session stop/restart
 // doesn't carry stale "was connected" / "was holding prop" state into
@@ -53,13 +49,5 @@ void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why);
 // per-peer puppets in coop order. Returns a reference -- the underlying
 // array is module-owned.
 coop::RemotePlayer& Puppet(int slot);
-
-// Top-level observer orchestrator: retried each tick. Idempotent --
-// each subsystem's own Install() short-circuits once it has succeeded.
-// Called from Tick() inside net_pump AND from the non-net "play" scenario
-// branch in harness.cpp (single-instance hands-on play also wants the
-// local grab/prop/weather/npc/item observers running for solo-play
-// behavioural parity with networked play). Game thread only.
-void InstallObservers(coop::net::Session& session);
 
 }  // namespace coop::net_pump

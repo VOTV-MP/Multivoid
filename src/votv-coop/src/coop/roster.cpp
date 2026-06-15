@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 
@@ -94,6 +95,21 @@ void Refresh() {
         NarrowNick(rowIsLocal ? coop::player_handshake::LocalNickname()
                               : coop::player_handshake::NicknameForSlot(slot),
                    r.nick);
+        // Connection-type column (user 2026-06-10): each board shows what THIS
+        // peer truthfully knows. The HOST owns every client conn -> real
+        // transport per client row + a hosting-mode label on its own row. A
+        // CLIENT owns only its host link -> that label on the host row; other
+        // clients' traffic reaches it relayed by the host -> "VIA HOST".
+        if (rowIsLocal && isHost) {
+            std::snprintf(r.link, sizeof(r.link), "%s",
+                          s->topology() == coop::net::Topology::P2P ? "P2P HOST" : "LAN HOST");
+        } else if (isHost) {
+            s->LinkLabelForSlot(slot, r.link, sizeof(r.link));  // a client's real link
+        } else if (slot == 0) {
+            s->LinkLabelForSlot(0, r.link, sizeof(r.link));     // my own link to the host
+        } else if (!rowIsLocal) {
+            std::snprintf(r.link, sizeof(r.link), "VIA HOST");
+        }
         ++idx;
     }
     snap.count = idx;

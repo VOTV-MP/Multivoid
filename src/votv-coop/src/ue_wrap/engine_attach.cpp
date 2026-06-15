@@ -17,6 +17,7 @@
 #include "ue_wrap/engine.h"
 
 #include "ue_wrap/call.h"
+#include "ue_wrap/fname_utils.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
@@ -37,6 +38,11 @@ void* g_setCollFn = nullptr;  // PrimitiveComponent::SetCollisionEnabled
 void* g_setNotifyHitFn = nullptr;  // PrimitiveComponent::SetNotifyRigidBodyCollision
 void* g_isAwakeFn = nullptr;  // PrimitiveComponent::IsAnyRigidBodyAwake
 void* g_putSleepFn = nullptr;  // PrimitiveComponent::PutRigidBodyToSleep
+void* g_getMatFn  = nullptr;  // PrimitiveComponent::GetMaterial
+void* g_getPhysMatFn = nullptr;  // MaterialInterface::GetPhysicalMaterial
+void* g_primCompClass = nullptr;  // the PrimitiveComponent UClass (root-type gate)
+void* g_attachCompFn = nullptr;  // Actor::K2_AttachToComponent
+void* g_detachFn     = nullptr;  // Actor::K2_DetachFromActor
 
 void* ActorFn(void** cache, const wchar_t* name) {
     if (!*cache) {
@@ -176,6 +182,78 @@ bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector&
       f.Set<bool>(L"bAddToCurrent", false);
       Call(root, f); }
     return true;
+}
+
+void* GetActorRootPhysicalMaterial(void* actor) {
+    // Root surface -> physical material, the same resolution a blocking trace's
+    // hit.PhysMat does on the hit face. Feeds lib_C::physSound for actors that are
+    // NOT prop_C descendants (the trash clump derives from plain Actor -- it has no
+    // physicsImpact component to read a cached PhysMat from).
+    void* root = RootComponentOf(actor);
+    if (!root) return nullptr;
+    // Type-gate: GetMaterial is a PrimitiveComponent UFunction; PE-dispatching it
+    // on a plain SceneComponent root would thunk into a bad P_THIS cast. (The
+    // physics setters above skip this gate because their targets are exclusively
+    // our own clump mirrors; this one receives arbitrary wire-grabbed actors.)
+    // Cache safety: PrimitiveComponent is a NATIVE ENGINE UClass (RF_Native |
+    // RF_Standalone) -- never GC'd, so the latched pointer cannot dangle. Do NOT
+    // copy this latch shape for a BLUEPRINT class (those reload on level travel;
+    // they need the reflection.cpp stale-detect approach instead).
+    if (!g_primCompClass) g_primCompClass = R::FindClass(L"PrimitiveComponent");
+    if (!g_primCompClass ||
+        !R::IsDescendantOfAny(R::ClassOf(root), &g_primCompClass, 1)) return nullptr;
+    void* getMat = PrimFn(&g_getMatFn, L"GetMaterial");
+    if (!getMat) return nullptr;
+    void* mat = nullptr;
+    { ParamFrame f(getMat);
+      f.Set<int32_t>(L"ElementIndex", 0);
+      if (!Call(root, f)) return nullptr;
+      mat = f.Get<void*>(L"ReturnValue"); }
+    if (!mat || !R::IsLive(mat)) return nullptr;
+    // GetPhysicalMaterial is virtual on UMaterialInterface (instance walks to its
+    // parent material's assignment) -- the native thunk handles the dispatch.
+    if (!g_getPhysMatFn) {
+        if (void* c = R::FindClass(L"MaterialInterface"))
+            g_getPhysMatFn = R::FindFunction(c, L"GetPhysicalMaterial");
+    }
+    if (!g_getPhysMatFn) return nullptr;
+    ParamFrame f(g_getPhysMatFn);
+    if (!Call(mat, f)) return nullptr;
+    void* physmat = f.Get<void*>(L"ReturnValue");
+    return (physmat && R::IsLive(physmat)) ? physmat : nullptr;
+}
+
+bool AttachActorToComponentSocket(void* actor, void* component, const wchar_t* socket) {
+    // Generic socket-attach (distinct from AttachActorToRagdollBody, which resolves a body
+    // skeletal mesh + pelvis bone): attach `actor` directly to `component` at the named
+    // SOCKET, SNAPPED to the socket transform so it follows the socket each frame. Used for
+    // the Killer Wisp grab-hold (victim puppet -> wisp mesh 'playerGrab' socket). KeepWorld
+    // scale so the attached actor does not inherit the wisp's scale. Game thread.
+    if (!actor || !R::IsLive(actor) || !component || !R::IsLive(component)) return false;
+    void* fn = ActorFn(&g_attachCompFn, L"K2_AttachToComponent");
+    if (!fn) { UE_LOGW("engine: K2_AttachToComponent unresolved -- cannot socket-attach"); return false; }
+    R::FName sock = socket ? ue_wrap::fname_utils::StringToFName(socket) : R::FName{};
+    ParamFrame f(fn);
+    f.Set<void*>(L"Parent", component);
+    f.SetRaw(L"SocketName", &sock, sizeof(sock));
+    f.Set<uint8_t>(L"LocationRule", uint8_t{2});       // EAttachmentRule::SnapToTarget (sit at the socket)
+    f.Set<uint8_t>(L"RotationRule", uint8_t{2});       // SnapToTarget (follow the socket orientation)
+    f.Set<uint8_t>(L"ScaleRule",    uint8_t{1});       // KeepWorld (do NOT inherit the wisp scale)
+    f.Set<bool>(L"bWeldSimulatedBodies", false);
+    return Call(actor, f);
+}
+
+bool DetachActorFromParent(void* actor) {
+    // Generic detach (K2_DetachFromActor, KeepWorld) -- leaves `actor` where the attach
+    // left it so a subsequent pose-drive / ragdoll takes over cleanly. Game thread.
+    if (!actor || !R::IsLive(actor)) return false;
+    void* fn = ActorFn(&g_detachFn, L"K2_DetachFromActor");
+    if (!fn) { UE_LOGW("engine: K2_DetachFromActor unresolved -- cannot detach"); return false; }
+    ParamFrame f(fn);
+    f.Set<uint8_t>(L"LocationRule", uint8_t{1});       // EDetachmentRule::KeepWorld
+    f.Set<uint8_t>(L"RotationRule", uint8_t{1});       // KeepWorld
+    f.Set<uint8_t>(L"ScaleRule",    uint8_t{1});       // KeepWorld
+    return Call(actor, f);
 }
 
 }  // namespace ue_wrap::engine

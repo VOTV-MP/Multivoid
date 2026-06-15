@@ -31,6 +31,11 @@ std::array<std::wstring, net::kMaxPeers> g_remoteNickBySlot{
 };
 std::array<bool, net::kMaxPeers> g_joinSentBySlot{};
 
+// v73 per-player inventory identity. g_localGuid rides our outbound Join; g_guidBySlot[s]
+// caches the GUID peer `s` sent (HOST-side, keys coop_players/<guid>.json). ASCII 32-hex.
+std::string g_localGuid;
+std::array<std::string, net::kMaxPeers> g_guidBySlot{};
+
 std::vector<uint8_t> ToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
@@ -129,8 +134,18 @@ void SetLocalNickname(const std::wstring& nick) {
 
 const std::wstring& LocalNickname() { return g_localNick; }
 
+void SetLocalGuid(const std::string& guid) { g_localGuid = guid; }
+
+const std::string& GuidForSlot(int slot) {
+    UE_ASSERT_GAME_THREAD("g_guidBySlot (GuidForSlot)");
+    static const std::string kEmpty;
+    if (slot < 0 || slot >= net::kMaxPeers) return kEmpty;
+    return g_guidBySlot[slot];
+}
+
 void Reset() {
     for (auto& nick : g_remoteNickBySlot) nick = L"Remote player";
+    for (auto& g : g_guidBySlot) g.clear();
     g_joinSentBySlot.fill(false);
 }
 
@@ -174,6 +189,11 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         if (nickUtf8.size() > 200) nickUtf8.resize(200);
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
         joinPayload.insert(joinPayload.end(), nickUtf8.begin(), nickUtf8.end());
+        // v73 per-player inventory: append [uint8 guidlen][guid ASCII] after the nick. The
+        // HOST keys this peer's inventory file by it. ASCII hex (<=255); absent -> empty.
+        const uint8_t guidLen = static_cast<uint8_t>(g_localGuid.size() > 255 ? 255 : g_localGuid.size());
+        joinPayload.push_back(guidLen);
+        joinPayload.insert(joinPayload.end(), g_localGuid.begin(), g_localGuid.begin() + guidLen);
         joinPayloadBuilt = true;
     }
     if (session.SendReliableToSlot(slot, net::ReliableKind::Join,
@@ -195,6 +215,7 @@ void OnSlotDisconnected(int slot) {
     // departed peer's name in the HUD toasts. NicknameForSlot falls back to
     // a placeholder when this is empty.
     g_remoteNickBySlot[slot].clear();
+    g_guidBySlot[slot].clear();  // v73: drop the departed peer's inventory GUID for this slot
 }
 
 const std::wstring& NicknameForSlot(int slot) {
@@ -204,6 +225,15 @@ const std::wstring& NicknameForSlot(int slot) {
     static const std::wstring kPlaceholder = L"Remote player";
     if (slot < 0 || slot >= net::kMaxPeers) return kPlaceholder;
     return g_remoteNickBySlot[slot];
+}
+
+bool IsValidGuid(const std::string& guid) {
+    if (guid.size() != 32) return false;
+    for (char c : guid) {
+        const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!hex) return false;
+    }
+    return true;
 }
 
 bool HandleJoinMessage(net::Session& session,
@@ -240,10 +270,32 @@ bool HandleJoinMessage(net::Session& session,
     const uint8_t* nickStart = msg.payload + 4;
     size_t nickRemaining = msg.payloadLen - 4;
     std::wstring nick = g_remoteNickBySlot[senderSlot];
+    size_t nickFieldLen = 0;  // bytes the nick field [u8 len][bytes] occupies (0 if malformed/absent)
     if (nickRemaining > 0) {
         const int len = nickStart[0];
-        if (1 + len <= static_cast<int>(nickRemaining) && len > 0)
-            nick = FromUtf8(nickStart + 1, len);
+        if (1 + len <= static_cast<int>(nickRemaining)) {
+            nickFieldLen = 1 + static_cast<size_t>(len);
+            if (len > 0) nick = FromUtf8(nickStart + 1, len);
+        }
+    }
+    // v73 per-player inventory: the GUID follows the nick: [u8 guidlen][guid ASCII]. Tolerate
+    // absence (a peer that sent none -> g_guidBySlot stays empty = first-join/empty inventory).
+    if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
+        const uint8_t* guidStart = nickStart + nickFieldLen;
+        const size_t guidRemaining = nickRemaining - nickFieldLen;
+        const int glen = guidStart[0];
+        if (glen > 0 && 1 + glen <= static_cast<int>(guidRemaining)) {
+            std::string guid(reinterpret_cast<const char*>(guidStart + 1), static_cast<size_t>(glen));
+            // SECURITY: this GUID becomes a host filesystem path component (coop_players/<guid>.json).
+            // VALIDATE to exactly 32 hex chars at the wire boundary (a peer's config could be
+            // tampered to send "..\\..\\evil") -- reject -> leave empty -> first-join/empty-inventory
+            // path, no host file written outside coop_players. (Adversarial-verify HIGH, 2026-06-14.)
+            if (IsValidGuid(guid))
+                g_guidBySlot[senderSlot] = std::move(guid);
+            else
+                UE_LOGW("handshake: slot %d sent a non-hex/oversize GUID (%d bytes) -- rejecting "
+                        "(empty-inventory fallback)", senderSlot, glen);
+        }
     }
     // Install mirror Player Element for this sender so future
     // ItemActivate/Weather/etc. packets bearing senderElementId

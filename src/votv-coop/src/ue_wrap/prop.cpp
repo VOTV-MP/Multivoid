@@ -274,6 +274,16 @@ bool IsFrozen(void* prop) {
     return ReadField<bool>(prop, P::off::Aprop_frozen);
 }
 
+void WriteStatic(void* prop, bool on) {
+    if (!prop) return;
+    *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_Static) = on;
+}
+
+void WriteFrozen(void* prop, bool on) {
+    if (!prop) return;
+    *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_frozen) = on;
+}
+
 bool IsSleeping(void* prop) {
     if (!prop) return false;
     return ReadField<bool>(prop, P::off::Aprop_sleep);

@@ -65,7 +65,7 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
     //    PlaySoundAtLocation UFunction are resolved + cached INSIDE
     //    ue_wrap::engine::PlaySoundAtLocation (section 5) now, so they no
     //    longer live here (RULE 2 -- one dispatch, shared with the trash-clump
-    //    throw whoosh in coop::clump_throw_sound).
+    //    throw whoosh in coop::prop_sound).
     static void* sSoundAsset  = nullptr;
     static void* sAttenuation = nullptr;
 

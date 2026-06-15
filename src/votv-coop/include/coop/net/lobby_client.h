@@ -33,13 +33,23 @@ struct LobbyRow {
     int  playersCur = 0;
     int  playersMax = 0;
     int  ageSec = 0;        // seconds since the host's last heartbeat
+    int  proto = 0;         // host's kProtocolVersion (v59 gate: JoinLobby rejects a
+                            // mismatch with an "update your mod" message; 0 = the host
+                            // predates the field -- not verifiable, the wire-level
+                            // protocol-mismatch close stays the backstop). 2026-06-11.
     bool locked = false;    // passworded (UI hint; gate is the game-layer join-secret)
+    bool direct = false;    // conn=="direct": a port-forwarded UDP host (browser
+                            // badge; join returns ip:port, not ICE creds). 2026-06-11.
 };
 
-// Everything a joining client needs to build a P2P coop::net::Config and dial the
-// host, returned by POST /v1/join. ok=false on any failure.
+// Everything a joining client needs to dial the host, returned by POST /v1/join.
+// ok=false on any failure. Two shapes (2026-06-11): direct=false -> the P2P/ICE
+// cred block below; direct=true -> just `addr` ("ip:port") for a plain LanDirect
+// UDP connect (the host forwarded its port; nothing to relay).
 struct JoinInfo {
     bool ok = false;
+    bool direct = false;
+    std::string addr;            // direct only: "ip:port" to ConnectDirect to
     std::string sessionId;
     std::string peerIdentity;    // our freshly-minted signaling identity
     std::string hostIdentity;    // the host's identity we dial
@@ -51,12 +61,25 @@ struct JoinInfo {
     std::string turnPass;
 };
 
+// The master's "latest released mod" record (GET /v1/latest, v59 launch toast).
+// ok=false when the master is unreachable / pre-v59 (404) -- the caller stays
+// silent in that case (never nag an offline player).
+struct LatestInfo {
+    bool ok = false;
+    int proto = 0;     // latest released kProtocolVersion
+    std::string mod;   // human tag, e.g. "0.9.0-n"
+    std::string url;   // release page (github)
+};
+
 class LobbyClient {
 public:
     // Kick off an async GET /v1/lobbies against `masterUrl` ("host:port"), optionally
     // filtered to `versionFilter` (empty = all). Non-blocking; a refresh already in
     // flight is coalesced (returns immediately). Results readable via CopyRows.
     void RefreshAsync(const std::string& masterUrl, const std::string& versionFilter);
+
+    // Blocking GET /v1/latest (the v59 launch toast). CALL ON A WORKER THREAD.
+    static LatestInfo FetchLatest(const std::string& masterUrl, int timeoutMs);
 
     // Render/game thread: copy the latest fetched rows into `out`. Returns the fetch
     // generation (increments on each completed refresh) so the caller can tell new

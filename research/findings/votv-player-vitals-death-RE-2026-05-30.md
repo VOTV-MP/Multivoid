@@ -501,3 +501,20 @@ STEP before the combat loop can close. (Detection half remains separately deferr
 Fallback if the BP can't be made to fire on the client: host computes the resulting
 health and the owner writes it directly (loses per-peer armor mitigation -- weigh vs
 RULE 1). Code committed as a wire-proven checkpoint; owner-apply marked blocked.
+
+### RESOLUTION 2026-06-13 (session 15) — the asymmetry was NEVER authority; the guard is CRACKED
+RE'd statically (no probe) during the Killer Wisp kill design (research/findings/
+votv-killerwisp-coop-design-2026-06-13.md). A full `_scan.py` sweep of `mainPlayer_C` for
+HasAuthority / NetMode / GetLocalRole / IsLocallyControlled / Authority / Standalone returned
+**ZERO hits in any function** — mainPlayer_C has NO networking primitives (authored single-player).
+The "Add Player Damage no-op on the client's own player" is the BP guard at `Add Player Damage`
+@705-841: `IFNOT(immortal || isDreaming || dead || startInvinc) -> else early-return (no damage)`.
+The call no-ops whenever any of those four scalars is set; `addDamage` funnels into the same entry.
+**`startInvinc`@0x0D42 defaults TRUE (CDO) and clears only one tick into BeginPlay (@3603 Delay(0)
+-> @3658 startInvinc:=false)** — the most likely cause of the prior client no-op (spawn-i-frame
+timing/state), NOT authority. CONSEQUENCE: the Inc3-WIRE owner-apply is NOT authority-blocked — the
+owner just needs to be past spawn i-frames (or clear startInvinc) and not immortal/dreaming/dead.
+And the lethal primitive `ragdollMode(true,false,true)` does NOT share that guard (its only gate is
+`canRagdoll`@0xD10, default true) — proven to kill a client's OWN possessed player identically to
+the host. Use DIRECT `ragdollMode(true,false,true)` for a forced kill, NOT `kill()` (gated by
+`dead||startInvinc`).

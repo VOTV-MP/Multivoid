@@ -6,6 +6,8 @@
 #include "coop/prop_lifecycle.h"
 
 #include "coop/element/element.h"
+#include "coop/element/mirror_manager.h"  // SyncDestroyedTrackedProp reads the key off the element
+#include "coop/element/prop.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
@@ -495,14 +497,26 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 bool RegisterExtraKeyedInitObservers() {
     if (g_extraKeyedInitDone) return true;
     struct Extra { const wchar_t* cls; bool* done; };
-    static bool sTrash = false, sClump = false, sChip = false;
+    static bool sTrash = false, sClump = false, sChip = false, sFood = false;
     static int  sAttempts = 0;
     constexpr int kMaxAttempts = 120;  // ~2 min at the ~1 Hz throttled call rate
     const Extra extras[] = {
         { L"trashBitsPile_C",     &sTrash },
         { L"prop_garbageClump_C", &sClump },
         { L"actorChipPile_C",     &sChip  },
+        // prop_food_C (2026-06-11 pinecone-scare RE): the food base OWNS an Init
+        // override and loads LATE (after the one-shot subclass scan latched), so
+        // its derived leaves -- prop_food_pinecone_C (the RNG pinecone scare),
+        // and every other food prop with no Init of its own -- dispatch THIS
+        // unhooked Init and never live-broadcast their spawn. Empirically proven:
+        // a force-spawned prop_food_pinecone_C produced no host Init-POST/SPAWN
+        // line; the client only saw it 30 s late + at rest via the snapshot drain
+        // (the scare drop/bounce lost). Registering prop_food_C::Init here closes
+        // it for the whole food lineage (the same late-load gap as the trash
+        // classes above).
+        { L"prop_food_C",         &sFood  },
     };
+    constexpr int kExtraCount = static_cast<int>(std::size(extras));
     const std::wstring kInitName(P::name::PropInitFn);
     int done = 0;
     for (const auto& e : extras) {
@@ -534,10 +548,10 @@ bool RegisterExtraKeyedInitObservers() {
             *e.done = true; ++done;
         }
     }
-    if (done == 3) {
+    if (done == kExtraCount) {
         g_extraKeyedInitDone = true;
-        UE_LOGI("grab_hook[extra]: all 3 keyed garbage classes resolved/handled -- trash-ball "
-                "Init catch complete (O(1) hereafter)");
+        UE_LOGI("grab_hook[extra]: all %d late-load keyed classes resolved/handled (trash-ball + "
+                "food/pinecone Init catch) -- O(1) hereafter", kExtraCount);
         return true;
     }
     // O(1)-safety bound (audit 2026-05-31): cap the retry so Install() reaches its
@@ -548,12 +562,13 @@ bool RegisterExtraKeyedInitObservers() {
     // FindClass walk terminates rather than running for the whole session.
     if (++sAttempts >= kMaxAttempts) {
         g_extraKeyedInitDone = true;
-        UE_LOGW("grab_hook[extra]: gave up after %d attempts -- unresolved: %s%s%s; Init catch "
+        UE_LOGW("grab_hook[extra]: gave up after %d attempts -- unresolved: %s%s%s%s; Init catch "
                 "latched to keep Install() O(1) (re-arms next session)",
                 sAttempts,
                 sTrash ? "" : "trashBitsPile_C ",
                 sClump ? "" : "prop_garbageClump_C ",
-                sChip  ? "" : "actorChipPile_C ");
+                sChip  ? "" : "actorChipPile_C ",
+                sFood  ? "" : "prop_food_C ");
         return true;
     }
     return false;
@@ -562,6 +577,49 @@ bool RegisterExtraKeyedInitObservers() {
 }  // namespace
 
 // ---- public API --------------------------------------------------------
+
+// See prop_lifecycle.h. The sandbox Q-menu / toolgun spawn's own init() is
+// dispatched EX_LocalVirtualFunction from its UCS (BP-internal) so it never
+// fires our Aprop_C::Init POST observer; coop/host_spawn_watcher catches the
+// spawn at FinishSpawningActor POST (where init has already minted the Key) and
+// calls this to run the IDENTICAL keyed broadcast. Direct call (no GT::Post):
+// the caller guarantees the game thread (FinishSpawningActor POST is GT). The
+// shared HasProcessedInit latch dedupes vs an Init-POST that did fire.
+void ExpressSpawnedProp(void* actor) {
+    GrabObserver_Aprop_Init_POST_Body(actor);
+}
+
+void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
+    // See prop_lifecycle.h. Contract: NEVER dereference `actorKey` (the caller
+    // may hold a PendingKill or GC-purged pointer; v67 kerfur_convert calls
+    // this a tick after the BP-internal destroy). The wire key comes from the
+    // ELEMENT; the pointer is only the tracker maps' key.
+    if (!actorKey || eid == coop::element::kInvalidId) return;
+    std::string key8;
+    {
+        auto* el =
+            coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
+        if (!el) return;  // already drained -- double call / raced the real PRE
+        key8 = el->GetName();
+    }
+    auto* s = LoadSession();
+    if (s && s->connected()) {
+        coop::net::PropDestroyPayload dp{};
+        dp.key.len = 0;
+        for (size_t i = 0; i < key8.size() && i < 31; ++i) {
+            dp.key.data[dp.key.len++] = key8[i];
+        }
+        dp.elementId = eid;  // eid rides along (keyless elements route by it)
+        UE_LOGI("prop_lifecycle[explicit destroy]: broadcasting DESTROY key='%s' eid=%u (BP-internal K2_DestroyActor -- v67 converge)",
+                key8.c_str(), static_cast<uint32_t>(eid));
+        s->SendPropDestroy(dp);
+    }
+    // Same teardown the organic K2_DestroyActor PRE runs: processed-Init latch
+    // out, then UnmarkKnownKeyedProp (key index + reverse map + Element drain
+    // via ElementDeleter). Both are pointer-as-map-key only.
+    PT::UnmarkProcessedInit(actorKey);
+    PT::UnmarkKnownKeyedProp(actorKey);
+}
 
 void SetSession(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);

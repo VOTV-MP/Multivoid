@@ -130,3 +130,8 @@ research/clumpvis_shots/
 # BP reflection RE workspace (binaries + extracted copyrighted game content -- dev/RE only, never shipped)
 research/pak_re/
 research/bp_reflection/
+
+# Voice-chat RE reference: a 54MB downloaded clone (saved HTML page + a nested
+# git clone of simple-voice-chat + a Bukkit .jar). Heavy third-party reference,
+# not collaborative source -- same policy as the other reference binaries above.
+reference/VoiceChatMC/

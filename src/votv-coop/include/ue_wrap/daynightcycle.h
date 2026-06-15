@@ -37,4 +37,26 @@ bool ReadClock(float& totalTime, float& day, float& timeScale);
 // cycle's own ReceiveTick then re-derives the sun. No-op if not resolved. Game thread.
 void ApplyClock(float totalTime, float day, float timeScale);
 
+// ---- U6 day-roll suppression (v65; coop/time_sync drives these) ----
+// RE (2026-06-12 daynight agent pass): the midnight task/email/points cascade
+// is a TICK-THRESHOLD trigger (`day > MaxTime` inside ReceiveTick), armed on
+// every peer -- a connected client would roll its OWN task batch (different
+// RNG) and the 6am `func_newHour` would place a DUPLICATE automatic drone
+// order (incl. an instant one at join when the first clock snap crosses
+// 06:00 with dailyDelivery=false). Suppression is state-level, not a timer
+// kill: the client's day only advances via our corrections (always < MaxTime
+// -- the host wraps in-tick), so writing TimeScale=0 makes the whole cascade
+// structurally unreachable client-side while sun/sky visuals keep deriving
+// from the corrected `day`.
+
+// Write TimeScale alone (1.0f = the game's own restore value, uber @10703;
+// used by the disconnect restore). No-op if unresolved.
+void WriteTimeScale(float scale);
+
+// saveSlot.dailyDelivery := true -- the game's OWN 6am-order latch (its only
+// writers are the suppressed midnight reset and the order placement itself,
+// so one write holds for the session). Called with every clock correction;
+// cheap (cached offsets + one bool write). False until saveSlot resolves.
+bool LatchDailyDelivery();
+
 }  // namespace ue_wrap::daynightcycle

@@ -1,5 +1,6 @@
 #include "coop/dev/restore_vitals.h"
 
+#include "coop/dev/dev_gate.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/game_thread.h"
@@ -55,6 +56,12 @@ void ApplyLocally() {
 }
 
 void Restore() {
+    // Strict client lockout: a joined client refilling its own vitals is a
+    // survival cheat in someone else's game (coop::dev_gate).
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("restore_vitals: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
     // Local apply runs on the game thread (saveSlot writes touch BP state); the
     // broadcast is wire-thread-safe, so this is safe to call from the menu (render
     // thread). Best-effort: if the Session isn't connected, the local apply still

@@ -99,6 +99,8 @@ VC_DEFINE_OFFSET(MainPlayer_holding_actor,        L"mainPlayer_C", L"holding_act
 VC_DEFINE_OFFSET(MainPlayer_lookAtActor,          L"mainPlayer_C", L"lookAtActor")  // 0x0AA0: the actor the player is aiming at (door target on E-press)
 VC_DEFINE_OFFSET(MainPlayer_isRagdoll,            L"mainPlayer_C", L"isRagdoll")
 VC_DEFINE_OFFSET(MainPlayer_dead,                 L"mainPlayer_C", L"dead")
+VC_DEFINE_OFFSET(MainPlayer_activeInterface,      L"mainPlayer_C", L"activeInterface")  // 0x07E0: THE inside-a-device discriminator (v63 occupancy)
+VC_DEFINE_OFFSET(MainPlayer_HitResult,            L"mainPlayer_C", L"HitResult")        // 0x0744: FHitResult(0x88); Actor weakptr at +0x68 (deny aim-clear)
 
 VC_DEFINE_OFFSET(AnimBP_kerfur_walkSpeed,           P::name::AnimBPKerfurRegularClass, L"walkSpeed")
 VC_DEFINE_OFFSET(AnimBP_kerfur_Pawn,                P::name::AnimBPKerfurRegularClass, L"Pawn")

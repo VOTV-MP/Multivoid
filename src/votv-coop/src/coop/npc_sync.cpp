@@ -23,6 +23,7 @@
 #include "coop/npc_mirror.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
+#include "ue_wrap/kerfur.h"  // HasSaveKey -- v75 EntitySpawn savePersisted flag (NPC adoption gate)
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"      // ReadCharacterIsFalling (NPC in-air state bit)
 #include "ue_wrap/reflection.h"
@@ -63,8 +64,9 @@ inline coop::net::Session* LoadSession() {
 // other latches that depend on Install having completed.
 std::atomic<bool> g_installed{false};
 
-// 12 NPC UClass* pointers (zombie/kerfur/krampus/funguy/goreSlither/insomniacs/
-// fossilhounds/antibreathers/orborbs + 3 ariral variants), resolved at install
+// NPC UClass* pointers (the 12 enemy classes -- zombie/kerfur/krampus/funguy/
+// goreSlither/insomniacs/fossilhounds/antibreathers/orborbs + 3 ariral variants
+// -- plus the additions killerwisp_C/ventCrawler_C), resolved at install
 // from the kNpcAllowlist names in sdk_profile.h. Sized by kNpcAllowlistSize
 // so a future addition to the allowlist constant binds the array length too.
 void* g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize] = {};
@@ -351,6 +353,11 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
         // time -- the prior function-local-static check-then-write was a
         // data race on parallel-anim worker threads (audited 2026-05-28).
         coop::net::EntitySpawnPayload p{};
+        // v75: a RUNTIME interceptor spawn fires AFTER the client's save-load is done, so the
+        // client has no local twin for it -> savePersisted stays 0 -> the client fresh-spawns a
+        // mirror. (Save-persisted NPCs reach the client via the world-enum/connect-snapshot path,
+        // which sets savePersisted=1.) Explicit for intent; p{} already zero-inits it.
+        p.savePersisted = 0;
         if (g_npcSpawnXformParamOff >= 0) {
             // FTransform layout: FQuat Rotation (16B) + FVector Translation (12B)
             // + FVector Scale3D (12B) -- 48 bytes total, but UE4 also aligns to
@@ -494,6 +501,21 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
 
 void SetSession(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
+}
+
+bool IsInstalled() {
+    // True once Install's attempt completed (it stops retrying). HAPPY path:
+    // g_installed latches true only AFTER all kNpcAllowlistSize classes resolve
+    // (a partial resolve early-returns WITHOUT latching), so a latched install
+    // that resolved the allowlist resolved ALL of it -- IsAllowlistedClass is
+    // then fully usable. BROKEN-build paths (BeginDeferred UFunction / params
+    // unresolvable) latch true with a NULL allowlist to stop retrying; the
+    // reconcile sweep then safely no-ops (IsAllowlistedClass returns false for
+    // unresolved slots). Deliberately ignores g_npcSyncDisabledThisProcess
+    // (interceptor-disabled but allowlist still resolved): callers must not
+    // block unrelated prop/door replay on the NPC interceptor being live. See
+    // the header for the full invariant.
+    return g_installed.load(std::memory_order_acquire);
 }
 
 void MarkIncomingNpcSpawn(void* npcClass) {
@@ -776,6 +798,23 @@ void ClearIncomingNpcSpawn() {
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
 }
 
+coop::element::ElementId GetNpcIdForActor(void* actor) {
+    if (!actor) return coop::element::kInvalidId;
+    std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+    auto it = g_actorToNpcId.find(actor);
+    return it == g_actorToNpcId.end() ? coop::element::kInvalidId : it->second;
+}
+
+void SyncDestroyedNpcActor(void* actor) {
+    // The K2_DestroyActor PRE body, callable for destroys that PRE cannot see
+    // (BP-internal by-name K2_DestroyActor -- kerfurOmega.dropKerfurProp). The
+    // body uses `actor` as a MAP KEY only (find/erase + Take(eid) +
+    // SendEntityDestroy) -- never dereferences it -- so it is safe on a
+    // PendingKill or even GC-purged pointer, and a double call (or a call
+    // racing the real PRE) no-ops on the map miss.
+    NpcDestroy_PRE(actor, nullptr, nullptr);
+}
+
 bool GetDevSpawnRefs(DevSpawnRefs& out) {
     // Valid only once Install resolved the GameplayStatics UFunctions + CDO
     // (g_installCacheFinishSpawnFn / g_installCacheGsCdo cached in Install's
@@ -858,6 +897,37 @@ int RegisterExistingWorldNpcs() {
             g_actorToNpcId[obj] = eid;
         }
         ++registered;
+        // v67 (kerfur_convert): make the registration VISIBLE now -- broadcast
+        // EntitySpawn for the newly-registered NPC to connected peers.
+        // BP-internal spawns (EX_CallMath BeginDeferred -- e.g. prop_kerfurOmega.
+        // spawnKerfuro's kerfur) never pass the interceptor, so without this a
+        // mid-session spawn existed host-only until the next connect edge. At
+        // the connect edge itself this duplicates QueueConnectBroadcastForSlot's
+        // send for freshly-found NPCs -- harmless: the receiver's OnEntitySpawn
+        // drops a duplicate eid early (NpcMirrors().Get(eid) != nullptr -- a
+        // logged skip, not a re-install; audit I1 2026-06-12).
+        if (s->connected()) {
+            coop::net::EntitySpawnPayload p{};
+            const std::string& tn = el->GetTypeName();
+            p.className.len = 0;
+            for (size_t k = 0; k < tn.size() && k < 63; ++k)
+                p.className.data[p.className.len++] = tn[k];
+            p.elementId = static_cast<uint32_t>(eid);
+            const auto loc = ue_wrap::engine::GetActorLocation(obj);
+            const auto rot = ue_wrap::engine::GetActorRotation(obj);
+            p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
+            p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+            // v75: savePersisted flag for client-side class-match ADOPTION. A non-None int_save
+            // Key == this pre-existing NPC is a save object both peers booted (the kerfur) -> the
+            // joiner adopts its own local twin instead of duplicating. A host-spawned transient
+            // enemy has no key -> savePersisted=0 -> fresh-spawn. (v74 shipped the key VALUE for
+            // key-equality match -- abandoned: the kerfur's key is minted RANDOM per load.)
+            p.savePersisted = ue_wrap::kerfur::HasSaveKey(obj) ? 1 : 0;
+            if (!s->SendEntitySpawn(p)) {
+                UE_LOGW("npc-sync[world-enum]: SendEntitySpawn failed for newly-registered eid=%u",
+                        p.elementId);
+            }
+        }
     }
     if (found > 0)
         UE_LOGI("npc-sync[world-enum]: registered %d pre-existing world NPC(s) "

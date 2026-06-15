@@ -120,6 +120,23 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_subdirectory(third_party/GameNetworkingSockets EXCLUDE_FROM_ALL)
 
+# --- voice chat substrate (v66; votv-voice-chat-port-design-2026-06-12.md) ---
+# libopus (BSD-3, vendored shallow clone pinned v1.5.2) -- the voice codec
+# (the same lib Simple Voice Chat wraps via opus4j). Own CMake; inherits the
+# global /MT runtime property set above.
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING        OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS      OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
+
+# miniaudio (public-domain/MIT-0 dual, vendored single header pinned 0.11.22)
+# -- capture + playback devices + enumeration (WASAPI underneath), replacing
+# SVC's javax.sound/OpenAL stack. One C TU (minhook pattern: our own static
+# target on the same CRT). Spatialization is OURS (the SVC REDUCED-mode pan),
+# so no 3D-audio engine features are compiled in.
+add_library(miniaudio STATIC third_party/miniaudio/miniaudio.c)
+target_include_directories(miniaudio PUBLIC third_party/miniaudio)
+
 # nlohmann/json (MIT, header-only, via the vcpkg manifest) -- parses the master
 # server's JSON (lobby list + host/join responses) in coop/net/lobby_*. RULE 13:
 # don't hand-roll a JSON parser for untrusted network input.
@@ -130,6 +147,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/log.cpp
     src/ue_wrap/sig_scan.cpp
     src/ue_wrap/reflection.cpp
+    src/ue_wrap/engine_heap.cpp
     src/ue_wrap/hook.cpp
     src/ue_wrap/game_thread.cpp
     src/ue_wrap/engine.cpp
@@ -151,7 +169,16 @@ add_library(votv-coop SHARED
     src/ue_wrap/power_control.cpp
     src/ue_wrap/atv.cpp
     src/ue_wrap/drone.cpp
+    src/ue_wrap/windturbine.cpp
+    src/ue_wrap/door_box.cpp
+    src/ue_wrap/device_screen.cpp
+    src/ue_wrap/space_renderer.cpp
+    src/ue_wrap/console_desk.cpp
+    src/ue_wrap/dish.cpp
+    src/ue_wrap/sleep.cpp
+    src/ue_wrap/email.cpp
     src/ue_wrap/passwordlock.cpp
+    src/ue_wrap/wisp.cpp
     src/ue_wrap/swinger.cpp
     src/ue_wrap/engine_pawn.cpp
     src/ue_wrap/engine_widget.cpp
@@ -160,11 +187,17 @@ add_library(votv-coop SHARED
     src/ue_wrap/call.cpp
     src/ue_wrap/fname_utils.cpp
     src/ue_wrap/ftext_utils.cpp
+    src/ue_wrap/fstring_utils.cpp
+    src/ue_wrap/signal_dynamic.cpp
+    src/ue_wrap/saved_signals.cpp
     src/ue_wrap/puppet.cpp
+    src/ue_wrap/kerfur.cpp
+    src/ue_wrap/votv_lib.cpp
     src/ue_wrap/economy.cpp
     src/ue_wrap/order_economy.cpp
     src/ue_wrap/prop.cpp
     src/ue_wrap/vitals.cpp
+    src/ue_wrap/spawn_menu.cpp
     src/coop/remote_player.cpp
     src/coop/remote_prop.cpp
     src/coop/save_guard.cpp
@@ -175,7 +208,14 @@ add_library(votv-coop SHARED
     src/coop/nameplate.cpp
     src/coop/chat_feed.cpp
     src/coop/event_feed.cpp
+    src/coop/event_dispatch_entity.cpp
+    src/coop/event_dispatch_state.cpp
+    src/coop/event_dispatch_world.cpp
+    src/coop/chat_sync.cpp
+    src/coop/turbine_sync.cpp
     src/coop/interactable_sync.cpp
+    src/coop/kerfur_convert.cpp
+    src/coop/kerfur_command.cpp
     src/coop/keypad_sync.cpp
     src/coop/time_sync.cpp
     src/coop/sky_sync.cpp
@@ -191,9 +231,11 @@ add_library(votv-coop SHARED
     src/coop/item_activate.cpp
     src/coop/player_damage.cpp
     src/coop/flashlight_click_sound.cpp
-    src/coop/clump_throw_sound.cpp
+    src/coop/prop_sound.cpp
+    src/coop/inventory_pickup_sync.cpp
     src/coop/shutdown.cpp
     src/coop/players_registry.cpp
+    src/coop/npc_adoption.cpp
     src/coop/npc_mirror.cpp
     src/coop/npc_pose_drive.cpp
     src/coop/npc_pose_host.cpp
@@ -202,10 +244,12 @@ add_library(votv-coop SHARED
     src/coop/prop_element_tracker.cpp
     src/coop/prop_lifecycle.cpp
     src/coop/prop_snapshot.cpp
+    src/coop/prop_stick_sync.cpp
     src/coop/prop_synth_key.cpp
     src/coop/remote_prop_spawn.cpp
     src/coop/garbage_sync.cpp
     src/coop/ambient_spawner_suppress.cpp
+    src/coop/host_spawn_watcher.cpp
     src/coop/trash_collect_sync.cpp
     src/coop/trash_pile_sync.cpp
     src/coop/weather_sync.cpp
@@ -230,18 +274,48 @@ add_library(votv-coop SHARED
     src/coop/session_manager.cpp
     src/coop/join_progress.cpp
     src/coop/net_pump.cpp
+    src/coop/subsystems.cpp
+    src/coop/local_streams.cpp
+    src/coop/device_occupancy.cpp
+    src/coop/console_state_sync.cpp
+    src/coop/signal_catch_sync.cpp
+    src/coop/sleep_sync.cpp
+    src/coop/wisp_attack_sync.cpp
+    src/coop/wisp_tear_mirror.cpp
+    src/coop/player_inventory_sync.cpp
+    src/coop/inventory_wire.cpp
+    src/ue_wrap/inventory.cpp
+    src/coop/email_sync.cpp
+    src/coop/blob_chunks.cpp
+    src/coop/signal_wire.cpp
+    src/coop/signal_sync.cpp
+    src/coop/comp_sync.cpp
+    src/coop/voice/voice_chat.cpp
+    src/coop/voice/voice_capture.cpp
+    src/coop/voice/voice_playback.cpp
+    src/coop/net/session_voice.cpp
+    src/ui/voice_icons.cpp
+    src/ui/voice_panel.cpp
     src/coop/dev/add_points.cpp
     src/coop/dev/perf_probe.cpp
+    src/coop/dev/leak_probe.cpp
+    src/coop/dev/heap_probe.cpp
+    src/coop/dev/inventory_probe.cpp
     src/coop/dev/drone_probe.cpp
+    src/coop/dev/pinecone_probe.cpp
+    src/coop/dev/sleep_probe.cpp
+    src/coop/dev/event_trigger.cpp
     src/coop/dev/lightswitch_probe.cpp
     src/coop/dev/keypad_probe.cpp
     src/coop/dev/door_probe.cpp
     src/coop/dev/save_probe.cpp
+    src/coop/dev/dev_gate.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/freecam.cpp
     src/coop/dev/flashlight_setup.cpp
     src/coop/dev/pos_hud.cpp
     src/coop/dev/restore_vitals.cpp
+    src/coop/dev/spawn_menu_unlock.cpp
     src/coop/dev/spawn_npc.cpp
     src/coop/dev/teleport_client.cpp
     src/coop/dev/menu_proceed.cpp
@@ -254,6 +328,8 @@ add_library(votv-coop SHARED
     src/ui/loading_screen.cpp
     src/ui/console.cpp
     src/ui/hud.cpp
+    src/ui/toast.cpp
+    src/ui/chat_input.cpp
     src/coop/roster.cpp
     src/coop/ban_list.cpp
     src/coop/moderation.cpp
@@ -293,6 +369,8 @@ target_link_libraries(votv-coop PRIVATE
     GameNetworkingSockets::static
     bcrypt
     crypt32
+    opus       # v66 voice codec (third_party/opus, static)
+    miniaudio  # v66 capture/playback devices (third_party/miniaudio, static)
 )
 target_include_directories(votv-coop PRIVATE
     third_party/GameNetworkingSockets/include)
@@ -349,3 +427,5 @@ if (MSVC)
     # Export forwarders are declared via #pragma comment(linker,"/export:...")
     # in src/loader/xinput_proxy.cpp.
 endif()
+
+

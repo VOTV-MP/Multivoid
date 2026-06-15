@@ -10,7 +10,6 @@
 
 #include <windows.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -55,19 +54,39 @@ std::string ReadScenario() {
     return env.empty() ? "menu" : env;
 }
 
+// Trim leading/trailing whitespace (space, tab, CR, LF). The VALUE side of a key=value
+// line keeps its INTERIOR spaces verbatim: audio device names ("Voicemeeter Out B1
+// (VB-Audio ...)") are matched by substring against the enumerated device list, and the
+// old strip-ALL-whitespace read mangled them into never-matching strings, silently
+// falling back to the default device (the 2026-06-12 voice-inaudible root cause #1).
+// Keys themselves never contain spaces, so edge-trimmed key equality is exact.
+static std::string TrimEdges(const std::string& s) {
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return std::string();
+    const size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+
+// Split a raw ini line at the first '=' into an edge-trimmed key and an edge-trimmed,
+// interior-verbatim value. False for lines without '=' or with an empty key (comments,
+// blanks, section headers fall out naturally -- '#'/';' never equals a real key).
+static bool ParseIniLine(const std::string& line, std::string& key, std::string& value) {
+    const size_t eq = line.find('=');
+    if (eq == std::string::npos) return false;
+    key = TrimEdges(line.substr(0, eq));
+    value = TrimEdges(line.substr(eq + 1));
+    return !key.empty();
+}
+
 std::string ReadIniValue(const char* key, const char* def) {
     const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return def;
-    const std::string prefix = std::string(key) + "=";
     std::string result = def;
     char line[256];
     while (std::fgets(line, sizeof(line), f)) {
-        std::string s(line);
-        s.erase(std::remove_if(s.begin(), s.end(),
-                               [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
-                s.end());
-        if (s.rfind(prefix, 0) == 0) { result = s.substr(prefix.size()); break; }
+        std::string k, v;
+        if (ParseIniLine(line, k, v) && k == key) { result = v; break; }
     }
     std::fclose(f);
     return result;
@@ -75,14 +94,15 @@ std::string ReadIniValue(const char* key, const char* def) {
 
 void WriteIniValue(const char* key, const char* value) {
     const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
-    const std::string prefix = std::string(key) + "=";
-    // Scrub CR/LF from the value: an embedded newline (e.g. pasted into the name field)
-    // would split the "key=value" line and corrupt the NEXT key on the read-back. ReadIniValue
-    // already strips whitespace on read, so the value can't legitimately contain a newline.
+    // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
+    // would split the "key=value" line and corrupt the NEXT key on read-back), then
+    // edge-trim. Interior spaces are part of the value (device names) and round-trip
+    // verbatim through ReadIniValue's parse.
     std::string safe;
     for (const char* p = value; *p; ++p)
         if (*p != '\n' && *p != '\r') safe.push_back(*p);
-    value = safe.c_str();
+    safe = TrimEdges(safe);
+    const std::string newLine = std::string(key) + "=" + safe + "\n";
     // Read existing lines, replacing the key's line IN PLACE if present (so we keep
     // the rest of the ini -- sections, comments, other keys -- untouched).
     std::vector<std::string> lines;
@@ -93,12 +113,9 @@ void WriteIniValue(const char* key, const char* value) {
             char line[512];
             while (std::fgets(line, sizeof(line), f)) {
                 std::string s(line);
-                std::string stripped = s;
-                stripped.erase(std::remove_if(stripped.begin(), stripped.end(),
-                                              [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
-                               stripped.end());
-                if (!found && stripped.rfind(prefix, 0) == 0) {
-                    lines.push_back(prefix + value + "\n");
+                std::string k, v;
+                if (!found && ParseIniLine(s, k, v) && k == key) {
+                    lines.push_back(newLine);
                     found = true;
                 } else {
                     lines.push_back(s);
@@ -112,7 +129,7 @@ void WriteIniValue(const char* key, const char* value) {
         // line had no trailing newline.
         if (!lines.empty() && !lines.back().empty() && lines.back().back() != '\n')
             lines.back() += "\n";
-        lines.push_back(prefix + value + "\n");
+        lines.push_back(newLine);
     }
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"w") != 0 || !f) {
@@ -121,7 +138,7 @@ void WriteIniValue(const char* key, const char* value) {
     }
     for (const auto& l : lines) std::fputs(l.c_str(), f);
     std::fclose(f);
-    UE_LOGI("config: persisted %s=%s", key, value);
+    UE_LOGI("config: persisted %s=%s", key, safe.c_str());
 }
 
 // ---- Built-in (hardcoded) public net endpoints -- our VPS -----------------------
@@ -133,8 +150,10 @@ void WriteIniValue(const char* key, const char* value) {
 // stay in the local-only ini, or the master mints them per session; only net.master is
 // strictly required for the normal flow). The `net.master.custom=1` ini gate opts OUT
 // of these and uses the ini's own net.master / net.signaling (run-your-own-master).
-static constexpr const char* kBuiltinMasterUrl    = "87.121.218.33:10001";
-static constexpr const char* kBuiltinSignalingUrl = "87.121.218.33:10000";
+// The constants live in coop/net/protocol.h (kOfficial*Url) -- shared with the UI
+// display mask that prints "DEFAULT" instead of the raw VPS address.
+static constexpr const char* kBuiltinMasterUrl    = coop::net::kOfficialMasterUrl;
+static constexpr const char* kBuiltinSignalingUrl = coop::net::kOfficialSignalingUrl;
 
 // The custom-master gate. net.master.custom = 1/true/yes/on opts out of the hardcoded
 // VPS endpoints and uses the ini's net.master / net.signaling instead. Default OFF ->
@@ -217,9 +236,19 @@ static void FillP2PFields(coop::net::Config& c) {
     std::string ice = ReadEnv("VOTVCOOP_NET_ICE");
     c.iceMode = ice.empty() ? ReadIniValue("net.ice", "") : ice;
 
+    // Console-visible diagnostic: any endpoint on the OFFICIAL VPS host prints
+    // as "DEFAULT" -- the connect console must not advertise the raw address
+    // (the session_manager DisplayMaster twin; user 2026-06-10). A custom
+    // endpoint prints verbatim (its operator debugs with it).
+    auto maskOfficial = [](const std::string& v) -> std::string {
+        std::string host = coop::net::kOfficialMasterUrl;
+        const size_t colon = host.find(':');
+        if (colon != std::string::npos) host.resize(colon);
+        return v.rfind(host, 0) == 0 ? std::string("DEFAULT") : v;
+    };
     UE_LOGI("config: P2P fields -- identity='%s' host='%s' signaling='%s' stun='%s'",
             c.localIdentity.c_str(), c.hostIdentity.c_str(),
-            c.signalingUrl.c_str(), c.stunList.c_str());
+            maskOfficial(c.signalingUrl).c_str(), maskOfficial(c.stunList).c_str());
 }
 
 coop::net::Config ReadNetConfig(bool& enabled) {
@@ -267,7 +296,16 @@ std::string ReadMasterUrl() {
     // and mints the per-session signaling/STUN/TURN creds.
     std::string m = ReadEnv("VOTVCOOP_MASTER_URL");
     if (!m.empty()) return m;
-    if (UseCustomNetMaster()) return ReadIniValue("net.master", kBuiltinMasterUrl);
+    if (UseCustomNetMaster()) {
+        std::string v = ReadIniValue("net.master", kBuiltinMasterUrl);
+        // "DEFAULT" sentinel (the shipped release ini): resolves to the official
+        // server even under the custom gate -- the ini never needs the raw VPS
+        // address spelled out.
+        std::string lower = v;
+        for (char& c : lower) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        if (v.empty() || lower == "default") return kBuiltinMasterUrl;
+        return v;
+    }
     return kBuiltinMasterUrl;
 }
 
@@ -289,6 +327,35 @@ std::wstring ReadNickname() {
     std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
     if (nick.empty()) nick = ReadIniValue("net.nick", "Player");
     return std::wstring(nick.begin(), nick.end());
+}
+
+std::string ReadPlayerGuid() {
+    // Durable per-INSTALL player identity for the host-side per-player inventory
+    // (coop_players/<guid>.json). Read from votv-coop.ini "player_guid="; generate +
+    // persist on first launch / if absent or malformed. 32 lowercase hex chars (128 bits).
+    // Per-install identity is the accepted tradeoff (design 2.3 "go with guid"): a reinstall
+    // or a different PC = a fresh inventory unless the player_guid= line is copied over.
+    std::string guid = ReadIniValue("player_guid", "");
+    bool ok = guid.size() == 32;
+    if (ok) {
+        for (char c : guid)
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
+    }
+    if (!ok) {
+        // std::random_device is CSPRNG-backed on MSVC -- ample for a stable identity (no
+        // crypto guarantee needed). 4x32 bits -> 32 hex chars. Avoids a bcrypt include.
+        std::random_device rd;
+        static const char kHex[] = "0123456789abcdef";
+        guid.clear();
+        guid.reserve(32);
+        for (int w = 0; w < 4; ++w) {
+            const uint32_t r = rd();
+            for (int n = 28; n >= 0; n -= 4) guid.push_back(kHex[(r >> n) & 0xF]);
+        }
+        WriteIniValue("player_guid", guid.c_str());
+        UE_LOGI("config: generated new player_guid=%s (persisted to votv-coop.ini)", guid.c_str());
+    }
+    return guid;
 }
 
 }  // namespace harness::config

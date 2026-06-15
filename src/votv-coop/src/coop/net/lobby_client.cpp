@@ -26,6 +26,12 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
     // Detached worker. LobbyClient is a process-lifetime singleton (session_manager
     // owns it as a never-destroyed static), so `this` outlives the thread.
     std::thread([this, masterUrl, versionFilter] {
+      // try/catch around the whole body (audit F4): a std::bad_alloc from the
+      // row parse must not escape a detached thread (std::terminate) NOR leave
+      // inFlight_ latched true -- which would permanently coalesce every future
+      // RefreshAsync into a no-op, freezing the browser at "Refreshing...".
+      // Mirrors the try/catch every other action worker already has.
+      try {
         // Sanitize the version filter into the request line: keep only an unreserved
         // allowlist so a caller can never inject a space/CRLF/'#' into the HTTP
         // request line or a header (defensive -- the current caller passes empty).
@@ -59,7 +65,9 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                     r.playersCur = J::Int(e, "players_cur");
                     r.playersMax = J::Int(e, "players_max");
                     r.ageSec     = J::Int(e, "age");
+                    r.proto      = J::Int(e, "proto");  // v59 join gate (0 = pre-field host)
                     r.locked     = J::Bool(e, "locked");
+                    r.direct     = (J::Str(e, "conn") == "direct");  // 2026-06-11 direct lobbies
                     if (!r.lobbyId.empty()) parsed.push_back(std::move(r));
                 }
                 st = std::to_string(parsed.size()) +
@@ -75,8 +83,15 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
             ++generation_;
             status_ = st;  // keep st for the log line below
         }
-        UE_LOGI("lobby: refresh done -- %s [%s]", masterUrl.c_str(), st.c_str());
-        inFlight_.store(false);
+        // No raw master URL in this line: it mirrors into the user-visible
+        // console (the official server shows as "DEFAULT" elsewhere; the
+        // status string already carries the row count / error).
+        UE_LOGI("lobby: refresh done [%s]", st.c_str());
+      } catch (...) {
+        std::lock_guard<std::mutex> lk(mu_);
+        status_ = "refresh error";
+      }
+      inFlight_.store(false);  // ALWAYS clear (the latch that gates the next refresh)
     }).detach();
 }
 
@@ -89,6 +104,23 @@ uint64_t LobbyClient::CopyRows(std::vector<LobbyRow>& out) const {
 std::string LobbyClient::Status() const {
     std::lock_guard<std::mutex> lk(mu_);
     return status_;
+}
+
+LatestInfo LobbyClient::FetchLatest(const std::string& masterUrl, int timeoutMs) {
+    LatestInfo info;
+    const http::Response resp = http::Get(masterUrl, "/v1/latest", timeoutMs);
+    if (!resp.ok) { UE_LOGI("lobby: /v1/latest -- master unreachable (no toast)"); return info; }
+    if (resp.status != 200) {  // a pre-v59 master 404s -- silent, not an error
+        UE_LOGI("lobby: /v1/latest -- master returned %d (no toast)", resp.status);
+        return info;
+    }
+    J::Json j;
+    if (!J::ParseObject(resp.body, j)) { UE_LOGW("lobby: /v1/latest -- malformed response"); return info; }
+    info.proto = J::Int(j, "proto");
+    info.mod   = J::Str(j, "mod");
+    info.url   = J::Str(j, "url");
+    info.ok    = info.proto > 0;
+    return info;
 }
 
 JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobbyId,
@@ -108,6 +140,14 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
     J::Json j;
     if (!J::ParseObject(resp.body, j)) {
         UE_LOGW("lobby: join '%s' -- malformed response", lobbyId.c_str());
+        return info;
+    }
+    // Direct lobby (2026-06-11): the whole join capability is the host's addr.
+    if (J::Str(j, "conn") == "direct") {
+        info.direct = true;
+        info.addr = J::Str(j, "addr");
+        info.ok = !info.addr.empty();
+        if (!info.ok) UE_LOGW("lobby: join '%s' -- direct response missing addr", lobbyId.c_str());
         return info;
     }
     info.sessionId      = J::Str(j, "sessionId");

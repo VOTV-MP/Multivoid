@@ -197,6 +197,43 @@ void PollAndBroadcast() {
     }
 }
 
+// DEV-ONLY synthetic wipe (ini `window_synth=1`). One-shot, host-only: ~5s after
+// connect, decrement the first indexed window's `clean` via the SAME path a real
+// soapy-sponge wipe drives (WriteCleanAndApply -> field write + setClean repaint),
+// so the normal PollAndBroadcast below detects the decrease and broadcasts it. Used
+// to PROVE the live-wipe sync chain (host detect -> WindowCleanState -> client apply)
+// end-to-end autonomously, isolating any real-gesture bug to the clean@0x0260
+// detection. NOT shipped behavior -- gated off by default; remove the ini key for play.
+void MaybeSyntheticWipe() {
+    static const bool s_on = ::coop::ini_config::IsIniKeyTrue("window_synth");
+    if (!s_on) return;
+    static bool s_done = false;
+    static int  s_ticks = 0;
+    if (s_done) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (++s_ticks < 300) return;  // ~5s settle after connect (60 Hz tick)
+    void* actor = nullptr;
+    std::wstring key;
+    {
+        std::lock_guard<std::mutex> lk(g_indexMutex);
+        if (g_byKey.empty()) return;
+        auto& kv = *g_byKey.begin();
+        key = kv.first;
+        actor = kv.second.actor;
+    }
+    if (!actor || !R::IsLive(actor)) return;
+    float cur = 0.f;
+    if (!BW::ReadClean(actor, cur)) return;
+    float target = cur - 0.4f;
+    if (target < 0.f) target = 0.f;
+    BW::WriteCleanAndApply(actor, target);  // field write + setClean (the real wipe path)
+    s_done = true;
+    UE_LOGW("window[SYNTH]: dev synthetic wipe -- key='%ls' clean %.3f -> %.3f "
+            "(PollAndBroadcast should now send + the client should apply)",
+            key.c_str(), cur, target);
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -271,6 +308,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void Tick() {
     if (!BW::EnsureResolved()) return;
+    MaybeSyntheticWipe();  // dev-only, ini-gated one-shot (no-op unless window_synth=1)
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRetry >= kRetryRebuildThrottle) {
         g_lastRetry = now;

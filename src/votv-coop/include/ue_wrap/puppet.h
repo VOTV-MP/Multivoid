@@ -64,20 +64,22 @@ float GetSpawnMeshOffsetZ(void* localPlayer);
 // cached per actor. nullptr if none.
 void* GetSkeletalMeshComponent(void* puppetActor);
 
-// Drive the puppet's pose from a network snapshot value:
-//   * walkSpeed/spd (locomotion BlendSpace inputs; speed in cm/s, 0 = idle).
-//   * headLookAt (FRotator): the AnimBP-exposed head-bone look direction.
-//     - headPitch: streamed view pitch, degrees. Wire contract is the
-//       canonical FRotator axis range (-180, 180]; live values from VOTV's
-//       camera-clamped source sit well inside (-89, 89).
-//     - headYawDelta: head yaw RELATIVE to body (degrees). Currently always
-//       streamed as 0 -- the source actor's body yaw already lags the camera
-//       inside VOTV's Character, so the natural "head leads body" effect
-//       reproduces on the puppet for free when we stream actor yaw. Param
-//       kept for a future enhancement where the head's yaw lead is sent
-//       explicitly (e.g. free-look key without turning the body).
-// No-op if the live AnimInstance isn't resolved yet.
-void DriveAnimBP(void* puppetActor, float speed, float headPitch, float headYawDelta);
+// Drive the puppet head to a WORLD look-point so it shows WHERE THE REMOTE
+// PLAYER IS LOOKING (not auto-follow the local/observer camera). Uses the kerfur
+// NATIVE lookAt/customLookAt pipeline -- the SAME FAnimNode_LookAt path the NPC
+// mirror uses (WriteLookAtOnAnim) -- on the PUPPET's own AnimInstances, so it
+// cannot interfere with NPC head-follow (separate instances). customLookAt=true
+// stops the AnimBP re-aiming lookAt at the LOCAL PlayerCameraManager every tick
+// (the old "puppet head follows the observer" bug). Writes BOTH rendered kel
+// bodies' instances (mesh_playerVisible AND its AttachParent ACharacter::Mesh
+// slot -- the puppet renders two overlapped bodies, each with its own kerfur
+// AnimInstance; driving only one leaves the other auto-following = the round-2
+// hands-on bug). The caller (remote_player) reconstructs `worldTarget` from the
+// streamed camera yaw/pitch anchored at the puppet's head; the body-relative
+// LookAt clamps + RemotePlayer::UpdateBodyYaw's hold give "head leads, body
+// turns at the threshold". No-op if no live AnimInstance is resolved yet.
+// RE: research/findings/votv-puppet-head-look-RE-2026-06-11.md.
+void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 
 // DIAGNOSTIC (the "diff observable state" rule): read the live AnimInstance off a
 // SkeletalMeshComponent and log its key pose-driver variables. Call on the LOCAL
@@ -118,6 +120,14 @@ void DumpKerfurHeadGraph(void* skeletalMeshComponent);
 void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir);
+
+// PLAYER-puppet-only sprint knob: MaxWalkSpeed = class-default (walking) or
+// x2 (sprinting), mirroring mainPlayer's native updateSpeed. lib_C::step's
+// footstep VOLUME reads MaxWalkSpeed (NOT Velocity) -- without this a
+// sprinting remote sounds walk-quiet (sounds RE 2026-06-11 par.4). Kept
+// separate from DriveCharacterMovement because npc_pose_drive shares that
+// drive and NPC MaxWalkSpeed must stay untouched. Game thread only.
+void DriveSprintWalkSpeed(void* puppetActor, bool sprinting);
 
 // Symmetric read accessor for CMC.MovementMode -- returns true iff `actor`
 // is an ACharacter-derived pawn whose CMC reports MOVE_Falling (the wire

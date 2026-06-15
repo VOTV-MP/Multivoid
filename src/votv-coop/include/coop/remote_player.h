@@ -21,6 +21,8 @@
 
 #include "coop/lerp_window.h"
 #include "coop/net/protocol.h"
+#include "coop/puppet_body_yaw.h"
+#include "coop/puppet_footsteps.h"
 #include "ue_wrap/types.h"
 
 #include <cstdint>
@@ -280,6 +282,15 @@ private:
                                               // puppet's head visually follows where the
                                               // SOURCE is looking (free-look / camera lead).
     float            curSpeed_ = 0.f;
+    // Presentation body yaw (turn-in-place synthesis) -- what SetActorRotation
+    // actually shows; curYaw_ stays the WIRE truth. Reset on spawn / first
+    // packet / teleport snap / ragdoll recover; advanced each Tick. Full
+    // design doc + constants live in coop/puppet_body_yaw.h.
+    coop::puppet_body_yaw::State bodyYaw_{};
+    // Footstep stride emitter (2026-06-10): walks the interp displacement and
+    // dispatches the game's own lib_C::step every native stride -- the
+    // puppet's BP tick (where the native accumulator lives) is suppressed.
+    coop::puppet_footsteps::Stride footsteps_{};
     // v8 state flags (kStateBitInAir + reserved bits). NOT interpolated --
     // snapped on every SetTargetPose. Read by ApplyToEngine to drive the
     // puppet's CMC.MovementMode each tick: bit 0 set -> MOVE_Falling=3,

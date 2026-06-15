@@ -40,7 +40,22 @@ std::wstring GetKeyString(void* door);
 
 // Read the door's `isOpened` bool into `open`. Returns false if the read could
 // not be made (null door / not resolved); leaves `open` untouched on failure.
+// This is the animation-COMPLETED flag: it flips only when the swing reaches
+// the end (~0.5 s after the press). Diagnostics / "is it actually open now"
+// callers want this; the host poll wants the INTENT reader below.
 bool TryReadOpen(void* door, bool& open);
+
+// Like TryReadOpen but returns the door's swing INTENT, not its completion: while
+// the door is moving (`isMoving`) the destination is `move__Direction` (set at
+// swing-START), so an open/close is reported the instant it BEGINS instead of
+// ~0.5 s later when `isOpened` settles. A settled door reads `isOpened` (the
+// direction holds the last swing's value, which agrees). This is the door
+// channel's poll reader: it makes the HOST broadcast a door it opens at
+// swing-start, matching the CLIENT's input-edge DoorOpenRequest -- the fix for
+// the host->client open-lag asymmetry (2026-06-13: client opens mirrored frame-
+// perfect on the host because the client signals on the E-press edge; the host's
+// own opens lagged because the poll waited for isOpened to complete the swing).
+bool TryReadOpenIntent(void* door, bool& open);
 
 // True iff a player's manual E-press would open/toggle this door RIGHT NOW, per the
 // door's OWN engine logic. BYTE-EXACT from the BP disassembly (door CFG, 2026-06-06):
@@ -73,6 +88,12 @@ bool CallDoorClose(void* door, bool bypass);
 // so an unlocked door stays openable (CanOpen) after the code, independent of whether
 // the native keypad chain completed. Plain field write; no UFunction. Game thread.
 void SetActive(void* door, bool on);
+
+// Read the door's `Active` (power) flag. True on null/unresolved (fail-OPEN, matching
+// CanOpen). Callers SAVE the gate before a temporary clear so the restore puts back the
+// REAL value -- a locked door's false must survive the E-press dispatch (restoring a
+// hardcoded true silently unlocked locked doors client-side; user 2026-06-12 round 2).
+bool GetActive(void* door);
 
 // The doorOpen / doorClose UFunction pointers (for POST-observer registration by
 // coop::door_sync). nullptr until EnsureResolved succeeds.

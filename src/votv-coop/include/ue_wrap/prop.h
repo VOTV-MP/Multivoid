@@ -114,6 +114,16 @@ bool IsStatic(void* prop);
 // prop won't move even if grabbed (e.g. quest-locked containers).
 bool IsFrozen(void* prop);
 
+// Write Aprop_C.Static / Aprop_C.frozen on a LIVE prop -- the wall-attachable
+// stick/unstick mirror (v68 prop_stick_sync). Plain field writes; the caller
+// follows with a ProcessEvent init() dispatch so the BP recomputes
+// SetSimulatePhysics/collision from the new flags (the SP unstick shape:
+// comp_wallAttachable.unstick = frozen=false + static=false + init()).
+// Null-safe no-ops. CALLER must have established `prop` is a live
+// Aprop_C-derived actor (same contract as the readers). Game thread.
+void WriteStatic(void* prop, bool on);
+void WriteFrozen(void* prop, bool on);
+
 // Reads Aprop_C.sleep at +0x02DD. True = the prop is physics-SLEEPING (settled,
 // not actively simulating). SP parity: Aprop_C::init() =
 // SetSimulatePhysics(NOT(static||frozen||sleep)) -> a save-loaded settled prop has

@@ -32,6 +32,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 struct EntitySpawnPayload;
@@ -80,7 +81,24 @@ void SetClientRefs(const ClientRefs& refs);
 //
 // Host echo: defensive no-op when role() == Host (host doesn't receive
 // its own broadcasts; this is paranoia).
+//
+// v75: routes by payload.savePersisted. A host-spawned transient (savePersisted=0, no local twin)
+// is fresh-spawned here via SpawnFreshNpcMirror. A save-persisted NPC (savePersisted=1 -- the
+// kerfur, which the joining client ALSO loaded from the transferred save) is handed to
+// coop::npc_adoption::ArmAdoption for deferred class-match adoption of its local twin (the local
+// twin spawns via un-hookable EX_CallMath; its int_save key is RANDOM per peer so key-equality is
+// impossible -- only class + untracked-local is portable).
 void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
+
+// Fresh-spawn a host NPC mirror: BeginDeferred + FinishSpawning a NEW actor of `actorClass`, park
+// it (CMC + actor ticks off; kerfur AI-timer neutralize), and Install it as mirror `elementId`.
+// `actorClass` must already be resolved + allowlist-validated by the caller. Used by OnEntitySpawn
+// for host-spawned transients AND by coop::npc_adoption as the TIMEOUT FALLBACK when a save-
+// persisted NPC's local twin never materialized. Returns true on success. Game thread; requires
+// SetClientRefs to have run.
+bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
+                         float locX, float locY, float locZ,
+                         float rotPitch, float rotYaw, float rotRoll);
 
 // Inc3 receiver (client-side, host-broadcast NPC teardown). Resolves
 // the mirror Element via MirrorManager<Npc>::Take(payload.elementId),
@@ -96,6 +114,33 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload);
 // Thread: game thread only (K2_DestroyActor is a UFunction call;
 // ProcessEvent is GT-only). Caller is expected to be on the GT.
 void DrainClientMirrors();
+
+// v75 CLIENT world-swap teardown: drop every client mirror whose actor was freed by a level load
+// (a dangling Element -- the host sends no EntityDestroy on a client world-swap). RELEASE-ONLY (no
+// K2_DestroyActor: the actor is gone); still-live mirrors are KEPT. Without this, a save-transfer
+// join's second level load cannot re-mirror/re-adopt the same host eid (OnEntitySpawn + ArmAdoption
+// early-return on Get(eid)!=nullptr against the stale Element). Called from
+// npc_adoption::OnClientWorldReady. Game thread only.
+void PruneDeadClientMirrors();
+
+// CLIENT-side host-authoritative reconciliation (2026-06-13). Destroy every
+// live allowlisted-NPC actor on this client that is NOT a host-streamed mirror
+// (i.e. not bound to an Npc in MirrorManager<Npc>). Such an actor is a "ghost":
+// a save-load NPC that spawned before the suppressor armed (save-transfer join
+// loads the host's save -- with its NPCs -- before npc_sync::Install completes),
+// or any client BP spawn that escaped suppression. Returns the count destroyed.
+//
+// This enforces the invariant "on a client, the only allowlisted NPCs are host
+// mirrors" (MTA shape: client elements are server-authoritative; a join/resync
+// reconciles the client set to the server's). ORDER-INDEPENDENT of mirror
+// arrival: a tracked mirror is in the snapshot and is KEPT whether it
+// materialized before or after this sweep, so it is safe to run any time after
+// npc_sync::IsInstalled() (allowlist resolved). No-op off the client.
+//
+// Thread: game thread only (K2_DestroyActor is a ProcessEvent call). Cold path:
+// one GUObjectArray walk per call (caller fires it once per (re)announce), like
+// npc_sync::RegisterExistingWorldNpcs.
+int DestroyUntrackedClientNpcs();
 
 // v37 CLIENT pose-stream drive: drain the latest EntityPose batch (Session::TakeRemoteNpcBatch)
 // -> open an interp window per NPC (SetTargetNpcPose), then advance + drive EVERY live mirror

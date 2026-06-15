@@ -162,6 +162,35 @@ void StartEnumerationFor(int peerSlot) {
     }
     UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
+
+    // EAGER host pile death-watch enroll (2026-06-13, save-transfer pile-dupe fix).
+    // The pile grab morph (playerGrabbed -> turnToPile -> K2_DestroyActor) is
+    // ProcessEvent-INVISIBLE, so trash_collect_sync's death-watch is the SOLE
+    // destroy signal. The enroll used to be LAZY (per-pile, as DrainChunk expressed
+    // each chunk), so during the ~9-tick drain of ~870 piles, a pile the HOST
+    // grabbed before its chunk was reached was UNWATCHED -> no PropDestroy was sent
+    // -> the client's mirror pile lived on = the dupe the user hit on a save-transfer
+    // join. Enroll EVERY live chipPile candidate up front so a host grab at ANY time
+    // during (or after) the drain broadcasts PropDestroy(eid). Idempotent per eid;
+    // `quiet` keeps this off the log (one summary line below, not ~870). Host-only
+    // path (StartEnumerationFor only runs on the snapshotting host). Connect-edge
+    // cold path: ~870 GetActorLocation reads once per join, not per frame.
+    {
+        int enrolled = 0;
+        for (size_t i = 0; i < g_snapshotCandidates.size(); ++i) {
+            void* obj = g_snapshotCandidates[i];
+            const coop::element::ElementId eid = g_snapshotEids[i];
+            if (eid == coop::element::kInvalidId || eid == 0) continue;
+            if (!ue_wrap::prop::IsChipPile(obj)) continue;
+            coop::trash_collect_sync::WatchPile(obj, static_cast<uint32_t>(eid), /*quiet=*/true);
+            ++enrolled;
+        }
+        if (enrolled > 0)
+            UE_LOGI("snapshot: eager-enrolled %d chipPile(s) in the host death-watch (slot %d) -- "
+                    "a host grab during the drain now broadcasts PropDestroy(eid)",
+                    enrolled, peerSlot);
+    }
+
     g_snapshotSentTotal = 0;
     // v34: OPEN the joiner's loading-screen bracket. Send the candidate count (the progress
     // denominator) on Lane::Bulk BEFORE the first PropSpawn, so GNS in-lane ordering puts it
@@ -499,17 +528,12 @@ void DrainChunk() {
         // Cached eid from StartEnumerationFor, hoisted above the keyless
         // check (no per-candidate prop-tracker mutex; audit fix 2026-05-28).
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
-        // Fork B HALF 1 host-grab coverage: the pile grab morph is
-        // ProcessEvent-invisible, so v52's death-watch is the only destroy
-        // path -- but it only enrolled receiver OnSpawn mirrors + owner
-        // converts. NOTHING covered the HOST grabbing a pile it snapshot-
-        // streamed: enroll every expressed pile here (idempotent per eid) so
-        // a host grab kills the client's mirror via PropDestroy(eid).
-        if (ue_wrap::prop::IsChipPile(obj) &&
-            eid != coop::element::kInvalidId && eid != 0) {
-            // WatchPileAt: reuse the loc read above (perf audit W-3).
-            coop::trash_collect_sync::WatchPileAt(obj, eid, loc);
-        }
+        // NOTE: host pile death-watch enrollment is EAGER now -- done up front in
+        // StartEnumerationFor for ALL live chipPiles (not lazily per-expressed
+        // chunk here). The old per-chunk enroll left a pile UNWATCHED during the
+        // multi-tick drain window before its chunk was reached, so a host grab in
+        // that window sent no PropDestroy -> client dupe. RULE 2: one enroll site
+        // (StartEnumerationFor), not two. See the eager loop there.
         // Send to ONE slot only. Other peers (already-connected) already
         // have these props from their own connect-edge drain.
         s->SendReliableToSlot(g_currentTargetSlot,

@@ -20,6 +20,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace ue_wrap::ftext_utils {
 
@@ -32,5 +33,16 @@ inline constexpr int kFTextSize = 0x18;
 // Returns false (out untouched) if the Kismet text library isn't resolvable yet (still
 // booting / at the menu). Game-thread only (ProcessEvent dispatch on first mint).
 bool EmptyFText(void* out);
+
+// Mint a live FText from `s` via UKismetTextLibrary::Conv_StringToText and copy its
+// 0x18 bytes into `out`. The mint's +1 ref deliberately leaks (the ParamFrame raw-free
+// mechanism documented above) so the copied bytes stay valid for the consumer's own
+// deep-copy -- negligible at human event rates (v64 email mirror). Game thread.
+bool MintFText(const wchar_t* s, void* out);
+
+// The inverse: read an engine FText's display string via
+// UKismetTextLibrary::Conv_TextToString. `ftext` points at 0x18 FText bytes (e.g. a
+// struct member on a live object). Empty on failure / unresolved. Game thread.
+std::wstring FTextToString(const void* ftext);
 
 }  // namespace ue_wrap::ftext_utils

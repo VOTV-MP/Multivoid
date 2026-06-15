@@ -3,6 +3,7 @@
 #include "coop/shutdown.h"
 
 #include "coop/net/session.h"
+#include "coop/player_inventory_sync.h"  // v73: flush inventories on shutdown
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"
@@ -191,6 +192,10 @@ void DoShutdown() {
 
     UE_LOGI("shutdown: BEGIN cleanup (flag set; session=%p hwnd=%p)",
             g_session, g_subclassedHwnd.load(std::memory_order_relaxed));
+
+    // v73: flush each connected peer's last inventory blob to <guid>.json BEFORE the session
+    // stops (after Stop the slots are gone). Pure file I/O on captured bytes -- safe here.
+    coop::player_inventory_sync::FlushAllToDisk();
 
     if (g_session) g_session->Stop();
     ::Sleep(100);  // let detached pollers observe g_shuttingDown

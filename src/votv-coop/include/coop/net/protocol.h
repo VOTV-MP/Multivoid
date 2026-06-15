@@ -492,10 +492,228 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // v57 (2026-06-10): TrashPileState -- the trashBitsPile_C collect-counter mirror (amountA/B int
 // pair, poll + proximity death-watch + adopt connect-snapshot; coop/trash_pile_sync). RE:
 // findings HANDS-ON ROUND 2 (4); bytecode-grounded by the trashBitsPile RE agent pass.
-inline constexpr uint16_t kProtocolVersion = 57;
+// v58 (2026-06-11): InventoryPickup -- the iconic inventory-collect blip (inventory_Cue), audible
+// at the collecting peer's position on every OTHER peer. Natively PlaySound2D = 2D collector-only;
+// the collector's machine POST-observes UGameplayStatics::PlaySound2D (EX_FinalFunction on the CDO
+// = ProcessEvent-visible; gated Sound==inventory_Cue + pitch~1.1 + WorldContextObject==local
+// player -- the game-wide cue census has zero other matches) and broadcasts its position; peers
+// play the cue spatialized there. coop/inventory_pickup_sync; RE:
+// votv-inventory-pickup-seam-RE-2026-06-11.md.
+// v59 2026-06-11: KeypadSyncPayload + `event` byte (KeypadEvent Accept/Deny) -- the short-code
+// submit mirror; receivers run the keypad's native Open(Active) chain instead of the deleted
+// host-side buffer==password accept poll (which fired without the accept press and latched the
+// LED green forever -- the 2026-06-11 keypad bug).
+// v60 2026-06-11: + ChatMessage=48 (the T-chat line; peer-symmetric, host-relayed).
+// v61 2026-06-11: + TurbineState=49 (wind-turbine facing/spin mirror, host-auth ~1 Hz).
+// v62 2026-06-11: + LockerDoorState=50 (locker + drone-console hinged doors, symmetric toggle).
+// v63 2026-06-12: + DeviceClaim=51 -- enterable-device OCCUPANCY (base computers/terminals
+// phase 1, user design: ONE peer "inside" an enterable screen device at a time; a second
+// peer's E gets DENIED with the game's own button_keypad_deny sound). Host-arbitrated
+// first-wins claim table keyed by the SHARED-WIDGET identity (desk-coords / sat / radar /
+// reactor / laptop are one claim each -- their screens are literally one shared widget
+// instance; transformer panels + arcade props are per-instance via quantized position).
+// Claim = activeInterface rising edge (poll; every enter call is EX_LocalVirtualFunction,
+// PE-invisible); deny = InpActEvt_use PRE aim-clear (the door HostAuth precedent); loser
+// force-exit = reflected setActiveInterface(null) (the game's own ragdollMode exit path).
+// Screen-STATE mirror (desk blob / dish aim / sky-signal host-roller / email deltas) is
+// phase 2. RE: votv-base-computers-RE-2026-06-11.md.
+// v64 2026-06-12: base-computers PHASE 2 increment 1 (screen-state mirror, RE doc SS4-5):
+// SkySignalState=52 (host-authoritative sky-signal SET snapshot, parts of 3 wire rows --
+// the coords-minigame targets were pure per-peer RNG; the client's spawnSignal roller
+// timer is killed and its widget lifetimes become wire-driven, so the client set is a
+// pure mirror) + SkySignalCatch=53 (the desk-claim holder's catch relayed to the host
+// roller) + DeskState=54 (the desk's live-visible scalars + the coordLog tail:
+// claim-owner cadence + any-peer button edges + adopt snapshot) + DishAimState=55
+// (spaceRenderer.coords dish-aim stream while the desk is claimed). Email/saved-signal
+// deltas reserved as the NEXT increment. RE: votv-computers-phase2-impl-RE-2026-06-12.md.
+// v65 2026-06-12: base-computers PHASE 2 increment 3 (the remaining computers block).
+// + EmailDelete=57 -- the player's del-button (ui_laptop.delEmail) mirrors cross-peer.
+// CONTENT-KEYED (FNV-1a 64 of the row's serialized EmailAppend blob), NOT index-keyed:
+// a producer appends natively BEFORE its row relays, so concurrent appends give peers
+// different array ORDERS and a wire index can name a different row per peer. Each peer
+// shadows saveSlot.emails (per-row POD instance key read raw off the array bytes --
+// zero reflected calls in the steady-state poll -- plus the blob hash captured at
+// first sight: prime / local append / wire apply); a poll diffs positionally under the
+// append-at-tail invariant and broadcasts removed rows' hashes; receivers resolve
+// their local index by hash and run the native ui_laptop.delEmail. A short-TTL
+// tombstone set closes the delete-beats-chunked-append race.
+// + SavedSignalAppend=58 / SavedSignalDelete=59 -- the same shadow/diff/content-hash
+// shape on gamemode.savedSignals_0 (the desk signal library); apply = reflected
+// gamemode.saveSignal / deleteSignal (native pane refresh); image PNG deferred to a
+// bulk lane. + CompState=60 / CompData=61 -- the refiner decode pane: single-simulator
+// doctrine (the native latch holder streams; mirrors render passively -- the decode
+// ticker has no occupancy gate and completion fires world triggers incl. the theEvil_C
+// spawn, so a latched mirror would double-produce). Client world-up UNLATCH kills the
+// save-transfer's setData->comp_start auto-resume on joiners (pre-existing
+// double-simulation bug since v56). EmailChunkPayload generalized to BlobChunkPayload
+// (coop/blob_chunks owns chunked send/reassembly for kinds 56/58/61, RULE 2).
+// + U6 day-cycle suppression (NO new kind): a connected CLIENT writes
+// daynightCycle.TimeScale=0 with every clock correction (the midnight task/email/
+// points cascade + savedtime.Z roll become structurally unreachable client-side --
+// host's rolls mirror via the email/order channels) and latches
+// saveSlot.dailyDelivery=true (kills the 6am duplicate auto-order INCL. the join-edge
+// instant fire); disconnect restores TimeScale=1 (the game's own restore value).
+// RE: the 2026-06-12 comp/savedSignals/daynight agent passes.
+// v66 2026-06-12: PROXIMITY VOICE CHAT (the Simple-Voice-Chat port, svc-voice-chat-RE +
+// votv-voice-chat-port-design 2026-06-12; MTA transport precedent CVoiceDataPacket --
+// voice multiplexes over the main session, NO second socket, so SVC's entire UDP
+// security layer (magic/AES secret/auth/keepalive/ping) is dropped, not ported).
+// + MsgType::VoiceFrame=64 -- 20 ms / 48 kHz mono opus frames (VOIP + FEC 5%), per-sender
+// voice seq, empty stop-marker ends a burst (encoder/decoder reset both ends); receiver
+// jitter buffer (threshold 3) + <=5-frame PLC + 100 ms prebuffer; linear distance
+// attenuation 1-d/maxDist (4800 cm, whisper 2400) + SVC REDUCED-mode stereo pan, mixed
+// in a miniaudio playback callback from per-slot PCM rings; capture = miniaudio device
+// -> gain+limiter -> PTT 'X' / threshold activation (-50 dB) -> opus encode (SPSC to the
+// game thread). Host relays VoiceFrame to all ready slots (no distance cull at <=4
+// peers; receiver attenuation zeroes out-of-range audio). + ReliableKind::VoiceState=62
+// {micMuted, voiceDisabled} display-only edges. Vendored: libopus v1.5.2 (BSD) +
+// miniaudio 0.11.22 (public domain), third_party/. Modules: coop/voice/*.
+// v67 2026-06-12: KERFUR ON/OFF CONVERSION host-authoritative (the user dupe: "client
+// turns kerfur-prop on, then off -> host sees 2 kerfurs"). Ground truth (kismet,
+// votv-kerfur-convert-RE-2026-06-12): both conversion verbs are BP-INTERNAL
+// (EX_CallMath BeginDeferred + by-name K2_DestroyActor) -- INVISIBLE to the
+// ProcessEvent detour, so the client's local conversion was never suppressed/tracked
+// and the host's own conversion never registered its spawn (zero npc-suppress[client]
+// / npc-sync[host] broadcast lines across all real-session logs = the BeginDeferred
+// interceptor has never fired for game-BP spawns; mid-session NPC sync rode the
+// connect-edge walk alone). Fix: PRE-cancel the PE-VISIBLE menu dispatchers on the
+// client (kerfurOmega_C::actionName 'turn_off' / prop_kerfurOmega_C::actionOptionIndex
+// action==8) -> ReliableKind::KerfurConvertRequest=63 {elementId, toProp}; the HOST
+// executes the real verb (dropKerfurProp / spawnKerfuro via ProcessEvent, the BP's
+// kill-guard replicated) and CONVERGES the BP-internal side effects explicitly:
+// !IsLive actor -> the factored destroy-sync (EntityDestroy / PropDestroy); new prop
+// (+floppy) -> ExpressSpawnedProp walk-ingest; new NPC -> RegisterExistingWorldNpcs,
+// which now also broadcasts EntitySpawn for newly-registered NPCs while connected.
+// Host menu conversions ride the same converge via a pending queue (interceptor may
+// not Post). Module: coop/kerfur_convert.
+// v68 2026-06-12: WALL-ATTACHABLE STICK mirror (user: client sticks the camera to a
+// wall, host sees it fall). RE (votv-camera-stick-RE agent pass, 2026-06-12): the
+// stick is comp_wallAttachable_C's held-proximity poll -- commit (ubergraph entry 45,
+// reached ONLY via a latent Delay resume = PE-VISIBLE) sets prop.frozen (or .Static
+// when pryingRequired) + init() (physics off) + K2_AttachToComponent KeepWorld +
+// eff_OC_freeze VFX + a 0.25 s glide to the surface; unstick = re-grab (frozen=false
+// + init()). Every spawn/field-write inside is BP-internal -- our prop pipeline never
+// saw it, and the receiver-side release/timeout paths unconditionally re-enabled
+// physics (the fall). Fix: POST observer on ExecuteUbergraph_comp_wallAttachable
+// (EntryPoint==45) -> next-pump-pass PropStickState{key,eid,flags,commit pose}
+// broadcast (ReliableKind 64, relayed like other symmetric prop state; NO settle
+// delay -- the stick must beat the sender's hold-break PropRelease on their shared
+// lane, and the receiver re-derives the settled pose itself); receiver
+// stops any drive, re-poses, re-enables simulate and PE-dispatches the BP's OWN
+// forceStick(true) (full SP parity: field+attach+VFX; raw frozen-write+init+re-pose
+// fallback when the receiver-side trace diverges -- SP's own save-load degraded
+// mode). Unstick mirrors through the existing pose stream: a stuck WALL-ATTACHABLE
+// mirror unsticks when a SUSTAINED PropPose stream arrives (>=5 fresh poses --
+// 1-2 stale in-flight packets sent between the sender's commit and its hold-break
+// must not unstick it), and the release/timeout physics re-enable is gated on
+// !frozen/!static. Module: coop/prop_stick_sync.
+// v69 2026-06-12: DRONE ROTOR-DUST anchor (user: dust shows on host, never on
+// clients). Bytecode RE (research/pak_re/drone_dust_notes.md): eff_droneDust is
+// bAbsoluteLocation with NO relative offset -- it sits at WORLD ORIGIN until
+// drone_C's per-tick chain K2_SetWorldLocation's it to the ground-trace hit
+// (and the PS is EmitterLoops=1/20s -- it completes and needs the per-tick
+// IsActive!=want re-arm). The client mirror suppresses that tick -> the old
+// one-shot SetActive+param replay ran at origin, frustum-culled = invisible.
+// Fix: DroneStatePayload grows the host's dust-anchor world location (28->40 B);
+// the client replays the BP's own three calls per packet (SetActive on
+// IsActive!=want, K2_SetWorldLocation(anchor), SetFloatParameter('dust',
+// 1-dist/2000)). Divergence from the RE's preferred client-local re-trace:
+// streaming the host's anchor avoids hand-building the SphereTraceSingleFor-
+// Objects frame (two TArrays + FHitResult by-ref) -- 12 B on an existing
+// 20 Hz host->client stream. Module: coop/drone_sync + ue_wrap/drone.
+// v70 2026-06-12: STOLAS SIGNAL-CATCH CONSUME REPLAY (the round-3 "client caught a
+// signal, host's downloader said NO SIGNAL / dishes never slewed / terminal full of
+// blank lines" report; RE: votv-stolas-signal-catch-RE-2026-06-12.md). The SP consume
+// chain after gatherSignal (coord_signalData write -> row delete -> ALL gamemode.dishs
+// startMovingTo -> arrival -> dishesStop -> formDownload arms the downloader) ran
+// occupant-local only. Now: SkySignalCatch=53 grows from a 20 B row-delete relay into
+// the full 80 B consume replay {wire row from the catcher's coord_signalData; the exact
+// startMovingTo slew vector read off a just-started dish; kind 0=catch/1=cleared}.
+// Catcher detection (claim holder, 1 Hz): row vanished from `signals` AND a dish
+// isMoving RISING edge in the same poll -- the dish edge is the success signature
+// (expiry deletes a row with no dish movement; a FAILED ping writes the struct but
+// moves no dish; this also catches a success on a re-pinged identity the struct
+// already pointed at, which the RE doc's struct-changed AND-detector missed). Host
+// validates the desk-claim holder, replays, rebroadcasts to everyone but the catcher.
+// Receiver replay: coord_signalData := wire row (raw POD + StringToFName) ->
+// RemoveSignalByIdentity -> reset the download machine (signalName None + mesh null +
+// initDownloadSignal(0,0,-1) -- the @33832 delete-chain shape; mesh-null also makes
+// the native @4602 pulse zero resDetect) -> playPingSound(pingSuccess) -> dish::
+// StartMovingAll(slew) -- the NATIVE chain then self-runs per peer (random per-dish
+// delays, activeDishes bookkeeping, dishesStop -> formDownload(0,-1)) = downloader,
+// letter-board lamps, signalFound trigger all arm with zero extra wire. slewValid=0
+// fallback (no moving dish found -- e.g. joiner replay after dishes settled): receivers
+// arm formDownload directly. kind=1 (cleared, the 'Signal data deleted' button):
+// objectName->None edge detected on ANY peer (unclaimed trust, matches the physical
+// button), replay = the @33832-34222 chain minus the log line. Joiner: host sends one
+// catch replay when coord_signalData is armed (identity from the desk struct).
+// + DeskLogLine=65 REPLACES the DeskState coordLog tail diff (RULE 2: the 96-char
+// sliding-window tail protocol was structurally lossy -- the 0.2 s coordLog2 timer
+// appends ~5 animated lines/s, the 1 Hz window slid past more text than it carried,
+// the receiver's no-overlap fallback re-appended fragments = the blank/garbled mirror
+// terminal). Producer-side EXACT diff (one local monotone text), complete CRLF lines
+// only, ANIMATED lines filtered by prefix (CDOWN:/AREA SCAN:/APPROXIMATION:/ANALYSIS:/
+// CR:[ -- those self-generate on every peer from mirrored scalars); only the 9 one-shot
+// event lines ride the wire (host-relayed); receiver appends via writeToCoordLog_2
+// (native CRLF + repaint + 1000-cap) and advances its own diff baseline (echo-proof).
+// + DeskStatePayload reshaped (152->60 B): coordLog[96]+len GONE (DeskLogLine), canDL
+// GONE (DERIVED -- canSaveSignal recomputes it per detector pulse from resDetect +
+// decoded>=size; a wire write would oscillate against the local recompute), + dlDecoded
+// /dlPolarity ADOPT-ONLY fields (DL_SignalDownloadDLData progress for the joiner
+// catch-up, applied via formDownload(decoded,polarity) once its mesh arms; live
+// streaming REJECTED -- bytecode @66736-68635 shows decoded accrues per tick on EVERY
+// armed peer (no occupancy gate), so an advance-triggered stream would make all peers
+// 1 Hz senders forever, the exact v69 RAM-balloon shape; per-peer accrual converges
+// natively once the catch replay arms everyone). + DishAimStatePayload carries
+// ui_coordinates.Direction (the catch-gate panel toggle) in its pad (40 B unchanged).
+// Modules: coop/signal_catch_sync (new) + ue_wrap/dish (new) + coop/console_state_sync.
+// v71 2026-06-13: SLEEP GATE (Minecraft-style night skip; RE: votv-sleep-nightmare-RE-
+// 2026-06-12.md). SP sleep = ONE engine call (SetGlobalTimeDilation(20) @70543) + ONE
+// world flag (mainGamemode.isSleep @0x04EC), both PER-PROCESS -- a lone coop sleeper
+// would run its whole local world at 20x while the shared clock (host-authored,
+// time_sync) stands still, and awake peers' vitals would drain at 20x if it were
+// shared. Gate: a peer entering a bed keeps the native cosmetic half (sleepingPawn +
+// sleepCam) but sleep_sync's per-tick enforcement undoes the dilation to 1.0 while
+// WAITING (polling the isSleep edge -- deliberately NOT the RE doc's sleep() detour:
+// the poll covers every entry path (interaction, probes, a host already asleep when a
+// client connects) with no new hook surface, at a <=1-tick undo lag). Each peer's
+// isSleep edge reports inBed over ReliableKind::SleepState=66; the HOST tallies
+// world-ready peers and broadcasts the "N/M sleeping" counter (chat feed) -- when ALL
+// are in bed it broadcasts ACCELERATE (each sleeping peer sets its own dilation 20;
+// vitals refill at the native dilated rate per peer; the client clock free-runs at
+// TimeScale=1 for the phase -- time_sync::SetSleepAccelerate -- so the sky pans
+// smoothly instead of stepping on 2 s corrections). END = any peer's isSleep falling
+// edge (natural host wake / manual exit / hunger / event / nightmare -- all funnel
+// through gamemode.wakeup): host broadcasts End{natural}; receivers still in bed run
+// the native wakeup() reflected, and ONLY a NATURAL end (the host slept to >=100)
+// grants every peer saveSlot.sleep=100 -- wakeup FIRST, need-write AFTER, because
+// wakeup rolls the 10% gearer gift iff sleep>=99 at call time (write-first would gift
+// every mirror every night). CLIENTS clamp their need at 99 during the phase (only
+// the HOST ends the night naturally -- one authority, no first-to-fill race) and run
+// dreamProbability=0 for the whole session (nightmares HOST-ONLY by design; the
+// host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
+// a host nightmare wakes the house structurally: createDream wakeup()s before the
+// dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
+inline constexpr uint16_t kProtocolVersion = 75;  // v75: EntitySpawn drops WireKey, carries a savePersisted flag instead
+                                                  // (NPC adoption is now class-match via a deferred poll, NOT key-equality:
+                                                  // kerfurOmega::loadData drops the int_save key restore so the key is RANDOM
+                                                  // per-peer -- bytecode-proven; only is-a-save-object is portable).
+                                                  // v74: EntitySpawn carried the int_save Key (FAILED -- key non-deterministic)
+                                                  // + EntityPoseSnapshot carries kerfur State/face (host-authoritative mirror).
+                                                  // v73: Join appends [u8 guidlen][guid] -- per-player inventory identity
 
 // Default LAN port (overridable via votv-coop.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
+
+// The OFFICIAL (built-in) public endpoints -- our VPS. PUBLIC connection
+// endpoints, not secrets (every client connects to them); the signaling TOKEN
+// / TURN creds are never compiled in. ONE definition here (coop/net) so the
+// harness config resolver AND the UI display mask share it: user-visible
+// surfaces (the shipped ini, the connect console, browser status) show the
+// word "DEFAULT" instead of the raw address when the master equals this --
+// no need to advertise the VPS IP in plain sight (user 2026-06-10).
+inline constexpr const char* kOfficialMasterUrl    = "87.121.218.33:10001";
+inline constexpr const char* kOfficialSignalingUrl = "87.121.218.33:10000";
 
 // PR-2 v10 (2026-05-28): GNS owns handshake (Hello), graceful disconnect
 // (Bye), RTT (Ping/Pong), and reliable acks (ReliableAck). Those five
@@ -522,6 +740,18 @@ enum class MsgType : uint8_t {
                        //      TickPoseStream); the client interpolates + drives the mirror's CMC
                        //      (npc_mirror, the RemotePlayer-twin element::Npc). One datagram for
                        //      all NPCs (<=kMaxNpcBatchEntries, MTU-capped).
+    VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
+                       //      opus frame (SVC pipeline port, MTA transport shape: voice
+                       //      multiplexes over the main session, no second socket). A STREAM,
+                       //      not a state: the receiver queues every arrival into a per-sender
+                       //      voice inbox (FIFO) -> jitter buffer; the per-payload voice seq
+                       //      (NOT the header seq) drives PLC/reorder there, so the newest-wins
+                       //      header-seq drop the pose kinds use does NOT apply. Host relays to
+                       //      every other ready slot (no distance cull at <=4 peers -- the
+                       //      RECEIVER's linear attenuation hits zero past the radius anyway;
+                       //      deliberate divergence from the port design's host cull, which
+                       //      would have needed engine positions on the net thread). Body:
+                       //      VoiceFramePayload (8 B head + opusLen bytes).
 };
 
 // Payload kinds carried inside a Reliable message. The chat/event-feed groundwork:
@@ -788,14 +1018,16 @@ enum class ReliableKind : uint8_t {
                        //     re-broadcasts the new total to all. CLIENT->host only; not
                        //     relayable. Payload: BalancePayload.
     KeypadState = 25,  // 2026-06-06 (v35): password-keypad INPUT mirror (ApasswordLock_C). v38: + active (cancel->red).
+                       //     v59: + event (the short-code submit mirror -- see KeypadEvent).
                        //     SYMMETRIC, MTA input-replication. The keypad verbs are BP-internal
                        //     (bypass our ProcessEvent detour), so the SENDER POLLS each keypad's
-                       //     inPassword each tick and broadcasts on a buffer change, keyed by
+                       //     {inPassword, active} each tick and broadcasts on a change, keyed by
                        //     AtriggerBase_C::Key. The RECEIVER REPLAYS inputNumber(digit) for the
-                       //     typed-buffer delta (native display+beep; Reset() on a clear; upd()
-                       //     to repaint) -- which drives the keypad's OWN native validator, so on
-                       //     the HOST a client's correct code is accepted natively (no guessed
-                       //     output mirror, no unreachable submit verb). isAcc/isDeny were REMOVED
+                       //     typed-buffer delta (native display+beep; direct buffer clear on a
+                       //     shrink -- NEVER the Reset() verb, that's set-new-code mode; upd()
+                       //     to repaint) -- which drives the keypad's OWN native validator (the
+                       //     BP auto-submits at Len>=5), and runs the native Open(Active) chain
+                       //     for a stamped short-code Accept/Deny event. isAcc/isDeny were REMOVED
                        //     v35: the door BP disassembly (2026-06-06) proved they are crosshair-
                        //     HOVER flags, not accept state -- mirroring both was the "PURPLE"; the
                        //     door lock keys on the door's own `Active` (DoorState/CanOpen). Host
@@ -961,9 +1193,11 @@ enum class ReliableKind : uint8_t {
                        //     (NOT relayed; trust-gated senderPeerSlot==0, like SkyState). Cargo
                        //     (the delivered box) rides the EXISTING Aprop_C prop pipeline -- no
                        //     drone cargo packet. Phase 2 = flyingType/hasSack FX + the console
-                       //     call (client->host) + radar Active. Payload: DroneStatePayload (28 B).
+                       //     call (client->host) + radar Active; v69 adds the rotor-dust anchor
+                       //     (the dust component's ground-pinned world location -- see the v69
+                       //     header note). Payload: DroneStatePayload (40 B).
                        //     coop/drone_sync + ue_wrap/drone. RE: votv-delivery-drone-RE-and-
-                       //     coop-sync-design-2026-06-03.md.
+                       //     coop-sync-design-2026-06-03.md + research/pak_re/drone_dust_notes.md.
     OrderRequest = 39, // 2026-06-09 (v49): delivery-drone ECONOMY -- a CLIENT forwards a laptop
                        //     shop order to the HOST so the shared drone delivers it. VOTV has NO UE
                        //     replication, so a client's makeAnOrder is 100% client-LOCAL (Array_Adds
@@ -1060,6 +1294,280 @@ enum class ReliableKind : uint8_t {
                        //     + pose stream. Payload: TrashPileStatePayload (40 B). Module:
                        //     coop/trash_pile_sync. RE: the trashBitsPile bytecode pass
                        //     (findings HANDS-ON ROUND 2 (4)).
+    InventoryPickup = 47, // 2026-06-11 (v58): the inventory-collect BLIP (inventory_Cue,
+                       //     the "Half-Life pickup") made audible to OTHER peers. Natively
+                       //     putObjectInventory2 plays it PlaySound2D = 2D collector-only,
+                       //     and a remote collect reaches peers only as a bare PropDestroy --
+                       //     structurally silent. The collector POST-observes GameplayStatics::
+                       //     PlaySound2D (EX_FinalFunction on the CDO = ProcessEvent-visible)
+                       //     gated on Sound==inventory_Cue + pitch~1.1 + WCO==local player
+                       //     (zero other matches in the game-wide cue census; fires once per
+                       //     successful collect across all 26 putObjectInventory2 call sites)
+                       //     and broadcasts its world position; every other peer plays the cue
+                       //     spatialized there (vol 1.0 / pitch 1.1 / att_default). PEER-
+                       //     SYMMETRIC + host-relayed (firefly shape). Payload:
+                       //     InventoryPickupPayload (12 B). Module: coop/inventory_pickup_sync
+                       //     (+ prop_sound playback). RE: votv-inventory-pickup-seam-RE-
+                       //     2026-06-11.md.
+    ChatMessage = 48,  // 2026-06-11 (v60): the T-chat line (user req "chat on T, rule 1").
+                       //     PEER-SYMMETRIC + host-relayed (firefly relay shape): any peer
+                       //     types in the T input bar (ui/chat_input); the line broadcasts
+                       //     and every receiver pushes "<nick>: <text>" into chat_feed (the
+                       //     nick resolves from senderPeerSlot via player_handshake -- the
+                       //     wire carries TEXT only, identity comes from the transport).
+                       //     The feed's existing TTL fade gives the requested disappear-
+                       //     when-idle; ESC closes the input (the game pause menu opens
+                       //     normally). Payload: ChatMessagePayload (<=220 B). Module:
+                       //     coop/chat_sync (+ ui/chat_input).
+    TurbineState = 49, // 2026-06-11 (v61): GIANT WIND TURBINE facing/spin mirror (user req:
+                       //     "their direction diverges between client and host"). HOST-
+                       //     authoritative, ~1 Hz per turbine (~13 placed): the turbine BP is
+                       //     a per-tick SERVO chasing the directionalWind direction (which v50
+                       //     already syncs) -- divergence comes from the NON-persisted servo
+                       //     integrator `rot` resetting to 0 each world load + a 1 deg/s chase
+                       //     + per-peer numeric noise during calm + a BeginPlay rand(0.9,1.0)
+                       //     blade-rate multiplier. The host streams the 6 driver floats; the
+                       //     client writes them RAW (no engine calls -- the turbine's own tick
+                       //     consumes them; its head spring IS the interpolator). NO
+                       //     suppression needed (no live RNG re-targeter; setRandRot is dead
+                       //     code). Identity = quantized world position (grime PosKey style;
+                       //     one map-baked pair SHARES a save Key, so Key-indexing would
+                       //     collapse them). NOT relayed (host-only origin). Payload:
+                       //     TurbineStatePayload (56 B). Module: coop/turbine_sync +
+                       //     ue_wrap/windturbine. RE: votv-wind-turbines-RE-2026-06-11.md.
+    LockerDoorState = 50, // 2026-06-11 (v62): hinged-door storage boxes -- the ~19 base/map
+                       //     LOCKERS (locker_C + locker_personal_C/locker_death_C) and the
+                       //     DRONE-CALL CONSOLE box (droneConsole_C). SYMMETRIC keyed toggle
+                       //     (zero auto-revert writers of `opened`, bytecode-scanned) riding
+                       //     the interactable Channel with ONE door_box adapter. Identity =
+                       //     the level-export actor FName (neither class carries a save Key;
+                       //     names are deterministic for placed actors). Apply: locker = the
+                       //     native BP verb Open(bool) (sound+swing+collision+trigger);
+                       //     console = opened write + setButtonsCollision() + Timeline
+                       //     Play/Reverse (the garage write+refresh precedent); both get the
+                       //     door.cpp verify+force-snap for far-frozen swings. The radiotower
+                       //     "mast box" doors are prop_swinger_C child actors -- already on
+                       //     the container channel. Payload: KeyedTogglePayload (40 B).
+                       //     RE: votv-lockers-boxes-door-RE-2026-06-11.md.
+    DeviceClaim = 51,  // 2026-06-12 (v63): enterable-device OCCUPANCY claim/release (base
+                       //     computers/terminals phase 1). CLIENT->HOST request + HOST->all
+                       //     broadcast (one kind, both directions; host re-broadcasts after
+                       //     arbitration, so NOT in the client-relay whitelist). First-wins:
+                       //     a losing claimant gets a point-to-point busy=1 carrying the
+                       //     WINNER's slot and force-exits its own player (reflected
+                       //     setActiveInterface(null), the ragdollMode exit path) + plays
+                       //     button_keypad_deny. busy=0 releases (activeInterface falling
+                       //     edge -- covers ESC, ragdoll, death). Host clears a leaver's
+                       //     claims on the per-slot disconnect edge; the connect replay
+                       //     sends the live claim table to a joiner. Keyed by the SHARED
+                       //     WIDGET identity ("desk"/"sat"/"radar"/"reactor"/"laptop" --
+                       //     one shared widget instance each -- + "tfm_<posKey>" /
+                       //     "arc_<posKey>" per-instance). Payload: DeviceClaimPayload
+                       //     (36 B). Module: coop/device_occupancy + ue_wrap/device_screen.
+                       //     RE: votv-base-computers-RE-2026-06-11.md.
+    SkySignalState = 52, // 2026-06-12 (v64): HOST-authoritative sky-signal SET snapshot
+                       //     (the coords-minigame targets, spaceRenderer.signals). The
+                       //     host's native spawnSignal roller is the ONLY roller; a client
+                       //     kills its own roller timer (K2_ClearTimer; restored by one
+                       //     reflected spawnSignal() on disconnect) and mirrors the wire
+                       //     set verbatim (addSignal(coords) + row overwrite + widget
+                       //     prop pushes; widget lifetimes are wire-driven via keepalive,
+                       //     so ONLY wire snapshots remove rows). Sent on the host's ~1 Hz
+                       //     poll detecting ANY set change, in parts of <=3 wire rows
+                       //     (gen byte guards cross-snapshot part mixing). Trust-gated to
+                       //     slot 0; NOT relayed. Payload: SkySignalStatePayload (188 B).
+                       //     Module: coop/console_state_sync + ue_wrap/space_renderer.
+    SkySignalCatch = 53, // 2026-06-12 (v64; CONSUME REPLAY since v70): the signal-catch
+                       //     world event. kind=0 catch: the desk-claim holder's detector
+                       //     (row vanished + dish isMoving rising edge, 1 Hz) ships the
+                       //     full consume replay {coord_signalData row content + the
+                       //     exact dish slew vector}; the HOST validates the claim
+                       //     holder, replays (struct write -> row delete -> download-
+                       //     machine reset -> ping sound -> StartMovingAll(slew)) and
+                       //     rebroadcasts to everyone but the catcher -- the NATIVE
+                       //     dish-arrival chain then arms formDownload per peer. kind=1
+                       //     cleared: any peer's 'Signal data deleted' button (objectName
+                       //     ->None edge, unclaimed trust), replay = the @33832 reset
+                       //     chain. Host also sends one kind=0 to a JOINER while
+                       //     coord_signalData is armed (slewValid=0 once dishes settled
+                       //     -> the joiner arms formDownload directly). Receivers
+                       //     register the identity in a short-TTL recent-catch set that
+                       //     filters stale in-flight SkySignalState snapshot rows.
+                       //     Payload: SkySignalCatchPayload (80 B). Module:
+                       //     coop/signal_catch_sync + ue_wrap/dish + ue_wrap/console_desk.
+    DeskState = 54,    // 2026-06-12 (v64; reshaped v70): the 4-screen desk's LIVE-VISIBLE
+                       //     scalars (analogDScreenTest). Streamed at ~1-2 Hz on-change
+                       //     by the desk-claim OWNER while claimed (host-relayed),
+                       //     edge-broadcast by ANY peer on a discrete button flip while
+                       //     unclaimed (physical buttons don't require entering),
+                       //     adopt=1 on the host connect snapshot. Receivers write the
+                       //     raw fields + reflect-call the desk's upd* refresh chain.
+                       //     The PERSISTED blob already rides v56 save-transfer at join;
+                       //     this channel covers only live divergence. v70: the coordLog
+                       //     tail moved to DeskLogLine; canDL left the wire (derived);
+                       //     dlDecoded/dlPolarity ride ADOPT-ONLY (the joiner download
+                       //     catch-up). Payload: DeskStatePayload (60 B). Module:
+                       //     coop/console_state_sync + ue_wrap/console_desk.
+    DishAimState = 55, // 2026-06-12 (v64): the coords-panel cursor state (the
+                       //     ui_coordinates widget: viewCoordinate + Coordinate_0..2 +
+                       //     selected + the v70 Direction toggle) streamed ~3 Hz by
+                       //     the desk-claim owner while claimed; host-relayed. Receivers
+                       //     raw-write + reflected updCursorLocations (which also rotates
+                       //     the physical pingDishes). Payload: DishAimStatePayload (40 B).
+    EmailAppend = 56,  // 2026-06-12 (v64, increment 2): the meadow-PC email mirror. Every
+                       //     producer (daynightCycle task mails, drone sell responses,
+                       //     console/desk status mails) funnels through gamemode.addEmail
+                       //     -- PE-invisible, so the PRODUCING peer watermark-polls
+                       //     saveSlot.emails.Num and ships new rows (host-relayed); the
+                       //     receiver rebuilds the Fstruct_email (FTexts minted from
+                       //     strings, pfp by leaf name or null, date zeroed) and reflected
+                       //     gamemode.addEmail applies persistence + list row + the email
+                       //     ding + tab highlight in one call (which also RE-STAMPS the
+                       //     date from the host-synced clock). Echo-proof: a wire apply
+                       //     advances the local watermark past its own append. Topics/
+                       //     texts are paragraphs -> VARIABLE-LENGTH chunked stream (the
+                       //     OrderRequest shape): EmailChunkPayload (228 B) parts keyed
+                       //     (senderSlot, emailSeq). RE:
+                       //     votv-computers-phase2-impl-RE-2026-06-12.md SS3.
+    EmailDelete = 57,  // 2026-06-12 (v65): the email DELETE mirror -- ui_laptop.delEmail
+                       //     (the row's del button) propagated cross-peer. Content-keyed
+                       //     by the FNV-1a 64 of the row's serialized EmailAppend blob;
+                       //     wire INDEXES are unsafe because concurrent producer appends
+                       //     order differently per peer. The deleting peer's shadow diff
+                       //     detects the shrink and ships the removed hash; receivers
+                       //     resolve their local index by hash and call the native
+                       //     delEmail (list slot + saveSlot row in one). Unknown hashes
+                       //     tombstone briefly so a delete that outruns its own row's
+                       //     chunked append still lands. Payload: EmailDeletePayload.
+    SavedSignalAppend = 58,  // 2026-06-12 (v65): saved-signals list (gamemode.savedSignals_0)
+                       //     append mirror -- the email shadow/diff shape on the desk's
+                       //     signal library. Rows are Fstruct_signalDataDynamic (0x70,
+                       //     pure POD+strings; textures/sounds re-derive natively at play
+                       //     time via lib_C.dynamicToSignal <- list_signals templates, so
+                       //     the row is fully serializable). Producer's poll diffs the
+                       //     array, serializes new rows (WITHOUT the image PNG blob --
+                       //     laptop-photo bytes are a deferred bulk-lane increment) and
+                       //     ships BlobChunkPayload chunks; receivers re-play the native
+                       //     gamemode.saveSignal(row,...,selfQuality=true) = append +
+                       //     "Create Signal List" pane rebuild + specials/forceObjects
+                       //     bookkeeping in one call. Join converges via the v56 save
+                       //     transfer (savedSignals_comp_0 rides the .sav). RE: the
+                       //     2026-06-12 savedSignals agent pass (saveSignal walkthrough).
+    SavedSignalDelete = 59,  // 2026-06-12 (v65): saved-signals delete mirror, content-keyed
+                       //     (ContentHashPayload) exactly like EmailDelete -- the game's
+                       //     deleteSignal is index-based and ids are non-unique (copies
+                       //     share them), so the wire identity is the serialized-blob
+                       //     hash; receivers resolve their index + reflected
+                       //     deleteSignal(index) (native pane refresh). Covers both the
+                       //     play-pane delete AND the export-to-drive move (list side;
+                       //     drive CONTENT sync is a documented separate gap).
+    CompState = 60,    // 2026-06-12 (v65): the refiner decode-pane scalar stream. The
+                       //     SIMULATING peer (the one whose comp_isDecodeActive latched
+                       //     natively -- the start-presser; or the host after a save
+                       //     load) broadcasts ~1 Hz while decoding + on edges. Mirrors
+                       //     stay PASSIVE: raw-write comp_progress/comp_downloading and
+                       //     repaint texts/cues; they NEVER latch comp_isDecodeActive --
+                       //     the decode ticker has NO occupancy gate (RE: tick chain
+                       //     @76437->@75579->@71488), so a latched mirror would simulate
+                       //     independently and double-fire completion (incl. the
+                       //     level-3 theEvil_C spawn). Payload: CompStatePayload.
+    CompData = 61,     // 2026-06-12 (v65): the refiner's loaded signal (comp_data_0,
+                       //     Fstruct_signalDataDynamic) -- BlobChunkPayload chunks on
+                       //     change edges (drive upload / eject / completion level-up)
+                       //     + host adopt at connect-replay. Receivers write the live
+                       //     struct in place (engine-minted FStrings/FNames) + updComp
+                       //     repaint. Image blob skipped live (same deferral as 58).
+    VoiceState = 62,   // 2026-06-12 (v66): voice-chat presence state {micMuted,
+                       //     voiceDisabled} broadcast on edges (player-symmetric,
+                       //     host-relayed). DISPLAY-ONLY (nameplate/scoreboard/HUD
+                       //     icons) -- routing never depends on it: a muted sender
+                       //     simply produces no VoiceFrame datagrams. Talking/whisper
+                       //     indicators derive client-side from decoded frames (the
+                       //     SVC TalkCache shape), zero extra packets. Payload:
+                       //     VoiceStatePayload.
+    KerfurConvertRequest = 63,  // 2026-06-12 (v67): CLIENT->host kerfur on/off
+                       //     CONVERSION request (the dupe fix -- see the v67 header
+                       //     note). The client PRE-cancels its local menu dispatch
+                       //     (kerfurOmega_C::actionName 'turn_off' / prop_kerfurOmega_C::
+                       //     actionOptionIndex action==8) and sends the target's
+                       //     elementId + direction; the HOST validates (live actor,
+                       //     right class, BP kill-guard) and executes the real verb --
+                       //     the conversion's spawns/destroys then mirror through the
+                       //     existing Entity*/Prop* pipelines via the explicit converge
+                       //     (coop::kerfur_convert). DoorOpenRequest shape: host-only
+                       //     receiver; the authoritative results flow back as
+                       //     EntityDestroy + PropSpawn (turn_off) or PropDestroy +
+                       //     EntitySpawn (turn on). Payload: KerfurConvertPayload.
+    PropStickState = 64,  // 2026-06-12 (v68): wall-attachable STICK mirror (see the
+                       //     v68 header note). Sent by the STICKING peer on the pump
+                       //     pass after its comp_wallAttachable commit (commit pose;
+                       //     ordered BEFORE the hold-break PropRelease in-lane);
+                       //     symmetric prop state -- the host relays a client's stick
+                       //     to the other clients (IsClientRelayableReliableKind).
+                       //     Receiver: stop drive -> re-pose -> simulate(true) ->
+                       //     PE forceStick(true) (SP replay; raw frozen-write
+                       //     fallback). The unstick direction deliberately has NO
+                       //     message: it mirrors through the existing PropPose
+                       //     sustained-stream gate + the frozen-gated release paths
+                       //     (coop/prop_stick_sync + remote_prop). Payload:
+                       //     PropStickStatePayload.
+    DeskLogLine = 65,  // 2026-06-12 (v70): one coords-terminal EVENT line, produced by
+                       //     the peer whose local action wrote it (exact producer-side
+                       //     diff of coord_coordLog2Text; animated bar/status lines
+                       //     filtered by prefix -- they self-generate on every peer
+                       //     from mirrored scalars). Host-relayed (producer-symmetric).
+                       //     Receiver: writeToCoordLog_2 append (native CRLF/repaint/
+                       //     1000-cap) + own-baseline advance (echo-proof). Replaces
+                       //     the v64 DeskState coordLog tail diff (RULE 2 -- see the
+                       //     v70 header note). Payload: DeskLogLinePayload (124 B).
+    SleepState = 66,   // 2026-06-13 (v71): the Minecraft sleep gate (see the v71
+                       //     header note). BOTH directions on one kind (the
+                       //     DeviceClaim shape): op=Report is any peer's isSleep
+                       //     edge toward the host (trust = the TRANSPORT sender
+                       //     slot); op=Tally/Accelerate/End are host->all phase
+                       //     broadcasts (clients trust-gate to slot 0). NOT
+                       //     client-relayed (host-mediated). Payload:
+                       //     SleepStatePayload (4 B). Module: coop/sleep_sync.
+    WispGrab = 67,     // 2026-06-13 (v72): the Killer Wisp catch/kill. HOST->ONE victim
+                       //     slot: the host detected its killerwisp_C grabbing this
+                       //     client's puppet (Target classification), neutralized its own
+                       //     false-grab, and tells the victim to die for real. The victim
+                       //     self-verifies victimElementId==own, parks its CMC, and
+                       //     schedules ragdollMode(true,false,true) on its OWN player after
+                       //     killDelayMs (host-decided, ~the tear duration). HOST-ONLY
+                       //     (senderPeerSlot==0 gate); NOT client-relayable. Payload:
+                       //     WispGrabPayload (12 B). Module: coop/wisp_attack_sync (send) +
+                       //     coop/wisp_tear_mirror (receive). Design:
+                       //     research/findings/votv-killerwisp-coop-design-2026-06-13.md.
+    WispTear = 68,     // 2026-06-13 (v72): the Killer Wisp tear MIRROR. HOST->ALL: every
+                       //     peer resolves its local wisp NPC mirror by wispElementId and
+                       //     plays the fatality tear on it (force-tick the parked mirror
+                       //     mesh + Montage_Play 'fatality' + spawn/weld the 4 limb gibs)
+                       //     and socket-attaches the victim's PUPPET (Registry::Puppet(
+                       //     victimSlot)) to the wisp 'playerGrab' socket. On the victim's
+                       //     OWN machine victimSlot==own -> no puppet (its real death is the
+                       //     view). HOST-ONLY; NOT relayable. Payload: WispTearPayload (8 B).
+    PlayerInventoryBlob = 69,  // 2026-06-14 (v73): per-player inventory stream. CLIENT->HOST:
+                       //     a client streams its serialized saveSlot inventory (inventoryData
+                       //     + equipment + hold, via coop/inventory_wire) on change (~1 Hz,
+                       //     FNV-deduped); the host persists it to coop_players/<guid>.json.
+                       //     Reuses BlobChunkPayload (chunked over Lane::Bulk; no new payload
+                       //     struct). HOST-TERMINAL -- NOT client-relayable (never fanned out to
+                       //     other peers). The HOST->CLIENT apply-on-join (Inc 4) reuses this
+                       //     kind in the reverse direction. Module: coop/player_inventory_sync.
+                       //     Plan: research/findings/votv-inventory-impl-plan-2026-06-14.md.
+    KerfurCommand = 70,  // 2026-06-14 (v74): host-authoritative kerfur radial-menu command relay.
+                       //     CLIENT->HOST (+ host's own menu use, executed locally): a player picks
+                       //     a kerfur menu verb (follow/idle/patrol/fix_servers/get_reports/
+                       //     fix_transformers); the client cancels the local actionName dispatch (the
+                       //     verbs hard-pin GetPlayerPawn(0) -> would follow the wrong player) and
+                       //     sends KerfurCommandPayload{eid, command}. The host runs the real verb via
+                       //     ProcessEvent (State change streams to mirrors via the pose stream), EXCEPT
+                       //     Follow: the host sets State=idle + drives a CreateMoveToProxyObject loop
+                       //     toward THE REQUESTING PLAYER's body (senderPeerSlot; the BP can't, it has
+                       //     no pawn for remote players). turn_off stays in KerfurConvertRequest.
+                       //     Module: coop/kerfur_command. RE: votv-kerfurOmega-coop-double-and-camera-
+                       //     RE-2026-06-14.md sec 7 + the menu-command RE agent.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -1276,8 +1784,12 @@ struct EntityPoseSnapshot {
     float    bodyYaw;     // 4  -- v40: kerfur VISIBLE body (ACharacter::Mesh) WORLD yaw (deg). The actor BP
                           //      aims the mesh at the local player decoupled from the actor root; we mirror it.
                           //      VALID iff stateBits has kEntityPoseBitHasBodyYaw (kerfur-family only).
-    uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw
-    uint8_t  _pad[3];     // 3  -- 4-byte alignment
+    uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
+    uint8_t  kerfState;   // 1  -- v74: kerfur command (enum_kerfurCommand @ "State"); VALID iff bit3. Drives the
+                          //      AnimBP state machine on the parked mirror (which can't run its own AI). 0 when bit3 clear.
+    uint8_t  kerfFace;    // 1  -- v74: kerfur faceMaterialIndex (@ "faceMaterialIndex"); VALID iff bit3. The mirror's
+                          //      face actor (kerfusFace) is otherwise frozen (its timer_face is neutralized at park).
+    uint8_t  _pad;        // 1  -- 4-byte alignment
 };
 static_assert(sizeof(EntityPoseSnapshot) == 44, "EntityPoseSnapshot must be 44 bytes");
 
@@ -1286,6 +1798,8 @@ static_assert(sizeof(EntityPoseSnapshot) == 44, "EntityPoseSnapshot must be 44 b
 // not apply to NPCs -- distinct struct, distinct meaning).
 inline constexpr uint8_t kEntityPoseBitHasLookAt = 0x02;  // v39: lookAt{X,Y,Z} carries a valid head-look world target
 inline constexpr uint8_t kEntityPoseBitHasBodyYaw = 0x04;  // v40: bodyYaw carries a valid visible-body world yaw
+inline constexpr uint8_t kEntityPoseBitHasKerfurState = 0x08;  // v74: kerfState + kerfFace carry valid kerfur command/face
+inline constexpr uint8_t kEntityPoseBitKerfurSpooky   = 0x10;  // v74: the kerfur is in its spooky/kill state (host-authoritative)
 
 // v37: header of an EntityPose datagram -- N follows. N is derived from the datagram length
 // (count is the authoritative entry count, validated <= kMaxNpcBatchEntries by the receiver).
@@ -1342,6 +1856,89 @@ struct RagdollPosePacket {
     RagdollPoseSnapshot pose;    // 48
 };
 static_assert(sizeof(RagdollPosePacket) == 68, "RagdollPosePacket must be 68 bytes");
+
+// v66 voice chat: one 20 ms opus frame (MsgType::VoiceFrame). The DATAGRAM
+// carries only 8 + opusLen bytes of this struct (the array is max-sized for
+// the receive copy). seq is the per-sender VOICE sequence (monotonic per
+// session, increments per frame INCLUDING the stop marker) -- the jitter
+// buffer orders/PLCs by it. A stop marker (bit1, opusLen=0) ends a talk
+// burst: the receiver flushes its jitter buffer and resets its decoder, the
+// sender resets its encoder (SVC's empty-frame contract). Whisper (bit0)
+// halves the receiver-side attenuation radius. The SPEAKER's identity rides
+// the PacketHeader senderSlot (host relay rewrites it -- the pose precedent),
+// not the payload.
+inline constexpr int kVoiceMaxOpusBytes = 200;  // encoder hard cap (48 kbps VOIP ~ 120 B typical)
+inline constexpr uint8_t kVoiceFlagWhisper = 0x01;
+inline constexpr uint8_t kVoiceFlagStop    = 0x02;
+struct VoiceFramePayload {
+    uint8_t  flags;     // kVoiceFlag*
+    uint8_t  _pad;
+    uint16_t opusLen;   // 0 for the stop marker
+    uint32_t seq;       // per-sender voice seq (NOT the header seq)
+    uint8_t  opus[kVoiceMaxOpusBytes];
+};
+inline constexpr int kVoiceFrameHeadBytes = 8;  // payload bytes before opus[]
+struct VoiceFramePacket {
+    PacketHeader      header;  // 20
+    VoiceFramePayload body;    // 8 + opusLen on the wire
+};
+static_assert(sizeof(VoiceFramePayload) == kVoiceFrameHeadBytes + kVoiceMaxOpusBytes,
+              "VoiceFramePayload layout drifted");
+static_assert(sizeof(VoiceFramePacket) == 228,  // 20+8+200; kMaxPacketBytes (256) declared below
+              "VoiceFramePacket must fit one datagram");
+
+// v66: voice presence for the icon surfaces (ReliableKind::VoiceState).
+struct VoiceStatePayload {
+    uint8_t micMuted;       // 1 = the peer muted its mic
+    uint8_t voiceDisabled;  // 1 = the peer turned the voice module off entirely
+    uint8_t _pad[2];
+};
+static_assert(sizeof(VoiceStatePayload) == 4, "VoiceStatePayload must be 4 bytes");
+
+// v68: wall-attachable stick state (PropStickState). key = the prop's wire key
+// (the canonical Aprop_C resolve); elementId rides along for the eid fallback
+// (0 = sender had no Element). flags carries WHICH field the BP set (bit0
+// frozen -- the camera family; bit1 static -- pryingRequired attachables); the
+// receiver's SP-replay (forceStick) re-derives it natively and the flags only
+// steer the raw-write fallback + logging. pose = the sender's COMMIT-time actor
+// transform -- where the stick trace succeeded (the receiver pre-poses there so
+// the replay's re-trace finds the same surface; its own glide settles it).
+struct PropStickStatePayload {
+    WireKey  key;
+    uint32_t elementId;
+    uint8_t  flags;      // bit0 = frozen, bit1 = static
+    uint8_t  _pad[3];    // zeroed
+    float locX, locY, locZ;
+    float rotPitch, rotYaw, rotRoll;
+};
+static_assert(sizeof(PropStickStatePayload) == 64, "PropStickStatePayload must be 64 bytes");
+
+// v67: client->host kerfur on/off conversion request (KerfurConvertRequest).
+// elementId routes by the entity the client's menu targeted: an Npc Element id
+// when toProp=1 (turn_off on a live kerfur mirror), a Prop Element id when
+// toProp=0 (turn on, on a kerfur-prop mirror). The host resolves the element,
+// validates the bound actor (live + kerfurOmega_C- / prop_kerfurOmega_C-derived)
+// and runs the BP verb; there is deliberately NO other state in the payload --
+// the conversion's outcome (which prop class, floppy, transform) is the HOST
+// BP's own business and mirrors through the entity pipelines.
+struct KerfurConvertPayload {
+    uint32_t elementId;  // Npc eid (toProp=1) or Prop eid (toProp=0)
+    uint8_t  toProp;     // 1 = NPC -> prop (turn_off); 0 = prop -> NPC (turn on)
+    uint8_t  _pad[3];    // zeroed
+};
+static_assert(sizeof(KerfurConvertPayload) == 8, "KerfurConvertPayload must be 8 bytes");
+
+// v74: host-authoritative kerfur menu command (KerfurCommand=70). CLIENT->HOST. The HOST
+// derives the REQUESTER from senderPeerSlot (so Follow follows the clicking player); the host's
+// OWN menu use never hits the wire (executed locally in kerfur_command::Tick with requester=host).
+// command = KerfurMenuCommand enum (coop/kerfur_command.h). Deliberately no requesterSlot field --
+// the wire layer already attributes the sender, and a self-declared slot would be spoofable.
+struct KerfurCommandPayload {
+    uint32_t elementId;  // host Npc eid of the target kerfur
+    uint8_t  command;    // KerfurMenuCommand (follow/idle/patrol/fix_servers/get_reports/fix_transformers)
+    uint8_t  _pad[3];    // zeroed
+};
+static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
 
 // v5: PropRelease reliable payload. Sent ONCE when the sender's grab ends.
 // Receiver re-enables SimulatePhysics on the cached prop, then sets linear +
@@ -1521,6 +2118,222 @@ static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 b
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
 
+// v63: enterable-device occupancy claim/release (ReliableKind::DeviceClaim).
+// `key` = the shared-widget claim identity (see the kind doc); `slot` = the
+// HOLDING peer slot (on a host broadcast / arbitration reply this is the
+// authoritative holder -- the WINNER, not necessarily the sender); `busy` =
+// 1 claim / 0 release. A losing claimant recognizes its loss by busy=1 with
+// slot != its own while it is still inside that device.
+struct DeviceClaimPayload {
+    WireKey  key;        // 32 -- the device claim key
+    uint8_t  slot;       // 1  -- holding peer slot
+    uint8_t  busy;       // 1  -- 1 = claimed, 0 = released
+    uint8_t  _pad[2];    // 2  -- alignment / reserved
+};
+static_assert(sizeof(DeviceClaimPayload) == 36, "DeviceClaimPayload must be 36 bytes");
+static_assert(sizeof(DeviceClaimPayload) <= 256 - 20 - 8,
+              "DeviceClaimPayload must fit in one reliable datagram");
+
+// v64: one sky signal on the wire (Fstruct_signal_spawn 0x2C with the FName
+// objectName replaced by its string -- FName indices are not cross-process
+// stable). The POD head is byte-copied from/to the live row; objectName is
+// re-resolved to an FName on the receiver. The widget tail carries the paired
+// ui_signal's rolled/ticking state: `alpha` is THE expiry countdown (1 -> 0;
+// reduceLifetime subtracts dt/lifetime and self-deletes at <= 0 -- LifeTime
+// alone does NOT drive expiry), and `direction` is GAMEPLAY-LOAD-BEARING
+// (the desk gates catch success on gatherSignal dir == the panel's direction
+// toggle; a per-peer re-roll would diverge the minigame). Phase-2 impl RE.
+struct WireSkySignal {
+    float   x, y, z;          // 12 -- coordinates (FVector; also the cross-peer identity)
+    int32_t type;             // 4
+    float   strength;         // 4
+    float   frequency;        // 4  -- identity tiebreaker (wire-copied exact)
+    float   frequencySpread;  // 4
+    float   polarity;         // 4
+    float   polaritySpread;   // 4
+    float   alpha;            // 4 -- widget Alpha: the 1->0 expiry countdown
+    float   lifeTime;         // 4 -- widget LifeTime: the countdown divisor
+    float   maxLifetime;      // 4 -- widget MaxLifetime (rolled 120-240)
+    uint8_t direction;        // 1 -- widget Direction (catch-gate parity)
+    uint8_t nameLen;          // 1
+    char    objectName[14];   // 14 -- rolled names are short ("sat1"-class); truncation logged
+};
+static_assert(sizeof(WireSkySignal) == 64, "WireSkySignal must be 64 bytes");
+
+// v64: the host-authoritative sky-signal SET snapshot (ReliableKind::SkySignalState),
+// split into parts of <=3 rows. `gen` increments per snapshot so a receiver never
+// mixes parts of two different snapshots (drop-and-wait-for-next on mismatch --
+// snapshots are state-complete, so losing one only delays convergence one change).
+struct SkySignalStatePayload {
+    uint8_t gen;       // snapshot generation (wraps; equality-checked only)
+    uint8_t part;      // 0-based part index
+    uint8_t parts;     // total parts in this snapshot (>=1)
+    uint8_t count;     // rows in THIS part (<=3)
+    uint8_t totalCount;// rows in the whole snapshot (receiver sanity/log)
+    uint8_t _pad[3];
+    WireSkySignal rows[3];
+};
+static_assert(sizeof(SkySignalStatePayload) == 200, "SkySignalStatePayload must be 200 bytes");
+static_assert(sizeof(SkySignalStatePayload) <= 256 - 20 - 8,
+              "SkySignalStatePayload must fit in one reliable datagram");
+
+// v70: the signal-catch CONSUME REPLAY (ReliableKind::SkySignalCatch; replaces
+// the v64 20 B row-delete-only relay -- RULE 2). `row` is filled by the CATCHER
+// from its own coord_signalData (the authoritative post-catch struct, @79303) --
+// identity stays the exact wire-copied coordinates + frequency; alpha/lifetimes
+// ride along zeroed (the row is being deleted; receivers ignore them). `slew` is
+// the exact startMovingTo argument, read as (dish.lookAt - dish.ActorLocation)
+// off any just-started dish -- the BP computes ONE vector for all dishes, and
+// startMovingTo re-adds each receiver dish's own ActorLocation, so one relative
+// vector replays exactly everywhere. slewValid=0 (no moving dish -- the joiner
+// replay after dishes settled): receivers skip the dish theater and arm
+// formDownload(0,-1) directly. kind: 0 = catch (claim-holder-gated on the host),
+// 1 = cleared (the 'Signal data deleted' button -- unclaimed trust; row + slew
+// ignored, receivers replay the @33832 reset chain).
+struct SkySignalCatchPayload {
+    WireSkySignal row;          // 64 -- the caught signal's full row content
+    float   slewX, slewY, slewZ;// 12 -- the startMovingTo relative vector
+    uint8_t kind;               // 1  -- 0 = catch, 1 = cleared
+    uint8_t slewValid;          // 1  -- 0 = no dish was moving; arm directly
+    uint8_t _pad[2];            // 2
+};
+static_assert(sizeof(SkySignalCatchPayload) == 80, "SkySignalCatchPayload must be 80 bytes");
+
+// v64 (reshaped v70): the desk's live-visible scalars (ReliableKind::DeskState).
+// Field set = the RE doc SS4.1 live actor fields; receivers write raw + run the
+// desk's own upd* refresh chain. `adopt` = 1 on the host connect snapshot.
+// v70 removals (RULE 2): the coordLog[96] tail + len moved to the lossless
+// DeskLogLine event-line channel; canDL is DERIVED (canSaveSignal recomputes it
+// per detector pulse) and never belonged on the wire. v70 additions: dlDecoded
+// + dlPolarity (DL_SignalDownloadDLData download progress) -- ADOPT-ONLY: live
+// decoded accrues per tick on EVERY armed peer (bytecode @66736-68635, no
+// occupancy gate) so receivers ignore them on live edges; on adopt=1 the joiner
+// stores them as a pending formDownload(decoded, polarity) catch-up applied once
+// its own download machine arms (mesh valid after the replayed dishes arrive).
+struct DeskStatePayload {
+    float   dlPoFilterOffset;   // 4
+    float   dlFrFilterOffset;   // 4
+    float   dlPoFilterSpeed;    // 4
+    float   dlFrFilterSpeed;    // 4
+    float   dlDownloading;      // 4 -- float in the BP (0 = idle)
+    float   dlResDetecPercent;  // 4 -- the live detection-needle percent
+    float   coordCooldown;      // 4
+    float   dlDecoded;          // 4 -- v70 adopt-only (see header note)
+    int32_t playVolume;         // 4 -- int32 in the BP (header-verified)
+    int32_t dlPolarityDir;      // 4
+    int32_t compMaxLevel;       // 4 -- claim-owner edit; the comp DECODE stream is CompState (v65)
+    int32_t playSelectIndex;    // 4
+    int32_t dlPolarity;         // 4 -- v70 adopt-only (DLData.polarity; -1 = unset)
+    uint8_t dlActiveFrFilter;   // 1
+    uint8_t dlActivePoFilter;   // 1
+    uint8_t activePlay;         // 1
+    uint8_t activeDownload;     // 1
+    uint8_t activeCoords;       // 1
+    uint8_t activeComp;         // 1
+    uint8_t coordIsPing;        // 1
+    uint8_t adopt;              // 1
+};
+static_assert(sizeof(DeskStatePayload) == 60, "DeskStatePayload must be 60 bytes");
+static_assert(sizeof(DeskStatePayload) <= 256 - 20 - 8,
+              "DeskStatePayload must fit in one reliable datagram");
+
+// v70: one coords-terminal EVENT line (ReliableKind::DeskLogLine) -- the 9
+// one-shot writeToCoordLog_2 lines ('Successful ping...', the Err2-Err6 gate
+// errors, '<r>Cooldown error</>', quick-scan, 'Signal data deleted'). Produced
+// by the peer whose local action wrote the line (exact producer-side diff of
+// coord_coordLog2Text; ANIMATED bar/status lines are filtered by prefix -- they
+// self-generate on every peer from mirrored scalars). Host-relayed. Receivers
+// append via writeToCoordLog_2 (native CRLF + repaint + scroll + 1000-cap) and
+// advance their own producer baseline past the applied text (echo-proof). ASCII
+// (the BP lines, including the <r>/<c> rich-text markup, are ASCII).
+struct DeskLogLinePayload {
+    uint8_t len;        // 1 -- used bytes in line[]
+    uint8_t _pad[3];    // 3
+    char    line[120];  // 120 -- one event line WITHOUT the trailing CRLF
+};
+static_assert(sizeof(DeskLogLinePayload) == 124, "DeskLogLinePayload must be 124 bytes");
+
+// v71: the sleep gate (ReliableKind::SleepState). op semantics:
+//   0 Report     (peer -> host)  flag = inBed (the sender's isSleep edge)
+//   1 Tally      (host -> all)   count/total for the "N/M sleeping" feed line
+//   2 Accelerate (host -> all)   everyone is in bed -- start the 20x phase
+//   3 End        (host -> all)   flag = natural (1: the host slept to full --
+//                                 every peer is granted sleep=100; 0: early
+//                                 interrupt -- peers keep their accrued need)
+struct SleepStatePayload {
+    uint8_t op;     // 1
+    uint8_t flag;   // 1 -- Report: inBed; End: natural
+    uint8_t count;  // 1 -- Tally: peers in bed
+    uint8_t total;  // 1 -- Tally: world-ready peers
+};
+static_assert(sizeof(SleepStatePayload) == 4, "SleepStatePayload must be 4 bytes");
+
+// v64/v65: one chunk of a variable-length serialized blob. Shared by every
+// chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);
+// assembly key = (transport senderSlot, kind, blobSeq); chunks arrive
+// in-order on the reliable lane; coop/blob_chunks owns send + reassembly
+// (C-1 restart-on-chunk-0 + TTL semantics). Email blob: { uint8 version(=1);
+// uint8 username; uint16 topicChars; uint16 textChars; uint16 pfpChars;
+// topic UTF-16LE; text; pfpLeaf } -- caps topic 256 / text 4096 / pfp 96.
+// Signal-row blob (SavedSignalAppend / CompData): see coop/signal_wire.
+struct BlobChunkPayload {
+    uint32_t blobSeq;    // 4 -- per-SENDER monotonically increasing (per kind)
+    uint8_t  chunkIdx;   // 1
+    uint8_t  chunks;     // 1 -- total (>=1)
+    uint16_t chunkLen;   // 2 -- used bytes in data[]
+    uint8_t  data[220];  // 220
+};
+static_assert(sizeof(BlobChunkPayload) == 228, "BlobChunkPayload must be 228 bytes");
+static_assert(sizeof(BlobChunkPayload) <= 256 - 20 - 8,
+              "BlobChunkPayload must fit in one reliable datagram");
+
+// v65: one content-keyed delete (EmailDelete / SavedSignalDelete). The hash is
+// FNV-1a 64 over the row's serialized append blob (which excludes per-peer
+// re-stamped fields), so the producer and every receiver derive the SAME key
+// for the same row regardless of local array order.
+struct ContentHashPayload {
+    uint64_t contentHash;
+};
+static_assert(sizeof(ContentHashPayload) == 8, "ContentHashPayload must be 8 bytes");
+
+// v65: the refiner decode-pane scalar stream (ReliableKind::CompState), sent
+// ~1 Hz by the SIMULATING peer while comp_isDecodeActive, plus on edges and
+// as the host's adopt snapshot at connect-replay. decodeActive is WIRE-ONLY
+// state on mirrors -- never written to the mirror's comp_isDecodeActive (a
+// latched mirror would simulate the decode itself; see ReliableKind docs).
+struct CompStatePayload {
+    uint8_t decodeActive;  // 1
+    uint8_t adopt;         // 1 -- host connect snapshot (trust-gated to slot 0)
+    uint8_t isFinalLevel;  // 1 -- v66 (audit I-1): stamped by the SIMULATOR at the
+                           //      falling edge from its post-increment level vs
+                           //      maxLevel; the mirror's Done-vs-prog beep MUST use
+                           //      this (its local level is pre-CompData stale --
+                           //      CompState outruns the chunked data on the lane)
+    uint8_t _pad;          // 1
+    float   progress;      // 4 -- comp_progress (0..100)
+    float   downloading;   // 4 -- comp_downloading (this tick's increment; the B\s readout)
+};
+static_assert(sizeof(CompStatePayload) == 12, "CompStatePayload must be 12 bytes");
+
+// v64: the dish-aim stream (ReliableKind::DishAimState) -- the claim owner's
+// coords-panel cursor state at ~3 Hz while the desk is claimed. Phase-2 impl
+// RE falsified the spaceRenderer.coords/coords_rot fields (dead bytecode);
+// the REAL aim lives on the ui_coordinates widget: viewCoordinate + the three
+// Coordinate_N cursors + the selected index. Receivers raw-write + reflected
+// updCursorLocations() (which also rotates the physical pingDishes).
+// v70: + direction (ui_coordinates.Direction, the panel polarity toggle that
+// GATES catch success @9189) -- aim state, rides the pad (size unchanged).
+struct DishAimStatePayload {
+    float   viewX, viewY;            // 8  -- ui_coordinates.viewCoordinate
+    float   c0X, c0Y;                // 8  -- Coordinate_0
+    float   c1X, c1Y;                // 8  -- Coordinate_1
+    float   c2X, c2Y;                // 8  -- Coordinate_2
+    int32_t selected;                // 4  -- the selected cursor index
+    uint8_t direction;               // 1  -- v70: the Direction toggle (catch gate)
+    uint8_t _pad[3];                 // 3
+};
+static_assert(sizeof(DishAimStatePayload) == 40, "DishAimStatePayload must be 40 bytes");
+
 // KeyedScalarPayload -- the SHARED payload for "keyed monotone-decreasing dirt scalar" sync:
 // WindowCleanState (30, v41 -- AbaseWindow_C::clean@0x0260) AND GrimeState/GrimeDestroy (31/32,
 // v42 -- Agrime_C::process@0x0250). One payload for the keyed-float kinds, mirroring how
@@ -1572,12 +2385,30 @@ static_assert(sizeof(TrashPileStatePayload) <= 256 - 20 - 8,
 // accept state -- mirroring both onto a keypad produced the non-native green+red "PURPLE" the
 // user reported, and the door lock keys on the door's own `Active`, not the keypad's isAcc.
 // RE: research/findings/votv-keypad-door-BP-disassembly-2026-06-06.md.
+// v59 (2026-06-11): + `event` -- the SHORT-code submit mirror. The BP auto-submits at
+// Len>=5 (uber @2398), so long codes validate natively on EVERY peer from the digit replay
+// alone; but a short code's ACCEPT press (open(password==inPassword)) and the explicit
+// CANCEL (open(false)) change NO digit -- they were invisible on the wire, and the old
+// host-side "accept when buffer==password" poll fired WITHOUT the accept press (2026-06-11
+// user bug: door triggers the moment the last digit is typed) and latched the LED green
+// forever. Now the TYPING peer detects its own native submit edge (active flip + buffer
+// cleared, lastKnown buffer 0<len<5, not reset mode) and stamps Accept/Deny; the receiver
+// runs the keypad's OWN native Open(Active) chain (accept/deny sound, LED, buffer clear,
+// LOCK-state propagation to pair + gated door -- an accept UNLOCKS the door, never opens
+// it; opening is a normal E press on the door channel). len>=5 transitions stamp None
+// (native already ran everywhere -- a stamped event would double-run the chain).
+enum class KeypadEvent : uint8_t {
+    None   = 0,  // plain state mirror (digits / active)
+    Accept = 1,  // short-code accept press with correct code -> receiver runs native Open(true)
+    Deny   = 2,  // short-code wrong-accept / explicit cancel -> receiver runs native Open(false)
+};
 struct KeypadSyncPayload {
     WireKey  key;        // 32 -- the keypad's Key FName (string)
     uint8_t  bufLen;     // 1  -- digits in `buf` (0..16; codes are short)
     uint8_t  buf[16];    // 16 -- the typed digits, one per byte (each 0..9)
     uint8_t  active;     // 1  -- v38: keypad `active` @0x0330 (LED selector: 0=red/locked, 1=green/powered; mirrors cancel->red)
-    uint8_t  _pad[6];    // 6  -- 8-byte alignment / reserved (was isAcc/isDeny + pad; removed v35)
+    uint8_t  event;      // 1  -- v59: KeypadEvent (the short-code submit mirror)
+    uint8_t  _pad[5];    // 5  -- 8-byte alignment / reserved (was isAcc/isDeny + pad; removed v35)
 };
 static_assert(sizeof(KeypadSyncPayload) == 56, "KeypadSyncPayload must be 56 bytes");
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
@@ -1632,8 +2463,12 @@ struct DroneStatePayload {
                                //        replays/writes on the bit edges (the suppressed tick can't).
     uint8_t adopt;             // 1  -- 1 = host connect-snapshot (snap verbatim), 0 = live stream
     uint8_t _pad;              // 1
+    float   dustX, dustY, dustZ;  // 12 -- v69: eff_droneDust world location (the host BP pins the
+                               //        bAbsoluteLocation component to its ground-trace hit per tick;
+                               //        the mirror replays K2_SetWorldLocation + the 'dust' param from
+                               //        it). Valid only while stateBits bit0 is set; zeros otherwise.
 };
-static_assert(sizeof(DroneStatePayload) == 28, "DroneStatePayload must be 28 bytes");
+static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
 
 // v49 (2026-06-09): delivery-drone ECONOMY -- the CLIENT->HOST OrderRequest (see ReliableKind::
 // OrderRequest). VARIABLE-LENGTH: this fixed 16-byte header is followed by `chunkItems` packed
@@ -1684,11 +2519,23 @@ inline constexpr int kMaxOrderClassName = 96;   // UE leaf class names are short
 struct EntitySpawnPayload {
     WireClassName className;       // 64 -- "npc_zombie_C", "kerfurOmega_mannequin_C", etc.
     uint32_t      elementId;       // 4 -- v12 (was `sessionId`): host-allocated, [1, 32768); 0 = invalid
-    uint32_t      _pad;            // 4 -- 8-byte alignment for the floats
+    uint8_t       savePersisted;   // 1 -- v75: 1 = this NPC is a save object (has a non-None int_save
+                                   //      "Key") that the joining client ALSO loaded from the transferred
+                                   //      save -> the client must ADOPT its own local twin (class-match,
+                                   //      coop/npc_adoption) instead of spawning a duplicate. 0 = no local
+                                   //      twin (host-spawned transient enemy) -> fresh-spawn a mirror.
+                                   //      REPLACES v74's WireKey: the kerfur's int_save Key is minted
+                                   //      RANDOM per load (kerfurOmega::loadData overrides the int_save
+                                   //      base + drops the key restore -- bytecode-proven), so it differs
+                                   //      across peers and key-equality adoption is impossible. Only the
+                                   //      PRESENCE of a key (= is-a-save-object) is portable, not its value.
+                                   //      See research/findings/votv-kerfurOmega-coop-double-and-camera-
+                                   //      RE-2026-06-14.md sec "CORRECTION" + sec 11.
+    uint8_t       _pad2[3];        // 3 -- align loc to 4 (was the tail of WireKey)
     float         locX, locY, locZ;            // 12 -- world cm at spawn time
     float         rotPitch, rotYaw, rotRoll;   // 12 -- FRotator
 };
-static_assert(sizeof(EntitySpawnPayload) == 96, "EntitySpawnPayload must be 96 bytes");
+static_assert(sizeof(EntitySpawnPayload) == 96, "EntitySpawnPayload must be 96 bytes (v75: savePersisted replaces WireKey)");
 static_assert(sizeof(EntitySpawnPayload) <= 256 - 20 - 8,
               "EntitySpawnPayload must fit in one reliable datagram");
 
@@ -1814,6 +2661,36 @@ static_assert(sizeof(PlayerDamagePayload) == 8,
               "PlayerDamagePayload must be exactly 8 bytes (v21 wire-format)");
 static_assert(sizeof(PlayerDamagePayload) <= 256 - 20 - 8,
               "PlayerDamagePayload must fit in one reliable datagram");
+
+// WispGrab (67) -- host->ONE victim slot. The host's killerwisp_C is grabbing this
+// client's puppet (its acquired Target classified as a client puppet via GetController);
+// the host neutralized its own false-grab and tells the addressed client to ragdoll-die
+// for real after a host-decided fixed delay (the kill is per-peer-authoritative: the
+// victim runs ragdollMode on its OWN player -- the wisp's BP only ever kills the local
+// host). Host-only send; receiver gates senderPeerSlot==0 + victimElementId==own; not
+// relayable. See research/findings/votv-killerwisp-coop-design-2026-06-13.md (B).
+struct WispGrabPayload {
+    uint32_t victimElementId;  // the addressed peer's Player Element id (self-verify == own)
+    uint32_t wispElementId;    // the killerwisp NPC Element id (tear-mirror association)
+    uint32_t killDelayMs;      // host-decided delay before the victim ragdolls (~tear length)
+};
+static_assert(sizeof(WispGrabPayload) == 12, "WispGrabPayload must be exactly 12 bytes (v72)");
+static_assert(sizeof(WispGrabPayload) <= 256 - 20 - 8,
+              "WispGrabPayload must fit in one reliable datagram");
+
+// WispTear (68) -- host->ALL. Every peer plays the fatality tear on its LOCAL mirror of
+// the wisp (resolved by wispElementId via the Npc Registry) and socket-attaches the
+// victim's puppet (Registry::Puppet(victimSlot)) to the wisp 'playerGrab' socket. On the
+// victim's own machine victimSlot==own -> there is no self-puppet (the real ragdoll death
+// from WispGrab is the local view). Host-only send; receiver gates senderPeerSlot==0; not
+// relayable. See the design doc (C).
+struct WispTearPayload {
+    uint32_t wispElementId;    // the killerwisp NPC Element id -> resolve the local mirror
+    uint32_t victimSlot;       // cross-peer Registry slot of the victim (whose puppet to hold)
+};
+static_assert(sizeof(WispTearPayload) == 8, "WispTearPayload must be exactly 8 bytes (v72)");
+static_assert(sizeof(WispTearPayload) <= 256 - 20 - 8,
+              "WispTearPayload must fit in one reliable datagram");
 
 // BalanceSync (23) / BalanceDelta (24) -- shared host-authoritative Points balance
 // (2026-06-04, v30). One int32: the absolute TOTAL (BalanceSync, host->client mirror)
@@ -1957,6 +2834,49 @@ struct FireflySpawnPayload {
     float z;
 };
 static_assert(sizeof(FireflySpawnPayload) == 12, "FireflySpawnPayload must be 12 bytes");
+
+// InventoryPickupPayload -- one inventory-collect blip (InventoryPickup=47, v58). The
+// collector broadcasts its own world position at the moment the native inventory_Cue
+// PlaySound2D fired (see ReliableKind::InventoryPickup); every other peer plays the cue
+// spatialized there. Position-on-the-wire (the firefly shape) rather than puppet-resolved
+// at the receiver: immune to puppet-not-yet-spawned races and interp lag.
+struct InventoryPickupPayload {
+    float x;  // the collector's world location at collect time
+    float y;
+    float z;
+};
+static_assert(sizeof(InventoryPickupPayload) == 12, "InventoryPickupPayload must be 12 bytes");
+
+// ChatMessagePayload -- one T-chat line (ChatMessage=48, v60). TEXT ONLY: the sender's
+// identity comes from the transport's senderPeerSlot (nickname via player_handshake),
+// never from the payload -- a peer cannot speak as someone else. UTF-8, len-prefixed,
+// NOT NUL-terminated; receiver clamps len and sanitizes non-printable bytes before
+// display (chat_feed stores ASCII; multibyte renders as '?').
+struct ChatMessagePayload {
+    uint8_t len;        // bytes used in text[] (0 < len <= sizeof(text))
+    char    text[203];  // the line, UTF-8
+};
+static_assert(sizeof(ChatMessagePayload) == 204, "ChatMessagePayload must be 204 bytes");
+static_assert(sizeof(ChatMessagePayload) <= 256 - 20 - 8,
+              "ChatMessagePayload must fit in one reliable datagram");
+
+// TurbineStatePayload -- one wind turbine's driver state (TurbineState=49, v61).
+// HOST->client ~1 Hz per turbine. The six floats are the turbine BP's spring/
+// integrator INPUTS (RE doc votv-wind-turbines-RE-2026-06-11.md section 1): the
+// receiver writes them raw and the turbine's OWN tick does everything else (the
+// head spring is the interpolator; rot is the unbounded servo integrator whose
+// 0-reset on world load is the main divergence source). Identity = quantized
+// world position (one baked pair shares a save Key).
+struct TurbineStatePayload {
+    WireKey key;            // 32 -- "t_<qx>_<qy>_<qz>" quantized world position
+    float   headRotation;   // @0x0300 the facing (world yaw deg; spring output)
+    float   targetRot;      // @0x030C spring target
+    float   rot;            // @0x0340 servo integrator (unbounded deg, raw)
+    float   alphaBlades;    // @0x02F8 blade spin phase (deg accumulator)
+    float   bladesMomentum; // @0x0334 blade spring output (spin rate)
+    float   mult;           // @0x0328 per-instance BeginPlay rand(0.9,1.0) rate skew
+};
+static_assert(sizeof(TurbineStatePayload) == 56, "TurbineStatePayload must be 56 bytes");
 
 // PropConvertPayload -- the atomic trash-clump ball->pile swap (PropConvert=41, v52). The owner's
 // clump death-watch fires this ONE reliable event the instant its watched clump dies (= it morphed

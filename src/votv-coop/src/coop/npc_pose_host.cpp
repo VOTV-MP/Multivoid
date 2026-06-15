@@ -19,6 +19,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/engine.h"
+#include "ue_wrap/kerfur.h"  // HasSaveKey (savePersisted flag) + ReadKerfurState (mirror fidelity)
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
@@ -69,6 +70,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        // v75: mark save-persisted NPCs so the joiner ADOPTS its own local twin (class-match in
+        // coop/npc_adoption) instead of spawning a duplicate. A non-None int_save Key == this NPC
+        // is a save object both peers booted (the kerfur); a host-spawned transient enemy has no
+        // key -> savePersisted=0 -> the receiver fresh-spawns a mirror. (v74 shipped the key VALUE
+        // for key-equality adoption -- abandoned: the kerfur's key is minted RANDOM per load, so it
+        // differs across peers; only the PRESENCE of a key is portable.)
+        p.savePersisted = ue_wrap::kerfur::HasSaveKey(actor) ? 1 : 0;
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
             ++sent;
     }
@@ -131,6 +139,17 @@ void TickPoseStream() {
             if (!s_loggedBody) { s_loggedBody = true;
                 UE_LOGI("npc-bodyfacing: host streaming kerfur bodyYaw=%.1f eid=%u (first)",
                         snap.bodyYaw, snap.elementId); }
+        }
+        // v74 host-authoritative kerfur cosmetic/command state: the parked mirror runs no AI
+        // (actor tick off + timers neutralized) so it can't pick its own command/face. Stream
+        // the host kerfur's State (enum_kerfurCommand -> AnimBP state machine) + isSpooky + face
+        // index so the mirror's body animation matches. Class-gated (non-kerfur NPCs skip).
+        uint8_t kState = 0, kFace = 0; bool kSpooky = false;
+        if (ue_wrap::kerfur::ReadKerfurState(actor, kState, kSpooky, kFace)) {
+            snap.kerfState = kState;
+            snap.kerfFace  = kFace;
+            snap.stateBits |= coop::net::kEntityPoseBitHasKerfurState;
+            if (kSpooky) snap.stateBits |= coop::net::kEntityPoseBitKerfurSpooky;
         }
         batch.push_back(snap);
     }

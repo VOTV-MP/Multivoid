@@ -1161,3 +1161,94 @@ live adopt-applies on the client, door PRE+POST installed, pile-bind 870, the
 ghost probe quantified the exposure (162 keyless skipped, top 109 prop_C --
 the structural-fix dataset), 0 errors, client 3.9GB. Audit-fixed build
 re-smoked after (see next entry if numbers differ).
+
+===== SOUND BUGS (late evening, RE agent pass) =====
+(1) "Remote clump throw no whoosh" -- NOT A SYNC BUG (hypothesis falsified by
+bytecode+logs): the clump IS PhysicsHandle-carried at interp speed 100 (instant
+tracking, no flick momentum), and every hands-on release was an E-key DROP --
+a path with NO impulse (the LOCAL clump also fell at the feet; convert
+transforms prove it). The real throw is LMB (traceThrow->throwShit ~1500cm/s,
+velocity applied BEFORE grabbing_actor clears in one synchronous event -> our
+edge sampler reads it correctly). E-drop silence is SP parity. Contingency
+design (bounded 3-tick deferred release sample) documented in the agent
+output; implement ONLY if a real LMB clump throw ever arrives slow on the wire.
+(2) PUPPET FOOTSTEPS -- FIXED (smoke PASS, hands-on pending): the native
+accumulator lives in mainPlayer's BP tick block @70172 (stride 150cm, |v|>10,
+run x0.75 -> lib_C::step) and the puppet's BP tick is deliberately suppressed
+(puppet.cpp SetActorTickEnabled(false) -- the SP-brain/camera-MPC guard);
+Kerfur is audible via anim-notify notify_kerfurStep -> int_anim_events.step ->
+the SAME lib_C::step (mainPlayer_C lacks that interface; adding = asset edit
+A6). FIX: NEW coop/puppet_footsteps.h (header-only Stride: native constants,
+teleport guard, idle re-prime) ticked from RemotePlayer::ApplyToEngine after
+the CMC drive + NEW ue_wrap/votv_lib.{h,cpp} (latched lib_C CDO + step thunk,
+args mirror the native call @70973). All sound selection/spatialization/
+steppedOn reactions are the game's own. Cost: float math/frame + 1 PE per
+150cm walked. Side effects flagged: observer-side stats.steps++ per remote
+step (cosmetic); steppedOn fires on the observer (correct mirroring). Fresh
+dumps: prop_garbageClump, lib, kerfurOmega, notify_kerfurStep (bp_reflection/).
+
+===== HOST-GAME CONNECTION SELECTOR (2026-06-11, user req) =====
+Picker gains Connection: AUTO (recommended; master P2P/ICE -- direct-or-TURN
+automatic; TURN deliberately NOT a user choice) vs DIRECT (LanDirect listen on
+net.port, NO master announce -- the master join flow hands P2P creds so a
+listed direct lobby would mislead joiners; friends use Direct Connect) + a
+Public-game checkbox (AUTO only; private = announce->SetListed(false), the
+hidden shape). HostWithSave(+directConnection,+publicGame). DEFERRED w/ design:
+port-open check needs a MASTER probe endpoint (master sends UDP probe ->
+host session reports receipt -> "port closed, use AUTO" verdict); direct-lobby
+LISTING needs master support (store/return host ip:port). Smoke PASS.
+
+===== CONNECTION-TYPE SELECTOR + DIRECT LOBBIES (2026-06-11, user req) =====
+3 connection types (TURN is NOT a user choice -- it's ICE's automatic fallback
+INSIDE auto): AUTO (master P2P/ICE, always listed -- a relay game's only
+rendezvous, hiding=unjoinable), DIRECT (LanDirect UDP listen on a forwarded
+port, master-LISTED), LAN (.bat/manual Direct Connect). User visibility model:
+AUTO can't hide at host (trap removed, RULE-2); hide via the IN-GAME scoreboard
+once friends are in; DIRECT has a host-time "Hide from server browser" checkbox.
+
+MASTER (coop_master_server.py): Lobby +conn/+direct_port; h_host parses
+conn=direct + port (1024-65535) -- REJECTS out-of-range with 400 (audit R1: no
+silent p2p downgrade that would hand joiners ICE creds a LanDirect host can't
+speak) + REFLECTS accepted conn back; direct hosts get NO ICE/TURN block;
+h_join direct -> {conn,addr=src-ip:port} (no creds); rows +conn (no direct_port
+leak). master_smoke +8 direct checks, all PASS.
+
+CLIENT: lobby_announcer.Host(+directPort); session_manager HostWithSave(+direct
+,+hideFromBrowser) one worker announces P2P or DIRECT, listed=ok&&!(direct&&
+hide); JoinLobby direct branch -> LanDirect dial; LobbyRow.direct + JoinInfo
+{direct,addr}; g_listedState/ListedState()/HostListenPort(). Picker: AUTO
+checkbox GONE, DIRECT 'Hide from server browser' checkbox. Scoreboard: host-only
+'Show in server browser' toggle -> SetListed.
+
+AUDITS (2 master + 1 client agent):
+- **CRITICAL C-1 (master, the headline)**: resolve_client_ip took the LEFTMOST
+  X-Forwarded-For = CLIENT-FORGED value. Behind the production xray proxy (peer
+  =loopback -> XFF trusted), an attacker could forge XFF:<victim> and make the
+  master (a) advertise a direct lobby's addr as the victim's, (b) [if portcheck
+  shipped] UDP-probe the victim. FIX: take the RIGHTMOST XFF entry (what OUR
+  trusted proxy appended = the real observed peer); X-Real-IP (proxy-overwritten)
+  still preferred. The 1st audit's "lo.ip unpoisonable" PASS only held for the
+  direct-exposure model; the proxy model is production -> 2nd audit caught it.
+- **HIGH /v1/portcheck (both audits)**: a master emitting outbound UDP on request
+  = reflection/amplification surface its provider can flag; per-IP RL can't bound
+  AGGREGATE UDP across a distributed source set; "can't aim at a 3rd party" false
+  under CGNAT. DECISION (RULE 1, don't ship a risky half-feature): REMOVED the
+  standalone endpoint this round (it had no UI wired). Safe design noted for when
+  the DIRECT port-check UI lands: FOLD the probe into the RL_CREATE-capped, real-
+  session-tied /v1/host direct announce + a nonce the host echoes on the socket
+  it just bound -- no standalone reflector.
+- **R1 (master)**: silent direct->p2p downgrade on bad port -> FIXED (reject 400
+  + reflect conn).
+- **CLIENT F1/F2 (loading-cover strand on shutdown race in JoinLobby)**: FIXED
+  (Fail() on every exit, not bare return). **F3 (host-boot cover strand on
+  HostWithSave throw)**: FIXED (catch -> AbortHost + join_progress::Reset).
+  **F4 (RefreshAsync inFlight_ latched true on a parse bad_alloc -> browser
+  frozen at Refreshing forever)**: FIXED (try/catch, always clear inFlight_).
+- CLIENT clean: announce-fail direct path coherent; SetListed thread-safe
+  (announcer mutex); g_listedState atomic; self-lobby guard correct for direct.
+- DEFERRED (LOW): F6 (ParseHostPort bare-IPv6 misparse -- master returns dotted
+  decimal, harmless; would Fail->reconnect anyway); F7 (server_browser per-frame
+  CopyRows -- main-menu-only waste; gen-guard is a trivial later win).
+OPS: VPS master needs the new coop_master_server.py deployed (USER step -- the
+  master is RULE-3 infra; the resolve_client_ip C-1 fix matters most). DLL +
+  LAN smoke is the mod side.

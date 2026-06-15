@@ -79,6 +79,18 @@ bool g_interceptorsRegistered = false;  // client PRE interceptors
 // interceptor lives on the directionalWind class, which may load after the cycle, so the
 // registration sits ABOVE Install's cycle-gated g_installed early-out.
 std::atomic<bool> g_windIsClient{false};
+
+// Runtime gate for the 5 scheduler PRE-interceptors (latent-bug fix 2026-06-11,
+// agent-found): the old OnSchedulerPreSuppress returned true UNCONDITIONALLY and
+// was registered client-only at install time -- but interceptors live for the
+// process, so (a) an EX-client kept suppressing its local weather rolls after
+// disconnect (SP/menu world with dead rain/fog/lightning until restart), and
+// (b) a process that HOSTED first never registered them at all (the g_installed
+// latch), so a later client session in the same process ran its own rolls =
+// weather divergence. Fix = the proven g_windIsClient shape: register on BOTH
+// roles once, gate at FIRE time on this atomic (true only while connected as a
+// client), clear on disconnect.
+std::atomic<bool> g_schedulerSuppressActive{false};
 bool g_windOriginInterceptorReg = false;
 
 // Session pointer; atomic so the observer / interceptor reads can't race
@@ -295,12 +307,14 @@ void OnSchedulerPost(void* self, void* function, void* /*params*/) {
 // ---- CLIENT: PRE interceptor suppresses local scheduler -----------------
 
 bool OnSchedulerPreSuppress(void* /*self*/, void* /*params*/) {
-    // Returning true skips the original UFunction body. Client only -- the
-    // host's role-gate at install time means the host never registers this.
-    // No filter on `self`: there's one cycle per session; all dispatches
-    // on the 5 scheduler UFunctions are this cycle's. Logging this at INFO
-    // would spam (each fires on a timer); silent suppression is correct.
-    return true;
+    // Returning true skips the original UFunction body. Runtime-gated on the
+    // connected-as-client atomic (the g_windIsClient shape): host + idle/SP
+    // pass through, a connected client's local weather rolls are suppressed
+    // (it receives WeatherState from the host instead). No filter on `self`:
+    // there's one cycle per session; all dispatches on the 5 scheduler
+    // UFunctions are this cycle's. Logging this at INFO would spam (each
+    // fires on a timer); silent suppression is correct.
+    return g_schedulerSuppressActive.load(std::memory_order_acquire);
 }
 
 // v50: cancel AdirectionalWind_C::changeWindOrigin (the per-peer RNG windTarget re-roll)
@@ -398,6 +412,10 @@ void Install(coop::net::Session* session) {
     // if the class/UFunction isn't loaded or the interceptor table is momentarily full).
     g_windIsClient.store(session && session->role() != coop::net::Role::Host,
                          std::memory_order_release);
+    // Same refresh for the 5 scheduler interceptors' runtime gate (see the
+    // atomic's comment): true only while connected as a client.
+    g_schedulerSuppressActive.store(session && session->role() != coop::net::Role::Host,
+                                    std::memory_order_release);
     if (!g_windOriginInterceptorReg) {
         // Throttle the resolve to ~1 Hz: R::FindClass walks the ~190k-entry GUObjectArray,
         // and this block sits ABOVE the g_installed early-out so it would otherwise walk
@@ -479,7 +497,12 @@ void Install(coop::net::Session* session) {
                 "(5 schedulers + 3 mutators)", n);
     }
 
-    if (!isHost && !g_interceptorsRegistered) {
+    // Registered on BOTH roles (2026-06-11 latent-bug fix): the interceptor body
+    // gates at fire time on g_schedulerSuppressActive (true only while connected
+    // as a client), so the host and an idle/SP world pass through. Registering
+    // host-side too closes the host-first-then-client-session gap (interceptors
+    // can only be registered, never removed, and g_installed latches per process).
+    if (!g_interceptorsRegistered) {
         int n = 0;
         void* targets[] = { g_timerRainFn, g_timerLightningFn, g_fogEventFn,
                             g_superFogEventFn, g_permaRainTimerFn };
@@ -487,9 +510,10 @@ void Install(coop::net::Session* session) {
             if (t && GT::RegisterInterceptor(t, &OnSchedulerPreSuppress)) ++n;
         }
         g_interceptorsRegistered = true;
-        UE_LOGI("weather: CLIENT PRE interceptors registered on %d/5 scheduler "
-                "UFunctions (client never decides 'rain now' locally; receives "
-                "WeatherState from host instead)", n);
+        UE_LOGI("weather: scheduler PRE interceptors registered on %d/5 UFunctions "
+                "(runtime-gated: suppress only while connected as a CLIENT -- the "
+                "client never decides 'rain now' locally; receives WeatherState "
+                "from the host instead)", n);
     }
 
     // Phase 5W Inc-fix-2: echo-suppress interceptor on causeRain, registered
@@ -861,12 +885,12 @@ void OnDisconnect() {
     // session reconnects with a different role (host->client or back),
     // the still-registered host-only observers would fire on the wrong
     // peer. The 5 scheduler PRE-interceptors and the causeRain
-    // echo-suppress interceptor are KEPT registered -- they're conditional
-    // on g_causeRainEchoSuppress (false outside Apply) and on role
-    // checks inside the observer body, so they stay safe across role
-    // changes; unregistering them would require re-resolving + re-
-    // registering on each connect-edge, which is heavier than the
-    // run-time role check.
+    // echo-suppress interceptor are KEPT registered (interceptors are
+    // process-lifetime by design) -- each is gated INSIDE the body:
+    // causeRain on g_causeRainEchoSuppress (false outside Apply), the
+    // schedulers on g_schedulerSuppressActive (cleared below -- the
+    // 2026-06-11 fix; the body previously returned true unconditionally,
+    // leaving an ex-client's local weather rolls dead until restart).
     coop::weather_lightning::OnDisconnect();
     coop::weather_redsky::OnDisconnect();
     coop::weather_fog::OnDisconnect();
@@ -875,6 +899,9 @@ void OnDisconnect() {
     // the process lifetime) goes inert -- a disconnected client's local wind resumes its
     // own RNG gust rolls instead of staying frozen at the last synced target.
     g_windIsClient.store(false, std::memory_order_release);
+    // 2026-06-11: same for the scheduler suppressors -- a disconnected client's
+    // local weather scheduler resumes (its own rain/fog/lightning rolls).
+    g_schedulerSuppressActive.store(false, std::memory_order_release);
     // Clear g_installed so the next session's Install() call can re-enter
     // and re-register lightning + red-sky observers. The other per-feature
     // flags (g_observersRegistered, g_interceptorsRegistered) stay set --

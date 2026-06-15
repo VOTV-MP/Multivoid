@@ -1,5 +1,6 @@
 #include "coop/dev/freecam.h"
 
+#include "coop/dev/dev_gate.h"
 #include "coop/players_registry.h"
 #include "coop/shutdown.h"
 #include "coop/ini_config.h"
@@ -57,6 +58,10 @@ inline void* ReadPtr(void* base, size_t off) {
 // per RULE 1 (2026-05-26 unification). This module just calls Get().
 
 void Enable() {
+    if (!::coop::dev_gate::Allowed()) {
+        UE_LOGW("freecam: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
     g_player = coop::players::Registry::Get().Local();
     if (!g_player) { UE_LOGW("freecam: no local player (no mainPlayer_C with a Controller)"); return; }
     g_pc = E::GetController(g_player);
@@ -117,6 +122,14 @@ void Teleport() {
 // specific event firing. Runs on the game thread inside the detour.
 void MovementTick() {
     if (!g_active.load() || !g_camActor || !g_pc) return;
+    // Live role gate: a freecam activated BEFORE joining (or during hosting,
+    // then the role changed) dies the moment this peer is a connected client.
+    // Runs on the game thread -- Disable() restores the view target directly.
+    if (!::coop::dev_gate::Allowed()) {
+        UE_LOGW("freecam: auto-off -- dev features are disabled while connected as a client");
+        Disable();
+        return;
+    }
     // Foreground-window gate (same reason as the hotkey thread): the WASD /
     // Space / Ctrl / Shift KeyDown reads are GLOBAL, so without this the
     // freecam would still move when the user types in the OTHER instance's

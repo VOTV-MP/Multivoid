@@ -36,6 +36,12 @@ std::atomic<unsigned long long> g_tasksRun{0};
 // Arming the bypass for the teardown window lets VOTV travel natively, then it
 // auto-expires so the fresh menu world runs with our layer fully normal again.
 std::atomic<long long> g_bypassUntilMs{0};
+// Optional condition-based release for the bypass: when set, the detour clears
+// the bypass the instant ProcessEvent dispatches THIS UFunction (the menu's
+// ui_menu_C::Tick for the death-flee), resuming on that very call. The maxMs
+// deadline above is then just a safety ceiling. Lock-free (game-thread written
+// at arm time, read in the detour).
+std::atomic<void*> g_bypassResumeFn{nullptr};
 
 long long NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -725,11 +731,25 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     // no DLL present. Auto-expires when the deadline passes -> normal detour resumes.
     const long long until = g_bypassUntilMs.load(std::memory_order_relaxed);
     if (until != 0) {
-        if (NowMs() < until) {
+        // Condition-based release: the moment the armed resume-function dispatches
+        // (the menu's ui_menu_C::Tick -> menu world up, teardown past), clear the
+        // bypass and FALL THROUGH to the normal detour so this very call runs our
+        // logic (the MULTIPLAYER-injection POST observer fires on the first menu
+        // frame). A single pointer compare per dispatch while armed -- negligible.
+        void* resumeFn = g_bypassResumeFn.load(std::memory_order_relaxed);
+        if (resumeFn != nullptr && function == resumeFn) {
+            g_bypassUntilMs.store(0, std::memory_order_relaxed);
+            g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);
+            UE_LOGW("game_thread: transparent bypass RESUMED on its release function "
+                    "(menu world up) -- detour normal again");
+            // fall through to the normal detour below
+        } else if (NowMs() < until) {
             if (g_originalPE) g_originalPE(self, function, params);
             return;
+        } else {
+            g_bypassUntilMs.store(0, std::memory_order_relaxed);   // ceiling hit -> resume
+            g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);
         }
-        g_bypassUntilMs.store(0, std::memory_order_relaxed);  // expired -> resume normal detour
     }
     if (RunDetourSEH(self, function, params) != 0) {
         // The Impl crashed somewhere -- recover by logging + returning
@@ -787,9 +807,21 @@ void Uninstall() {
 bool IsInstalled() { return g_installed; }
 
 void SetTransparentBypass(int ms) {
+    g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);  // pure timer mode
     g_bypassUntilMs.store(ms > 0 ? NowMs() + ms : 0, std::memory_order_relaxed);
     UE_LOGW("game_thread: transparent bypass %s (ms=%d) -- detour forwards straight to "
             "the engine (world-teardown flee)", ms > 0 ? "ARMED" : "cleared", ms);
+}
+
+void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs) {
+    // Arm the resume-function BEFORE the deadline so the detour never observes a
+    // live bypass without its release condition. A null resumeOnFunction falls
+    // back to a pure timer (identical to SetTransparentBypass).
+    g_bypassResumeFn.store(resumeOnFunction, std::memory_order_relaxed);
+    g_bypassUntilMs.store(maxMs > 0 ? NowMs() + maxMs : 0, std::memory_order_relaxed);
+    UE_LOGW("game_thread: transparent bypass %s (resumeFn=%p, ceiling=%dms) -- detour "
+            "forwards straight to the engine until the menu world is up",
+            maxMs > 0 ? "ARMED" : "cleared", resumeOnFunction, maxMs);
 }
 
 void Post(Task task) {

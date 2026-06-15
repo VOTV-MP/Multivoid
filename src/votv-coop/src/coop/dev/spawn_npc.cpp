@@ -2,9 +2,11 @@
 
 #include "coop/dev/spawn_npc.h"
 
+#include "coop/dev/dev_gate.h"
 #include "coop/ini_config.h"
 #include "coop/npc_sync.h"
 #include "coop/players_registry.h"
+#include "coop/remote_player.h"   // RemotePlayer::GetActor (the on-client wisp test spawn)
 #include "coop/shutdown.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -28,15 +30,14 @@ namespace E  = ue_wrap::engine;
 
 namespace {
 
-// Spawn an allowlisted NPC ~2.5 m in front of the local player, facing them, via
-// BeginDeferredActorSpawnFromClass + FinishSpawningActor. The spawn goes through
-// the very UFunction npc_sync's interceptor hooks, so on the HOST the interceptor
-// runs the full sync path (AllocAndInstall an Npc Element + broadcast EntitySpawn
-// + let the spawn proceed) and connected clients materialize a mirror. This is the
-// ONLY programmatic NPC-spawn trigger (VOTV NPCs spawn only from purchase/scripted
-// events). Game thread only. (Extracted from npc_sync.cpp 2026-05-30 to keep it
-// under the 800-LOC soft cap; the spawn refs come from npc_sync::GetDevSpawnRefs.)
-void SpawnNpcInFront(const wchar_t* className) {
+// Spawn an allowlisted NPC at `xform` via BeginDeferredActorSpawnFromClass +
+// FinishSpawningActor. The spawn goes through the very UFunction npc_sync's interceptor
+// hooks, so on the HOST the interceptor runs the full sync path (AllocAndInstall an Npc
+// Element + broadcast EntitySpawn + let the spawn proceed) and connected clients
+// materialize a mirror. This is the ONLY programmatic NPC-spawn trigger (VOTV NPCs spawn
+// only from purchase/scripted events). Game thread only. (Extracted from npc_sync.cpp
+// 2026-05-30; the spawn refs come from npc_sync::GetDevSpawnRefs.)
+void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     coop::npc_sync::DevSpawnRefs refs;
@@ -49,33 +50,11 @@ void SpawnNpcInFront(const wchar_t* className) {
         UE_LOGW("spawn_npc: class '%ls' not found in GUObjectArray -- ignoring", className);
         return;
     }
-    void* local = coop::players::Registry::Get().Local();
-    if (!local) {
-        UE_LOGW("spawn_npc: no local player resolved yet -- ignoring (world loaded?)");
-        return;
-    }
     void* worldCtx = E::GetWorldContext();
     if (!worldCtx) {
         UE_LOGW("spawn_npc: no world context -- ignoring");
         return;
     }
-    // Spawn point: ~250 cm ahead of the player's view yaw at the player's Z. NO turn-to-face:
-    // the NPC spawns at the player's OWN view yaw (the prior +180 "turn to face the host" was a
-    // screenshot convenience that aimed the test kerfur at the host -- removed 2026-06-07 so the
-    // dev-spawn adds zero host-relative rotation; the client mirrors this transform byte-for-byte).
-    const ue_wrap::FVector loc = E::GetActorLocation(local);
-    float yaw = 0.f;
-    if (void* ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
-    constexpr float kDist = 250.f;
-    constexpr float kDeg2Rad = 0.0174532925f;
-    const float fwdX = std::cos(yaw * kDeg2Rad);
-    const float fwdY = std::sin(yaw * kDeg2Rad);
-    ue_wrap::FTransform xform{};
-    E::RotatorToQuat(0.f, yaw, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
-    xform.TX = loc.X + fwdX * kDist;
-    xform.TY = loc.Y + fwdY * kDist;
-    xform.TZ = loc.Z;
-
     constexpr uint8_t kAlwaysSpawn = 1;  // ESpawnActorCollisionHandlingMethod::AlwaysSpawn
     void* spawned = nullptr;
     {
@@ -117,14 +96,88 @@ void SpawnNpcInFront(const wchar_t* className) {
             return;
         }
     }
-    UE_LOGI("spawn_npc: spawned '%ls' actor=%p at (%.0f, %.0f, %.0f) (in front of local player %p)",
-            className, spawned, xform.TX, xform.TY, xform.TZ, local);
+    UE_LOGI("spawn_npc: spawned '%ls' actor=%p at (%.0f, %.0f, %.0f)",
+            className, spawned, xform.TX, xform.TY, xform.TZ);
+}
+
+// Spawn ~2.5 m in front of the local player at their view yaw (NO turn-to-face -- the
+// client mirrors the transform byte-for-byte).
+void SpawnNpcInFront(const wchar_t* className) {
+    void* local = coop::players::Registry::Get().Local();
+    if (!local) {
+        UE_LOGW("spawn_npc: no local player resolved yet -- ignoring (world loaded?)");
+        return;
+    }
+    const ue_wrap::FVector loc = E::GetActorLocation(local);
+    float yaw = 0.f;
+    if (void* ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
+    constexpr float kDist = 250.f;
+    constexpr float kDeg2Rad = 0.0174532925f;
+    ue_wrap::FTransform xform{};
+    E::RotatorToQuat(0.f, yaw, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    xform.TX = loc.X + std::cos(yaw * kDeg2Rad) * kDist;
+    xform.TY = loc.Y + std::sin(yaw * kDeg2Rad) * kDist;
+    xform.TZ = loc.Z;
+    SpawnNpcAt(className, xform);
+}
+
+// v72 Killer Wisp TEST hook: spawn `className` ON the first connected client puppet so it
+// immediately acquires the PUPPET as Target -- the only easy way to exercise the cross-peer
+// kill (the wisp normally targets whoever is nearest, = the host). Host-side; no-op + warns
+// if no client puppet is present. Game thread.
+void SpawnNpcOnFirstClient(const wchar_t* className) {
+    auto& reg = coop::players::Registry::Get();
+    void* puppetActor = nullptr;
+    uint8_t foundSlot = 0;
+    for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot) {
+        if (coop::RemotePlayer* pp = reg.Puppet(slot)) {
+            void* a = pp->GetActor();
+            if (a && R::IsLive(a)) { puppetActor = a; foundSlot = slot; break; }
+        }
+    }
+    if (!puppetActor) {
+        UE_LOGW("spawn_npc: no connected client puppet -- cannot spawn '%ls' on a client", className);
+        return;
+    }
+    const ue_wrap::FVector loc = E::GetActorLocation(puppetActor);
+    ue_wrap::FTransform xform{};
+    E::RotatorToQuat(0.f, 0.f, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    xform.TX = loc.X;
+    xform.TY = loc.Y;
+    xform.TZ = loc.Z + 50.f;  // slightly up so it doesn't clip the floor
+    UE_LOGI("spawn_npc: spawning '%ls' ON client slot %u puppet at (%.0f, %.0f, %.0f)",
+            className, foundSlot, loc.X, loc.Y, loc.Z);
+    SpawnNpcAt(className, xform);
 }
 
 void PostSpawnKerfur() {
+    // Strict client lockout: a client-side spawn is LOCAL-ONLY (host-auth NPC
+    // pipeline never registers it) -- a ghost entity + a cheat (coop::dev_gate).
+    // Gating here covers both entries: the F1 menu button and the autonomous
+    // file trigger.
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("spawn_npc: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
     // The spawn touches engine reflection (BeginDeferred/FinishSpawning via
     // ProcessEvent) -- must run on the game thread.
     GT::Post([] { SpawnNpcInFront(P::name::NpcClass_KerfurOmega); });
+}
+
+// Generic dev test-spawn of an allowlisted class in front of the host player.
+// THE reliable way to test a new npc_sync allowlist entry: F1 EVENTS are a poor
+// test (wisps only arms an overlap box; ventCrawler's eventer spawn uses
+// EX_CallMath -> bypasses our ProcessEvent interceptor + lands ~10 m away in a
+// vent). This Call->reflection::CallFunction->ProcessEvent path re-enters the
+// SAME detoured pointer, so NpcSuppress_Interceptor fires and the host broadcasts
+// EntitySpawn -> the client mirrors it. Client-locked (dev_gate); game thread.
+// className is a static string-literal constant (sdk_profile) -> safe to capture.
+void PostSpawnClass(const wchar_t* className) {
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("spawn_npc: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
+    GT::Post([className] { SpawnNpcInFront(className); });
 }
 
 // Trigger-FILE watcher (autonomous path only). mp.py creates the file once all
@@ -152,6 +205,18 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
 }  // namespace
 
 void SpawnKerfurOmega() { PostSpawnKerfur(); }
+void SpawnKillerWisp()  { PostSpawnClass(P::name::NpcClass_KillerWisp); }
+void SpawnVentCrawler() { PostSpawnClass(P::name::NpcClass_VentCrawler); }
+
+void SpawnKillerWispOnClient() {
+    // v72 Killer Wisp cross-peer-kill test: spawn the wisp ON the first client puppet so it
+    // grabs the PUPPET (routes the kill to that client) rather than the host. Host-side only.
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("spawn_npc: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
+    GT::Post([] { SpawnNpcOnFirstClient(P::name::NpcClass_KillerWisp); });
+}
 
 void Init() {
     wchar_t probe[8] = {};

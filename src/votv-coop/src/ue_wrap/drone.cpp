@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 
 namespace ue_wrap::drone {
@@ -42,15 +43,19 @@ void*   g_setActiveFn   = nullptr;  // UActorComponent::SetActive(bool bNewActiv
 void*   g_activateFn    = nullptr;  // UActorComponent::Activate(bool bReset)
 void*   g_isActiveFn    = nullptr;  // UActorComponent::IsActive() -> bool
 int32_t g_lightAlarmOff = -1;       // Adrone_C::light_alarm @0x0240 (UPointLightComponent*) -- arrival signal light
-void*   g_setFloatParamFn = nullptr;// UParticleSystemComponent::SetFloatParameter(FName, float) -- dust intensity
+void*   g_setFloatParamFn = nullptr;// UFXSystemComponent::SetFloatParameter(FName, float) -- dust intensity
 void*   g_setVisFn        = nullptr;// USceneComponent::SetVisibility(bool, bool) -- the signal light
+void*   g_getCompLocFn    = nullptr;// USceneComponent::K2_GetComponentLocation() -- host dust-anchor read
+void*   g_setWorldLocFn   = nullptr;// USceneComponent::K2_SetWorldLocation(...) -- mirror dust-anchor pin
 R::FName g_dustFName{0, 0};         // the 'dust' particle intensity param name (lazy; needs Kismet up)
 constexpr int32_t kCanTakeOffFallback = 0x0500;
 constexpr int32_t kDustFallback       = 0x0278;
 constexpr int32_t kAudioAlarmFallback = 0x0230;
 constexpr int32_t kLightAlarmFallback = 0x0240;
-constexpr float   kDustIntensity      = 1.0f;  // full intensity on the mirror (the host fades by ground
-                                               // distance; the mirror lacks the raycast -> fixed -- MVP)
+// The BP's per-tick intensity formula (drone_dust_notes.md stmt @11781-11966):
+// 'dust' = 1 - dist(actor, ground hit)/2000 -- a RateScale multiplier on both
+// spawn modules, valid range [0,1].
+constexpr float kDustTraceLen = 2000.f;
 // Interaction-gate fields (RE 2026-06-09): the client mirror must carry these so a PARKED drone is
 // interactable (the suppressed tick never sets them). canTakeOff@0x0500 IS the gate (true=parked);
 // hasSack@0x0501 gates the action options (open-inv / drop-sack); container@0x04F8 is the inventory
@@ -96,11 +101,15 @@ bool EnsureFxResolved() {
     // null -> the 'dust' param is never set -> the emitter stays at rate 0 -> NO dust (the bug).
     if (void* fxCls = R::FindClass(L"FXSystemComponent"))
         g_setFloatParamFn = R::FindFunction(fxCls, L"SetFloatParameter");
-    if (void* scCls = R::FindClass(profile::name::SceneComponentClass))
-        g_setVisFn = R::FindFunction(scCls, profile::name::SetVisibilityFn);
-    if (!g_setFloatParamFn || !g_setVisFn)
-        UE_LOGW("drone: FX polish UFunctions partial (SetFloatParameter=%p SetVisibility=%p) -- "
-                "dust intensity / signal light may be limited", g_setFloatParamFn, g_setVisFn);
+    if (void* scCls = R::FindClass(profile::name::SceneComponentClass)) {
+        g_setVisFn      = R::FindFunction(scCls, profile::name::SetVisibilityFn);
+        g_getCompLocFn  = R::FindFunction(scCls, L"K2_GetComponentLocation");
+        g_setWorldLocFn = R::FindFunction(scCls, L"K2_SetWorldLocation");
+    }
+    if (!g_setFloatParamFn || !g_setVisFn || !g_getCompLocFn || !g_setWorldLocFn)
+        UE_LOGW("drone: FX polish UFunctions partial (SetFloatParameter=%p SetVisibility=%p "
+                "GetCompLoc=%p SetWorldLoc=%p) -- dust / signal light may be limited",
+                g_setFloatParamFn, g_setVisFn, g_getCompLocFn, g_setWorldLocFn);
     g_fxResolved = true;
     UE_LOGI("drone: FX resolved canTakeOff@0x%04X eff_droneDust@0x%04X audio_alarm@0x%04X "
             "light_alarm@0x%04X hasSack@0x%04X container@0x%04X",
@@ -216,22 +225,58 @@ uint8_t ReadFxBits(void* drone) {
     return bits;
 }
 
-void SetDust(void* drone, bool on) {
+bool ReadDustAnchor(void* drone, FVector& out) {
+    if (!drone || !EnsureFxResolved() || !g_getCompLocFn) return false;
+    void* dust = ReadComp(drone, g_dustOff);
+    if (!dust) return false;
+    ParamFrame f(g_getCompLocFn);
+    if (!f.valid() || !Call(dust, f)) return false;
+    out = f.Get<FVector>(L"ReturnValue");
+    return true;
+}
+
+void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
     if (!drone || !EnsureFxResolved()) return;
     void* dust = ReadComp(drone, g_dustOff);
     if (!dust) return;
-    SetComponentActive(dust, on);
-    // The emitter's spawn rate is driven by the 'dust' float param (intensity); SetActive(true)
-    // alone leaves it at the mirror's default (0 -> emits NOTHING -- the "no dust on peers" bug).
-    // Set it so the dust is visible. (Lazy-resolve the FName: it needs Kismet up, which post-boot it is.)
-    if (on && g_setFloatParamFn) {
+    // 1. The BP's own edge form (drone_dust_notes.md @11295-11562): SetActive
+    //    only when IsActive() != want. Load-bearing both ways: deactivates on
+    //    leaving the ground AND re-arms the EmitterLoops=1/20s system after it
+    //    self-completes mid-hover -- a latched rising-edge replay cannot
+    //    (the pre-v69 invisible-dust bug, part 2).
+    if (ComponentIsActive(dust) != on) SetComponentActive(dust, on);
+    if (!on) return;
+    // 2. Pin the component to the host's ground-trace hit. eff_droneDust is
+    //    bAbsoluteLocation with NO relative offset -- unmoved it renders at
+    //    WORLD ORIGIN and its fixed relative bounding box gets frustum-culled
+    //    (the pre-v69 invisible-dust bug, part 1). Same call form as the BP
+    //    (@12035-12346): sweep=false, teleport=false; no VInterpTo -- the
+    //    host streams its already-interpolated component location at 20 Hz.
+    if (g_setWorldLocFn) {
+        ParamFrame f(g_setWorldLocFn);
+        if (f.valid()) {
+            f.Set<FVector>(L"NewLocation", anchor);
+            f.Set<bool>(L"bSweep", false);
+            f.Set<bool>(L"bTeleport", false);
+            Call(dust, f);
+        }
+    }
+    // 3. The BP's intensity formula (@11781-11966): 'dust' = 1 - dist(actor,
+    //    hit)/2000, clamped [0,1] (a RateScale multiplier on both spawn
+    //    modules). Lazy-resolve the FName (needs Kismet up; post-boot it is).
+    if (g_setFloatParamFn) {
         if (g_dustFName.ComparisonIndex == 0 && g_dustFName.Number == 0)
             g_dustFName = ue_wrap::fname_utils::StringToFName(L"dust");
         if (g_dustFName.ComparisonIndex != 0 || g_dustFName.Number != 0) {
+            const FVector loc = E::GetActorLocation(drone);
+            const float dx = loc.X - anchor.X, dy = loc.Y - anchor.Y, dz = loc.Z - anchor.Z;
+            float dustVal = 1.f - std::sqrt(dx * dx + dy * dy + dz * dz) / kDustTraceLen;
+            if (dustVal < 0.f) dustVal = 0.f;
+            if (dustVal > 1.f) dustVal = 1.f;
             ParamFrame f(g_setFloatParamFn);
             if (f.valid()) {
                 f.SetRaw(L"ParameterName", &g_dustFName, sizeof(g_dustFName));
-                f.Set<float>(L"Param", kDustIntensity);
+                f.Set<float>(L"Param", dustVal);
                 Call(dust, f);
             }
         }

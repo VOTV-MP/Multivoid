@@ -36,6 +36,11 @@ ProcessEventFn g_processEvent = nullptr;
 
 }  // namespace
 
+// The engine-heap allocator (EngineAlloc / EngineFree + the &GMalloc slot) lives in
+// ue_wrap/engine_heap.cpp (modular split, 2026-06-14). ResolveEngineHeap() resolves the GMalloc
+// slot once; Resolve() calls it eagerly below, alongside the other primitives.
+void ResolveEngineHeap();
+
 uintptr_t GUObjectArrayAddr() { return g_objArray; }
 uintptr_t FNameToStringAddr() { return reinterpret_cast<uintptr_t>(g_fnameToString); }
 uintptr_t ProcessEventAddr() { return reinterpret_cast<uintptr_t>(g_processEvent); }
@@ -57,6 +62,7 @@ bool Resolve() {
         const uintptr_t hit = FindPattern(P::kSigProcessEvent);
         if (hit) g_processEvent = reinterpret_cast<ProcessEventFn>(hit);
     }
+    ResolveEngineHeap();  // &GMalloc (engine_heap.cpp) -- best-effort, not part of IsResolved()
     return IsResolved();
 }
 
@@ -187,11 +193,22 @@ namespace {
 const wchar_t* RenderNameToScratch(const FName& name, int& lenOut) {
     lenOut = 0;
     if (!g_fnameToString) return nullptr;
-    // thread_local (not static): the scratch buffer is reused per thread, so two
-    // threads calling ToString never race the same FString -- without paying a
-    // per-call free of UE-allocated memory we can't release.
+    // thread_local (not static): per-thread scratch, so two threads rendering names
+    // never race the same FString.
     thread_local FString scratch{nullptr, 0, 0};
-    scratch.Num = 0;  // reuse the buffer; write from the start (one buffer per thread)
+    // CRITICAL (2026-06-13, the RAM balloon): FName::ToString(Out) does NOT reuse the
+    // caller's buffer -- IDA-verified it does `Out.Data = 0` (no free) then allocates
+    // a FRESH engine buffer every call. So the PREVIOUS render's buffer is orphaned
+    // and leaks unless WE free it. This is the hot name primitive (every NameEquals /
+    // ToString / FindFunction goes through here, ~10^5/s), so the unfreed orphan was
+    // the multi-MB/s engine-heap leak. Free the prior buffer before the engine drops
+    // the pointer; the engine reallocates below. (No-op until GMalloc is resolved.)
+    if (scratch.Data) {
+        EngineFree(scratch.Data);
+        scratch.Data = nullptr;
+        scratch.Max = 0;
+    }
+    scratch.Num = 0;
     g_fnameToString(&name, &scratch);
     if (!scratch.Data || scratch.Num <= 0) return nullptr;
     int len = scratch.Num;
@@ -209,13 +226,22 @@ std::wstring ToString(const FName& name) {
     return std::wstring(s, s + len);
 }
 
+// Name comparisons are case-INSENSITIVE: engine FNames compare by
+// ComparisonIndex (case-insensitive), and the rendered string carries
+// whatever casing was registered FIRST in this process -- a case-sensitive
+// compare makes by-name lookups depend on package load order. Found
+// 2026-06-12: FindFunction(kerfurOmega_C, L"actionName") returned null all
+// session because some earlier-loaded class registered the name as
+// "ActionName" (kerfur_convert never installed -> the conversion dupe).
+// Two engine names can never differ only by case, so insensitive matching
+// is strictly more correct, never less.
 bool NameEquals(const FName& name, const wchar_t* expected) {
     if (!expected) return false;
     int len = 0;
     const wchar_t* s = RenderNameToScratch(name, len);
     if (!s) return expected[0] == L'\0';
     const size_t elen = ::wcslen(expected);
-    return elen == static_cast<size_t>(len) && ::wmemcmp(s, expected, elen) == 0;
+    return elen == static_cast<size_t>(len) && ::_wcsnicmp(s, expected, elen) == 0;
 }
 
 bool NameStartsWith(const FName& name, const wchar_t* prefix) {
@@ -224,7 +250,7 @@ bool NameStartsWith(const FName& name, const wchar_t* prefix) {
     const wchar_t* s = RenderNameToScratch(name, len);
     if (!s) return prefix[0] == L'\0';
     const size_t plen = ::wcslen(prefix);
-    return plen <= static_cast<size_t>(len) && ::wmemcmp(s, prefix, plen) == 0;
+    return plen <= static_cast<size_t>(len) && ::_wcsnicmp(s, prefix, plen) == 0;
 }
 
 bool NameContains(const FName& name, const wchar_t* needle) {
@@ -236,8 +262,9 @@ bool NameContains(const FName& name, const wchar_t* needle) {
     if (!s || static_cast<size_t>(len) < nlen) return false;
     // Bounded scan (the scratch is not guaranteed null-terminated after the
     // trim, so no wcsstr) -- needles here are a few chars, rendered names ~16.
+    // Case-insensitive like NameEquals (FName casing = first registration).
     for (size_t i = 0; i + nlen <= static_cast<size_t>(len); ++i) {
-        if (::wmemcmp(s + i, needle, nlen) == 0) return true;
+        if (::_wcsnicmp(s + i, needle, nlen) == 0) return true;
     }
     return false;
 }
@@ -522,7 +549,8 @@ int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
         auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cls) +
                                                    O::UStruct_ChildProperties);
         while (field) {
-            if (ToString(FieldName(field)) == propName) {
+            // Case-insensitive (FName first-registration casing -- see NameEquals).
+            if (::_wcsicmp(ToString(FieldName(field)).c_str(), propName) == 0) {
                 return *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
             }
             field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
@@ -535,7 +563,95 @@ int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
 int32_t FindParamOffset(void* function, const wchar_t* paramName) {
     if (!function || !paramName) return -1;
     for (const ParamInfo& p : FunctionParams(function)) {
-        if (p.name == paramName) return p.offset;
+        // Case-insensitive (FName first-registration casing -- see NameEquals).
+        if (::_wcsicmp(p.name.c_str(), paramName) == 0) return p.offset;
+    }
+    return -1;
+}
+
+namespace {
+
+// The FField* of an instance property by (case-insensitive) name -- the same
+// SuperStruct-climbing walk as FindPropertyOffset, returning the field itself
+// so callers can read property-subclass payloads (FStructProperty::Struct).
+uint8_t* FindPropertyField(void* owningClass, const wchar_t* propName) {
+    if (!owningClass || !propName) return nullptr;
+    void* cls = owningClass;
+    for (int hops = 0; hops < 32 && cls; ++hops) {
+        auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cls) +
+                                                   O::UStruct_ChildProperties);
+        while (field) {
+            if (::_wcsicmp(ToString(FieldName(field)).c_str(), propName) == 0)
+                return field;
+            field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
+        }
+        cls = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(cls) + O::UStruct_SuperStruct);
+    }
+    return nullptr;
+}
+
+bool PlausibleHeapPtr(void* p) {
+    const auto v = reinterpret_cast<uintptr_t>(p);
+    return v > 0x10000 && v < 0x0000800000000000ull && (v & 7) == 0;
+}
+
+// True iff `p` is a live UObject whose class is a script-struct meta-class.
+// Used to VALIDATE a candidate FStructProperty::Struct slot read: the wrong
+// slot holds an FField* (PostConstructLinkNext), which is not in GUObjectArray
+// and can never pass IsLive's slot back-pointer check.
+bool LooksLikeScriptStruct(void* p) {
+    if (!PlausibleHeapPtr(p) || !IsLive(p)) return false;
+    void* cls = ClassOf(p);
+    if (!cls) return false;
+    const FName& cn = NameOf(cls);
+    return NameEquals(cn, L"UserDefinedStruct") || NameEquals(cn, L"ScriptStruct");
+}
+
+// FStructProperty::Struct slot offset, calibrated once per process (build-
+// dependent: 0x70 on stock UE4.27 FProperty, 0x78 on padded builds).
+int32_t g_structPropSlot = -1;
+
+}  // namespace
+
+void* PropertyInnerStruct(void* owningClass, const wchar_t* propName) {
+    uint8_t* field = FindPropertyField(owningClass, propName);
+    if (!field) return nullptr;
+    if (g_structPropSlot >= 0) {
+        void* p = *reinterpret_cast<void**>(field + g_structPropSlot);
+        return LooksLikeScriptStruct(p) ? p : nullptr;
+    }
+    for (int32_t cand : { 0x70, 0x78 }) {
+        void* p = *reinterpret_cast<void**>(field + cand);
+        if (LooksLikeScriptStruct(p)) {
+            g_structPropSlot = cand;
+            UE_LOGI("reflection: FStructProperty::Struct slot calibrated to +0x%X "
+                    "(property '%ls' -> struct '%ls')",
+                    cand, propName, ToString(NameOf(p)).c_str());
+            return p;
+        }
+    }
+    return nullptr;
+}
+
+int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix) {
+    if (!owningStruct || !prefix) return -1;
+    // BP UserDefinedStruct members carry GUID-mangled names
+    // ("decoded_5_A9CAC26F..."): the human prefix is stable across recooks,
+    // the GUID suffix is not -- so struct-member access resolves by prefix.
+    // Same walk as FindPropertyOffset (UScriptStruct and UClass share the
+    // UStruct ChildProperties layout); NameStartsWith is the zero-alloc
+    // case-insensitive compare (FName first-registration casing).
+    void* s = owningStruct;
+    for (int hops = 0; hops < 32 && s; ++hops) {
+        auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(s) +
+                                                   O::UStruct_ChildProperties);
+        while (field) {
+            if (NameStartsWith(FieldName(field), prefix)) {
+                return *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+            }
+            field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
+        }
+        s = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(s) + O::UStruct_SuperStruct);
     }
     return -1;
 }

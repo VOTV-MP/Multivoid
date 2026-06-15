@@ -13,6 +13,7 @@
 #include "ue_wrap/reflection.h"
 
 #include <windows.h>
+#include <psapi.h>  // PROCESS_MEMORY_COUNTERS_EX + K32GetProcessMemoryInfo (kernel32 export; no psapi.lib link)
 
 #include <array>
 #include <atomic>
@@ -116,6 +117,22 @@ void Sample() {
     const double elapsed = std::chrono::duration<double>(now - g_lastSample).count();
     if (elapsed < 1.0) return;
     g_lastSample = now;
+
+    // RAM-balloon instrument (2026-06-13): the client slowly balloons to an OOM
+    // safety-kill over ~10 min with NO log signature (off-game-thread heap leak;
+    // all our bounded containers ruled out). This 1 Hz line PROVES the climb +
+    // rate so the next test localizes the source. PrivateUsage (commit) is the
+    // balloon indicator -- it grows with leaked heap regardless of working-set
+    // trimming. K32GetProcessMemoryInfo is a kernel32 export (no psapi.lib link).
+    {
+        PROCESS_MEMORY_COUNTERS_EX pmc{};
+        pmc.cb = sizeof(pmc);
+        if (::K32GetProcessMemoryInfo(::GetCurrentProcess(),
+                reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
+            UE_LOGW("[perf][mem] private(commit)=%.1f MB workingset=%.1f MB -- watch for steady climb (RAM-balloon hunt)",
+                    pmc.PrivateUsage / 1048576.0, pmc.WorkingSetSize / 1048576.0);
+        }
+    }
 
     const unsigned long long pe     = GT::PeDispatchCountTotal();
     const unsigned long long peGT   = GT::PeDispatchCountGTTotal();

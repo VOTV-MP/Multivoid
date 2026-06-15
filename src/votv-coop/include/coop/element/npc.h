@@ -74,6 +74,9 @@ private:
     ue_wrap::FVector curLookAt_{};           // v39: streamed kerfur head-look WORLD target (NOT interpolated --
     bool             hasLookAt_      = false; //       the native FAnimNode_LookAt smooths it via its own InterpSpeed)
     bool             hasBodyYaw_     = false; // v40: bodyYaw valid (kerfur-family) -> drive the mesh world yaw
+    uint8_t          kerfState_      = 0;     // v74: streamed kerfur command (enum_kerfurCommand) -- snapped, drives the
+    bool             kerfSpooky_     = false; //      AnimBP state machine on the parked mirror; spooky = the kill/spooky flag
+    bool             hasKerfState_   = false; //      valid iff the host sent it (kerfur-family only)
     bool             hasPose_        = false;  // first packet snaps
     bool             dirty_          = true;   // unapplied change to push to the engine
 };

@@ -126,9 +126,20 @@ def main() -> int:
             return 1
         print(f"master up on :{PORT}")
 
+        # --- /v1/latest (v59 launch toast) ---
+        s, latest = req("GET", "/v1/latest")
+        check(s == 200, "/v1/latest 200")
+        check(isinstance(latest.get("proto"), int) and latest["proto"] > 0,
+              "latest carries a positive integer proto")
+        check(isinstance(latest.get("mod"), str) and latest["mod"] != "",
+              "latest carries a mod tag")
+        check(isinstance(latest.get("url"), str) and latest["url"].startswith("https://"),
+              "latest carries an https release url")
+
         # --- /v1/host ---
         s, host = req("POST", "/v1/host",
                       {"name": "Dr. Bao's Observatory", "version": "0.9.0-n",
+                       "proto": 59,
                        "world": "Site-23 (story)", "locked": False, "players_max": 4})
         check(s == 200, "/v1/host 200")
         check(all(k in host for k in ("sessionId", "lobbyId", "hostIdentity", "token")),
@@ -154,6 +165,8 @@ def main() -> int:
               "row name matches")
         check(row is not None and isinstance(row.get("age"), int) and row["age"] >= 0,
               "row carries an integer age field (relative, no clock sync)")
+        check(row is not None and row.get("proto") == 59,
+              "row carries the announced proto (v59 join gate)")
         check(row is not None and "sessionId" not in row and "token" not in row,
               "public row leaks NO sessionId/token (opaque lobbyId only)")
 
@@ -223,6 +236,32 @@ def main() -> int:
               "host name clamped to <=63 + control chars stripped")
         check(r2 is not None and len(r2["world"]) <= 39, "host world clamped to <=39")
         req("POST", "/v1/leave", {"sessionId": h2["sessionId"], "token": h2["token"]})
+
+        # --- DIRECT lobbies (2026-06-11) ---
+        s, dh = req("POST", "/v1/host",
+                    {"name": "Forwarded Den", "version": "0.9.0-n", "world": "W",
+                     "conn": "direct", "direct_port": 47621})
+        check(s == 200, "direct /v1/host 200")
+        check(dh.get("conn") == "direct", "direct host response reflects conn=direct (audit R1)")
+        check("turn" not in dh and "signalingUrl" not in dh,
+              "direct host gets NO ICE/TURN creds")
+        time.sleep(5.2)
+        s, lst = req("GET", "/v1/lobbies")
+        drow = next((r for r in lst.get("lobbies", []) if r.get("lobbyId") == dh["lobbyId"]), None)
+        check(drow is not None and drow.get("conn") == "direct",
+              "direct lobby lists with conn=direct")
+        check(drow is not None and "direct_port" not in drow,
+              "public row does NOT leak direct_port")
+        s, dj = req("POST", "/v1/join", {"lobbyId": dh["lobbyId"]})
+        check(s == 200 and dj.get("conn") == "direct", "direct join -> conn=direct")
+        check(dj.get("addr", "").endswith(":47621") and "sessionId" not in dj
+              and "turn" not in dj, "direct join returns addr ip:port, no ICE/TURN")
+        req("POST", "/v1/leave", {"sessionId": dh["sessionId"], "token": dh["token"]})
+        # out-of-range direct_port is REJECTED, not silently downgraded (audit R1)
+        s, _ = req("POST", "/v1/host",
+                   {"name": "Bad Port", "version": "0.9.0-n", "world": "W",
+                    "conn": "direct", "direct_port": 80})
+        check(s == 400, "direct_port out of range -> 400 (no silent p2p downgrade)")
 
         # --- /v1/leave ---
         s, _ = req("POST", "/v1/leave", {"sessionId": sid, "token": token})

@@ -6,11 +6,13 @@
 #include "harness/harness_diag.h"
 #include "harness/screenshot.h"
 #include "harness/sdk_check.h"
+#include "coop/dev/dev_gate.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/save_transfer.h"
 #include "coop/dev/restore_vitals.h"
+#include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/event_feed.h"
@@ -21,12 +23,15 @@
 #include "coop/ban_list.h"
 #include "coop/moderation.h"
 #include "coop/ini_config.h"
+#include "coop/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
+#include "coop/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
 #include "coop/session_manager.h"
 #include "coop/nameplate.h"
 #include "coop/chat_feed.h"
 #include "coop/roster.h"
 #include "coop/net/session.h"
 #include "coop/net_pump.h"
+#include "coop/subsystems.h"
 #include "coop/npc_sync.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/prop_snapshot.h"
@@ -313,6 +318,35 @@ void DriveMenuModeJoinWorldBoot() {
         ue_wrap::log::Flush();
         return;
     }
+    // v73 Inc4: when the per-player apply is enabled, WAIT (pumping net) for the host's apply blob
+    // BEFORE loading the world, so the pre-materialize SaveObjectReadyHook has this client's
+    // inventory at load time. The host pushes it at our PRE-WORLD connect edge, so it has almost
+    // always arrived during the save-transfer wait above -- this is the safety barrier. On timeout
+    // we load anyway (the hook then SKIPS, leaving the v56-inherited inventory). No-op when the
+    // apply gate is off (the v56 inheritance stays). Both load branches below wait first.
+    auto waitForApplyBlob = [] {
+        namespace PIS = coop::player_inventory_sync;
+        if (!PIS::IsApplyEnabled() || PIS::HasPendingApply()) return;
+        const ULONGLONG w0 = ::GetTickCount64();
+        while (!PIS::HasPendingApply()) {
+            if (coop::shutdown::IsShuttingDown() || !g_session.running()) return;
+            if (::GetTickCount64() - w0 > 10000) {
+                UE_LOGW("harness: inventory apply blob did not arrive in 10s -- loading with the "
+                        "v56-inherited inventory (the apply hook will skip)");
+                return;
+            }
+            PostPumpComposite([] {
+                coop::net_pump::Tick(g_session, 0.f);
+                coop::nameplate::Update();
+                coop::dev::object_overlay::Update();
+                coop::chat_feed::Tick();
+                TickShutdownHooks();
+            });
+            ::Sleep(16);
+        }
+        UE_LOGI("harness: inventory apply blob ready -- proceeding to load the world");
+    };
+
     if (ST::GetClientState() == ST::ClientState::ReadySlotWritten) {
         // Load the host's world from the downloaded slot. ResetCachedSave first
         // (B7): a rejoin in this process must not re-register a stale cached
@@ -323,12 +357,14 @@ void DriveMenuModeJoinWorldBoot() {
         auto rst = std::make_shared<std::atomic<int>>(0);
         Post([rst] { ue_wrap::engine::ResetCachedSave(); rst->store(1); });
         while (rst->load() == 0 && !coop::shutdown::IsShuttingDown()) ::Sleep(5);
+        waitForApplyBlob();
         if (!BootStorySaveBlocking(/*forceFresh=*/false, slot.c_str(), mode)) {
             UE_LOGW("harness: coop-slot load did not reach gameplay -- falling back fresh");
             BootStorySaveBlocking(/*forceFresh=*/true);
         }
     } else {
         UE_LOGI("harness: host save unavailable/failed -- fresh-booting the ephemeral baseline");
+        waitForApplyBlob();
         BootStorySaveBlocking(/*forceFresh=*/true);
     }
 }
@@ -370,6 +406,7 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     coop::dev::restore_vitals::SetSession(&g_session);
     coop::dev::teleport_client::SetSession(&g_session);
     coop::dev::force_weather::SetSession(&g_session);
+    coop::dev_gate::SetSession(&g_session);  // the strict CLIENT lockout for every dev feature
     coop::moderation::SetSession(&g_session);
     if (netCfg.role == coop::net::Role::Host) {
         // Snapshot the canonical save BEFORE coop injects state (host-only; clients are
@@ -597,7 +634,7 @@ void RunPlayLoop(bool idleInGameplay) {
                 coop::net_pump::Tick(g_session, 0.f);
             } else if (idleInGameplay) {
                 // Solo gameplay, no session yet: keep the local observers live.
-                coop::net_pump::InstallObservers(g_session);
+                coop::subsystems::Install(g_session);
             }
             // roster needs a live world+player; skip it at the menu.
             if (running || idleInGameplay) {
@@ -663,6 +700,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         for (wchar_t c : wn) nn.push_back(c < 128 ? static_cast<char>(c) : '?');
         coop::session_manager::SetNickname(nn);
     }
+    // v73 per-player inventory: seed the durable identity GUID (ini player_guid=, generated
+    // + persisted on first launch). Rides our Join so the host keys our inventory file.
+    coop::player_handshake::SetLocalGuid(cfg::ReadPlayerGuid());
 
     // The OMEGA WARNING is on screen during the FIRST few seconds (the intro/menu
     // world), BEFORE we `open` gameplay. Sample widgets across that window so the
@@ -1007,6 +1047,11 @@ void Start() {
     // [dev] freecam=1; the F1 menu (Player > Movement) also toggles it under
     // [dev] devkeys. No-op at boot otherwise.
     coop::dev::freecam::Init();
+
+    // Dev: use the sandbox prop-spawn menu (Q) in STORY mode. No-op at boot
+    // unless [dev] spawn_menu_unlock=1; the F1 menu (Game > Entities) toggles it
+    // under [dev] devkeys. Host/local only (coop::dev_gate).
+    coop::dev::spawn_menu_unlock::Init();
 
     // The other dev features (snow, restore vitals, teleport clients, pos/cam
     // overlay, spawn NPC) are now driven from the F1 ImGui menu -- their hotkey

@@ -265,6 +265,7 @@ bool RemotePlayer::Spawn() {
     curPitch_ = 0.f;
     curHeadYawDelta_ = 0.f;
     curSpeed_ = 0.f;
+    bodyYaw_.Reset(yaw);       // presentation yaw starts at the spawn facing
     targetPos_ = loc;
     targetYaw_ = yaw;
     targetPitch_ = 0.f;
@@ -372,6 +373,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         curHeadYawDelta_ = snap.headYawDelta;
         curSpeed_ = snap.speed;
         curStateBits_ = snap.stateBits;
+        bodyYaw_.Reset(snap.yaw);  // presentation yaw snaps with the real pose
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
@@ -396,6 +398,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
         curHeadYawDelta_ = snap.headYawDelta;
         curSpeed_ = snap.speed;
         curStateBits_ = snap.stateBits;
+        bodyYaw_.Reset(snap.yaw);  // a teleport re-bases the presentation yaw too
         targetPos_ = tgtPos;
         targetYaw_ = snap.yaw;
         targetPitch_ = snap.pitch;
@@ -486,6 +489,16 @@ void RemotePlayer::Tick() {
     // fresh packet rebases from the up-to-date pose (the interp-starvation fix).
     AdvanceInterp();
 
+    // Advance the body-yaw presentation (turn-in-place, coop/puppet_body_yaw.h)
+    // -- it keeps moving even when the wire is quiet (the catch-up turn
+    // outlives the camera flick that started it), so it must set dirty_
+    // itself. Skipped while ragdolled: the pelvis attachment owns the
+    // transform and StopRagdollDisplay re-bases.
+    if (!ragdollActive_ &&
+        bodyYaw_.Update(NowMs(), curSpeed_, curYaw_, curHeadYawDelta_)) {
+        dirty_ = true;
+    }
+
     // Skip the engine write when nothing has changed since the last push (frozen
     // at target between packets). The puppet -- whether SkelMesh backup or
     // mainPlayer_C orphan -- runs no physics integration (SkelMesh has no
@@ -559,6 +572,7 @@ void RemotePlayer::Destroy() {
     hasPose_ = false;
     window_.Close();
     dirty_ = false;
+    bodyYaw_.Reset(0.f);    // clears the latch + dt clock; re-seeded at the next Spawn
     ragdollWireState_ = false;   // a recycled puppet starts un-ragdolled + re-converges
     ragdollActive_ = false;
     hasRagdollPose_ = false;     // v22: drop stale streamed ragdoll pelvis state
@@ -609,6 +623,9 @@ void RemotePlayer::StopRagdollDisplay() {
     ragdollBodyIdx_ = -1;
     ragdollActive_ = false;
     hasRagdollPose_ = false;  // v22: next ragdoll bootstraps rotation fresh (not stale streamed)
+    // Re-base the body-yaw presentation on the wire truth: its Update was
+    // skipped during the flop and the get-up is a visual discontinuity anyway.
+    bodyYaw_.Reset(curYaw_);
     UE_LOGI("RemotePlayer::StopRagdollDisplay: detached puppet + destroyed ragdoll body");
 }
 
@@ -669,7 +686,9 @@ void RemotePlayer::ApplyToEngine() {
     ue_wrap::FVector puppetLoc = curPos_;
     puppetLoc.Z += meshOffsetZ_;
     E::SetActorLocation(actor_, puppetLoc);
-    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, curYaw_ + meshOffsetYaw_, 0.f});
+    // bodyYaw_ (presentation, coop/puppet_body_yaw.h) -- NOT curYaw_ (wire
+    // truth): while standing the body holds so the head can lead.
+    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, bodyYaw_.Yaw() + meshOffsetYaw_, 0.f});
 
     // Phase 5F (flashlight cone direction): drive the puppet's lag_fl
     // spring arm pitch so the flashlight cone points where the source
@@ -694,8 +713,16 @@ void RemotePlayer::ApplyToEngine() {
                         sSetRelRotFn = R::FindFunction(sc, P::name::SetRelativeRotationFn);
                     }
                 }
+                // Relative YAW compensates the body-yaw presentation hold: the
+                // cone must point at the CAMERA (curYaw_ + curHeadYawDelta_),
+                // but the parent actor now shows bodyYaw_ (turn-in-place) --
+                // shortest-arc the difference so the beam tracks the look
+                // direction while the body lags. Was 0 when the actor yaw WAS
+                // the camera yaw.
+                const float flRelYaw = OffsetDegrees(
+                    bodyYaw_.Yaw() + meshOffsetYaw_, curYaw_ + curHeadYawDelta_);
                 if (sSetRelRotFn) {
-                    ue_wrap::FRotator rot{curPitch_, 0.f, 0.f};
+                    ue_wrap::FRotator rot{curPitch_, flRelYaw, 0.f};
                     ue_wrap::ParamFrame f(sSetRelRotFn);
                     f.Set<ue_wrap::FRotator>(L"NewRotation", rot);
                     f.Set<bool>(L"bSweep", false);
@@ -705,10 +732,13 @@ void RemotePlayer::ApplyToEngine() {
                     // Fallback: direct write (function-local; if reflection
                     // can't resolve K2_SetRelativeRotation the pipeline isn't
                     // available anyway, so the engine wouldn't propagate
-                    // either way -- preserves prior behavior).
-                    *reinterpret_cast<float*>(
+                    // either way -- preserves prior behavior). FRotator is
+                    // {Pitch, Yaw, Roll} floats.
+                    auto* rr = reinterpret_cast<float*>(
                         reinterpret_cast<uint8_t*>(lag_fl) +
-                        P::off::USceneComponent_RelativeRotation) = curPitch_;
+                        P::off::USceneComponent_RelativeRotation);
+                    rr[0] = curPitch_;
+                    rr[1] = flRelYaw;
                 }
             }
         }
@@ -739,17 +769,48 @@ void RemotePlayer::ApplyToEngine() {
         };
         const bool inAir = (curStateBits_ & coop::net::kStateBitInAir) != 0;
         Pup::DriveCharacterMovement(actor_, vel, inAir);
+        // Run-loudness parity: lib_C::step's volume reads CMC.MaxWalkSpeed
+        // (the SETTING), which the parked puppet never updates -- mirror the
+        // native sprint knob from the streamed speed. Threshold = the same
+        // run boundary the stride emitter uses.
+        Pup::DriveSprintWalkSpeed(
+            actor_, curSpeed_ > coop::puppet_footsteps::Stride::kRunSpeedCmS);
+        // Footstep audio (hands-on fix 2026-06-10): the native footstep
+        // accumulator lives in the puppet's SUPPRESSED mainPlayer BP tick, so
+        // the coop layer strides the interp displacement and dispatches the
+        // game's own lib_C::step (see coop/puppet_footsteps.h). The current
+        // interp position is the actor's location this frame (cur_).
+        footsteps_.Tick(actor_, curPos_, curSpeed_, !inAir);
     }
 
-    // Head bone gets the source's full view direction: pitch (look up/down) AND
-    // the camera-vs-body yaw lead (looking left/right with the camera leading
-    // the body, including free-look). DriveAnimBP also overrides the AnimBP's
-    // `lookingAtPlayer` to false every tick -- the kerfur AnimBP's default
-    // graph re-writes that flag to TRUE each frame (track the LOCAL player),
-    // which is glaringly wrong on a puppet (puppet's head twists to face the
-    // observer's body, not where the SOURCE is looking). We turn off that
-    // auto-track and drive headLookAt directly from the streamed view.
-    Pup::DriveAnimBP(actor_, curSpeed_, curPitch_, curHeadYawDelta_);
+    // Head-look: show WHERE THE REMOTE PLAYER IS LOOKING (not auto-follow the
+    // observer). Reconstruct a WORLD look-point from the streamed view -- world
+    // yaw = wire yaw (curYaw_) + camera lead (curHeadYawDelta_) = the source's
+    // CAMERA yaw, plus pitch -- anchored at the puppet's head, and drive it
+    // through the kerfur native lookAt path. The look target is camera TRUTH;
+    // the body underneath shows bodyYaw_ (UpdateBodyYaw's turn-in-place hold),
+    // so the body-relative LookAt clamps let the head visibly lead until the
+    // body catches up. (The original assumption that the SOURCE body lags the
+    // camera -- making this emerge from the wire alone -- was falsified by
+    // hands-on 2026-06-11: VOTV's first-person body follows the camera
+    // immediately, so the lead is synthesized receiver-side instead.)
+    // RE: research/findings/votv-puppet-head-look-RE-2026-06-11.md.
+    {
+        constexpr float kDeg2Rad = 0.01745329252f;
+        const float yawRad   = (curYaw_ + curHeadYawDelta_) * kDeg2Rad;
+        const float pitchRad = curPitch_ * kDeg2Rad;
+        const float cp = std::cos(pitchRad);
+        const ue_wrap::FVector head = GetHeadPosition();  // actor X/Y + head-Z
+        constexpr float kLookDist = 500.f;  // any positive distance; LookAt uses the direction
+        const ue_wrap::FVector worldLook{
+            head.X + cp * std::cos(yawRad) * kLookDist,
+            head.Y + cp * std::sin(yawRad) * kLookDist,
+            // +up. UE pitch-sign caveat: if hands-on shows "looks up -> head tilts
+            // DOWN", flip to -std::sin(pitchRad) (a 1-char tuning, per the RE).
+            head.Z + std::sin(pitchRad) * kLookDist,
+        };
+        Pup::DriveHeadLookAtWorld(actor_, worldLook);
+    }
 }
 
 bool RemotePlayer::SetLocation(const ue_wrap::FVector& location) {

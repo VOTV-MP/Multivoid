@@ -56,6 +56,28 @@ inline constexpr const char* kSigProcessEvent =
     "40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00 48 8D 6C 24 30 "
     "48 89 9D 18 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 85 B0 00 00 00";
 
+// FMemory::Realloc -- the tiny wrapper `{ if(!GMalloc) GCreateMalloc(); return
+// GMalloc->Realloc(ptr,size,align); }`. We match it ONLY to recover the GMalloc
+// pointer: decode the disp32 of its `mov rcx, cs:GMalloc` (at +kGMallocLeaDispOff;
+// the instruction ends at +kGMallocLeaEndOff, so &GMalloc = hit + EndOff + disp32).
+// With GMalloc we can call FMalloc::Free (vtable byte offset kFMallocFreeVtOff) to
+// release engine-allocated buffers -- needed because FName::ToString ORPHANS the
+// caller's FString buffer every call (zeroes Out.Data without freeing, then
+// allocates fresh), so our reused render scratch leaked an engine FString per render
+// (the 2026-06-13 RAM balloon). vtable offsets IDA-verified against this UE4.27
+// build: Realloc=+0x20, Free=+0x30.
+inline constexpr const char* kSigFMemoryRealloc =
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F1 41 8B D8 "
+    "48 8B 0D ?? ?? ?? ?? 48 8B FA 48 85 C9 75 0C";
+inline constexpr size_t kGMallocLeaDispOff = 24;
+inline constexpr size_t kGMallocLeaEndOff  = 28;
+inline constexpr size_t kFMallocFreeVtOff    = 0x30;  // FMalloc::Free    vtable byte offset (UE4.27)
+inline constexpr size_t kFMallocReallocVtOff = 0x20;  // FMalloc::Realloc vtable byte offset (UE4.27)
+// EngineAlloc allocates via FMalloc::Realloc(nullptr, size, align) -- the SAME slot the
+// kSigFMemoryRealloc signature is matched FROM (verified-in-use), not the never-exercised
+// Malloc slot. Realloc(null,n) == Malloc(n); allocator-matched with EngineFree (both GMalloc),
+// so the engine's later Array realloc / GC free of a buffer WE allocated does not corrupt.
+
 // UGameplayStatics::SaveGameToSlot(USaveGame* obj, const FString& slot, int32 idx)
 // -> bool. The SINGLE physical write chokepoint: every save trigger (autosave/
 // sleep/quicksave/menu/forced + the direct-SaveGameToSlot world triggers) and
@@ -349,6 +371,14 @@ inline constexpr size_t Aprop_frozen        = 0x02DA;  // bool
 inline constexpr size_t Aprop_sleep         = 0x02DD;  // bool (prop settled/sleeping -> physics NOT simulating). SDK dump prop.hpp:19 `bool sleep; // 0x02DD`. SP: init() = SetSimulatePhysics(NOT(static||frozen||sleep)).
 inline constexpr size_t Aprop_Key           = 0x02E0;  // FName (ComparisonIndex @ +0, Number @ +4)
 inline constexpr size_t Aprop_StaticMesh    = 0x0238;  // UStaticMeshComponent*
+// Per-material prop sound set (sounds RE 2026-06-11; coop/prop_sound consumer):
+// prop.physicsImpact -> comp.physSoundData (inline struct, populated at prop
+// init by setPhysSoundData = the lib_C::physSound DataTable row) -> soft_30 =
+// the cue the native E-grab plays (mainPlayer uber @100337, vol 0.5 pitch 1.0).
+inline constexpr size_t Aprop_physicsImpact          = 0x0230;  // Ucomp_physicsImpact_C*  prop.hpp:8
+inline constexpr size_t CompPhysImpact_physSoundData = 0x00C8;  // Fstruct_physSound (inline, 0x98)  comp_physicsImpact.hpp:9
+inline constexpr size_t CompPhysImpact_PhysMat       = 0x0290;  // UPhysicalMaterial*  comp_physicsImpact.hpp (the comp's cached physmat -- input for a fresh lib_C::physSound lookup)
+inline constexpr size_t FstructPhysSound_soft        = 0x0010;  // USoundBase* soft_30  struct_physSound.hpp
 
 // ---- HUD / Canvas (screen-space nameplate, MTA-style) --------------------
 // We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
@@ -590,7 +620,7 @@ inline constexpr size_t LookAt_LookAtLocation     = 0x140;  // FVector (fallback
 // FAnimNode_ModifyBone specifics (for direct head-rotation writes):
 inline constexpr size_t ModBone_Translation       = 0xD8;   // FVector
 inline constexpr size_t ModBone_Rotation          = 0xE4;   // FRotator
-inline constexpr size_t ModBone_RotationMode      = 0xFD;   // EBoneModificationMode (0=Ignore,1=Add,2=Replace)
+inline constexpr size_t ModBone_RotationMode      = 0xFD;   // EBoneModificationMode (0=Ignore,1=Replace,2=Additive)
 // AnimGraphNode_* offsets within the kerfurOmega_regular AnimInstance:
 inline constexpr size_t kKerfurLookAt_1           = 0x1730;
 inline constexpr size_t kKerfurLookAt             = 0x18E0;
@@ -690,11 +720,16 @@ inline constexpr const wchar_t* GameplayStaticsClass = L"GameplayStatics";
 // pattern). Host runs spawners normally; client's NPC actors arrive via
 // the EntityPoseBatch wire (Inc2; not implemented yet).
 //
-// All 12 classes are confirmed targeting-compatible with our mainPlayer_C
-// orphan puppet (RE section 1 verdict: "ALL 12 enemy classes either use
-// AIPerception/PawnSensing or generic Cast to AActor / Cast to
+// The original 12 enemy classes are confirmed targeting-compatible with our
+// mainPlayer_C orphan puppet (RE section 1 verdict: "ALL 12 enemy classes
+// either use AIPerception/PawnSensing or generic Cast to AActor / Cast to
 // mainPlayer_C. The orphan puppet -- being a real Pawn of the same class
-// -- is reachable by every targeting path inspected.").
+// -- is reachable by every targeting path inspected."). The 2 event/late-game
+// additions (killerwisp_C, ventCrawler_C; 2026-06-13) ride the same pose-mirror
+// path. killerwisp_C IS targeting-compatible (AIPerception + Target APawn, same
+// shape as the 12 -- SDK-verified); its kill/dismember of a REMOTE peer still
+// needs the per-victim effect relay (the wisp/NPC kill-claim design). ventCrawler
+// wall-crawl pitch/roll is smoke-pending (yaw-only stream).
 inline constexpr const wchar_t* NpcClass_Zombie       = L"npc_zombie_C";
 inline constexpr const wchar_t* NpcClass_KerfurOmega  = L"kerfurOmega_C";
 inline constexpr const wchar_t* NpcClass_Krampus      = L"npc_krampus_C";
@@ -707,12 +742,31 @@ inline constexpr const wchar_t* NpcClass_Orborb       = L"npc_orborb_C";
 inline constexpr const wchar_t* NpcClass_ArirFollower = L"npc_arirFollower_C";
 inline constexpr const wchar_t* NpcClass_AriralShooter   = L"npc_ariral_shooter_C";
 inline constexpr const wchar_t* NpcClass_AriralPigBeater = L"npc_ariral_pigBeater_C";
+// Event/late-game creatures brought into the host-authoritative entity layer
+// (RULE-1: extend npc_sync, do NOT replay the trigger). VERIFIED against the SDK
+// CXXHeaderDump (the no-assuming rule, [[feedback-verify-game-domain-facts]]):
+//   * killerwisp_C (Akillerwisp_C : ACharacter) -- the lethal YELLOW "Killer Wisp"
+//     (NOT the base wisp_C swarm, NOT the per-player-effect colored wisps wisp_o/b/
+//     g/...; those are SIBLING ACharacter classes with per-player effects, not
+//     simple mirrorables). Uses AIPerception + a Target APawn exactly like the 12
+//     enemies -> targeting-compatible with our puppet. Has comp_radarPoint -> shows
+//     on radar. Spawns via Aticker_yellowWispSpawner_C (late-game: post-Obelisk,
+//     days 26-31 night), NOT the F1 `wisps` event -- test via that spawner / a dev
+//     spawn, not the wisps button.
+//   * ventCrawler_C (AventCrawler_C : ACharacter) -- F1 `ventCrawler` event.
+// Both ACharacter -> ride the existing BeginDeferred interceptor + pose stream.
+// SMOKE-PENDING fidelity: ventCrawler wall-crawls (yaw-only pose stream renders it
+// upright -- a known pitch/roll gap to close after smoke).
+inline constexpr const wchar_t* NpcClass_KillerWisp   = L"killerwisp_C";
+inline constexpr const wchar_t* NpcClass_VentCrawler  = L"ventCrawler_C";
 
 // Compact array for the allowlist resolver (Inc1 of Phase 5N1). Iterated
 // once at install time; each name resolved via R::FindClass + cached. The
 // classes are loaded on first gameplay-level transition (NOT at menu)
 // per VOTV's content-cooking pattern -- so the install retry path must
-// re-attempt until ALL 12 resolve (or log per-class failures).
+// re-attempt until all entries resolve (or log per-class failures). The
+// array is sizeof-derived (kNpcAllowlistSize), so adding an entry binds
+// everywhere automatically -- no count to update in npc_sync.
 inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_Zombie,
     NpcClass_KerfurOmega,
@@ -726,8 +780,33 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_ArirFollower,
     NpcClass_AriralShooter,
     NpcClass_AriralPigBeater,
+    NpcClass_KillerWisp,   // yellow Killer Wisp (late-game; AIPerception like the 12)
+    NpcClass_VentCrawler,  // event `ventCrawler`  (smoke-pending: wall-crawl pose)
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
+
+// kAmbientPropSpawnMirrorClasses (M2 HostSpawnWatcher, 2026-06-11): the transient
+// physics props the host's ambient spawners materialize via
+// BeginDeferredActorSpawnFromClass whose own Init is BP-internal/unobservable
+// (the pinecone-scare finding -- the spawner's Init dispatches via
+// EX_LocalVirtualFunction -> ProcessInternal, bypassing our ProcessEvent detour;
+// empirically confirmed by the pinecone_probe). The SPAWN CALL is observable, so
+// coop/host_spawn_watcher catches it at the BeginDeferred POST seam and mirrors
+// the prop host->client via the PropSpawn pipeline (key=None, eid-routed -- the
+// trash-clump precedent), then death-watches its SetLifeSpan(600) expiry ->
+// PropDestroy. These are the pineconeSpawner_C outputs (ambient_spawner_suppress.cpp:14):
+// keyless + transient -- never the keyed/saved path, so the keyless-eid identity
+// is correct. Local fall physics diverges per peer and that is FINE (user
+// 2026-06-11: "local physics of falling objects doesn't need syncing"). Exact-
+// pointer matched (no hierarchy walk) -- leaf classes with no in-scope subclasses.
+inline constexpr const wchar_t* kAmbientPropSpawnMirrorClasses[] = {
+    L"prop_food_pinecone_C",  // the scare: spawns high, drops, bounces, rolls / lies
+    L"prop_stick_C",          // pineconeSpawner forage branch
+    L"prop_crystal_C",        // pineconeSpawner forage branch
+};
+inline constexpr size_t kAmbientPropSpawnMirrorClassesSize =
+    sizeof(kAmbientPropSpawnMirrorClasses) / sizeof(kAmbientPropSpawnMirrorClasses[0]);
+
 inline constexpr const wchar_t* BeginDeferredSpawnFn = L"BeginDeferredActorSpawnFromClass";
 inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 

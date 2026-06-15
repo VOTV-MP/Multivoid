@@ -59,6 +59,15 @@ inline Lane LaneForKind(ReliableKind k) {
     // nothing -- and Begin must precede its chunks in-lane.
     case ReliableKind::SaveTransferBegin: return Lane::Bulk;
     case ReliableKind::SaveTransferChunk: return Lane::Bulk;
+    case ReliableKind::PlayerInventoryBlob: return Lane::Bulk;  // v73 per-player inventory (large, chunked)
+    // v68: PropStickState + PropRelease are ORDER-PAIRED: the receiver's release
+    // gate (StickHoldsPhysicsOff) reads the frozen state the stick writes, and the
+    // sender emits stick-then-release ~one pump pass apart -- a release overtaking
+    // its stick re-enables physics on the just-stuck mirror (the falling-camera
+    // bug). They land on Normal via default: anyway; these explicit cases pin the
+    // pairing against a future single-kind lane move (the Spawn/Destroy rule above).
+    case ReliableKind::PropStickState: return Lane::Normal;
+    case ReliableKind::PropRelease:    return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -92,18 +101,32 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::PropDestroy:
     case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
     case ReliableKind::PropRelease:
+    case ReliableKind::PropStickState:    // v68: a client's wall-attachable stick (camera on a wall) must reach the other clients
     case ReliableKind::DoorState:
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
     case ReliableKind::GarageDoorState:   // v44: garage door is SYMMETRIC -- relay a client's open/close to the others
     case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
+    case ReliableKind::LockerDoorState:   // v62: locker/console doors are SYMMETRIC -- relay a client's toggle to the others
     case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
     case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-authoritative -- relay a client DRIVER's pose to the other clients
+    case ReliableKind::DeskState:         // v64: desk scalars are CLAIM-OWNER-authoritative (+ any-peer button edges) -- relay a client's edge to the others
+    case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others
     case ReliableKind::GrimeState:        // v42: surface grime is SYMMETRIC -- relay a client's wipe
     case ReliableKind::TrashPileState:    // v57: trash-pile collect counters are SYMMETRIC -- relay a client's collect to the others
     case ReliableKind::FireflySpawn:      // v51: fireflies are PEER-SYMMETRIC -- each peer spawns near its OWN camera + shares; relay a client's spawn to the others so all peers see everyone's
+    case ReliableKind::InventoryPickup:   // v58: the inventory-collect blip is PEER-SYMMETRIC -- relay a client's collect so every peer hears it
+    case ReliableKind::ChatMessage:       // v60: T-chat is PEER-SYMMETRIC -- relay a client's line so every peer reads it
+    case ReliableKind::EmailAppend:       // v64: emails are PRODUCER-SYMMETRIC (any peer's local pipeline can append) -- relay a client's rows to the others
+    case ReliableKind::EmailDelete:       // v65: email deletes are PLAYER-SYMMETRIC (any peer's del button) -- relay a client's delete to the others
+    case ReliableKind::SavedSignalAppend: // v65: saved-signal saves are PRODUCER-SYMMETRIC (download-save/import/copy at the claimed desk) -- relay
+    case ReliableKind::SavedSignalDelete: // v65: saved-signal deletes/export-moves are PLAYER-SYMMETRIC -- relay
+    case ReliableKind::CompState:         // v65: the decode stream is SIMULATOR-authoritative (the peer whose latch is set) -- relay a client simulator to the others
+    case ReliableKind::CompData:          // v65: comp_data_0 edges come from the claim-owner OR the simulator -- relay
+    case ReliableKind::VoiceState:        // v66: voice mute/disabled display state is PLAYER-SYMMETRIC -- relay a client's edge to the others
+    case ReliableKind::DeskLogLine:       // v70: coords-terminal event lines are PRODUCER-SYMMETRIC (the line originates where the action ran) -- relay a client's line to the others
         return true;
     default:
         return false;

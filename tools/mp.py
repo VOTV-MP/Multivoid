@@ -718,7 +718,10 @@ def cmd_smoke(args) -> None:
     t0 = time.time()
     last_peers: list[dict] = []
     kill_reason: str | None = None
-    while time.time() - t0 < args.duration:
+
+    def sample_once() -> bool:
+        """One monitor sample. Returns False to stop (RAM breach)."""
+        nonlocal last_peers, kill_reason
         time.sleep(args.sample_interval)
         peers = list_votv()
         last_peers = peers
@@ -731,7 +734,43 @@ def cmd_smoke(args) -> None:
         max_rss = max((p["RSS_MB"] for p in peers), default=0)
         if max_rss > args.ram_kill_mb:
             kill_reason = f"peer RSS={max_rss}MB > kill threshold {args.ram_kill_mb}MB"
+            return False
+        return True
+
+    while time.time() - t0 < args.duration:
+        if not sample_once():
             break
+
+    # Join-aware grace (2026-06-12, cold-cache flake). The menu-mode
+    # save-transfer join (client boot + connect + ~18 MB download + save load +
+    # connect replay) can outrun --duration on the day's first launch after a
+    # deploy (cold DLL/shader/disk caches) -- the fixed budget then kills the
+    # peers mid-download and the verdict FAILs on "never spawned the host
+    # puppet" with nothing actually wrong (it PASSes on the warm re-run).
+    # If the puppet marker is still missing at budget end while both peers are
+    # alive and under the RAM cap, keep sampling up to --join-grace extra
+    # seconds; once the marker appears, run one more fixed steady-state stretch
+    # so the verdict still covers post-join stability, not just the join.
+    if not kill_reason and len(last_peers) == 2:
+        client_log = CLIENT_DIR / "votv-coop.log"
+        if 0 not in parse_log_markers(client_log)["puppet_slots"]:
+            log(f"--- JOIN GRACE: host puppet not up at budget end; extending up to {args.join_grace}s ---")
+            g0 = time.time()
+            joined = False
+            while time.time() - g0 < args.join_grace:
+                if not sample_once():
+                    break
+                if len(last_peers) != 2:
+                    break  # a peer died -- let the normal verdict report it
+                if 0 in parse_log_markers(client_log)["puppet_slots"]:
+                    joined = True
+                    break
+            if joined and not kill_reason:
+                log("--- JOIN GRACE: puppet spawned; 15s post-join steady-state ---")
+                s0 = time.time()
+                while time.time() - s0 < 15:
+                    if not sample_once():
+                        break
 
     log("--- FINAL STATE ---")
     log(f"peers alive at end: {len(last_peers)}")
@@ -1877,6 +1916,10 @@ def main() -> None:
     p_kill.set_defaults(func=cmd_kill)
 
     p_smoke = sub.add_parser("smoke", help="autonomous LAN smoke (host+client+monitor+kill)")
+    p_smoke.add_argument("--join-grace", type=int, default=90,
+                         help="extra seconds to keep sampling when the client is still "
+                              "mid-join (save-transfer download/load) at --duration end; "
+                              "a 15s steady-state stretch follows a successful late join")
     p_smoke.add_argument("--duration", type=int, default=30,
                          help="seconds to monitor after both peers up")
     p_smoke.add_argument("--sample-interval", type=int, default=5,

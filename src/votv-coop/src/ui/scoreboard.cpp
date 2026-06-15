@@ -3,11 +3,15 @@
 #include "ui/scoreboard.h"
 
 #include "coop/moderation.h"
+#include "coop/session_manager.h"  // ListedState / SetListed (the host hide toggle)
 #include "coop/roster.h"
+#include "coop/voice/voice_chat.h"
 #include "ui/dev_menu.h"
+#include "ui/voice_icons.h"
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace ui::scoreboard {
@@ -45,7 +49,9 @@ void Render() {
     // Top-centre, pinned. Pivot (0.5, 0) keeps it centred regardless of width.
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.14f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.0f));  // upper-centre, below the top HUD
-    ImGui::SetNextWindowSize(ImVec2(300.0f, 0.0f), ImGuiCond_Always);  // fixed width, auto height
+    // 460 wide (was 300 -- truncated nicks + "LAN HOST" clipped, user round-1
+    // screenshot 2026-06-12); auto height.
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
 
     // Clean translucent panel: padded, rounded, borderless, dark bg so it reads over
     // any scene. Own header (no OS-style title bar).
@@ -60,14 +66,24 @@ void Render() {
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
 
+    coop::voice_chat::UiSnapshot vs;
+    coop::voice_chat::GetUiSnapshot(vs);
+
     if (ImGui::Begin("###coop_scoreboard", nullptr, flags)) {
-        // Header: bright "PLAYERS" + accent online count.
+        // Header: bright "PLAYERS" + accent online count + a dim "V: voice" key
+        // hint (the settings window moved to its own V-key surface, user
+        // 2026-06-12 round 1 -- no button here).
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
         ImGui::TextUnformatted("PLAYERS");
         ImGui::PopStyleColor();
         ImGui::SameLine(0.0f, 8.0f);
         if (s.inSession) ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.00f, 1.0f), "%d online", s.count);
         else             ImGui::TextDisabled("offline");
+        if (vs.enabled != 0 && vs.started != 0) {
+            const float bw = ImGui::CalcTextSize("V: voice settings").x;
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - bw);
+            ImGui::TextDisabled("V: voice settings");
+        }
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -81,8 +97,16 @@ void Render() {
         const bool host = LocalIsHost();
         const bool dev  = ui::dev_menu::DevMode();
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
-        if (ImGui::BeginTable("##roster", 2, tflags)) {
+        const bool voiceOn = vs.enabled != 0 && vs.started != 0;
+        if (ImGui::BeginTable("##roster", voiceOn ? 4 : 3, tflags)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+            // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
+            // Click = self: toggle mute; remote: per-player volume popup.
+            if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+            // Connection type (user 2026-06-10): how the game is hosted on the
+            // host row ("LAN HOST"/"P2P HOST") + each link's transport ("LAN"/
+            // "P2P"/"P2P RELAY"; "VIA HOST" for peer clients on a client board).
+            ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, 72.0f);
             ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 50.0f);
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
@@ -99,9 +123,15 @@ void Render() {
                 if (actionable) {
                     ImGui::PushStyleColor(ImGuiCol_Text, nickCol);
                     // DontClosePopups: clicking the row toggles the popup; the
-                    // selection state itself is meaningless here.
+                    // selection state itself is meaningless here. AllowOverlap:
+                    // the row spans ALL columns, and ImGui gives a click to the
+                    // FIRST-submitted item -- without it the row selectable eats
+                    // the Mic-column icon's clicks and pops the kick/ban menu
+                    // instead of the volume popup (user 2026-06-12 round 2).
                     if (ImGui::Selectable(nick, false,
-                                          ImGuiSelectableFlags_DontClosePopups | ImGuiSelectableFlags_SpanAllColumns))
+                                          ImGuiSelectableFlags_DontClosePopups |
+                                              ImGuiSelectableFlags_SpanAllColumns |
+                                              ImGuiSelectableFlags_AllowOverlap))
                         ImGui::OpenPopup("##act");
                     ImGui::PopStyleColor();
 
@@ -126,10 +156,72 @@ void Render() {
                     if (r.isLocal) { ImGui::SameLine(0.0f, 6.0f); ImGui::TextDisabled("(you)"); }
                 }
 
+                // Voice column (v66): the per-player mic-state icon. Self row:
+                // click toggles your mute. Remote row: click opens the local
+                // mute/volume popup (SetSlotVolume is render-thread-safe).
+                int col = 1;
+                if (voiceOn) {
+                    ImGui::TableSetColumnIndex(col++);
+                    const bool self = r.isLocal;
+                    const auto icon = static_cast<coop::voice_chat::VoiceIcon>(
+                        r.slot >= 0 && r.slot < static_cast<int>(coop::players::kMaxPeers)
+                            ? vs.icons[r.slot] : 0);
+                    const float ih = ImGui::GetTextLineHeight();
+                    const ImVec2 cell = ImGui::GetCursorScreenPos();
+                    // Locally-silenced peers show the muted-mic glyph dimmed even
+                    // when their own state is None (you chose not to hear them).
+                    const bool localSilenced =
+                        !self && r.slot >= 0 &&
+                        r.slot < static_cast<int>(coop::players::kMaxPeers) &&
+                        vs.slotVolume[r.slot] <= 0.001f;
+                    if (ImGui::InvisibleButton("##vicon", ImVec2(20.0f, ih))) {
+                        if (self) coop::voice_chat::SetMuted(vs.muted == 0);
+                        else if (r.connected) ImGui::OpenPopup("##vvol");
+                    }
+                    // An idle peer (icon None) draws a DIM mic outline instead of
+                    // nothing -- an invisible cell read as "no mute icons" (user
+                    // round 1) and gave the click target no affordance.
+                    const bool idle =
+                        !localSilenced && icon == coop::voice_chat::VoiceIcon::None;
+                    const auto shown = localSilenced ? coop::voice_chat::VoiceIcon::MicMuted
+                                       : idle        ? coop::voice_chat::VoiceIcon::Talking
+                                                     : icon;
+                    ui::voice_icons::Draw(ImGui::GetWindowDrawList(),
+                                          ImVec2(cell.x + 10.0f, cell.y + ih * 0.5f),
+                                          ih * 0.95f, shown,
+                                          localSilenced ? 0.55f : idle ? 0.30f : 1.0f);
+                    if (ImGui::IsItemHovered()) {
+                        const char* lbl = localSilenced ? "Muted for you (click for volume)"
+                                          : self ? (vs.muted ? "Your mic is muted -- click to unmute"
+                                                             : "Click to mute your mic")
+                                          : idle ? "Voice connected (click for volume)"
+                                                 : ui::voice_icons::Label(shown);
+                        if (lbl && lbl[0]) ImGui::SetTooltip("%s", lbl);
+                    }
+                    if (!self && ImGui::BeginPopup("##vvol")) {
+                        ImGui::TextDisabled("%s", nick);
+                        ImGui::Separator();
+                        float v = vs.slotVolume[r.slot];
+                        bool silenced = v <= 0.001f;
+                        if (ImGui::Checkbox("Mute for me", &silenced))
+                            coop::voice_chat::SetSlotVolume(r.slot, silenced ? 0.0f : 1.0f);
+                        if (!silenced) {
+                            if (ImGui::SliderFloat("##pvol", &v, 0.0f, 2.0f, "volume %.2fx"))
+                                coop::voice_chat::SetSlotVolume(r.slot, v);
+                        }
+                        ImGui::EndPopup();
+                    }
+                }
+
+                // Link column: the connection-type label (empty on the own client
+                // row -- its link is already shown on the host row).
+                ImGui::TableSetColumnIndex(col++);
+                if (r.link[0]) ImGui::TextDisabled("%s", r.link);
+
                 // Ping column: per-peer RTT, right-aligned (remote connected peers only;
                 // you have no self-ping). 0 on a sub-ms LAN shows "<1ms"; -1 (unsampled)
                 // shows "--".
-                ImGui::TableSetColumnIndex(1);
+                ImGui::TableSetColumnIndex(col);
                 if (!r.isLocal && r.connected) {
                     char pb[16];
                     if (r.ping > 0)       std::snprintf(pb, sizeof(pb), "%dms", r.ping);
@@ -145,6 +237,21 @@ void Render() {
             ImGui::EndTable();
         }
         if (s.count == 0) ImGui::TextDisabled("No players.");
+
+        // Host-only "Hide from server browser" toggle (user 2026-06-11). This is
+        // where an AUTO/relay host hides the lobby ONCE friends are in -- hiding at
+        // host time would make it unjoinable (the master is the only rendezvous), so
+        // it lives here, not in the Host-Game picker. Posts /v1/visibility async;
+        // the session stays live. Mirrors the master state via ListedState().
+        if (host) {
+            ImGui::Separator();
+            bool listed = coop::session_manager::ListedState();
+            if (ImGui::Checkbox("Show in server browser", &listed))
+                coop::session_manager::SetListed(listed);
+            ImGui::SameLine();
+            ImGui::TextDisabled(listed ? "(others can find your game)"
+                                       : "(hidden -- friends join by invite/IP)");
+        }
 
         // Permanent-ban confirmation modal (shared across rows; g_banConfirmSlot
         // carries the pending slot). A ban is destructive + irreversible from the

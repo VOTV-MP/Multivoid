@@ -3,7 +3,7 @@
 // Engine-wrapper layer (principle 7). The USoundAttenuation construct/config +
 // UGameplayStatics::PlaySoundAtLocation dispatch. Declared in ue_wrap/engine.h
 // (SoundAttenuationConfig / SpawnSoundAttenuation / PlaySoundAtLocation) so callers
-// (coop::flashlight_click_sound, coop::clump_throw_sound) are unchanged.
+// (coop::flashlight_click_sound, coop::prop_sound) are unchanged.
 //
 // Extracted 2026-06-06 (modularity audit): engine.cpp had grown past the 800-LOC soft
 // cap; this audio block is self-contained (its own cached CDO/UFunction statics, no

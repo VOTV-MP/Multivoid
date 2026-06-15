@@ -158,3 +158,35 @@ inPassword digit mirror, replayed via inputNumber). DEFERRED (Phase B.1, documen
 the keypad door in the door channel's hold register so it is E-closable / auto-closes after walk-through
 (today it stays open + suppressed, like SP's persistent unlock); the `pair`-keypad + `isReset` set-new-
 code propagation (isReset entries are correctly NOT auto-opened).
+
+---
+
+## ADDENDUM 2026-06-12 — live-proven chain timing + door swing semantics (session 12)
+
+> The Phase B HostAcceptPoll above was DELETED 2026-06-11 (the "door opens on
+> the last digit + stuck green/open forever" bug) and replaced by the v59
+> SUBMIT MIRROR (KeypadEvent Accept/Deny edges + receiver CallOpen replay; see
+> coop/keypad_sync.cpp header). Two NEW ground truths were proven live on
+> 2026-06-12 from the red/green echo-storm logs:
+
+1. **`open(Active)`'s state writes are DEFERRED ~0.3s past ProcessEvent
+   return** (latent sub-chains inside the BP body). The keypad still reads
+   the PRE-chain `{inPassword, active}` for several frames after a reflected
+   `CallOpen` returns; the writes (buffer clear + active + pair/door
+   propagation) land together later. Any echo-suppression primed to a
+   point-in-time snapshot is therefore WRONG; the settled endpoint is
+   deterministic (`{'', Active}` — the param IS the verdict, no internal
+   re-validation), which is what the keypad_sync settling fix primes to.
+   Evidence: votv-coop logs 14:02:42-52 (poll read `{1111,0}` immediately
+   after `VERB FIRED: passwordLock.Open`; landing observed 1-2 polls later).
+
+2. **`doorOpen`'s swing is ADDITIVE** (target = current pose + delta, not an
+   absolute open pose). Re-running `doorOpen(bypassCheck=true)` on an
+   already-open door drives the mesh PAST its frame through the wall, one
+   delta further per re-run — the join-time clipping on saved-open doors
+   (every connect snapshot re-applied ON). Receiver applies must therefore be
+   IDEMPOTENT on settled state: ue_wrap::door::SmartApply now skips when
+   `!isMoving && isOpened == target` (mid-swing stays non-idempotent so an
+   authoritative reversal still lands). Same session: the use-input PRE/POST
+   observers now save/restore the door's REAL `Active` (a hardcoded
+   restore-to-true silently re-powered keypad-locked doors client-side).

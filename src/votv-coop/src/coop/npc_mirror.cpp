@@ -16,9 +16,11 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/npc_adoption.h"  // v75: deferred class-match adoption for save-persisted NPCs
 #include "coop/npc_sync.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
+#include "ue_wrap/kerfur.h"  // thorough park (NeutralizeAiTimers) for fresh-spawn mirrors
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
@@ -28,6 +30,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace coop::npc_mirror {
@@ -50,6 +53,15 @@ inline coop::element::MirrorManager<coop::element::Npc>& NpcMirrors() {
     return coop::element::MirrorManager<coop::element::Npc>::Instance();
 }
 
+// v75 (supersedes v74's key-adoption -- the kerfur int_save key is RANDOM per peer, bytecode-
+// proven, so key-equality could never match): a save-persisted NPC the joining client loaded
+// from the transferred save (savePersisted=1) is ADOPTED by class-match via a DEFERRED POLL in
+// coop/npc_adoption (the local twin spawns via un-hookable EX_CallMath at an unpredictable time,
+// so we poll for it). OnEntitySpawn hands save-persisted spawns to npc_adoption::ArmAdoption;
+// only host-spawned transients (savePersisted=0) fresh-spawn here via SpawnFreshNpcMirror.
+// The post-snapshot ghost sweep (DestroyUntrackedClientNpcs) is triggered by npc_adoption once the
+// connect snapshot is delivered (SnapshotComplete) AND every pending adoption has converged.
+
 }  // namespace
 
 void SetClientRefs(const ClientRefs& refs) {
@@ -58,6 +70,10 @@ void SetClientRefs(const ClientRefs& refs) {
     g_gsCdo               = refs.gsCdo;
     g_spawnReturnParamOff = refs.spawnReturnParamOff;
     g_k2DestroyFn         = refs.k2DestroyFn;
+    // v75: the adoption module needs NO UFunction refs of its own -- its bind path only parks
+    // (DisableCharacterTicks + NeutralizeAiTimers), its timeout fallback re-enters
+    // npc_mirror::SpawnFreshNpcMirror, and its ghost sweep re-enters DestroyUntrackedClientNpcs;
+    // all three read npc_mirror's own globals above.
 }
 
 void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
@@ -145,47 +161,60 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                 classW.c_str(), payload.elementId);
         return;
     }
-    // UFunction + CDO must be resolved (npc_sync::Install pushes them via
-    // SetClientRefs; receiver can fire before Install completes on a
-    // fast-handshake peer).
-    //
-    // Note: g_spawnXformParamOff is owned by npc_sync's interceptor side
-    // and isn't read here. Install treats missing SpawnTransform as
-    // non-fatal ("position-less spawns still work"), so the receiver must
-    // too. The FTransform we build below stays at identity / origin when
-    // the wire pose is zeroed (degraded host case), which mirrors the
-    // host's interceptor behavior in that case. Visibly wrong but not a
-    // crash; aligns sender + receiver behavior.
+    // v75: route by whether the joining client has a LOCAL TWIN of this NPC (savePersisted).
+    // savePersisted=1 -> a save object (the kerfur) the client ALSO loaded from the transferred
+    // save; its local twin spawned via un-hookable EX_CallMath at an unpredictable time. ADOPT it
+    // by class-match via a DEFERRED POLL (coop/npc_adoption) -- the kerfur's int_save Key is minted
+    // RANDOM per peer (bytecode-proven: kerfurOmega::loadData drops the base key restore), so
+    // key-equality could never match; class + untracked-local is the only portable identity.
+    // savePersisted=0 -> a host-spawned transient (enemy) the client has NO local copy of ->
+    // fresh-spawn a mirror now.
+    if (payload.savePersisted) {
+        coop::npc_adoption::ArmAdoption(payload.elementId, classW, actorClass,
+                                        payload.locX, payload.locY, payload.locZ,
+                                        payload.rotPitch, payload.rotYaw, payload.rotRoll);
+        return;
+    }
+    SpawnFreshNpcMirror(classW, actorClass, payload.elementId,
+                        payload.locX, payload.locY, payload.locZ,
+                        payload.rotPitch, payload.rotYaw, payload.rotRoll);
+}
+
+bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
+                         float locX, float locY, float locZ,
+                         float rotPitch, float rotYaw, float rotRoll) {
+    using ue_wrap::ParamFrame;
+    using ue_wrap::Call;
+    // UFunction + CDO must be resolved (npc_sync::Install pushes them via SetClientRefs; a
+    // receiver can fire before Install completes on a fast-handshake peer). The FTransform we
+    // build stays at identity/origin when the wire pose is zeroed (degraded host case), which
+    // mirrors the host's interceptor behavior. Visibly wrong but not a crash.
     if (!g_spawnFn || !g_finishSpawnFn || !g_gsCdo ||
         g_spawnReturnParamOff < 0) {
         UE_LOGW("npc-sync[client OnSpawn]: receiver UFunctions not yet resolved "
                 "(spawnFn=%p finishFn=%p gsCdo=%p retOff=%d) -- dropping eid=%u",
                 g_spawnFn, g_finishSpawnFn, g_gsCdo,
-                g_spawnReturnParamOff, payload.elementId);
-        return;
+                g_spawnReturnParamOff, elementId);
+        return false;
     }
     void* worldCtx = E::GetWorldContext();
     if (!worldCtx) {
         UE_LOGW("npc-sync[client OnSpawn]: no world context -- dropping (eid=%u)",
-                payload.elementId);
-        return;
+                elementId);
+        return false;
     }
-    // Build FTransform from wire pose. NPCs have no scale in EntitySpawn
-    // (scale is a runtime variant signal we don't currently sync; defaults
-    // to unit -- matches host's spawn behavior since the BP rarely sets
-    // non-unit scale on NPCs).
+    // Build FTransform from wire pose. NPCs have no scale in EntitySpawn (defaults to unit).
     ue_wrap::FTransform xform{};
-    E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
+    E::RotatorToQuat(rotPitch, rotYaw, rotRoll,
                      xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
-    xform.TX = payload.locX;
-    xform.TY = payload.locY;
-    xform.TZ = payload.locZ;
+    xform.TX = locX;
+    xform.TY = locY;
+    xform.TZ = locZ;
     // xform scale stays at unit (constructor default).
 
-    // Mark the bypass slot BEFORE BeginDeferredActorSpawnFromClass so our
-    // own interceptor (client role) allows the spawn through instead of
-    // suppressing it. Single-shot: consumed by the next interceptor fire
-    // matching this class.
+    // Mark the bypass slot BEFORE BeginDeferredActorSpawnFromClass so our own interceptor (client
+    // role) allows the spawn through instead of suppressing it. Single-shot: consumed by the next
+    // interceptor fire matching this class.
     coop::npc_sync::MarkIncomingNpcSpawn(actorClass);
 
     constexpr uint8_t kAlwaysSpawn = 1;
@@ -194,12 +223,10 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         ParamFrame begin(g_spawnFn);
         if (!begin.valid()) {
             UE_LOGE("npc-sync[client OnSpawn]: ParamFrame(BeginDeferred) invalid -- dropping eid=%u",
-                    payload.elementId);
-            // Clear bypass slot defensively -- the spawn we marked won't
-            // happen, so a stray local spawn of the same class shouldn't
-            // accidentally pass through.
+                    elementId);
+            // Clear bypass slot defensively -- the spawn we marked won't happen.
             coop::npc_sync::ClearIncomingNpcSpawn();
-            return;
+            return false;
         }
         begin.Set<void*>(L"WorldContextObject", worldCtx);
         begin.Set<void*>(L"ActorClass", actorClass);
@@ -208,109 +235,89 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         begin.Set<void*>(L"Owner", nullptr);
         if (!Call(g_gsCdo, begin)) {
             UE_LOGE("npc-sync[client OnSpawn]: BeginDeferredActorSpawnFromClass call failed for "
-                    "'%ls' eid=%u", classW.c_str(), payload.elementId);
+                    "'%ls' eid=%u", classW.c_str(), elementId);
             coop::npc_sync::ClearIncomingNpcSpawn();
-            return;
+            return false;
         }
         spawned = begin.Get<void*>(L"ReturnValue");
     }
     if (!spawned) {
         UE_LOGE("npc-sync[client OnSpawn]: BeginDeferred returned null for '%ls' eid=%u "
                 "(suppressor swallowed it? bypass slot not consumed?)",
-                classW.c_str(), payload.elementId);
-        // Audit critical #2 / 2026-05-28: MarkIncomingNpcSpawn set the slot
-        // unconditionally before BeginDeferred; if Call succeeded but the
-        // engine returned null (e.g. the suppressor consumed an aliased
-        // class via concurrent fire OR a different interceptor swallowed
-        // the spawn), the slot might still be populated. Clear defensively
-        // so a subsequent local NPC spawn of the same class doesn't
-        // accidentally pass through and produce a rogue non-suppressed
-        // duplicate.
+                classW.c_str(), elementId);
+        // Clear defensively so a subsequent local NPC spawn of the same class doesn't pass through.
         coop::npc_sync::ClearIncomingNpcSpawn();
-        return;
+        return false;
     }
     {
         ParamFrame finish(g_finishSpawnFn);
         if (!finish.valid()) {
             UE_LOGE("npc-sync[client OnSpawn]: ParamFrame(FinishSpawning) invalid -- "
-                    "the actor %p is in a half-spawned state (BeginDeferred returned, "
-                    "FinishSpawning never ran). Forcing K2_DestroyActor to clean up.",
+                    "the actor %p is in a half-spawned state. Forcing K2_DestroyActor to clean up.",
                     spawned);
             if (g_k2DestroyFn && R::IsLive(spawned)) {
                 R::CallFunction(spawned, g_k2DestroyFn, nullptr);
             } else if (!g_k2DestroyFn) {
-                // Latent invariant: this branch is only reachable when the
-                // interceptor is live (otherwise MarkIncomingNpcSpawn was
-                // never called, the suppressor swallowed BeginDeferred,
-                // and `spawned` would be null). Interceptor registration
-                // gates on k2DestroyFn binding (npc_sync.cpp Install), so
-                // g_k2DestroyFn=nullptr here would mean the gating broke.
                 UE_LOGE("npc-sync[client OnSpawn]: g_k2DestroyFn=nullptr at half-spawn "
-                        "cleanup -- actor %p LEAKS (Install gating invariant violated; "
-                        "see npc_mirror.cpp two-push pattern)",
+                        "cleanup -- actor %p LEAKS (Install gating invariant violated)",
                         spawned);
             }
-            return;
+            return false;
         }
         finish.Set<void*>(L"Actor", spawned);
         finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
         if (!Call(g_gsCdo, finish)) {
             UE_LOGE("npc-sync[client OnSpawn]: FinishSpawningActor call failed for "
                     "%p '%ls' eid=%u -- forcing K2_DestroyActor",
-                    spawned, classW.c_str(), payload.elementId);
+                    spawned, classW.c_str(), elementId);
             if (g_k2DestroyFn && R::IsLive(spawned)) {
                 R::CallFunction(spawned, g_k2DestroyFn, nullptr);
             } else if (!g_k2DestroyFn) {
                 UE_LOGE("npc-sync[client OnSpawn]: g_k2DestroyFn=nullptr at FinishSpawn "
-                        "failure cleanup -- actor %p LEAKS (Install gating invariant "
-                        "violated; see npc_mirror.cpp two-push pattern)",
+                        "failure cleanup -- actor %p LEAKS (Install gating invariant violated)",
                         spawned);
             }
-            return;
+            return false;
         }
     }
 
-    // Build mirror Element + hand off to MirrorManager::Install. The
-    // template encapsulates the 5-step pattern (alloc-under-lock +
-    // RegisterMirror + rollback-on-fail). Install returns false on
-    // duplicate-eid race or Registry::RegisterMirror failure -- in
-    // both cases we own the orphan actor and must K2_DestroyActor it.
+    // Build mirror Element + hand off to MirrorManager::Install (alloc-under-lock +
+    // RegisterMirror + rollback-on-fail). Install returns false on duplicate-eid race or
+    // Registry::RegisterMirror failure -- we own the orphan actor and must K2_DestroyActor it.
     auto mirror = std::make_unique<coop::element::Npc>();
     std::string typeName8;
-    typeName8.reserve(payload.className.len);
-    for (uint8_t i = 0; i < payload.className.len; ++i) {
-        typeName8.push_back(static_cast<char>(payload.className.data[i]));
-    }
+    typeName8.reserve(classW.size());
+    for (wchar_t c : classW) typeName8.push_back(static_cast<char>(c));
     mirror->SetTypeName(std::move(typeName8));
     mirror->SetActor(spawned, R::InternalIndexOf(spawned));
 
     const coop::element::ElementId eid =
-        static_cast<coop::element::ElementId>(payload.elementId);
+        static_cast<coop::element::ElementId>(elementId);
 
     if (!NpcMirrors().Install(eid, std::move(mirror))) {
         UE_LOGW("npc-sync[client OnSpawn]: MirrorManager::Install(eid=%u) failed "
-                "(duplicate eid race or Registry::RegisterMirror collision) -- "
-                "destroying orphan actor %p",
+                "(duplicate eid race / Registry collision) -- destroying orphan actor %p",
                 eid, spawned);
         if (g_k2DestroyFn && R::IsLive(spawned)) {
             R::CallFunction(spawned, g_k2DestroyFn, nullptr);
         } else if (!g_k2DestroyFn) {
             UE_LOGE("npc-sync[client OnSpawn]: g_k2DestroyFn=nullptr at MirrorManager "
-                    "rollback cleanup -- actor %p LEAKS (Install gating invariant "
-                    "violated; see npc_mirror.cpp two-push pattern)",
+                    "rollback cleanup -- actor %p LEAKS (Install gating invariant violated)",
                     spawned);
         }
-        return;
+        return false;
     }
-    // Park the mirror so the streamed pose drive is authoritative: CMC tick OFF (no gravity /
-    // velocity integration fighting SetActorLocation) + actor tick OFF (suppress the BP AI graph).
-    // The AnimBP still ticks on the mesh -> it reads the CMC.Velocity our pose drive writes
-    // (element::Npc::ApplyToEngine) for the walk/run blend. Same parking as the player puppet.
+    // Park the mirror so the streamed pose drive is authoritative: CMC tick OFF + actor tick OFF
+    // (the AnimBP still ticks on the mesh and reads the CMC.Velocity our pose drive writes).
     ue_wrap::puppet::DisableCharacterTicks(spawned);
+    // THOROUGH PARK: DisableCharacterTicks does not stop FTimerManager timers. A kerfur arms three
+    // looping timers (timer_face/timer_kerf/checkDoor) that keep running local AI on the parked
+    // mirror (the 200s timer_kerf can flip it into a local spooky-kill state). No-op on non-kerfur.
+    ue_wrap::kerfur::NeutralizeAiTimers(spawned);
 
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
-            payload.elementId, classW.c_str(), spawned,
-            payload.locX, payload.locY, payload.locZ);
+            elementId, classW.c_str(), spawned, locX, locY, locZ);
+    return true;
 }
 
 void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
@@ -344,6 +351,11 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
         return;
     }
     void* actor = drained->GetActor();
+    // v74 "floating camera" fix is STRUCTURAL, not a teardown crutch: an ADOPTED mirror IS the
+    // client's own real save-kerfur (Inc-1), so K2_DestroyActor below runs its real ReceiveDestroyed
+    // + engine child-actor cascade EXACTLY as on the host (which does not orphan the cam/camera
+    // child -- RE sec 4). The old non-standard deferred-spawned mirror -- whose cascade was the
+    // suspected orphan source -- is no longer the path for save-persisted kerfurs.
     if (actor && g_k2DestroyFn && R::IsLive(actor)) {
         R::CallFunction(actor, g_k2DestroyFn, nullptr);
         UE_LOGI("npc-sync[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
@@ -430,6 +442,103 @@ void DrainClientMirrors() {
     }
 }
 
+void PruneDeadClientMirrors() {
+    // CLIENT world-swap teardown (v75). A save-transfer join performs TWO level loads; a mirror
+    // Installed/adopted in world-1 SURVIVES the swap as a dangling Element because the host sends
+    // no EntityDestroy on a client world-swap (it never world-swaps during the join) and the only
+    // other client drain (DrainClientMirrors) is full-disconnect only. The stale Element then
+    // blocks world-2 from re-mirroring/re-adopting the SAME host eid (OnEntitySpawn + ArmAdoption
+    // both early-return on NpcMirrors().Get(eid)!=nullptr). Drop every mirror whose actor was freed
+    // by the level load -- RELEASE TRACKING ONLY (NO K2_DestroyActor: the actor is already gone).
+    // A still-LIVE mirror (a re-announce without an actual level change) is KEPT, so the next
+    // replay's duplicate-eid drop is correct. Game thread only.
+    auto* s = coop::npc_sync::GetSession();
+    if (!s || s->role() != coop::net::Role::Client) return;  // host mirrors are the real NPCs -- never prune
+    std::vector<coop::element::Npc*> snap;
+    NpcMirrors().Snapshot(snap);
+    std::vector<coop::element::ElementId> deadIds;
+    for (coop::element::Npc* m : snap) {
+        if (!m || !m->IsMirror()) continue;
+        void* actor = m->GetActor();
+        if (actor && R::IsLiveByIndex(actor, m->GetInternalIdx())) continue;  // still live -> keep
+        deadIds.push_back(static_cast<coop::element::ElementId>(m->GetId()));
+    }
+    for (coop::element::ElementId eid : deadIds) {
+        // Take drains the Element under the manager mutex; the unique_ptr dtor (outside the mutex)
+        // runs Registry::UnregisterMirror -- ABBA-safe, same pattern as OnEntityDestroy. No K2.
+        std::unique_ptr<coop::element::Npc> drained = NpcMirrors().Take(eid);
+    }
+    if (!deadIds.empty())
+        UE_LOGI("npc-mirror[world-swap]: pruned %zu stale dead-actor NPC mirror(s) (re-adopt/re-mirror unblocked)",
+                deadIds.size());
+}
+
+int DestroyUntrackedClientNpcs() {
+    // CLIENT host-authoritative reconciliation -- see npc_mirror.h. Destroy every
+    // live allowlisted-NPC actor that is NOT a host-streamed mirror (a save-load
+    // ghost / escaped client spawn). MTA shape: reconcile the client entity set to
+    // the server's on join (reference/mtasa-blue CClientGame element sync).
+    auto* s = coop::npc_sync::GetSession();
+    if (!s || s->role() != coop::net::Role::Client) return 0;  // host owns NPCs; never sweep
+    if (!g_k2DestroyFn) {
+        UE_LOGW("npc-mirror[reconcile]: K2_DestroyActor unresolved -- cannot sweep ghost NPCs");
+        return 0;
+    }
+
+    // Snapshot the LEGITIMATE (host-mirrored) actor set under the manager mutex,
+    // then iterate without it (Snapshot is just a vector copy -- holding the
+    // mutex across the GUObjectArray walk + K2 calls would invite ABBA with the
+    // registry mutex). Every mirror binds its actor (SetActor) BEFORE Install
+    // into the manager (npc_mirror::OnEntitySpawn), and both that and this run on
+    // the game thread, so any element in the snapshot has a coherent bound actor.
+    std::vector<coop::element::Npc*> mirrors;
+    NpcMirrors().Snapshot(mirrors);
+    std::unordered_set<void*> tracked;
+    tracked.reserve(mirrors.size() * 2 + 1);
+    for (coop::element::Npc* m : mirrors) {
+        // Liveness-guard the tracked set: a mirror whose actor was freed (e.g. a world-swap that
+        // never sent EntityDestroy) holds a DANGLING pointer. Inserting it could falsely match a
+        // recycled GUObjectArray address. IsLiveByIndex (serial-number check) rejects dead actors.
+        if (m && m->GetActor() && R::IsLiveByIndex(m->GetActor(), m->GetInternalIdx()))
+            tracked.insert(m->GetActor());
+    }
+
+    const int32_t n = R::NumObjects();
+    int destroyed = 0, found = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        // Fast filter FIRST (matches the host world-enum walk): the subclass-aware
+        // allowlist check is a few pointer compares; >99% of GUObjectArray is not
+        // an NPC and never pays for the IsLive/NameOf work below.
+        void* cls = R::ClassOf(obj);
+        if (!cls || !coop::npc_sync::IsAllowlistedClass(cls)) continue;
+        if (tracked.count(obj) > 0) continue;  // a legitimate host mirror -- KEEP
+        // GC-liveness guard before any deref / NameOf alloc.
+        if (!R::IsLive(obj)) continue;
+        // Skip CDOs (Default__<Class>) -- the class template, not a world instance (alloc-free).
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
+        // v75: SOLE caller is npc_adoption::Tick, which fires this ONCE per world only after
+        // g_snapshotDelivered && g_pending.empty() (every save-persisted EntitySpawn has armed AND
+        // its deferred CLASS-MATCH adoption has bound the client's own save-kerfur as a host mirror
+        // -> the kerfur is in `tracked` and kept). Anything still untracked here is a genuine ghost:
+        // a host-spawned enemy that escaped the PE suppressor, OR a save NPC the host's world no
+        // longer has (e.g. a kerfur turned OFF after the save -> host holds only the prop form, so
+        // no EntitySpawn -> no adoption armed for it). Both must go. The host's authoritative mirror
+        // (if any) is tracked, so it survives.
+        ++found;
+        R::CallFunction(obj, g_k2DestroyFn, nullptr);  // K2_DestroyActor (game thread)
+        ++destroyed;
+        UE_LOGI("npc-mirror[reconcile]: destroyed untracked ghost NPC actor=%p class='%ls'",
+                obj, R::ToString(R::NameOf(cls)).c_str());
+    }
+    if (found > 0)
+        UE_LOGI("npc-mirror[reconcile]: swept %d untracked ghost NPC(s) (scanned %d "
+                "GUObjectArray slots, %zu tracked mirror(s))",
+                destroyed, n, mirrors.size());
+    return destroyed;
+}
+
 void TickClientNpcs() {
     auto* s = coop::npc_sync::GetSession();
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only (the host streams, it doesn't drive mirrors)
@@ -470,6 +579,12 @@ void TickClientNpcs() {
     NpcMirrors().Snapshot(elems);
     for (coop::element::Npc* el : elems)
         if (el && el->IsMirror()) el->Tick();
+
+    // 3) v75: drive the deferred class-match adoption of save-persisted NPCs (the kerfur), AND the
+    // post-SnapshotComplete one-shot ghost sweep (both owned by npc_adoption, which holds the
+    // connect-snapshot-delivered + converged timing). NO-OP (single integer compare) once adoption
+    // has converged and the sweep has run -- zero steady-state cost. Game thread only.
+    coop::npc_adoption::Tick();
 }
 
 }  // namespace coop::npc_mirror

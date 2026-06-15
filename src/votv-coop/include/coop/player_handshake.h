@@ -47,6 +47,23 @@ void SetLocalNickname(const std::wstring& nick);
 // reference to the game-thread-owned string). Used by the roster snapshot.
 const std::wstring& LocalNickname();
 
+// v73 (per-player inventory): set the local player's durable identity GUID (32 hex chars
+// from harness::config::ReadPlayerGuid). Seeded once at boot, appended to our Join so the
+// HOST can key this peer's inventory file (coop_players/<guid>.json). ASCII; not displayed.
+void SetLocalGuid(const std::string& guid);
+
+// HOST-side read of the GUID a peer sent in its Join, by peer slot. Empty until that peer's
+// Join lands (or if it sent none -> first-join/empty inventory). Game thread only.
+const std::string& GuidForSlot(int slot);
+
+// True iff `guid` is exactly 32 hex chars ([0-9a-fA-F]) -- the durable-identity format. The GUID
+// becomes a HOST FILESYSTEM PATH COMPONENT (coop_players/<guid>.json), so a remote-supplied GUID
+// MUST be validated to this charset before use: it is the only thing that keeps a hostile/tampered
+// Join (guid="..\\..\\evil") from steering a host file write outside coop_players (path traversal).
+// Hex is inherently filesystem-safe (no '.', '/', '\\', ':'). Used at the wire boundary AND in
+// PlayerFilePath (defense in depth). Pure; any thread.
+bool IsValidGuid(const std::string& guid);
+
 // Reset per-slot caches. Called from event_feed::OnSessionStart so a
 // Session::Stop()/Start() in the same process sees clean state.
 void Reset();

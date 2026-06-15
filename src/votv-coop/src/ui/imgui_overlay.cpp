@@ -35,6 +35,12 @@
 #include "ui/loading_screen.h"
 #include "ui/console.h"
 #include "ui/hud.h"
+#include "ui/toast.h"
+#include "ui/chat_input.h"
+#include "ui/voice_panel.h"
+#include "coop/chat_sync.h"
+#include "coop/multiplayer_menu.h"
+#include "coop/voice/voice_chat.h"
 #include "coop/join_progress.h"
 #include "coop/session_manager.h"
 #include "coop/dev/perf_probe.h"
@@ -102,15 +108,21 @@ inline bool BrowserOpen() { return ui::server_browser::IsOpen(); }
 inline bool PickerOpen()  { return ui::host_save_picker::IsOpen(); }
 inline bool LoadingOpen() { return ui::loading_screen::IsOpen(); }
 inline bool ConsoleOpen() { return ui::console::IsOpen(); }
+inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
+inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
+// VOTV's native pause/ESC menu is up (render-thread-safe atomic; see multiplayer_menu).
+// Gates the passive coop HUD + chat off so they never draw OVER the modal pause menu.
+inline bool PauseMenuOpen() { return coop::multiplayer_menu::IsPauseMenuOpen(); }
 inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
-                                   LoadingOpen() || ConsoleOpen(); }
+                                   LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen(); }
 inline bool CaptureActive() {
     // Interactive surfaces take the cursor + input: the F1 menu, the server browser + Host-
     // Game save picker (Connect / Host / type an IP / pick a save), the loading screen (its
-    // Cancel button), and the console (its command input). The host scoreboard is interactive
-    // too; the client scoreboard is a passive peek.
+    // Cancel button), the console (its command input), the T-chat input bar (typed keys
+    // must reach ImGui, not the game), and the V voice-settings panel (sliders + combos).
+    // The host scoreboard is interactive too; the client scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
-           (ScoreOpen() && ui::scoreboard::LocalIsHost());
+           ChatOpen() || VoiceOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
 void CreateRTV(IDXGISwapChain* sc) {
@@ -176,24 +188,71 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
         return 0;
     }
-    if (CaptureActive() && g_imguiReady.load(std::memory_order_acquire)) {
-        ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
-        // Force-hide the OS cursor over the client area: ImGui draws its own, so a
-        // visible OS cursor would be a second one. SetCursor(NULL) wins regardless of
-        // UE4's ShowCursor count; return TRUE halts further WM_SETCURSOR processing.
-        if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) { ::SetCursor(nullptr); return TRUE; }
-        // Swallow input the game would otherwise act on so clicks/keys go to ImGui.
-        // WM_INPUT is swallowed too: it's UE4's raw-input mouselook feed -- if the
-        // game saw it, the camera would spin while we move the mouse over the menu.
-        switch (msg) {
-            case WM_INPUT:
-            case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-            case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP:
-            case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
-            case WM_KEYDOWN: case WM_KEYUP: case WM_CHAR:
-            case WM_SYSKEYDOWN: case WM_SYSKEYUP:
-                return 1;
-            default: break;
+    // T -> open the chat input (v60, user req): only mid-session (chat is
+    // meaningless solo) and only when no other surface owns input (typing 't'
+    // into the browser's name field must not pop the chat). Swallow the press
+    // so the game never acts on T and the input bar doesn't start with a "t".
+    if (msg == WM_KEYDOWN && wParam == 'T' && !CaptureActive() && !PauseMenuOpen() &&
+        coop::chat_sync::SessionActive()) {
+        ui::chat_input::Open();
+        return 0;
+    }
+    // V -> toggle the voice settings panel (user 2026-06-12 round 1: V opens voice
+    // settings as its own surface; the scoreboard button is gone). Opens only while
+    // voice runs (devices live) and no other surface owns typed input (typing 'v'
+    // into chat/browser must not pop it); closes whenever the panel is up. The
+    // toggle edges are swallowed so the game never acts on V. Surfaces with text
+    // fields never coexist with the panel (they all gate on !CaptureActive() too),
+    // so the close path cannot eat a typed letter.
+    if (msg == WM_KEYDOWN && wParam == 'V' && (lParam & (1 << 30)) == 0) {
+        if (VoiceOpen()) { ui::voice_panel::Close(); return 0; }
+        if (!CaptureActive() && coop::voice_chat::Enabled()) {
+            ui::voice_panel::Toggle();
+            return 0;
+        }
+    }
+    // ESC while the chat input is open: close it and FALL THROUGH to the game
+    // (the pause menu opens normally -- the user-requested "ESC = chat gone,
+    // user lands in the menu" behavior). After Close() the capture block below
+    // no longer swallows this keydown (chat was the only capturing surface).
+    if (msg == WM_KEYDOWN && wParam == VK_ESCAPE && ChatOpen()) {
+        ui::chat_input::Close();
+    }
+    if (g_imguiReady.load(std::memory_order_acquire)) {
+        // INVARIANT: ImGui must see the RELEASE of every key it saw pressed. A surface
+        // can CLOSE on a key's WM_KEYDOWN (chat Enter-submit -> Close at chat_input.cpp;
+        // the ESC-close just above) BETWEEN that key's down and its up -- so the down
+        // reaches ImGui (capture still on) but, gated only on CaptureActive(), the up
+        // would route to the GAME (capture now off), latching Enter/Escape DOWN in ImGui
+        // forever -> the next InputText insta-submits/cancels (user 2026-06-13: "after
+        // one message every input field insta-cancels"). Fix: feed key RELEASES + WM_CHAR
+        // UNCONDITIONALLY. AddKeyEvent(key,false) for a key ImGui never saw down is a
+        // harmless no-op; feeding alone never captures (the swallow + cursor-hide below
+        // stay gated on CaptureActive, so the game still gets its releases when no surface
+        // owns input). Root fix of the pairing invariant -- not a per-surface Close()
+        // key-reset (that would race the render thread).
+        const bool release = (msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR);
+        if (CaptureActive() || release)
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
+
+        if (CaptureActive()) {
+            // Force-hide the OS cursor over the client area: ImGui draws its own, so a
+            // visible OS cursor would be a second one. SetCursor(NULL) wins regardless of
+            // UE4's ShowCursor count; return TRUE halts further WM_SETCURSOR processing.
+            if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) { ::SetCursor(nullptr); return TRUE; }
+            // Swallow input the game would otherwise act on so clicks/keys go to ImGui.
+            // WM_INPUT is swallowed too: it's UE4's raw-input mouselook feed -- if the
+            // game saw it, the camera would spin while we move the mouse over the menu.
+            switch (msg) {
+                case WM_INPUT:
+                case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+                case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+                case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
+                case WM_KEYDOWN: case WM_KEYUP: case WM_CHAR:
+                case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+                    return 1;
+                default: break;
+            }
         }
     }
     return ::CallWindowProcW(g_origWndProc, hwnd, msg, wParam, lParam);
@@ -253,6 +312,24 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     return true;
 }
 
+// v59 launch toast: poll the async version-check verdict once, toast it, then
+// render any live toasts. Ordinary function (NOT inside the __try -- C++ locals
+// with destructors are illegal in an SEH frame, C2712).
+void DrawToasts() {
+    static bool sVersionToasted = false;
+    if (!sVersionToasted) {
+        bool outdated = false;
+        const std::string line = coop::session_manager::LatestVersionLine(&outdated);
+        if (!line.empty()) {
+            // The outdated warning lingers (the user should not miss it); the
+            // up-to-date note is a short courtesy.
+            ui::toast::Push(line, outdated ? 25.0f : 8.0f, outdated);
+            sVersionToasted = true;
+        }
+    }
+    ui::toast::Render();
+}
+
 // SEH-guarded per-frame ImGui pass (render thread). A fault here must NOT take down
 // the game's render thread -- swallow it and leave the menu hidden.
 void RenderFrameGuarded() {
@@ -268,17 +345,22 @@ void RenderFrameGuarded() {
         // feed). Drawn FIRST so the interactive surfaces below sit ON TOP of it. It
         // never captures input -- nameplates use the background draw list, the chat
         // window is NoInputs -- so CaptureActive() excludes it and the player keeps
-        // playing while it overlays.
-        if (ui::hud::IsActive()) ui::hud::Render();
+        // playing while it overlays. SUPPRESSED while VOTV's native pause/ESC menu is up:
+        // our ImGui renders after the game in Present, so the passive HUD would otherwise
+        // draw on TOP of the modal pause menu (user 2026-06-13: chat over the ESC menu).
+        if (ui::hud::IsActive() && !PauseMenuOpen()) ui::hud::Render();
 
         if (MenuOpen())    ui::dev_menu::Render();
         if (ScoreOpen())   ui::scoreboard::Render();
+        if (VoiceOpen())   ui::voice_panel::Render();
         if (BrowserOpen()) ui::server_browser::Render();
         if (PickerOpen())  ui::host_save_picker::Render();
+        if (ChatOpen() && !PauseMenuOpen()) ui::chat_input::Render();
         // The console (bottom log panel) then the loading screen (centered) draw LAST, so the
         // connecting UI sits on top of everything during a join.
         if (ConsoleOpen()) ui::console::Render();
         if (LoadingOpen()) ui::loading_screen::Render();
+        DrawToasts();  // top-center notices (the v59 version toast) above everything
 
         ImGui::Render();
         if (g_rtv) {
@@ -289,6 +371,7 @@ void RenderFrameGuarded() {
         UE_LOGE("imgui_overlay: SEH in render frame -- hiding surfaces to protect the render thread");
         g_visible.store(false, std::memory_order_relaxed);
         g_scoreboard.store(false, std::memory_order_relaxed);
+        ui::voice_panel::Close();  // re-fault guard, same as the picker/loading below
         ui::server_browser::Close();
         // CLOSE the picker too: if its Render() faulted, leaving it open re-enters
         // Render() every frame and re-faults forever (audit HIGH-2 re-fault loop).
@@ -513,6 +596,7 @@ void Shutdown() {
     g_visible.store(false, std::memory_order_relaxed);
     g_scoreboard.store(false, std::memory_order_relaxed);
     g_scoreboardForced.store(false, std::memory_order_relaxed);
+    ui::voice_panel::Close();
     ui::server_browser::Close();
     ui::host_save_picker::Close();
     ui::loading_screen::Close();

@@ -131,6 +131,17 @@ void* g_loadGameFn = nullptr;
 void* g_setSaveSlotFn = nullptr;
 void* g_storySave = nullptr;  // cached USaveGame* (LoadGameFromSlot once)
 
+// Inventory Inc 4: the coop inventory layer registers this to overwrite a freshly
+// loaded/created saveSlot's player inventory BEFORE the native loadObjects() materialize.
+SaveObjectReadyHook g_saveObjectReadyHook = nullptr;
+// Fire the hook ONCE per loaded/created save object (guard against the boot poll re-firing it,
+// though the load/create blocks already run once). The hook self-gates to a no-op off a join.
+void FireSaveObjectReadyHook(void* saveObj) {
+    if (!g_saveObjectReadyHook || !saveObj) return;
+    UE_LOGI("engine: firing SaveObjectReadyHook on save object %p (pre-materialize)", saveObj);
+    g_saveObjectReadyHook(saveObj);
+}
+
 // Story/sandbox GameMode fix (2026-06-03). VOTV stores a save's game mode ONLY in
 // the slot-name PREFIX: getSavePrefix(mode) (on Uui_saveSlots_C) yields the prefix
 // VOTV uses for that mode, and a slot whose name starts with that prefix IS that
@@ -285,6 +296,10 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
         g_storySave = f.Get<void*>(L"ReturnValue");
         if (!g_storySave) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty", slot); return false; }
         UE_LOGI("engine: LoadStorySave -- loaded save '%ls' = %p", slot, g_storySave);
+        // Inc 4: the save's inventory arrays are now present but the world has NOT been built
+        // from them yet -- the one moment a coop client can substitute its per-player inventory
+        // (no-op off a join). Fires once (this block runs once; g_storySave then stays cached).
+        FireSaveObjectReadyHook(g_storySave);
     }
 
     // Register on the (persistent) GameInstance + flag the GameMode to APPLY it on
@@ -322,6 +337,11 @@ void ResetCachedSave() {
     if (g_storySave) UE_LOGI("engine: ResetCachedSave -- dropping cached save %p", g_storySave);
     g_storySave = nullptr;
     g_gameModeApplied = false;
+}
+
+void SetSaveObjectReadyHook(SaveObjectReadyHook hook) {
+    g_saveObjectReadyHook = hook;
+    UE_LOGI("engine: SaveObjectReadyHook %s", hook ? "armed" : "disarmed");
 }
 
 // FRESH New-Game boot: identical to LoadStorySave but with a BLANK saveSlot
@@ -381,6 +401,9 @@ bool StartFreshGame(bool storyMode) {
         g_storySave = f.Get<void*>(L"ReturnValue");
         if (!g_storySave) { UE_LOGW("engine: StartFreshGame -- CreateSaveGameObject returned null"); return false; }
         UE_LOGI("engine: StartFreshGame -- created BLANK saveSlot_C = %p (fresh New Game baseline)", g_storySave);
+        // Inc 4: a fresh client join (no host save) still gets its per-player inventory applied
+        // onto the BLANK save here, before loadObjects() materializes it (no-op off a join).
+        FireSaveObjectReadyHook(g_storySave);
     }
 
     // Register the blank save under a temp slot name. (Persistence suppression is a later

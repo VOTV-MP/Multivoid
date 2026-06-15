@@ -27,17 +27,16 @@ std::atomic<bool> g_resolved{false};
 void*   g_lockCls    = nullptr;  // passwordLock_C UClass
 int32_t g_keyOff     = -1;       // AtriggerBase_C::Key   (Alpha 0.9.0-n: 0x0260)
 int32_t g_inPwOff    = -1;       // ApasswordLock_C::inPassword (0x0380, FString)
-int32_t g_passwordOff= -1;       // ApasswordLock_C::password   (0x0350, FString) -- host-auth accept
 int32_t g_doorOff    = -1;       // ApasswordLock_C::door (Adoor_C*) (0x0338) -- the gated door
 int32_t g_isResetOff = -1;       // ApasswordLock_C::isReset    (0x0360, bool) -- set-new-code mode
 int32_t g_activeOff  = -1;       // ApasswordLock_C::active     (0x0330, bool) -- LED selector + door power
 void*   g_inputNumFn = nullptr;  // ApasswordLock_C::inputNumber(int32 Num)
 void*   g_updFn      = nullptr;  // ApasswordLock_C::upd()  (best-effort refresh; may be null)
+void*   g_openFn     = nullptr;  // ApasswordLock_C::Open(bool Active) -- the native submit chain
 
 // Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/passwordLock.hpp + triggerBase.hpp).
 constexpr int32_t kKeyOffFallback     = 0x0260;
 constexpr int32_t kInPwOffFallback    = 0x0380;
-constexpr int32_t kPasswordOffFallback= 0x0350;
 constexpr int32_t kDoorOffFallback    = 0x0338;
 constexpr int32_t kIsResetOffFallback = 0x0360;
 constexpr int32_t kActiveOffFallback  = 0x0330;
@@ -76,7 +75,6 @@ bool EnsureResolved() {
         keyOff = kKeyOffFallback;
     }
     const int32_t inPwOff    = ResolveOff(lockCls, L"inPassword", kInPwOffFallback);
-    const int32_t passwordOff= ResolveOff(lockCls, L"password",   kPasswordOffFallback);
     const int32_t doorOff    = ResolveOff(lockCls, L"door",       kDoorOffFallback);
     const int32_t isResetOff = ResolveOff(lockCls, L"isReset",    kIsResetOffFallback);
     const int32_t activeOff  = ResolveOff(lockCls, L"active",     kActiveOffFallback);
@@ -87,20 +85,25 @@ bool EnsureResolved() {
         return false;  // the receiver cannot mirror typing without it -- retry
     }
     void* updFn   = R::FindFunction(lockCls, L"upd");    // best-effort; tolerated null
+    // The native submit chain (the BP calls it `open`; the cooked UFunction FName renders
+    // `Open` in the CXX dump -- FName-compare both spellings). Tolerated null: without it
+    // the short-code submit mirror degrades to the plain state mirror (logged at call).
+    void* openFn = R::FindFunction(lockCls, L"open");
+    if (!openFn) openFn = R::FindFunction(lockCls, L"Open");
 
     g_lockCls    = lockCls;
     g_keyOff     = keyOff;
     g_inPwOff    = inPwOff;
-    g_passwordOff= passwordOff;
     g_doorOff    = doorOff;
     g_isResetOff = isResetOff;
     g_activeOff  = activeOff;
     g_inputNumFn = inputNumFn;
     g_updFn      = updFn;
+    g_openFn     = openFn;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("passwordlock: resolved passwordLock_C=%p Key@0x%04X inPassword@0x%04X password@0x%04X "
-            "door@0x%04X isReset@0x%04X active@0x%04X inputNumber=%p upd=%p",
-            lockCls, keyOff, inPwOff, passwordOff, doorOff, isResetOff, activeOff, inputNumFn, updFn);
+    UE_LOGI("passwordlock: resolved passwordLock_C=%p Key@0x%04X inPassword@0x%04X "
+            "door@0x%04X isReset@0x%04X active@0x%04X inputNumber=%p upd=%p open=%p",
+            lockCls, keyOff, inPwOff, doorOff, isResetOff, activeOff, inputNumFn, updFn, openFn);
     return true;
 }
 
@@ -125,11 +128,6 @@ bool ReadState(void* lock, State& out) {
     out.active = (g_activeOff >= 0) &&
                  *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(lock) + g_activeOff);
     return true;
-}
-
-std::wstring ReadPassword(void* lock) {
-    if (!lock || !g_resolved.load(std::memory_order_acquire)) return std::wstring();
-    return ReadFString(lock, g_passwordOff);
 }
 
 void* GatedDoor(void* lock) {
@@ -168,6 +166,21 @@ void CallUpd(void* lock) {
     if (!lock || !g_updFn) return;
     ParamFrame f(g_updFn);
     if (f.valid()) Call(lock, f);
+}
+
+bool CallOpen(void* lock, bool accept) {
+    if (!lock) return false;
+    if (!g_openFn) {
+        UE_LOGW("passwordlock: Open UFunction unresolved -- submit mirror degraded to state mirror");
+        return false;
+    }
+    ParamFrame f(g_openFn);
+    if (!f.valid()) return false;
+    // Param name "Active" per the cooked signature (CXXHeaderDump passwordLock.hpp:
+    // `void Open(bool Active)`). The body may defer sub-chains through latent Delays --
+    // callers must not expect synchronous state.
+    f.Set<bool>(L"Active", accept);
+    return Call(lock, f);
 }
 
 bool WriteActive(void* lock, bool active) {

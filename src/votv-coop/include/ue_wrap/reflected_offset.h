@@ -56,6 +56,13 @@ int32_t MainPlayer_lookAtActor();
 // the session -- NOT a synced display state). Both recook-volatile BP fields.
 int32_t MainPlayer_isRagdoll();
 int32_t MainPlayer_dead();
+// v63 device occupancy: activeInterface @0x07E0 is THE inside-a-device
+// discriminator (null = not inside any screen; set/cleared ONLY by
+// setActiveInterface). HitResult @0x0744 is the player's aim FHitResult --
+// the enter chain icasts its Actor weakptr (+0x68), which the deny gate
+// nulls for one InpActEvt_use dispatch.
+int32_t MainPlayer_activeInterface();
+int32_t MainPlayer_HitResult();
 
 // AnimBlueprint_kerfurOmega_regular_C field accessors (VOTV BP).
 int32_t AnimBP_kerfur_walkSpeed();

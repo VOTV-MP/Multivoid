@@ -31,6 +31,15 @@ char g_newName[64] = "";
 std::string g_hostName = "My VOTV Server";
 bool g_hostLocked = false;
 int  g_hostMax = 4;
+// Connection selector (user 2026-06-11): false = AUTO (recommended; P2P/ICE --
+// direct when the NAT allows it, relay automatically otherwise; nothing to
+// configure), true = DIRECT (LanDirect UDP listen; needs the port forwarded;
+// friends join via Direct Connect or the browser). AUTO is ALWAYS listed -- the
+// master is a relay game's only rendezvous, so a hidden AUTO game is unjoinable
+// (hide it in-game via the scoreboard once friends are in). g_hideDirect is the
+// DIRECT-only "don't list me" toggle (friends still Direct Connect by IP).
+bool g_direct = false;
+bool g_hideDirect = false;
 
 // Slot/display names are ASCII; downconvert wide->narrow for ImGui (non-ASCII -> '?').
 std::string W2A(const std::wstring& w) {
@@ -50,7 +59,8 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // world loads, and gives "Starting your server -- loading <world>" feedback.
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
     // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax)) {
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
+                          g_direct, /*hideFromBrowser=*/g_direct && g_hideDirect)) {
         UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
         return;
     }
@@ -71,7 +81,8 @@ void DoHostNew() {
     // A brand-new game's load is the SLOWEST host boot (the save isn't loadable for tens
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax)) {
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
+                          g_direct, /*hideFromBrowser=*/g_direct && g_hideDirect)) {
         UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
         return;
     }
@@ -166,6 +177,25 @@ void Render() {
         if (!canNew) ImGui::BeginDisabled();
         if (ImGui::Button("New Game & Host")) DoHostNew();
         if (!canNew) ImGui::EndDisabled();
+
+        // Connection type + visibility (user 2026-06-11; WP10 plain labels,
+        // technical depth in the hint lines). TURN is deliberately NOT a
+        // choice: it is the automatic fallback inside AUTO's ICE.
+        ImGui::Separator();
+        ImGui::TextUnformatted("Connection:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("AUTO (recommended)", !g_direct)) g_direct = false;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("DIRECT (port forward)", g_direct)) g_direct = true;
+        if (g_direct) {
+            ImGui::TextDisabled("Requires UDP port 47621 forwarded to this PC. Friends join from");
+            ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
+            ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
+        } else {
+            ImGui::TextDisabled("Connects directly when your network allows it, relays automatically");
+            ImGui::TextDisabled("otherwise. Works without any router setup. Always listed -- hide it");
+            ImGui::TextDisabled("in-game from the scoreboard once your friends have joined.");
+        }
 
         // Footer: Host the selected save / Cancel + the lobby params.
         ImGui::Separator();

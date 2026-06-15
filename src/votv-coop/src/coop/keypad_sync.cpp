@@ -3,6 +3,39 @@
 // the digit delta (which drives the keypad's own native validator -- MTA input-replication).
 // No isAcc/isDeny mirror (removed 2026-06-06: hover flags, the old PURPLE).
 //
+// v59 SUBMIT MIRROR (2026-06-11, replaces the deleted HostAcceptPoll): the BP auto-submits
+// at Len>=5 (uber @2398), so long codes validate NATIVELY on every peer from the digit
+// replay alone. A SHORT code's accept press (open(password==inPassword)) and the explicit
+// cancel (open(false)) change no digit -- the typing peer detects its own native submit
+// EDGE in the poll (active flip + buffer cleared, lastKnown buffer 0<len<5, not reset
+// mode), stamps KeypadEvent::Accept/Deny on the state packet, and every receiver runs the
+// keypad's OWN native Open(Active) chain (accept/deny sound, LED, buffer clear, and the
+// LOCK-state propagation to the PAIR keypad + the gated door via setActive). A native
+// accept UNLOCKS the door -- it does NOT open it (the door's 4s-doorOpen chain belongs to
+// a scripted trigger entry, not the player accept); opening the unlocked door is a normal
+// E press, already synced by the door channel. The old HostAcceptPoll accepted on
+// buffer==password at ANY length WITHOUT the accept press, auto-ForceOpened the door
+// (non-native), latched the LED green for the session (g_unlocked re-assert), and
+// permanently muted the door's autoclose (SuppressHostHeldDoor with no release): the
+// 2026-06-11 "door opens on the last digit + stuck green/open forever" bug. All deleted
+// (RULE 2).
+//
+// REPLAYED-CHAIN SETTLING (2026-06-12, the red/green echo-storm fix): the BP open() body
+// defers its state writes through latent sub-chains (the CallOpen contract: "never assume
+// synchronous state"; proven live -- the poll read the PRE-chain {code,0} for ~0.3s after
+// ProcessEvent(Open) returned). Priming lastKnown to the pre-chain {'',false} (the original
+// v59 echo-break) therefore let the poll (1) BROADCAST the stale mid-chain buffer (the
+// "poison" packet that retyped the code + forced the LED red on every peer) and then
+// (2) CLASSIFY the chain's landing ({code,0}->{'',1} with a short lastKnown buffer) as a
+// fresh local Accept (the "phantom"). Both peers did both -> a self-sustaining ~3Hz
+// cross-peer CallOpen loop: LED popping red/green, door power thrash, PE=224k/s, RAM
+// balloon (2026-06-12 hands-on). The chain's settled endpoint is DETERMINISTIC ({'',
+// Active}: the Open param IS the verdict, no internal re-validation), so ApplyIncoming now
+// primes lastKnown to the ENDPOINT and marks the key SETTLING; the poll neither broadcasts
+// nor classifies that key until the keypad reads the endpoint (failsafe TTL re-baselines
+// silently). A delta surfacing at settle-erase is an interleaved apply, not a local press
+// -- it is broadcast as plain state (convergence) but never event-classified.
+//
 // Structure borrows the proven interactable_sync Channel patterns (key->actor index
 // with IsLiveByIndex self-heal, throttled rebuild, deferred-apply retry, silent first-
 // sight prime, echo-suppress via priming lastKnown_ to the applied value) but with a
@@ -17,8 +50,7 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/door.h"          // host-authoritative accept drives the gated door open
-#include "ue_wrap/game_thread.h"
+#include "ue_wrap/door.h"          // the active mirror keeps the gated door's LOCK state in step
 #include "ue_wrap/log.h"
 #include "ue_wrap/passwordlock.h"
 #include "ue_wrap/reflection.h"
@@ -50,9 +82,18 @@ using State = PL::State;
 std::mutex g_mutex;  // guards the maps below (all access is game-thread-serial; defensive)
 std::unordered_map<std::wstring, Ref>   g_index;      // key -> live keypad
 std::unordered_map<std::wstring, State> g_lastKnown;  // key -> last broadcast/applied state (change-detect + echo-suppress)
-std::unordered_map<std::wstring, bool>  g_unlocked;   // GT-only (HOST): key -> a correct code has unlocked this keypad's gated door this session. Host-authoritative LED latch: keeps the keypad GREEN (re-asserts active@0x0330 against a stray local open(false)) + holds the unlock, matching SP's persistent unlock (Phase B). Replaces the old per-code-entry g_accepted (RULE 2).
-struct Pending { State want; std::chrono::steady_clock::time_point deadline; };
+struct Pending { State want; coop::net::KeypadEvent ev; std::chrono::steady_clock::time_point deadline; };
 std::unordered_map<std::wstring, Pending> g_pending;  // key -> deferred incoming apply
+
+// A native chain WE dispatched (ApplyIncoming's CallOpen) whose state writes have not yet
+// landed (the BP defers them through latent sub-chains -- see the header note). Until the
+// keypad settles on the chain's deterministic endpoint {'', Active}, the poll must neither
+// broadcast nor event-classify this key. The deadline is a failsafe only (a chain that
+// never reaches its endpoint stops suppressing); a healthy chain erases itself the moment
+// the endpoint reads back (observed landings are sub-second).
+struct Settling { State endpoint; std::chrono::steady_clock::time_point deadline; };
+std::unordered_map<std::wstring, Settling> g_settling;  // key -> replayed chain in flight
+constexpr auto kSettleTTL = std::chrono::seconds(2);
 
 std::chrono::steady_clock::time_point g_lastRetry{};
 size_t g_lastLogCount = SIZE_MAX;
@@ -73,7 +114,8 @@ bool SameState(const State& a, const State& b) {
 
 // State <-> payload. The buffer is digits only (keypad input is 0..9); a non-digit (never
 // expected) is dropped so the wire stays digit-clean.
-void StateToPayload(const std::wstring& key, const State& st, coop::net::KeypadSyncPayload& p) {
+void StateToPayload(const std::wstring& key, const State& st, coop::net::KeypadEvent ev,
+                    coop::net::KeypadSyncPayload& p) {
     std::memset(&p, 0, sizeof(p));
     WireKeyFromString(key, p.key);
     uint8_t n = 0;
@@ -83,6 +125,7 @@ void StateToPayload(const std::wstring& key, const State& st, coop::net::KeypadS
     }
     p.bufLen = n;
     p.active = st.active ? 1 : 0;  // v38: LED selector / door power (cancel -> red)
+    p.event  = static_cast<uint8_t>(ev);  // v59: short-code submit mirror
 }
 State PayloadToState(const coop::net::KeypadSyncPayload& p) {
     State st;
@@ -192,6 +235,25 @@ void ApplyState(void* actor, const std::wstring& key, const State& want, unsigne
 // of a key primes the baseline SILENTLY (initial divergence is the connect-snapshot's
 // job). Echo is impossible: ApplyState primes g_lastKnown to the applied value, so the
 // next poll sees no delta. Game thread.
+//
+// v59: the delta is also CLASSIFIED into a KeypadEvent (the short-code submit mirror):
+//   Accept -- active flipped false->true AND lastKnown buffer was a SHORT code (0<len<5):
+//             the native Open(true) chain just completed here from a local accept press.
+//             (len>=5 stays None: the digit replay already ran the BP auto-submit on every
+//             peer -- stamping it would double-run the chain. A receiver's own CallOpen
+//             never reaches classification at all: ApplyIncoming marks the key SETTLING
+//             and the poll skips it until the chain lands on the primed endpoint -- the
+//             echo-break, see the header note.)
+//   Deny   -- buffer shrank to empty with active false AND lastKnown buffer was a short
+//             code: a wrong-code accept press or the explicit cancel.
+//   Both stamps are gated on !IsResetMode (entering set-new-code mode shrinks the buffer
+//   too -- a stamped Deny would deny-blink every peer on a password change).
+// NO door drive here: a native accept UNLOCKS the door (open(Active) propagates
+// active to pair + door via setActive) -- it never opens it (the @2061 4s-doorOpen
+// chain is a scripted trigger entry, NOT the player accept; 2026-06-06 doc + audit
+// 2026-06-11). Opening the now-unlocked door is a normal player E press, already
+// synced by the door channel. The old auto-ForceOpen here was half of the
+// "door always open" bug.
 void PollAndBroadcast() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
@@ -205,110 +267,103 @@ void PollAndBroadcast() {
         for (auto& kv : g_index) refs.emplace_back(kv.first, kv.second);
     }
     for (auto& r : refs) {
-        if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
+        if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) {
+            // A dead/streamed-out keypad can never land its chain: drop any settling
+            // entry so a re-streamed actor isn't suppressed by the stale endpoint
+            // for the TTL remainder (audit 2026-06-12 item 9a). lastKnown keeps the
+            // endpoint -- the re-streamed actor converges via the normal delta path
+            // (no event possible: the endpoint buffer is empty).
+            std::lock_guard<std::mutex> lk(g_mutex);
+            g_settling.erase(r.first);
+            continue;
+        }
         State cur;
         if (!PL::ReadState(r.second.actor, cur)) continue;
+        State last;
+        bool classify = true;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
+            // A replayed Open chain in flight on this key: its writes land frames after the
+            // CallOpen (latent BP sub-chains), so any state read before the endpoint is a
+            // TRANSIENT -- broadcasting one is the poison packet and classifying the landing
+            // is the phantom Accept (the 2026-06-12 echo storm; header note). Suppress the
+            // key until it settles; a delta that remains AT settle-erase came from an
+            // interleaved apply, not a local press -- converge it, never classify it.
+            auto sIt = g_settling.find(r.first);
+            if (sIt != g_settling.end()) {
+                if (SameState(cur, sIt->second.endpoint)) {
+                    g_settling.erase(sIt);  // chain landed (lastKnown already == endpoint)
+                    classify = false;
+                } else if (std::chrono::steady_clock::now() < sIt->second.deadline) {
+                    continue;               // mid-chain -- no broadcast, no classification
+                } else {
+                    g_settling.erase(sIt);  // failsafe: chain never landed -- converge below
+                    classify = false;
+                }
+            }
             auto it = g_lastKnown.find(r.first);
             if (it == g_lastKnown.end()) { g_lastKnown[r.first] = cur; continue; }  // prime silently
             if (SameState(it->second, cur)) continue;                                // no change
+            last = it->second;
+        }
+        // Classify the delta (see the function comment). Reads on the live actor are
+        // outside g_mutex by design (engine access never under our lock).
+        coop::net::KeypadEvent ev = coop::net::KeypadEvent::None;
+        const bool shortCode = !last.buffer.empty() && last.buffer.size() < 5;
+        if (classify && shortCode && !PL::IsResetMode(r.second.actor)) {
+            if (!last.active && cur.active) {
+                ev = coop::net::KeypadEvent::Accept;
+            } else if (cur.buffer.empty() && !cur.active) {
+                ev = coop::net::KeypadEvent::Deny;
+            }
         }
         coop::net::KeypadSyncPayload p{};
-        StateToPayload(r.first, cur, p);
+        StateToPayload(r.first, cur, ev, p);
         if (s->SendReliable(coop::net::ReliableKind::KeypadState, &p, sizeof(p))) {
             { std::lock_guard<std::mutex> lk(g_mutex); g_lastKnown[r.first] = cur; }
-            UE_LOGI("keypad: sent key='%ls' buf='%ls'", r.first.c_str(), cur.buffer.c_str());
+            UE_LOGI("keypad: sent key='%ls' buf='%ls' active=%d ev=%u", r.first.c_str(),
+                    cur.buffer.c_str(), cur.active ? 1 : 0, static_cast<unsigned>(ev));
         } else {
             UE_LOGW("keypad: SendReliable failed key='%ls'", r.first.c_str());
         }
     }
 }
 
-// HOST-only Phase B: the authoritative keypad ACCEPT. The disassembly proved a correct code runs
-// `open(password==inPassword)` (when Len>=5) whose chain ends at `door.doorOpen(false)` -- but that
-// native open needs the door near the host player to animate (it freezes far away), and runs through
-// fragile latent delays. So the host evaluates the SAME condition against its OWN `password` (never
-// replicated) and drives the gated door itself: SetActive(true) (the unlock CanOpen gates on) +
-// ForceOpen (snaps isOpened reliably at any distance). The door channel's host poll then broadcasts
-// the open to every peer. The keypad's native chain (fired by the replayed inputNumber for display)
-// does the same idempotently (ForceOpen no-ops an already-open door). Latched per keypad until the
-// buffer no longer matches, so it fires once per code-entry. Runs every tick over the (~14) indexed
-// keypads -- a handful of bool/FString reads; only the host does the door writes.
-void HostAcceptPoll() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (!ue_wrap::door::EnsureResolved()) return;
-    // Snapshot the index refs (reuse the GT-serial scratch -- PollAndBroadcast already finished with
-    // it this tick) so we never hold g_mutex across the engine reads / door UFunction calls below.
-    auto& refs = g_pollScratch;
-    refs.clear();
+// Incoming-packet dispatch: a stamped Accept/Deny runs the keypad's NATIVE submit chain
+// (CallOpen) -- the receiver-side replication of a short-code accept/cancel press; a plain
+// None packet takes the existing state-mirror ApplyState. The echo-break is the ENDPOINT
+// prime + settle mark: open(Active)'s writes land frames later (latent BP sub-chains), but
+// its settled state is deterministic ({'', Active} -- the param IS the verdict), so
+// lastKnown is primed to that endpoint and the key is marked settling. The poll skips the
+// key until the keypad reads the endpoint (then cur == lastKnown -> nothing is sent at
+// all), so neither the mid-chain transient nor the landing can be broadcast or classified
+// -- the original {'',false} pre-chain prime allowed both, which was the 2026-06-12
+// cross-peer echo storm (header note). The chain does the LED + buffer clear + pair/door
+// LOCK propagation natively.
+void ApplyIncoming(void* actor, const std::wstring& key, const State& want,
+                   coop::net::KeypadEvent ev, unsigned fromSlot) {
+    if (ev == coop::net::KeypadEvent::None) { ApplyState(actor, key, want, fromSlot); return; }
+    if (PL::IsResetMode(actor)) {
+        UE_LOGW("keypad: dropping ev=%u for key='%ls' -- keypad is in set-new-code mode",
+                static_cast<unsigned>(ev), key.c_str());
+        return;
+    }
+    const bool accept = (ev == coop::net::KeypadEvent::Accept);
+    if (!PL::CallOpen(actor, accept)) {
+        // Degraded fallback (Open UFunction unresolved): mirror the END state directly so
+        // the LED/door at least converge -- the plain state apply.
+        ApplyState(actor, key, want, fromSlot);
+        return;
+    }
+    State endpoint;
+    endpoint.active = accept;  // the chain settles on {'', Active} -- see the comment above
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        if (g_index.empty()) return;
-        refs.reserve(g_index.size());
-        for (auto& kv : g_index) refs.emplace_back(kv.first, kv.second);
+        g_lastKnown[key] = endpoint;
+        g_settling[key] = Settling{ endpoint, std::chrono::steady_clock::now() + kSettleTTL };
     }
-    for (auto& r : refs) {
-        void* lock = r.second.actor;
-        if (!R::IsLiveByIndex(lock, r.second.idx)) continue;
-        State cur;
-        if (!PL::ReadState(lock, cur)) continue;
-
-        // (1) ALREADY UNLOCKED -> keep the LED host-authoritatively GREEN. The split-brain the
-        //     user hit: open(password==inPassword) runs on whichever peer presses ENTER, and a
-        //     stray open(false) -- the host (or the typing client) pressing ENTER on the buffer
-        //     the submit already cleared, i.e. open(password=="")==false -- reds active@0x0330
-        //     and nothing put it back -> "host PURPLE forever" (a red LED over a stuck digit
-        //     panel) while the client showed green. Re-assert green here so the host's LED
-        //     matches the green PollAndBroadcast sends every peer. Skip while in set-new-code
-        //     mode (isReset -> upd() shows BLUE; don't clobber it). Matches SP's persistent
-        //     unlock; no door re-drive (SuppressHostHeldDoor already holds it open).
-        if (auto it = g_unlocked.find(r.first); it != g_unlocked.end() && it->second) {
-            // A keypad entering set-new-code (isReset) mode is being RE-LOCKED with a fresh
-            // password -> DROP the unlock latch so that once the new code is set it re-evaluates
-            // accept from scratch (red until the new code is typed), instead of staying pinned
-            // green for the rest of the session. (Re-closing the gated DOOR on a password change
-            // is a Phase B follow-up -- the door hold-register integration noted at the accept.)
-            if (PL::IsResetMode(lock)) { g_unlocked.erase(it); continue; }
-            if (!cur.active) { PL::WriteActive(lock, true); PL::CallUpd(lock); }
-            continue;
-        }
-
-        // (2) Idle keypad: an empty buffer can never equal a non-empty password -- skip the
-        //     password/isReset reads (the only work done on the common idle keypad).
-        if (cur.buffer.empty()) continue;
-
-        // (3) Accept iff the full buffer equals the password and we're NOT setting a new code.
-        //     The old Len>=5 short-circuit was the BP's AUTO-submit gate -- but a manual ENTER
-        //     submits ANY length, so a <5-digit code (the user's 1111 + ENTER) never reached
-        //     here and the host never accepted it host-authoritatively. Match on exact equality
-        //     instead: a partial buffer can't equal the full password, so this only fires on a
-        //     genuinely complete correct code.
-        const std::wstring pw = PL::ReadPassword(lock);
-        const bool accept = !pw.empty() && cur.buffer == pw && !PL::IsResetMode(lock);
-        if (!accept) continue;
-
-        // (4) ACCEPT edge: latch the keypad unlocked, drive the gated door, green the host LED.
-        g_unlocked[r.first] = true;
-        if (void* door = PL::GatedDoor(lock)) {
-            ue_wrap::door::SetActive(door, true);  // unlock (CanOpen gate) -- authoritative, independent of the native chain
-            ue_wrap::door::ForceOpen(door);        // open reliably regardless of host-player distance (idempotent if already open)
-            // Mute the host's autoclose + sensor for this door (same recipe as a client-held door,
-            // door.h SuppressHostHeldDoor): the host has NO player at the keypad's door (only the
-            // typing client's puppet), so its native checkSensor would find an empty sensor +
-            // autoclose and shut the door it just opened -> open/close oscillation. The door stays
-            // open (persistent unlock, like SP's door.Active=true). NOTE (Phase B scope): the keypad
-            // door is not yet in the door channel's hold register, so it is not E-closable / won't
-            // auto-close after walk-through -- a follow-up integrates it for those nuances.
-            ue_wrap::door::SuppressHostHeldDoor(door);
-        } else {
-            UE_LOGW("keypad: ACCEPT key='%ls' but no gated door resolved", r.first.c_str());
-        }
-        PL::WriteActive(lock, true);  // host keypad GREEN, host-authoritative (PollAndBroadcast carries active=1 to peers)
-        PL::CallUpd(lock);            // repaint: upd() selects eff_glow_green from the freshly-written active
-        UE_LOGI("keypad: ACCEPT key='%ls' -- correct code: unlocked door + green LED (host-authoritative)", r.first.c_str());
-    }
+    UE_LOGI("keypad: native Open(%d) replayed key='%ls' (from slot %u)",
+            accept ? 1 : 0, key.c_str(), fromSlot);
 }
 
 }  // namespace
@@ -326,10 +381,15 @@ void OnReliable(const coop::net::KeypadSyncPayload& payload, uint8_t senderPeerS
     if (key.empty()) { UE_LOGW("keypad: OnReliable empty key -- dropping"); return; }
     if (!PL::EnsureResolved()) { UE_LOGW("keypad: apply -- class not resolved, dropping key='%ls'", key.c_str()); return; }
     State want = PayloadToState(payload);
-    if (void* actor = ResolveFast(key)) { ApplyState(actor, key, want, senderPeerSlot); return; }
+    auto ev = static_cast<coop::net::KeypadEvent>(payload.event);
+    if (ev != coop::net::KeypadEvent::None && ev != coop::net::KeypadEvent::Accept &&
+        ev != coop::net::KeypadEvent::Deny) {
+        ev = coop::net::KeypadEvent::None;  // unknown future value -> degrade to state mirror
+    }
+    if (void* actor = ResolveFast(key)) { ApplyIncoming(actor, key, want, ev, senderPeerSlot); return; }
     // Not streamed in yet -- defer + retry on the throttled tick.
     std::lock_guard<std::mutex> lk(g_mutex);
-    g_pending[key] = Pending{ std::move(want), std::chrono::steady_clock::now() + kPendingTTL };
+    g_pending[key] = Pending{ std::move(want), ev, std::chrono::steady_clock::now() + kPendingTTL };
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -348,8 +408,19 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (!R::IsLiveByIndex(d.second.actor, d.second.idx)) continue;
         State cur;
         if (!PL::ReadState(d.second.actor, cur)) continue;
+        {
+            // A key mid-settle snapshots the chain's ENDPOINT, not the live keypad:
+            // the live read is a mid-chain transient (the joiner would mirror the
+            // poison state), and writing it to lastKnown below would clobber the
+            // endpoint prime (audit 2026-06-12 item 7).
+            std::lock_guard<std::mutex> lk(g_mutex);
+            auto sIt = g_settling.find(d.first);
+            if (sIt != g_settling.end()) cur = sIt->second.endpoint;
+        }
         coop::net::KeypadSyncPayload p{};
-        StateToPayload(d.first, cur, p);
+        // Snapshot = plain state (event None): the joiner mirrors the RESULT (green/red LED,
+        // typed digits); door state arrives via the door channel's own snapshot.
+        StateToPayload(d.first, cur, coop::net::KeypadEvent::None, p);
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::KeypadState, &p, sizeof(p));
         { std::lock_guard<std::mutex> lk(g_mutex); g_lastKnown[d.first] = cur; }
         ++sent;
@@ -366,13 +437,13 @@ void Tick() {
         g_lastRetry = now;
         RebuildIndex();
         // RECEIVER: retry deferred applies for keypads that have now streamed in.
-        std::vector<std::pair<std::wstring, State>> ready;
+        std::vector<std::pair<std::wstring, Pending>> ready;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             for (auto it = g_pending.begin(); it != g_pending.end();) {
                 auto idxIt = g_index.find(it->first);
                 if (idxIt != g_index.end() && R::IsLiveByIndex(idxIt->second.actor, idxIt->second.idx)) {
-                    ready.emplace_back(it->first, it->second.want);
+                    ready.emplace_back(it->first, it->second);
                     it = g_pending.erase(it);
                 } else if (now >= it->second.deadline) {
                     it = g_pending.erase(it);
@@ -382,10 +453,10 @@ void Tick() {
             }
         }
         for (auto& rdy : ready)
-            if (void* actor = ResolveFast(rdy.first)) ApplyState(actor, rdy.first, rdy.second, 0xFF);
+            if (void* actor = ResolveFast(rdy.first))
+                ApplyIncoming(actor, rdy.first, rdy.second.want, rdy.second.ev, 0xFF);
     }
     PollAndBroadcast();
-    HostAcceptPoll();   // HOST: drive the gated door open on a correct code (Phase B)
 }
 
 void OnDisconnect() {
@@ -393,7 +464,7 @@ void OnDisconnect() {
     const size_t n = g_lastKnown.size();
     g_lastKnown.clear();
     g_pending.clear();
-    g_unlocked.clear();  // a new session re-evaluates each keypad's unlock from scratch
+    g_settling.clear();
     if (n > 0) UE_LOGI("keypad: OnDisconnect cleared %zu last-known", n);
 }
 

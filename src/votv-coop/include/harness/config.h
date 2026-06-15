@@ -61,4 +61,9 @@ coop::net::Config ReadP2PHostFallback();
 // The local player's display nickname. Env first, then ini, then "Player".
 std::wstring ReadNickname();
 
+// The local player's durable identity GUID (32 lowercase hex chars) for the host-side
+// per-player inventory file. Read from votv-coop.ini "player_guid="; generated + persisted
+// on first launch / if absent/malformed. Per-install identity (design 2.3).
+std::string ReadPlayerGuid();
+
 }  // namespace harness::config

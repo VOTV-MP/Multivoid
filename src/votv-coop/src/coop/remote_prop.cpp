@@ -2,7 +2,7 @@
 
 #include "coop/remote_prop.h"
 
-#include "coop/clump_throw_sound.h"
+#include "coop/prop_sound.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
@@ -10,6 +10,7 @@
 #include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
 #include "coop/prop_element_tracker.h"
+#include "coop/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
 #include "coop/remote_prop_spawn.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -55,6 +56,21 @@ struct ActiveDrive {
     uint64_t     lastApplyMs = 0;
 };
 std::array<ActiveDrive, coop::players::kMaxPeers> g_drives{};
+
+// v68 sustained-stream unstick gate (prop_stick_sync design note): when a
+// PropPose stream targets a STUCK wall-attachable, 1-2 stale packets may
+// merely be in flight from the moment between the sender's stick COMMIT and
+// its hold-break -- they must not unstick the mirror. Only a SUSTAINED stream
+// (a real re-grab) does: kUnstickStreak consecutive fresh poses for the same
+// identity within the streak window. Per-slot, like the drive cache itself.
+struct PendingUnstick {
+    void*    actor = nullptr;
+    int      streak = 0;
+    uint64_t lastMs = 0;
+};
+std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
+constexpr int      kUnstickStreak   = 5;
+constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
 
 // True if `actor` is the cached drive target of ANY slot's drive state.
 }  // namespace [drive helpers part 1]
@@ -310,6 +326,17 @@ void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
     else if (actor && R::IsLive(actor)) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
 }
 
+// v68: every release-shaped physics re-enable (explicit PropRelease, the
+// stream-stop timeout, the switched-prop implicit release) is gated on the
+// stick state. A wall-attachable that got STUCK while held (the commit fires
+// mid-hold; PropStickState applied it here) must stay frozen when the
+// sender's hold breaks -- the unconditional re-enable was exactly the
+// "host sees the camera fall" bug.
+bool StickHoldsPhysicsOff(void* actor) {
+    return actor && R::IsLive(actor) && ue_wrap::prop::IsDescendantOfProp(actor) &&
+           (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
+}
+
 void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     const std::wstring keyW = KeyToWString(pose.key);
     // KEY first (Aprop_C), then EID fallback (the non-keyable clump streams key=None).
@@ -323,6 +350,32 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
                 slot, keyW.c_str(), pose.elementId);
         return;
     }
+    // v68: a STUCK wall-attachable (frozen/static -- the camera on a wall)
+    // unsticks for an incoming drive only on a SUSTAINED stream (a real
+    // re-grab). The 1-2 stale PropPose packets in flight between the sender's
+    // stick commit and its hold-break land here with the drive cache freshly
+    // cleared by OnStickState -- without the streak gate they would unstick
+    // the mirror right back. A genuinely-static NON-attachable prop never
+    // legitimately streams; skip it outright (no unstick, no drive).
+    if (ue_wrap::prop::IsDescendantOfProp(prop) &&
+        (ue_wrap::prop::IsFrozen(prop) || ue_wrap::prop::IsStatic(prop))) {
+        if (!coop::prop_stick_sync::IsWallAttachable(prop)) {
+            UE_LOGW("remote_prop: slot %d PropPose for frozen/static non-attachable %p -- ignored", slot, prop);
+            return;
+        }
+        PendingUnstick& pu = g_pendingUnstick[slot];
+        const uint64_t now = NowMs();
+        if (pu.actor != prop || now - pu.lastMs > kUnstickWindowMs) {
+            pu.actor = prop;
+            pu.streak = 0;
+        }
+        pu.lastMs = now;
+        if (++pu.streak < kUnstickStreak) return;  // not yet proven a real re-grab
+        pu.actor = nullptr;
+        pu.streak = 0;
+        coop::prop_stick_sync::UnstickForDrive(prop);  // clears flags + simulate(true)/detach
+        // fall through: start the kinematic drive on the now-free prop
+    }
     // GetStaticMesh returns null for the non-Aprop_C clump by design (2a safety) --
     // it's driven via the generic root physics (DriveTogglePhysics). Only a true
     // Aprop_C with a missing mesh is an error worth bailing on.
@@ -334,6 +387,15 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     UE_LOGI("remote_prop: slot %d GRAB-IN key='%ls' eid=%u -> local actor=%p mesh=%p (%s)",
             slot, keyW.c_str(), pose.elementId, prop, mesh,
             mesh ? "Aprop physics-off" : "clump kinematic (generic physics-off)");
+    // Pick-up sounds (sounds RE 2026-06-11 + hands-on round 2): both native
+    // grab sounds run only in the LOCAL grabber's input chain, so synthesize
+    // them here. The `use` click is THE fixed always-the-same grab feedback
+    // (useAction plays it 2D grabber-only after pickupObject); the material
+    // soft cue is the secondary per-material thud. prop_C reads its cached
+    // physSoundData; plain-Actor grabs (the trash clump) resolve root
+    // material -> physmat -> the same physSound row (silent on row miss).
+    coop::prop_sound::PlayUseClick(prop);
+    coop::prop_sound::PlayGrabSound(prop);
     // Disable PhysX simulation so the per-packet SetActorLocation sticks (a clean
     // kinematic follow -- the clump uses the generic root toggle, NOT a fight-the-sim
     // crutch). The clump floats in front of the puppet exactly like the mannequin.
@@ -382,9 +444,11 @@ void Tick(coop::net::Session& session) {
                 if (drive.actor) {
                     // The peer at this slot switched to a different prop
                     // without sending Release -- implicit release (re-enable
-                    // physics on the prior body; generic for a clump).
+                    // physics on the prior body; generic for a clump). v68:
+                    // unless a stick froze it mid-hold (then physics stays off).
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
-                    DriveTogglePhysics(drive.actor, drive.mesh, true);
+                    if (!StickHoldsPhysicsOff(drive.actor))
+                        DriveTogglePhysics(drive.actor, drive.mesh, true);
                     drive.actor = nullptr;
                     drive.mesh = nullptr;
                     drive.lastKey.clear();
@@ -418,11 +482,13 @@ void Tick(coop::net::Session& session) {
             continue;
         }
         // No new packet for THIS slot -- check the stream-stop timeout
-        // (treat as implicit release: peer stopped sending PropPose).
+        // (treat as implicit release: peer stopped sending PropPose). v68:
+        // a stick that froze the prop mid-hold keeps physics off here too.
         if (drive.actor && (nowMs - drive.lastApplyMs) > 500) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
-            DriveTogglePhysics(drive.actor, drive.mesh, true);
+            if (!StickHoldsPhysicsOff(drive.actor))
+                DriveTogglePhysics(drive.actor, drive.mesh, true);
             drive.actor = nullptr;
             drive.mesh = nullptr;
             drive.lastKey.clear();
@@ -474,6 +540,16 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
         }
     }
+    if (StickHoldsPhysicsOff(propActor)) {
+        // v68: the prop got STUCK while this peer held it (PropStickState
+        // landed before this release -- same reliable lane keeps the order).
+        // The release must NOT re-enable physics / write velocity: the stuck
+        // camera stays on the wall. Drive cache still clears below.
+        UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off (v68)",
+                propActor);
+        meshToActOn = nullptr;
+        propActor = nullptr;
+    }
     if (meshToActOn) {
         // Order matters: SetSimulate(true) FIRST so the body re-enters
         // dynamic sim BEFORE we write velocity (a kinematic body's velocity
@@ -481,16 +557,19 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         DriveSimulate(meshToActOn, true);
         DriveSetLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         DriveSetAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
-        // RULE 1 natural-sound dispatch: fire Aprop_C.thrown(Player) so the
-        // prop's BP graph plays throw-whoosh sound + particle trail
-        // identically to a local throw. Gated on linear speed: a passive drop
-        // (residual walk velocity ~30 cm/s) shouldn't whoosh; a deliberate
-        // throw (>200 cm/s, per kThrownLinVelThreshold) should. Without this
-        // gate the BP fires on every release; without the call entirely
-        // (Bug A) it never fires on the remote at all.
+        // Throw dispatch, gated on linear speed: a passive drop (residual walk
+        // velocity ~30 cm/s) shouldn't whoosh; a deliberate throw (>200 cm/s,
+        // per kThrownLinVelThreshold) should.
+        //   - Aprop_C.thrown(Player): subclass hooks (particles etc.). The BASE
+        //     prop_C thrown() is a NO-OP (uber @465 POP->ret, sounds RE
+        //     2026-06-11 par.3) -- it never made the whoosh; the native whoosh
+        //     is PlaySound2D(swing) in the THROWER's input chain, thrower-only.
+        //   - PlayThrowWhoosh: the receiver-side spatialized swing (the audible
+        //     part this branch was silently missing).
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
             DrivePropThrown(propActor, localPlayer);
-            UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) -- launch speed %.1f cm/s > threshold %.1f",
+            coop::prop_sound::PlayThrowWhoosh(propActor);
+            UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- launch speed %.1f cm/s > threshold %.1f",
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
     } else if (propActor && R::IsLive(propActor)) {
@@ -516,12 +595,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         UE_LOGI("remote_prop: clump RELEASE -> collision on + physics + velocity |v|=%.1f cm/s (actor=%p)",
                 linSpeed, propActor);
         // Throw WHOOSH: the clump is a plain AActor with no Aprop_C.thrown() to
-        // fire (so the Aprop_C DrivePropThrown path above can't apply). Play VOTV's
-        // object-throw sound at it -- the same whoosh the hand-grabbed mannequin
-        // makes (user req 2026-06-03). Same speed gate as the Aprop_C branch so a
-        // passive drop is silent. [[project-bug-trash-chippile-uaf-crash]]
+        // fire. Same receiver-side swing as the Aprop_C branch (byte-exact RE
+        // 2026-06-11: EVERY LMB throw plays `swing` regardless of prop type --
+        // the earlier clump-only object_throw was a pre-RE guess, superseded
+        // per RULE 2). Same speed gate so a passive drop is silent.
         if (linSpeed > coop::net::kThrownLinVelThreshold) {
-            coop::clump_throw_sound::PlayThrowWhoosh(propActor);
+            coop::prop_sound::PlayThrowWhoosh(propActor);
         }
     }
     // Clear only the matching slot's drive state -- other slots' active

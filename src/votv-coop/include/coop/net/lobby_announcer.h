@@ -48,9 +48,13 @@ public:
     // Blocking POST /v1/host. CALL ON A WORKER THREAD. On success stashes the creds
     // and STARTS the 30s heartbeat thread (keeping the lobby alive). A prior lobby is
     // Stop()'d first. Returns the HostInfo (ok=false on failure -> nothing started).
+    // `directPort` != 0 announces a DIRECT lobby (2026-06-11): the master
+    // records conn="direct" + this LISTEN port and advertises the announce's
+    // source ip -- /v1/join then returns {conn,addr} for a plain UDP connect
+    // instead of ICE creds. 0 = the normal P2P lobby.
     HostInfo Host(const std::string& masterUrl, const std::string& name,
                   const std::string& version, const std::string& world,
-                  bool locked, int playersMax, int timeoutMs);
+                  bool locked, int playersMax, int timeoutMs, int directPort = 0);
 
     // The heartbeat publishes a live player count from this callback (host wires it to
     // the session's connected-peer count + 1). null -> publishes playersMax's host (1).

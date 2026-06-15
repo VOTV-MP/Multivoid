@@ -80,6 +80,27 @@ bool IsPerPlayerPropClass(const std::wstring& cls);
 // (remote_prop_spawn::DestroyUnclaimedDivergentProps). Game-thread only.
 void DestroyLocalProp(void* actor, bool deferred);
 
+// Express a freshly-spawned KEYED prop on the wire -- the SAME canonical keyed
+// broadcast as the Aprop_C::Init POST observer (filters + HasProcessedInit
+// dedupe + keyed PropSpawn payload + send + self-claim), callable from a
+// DIFFERENT spawn seam. For props whose own init() is BP-internal
+// (EX_LocalVirtualFunction from the UCS) and so NEVER fires the Init-POST
+// observer -- the sandbox Q-menu / toolgun spawns (host_spawn_watcher hooks
+// FinishSpawningActor POST, where the Key is already minted, and calls this).
+// Idempotent vs the Init-POST path (shared HasProcessedInit latch). GAME-THREAD
+// ONLY (runs ProcessEvent reads on the actor).
+void ExpressSpawnedProp(void* actor);
+
+// Explicit destroy-sync for a TRACKED prop whose K2_DestroyActor our PRE
+// observer could not see (BP-internal by-name call -- prop_kerfurOmega_C::
+// spawnKerfuro's self-destroy, v67). Broadcasts PropDestroy built from the
+// Prop ELEMENT's stored key (never dereferences `actorKey` -- safe on a
+// PendingKill or GC-purged pointer; the pointer is only a map key for the
+// tracker teardown) then drains the element via the same UnmarkKnownKeyedProp
+// path the organic destroy takes. No-ops when the element is already gone
+// (double call / raced the real PRE observer). Game thread.
+void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid);
+
 // GetPropElementIdForActor moved to coop::prop_element_tracker (M-1
 // 2026-05-29 follow-up). #include "coop/prop_element_tracker.h" instead.
 

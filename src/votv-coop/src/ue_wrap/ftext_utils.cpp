@@ -87,4 +87,46 @@ bool EmptyFText(void* out) {
     return true;
 }
 
+bool MintFText(const wchar_t* s, void* out) {
+    if (!s || !out) return false;
+    if (!Resolve()) return false;
+    const size_t len = wcslen(s);
+    R::FString fs{};
+    fs.Data = const_cast<wchar_t*>(s);
+    fs.Num  = static_cast<int32_t>(len + 1);
+    fs.Max  = fs.Num;
+    ue_wrap::ParamFrame f(g_convStrToTextFn);
+    if (!f.valid() || !f.SetRaw(g_inputParam, &fs, sizeof(fs))) return false;
+    if (!ue_wrap::Call(g_ktlCdo, f)) return false;
+    // Same pin mechanism as MintEmpty: ~ParamFrame raw-frees without UE-destructing
+    // the OUT FText, so its +1 ref (and these bytes' validity) deliberately leak --
+    // the consumer's deep-copy (Array_Add in ui_laptop.addEmail) adds its own refs.
+    return f.GetRaw(L"ReturnValue", out, kFTextSize);
+}
+
+std::wstring FTextToString(const void* ftext) {
+    if (!ftext || !Resolve()) return {};
+    static void* sConvTextToStrFn = nullptr;
+    static const wchar_t* sInParam = nullptr;
+    if (!sConvTextToStrFn) {
+        if (void* kc = R::ClassOf(g_ktlCdo))
+            sConvTextToStrFn = R::FindFunction(kc, L"Conv_TextToString");
+        if (sConvTextToStrFn) {
+            if (R::FindParamOffset(sConvTextToStrFn, L"InText") >= 0) sInParam = L"InText";
+            else if (R::FindParamOffset(sConvTextToStrFn, L"inText") >= 0) sInParam = L"inText";
+        }
+    }
+    if (!sConvTextToStrFn || !sInParam) return {};
+    ue_wrap::ParamFrame f(sConvTextToStrFn);
+    if (!f.valid() || !f.SetRaw(sInParam, ftext, kFTextSize)) return {};
+    if (!ue_wrap::Call(g_ktlCdo, f)) return {};
+    // The ReturnValue FString's buffer is engine-allocated inside the frame; copy
+    // before ~ParamFrame raw-frees the frame. (The FString heap buffer itself leaks
+    // by the same deliberate mechanism -- bounded by human email rates.)
+    R::FString ret{};
+    if (!f.GetRaw(L"ReturnValue", &ret, sizeof(ret))) return {};
+    if (!ret.Data || ret.Num <= 1) return {};
+    return std::wstring(ret.Data, static_cast<size_t>(ret.Num - 1));
+}
+
 }  // namespace ue_wrap::ftext_utils

@@ -29,6 +29,11 @@ struct Row {
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;
     int  ping = -1;          // RTT ms to this peer (-1 = local/unmeasured, 0 = sub-ms LAN)
+    // Connection-type label ("LAN HOST"/"P2P HOST" on the host's own row;
+    // "LAN"/"P2P"/"P2P RELAY" for links this peer OWNS; "VIA HOST" for other
+    // clients seen from a client board; "" = nothing to show, the own client
+    // row -- its link is already on the host row).
+    char link[12] = {};
 };
 
 struct Snapshot {

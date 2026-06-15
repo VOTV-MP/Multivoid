@@ -1,5 +1,6 @@
 #include "coop/dev/pos_hud.h"
 
+#include "coop/dev/dev_gate.h"
 #include "coop/players_registry.h"
 #include "coop/shutdown.h"
 #include "ue_wrap/engine.h"
@@ -133,8 +134,15 @@ void Hide() {
 // the menu drives visibility via SetVisible.
 DWORD WINAPI RefreshPumpThread(LPVOID) {
     int refreshCounter = 0;
-    constexpr int kRefreshEveryN = 12;  // 12 * 8 ms = ~96 ms -> ~10 Hz
+    constexpr int kRefreshEveryN = 12;  // 12 * 16 ms = ~192 ms -> ~5 Hz
     while (!coop::shutdown::IsShuttingDown()) {
+        // Live role gate: a readout shown BEFORE joining hides itself the
+        // moment this peer is a connected client (coop::dev_gate).
+        if (g_active.load() && !coop::dev_gate::Allowed()) {
+            g_active.store(false, std::memory_order_release);
+            GT::Post([] { Hide(); });
+            UE_LOGW("pos_hud: auto-off -- dev features are disabled while connected as a client");
+        }
         if (g_active.load() && ++refreshCounter >= kRefreshEveryN) {
             refreshCounter = 0;
             GT::Post([] { if (g_active.load()) Refresh(); });
@@ -156,6 +164,10 @@ void EnsurePump() {
 }  // namespace
 
 void SetVisible(bool on) {
+    if (on && !coop::dev_gate::Allowed()) {
+        UE_LOGW("pos_hud: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
     g_active.store(on, std::memory_order_release);
     if (on) {
         EnsurePump();

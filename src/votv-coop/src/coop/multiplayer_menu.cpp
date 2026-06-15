@@ -47,6 +47,13 @@ void* g_button = nullptr;               // our MULTIPLAYER UButton
 bool  g_prevLmb = false;                // VK_LBUTTON state last tick (click-edge detect)
 bool  g_lmbPrimed = false;             // first-tick guard: seed g_prevLmb without firing an edge
 uint64_t g_lastInjectMs = 0;            // throttle inject attempts on failure / self-heal
+// Render-thread-readable "pause/ESC menu is up" signal. Stamped (game thread) on every
+// pause-menu tick in OnMenuTickPost; IsPauseMenuOpen() reports open while the stamp is
+// fresh and auto-clears ~250 ms after the pause menu stops ticking (closed / back to
+// gameplay). std::atomic so the ImGui overlay (render thread) reads it lock-free -- it
+// gates the passive coop HUD (chat feed / nameplates) off so we never draw OVER the
+// native modal pause menu.
+std::atomic<uint64_t> g_pauseTickMs{0};
 // Client loading state: the menu instance + hidden-state we last applied for a join-in-
 // progress fade. Edge-applied so the SetVisibility/SetRenderOpacity UFunctions run only on
 // a change, not per tick. (g_menuFadeMenu is never dereferenced -- pointer compare only --
@@ -80,8 +87,14 @@ bool DoInject(void* menu) {
 void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
     // MAIN menu only -- the pause menu (isPause==true) shares ui_menu_C but has no
-    // NEW GAME button to sit above.
-    if (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0) return;
+    // NEW GAME button to sit above. While the pause menu IS up, publish the freshness-
+    // stamped signal the render-thread HUD reads (IsPauseMenuOpen) so the passive coop
+    // overlay (chat feed / nameplates) is not drawn on top of the modal pause menu, then
+    // bail -- none of the main-menu inject/fade logic below applies to the pause menu.
+    if (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0) {
+        g_pauseTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
+        return;
+    }
 
     // Client loading state: while a join is in progress, hide the WHOLE menu widget so only
     // the 3D menu background remains -- the "clean menu canvas" the connecting screen
@@ -191,6 +204,23 @@ void Init() {
                 g_retrying.store(false, std::memory_order_release);
         }
     });
+}
+
+bool IsPauseMenuOpen() {
+    // The pause-menu Tick fires ~every frame while it's up, so a stamp within the last
+    // ~250 ms means it is currently open; once it closes, stamping stops and this falls
+    // back to false within the window. Lock-free (atomic load + GetTickCount64) so it is
+    // safe to call from the render thread (the ImGui overlay) and the WndProc thread.
+    const uint64_t t = g_pauseTickMs.load(std::memory_order_relaxed);
+    return t != 0 && (::GetTickCount64() - t) < 250;
+}
+
+void* MenuTickFn() {
+    // g_tickFn is resolved once at install (at the boot menu, well before any
+    // gameplay death) and never moves -- UFunctions don't unload. Null only if
+    // the menu class never resolved, in which case the death-flee bypass falls
+    // back to its time ceiling.
+    return g_tickFn;
 }
 
 void ForceInjectNow() {

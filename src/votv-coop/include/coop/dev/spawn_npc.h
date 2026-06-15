@@ -27,4 +27,19 @@ void Init();
 // posted to it).
 void SpawnKerfurOmega();
 
+// Test-spawn the increment-1 npc_sync allowlist additions in front of the host --
+// THE reliable mirror test (the F1 wisps/ventCrawler events don't reliably spawn a
+// catchable creature: wisps arms an overlap box; the eventer's ventCrawler spawn
+// uses EX_CallMath -> bypasses our interceptor + lands in a far vent). See
+// spawn_npc.cpp PostSpawnClass. Host-only (dev_gate); safe off the game thread.
+void SpawnKillerWisp();
+void SpawnVentCrawler();
+
+// v72 Killer Wisp cross-peer-kill TEST: spawn a killerwisp ON the first connected client
+// puppet, so it acquires that PUPPET as its Target and exercises the host-detect ->
+// neutralize -> WispGrab/WispTear -> client ragdoll-death + tear path (the wisp normally
+// grabs whoever is nearest = the host). Host-only (dev_gate); no-op if no client is
+// connected. Safe off the game thread (posted to it).
+void SpawnKillerWispOnClient();
+
 }  // namespace coop::dev::spawn_npc

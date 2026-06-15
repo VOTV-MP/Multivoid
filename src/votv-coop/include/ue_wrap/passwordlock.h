@@ -70,15 +70,13 @@ struct State {
 // (null / not resolved); leaves `out` untouched on failure. Game thread.
 bool ReadState(void* lock, State& out);
 
-// --- Host-authoritative ACCEPT primitives (Phase B, game thread) ------------------
-// The accept truth (passwordLock BP disassembly 2026-06-06): typing digits grows `inPassword`;
-// when `Len(inPassword)>=5` the BP runs `open(password==inPassword)`, and a correct `open(true)`
-// chain ends at `door.doorOpen(false)`. We evaluate the SAME condition host-authoritatively
-// (the host owns `password`; we never replicate it) and drive the gated door ourselves.
-
-// The keypad's own password (FString @0x0350). Empty on failure / not resolved. HOST reads its
-// OWN keypad's code; do NOT send this on the wire. Game thread.
-std::wstring ReadPassword(void* lock);
+// --- Accept-chain context primitives (game thread) --------------------------------
+// The accept truth (BP disassembly 2026-06-06, corrected 2026-06-11): typing digits grows
+// `inPassword`; at Len>=5 the BP AUTO-submits open(password==inPassword) (uber @2398) -- so
+// long codes validate natively on every peer from the digit replay alone. SHORT codes submit
+// only on the accept press (open(eq)) / cancel (open(false)) -- mirrored cross-peer as v59
+// KeypadEvent + CallOpen below. (The old host-side buffer==password re-derivation accepted
+// WITHOUT the press and is deleted -- the 2026-06-11 stuck-green bug.)
 
 // The door this keypad gates (Adoor_C* @0x0338), or nullptr (none / dead / not resolved).
 // Game thread.
@@ -109,6 +107,18 @@ bool ClearBuffer(void* lock);
 // written state. Low-risk (an "update" verb, not a gameplay/submit verb); a no-op if
 // upd() is absent. Whether it actually repaints the LED is a hands-on check.
 void CallUpd(void* lock);
+
+// Dispatch the keypad's NATIVE submit handler `Open(bool Active)` -- exactly what the
+// typist's accept/cancel press runs internally (uber @4507/@4734/@2479/@3705). Sets
+// active:=Active (LED green/red), plays the success/deny sound, clears inPassword, and
+// setActive-propagates the LOCK state to the PAIR keypad + the gated door (door.active).
+// It UNLOCKS/locks -- it never MOVES the door (the 4s-doorOpen chain is a scripted
+// trigger entry, not the player accept; 2026-06-06 doc, re-confirmed by the 2026-06-11
+// audit). The v59 receiver-side replication of a SHORT-code submit (len>=5 codes never
+// need it -- the digit replay runs the BP's own auto-submit on every peer). May run
+// latent sub-chains; never assume synchronous state. False on null / unresolved.
+// Game thread.
+bool CallOpen(void* lock, bool accept);
 
 // Direct field-write of the keypad's `active` bool @0x0330 (the LED selector: false -> red).
 // DELIBERATELY a raw field-write, NOT the `setActive` verb: setActive cascades powerChanged

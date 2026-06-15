@@ -68,6 +68,14 @@ bool FillPayload(void* drone, bool active, bool adopt, coop::net::DroneStatePayl
     p.active = active ? 1 : 0;
     p.stateBits = D::ReadFxBits(drone);  // bit0=rotor dust active, bit1=canTakeOff (arrived) -- FX mirror
     p.adopt = adopt ? 1 : 0;
+    // v69: the dust anchor -- the BP pins the bAbsoluteLocation eff_droneDust
+    // to its ground-trace hit per tick; the mirror replays from this. A dust
+    // bit without a readable anchor is unusable on the receiver -> clear it.
+    if (p.stateBits & D::kFxDust) {
+        FVector a;
+        if (D::ReadDustAnchor(drone, a)) { p.dustX = a.X; p.dustY = a.Y; p.dustZ = a.Z; }
+        else                             { p.stateBits &= ~D::kFxDust; }
+    }
     return true;
 }
 
@@ -132,7 +140,8 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     if (!s || s->role() == coop::net::Role::Host) return;  // host is the authority -- never applies
     if (!D::EnsureResolved()) return;
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
-        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll)) {
+        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll) ||
+        !std::isfinite(payload.dustX) || !std::isfinite(payload.dustY) || !std::isfinite(payload.dustZ)) {
         UE_LOGW("drone: OnReliable non-finite pose -- dropping");
         return;
     }
@@ -141,10 +150,10 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
     SetTarget(g_m, payload, /*snap*/ payload.adopt != 0);
     // FX mirror: the suppressed tick kills the rotor-dust particle + the delivery alarm cue, so
-    // replay them off the synced stateBits (host packs them in FillPayload). Drive dust only on a
-    // bit CHANGE (SetActive restarts the emitter -> don't re-fire every packet), and play the
-    // "items ready" cue once on the canTakeOff rising edge. Both are self-contained component
-    // calls on the mirror (ue_wrap::drone). RE: votv-delivery-drone-RE-...-2026-06-03.md.
+    // replay them off the synced state (host packs it in FillPayload): the dust as a PER-PACKET
+    // replay of the BP's own tick update (v69 -- see ApplyDustMirror + drone_dust_notes.md), the
+    // "items ready" cue once on the canTakeOff rising edge. All self-contained component calls on
+    // the mirror (ue_wrap::drone). Pose RE: votv-delivery-drone-RE-...-2026-06-03.md.
     const uint8_t nb = payload.stateBits;
     const uint8_t ob = g_m.haveStateBits ? g_m.lastStateBits : 0;
     const bool canTakeOff = (nb & D::kFxArrived) != 0;
@@ -160,12 +169,21 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
                                      // address) -- RepointContainer short-circuits when the field is
                                      // already a live container, so steady-state cost is ~one deref.
 
-    // Dust: drive only on a CHANGE (SetActive restarts the emitter). Log the first ON to confirm flow.
-    if (!g_m.haveStateBits || ((nb ^ ob) & D::kFxDust)) {
-        const bool dustOn = (nb & D::kFxDust) != 0;
-        D::SetDust(drone, dustOn);
+    // Dust (v69): replay the BP's per-tick dust update EVERY packet, not on bit
+    // edges -- the anchor moves with the drone, the intensity tracks ground
+    // distance, and the EmitterLoops=1/20s system self-completes and needs the
+    // IsActive!=want re-arm (all inside ApplyDustMirror; ~3 component calls per
+    // 50 ms packet while flying, nothing when the bit is off and already off).
+    const bool dustOn = (nb & D::kFxDust) != 0;
+    D::ApplyDustMirror(drone, dustOn,
+                       FVector{ payload.dustX, payload.dustY, payload.dustZ });
+    if (dustOn) {
         static bool s_dustOnLogged = false;
-        if (dustOn && !s_dustOnLogged) { s_dustOnLogged = true; UE_LOGI("drone: FX mirror -- dust ON (rotor wash near ground)"); }
+        if (!s_dustOnLogged) {
+            s_dustOnLogged = true;
+            UE_LOGI("drone: FX mirror -- dust ON (anchor %.0f,%.0f,%.0f)",
+                    payload.dustX, payload.dustY, payload.dustZ);
+        }
     }
     // Arrival cue + signal light on the canTakeOff edges (the "items ready" sound + the visible light).
     if (canTakeOff && !(ob & D::kFxArrived)) {

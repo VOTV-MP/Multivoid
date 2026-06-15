@@ -201,11 +201,49 @@ int32_t FindParamOffset(void* function, const wchar_t* paramName);
 // the linear walk is fine one-shot but bad in a hot loop.
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName);
 
+// PREFIX-matched variant for GUID-mangled BP struct members: a UserDefinedStruct
+// member renders as "decoded_5_A9CAC26F480C342A406FFFB77DD0AB68" -- the human
+// prefix ("decoded_") is stable across recooks, the GUID suffix is not. Pass a
+// UScriptStruct* (see PropertyInnerStruct) or a UClass*; same SuperStruct-
+// climbing walk as FindPropertyOffset. Returns the FIRST prefix match (include
+// the trailing underscore in the prefix so "size_" can't match
+// "sizeFactor_..."). -1 if not found. Cache the result.
+int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
+
+// The inner UScriptStruct* of a struct-typed instance property
+// (FStructProperty::Struct) -- THE way to reach a BP struct's type object for
+// member-offset resolution: deterministic via the owning class's own property
+// chain, immune to global-name collisions, load order, and the struct asset's
+// runtime object name. The slot offset within FStructProperty is build-
+// dependent (0x70 stock UE4.27 / 0x78 padded), so the first call probes both
+// and VALIDATES the candidate through GUObjectArray liveness + its meta-class
+// name (the wrong slot holds an FField*, which can never validate), then
+// caches the calibrated slot process-wide. Null if the property isn't found
+// or no slot validates.
+void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
+
 // Convenience: the object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);
 
 // FName -> wide string via the engine's FName::ToString.
 std::wstring ToString(const FName& name);
+
+// Free an engine-allocated buffer via FMalloc::Free (GMalloc). Use ONLY on memory
+// the ENGINE allocated (e.g. an FString/FText buffer an engine UFunction wrote into
+// our frame, or the orphaned FName::ToString scratch) -- NEVER on CRT/`new` memory.
+// No-op until Resolve() has located GMalloc (AOB via FMemory::Realloc). Closes the
+// gap that previously forced "deliberate" engine-buffer leaks. Game-thread or any
+// thread (FMalloc::Free is internally synchronized).
+void EngineFree(void* enginePtr);
+
+// Allocate `size` bytes on the ENGINE heap (GMalloc) via FMalloc::Realloc(nullptr,size,align)
+// -- Realloc(null,n) == Malloc(n), and Realloc is the exact vtable slot kSigFMemoryRealloc is
+// matched from (verified-in-use), so this avoids relying on the never-exercised Malloc slot.
+// `align`=0 means DEFAULT_ALIGNMENT (16, enough for FTransform-bearing structs). Use ONLY when
+// the engine must later own/free the buffer (e.g. populating a saveSlot TArray<Fstruct_save>
+// the game's load/save/GC will read then FMemory::Free) -- pairing with EngineFree keeps the
+// allocator matched. Returns nullptr until GMalloc is resolved or on a zero size. Any thread.
+void* EngineAlloc(size_t size, uint32_t align = 0);
 
 // Boot health check (logs to votv-coop.log via ue_wrap::log): detect+log the
 // game/engine version, resolve every primitive, then FUNCTIONALLY validate them

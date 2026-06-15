@@ -57,6 +57,20 @@ void ResetCachedSave();
 // GameMode (the coop target is story). Polled like LoadStorySave. Game thread only.
 bool StartFreshGame(bool storyMode);
 
+// ---- Save-object-ready hook (inventory Inc 4) ---------------------------------
+// A callback the coop inventory layer registers to OVERWRITE a freshly loaded/created saveSlot
+// object's player-scoped inventory BEFORE the game's native loadObjects() materializes it on
+// BeginPlay. It fires exactly ONCE per disk-load (LoadStorySave) / creation (StartFreshGame),
+// on the game thread, with the USaveGame* (a UsaveSlot_C*) about to be registered + traveled
+// into -- i.e. the moment the inventory arrays are present but the world has not been built
+// from them yet. This is the RULE-1 apply injection point: the game's own load builds the live
+// inventory from whatever we leave in the save object (no live obj_11 poke, no second reload).
+// The hook MUST self-gate to a no-op unless the coop layer has a pending per-player inventory
+// (armed only on a CLIENT join); engine.cpp fires it unconditionally. Registering null disarms.
+// Principle 7: the substrate exposes the injection point, holding no inventory knowledge.
+using SaveObjectReadyHook = void(*)(void* saveSlotObject);
+void SetSaveObjectReadyHook(SaveObjectReadyHook hook);
+
 // VOTV encodes a save's game MODE only in its slot-name PREFIX (story "s_", infinite
 // "i_", sandbox "b_", halloween "SPOOKY_", ambience "a_", solar "l_"). These wrap
 // Uui_saveSlots_C::getSavePrefix (a pure mode->prefix map on the CDO) so the GameMode-
@@ -627,6 +641,12 @@ bool ForceMainPlayerGetUp(void* mainPlayer);
 // unresolved UFunction. Game thread only.
 bool InvokeAddPlayerDamage(void* mainPlayer, float damage);
 
+// The mainPlayer_C "Add Player Damage" UFunction pointer (resolved on demand). Exposed so
+// the Killer Wisp host-neutralize can install a ProcessEvent PRE-interceptor that zeroes the
+// wisp's limb-tear damage to the HOST while it false-grabs a client. null until mainPlayer_C
+// is loaded. Game thread only.
+void* AddPlayerDamageFunctionPtr();
+
 // ---- Orphan-puppet faint visual via the puppet's OWN mesh -----------------
 // vitals Inc2b receiver. We do NOT use VOTV's ragdollMode on the puppet: that
 // spawns a separate playerRagdoll_C physics actor whose entire lifecycle
@@ -684,6 +704,13 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
 bool AttachActorToRagdollBody(void* actor, void* body);
 bool DetachActorFromRagdollBody(void* actor);
 
+// Generic socket-attach (engine_attach.cpp): attach `actor` to `component` at the named
+// SOCKET, SnapToTarget so it sits at + follows the socket each frame (the Killer Wisp
+// grab-hold: victim puppet -> wisp body mesh 'playerGrab'). KeepWorld scale. False on
+// unresolved. DetachActorFromParent reverses it (KeepWorld). Game thread only.
+bool AttachActorToComponentSocket(void* actor, void* component, const wchar_t* socket);
+bool DetachActorFromParent(void* actor);
+
 // ---- Generic actor root-physics substrate (ue_wrap/engine_attach.cpp) ----
 // Root-component physics primitives used by the held-clump mirror (coop/remote_prop):
 // they operate via K2_GetRootComponent, NEVER the Aprop_C StaticMesh offset, so they
@@ -719,6 +746,18 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify);
 // false on failure. Game thread only.
 bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng);
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang);
+
+// The UPhysicalMaterial governing `actor`'s root surface: root primitive component
+// -> GetMaterial(0) -> UMaterialInterface::GetPhysicalMaterial() (all reflected
+// UFunctions; virtuals resolve through the native thunks). Feeds lib_C::physSound
+// like the native grab chain's hit.PhysMat input (mainPlayer uber @100003).
+// Equivalent to the trace's resolution for single-material actors WITHOUT a
+// BodyInstance.PhysMaterialOverride (the trace honors the override + the hit
+// face's slot; VOTV's grabbable plain-Actor family -- clump/pile -- is
+// single-material with no authored override, audit M-2 2026-06-11). Null if the
+// root isn't a primitive, has no material, or the material has no physical
+// material assigned. Game thread only.
+void* GetActorRootPhysicalMaterial(void* actor);
 
 // True ONLY if positively confirmed `actor`'s root rigid body is at rest (no body
 // awake -- asleep simulating OR non-simulating). Returns false on any resolution
@@ -803,8 +842,8 @@ void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg);
 // OwningActor for concurrency/occlusion). `sound` is a USoundBase (SoundWave or
 // SoundCue). `attenuation` may be null (plays 2D then). The per-call transient
 // UAudioComponent is engine-managed. Game thread only. Shared by the flashlight
-// click (coop::flashlight_click_sound) and the trash-clump throw whoosh
-// (coop::clump_throw_sound) -- the dispatch lived inline in the former (RULE 2).
+// click (coop::flashlight_click_sound) and the prop grab/throw sounds
+// (coop::prop_sound) -- the dispatch lived inline in the former (RULE 2).
 void PlaySoundAtLocation(void* worldContext, void* sound, const FVector& location,
                          void* attenuation, float volume = 1.f, float pitch = 1.f);
 

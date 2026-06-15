@@ -46,15 +46,19 @@ void SuppressTick(void* drone);
 // Restore the drone's ReceiveTick (on disconnect, so single-player flight works again). Game thread.
 void RestoreTick(void* drone);
 
-// ---- FX mirroring (Phase 2, 2026-06-09) -------------------------------------------------------
+// ---- FX mirroring (Phase 2, 2026-06-09; dust reworked v69 2026-06-12) -------------------------
 // The CLIENT suppresses the drone's ReceiveTick, which also kills the tick-driven FX: the
 // rotor-wash DUST (eff_droneDust @0x0278) and the delivery "items ready" alarm cue (audio_alarm
-// @0x0230 + light_alarm @0x0240). Bytecode RE (2026-06-09): the dust is driven by a downward
-// ground raycast (active iff near ground), and the alarm fires on the canTakeOff @0x0500 false->
-// true edge (drone within 25cm of its drop). Both are self-contained component calls -> drivable
-// directly on the suppressed mirror. So the HOST packs the FX-relevant state into the DroneState
-// stateBits and the CLIENT replays the component calls. RE: votv-delivery-drone-RE-and-coop-sync-
-// design-2026-06-03.md.
+// @0x0230 + light_alarm @0x0240). Bytecode RE (research/pak_re/drone_dust_notes.md): the drone's
+// tick sphere-traces 2000uu down each tick and (1) SetActive(hit, false) on an IsActive!=hit edge,
+// (2) K2_SetWorldLocation's eff_droneDust to the ground hit -- the component is bAbsoluteLocation
+// with NO relative offset, so unmoved it sits at WORLD ORIGIN (invisible: frustum-culled fixed
+// bounds), and (3) SetFloatParameter('dust', 1 - dist/2000) (a [0,1] RateScale). The PS is
+// EmitterLoops=1/20s -- it self-completes and needs the per-tick IsActive!=want re-arm. So the
+// HOST streams the FX bits + the dust component's world location in DroneState (20 Hz while
+// Active) and the CLIENT replays the BP's exact three calls per packet (ApplyDustMirror). The
+// alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop). Pose RE:
+// votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
 
 // stateBits packing (DroneStatePayload.stateBits): bit0 = dust active, bit1 = canTakeOff (arrived /
 // the interaction gate), bit2 = hasSack (cargo aboard / the action-option prerequisite).
@@ -66,9 +70,14 @@ inline constexpr uint8_t kFxHasSack  = 0x04;
 // Reads eff_droneDust.IsActive() + canTakeOff + hasSack. Game thread.
 uint8_t ReadFxBits(void* drone);
 
-// CLIENT mirror: drive the rotor-dust particle on/off (eff_droneDust.SetActive + the 'dust' intensity
-// param). Call only on a dust-bit CHANGE (SetActive(true) restarts the emitter). Game thread.
-void SetDust(void* drone, bool on);
+// HOST: read eff_droneDust's world location (the BP pins it to its ground-trace hit per tick) for
+// the DroneState stream. False if the FX refs / the component are unavailable. Game thread.
+bool ReadDustAnchor(void* drone, FVector& out);
+
+// CLIENT mirror: replay the BP's per-tick dust update from the streamed state -- SetActive on an
+// IsActive!=on edge (also re-arms the self-completing 20s system), pin the component to `anchor`,
+// write the 'dust' intensity (1 - dist/2000). Call per received DroneState packet. Game thread.
+void ApplyDustMirror(void* drone, bool on, const FVector& anchor);
 
 // CLIENT mirror: play the delivery "items ready" alarm cue once (audio_alarm.Activate). Call on the
 // canTakeOff rising edge. Game thread.

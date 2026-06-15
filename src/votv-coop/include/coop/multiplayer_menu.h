@@ -30,4 +30,17 @@ void Init();
 // race in the brief screenshot window). Game thread only.
 void ForceInjectNow();
 
+// True while VOTV's native pause/ESC menu (ui_menu_C with isPause) is currently up.
+// Backed by a freshness-stamped atomic the game-thread Tick observer updates, so this
+// is RENDER-THREAD / WndProc safe. The ImGui overlay reads it to NOT draw the passive
+// coop HUD (chat feed / nameplates) or open the chat input over the modal pause menu.
+// Auto-clears ~250 ms after the pause menu stops ticking (closed or back in gameplay).
+bool IsPauseMenuOpen();
+
+// The resolved ui_menu_C::Tick UFunction* (the menu's per-frame tick), or null if
+// not resolved yet. net_pump uses it as the death-flee transparent-bypass RELEASE
+// condition: the first time this dispatches, the menu world is up so the detour
+// can resume and inject MULTIPLAYER on that frame. Game thread.
+void* MenuTickFn();
+
 }  // namespace coop::multiplayer_menu

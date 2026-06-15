@@ -405,4 +405,36 @@ bool Session::GetPeerAddress(int peerSlot, char* out, int outLen) const {
     return out[0] != '\0';
 }
 
+bool Session::LinkLabelForSlot(int peerSlot, char* out, int outLen) const {
+    // Scoreboard connection-type column (user 2026-06-10). LanDirect is one
+    // word; for P2P the GNS connection-description string names the active ICE
+    // path -- the TURN relay path mentions "relay" (open-source GNS ICE
+    // transport descriptions), anything else is the direct/STUN-punched route.
+    if (!out || outLen <= 0) return false;
+    out[0] = '\0';
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    const uint32_t hConn = peerConns_[peerSlot].load();
+    if (hConn == 0) return false;
+    if (cfg_.topology == Topology::LanDirect) {
+        std::snprintf(out, static_cast<size_t>(outLen), "LAN");
+        return true;
+    }
+    auto* sockets = SteamNetworkingSockets();
+    if (!sockets) return false;
+    SteamNetConnectionInfo_t info{};
+    if (!sockets->GetConnectionInfo(static_cast<HSteamNetConnection>(hConn), &info)) return false;
+    char descLower[sizeof(info.m_szConnectionDescription)];
+    int i = 0;
+    for (; info.m_szConnectionDescription[i] != '\0' &&
+           i < static_cast<int>(sizeof(descLower)) - 1; ++i) {
+        const char c = info.m_szConnectionDescription[i];
+        descLower[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+    }
+    descLower[i] = '\0';
+    const bool relay = std::strstr(descLower, "relay") != nullptr ||
+                       std::strstr(descLower, "turn") != nullptr;
+    std::snprintf(out, static_cast<size_t>(outLen), relay ? "P2P RELAY" : "P2P");
+    return true;
+}
+
 }  // namespace coop::net

@@ -2,16 +2,21 @@
 
 #include "ui/dev_menu.h"
 
+#include "coop/dev/dev_gate.h"
+#include "coop/dev/event_trigger.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/add_points.h"
 #include "coop/dev/restore_vitals.h"
+#include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/ini_config.h"
 
+#include <cctype>
+#include <cstring>
 #include <vector>
 
 #include "imgui.h"
@@ -93,12 +98,85 @@ void RenderSpawnNpc() {
     if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
     ImGui::SameLine();
     ImGui::TextDisabled("(host spawns + syncs)");
+    // Increment-1 mirror test: spawn the new allowlist creatures directly (the F1
+    // wisps/ventCrawler EVENTS don't reliably spawn a catchable one -- see spawn_npc).
+    if (ImGui::Button("Spawn killerWisp (in front)"))  coop::dev::spawn_npc::SpawnKillerWisp();
+    ImGui::SameLine();
+    if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(mirror test: watch the client radar)");
+    // v72 Killer Wisp coop cross-peer-kill test: spawn the wisp ON a client puppet so it
+    // grabs the CLIENT (routes the kill there) instead of the nearest = the host.
+    if (ImGui::Button("Spawn killerWisp ON client (coop kill test)"))
+        coop::dev::spawn_npc::SpawnKillerWispOnClient();
 }
 
 void RenderGivePoints() {
     if (ImGui::Button("+1000 Points")) coop::dev::add_points::GivePoints(1000);
     ImGui::SameLine();
     ImGui::TextDisabled("(local balance -- afford drone orders)");
+}
+
+void RenderSpawnMenuUnlock() {
+    namespace SM = coop::dev::spawn_menu_unlock;
+    bool on = SM::IsEnabled();
+    if (ImGui::Checkbox("Prop spawn menu in story mode (Q)", &on)) SM::SetEnabled(on);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(host/local only)");
+    ImGui::Indent(22.f);
+    ImGui::TextDisabled("Enables the sandbox Q spawn menu in story mode.");
+    if (ImGui::Button("Open spawn menu now")) SM::OpenNow();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(or press Q while enabled)");
+    ImGui::Unindent(22.f);
+}
+
+// Case-insensitive substring (the filter box; avoids imgui_internal.h).
+bool StrContainsI(const char* hay, const char* needle) {
+    if (!needle[0]) return true;
+    for (const char* h = hay; *h; ++h) {
+        const char* a = h;
+        const char* b = needle;
+        while (*a && *b && (tolower(static_cast<unsigned char>(*a)) ==
+                            tolower(static_cast<unsigned char>(*b)))) { ++a; ++b; }
+        if (!*b) return true;
+    }
+    return false;
+}
+
+void RenderEvents() {
+    namespace ET = coop::dev::event_trigger;
+    ImGui::TextDisabled("Trigger any game event (host only; the game's own runEvent path).");
+    ImGui::TextDisabled("Day = the event's normal unlock day; triggering ignores it.");
+    static char filter[32] = {};
+    ImGui::SetNextItemWidth(180.f);
+    ImGui::InputTextWithHint("##evfilter", "filter...", filter, sizeof(filter));
+    ImGui::Separator();
+    ImGui::BeginChild("##evlist", ImVec2(0, 0));
+    const char* lastCat = nullptr;
+    for (const auto& ev : ET::Events()) {
+        if (filter[0] && !StrContainsI(ev.name, filter) && !StrContainsI(ev.category, filter))
+            continue;
+        if (!lastCat || strcmp(lastCat, ev.category) != 0) {
+            lastCat = ev.category;
+            ImGui::SeparatorText(ev.category);
+        }
+        const bool danger = ev.risk == ET::Risk::Dangerous;
+        if (danger)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.40f, 1.0f));
+        else if (ev.risk == ET::Risk::Caution)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.45f, 1.0f));
+        const bool clicked = ImGui::Button(ev.name, ImVec2(150, 0));
+        if (ev.risk != ET::Risk::Safe) ImGui::PopStyleColor();
+        const bool hoveredBtn = ImGui::IsItemHovered();
+        ImGui::SameLine();
+        if (ev.dayZ >= 0) ImGui::TextDisabled("day %d", ev.dayZ);
+        else ImGui::TextDisabled("story/trigger");
+        if (danger && hoveredBtn)
+            ImGui::SetTooltip("Story/save progression or relocation -- can desync the run.\nCtrl+click to trigger.");
+        if (clicked && (!danger || ImGui::GetIO().KeyCtrl)) ET::Trigger(ev);
+    }
+    ImGui::EndChild();
 }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------
@@ -115,9 +193,9 @@ const std::vector<Cat>& Tree() {
         }, true },
         { "Game", {
             { "Weather",  { { &RenderSnow, true } }, true },
-            { "Entities", { { &RenderSpawnNpc, true } }, true },
+            { "Entities", { { &RenderSpawnNpc, true }, { &RenderSpawnMenuUnlock, true } }, true },
             { "Economy",  { { &RenderGivePoints, true } }, true },
-            { "Events",   {}, true },
+            { "Events",   { { &RenderEvents, true } }, true },
         }, true },
         { "Network", {
             { "Stats",    {}, true },
@@ -147,10 +225,15 @@ void Init() {
                 ::coop::ini_config::IsIniKeyTrue("devkeys");
 }
 
-bool DevMode() { return g_devMode; }
+bool DevMode() {
+    // The ini switch AND the live role gate: dev tools vanish the moment this
+    // peer is a connected CLIENT (coop::dev_gate -- "strictly no dev on a
+    // client"). Re-appear on disconnect / when hosting. Render-thread safe.
+    return g_devMode && ::coop::dev_gate::Allowed();
+}
 
 void Render() {
-    const bool devMode = g_devMode;
+    const bool devMode = DevMode();
     const auto& tree = Tree();
 
     ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_FirstUseEver);
@@ -205,8 +288,12 @@ void Render() {
         ImGui::TextDisabled("Select a category on the left.");
         if (!devMode) {
             ImGui::Spacing();
-            ImGui::TextWrapped("Developer tools are hidden. Set [dev] devkeys=1 in "
-                               "votv-coop.ini to show them.");
+            if (g_devMode && !::coop::dev_gate::Allowed())
+                ImGui::TextWrapped("Developer tools are disabled while connected as a "
+                                   "client (host-only).");
+            else
+                ImGui::TextWrapped("Developer tools are hidden. Set [dev] devkeys=1 in "
+                                   "votv-coop.ini to show them.");
         }
     }
     ImGui::EndChild();

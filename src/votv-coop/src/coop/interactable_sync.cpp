@@ -16,6 +16,7 @@
 
 #include "ue_wrap/appliance.h"     // the 6-class save-actor toggle family (faucet/sink/shower/kitchen/serverBox/wallunit_tapes)
 #include "ue_wrap/door.h"
+#include "ue_wrap/door_box.h"      // v62 lockers + drone-console hinged doors
 #include "ue_wrap/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/garage.h"
@@ -46,7 +47,11 @@ const Adapter g_doorAdapter = {
     &ue_wrap::door::EnsureResolved,
     &ue_wrap::door::IsDoor,
     &ue_wrap::door::GetKeyString,
-    &ue_wrap::door::TryReadOpen,
+    // INTENT reader (not isOpened): the host broadcasts a door at swing-START, so
+    // a host-opened door mirrors frame-perfect on clients instead of lagging the
+    // ~0.5 s swing-completion (2026-06-13 host->client open-lag fix; client opens
+    // were already instant via the InpActEvt_use input-edge request).
+    &ue_wrap::door::TryReadOpenIntent,
     // Receiver-apply (host state on this peer): FORCE-SNAP, not doorOpen/doorClose. The open is
     // a tick-gated animation that FREEZES when this peer's player is far from the door (probe-
     // proven 2026-06-04: isOpened never sets), so doorOpen() can't reliably mirror a door the
@@ -130,11 +135,30 @@ const Adapter g_applianceAdapter = {
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
+// Hinged-door storage boxes (v62): the ~19 lockers (locker_C + the two pure
+// subclasses) and the drone-call console box (droneConsole_C). SYMMETRIC: a
+// bytecode scan found ZERO auto-revert writers of `opened` (only the player
+// toggle and the locker's own open()), so a symmetric poll never oscillates.
+// Identity = the level-export actor FName (neither class has a save Key;
+// placed-actor names are deterministic cross-peer). Apply = the native verb /
+// write+refresh per class, with the door.cpp verify+force-snap inside the
+// wrapper (the 0.5 s swing Timeline freezes outside tick range).
+// RE: research/findings/votv-lockers-boxes-door-RE-2026-06-11.md.
+const Adapter g_doorBoxAdapter = {
+    "doorbox", coop::net::ReliableKind::LockerDoorState,
+    &ue_wrap::door_box::EnsureResolved,
+    &ue_wrap::door_box::IsDoorBox,
+    &ue_wrap::door_box::GetNameKey,
+    &ue_wrap::door_box::TryReadOpened,
+    [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
+};
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert -> host-authoritative
 Channel g_light{g_lightAdapter};
 Channel g_container{g_containerAdapter};
 Channel g_garage{g_garageAdapter};  // garage has no auto-revert -> Symmetric (no oscillation)
 Channel g_appliance{g_applianceAdapter};  // appliances have no auto-revert -> Symmetric
+Channel g_doorBox{g_doorBoxAdapter};  // lockers/console have no auto-revert -> Symmetric
 // Keypads (ApasswordLock_C) are NOT a toggle -- they carry a typed buffer + 3 state bools
 // and their accept verb is unreachable (proven), so forcing them into this Channel was the
 // v31 fail-cycle. They now live in their own coop::keypad_sync module (RULE 2: the broken
@@ -148,6 +172,7 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
     case coop::net::ReliableKind::ContainerState: return &g_container;
     case coop::net::ReliableKind::GarageDoorState:return &g_garage;
     case coop::net::ReliableKind::ApplianceState: return &g_appliance;
+    case coop::net::ReliableKind::LockerDoorState:return &g_doorBox;
     default:                                      return nullptr;
     }
 }
@@ -174,25 +199,31 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
 bool g_useInputObserverInstalled = false;
 
 // The door whose Active gate the PRE observer cleared for the CURRENT
-// InpActEvt_use dispatch; the POST observer restores it. PRE/POST pair within
-// ONE game-thread dispatch, so a single slot suffices. (Door stress-desync fix
-// 2026-06-10: the client's NATIVE BP press chain InpActEvt_use -> player_use ->
-// doorOpen is BP-internal -- unobservable, unsuppressable by hooks -- so it
-// toggled the LOCAL door on every E in parallel with our host request, and the
-// host echo then got swallowed as "already in that state". Clearing Active --
-// the BP's own CanOpen gate -- for the body of the dispatch makes the native
-// chain a no-op: the client door moves ONLY on host echoes. MTA shape: the
-// non-authority never advances state from its own simulation (CVehicle
-// m_bAllowDoorRatioSetting); our equivalent lever is a field the BP already
-// gates on, since we cannot add flags to assets.)
+// InpActEvt_use dispatch + the REAL pre-clear value; the POST observer restores
+// that value. PRE/POST pair within ONE game-thread dispatch, so a single slot
+// suffices. (Door stress-desync fix 2026-06-10: the client's NATIVE BP press
+// chain InpActEvt_use -> player_use -> doorOpen is BP-internal -- unobservable,
+// unsuppressable by hooks -- so it toggled the LOCAL door on every E in
+// parallel with our host request, and the host echo then got swallowed as
+// "already in that state". Clearing Active -- the BP's own CanOpen gate -- for
+// the body of the dispatch makes the native chain a no-op: the client door
+// moves ONLY on host echoes. MTA shape: the non-authority never advances state
+// from its own simulation (CVehicle m_bAllowDoorRatioSetting); our equivalent
+// lever is a field the BP already gates on, since we cannot add flags to
+// assets.) The restore writes the SAVED value, never a hardcoded true: a
+// keypad-LOCKED door has Active=false, and restoring true silently re-powered
+// the lock client-side -- the next PRE-miss (aim trace not yet populated) let
+// the native chain open a locked door, and the host's deny correction slammed
+// it shut ("opens and shuts instantly", user 2026-06-12 round 2).
 void* g_useInputActiveCleared = nullptr;
+bool  g_useInputActivePrior  = true;
 
 void OnUseInputPre(void* self, void*, void*) {
     // Restore a LEAKED door first (audit IMP-3): if the prior dispatch's BP body
     // SEH-faulted, the POST observer never ran and the cleared door would stay
     // Active=false forever (bricked). Self-heals on the next E-press.
     if (g_useInputActiveCleared) {
-        ue_wrap::door::SetActive(g_useInputActiveCleared, true);
+        ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
     if (!self) return;
@@ -203,6 +234,7 @@ void OnUseInputPre(void* self, void*, void*) {
     if (!door || !ue_wrap::door::IsDoor(door)) return;
     const std::wstring key = ue_wrap::door::GetKeyString(door);
     if (key.empty() || key == L"None") return;  // unkeyed door: native behavior stays
+    g_useInputActivePrior = ue_wrap::door::GetActive(door);  // the REAL gate value to restore
     ue_wrap::door::SetActive(door, false);  // close the BP CanOpen gate for THIS dispatch
     g_useInputActiveCleared = door;
 }
@@ -210,10 +242,10 @@ void OnUseInputPre(void* self, void*, void*) {
 void OnUseInput(void* self, void*, void*) {
     // Restore the Active gate the PRE observer cleared -- FIRST, before any
     // early return below (disconnect race, debounce, ...): every exit path
-    // must leave the door powered. The native chain already ran (gated shut);
-    // the host echo is now the only thing that will move this door.
+    // must put back the SAVED value. The native chain already ran (gated
+    // shut); the host echo is now the only thing that will move this door.
     if (g_useInputActiveCleared) {
-        ue_wrap::door::SetActive(g_useInputActiveCleared, true);
+        ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
     if (!self) return;
@@ -282,7 +314,7 @@ void InstallUseInputObserver() {
 // ---- Receiver index (one-shot per channel, latched). The receiver resolves by Key;
 // late-loaded instances are caught by the retry-tick + connect-snapshot rebuilds. ------
 bool g_doorIndexed = false, g_lightIndexed = false, g_containerIndexed = false,
-     g_garageIndexed = false, g_applianceIndexed = false;
+     g_garageIndexed = false, g_applianceIndexed = false, g_doorBoxIndexed = false;
 void IndexChannels() {
     if (!g_doorIndexed && ue_wrap::door::EnsureResolved()) {
         UE_LOGI("door: indexed %zu door(s)", g_door.RebuildIndex()); g_doorIndexed = true;
@@ -299,6 +331,9 @@ void IndexChannels() {
     if (!g_applianceIndexed && ue_wrap::appliance::EnsureResolved()) {
         UE_LOGI("appliance: indexed %zu appliance(s)", g_appliance.RebuildIndex()); g_applianceIndexed = true;
     }
+    if (!g_doorBoxIndexed && ue_wrap::door_box::EnsureResolved()) {
+        UE_LOGI("doorbox: indexed %zu locker/console door(s)", g_doorBox.RebuildIndex()); g_doorBoxIndexed = true;
+    }
 }
 
 }  // namespace
@@ -309,6 +344,7 @@ void Install(coop::net::Session* session) {
     g_container.SetSession(session);
     g_garage.SetSession(session);
     g_appliance.SetSession(session);
+    g_doorBox.SetSession(session);
     IndexChannels();              // build the key->actor index (sender polls it; receiver resolves by it)
     InstallUseInputObserver();   // client E-press (InpActEvt_use + lookAtActor) -> DoorOpenRequest
 }
@@ -337,6 +373,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     g_container.QueueConnectBroadcastForSlot(peerSlot);
     g_garage.QueueConnectBroadcastForSlot(peerSlot);
     g_appliance.QueueConnectBroadcastForSlot(peerSlot);
+    g_doorBox.QueueConnectBroadcastForSlot(peerSlot);
 }
 
 void Tick() {
@@ -345,6 +382,8 @@ void Tick() {
     g_container.Tick();
     g_garage.Tick();
     g_appliance.Tick();
+    g_doorBox.Tick();
+    ue_wrap::door_box::TickVerify();  // force-snap far-frozen locker/console swings
 }
 
 void OnDisconnect() {
@@ -353,6 +392,8 @@ void OnDisconnect() {
     g_container.OnDisconnect();
     g_garage.OnDisconnect();
     g_appliance.OnDisconnect();
+    g_doorBox.OnDisconnect();
+    ue_wrap::door_box::OnDisconnect();  // drop mid-swing verify entries (audit IMPORTANT-2)
 }
 
 }  // namespace coop::interactable_sync

@@ -13,6 +13,7 @@
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine.h"
+#include "ue_wrap/kerfur.h"   // v74: DriveKerfurState (host-authoritative command/spooky on the mirror)
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
 
@@ -62,6 +63,15 @@ void Npc::SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap) {
     // term goes to a no-op when the host stops sending it (non-kerfur NPCs never set the bit).
     hasBodyYaw_ = (snap.stateBits & coop::net::kEntityPoseBitHasBodyYaw) != 0;
     if (!hasBodyYaw_) errorBodyYaw_ = 0.f;
+
+    // v74 host-authoritative kerfur command/spooky (snapped, not interpolated -- it selects the
+    // AnimBP state, not a pose). Applied in ApplyToEngine onto the parked mirror (which runs no AI
+    // so nothing fights the write). Non-kerfur NPCs never set the bit -> hasKerfState_ stays false.
+    hasKerfState_ = (snap.stateBits & coop::net::kEntityPoseBitHasKerfurState) != 0;
+    if (hasKerfState_) {
+        kerfState_  = snap.kerfState;
+        kerfSpooky_ = (snap.stateBits & coop::net::kEntityPoseBitKerfurSpooky) != 0;
+    }
 
     // First packet OR a teleport (error beyond the snap threshold) -> SNAP, no LERP across.
     const float dx = tgtPos.X - curPos_.X, dy = tgtPos.Y - curPos_.Y, dz = tgtPos.Z - curPos_.Z;
@@ -149,6 +159,10 @@ void Npc::ApplyToEngine() {
     // root re-bases this child mesh's world transform). The mirror's actor tick is off, so the
     // kerfur BP never overwrites it -> no gate flag needed. Class-gated inside -> safe on non-kerfur.
     if (hasBodyYaw_) Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
+    // v74: write the host-authoritative kerfur command + spooky flag so the parked mirror's AnimBP
+    // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
+    // inside -> safe no-op on non-kerfur NPCs.
+    if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
 }
 
 }  // namespace coop::element

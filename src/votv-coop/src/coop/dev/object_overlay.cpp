@@ -2,6 +2,7 @@
 
 #include "coop/dev/object_overlay.h"
 
+#include "coop/dev/dev_gate.h"
 #include "coop/element/registry.h"
 #include "coop/ini_config.h"
 #include "coop/players_registry.h"
@@ -299,7 +300,9 @@ void InitFromIni() {
 }
 
 void Update() {
-    if (!g_enabled.load(std::memory_order_acquire)) {
+    // Dev info overlay (net identity / phys state labels = ESP on a joined
+    // client). Same self-clear as toggle-off while the gate denies.
+    if (!g_enabled.load(std::memory_order_acquire) || !coop::dev_gate::Allowed()) {
         // Self-clear once so a stale snapshot doesn't linger after toggle-off;
         // after that the disabled cost is this one atomic load per tick.
         if (g_publishedAnything) PublishEmpty_(nullptr);
@@ -345,7 +348,12 @@ void GetSnapshot(Snapshot& out) {
     out = g_snap;
 }
 
-bool IsEnabled() { return g_enabled.load(std::memory_order_acquire); }
+bool IsEnabled() {
+    // Role-aware: reports OFF while connected as a client (coop::dev_gate) so
+    // every draw site + the menu checkbox die together; the latent flag
+    // survives and the overlay returns on disconnect / when hosting.
+    return g_enabled.load(std::memory_order_acquire) && coop::dev_gate::Allowed();
+}
 
 void SetEnabled(bool on) {
     g_enabled.store(on, std::memory_order_release);

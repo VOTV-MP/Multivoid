@@ -72,13 +72,14 @@ void TickWatchReleasedClumps(coop::net::Session* session);
 // on the grabber and only via a fiddly aim+press disambiguation).
 //
 // Register a pile (owner's just-converted pile OR a receiver's freshly-spawned mirror pile) under
-// its cross-peer eid. Idempotent per eid. Game thread.
-void WatchPile(void* pileActor, uint32_t eid);
+// its cross-peer eid. Idempotent per eid. Game thread. `quiet` suppresses the per-pile enroll log
+// (used by the host snapshot's bulk eager-enroll of ~870 piles, which emits ONE summary line itself).
+void WatchPile(void* pileActor, uint32_t eid, bool quiet = false);
 
 // Same, with a caller-provided position (perf audit W-3 2026-06-10: the
 // snapshot drain already read the pile's location for the payload -- this
 // overload skips the duplicate GetActorLocation dispatch per expressed pile).
-void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos);
+void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos, bool quiet = false);
 
 // Per-tick liveness sweep over watched piles. When a watched pile's actor goes dead AND it was
 // NEAR the local camera (a grab happens AT the player) AND we're not in a world-transition window

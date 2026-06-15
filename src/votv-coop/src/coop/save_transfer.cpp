@@ -257,6 +257,8 @@ void DeleteFileLogged_(const fs::path& p) {
 
 std::wstring CoopSlotName() { return CoopSlotFileNameNoExt_(); }
 
+const std::wstring& HostSlot() { return g_hostSlot; }
+
 void Install(coop::net::Session* session) {
     g_session = session;
     session->SetBulkSink(&BulkSink_);

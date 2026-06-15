@@ -46,6 +46,14 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // net-pump tick on the game thread.
 void Tick();
 
+// v71 sleep gate (coop/sleep_sync): while the accelerate phase runs, the CLIENT clock
+// free-runs at TimeScale=1 (its world is dilated 20x, matching the host's advance rate)
+// instead of the U6 TimeScale=0 -- otherwise the timelapse sky only moves on the 2 s
+// corrections and pans in visible steps. Toggled at the phase edges; applies immediately
+// and on every subsequent correction. time_sync stays the ONLY TimeScale writer (one
+// authority). No-op on the host. Game thread.
+void SetSleepAccelerate(bool on);
+
 // Session teardown: reset the throttle. Game thread.
 void OnDisconnect();
 
