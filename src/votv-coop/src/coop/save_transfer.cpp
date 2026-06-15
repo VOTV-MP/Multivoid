@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/save_guard.h"
 #include "ue_wrap/log.h"
+#include "ue_wrap/save_capture.h"
 
 #include <windows.h>
 
@@ -95,6 +96,28 @@ void SendBeginNoSave_(int slot) {
     UE_LOGW("save_transfer: no readable host save for slot %d -- client will fresh-boot", slot);
 }
 
+// Stamp a captured blob into the host stream + announce it (SaveTransferBegin). The
+// TickHost chunk pump streams it from there. Shared by the LIVE-capture path
+// (OnRequest) and the canonical torn-read fallback (TryCaptureBlob_); `crc` is
+// precomputed by the caller (both already have it in hand).
+void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes, uint32_t crc) {
+    hs.active = true;
+    hs.blob = std::move(bytes);
+    hs.blobReady = true;
+    hs.nextChunk = 0;
+    hs.chunkCount = static_cast<uint32_t>(
+        (hs.blob.size() + coop::net::kSaveChunkBytes - 1) / coop::net::kSaveChunkBytes);
+
+    coop::net::SaveTransferBeginPayload b{};
+    b.totalBytes = static_cast<uint32_t>(hs.blob.size());
+    b.chunkCount = hs.chunkCount;
+    b.crc32 = crc;
+    b.gameMode = 0;  // story -- the coop target; a sandbox-host variant threads the
+                     // live GameMode here when sandbox coop becomes a goal
+    g_session->SendReliableToSlot(slot, coop::net::ReliableKind::SaveTransferBegin,
+                                  &b, sizeof(b));
+}
+
 // One stable-read attempt for a slot still capturing its blob. Returns true when
 // the blob is captured (Begin sent), false to retry next tick.
 bool TryCaptureBlob_(int slot, HostStream& hs) {
@@ -143,22 +166,10 @@ bool TryCaptureBlob_(int slot, HostStream& hs) {
         return false;
     }
 
-    hs.blob = std::move(bytes);
-    hs.blobReady = true;
-    hs.nextChunk = 0;
-    hs.chunkCount = static_cast<uint32_t>(
-        (hs.blob.size() + coop::net::kSaveChunkBytes - 1) / coop::net::kSaveChunkBytes);
-
-    coop::net::SaveTransferBeginPayload b{};
-    b.totalBytes = static_cast<uint32_t>(hs.blob.size());
-    b.chunkCount = hs.chunkCount;
-    b.crc32 = crc;
-    b.gameMode = 0;  // story -- the coop target; a sandbox-host variant threads the
-                     // live GameMode here when sandbox coop becomes a goal
-    g_session->SendReliableToSlot(slot, coop::net::ReliableKind::SaveTransferBegin,
-                                  &b, sizeof(b));
-    UE_LOGI("save_transfer: slot %d streaming '%ls' (%u bytes, %u chunks, crc=0x%08X)",
-            slot, g_hostSlot.c_str(), b.totalBytes, b.chunkCount, b.crc32);
+    BeginStreamFromBlob_(slot, hs, std::move(bytes), crc);
+    UE_LOGI("save_transfer: slot %d streaming CANONICAL slot '%ls' (stale fallback; %u bytes, "
+            "%u chunks, crc=0x%08X)",
+            slot, g_hostSlot.c_str(), static_cast<uint32_t>(hs.blob.size()), hs.chunkCount, crc);
     return true;
 }
 
@@ -271,14 +282,55 @@ void SetHostSlot(const std::wstring& slot) {
     UE_LOGI("save_transfer: host slot = '%ls'", slot.c_str());
 }
 
+// The throwaway slot save_capture serializes the LIVE host world into. The zcoop_
+// prefix means CleanupStaleSlotsAtBoot already sweeps a crash leftover; we also
+// delete it the instant we've read it below, so it normally never lingers. It is
+// NEVER the host's canonical slot -- the host's progress is untouchable here.
+constexpr const wchar_t* kHostXferSlot = L"zcoop_hostxfer";
+
 void OnRequest(int peerSlot) {
     if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
-    if (g_hostSlot.empty()) { SendBeginNoSave_(peerSlot); return; }
     HostStream& hs = g_host[peerSlot];
     hs = HostStream{};  // reset any prior stream for this slot (rejoin)
-    hs.active = true;
-    UE_LOGI("save_transfer: slot %d requested the world save -- capturing '%ls' (torn-read guard)",
-            peerSlot, g_hostSlot.c_str());
+
+    // ROOT-CAUSE FIX (2026-06-15): serialize the host's world LIVE, right now, into
+    // a throwaway scratch slot -- instead of shipping the stale on-disk .sav. An
+    // entity the host changed since its last autosave (the canonical case: a kerfur
+    // turned ON -> now an NPC) is captured in its live state, so the joiner's native
+    // loadObjects() builds a correct world and the reconcile layer has nothing to
+    // fix up (no ghost off-prop, no fresh-spawn of an already-loaded NPC). The
+    // canonical slot is never named or written (save_capture controls the slot name)
+    // -- this is not a real save and cannot clobber host progress. We are on the game
+    // thread (net_pump::Tick asserts it), so the save UFunctions are legal here; the
+    // scratch file is read synchronously (no torn-read window -- we just wrote it)
+    // then deleted.
+    if (ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot)) {
+        const fs::path scratchFile =
+            coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
+        std::vector<uint8_t> bytes;
+        const bool got = ReadWholeFile(scratchFile, bytes) && !bytes.empty();
+        DeleteFileLogged_(scratchFile);  // transient -- gone the instant it is read
+        if (got) {
+            const uint32_t crc = Crc32(bytes.data(), bytes.size());
+            BeginStreamFromBlob_(peerSlot, hs, std::move(bytes), crc);
+            UE_LOGI("save_transfer: slot %d streaming LIVE host world (%u bytes, %u chunks, "
+                    "crc=0x%08X)",
+                    peerSlot, static_cast<uint32_t>(hs.blob.size()), hs.chunkCount, crc);
+            return;
+        }
+        UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
+                "falling back to the canonical slot", peerSlot, kHostXferSlot);
+    }
+
+    // Live capture unavailable (gamemode not live / save UFunctions unresolved /
+    // scratch unreadable -- a should-never-happen while a client is mid-join). Degrade
+    // to the canonical on-disk slot via TickHost's torn-read guard rather than deny
+    // the join: a stale world still beats no world (the reconcile layer covers it, as
+    // it did before this fix).
+    if (g_hostSlot.empty()) { SendBeginNoSave_(peerSlot); return; }
+    hs.active = true;  // TickHost::TryCaptureBlob_ captures the canonical slot
+    UE_LOGW("save_transfer: slot %d -- LIVE capture unavailable; falling back to canonical "
+            "slot '%ls' (stale; torn-read guard)", peerSlot, g_hostSlot.c_str());
 }
 
 void TickHost() {
