@@ -242,6 +242,7 @@ add_library(votv-coop SHARED
     src/coop/npc_pose_drive.cpp
     src/coop/npc_pose_host.cpp
     src/coop/npc_sync.cpp
+    src/coop/npc_world_enum.cpp
     src/coop/prop_echo_suppress.cpp
     src/coop/prop_element_tracker.cpp
     src/coop/prop_lifecycle.cpp

@@ -70,6 +70,13 @@ void Install(coop::net::Session* session);
 // Npcs). Game thread.
 bool IsInstalled();
 
+// True iff Install permanently disabled the host NPC lifecycle this process (the observer table
+// was full at Install -> no guaranteed POST/destroy observer). The extracted world-enum
+// (coop/npc_world_enum) gates on this + IsInstalled() before allocating any Npc Element -- the
+// SAME gate the interceptor uses, so it never leaks an Element with no destroy observer to close
+// it. Atomic; any thread.
+bool IsHostNpcSyncDisabled();
+
 // Bypass slot: the wire-received NPC spawn dispatcher (Inc3) will call
 // this immediately before BeginDeferredActorSpawnFromClass to mark the
 // next interceptor fire as "allow through, don't suppress". Single-shot;
@@ -87,6 +94,13 @@ void ClearIncomingNpcSpawn();
 // Mutex-guarded; safe from any thread (coop::kerfur_convert reads it inside
 // a ProcessEvent interceptor on a parallel-anim worker).
 coop::element::ElementId GetNpcIdForActor(void* actor);
+
+// Insert/overwrite the live-actor -> ElementId reverse-map entry GetNpcIdForActor reads. The
+// extracted world-enum (coop/npc_world_enum) calls this to publish a pre-existing world NPC it
+// registered (alloc + bind) into the same host reverse map the POST observer + K2_DestroyActor PRE
+// use -- so the destroy observer closes its lifecycle exactly like a fresh spawn. Mutex-guarded;
+// game thread (the world-enum walk runs on it). No-op when `actor` is null.
+void MapActorToNpcId(void* actor, coop::element::ElementId eid);
 
 // Explicit destroy-sync for an NPC actor whose K2_DestroyActor our PRE
 // observer could NOT see (BP-internal by-name call -- kerfurOmega_C::
@@ -119,35 +133,10 @@ void OnDisconnect();
 // not yet bound). Net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Why a newly-registered NPC's EntitySpawn carries savePersisted=1 (adopt a local twin) vs 0
-// (fresh-spawn a mirror) depends on the CALLER's intent, NOT the actor's has-a-key property:
-//  - ConnectEdge:        host world-load init (subsystems). The broadcast (re)reaches a JOINER who
-//                        loaded the same save -> it MAY have a local twin of a keyed save object ->
-//                        savePersisted = HasSaveKey(obj). [the v75 connect-edge adoption contract]
-//  - MidSessionConverge: a kerfur turned ON mid-session (kerfur_convert). The broadcast reaches
-//                        ALREADY-CONNECTED peers who have NO twin (they cancelled their own local
-//                        turn-on) -> ALWAYS savePersisted=0 -> fresh-spawn now. A turn-on kerfur has
-//                        a random UCS-minted key so HasSaveKey is true, but the key is meaningless to
-//                        a peer that never loaded it -> routing it into the deferred adoption poll
-//                        causes an ~8s pop-in + a class-only false-bind dupe (RCA 2026-06-15). This
-//                        matches the runtime-interceptor send, which already hardcodes savePersisted=0
-//                        for the same "spawned after the join, no local twin" reason.
-enum class NpcEnumOrigin { ConnectEdge, MidSessionConverge };
-
-// HOST-only PRE-EXISTING world-NPC enumeration (2026-06-07, user "two kerfurs on host" -- a kerfur
-// already in the loaded save wasn't synced). Walk GUObjectArray for allowlisted-NPC actors that
-// EXIST but are NOT yet coop-tracked -- i.e. loaded with the level BEFORE the interceptor installed,
-// so they never went through the intercepted BeginDeferred and were never registered. Register each
-// as a host Npc Element (alloc + bind the live actor + reverse-map) -- the same end state the
-// interceptor+POST observer reach for a fresh spawn, but for an actor that loaded with the level.
-// QueueConnectBroadcastForSlot then mirrors them to the joiner + TickPoseStream streams them after.
-// Idempotent (skips already-tracked actors). `origin` decides the savePersisted policy (see above).
-// Called at the host connect edge (ConnectEdge) AND from the kerfur turn-on converge
-// (MidSessionConverge). Returns the count newly registered. Game thread. Cold path: one GUObjectArray
-// walk per call. Soft-cap note: npc_sync.cpp is at 942 LOC (over the 800 soft cap) -- this host-side
-// function + QueueConnectBroadcastForSlot/TickPoseStream are the recorded extraction into
-// coop/npc_world_enum.{h,cpp} (DEFERRED; do as a dedicated behavior-preserving refactor).
-int RegisterExistingWorldNpcs(NpcEnumOrigin origin);
+// NpcEnumOrigin + RegisterExistingWorldNpcs (the HOST-only pre-existing world-NPC GUObjectArray
+// walk) moved to coop/npc_world_enum.{h,cpp} (K-0 2026-06-16, 800-LOC soft cap). Include that header
+// to call them; they consume this header's host-side accessors (GetSession / IsInstalled /
+// IsHostNpcSyncDisabled / IsAllowlistedClass / GetNpcIdForActor / MapActorToNpcId).
 
 // HOST-only per-tick NPC pose stream driver: read each live Npc Element's current world
 // transform + publish the batch to the session for the net thread to fan out (EntityPose,

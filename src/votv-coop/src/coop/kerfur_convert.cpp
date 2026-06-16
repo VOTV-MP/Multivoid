@@ -32,6 +32,7 @@
 #include "coop/net/session.h"
 #include "coop/npc_mirror.h"     // DestroyUntrackedClientNpcs -- the turn-on ghost-NPC reconcile
 #include "coop/npc_sync.h"
+#include "coop/npc_world_enum.h"  // K-0: RegisterExistingWorldNpcs (moved out of npc_sync)
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/remote_prop_spawn.h"  // HasLoadTailQuiesced -- gate the client poll past the join reconcile
@@ -221,7 +222,7 @@ void ConvergeAfterConversion(void* actor, int32_t internalIdx,
         // already-connected peers have NO local twin of this just-spawned kerfur, so they fresh-spawn
         // a mirror immediately instead of being routed into the v75 connect-edge adoption poll (which
         // would cause an ~8s pop-in + a class-only false-bind dupe -- RCA 2026-06-15).
-        coop::npc_sync::RegisterExistingWorldNpcs(coop::npc_sync::NpcEnumOrigin::MidSessionConverge);
+        coop::npc_world_enum::RegisterExistingWorldNpcs(coop::npc_world_enum::NpcEnumOrigin::MidSessionConverge);
     }
 }
 
