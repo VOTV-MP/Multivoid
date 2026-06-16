@@ -16,6 +16,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
+#include "coop/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
 #include "coop/net/protocol.h"
 #include "coop/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
 #include "coop/prop_echo_suppress.h"
@@ -305,7 +306,7 @@ void RecordClaimIfTracking(void* actor) {
 }
 
 void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
-             void* localPlayer, bool fromConvert) {
+             void* localPlayer, bool fromConvert, bool deferKerfur) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     const std::wstring classW = ClassNameToWString(payload.className);
@@ -673,6 +674,17 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // rekey'd to the wire Key above, so future PropPose / PropDestroy
         // from sender resolves via key OR eid lookup.
         coop::remote_prop::RegisterPropMirror(payload.elementId, fuzzy, keyW, classW, senderSlot);
+        return;
+    }
+    // K-6 (prop-form kerfur join fix): we reached here = no exact-key match and no inline fuzzy match.
+    // For a kerfur PROP, the client's own save-loaded twin may still be ASYNC-LOADING (the snapshot
+    // PropSpawn arrives before the world's late tail materializes it), so fresh-spawning NOW would
+    // create a DUPLICATE beside the still-coming twin (the prop-form join-dup root). DEFER to the
+    // polled class+pose adoption (mirrors npc_adoption) -- it binds the twin when it appears, or
+    // fresh-spawns once at quiescence. deferKerfur is false on that fallback + on the convert
+    // materialize, so neither re-defers here. Keyed by class name (cheap; matches prop_kerfurOmega + skins).
+    if (deferKerfur && classW.find(L"prop_kerfurOmega") != std::wstring::npos) {
+        coop::kerfur_prop_adoption::Arm(payload);
         return;
     }
     if (!ResolveSpawnFns()) {

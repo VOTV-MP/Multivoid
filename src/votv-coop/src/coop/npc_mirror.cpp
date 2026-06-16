@@ -17,7 +17,8 @@
 #include "coop/kerfur_convert.h"  // FindParkedGhostNpcNear -- adopt the client's own turn-on result
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/npc_adoption.h"  // v75: deferred class-match adoption for save-persisted NPCs
+#include "coop/npc_adoption.h"
+#include "coop/kerfur_prop_adoption.h"  // K-6: deferred prop-form kerfur adoption (driven from the client tick)  // v75: deferred class-match adoption for save-persisted NPCs
 #include "coop/remote_prop_spawn.h"  // TickClientReconcile (deferred prop divergence sweep)
 #include "coop/npc_sync.h"
 #include "ue_wrap/call.h"
@@ -628,6 +629,10 @@ void TickClientNpcs() {
     // connect-snapshot-delivered + converged timing). NO-OP (single integer compare) once adoption
     // has converged and the sweep has run -- zero steady-state cost. Game thread only.
     coop::npc_adoption::Tick();
+    // 3b) K-6: drive the deferred class+pose adoption of save-loaded PROP-form kerfurs (the prop
+    // analogue of npc_adoption -- binds the client's local kerfur prop to the host eid when it
+    // materializes, never fresh-spawning a duplicate). NO-OP (single bool) once pending is empty.
+    coop::kerfur_prop_adoption::Tick();
 
     // 4) Drive the deferred PROP divergence sweep (the save-transfer kerfur-ghost fix): it waits for
     // the save load's late key-minting tail to quiesce before adjudicating, so a host-converted-away

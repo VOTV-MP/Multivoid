@@ -66,6 +66,10 @@ void SetKerfurClasses(void* npcClass, void* propClass);
 bool IsKerfurClass(void* cls);
 // True iff `actor`'s class is a kerfur class. nullptr-safe.
 bool IsKerfurActor(void* actor);
+// True iff `cls` derives specifically from the kerfur PROP base (prop_kerfurOmega_C + skins), NOT the
+// NPC base. Used by kerfur_prop_adoption to collect prop-form candidates only (the NPC form is
+// npc_adoption's job). False until SetKerfurClasses bound the prop base.
+bool IsKerfurPropClass(void* cls);
 
 // HOST only: reserve (or return the existing) stable KerfurId for a kerfur `actor` first seen in
 // `form`, whose current-form wire eid is `currentEid`. Idempotent per actor (returns the existing K

@@ -16,7 +16,8 @@
 #include "coop/join_progress.h"
 #include "coop/net/session.h"
 #include "coop/subsystems.h"
-#include "coop/npc_adoption.h"  // v75: OnSnapshotComplete (deferred-adoption ghost-sweep gate)
+#include "coop/npc_adoption.h"
+#include "coop/kerfur_prop_adoption.h"  // K-6  // v75: OnSnapshotComplete (deferred-adoption ghost-sweep gate)
 #include "coop/player_damage.h"
 #include "coop/wisp_tear_mirror.h"  // v72 Killer Wisp: WispGrab/WispTear receivers
 #include "coop/player_handshake.h"
@@ -403,6 +404,7 @@ void Update(net::Session& session, void* localPlayer) {
             // the prop divergence sweep armed above) -- gated on the SAME load-tail quiescence, so a
             // still-loading local twin is adopted, never swept or fresh-spawned into a duplicate.
             coop::npc_adoption::OnSnapshotComplete();
+            coop::kerfur_prop_adoption::OnSnapshotComplete();  // K-6 parity (reserved; no-op today)
             break;
         }
 

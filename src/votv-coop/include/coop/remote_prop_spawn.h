@@ -49,8 +49,13 @@ namespace coop::remote_prop_spawn {
 // disables the keyless-pile position-bind lane: a convert-born pile has no
 // local counterpart by construction, so it must never bind to a nearby
 // unrelated pile -- it always fresh-spawns. Wire dispatch passes the default.
+// `deferKerfur` (K-6, default true for the wire dispatch): for a prop-form kerfur whose local twin
+// isn't found by the inline fuzzy match, DEFER to the polled class+pose adoption
+// (kerfur_prop_adoption::Arm) instead of fresh-spawning a duplicate beside the still-async-loading
+// twin. Passed false by the adoption's own quiescence fresh-spawn fallback (one-shot, no defer loop)
+// and by kerfur_convert::MaterializeKerfurMirror's convert materialize (the parked ghost is ready now).
 void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
-             void* localPlayer, bool fromConvert = false);
+             void* localPlayer, bool fromConvert = false, bool deferKerfur = true);
 
 // ---- Adoption-universe claim tracking (P2 2026-06-10; widened Fork B 2e) --
 //

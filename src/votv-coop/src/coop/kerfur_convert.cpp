@@ -299,7 +299,11 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, const std
         sp.physFlags = 0;
         sp.chipType = 0;
         sp.elementId = static_cast<uint32_t>(eid);
-        coop::remote_prop_spawn::OnSpawn(sp, /*senderSlot=*/0, localPlayer, /*fromConvert=*/false);
+        // deferKerfur=false: this is the CONVERSION materialize -- the client's parked ghost is ready
+        // NOW (claim/adopt), so OnSpawn must run the inline fuzzy-adopt, NOT defer to the join-time
+        // kerfur_prop_adoption poll (which is for un-converted save-loaded twins). K-6.
+        coop::remote_prop_spawn::OnSpawn(sp, /*senderSlot=*/0, localPlayer, /*fromConvert=*/false,
+                                         /*deferKerfur=*/false);
     }
 }
 
@@ -461,21 +465,40 @@ void ClaimConversionGhosts(bool wantNpc, float x, float y, float z) {
     // non-mirror kerfur of the new form at the conversion site is our own local ghost.
     std::unordered_set<void*> mirrors;
     CollectMirrorActors(/*wantProp=*/!wantNpc, /*wantNpc=*/wantNpc, mirrors);
-    const auto now = std::chrono::steady_clock::now();
     const int32_t n = R::NumObjects();
     constexpr float kR2 = 500.f * 500.f;  // the new form spawns at the kerfur's own transform
-    int claimed = 0;
+    // K-6 over-claim fix: the conversion verb spawns EXACTLY ONE actor per base class (1
+    // prop_kerfurOmega body +, for turn_off, optionally 1 prop_floppyDisc) AT the conversion position
+    // (RE redesign sec 3). So claim ONLY the NEAREST untracked candidate PER base class -- NOT every
+    // kerfur prop within 5 m. The old "claim all within radius" grabbed the player's PRE-EXISTING
+    // save-loaded kerfur props and the 4 s orphan-reaper then DESTROYED them ("kerfur props removed
+    // entirely"; proven from the 2026-06-16 client log "claimed 4 local conversion ghost(s)"). The
+    // join-time kerfur_prop_adoption makes those pre-existing props mirrors (-> excluded just below),
+    // so this nearest-only rule is the belt-and-suspenders for a conversion racing the adoption poll.
+    void* bestObj[2] = {nullptr, nullptr};
+    float bestD2[2]  = {kR2, kR2};
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
-        if (!cls || !R::IsDescendantOfAny(cls, bases, nBases)) continue;
+        if (!cls) continue;
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
         if (mirrors.count(obj)) continue;  // a host wire mirror -- not our ghost
+        int b = -1;  // which base class this actor is (nearest tracked per base)
+        for (size_t bi = 0; bi < nBases; ++bi)
+            if (R::IsDescendantOfAny(cls, &bases[bi], 1)) { b = static_cast<int>(bi); break; }
+        if (b < 0) continue;
         const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
         const float dx = loc.X - x, dy = loc.Y - y, dz = loc.Z - z;
-        if (dx * dx + dy * dy + dz * dz > kR2) continue;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2[b]) { bestD2[b] = d2; bestObj[b] = obj; }
+    }
+    const auto now = std::chrono::steady_clock::now();
+    int claimed = 0;
+    for (size_t bi = 0; bi < nBases; ++bi) {
+        void* obj = bestObj[bi];
+        if (!obj) continue;
         if (wantNpc) {
             ue_wrap::puppet::DisableCharacterTicks(obj);  // park: the streamed pose becomes authoritative
             ue_wrap::kerfur::NeutralizeAiTimers(obj);      // stop the kerfur AI timers on the ghost
@@ -487,7 +510,7 @@ void ClaimConversionGhosts(bool wantNpc, float x, float y, float z) {
         ++claimed;
     }
     if (claimed)
-        UE_LOGI("kerfur_convert[client]: claimed %d local conversion ghost(s) (%s) near (%.0f,%.0f,%.0f) -- parked for host adoption",
+        UE_LOGI("kerfur_convert[client]: claimed %d local conversion ghost(s) (%s) nearest-per-class near (%.0f,%.0f,%.0f) -- parked for host adoption",
                 claimed, wantNpc ? "NPC turn-on" : "prop turn-off", x, y, z);
 }
 

@@ -58,6 +58,7 @@
 #include "coop/player_damage.h"
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"
+#include "coop/kerfur_prop_adoption.h"  // K-6
 #include "coop/npc_mirror.h"
 #include "coop/npc_sync.h"
 #include "coop/npc_world_enum.h"  // K-0: RegisterExistingWorldNpcs (moved out of npc_sync)
@@ -244,6 +245,7 @@ DisconnectStats DisconnectAll() {
     stats.snapPending = coop::prop_snapshot::OnDisconnect();
     coop::npc_sync::OnDisconnect();
     coop::npc_adoption::OnSessionEnd();        // v75: drop pending deferred adoptions + reset latches
+    coop::kerfur_prop_adoption::OnSessionEnd(); // K-6: drop pending prop-form kerfur adoptions
     coop::host_spawn_watcher::OnDisconnect();  // M2: drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();      // v67: drop pending host-menu converges
     coop::kerfur_entity::OnDisconnect();       // K-3: clear the KerfurId table + free its reserved host ids

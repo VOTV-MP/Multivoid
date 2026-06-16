@@ -22,7 +22,8 @@
 #include "coop/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/npc_adoption.h"  // OnClientWorldReady (v75 deferred-adoption per-world reset)
+#include "coop/npc_adoption.h"
+#include "coop/kerfur_prop_adoption.h"  // K-6  // OnClientWorldReady (v75 deferred-adoption per-world reset)
 #include "coop/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
@@ -565,6 +566,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // re-adopts its save-NPCs + re-sweeps orphans (the ghost sweep itself fires from
                 // npc_adoption::Tick, gated on SnapshotComplete + adoption convergence).
                 coop::npc_adoption::OnClientWorldReady();
+                coop::kerfur_prop_adoption::OnClientWorldReady();  // K-6: drop stale prop-kerfur pending
                 // Same per-world reset for the deferred PROP divergence sweep -- a sweep armed for
                 // the prior world must not fire against this fresh one (save-transfer = two loads).
                 coop::remote_prop_spawn::OnClientWorldReadyResetSweep();
