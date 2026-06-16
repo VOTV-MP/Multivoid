@@ -49,22 +49,6 @@ int ReadVis(void* widget) {
     return *reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(widget) + g_visOff);
 }
 
-// mainPlayer.activeInterface -- the game's "which UI is currently open" pointer. Vanilla's open
-// block (@12104) SETS it to the spawn-menu widget and the close block (@11555) CLEARS it. We honour
-// that so the menu is fully native: (a) Open()'s activeInterface guard becomes meaningful (a second
-// open over our own menu is refused), and (b) the game's OWN Escape/close logic, which keys off
-// activeInterface, can dismiss our menu too -- a second way out beyond the Q toggle. Cached offset.
-void SetActiveInterface(void* localPlayer, void* value) {
-    if (!localPlayer) return;
-    static int32_t sOff = -2;
-    if (sOff == -2) {
-        void* cls = R::FindClass(P::name::MainPlayerClass);
-        sOff = cls ? R::FindPropertyOffset(cls, L"activeInterface") : -1;
-    }
-    if (sOff >= 0)
-        *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(localPlayer) + sOff) = value;
-}
-
 }  // namespace
 
 bool Open() {
@@ -161,10 +145,6 @@ bool Open() {
         if (sCursorOff >= 0) *(reinterpret_cast<uint8_t*>(pc) + sCursorOff) = 1;
     }
 
-    // Mark our menu as the active interface (vanilla parity) -- enables Escape-to-close + blocks
-    // another UI stacking over it + makes Open()'s top guard meaningful.
-    SetActiveInterface(localPlayer, widget);
-
     const int visAfter = ReadVis(widget);
     UE_LOGI("spawn_menu::Open: native SetVisibility(Visible) + opened() + GameAndUI input -- "
             "visibility %d -> %d (0=Visible)", visBefore, visAfter);
@@ -229,9 +209,6 @@ bool Close() {
             if (f.valid()) ue_wrap::Call(widget, f);
         }
     }
-
-    // Clear the active-interface marker (vanilla parity -- the inverse of Open()'s set).
-    SetActiveInterface(localPlayer, nullptr);
 
     UE_LOGI("spawn_menu::Close: restored GameOnly input + hid cursor%s",
             widget ? " + collapsed widget" : " (no widget)");
