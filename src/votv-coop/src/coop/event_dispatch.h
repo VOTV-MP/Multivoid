@@ -39,9 +39,11 @@ void HandleEntityEvent(net::Session& session,
 // Keyed device-state family: DoorState/LightState/ContainerState/GarageDoorState/
 // ApplianceState (the shared KeyedTogglePayload case), KeypadState,
 // PowerControlState, AtvState, DroneState, OrderRequest, WindowCleanState,
-// GrimeState, TrashPileState, DoorOpenRequest.
+// GrimeState, TrashPileState, DoorOpenRequest, KerfurConvert (v78 client apply).
+// `localPlayer` threads into the KerfurConvert client apply (prop teardown/materialize).
 void HandleStateEvent(net::Session& session,
-                      const net::Session::ReliableMessage& msg);
+                      const net::Session::ReliableMessage& msg,
+                      void* localPlayer);
 
 // Ambient / world-event family: FireflySpawn, InventoryPickup, TimeSync,
 // SkyState, RedSky, LightningStrike, WeatherState.

@@ -79,15 +79,35 @@ coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid);
 coop::element::ElementId GetCurrentEidForKerfurId(coop::element::ElementId kerfurId);
 Form                     GetFormForKerfurId(coop::element::ElementId kerfurId);
 
-// CLIENT only: record that host-range eid `currentEid` is the current `form` of kerfur `kerfurId`
-// (learnt from a kerfur-class EntitySpawn/PropSpawn in K-3; from KerfurConvert in K-4). Maintains the
-// client's K<->eid maps + the IsKerfurEid set. Idempotent. Game thread.
-void RegisterClientKerfur(coop::element::ElementId kerfurId, coop::element::ElementId currentEid,
-                          Form form);
-
-// BOTH roles: is this wire eid the CURRENT-form eid of a tracked kerfur? (host: from the table;
-// client: from the client set.) Used by the K-5 class-gate + the conversion routing.
+// HOST only: is this wire eid the CURRENT-form eid of a tracked kerfur? Used by the K-5 class-gate +
+// the conversion routing. (The CLIENT is eid-based and does NOT track KerfurIds -- K-4b simplification
+// per redesign section 11: it applies KerfurConvert by oldEid/newEid + IsKerfurClass, never by a
+// KerfurId, so the client K<->eid maps + RegisterClientKerfur of the K-3 scaffolding were removed.)
 bool IsKerfurEid(coop::element::ElementId currentEid);
+
+// HOST only: the conversion mutation -- the MTA SetElementModel equivalent (redesign 10.3). The host
+// ran the BP verb (its own radial menu OR a client KerfurConvertRequest) and registered the new-form
+// actor SILENTLY via the normal Npc/Prop pipeline at host-range `newEid`. This rebinds the stable
+// KerfurId (resolved from `oldEid`, or freshly allocated if the dying form was untracked) onto the
+// new form IN PLACE -- K is PRESERVED across the conversion, never re-minted -- then broadcasts the
+// SOLE conversion-transition packet KerfurConvert(K, oldEid, newEid, toForm, transform, className) to
+// all peers. Returns K (kInvalidId on non-host / null actor / Registry exhaustion). The caller reads
+// the new actor's transform + class and passes them (keeps this module's engine surface minimal).
+// Game thread.
+coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* newActor,
+                                       int32_t newIdx, coop::element::ElementId newEid, Form newForm,
+                                       const std::wstring& className,
+                                       float locX, float locY, float locZ,
+                                       float rotPitch, float rotYaw, float rotRoll);
+
+// HOST only: the verb was REFUSED (sentient/kill -- the old-form actor is still live, no new form
+// spawned). Broadcast KerfurConvert(rejected=1) carrying the OLD form + transform so a client that
+// optimistically converted its own mirror locally can RESTORE it (fixes Failure #7). The host table is
+// unchanged (the kerfur did not convert). Game thread.
+void BroadcastConvertRejected(coop::element::ElementId oldEid, Form oldForm,
+                              float locX, float locY, float locZ,
+                              float rotPitch, float rotYaw, float rotRoll,
+                              const std::wstring& className);
 
 // Drop a kerfur record (its actor died for good -- destroyed, not converted). HOST frees K. No-op on
 // an untracked id. Game thread. (K-4 BindFormActor handles the CONVERSION case -- reuse, not drop.)

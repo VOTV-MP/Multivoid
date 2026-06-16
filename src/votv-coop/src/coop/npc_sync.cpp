@@ -18,6 +18,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
+#include "coop/kerfur_entity.h"   // K-4b: reserve the stable KerfurId when a fresh kerfur NPC binds
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_mirror.h"
@@ -275,6 +276,17 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
     }
     UE_LOGI("npc-sync[host POST]: bound actor=%p to Npc eid=%u typeName='%s'",
             spawnedActor, eid, el->GetTypeName().c_str());
+    // K-4b (kerfur redesign): a fresh kerfur NPC (dev-spawn / purchase via the interceptor) gets its
+    // stable host-range KerfurId reserved at first sighting -- idempotent per actor, host-only inside
+    // AllocKerfurId. (Conversion turn-on NPCs spawn via EX_CallMath and never fire this POST;
+    // RegisterHostNpcSilent + BindFormActor own those + reuse the dying form's K.) The g_actorToNpcId
+    // leaf lock is released above, so AllocKerfurId's g_mutex->Registry order never nests with it.
+    if (void* spawnedCls = R::ClassOf(spawnedActor)) {
+        if (coop::kerfur_entity::IsKerfurClass(spawnedCls)) {
+            coop::kerfur_entity::AllocKerfurId(spawnedActor, eid, coop::kerfur_entity::Form::Npc,
+                                               R::ToString(R::NameOf(spawnedCls)));
+        }
+    }
 }
 
 // K2_DestroyActor PRE observer: fires for EVERY actor destroy in the world.
@@ -813,6 +825,57 @@ void SyncDestroyedNpcActor(void* actor) {
     // PendingKill or even GC-purged pointer, and a double call (or a call
     // racing the real PRE) no-ops on the map miss.
     NpcDestroy_PRE(actor, nullptr, nullptr);
+}
+
+coop::element::ElementId RegisterHostNpcSilent(void* actor, const std::wstring& className) {
+    // See npc_sync.h. Same end state as NpcSpawn_POST's bind (Npc Element alloc + bound actor +
+    // reverse-map entry so K2_DestroyActor PRE closes its lifecycle) but for an EX_CallMath-spawned
+    // turn-on kerfur that never passed the interceptor -- and WITHOUT the wire EntitySpawn (the kerfur
+    // conversion's sole signal is KerfurConvert). Game thread (the kerfur converge runs on it).
+    if (!actor) return coop::element::kInvalidId;
+    auto npc = std::make_unique<coop::element::Npc>();
+    std::string typeName8;
+    for (size_t i = 0; i < className.size() && i < 63; ++i)
+        typeName8.push_back(static_cast<char>(className[i]));
+    npc->SetTypeName(std::move(typeName8));
+    const coop::element::ElementId eid =
+        NpcMirrors().AllocAndInstall(std::move(npc), /*isHost=*/true);
+    if (eid == coop::element::kInvalidId) {
+        UE_LOGW("npc-sync[silent register]: AllocAndInstall kInvalidId for '%ls' (Registry full?)",
+                className.c_str());
+        return coop::element::kInvalidId;
+    }
+    coop::element::Npc* el = NpcMirrors().Get(eid);
+    if (!el) {
+        coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+        UE_LOGW("npc-sync[silent register]: eid=%u not retrievable after AllocAndInstall -- drained",
+                static_cast<uint32_t>(eid));
+        return coop::element::kInvalidId;
+    }
+    el->SetActor(actor, R::InternalIndexOf(actor));
+    MapActorToNpcId(actor, eid);
+    UE_LOGI("npc-sync[silent register]: host NPC %p class '%ls' -> eid=%u (no EntitySpawn broadcast)",
+            actor, className.c_str(), static_cast<uint32_t>(eid));
+    return eid;
+}
+
+void ReleaseNpcElementSilent(coop::element::ElementId eid) {
+    // See npc_sync.h. NpcDestroy_PRE's teardown (Take from NpcMirrors + erase the actor reverse-map
+    // entry + defer-destroy) MINUS the SendEntityDestroy. The kerfur converge releases the dying NPC
+    // form this way; KerfurConvert carries oldEid so the clients tear down their mirror. Game thread.
+    if (eid == coop::element::kInvalidId) return;
+    std::unique_ptr<coop::element::Npc> drained = NpcMirrors().Take(eid);
+    if (drained) {
+        if (void* actor = drained->GetActor()) {
+            std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+            g_actorToNpcId.erase(actor);
+        }
+    }
+    // Defer the ~Npc/FreeId to the game-thread ElementDeleter Flush (matches NpcDestroy_PRE). A null
+    // drained (already-released eid) makes Enqueue a no-op.
+    coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
+    UE_LOGI("npc-sync[silent release]: Npc eid=%u released (no EntityDestroy broadcast)",
+            static_cast<uint32_t>(eid));
 }
 
 bool GetDevSpawnRefs(DevSpawnRefs& out) {

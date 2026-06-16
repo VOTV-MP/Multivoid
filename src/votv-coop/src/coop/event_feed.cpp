@@ -439,11 +439,12 @@ void Update(net::Session& session, void* localPlayer) {
         case net::ReliableKind::VoiceState:
         case net::ReliableKind::DoorOpenRequest:
         case net::ReliableKind::KerfurConvertRequest:
+        case net::ReliableKind::KerfurConvert:  // v78 host->all kerfur form-transition broadcast (client apply)
         case net::ReliableKind::KerfurCommand:  // v74 host-authoritative kerfur menu command relay
         case net::ReliableKind::DeskLogLine:   // v70 (route fix 2026-06-13: missed at ship -- the idle smokes never exercised the wire)
         case net::ReliableKind::SleepState:    // v71
         case net::ReliableKind::PlayerInventoryBlob: {  // v73 per-player inventory stream
-            HandleStateEvent(session, msg);
+            HandleStateEvent(session, msg, localPlayer);
             break;
         }
 

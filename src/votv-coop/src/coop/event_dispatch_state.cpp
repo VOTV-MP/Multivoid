@@ -36,7 +36,8 @@
 namespace coop::event_feed {
 
 void HandleStateEvent(net::Session& session,
-                      const net::Session::ReliableMessage& msg) {
+                      const net::Session::ReliableMessage& msg,
+                      void* localPlayer) {
     switch (msg.kind) {
     case net::ReliableKind::DoorState:
     case net::ReliableKind::LightState:
@@ -683,6 +684,29 @@ void HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::kerfur_command::OnCommandRequest(p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::KerfurConvert: {
+        // v78: HOST->ALL kerfur form-transition broadcast -- the SOLE conversion-transition signal
+        // (kerfur redesign 10.3). CLIENT-only apply: the host converged its OWN conversion inline via
+        // the silent host element ops, so it never applies its own broadcast. Host-authoritative:
+        // accept only from slot 0 (the host).
+        if (session.role() != net::Role::Client) {
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: KerfurConvert from non-host senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::KerfurConvertBroadcastPayload)) {
+            UE_LOGW("event_feed: KerfurConvert payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::KerfurConvertBroadcastPayload));
+            break;
+        }
+        net::KerfurConvertBroadcastPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::kerfur_convert::OnKerfurConvert(p, localPlayer);
         break;
     }
     default:

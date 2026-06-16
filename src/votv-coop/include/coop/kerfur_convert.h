@@ -58,6 +58,7 @@
 namespace coop::net {
 class Session;
 struct KerfurConvertPayload;
+struct KerfurConvertBroadcastPayload;
 }  // namespace coop::net
 
 namespace coop::kerfur_convert {
@@ -72,9 +73,20 @@ void Install(coop::net::Session* session);
 
 // HOST-only receiver for KerfurConvertRequest (wired in event_dispatch_state).
 // Validates + executes the verb + converges, all on the game thread (the
-// event_feed drain). senderPeerSlot is log-only.
+// event_feed drain). senderPeerSlot is log-only. payload.elementId is the
+// dying-form's host-range MIRROR eid (the client is eid-based); the host
+// resolves both the actor and the stable KerfurId from it.
 void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
                       uint8_t senderPeerSlot);
+
+// CLIENT-only receiver for KerfurConvert (v78, host->all; wired in event_dispatch_state, slot-0
+// gated). The SOLE conversion-transition signal (kerfur redesign 10.3): destroy the old-form mirror
+// at payload.oldEid, then ADOPT this peer's own claimed local conversion ghost to the authoritative
+// payload.newEid (the initiator) or materialize a fresh mirror (other peers). rejected=1 -> the host
+// refused (sentient): keep the mirror, or restore it if we optimistically converted locally (fixes
+// Failure #7). `localPlayer` (live AmainPlayer_C*, may be null) feeds the prop teardown/materialize
+// (held-prop guard + PHC release). Game thread (event_feed drain).
+void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& payload, void* localPlayer);
 
 // Drain the deferred-action queue (pushed by the interceptors, which may run
 // on a parallel-anim worker and must not call engine functions or walk the

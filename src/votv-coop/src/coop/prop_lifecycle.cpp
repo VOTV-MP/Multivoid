@@ -621,6 +621,25 @@ void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
     PT::UnmarkKnownKeyedProp(actorKey);
 }
 
+coop::element::ElementId RegisterHostPropSilent(void* actor) {
+    // See prop_lifecycle.h. The MarkPropElement shadow alloc (host range) for a BP-internally-spawned
+    // prop, MINUS the wire PropSpawn the Init-POST / ExpressSpawnedProp path sends -- the kerfur
+    // conversion's only wire signal is KerfurConvert. Game thread (ProcessEvent-adjacent key read).
+    if (!actor) return coop::element::kInvalidId;
+    const std::wstring cls = R::ClassNameOf(actor);
+    const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(actor);
+    if (keyStr.empty() || keyStr == L"None") {
+        UE_LOGW("prop_lifecycle[silent register]: prop %p class '%ls' has no key -- cannot register (kerfur converge)",
+                actor, cls.c_str());
+        return coop::element::kInvalidId;
+    }
+    PT::MarkPropElement(actor, keyStr, cls);
+    const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
+    UE_LOGI("prop_lifecycle[silent register]: host prop %p class '%ls' key '%ls' -> eid=%u (no PropSpawn broadcast)",
+            actor, cls.c_str(), keyStr.c_str(), static_cast<uint32_t>(eid));
+    return eid;
+}
+
 void SetSession(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
     // Mirror to the element tracker so its in-lock role read sees the same

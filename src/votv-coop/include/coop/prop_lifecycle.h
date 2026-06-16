@@ -101,6 +101,14 @@ void ExpressSpawnedProp(void* actor);
 // (double call / raced the real PRE observer). Game thread.
 void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid);
 
+// HOST kerfur conversion (K-4b): register a BP-internally-spawned prop (the turn_off output -- the
+// verb spawns it via EX_CallMath, so no Init POST fires for it) as a host Prop Element shadow WITHOUT
+// the wire PropSpawn broadcast (the SOLE conversion signal is KerfurConvert -- kerfur redesign 10.3).
+// Reads the actor's class + key, MarkPropElement's the shadow, and returns the host-range eid
+// (kInvalidId on no-key / failure). The dying prop form is released the symmetric SILENT way via
+// prop_element_tracker::UnmarkKnownKeyedProp (no PropDestroy). Game thread.
+coop::element::ElementId RegisterHostPropSilent(void* actor);
+
 // GetPropElementIdForActor moved to coop::prop_element_tracker (M-1
 // 2026-05-29 follow-up). #include "coop/prop_element_tracker.h" instead.
 

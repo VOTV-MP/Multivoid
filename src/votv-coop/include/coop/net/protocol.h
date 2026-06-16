@@ -1969,8 +1969,10 @@ static_assert(sizeof(PropStickStatePayload) == 64, "PropStickStatePayload must b
 // the conversion's outcome (which prop class, floppy, transform) is the HOST
 // BP's own business and mirrors through the entity pipelines.
 struct KerfurConvertPayload {
-    uint32_t elementId;  // v78: now the stable KerfurId (host-range), not the per-form eid; the host
-                         //      resolves it via kerfur_entity::GetKerfurById -> the current-form actor.
+    uint32_t elementId;  // the dying form's host-range MIRROR eid (the client is eid-based -- redesign
+                         //      11). The host resolves BOTH the actor (MirrorManager::Get) and the
+                         //      stable KerfurId (kerfur_entity::GetKerfurIdForEid) from it, runs the
+                         //      verb, and the result rides KerfurConvert (the host->all broadcast).
     uint8_t  toProp;     // 1 = NPC -> prop (turn_off); 0 = prop -> NPC (turn on)
     uint8_t  _pad[3];    // zeroed
 };
@@ -2132,10 +2134,11 @@ inline constexpr uint8_t kFrozen          = 0x04;
 inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static @0x02D8
 inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep  @0x02DD
 inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn @0x02D9
-inline constexpr uint8_t kFlagKerfur      = 0x40;  // v78: this PropSpawn carries a KERFUR prop (prop-form
-                                                   // kerfur join-snapshot) -> the receiver routes it to
-                                                   // kerfur_entity (RegisterClientKerfur) after the normal
-                                                   // prop mirror install, so a joiner tracks the KerfurId.
+inline constexpr uint8_t kFlagKerfur      = 0x40;  // v78 (K-5): this PropSpawn carries a KERFUR prop
+                                                   // (prop-form kerfur join-snapshot) -> the host stamps
+                                                   // it so the joiner's receiver routes it to the kerfur
+                                                   // hold/identity path. (The client is eid-based -- it
+                                                   // does NOT track KerfurIds.)
 }  // namespace propspawn_flags
 
 // v5 Phase 5S0 Inc2: prop-destroy reliable payload. WireKey identifies the

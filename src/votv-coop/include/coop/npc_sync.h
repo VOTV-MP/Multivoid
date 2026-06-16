@@ -26,6 +26,8 @@
 
 #include "coop/element/element.h"  // ElementId (GetNpcIdForActor)
 
+#include <string>  // RegisterHostNpcSilent className
+
 namespace coop::net {
 class Session;
 }  // namespace coop::net
@@ -109,6 +111,19 @@ void MapActorToNpcId(void* actor, coop::element::ElementId eid);
 // a map key only (never dereferenced) -- callable on a PendingKill/purged
 // pointer; no-ops when the actor is untracked (double-call safe).
 void SyncDestroyedNpcActor(void* actor);
+
+// HOST kerfur conversion (K-4b): register a BP-internally-spawned NPC (the turn-on output -- the verb
+// spawns via EX_CallMath, so no NpcSpawn_POST fires for it) as a host Npc Element WITHOUT broadcasting
+// EntitySpawn. The SOLE wire signal for a conversion is KerfurConvert (kerfur redesign 10.3 -- no
+// redundant EntitySpawn). AllocAndInstall + bind actor + reverse-map. Returns the host-range eid, or
+// kInvalidId on failure. Game thread.
+coop::element::ElementId RegisterHostNpcSilent(void* actor, const std::wstring& className);
+
+// HOST kerfur conversion (K-4b): release the dying NPC form's Element by `eid` WITHOUT broadcasting
+// EntityDestroy (KerfurConvert carries oldEid for the clients). Take from NpcMirrors + erase the actor
+// reverse-map entry + defer-destroy via ElementDeleter. Mirror of NpcDestroy_PRE minus the wire send.
+// Game thread.
+void ReleaseNpcElementSilent(coop::element::ElementId eid);
 
 // Trust-boundary check used by both host (interceptor) and client
 // (receiver) sides: returns true iff `cls` is a UClass* that derives from
