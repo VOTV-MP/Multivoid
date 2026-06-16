@@ -251,3 +251,79 @@ driver. The ghost-adopt target flips from a fuzzy Gap-I-1 race to the authoritat
   `IngestSpawnedConversionProps` + collapse the dual-driver. The new path REPLACES the old.
 - **K-5**: class-gate (`MarkPropElement` + `EnsureHeldItemBroadcast`) + `KerfurHoldRequest` + `kFlagKerfur`
   join-snapshot + update the `kerfur_toggle` dev trigger to request (not call the verb directly).
+
+---
+
+## 11. AS-BUILT PROGRESS + the precise K-4b/K-5 plan (2026-06-16, session 19)
+
+**DONE + verified (committed, pushed, smoke-PASS):**
+- **K-0** `da13665a` — `npc_world_enum` extracted from `npc_sync` (behavior-preserving; audit CLEAN).
+- **K-1** — `MidSessionConverge ⇒ savePersisted=0` preserved in the moved code (already shipped a25f636c).
+- **K-3** `7a429abe` — `ElementType::Kerfur=4` + `coop/kerfur_entity.{h,cpp}`: the HOST-side KerfurId table.
+  Verified live: `kerfur_entity: reserved KerfurId=2278 ... currentEid=2277` (K distinct from the per-form
+  eid). `kerfurtoggle` smoke PASS (zero regression). Populated only via the world-enum/converge path so
+  far (the fresh-spawn + the conversion driving land in K-4b).
+- **K-4a** `36678977` — protocol **v78** wire definitions ONLY (build-clean, behavior-neutral):
+  `KerfurConvert=74` (host->all, `KerfurConvertBroadcastPayload` 104B `{kerfurId, oldEid, newEid, toForm,
+  rejected, transform, newClassName}`), `KerfurHoldRequest=75` (`KerfurHoldPayload` 8B), `kFlagKerfur=0x40`,
+  `KerfurConvertPayload.elementId` now carries the stable KerfurId. NOT yet sent/handled.
+
+**KEY SIMPLIFICATION (decided, not yet applied):** the CLIENT stays **eid-based** — it does NOT track
+KerfurIds. So in K-4b **REMOVE the client maps + `RegisterClientKerfur`** from `kerfur_entity.{h,cpp}`
+(landed in K-3 scaffolding, turned out unused). The client uses `IsKerfurClass(actor)` (the class-gate
+predicate) + the `oldEid`/`newEid` carried in `KerfurConvert`. Only the HOST owns the KerfurId table.
+
+### K-4b — the conversion rewrite (proto v78 goes live). File-by-file:
+
+1. **Full host KerfurId population at FIRST sighting** (so every kerfur has a KerfurId BEFORE any
+   conversion): add `AllocKerfurId` in `npc_sync.cpp`'s `NpcSpawn_POST` (fresh kerfur NPC: dev-spawn /
+   purchase) gated on `kerfur_entity::IsKerfurActor` + in the host's kerfur-PROP first registration
+   (prop_element_tracker / remote_prop host path) with `Form::Prop`. (world-enum already done in K-3.)
+2. **`kerfur_entity` (host) `BindFormActor(kerfurId, newActor, newIdx, newEid, newForm, className)`** —
+   the SOLE conversion signal. Update the record (K -> newForm/newEid/newActor) + broadcast
+   `KerfurConvert(K, oldEid, newEid, newForm, transform, className)`. Reject path: actor still live ->
+   broadcast `rejected=1` (no transform).
+3. **`kerfur_entity` (client) `OnKerfurConvert(payload)`** — `rejected` -> no-op. Else: destroy the mirror
+   at `oldEid` (`npc_mirror::DestroyMirrorForEid` for an NPC old-form / a new `remote_prop::DestroyPropMirrorForEid`
+   for a prop old-form -- both = Take + K2), then at `newEid`: ADOPT the claimed local ghost (NPC:
+   `kerfur_convert::FindParkedGhostNpcNear` -> `npc_mirror::AdoptExistingNpcAsMirror(ghost, newEid, cls)`;
+   PROP: the existing Gap-I-1 frozen-ghost adopt, now keyed to the authoritative `newEid`) ELSE materialize
+   fresh (`npc_mirror::SpawnFreshNpcMirror` / the remote_prop materialize-at-eid).
+4. **SILENT host element ops** (so `KerfurConvert` is the ONLY wire signal -- no redundant
+   EntityDestroy/PropSpawn for a conversion; RULE 2): add `npc_sync::ReleaseNpcElementSilent(eid)` (Take
+   from NpcMirrors + erase the reverse map, NO `SendEntityDestroy`) + a silent host prop register/release
+   (AllocAndInstall + reverse-map, NO `SendPropSpawn`). `BindFormActor` calls the silent release (old form)
+   + silent register (new form, -> newEid). [If the silent ops prove tricky, the lower-risk fallback is to
+   keep the existing EntityDestroy/PropSpawn pipeline and let `KerfurConvert` PRE-EMPT the adopt -- the
+   redundant spawn then hits the dup-eid drop. Prefer the silent ops (proper); fall back only if blocked.]
+5. **`kerfur_convert.cpp`**: DELETE `IngestSpawnedConversionProps` (+ its `ConvergeAfterConversion` call) +
+   the now-dead ghost-machinery includes if they become unused. Rewrite `ConvergeAfterConversion` to resolve
+   the new-form actor + call `BindFormActor`. `OnConvertRequest`: `payload.elementId` is the KerfurId ->
+   `kerfur_entity::GetKerfurById` -> current actor -> run verb -> `BindFormActor`. The client poll's
+   `SendConvertRequestDirect`/`SendQueuedRequest` send the KerfurId (`GetKerfurIdForEid(mirrorEid)`).
+   Collapse the dual-driver (host poll = host-initiated detection only; client = request only).
+6. **Routing** (the 3-place rule): `event_feed.cpp` add `KerfurConvert` + `KerfurHoldRequest` to the
+   `HandleStateEvent` family list (line ~441); `event_dispatch_state.cpp` add a `KerfurConvert` case
+   (CLIENT-only, senderPeerSlot==0 gate -> `kerfur_entity::OnKerfurConvert`) + a `KerfurHoldRequest` case
+   (HOST-only -> `kerfur_convert::OnHoldRequest`, K-5).
+7. Build -> deploy x4 -> `mp.py kerfurtoggle` 10x. PASS = same KerfurId across all 10 cycles on both logs,
+   NO `IngestSpawnedConversionProps`/`outside the host range`, the `KerfurConvert` lines present.
+
+### K-5 — client-mint class-gate + held-kerfur (the user's #1 pain: grab-dupe):
+1. `prop_element_tracker.cpp` `MarkPropElement`: early-return `if (kerfur_entity::IsKerfurClass(cls)) return;`
+   (a kerfur prop's identity is host-managed; a client must NEVER mint a peer-range eid for it -- this kills
+   Failures #1/#3/#6).
+2. `trash_collect_sync.cpp` `EnsureHeldItemBroadcast`: `if (kerfur_entity::IsKerfurActor(heldActor)) {`
+   send `KerfurHoldRequest(kerfurMirrorEid, held=1)` (the host-range eid the client's prop mirror already
+   has) `; return false; }` -- the host's `OnHoldRequest` records the holder so its prop-pose authority cedes
+   to the holding client (shared-entity, like the ATV). NO peer-range mint.
+3. `kerfur_entity::OnHoldRequest(payload, slot)` (host): record slot<->kerfur; cede pose authority.
+4. `remote_prop_spawn::OnSpawn`: `if (physFlags & kFlagKerfur)` route the prop-form join-snapshot through
+   the kerfur path (the host stamps `kFlagKerfur` when it connect-broadcasts a prop-form kerfur).
+5. Update `coop/dev/kerfur_toggle` to send a `KerfurConvertRequest` (not call `dropKerfurProp` directly) so
+   the no-client-ghost-mint invariant holds in the autotest. Add a `kerfurgrab` smoke (client grabs a kerfur
+   prop -> NO peer-range PropSpawn; `KerfurHoldRequest` on both logs).
+
+KEEP throughout: the POLL detection, `ClaimConversionGhosts`/`FindParkedGhostNpcNear`/`CleanupParkedGhosts`
+(RE-mandated -- the PE-invisible local conversion is unavoidable), the Npc/Prop pose pipelines, and the
+connect-edge save-load class-match adoption (`AdoptExistingNpcAsMirror` via `npc_adoption`).
