@@ -306,6 +306,19 @@ void* ReadMainPlayerLookAtActor(void* mainPlayer) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
 }
 
+bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex) {
+    releaseEToUse = false;
+    actionIndex   = -1;
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    const int32_t offRel = ue_wrap::reflected_offset::MainPlayer_releaseEToUse();
+    const int32_t offIdx = ue_wrap::reflected_offset::MainPlayer_actionIndex();
+    if (offRel < 0 || offIdx < 0) return false;  // BP class not loaded / fields renamed (recook)
+    auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
+    releaseEToUse = *reinterpret_cast<bool*>(base + offRel);
+    actionIndex   = *reinterpret_cast<int32_t*>(base + offIdx);
+    return true;
+}
+
 bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);

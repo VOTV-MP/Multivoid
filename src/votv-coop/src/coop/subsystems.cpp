@@ -25,6 +25,7 @@
 #include "coop/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/kerfur_convert.h"  // v67: host-authoritative kerfur on/off conversion (the dupe fix)
 #include "coop/kerfur_command.h"  // v74: host-authoritative kerfur menu command relay + ownership follow
+#include "coop/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
 #include "coop/kerfur_entity.h"   // K-3: stable-KerfurId authority table (the redesign root fix)
 #include "coop/prop_stick_sync.h"  // v68: wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/teleport_client.h"  // TeleportSlotToHost: spawn a joiner at the host pose (connect edge)
@@ -110,6 +111,7 @@ void Install(coop::net::Session& session) {
     coop::kerfur_entity::SetSession(&session);  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
     coop::kerfur_convert::Install(&session);  // v67: host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
     coop::kerfur_command::Install(&session);  // v74: host-authoritative kerfur menu command relay + ownership-aware Follow
+    coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::prop_stick_sync::Install(&session); // v68: wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);      // v71: the Minecraft sleep gate (isSleep edge poll -> host tally -> accelerate/end phases)
     coop::wisp_attack_sync::Install(&session); // v72: Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
@@ -250,6 +252,7 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_convert::OnDisconnect();      // v67: drop pending host-menu converges
     coop::kerfur_entity::OnDisconnect();       // K-3: clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();      // v74: drop pending menu commands + owned-follow map
+    coop::kerfur_menu_input::OnDisconnect();   // drop the cached session (the InpActEvt_use observer stays registered)
     coop::prop_stick_sync::OnDisconnect();     // v68: drop commit-pending stick records
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();

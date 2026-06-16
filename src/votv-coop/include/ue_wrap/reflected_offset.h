@@ -49,6 +49,9 @@ int32_t MainPlayer_holding_actor();
 // E-press (InpActEvt_use) this is the door/interactable being used -- read it in the
 // proven-firing InpActEvt_use observer to identify the door for host-authoritative sync.
 int32_t MainPlayer_lookAtActor();
+// Radial-menu confirm fields (kerfur menu verb detection on the client InpActEvt_use seam).
+int32_t MainPlayer_releaseEToUse();  // 0x0E88: the "release E to use" radial confirm flag
+int32_t MainPlayer_actionIndex();    // 0x0A98: the highlighted radial-menu option index
 // Ragdoll/faint DISPLAY state (vitals pillar Inc2b, 2026-05-31). isRagdoll is
 // the AnimBP gate flipped by ragdollMode() -- set by ANY ragdoll cause (manual
 // C-key InpActEvt_ragdoll_..._25, exhaustion faint(), KO). `dead` is the death

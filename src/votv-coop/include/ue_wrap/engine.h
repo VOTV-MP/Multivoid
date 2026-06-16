@@ -338,6 +338,13 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 // aiming at anything / mainPlayer dead. Game thread.
 void* ReadMainPlayerLookAtActor(void* mainPlayer);
 
+// The local player's radial-menu confirm state: AmainPlayer_C::releaseEToUse @0x0E88 (true on the
+// "release E to use" radial confirm) + actionIndex @0x0A98 (the highlighted option's index into the
+// target's getActionOptions list). Returns false (outs untouched) if mainPlayer is dead or the
+// fields are unresolved (recook). Game thread. Used by coop/kerfur_menu_input to relay the client's
+// kerfur radial verb (the actionName dispatch itself is EX_LocalVirtualFunction / PE-invisible).
+bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex);
+
 // Write both AmainPlayer_C::grabbing_actor + AmainPlayer_C::grabbing_component
 // in a single dispatch. Used by the autotest harness's synthetic grab path
 // where the test code drives UPhysicsHandleComponent.GrabComponentAtLocation

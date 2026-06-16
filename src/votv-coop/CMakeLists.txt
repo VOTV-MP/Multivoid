@@ -218,6 +218,7 @@ add_library(votv-coop SHARED
     src/coop/interactable_sync.cpp
     src/coop/kerfur_convert.cpp
     src/coop/kerfur_command.cpp
+    src/coop/kerfur_menu_input.cpp
     src/coop/kerfur_entity.cpp
     src/coop/kerfur_prop_adoption.cpp
     src/coop/keypad_sync.cpp

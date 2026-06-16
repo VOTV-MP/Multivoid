@@ -101,6 +101,8 @@ VC_DEFINE_OFFSET(MainPlayer_isRagdoll,            L"mainPlayer_C", L"isRagdoll")
 VC_DEFINE_OFFSET(MainPlayer_dead,                 L"mainPlayer_C", L"dead")
 VC_DEFINE_OFFSET(MainPlayer_activeInterface,      L"mainPlayer_C", L"activeInterface")  // 0x07E0: THE inside-a-device discriminator (v63 occupancy)
 VC_DEFINE_OFFSET(MainPlayer_HitResult,            L"mainPlayer_C", L"HitResult")        // 0x0744: FHitResult(0x88); Actor weakptr at +0x68 (deny aim-clear)
+VC_DEFINE_OFFSET(MainPlayer_releaseEToUse,        L"mainPlayer_C", L"releaseEToUse")    // 0x0E88: radial "release E to use" confirm flag (kerfur menu detect)
+VC_DEFINE_OFFSET(MainPlayer_actionIndex,          L"mainPlayer_C", L"actionIndex")      // 0x0A98: highlighted radial-menu option index
 
 VC_DEFINE_OFFSET(AnimBP_kerfur_walkSpeed,           P::name::AnimBPKerfurRegularClass, L"walkSpeed")
 VC_DEFINE_OFFSET(AnimBP_kerfur_Pawn,                P::name::AnimBPKerfurRegularClass, L"Pawn")
