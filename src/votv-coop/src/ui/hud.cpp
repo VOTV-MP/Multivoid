@@ -232,8 +232,10 @@ void DrawLocalVoiceIcon() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();  // under windows, like the nameplates
     // Offset right of the far-left edge so it clears VOTV's native bottom-left vitals
     // column (food / stamina icons + their numbers), which the old x=26 fought with
-    // (user, 2026-06-13). ~110 px clears icon+4-digit readout at 1080p.
-    ui::voice_icons::Draw(dl, ImVec2(110.f, io.DisplaySize.y - 30.f), 18.f, icon, 0.9f);
+    // (user, 2026-06-13). Per user (2026-06-16) the local badge is 4x larger (18->72 px)
+    // and pushed further right (x=170) to fully clear the vitals readout; the center is
+    // lifted to y-56 so the taller glyph stays on-screen above the bottom edge at 1080p.
+    ui::voice_icons::Draw(dl, ImVec2(170.f, io.DisplaySize.y - 56.f), 72.f, icon, 0.9f);
 }
 
 void Render() {

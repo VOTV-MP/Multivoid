@@ -425,7 +425,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
                     if (session.IsSlotReady(slot)) {
                         coop::prop_snapshot::TriggerForSlot(slot);
-                        UE_LOGI("net_pump: re-snapshot ready slot %d after world-change re-seed", slot);
+                        UE_LOGI("net_pump: re-snapshot ready slot %d after re-seed", slot);
                     }
                 }
             };
@@ -480,6 +480,34 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 UE_LOGI("net_pump: world changed without a mass purge -- re-seeded (%zu new keyed)", added);
                 if (added > 0) retriggerReadySlots();
                 maybeReAnnounce();  // only if the UWorld actually swapped (see g_announcedWorld)
+            } else if (inGameplayWorld &&
+                       coop::prop_element_tracker::HasSeededOnce() &&
+                       coop::prop_element_tracker::IsRegistrySeededForCurrentWorld()) {
+                // STEADY gameplay world (no level transition): the ONLY ongoing
+                // detector for props that come into existence mid-session via
+                // EX_CallMath -- the Q spawn-menu, the toolgun, the ambient
+                // spawners, and grab-morph chipPiles. Those bypass UObject::
+                // ProcessEvent (our sole hook seam), so the Init-POST observer
+                // never sees them: they sit UNTRACKED (overlay "key=.. / no eid")
+                // and are never mirrored to peers (user 2026-06-16: spawn-menu
+                // props + piles invisible on the client). This 0.25 Hz
+                // GUObjectArray re-seed (same cadence + cost class as the reaper
+                // above; the FindObjectByClass world resolve is shared) mints
+                // each new keyed prop's eid AND each keyless chipPile's eid (the
+                // SeedWalk_ IsChipPile branch), then the retrigger re-enumerates
+                // them to connected peers (client RegisterPropMirror dedupes the
+                // ones it already holds) and eager-enrolls new chipPiles in the
+                // host death-watch via StartEnumerationFor -- so a host grab /
+                // removal now broadcasts PropDestroy(eid) and the client drops
+                // its stale pile. Mirrors the NPC precedent (npc_world_enum's
+                // periodic EX_CallMath re-register). added==0 (steady, nothing
+                // newly spawned) costs only the walk -- zero peer traffic.
+                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
+                if (added > 0) {
+                    UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
+                            "(spawn-menu/toolgun/ambient/pile) -- mirroring to connected peers", added);
+                    retriggerReadySlots();
+                }
             }
         }
     }
