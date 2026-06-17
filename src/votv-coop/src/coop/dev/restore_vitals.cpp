@@ -75,4 +75,27 @@ void Restore() {
     UE_LOGI("restore_vitals: Restore triggered (local apply + peer broadcast)");
 }
 
+void SetLow() {
+    // Strict client lockout (same as Restore -- dev verbs are host-only).
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("restore_vitals: SetLow REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
+    // LOCAL ONLY: set the tester's food/sleep/health to 10. No broadcast -- the v19 vitals DISPLAY
+    // stream mirrors these low values to peers' nameplates automatically, so this stays a one-peer test
+    // (the point is to see MY low-vitals effects + confirm they show on my puppet). Posted to the game
+    // thread (saveSlot writes touch BP state); coffeePower untouched (its >0 BP side-effect, see header).
+    GT::Post([] {
+        constexpr float kLow = 10.0f;
+        const bool food   = V::Write(V::Field::Food,   kLow);
+        const bool sleep  = V::Write(V::Field::Sleep,  kLow);
+        const bool health = V::Write(V::Field::Health, kLow);
+        if (food && sleep && health)
+            UE_LOGI("restore_vitals: vitals set LOW (food/sleep/health = %.0f)", kLow);
+        else
+            UE_LOGW("restore_vitals: set-low incomplete (food=%d sleep=%d health=%d) -- "
+                    "save not registered / still booting?", food, sleep, health);
+    });
+}
+
 }  // namespace coop::dev::restore_vitals

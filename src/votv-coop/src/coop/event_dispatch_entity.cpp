@@ -12,6 +12,7 @@
 #include "coop/join_progress.h"
 #include "coop/npc_mirror.h"
 #include "coop/players_registry.h"
+#include "coop/world_actor_sync.h"  // v80 (B3b): non-Character event-actor mirror receivers
 #include "coop/prop_stick_sync.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
@@ -415,6 +416,55 @@ void HandleEntityEvent(net::Session& session,
         net::EntityDestroyPayload pCopy = p;
         ue_wrap::game_thread::Post([pCopy] {
             ::coop::npc_mirror::OnEntityDestroy(pCopy);
+        });
+        break;
+    }
+    case net::ReliableKind::WorldActorSpawn: {
+        // v80 (B3b): host-broadcast non-Character event-actor spawn (the WorldActor analogue of
+        // EntitySpawn). Host-authoritative -- reject non-host senders (a malicious client could
+        // otherwise flood crafted classNames forcing FindClass walks on the host game thread).
+        // OnWorldActorSpawn does the full per-field validation (finite + bounds + allowlist + dedup);
+        // its UFunction calls are game-thread only, so dispatch via GT::Post.
+        if (msg.payloadLen < sizeof(net::EntitySpawnPayload)) {
+            UE_LOGW("event_feed: WorldActorSpawn payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::EntitySpawnPayload));
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: WorldActorSpawn from non-host senderPeerSlot=%d -- dropping (host-only)",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::EntitySpawnPayload pWa{};
+        std::memcpy(&pWa, msg.payload, sizeof(pWa));
+        if (pWa.className.len > 63) {
+            UE_LOGW("event_feed: WorldActorSpawn className.len=%u > 63 -- dropping", pWa.className.len);
+            break;
+        }
+        net::EntitySpawnPayload pWaCopy = pWa;
+        ue_wrap::game_thread::Post([pWaCopy] {
+            ::coop::world_actor_sync::OnWorldActorSpawn(pWaCopy);
+        });
+        break;
+    }
+    case net::ReliableKind::WorldActorDestroy: {
+        // v80 (B3b): host-broadcast non-Character event-actor destroy (the WorldActor analogue of
+        // EntityDestroy). Host-authoritative.
+        if (msg.payloadLen < sizeof(net::EntityDestroyPayload)) {
+            UE_LOGW("event_feed: WorldActorDestroy payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::EntityDestroyPayload));
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: WorldActorDestroy from non-host senderPeerSlot=%d -- dropping (host-only)",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::EntityDestroyPayload pWaD{};
+        std::memcpy(&pWaD, msg.payload, sizeof(pWaD));
+        net::EntityDestroyPayload pWaDCopy = pWaD;
+        ue_wrap::game_thread::Post([pWaDCopy] {
+            ::coop::world_actor_sync::OnWorldActorDestroy(pWaDCopy);
         });
         break;
     }

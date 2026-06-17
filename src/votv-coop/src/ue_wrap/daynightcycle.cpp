@@ -23,10 +23,12 @@ void*   g_cycleCls    = nullptr;  // daynightCycle_C UClass
 int32_t g_totalTimeOff = -1;      // AdaynightCycle_C::totalTime (Alpha 0.9.0-n: 0x02B0)
 int32_t g_dayOff       = -1;      // AdaynightCycle_C::Day       (0x0298)
 int32_t g_timeScaleOff = -1;      // AdaynightCycle_C::TimeScale (0x02B4)
+int32_t g_maxTimeOff   = -1;      // AdaynightCycle_C::MaxTime   (0x02AC) -- one day's length in totalTime units
 
 constexpr int32_t kTotalTimeOffFallback = 0x02B0;
 constexpr int32_t kDayOffFallback       = 0x0298;
 constexpr int32_t kTimeScaleOffFallback = 0x02B4;
+constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
 
 void* g_cycleCache = nullptr;  // cached singleton (GT-only)
 
@@ -43,14 +45,17 @@ bool EnsureResolved() {
     if (dayOff < 0) dayOff = kDayOffFallback;
     int32_t scaleOff = R::FindPropertyOffset(cls, L"TimeScale");
     if (scaleOff < 0) scaleOff = kTimeScaleOffFallback;
+    int32_t maxOff = R::FindPropertyOffset(cls, L"MaxTime");
+    if (maxOff < 0) maxOff = kMaxTimeOffFallback;
 
     g_cycleCls     = cls;
     g_totalTimeOff = totalOff;
     g_dayOff       = dayOff;
     g_timeScaleOff = scaleOff;
+    g_maxTimeOff   = maxOff;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X",
-            cls, totalOff, dayOff, scaleOff);
+    UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X",
+            cls, totalOff, dayOff, scaleOff, maxOff);
     return true;
 }
 
@@ -76,6 +81,13 @@ bool ReadClock(float& totalTime, float& day, float& timeScale) {
     totalTime = *reinterpret_cast<const float*>(base + g_totalTimeOff);
     day       = *reinterpret_cast<const float*>(base + g_dayOff);
     timeScale = *reinterpret_cast<const float*>(base + g_timeScaleOff);
+    return true;
+}
+
+bool ReadMaxTime(float& maxTime) {
+    void* cyc = Cycle();
+    if (!cyc || g_maxTimeOff < 0) return false;
+    maxTime = *reinterpret_cast<const float*>(reinterpret_cast<const char*>(cyc) + g_maxTimeOff);
     return true;
 }
 

@@ -32,6 +32,11 @@ void* Cycle();
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);
 
+// Read MaxTime -- the length of ONE day in `totalTime` units (the within-day clock runs [0, MaxTime),
+// wrapping to advance Day; the sun angle is totalTime/MaxTime of a full rotation). Lets a caller map a
+// time-of-day FRACTION (0..1) to a totalTime (frac * MaxTime). False if unresolved. Game thread.
+bool ReadMaxTime(float& maxTime);
+
 // Overwrite the cycle's clock (direct field writes -- the loadtime equivalent, no
 // UFunction, unconditional). The client applies the host's authoritative clock here; the
 // cycle's own ReceiveTick then re-derives the sun. No-op if not resolved. Game thread.

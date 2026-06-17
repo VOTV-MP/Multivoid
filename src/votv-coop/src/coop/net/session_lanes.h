@@ -48,6 +48,11 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::PropConvert:    return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
+    // v80 (B3b): WorldActorSpawn + WorldActorDestroy share the Spawn/Destroy lane for the same reason --
+    // GNS guarantees in-order delivery WITHIN a lane, so a destroy can't overtake its spawn (phantom
+    // mirror) under backpressure. (Host-authoritative: NOT relayable, NOT pre-world-sendable.)
+    case ReliableKind::WorldActorSpawn:   return Lane::Bulk;
+    case ReliableKind::WorldActorDestroy: return Lane::Bulk;
     // v34: the loading-screen brackets MUST share PropSpawn's lane so GNS's in-lane
     // ordering delivers them strictly Begin -> [every PropSpawn] -> Complete. If
     // SnapshotComplete rode a different lane it could overtake the prop stream under

@@ -157,6 +157,12 @@ public:
     // no per-tick heap alloc on either side.
     void SetLocalNpcPoseBatch(const std::vector<EntityPoseSnapshot>& batch);
 
+    // v80 (B3b): HOST publishes the current WorldActor pose batch (one WorldActorPoseSnapshot per live
+    // non-Character event actor); the net thread fan-outs ONE WorldActorPose datagram to all peers each
+    // sendHz tick. Sibling of SetLocalNpcPoseBatch -- same copy-into-localWorldActorBatch_ shape (no
+    // per-tick heap alloc), an EMPTY batch clears it (actors gone -> stop sending). Game thread.
+    void SetLocalWorldActorPoseBatch(const std::vector<WorldActorPoseSnapshot>& batch);
+
     // Per-peer accessors. peerSlot is the coop::players::Registry slot
     // (0 = host, 1..kMaxPeers-1 = clients). Returns false if peerSlot is
     // out of range, that slot has no remote pose yet, or aggregate state
@@ -172,6 +178,11 @@ public:
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
     // packet motion). Returns false if no new batch since the last take. Net thread fills it.
     bool TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out);
+
+    // v80 (B3b, CLIENT game thread): move out the latest received WorldActor pose batch + clear the
+    // new-data flag (consume-once, same as TakeRemoteNpcBatch). Returns false if no new batch since
+    // the last take. Net thread fills it.
+    bool TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out);
 
     // Game thread: queue a reliable message. Host fan-outs to all connected
     // clients; client sends to host. Returns false on payload-too-large or
@@ -363,6 +374,12 @@ private:
     // it for the game thread (takes remoteMutex_).
     int  SerializeLocalNpcBatch(uint8_t* buf);
     void StoreRemoteNpcBatch(const void* data, int len, uint32_t seq);
+    // v80 (B3b) WorldActor pose batch send/receive (defined in session_worldactor.cpp -- the
+    // session_npc.cpp clone). Same contract: Serialize builds the body after the leading PacketHeader
+    // (returns 0 when empty / on a client -- only the host populates the local batch); Store parses +
+    // newest-wins-stores one received datagram for the game thread. localMutex_ / remoteMutex_ as NPC.
+    int  SerializeLocalWorldActorBatch(uint8_t* buf);
+    void StoreRemoteWorldActorBatch(const void* data, int len, uint32_t seq);
     // v66 voice receive-side store (defined in session_voice.cpp): validate one
     // VoiceFrame datagram, queue it on the voice inbox, host-relay. Net thread.
     void StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int len);
@@ -441,6 +458,10 @@ private:
     // + fan-outs ONE EntityPose datagram). Empty vector = nothing to send (NPCs gone).
     std::vector<EntityPoseSnapshot> localNpcBatch_;
     bool hasLocalNpcBatch_ = false;
+    // v80 (B3b): host WorldActor pose batch (game thread writes via SetLocalWorldActorPoseBatch, net
+    // thread reads + fan-outs ONE WorldActorPose datagram). Empty vector = nothing to send.
+    std::vector<WorldActorPoseSnapshot> localWorldActorBatch_;
+    bool hasLocalWorldActorBatch_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -466,6 +487,11 @@ private:
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;
     bool     hasRemoteNpcBatch_ = false;
     uint32_t lastRemoteNpcSeq_  = 0;
+    // v80 (B3b): latest received WorldActor pose batch (host->client; ONE slot, host is the only
+    // sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteWorldActorBatch.
+    std::vector<WorldActorPoseSnapshot> remoteWorldActorBatch_;
+    bool     hasRemoteWorldActorBatch_ = false;
+    uint32_t lastRemoteWorldActorSeq_  = 0;
     // Per-slot expected senderEpoch latched from the first packet arriving
     // from that slot (PR-FOUNDATION-1b v16). Zero == not yet latched;
     // subsequent packets whose header epoch doesn't match are dropped at

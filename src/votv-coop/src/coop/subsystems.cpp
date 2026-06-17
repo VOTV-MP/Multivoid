@@ -64,6 +64,7 @@
 #include "coop/npc_mirror.h"
 #include "coop/npc_sync.h"
 #include "coop/npc_world_enum.h"  // K-0: RegisterExistingWorldNpcs (moved out of npc_sync)
+#include "coop/world_actor_sync.h"  // v80 (B3b): non-Character event-actor transform mirror (sibling of npc_sync)
 #include "coop/players_registry.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/prop_snapshot.h"
@@ -80,6 +81,7 @@ void Install(coop::net::Session& session) {
     coop::prop_lifecycle::InstallInventory(&session);
     coop::prop_lifecycle::Install(&session);
     coop::npc_sync::Install(&session);
+    coop::world_actor_sync::Install(&session);  // v80 (B3b): non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)
     coop::item_activate::Install(&session);  // Phase 5F flashlight
     coop::player_damage::Install(&session);  // vitals Inc3-WIRE damage relay (send + owner-apply)
     coop::weather_sync::Install(&session);   // Phase 5W weather
@@ -183,6 +185,7 @@ void ConnectReplayForSlot(int slot) {
     coop::trash_pile_sync::QueueConnectBroadcastForSlot(slot);    // v57 pile counters (adopt=1) + depleted-key replay
     coop::npc_world_enum::RegisterExistingWorldNpcs(coop::npc_world_enum::NpcEnumOrigin::ConnectEdge);  // pre-existing/level-load NPCs (the save's kerfur) -> joiner adopts its twin
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);           // existing NPCs -> joiner
+    coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);   // v80 (B3b): existing event WorldActors -> joiner
     coop::balance_sync::OnClientConnect(slot);                    // v30: host's current balance
     coop::player_inventory_sync::EnsurePlayerFile(slot);         // v73: ensure this peer's per-save inventory file exists
     // v73 Inc4: the host->client apply-blob push is NOT here -- ConnectReplayForSlot fires at
@@ -248,6 +251,7 @@ DisconnectStats DisconnectAll() {
     stats.initProcessedDropped = coop::prop_lifecycle::OnDisconnect().initProcessedDropped;
     stats.snapPending = coop::prop_snapshot::OnDisconnect();
     coop::npc_sync::OnDisconnect();
+    coop::world_actor_sync::OnDisconnect();    // v80 (B3b): drain WorldActor mirrors (K2 client ones) + clear host reverse-map
     coop::npc_adoption::OnSessionEnd();        // v75: drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd(); // K-6: drop pending prop-form kerfur adoptions
     coop::host_spawn_watcher::OnDisconnect();  // M2: drop the ambient-prop death-watch list
@@ -320,6 +324,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable};  coop::grime_sync::Tick(); }          // v42 surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_mirror::TickClientNpcs(); }  // v37 CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::world_actor_sync::TickPoseStream(); }       // v80 HOST: read event WorldActors -> publish WorldActorPose batch (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable};  coop::world_actor_sync::TickClientWorldActors(); } // v80 CLIENT: apply batch + drive WorldActor mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::trash_collect_sync::TickWatchReleasedClumps(&session); }  // emit atomic PropConvert (or PropDestroy) when a watched clump's unobservable morph-destroy fires
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // M2: ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_convert::Tick(); }  // v67: drain deferred kerfur conversion requests/converges (cheap no-op when empty)

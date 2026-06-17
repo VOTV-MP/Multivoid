@@ -512,6 +512,9 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
+    case MsgType::WorldActorPose:
+        StoreRemoteWorldActorBatch(data, len, seq);  // v80 (B3b) -> session_worldactor.cpp (parse + newest-wins store)
+        break;
     case MsgType::VoiceFrame:
         // v66 voice: a STREAM -- queue every arrival (no header-seq stale-drop;
         // the per-payload voice seq orders at the jitter buffer). Store + host
@@ -720,7 +723,11 @@ void Session::NetThread() {
             // returning 0 when there is no batch to send this tick (no intermediate copy).
             uint8_t npcBuf[kNpcPoseDatagramMax];
             const int npcMsgLen = SerializeLocalNpcBatch(npcBuf);
-            if (have || haveProp || haveRagdoll || npcMsgLen > 0) {
+            // v80 (B3b): the live WorldActor pose batch, serialized ONCE like the NPC batch (host-only
+            // producer -- SerializeLocalWorldActorBatch returns 0 on a client / when no actors stream).
+            uint8_t waBuf[kWorldActorPoseDatagramMax];
+            const int waMsgLen = SerializeLocalWorldActorBatch(waBuf);
+            if (have || haveProp || haveRagdoll || npcMsgLen > 0 || waMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
                     if (hConn == 0) continue;
@@ -760,6 +767,15 @@ void Session::NetThread() {
                         std::memcpy(npcBuf, &npcHdr, sizeof(npcHdr));
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, npcBuf, static_cast<uint32_t>(npcMsgLen),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                    }
+                    if (waMsgLen > 0) {  // v80 (B3b): WorldActor pose batch -- body built once above; stamp the header per-peer
+                        PacketHeader waHdr{};
+                        WriteHeader(waHdr, MsgType::WorldActorPose, sendSeq_.fetch_add(1), ownEpoch_);
+                        std::memcpy(waBuf, &waHdr, sizeof(waHdr));
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, waBuf, static_cast<uint32_t>(waMsgLen),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                         if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
                     }

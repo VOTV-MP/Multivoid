@@ -153,6 +153,8 @@ void Update(net::Session& session, void* localPlayer) {
         case net::ReliableKind::PropStickState:
         case net::ReliableKind::EntitySpawn:
         case net::ReliableKind::EntityDestroy:
+        case net::ReliableKind::WorldActorSpawn:    // v80 (B3b): non-Character event-actor lifecycle
+        case net::ReliableKind::WorldActorDestroy:
         case net::ReliableKind::ItemActivate: {
             HandleEntityEvent(session, msg, localPlayer);
             break;

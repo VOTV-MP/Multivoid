@@ -27,6 +27,14 @@ void SetSession(coop::net::Session* session);
 // wire-thread-safe).
 void Restore();
 
+// Menu action (Player > Vitals): set THIS peer's food/sleep/health LOW (10) for testing low-vitals
+// behaviour (blood-loss effect, faint/death visuals, the puppet's low-health nameplate). LOCAL ONLY --
+// no broadcast: the v19 vitals DISPLAY stream (PoseSnapshot healthFrac/foodFrac/sleepFrac) already
+// mirrors the low values to peers' nameplates, so setting only the tester's vitals is the right scope.
+// Host-only via dev_gate (a client lowering its own survival is harmless, but dev verbs are host-only).
+// Safe off the game thread (the write is posted to it).
+void SetLow();
+
 // Receiver: max-out food/sleep/health on the local UsaveSlot_C (coffeePower
 // intentionally excluded -- see header comment).
 // Called from event_feed.cpp on incoming ReliableKind::RestoreVitals, AND

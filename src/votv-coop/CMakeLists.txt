@@ -247,6 +247,7 @@ add_library(votv-coop SHARED
     src/coop/npc_pose_host.cpp
     src/coop/npc_sync.cpp
     src/coop/npc_world_enum.cpp
+    src/coop/world_actor_sync.cpp
     src/coop/prop_echo_suppress.cpp
     src/coop/prop_element_tracker.cpp
     src/coop/prop_lifecycle.cpp
@@ -267,8 +268,10 @@ add_library(votv-coop SHARED
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
+    src/coop/element/world_actor.cpp
     src/coop/net/session.cpp
     src/coop/net/session_npc.cpp
+    src/coop/net/session_worldactor.cpp
     src/coop/net/session_start.cpp
     src/coop/net/session_status.cpp
     src/coop/net/session_relay.cpp
@@ -322,6 +325,7 @@ add_library(votv-coop SHARED
     src/coop/dev/flashlight_setup.cpp
     src/coop/dev/pos_hud.cpp
     src/coop/dev/restore_vitals.cpp
+    src/coop/dev/set_clock.cpp
     src/coop/dev/spawn_menu_unlock.cpp
     src/coop/dev/spawn_npc.cpp
     src/coop/dev/kerfur_toggle.cpp

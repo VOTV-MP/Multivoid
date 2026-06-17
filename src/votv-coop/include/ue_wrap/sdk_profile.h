@@ -794,6 +794,37 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 
+// B3b (2026-06-17): the NON-Character event actors the Character-only NPC mirror cannot replicate.
+// npc_pose_drive drives pos + YAW-ONLY rotation + DriveCharacterMovement (CMC@0x288, ACharacter-only),
+// so these AActor/APawn ships/UFOs/saucers need a SEPARATE transform-only FULL-rotation mirror
+// (coop::element::WorldActor + coop/world_actor_sync). A SECOND BeginDeferred interceptor consumes this
+// list; it is DISJOINT from kNpcAllowlist (a class is one or the other), so the two interceptors are
+// conflict-free (game_thread.h multi-interceptor support). VERIFIED : AActor/APawn in the SDK
+// CXXHeaderDump ([[feedback-verify-game-domain-facts]]) -- agent ac176fda + the design doc
+// research/findings/votv-b3b-worldactor-mirror-design-2026-06-17.md. Matched by name (no host-allocated
+// wire id), but kept curated. v1 ships the high-value subset live + the rest behind smoke confirmation
+// of their spawn path (kavotia/piramidTest possession-risk classes are NOT here -- they go to B3a/verify).
+inline constexpr const wchar_t* kWorldActorAllowlist[] = {
+    L"ufoDropper_body_C",          // ufoDropper delivery saucer body (the gray "drop pod")
+    L"ufoDropper_car_C",           // ufoDropper car variant
+    L"ufoDropper_tank_C",          // ufoDropper tank variant
+    L"rozitBorg_C",                // Rozital mothership (borgRozital event)
+    L"arirShip_C",                 // ariral ship
+    L"skyUfo_C",                   // high-altitude sky UFO
+    L"jellyfish_C",                // space jellyfish
+    L"morningUfo_C",               // morningGay event UFO
+    L"tentacleBallsFollower_C",    // tentacle-balls follower
+    L"soltomiaCleaning_C",         // soltomia cleaning craft
+    L"kocker_C",                   // kocker
+    L"skyFallingEvent_C",          // "Sky Falling" event body (AskyFallingEvent_C; distinct from skyFallingEvent's emitter cue)
+    L"superEgger_C",               // super egger
+    L"igetis_C",                   // igetis
+    L"firetank_C",                 // firetank (APawn -- transform-only mirror is layout-agnostic)
+    L"piramidSubpawn_C",           // pyramid sub-pawn (APawn)
+};
+inline constexpr size_t kWorldActorAllowlistSize =
+    sizeof(kWorldActorAllowlist) / sizeof(kWorldActorAllowlist[0]);
+
 // kAmbientPropSpawnMirrorClasses (M2 HostSpawnWatcher, 2026-06-11): the transient
 // physics props the host's ambient spawners materialize via
 // BeginDeferredActorSpawnFromClass whose own Init is BP-internal/unobservable

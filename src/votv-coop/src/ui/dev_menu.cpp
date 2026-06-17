@@ -10,6 +10,7 @@
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/add_points.h"
 #include "coop/dev/restore_vitals.h"
+#include "coop/dev/set_clock.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
@@ -58,6 +59,34 @@ void RenderRestoreVitals() {
     if (ImGui::Button("Restore vitals (food / sleep / health)")) coop::dev::restore_vitals::Restore();
     ImGui::SameLine();
     ImGui::TextDisabled("(both peers)");
+    if (ImGui::Button("Set vitals LOW (10)")) coop::dev::restore_vitals::SetLow();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(local test -- food/sleep/health=10; nameplate syncs)");
+}
+
+void RenderSetClock() {
+    namespace SC = coop::dev::set_clock;
+    int day = 0; float frac = 0.f;
+    if (!SC::ReadCurrent(day, frac)) {
+        ImGui::TextDisabled("World clock not resolved yet (enter a world).");
+        return;
+    }
+    ImGui::TextDisabled("Host-authoritative; the new day/time syncs to clients.");
+    ImGui::Text("Now: day %d   time %.3f of day", day, frac);
+    static int s_day = -1;
+    if (s_day < 0) s_day = day;  // seed once from the live day
+    ImGui::SetNextItemWidth(110.f);
+    ImGui::InputInt("##clkday", &s_day);
+    if (s_day < 0) s_day = 0;
+    ImGui::SameLine();
+    if (ImGui::Button("Set day")) SC::SetDay(s_day);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(host only)");
+    float f = frac;
+    ImGui::SetNextItemWidth(260.f);
+    if (ImGui::SliderFloat("Time of day", &f, 0.0f, 0.999f, "%.3f"))
+        SC::SetTimeFraction(f);  // live: drag moves the sun (totalTime := frac * MaxTime)
+    ImGui::TextDisabled("0 = day start  ->  ~1 = day end. Drag to move the sun.");
 }
 
 void RenderPosHud() {
@@ -147,15 +176,19 @@ bool StrContainsI(const char* hay, const char* needle) {
 void RenderEvents() {
     namespace ET = coop::dev::event_trigger;
     ImGui::TextDisabled("Trigger any game event (host only; the game's own runEvent path).");
-    ImGui::TextDisabled("Day = the event's normal unlock day; triggering ignores it.");
+    ImGui::TextDisabled("'day N' = unlock day (triggering ignores it). 'native trigger' = how the GAME");
+    ImGui::TextDisabled("fires it (info only). 'random daily roll' = eligible from that day (native picker).");
     static char filter[32] = {};
     ImGui::SetNextItemWidth(180.f);
-    ImGui::InputTextWithHint("##evfilter", "filter...", filter, sizeof(filter));
+    ImGui::InputTextWithHint("##evfilter", "filter (name / category / trigger)...", filter, sizeof(filter));
     ImGui::Separator();
-    ImGui::BeginChild("##evlist", ImVec2(0, 0));
+    // Horizontal scrollbar: the native-trigger column can run past the panel on a narrow window, so the
+    // user can scroll right rather than lose the text (the window itself is also wider + min-constrained).
+    ImGui::BeginChild("##evlist", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     const char* lastCat = nullptr;
     for (const auto& ev : ET::Events()) {
-        if (filter[0] && !StrContainsI(ev.name, filter) && !StrContainsI(ev.category, filter))
+        if (filter[0] && !StrContainsI(ev.name, filter) && !StrContainsI(ev.category, filter) &&
+            !StrContainsI(ev.trigger, filter))
             continue;
         if (!lastCat || strcmp(lastCat, ev.category) != 0) {
             lastCat = ev.category;
@@ -170,10 +203,18 @@ void RenderEvents() {
         if (ev.risk != ET::Risk::Safe) ImGui::PopStyleColor();
         const bool hoveredBtn = ImGui::IsItemHovered();
         ImGui::SameLine();
-        if (ev.dayZ >= 0) ImGui::TextDisabled("day %d", ev.dayZ);
-        else ImGui::TextDisabled("story/trigger");
-        if (danger && hoveredBtn)
-            ImGui::SetTooltip("Story/save progression or relocation -- can desync the run.\nCtrl+click to trigger.");
+        if (ev.dayZ >= 0) ImGui::TextDisabled("day %-3d", ev.dayZ);
+        else              ImGui::TextDisabled("story  ");
+        ImGui::SameLine();
+        // The native trigger -- how the GAME fires this event, distinct from our F1 runEvent.
+        ImGui::TextDisabled("%s", ev.trigger);
+        if (hoveredBtn) {
+            if (danger)
+                ImGui::SetTooltip("native trigger: %s\n\nStory/save progression or relocation -- can "
+                                  "desync the run.\nCtrl+click to trigger.", ev.trigger);
+            else
+                ImGui::SetTooltip("native trigger: %s", ev.trigger);
+        }
         if (clicked && (!danger || ImGui::GetIO().KeyCtrl)) ET::Trigger(ev);
     }
     ImGui::EndChild();
@@ -195,6 +236,7 @@ const std::vector<Cat>& Tree() {
             { "Weather",  { { &RenderSnow, true } }, true },
             { "Entities", { { &RenderSpawnNpc, true }, { &RenderSpawnMenuUnlock, true } }, true },
             { "Economy",  { { &RenderGivePoints, true } }, true },
+            { "Clock",    { { &RenderSetClock, true } }, true },
             { "Events",   { { &RenderEvents, true } }, true },
         }, true },
         { "Network", {
@@ -236,7 +278,11 @@ void Render() {
     const bool devMode = DevMode();
     const auto& tree = Tree();
 
-    ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_FirstUseEver);
+    // Wider default + a MIN-size constraint so the content panel never gets cramped (user: elements
+    // didn't fit, had to widen every time). The min applies even when imgui.ini saved a narrow size,
+    // so it self-corrects an already-too-narrow window on next open; the user can still grow it.
+    ImGui::SetNextWindowSize(ImVec2(820, 460), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(720, 320), ImVec2(100000.0f, 100000.0f));
     if (!ImGui::Begin("VOTV Coop  -  Menu (F1)", nullptr, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;

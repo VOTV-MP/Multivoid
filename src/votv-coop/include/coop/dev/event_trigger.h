@@ -34,6 +34,12 @@ struct EventInfo {
     const char* category;  // the RE doc's grouping (display)
     Risk risk;
     bool prank;            // true = the ariralPrank special branch
+    const char* trigger;   // how the GAME natively fires it (NOT our F1 runEvent) -- shown in the menu.
+                           // "random daily roll (day>=N)" = eligible to be randomly selected from day N
+                           // (the nightly selector is native -- the DataTable is the proven day-gate, the
+                           // picker itself is C++/level-trigger, not in the BP dumps). "day N story" =
+                           // scripted on reaching the day. Sources: list_events DataTable +
+                           // votv-event-system-RE-2026-06-13.md + the 2026-06-17 classification.
 };
 
 // The full cooked table (static -- the SwitchName is fixed per game build).

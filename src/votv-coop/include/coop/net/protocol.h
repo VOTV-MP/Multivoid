@@ -694,7 +694,18 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 79;  // v79: EventCue=75 -- HOST-AUTH cosmetic emitter-cue mirror
+inline constexpr uint16_t kProtocolVersion = 80;  // v80: B3b WorldActor mirror -- WorldActorSpawn=76 +
+                                                  // WorldActorDestroy=77 (reliable, reuse EntitySpawn/Destroy
+                                                  // payloads) + MsgType::WorldActorPose=33 (unreliable FULL-
+                                                  // rotation transform batch). Host-authoritative mirror of the
+                                                  // ~14 NON-Character event actors (gray saucers, Rozital
+                                                  // mothership, ariral ships, sky UFO, jellyfish, firetank)
+                                                  // the Character-only NPC mirror can't replicate. A 2nd
+                                                  // BeginDeferred interceptor (disjoint allowlist) + its own
+                                                  // coop::element::WorldActor element + world_actor_sync module.
+                                                  // See research/findings/votv-b3b-worldactor-mirror-design-
+                                                  // 2026-06-17.md. (B3a Character creatures extend kNpcAllowlist.)
+                                                  // v79: EventCue=75 -- HOST-AUTH cosmetic emitter-cue mirror
                                                   // (B1, the "sync all events" arc). The host polls for new
                                                   // cosmetic ParticleSystemComponents (eff_shootingStar_rain etc.,
                                                   // spawned via EX_CallMath = PE-invisible) + broadcasts {cueId,pos};
@@ -758,6 +769,17 @@ enum class MsgType : uint8_t {
                        //      TickPoseStream); the client interpolates + drives the mirror's CMC
                        //      (npc_mirror, the RemotePlayer-twin element::Npc). One datagram for
                        //      all NPCs (<=kMaxNpcBatchEntries, MTU-capped).
+    WorldActorPose = 33, // v80 (2026-06-17, B3b): HOST->all NON-Character event-actor pose BATCH
+                       //      (unreliable, ~sendHz). Sibling of EntityPose=32 but FULL rotation
+                       //      (ships/UFOs bank + roll) and NO speed/CMC/kerfur -- a WorldActor is a
+                       //      plain AActor driven transform-only. Body: EntityPoseBatchHeader (count)
+                       //      + N WorldActorPoseSnapshot. Keyed per-entry by WorldActor Element id
+                       //      (host range, shared Registry id space); newest-wins. The host reads each
+                       //      live allowlisted actor's transform (world_actor_sync::TickPoseStream);
+                       //      the client interpolates pos + shortest-arc each angle + drives the parked
+                       //      mirror (element::WorldActor). Mirrors the ~14 gray saucers / mothership /
+                       //      ariral ships / sky UFO / jellyfish / firetank the Character-only NPC
+                       //      mirror cannot replicate (B3 split: B3a Character creatures -> kNpcAllowlist).
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -1630,6 +1652,20 @@ enum class ReliableKind : uint8_t {
                        //     registry: coop/event_cue_sync.cpp. (Slot 75 was briefly KerfurHoldRequest
                        //     scaffolding in K-4a, removed in K-5 BEFORE it ever shipped on the wire -- never
                        //     sent, so the id is genuinely free; reused here with the v79 version bump.)
+    WorldActorSpawn = 76,  // 2026-06-17 (v80, B3b): HOST->ALL non-Character event-actor SPAWN announce
+                       //     (the WorldActor analogue of EntitySpawn=5). Reuses EntitySpawnPayload
+                       //     (className + host-range elementId + loc/rotPYR; savePersisted always 0 --
+                       //     event actors are never save objects). HOST-AUTHORITATIVE: the host's
+                       //     BeginDeferred interceptor (a SECOND interceptor on the same UFunction;
+                       //     disjoint allowlist from npc_sync) allocates a WorldActor Element + broadcasts;
+                       //     the client suppresses its own (dormant scheduler never fires events anyway)
+                       //     + materializes a transform-only mirror (world_actor_sync). NOT client-
+                       //     relayable, NOT pre-world-sendable. event_dispatch_entity dispatches it.
+    WorldActorDestroy = 77, // 2026-06-17 (v80, B3b): HOST->ALL non-Character event-actor DESTROY (the
+                       //     WorldActor analogue of EntityDestroy=6). Reuses EntityDestroyPayload
+                       //     (elementId only). Host K2_DestroyActor PRE observer broadcasts; the client
+                       //     tears down its mirror. Host-authoritative; shares the Bulk lane with
+                       //     WorldActorSpawn (in-order spawn-before-destroy, same as EntitySpawn/Destroy).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -1882,6 +1918,29 @@ inline constexpr int kMaxNpcBatchEntries = 31;
 inline constexpr int kNpcPoseDatagramMax =
     static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
     kMaxNpcBatchEntries * static_cast<int>(sizeof(EntityPoseSnapshot));
+
+// v80 (B3b): ONE non-Character event WorldActor's pose in the WorldActorPose batch. Keyed by the
+// WorldActor Element id (host range; same shared Registry id space as EntitySpawn -- a WA and an Npc
+// never share an eid). Unlike EntityPoseSnapshot this is transform-ONLY with FULL rotation: a
+// WorldActor (UFO/ship/saucer) banks + rolls, and it is a plain AActor (no CMC, no kerfur, no
+// locomotion blend) so there is no speed/stateBits/lookAt/bodyYaw. The host reads GetActorLocation +
+// GetActorRotation each send tick; the client interpolates pos (vector error) + each angle
+// (shortest-arc) and SetActorLocation/SetActorRotation-drives the parked mirror (element::WorldActor).
+struct WorldActorPoseSnapshot {
+    uint32_t elementId;        // 4  -- WorldActor Element id (host range)
+    float    x, y, z;          // 12 -- world cm (actor location = pivot)
+    float    pitch, yaw, roll; // 12 -- actor world rotation deg (NormalizeAxis'd, FULL rotation)
+};
+static_assert(sizeof(WorldActorPoseSnapshot) == 28, "WorldActorPoseSnapshot must be 28 bytes");
+
+// Max WorldActors per WorldActorPose datagram, MTU-capped: (1400 - PacketHeader(20) -
+// EntityPoseBatchHeader(4)) / 28 = 49. The realistic event WA count is a handful (a few UFOs at once),
+// so 31 (the NPC cap) is ample headroom while keeping the datagram (20 + 4 + 31*28 = 892) well under MTU.
+// The batch reuses EntityPoseBatchHeader (a generic count+pad), NOT a byte-identical twin (RULE 2).
+inline constexpr int kMaxWorldActorBatchEntries = 31;
+inline constexpr int kWorldActorPoseDatagramMax =
+    static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
+    kMaxWorldActorBatchEntries * static_cast<int>(sizeof(WorldActorPoseSnapshot));
 
 // v22: ragdoll PELVIS physics state. Sent unreliable, ~sendHz, WHILE the sender's
 // AmainPlayer_C::isRagdoll is set (the native C-key/faint/KO ragdoll). The sender

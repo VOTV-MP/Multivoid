@@ -75,6 +75,11 @@ enum class ElementType : uint8_t {
     // spanning BOTH forms; the kerfur's RENDERED form is a normal Npc/Prop mirror
     // at its own per-form eid (see coop/kerfur_entity.h + the redesign doc).
     Kerfur  = 4,
+    // v80 (B3b): a NON-Character event WorldActor (gray saucer, Rozital mothership, ariral
+    // ship, sky UFO, jellyfish, firetank, ...) -- a plain AActor/APawn the host streams a
+    // transform-only mirror of. Peer of Npc under Element (the intended sibling design, MTA
+    // CClientStreamElement shape); see coop/element/world_actor.h + coop/world_actor_sync.
+    WorldActor = 5,
     // Door / Light / Vehicle / etc. get IDs as those features land.
 };
 
