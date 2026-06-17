@@ -30,6 +30,9 @@ std::array<std::wstring, net::kMaxPeers> g_remoteNickBySlot{
     L"Remote player", L"Remote player", L"Remote player", L"Remote player"
 };
 std::array<bool, net::kMaxPeers> g_joinSentBySlot{};
+// HOST-side once-per-join latch for the "<nick> joined the game" line (fired on ClientWorldReady, not
+// on the first pose -- see OnClientWorldReady). Cleared on slot disconnect so a reconnect re-announces.
+std::array<bool, net::kMaxPeers> g_joinAnnouncedBySlot{};
 
 // v73 per-player inventory identity. g_localGuid rides our outbound Join; g_guidBySlot[s]
 // caches the GUID peer `s` sent (HOST-side, keys coop_players/<guid>.json). ASCII 32-hex.
@@ -147,6 +150,7 @@ void Reset() {
     for (auto& nick : g_remoteNickBySlot) nick = L"Remote player";
     for (auto& g : g_guidBySlot) g.clear();
     g_joinSentBySlot.fill(false);
+    g_joinAnnouncedBySlot.fill(false);
 }
 
 void MaybeSendJoinToSlot(net::Session& session, int slot,
@@ -210,6 +214,7 @@ void OnSlotDisconnected(int slot) {
     UE_ASSERT_GAME_THREAD("g_remoteNickBySlot (OnSlotDisconnected)");
     if (slot < 0 || slot >= net::kMaxPeers) return;
     g_joinSentBySlot[slot] = false;
+    g_joinAnnouncedBySlot[slot] = false;  // a reconnect on this slot re-announces "joined" on its next ClientWorldReady
     // N-5 (2026-05-29 audit): clear the stashed nickname so a subsequent peer
     // reusing the same slot before its Join arrives doesn't display the
     // departed peer's name in the HUD toasts. NicknameForSlot falls back to
@@ -514,16 +519,30 @@ bool HandlePlayerJoined(net::Session& session,
 }
 
 void AnnouncePeerSpawned(net::Role role, int slot) {
-    // Called from net_pump the moment a remote peer's PUPPET spawns (= the peer is actually in the
-    // world, past the connect/load phase). Pairs with the "is connecting to the game" handshake
-    // line. Role-aware: on a CLIENT, slot 0 is the HOST whose game WE joined ("Joined <host>'s
-    // game"), not a peer who joined ours.
+    // Called from net_pump the moment a remote peer's PUPPET spawns. net_pump now calls this ONLY for
+    // the CLIENT role: slot 0 is the HOST whose game WE joined ("Joined <host>'s game"); a higher slot
+    // is a cross-peer client whose puppet just spawned here ("<nick> joined the game"). Both are gated
+    // on the client's own g_worldReadyAnnounced (net_pump's puppet-spawn block), so they fire at this
+    // peer's world-ready. The HOST announces a joiner via OnClientWorldReady (below), NOT here -- the
+    // first pose can be a pre-world pose (user 2026-06-17). The role arg is kept for the slot-0 phrasing.
     const std::wstring nick = NicknameForSlot(static_cast<uint8_t>(slot));
     if (role == net::Role::Client && slot == 0) {
         coop::chat_feed::Push(L"Joined " + nick + L"'s game");
     } else {
         coop::chat_feed::Push(nick + L" joined the game");
     }
+}
+
+void OnClientWorldReady(int slot) {
+    // HOST-side "<nick> joined the game" -- the authoritative in-world announce (see the header). Fired
+    // from event_feed when a client's ClientWorldReady reliable lands; latched once per join so a
+    // re-sent ClientWorldReady doesn't repeat the line.
+    UE_ASSERT_GAME_THREAD("g_joinAnnouncedBySlot (OnClientWorldReady)");
+    if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
+    if (g_joinAnnouncedBySlot[slot]) return;          // already announced for this join
+    g_joinAnnouncedBySlot[slot] = true;
+    coop::chat_feed::Push(NicknameForSlot(slot) + L" joined the game");
+    UE_LOGI("player_handshake: slot %d joined the game (announced on ClientWorldReady)", slot);
 }
 
 bool HandleAssignPeerSlot(net::Session& session,

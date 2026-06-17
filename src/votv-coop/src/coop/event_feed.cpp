@@ -141,6 +141,11 @@ void Update(net::Session& session, void* localPlayer) {
                 msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers) {
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
+                // "<nick> joined the game" fires HERE -- the authoritative in-world moment -- NOT on the
+                // client's first pose (a menu-mode joiner streams a pre-world/menu pose while still
+                // loading, which fired the line too early; user 2026-06-17). This coincides with the
+                // joiner setting g_worldReadyAnnounced + posting its own "Joined <host>'s game".
+                coop::player_handshake::OnClientWorldReady(msg.senderPeerSlot);
             }
             break;
         }
