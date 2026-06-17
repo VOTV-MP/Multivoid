@@ -30,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::remote_prop {
 
@@ -734,6 +735,23 @@ void RegisterPropMirror(coop::element::ElementId eid,
     }
     // On false: Install already logged the failure case (rejected
     // sentinel id, duplicate, or RegisterMirror failure).
+}
+
+// Reverse lookup: the eid bound to `actor` among the Prop Elements (mirrors + locals all live in this
+// one manager). The forward map (prop_element_tracker) is the fast O(1) path for OWNED props; this is
+// the MIRROR-side fallback the chipPile grab hook uses when a CLIENT grabs a host-owned pile (whose
+// mirror is NOT in the local forward map). O(n) but reached only on the rare grab edge after the
+// forward map missed. Snapshot copies the raw pointers under the manager lock, then we iterate
+// lock-free (a concurrently-dropped element would just fail the GetActor compare -- never a UAF here
+// since we only read GetActor/GetId, not the engine actor).
+coop::element::ElementId ResolveMirrorEidByActor(void* actor) {
+    if (!actor) return coop::element::kInvalidId;
+    std::vector<coop::element::Prop*> snap;
+    PropMirrors().Snapshot(snap);
+    for (coop::element::Prop* p : snap) {
+        if (p && p->GetActor() == actor) return p->GetId();
+    }
+    return coop::element::kInvalidId;
 }
 
 namespace {  // [spawn helpers continued]

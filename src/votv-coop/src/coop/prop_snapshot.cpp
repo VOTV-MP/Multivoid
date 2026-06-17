@@ -17,7 +17,6 @@
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/remote_prop.h"
-#include "coop/trash_collect_sync.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -163,33 +162,11 @@ void StartEnumerationFor(int peerSlot) {
     UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
 
-    // EAGER host pile death-watch enroll (2026-06-13, save-transfer pile-dupe fix).
-    // The pile grab morph (playerGrabbed -> turnToPile -> K2_DestroyActor) is
-    // ProcessEvent-INVISIBLE, so trash_collect_sync's death-watch is the SOLE
-    // destroy signal. The enroll used to be LAZY (per-pile, as DrainChunk expressed
-    // each chunk), so during the ~9-tick drain of ~870 piles, a pile the HOST
-    // grabbed before its chunk was reached was UNWATCHED -> no PropDestroy was sent
-    // -> the client's mirror pile lived on = the dupe the user hit on a save-transfer
-    // join. Enroll EVERY live chipPile candidate up front so a host grab at ANY time
-    // during (or after) the drain broadcasts PropDestroy(eid). Idempotent per eid;
-    // `quiet` keeps this off the log (one summary line below, not ~870). Host-only
-    // path (StartEnumerationFor only runs on the snapshotting host). Connect-edge
-    // cold path: ~870 GetActorLocation reads once per join, not per frame.
-    {
-        int enrolled = 0;
-        for (size_t i = 0; i < g_snapshotCandidates.size(); ++i) {
-            void* obj = g_snapshotCandidates[i];
-            const coop::element::ElementId eid = g_snapshotEids[i];
-            if (eid == coop::element::kInvalidId || eid == 0) continue;
-            if (!ue_wrap::prop::IsChipPile(obj)) continue;
-            coop::trash_collect_sync::WatchPile(obj, static_cast<uint32_t>(eid), /*quiet=*/true);
-            ++enrolled;
-        }
-        if (enrolled > 0)
-            UE_LOGI("snapshot: eager-enrolled %d chipPile(s) in the host death-watch (slot %d) -- "
-                    "a host grab during the drain now broadcasts PropDestroy(eid)",
-                    enrolled, peerSlot);
-    }
+    // (The EAGER host chipPile death-watch enroll that used to live here was REMOVED 2026-06-17 with
+    // the pile death-watch retirement. The host no longer needs to pre-enroll piles: a host grab is
+    // now caught directly by the InpActEvt_use PRE observer reading lookAtActor=pile -> its eid (every
+    // snapshot candidate is already element-bound, so GetPropElementIdForActor resolves it on grab),
+    // so there is no drain-window race to pre-arm against. See trash_collect_sync.cpp.)
 
     g_snapshotSentTotal = 0;
     // v34: OPEN the joiner's loading-screen bracket. Send the candidate count (the progress

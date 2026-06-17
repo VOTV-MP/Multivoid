@@ -14,13 +14,18 @@
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_synth_key.h"
+#include "coop/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/remote_prop_spawn.h"
 #include "ue_wrap/engine.h"
+#include "ue_wrap/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
 #include "ue_wrap/types.h"
 
+#include <atomic>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -29,6 +34,13 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace PT = coop::prop_element_tracker;
+namespace GT = ue_wrap::game_thread;
+namespace P  = ue_wrap::profile;
+
+// Cached Session for the pile-grab observer (the PRE callback can't take a param). Set by Install
+// (re-cached every call for reconnect). Game-thread read inside the observer.
+std::atomic<coop::net::Session*> g_session{nullptr};
+bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (stays for process life)
 
 // Death-watch set. The clump's morph-destroy is unobservable (see header), so the
 // owner liveness-checks every clump it broadcast and broadcasts the despawn when the
@@ -45,36 +57,22 @@ struct WatchedClump {
 std::vector<WatchedClump> g_watchedClumps;
 constexpr size_t kMaxWatchedClumps = 32;
 
-// Mirror-pile death-watch (v52). A converted/landed trash pile lives as the owner's pile + the
-// receiver's mirror pile, sharing one cross-peer eid. Grabbing the shared pile morphs+destroys it
-// LOCALLY on the grabber (BP-internal/unobservable), so whoever grabs it watches it die here and
-// broadcasts PropDestroy(eid) -> the others drop their mirror (identity-exact re-grab destroy,
-// replacing the retired InpActEvt_use grab-guess). GAME-THREAD ONLY (net_pump tick). Bounded.
-struct WatchedPile {
-    void*    actor       = nullptr;
-    int32_t  internalIdx = -1;   // captured live -> IsLiveByIndex without deref
-    uint32_t eid         = 0;    // PropDestroy identity (key=None)
-    ue_wrap::FVector lastPos{};  // fixed spawn pos (a settled pile never moves) -> proximity gate
-};
-std::vector<WatchedPile> g_watchedPiles;
-// Cap is a runaway backstop, not a working limit. Fork B HALF 1 (2026-06-10)
-// enrolls EVERY snapshot-expressed host pile (plus every mirror + convert),
-// and the map's seeded garbagePileSpawner places hundreds -> 1024 headroom.
-// The per-tick cost is just IsLiveByIndex (O(1)) over the live set; piles are
-// stationary so there's no per-tick UFunction call. Shedding the oldest on
-// overflow silently breaks that pile's re-grab destroy, so the cap stays well
-// above any realistic pile count and the shed WARNs.
-// 2026-06-13: bumped 1024 -> 2048 for the host EAGER enroll (prop_snapshot::
-// StartEnumerationFor enrolls EVERY live chipPile up front -- ~870 on a heavy
-// save -- so the cap needs clear headroom over the full pile count, not just
-// "hundreds"). Per-tick cost stays O(n) IsLiveByIndex (no UFunction dispatch).
-constexpr size_t kMaxWatchedPiles = 2048;
-// Proximity radius (cm) for the grab-vs-stream-out discriminator: a grab happens AT the local
-// player; a sublevel stream-out is far. 800 cm mirrors the grime super-sponge death-watch (which
-// smoke-proved 0 false-fire on the connect stream-out). Erring loose: a miss silently breaks one
-// re-grab destroy; a false fire (rare here) is a spurious PropDestroy a receiver no-ops on.
-constexpr float kPileProximityCm  = 800.0f;
-constexpr float kPileProximityCm2 = kPileProximityCm * kPileProximityCm;
+// NOTE (2026-06-17, RULE 1+2): the mirror-PILE death-watch that used to live here (g_watchedPiles +
+// WatchPile/WatchPileAt/NotifyPileConsumed/TickWatchReleasedPiles) is RETIRED. It inferred "grabbed"
+// from "a watched pile's actor died NEAR the local camera", which is UNSOUND: a chipPile is a mobile,
+// physics-simulating actor that dies near the camera for many non-grab reasons (a peer bumping it,
+// a physics nudge through the floor, a LifeSpan/removeWOrespawn despawn). Any such near-camera death
+// was misread as a grab -> a spurious PropDestroy(eid) -> the receiver's unconditional K2_DestroyActor
+// wiped the pile on BOTH peers. Since BOTH peers watch the same pile, a peer repeatedly TOUCHING a pile
+// eventually triggered a near-camera non-grab death and the pile vanished for everyone -- the recurring
+// "piles destroyed when a peer touches them a lot" bug. The DECISIVE RE
+// (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md) proved the correct, strictly-better mechanism
+// is OnPileGrabPre below: a PRE observer on the (ProcessEvent-visible) E-press InpActEvt_use that reads
+// lookAtActor -> the pile, still ALIVE + eid-resolvable -> PropDestroy(eid). It fires ONLY on a real
+// grab (a bump/stream-out/physics-death is not an E-press, so it can never enter that path). The CLUMP
+// death-watch below stays -- a thrown clump's morph-to-pile conversion is genuinely unobservable and
+// has no input edge, so the owner-side liveness poll is the only signal (and clumps are airborne &
+// transient, not the stationary piles a player walks up to and bumps).
 
 // Register a freshly-broadcast clump for death-watching. Idempotent per eid.
 void WatchClump(void* clump, uint32_t eid) {
@@ -138,9 +136,9 @@ bool BroadcastConvertNear(uint32_t oldEid, const ue_wrap::FVector& pos, coop::ne
     // SnapshotComplete destroys our own freshly-announced pile. Also keeps
     // the watched-piles-are-always-claimed invariant for owner-side watches.
     coop::remote_prop_spawn::RecordClaimIfTracking(pile);
-    // Watch the owner's own pile so the owner's re-grab of it (the pile morph-destroys locally)
-    // broadcasts PropDestroy(newEid) -> the receiver drops its mirror pile.
-    WatchPile(pile, p.newEid);
+    // The owner's later re-grab of this converted pile is caught by OnPileGrabPre (the InpActEvt_use
+    // PRE observer reads lookAtActor=pile -> newEid -> PropDestroy) -> the receiver drops its mirror.
+    // (This used to enroll the pile in the now-retired pile death-watch; see the note above.)
     return true;
 }
 
@@ -337,90 +335,74 @@ void TickWatchReleasedClumps(coop::net::Session* s) {
     }
 }
 
-// ---- mirror-pile death-watch (v52) -----------------------------------------------------
-
-void WatchPile(void* pileActor, uint32_t eid, bool quiet) {
-    if (!pileActor || eid == 0 || eid == coop::element::kInvalidId) return;
-    WatchPileAt(pileActor, eid, ue_wrap::engine::GetActorLocation(pileActor), quiet);
+// ---- pile-grab destroy: the InpActEvt_use PRE observer (RULE-1 replacement for the death-watch) ----
+//
+// DECISIVE RE (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md, summary table): a chipPile grab
+// is the E-press input action AmainPlayer_C::InpActEvt_use_..._41 -> icast(lookAtActor)->playerGrabbed
+// (spawn clump + pickupObjectDirect(clump) + K2_DestroyActor(self)), all dispatched BP-internally
+// (EX_LocalVirtualFunction / EX_VirtualFunction -> ProcessInternal) and INVISIBLE to our ProcessEvent
+// detour. The ONLY ProcessEvent-observable edge with the pile STILL ALIVE + eid-resolvable is a PRE
+// observer on InpActEvt_use (the native input -> UFunction dispatch DOES hit ProcessEvent -- the same
+// seam door + kerfur-menu sync use), reading mainPlayer.lookAtActor = the pile under the crosshair
+// BEFORE the ubergraph converts+destroys it. This fires ONLY on a real grab: a bump, a stream-out, a
+// physics death, a LifeSpan despawn are NOT an E-press, so they can never enter this path -- which is
+// exactly why it replaces the unsound proximity death-watch (the recurring "piles destroyed when a
+// peer touches them" bug). Symmetric (BOTH roles): the owner re-grabbing its own pile resolves via the
+// forward map (GetPropElementIdForActor); a peer grabbing a host-owned mirror pile resolves via
+// remote_prop::ResolveMirrorEidByActor. Puppets are unpossessed -> never process input -> this only
+// ever fires for the local player.
+static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;  // BOTH roles -- whoever physically grabs
+    void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the pile (PRE-conversion, alive)
+    if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return;         // E-press not aimed at a pile
+    // Cross-peer identity: a pile WE own is in the forward map; a pile WE mirror is in the prop
+    // MirrorManager. Either resolves THE shared eid the other peer keys its copy on.
+    coop::element::ElementId eid = PT::GetPropElementIdForActor(aimed);
+    if (eid == coop::element::kInvalidId)
+        eid = coop::remote_prop::ResolveMirrorEidByActor(aimed);
+    if (eid == coop::element::kInvalidId || eid == 0u) return;  // untracked pile -> no peer mirror to drop
+    // InpActEvt_use dispatches on BOTH the press AND the release of one tap; the press already
+    // converts+destroys the pile so the release is a natural no-op (lookAtActor no longer the pile),
+    // but collapse a same-eid repeat within a tap window defensively. One E-press grabs one pile, so a
+    // single (eid,time) slot suffices -- no unbounded per-pile map.
+    static coop::element::ElementId s_lastEid = coop::element::kInvalidId;
+    static std::chrono::steady_clock::time_point s_lastTs{};
+    const auto now = std::chrono::steady_clock::now();
+    if (eid == s_lastEid && now - s_lastTs < std::chrono::milliseconds(300)) return;
+    s_lastEid = eid;
+    s_lastTs  = now;
+    coop::net::PropDestroyPayload dp{};
+    dp.key.len   = 0;     // chipPile is eid-only (Key=None on the wire)
+    dp.elementId = static_cast<uint32_t>(eid);
+    s->SendPropDestroy(dp);
+    UE_LOGI("trash_collect: pile grab (E-press on chipPile eid=%u) -> PropDestroy (peer drops its mirror)",
+            static_cast<unsigned>(eid));
 }
 
-void WatchPileAt(void* pileActor, uint32_t eid, const ue_wrap::FVector& pos, bool quiet) {
-    // Perf audit W-3 (2026-06-10): the snapshot drain already read the pile's
-    // location for the payload -- this overload skips the duplicate
-    // GetActorLocation ProcessEvent dispatch per expressed pile.
-    if (!pileActor || eid == 0 || eid == coop::element::kInvalidId) return;
-    const int32_t idx = R::InternalIndexOf(pileActor);
-    if (idx < 0) return;
-    for (auto& w : g_watchedPiles) {
-        if (w.eid == eid) { w.actor = pileActor; w.internalIdx = idx; w.lastPos = pos; return; }
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);  // re-cache every call (reconnect)
+    if (g_grabObserverInstalled) return;
+    void* cls = R::FindClass(P::name::MainPlayerClass);
+    if (!cls) return;  // mainPlayer_C not loaded yet -> retry on the next world-gated Install
+    void* fn = R::FindFunction(cls, P::name::MainPlayerUseInputEventFn);
+    if (!fn) {
+        UE_LOGW("trash_collect: InpActEvt_use UFunction not found -- pile grabs cannot drop peer mirrors");
+        g_grabObserverInstalled = true;  // permanent give-up (don't re-walk the class forever)
+        return;
     }
-    if (g_watchedPiles.size() >= kMaxWatchedPiles) {
-        // Backstop: shed oldest. A shed entry's re-grab destroy silently
-        // breaks -- WARN so a map exceeding the cap is visible in the log.
-        UE_LOGW("trash_collect: watched-pile cap %zu hit -- shedding eid=%u (its re-grab destroy is lost; raise kMaxWatchedPiles)",
-                kMaxWatchedPiles, g_watchedPiles.front().eid);
-        g_watchedPiles.erase(g_watchedPiles.begin());
+    if (!GT::RegisterPreObserver(fn, &OnPileGrabPre)) {
+        UE_LOGW("trash_collect: InpActEvt_use PRE observer register failed (table full?)");
+        return;  // not latched -> retry next Install
     }
-    g_watchedPiles.push_back(WatchedPile{pileActor, idx, eid, pos});
-    if (!quiet)
-        UE_LOGI("trash_collect: watching pile eid=%u actor=%p at (%.1f,%.1f,%.1f) for re-grab destroy",
-                eid, pileActor, pos.X, pos.Y, pos.Z);
-}
-
-void NotifyPileConsumed(uint32_t eid) {
-    for (size_t i = 0; i < g_watchedPiles.size(); ++i) {
-        if (g_watchedPiles[i].eid == eid) {
-            g_watchedPiles.erase(g_watchedPiles.begin() + i);
-            UE_LOGI("trash_collect: pile eid=%u consumed by incoming wire destroy -> dropped watch "
-                    "(no re-broadcast)", eid);
-            return;
-        }
-    }
-}
-
-void TickWatchReleasedPiles(coop::net::Session* s, bool suppress) {
-    if (!s || !s->connected() || g_watchedPiles.empty()) return;
-    // Read the local camera ONCE, only when at least one pile died this tick (the common case is
-    // none). A pile grab happens AT the local player; a far death is a sublevel stream-out.
-    bool camValid = false;
-    ue_wrap::FVector cam{};
-    for (size_t i = 0; i < g_watchedPiles.size();) {
-        WatchedPile& w = g_watchedPiles[i];
-        if (R::IsLiveByIndex(w.actor, w.internalIdx)) {
-            // NO per-tick GetActorLocation here: a landed chipPile is SETTLED (placed, not
-            // simulating) -> it never moves, so the spawn-time lastPos captured in WatchPile stays
-            // accurate for the proximity gate. (The clump watch above legitimately re-reads each
-            // tick because clumps are airborne; piles are not.) Audit perf-WARN 2026-06-09.
-            ++i;
-            continue;
-        }
-        // Dead. Broadcast PropDestroy ONLY for a NEAR death outside a world-transition window (a
-        // grab); far / transition deaths are stream-outs -> drop the entry silently (it re-watches
-        // on a future convert). The grime super-sponge precedent (0 false-fire on connect stream-out).
-        bool grabbed = false;
-        if (!suppress) {
-            if (!camValid) { cam = ue_wrap::engine::GetCameraLocation(); camValid = true; }
-            const float dx = cam.X - w.lastPos.X, dy = cam.Y - w.lastPos.Y, dz = cam.Z - w.lastPos.Z;
-            grabbed = (dx * dx + dy * dy + dz * dz) <= kPileProximityCm2;
-        }
-        if (grabbed) {
-            coop::net::PropDestroyPayload dp{};
-            dp.key.len   = 0;          // key=None: the pile is eid-only
-            dp.elementId = w.eid;
-            s->SendPropDestroy(dp);
-            UE_LOGI("trash_collect: watched pile eid=%u grabbed locally (died near camera) -> "
-                    "PropDestroy (drop peer mirror)", w.eid);
-        } else {
-            UE_LOGI("trash_collect: watched pile eid=%u died far/transition (stream-out) -> drop watch silently",
-                    w.eid);
-        }
-        g_watchedPiles.erase(g_watchedPiles.begin() + i);
-    }
+    g_grabObserverInstalled = true;
+    UE_LOGI("trash_collect: pile-grab observer installed on InpActEvt_use (E-press on a chipPile -> PropDestroy(eid))");
 }
 
 void OnDisconnect() {
+    g_session.store(nullptr, std::memory_order_release);
     g_watchedClumps.clear();
-    g_watchedPiles.clear();
 }
 
 }  // namespace coop::trash_collect_sync

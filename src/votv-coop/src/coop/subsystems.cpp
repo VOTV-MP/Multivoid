@@ -108,6 +108,7 @@ void Install(coop::net::Session& session) {
     coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
     coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
     coop::trash_pile_sync::Install(&session);  // v57 trashBitsPile collect counters (uses 6/7)
+    coop::trash_collect_sync::Install(&session);  // chipPile grab observer (InpActEvt_use PRE -> PropDestroy(eid); replaces the retired pile death-watch)
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();           // Phase 5G garbage
     coop::ambient_spawner_suppress::Install(&session);  // Fork C: client ambient flora/forage spawner suppression (host results stream)
@@ -336,14 +337,13 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable};  coop::wisp_tear_mirror::Tick(); }  // v72: discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::player_inventory_sync::Tick(); }  // v73: inventory read-verify self-test (Inc2; no-op unless inventory_selftest=1)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::dev::inventory_probe::Tick(); }  // v73 Inc4: SP apply round-trip self-test (no-op unless inventory_probe=1)
-    // v52: mirror-pile death-watch -- a watched pile that dies NEAR the local camera was grabbed
-    // (the morph-destroy is unobservable) -> broadcast PropDestroy(eid) so peers drop their mirror.
-    // Suppressed during a world-transition window (connect-teleport sublevel stream-out makes far
-    // piles go dead = stream-out, not a grab; the grime super-sponge precedent).
+    // v57: trashBitsPile collect-counter poll + depletion death-watch. (The chipPile mirror-PILE
+    // death-watch that used to run here was RETIRED 2026-06-17 -- a chipPile re-grab now fires from
+    // the InpActEvt_use PRE observer that trash_collect_sync::Install registers, not a per-tick
+    // near-camera liveness sweep that misread any non-grab pile death as a grab.)
     { PP::Scope _s{PP::Bucket::TrashWatch};
       const bool inTransition = fleeing || coop::join_progress::Active();
-      coop::trash_collect_sync::TickWatchReleasedPiles(&session, inTransition);
-      coop::trash_pile_sync::Tick(inTransition); }  // v57: counter poll + depletion death-watch (same transition gate)
+      coop::trash_pile_sync::Tick(inTransition); }  // counter poll + depletion death-watch (transition-gated)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)

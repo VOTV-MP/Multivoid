@@ -3,6 +3,24 @@
 // the digit delta (which drives the keypad's own native validator -- MTA input-replication).
 // No isAcc/isDeny mirror (removed 2026-06-06: hover flags, the old PURPLE).
 //
+// HOST AUTHORITY for keypad POWER + the gated door's LOCK (2026-06-17, the "some keypads are dead
+// from the host's perspective" fix). keypad.active is BUILDING POWER (keypad BP RE 2026-06-06):
+// setActive propagates it to the gated door (door.active = keypad.active) and the door's E-press
+// opens iff Active && !jammed && !superClosed -- so it is host-authoritative world state, like the
+// HostAuth door channel. The two axes are split:
+//   - DIGIT BUFFER (inPassword): bidirectional INPUT mirror. A client typing replays onto the host's
+//     keypad, running the HOST's own native validator (a correct code unlocks the shared door
+//     host-authoritatively; a wrong 5-digit code auto-submits + denies on the host's own validator).
+//   - active / door POWER + LED: HOST-AUTHORITATIVE. The host NEVER takes its keypad power / door lock
+//     from a CLIENT packet (ApplyState's active/door write is client-only; ApplyIncoming drops a
+//     client's DENY before open(false) on the host). A client's cancel / wrong short code / a
+//     save-transfer transient carrying active=0 can no longer de-power the host's door. Clients mirror
+//     the host's authoritative active. (Known edge: a client's deliberate cancel still reddens its OWN
+//     LED + may briefly diverge until the host's next authoritative broadcast / the connect-snapshot;
+//     the SP-faithful re-lock is now host-driven. A full single-syncer refactor -- client sends input
+//     requests, host is the sole KeypadState producer -- would close that edge; deferred as it is the
+//     reported bug's secondary symptom, not its cause.)
+//
 // v59 SUBMIT MIRROR (2026-06-11, replaces the deleted HostAcceptPoll): the BP auto-submits
 // at Len>=5 (uber @2398), so long codes validate NATIVELY on every peer from the digit
 // replay alone. A SHORT code's accept press (open(password==inPassword)) and the explicit
@@ -219,8 +237,24 @@ void ApplyState(void* actor, const std::wstring& key, const State& want, unsigne
     // the same value to the gated door's power so keypad.active == door.active like SP (coop=SP).
     State after;
     if (PL::ReadState(actor, after) && after.active != want.active) {
-        PL::WriteActive(actor, want.active);
-        if (void* door = PL::GatedDoor(actor)) ue_wrap::door::SetActive(door, want.active);
+        // HOST AUTHORITY (2026-06-17, "keypads dead from the host's view" fix). keypad.active is
+        // BUILDING POWER (keypad BP RE 2026-06-06): setActive propagates it to the gated door
+        // (door.active = keypad.active) and the door's E-press opens iff Active && !jammed &&
+        // !superClosed. It is host-authoritative world state -- exactly why the door channel is
+        // HostAuth. So the HOST must NEVER take its keypad power / door lock from a CLIENT packet: a
+        // client's cancel / wrong-code / save-transfer transient carrying active=0 would otherwise
+        // de-power the host's door, making the host's own E-press fail = the reported "some keypads
+        // are dead from the host's perspective." Only a CLIENT mirrors the host's authoritative active
+        // (+ door). The host's keypad power changes solely from its OWN native open() -- driven by the
+        // replayed digit input running the host's validator -- and the gamemode power system; the host
+        // then broadcasts that authoritative result. The digit BUFFER reconcile above stays
+        // bidirectional (the input mirror), so a client typing the correct code still unlocks the
+        // shared door via the host's own validation.
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (s && s->role() == coop::net::Role::Client) {
+            PL::WriteActive(actor, want.active);
+            if (void* door = PL::GatedDoor(actor)) ue_wrap::door::SetActive(door, want.active);
+        }
     }
     // Repaint the digit DISPLAY + the LED (so a native clear wipes the panel and upd() re-selects the
     // particle template from the freshly-written `active`: eff_glow_red when !active).
@@ -349,6 +383,21 @@ void ApplyIncoming(void* actor, const std::wstring& key, const State& want,
         return;
     }
     const bool accept = (ev == coop::net::KeypadEvent::Accept);
+    // HOST AUTHORITY: a CLIENT's DENY (a wrong short code or the explicit cancel) must NOT run
+    // open(false) on the host -- open(false) sets active=false and propagates it to the gated door,
+    // de-powering the host's door (the "dead keypad from the host's view" bug). The host applies only a
+    // client's ACCEPT (a legitimate shared unlock: the client entered the correct code on the shared
+    // keypad, which powers the door for everyone). A Deny on the host instead falls through to a
+    // buffer-only reconcile (ApplyState, whose active/door write is host-skipped) so the host's keypad
+    // power stays its own. A CLIENT still replays BOTH events (it mirrors the host's authoritative
+    // accept/deny result). The host's own keypad presses + the gamemode remain its only power source.
+    {
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (s && s->role() == coop::net::Role::Host && !accept) {
+            ApplyState(actor, key, want, fromSlot);
+            return;
+        }
+    }
     if (!PL::CallOpen(actor, accept)) {
         // Degraded fallback (Open UFunction unresolved): mirror the END state directly so
         // the LED/door at least converge -- the plain state apply.

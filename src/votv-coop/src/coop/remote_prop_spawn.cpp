@@ -16,6 +16,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
+#include "coop/kerfur_entity.h"  // GetKerfurMirrorEidForActor -- exempt host-driven kerfur mirrors from the divergence sweep
 #include "coop/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
 #include "coop/net/protocol.h"
 #include "coop/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
@@ -23,7 +24,6 @@
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/remote_prop.h"
-#include "coop/trash_collect_sync.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -211,6 +211,7 @@ bool g_claimTrackingActive = false;
 // All game-thread-only (the client tick + the event_feed drain), no mutex.
 bool g_sweepPending = false;                          // armed at SnapshotComplete; cleared when the sweep runs
 bool g_sweepFired   = false;                          // sticky: set when the sweep runs, until re-armed (HasLoadTailQuiesced)
+bool g_sweepReconciled = false;                       // sticky PER-WORLD: set after a SUCCESSFUL (non-aborted) sweep. A steady-world re-snapshot must NOT re-reconcile (re-doom unclaimed locals) -- it just delivers new props via the drain. Reset on world change. (2026-06-17 join-churn fix.)
 std::chrono::steady_clock::time_point g_sweepArmedAt{};
 std::chrono::steady_clock::time_point g_sweepLastScan{};  // {} (epoch 0) => not yet scanned this arm
 int  g_sweepLastUnsettledCount = -1;
@@ -551,9 +552,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             RestoreCollisionIfNeeded(L"pile-bind", classW, pile);
             coop::remote_prop::RegisterPropMirror(payload.elementId, pile, keyW, classW, senderSlot);
             coop::prop_element_tracker::IndexActorKey(pile, keyW);  // None-guarded no-op (parity with the fresh path)
-            // Death-watch by IDENTITY, exactly like a fresh pile mirror: a
-            // local grab morph-destroys it -> PropDestroy(eid) tells the host.
-            coop::trash_collect_sync::WatchPile(pile, payload.elementId);
+            // (No pile death-watch enroll here since 2026-06-17. RegisterPropMirror above bound this
+            // local pile to payload.elementId, so a later local grab resolves the eid via
+            // ResolveMirrorEidByActor in the InpActEvt_use PRE observer -> PropDestroy tells the host.)
             const int nBind = ++g_pileBindCount;
             if (nBind <= 3 || (nBind % 200) == 0) {
                 UE_LOGI("remote_prop_spawn: pile-bind #%d -- eid=%u '%ls' chipType=%u -> OWN local pile %p (d=%.1fcm%s)",
@@ -913,20 +914,14 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // kinematic drive could never start and the clump would appear but not
     // follow the collector's hand. Harmless + faster for Aprop_C mirrors too.
     coop::prop_element_tracker::IndexActorKey(spawned, keyW);
-    // v52: enrol a chipPile MIRROR in the mirror-pile death-watch. A pile, when grabbed locally,
-    // morphs to a held ball + self-destructs (BP-internal/unobservable), so whoever grabs the
-    // shared pile must detect its local death and broadcast PropDestroy(eid) -> the other peer
-    // drops its copy by identity. Watching ALL chipPile mirrors here (not only the PropConvert-
-    // born ones) is what covers a PRE-EXISTING / snapshot pile: without it, the peer grabbing an
-    // initial pile never told the owner to delete its copy = the "initial pile not destroyed"
-    // dupe. NOTE: NOT gated on eidOnly -- a pre-existing world chipPile is broadcast KEYED (a synth
-    // Key from the Init-POST path), so it is NOT key=None; we still watch it by its eid (which
-    // resolves cross-peer via RegisterPropMirror, and the relaxed PropDestroy eid-range lets the
-    // grabber's destroy through). chipPile only (clumps/balls are transient, owner-death-watched
-    // separately). Idempotent per eid; a wire-driven destroy drops the watch via NotifyPileConsumed.
-    if (payload.elementId != 0 && ue_wrap::prop::IsChipPile(spawned)) {
-        coop::trash_collect_sync::WatchPile(spawned, payload.elementId);
-    }
+    // (The chipPile MIRROR used to be enrolled in the mirror-pile death-watch here. RETIRED
+    // 2026-06-17, RULE 1+2: the death-watch's near-camera "grabbed" inference was unsound -- a peer
+    // bumping a pile until it died near the camera read as a grab and wiped the pile on both peers
+    // ("piles destroyed when touched a lot"). A peer's later grab of THIS mirror is now caught by the
+    // InpActEvt_use PRE observer (trash_collect_sync) reading lookAtActor=pile -> ResolveMirrorEidByActor
+    // (RegisterPropMirror above bound it to payload.elementId) -> PropDestroy(eid). Covers the
+    // pre-existing / snapshot pile case too, since the resolve works for any registered mirror. Fires
+    // only on a real E-press, never a bump/stream-out/physics-death.)
 }
 
 void BeginClaimTracking() {
@@ -974,11 +969,9 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // universe test. (IsRngDivergentClass + ResolveRngDivergentBases
     // retired with it, RULE 2.)
     //
-    // Watched-pile interaction (audit Finding 3, re-verified under 2e):
-    // trash_collect_sync::OnDisconnect clears g_watchedPiles at both
-    // net_pump teardown sites, and within a bracket every WatchPile
-    // enrollment happens inside OnSpawn AFTER its RecordClaim -- watched
-    // piles are always claimed, never swept.
+    // (The "watched-pile interaction" caveat once noted here is GONE 2026-06-17 with the pile
+    // death-watch retirement -- there are no watched piles for the sweep to spare anymore; a pile
+    // re-grab is handled by the InpActEvt_use observer, independent of this sweep + its claim set.)
     //
     // Phase 1: collect. ONE GUObjectArray walk (the SeedWalk_ shape), ZERO
     // engine dispatches inside it (class test = pure SuperStruct pointer
@@ -1029,6 +1022,13 @@ static void RunDivergenceSweep_(void* localPlayer) {
         // never claim-bind). The 2026-06-10 smoke swept the client's
         // inventory container and the client fataled at the next GC purge.
         if (coop::prop_lifecycle::IsPerPlayerPropClass(acls)) continue;
+        // A bound kerfur prop MIRROR is host-driven state (its host-range eid is bound when the
+        // convert/adoption materializes it), NEVER a save-load divergence. A convert-materialize that
+        // landed BETWEEN snapshot brackets is unclaimed in THIS bracket, so without this it lands in
+        // `doomed` -> destroyed -> the kerfur_convert POLL reads the dead mirror as a "turn-on" -> the
+        // "kerfurs come alive by themselves" flip-flop. The reconcile-once latch stops the RE-sweep
+        // churn; this guard protects the mirror from the FIRST sweep too. (2026-06-17 kerfur join fix.)
+        if (coop::kerfur_entity::GetKerfurMirrorEidForActor(a) != coop::element::kInvalidId) continue;
         if (ue_wrap::prop::IsChipPile(a)) {
             // Expressible keyed OR keyless (HALF 1 eid expression).
             doomed.push_back(a);
@@ -1116,6 +1116,11 @@ static void RunDivergenceSweep_(void* localPlayer) {
             UE_LOGI("remote_prop_spawn:   doomed %d x '%ls'", cnt, hcls.c_str());
         }
     }
+    // A SUCCESSFUL (non-aborted) reconciliation just landed for this world. Latch it so a later
+    // steady-world re-snapshot does NOT re-arm the destructive sweep (see ArmDivergenceSweep) -- the
+    // join-churn fix. The >50% ABORT path above returned WITHOUT reaching here, so an incomplete bracket
+    // never latches (it keeps re-arming until a real reconciliation lands).
+    g_sweepReconciled = true;
     g_claimedActors.clear();
     g_claimTrackingActive = false;
     ResetPileBindIndex();  // bracket over: drop candidate pointers (would dangle past the GC below)
@@ -1183,6 +1188,29 @@ void ArmDivergenceSweep() {
         UE_LOGW("remote_prop_spawn: divergence sweep arm requested but tracking not armed -- skipping");
         return;
     }
+    // RECONCILE-ONCE-PER-WORLD (2026-06-17, the join-churn root fix). The divergence sweep is a
+    // ONE-TIME join reconciliation: it adjudicates the client's save-loaded world against the host's
+    // first full snapshot and destroys genuinely-divergent UNCLAIMED locals. Once it has SUCCEEDED for
+    // THIS world (g_sweepReconciled), a later FULL re-snapshot is NOT a re-reconciliation -- it is the
+    // host's steady-world re-seed delivering NEW runtime-spawned props (ambient piles / spawn-menu /
+    // kerfur conversions). Those already arrived via this bracket's drain PropSpawns (RegisterPropMirror
+    // dedupes), and genuine deletions arrive via the host's PropDestroy stream -- NEITHER needs the
+    // destructive sweep. RE-ARMING it here was the join-churn ENGINE: the host re-snapshotted ~10x in
+    // one join (every ambient pile spawn -> added>0 -> retrigger), each re-arming this sweep, which then
+    // re-doomed unclaimed locals -- thrashing the piles AND repeatedly dooming convert-materialized
+    // kerfur mirrors (the "kerfurs come alive by themselves" loop). So: reconcile ONCE; a steady re-
+    // snapshot after that just closes its bracket here (claims dropped, no sweep). A WORLD CHANGE resets
+    // the latch (OnClientWorldReadyResetSweep / ResetClaimTracking) so the new world re-reconciles. An
+    // ABORTED >50% sweep does NOT set the latch -- an incomplete/racing bracket keeps re-arming until
+    // one real reconciliation lands.
+    if (g_sweepReconciled) {
+        g_claimedActors.clear();
+        g_claimTrackingActive = false;
+        ResetPileBindIndex();
+        UE_LOGI("remote_prop_spawn: re-snapshot after reconciliation -- new props delivered via the drain, "
+                "NO re-sweep (world already reconciled; a re-arm would re-doom unclaimed locals = the join churn)");
+        return;
+    }
     // Defer the one real sweep. Claim tracking stays armed (NOT disarmed here) so
     // any host PropSpawn / client self-announce during the quiesce window still
     // claims its actor via RecordClaim and is spared.
@@ -1244,8 +1272,15 @@ bool IsInDivergenceUniverseUnclaimed(void* actor) {
     void* cls = R::ClassOf(actor);
     if (!ue_wrap::prop::IsClassKeyedInteractable(cls)) return false;  // out of the divergence universe
     if (!R::IsLive(actor)) return false;
-    if (ue_wrap::prop::IsChipPile(actor)) return false;  // pile has its own collect/share + death-watch path
+    if (ue_wrap::prop::IsChipPile(actor)) return false;  // pile has its own collect/share + grab-hook destroy path
     if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(actor))) return false;  // per-player: never swept
+    // A kerfur prop MIRROR is host-driven state (its host-range eid is bound when the convert/adoption
+    // materializes it), NEVER a save-loaded local awaiting adjudication -- so it is not a divergence
+    // candidate for any caller of THIS predicate (IsPendingSweepCandidate + the trash_collect pre-
+    // quiescence grab guards). (The divergence SWEEP itself dooms via its own inlined walk in
+    // RunDivergenceSweep_, which carries the SAME kerfur-mirror exemption.) Exempt it like the chipPile /
+    // per-player ones. (2026-06-17 kerfur join-churn fix; companion to the reconcile-once gate.)
+    if (coop::kerfur_entity::GetKerfurMirrorEidForActor(actor) != coop::element::kInvalidId) return false;
     return true;  // unclaimed in-universe keyed Aprop = a divergence candidate awaiting adjudication
 }
 
@@ -1262,6 +1297,7 @@ void OnClientWorldReadyResetSweep() {
                 "from the prior world (the new snapshot bracket will re-arm it)");
     g_sweepPending = false;
     g_sweepFired = false;
+    g_sweepReconciled = false;  // a NEW world must re-reconcile -- reset the per-world reconcile-once latch
     g_sweepStableScans = 0;
     g_sweepLastUnsettledCount = -1;
 }
@@ -1277,6 +1313,7 @@ void ResetClaimTracking() {
     // (the tick driver would otherwise fire it against a torn-down world).
     g_sweepPending = false;
     g_sweepFired = false;
+    g_sweepReconciled = false;  // fresh session -> re-reconcile on the next snapshot
     g_sweepStableScans = 0;
     g_sweepLastUnsettledCount = -1;
     ResetPileBindIndex();  // dangling-pointer hygiene across sessions (mirrors the claim set)

@@ -21,9 +21,10 @@ namespace GT = ue_wrap::game_thread;
 void* g_gmCls = nullptr;
 void* g_gm = nullptr;
 int32_t g_gmIdx = -1;
-int32_t g_offEventer = -1;        // mainGamemode.eventer (trigger_eventer_C*)
+int32_t g_offEventer = -1;          // mainGamemode.eventer (trigger_eventer_C*)
 void* g_eventerCls = nullptr;
-void* g_runEventFn = nullptr;     // runEvent(FName event, FName special)
+void* g_runEventFn = nullptr;        // runEvent(FName Event, FName Special)
+void* g_runSpecialEventFn = nullptr; // runSpecialEvent(FName eventName1) -> bool  (the per-name prank switch)
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_resolved = false;
 
@@ -36,10 +37,11 @@ void ResolvePass() {
     if (!g_gmCls || !g_eventerCls) return;
     if (g_offEventer < 0) g_offEventer = R::FindPropertyOffset(g_gmCls, L"eventer");
     if (!g_runEventFn) g_runEventFn = R::FindFunction(g_eventerCls, L"runEvent");
+    if (!g_runSpecialEventFn) g_runSpecialEventFn = R::FindFunction(g_eventerCls, L"runSpecialEvent");
     if (!g_resolved && g_offEventer >= 0 && g_runEventFn) {
         g_resolved = true;
-        UE_LOGI("event_trigger: resolved (eventer off=0x%X runEvent=yes, %zu menu entries)",
-                g_offEventer, Events().size());
+        UE_LOGI("event_trigger: resolved (eventer off=0x%X runEvent=yes runSpecialEvent=%s, %zu menu entries)",
+                g_offEventer, g_runSpecialEventFn ? "yes" : "no", Events().size());
     }
 }
 
@@ -62,77 +64,147 @@ void* Eventer() {
 
 }  // namespace
 
+const char* CategoryName(Category c) {
+    switch (c) {
+        case Category::Story:    return "Story";
+        case Category::Ariral:   return "Ariral";
+        case Category::Creature: return "Creature";
+        case Category::Signal:   return "Signal";
+        case Category::Prop:     return "Prop";
+        case Category::Cosmetic: return "Cosmetic";
+        case Category::Sound:    return "Sound";
+        case Category::Scare:    return "Scare";
+        case Category::Teleport: return "Teleport";
+        case Category::Physics:  return "Physics";
+        case Category::Dream:    return "Dream";
+        case Category::World:    return "World";
+        default:                 return "Other";
+    }
+}
+
 const std::vector<EventInfo>& Events() {
-    // The 65 SwitchName cases (votv-event-system-RE-2026-06-13.md section 1.2)
-    // + the ariralPrank special. dayZ = the DataTable unlock day (-1 = story/
-    // trigger-only). Risk per the doc's section-5 safety table.
+    using D = Dispatch;
+    using C = Category;
+    // ALL natively-triggerable events across BOTH dispatchers (runEvent 65 + runSpecialEvent 34
+    // effective), ordered BY CATEGORY then day. dayZ = list_events DataTable time.Z (-1 = trigger/
+    // rep-gated). `time` = native trigger time-of-day (time.X:time.Y anchor / "trigger" build-or-story /
+    // "rep-gated" prank pool). Sources: votv-event-system-RE-2026-06-13.md (runEvent cases + safety),
+    // the 2026-06-17 dispatcher sweep (runSpecialEvent 36-case switch + daynightCycle X=Hour/Y=Min/Z=Day),
+    // list_events DataTable (day + HH:MM), votv-all-events-coop-sync-classification-2026-06-17.md (names).
     static const std::vector<EventInfo> kEvents = {
-        { "starRain",        1, "sky/visual",   Risk::Safe,      false, "random daily roll (day>=1); also a story beat" },
-        { "solar",           3, "sky/visual",   Risk::Safe,      false, "random daily roll (day>=3)" },
-        { "wisps",          13, "sky/visual",   Risk::Safe,      false, "random daily roll (day>=13); arms a wisp swarm" },
-        { "peace",           5, "ambient",      Risk::Safe,      false, "day-5 story signal (forceObjects append)" },
-        { "picnic",          7, "world prop",   Risk::Safe,      false, "random daily roll (day>=7); places picnic props" },
-        { "destroyPicnic",   9, "world prop",   Risk::Safe,      false, "chained from picnic (day>=9): removes the props" },
-        { "salt",           24, "prop",         Risk::Safe,      false, "random daily roll (day>=24); spawns a saltpile" },
-        { "cookier",        24, "npc",          Risk::Safe,      false, "random daily roll (day>=24); arms cookiebox" },
-        { "enasus",         14, "prop drop",    Risk::Safe,      false, "random daily roll (day>=14); drops sushi+note" },
-        { "enacros",        19, "prop drop",    Risk::Safe,      false, "random daily roll (day>=19); drops croissant+note" },
-        { "ariralPrank",    -1, "ariral prank", Risk::Safe,      true,  "ariral-reputation tier roll (runSpecialEvent)" },
-        { "arirShip",       12, "ariral",       Risk::Safe,      false, "random daily roll (day>=12); arms arirShip" },
-        { "arirSignal",      8, "signal",       Risk::Safe,      false, "random daily roll (day>=8) -> forceObjects signal" },
-        { "picSignal",      11, "signal",       Risk::Safe,      false, "random daily roll (day>=11) -> forceObjects signal" },
-        { "arirSpk",        10, "ariral",       Risk::Safe,      false, "random daily roll (day>=10) -> forceObjects msg" },
-        { "arirFollower",   -1, "ariral npc",   Risk::Safe,      false, "story/trigger-only (spawns arirFollower NPC)" },
-        { "arirEgg",        -1, "ariral",       Risk::Safe,      false, "story/trigger-only; arms an arirEgg prop" },
-        { "susArir",        -1, "ariral",       Risk::Safe,      false, "story/trigger-only (per-player scare)" },
-        { "arirSat_0",      25, "signal/sat",   Risk::Safe,      false, "random daily roll (day>=25) -> forceObjects sat sig" },
-        { "arirSat_1",      25, "signal/sat",   Risk::Safe,      false, "random daily roll (day>=25) -> forceObjects sat sig" },
-        { "arirSat_2",      25, "signal/sat",   Risk::Safe,      false, "random daily roll (day>=25) -> forceObjects sat sig" },
-        { "soltoClean",     34, "ariral npc",   Risk::Safe,      false, "random daily roll (day>=34); spawns soltomiaClean" },
-        { "morningGay",     36, "ufo",          Risk::Safe,      false, "random daily roll (day>=36); spawns morningUfo" },
-        { "falseEnter",     -1, "scare",        Risk::Safe,      false, "story/trigger-only (per-player scare)" },
-        { "mann",           -1, "scare",        Risk::Safe,      false, "story/trigger-only (per-player scare)" },
-        { "vent",           -1, "scare",        Risk::Safe,      false, "story/trigger-only (per-player scare)" },
-        { "fakeGrays",      -1, "scare",        Risk::Safe,      false, "story/trigger-only (per-player hallucination)" },
-        { "toeStab",        23, "scare",        Risk::Safe,      false, "random daily roll (day>=23); arms a scare" },
-        { "ventKnocker",    11, "scare",        Risk::Safe,      false, "random daily roll (day>=11); spawns kocker (banging)" },
-        { "vehtp",          -1, "world",        Risk::Safe,      false, "story/trigger-only (ATV teleport)" },
-        { "crys",           -1, "world",        Risk::Safe,      false, "story/trigger-only" },
-        { "paperGray",      -1, "prop",         Risk::Safe,      false, "story/trigger-only; arms a paper-prop scare" },
-        { "agrav",          16, "physics",      Risk::Caution,   false, "random daily roll (day>=16); gated isPhysicalEvents" },  // RE'd 2026-06-13 (trigger_agrav kismet, full 443-name symbol table): physics-ONLY -- SetEnableGravity(false)+SetPhysicsLinearVelocity/Angular on props in Bounds + a camera post-process cloak. NO travel/menu/quit/teleport/damage/death/kill verb -> agrav CANNOT itself end the session. Caution (not Safe) because it flings loose physics props and mainPlayer has impact-damage entry points (receivedPhyiscsDamage/impactDamage), so a flung heavy prop can hurt the host. The round-4 menu-travel (~84s later) was loadLevel('menu') from mainPlayer's death/recovery cluster -- NOT proven agrav-caused (no vitals/input trace; see votv-event-system-RE doc + the loadLevel probe).
-        { "looker_0-1",     27, "looker npc",   Risk::Caution,   false, "random daily roll (day>=27) -> forceObjects looker" },
-        { "looker_1-1",     27, "looker npc",   Risk::Caution,   false, "random daily roll (day>=27) -> forceObjects looker" },
-        { "looker_2-1",     28, "looker npc",   Risk::Caution,   false, "random daily roll (day>=28) -> forceObjects looker" },
-        { "looker_3-1",     28, "looker npc",   Risk::Caution,   false, "random daily roll (day>=28) -> forceObjects looker" },
-        { "looker_4-1",     28, "looker npc",   Risk::Caution,   false, "random daily roll (day>=28) -> forceObjects looker" },
-        { "ventCrawler",     4, "creature",     Risk::Caution,   false, "random daily roll (day>=4); spawns ventCrawler" },
-        { "tentacleBalls",  32, "creature",     Risk::Caution,   false, "random daily roll (day>=32); spawns a follower" },
-        { "fallbody_0",     39, "ufo drop",     Risk::Caution,   false, "random daily roll (day>=39); UFO drops a body" },
-        { "fallbody_1",     40, "ufo drop",     Risk::Caution,   false, "random daily roll (day>=40); UFO drops a body" },
-        { "fallcar_0",      41, "ufo drop",     Risk::Caution,   false, "random daily roll (day>=41); UFO drops a car" },
-        { "arirBuster",     14, "invasion",     Risk::Caution,   false, "random daily roll (day>=14); spawns arirBuster" },
-        { "graysforest",    42, "invasion",     Risk::Caution,   false, "random daily roll (day>=42); gray forest invasion" },
-        { "graystank",      43, "invasion",     Risk::Caution,   false, "random daily roll (day>=43); UFO drops tank+pig" },
-        { "eggvasion",      -1, "invasion",     Risk::Caution,   false, "story/trigger-only (superEgger invasion)" },
-        { "boarwar",        46, "invasion",     Risk::Caution,   false, "random daily roll (day>=46); boar invasion" },
-        { "bedEvent",       -1, "sleep/dream",  Risk::Caution,   false, "dream/sleep (trigger_bedEvent on sleeping)" },
-        { "earthTp",        26, "TELEPORT",     Risk::Dangerous, false, "random daily roll (day>=26); teleports the player" },
-        { "treehouse_0",    16, "story build",  Risk::Dangerous, false, "day-16 story build stage" },
-        { "treehouse_1",    17, "story build",  Risk::Dangerous, false, "day-17 story build stage (chained)" },
-        { "treehouse_2",    18, "story build",  Risk::Dangerous, false, "day-18 story build stage" },
-        { "treehouse_3",    19, "story build",  Risk::Dangerous, false, "day-19 story build stage" },
-        { "treehouse_4",    20, "story build",  Risk::Dangerous, false, "day-20 story build stage" },
-        { "treehouse_5",    21, "story build",  Risk::Dangerous, false, "day-21 story build stage (final)" },
-        { "break_Victor",   16, "story",        Risk::Dangerous, false, "day-16 story: breaks Victor servers" },
-        { "break_Victor2",  19, "story",        Risk::Dangerous, false, "day-19 story: 2nd Victor break (chained)" },
-        { "break_RomeoSierra", 7, "story",      Risk::Dangerous, false, "day-7 story: breaks Romeo/Sierra servers" },
-        { "obelisk",        24, "story struct", Risk::Dangerous, false, "day-24 story struct; arms the obelisk" },
-        { "piramid",        30, "story struct", Risk::Dangerous, false, "day-30 story struct; arms the piramid" },
-        { "piramid_sig",    29, "signal/story", Risk::Dangerous, false, "day-29 story -> forceObjects piramid signal" },
-        { "borgRozital",    37, "story npc",    Risk::Dangerous, false, "day-37 story; spawns rozitBorg mothership" },
-        { "rozitalHole",    38, "world/story",  Risk::Dangerous, false, "day-38 story; bottom-hole controller" },
-        { "dreambase",      30, "dream/story",  Risk::Dangerous, false, "day-30 dream/story; spawns the dreambase" },
-        { "call0",          47, "story (end)",  Risk::Dangerous, false, "day-47 story END (alphaFinish gate)" },
+        // ---- Story (narrative / save progression) ----
+        { "break_RomeoSierra", D::RunEvent, C::Story, 7,  "01:44", "breaks the Romeo/Sierra servers",        Risk::Dangerous },
+        { "arirShip",          D::RunEvent, C::Story, 12, "00:01", "arms arirShip_C (radio-tower ariral ship)", Risk::Caution },
+        { "treehouse_0",       D::RunEvent, C::Story, 16, "trigger","ariral treehouse build stage 0",         Risk::Dangerous },
+        { "break_Victor",      D::RunEvent, C::Story, 16, "01:11", "breaks the Victor servers",               Risk::Dangerous },
+        { "treehouse_1",       D::RunEvent, C::Story, 17, "trigger","treehouse build stage 1",                Risk::Dangerous },
+        { "treehouse_2",       D::RunEvent, C::Story, 18, "trigger","treehouse build stage 2",                Risk::Dangerous },
+        { "treehouse_3",       D::RunEvent, C::Story, 19, "trigger","treehouse build stage 3",                Risk::Dangerous },
+        { "break_Victor2",     D::RunEvent, C::Story, 19, "01:02", "2nd Victor server break",                 Risk::Dangerous },
+        { "treehouse_4",       D::RunEvent, C::Story, 20, "trigger","treehouse build stage 4",                Risk::Dangerous },
+        { "treehouse_5",       D::RunEvent, C::Story, 21, "trigger","treehouse build stage 5 (final)",        Risk::Dangerous },
+        { "obelisk",           D::RunEvent, C::Story, 24, "15:40", "arms the warning obelisk + alarms",       Risk::Dangerous },
+        { "looker_0-1",        D::RunEvent, C::Story, 27, "20:00", "forceObjects += looker (sky)",            Risk::Caution },
+        { "looker_1-1",        D::RunEvent, C::Story, 27, "22:00", "forceObjects += looker (window)",         Risk::Caution },
+        { "looker_2-1",        D::RunEvent, C::Story, 28, "00:00", "forceObjects += looker",                  Risk::Caution },
+        { "looker_3-1",        D::RunEvent, C::Story, 28, "02:00", "forceObjects += looker",                  Risk::Caution },
+        { "looker_4-1",        D::RunEvent, C::Story, 28, "04:00", "forceObjects += looker",                  Risk::Caution },
+        { "piramid",           D::RunEvent, C::Story, 30, "18:00", "arms the piramid structure",              Risk::Dangerous },
+        { "dreambase",         D::RunEvent, C::Story, 30, "18:00", "spawns the dreambase + pivots",           Risk::Dangerous },
+        { "borgRozital",       D::RunEvent, C::Story, 37, "11:00", "spawns the rozitBorg mothership",         Risk::Dangerous },
+        { "rozitalHole",       D::RunEvent, C::Story, 38, "00:00", "bottom-hole controller",                  Risk::Dangerous },
+        { "call0",             D::RunEvent, C::Story, 47, "00:01", "day-47 END (roar; alphaFinish gate)",     Risk::Dangerous },
+
+        // ---- Ariral (faction NPCs / reputation interactions + pranks) ----
+        { "arirBuster",   D::RunEvent,     C::Ariral, 14, "17:00",   "spawns arirBusterSpawner_C",            Risk::Caution },
+        { "soltoClean",   D::RunEvent,     C::Ariral, 34, "19:00",   "spawns soltomiaCleaning_C",             Risk::Caution },
+        { "arirFollower", D::RunEvent,     C::Ariral, -1, "trigger", "spawns npc_arirFollower_C",             Risk::Caution },
+        { "susArir",      D::RunEvent,     C::Ariral, -1, "trigger", "ariral 'sus' interaction (per-player)", Risk::Caution },
+        { "ariralPrank",  D::RandomPrank,  C::Ariral, -1, "rep-gated","RANDOM rep-tiered ariral prank (summonArirPrank)", Risk::Caution },
+        { "food",         D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral throws a food prop (good tier)", Risk::Safe },
+        { "drive",        D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral throws a drive prop (good tier)", Risk::Safe },
+        { "atvFuel",      D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral refuels the ATV",               Risk::Safe },
+        { "atvFix",       D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral ATV repair (toolbox)",          Risk::Safe },
+        { "poisonFood",   D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral throws SPIKED food (bad tier)", Risk::Caution },
+        { "expDrive",     D::SpecialEvent, C::Ariral, -1, "rep-gated","ariral throws an EXPLOSIVE drive (bad tier)", Risk::Dangerous },
+
+        // ---- Creature (hostile/ambient spawns + invasions) ----
+        { "ventCrawler",  D::RunEvent,     C::Creature, 4,  "23:27",   "spawns ventCrawler_C",               Risk::Caution },
+        { "ventKnocker",  D::RunEvent,     C::Creature, 11, "00:38",   "spawns kocker_C (vent banging)",      Risk::Caution },
+        { "wisps",        D::RunEvent,     C::Creature, 13, "19:17",   "arms a wisp_C swarm",                 Risk::Caution },
+        { "tentacleBalls",D::RunEvent,     C::Creature, 32, "18:00",   "spawns tentacleBallsFollower_C",      Risk::Caution },
+        { "morningGay",   D::RunEvent,     C::Creature, 36, "10:50",   "spawns morningUfo_C",                 Risk::Caution },
+        { "fallbody_0",   D::RunEvent,     C::Creature, 39, "23:11",   "UFO drops a body (ufoDropper_body_C)", Risk::Caution },
+        { "fallbody_1",   D::RunEvent,     C::Creature, 40, "04:18",   "UFO drops a body (window variant)",   Risk::Caution },
+        { "fallcar_0",    D::RunEvent,     C::Creature, 41, "22:28",   "UFO drops a car (ufoDropper_car_C)",  Risk::Caution },
+        { "graysforest",  D::RunEvent,     C::Creature, 42, "17:01",   "gray forest invasion controller",    Risk::Dangerous },
+        { "graystank",    D::RunEvent,     C::Creature, 43, "18:01",   "UFO drops a tank + pig",             Risk::Dangerous },
+        { "boarwar",      D::RunEvent,     C::Creature, 46, "03:00",   "boar invasion (90 min)",             Risk::Dangerous },
+        { "eggvasion",    D::RunEvent,     C::Creature, -1, "trigger", "superEgger_C invasion",              Risk::Dangerous },
+        { "trashBase",    D::SpecialEvent, C::Creature, -1, "rep-gated","spawns arirTrasher_C",              Risk::Caution },
+        { "rockThrow",    D::SpecialEvent, C::Creature, -1, "rep-gated","rockThrower_C x3 (rocks at window)", Risk::Caution },
+        { "hillRoller",   D::SpecialEvent, C::Creature, -1, "rep-gated","spawns hillRollerSpawner_C",        Risk::Caution },
+        { "alienJump",    D::SpecialEvent, C::Creature, -1, "rep-gated","spawns alienJump_C",                Risk::Caution },
+
+        // ---- Signal (SETI / forceObjects beats) ----
+        { "peace",     D::RunEvent, C::Signal, 5,  "23:14", "the 'peace' signal (forceObjects)",      Risk::Safe },
+        { "arirSignal",D::RunEvent, C::Signal, 8,  "18:00", "ariral signal (forceObjects)",           Risk::Safe },
+        { "arirSpk",   D::RunEvent, C::Signal, 10, "00:02", "ariral speak message (forceObjects)",    Risk::Safe },
+        { "picSignal", D::RunEvent, C::Signal, 11, "23:10", "picnic signal (forceObjects)",           Risk::Safe },
+        { "arirSat_0", D::RunEvent, C::Signal, 25, "11:00", "ariral satellite signal",                Risk::Safe },
+        { "arirSat_1", D::RunEvent, C::Signal, 25, "12:00", "ariral satellite signal",                Risk::Safe },
+        { "arirSat_2", D::RunEvent, C::Signal, 25, "13:00", "ariral satellite signal",                Risk::Safe },
+        { "piramid_sig",D::RunEvent,C::Signal, 29, "18:00", "piramid signal (forceObjects)",          Risk::Safe },
+
+        // ---- Prop (world prop spawn/remove) ----
+        { "picnic",       D::RunEvent,     C::Prop, 7,  "00:44",   "places the picnic props",          Risk::Safe },
+        { "destroyPicnic",D::RunEvent,     C::Prop, 9,  "00:00",   "removes the picnic props",         Risk::Safe },
+        { "enasus",       D::RunEvent,     C::Prop, 14, "08:49",   "drops sushi + the enasus note",    Risk::Safe },
+        { "enacros",      D::RunEvent,     C::Prop, 19, "08:49",   "drops a croissant + the enacros note", Risk::Safe },
+        { "salt",         D::RunEvent,     C::Prop, 24, "18:00",   "spawns saltpile_C (salt heart)",   Risk::Safe },
+        { "cookier",      D::RunEvent,     C::Prop, 24, "05:30",   "arms prop_cookiebox_C",            Risk::Safe },
+        { "arirEgg",      D::RunEvent,     C::Prop, -1, "trigger",  "arms prop_arirEgg_C",             Risk::Safe },
+        { "paperGray",    D::RunEvent,     C::Prop, -1, "trigger",  "arms a paper-gray prop scare",    Risk::Safe },
+        { "cookiebox",    D::SpecialEvent, C::Prop, -1, "rep-gated","spawns prop_cookiebox_C (gift)",  Risk::Safe },
+        { "trashPiles",   D::SpecialEvent, C::Prop, -1, "rep-gated","trash props at doorways",         Risk::Safe },
+        { "arirGraff",    D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal (grime_arirGraffiti_C)", Risk::Safe },
+        { "vaccine",      D::SpecialEvent, C::Prop, -1, "rep-gated","spawns event_vaccine_C",          Risk::Caution },
+        { "oil",          D::SpecialEvent, C::Prop, -1, "rep-gated","spawns oilStainSpawn_C x8",       Risk::Caution },
+        { "begos",        D::SpecialEvent, C::Prop, -1, "rep-gated","spawns begoExplosion_C x4",       Risk::Dangerous },
+        { "gascans",      D::SpecialEvent, C::Prop, -1, "rep-gated","explosive gascans (event_funnyGascans_C)", Risk::Dangerous },
+        { "bombBox",      D::SpecialEvent, C::Prop, -1, "rep-gated","spawns prop_bombbox_C",           Risk::Dangerous },
+
+        // ---- Cosmetic (sky / particle visuals) ----
+        { "starRain", D::RunEvent, C::Cosmetic, 1, "00:17", "shooting-star/meteor emitter (eff_shootingStar_rain)", Risk::Safe },
+        { "solar",    D::RunEvent, C::Cosmetic, 3, "00:10", "solar sky/light flash + boom",            Risk::Safe },
+
+        // ---- Sound (audio cue) ----
+        { "alienSounds", D::SpecialEvent, C::Sound, -1, "rep-gated", "noiser_C x3 (alien noises)",     Risk::Safe },
+
+        // ---- Scare (per-player jumpscare / hallucination) ----
+        { "toeStab",    D::RunEvent, C::Scare, 23, "02:03",   "per-player toe-stab scare",             Risk::Caution },
+        { "falseEnter", D::RunEvent, C::Scare, -1, "trigger", "per-player false-enter scare",          Risk::Caution },
+        { "mann",       D::RunEvent, C::Scare, -1, "trigger", "per-player mannequin scare",            Risk::Caution },
+        { "vent",       D::RunEvent, C::Scare, -1, "trigger", "per-player vent scare",                 Risk::Caution },
+        { "fakeGrays",  D::RunEvent, C::Scare, -1, "trigger", "per-player gray hallucination",         Risk::Caution },
+
+        // ---- Teleport (relocates the triggering player) ----
+        { "earthTp", D::RunEvent, C::Teleport, 26, "11:27", "teleports the triggering player",          Risk::Dangerous },
+
+        // ---- Physics ----
+        { "agrav", D::RunEvent, C::Physics, 16, "01:00", "anti-gravity (gated isPhysicalEvents)",       Risk::Caution },
+
+        // ---- Dream (sleep subsystem) ----
+        { "bedEvent",       D::RunEvent,     C::Dream, -1, "trigger", "sleep/dream (trigger_bedEvent)",  Risk::Caution },
+        { "treehouseSleep", D::SpecialEvent, C::Dream, -1, "rep-gated","treehouse kidnapping (sleep -> teleport)", Risk::Caution },
+
+        // ---- World (non-prop device / world state) ----
+        { "vehtp",      D::RunEvent,     C::World, -1, "trigger",  "ATV teleport",                       Risk::Caution },
+        { "crys",       D::RunEvent,     C::World, -1, "trigger",  "event_crys",                         Risk::Safe },
+        { "console",    D::SpecialEvent, C::World, -1, "rep-gated","terminal types commands (event_consoleWrite_C)", Risk::Caution },
+        { "lightswitch",D::SpecialEvent, C::World, -1, "rep-gated","lights turn off (event_lightsTurnoffer_C)", Risk::Caution },
+        { "keypadGuess",D::SpecialEvent, C::World, -1, "rep-gated","door keypad guessed (event_passwordGuesser_C)", Risk::Caution },
+        { "atvExplode", D::SpecialEvent, C::World, -1, "rep-gated","ATV boobytrap (car.trap = true)",    Risk::Dangerous },
     };
     return kEvents;
 }
@@ -147,29 +219,48 @@ bool Trigger(const EventInfo& ev) {
         UE_LOGW("event_trigger: not resolved yet (gamemode/eventer/runEvent pending)");
         return false;
     }
-    // Copy the POD info -- the GT task may outlive this render-thread frame.
+    // Copy the POD fields -- the GT task may outlive this render-thread frame.
     const std::string name = ev.name;
-    const bool prank = ev.prank;
-    GT::Post([name, prank] {
+    const Dispatch dispatch = ev.dispatch;
+    GT::Post([name, dispatch] {
         void* eventer = Eventer();
         if (!eventer) {
             UE_LOGW("event_trigger: no live trigger_eventer (world not up?)");
             return;
         }
+        const std::wstring wname(name.begin(), name.end());
+        if (dispatch == Dispatch::SpecialEvent) {
+            // A specific, addressable ariral prank: runSpecialEvent(name) -- a flat per-name switch,
+            // NO rep/random gating (the RANDOM path is RandomPrank below). 2 of the 36 cases are
+            // no-ops (agrav -> use runEvent; arirEgg -> April-Fools-gated); those are not exposed.
+            if (!g_runSpecialEventFn) {
+                UE_LOGW("event_trigger: runSpecialEvent unresolved -- cannot fire prank '%s'", name.c_str());
+                return;
+            }
+            ue_wrap::ParamFrame f(g_runSpecialEventFn);
+            if (!f.valid()) return;
+            f.Set<R::FName>(L"eventName1", ue_wrap::fname_utils::StringToFName(wname));
+            if (ue_wrap::Call(eventer, f))
+                UE_LOGI("event_trigger: runSpecialEvent('%s') dispatched", name.c_str());
+            else
+                UE_LOGW("event_trigger: runSpecialEvent('%s') dispatch FAILED", name.c_str());
+            return;
+        }
+        // RunEvent + RandomPrank both go through runEvent(Event, Special). RandomPrank keys on
+        // Special="ariralPrank" (Event ignored -> summonArirPrank random rep-tier draw); a normal
+        // event passes its own name with Special="None".
         ue_wrap::ParamFrame f(g_runEventFn);
         if (!f.valid()) return;
-        const std::wstring wname(name.begin(), name.end());
-        // The prank branch keys on `special`; `event` is ignored there (any
-        // arirInteraction row name works -- the doc's section 2.4).
-        const std::wstring eventName = prank ? L"arirInteraction_0" : wname;
-        const std::wstring specialName = prank ? L"ariralPrank" : L"None";
+        const bool random = (dispatch == Dispatch::RandomPrank);
+        const std::wstring eventName   = random ? L"arirInteraction_0" : wname;
+        const std::wstring specialName = random ? L"ariralPrank" : L"None";
         f.Set<R::FName>(L"event", ue_wrap::fname_utils::StringToFName(eventName));
         f.Set<R::FName>(L"special", ue_wrap::fname_utils::StringToFName(specialName));
         if (ue_wrap::Call(eventer, f))
-            UE_LOGI("event_trigger: runEvent('%s'%s) dispatched", name.c_str(),
-                    prank ? ", special=ariralPrank" : "");
+            UE_LOGI("event_trigger: runEvent('%ls'%s) dispatched", eventName.c_str(),
+                    random ? ", special=ariralPrank" : "");
         else
-            UE_LOGW("event_trigger: runEvent('%s') dispatch FAILED", name.c_str());
+            UE_LOGW("event_trigger: runEvent('%ls') dispatch FAILED", eventName.c_str());
     });
     return true;
 }

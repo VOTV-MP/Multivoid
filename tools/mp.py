@@ -1495,6 +1495,186 @@ def cmd_kerfurtoggle(args) -> None:
     sys.exit(0)
 
 
+# --- join-churn regression markers (the 2026-06-17 reconcile-once + kerfur-exemption + flood fix) ---
+_JC_SWEEP_FIRING = "divergence sweep FIRING"               # the divergence sweep actually running
+_JC_NO_RESWEEP   = "NO re-sweep (world already reconciled" # MY reconcile-once gate firing (the fix proof)
+_JC_DESTROYED    = "unclaimed locals destroyed"            # a sweep that destroyed locals (the thrash, if repeated)
+_JC_NOMATCH      = "no local match (key or eid)"           # the eid=0 held-clump flood
+
+
+def cmd_joinchurn(args) -> None:
+    """Autonomous regression test for the 2026-06-17 JOIN-CHURN fix (reconcile-once latch +
+    kerfur-mirror sweep exemption + held-clump flood skip).
+
+    Reproduces the EXACT reported bug: the HOST loads the populated s_1234 (its garbage/ambient
+    spawners mint chipPiles continuously), a FRESH client joins, and the host's steady-world re-seed
+    re-snapshots every few seconds. WITHOUT the fix, each full re-snapshot re-armed the client's
+    DESTRUCTIVE divergence sweep, which re-fired ~10x in one join -- thrashing the piles + dooming
+    kerfur mirrors (the "piles lost sync / kerfurs come alive by themselves" report). WITH the fix
+    the client reconciles ONCE, and the subsequent re-snapshots hit the reconcile-once gate
+    (delivering new props without re-sweeping).
+
+    Then it spawns a kerfur on the host -- which (a) mints a NEW keyed prop so the steady re-seed
+    re-snapshots AFTER reconciliation, GUARANTEEING the gate marker appears, and (b) exercises the
+    kerfur-mirror path (it must mirror + PERSIST, not be doomed by the sweep -> no spurious
+    POLL-turn-on flip-flop).
+
+    Screenshots are captured at FOUR situations: A=mid-join churn, B=post-reconcile, C=kerfur
+    present, D=steady-state. PASS requires: both peers alive + connected; the reconcile-once gate
+    FIRED (>=1 NO-re-sweep); the sweep fired only a few times (<= --max-sweeps, NOT the ~10 churn);
+    bounded destroy-sweeps + no-local-match flood; the kerfur mirrored with no flip-flop loop."""
+    shots_dir = ROOT / "research" / "joinchurn_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    host_log = HOST_DIR / "votv-coop.log"
+    client_log = CLIENT_DIR / "votv-coop.log"
+    spawn_trigger = str(HOST_DIR / "spawn_npc.trigger")
+    for t in (spawn_trigger,):
+        try:
+            Path(t).unlink()
+        except OSError:
+            pass
+
+    if kill_all() > 0:
+        log("note: pre-existing VotV killed before joinchurn")
+    deploy_all()
+
+    # --- HOST: populated s_1234 (the garbage spawners that keep minting piles = the churn trigger) ---
+    log("--- HOST LAUNCH (s_1234 populated; kerfur spawn trigger armed) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb, trigger_file=spawn_trigger)
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before UDP bind"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log("FAIL: host did not bind UDP"); kill_all(); sys.exit(1)
+    _wait_for_log(host_log, "==== PLAY READY ====", args.boot_timeout, "HOST")
+    log(f"host-settle {args.host_settle}s (drain the boot-world's dying prop elements before connect)...")
+    time.sleep(args.host_settle)
+
+    # --- CLIENT: FRESH join (the join that drove the churn) ---
+    log("--- CLIENT LAUNCH (FRESH join) ---")
+    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                             res_x=1280, res_y=720, peer_slot=1, monitor=2, tile_index=0,
+                             memory_limit_gb=args.memory_limit_gb)
+    slot = wait_for_client_connect(CLIENT_DIR, args.client_boot_timeout, "CLIENT", client_pid)
+    if slot is None:
+        log("FAIL: client never connected"); tail_log(client_log, 30, "CLIENT"); kill_all(); sys.exit(1)
+
+    def snap(tag: str) -> None:
+        _capture_window(host_pid, shots_dir / f"{tag}_host.png")
+        _capture_window(client_pid, shots_dir / f"{tag}_client.png")
+
+    # --- SITUATION A: the join-churn window. Sample RSS; screenshot mid-join. ---
+    log(f"--- SITUATION A: monitoring the join-churn window for {args.join_monitor}s ---")
+    t0 = time.time(); shot_a = False; kill_reason = None
+    while time.time() - t0 < args.join_monitor:
+        time.sleep(args.sample_interval)
+        peers = list_votv(); t = int(time.time() - t0)
+        mx = max((p["RSS_MB"] for p in peers), default=0)
+        log(f"  t={t}s peers={len(peers)} maxRSS={mx}MB  "
+            f"sweep_FIRING={_log_count(client_log, _JC_SWEEP_FIRING)} "
+            f"gate(NO-re-sweep)={_log_count(client_log, _JC_NO_RESWEEP)} "
+            f"flood={_log_count(client_log, _JC_NOMATCH)}")
+        if mx > args.ram_kill_mb:
+            kill_reason = f"peer RSS {mx}MB > {args.ram_kill_mb}MB kill threshold"; break
+        if len(peers) < 2:
+            kill_reason = "a peer DIED during the join"; break
+        if not shot_a and t >= args.midjoin_shot_at:
+            log("  -- mid-join screenshot (SITUATION A) --"); snap("A_midjoin"); shot_a = True
+    if not shot_a and not kill_reason:
+        snap("A_midjoin")
+    if kill_reason:
+        tail_log(client_log, 40, "CLIENT"); tail_log(host_log, 12, "HOST")
+        log("--- KILLING ---"); kill_all(); log(f"FAIL: {kill_reason}"); sys.exit(2)
+
+    # --- SITUATION B: reconciliation. Wait for the client's load-tail quiescence (the ONE sweep). ---
+    _wait_for_log(client_log, "load tail quiesced", 60, "CLIENT")
+    log("--- SITUATION B: reconciled; post-reconcile screenshot + 4s settle ---")
+    time.sleep(4)
+    snap("B_reconciled")
+
+    # --- SITUATION C: spawn a kerfur. Mints a NEW keyed prop -> the steady re-seed re-snapshots
+    #     AFTER reconciliation (forces the reconcile-once GATE to fire) AND exercises the kerfur
+    #     mirror (it must persist, not be swept -> no spurious POLL-turn-on flip-flop). ---
+    log("--- SITUATION C: spawn a kerfur (forces a post-reconcile re-snapshot + tests the kerfur mirror) ---")
+    _wait_for_log(host_log, "npc-suppress: installed interceptor", args.install_timeout, "HOST")
+    Path(spawn_trigger).write_text("spawn")
+    _wait_for_log(host_log, "spawn_npc: spawned 'kerfurOmega_C'", 20, "HOST")
+    _wait_for_log(client_log, "materialized mirror", 25, "CLIENT")
+    log("--- kerfur mirrored; settling 12s (watch for spurious convert + the post-reconcile gate) ---")
+    time.sleep(12)
+    snap("C_kerfur")
+
+    # --- SITUATION D: steady state ---
+    log(f"--- SITUATION D: steady-state settle {args.steady}s ---")
+    time.sleep(args.steady)
+    snap("D_steady")
+
+    # --- markers (read before kill) ---
+    sweeps     = _log_count(client_log, _JC_SWEEP_FIRING)
+    gate       = _log_count(client_log, _JC_NO_RESWEEP)
+    destroyed  = _log_count(client_log, _JC_DESTROYED)
+    nomatch    = _log_count(client_log, _JC_NOMATCH)
+    k_mirror   = _log_count(client_log, "materialized mirror")
+    k_off      = _log_count(client_log, "POLL turn_off")
+    k_on       = _log_count(client_log, "POLL turn-on")
+    h_outofrng = _log_count(host_log, "outside the host range")
+    cmk        = parse_log_markers(client_log)
+    peers_end  = list_votv()
+    tail_log(client_log, 30, "CLIENT")
+    tail_log(host_log, 12, "HOST")
+    log("--- KILLING ---"); kill_all()
+
+    # --- verdict ---
+    log("--- JOINCHURN VERDICT ---")
+    log(f"churn(CLIENT):  divergence-sweep-FIRING={sweeps}   reconcile-once-GATE(NO-re-sweep)={gate}   "
+        f"unclaimed-destroyed={destroyed}   no-local-match-flood={nomatch}")
+    log(f"kerfur(CLIENT): materialized-mirror={k_mirror}  spurious turn_off={k_off} turn_on={k_on}   "
+        f"host out-of-range-req={h_outofrng}")
+    log(f"liveness: peers_end={len(peers_end)} assigned_slot={cmk['assigned_slot']} "
+        f"puppet_slots={sorted(cmk['puppet_slots'])} malformed_drops={cmk['malformed_drops']}")
+    fails: list[str] = []
+    if len(peers_end) < 2:
+        fails.append(f"a peer died (peers_end={len(peers_end)})")
+    if cmk["assigned_slot"] is None:
+        fails.append("client never reached connected (no peer-slot assignment)")
+    if 0 not in cmk["puppet_slots"]:
+        fails.append("client never spawned the host puppet (pose stream not flowing)")
+    if gate < 1:
+        fails.append("the RECONCILE-ONCE GATE never fired (no 'NO re-sweep') -- the fix is NOT active, "
+                     "OR the host never re-snapshotted post-reconcile (spawners idle / world too small)")
+    if sweeps > args.max_sweeps:
+        fails.append(f"divergence sweep FIRED {sweeps}x (> {args.max_sweeps}) -- the re-snapshot/sweep CHURN is back")
+    if destroyed > args.max_destroys:
+        fails.append(f"{destroyed} destructive 'unclaimed locals destroyed' sweeps (> {args.max_destroys}) -- repeated reconciliation = the thrash")
+    if nomatch > args.max_nomatch:
+        fails.append(f"{nomatch} 'no local match' (> {args.max_nomatch}) -- the eid=0 held-clump flood is back")
+    if k_mirror < 1:
+        fails.append("the spawned kerfur NEVER mirrored to the client (kerfur sync broken)")
+    if (k_off + k_on) > args.max_kerfur_convert:
+        fails.append(f"{k_off + k_on} spurious kerfur converts (> {args.max_kerfur_convert}) -- the 'died invisibly' flip-flop loop")
+    if h_outofrng > 0:
+        fails.append(f"{h_outofrng} 'outside host range' kerfur request -- a client-eid cascade dupe")
+    if cmk["malformed_drops"] > 0:
+        fails.append(f"{cmk['malformed_drops']} malformed (senderEpoch=0) wire drop(s)")
+    for tag in ("A_midjoin", "B_reconciled", "C_kerfur", "D_steady"):
+        log(f"  screenshots: {tag}_host.png + {tag}_client.png  (research/joinchurn_shots/)")
+    if fails:
+        log(f"FAIL ({len(fails)} issue(s)):")
+        for f in fails:
+            log(f"  - {f}")
+        sys.exit(2)
+    log(f"PASS: reconcile-once gate fired {gate}x; divergence sweep only {sweeps}x (no churn); "
+        f"{destroyed} destroy-sweep(s); no-local-match flood {nomatch} (bounded); kerfur mirrored "
+        f"({k_mirror}) with no flip-flop ({k_off + k_on} converts); both peers stable + connected.")
+    sys.exit(0)
+
+
 def cmd_spawnmenutest(args) -> None:
     """Autonomous diagnosis of the story-mode Q spawn-menu dev feature. Launches a HOST in
     STORY mode (s_1234) with the spawn-menu file trigger, fires OpenNow() once the world is up,
@@ -2187,6 +2367,40 @@ def main() -> None:
     p_kt.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_kt.add_argument(flag, **kw)
     p_kt.set_defaults(func=cmd_kerfurtoggle)
+
+    p_jc = sub.add_parser("joinchurn",
+                          help="autonomous regression test of the 2026-06-17 join-churn fix "
+                               "(reconcile-once + kerfur exemption + flood skip): host s_1234 + fresh "
+                               "client + kerfur spawn; 4-situation screenshots; verdicts on the "
+                               "reconcile-once markers")
+    p_jc.add_argument("--boot-timeout", type=int, default=40,
+                      help="seconds to wait for host UDP bind / PLAY READY")
+    p_jc.add_argument("--host-settle", type=int, default=25,
+                      help="seconds after host PLAY READY (drain the boot-world dying props) before connect")
+    p_jc.add_argument("--client-boot-timeout", type=int, default=90,
+                      help="seconds for the client to reach connected (save-transfer join)")
+    p_jc.add_argument("--join-monitor", type=int, default=75,
+                      help="seconds to monitor the join-churn window (cover the load tail)")
+    p_jc.add_argument("--midjoin-shot-at", type=int, default=20,
+                      help="seconds into the join to capture the mid-join screenshot (SITUATION A)")
+    p_jc.add_argument("--install-timeout", type=int, default=90,
+                      help="seconds to wait for the host's NPC interceptor (gameplay loaded) before the kerfur spawn")
+    p_jc.add_argument("--steady", type=int, default=15,
+                      help="seconds of final steady-state settle (SITUATION D)")
+    p_jc.add_argument("--sample-interval", type=int, default=5)
+    p_jc.add_argument("--ram-kill-mb", type=int, default=9000)
+    p_jc.add_argument("--max-sweeps", type=int, default=4,
+                      help="max acceptable divergence-sweep FIRING count (pre-fix churn was ~10)")
+    p_jc.add_argument("--max-destroys", type=int, default=2,
+                      help="max acceptable destructive 'unclaimed locals destroyed' sweeps")
+    p_jc.add_argument("--max-nomatch", type=int, default=40,
+                      help="max acceptable 'no local match' held-clump flood (pre-fix was 152)")
+    p_jc.add_argument("--max-kerfur-convert", type=int, default=4,
+                      help="max acceptable spurious kerfur converts (the 'died invisibly' flip-flop)")
+    p_jc.add_argument("--memory-limit-gb", type=float, default=12.0,
+                      help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_jc.add_argument(flag, **kw)
+    p_jc.set_defaults(func=cmd_joinchurn)
 
     p_sm = sub.add_parser("spawnmenutest",
                           help="diagnose the story-mode Q spawn-menu dev feature: host fires OpenNow + reports activeInterface/dispatch + screenshot")

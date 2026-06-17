@@ -17,7 +17,6 @@
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
 #include "coop/remote_prop_spawn.h"
-#include "coop/trash_collect_sync.h"
 #include "coop/trash_pile_sync.h"
 
 #include "ue_wrap/game_thread.h"
@@ -289,13 +288,11 @@ void HandleEntityEvent(net::Session& session,
         // doomed) before K2_DestroyActor. Prevents UPhysicsHandle
         // Component::TickComponent reading a dangling GrabbedComponent
         // ptr next frame.
-        // v52: if this destroy targets a pile WE are death-watching (the OTHER peer grabbed the
-        // shared pile), drop our watch entry first so the local teardown below doesn't make our
-        // own liveness sweep re-broadcast the (wire-induced) death back to the origin.
-        if (p.elementId != 0 && p.elementId != coop::element::kInvalidId) {
-            coop::trash_collect_sync::NotifyPileConsumed(p.elementId);
-        }
-        // v57: same echo guard for the trashBitsPile counter channel, keyed -- a wire
+        // (The chipPile death-watch echo guard that lived here -- NotifyPileConsumed(p.elementId) --
+        // is GONE 2026-06-17 with the pile death-watch retirement: there is no per-pile watch entry to
+        // drop, and the InpActEvt_use grab observer only fires on a local E-press, never on a
+        // wire-driven destroy, so a wire destroy can never echo back out.)
+        // v57: echo guard for the trashBitsPile counter channel, keyed -- a wire
         // destroy of a dispenser pile must not re-broadcast from OUR death-watch.
         if (p.key.len > 0) {
             std::wstring dkey;
@@ -349,10 +346,10 @@ void HandleEntityEvent(net::Session& session,
                 break;
             }
         }
-        // OnConvert spawns the pile via remote_prop_spawn::OnSpawn, which enrols every
-        // chipPile mirror in the death-watch itself -- so no separate WatchPile here. A null
-        // return = the pile spawn failed (e.g. a transient FindClass miss before the chipPile
-        // BP class loaded); rare, but log it since the re-grab destroy won't propagate.
+        // OnConvert spawns the pile via remote_prop_spawn::OnSpawn (which RegisterPropMirror-binds it,
+        // so a later grab resolves its eid via the InpActEvt_use observer -> PropDestroy). A null
+        // return = the pile spawn failed (e.g. a transient FindClass miss before the chipPile BP class
+        // loaded); rare, but log it since the re-grab destroy won't propagate.
         if (!remote_prop::OnConvert(p, localPlayer, msg.senderPeerSlot)) {
             UE_LOGW("event_feed: PropConvert newEid=%u pile spawn FAILED -- a re-grab of this "
                     "pile won't propagate its destroy", p.newEid);

@@ -59,9 +59,9 @@ void RenderRestoreVitals() {
     if (ImGui::Button("Restore vitals (food / sleep / health)")) coop::dev::restore_vitals::Restore();
     ImGui::SameLine();
     ImGui::TextDisabled("(both peers)");
-    if (ImGui::Button("Set vitals LOW (10)")) coop::dev::restore_vitals::SetLow();
+    if (ImGui::Button("Set stamina low")) coop::dev::restore_vitals::SetStaminaLow();
     ImGui::SameLine();
-    ImGui::TextDisabled("(local test -- food/sleep/health=10; nameplate syncs)");
+    ImGui::TextDisabled("(local test -- sleep/energy=10 -> exhausted; nameplate syncs)");
 }
 
 void RenderSetClock() {
@@ -175,24 +175,27 @@ bool StrContainsI(const char* hay, const char* needle) {
 
 void RenderEvents() {
     namespace ET = coop::dev::event_trigger;
-    ImGui::TextDisabled("Trigger any game event (host only; the game's own runEvent path).");
-    ImGui::TextDisabled("'day N' = unlock day (triggering ignores it). 'native trigger' = how the GAME");
-    ImGui::TextDisabled("fires it (info only). 'random daily roll' = eligible from that day (native picker).");
+    ImGui::TextDisabled("Trigger any game event (host only; runEvent + runSpecialEvent). Grouped by strict");
+    ImGui::TextDisabled("category. 'day N' = unlock day. The cyan TIME column is the native trigger time-of-");
+    ImGui::TextDisabled("day (HH:MM anchor) / 'trigger' (story/build) / 'rep' (ariral-reputation prank pool).");
     static char filter[32] = {};
     ImGui::SetNextItemWidth(180.f);
-    ImGui::InputTextWithHint("##evfilter", "filter (name / category / trigger)...", filter, sizeof(filter));
+    ImGui::InputTextWithHint("##evfilter", "filter (name / category / time / effect)...", filter, sizeof(filter));
     ImGui::Separator();
-    // Horizontal scrollbar: the native-trigger column can run past the panel on a narrow window, so the
-    // user can scroll right rather than lose the text (the window itself is also wider + min-constrained).
+    // Horizontal scrollbar: the effect column can run past the panel on a narrow window, so the user can
+    // scroll right rather than lose the text (the window itself is also wider + min-constrained).
     ImGui::BeginChild("##evlist", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-    const char* lastCat = nullptr;
+    ET::Category lastCat = ET::Category::COUNT;
+    bool haveCat = false;
     for (const auto& ev : ET::Events()) {
-        if (filter[0] && !StrContainsI(ev.name, filter) && !StrContainsI(ev.category, filter) &&
-            !StrContainsI(ev.trigger, filter))
+        const char* catName = ET::CategoryName(ev.cat);
+        if (filter[0] && !StrContainsI(ev.name, filter) && !StrContainsI(catName, filter) &&
+            !StrContainsI(ev.time, filter) && !StrContainsI(ev.mechanism, filter))
             continue;
-        if (!lastCat || strcmp(lastCat, ev.category) != 0) {
-            lastCat = ev.category;
-            ImGui::SeparatorText(ev.category);
+        if (!haveCat || ev.cat != lastCat) {
+            lastCat = ev.cat;
+            haveCat = true;
+            ImGui::SeparatorText(catName);
         }
         const bool danger = ev.risk == ET::Risk::Dangerous;
         if (danger)
@@ -204,16 +207,24 @@ void RenderEvents() {
         const bool hoveredBtn = ImGui::IsItemHovered();
         ImGui::SameLine();
         if (ev.dayZ >= 0) ImGui::TextDisabled("day %-3d", ev.dayZ);
-        else              ImGui::TextDisabled("story  ");
+        else              ImGui::TextDisabled("  -   ");
         ImGui::SameLine();
-        // The native trigger -- how the GAME fires this event, distinct from our F1 runEvent.
-        ImGui::TextDisabled("%s", ev.trigger);
+        // The native trigger TIME (hours:minutes) -- the user's key ask. Cyan so it stands out.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.95f, 1.0f));
+        ImGui::Text("%-7s", ev.time);
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", ev.mechanism);
         if (hoveredBtn) {
-            if (danger)
-                ImGui::SetTooltip("native trigger: %s\n\nStory/save progression or relocation -- can "
-                                  "desync the run.\nCtrl+click to trigger.", ev.trigger);
-            else
-                ImGui::SetTooltip("native trigger: %s", ev.trigger);
+            if (danger) {
+                ImGui::SetTooltip("%s  |  native time: %s\n%s\n\nStory/save progression or player relocation"
+                                  " --\ncan desync the run. Ctrl+click to trigger.", catName, ev.time, ev.mechanism);
+            } else {
+                const char* path = (ev.dispatch == ET::Dispatch::SpecialEvent) ? "runSpecialEvent (specific prank)"
+                                 : (ev.dispatch == ET::Dispatch::RandomPrank)  ? "runEvent (RANDOM rep-tier prank)"
+                                 :                                               "runEvent";
+                ImGui::SetTooltip("%s  |  native time: %s  |  via %s\n%s", catName, ev.time, path, ev.mechanism);
+            }
         }
         if (clicked && (!danger || ImGui::GetIO().KeyCtrl)) ET::Trigger(ev);
     }

@@ -307,15 +307,24 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-        session.SetLocalPropPose(true, pp);
-        // Throttled emit log: first 3 + every 60th, matches receiver
-        // throttle so the two logs can be diff'd line-for-line.
-        const uint64_t n = ++g_propEmitCount;
-        if (n <= 3 || (n % 60) == 0) {
-            UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u",
-                    static_cast<unsigned long long>(n),
-                    pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
-                    static_cast<int>(pp.key.len), pp.elementId);
+        // Only STREAM a held-prop pose that carries a cross-peer IDENTITY (a Key OR an eid). A clump
+        // grabbed PRE-QUIESCENCE that EnsureHeldItemBroadcast declined to express is keyless AND eid-less
+        // -- the receiver can't resolve it, so streaming it floods the peer with 'no local match' warns
+        // (~60/s) for an actor it will never have, and shows nothing. Skip the SEND until it gains an
+        // identity; the stream resumes the instant the item is expressed. (Join-window flood fix
+        // 2026-06-17. g_lastHeldProp is still tracked below so the release edge + re-acquire work; a
+        // PropRelease for a never-expressed held prop is harmless -- the peer has no mirror to release.)
+        if (pp.key.len > 0 || pp.elementId != 0) {
+            session.SetLocalPropPose(true, pp);
+            // Throttled emit log: first 3 + every 60th, matches receiver
+            // throttle so the two logs can be diff'd line-for-line.
+            const uint64_t n = ++g_propEmitCount;
+            if (n <= 3 || (n % 60) == 0) {
+                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u",
+                        static_cast<unsigned long long>(n),
+                        pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
+                        static_cast<int>(pp.key.len), pp.elementId);
+            }
         }
         g_lastHeldProp = heldActor;
         g_lastHeldKey = pp.key;

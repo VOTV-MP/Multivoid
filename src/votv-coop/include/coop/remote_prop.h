@@ -85,6 +85,14 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         const std::wstring& cls,
                         int senderSlot);
 
+// Reverse lookup of the wire ElementId bound to `actor` in the prop MirrorManager, or kInvalidId if
+// none. The forward map (prop_element_tracker::GetPropElementIdForActor) is the O(1) path for OWNED
+// props; this is the MIRROR-side resolver (e.g. a CLIENT grabbing a host-owned chipPile) -- an O(n)
+// Snapshot-walk reached ONLY on the rare grab edge AFTER the forward map missed, never a hot path.
+// Game-thread only (Snapshot takes the MirrorManager lock). Used by trash_collect_sync's pile-grab
+// observer to resolve a shared pile eid from the actor under the crosshair.
+coop::element::ElementId ResolveMirrorEidByActor(void* actor);
+
 // Extract null-terminated wstring from a WireKey. Shared utility used
 // by both the drive subsystem (FindSlotByKey, OnRelease, OnDestroy)
 // and the spawn receiver (OnSpawn). Public on this header because the
