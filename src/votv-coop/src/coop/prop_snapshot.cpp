@@ -11,6 +11,7 @@
 
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
+#include "coop/kerfur_entity.h"  // IsKerfurActor -- exclude kerfurs from the incremental express (KerfurConvert is their only signal)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"
@@ -514,6 +515,13 @@ void ExpressIncrementalSpawn(void* actor) {
     // never broadcasts -- a client's runtime spawns route through the host (phase 2).
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!actor || !R::IsLive(actor)) return;
+    // Kerfur exclusion (2026-06-18 backstop to the MarkKnownKeyedProp close in
+    // RegisterHostPropSilent): a kerfur's ONLY wire signal is KerfurConvert -- never the
+    // generic incremental PropSpawn. Re-expressing a kerfur prop here with its real BP key
+    // dupes it on a client fuzzy-miss (the host turn-on/off dupe). The connect snapshot's
+    // drain handles a kerfur prop differently (the client adopts it); only THIS steady-state
+    // express must skip it.
+    if (coop::kerfur_entity::IsKerfurActor(actor)) return;
     // eid was minted by the seed walk that yielded this actor (phase 2 of
     // SeedWalk_, before it returned), so this resolves.
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);

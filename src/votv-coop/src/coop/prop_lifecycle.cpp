@@ -634,8 +634,17 @@ coop::element::ElementId RegisterHostPropSilent(void* actor) {
         return coop::element::kInvalidId;
     }
     PT::MarkPropElement(actor, keyStr, cls);
+    // R1-regression fix (2026-06-18, host turn-on/off kerfur dupe). ALSO mark it KNOWN.
+    // Without this the converged kerfur prop is absent from g_knownKeyedProps, so the R1
+    // steady-world re-seed's newness test (`g_knownKeyedProps.insert(obj).second`) sees it
+    // as NEW every ~4s and ExpressIncrementalSpawn re-broadcasts it with its REAL BP key --
+    // a 2nd PropSpawn conflicting with the kerfur's ONLY intended wire signal (KerfurConvert).
+    // On a client fuzzy-miss (skin variant / race) that 2nd PropSpawn fresh-spawns a duplicate
+    // kerfurOmega. Marking it known closes the echo at the source (the release path's
+    // UnmarkKnownKeyedProp is symmetric). The kerfur prop still needs NO PropSpawn here.
+    PT::MarkKnownKeyedProp(actor);
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
-    UE_LOGI("prop_lifecycle[silent register]: host prop %p class '%ls' key '%ls' -> eid=%u (no PropSpawn broadcast)",
+    UE_LOGI("prop_lifecycle[silent register]: host prop %p class '%ls' key '%ls' -> eid=%u (no PropSpawn broadcast; marked known so the re-seed won't re-express it)",
             actor, cls.c_str(), keyStr.c_str(), static_cast<uint32_t>(eid));
     return eid;
 }

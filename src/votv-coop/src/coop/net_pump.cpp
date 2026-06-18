@@ -407,9 +407,43 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 return;
             }
             if (!inGameplayWorld) coop::prop_element_tracker::SetInPurgeEpisode(false);  // inert at menu; re-arm on gameplay re-entry
+            std::vector<coop::element::ElementId> reapedEids;
             const size_t reaped = inGameplayWorld
-                ? coop::prop_element_tracker::ReapDeadLocalPropElements(kReapEvictCap)
+                ? coop::prop_element_tracker::ReapDeadLocalPropElements(kReapEvictCap, &reapedEids)
                 : 0;
+            // PART 1 (2026-06-18) HOST-AUTHORITATIVE prop/pile death-watch. A host prop/pile
+            // destroyed via a BP-internal EX_CallMath path (garbage-truck collect, ambient cull,
+            // removeWOrespawn/LifeSpan despawn, grab-morph) NEVER fires K2_DestroyActor, so the
+            // ProcessEvent detour can't see it -- the ONLY thing that ever removed the peer's
+            // stale mirror was the retired 4s full re-snapshot's sweep. The reaper above detects
+            // exactly these (a dead LOCAL element K2 never drained). In STEADY state (NOT a mass-
+            // purge transition -- that is engine teardown the client does on its own travel) the
+            // HOST now broadcasts an explicit PropDestroy(eid) per vanish -- MTA Packet_EntityRemove,
+            // by IDENTITY (the sound replacement for the retired unsound proximity death-watch).
+            // The client resolves the host-range eid -> drops its mirror. Idempotent vs the instant
+            // OnPileGrabPre grab-destroy (a 2nd by-eid PropDestroy is a logged no-op on the receiver).
+            // ASSUMPTION (audit L3, 2026-06-18): VOTV is ONE persistent untitled_1 world with no
+            // in-gameplay sublevel/cave streaming, so the only thing that purges props is a full world
+            // swap (reaps ALL ~3300 = a mass purge, excluded by reaped<kReseedPurge). IF a partial
+            // LoadStreamLevel cave-travel is ever added (a <64 purge inside a live UWorld with peers in
+            // DIFFERENT sublevels), this would PropDestroy the unloaded sublevel's props on a peer still
+            // there -- re-gate on a membership/co-location check then.
+            if (session.role() == coop::net::Role::Host && reaped > 0 &&
+                reaped < kReseedPurge && !coop::prop_element_tracker::InPurgeEpisode()) {
+                int sent = 0;
+                for (coop::element::ElementId eid : reapedEids) {
+                    if (eid == coop::element::kInvalidId || eid == 0) continue;
+                    coop::net::PropDestroyPayload dp{};
+                    dp.key.len = 0;  // eid-only: the client resolves the mirror by host-range eid
+                    dp.elementId = static_cast<uint32_t>(eid);
+                    session.SendPropDestroy(dp);
+                    ++sent;
+                }
+                if (sent > 0)
+                    UE_LOGI("net_pump: host death-watch -- broadcast %d explicit PropDestroy(eid) for "
+                            "steady-state prop/pile vanish(es) the un-hookable BP path never replicated "
+                            "(MTA per-entity remove, by identity)", sent);
+            }
             // Catch up ALREADY-connected peers to the now-complete prop set:
             // their connect-edge snapshot (if it ran at all -- the fork-A
             // coherence gate defers it mid-transition) enumerated the PRE-

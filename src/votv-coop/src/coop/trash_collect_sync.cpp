@@ -164,6 +164,31 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // mirror -- it spawns physics-free and is driven KINEMATICALLY (the inverse
     // of the reverted-2a UAF). [[project-bug-trash-chippile-uaf-crash]]
     if (!ue_wrap::prop::IsKeyedInteractable(heldActor)) return false;
+    // PART 2 (2026-06-18) CLIENT host-authority gate for SHARED TRASH (chipPile / garbageClump /
+    // trashBitsPile -- the non-Aprop_C "world litter"). These are HOST-OWNED shared entities. When a
+    // CLIENT grabs a host pile, its BP locally morphs it to a clump (EX_CallMath, un-hookable) and this
+    // path would SendPropSpawn that clump -> the host fresh-spawns a DUPLICATE, and on the clump's later
+    // land-convert (BroadcastConvertNear, reachable only if we WatchClump below) the host spawns yet
+    // another pile = "a new pile born from the host's original, from the host's perspective." The client
+    // must NEVER author a shared trash entity -- the exact host-authority rule the K-5 kerfur gate above
+    // enforces. Suppressing here ALSO disarms the clump-convert watch (WatchClump is only reached past
+    // this return), so neither the clump PropSpawn nor the PropConvert ever leaves the client -> the dupe
+    // is killed at the SOURCE. The client's grab already removed the host's original via OnPileGrabPre's
+    // PropDestroy (eid-resolved on the mirror), so the original IS removed -- no orphan. The client holds
+    // the clump locally; a client-THROWN ground pile staying client-local is a known phase-2 gap (the
+    // host-request spawn model) -- a benign divergence, NOT a dupe. Aprop_C items (IsDescendantOfProp)
+    // are unaffected (per-player carry stays). The HOST still authors its own held trash below.
+    // (Audit M1, 2026-06-18: this suppresses all 3 shared-trash bases but OnPileGrabPre's host-original
+    // PropDestroy covers only chipPile -- safe because the other two are never carried-as-a-host-mirror:
+    // a trashBitsPile dispenses an Aprop item + a separately-synced counter (not a held clump), and a
+    // garbageClump only ever exists as a chipPile's morph product, whose chipPile grab already fired
+    // OnPileGrabPre. So no host original is ever left orphaned.)
+    if (s->role() == coop::net::Role::Client && !ue_wrap::prop::IsDescendantOfProp(heldActor)) {
+        UE_LOGI("trash_collect: CLIENT holds shared trash cls='%ls' -- NOT authoring it (host owns world "
+                "piles/clumps; the grab's PropDestroy already removed the host original). No dupe.",
+                R::ClassNameOf(heldActor).c_str());
+        return false;
+    }
 
     // A divergence sweep is pending and this held actor is one of its candidates
     // (an in-universe, unclaimed save-loaded local the host did NOT express -- a

@@ -220,7 +220,17 @@ bool InPurgeEpisode();
 // frame. No-op (returns 0) when nothing is dead. Game-thread only (mirrors the
 // K2_DestroyActor PRE eviction site + the ElementDeleter::Flush contract).
 // Returns the number of dead local Prop Elements evicted.
-size_t ReapDeadLocalPropElements(size_t maxEvictions);
+//
+// PART 1 (2026-06-18, host-authoritative death-watch): optionally YIELDS the eid of each
+// evicted element. The net_pump reaper, in STEADY state (not a mass-purge transition),
+// broadcasts an explicit PropDestroy(eid) per yielded eid on the HOST -- so a prop/pile the
+// host destroyed via an un-hookable BP-internal EX_CallMath path (garbage-truck collect,
+// ambient cull, removeWOrespawn/LifeSpan despawn) -- which NEVER fires K2_DestroyActor and
+// so was only ever cleaned by the retired 4s full re-snapshot -- now propagates as an
+// explicit per-entity remove (MTA Packet_EntityRemove), by identity, not a proximity guess.
+// nullptr (the boot/self-test callers) keeps the prior silent-eviction behavior.
+size_t ReapDeadLocalPropElements(size_t maxEvictions,
+                                 std::vector<coop::element::ElementId>* outReapedEids = nullptr);
 
 // Self-test (env VOTVCOOP_RUN_PROPREAP_TEST): construct a synthetic DEAD local
 // Prop Element (sentinel actor + internalIdx -1 so IsLiveByIndex rejects it

@@ -689,7 +689,8 @@ bool InPurgeEpisode() {
 // See header for WHY. Reaps by EID (not by actor pointer) with an IsMirror()
 // gate so it is robust against the engine recycling a purged actor's address.
 
-size_t ReapDeadLocalPropElements(size_t maxEvictions) {
+size_t ReapDeadLocalPropElements(size_t maxEvictions,
+                                 std::vector<coop::element::ElementId>* outReapedEids) {
     if (maxEvictions == 0) return 0;
     // One mutex-guarded copy of (actor, eid, internalIdx, mirror) for every Prop
     // Element. No Element* deref after the Registry mutex releases; the cached
@@ -734,7 +735,19 @@ size_t ReapDeadLocalPropElements(size_t maxEvictions) {
         // to UnmarkKnownKeyedProp's drain, minus the wire broadcast. Take(eid) is
         // a no-op returning null if a racing K2_DestroyActor PRE already took it
         // (Enqueue(null) is a no-op) -- single ownership transfer either way.
-        coop::element::ElementDeleter::Get().Enqueue(PropMirrors().Take(pr.id));
+        auto taken = PropMirrors().Take(pr.id);
+        // PART 1 death-watch yield: the HOST broadcasts an explicit PropDestroy(eid) for this
+        // steady-state vanish the un-hookable BP path didn't replicate. SKIP kerfur props: a
+        // kerfur's lifecycle is KerfurConvert, not PropDestroy -- the convert poll drains the dead
+        // prop element ~200ms after a turn-on, and if the reaper races into that window a
+        // PropDestroy here would conflict the KerfurConvert (client drops the kerfur, then re-
+        // converts) -- the exact "spam turn-on/off births a dupe" class. The class string is the
+        // reliable signal (the actor is already dead, so IsKerfurActor can't read it).
+        if (outReapedEids && taken &&
+            taken->GetTypeName().find("kerfurOmega") == std::string::npos) {
+            outReapedEids->push_back(pr.id);
+        }
+        coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
         ++evicted;
     }
     if (evicted > 0) {
