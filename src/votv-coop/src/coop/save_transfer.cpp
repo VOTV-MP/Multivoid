@@ -3,6 +3,7 @@
 #include "coop/save_transfer.h"
 
 #include "coop/net/session.h"
+#include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/save_guard.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/save_capture.h"
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -82,6 +84,16 @@ struct HostStream {
                                    // freed on completion -- joins are rare)
 };
 HostStream g_host[coop::net::kMaxPeers];
+
+// R2 (2026-06-17): the keyed-prop wire-keys the host's world held at blob-capture
+// instant (OnRequest, LIVE-capture path only) == what this joiner's blob contains.
+// SendBlobDivergenceDeletes (connect edge) diffs it against the then-live set and
+// sends EXPLICIT per-key PropDestroy for props the blob HAD that the host has since
+// removed -- so the client drops exactly those (MTA Packet_EntityRemove) instead of
+// the divergence sweep INFERRING the delete (where every kerfur-dupe regression
+// lived). Lives OUTSIDE HostStream because HostStream is freed when the chunk stream
+// completes (TickHost), which is BEFORE the client finishes loading + announces ready.
+std::unordered_set<std::wstring> g_blobKeys[coop::net::kMaxPeers];
 
 // How many chunks one TickHost pass may push per slot. 4 x 56KB at 60 Hz = ~13
 // MB/s ceiling; the GNS send buffer's backpressure (send failure -> stop, retry
@@ -316,6 +328,16 @@ void OnRequest(int peerSlot) {
             UE_LOGI("save_transfer: slot %d streaming LIVE host world (%u bytes, %u chunks, "
                     "crc=0x%08X)",
                     peerSlot, static_cast<uint32_t>(hs.blob.size()), hs.chunkCount, crc);
+            // R2 baseline: record the keyed-prop set this blob contains (== the host's
+            // live keyed props this instant -- the blob was just serialized from them).
+            // SendBlobDivergenceDeletes diffs it at the connect edge. LIVE-capture path
+            // only; the stale-fallback below leaves g_blobKeys empty so the divergence
+            // sweep keeps full responsibility for that join (clean degradation).
+            g_blobKeys[peerSlot].clear();
+            coop::prop_element_tracker::CollectTrackedKeyedPropKeys(g_blobKeys[peerSlot]);
+            UE_LOGI("save_transfer: slot %d -- captured %zu keyed-prop keys at blob instant "
+                    "(R2 blob-vs-live divergence baseline)",
+                    peerSlot, g_blobKeys[peerSlot].size());
             return;
         }
         UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
@@ -372,6 +394,37 @@ void CancelForSlot(int peerSlot) {
     if (g_host[peerSlot].active)
         UE_LOGI("save_transfer: slot %d left mid-stream -- cancelled", peerSlot);
     g_host[peerSlot] = HostStream{};
+    g_blobKeys[peerSlot].clear();  // R2: drop any unconsumed blob baseline
+}
+
+void SendBlobDivergenceDeletes(int peerSlot) {
+    if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
+    auto& blobKeys = g_blobKeys[peerSlot];
+    if (blobKeys.empty()) return;  // no live-capture baseline (stale-fallback join) -- sweep owns it
+    // Current live keyed-prop set on the host.
+    std::unordered_set<std::wstring> liveKeys;
+    coop::prop_element_tracker::CollectTrackedKeyedPropKeys(liveKeys);
+    int sent = 0;
+    for (const std::wstring& k : blobKeys) {
+        if (liveKeys.count(k)) continue;  // still live -- the snapshot (re)asserts it
+        // The blob HAD this prop; the host's live world no longer does. Name it
+        // explicitly so the joiner drops exactly it -- no divergence-sweep inference.
+        coop::net::PropDestroyPayload dp{};
+        dp.key.len = 0;
+        for (size_t i = 0; i < k.size() && i < 31; ++i)
+            dp.key.data[dp.key.len++] = static_cast<char>(k[i]);
+        dp.elementId = 0;  // resolve by key: the eid is host-range-unstable across a transfer
+        // Per-slot (NOT broadcast): this divergence is specific to THIS joiner's blob.
+        // Bulk lane, ahead of the snapshot bracket (caller orders us before
+        // TriggerForSlot) so the removes land before the adds.
+        g_session->SendReliableToSlot(peerSlot, coop::net::ReliableKind::PropDestroy,
+                                      &dp, sizeof(dp));
+        ++sent;
+    }
+    UE_LOGI("save_transfer: slot %d -- blob-vs-live diff sent %d explicit PropDestroy "
+            "(blob had %zu keyed props, host live has %zu) [R2 MTA Packet_EntityRemove]",
+            peerSlot, sent, blobKeys.size(), liveKeys.size());
+    blobKeys.clear();
 }
 
 // ---- CLIENT --------------------------------------------------------------------
@@ -469,7 +522,10 @@ void OnDisconnect() {
         DeleteFileLogged_(dir / (CoopSlotFileNameNoExt_() + L".sav"));
         DeleteFileLogged_(dir / (CoopSlotFileNameNoExt_() + L".sav.part"));
     }
-    for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) g_host[slot] = HostStream{};
+    for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
+        g_host[slot] = HostStream{};
+        g_blobKeys[slot].clear();  // R2: no blob baseline survives a session end
+    }
 }
 
 }  // namespace coop::save_transfer

@@ -48,6 +48,8 @@
 
 #include <cstddef>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -134,6 +136,18 @@ bool ReconcileIndexThrottled();
 // per-grab resolution stays O(1) instead of perpetually falling back to scan.
 void IndexActorKey(void* actor, const std::wstring& key);
 
+// ---- R2: blob-vs-live divergence baseline (2026-06-17) -------------------
+// Copy the wire-keys of all currently-tracked keyed props (the host's live
+// keyed-prop set) into `out`. save_transfer snapshots this at blob-capture
+// (OnRequest) and again at the connect edge, diffing the two to send EXPLICIT
+// per-key PropDestroy for props the blob HAD that the host has since removed
+// (MTA Packet_EntityRemove) -- so the joining client never INFERS a delete via
+// the divergence sweep. Keyless chipPiles are NOT in the key index (their
+// cross-peer identity is the eid, not a key), so this is naturally
+// keyed-Aprop_C only. O(tracked) copy under the key-index leaf mutex; no
+// reflection, no GUObjectArray walk. Game-thread or worker safe.
+void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out);
+
 // ---- One-shot seed -------------------------------------------------------
 // GUObjectArray walk that populates KnownKeyedProps + creates Prop Element
 // shadows for every live keyed-interactable. Internal latch; safe to
@@ -156,7 +170,14 @@ void SeedKnownKeyedProps();
 // Game-thread only; expensive (full ~150k GUObjectArray walk) -- call on a
 // world/level-change edge, never per-tick. This is also the re-seed a future
 // cave/level-travel feature needs.
-size_t ReSeedKnownKeyedProps();
+//
+// R1 (2026-06-17, MTA CEntityAddPacket streaming): optionally YIELDS the actors
+// this walk newly adopted. The steady-world re-seed (net_pump) passes a vector
+// and broadcasts ONE incremental PropSpawn per new actor (prop_snapshot::
+// ExpressIncrementalSpawn) instead of re-firing the whole bracketed snapshot --
+// a bracket re-arms the client divergence sweep, an incremental add does not.
+// nullptr (boot seed / throttled reconcile) keeps the prior count-only behavior.
+size_t ReSeedKnownKeyedProps(std::vector<void*>* outNewActors = nullptr);
 
 // ---- World-coherence stamp (Fork A, 2026-06-10) ---------------------------
 // Every seed walk stamps the live gameplay UWorld it expressed; the snapshot

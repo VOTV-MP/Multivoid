@@ -224,6 +224,99 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
     DequeuePending_();
 }
 
+// Build a PropSpawnPayload from a live actor + its eid/cached-index. THE single
+// per-prop payload builder, shared by the bracketed drain (DrainChunk) AND the
+// bracket-free incremental express (ExpressIncrementalSpawn) -- RULE 2: one
+// builder, not two parallel copies. Returns false (caller skips the actor) when
+// it is not expressible: null, dead, wire-suppressed, per-player, or
+// unkeyed-and-not-a-chipPile. internalIdx >= 0 -> liveness re-checked via
+// IsLiveByIndex (the drain's cached index, safe against a GC purge between
+// enumerate and drain); < 0 -> the caller has already confirmed liveness (the
+// incremental express). A keyless chipPile keeps key.len == 0 so the receiver
+// routes it down the eidOnly lane (its cross-peer identity is the ElementId, not
+// a key); anything else keyless is not expressible.
+bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t internalIdx,
+                            coop::net::PropSpawnPayload& p) {
+    if (!obj) return false;
+    // IsLiveByIndex (NOT IsLive) reads only the GUObjectArray slot, never obj's
+    // (possibly freed) memory -- so a candidate GC-purged since enumeration is
+    // rejected without faulting (the connect-edge crash root-caused 2026-05-30).
+    if (internalIdx >= 0 && !R::IsLiveByIndex(obj, internalIdx)) return false;
+    const std::wstring cls = R::ClassNameOf(obj);
+    // Same wire-suppress allowlist + per-player skip as the Init POST observer:
+    // intermediate-variant classes (mushroom7_C) and per-player props never
+    // cross the wire (host-authoritative / each peer owns its own).
+    if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return false;
+    if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return false;
+    p.className.len = 0;
+    for (size_t j = 0; j < cls.size() && j < 63; ++j) {
+        p.className.data[p.className.len++] = static_cast<char>(cls[j]);
+    }
+    const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(obj);
+    if (keyStr.empty() || keyStr == L"None") {
+        // Fork B HALF 1: a keyless chipPile IS expressible -- its cross-peer
+        // identity is the ElementId (the receiver's eidOnly OnSpawn lane spawns +
+        // watches it). Anything ELSE keyless has no stable cross-peer identity ->
+        // not expressible (symmetric with the client sweep's universe test).
+        if (!ue_wrap::prop::IsChipPile(obj) ||
+            eid == coop::element::kInvalidId || eid == 0) {
+            return false;
+        }
+        // p.key.len stays 0 -> the receiver routes down the eidOnly lane.
+    } else {
+        p.key.len = 0;
+        for (size_t j = 0; j < keyStr.size() && j < 31; ++j) {
+            p.key.data[p.key.len++] = static_cast<char>(keyStr[j]);
+        }
+    }
+    const auto loc = ue_wrap::engine::GetActorLocation(obj);
+    const auto rot = ue_wrap::engine::GetActorRotation(obj);
+    p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
+    p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
+    p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
+    p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
+    // v54: REAL scale -- part of the saved transform SP restores (loadData ->
+    // SetActorScale3D); the old 1,1,1 hardcode mis-sized any scaled host prop.
+    const auto scl = ue_wrap::engine::GetActorScale3D(obj);
+    p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
+    // SP-parity physics stamp (2026-06-09): kSimulatePhysics ONLY for an
+    // actively-simulating Aprop_C (positively awake -- IsActorRootBodyAtRest
+    // false -- so a settled-but-flag-awake prop mirrors kinematic at the host's
+    // resting transform). non-Aprop_C keyed interactables (chipPile/trashBits/
+    // clump) are kinematic by design -> physFlags=0. v54 also carries the raw
+    // Static/sleep/removeWOrespawn bools + the list_props `Name` so the receiver's
+    // init() builds the TRUE prop (mesh/mass/collision), not the CDO 'cube'.
+    p.physFlags = 0;
+    p.propName.len = 0;
+    if (ue_wrap::prop::IsDescendantOfProp(obj)) {
+        const bool isStatic = ue_wrap::prop::IsStatic(obj);
+        const bool frozen   = ue_wrap::prop::IsFrozen(obj);
+        const bool sleep    = ue_wrap::prop::IsSleeping(obj);
+        if (!(isStatic || frozen || sleep) &&
+            !ue_wrap::engine::IsActorRootBodyAtRest(obj)) {
+            p.physFlags |= coop::net::propspawn_flags::kSimulatePhysics;
+        }
+        if (ue_wrap::prop::IsHeavy(obj)) p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
+        if (frozen)   p.physFlags |= coop::net::propspawn_flags::kFrozen;
+        if (isStatic) p.physFlags |= coop::net::propspawn_flags::kStatic;
+        if (sleep)    p.physFlags |= coop::net::propspawn_flags::kSleep;
+        if (ue_wrap::prop::ReadRemoveWOrespawn(obj)) {
+            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
+        }
+        const std::wstring nm = ue_wrap::prop::GetPropNameString(obj);
+        for (size_t j = 0; j < nm.size() && j < 31; ++j) {
+            p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
+        }
+    }
+    p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
+    p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
+    // Fork B HALF 1: carry the trash VARIANT (GetChipType is reflection-gated --
+    // a no-op 0 for classes without a chipType property).
+    p.chipType = ue_wrap::prop::GetChipType(obj);
+    p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
+    return true;
+}
+
 }  // namespace
 
 void SetSession(coop::net::Session* session) {
@@ -386,131 +479,18 @@ void DrainChunk() {
                                       ? g_snapshotInternalIdxs[g_snapshotCandidateIdx]
                                       : -1;
         if (!obj || !R::IsLiveByIndex(obj, cachedIdx)) continue;
-        coop::net::PropSpawnPayload p{};
-        const std::wstring cls = R::ClassNameOf(obj);
-        // Same wire-suppress allowlist as the Init POST observer.
-        // Intermediate-variant classes (mushroom7_C) never cross the wire
-        // -- host-authoritative.
-        if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) {
-            UE_LOGI("snapshot: skipping intermediate-variant '%ls' actor %p (wire-suppressed)",
-                    cls.c_str(), obj);
-            continue;
-        }
-        if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) {
-            UE_LOGI("snapshot: skipping per-player '%ls' actor %p (each peer owns its own; never expressed)",
-                    cls.c_str(), obj);
-            continue;
-        }
-        p.className.len = 0;
-        for (size_t j = 0; j < cls.size() && j < 63; ++j) {
-            p.className.data[p.className.len++] = static_cast<char>(cls[j]);
-        }
-        // Eid hoisted above the keyless check (Fork B HALF 1): the keyless-
-        // pile expression below needs it, and the tail stamps it either way.
+        // Cached eid from StartEnumerationFor (no per-candidate prop-tracker
+        // mutex; audit fix 2026-05-28).
         const coop::element::ElementId eid =
             g_snapshotCandidateIdx < g_snapshotEids.size()
                 ? g_snapshotEids[g_snapshotCandidateIdx]
                 : coop::element::kInvalidId;
-        const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(obj);
-        if (keyStr.empty() || keyStr == L"None") {
-            // Fork B HALF 1 (2026-06-10): a keyless chipPile IS expressible --
-            // its cross-peer identity is the ElementId (minted by the seed
-            // walk; the receiver's eidOnly OnSpawn lane spawns + watches it).
-            // This is what puts the host's world piles in the connect
-            // snapshot at all: pre-HALF-1 the keyless skip silently dropped
-            // every pile while the client sweep destroyed its own -> the
-            // client had ZERO piles (2026-06-10 hands-on). Anything ELSE
-            // keyless stays non-expressible (no stable cross-peer identity)
-            // -- symmetric with the client sweep's universe test.
-            if (!ue_wrap::prop::IsChipPile(obj) ||
-                eid == coop::element::kInvalidId || eid == 0) {
-                continue;
-            }
-            // p.key.len stays 0 -> the receiver routes down the eidOnly lane.
-        } else {
-            p.key.len = 0;
-            for (size_t j = 0; j < keyStr.size() && j < 31; ++j) {
-                p.key.data[p.key.len++] = static_cast<char>(keyStr[j]);
-            }
-        }
-        const auto loc = ue_wrap::engine::GetActorLocation(obj);
-        const auto rot = ue_wrap::engine::GetActorRotation(obj);
-        p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
-        p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
-        p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
-        p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-        // v54: REAL scale -- scale is part of the saved transform SP restores
-        // (loadData -> SetActorScale3D); the old 1,1,1 hardcode mirrored any
-        // scaled host prop mis-sized.
-        const auto scl = ue_wrap::engine::GetActorScale3D(obj);
-        p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-        // SP-parity physics stamp (2026-06-09 perf root-cause fix). SP's
-        // Aprop_C::init() = SetSimulatePhysics(NOT(static||frozen||sleep)) -- a
-        // save-loaded SETTLED prop has sleep=true and is therefore NON-simulating.
-        // The prior code stamped kSimulatePhysics UNCONDITIONALLY -> the client's
-        // Path-C / reconcile mirror spawned SIMULATING, penetrated the client's
-        // RNG-divergent layout, PhysX ejected it (flying objects) + permanent
-        // ~45ms/frame solver cost (client lock) + the intermittent fatal crash.
-        // Stamp kSimulatePhysics ONLY for an actively-simulating Aprop_C. non-Aprop_C
-        // keyed interactables (chipPile/trashBits/clump) have no Aprop layout to read
-        // and are kinematic by design -> physFlags=0 (Path C's GetStaticMesh-null gate
-        // already skips DriveSimulate for them; the receiver's ReconcileToHostPhysics
-        // forces the mirror kinematic on a settled stamp).
-        // v54: also carry the raw Static/sleep/removeWOrespawn bools + the
-        // list_props identity row `Name` -- the full field set SP's own
-        // loadData restores -- so the receiver's pre-Finish writes let init()
-        // construct the TRUE prop (mesh/mass/collision), not the CDO 'cube'.
-        p.physFlags = 0;
-        p.propName.len = 0;
-        if (ue_wrap::prop::IsDescendantOfProp(obj)) {
-            const bool isStatic = ue_wrap::prop::IsStatic(obj);
-            const bool frozen   = ue_wrap::prop::IsFrozen(obj);
-            const bool sleep    = ue_wrap::prop::IsSleeping(obj);
-            // 2026-06-10 (the falling-walls smoke): sleep@0x02DD is the SAVE
-            // flag, not live physics state -- the host's settled cubicle
-            // panels carried sleep=false while their rigid bodies were long
-            // asleep, so the flag-only stamp shipped 533 of 614 prop_C as
-            // "simulating" and every mirror spawned simulating, fell from
-            // the spawn transform and re-settled divergently (the P1 woken-
-            // physics storm one level deeper). Require the body to be
-            // POSITIVELY awake (IsActorRootBodyAtRest false) before claiming
-            // simulating: a settled-but-flag-awake prop mirrors kinematic at
-            // the host's exact resting transform. A genuinely moving prop is
-            // held/thrown and the PropPose stream owns it anyway, so an
-            // at-rest mis-stamp self-corrects on the next pose packet.
-            if (!(isStatic || frozen || sleep) &&
-                !ue_wrap::engine::IsActorRootBodyAtRest(obj)) {
-                p.physFlags |= coop::net::propspawn_flags::kSimulatePhysics;
-            }
-            if (ue_wrap::prop::IsHeavy(obj)) p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-            if (frozen)   p.physFlags |= coop::net::propspawn_flags::kFrozen;
-            if (isStatic) p.physFlags |= coop::net::propspawn_flags::kStatic;
-            if (sleep)    p.physFlags |= coop::net::propspawn_flags::kSleep;
-            if (ue_wrap::prop::ReadRemoveWOrespawn(obj)) {
-                p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
-            }
-            const std::wstring nm = ue_wrap::prop::GetPropNameString(obj);
-            for (size_t j = 0; j < nm.size() && j < 31; ++j) {
-                p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
-            }
-        }
-        p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
-        p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
-        // Fork B HALF 1: carry the trash VARIANT. Was never stamped here --
-        // every snapshot-expressed pile rendered as variant 0 on the mirror.
-        // GetChipType is reflection-gated (returns 0 for classes without a
-        // chipType property), so the unconditional stamp is a no-op for
-        // ordinary props.
-        p.chipType = ue_wrap::prop::GetChipType(obj);
-        // Cached eid from StartEnumerationFor, hoisted above the keyless
-        // check (no per-candidate prop-tracker mutex; audit fix 2026-05-28).
-        p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
-        // NOTE: host pile death-watch enrollment is EAGER now -- done up front in
-        // StartEnumerationFor for ALL live chipPiles (not lazily per-expressed
-        // chunk here). The old per-chunk enroll left a pile UNWATCHED during the
-        // multi-tick drain window before its chunk was reached, so a host grab in
-        // that window sent no PropDestroy -> client dupe. RULE 2: one enroll site
-        // (StartEnumerationFor), not two. See the eager loop there.
+        coop::net::PropSpawnPayload p{};
+        // Build via the shared per-prop builder (keyed vs keyless/eid-only pile
+        // handling, wire-suppress + per-player skips, v54 physics + identity). A
+        // non-expressible candidate returns false -> skip. cachedIdx already
+        // re-validated liveness above, so pass -1 (don't repeat IsLiveByIndex).
+        if (!BuildPropSpawnPayload_(obj, eid, -1, p)) continue;
         // Send to ONE slot only. Other peers (already-connected) already
         // have these props from their own connect-edge drain.
         s->SendReliableToSlot(g_currentTargetSlot,
@@ -525,6 +505,32 @@ void DrainChunk() {
         UE_LOGI("snapshot: drained chunk for slot %d -- this tick=%d, processed %zu/%zu",
                 g_currentTargetSlot, sent, g_snapshotCandidateIdx, g_snapshotCandidates.size());
     }
+}
+
+void ExpressIncrementalSpawn(void* actor) {
+    auto* s = g_session_ptr.load(std::memory_order_acquire);
+    // Host-authoritative: only the host broadcasts world spawns. The steady-world
+    // re-seed still runs on a client (it mints the client's OWN local eids) but
+    // never broadcasts -- a client's runtime spawns route through the host (phase 2).
+    if (!s || s->role() != coop::net::Role::Host) return;
+    if (!actor || !R::IsLive(actor)) return;
+    // eid was minted by the seed walk that yielded this actor (phase 2 of
+    // SeedWalk_, before it returned), so this resolves.
+    const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
+    coop::net::PropSpawnPayload p{};
+    // internalIdx -1: liveness just confirmed above (IsLive); the builder's idx
+    // guard is only for the drain's cached-index path.
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p)) return;  // not expressible -- skip silently
+    // Broadcast ONE additive PropSpawn to all ready peers (MTA CEntityAddPacket /
+    // BroadcastOnlyJoined; the SAME s->SendPropSpawn the Init-POST observer uses for
+    // an organically-spawned prop). NO SnapshotBegin/Complete bracket -> the client's
+    // destructive divergence sweep is NOT re-armed (the entire point of R1). A peer
+    // that also enumerates this prop in its own in-flight connect drain just dedupes
+    // it via RegisterPropMirror.
+    s->SendPropSpawn(p);
+    UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted prop %p (eid=%u, key='%.*s') "
+            "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
+            actor, p.elementId, static_cast<int>(p.key.len), p.key.data);
 }
 
 void CancelForSlot(int peerSlot) {

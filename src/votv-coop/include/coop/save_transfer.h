@@ -76,6 +76,19 @@ void TickHost();
 // Peer left mid-stream -- drop its pump state (net_pump disconnect edge).
 void CancelForSlot(int peerSlot);
 
+// R2 (2026-06-17, MTA Packet_EntityRemove): send EXPLICIT per-key PropDestroy to
+// `peerSlot` for every keyed prop its save-transfer BLOB contained that the host's
+// LIVE world no longer has (e.g. a prop the host grabbed/destroyed/converted during
+// the ~30-60s the joiner spent downloading + loading). Diffs the key-set captured
+// at blob-capture (OnRequest, LIVE-capture path) against the current live key-set.
+// This replaces the divergence sweep's destructive "unclaimed -> infer-delete" for
+// the save-transfer case (where every kerfur-dupe regression lived). Per-slot (the
+// divergence is specific to THIS joiner's blob), Bulk lane. Call from
+// ConnectReplayForSlot BEFORE prop_snapshot::TriggerForSlot so removes precede the
+// snapshot's adds. No-op if no live-capture baseline was taken (stale-fallback join).
+// Game thread.
+void SendBlobDivergenceDeletes(int peerSlot);
+
 // ---- CLIENT side ----------------------------------------------------------------
 
 enum class ClientState : int {

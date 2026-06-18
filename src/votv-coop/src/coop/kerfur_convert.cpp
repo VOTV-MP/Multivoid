@@ -383,8 +383,16 @@ bool OnKerfurActionNamePre(void* self, void* params) {
 // Game-thread only (Tick). 5 Hz throttle bounds the Prop snapshot walk.
 // ============================================================================
 
-struct KerfurWatch { float x, y, z; bool handled; };
-std::unordered_map<uint32_t, KerfurWatch> g_kerfurWatch;  // eid -> last-live pose + dedupe; GT-only
+// R4 (2026-06-18, MTA CClientEntity::m_ucSyncTimeContext shape): `actor` records WHICH
+// actor was live when we cached the entry. The death path fires a conversion only if the
+// dead actor IS that same one -- so if the eid was freed + reallocated to a NEW kerfur
+// mirror (a different actor) since we cached it, and that new mirror died before a poll
+// confirmed it live, the cached entry belongs to the OLD generation and we DON'T fire on
+// it. (R3 stopped the divergence sweep from killing mirrors -- the dominant flip-flop
+// cause; this is the belt against the narrow eid-reuse race. A zero/legacy actor still
+// fires, matching m_ucSyncTimeContext's "context 0 == accept".)
+struct KerfurWatch { float x, y, z; bool handled; void* actor; };
+std::unordered_map<uint32_t, KerfurWatch> g_kerfurWatch;  // eid -> last-live pose + dedupe + generation actor; GT-only
 std::chrono::steady_clock::time_point g_lastConvPoll{};
 
 void SendConvertRequestDirect(uint32_t eid, uint8_t toProp) {
@@ -593,11 +601,14 @@ void PollKerfurConversions() {
         seen.insert(eid);
         if (R::IsLiveByIndex(actor, el->GetInternalIdx())) {
             const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(actor);
-            g_kerfurWatch[eid] = KerfurWatch{loc.X, loc.Y, loc.Z, false};
+            g_kerfurWatch[eid] = KerfurWatch{loc.X, loc.Y, loc.Z, false, actor};  // R4: stamp the live actor (generation identity)
             continue;
         }
         auto it = g_kerfurWatch.find(eid);
         if (it == g_kerfurWatch.end() || it->second.handled) continue;  // never-live / already handled
+        // R4 stale-generation guard: only fire if the dead actor is the one we cached live
+        // (else the eid was reused by a newer mirror -- this death is the old generation's).
+        if (it->second.actor && it->second.actor != actor) { it->second.handled = true; continue; }
         const float lx = it->second.x, ly = it->second.y, lz = it->second.z;
         UE_LOGI("kerfur_convert: POLL turn_off (kerfur NPC eid=%u died invisibly) -> %s",
                 eid, isClient ? "client requests host" : "host broadcasts destroy+prop");
@@ -626,11 +637,14 @@ void PollKerfurConversions() {
         seen.insert(eid);
         if (R::IsLiveByIndex(actor, el->GetInternalIdx())) {
             const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(actor);
-            g_kerfurWatch[eid] = KerfurWatch{loc.X, loc.Y, loc.Z, false};
+            g_kerfurWatch[eid] = KerfurWatch{loc.X, loc.Y, loc.Z, false, actor};  // R4: stamp the live actor (generation identity)
             continue;
         }
         auto it = g_kerfurWatch.find(eid);
         if (it == g_kerfurWatch.end() || it->second.handled) continue;
+        // R4 stale-generation guard (see turn_off above): drop a death whose eid was
+        // reused by a newer prop mirror since we cached it live.
+        if (it->second.actor && it->second.actor != actor) { it->second.handled = true; continue; }
         const float lx = it->second.x, ly = it->second.y, lz = it->second.z;
         UE_LOGI("kerfur_convert: POLL turn-on (kerfur prop eid=%u died invisibly) -> %s",
                 eid, isClient ? "client requests host" : "host broadcasts destroy+npc");

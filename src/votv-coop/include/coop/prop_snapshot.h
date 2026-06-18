@@ -50,6 +50,19 @@ void TriggerForSlot(int peerSlot);
 // each frame while connected.
 void DrainChunk();
 
+// R1 (2026-06-17, MTA CEntityAddPacket): broadcast ONE additive PropSpawn for a
+// single runtime-adopted prop WITHOUT opening a snapshot bracket. The steady-
+// world re-seed (net_pump) calls this per newly-tracked prop instead of re-firing
+// the full bracketed snapshot -- a SnapshotBegin/Complete bracket RE-ARMS the
+// client's destructive divergence sweep (the join-churn), a bracket-free add does
+// not. Reuses the EXACT per-prop payload logic DrainChunk uses (keyed vs
+// keyless/eid-only pile handling, wire-suppress/per-player skips, v54
+// physics+identity). Host-only (host-authoritative spawns); silent no-op for a
+// non-expressible actor (dead / suppressed / per-player / unkeyed-non-pile).
+// Mirrors MTA: one CEntityAddPacket per runtime entity, never a world re-send
+// (Server/.../CStaticFunctionDefinitions.cpp:8349).
+void ExpressIncrementalSpawn(void* actor);
+
 // Abort any pending or in-progress drain for `peerSlot`. Called from
 // the harness's per-slot disconnect edge so a peer drop mid-drain
 // doesn't waste ~1700 SendReliableToSlot calls into a dead connection

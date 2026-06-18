@@ -520,7 +520,7 @@ std::atomic<uint64_t> g_seedGeneration{0};
 // this is registry-coherence state so the tracker owns the flag.
 std::atomic<bool>     g_inPurgeEpisode{false};
 
-SeedCounts SeedWalk_() {
+SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
     const int32_t n = R::NumObjects();
     SeedCounts c;
     std::vector<void*> live;
@@ -539,7 +539,17 @@ SeedCounts SeedWalk_() {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
         for (void* obj : live) {
             if (g_knownKeyedProps.size() >= kKnownKeyedPropsCap) break;
-            if (g_knownKeyedProps.insert(obj).second) ++c.newlyTracked;  // .second = newly inserted
+            if (g_knownKeyedProps.insert(obj).second) {
+                ++c.newlyTracked;  // .second = newly inserted
+                // R1: yield the newly-adopted actor so the steady-world re-seed
+                // can broadcast ONE incremental PropSpawn for it (the eid is
+                // minted in phase 2 below, before this function returns, so a
+                // caller iterating outNewActors resolves GetPropElementIdForActor).
+                // Captured here (the ONLY newness signal -- phase-2 MarkPropElement
+                // is idempotent + silent on already-tracked). May include keyless
+                // non-pile actors that phase 2 won't express; the express filters them.
+                if (outNewActors) outNewActors->push_back(obj);
+            }
         }
     }
     // Tier 3 Props migration 2026-05-28: also create Prop Element shadows
@@ -624,17 +634,28 @@ void SeedKnownKeyedProps() {
     // gate can refuse to bracket before the boot seed has ever run (RULE 2:
     // one latch, not a function-local twin).
     if (g_seededOnce.load(std::memory_order_acquire)) return;
-    const SeedCounts c = SeedWalk_();
+    const SeedCounts c = SeedWalk_(nullptr);
     UE_LOGI("prop_element_tracker: seeded known-keyed-props set with %d live actors (%d new, %d keyless chipPile element(s), %d CDOs, %d dying skipped) -- subsequent snapshots skip GUObjectArray walk",
             c.liveFound, c.newlyTracked, c.keylessPiles, c.cdo, c.dying);
     g_seededOnce.store(true, std::memory_order_release);
 }
 
-size_t ReSeedKnownKeyedProps() {
-    const SeedCounts c = SeedWalk_();
+size_t ReSeedKnownKeyedProps(std::vector<void*>* outNewActors) {
+    const SeedCounts c = SeedWalk_(outNewActors);
     UE_LOGI("prop_element_tracker: re-seed found %d live keyed props, added %d NEW to tracking (%d keyless chipPile element(s), %d CDOs, %d dying) -- world/level-change reconcile [snapshot-completeness]",
             c.liveFound, c.newlyTracked, c.keylessPiles, c.cdo, c.dying);
     return static_cast<size_t>(c.newlyTracked);
+}
+
+void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out) {
+    // The key index (g_keyToActor) holds exactly the live keyed props that minted
+    // a Prop Element with a non-empty wire-key -- i.e. the keyed Aprop_C set the
+    // save persists. Keyless chipPiles never enter it (IndexKeyForActor_ no-ops
+    // empty keys), which is exactly R2's scope (diff/delete by key). Leaf-mutex
+    // copy; no engine calls under lock.
+    std::lock_guard<std::mutex> lk(g_keyIndexMutex);
+    out.reserve(out.size() + g_keyToActor.size());
+    for (const auto& kv : g_keyToActor) out.insert(kv.first);
 }
 
 bool HasSeededOnce() {

@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::net_pump {
 namespace {
@@ -494,19 +495,30 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // GUObjectArray re-seed (same cadence + cost class as the reaper
                 // above; the FindObjectByClass world resolve is shared) mints
                 // each new keyed prop's eid AND each keyless chipPile's eid (the
-                // SeedWalk_ IsChipPile branch), then the retrigger re-enumerates
-                // them to connected peers (client RegisterPropMirror dedupes the
-                // ones it already holds) and eager-enrolls new chipPiles in the
-                // host death-watch via StartEnumerationFor -- so a host grab /
-                // removal now broadcasts PropDestroy(eid) and the client drops
-                // its stale pile. Mirrors the NPC precedent (npc_world_enum's
-                // periodic EX_CallMath re-register). added==0 (steady, nothing
-                // newly spawned) costs only the walk -- zero peer traffic.
-                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
+                // SeedWalk_ IsChipPile branch). added==0 (steady, nothing newly
+                // spawned) costs only the walk -- zero peer traffic.
+                //
+                // R1 (2026-06-17, MTA CEntityAddPacket): broadcast ONE bracket-free
+                // additive PropSpawn per NEWLY-adopted prop (prop_snapshot::
+                // ExpressIncrementalSpawn), NOT a full re-bracketed snapshot. The old
+                // retriggerReadySlots() re-fired a SnapshotBegin/Complete bracket every
+                // ~4s during a join, and each bracket RE-ARMED the client's destructive
+                // divergence sweep (~10x in 90s = the join-churn that thrashed piles +
+                // doomed kerfur mirrors). An incremental add never opens a bracket -> the
+                // sweep is not re-armed. MTA's strictly-incremental streaming: one
+                // CEntityAddPacket per new entity, never a world re-send
+                // (Server/.../CStaticFunctionDefinitions.cpp:8349). ExpressIncrementalSpawn
+                // is host-only internally; the re-seed still mints local eids on a client
+                // (its own tracking) but broadcasts nothing. (retriggerReadySlots stays --
+                // the episode-end + small-travel branches above legitimately re-bracket on
+                // a real world transition, where the client SHOULD re-reconcile.)
+                std::vector<void*> newProps;
+                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps(&newProps);
                 if (added > 0) {
                     UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
-                            "(spawn-menu/toolgun/ambient/pile) -- mirroring to connected peers", added);
-                    retriggerReadySlots();
+                            "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
+                            "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", added);
+                    for (void* a : newProps) coop::prop_snapshot::ExpressIncrementalSpawn(a);
                 }
             }
         }

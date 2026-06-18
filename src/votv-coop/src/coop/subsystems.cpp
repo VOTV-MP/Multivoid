@@ -164,6 +164,14 @@ bool g_joinPlaced[coop::players::kMaxPeers] = {};
 void ConnectReplayForSlot(int slot) {
     if (slot < 1 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     UE_LOGI("net: slot %d world-ready -- replaying snapshot + flashlight + weather + peer states", slot);
+    // R2 (MTA Packet_EntityRemove): BEFORE the snapshot bracket, send explicit
+    // per-key PropDestroy for props this joiner's blob HAD that the host's live
+    // world no longer has (e.g. a prop grabbed/destroyed during the ~30-60s
+    // download+load). The client drops exactly those instead of the divergence
+    // sweep INFERRING the delete. Bulk lane ahead of TriggerForSlot -> removes
+    // land before the snapshot's adds. No-op for a fresh-New-Game / stale-fallback
+    // joiner (no blob baseline -> the sweep, bounded by R3, still owns that).
+    coop::save_transfer::SendBlobDivergenceDeletes(slot);
     coop::prop_snapshot::TriggerForSlot(slot);
     coop::item_activate::QueueConnectBroadcastForSlot(slot);
     coop::weather_sync::QueueConnectBroadcastForSlot(slot);
