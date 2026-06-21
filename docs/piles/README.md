@@ -84,7 +84,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
 - **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
-  (2026-06-21 session 38+, HEAD `1011e512`, proto v82; deployed DLL still `BA79E705`).** Host-authoritative
+  (2026-06-21 session 38+, HEAD `245148c6`, proto v82; deployed DLL `69405445`).** Host-authoritative
   trash-entity identity (eid = logical entity), MTA single-syncer + sync-time-context byte. **GRAB
   (pile→clump) = VERIFIED hands-on** via the `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE
   (clump→pile) = the DETERMINISTIC `UFunction::Func` thunk converter** (commit `d19ae4d4`,
@@ -94,11 +94,15 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   the triple-grab-cue fix (`fea04c26`) are deployed-pending-hands-on. The proximity death-watch is RETIRED
   (RULE 2). **The s35 "BeginDeferred-POST is observable" link was DISPROVEN** (EX_CallMath → invisible; 0
   host_spawn_watcher fires). **CLIENT mirror of trash = the host-authoritative `AStaticMeshActor` PROXY —
-  phase 1 AS-BUILT (built, NOT smoked, NOT deployed)** (commits `06685a9c` + `1011e512`, `coop/trash_proxy`):
-  an `AStaticMeshActor` WE own (NO blueprint, `AddToRoot`, our eid→actor registry, re-skin in place on
-  convert) replaces the real self-morphing BP mirror → the client mirror-staleness dup is impossible BY
-  CONSTRUCTION (the 3-verdict discriminator / health-poll / serial-check plan is DROPPED as moot). Phase 1 =
-  visual + position + re-skin, NoCollision; collision (the `garbageCollider` hull) + the client-grab
+  DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CLUMP CARRY OPEN (NOT working)** (deployed `69405445`,
+  `coop/trash_proxy`): an `AStaticMeshActor` WE own (NO blueprint, `AddToRoot`, our eid→actor registry,
+  re-skin in place on convert) replaces the real self-morphing BP mirror → the client mirror-staleness dup is
+  impossible BY CONSTRUCTION (the 3-verdict discriminator / health-poll / serial-check plan is DROPPED as
+  moot). The dup-gone + the resting/landed-pile mirror are hands-on confirmed (incl. the `SetComponentMobility(
+  Movable)` visibility fix, `245148c6` — a runtime `AStaticMeshActor` is STATIC by default → `SetStaticMesh`
+  no-ops). BUT the host grabbing + carrying a pile does NOT mirror — the client's proxy stays a pile at its
+  rest spot (`0` `GRAB-IN`, no ToClump convert applied); the live carry is the OPEN phase-1 north star. Phase 1
+  = visual + position + re-skin, NoCollision; collision (the `garbageCollider` hull) + the client-grab
   direction are PHASE 2 / Increment 2 (still DESIGN). Design + AS-BUILT:
   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`. **Read this for the pile
   sync.**
@@ -146,7 +150,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   docs, which are a sibling problem: `votv-kerfur-savetransfer-ghost-prop-RCA-2026-06-15.md`,
   `votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md`).
 
-## Status (2026-06-21, session 38+; HEAD `1011e512`) — DESIGN → AS-BUILT → VERIFIED
+## Status (2026-06-21, session 38+; HEAD `245148c6`, deployed `69405445`) — DESIGN → AS-BUILT → VERIFIED
 
 The whole saga below (01–04 + the s21–s33 session-log) converged on **08 — the host-authoritative trash
 channel**, which is the CURRENT design + as-built. The day-to-day live state is in the auto-memory
@@ -159,24 +163,35 @@ channel**, which is the CURRENT design + as-built. The day-to-day live state is 
    the EXACT spawned pile the same tick — zero proximity, no reaper race. The thunk DETECTION is **VERIFIED**
    (a read-only pass agreed ptr-for-ptr with the prior proximity death-watch, which is now RETIRED, RULE 2);
    the CONVERT flip + the triple-grab-cue fix (`fea04c26`, the ctx-gate requireCurrentGen split) are
-   **AS-BUILT, deployed `BA79E705`, hands-on-PENDING** (the next hands-on confirms a single grab cue + no
-   vanish-return). Runbook: `research/handson_runbook_2026-06-21_repile_thunk.md` (take-22).
-3. **CLIENT mirror-staleness dup — phase-1 proxy AS-BUILT (built, not smoked), HEAD `1011e512`** (was OPEN).
-   The client's mirror of trash is now a host-authoritative `AStaticMeshActor` we own (NO blueprint,
-   `AddToRoot`, our eid→actor registry; re-skin in place on convert) instead of the real self-morphing BP —
-   so the staleness dup (a join-mirror going NOT-LIVE within ~10s → fresh-clump spawn + original lingering)
-   is impossible BY CONSTRUCTION. Commits `06685a9c` + `1011e512` (the hotfix: CRITICAL per-slot-disconnect
-   leak). Phase 1 = visual + position + re-skin, NoCollision. Audit `a249b005`: CRITICAL-1 fixed; HIGH-1
-   (ToClump-beats-spawn), HIGH-2 (clump MATERIAL swap), MEDIUM-1 (StaticLoadObject + Cube fallback) + the
-   km-walk lerp + reliable carry-end release STILL PENDING before the smoke. The 3-verdict discriminator /
-   health-poll / serial-check plan is DROPPED (moot). Design + AS-BUILT:
-   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
-4. **NEXT (DESIGN, NOT built):** the phase-1 proxy smoke (the dup-gone + km-walk gate) once deployed; then
-   grab-via-thunk (closes the eid=0 adopt-miss gap); then proxy PHASE 2 (collision — the `garbageCollider`
-   hull) + Increment 2 (the client-grab direction — suppress-native + GrabIntent → host executes on
-   puppet-N; proto v83).
+   **AS-BUILT** (logged GREEN on `BA79E705` in the A+B run; now folded into the deployed proxy build
+   `69405445`). The single grab cue + no vanish-return remain hands-on-PENDING. Runbook:
+   `research/handson_runbook_2026-06-21_repile_thunk.md` (take-22).
+3. **CLIENT mirror-staleness dup — phase-1 proxy: DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CLUMP
+   CARRY OPEN (NOT working). HEAD `245148c6`, deployed `69405445`** (the dup was OPEN, now fixed by
+   construction). The client's mirror of trash is now a host-authoritative `AStaticMeshActor` we own (NO
+   blueprint, `AddToRoot`, our eid→actor registry; re-skin in place on convert) instead of the real
+   self-morphing BP — so the staleness dup (a join-mirror going NOT-LIVE within ~10s → fresh-clump spawn +
+   original lingering) is impossible BY CONSTRUCTION. **The dup is GONE and the resting + landed piles mirror
+   VISIBLY (hands-on confirmed):** `0` `mirror NOT-FOUND` in the smoke + the user confirmed it works; a
+   runtime `AStaticMeshActor` is STATIC mobility by default (on which `SetStaticMesh` no-ops → the proxies
+   were INVISIBLE in the render-blind smoke), fixed with `SetComponentMobility(Movable)` (`245148c6`).
+   Commits `06685a9c` + `1011e512` (CRITICAL per-slot-disconnect leak) + `3d371349` (HIGH-1/2 + MEDIUM-1) +
+   `095dbf44`/`8a17faeb` (lerp/freeze) + `245148c6` (Movable). Phase 1 = visual + position + re-skin,
+   NoCollision. **OPEN: the live carry does NOT mirror** — when the host grabs + carries a pile, the client's
+   proxy stays a PILE at its rest spot (does not re-skin to a clump / does not follow): `0` `GRAB-IN`, no
+   ToClump convert applied → the pose-drive never establishes (the km-walk lerp is BUILT but UNEXERCISED). The
+   earlier smoke "functionally green" is WITHDRAWN (render-blind + the autotest grabbed during the join). The
+   3-verdict discriminator / health-poll / serial-check plan is DROPPED (moot). Design + the CARRY-MIRROR OPEN
+   root-cause: `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
+4. **NEXT — fix the LIVE CARRY (the OPEN phase-1 north star):** instrument the ToClump convert reception + the
+   pose-drive establish/apply rate; fix the autotest to grab only AFTER a settled join + HOLD-and-MOVE for a
+   sustained carry; then fix the dropped convert-adoption / ctx-gate / drive link (CARRY-MIRROR OPEN "NEXT" in
+   the finding). THEN: grab-via-thunk (closes the eid=0 adopt-miss gap); then proxy PHASE 2 (collision — the
+   `garbageCollider` hull) + Increment 2 (the client-grab direction — suppress-native + GrabIntent → host
+   executes on puppet-N; proto v83). Phase 2 is deferred until the carry works + is hands-on confirmed.
 
-**DEPLOYED: `BA79E705` (proto v82) = HEAD `fea04c26`** — the thunk re-pile + the sound fix, pending the
-hands-on confirmation. **The phase-1 trash proxy (HEAD `1011e512`) is BUILT but NOT yet deployed** (the user
-is mid-A+B hands-on, so the deploy slots are in use). The earlier `C7030D00` adopt-bind baseline + the FAILED
+**DEPLOYED: `69405445` (proto v82) = HEAD `245148c6`** — the phase-1 trash proxy (incl. the Movable
+visibility fix), folding in the s38 thunk re-pile + sound fix. The proxy's **dup-fix + visibility are
+hands-on confirmed**; the **live clump carry is OPEN** (does not mirror — see the Status above). The earlier
+`BA79E705` (HEAD `fea04c26`, the thunk re-pile + sound fix) and `C7030D00` adopt-bind baseline + the FAILED
 s05/06 morph + the s07 morph-V2 are all superseded by 08 (the 07 doc is archived).

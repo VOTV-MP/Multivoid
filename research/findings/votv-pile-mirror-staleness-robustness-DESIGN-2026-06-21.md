@@ -316,15 +316,20 @@ does NOT read+send a live mesh name. The phase-1 ue_wrap foundation is therefore
 
 ---
 
-## AS-BUILT — phase 1 of the proxy (2026-06-21, code HEAD `8a17faeb`, build `f2344bab`) — SMOKED FUNCTIONALLY GREEN
+## AS-BUILT — phase 1 of the proxy (2026-06-21, code HEAD `245148c6`, build `69405445`) — DUP-FIX + VISIBILITY hands-on VERIFIED; LIVE CARRY OPEN
 
-> **Phase 1 of the host-authoritative `AStaticMeshActor` trash proxy (§2/§7) is BUILT, audit-GO, and
-> autonomously SMOKE-verified by matching real log** (the SMOKE bullet below): the dup is gone (0
-> `mirror NOT-FOUND`), 875 proxies, the grab→carry→throw→re-pile cycle mirrored cross-peer, no crash/leak,
-> 300 s stable. **Still NOT hands-on verified** — the km-walk FEEL + the visual dup-gone are the user's
-> hands-on (runbook take-23). §2/§6/§7 above stay the design of record; this section records what shipped.
-> Commits: `06685a9c` (core) + `1011e512` (leak hotfix) + `3d371349` (HIGH-1/2 + MEDIUM-1) + `095dbf44`
-> (lerp/freeze/teardown) + `8a17faeb` (HOT-1 dirty-gate); harness `4a1f42a6` + `f1177589`.
+> **The DUP FIX works (hands-on): no doubled piles, resting + landed piles mirror correctly + VISIBLY.**
+> The host-authoritative `AStaticMeshActor` proxy (§2/§7) replaces the self-morphing BP mirror; the staleness
+> dup is structurally gone (`0` `mirror NOT-FOUND` in the smoke + the user saw it works). **But the LIVE
+> CLUMP CARRY does NOT mirror yet** — when the host grabs + carries a pile, the client's proxy stays a PILE
+> at its rest spot (the ToClump convert + the carry pose-drive are not applied — `0` `GRAB-IN`), so the user
+> sees "old pile not removed" + a "2 fps" convert-jump instead of a smooth carry. **That is the OPEN phase-1
+> north star** (the perfect carry mirror), root-caused in the dated CARRY-MIRROR section below. The smoke's
+> earlier "functionally green" was MISLEADING — it is render-blind + the autotest grabbed during the join;
+> see the corrected SMOKE bullet. §2/§6/§7 above stay the design of record.
+> Commits: `06685a9c` (core) + `1011e512` (leak) + `3d371349` (HIGH-1/2 + MEDIUM-1) + `095dbf44`
+> (lerp/freeze/teardown) + `8a17faeb` (HOT-1) + `245148c6` (the VISIBILITY/Movable fix); harness `4a1f42a6`
+> + `f1177589` + `cfdd7745`.
 
 ### What shipped (commits `06685a9c` core + `1011e512` hotfix)
 
@@ -396,17 +401,26 @@ does NOT read+send a live mesh name. The phase-1 ue_wrap foundation is therefore
   continue`), the re-entrancy (fixed-size `g_drives` array — safe), the lerp math, the non-proxy exemption,
   and all four new UFunction signatures (SDK-exact). Only finding = HOT-1 (MEDIUM, folded above). Endorsed the
   post-smoke extraction of the drive subsystem → `remote_prop_drive.{cpp,h}` (`remote_prop.cpp` is 1325 LOC).
-- **SMOKE — FUNCTIONALLY GREEN by matching real log (autonomous LAN chippile, SHA `f2344bab`, 2026-06-21).**
-  Host drove a real grab on a tracked pile (eid=6264) + Phase B re-pile; the client mirrored it. Verified
-  in the client log: **875 `trash_proxy: SPAWN`** (AStaticMeshActor, rooted, NoCollision — the BP mirror is
-  gone); **the dup is GONE — `0` `mirror NOT-FOUND` / `spawn fresh`**; the eid=6264 cross-peer cycle worked
-  end-to-end (host `GRAB ADOPT → broadcast convert → CARRY → THROW → RE-PILE(thunk) → LAND`; client `HOLD
-  carry pose (ctx-gate)` → `trash_proxy: SPAWN` → **`recv convert LAND → proxy SPAWNED PILE (convert beat its
-  spawn) [SYNC-MIRROR OK -- no dup]`** = HIGH-1 firing live); **`0` proxy/drive errors**, no crash/SEH/OOM,
-  session stable 300 s. The autotest's lan-test exit-1 was a HARNESS PASS-criteria bug (the net-stats
-  `puppet=` counter is host-centric — `net_pump::Puppet(1)` slot 1, but a client's host-puppet is at slot 0),
-  fixed in `f1177589`; the puppet demonstrably spawned (`RemotePlayer::Spawn` + `pose-diag` tracking). What
-  the smoke CANNOT prove (still the user's hands-on, runbook take-23): the km-walk FEEL + the visual dup-gone.
+- **SMOKE — PARTIAL; "functionally green" was MISLEADING (the smoke is RENDER-BLIND + the autotest grabbed
+  DURING the client join). SHA `f2344bab`, 2026-06-21.** What the smoke DID prove (matching real log): the
+  dup is GONE — **`0` `mirror NOT-FOUND` / `spawn fresh`**, 875 proxies spawn (`AStaticMeshActor`, rooted),
+  `0` proxy/drive errors, no crash/SEH/OOM, 300 s stable. The lan-test exit-1 was a harness PASS-gate bug
+  (net-stats `puppet=` is host-centric — `net_pump::Puppet(1)` slot 1, but a client's host-puppet is slot 0),
+  fixed `f1177589`+`cfdd7745`. **What the smoke did NOT prove + the hands-on then DISPROVED:**
+  - **The proxies were INVISIBLE in the smoke.** `f2344bab` spawned them STATIC-mobility, on which
+    `SetStaticMesh` no-ops at runtime; the smoke can't see render (log markers + black screenshots) so it
+    passed anyway. FIXED: `SetComponentMobility(Movable)` (`245148c6`, build `69405445`); user hands-on then
+    confirmed the resting + landed piles mirror VISIBLY. [[lesson-runtime-staticmeshactor-must-be-movable]]
+  - **The live clump CARRY never mirrored.** Client log: **`0` `GRAB-IN`** (the pose drive NEVER established),
+    carry poses ctx-HELD, and (verdict run) the ToClump convert never applied. The autotest grabs at host+40 s
+    but the client's 875-proxy join finished LATER → the grab RACED the join, so the smoke never cleanly
+    tested a post-join carry. The `[SYNC-MIRROR OK]` line was the LAND (spawn-on-convert PILE), not a driven
+    carry. So **"the grab→carry→throw→re-pile cycle worked end-to-end" is WITHDRAWN** — only the dup-gone +
+    the final landing are evidenced.
+  **HANDS-ON 2026-06-21 (`69405445`):** resting + landed piles mirror correctly + VISIBLY [V]; BUT the host
+  grabbing + carrying a clump does **NOT** mirror — the proxy stays a PILE at its rest spot (user: "old pile
+  not removed") and only convert-jumps update it (user: "2 fps animation of the clump"). **The live carry
+  mirror is the OPEN phase-1 north star** — see the dated CARRY-MIRROR section at the bottom.
 
 ### Scope held
 
@@ -414,3 +428,53 @@ Phase 1 = **trash only** (chipPile/clump + variants), **visual + position + re-s
 client temporarily passes through mirrored trash — the accepted phase-1 regression, Q1). Collision (the
 `garbageCollider` double-duty hull), the look-trace probe, and the client-grab direction are **PHASE 2 /
 Increment 2**. `Aprop_C` + kerfur mirrors are unchanged.
+
+---
+
+## CARRY-MIRROR OPEN — the live grab->carry->clump does NOT mirror (2026-06-21, code HEAD `245148c6`)
+
+The phase-1 north star -- "a host can grab a pile, walk a few km, and the client sees a perfect sync
+mirror of the carried clump" -- is **NOT working**. The dup fix + the resting/landed-pile mirror (visible
+after the Movable fix) are solid; the LIVE CARRY is the open piece.
+
+### Hands-on symptom (user, `69405445`)
+- "client doesn't remove old piles which host already grabbed and turned into a clump" -- on a host grab,
+  the client's proxy **stays a PILE at its rest position** (never re-skins to a clump in the host's hand,
+  never follows). The original pile appears "not removed."
+- "the animation of clump/pile is ~2 frames a second" -- NOT global FPS (that's fine). The carried clump's
+  position updates only on the occasional convert, not as a smooth ~57 Hz carry.
+
+### Root indicators (smoke client log, the LATEST verdict run `b803jo1cg`, SHA `f2344bab`)
+- **`0` `remote_prop: slot N GRAB-IN`** -- the pose drive NEVER established for any prop the whole run.
+- **`0` `recv convert GRAB` / `re-skinned IN PLACE to CLUMP` / `SPAWNED CLUMP`** -- the client NEVER applied
+  a ToClump convert. (And `0` `DROP stale convert`, so `OnConvert` wasn't even reached for the grab -- the
+  recv is logged AFTER `AdoptInboundConvertCtx`, so a silent drop/no-call leaves no trace.)
+- The host log DID broadcast the full sequence: `HOST GRAB(pile->clump) eid=6265 ctx=1` -> `THROW ctx=2`
+  -> `LAND(clump->pile) ctx=3`. So the host sent it; the client did not apply the grab/carry.
+- The carry poses that did arrive were ctx-HELD (`CLIENT HOLD carry pose ... not E's current generation`).
+
+### The mechanism (verified from code, trash_channel.cpp:126-158)
+`AdoptInboundConvertCtx(E,ctx)` drops a convert whose `ctx < known`. `IsInboundStreamCtxFresh(E,ctx,
+requireCurrentGen=true)` HOLDS a carry pose unless `ctx == known`. So **if the ToClump convert (ctx=1) is
+not adopted, `known` for E never becomes 1, and EVERY carry pose (ctx=1) is held forever -> the drive never
+establishes -> the clump never re-skins or follows.** The proxy sits as the resting pile; only a later
+convert that IS applied (a LAND) jumps it. That is exactly the user's two symptoms.
+
+### Why the ToClump wasn't applied -- NOT yet pinned (two candidate causes, both must be checked):
+1. **Smoke JOIN-RACE (contaminates the smoke, may NOT be the user's cause).** The autotest grabs at
+   host-gameplay +40 s, but the client's 875-proxy join snapshot finished LATER (proxies SPAWN logged ~13 s
+   AFTER the host's grab). So in the smoke the grab raced the join -> the ToClump arrived before the client
+   had a proxy / a coherent session for E. The autotest's 40 s settle is too short for this 875-pile save.
+2. **A real post-join carry bug (the user's actual case -- they grab AFTER a settled join).** The
+   convert/ctx/drive interaction still fails for the user. NOT root-caused to a line yet.
+
+### NEXT (resume here -- this is THE phase-1 work)
+1. **Instrument** (no behavior change): log every PropConvert RECEPTION in `OnConvert` BEFORE
+   `AdoptInboundConvertCtx` (eid/kind/ctx/known); log the drive ESTABLISH + a per-second apply rate in
+   `remote_prop::Tick`; log the carry-pose ctx-hold rate. So the next test is definitive.
+2. **Fix the autotest** to grab only AFTER a fully-settled join (wait on `HasLoadTailQuiesced` / a longer
+   settle, not a fixed 40 s) + HOLD-and-MOVE the host ~6-8 s for a real sustained carry, so the smoke
+   cleanly measures the post-join carry rate + whether the ToClump applies.
+3. From that data, fix the dropped link (the ToClump convert adoption and/or the carry-pose ctx gate
+   and/or the drive establishment). The lerp/freeze/dirty-gate (`095dbf44`/`8a17faeb`) are downstream of
+   the drive establishing -- they are BUILT but UNEXERCISED until the carry drive starts.

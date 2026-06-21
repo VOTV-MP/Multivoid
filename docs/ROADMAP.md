@@ -13,20 +13,26 @@ NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
 protocol is at **v82**. **Pile/trash sync — the host-authoritative trash channel
-([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `1011e512`:**
+([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `245148c6`, deployed `69405445`:**
 the pile MORPH (v81) was refuted by a real hands-on; so was the s35 "BeginDeferred-POST
 is observable" link (it is `EX_CallMath` → invisible; 0 host_spawn_watcher fires). The
 GRAB (pile→clump) is **VERIFIED hands-on** (`InpActEvt_use` PRE + held-edge adopt); the
 RE-PILE (clump→pile) is now the **deterministic `UFunction::Func` thunk converter**
 (`ue_wrap/ufunction_hook`, commit `d19ae4d4`) — detection VERIFIED, the convert + the
-triple-grab-cue fix (`fea04c26`) are **AS-BUILT, deployed `BA79E705`, hands-on-PENDING**.
+triple-grab-cue fix (`fea04c26`) are **AS-BUILT** (folded into the deployed proxy build;
+the single-grab-cue + no-vanish-return remain hands-on-PENDING).
 The CLIENT mirror of trash is now a host-authoritative **`AStaticMeshActor` proxy**
-(`coop/trash_proxy`, commits `06685a9c`+`1011e512`) — NO blueprint + `AddToRoot` +
+(`coop/trash_proxy`, deployed `69405445`, HEAD `245148c6`) — NO blueprint + `AddToRoot` +
 eid→actor registry + re-skin in place → the client mirror-staleness dup is impossible by
-construction; **phase-1 proxy AS-BUILT (built, not smoked), NOT yet deployed** (visual +
-position + re-skin, NoCollision; HIGH-1/HIGH-2/MEDIUM-1 + the km-walk lerp pending per
-audit `a249b005`). The client-grab direction (Increment 2, proto v83) + proxy PHASE 2
-(collision) are still DESIGN. **The day-to-day live state is
+construction. **DUP-FIX + VISIBILITY are hands-on VERIFIED** (no doubled piles; resting +
+landed piles mirror visibly — a runtime `AStaticMeshActor` is STATIC by default so it must
+be set Movable, `245148c6`, else `SetStaticMesh` no-ops and the proxy is invisible). **The
+LIVE CLUMP CARRY is the OPEN phase-1 item — it does NOT mirror yet** (a host grab + carry
+leaves the client's proxy a pile at its rest spot: `0` `GRAB-IN`, no ToClump convert
+applied → the pose-drive never establishes; the earlier smoke "functionally green" is
+WITHDRAWN as render-blind + a join-race). Phase 2 (collision + the client-grab direction,
+Increment 2 / proto v83) is **deferred until the live carry works + is hands-on confirmed**.
+**The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.
 For cross-cutting architecture truth see the new
