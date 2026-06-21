@@ -58,8 +58,38 @@ struct ActiveDrive {
     std::string  lastKey;        // ASCII (the Aprop_C save UUID format); empty for a clump
     uint32_t     lastEid = 0;    // v26: Prop Element id identity for the non-keyable clump
     uint64_t     lastApplyMs = 0;
+    // Host-authoritative trash proxy: NO stream-stop timeout-release. A network gap
+    // mid-km-walk must FREEZE the proxy at its last pose, never drop it to physics --
+    // the carry ends ONLY on an explicit reliable edge (OnRelease throw / OnConvert
+    // ToPile / disconnect), which the host-authoritative trash channel always sends.
+    // Set at drive (re)start. A non-proxy Aprop_C held item keeps the 500 ms timeout
+    // (it has no such reliable end-of-carry guarantee). [[feedback-follow-mta-architecture]]
+    bool         isProxy = false;
+    // MTA-style interpolation, SCOPED TO THE TRASH PROXY (the km-walk smoothness goal): a
+    // ~sendHz pose stream renders smoothly at frame rate by lerping position + rotation between
+    // consecutive host poses, instead of snapping to each packet. A non-proxy Aprop_C held item
+    // is EXEMPT -- it keeps its proven teleport-to-latest behavior (interpolation latency would
+    // regress that unrequested). For a proxy: the first pose snaps; subsequent poses lerp from the
+    // CURRENT rendered transform to the new target over the measured interval; a far jump (gap /
+    // teleport) snaps. (Vehicle/ped interp shape: reference/mtasa-blue CClientPed/CClientVehicle.)
+    bool              lerpSeeded = false;  // identity seeded (first pose snapped)
+    bool              lerpActive = false;  // a lerp in progress (false => frozen at target)
+    ue_wrap::FVector  startLoc{}, targetLoc{}, renderedLoc{};
+    ue_wrap::FRotator startRot{}, targetRot{}, renderedRot{};
+    uint64_t          lerpStartMs = 0;
+    uint64_t          lerpDurMs   = 0;     // measured pose interval (clamped)
+    uint64_t          lastPoseMs  = 0;     // arrival time of the previous pose (interval measure)
 };
 std::array<ActiveDrive, coop::players::kMaxPeers> g_drives{};
+
+// Interpolation tuning. The pose interval is measured per-stream and clamped: below
+// kLerpMinMs a tick-fast stream effectively snaps; above kLerpMaxMs a slow/gappy stream
+// caps the lerp window so a long stall doesn't produce a multi-second crawl. A jump
+// larger than kSnapDist (cm) is a teleport / post-gap catch-up -> snap, don't crawl across.
+constexpr uint64_t kLerpMinMs   = 16;     // ~one 60 fps frame
+constexpr uint64_t kLerpMaxMs   = 200;    // ~5 Hz floor (a gappy stream still converges)
+constexpr float    kSnapDist    = 500.f;  // 5 m: beyond this, snap instead of interpolate
+constexpr float    kSnapDistSq  = kSnapDist * kSnapDist;
 
 // v68 sustained-stream unstick gate (prop_stick_sync design note): when a
 // PropPose stream targets a STUCK wall-attachable, 1-2 stale packets may
@@ -425,12 +455,103 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     g_drives[slot].mesh  = mesh;
     g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
     g_drives[slot].lastEid = pose.elementId;
+    // Host-authoritative trash proxy? -> freeze-not-timeout end-of-carry policy (a
+    // network gap mid-km-walk freezes; release only on the explicit reliable edge).
+    g_drives[slot].isProxy = (pose.elementId != 0 && coop::trash_proxy::IsProxy(pose.elementId));
+    // Fresh drive identity: the next pose SNAPS (no drift-in from the spawn/rest
+    // position), then subsequent poses interpolate.
+    g_drives[slot].lerpSeeded = false;
+    g_drives[slot].lerpActive = false;
     // Seed the timeout clock with NOW. Without this, lastApplyMs stays at
     // zero (struct default); the stream-stop timeout at Tick() compares
     // (NowMs() - lastApplyMs > 500) and fires immediately, releasing the
     // grab on the very first packet drop / late-arrival after a fresh
     // grab. See research/findings/votv-coop-audit-post-pr4-7-2026-05-28.md.
     g_drives[slot].lastApplyMs = NowMs();
+}
+
+// Shortest-path angular interpolation (handles the +/-180 wrap so a yaw crossing
+// 179 -> -179 lerps 2 deg, not 358).
+float LerpAngle(float a, float b, float t) {
+    return a + ue_wrap::NormalizeAxis(b - a) * t;
+}
+
+// Reset a drive slot to idle. ONE implementation -- every clear site funnels here, so
+// the lerp + proxy state can never be left half-cleared (RULE 2). Does NOT touch
+// physics; the caller decides whether to re-enable simulation (a release) or leave it
+// off (a stick / a freeze).
+void ResetDriveState(ActiveDrive& d) {
+    d.actor      = nullptr;
+    d.mesh       = nullptr;
+    d.lastKey.clear();
+    d.lastEid    = 0;
+    d.isProxy    = false;
+    d.lerpSeeded = false;
+    d.lerpActive = false;
+}
+
+// Record a new host pose as the lerp TARGET. First pose for an identity (or a far jump)
+// snaps; otherwise interpolate from the CURRENT rendered transform over the measured pose
+// interval. Game thread.
+void BeginLerpToPose(ActiveDrive& d, const coop::net::PropPoseSnapshot& pose, uint64_t nowMs) {
+    const ue_wrap::FVector  nloc{pose.x, pose.y, pose.z};
+    const ue_wrap::FRotator nrot{pose.pitch, pose.yaw, pose.roll};
+    const float dx = nloc.X - d.renderedLoc.X, dy = nloc.Y - d.renderedLoc.Y, dz = nloc.Z - d.renderedLoc.Z;
+    // Interpolation is scoped to the host-authoritative trash PROXY (the km-walk smoothness
+    // requirement). A non-proxy Aprop_C held item keeps its proven teleport-to-latest behavior
+    // (snap every pose) -- adding interpolation latency to it would regress unrequested, proven
+    // sync. So a non-proxy ALWAYS snaps; a proxy snaps only on the first pose or a far jump.
+    if (!d.isProxy || !d.lerpSeeded || (dx * dx + dy * dy + dz * dz) > kSnapDistSq) {
+        // Snap: non-proxy (teleport), OR first pose (no drift-in from spawn/rest), OR a jump too
+        // large to interpolate (post-gap catch-up / teleport -- crawling across the map would
+        // look worse than a snap).
+        d.startLoc = d.targetLoc = d.renderedLoc = nloc;
+        d.startRot = d.targetRot = d.renderedRot = nrot;
+        if (d.actor && R::IsLive(d.actor)) {
+            E::SetActorLocation(d.actor, nloc);
+            E::SetActorRotation(d.actor, nrot);
+        }
+        d.lerpActive = false;       // already at target (frozen until the next pose)
+        d.lerpSeeded = true;
+        d.lastPoseMs = nowMs;
+        return;
+    }
+    uint64_t interval = nowMs - d.lastPoseMs;
+    if (interval < kLerpMinMs) interval = kLerpMinMs;
+    if (interval > kLerpMaxMs) interval = kLerpMaxMs;
+    d.lastPoseMs  = nowMs;
+    d.startLoc    = d.renderedLoc;  // continue from where we are actually rendering
+    d.startRot    = d.renderedRot;
+    d.targetLoc   = nloc;
+    d.targetRot   = nrot;
+    d.lerpStartMs = nowMs;
+    d.lerpDurMs   = interval;
+    d.lerpActive  = true;
+}
+
+// Advance an in-progress lerp one tick (called EVERY tick, not only on a new pose, so
+// the follow is smooth and a stream gap FREEZES at the target rather than dropping).
+// No-op when no lerp is active (frozen) or the actor died. Game thread.
+void AdvanceLerp(ActiveDrive& d, uint64_t nowMs) {
+    if (!d.lerpActive || !d.actor) return;
+    if (!R::IsLive(d.actor)) { d.lerpActive = false; return; }
+    float alpha = d.lerpDurMs
+        ? static_cast<float>(nowMs - d.lerpStartMs) / static_cast<float>(d.lerpDurMs) : 1.f;
+    if (alpha < 0.f) alpha = 0.f;
+    if (alpha > 1.f) alpha = 1.f;
+    const ue_wrap::FVector loc{
+        d.startLoc.X + (d.targetLoc.X - d.startLoc.X) * alpha,
+        d.startLoc.Y + (d.targetLoc.Y - d.startLoc.Y) * alpha,
+        d.startLoc.Z + (d.targetLoc.Z - d.startLoc.Z) * alpha };
+    const ue_wrap::FRotator rot{
+        LerpAngle(d.startRot.Pitch, d.targetRot.Pitch, alpha),
+        LerpAngle(d.startRot.Yaw,   d.targetRot.Yaw,   alpha),
+        LerpAngle(d.startRot.Roll,  d.targetRot.Roll,  alpha) };
+    E::SetActorLocation(d.actor, loc);
+    E::SetActorRotation(d.actor, rot);
+    d.renderedLoc = loc;
+    d.renderedRot = rot;
+    if (alpha >= 1.f) d.lerpActive = false;  // reached target -> freeze (no redundant writes)
 }
 
 }  // namespace
@@ -470,50 +591,46 @@ void Tick(coop::net::Session& session) {
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
                     if (!StickHoldsPhysicsOff(drive.actor))
                         DriveTogglePhysics(drive.actor, drive.mesh, true);
-                    drive.actor = nullptr;
-                    drive.mesh = nullptr;
-                    drive.lastKey.clear();
-                    drive.lastEid = 0;
+                    ResetDriveState(drive);
                 }
                 ResolveAndStartDrive(slot, pose);
             }
             if (drive.actor && R::IsLive(drive.actor)) {
-                ue_wrap::FVector  loc{pose.x, pose.y, pose.z};
-                ue_wrap::FRotator rot{pose.pitch, pose.yaw, pose.roll};
-                E::SetActorLocation(drive.actor, loc);
-                E::SetActorRotation(drive.actor, rot);
+                // Record the pose as the new lerp TARGET (AdvanceLerp below moves the
+                // actor toward it every tick -- a smooth follow, not a per-packet teleport).
+                BeginLerpToPose(drive, pose, nowMs);
                 drive.lastApplyMs = nowMs;
-                // Throttled position log: first 3 applies + every 60th after
-                // per slot. Helps debug cross-peer position parity.
+                // Throttled target log: first 3 + every 60th after per slot.
                 static std::array<uint64_t, coop::players::kMaxPeers> sApplyCount{};
                 const uint64_t n = ++sApplyCount[slot];
                 if (n <= 3 || (n % 60) == 0) {
-                    UE_LOGI("remote_prop: slot %d drive #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f)",
+                    UE_LOGI("remote_prop: slot %d drive #%llu -> target(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f)%s",
                             slot, static_cast<unsigned long long>(n),
-                            loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll);
+                            pose.x, pose.y, pose.z, pose.pitch, pose.yaw, pose.roll,
+                            drive.isProxy ? " [proxy]" : "");
                 }
             } else if (drive.actor) {
                 // The cached actor died (level unload / GC). Drop cleanly.
                 UE_LOGW("remote_prop: slot %d cached actor no longer live -- dropping drive", slot);
-                drive.actor = nullptr;
-                drive.mesh = nullptr;
-                drive.lastKey.clear();
-                drive.lastEid = 0;
+                ResetDriveState(drive);
             }
-            continue;
         }
-        // No new packet for THIS slot -- check the stream-stop timeout
-        // (treat as implicit release: peer stopped sending PropPose). v68:
-        // a stick that froze the prop mid-hold keeps physics off here too.
-        if (drive.actor && (nowMs - drive.lastApplyMs) > 500) {
+        // Advance the interpolation EVERY tick (whether or not a new pose arrived): a
+        // smooth frame-rate follow between ~sendHz poses, and a stream gap FREEZES at the
+        // last target instead of stalling at the last packet's raw position.
+        AdvanceLerp(drive, nowMs);
+        // Stream-stop implicit release -- ONLY for a non-proxy Aprop_C held item (which has
+        // no reliable end-of-carry guarantee, so 500 ms of silence == released). A host-
+        // authoritative trash PROXY is EXEMPT: a network gap must FREEZE it (AdvanceLerp
+        // already holds it at the last target), and it releases only on the explicit reliable
+        // edge (OnRelease throw / OnConvert ToPile / disconnect). THIS is the km-walk
+        // robustness fix -- a hitch no longer drops the carried pile to physics mid-walk.
+        if (drive.actor && !drive.isProxy && (nowMs - drive.lastApplyMs) > 500) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
             if (!StickHoldsPhysicsOff(drive.actor))
                 DriveTogglePhysics(drive.actor, drive.mesh, true);
-            drive.actor = nullptr;
-            drive.mesh = nullptr;
-            drive.lastKey.clear();
-            drive.lastEid = 0;
+            ResetDriveState(drive);
         }
     }
 }
@@ -591,7 +708,20 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         meshToActOn = nullptr;
         propActor = nullptr;
     }
-    if (meshToActOn) {
+    // Host-authoritative trash proxy throw: do NOT simulate locally (phase-1 NoCollision
+    // follower -- local physics would both diverge from the host's authoritative trajectory
+    // AND re-enable collision, breaking the phase-1 invariant). The proxy FREEZES at the
+    // release pose; the host's reliable ToPile convert re-skins + repositions it to the
+    // landed pile. The receiver-side swing still plays so the throw has audible feedback.
+    // (Phase 2 may stream the flight for a smooth arc instead of the brief freeze.)
+    if (payload.elementId != 0 && coop::trash_proxy::IsProxy(payload.elementId)) {
+        if (propActor && linSpeed > coop::net::kThrownLinVelThreshold)
+            coop::prop_sound::PlayThrowWhoosh(propActor);
+        if (propActor) ClearAnyDriveFor(propActor);  // stop the carry drive; freeze in place
+        UE_LOGI("[PILE] CLIENT proxy throw eid=%u |v|=%.1f cm/s -- frozen at release (no local physics); "
+                "awaiting host ToPile convert to reposition to the landed pile",
+                payload.elementId, linSpeed);
+    } else if (meshToActOn) {
         // Order matters: SetSimulate(true) FIRST so the body re-enters
         // dynamic sim BEFORE we write velocity (a kinematic body's velocity
         // write would be ignored / cause a PhysX kinematic-target chase).
@@ -648,10 +778,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // Clear only the matching slot's drive state -- other slots' active
     // drives (if any) stay intact.
     if (releasedSlot >= 0) {
-        g_drives[releasedSlot].actor = nullptr;
-        g_drives[releasedSlot].mesh = nullptr;
-        g_drives[releasedSlot].lastKey.clear();
-        g_drives[releasedSlot].lastEid = 0;
+        ResetDriveState(g_drives[releasedSlot]);
     }
 }
 
@@ -880,10 +1007,7 @@ void ClearAnyDriveFor(void* actor) {
         if (d.actor == actor) {
             UE_LOGI("remote_prop: actor %p was under active kinematic drive (slot %td) -- clearing drive cache",
                     actor, std::distance(&g_drives[0], &d));
-            d.actor = nullptr;
-            d.mesh = nullptr;
-            d.lastKey.clear();
-            d.lastEid = 0;
+            ResetDriveState(d);
         }
     }
 }
@@ -980,6 +1104,18 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     // that beat its OnSpawn) keep the legacy spawn+rebind path below.
     if (coop::trash_proxy::IsProxy(E)) {
         void* proxy = coop::trash_proxy::ReskinProxy(E, payload.chipType, wantClump);
+        // Reposition the proxy to the convert's authoritative transform + stop any active carry
+        // drive. ESSENTIAL for ToPile (LAND): the carry stream stopped at the throw and the proxy
+        // froze mid-air at release; this convert carries the LANDED rest position, so without the
+        // reposition the re-skinned pile would float where the throw began. Harmless for ToClump
+        // (GRAB): the incoming carry pose stream re-targets it immediately. ClearAnyDriveFor also
+        // resets the lerp so a later stream re-snaps from the new position (no crawl from the stale
+        // frozen pose).
+        if (proxy) {
+            ClearAnyDriveFor(proxy);
+            E::SetActorLocation(proxy, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
+            E::SetActorRotation(proxy, ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        }
         UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u -> PROXY re-skinned IN PLACE to %s chipType=%u "
                 "[SYNC-MIRROR OK -- no spawn-fresh, no dup]",
                 edge, E, static_cast<unsigned>(payload.ctx), wantClump ? "CLUMP" : "PILE",
@@ -1094,15 +1230,21 @@ void ForceRelease() {
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;
+        // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + RemoveFromRoot
+        // + unbind). NEVER ConsumeLocalActor it -- that destroys the rooted AStaticMeshActor
+        // WITHOUT RemoveFromRoot (a leaked GUObjectArray slot) and bypasses the proxy registry.
+        // RetireProxy clears this drive (ClearAnyDriveFor) so d.actor is null after.
+        if (d.isProxy) {
+            coop::trash_proxy::RetireProxy(d.lastEid);
+            ++released;
+            continue;
+        }
         // Normal prop -> release to physics (persists). Null-mesh clump mirror -> destroy
         // it (transient; the holder's death-watcher is gone on teardown -> would leak).
         // [[project-bug-trash-chippile-uaf-crash]]
         if (d.mesh) DriveSimulate(d.mesh, true);
         else        ConsumeLocalActor(d.actor);
-        d.actor = nullptr;
-        d.mesh = nullptr;
-        d.lastKey.clear();
-        d.lastEid = 0;
+        ResetDriveState(d);
         ++released;
     }
     if (released > 0) {
@@ -1144,6 +1286,16 @@ void OnDisconnectForSlot(int peerSlot) {
     }
     ActiveDrive& d = g_drives[peerSlot];
     if (!d.actor) return;
+    // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + RemoveFromRoot
+    // + unbind), never ConsumeLocalActor (a rooted-slot leak + registry bypass). Normally the
+    // proxy is already retired by trash_proxy::OnDisconnectForSlot (called first in
+    // subsystems::DisconnectSlot), so d.actor is null and we returned above -- this is the
+    // belt-and-suspenders path. RetireProxy is idempotent.
+    if (d.isProxy) {
+        coop::trash_proxy::RetireProxy(d.lastEid);  // clears this drive via ClearAnyDriveFor
+        UE_LOGI("remote_prop: peer slot %d disconnected -- retired held trash proxy eid=%u", peerSlot, d.lastEid);
+        return;
+    }
     if (d.mesh) {
         // Normal world prop: release to physics -- it persists (convergent world object).
         DriveSimulate(d.mesh, true);
@@ -1158,10 +1310,7 @@ void OnDisconnectForSlot(int peerSlot) {
         UE_LOGI("remote_prop: peer slot %d disconnected mid-carry -- destroyed held clump mirror %p (no leak)",
                 peerSlot, d.actor);
     }
-    d.actor = nullptr;
-    d.mesh = nullptr;
-    d.lastKey.clear();
-    d.lastEid = 0;
+    ResetDriveState(d);
 }
 
 }  // namespace coop::remote_prop
