@@ -248,7 +248,9 @@ while ((Get-Date) -lt $deadline) {
     }
     # Prefix match: the connect line may be "CONNECTED (host)" or
     # "CONNECTED (host, via token'd msg)" depending on which path confirmed it.
-    $hostOk   = Side-Ok $hostLog   "CONNECTED (host"   "Client joined the game"
+    # Host join marker is "slot N joined the game" (player_handshake announces by slot, not nick),
+    # so match the scenario-robust substring "joined the game" rather than "Client joined the game".
+    $hostOk   = Side-Ok $hostLog   "CONNECTED (host"   "joined the game"
     $clientOk = Client-Ok $clientLog
     if ($hostOk -and $clientOk) { $pass = $true; break }
     Start-Sleep -Seconds 3
