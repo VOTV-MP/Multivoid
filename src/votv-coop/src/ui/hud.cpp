@@ -218,7 +218,7 @@ bool IsActive() {
            coop::voice_chat::Enabled();  // v66: the local mic indicator works pre-join too
 }
 
-// The local voice indicator (v66): bottom-left 18 px icon, the SVC HUD chain
+// The local voice indicator (v66): a compact bottom-left icon, the SVC HUD chain
 // (talking / whispering / muted / disconnected; PTT idle shows nothing). Reads
 // the published UiSnapshot -- this runs on the RENDER thread, and the live
 // chain (LocalHudIcon) walks game-thread state (audit I-1).
@@ -228,14 +228,20 @@ void DrawLocalVoiceIcon() {
     if (!vs.enabled || !vs.started) return;
     const auto icon = static_cast<coop::voice_chat::VoiceIcon>(vs.localIcon);
     if (icon == coop::voice_chat::VoiceIcon::None) return;
+    // Hide the "voice disconnected" badge when solo (no remote players present): a
+    // lone host/client hasn't failed at anything -- there is simply nobody to talk to
+    // yet, so the "no signal" glyph was pure noise (it vanished the instant a peer
+    // joined, which is exactly what the user saw). Once a peer IS present the icon is
+    // meaningful again (a real voice-transport-down state). (user 2026-06-18)
+    if (icon == coop::voice_chat::VoiceIcon::Disconnected && !coop::nameplate::HasAny()) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();  // under windows, like the nameplates
     // Offset right of the far-left edge so it clears VOTV's native bottom-left vitals
     // column (food / stamina icons + their numbers), which the old x=26 fought with
-    // (user, 2026-06-13). Per user (2026-06-16) the local badge is 4x larger (18->72 px)
-    // and pushed further right (x=170) to fully clear the vitals readout; the center is
-    // lifted to y-56 so the taller glyph stays on-screen above the bottom edge at 1080p.
-    ui::voice_icons::Draw(dl, ImVec2(170.f, io.DisplaySize.y - 56.f), 72.f, icon, 0.9f);
+    // (user, 2026-06-13). x=170 clears the vitals readout; a compact 28 px badge
+    // sat near the bottom edge (user 2026-06-18: the prior 72 px badge was far too
+    // large).
+    ui::voice_icons::Draw(dl, ImVec2(170.f, io.DisplaySize.y - 36.f), 28.f, icon, 0.9f);
 }
 
 void Render() {
