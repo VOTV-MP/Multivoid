@@ -61,7 +61,15 @@ param(
     # gamemode + swaps color curves to the red set. Host POST observer
     # broadcasts; client invokes same. Visual signal: entire sky/scene
     # goes RED on both peers. Unambiguous, unlike rain particles.
-    [switch]$RedSkyTest
+    [switch]$RedSkyTest,
+    # 2026-06-21 (trash-proxy phase 1): autonomous chipPile GRAB + re-pile test
+    # (VOTVCOOP_RUN_CHIPPILE_TEST=1). HOST waits 40 s for gameplay + client +
+    # pile tracking, then drives a real grab (arm InpActEvt_use + run playerGrabbed)
+    # and a Phase B re-pile. CLIENT is scan-only. The verification is in the LOGS
+    # (the client's trash PROXY lifecycle): SPAWN -> OnConvert re-skin GRAB(pile->clump)
+    # -> re-skin LAND(clump->pile), all IN PLACE on ONE actor (no dup), plus the
+    # lerp drive + no leak. Needs a save with chipPiles (else it logs "NO chipPile").
+    [switch]$ChipPileTest
 )
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
@@ -116,7 +124,7 @@ $hostPose   = @{ X = "-37730"; Y = "69943";  Z = "6420"; Yaw = "-86.8"; Pitch = 
 $clientPose = @{ X = "-37640"; Y = "68532";  Z = "6399"; Yaw = "88.2";  Pitch = "-4.7" }
 
 # --- launch the two instances with per-process env --------------------------
-function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $flashlightTest, $weatherTest, $redSkyTest) {
+function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $flashlightTest, $weatherTest, $redSkyTest, $chipPileTest) {
     $env:VOTVCOOP_SCENARIO = "play"
     $env:VOTVCOOP_NET_ROLE = $role
     $env:VOTVCOOP_NET_PORT = "$Port"
@@ -146,6 +154,9 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $f
     if ($redSkyTest) {
         $env:VOTVCOOP_RUN_REDSKY_TEST = "1"
     }
+    if ($chipPileTest) {
+        $env:VOTVCOOP_RUN_CHIPPILE_TEST = "1"
+    }
     $p = Start-Process -FilePath $exe `
             -ArgumentList "-windowed","-ResX=$ResX","-ResY=$ResY" -PassThru
     # Clear so the next launch / this shell isn't polluted.
@@ -154,13 +165,14 @@ function Launch-Instance($role, $nick, $logName, $extraEnv, $pose, $grabTest, $f
                 Env:VOTVCOOP_AUTOTEST_X,Env:VOTVCOOP_AUTOTEST_Y,Env:VOTVCOOP_AUTOTEST_Z,`
                 Env:VOTVCOOP_AUTOTEST_YAW,Env:VOTVCOOP_AUTOTEST_PITCH,Env:VOTVCOOP_RUN_GRAB_TEST,`
                 Env:VOTVCOOP_GRAB_TEST_ANCHOR_X,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Y,Env:VOTVCOOP_GRAB_TEST_ANCHOR_Z,`
-                Env:VOTVCOOP_RUN_FLASHLIGHT_TEST,Env:VOTVCOOP_RUN_WEATHER_TEST,Env:VOTVCOOP_RUN_REDSKY_TEST `
+                Env:VOTVCOOP_RUN_FLASHLIGHT_TEST,Env:VOTVCOOP_RUN_WEATHER_TEST,Env:VOTVCOOP_RUN_REDSKY_TEST,`
+                Env:VOTVCOOP_RUN_CHIPPILE_TEST `
                 -ErrorAction SilentlyContinue
     return $p
 }
 
 Step "launching HOST (nick=Host, binds port $Port, autotest pose @ host$(if($GrabTest){', GRAB TEST armed (full)'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'})$(if($WeatherTest){', WEATHER TEST armed (host drives, client observes)'})$(if($RedSkyTest){', RED SKY TEST armed (host drives)'}))..."
-$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest $FlashlightTest $WeatherTest $RedSkyTest
+$hostProc = Launch-Instance "host" "Host" $hostLogName "" $hostPose $GrabTest $FlashlightTest $WeatherTest $RedSkyTest $ChipPileTest
 Start-Sleep -Seconds 4   # let the host process come up first
 Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ client$(if($GrabTest){', SCAN ONLY'})$(if($FlashlightTest){', FLASHLIGHT TEST armed'})$(if($WeatherTest){', WEATHER TEST armed (observer-only)'})$(if($RedSkyTest){', RED SKY TEST armed (observer-only)'}))..."
 # Client also gets VOTVCOOP_RUN_GRAB_TEST=1 -- it runs the prop scan + logs
@@ -171,7 +183,7 @@ Step "launching CLIENT (nick=Client, peer=127.0.0.1:$Port, autotest pose @ clien
 # the routine self-gates on role -- only the host actually forces rain;
 # the client logs "not host" and exits. Setting the env on both keeps
 # launcher symmetry simple.
-$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest $FlashlightTest $WeatherTest $RedSkyTest
+$clientProc = Launch-Instance "client" "Client" $clientLogName "127.0.0.1" $clientPose $GrabTest $FlashlightTest $WeatherTest $RedSkyTest $ChipPileTest
 Step "host pid=$($hostProc.Id)  client pid=$($clientProc.Id)"
 
 # --- verification helpers ---------------------------------------------------
@@ -307,6 +319,18 @@ if ($pass) {
         Capture-Pair "post-throw"
         # Let the rest of the routine complete (heavy arm + Timeline tail).
         Start-Sleep -Seconds 6
+    } elseif ($ChipPileTest) {
+        # chipPile test timing (RunAutonomousChipPileTest): the HOST thread waits 40 s from
+        # boot for gameplay + client + pile tracking, then drives the grab (~10 s) + Phase B
+        # re-pile (~12 s) + tail. The 40 s settle may overlap the connect wait, so from PASS we
+        # give it the full window. Capture mid-carry + post-re-pile for a visual cross-check
+        # (the logs are the real verdict -- the client's PROXY lifecycle).
+        Step "PASS detected; CHIPPILE TEST armed -- host settles 40 s then grabs + re-piles..."
+        Start-Sleep -Seconds 50          # ~mid-carry (after the 40 s settle + grab)
+        Capture-Pair "chippile-carry"
+        Start-Sleep -Seconds 25          # ~after Phase B re-pile + convert
+        Capture-Pair "chippile-repile"
+        Start-Sleep -Seconds 10          # tail (let the last convert + drive settle)
     } else {
         Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
         Start-Sleep -Seconds 6
@@ -430,6 +454,39 @@ if ($pass -and $FlashlightTest) {
         Step "==== CLIENT flashlight lines ===="
         Select-String -Path $clientLog -Pattern "flashlight" -ErrorAction SilentlyContinue |
             Select-Object -Last 12 | ForEach-Object { Write-Host "  $($_.Line)" }
+    }
+}
+
+# 2026-06-21 trash-proxy phase 1: chipPile verdict. The proof is the CLIENT's PROXY
+# lifecycle -- a single AStaticMeshActor re-skinned in place (no dup), driven + frozen
+# correctly. Counts the markers and flags the dup/leak/NOT-FOUND failure signatures.
+if ($pass -and $ChipPileTest) {
+    Write-Host ""
+    Step "==== CHIPPILE (trash proxy) verdict ===="
+    $hostGrab       = Count-Matches $hostLog   "chippile_test: .*GRAB"
+    $hostConvert    = Count-Matches $hostLog   "HOST GRAB ADOPT|HOST RE-PILE|HOST (GRAB|LAND)"
+    $cliSpawn       = Count-Matches $clientLog "trash_proxy: SPAWN"
+    $cliReskin      = Count-Matches $clientLog "PROXY re-skinned IN PLACE"
+    $cliSpawnOnConv = Count-Matches $clientLog "proxy SPAWNED .* convert beat its spawn"
+    # Failure signatures -- ANY of these is a regression.
+    $cliNotFound    = Count-Matches $clientLog "mirror NOT-FOUND|no local mirror of E existed"
+    $cliErr         = Count-Matches $clientLog "trash_proxy: .*FAILED|proxy spawn-on-convert FAILED|SkinProxy.*unresolved|SetComponentMaterial unresolved"
+    Step "host   log: grab=$hostGrab  hostConvert=$hostConvert"
+    Step "client log: proxySPAWN=$cliSpawn  reskinINPLACE=$cliReskin  spawn-on-convert=$cliSpawnOnConv"
+    Step "client log: FAIL-sigs -> NOT-FOUND=$cliNotFound  errors=$cliErr"
+    # PASS: the client spawned at least one proxy AND re-skinned in place at least once
+    # (the grab convert), with ZERO NOT-FOUND and ZERO proxy errors.
+    $cppass = ($cliSpawn -ge 1) -and ($cliReskin -ge 1) -and ($cliNotFound -eq 0) -and ($cliErr -eq 0)
+    if ($cppass) {
+        Write-Host "[lan-test] CHIPPILE RESULT: PASS -- client proxy spawned + re-skinned in place, no dup/NOT-FOUND/error." -ForegroundColor Green
+    } else {
+        Write-Host "[lan-test] CHIPPILE RESULT: FAIL (or no pile in save) -- see the PILE lines below." -ForegroundColor Red
+        Step "==== HOST chippile/pile lines ===="
+        Select-String -Path $hostLog -Pattern "chippile_test|\[PILE\]|trash_proxy|NO chipPile" -ErrorAction SilentlyContinue |
+            Select-Object -Last 25 | ForEach-Object { Write-Host "  $($_.Line)" }
+        Step "==== CLIENT chippile/pile lines ===="
+        Select-String -Path $clientLog -Pattern "\[PILE\]|trash_proxy|OnConvert|mirror (FOUND|NOT-FOUND)" -ErrorAction SilentlyContinue |
+            Select-Object -Last 25 | ForEach-Object { Write-Host "  $($_.Line)" }
     }
 }
 
