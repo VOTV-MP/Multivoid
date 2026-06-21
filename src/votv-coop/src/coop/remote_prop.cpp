@@ -986,6 +986,27 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
                 static_cast<unsigned>(payload.chipType));
         return proxy;
     }
+    // HIGH-1: a trash convert that BEAT its OnSpawn (no proxy for E yet). Spawn the proxy HERE in the
+    // unambiguous wantClump form (the convert's authoritative direction) and bind E, rather than falling
+    // to the legacy path below -- that routes through remote_prop_spawn::OnSpawn, which derives the
+    // proxy's form from the spawn CLASS (a fragile coupling). A trailing real PropSpawn then hits
+    // SpawnProxy's convergence branch, which (by design) does NOT re-skin, so the form stays correct.
+    // Non-trash converts (Aprop_C / kerfur) fall through to the legacy spawn+rebind path below.
+    if (coop::trash_proxy::IsTrashProxyClass(remote_prop_spawn::ClassNameToWString(payload.pileClass))) {
+        ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
+        ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
+        void* proxy = coop::trash_proxy::SpawnProxy(E, payload.chipType, /*isClump=*/wantClump,
+                                                    senderSlot, loc, rot);
+        if (proxy) {
+            RegisterPropMirror(E, proxy, L"", R::ClassNameOf(proxy), senderSlot);
+            UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u -> proxy SPAWNED %s (convert beat its spawn) "
+                    "[SYNC-MIRROR OK -- no dup]", edge, E, static_cast<unsigned>(payload.ctx),
+                    wantClump ? "CLUMP" : "PILE");
+        } else {
+            UE_LOGW("[PILE] CLIENT recv convert %s eid=%u -- proxy spawn-on-convert FAILED (DESYNC)", edge, E);
+        }
+        return proxy;
+    }
     void* cur = ResolveLiveActorByEid(E);
     const bool hadMirror = (cur != nullptr);   // was a SYNC-MIRROR of E present to re-skin?
     // Idempotency: if our rendering of E already matches the target edge (an echo, a duplicate, or a

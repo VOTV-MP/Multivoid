@@ -83,6 +83,25 @@ bool ResolveStaticMeshFn() {
     return g_setStaticMeshFn != nullptr;
 }
 
+void* g_primCompClass = nullptr;     // owns SetMaterial (UPrimitiveComponent)
+void* g_setMaterialFn = nullptr;
+void* g_staticMeshAssetClass = nullptr;  // UStaticMesh (owns GetMaterial(MaterialIndex))
+void* g_smGetMaterialFn = nullptr;
+
+bool ResolveSetMaterialFn() {
+    if (!g_primCompClass) g_primCompClass = R::FindClass(L"PrimitiveComponent");
+    if (g_primCompClass && !g_setMaterialFn)
+        g_setMaterialFn = R::FindFunction(g_primCompClass, L"SetMaterial");
+    return g_setMaterialFn != nullptr;
+}
+
+bool ResolveStaticMeshGetMaterialFn() {
+    if (!g_staticMeshAssetClass) g_staticMeshAssetClass = R::FindClass(L"StaticMesh");
+    if (g_staticMeshAssetClass && !g_smGetMaterialFn)
+        g_smGetMaterialFn = R::FindFunction(g_staticMeshAssetClass, L"GetMaterial");
+    return g_smGetMaterialFn != nullptr;
+}
+
 }  // namespace
 
 FVector GetComponentLocation(void* component) {
@@ -235,6 +254,32 @@ bool SetStaticMesh(void* component, void* staticMeshAsset) {
     ParamFrame f(g_setStaticMeshFn);
     f.Set<void*>(L"NewMesh", staticMeshAsset);
     return Call(component, f);
+}
+
+bool SetComponentMaterial(void* component, int32_t elementIndex, void* material) {
+    // UPrimitiveComponent::SetMaterial(ElementIndex, Material). `material` may be null:
+    // SetMaterial(0, null) reverts the slot to the mesh asset's default material (the
+    // proxy uses this to clear a stale clump override when re-skinning back to a pile).
+    // Resolved on PrimitiveComponent (the BlueprintCallable lives there); dispatched on
+    // the StaticMeshComponent instance works -- ProcessEvent keys on the function object.
+    if (!component || !ResolveSetMaterialFn()) {
+        UE_LOGE("engine: SetComponentMaterial unresolved (comp=%p fn=%p)", component, g_setMaterialFn);
+        return false;
+    }
+    ParamFrame f(g_setMaterialFn);
+    f.Set<int32_t>(L"ElementIndex", elementIndex);
+    f.Set<void*>(L"Material", material);
+    return Call(component, f);
+}
+
+void* GetStaticMeshMaterial(void* staticMeshAsset, int32_t materialIndex) {
+    // UStaticMesh::GetMaterial(MaterialIndex) -> UMaterialInterface*. The clump form's
+    // per-chipType look (setTex: SetMaterial(0, getChipPileType(chipType).GetMaterial(0))).
+    if (!staticMeshAsset || !ResolveStaticMeshGetMaterialFn()) return nullptr;
+    ParamFrame f(g_smGetMaterialFn);
+    f.Set<int32_t>(L"MaterialIndex", materialIndex);
+    if (!Call(staticMeshAsset, f)) return nullptr;
+    return f.Get<void*>(L"ReturnValue");
 }
 
 void* GetCharacterMovementComponent(void* characterPawn) {

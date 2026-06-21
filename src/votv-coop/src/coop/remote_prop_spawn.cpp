@@ -85,15 +85,9 @@ bool ResolveSpawnFns() {
     return true;
 }
 
-// Build a wide string from WireClassName. Lossless for ASCII (VOTV class names).
-std::wstring ClassNameToWString(const coop::net::WireClassName& cn) {
-    std::wstring s;
-    s.reserve(cn.len);
-    for (uint8_t i = 0; i < cn.len && i < 63; ++i) {
-        s.push_back(static_cast<wchar_t>(static_cast<unsigned char>(cn.data[i])));
-    }
-    return s;
-}
+// ClassNameToWString is now a shared public helper (definition after the anon
+// namespace; declared in remote_prop_spawn.h). Internal anon-namespace callers
+// resolve it via enclosing-namespace lookup.
 
 // True for prop classes whose locally-spawned instance lands with collision
 // disabled (NoCollision) via a natural-spawn pipeline that calls
@@ -298,6 +292,17 @@ void EnsurePileBindIndex() {
 }
 
 }  // namespace
+
+// Build a wide string from WireClassName. Lossless for ASCII (VOTV class names).
+// Shared (declared in remote_prop_spawn.h) so remote_prop::OnConvert can reuse it.
+std::wstring ClassNameToWString(const coop::net::WireClassName& cn) {
+    std::wstring s;
+    s.reserve(cn.len);
+    for (uint8_t i = 0; i < cn.len && i < 63; ++i) {
+        s.push_back(static_cast<wchar_t>(static_cast<unsigned char>(cn.data[i])));
+    }
+    return s;
+}
 
 void RecordClaimIfTracking(void* actor) {
     // Fork B 2c (2026-06-10): public claim primitive for the SELF-announce

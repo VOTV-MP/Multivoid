@@ -566,6 +566,19 @@ bool SetAnimClass(void* skeletalMeshComponent, void* animBlueprintClass);
 // call. Rejects null. Game thread only.
 bool SetStaticMesh(void* staticMeshComponent, void* staticMeshAsset);
 
+// UPrimitiveComponent::SetMaterial(ElementIndex, Material) -- override one material
+// slot on a component. `material` MAY be null: SetMaterial(0, null) reverts that
+// slot to the mesh asset's own default material (the trash proxy uses this to clear
+// a stale clump material override when re-skinning a shared component back to a
+// pile). The clump form sets slot 0 to the pile mesh's material on the fixed
+// dirtball mesh (verified prop_garbageClump_C::setTex). Game thread only.
+bool SetComponentMaterial(void* primitiveComponent, int32_t elementIndex, void* material);
+
+// UStaticMesh::GetMaterial(MaterialIndex) -> UMaterialInterface* -- the material the
+// mesh asset carries at `materialIndex`. Feeds the clump's material swap
+// (getChipPileType(chipType).GetMaterial(0), per setTex). Null on failure. Game thread.
+void* GetStaticMeshMaterial(void* staticMeshAsset, int32_t materialIndex);
+
 // Destroy an actor component (UActorComponent::K2_DestroyComponent). Used to
 // strip a remote pawn's local-only systems (e.g. its unbound PostProcessComponent
 // that hijacks the local screen's gamma/exposure). `contextObject` is the calling

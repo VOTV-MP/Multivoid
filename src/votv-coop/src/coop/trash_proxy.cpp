@@ -72,21 +72,47 @@ void* ResolveClumpMesh() {
     return sDirtball;
 }
 
+// MEDIUM-1 last-ditch: the engine basic Cube, so a proxy is NEVER invisible even if
+// both the dirtball clump mesh and the chipType pile mesh fail to resolve. In
+// practice unreachable -- a trash class being loaded (we resolved IsTrashProxyClass
+// against it) pins its referenced meshes resident, and ResolvePileMesh last-good-
+// caches -- so a full native StaticLoadObject primitive is not warranted; FindObject
+// (resident) is the proportionate guard. Last-good cached.
+void* ResolveCubeFallback() {
+    static void* sCube = nullptr;
+    if (!sCube || !R::IsLive(sCube)) sCube = R::FindObject(L"Cube", L"StaticMesh");
+    return sCube;
+}
+
 // Skin the proxy's StaticMeshComponent for the requested form. SetStaticMesh
 // recomputes the component's bounds + collision body in the SAME call (atomic --
-// no window where the visual is the new form but the bound is the old). Clump ->
-// dirtball (falls back to the pile mesh if dirtball isn't resident); pile -> the
-// chipType pile mesh (ResolvePileMesh itself last-good-caches). `worldCtx` is a
-// live UObject for getChipPileType's WorldContext (the proxy actor itself).
-// TODO(phase-1 HIGH-2): the clump also needs SetMaterial(0, pileMesh.GetMaterial(0))
-// -- the per-chipType clump look is a MATERIAL swap on the fixed dirtball mesh (the
-// VERIFIED game behavior, prop_garbageClump_C::setTex). Pending engine::SetComponentMaterial
-// + GetStaticMeshMaterial; until then the clump renders with the default dirtball material.
+// no window where the visual is the new form but the bound is the old). `worldCtx`
+// is a live UObject for getChipPileType's WorldContext (the proxy actor itself).
+//
+// PILE  = the chipType pile mesh directly (its own slot-0 material is correct). We
+//         re-skin ONE shared component back and forth (unlike the game's separate
+//         actors), so CLEAR any leftover clump material override: SetMaterial(0,null)
+//         reverts slot 0 to the mesh asset default.
+// CLUMP = the FIXED dirtball mesh + the pile mesh's slot-0 MATERIAL. This is the
+//         VERIFIED game behavior (prop_garbageClump_C::setTex bytecode = SetMaterial(
+//         0, getChipPileType(chipType).GetMaterial(0)) on the fixed StaticMesh -- a
+//         MATERIAL swap, NOT a mesh swap). Mesh fallback chain dirtball -> pile mesh
+//         -> Cube so the clump is never invisible.
 void SkinProxy(void* worldCtx, void* comp, uint8_t chipType, bool isClump) {
     if (!comp) return;
-    void* mesh = isClump ? ResolveClumpMesh() : nullptr;
-    if (!mesh) mesh = ue_wrap::prop::ResolvePileMesh(chipType, worldCtx);  // pile, or clump-fallback
-    if (mesh) E::SetStaticMesh(comp, mesh);
+    void* pileMesh = ue_wrap::prop::ResolvePileMesh(chipType, worldCtx);  // last-good cached
+    if (isClump) {
+        void* mesh = ResolveClumpMesh();
+        if (!mesh) mesh = pileMesh;
+        if (!mesh) mesh = ResolveCubeFallback();
+        if (mesh) E::SetStaticMesh(comp, mesh);
+        void* mat = pileMesh ? E::GetStaticMeshMaterial(pileMesh, 0) : nullptr;
+        E::SetComponentMaterial(comp, 0, mat);  // null -> dirtball default (acceptable fallback)
+    } else {
+        void* mesh = pileMesh ? pileMesh : ResolveCubeFallback();
+        if (mesh) E::SetStaticMesh(comp, mesh);
+        E::SetComponentMaterial(comp, 0, nullptr);  // clear any clump override -> pile mesh's own material
+    }
 }
 
 }  // namespace
@@ -102,12 +128,16 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
         UE_LOGW("trash_proxy: StaticMeshActor class unresolved -- cannot spawn proxy eid=%u", eid);
         return nullptr;
     }
-    // Re-spawn convergence (the OWNER re-ingesting at a re-bracket, or a duplicate
-    // spawn packet): re-skin the existing live proxy instead of leaking a second.
+    // Re-spawn convergence (a re-seed / duplicate / snapshot-bootstrap spawn for an eid
+    // we already mirror): return the existing proxy, never a second actor. CRITICALLY,
+    // do NOT re-skin here (HIGH-1): the proxy's FORM (pile<->clump) is owned exclusively
+    // by the ctx-ordered convert channel (initial SpawnProxy form + ReskinProxy). A
+    // trailing/stale PropSpawn carries the spawn CLASS, which for a pile that the host
+    // has since grabbed is the chipPile class (isClump=false) -- re-skinning on it would
+    // flip a correctly-converted CLUMP back to a PILE. Form changes ride PropConvert only.
     if (auto it = g_proxies.find(eid);
         it != g_proxies.end() && it->second.actor && R::IsLive(it->second.actor)) {
         it->second.ownerSlot = ownerSlot;  // a re-bracket may re-stamp the owner
-        SkinProxy(it->second.actor, it->second.comp, chipType, isClump);
         return it->second.actor;
     }
     void* actor = E::SpawnActor(g_smaClass, loc, /*inertPawn=*/false);

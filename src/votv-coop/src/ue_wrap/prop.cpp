@@ -387,8 +387,11 @@ void SetChipType(void* actor, uint8_t chipType) {
     const int32_t off = ResolveChipTypeOffset(cls);
     if (off < 0) return;  // not a chip-type actor (Aprop_C etc.) -- 0x0238 is StaticMesh there
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(actor) + off) = chipType;
-    // Repaint the mesh from the new variant. setTex() -> getChipPileType picks the
-    // round-in-hand clump mesh for this chipType. No-op if the class has no setTex.
+    // Repaint from the new variant via the game's own setTex. VERIFIED bytecode
+    // (prop_garbageClump_C::setTex): SetMaterial(0, getChipPileType(chipType).GetMaterial(0))
+    // on the clump's FIXED dirtball mesh -- a per-chipType MATERIAL swap, NOT a mesh swap.
+    // (The proxy mirror replicates this directly in trash_proxy::SkinProxy.) No-op if the
+    // class has no setTex (chipPile sets its mesh = getChipPileType(chipType) elsewhere).
     if (void* fn = ResolveSetTexFn(cls)) {
         ue_wrap::ParamFrame f(fn);
         ue_wrap::Call(actor, f);
