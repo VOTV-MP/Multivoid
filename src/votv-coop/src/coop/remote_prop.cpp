@@ -346,12 +346,13 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // re-skinned actor (now a SETTLED PILE) to the dead clump position -- the stale-pose half of the
     // cluster bug. ctx==0 / unknown eid (a non-trash keyed prop) -> always fresh, so Aprop poses pass.
     if (pose.elementId != 0 &&
-        !coop::trash_channel::IsInboundStreamCtxFresh(pose.elementId, pose.ctx)) {
+        !coop::trash_channel::IsInboundStreamCtxFresh(pose.elementId, pose.ctx, /*requireCurrentGen=*/true)) {
         // Throttle: a short in-flight burst of same-(eid,ctx) stale poses collapses to ONE line.
         static uint32_t s_lastDropEid = 0; static uint8_t s_lastDropCtx = 0;
         if (pose.elementId != s_lastDropEid || pose.ctx != s_lastDropCtx) {
-            UE_LOGI("[PILE] CLIENT DROP stale carry pose eid=%u ctx=%u (older than E's last transition -- "
-                    "a clump pose still in flight after re-pile/throw; would re-drive the settled pile)",
+            UE_LOGI("[PILE] CLIENT HOLD carry pose eid=%u ctx=%u (not E's current generation -- either AHEAD "
+                    "of its convert (would drive the pre-convert OLD rendering -> pile-jump + the triple "
+                    "grab-cue) or STALE after a later transition; applies once the matching convert lands)",
                     pose.elementId, static_cast<unsigned>(pose.ctx));
             s_lastDropEid = pose.elementId; s_lastDropCtx = pose.ctx;
         }
@@ -533,7 +534,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // (ctx older than E's last transition) so a throw delayed past a re-pile / re-grab can never re-apply
     // velocity to the re-skinned entity. ctx==0 / eid==0 (a keyed Aprop release) -> always fresh, as before.
     if (payload.elementId != 0 &&
-        !coop::trash_channel::IsInboundStreamCtxFresh(payload.elementId, payload.ctx)) {
+        !coop::trash_channel::IsInboundStreamCtxFresh(payload.elementId, payload.ctx, /*requireCurrentGen=*/false)) {
         UE_LOGI("[PILE] CLIENT DROP stale release eid=%u ctx=%u (older than E's last transition)",
                 payload.elementId, static_cast<unsigned>(payload.ctx));
         return;

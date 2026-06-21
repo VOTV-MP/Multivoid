@@ -135,16 +135,26 @@ bool AdoptInboundConvertCtx(coop::element::ElementId E, uint8_t ctx) {
     return true;
 }
 
-bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx) {
+bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx, bool requireCurrentGen) {
     if (ctx == 0) return true;                            // legacy/non-trash keyed prop -> no enforcement
     auto it = g_ctx.find(static_cast<uint32_t>(E));
     // A trash carry/throw (ctx>=1) for an eid we have seen NO convert for yet: the ToClump convert (reliable
     // lane) has not landed, so E still renders as a PILE here. Applying the clump's carry pose would DRIVE
     // the pile to the carry point + fire its grab cue BEFORE the re-skin -- the 2026-06-21 double-grab-sound
-    // + pre-convert pile-jump glitch (the unreliable pose beats the reliable convert). DROP until the convert
+    // + pre-convert pile-jump glitch (the unreliable pose beats the reliable convert). HOLD until the convert
     // arrives (reliable -> it will); then g_ctx[E] is set and poses apply to the clump.
     if (it == g_ctx.end() || it->second == 0) return false;
-    return AtLeast(ctx, it->second);                     // else drop only a pose older than the last transition
+    // requireCurrentGen splits the gate by packet kind (2026-06-21 sound fix, client-log root-caused):
+    //   * CARRY POSE (true): apply ONLY the CURRENT generation (ctx == known). A pose for generation N drives
+    //     the gen-N rendering, which exists ONLY after convert N is adopted (known==N). A pose AHEAD of its
+    //     convert (ctx>known) is HELD -- else it drives the still-PRE-convert OLD rendering (the pile-jump +
+    //     the SECOND grab-cue: the convert then re-skins -> the actor swaps -> a fresh GRAB-IN re-fires the
+    //     cue = the triple sound). The reliable convert always lands, so the held pose is superseded by the
+    //     continuous 30-60 Hz stream -- carry just starts AT the convert, no animation loss.
+    //   * RELEASE (false): apply if NOT STALE (ctx >= known, AtLeast). A throw legitimately LEADS the last
+    //     convert (ctx=N+1 over the grab's known=N) -- the throw is NOT a re-skin (the clump stays a clump),
+    //     so it applies immediately to the current rendering; only a throw delayed past a re-pile drops.
+    return requireCurrentGen ? (ctx == it->second) : AtLeast(ctx, it->second);
 }
 
 void OnDisconnect() {

@@ -78,10 +78,12 @@ uint8_t CtxForEid(coop::element::ElementId E);
 // convert -> drop). ctx==0 = legacy/non-trash (always fresh, no adoption). Game thread.
 bool AdoptInboundConvertCtx(coop::element::ElementId E, uint8_t ctx);
 
-// RECEIVER: a PropPose / PropRelease for E arrived with `ctx`. Returns true if fresh-or-current
-// (apply); false if STALE relative to E's known generation (drop -- a carry/throw packet from before
-// the latest transition). ctx==0, or an E we've seen no convert for, = no enforcement (true). Game thread.
-bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx);
+// RECEIVER: a PropPose / PropRelease for E arrived with `ctx`. `requireCurrentGen` picks the gate by packet
+// kind: a CARRY POSE passes TRUE (apply only the CURRENT generation, ctx == known -- HOLD a pose ahead of
+// its convert, the 2026-06-21 triple-grab-sound + pile-jump fix; DROP a stale one); a RELEASE passes FALSE
+// (apply if NOT stale, ctx >= known -- a throw legitimately leads the last convert since it is not a
+// re-skin). ctx==0, or an E we've seen no convert for, = no/hold enforcement. Game thread.
+bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx, bool requireCurrentGen);
 
 // Drop all per-eid state (net disconnect).
 void OnDisconnect();
