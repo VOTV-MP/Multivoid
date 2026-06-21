@@ -223,6 +223,19 @@ function Side-Ok($log, $connStr, $joinStr) {
     $s = Net-Stats $log
     return ($s -ne $null) -and ($s.recv -gt 0) -and ($s.puppet -eq 1)
 }
+# Client-side readiness, scenario-robust (2026-06-21 fix). The net-stats "puppet" counter is
+# HOST-CENTRIC -- it reports net_pump::Puppet(1).valid() (slot 1), but on a CLIENT the host's
+# puppet is at slot 0 (net_pump.cpp:60 "slot 0 = host ... on CLIENT processes"), so that counter
+# is structurally ALWAYS 0 on a client and Side-Ok's puppet==1 can never hold client-side. The
+# join message also differs by flow (a menu-mode save-transfer join logs "Joined <host>'s game",
+# not "Host joined the game"). Verify the client is genuinely in the shared world by the robust
+# signals: CONNECTED(client) + the host's puppet actually SPAWNED + inbound traffic.
+function Client-Ok($log) {
+    if (-not (Log-Has $log "CONNECTED (client")) { return $false }
+    if (-not (Log-Has $log "RemotePlayer::Spawn: puppet=")) { return $false }
+    $s = Net-Stats $log
+    return ($s -ne $null) -and ($s.recv -gt 0)
+}
 
 # --- poll until both sides pass or timeout ----------------------------------
 Step "waiting up to ${TimeoutSec}s for cross-process connect + state exchange..."
@@ -236,7 +249,7 @@ while ((Get-Date) -lt $deadline) {
     # Prefix match: the connect line may be "CONNECTED (host)" or
     # "CONNECTED (host, via token'd msg)" depending on which path confirmed it.
     $hostOk   = Side-Ok $hostLog   "CONNECTED (host"   "Client joined the game"
-    $clientOk = Side-Ok $clientLog "CONNECTED (client" "Host joined the game"
+    $clientOk = Client-Ok $clientLog
     if ($hostOk -and $clientOk) { $pass = $true; break }
     Start-Sleep -Seconds 3
 }
@@ -489,9 +502,11 @@ if ($pass -and $ChipPileTest) {
     Step "host   log: grab=$hostGrab  hostConvert=$hostConvert"
     Step "client log: proxySPAWN=$cliSpawn  reskinINPLACE=$cliReskin  spawn-on-convert=$cliSpawnOnConv"
     Step "client log: FAIL-sigs -> NOT-FOUND=$cliNotFound  errors=$cliErr"
-    # PASS: the client spawned at least one proxy AND re-skinned in place at least once
-    # (the grab convert), with ZERO NOT-FOUND and ZERO proxy errors.
-    $cppass = ($cliSpawn -ge 1) -and ($cliReskin -ge 1) -and ($cliNotFound -eq 0) -and ($cliErr -eq 0)
+    # PASS: the client spawned at least one proxy AND handled the grab convert -- EITHER a
+    # re-skin in place (proxy already existed) OR a spawn-on-convert (HIGH-1: the convert beat
+    # its OnSpawn, so the proxy materialized in the convert's form) -- both are correct, dup-free
+    # convert handling. ZERO NOT-FOUND (the dup-staleness signature) and ZERO proxy errors.
+    $cppass = ($cliSpawn -ge 1) -and (($cliReskin -ge 1) -or ($cliSpawnOnConv -ge 1)) -and ($cliNotFound -eq 0) -and ($cliErr -eq 0)
     if ($cppass) {
         Write-Host "[lan-test] CHIPPILE RESULT: PASS -- client proxy spawned + re-skinned in place, no dup/NOT-FOUND/error." -ForegroundColor Green
     } else {
