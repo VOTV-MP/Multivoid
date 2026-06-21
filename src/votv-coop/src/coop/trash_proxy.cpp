@@ -103,11 +103,17 @@ void SkinProxy(void* worldCtx, void* comp, uint8_t chipType, bool isClump) {
     void* pileMesh = ue_wrap::prop::ResolvePileMesh(chipType, worldCtx);  // last-good cached
     if (isClump) {
         void* mesh = ResolveClumpMesh();
-        if (!mesh) mesh = pileMesh;
-        if (!mesh) mesh = ResolveCubeFallback();
+        const char* meshSrc = "dirtball";
+        if (!mesh) { mesh = pileMesh;            meshSrc = "PILE-FALLBACK(dirtball UNRESOLVED -> clump renders identical to a pile!)"; }
+        if (!mesh) { mesh = ResolveCubeFallback(); meshSrc = "CUBE-FALLBACK"; }
         if (mesh) E::SetStaticMesh(comp, mesh);
         void* mat = pileMesh ? E::GetStaticMeshMaterial(pileMesh, 0) : nullptr;
         E::SetComponentMaterial(comp, 0, mat);  // null -> dirtball default (acceptable fallback)
+        // [diag 2026-06-21] WHICH mesh the clump got: if 'PILE-FALLBACK', the ToClump re-skin is a
+        // visual no-op (clump looks exactly like the pile) -- the prime suspect for the hands-on
+        // "the proxy stays a pile" symptom. Event-driven (once per convert/grab), not a hot path.
+        UE_LOGI("[PILE] trash_proxy: SkinProxy CLUMP chipType=%u mesh-src=%s mesh=%p mat=%p",
+                static_cast<unsigned>(chipType), meshSrc, mesh, mat);
     } else {
         void* mesh = pileMesh ? pileMesh : ResolveCubeFallback();
         if (mesh) E::SetStaticMesh(comp, mesh);

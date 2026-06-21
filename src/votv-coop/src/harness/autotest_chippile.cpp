@@ -37,6 +37,7 @@
 #include "harness/autotest.h"
 
 #include "coop/players_registry.h"
+#include "coop/remote_player.h"        // RemotePlayer::GetActor (client-in-world readiness gate)
 #include "coop/prop_element_tracker.h"
 #include "coop/remote_prop.h"
 #include "ue_wrap/call.h"
@@ -110,13 +111,36 @@ void RunAutonomousChipPileTest() {
         return;
     }
 
-    // 40 s settle: the host must be in gameplay with the client connected (so the PropConvert has
-    // a receiver) AND the story-map's keyless chipPiles tracked. The boot seed runs on the
-    // pre-travel world (incomplete-snapshot bug); the story piles are tracked by a later
-    // world-change reconcile re-seed -- a smoke at 30 s found the nearest pile still UNTRACKED
-    // (eid=0). 40 s + an explicit ReSeed below makes the grabbed pile deterministically eid-bound.
-    UE_LOGI("chippile_test: HOST starting (waiting 40 s for gameplay + client connect + pile tracking)");
-    ::Sleep(40000);
+    // SETTLE -- gate the grab on a host-OBSERVABLE client-readiness signal, NOT a fixed sleep.
+    // The smoke 2026-06-21 grabbed at a fixed 40 s but the client did not express its proxy
+    // mirrors (its AStaticMeshActor copies of our piles) until ~53 s -> the ToClump convert had
+    // NO proxy to re-skin and the WHOLE carry raced the join (client log: reskinINPLACE=0). So:
+    //   (1) poll for the client's PUPPET to go LIVE -- the host spawns it once the client
+    //       connects + handshakes, a clean "client is in-world" floor;
+    //   (2) then a generous margin for the client to RECEIVE + EXPRESS the host's prop snapshot.
+    // Combined with the 8 s MOVING carry below, the carry lands on a fully-settled world even if
+    // the client expresses a little late. (A host-side "client finished joining" wire signal would
+    // be cleaner but is out of scope for a test harness -- join_progress is client-local.)
+    UE_LOGI("chippile_test: HOST starting -- waiting for the client puppet to go live (in-world) before the grab");
+    {
+        const int kWaitCapS = 150;
+        int waitedS = 0; bool inWorld = false;
+        while (waitedS < kWaitCapS) {
+            const int r = RunGT([](std::atomic<int>& d) {
+                coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(/*peerSlot=*/1);
+                void* a = pup ? pup->GetActor() : nullptr;
+                d.store((a && R::IsLive(a)) ? 1 : 2);
+            });
+            if (r == 1) { inWorld = true; break; }
+            ::Sleep(1000); ++waitedS;
+        }
+        if (!inWorld)
+            UE_LOGW("chippile_test: client puppet never went live in %d s -- grabbing anyway (may still race)", kWaitCapS);
+        else
+            UE_LOGI("chippile_test: client puppet LIVE after %d s (client in-world); +35 s margin for it to "
+                    "express its proxy snapshot, then ReSeed + grab", waitedS);
+        ::Sleep(35000);
+    }
 
     // ---- 1. Resolve local player + the E-press UFunction (InpActEvt_use_..._41).
     struct Resolved { void* player = nullptr; void* useFn = nullptr; int32_t useFrame = 0; };
@@ -293,6 +317,55 @@ void RunAutonomousChipPileTest() {
             sawClumpGrabbing ? "clump rides grabbing_actor (PHC path); local_streams reads it first so the morph adopts it -- CORRECTED premise, morph OK"
           : sawClumpHolding  ? "clump rides holding_actor (the old assumed field)"
                              : "NEITHER -- no clump was held (playerGrabbed did not run, or the clump self-freed before the first poll)");
+
+    // ---- 6.5 SUSTAINED MOVING CARRY (the km-walk the phase-1 north star needs; smoke gap 2026-06-21).
+    // The 1.6 s field-routing probe above is STATIONARY + then re-piles immediately -- it never exercised
+    // a real moving carry, so a client drive that never establishes / never follows would pass unnoticed.
+    // WALK the host ~8 s with the clump held so the client MUST establish the carry pose-drive, FOLLOW,
+    // and interpolate. Move in small per-100ms steps (a walk, not one teleport, so the PHC keeps the
+    // clump in hand) and re-confirm the hold each step. The CLIENT log is then judged for `GRAB-IN eid=N`
+    // + `drive #N -> target ... [proxy]` advancing across the 8 s (the proof the carry mirrors), and the
+    // proxy `SkinProxy CLUMP mesh-src` (dirtball vs PILE-FALLBACK). The host streams `PropPose emit ... ctx=1`.
+    if (heldClump) {
+        ue_wrap::FVector base{};
+        RunGT([rsv, &base](std::atomic<int>& d) { base = E::GetActorLocation(rsv->player); d.store(1); });
+        float dx = base.X - sel->pos.X, dy = base.Y - sel->pos.Y;   // carry AWAY from the pile origin (open space)
+        const float h = std::sqrt(dx * dx + dy * dy);
+        if (h < 1.f) { dx = 1.f; dy = 0.f; } else { dx /= h; dy /= h; }
+        // 15 cm / 100 ms = 1.5 m/s (a brisk WALK). The first cut used 40 cm/step = 4 m/s, which imparted
+        // ~4 m/s into the PHC-held clump and BROKE the grab mid-carry (the clump flew off as a "throw",
+        // smoke 2026-06-21 23:54:08). A walk-speed carry keeps the clump in hand for the full 8 s.
+        const int   kSteps  = 80;         // 80 * 100 ms = 8 s
+        const float kStepCm = 15.f;       // 80 * 15 cm = 12 m carry at 1.5 m/s
+        int stillHeld = 0, consecMiss = 0;
+        for (int s = 0; s < kSteps; ++s) {
+            ::Sleep(100);
+            const ue_wrap::FVector to{ base.X + dx * kStepCm * (s + 1), base.Y + dy * kStepCm * (s + 1), base.Z };
+            int held = 0;
+            RunGT([rsv, to, &held](std::atomic<int>& d) {
+                E::SetActorLocation(rsv->player, to);             // walk the host one 15 cm step
+                E::MainPlayerGrabState gs{};
+                if (E::ReadMainPlayerGrabState(rsv->player, gs) &&
+                    ((gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ||
+                     (gs.holdingActor  && ue_wrap::prop::IsGarbageClump(gs.holdingActor))))
+                    held = 1;
+                d.store(1);
+            });
+            stillHeld += held;
+            consecMiss = held ? 0 : (consecMiss + 1);
+            if ((s % 20) == 0)
+                UE_LOGI("chippile_test: moving carry step %d/%d (held-confirms=%d) -- client should be "
+                        "following the clump now (its log: GRAB-IN + drive #N [proxy])", s, kSteps, stillHeld);
+            if (consecMiss >= 8) {   // the grab broke (clump dropped) -- stop walking, go to re-pile
+                UE_LOGW("chippile_test: clump no longer held after step %d (grab broke) -- ending the moving carry early", s);
+                break;
+            }
+        }
+        UE_LOGI("chippile_test: MOVING CARRY done -- %d/%d steps still holding the clump (eid=%u). CLIENT must show "
+                "'GRAB-IN' + 'drive #N -> target ... [proxy]' advancing across the 8 s, and the proxy "
+                "'SkinProxy CLUMP mesh-src=dirtball' (PILE-FALLBACK => clump renders as a pile)",
+                stillHeld, kSteps, sel->eid);
+    }
 
     // ---- 7. (Phase B, best-effort) RE-PILE. The clump rides grabbing_actor (the PHC light-grab path),
     // so throwHoldingProp via reflection does NOT release it (BP-pure-inline; smoke proof: the carry

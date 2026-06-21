@@ -387,10 +387,12 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         // Throttle: a short in-flight burst of same-(eid,ctx) stale poses collapses to ONE line.
         static uint32_t s_lastDropEid = 0; static uint8_t s_lastDropCtx = 0;
         if (pose.elementId != s_lastDropEid || pose.ctx != s_lastDropCtx) {
-            UE_LOGI("[PILE] CLIENT HOLD carry pose eid=%u ctx=%u (not E's current generation -- either AHEAD "
-                    "of its convert (would drive the pre-convert OLD rendering -> pile-jump + the triple "
-                    "grab-cue) or STALE after a later transition; applies once the matching convert lands)",
-                    pose.elementId, static_cast<unsigned>(pose.ctx));
+            UE_LOGI("[PILE] CLIENT HOLD carry pose eid=%u ctx=%u known=%u (not E's current generation -- either "
+                    "AHEAD of its convert (would drive the pre-convert OLD rendering -> pile-jump + the triple "
+                    "grab-cue) or STALE after a later transition; applies once the matching convert lands. "
+                    "known=0 => the ToClump convert was NEVER adopted, so EVERY carry pose holds forever)",
+                    pose.elementId, static_cast<unsigned>(pose.ctx),
+                    static_cast<unsigned>(coop::trash_channel::CtxForEid(pose.elementId)));
             s_lastDropEid = pose.elementId; s_lastDropCtx = pose.ctx;
         }
         return;
@@ -1118,6 +1120,13 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
         UE_LOGW("[PILE] CLIENT recv convert %s -- INVALID eid E=%u, dropping (no entity to re-skin)", edge, E);
         return nullptr;
     }
+    // [diag 2026-06-21] RECEPTION marker -- logged BEFORE the ctx-gate so "the ToClump convert ARRIVED"
+    // is explicit (its absence in the client log = the convert never reached us; e.g. the join race).
+    // Shows known (our current ctx for E) + whether we have a proxy to re-skin. Event-driven, not hot.
+    UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u known=%u isProxy=%d -- RECEPTION (pre-gate)",
+            edge, E, static_cast<unsigned>(payload.ctx),
+            static_cast<unsigned>(coop::trash_channel::CtxForEid(E)),
+            coop::trash_proxy::IsProxy(E) ? 1 : 0);
     // docs/piles/08: adopt the host's authoritative sync-time-context for E, and DROP a stale/out-of-order
     // convert (a duplicate, or one older than a transition we already applied). ctx==0 = legacy/non-trash.
     if (!coop::trash_channel::AdoptInboundConvertCtx(E, payload.ctx)) return nullptr;

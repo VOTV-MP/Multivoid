@@ -350,17 +350,19 @@ if ($pass) {
         # Let the rest of the routine complete (heavy arm + Timeline tail).
         Start-Sleep -Seconds 6
     } elseif ($ChipPileTest) {
-        # chipPile test timing (RunAutonomousChipPileTest): the HOST thread waits 40 s from
-        # boot for gameplay + client + pile tracking, then drives the grab (~10 s) + Phase B
-        # re-pile (~12 s) + tail. The 40 s settle may overlap the connect wait, so from PASS we
-        # give it the full window. Capture mid-carry + post-re-pile for a visual cross-check
-        # (the logs are the real verdict -- the client's PROXY lifecycle).
-        Step "PASS detected; CHIPPILE TEST armed -- host settles 40 s then grabs + re-piles..."
-        Start-Sleep -Seconds 50          # ~mid-carry (after the 40 s settle + grab)
+        # chipPile test timing (RunAutonomousChipPileTest): the HOST thread now GATES the grab on
+        # the client puppet going live (in-world) + a 35 s snapshot-expression margin -- killing the
+        # fixed-40s join race that made the client express its proxies AFTER the grab (smoke
+        # 2026-06-21). Then: grab -> 1.6 s field probe -> 8 s SUSTAINED MOVING carry -> Phase B
+        # re-pile -> tail. From PASS the puppet is live almost immediately, so the grab lands ~PASS+37s.
+        # Capture mid-carry + post-re-pile (render-blind; the logs are the real verdict -- the client's
+        # PROXY lifecycle + the GRAB-IN/drive-advance that prove the carry mirrors).
+        Step "PASS detected; CHIPPILE TEST armed -- host waits for client puppet + 35 s margin, then grabs + carries 8 s + re-piles..."
+        Start-Sleep -Seconds 48          # ~mid moving-carry (puppet-live ~immediate + 35 s margin + grab + probe)
         Capture-Pair "chippile-carry"
-        Start-Sleep -Seconds 25          # ~after Phase B re-pile + convert
+        Start-Sleep -Seconds 22          # ~after Phase B re-pile + the ToPile convert
         Capture-Pair "chippile-repile"
-        Start-Sleep -Seconds 10          # tail (let the last convert + drive settle)
+        Start-Sleep -Seconds 30          # >=30 s steady-state tail (let the last convert + drive settle)
     } else {
         Step "PASS detected; waiting 6 s for pose stream to settle before screenshot..."
         Start-Sleep -Seconds 6
@@ -498,28 +500,38 @@ if ($pass -and $ChipPileTest) {
     $cliSpawn       = Count-Matches $clientLog "trash_proxy: SPAWN"
     $cliReskin      = Count-Matches $clientLog "PROXY re-skinned IN PLACE"
     $cliSpawnOnConv = Count-Matches $clientLog "proxy SPAWNED .* convert beat its spawn"
+    # The CARRY proof (2026-06-21): re-skin alone only proves the convert landed -- it does NOT prove
+    # the carry MIRRORS. GRAB-IN = the carry pose-drive established; drive #N [proxy] = it advanced
+    # across the 8 s moving carry; HOLD = poses were stuck (the convert was not adopted -> known=0).
+    $cliGrabIn      = Count-Matches $clientLog "GRAB-IN"
+    $cliDriveAdv    = Count-Matches $clientLog "drive #.*\[proxy\]"
+    $cliHold        = Count-Matches $clientLog "CLIENT HOLD carry pose"
+    $cliClumpFall   = Count-Matches $clientLog "PILE-FALLBACK"
     # Failure signatures -- ANY of these is a regression.
     $cliNotFound    = Count-Matches $clientLog "mirror NOT-FOUND|no local mirror of E existed"
     $cliErr         = Count-Matches $clientLog "trash_proxy: .*FAILED|proxy spawn-on-convert FAILED|SkinProxy.*unresolved|SetComponentMaterial unresolved"
     Step "host   log: grab=$hostGrab  hostConvert=$hostConvert"
     Step "client log: proxySPAWN=$cliSpawn  reskinINPLACE=$cliReskin  spawn-on-convert=$cliSpawnOnConv"
+    Step "client log: CARRY -> GRAB-IN=$cliGrabIn  driveAdvance=$cliDriveAdv  HOLD=$cliHold  clumpMeshFellBackToPile=$cliClumpFall"
     Step "client log: FAIL-sigs -> NOT-FOUND=$cliNotFound  errors=$cliErr"
-    # PASS: the client spawned at least one proxy AND handled the grab convert -- EITHER a
-    # re-skin in place (proxy already existed) OR a spawn-on-convert (HIGH-1: the convert beat
-    # its OnSpawn, so the proxy materialized in the convert's form) -- both are correct, dup-free
-    # convert handling. ZERO NOT-FOUND (the dup-staleness signature) and ZERO proxy errors.
-    $cppass = ($cliSpawn -ge 1) -and (($cliReskin -ge 1) -or ($cliSpawnOnConv -ge 1)) -and ($cliNotFound -eq 0) -and ($cliErr -eq 0)
+    # PASS now requires the CARRY to actually mirror, not just the convert to land: a re-skin AND the
+    # pose-drive established (GRAB-IN) AND it advanced (drive [proxy]). ZERO NOT-FOUND (dup-staleness)
+    # and ZERO proxy errors. (HOLD>0 with GRAB-IN==0 is the carry-never-established bug; clumpMeshFell
+    # BackToPile>0 is the cosmetic clump-looks-like-pile bug -- both surface in the lines below.)
+    $cppass = ($cliSpawn -ge 1) -and (($cliReskin -ge 1) -or ($cliSpawnOnConv -ge 1)) -and `
+              ($cliGrabIn -ge 1) -and ($cliDriveAdv -ge 1) -and ($cliNotFound -eq 0) -and ($cliErr -eq 0)
     if ($cppass) {
-        Write-Host "[lan-test] CHIPPILE RESULT: PASS -- client proxy spawned + re-skinned in place, no dup/NOT-FOUND/error." -ForegroundColor Green
+        Write-Host "[lan-test] CHIPPILE RESULT: PASS -- client proxy re-skinned + the carry pose-drive established AND advanced, no dup/NOT-FOUND/error." -ForegroundColor Green
     } else {
         Write-Host "[lan-test] CHIPPILE RESULT: FAIL (or no pile in save) -- see the PILE lines below." -ForegroundColor Red
-        Step "==== HOST chippile/pile lines ===="
-        Select-String -Path $hostLog -Pattern "chippile_test|\[PILE\]|trash_proxy|NO chipPile" -ErrorAction SilentlyContinue |
-            Select-Object -Last 25 | ForEach-Object { Write-Host "  $($_.Line)" }
-        Step "==== CLIENT chippile/pile lines ===="
-        Select-String -Path $clientLog -Pattern "\[PILE\]|trash_proxy|OnConvert|mirror (FOUND|NOT-FOUND)" -ErrorAction SilentlyContinue |
-            Select-Object -Last 25 | ForEach-Object { Write-Host "  $($_.Line)" }
     }
+    # Always print the pile lines (PASS or FAIL) -- this is a diagnostic smoke; the timeline is the verdict.
+    Step "==== HOST chippile/pile lines ===="
+    Select-String -Path $hostLog -Pattern "chippile_test|\[PILE\]|trash_proxy|NO chipPile|PropPose emit" -ErrorAction SilentlyContinue |
+        Select-Object -Last 50 | ForEach-Object { Write-Host "  $($_.Line)" }
+    Step "==== CLIENT chippile/pile lines ===="
+    Select-String -Path $clientLog -Pattern "\[PILE\]|trash_proxy|OnConvert|GRAB-IN|drive #.*proxy|mirror (FOUND|NOT-FOUND)" -ErrorAction SilentlyContinue |
+        Select-Object -Last 70 | ForEach-Object { Write-Host "  $($_.Line)" }
 }
 
 # --- teardown ---------------------------------------------------------------

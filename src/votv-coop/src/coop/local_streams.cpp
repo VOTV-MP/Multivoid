@@ -368,10 +368,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // throttle so the two logs can be diff'd line-for-line.
             const uint64_t n = ++g_propEmitCount;
             if (n <= 3 || (n % 60) == 0) {
-                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u",
+                UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u ctx=%u",
                         static_cast<unsigned long long>(n),
                         pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
-                        static_cast<int>(pp.key.len), pp.elementId);
+                        static_cast<int>(pp.key.len), pp.elementId, static_cast<unsigned>(pp.ctx));
             }
         }
         g_lastHeldProp = heldActor;
