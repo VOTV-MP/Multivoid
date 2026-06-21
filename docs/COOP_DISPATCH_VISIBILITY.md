@@ -71,7 +71,7 @@ gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is al
 | `Actor.K2_DestroyActor` — engine-initiated destroy of a tracked actor | engine → PE | **VISIBLE** | we hook the **PRE** (`prop_lifecycle.cpp:293`, `npc_sync.cpp:298`) | [V] |
 | **A BP-deferred-spawned actor's `init()`** (chipPile/clump/sandbox Aprop) | `EX_LocalVirtualFunction` from UCS | **INVISIBLE — its Init-POST observer does NOT fire** | the `FinishSpawningActor` POST (keyed) or `BeginDeferred` POST (keyless) seams below | [V: host_spawn_watcher.cpp:130-135,197-208] |
 | `BeginDeferredActorSpawnFromClass` POST — **from a native/engine/spawner caller** (`garbagePileSpawner`, ambient pinecone/stick, NPC/WorldActor spawners) | the caller's dispatch reaches PE | **VISIBLE** | actor NOT yet positioned (read the `SpawnTransform` PARAM, not GetActorLocation). `host_spawn_watcher`/`npc_sync`/`world_actor_sync` all POST-observe it | [V] |
-| `BeginDeferredActorSpawnFromClass` / `FinishSpawningActor` — **from a BP ubergraph caller** (the chipPile grab clump-spawn; the clump re-pile pile-spawn) | the CALLER issues it `EX_CallMath` | **INVISIBLE** | a `UFunction::Func` thunk patch — NOT a ProcessEvent observer (see "Catching an EX_CallMath call" below). AS-BUILT interim = the InpActEvt-PRE + held-edge adopt (grab) + a death-watch convert (re-pile), `trash_channel`/`trash_collect_sync` | [V: 0 host_spawn_watcher fires across 870 piles + every re-pile, hands-on 2026-06-21, commit 0e56ca39] |
+| `BeginDeferredActorSpawnFromClass` / `FinishSpawningActor` — **from a BP ubergraph caller** (the chipPile grab clump-spawn; the clump re-pile pile-spawn) | the CALLER issues it `EX_CallMath` | **INVISIBLE to PE; CAUGHT by a `UFunction::Func` thunk patch** | the thunk patch (`ue_wrap/ufunction_hook`, AS-BUILT commit `d19ae4d4`) — NOT a ProcessEvent observer (see "Catching an EX_CallMath call" below). It owns the re-pile (clump→pile) deterministically; the grab (pile→clump) stays on the InpActEvt-PRE + held-edge adopt for now, `trash_channel`/`trash_collect_sync` | [V: 0 host_spawn_watcher fires across 870 piles + every re-pile, hands-on 2026-06-21, commit 0e56ca39; thunk DETECTION verified read-only `B7EEB1BF`] |
 | `FinishSpawningActor` POST | GameplayStatics → PE | **VISIBLE** | the keyed sandbox-spawn seam (Key minted by now) → `ExpressSpawnedProp` | [V: host_spawn_watcher.cpp:209] |
 | `ReceiveBeginPlay` — **save-loaded** actor (pre-exists at connect) | no runtime PE our session sees | **caught by the GUObjectArray SEED WALK**, NOT an Init observer | `SeedKnownKeyedProps` / `RegisterExistingWorldNpcs` (the 872 save-loaded piles, the pre-existing NPCs) | [V] |
 | `ReceiveBeginPlay` — a normal runtime-spawned actor | maybe PE | **[?] not separately verified** | probe before relying on it | [?] |
@@ -96,7 +96,8 @@ gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is al
    - **an `EX_CallMath` call whose `WorldContextObject`/`ReturnValue` you need DETERMINISTICALLY** (a
      `(source, product)` pair, e.g. the chipPile/clump re-pile) → a **`UFunction::Func` thunk patch** on the
      callee — a ProcessEvent observer can NEVER fire on it (see "Catching an EX_CallMath call" below). Do NOT
-     register a BeginDeferred POST for a BP-ubergraph spawn; it won't fire.
+     register a BeginDeferred POST for a BP-ubergraph spawn; it won't fire. **The facility now exists:**
+     `ue_wrap/ufunction_hook` (AS-BUILT, commit `d19ae4d4`) — reuse it.
    - **an INPUT that triggers a BP-internal action** (the pile grab) → hook the **input UFunction**
      (`InpActEvt_use` PRE) and read what the BP is about to act on — the input is VISIBLE even though
      everything it triggers is not.
@@ -136,22 +137,28 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   2026-06-21 (commit `0e56ca39`). `host_spawn_watcher` catches BeginDeferred ONLY from the
   native/spawner caller (pinecone/`garbagePileSpawner`), whose dispatch reaches PE. **[V]**
 - **To catch an `EX_CallMath` call deterministically (with its `WorldContextObject`=source + `ReturnValue`):
-  patch `UFunction::Func` of the callee** to a transparent native thunk (read params off `FFrame.Locals` +
-  the thunk `Result`, forward to the original). This is below the BP VM, so it sees the inner call. Design +
-  the `FFrame::Locals` / `UFunction::Func` IDA anchors + the read-only-validation plan:
-  `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`. **[DESIGN — IDA-gated, NOT
-  built.]**
-- **Interim (AS-BUILT) when a thunk patch isn't yet in place:** drive off the VISIBLE seams instead — the
-  triggering INPUT (`InpActEvt_use` PRE, for the grab) + a result POLL / death-watch (for the re-pile). This
-  is what ships today (`trash_channel`/`trash_collect_sync`, docs/piles/08). A death-watch convert carries a
-  small race window (the ~5s reaper-vs-rebind glitch) the thunk hook removes. **[V/AS-BUILT]**
+  patch `UFunction::Func` of the callee** to a transparent native thunk (read `FFrame::Object` @0x18 = the
+  source = `EX_Self`; read `*Result` for the spawned actor; forward to the original). This is below the BP
+  VM, so it sees the inner call. **The facility is AS-BUILT:** `ue_wrap/ufunction_hook`
+  (`InstallPostHook(ufn, cb)`, stamped per-slot transparent thunks, SEH + re-entrancy guarded; offsets
+  `UFunction::Func`@0xD8 / `FFrame::Object`@0x18 pinned in `sdk_profile.h`). The chipPile re-pile uses it:
+  `trash_collect_sync::OnBeginDeferredSpawnObserve` → `OnHostConvert(kToPile)` the same tick the pile spawns.
+  Detection VERIFIED hands-on (read-only pass `B7EEB1BF`: thunk `*Result` == the old death-watch's pile,
+  ptr-for-ptr). RE: `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md` §3/§6. **[V —
+  AS-BUILT, commit `d19ae4d4`; the convert itself is deployed-pending-hands-on.]**
+- **The former interim (the proximity death-watch convert) is RETIRED** (RULE 2, same commit): the thunk
+  converts the EXACT spawned pile the same tick → the ~5s reaper-vs-rebind glitch is gone by construction.
+  The GRAB direction still uses the VISIBLE InpActEvt-PRE + held-edge adopt (a future tightening moves it to
+  the same thunk). **[V/AS-BUILT]**
 
 ## NEEDS-PROBE
 
 - **[?]** `ReceiveBeginPlay` for a normal runtime-spawned (non-deferred) actor reaching ProcessEvent — not
   verified; probe before hooking it.
-- **[?]** the `FFrame::Locals` + `UFunction::Func` offsets on `VotV-Win64-Shipping.exe` for the thunk-patch
-  plan — pin via IDA before any patch (the READ-ONLY log pass is the proof-on-this-build gate).
+- **[V — RESOLVED 2026-06-21]** the `FFrame::Object`/`Func` offsets for the thunk patch are IDA-pinned
+  (`FFrame::Object`@0x18, `FFrame::Locals`@0x28, `UFunction::Func`@0xD8) AND validated by the read-only log
+  pass (`B7EEB1BF`); shipped in `ue_wrap/ufunction_hook` (commit `d19ae4d4`). The thunk reads the spawned
+  actor from `*Result`, not `Locals+returnOff` (empirically confirmed in the disasm). See the chippile RE §6.
 - **[RD→needs symptom probe]** The "`init()` is `EX_LocalVirtualFunction`" root cause is IDA-traced in the
   pass-1 RE; the *symptom* (Init-POST never fires for a Q-menu/morph spawn) is what a runtime probe
   confirms (force-spawn → check for an Init-POST log line vs a Finish-POST line).

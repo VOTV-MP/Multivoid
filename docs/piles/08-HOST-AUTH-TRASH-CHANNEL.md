@@ -1,13 +1,26 @@
 # 08 — HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync redesign)
 
-> **Status (2026-06-21, committed `0e56ca39`, deployed `872ca8ee`, proto v82):**
+> **Status (2026-06-21 session 38, HEAD `fea04c26`, deployed `BA79E705`, proto v82 — no wire change):**
 > - **GRAB (pile→clump) — [V] VERIFIED hands-on** (`[SYNC-MIRROR OK]` in the client log). Driven by the
 >   `InpActEvt_use` PRE seam (a real input event → ProcessEvent-VISIBLE) + the held-object edge adopt.
-> - **RE-PILE (clump→pile) — [AS-BUILT], hands-on NO-DUPE** (user confirmed no dupes). Driven by a host
->   death-watch convert onto the fresh UNTRACKED pile at the clump's resting point. One **known minor**
->   glitch: a ~5 s vanish-return on some re-piles (the reaper racing the convert rebind).
-> - **The deterministic re-pile via a `UFunction::Func` thunk hook — [DESIGN], IDA-gated, NOT built.**
+> - **RE-PILE (clump→pile) — now the DETERMINISTIC `UFunction::Func` thunk converter — [AS-BUILT]; the
+>   thunk DETECTION is [V] VERIFIED hands-on, the CONVERT flip is deployed-pending-hands-on** (commit
+>   `d19ae4d4`). A read-only observe pass (deployed `B7EEB1BF`) showed many CLEAN `[REPILE]` and the thunk's
+>   `*Result` was ptr-for-ptr the SAME pile the old death-watch's FindNearest found on every isolated re-pile
+>   (two independent paths agreeing). The convert now fires the SAME tick the pile is constructed → **zero
+>   proximity, no reaper race, so the ~5s vanish-return is gone by construction.** The proximity death-watch
+>   is **RETIRED** (RULE 2, same commit).
+> - **Triple grab-cue — FIXED [AS-BUILT], deployed-pending-hands-on** (commit `fea04c26`): the ctx-gate was
+>   split by packet kind (a carry pose requires `ctx == known`, a release keeps `ctx >= known`) so an
+>   ahead-of-convert carry pose no longer drives the pre-convert pile + re-fires the grab cue.
+> - **DETECTION verified, CONVERT pending the hands-on:** the next hands-on confirms the grab cue is SINGLE
+>   (not triple) and the re-pile no longer vanish-returns. Do NOT mark the convert/sound VERIFIED until then.
 > - **CLIENT-grab direction (Increment 2) — [DESIGN], NOT built** (proto v83).
+> - **OPEN — the client mirror-staleness dup (the ROBUSTNESS track):** the client's join-mirror of a pile
+>   goes NOT-LIVE on its own within ~10s → `OnConvert` `ResolveLiveActorByEid` returns null → "mirror
+>   NOT-FOUND" → a fresh clump is spawned while the original lingers = a dup the user sees. The thunk flip
+>   does NOT fix this (it is client-side staleness, NOT the host-side cluster mis-bind the flip fixes). See
+>   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
 >
 > Supersedes **07** (the MORPH V2 re-skin + proximity land-watch — RETIRED 2026-06-21: it false-fired in
 > dense pile clusters and never wired the client→host direction; the autonomous smoke that "verified" it was
@@ -124,9 +137,10 @@ visual actor from that state — never advances state locally, never guesses ide
 
 **Cluster-safe identity, NO proximity:**
 1. **eid end-to-end.** The clump↔pile link rebinds the SAME E in place (`oldEid==newEid==E`); no spatial
-   search keys identity. (AS-BUILT, the grab uses the InpActEvt-PRE eid; the re-pile finds the fresh pile by
-   position but ONLY among UNTRACKED piles, then converts E onto it — see AS-BUILT below. The deterministic
-   zero-search source is the thunk hook, DESIGN.)
+   search keys identity. (AS-BUILT: the grab uses the InpActEvt-PRE eid; the re-pile is now the
+   `UFunction::Func` thunk converter — it reads the exact `(source clump, spawned pile)` pair off the
+   `EX_CallMath BeginDeferred` and converts E onto the spawned pile the same tick, zero spatial search. The
+   former proximity death-watch is RETIRED.)
 2. **MTA sync-time-context (`ctx` byte).** Stamp every PropConvert/Pose/Release; bump on EVERY transition;
    receivers drop stale-ctx packets (port `CElement::GenerateSyncTimeContext`/`CanUpdateSync`, MTA
    `CElement.cpp:1281/1300`). A late pose/land packet for eid E after a transition is REJECTED — never
@@ -147,10 +161,11 @@ CLIENT → HOST (intent/request, NOT a state push):                             
   GrabIntent{eid}   ThrowIntent{eid}   PileResyncRequest{}
 ```
 
-**Host-grab** (host is authority AND grabber) — **[V] AS-BUILT, VERIFIED**: `InpActEvt_use` PRE resolves the
-aimed pile's eid → records it as a pending grab → the held-object edge adopts the spawned clump onto E,
-bumps ctx, broadcasts `PropConvert{kToClump}`. Carry streams `PropPose` (ctx-stamped). Throw → `PropRelease`.
-Land caught by the death-watch convert (AS-BUILT) / the thunk hook (DESIGN) → `PropConvert{kToPile, xform}`.
+**Host-grab** (host is authority AND grabber) — **[V] VERIFIED** (grab) **+ [AS-BUILT]** (re-pile):
+`InpActEvt_use` PRE resolves the aimed pile's eid → records it as a pending grab → the held-object edge
+adopts the spawned clump onto E, bumps ctx, broadcasts `PropConvert{kToClump}`. Carry streams `PropPose`
+(ctx-stamped). Throw → `PropRelease`. Land caught by the **`UFunction::Func` thunk converter** (commit
+`d19ae4d4`; detection VERIFIED, convert deployed-pending-hands-on) → `PropConvert{kToPile, xform}`.
 
 **Client-grab** (the dead direction — the door `OnRequest` pattern verbatim) — **[DESIGN] Increment 2**:
 ```
@@ -173,12 +188,14 @@ push — no BP-asset edits, no Replicated props/RPCs, no pak edits (A6 respected
 
 ---
 
-## AS-BUILT — Increment 1 (committed `0e56ca39`, deployed `872ca8ee`, proto v82)
+## AS-BUILT — Increment 1 (HEAD `fea04c26`, deployed `BA79E705`, proto v82; the thunk landed `d19ae4d4`)
 
-**Re-pile via VISIBLE seams (the BeginDeferred-POST link DISPROVEN + removed).** Per
+**Grab via the VISIBLE InpActEvt seam; re-pile via the deterministic `UFunction::Func` thunk (the
+BeginDeferred-POST ProcessEvent link DISPROVEN + removed; the proximity death-watch RETIRED).** Per
 [[feedback-docs-piles-living-knowledge-base]] "AS-BUILT" ≠ "VERIFIED": the GRAB is VERIFIED (a real hands-on
-`[SYNC-MIRROR OK]`); the RE-PILE is AS-BUILT with a hands-on no-dupe observation (user confirmed no dupes) +
-one known-minor glitch.
+`[SYNC-MIRROR OK]`); the RE-PILE thunk DETECTION is VERIFIED (a read-only observe pass agreed ptr-for-ptr
+with the old death-watch); the RE-PILE CONVERT flip + the triple-sound fix are AS-BUILT, deployed,
+hands-on-PENDING.
 
 ### What shipped
 
@@ -195,13 +212,20 @@ one known-minor glitch.
   on the host, records its eid via `trash_channel::NotePendingGrab`. `local_streams`' new-held edge adopts the
   spawned clump onto that eid via `trash_channel::AdoptPendingGrabClump → OnHostConvert(kToClump)`. Identity
   is the host eid end-to-end; NO proximity. (`[SYNC-MIRROR OK]` in the client log.)
-- **RE-PILE (clump→pile) — [AS-BUILT], hands-on NO-DUPE:** at adopt, `WatchClumpForRepile(E, clump)` enrolls
-  the clump in a host-tick death-watch (`g_watchedClumps`, `lastPos` follows carry + flight). `Tick` (host
-  net-pump): the tick the clump dies (the BP re-piled it — `EX_CallMath` spawn + BP-internal destroy, both
-  invisible), `FindNearestUntrackedChipPile_(lastPos, 250cm)` finds the fresh pile and `OnHostConvert(E,
-  kToPile)` converts E onto it in place → the client re-skins its ONE mirror (no destroy+spawn dupe). **Gated
-  to UNTRACKED piles only** (a tracked neighbour is excluded → NOT the s35 cluster mis-bind). The rebind
-  re-points E onto the live new pile, so the reaper sees E alive. No fresh pile near → `PropDestroy(eid)`.
+- **RE-PILE (clump→pile) — [AS-BUILT], the DETERMINISTIC `UFunction::Func` thunk converter (commit
+  `d19ae4d4`):** a process-lifetime patch on `BeginDeferredActorSpawnFromClass`'s `Func` (`UFunction+0xD8`)
+  installs a transparent forwarder (`ue_wrap/ufunction_hook`). On a host re-pile the clump's
+  `EX_CallMath BeginDeferred(self=clump, pile)` fires the thunk → `OnBeginDeferredSpawnObserve` reads
+  `FFrame::Object` (@0x18 = the re-piling clump = `WorldContextObject` = `EX_Self`) + `*Result` (the new
+  pile); if the clump is a TRACKED trash entity (eid E) it `OnHostConvert(E, kToPile)` converts E onto the
+  EXACT spawned pile the SAME tick it is constructed → the client re-skins its ONE mirror (no destroy+spawn
+  dupe), **zero proximity, no reaper race**. An UNTRACKED clump (the grab-adopt miss, eid=0) is skipped. The
+  thunk DETECTION is VERIFIED (read-only pass `B7EEB1BF`: many CLEAN `[REPILE]`, `*Result` ptr-for-ptr ==
+  the old death-watch's FindNearest pile on every isolated re-pile); the CONVERT flip is hands-on-PENDING.
+- **The proximity death-watch RETIRED (RULE 2, same commit):** `WatchClumpForRepile` / `Tick` /
+  `FindNearestUntrackedChipPile_` / `g_watchedClumps` + the `local_streams` enroll + the `subsystems` tick +
+  the `trash_collect_sync.h` decls are DELETED — no window with two live converters. A thread-local
+  re-entrancy guard (`t_inCb`) in `ufunction_hook.cpp` keeps a nested spawn from double-converting.
 - **`host_spawn_watcher` — the chipPile/clump link REMOVED** (reverted to the ambient/pinecone BeginDeferred
   POST only; the comment at `:118-122` records why: EX_CallMath, invisible to the ProcessEvent hook). **[V]**
 - **MORPH DELETED (RULE 2):** `coop/pile_morph.{cpp,h}` git-removed; `trash_collect_sync::OnPileGrabPre` is
@@ -210,40 +234,43 @@ one known-minor glitch.
   `remote_prop::OnConvert` adopts ctx + drops stale; `subsystems` ticks `TickPendingGrab` + adds
   `trash_channel::OnDisconnect`. **[V]**
 
-### KNOWN minor [?] (interim, removed by the thunk hook)
+### KNOWN minor — RESOLVED by the thunk (2026-06-21)
 
-A ~5 s vanish-return on SOME re-piles: the host reaper death-watch can race the convert rebind — the clump
-dies, and a PropDestroy can fire before/alongside the convert landing the new pile under E. Cosmetic,
-self-corrects. Removed by the deterministic thunk hook (DESIGN, below), which converts the SAME tick the new
-pile is constructed (no death-watch window).
+The interim ~5 s vanish-return (the reaper death-watch racing the convert rebind) is **gone by
+construction**: the thunk converter rebinds E onto the new pile the SAME tick it is constructed, so the
+reaper never sees E dead between the clump's death and the pile's rebind. (Confirm absent at the next
+hands-on alongside the single-grab-cue check.)
 
 ---
 
-## PLANNED — the deterministic re-pile via a `UFunction::Func` thunk hook (DESIGN, IDA-gated, NOT built)
+## AS-BUILT — the deterministic re-pile via a `UFunction::Func` thunk hook (committed `d19ae4d4`)
 
 Catch the `EX_CallMath BeginDeferred` itself by patching the callee's thunk (a ProcessEvent observer provably
-can't — that's the whole point of the disproof). Full design + the IDA anchors + the validation plan:
-**`research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`** (durable-RE). Summary:
+can't — that's the whole point of the disproof). Full RE + the IDA-pinned offsets + the validation result:
+**`research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`** §3 (now AS-BUILT). As built:
 
-- **Patch `UFunction::Func` (`UFunction+0xD8`) of `BeginDeferredActorSpawnFromClass`** → our native thunk:
-  read `WorldContextObject` (= source clump, `EX_Self`) from `FFrame.Locals + worldCtxOff`; forward to the
-  original (transparent); read `ReturnValue` (= new pile) from the thunk's `Result` arg (NOT `Locals +
-  returnOff`); filter `IsGarbageClump(worldCtx) && IsChipPile(actorCls) && GetPropElementIdForActor(worldCtx)
-  != invalid`; on match → `OnHostConvert(BoundEidOf(worldCtx), kToPile, ReturnValue)`. **ZERO proximity, same
-  tick.** Process-lifetime, game-thread (BeginDeferred is GT-only), transparent forwarder, no unpatch.
-- **GATE — an IDA pass on OUR binary** must pin `FFrame::Locals` (anchor: the `Locals = Frame` store inside
-  the AOB-resolved `UObject::ProcessEvent`, cross-checked vs a native thunk's `Stack.Locals + offset` read) +
-  `UFunction::Func` (anchor: the `mov rax,[rFn+FuncOff]; call rax` in ProcessEvent/Invoke; the resolved value
-  must land in `.text`).
-- **Validation — READ-ONLY first:** install the thunk as a pure forwarder that LOGS worldCtx/actor/result
-  class names (no convert). Enable the convert ONLY once a re-pile prints `clump + chipPile`. Then DELETE the
-  death-watch convert + `FindNearestUntrackedChipPile_` (RULE 2 — no parallel paths).
-- **Fallback (ONLY if `FFrame::Locals` is genuinely unreachable, NOT merely an unusual offset):** the
-  `prop_garbageClump_C` `BndEvt__…ComponentHit` delegate (ProcessEvent-VISIBLE) for the source clump +
-  temporal correlation. Strictly worse (re-implements the convert gate + a correlation window); last resort.
+- **`ue_wrap/ufunction_hook.{h,cpp}`** — the standalone Func-patch facility (principle 7, engine substrate).
+  `InstallPostHook(ufn, cb)` saves the original `Func` (@`UFunction+0xD8`) and writes a STAMPED transparent
+  thunk (`NativeThunk<N>`, one per slot, ≤4) that reads `FFrame::Object` (@0x18) BEFORE forwarding, runs the
+  original (transparent — the spawn proceeds), then passes `(srcObj, *Result)` to the callback under an SEH
+  guard + a thread-local re-entrancy guard. Refuses to patch if `Func` reads null (wrong offset for the
+  build). Offsets `off::UFunction_Func`/`off::FFrame_Object` pinned in `sdk_profile.h`.
+- **`trash_collect_sync::OnBeginDeferredSpawnObserve`** is the converter: installed in `Install` via
+  `ufunction_hook::InstallPostHook(BeginDeferredActorSpawnFromClass, …)`. Filters
+  `IsGarbageClump(srcObj) && IsChipPile(newActor) && GetPropElementIdForActor(srcObj) != invalid`; on a
+  TRACKED clump re-pile → `OnHostConvert(E, kToPile, newActor, loc=clumpResting, rot, chipType)`. The grab
+  case (srcObj=pile) is skipped here (the host grab stays on the InpActEvt-PRE + held-edge adopt). **Zero
+  proximity, same tick.** Game-thread (BeginDeferred is GT-only), process-lifetime, host-only.
+- **VALIDATION — DONE (read-only pass, deployed `B7EEB1BF`, 2026-06-21):** the thunk ran as a pure logger;
+  the host log showed many CLEAN `[REPILE]` (worldCtx a tracked garbageClump + Result a chipPile, eid
+  cross-check perfect) and the thunk's `*Result` was ptr-for-ptr the SAME pile the death-watch's FindNearest
+  found on every isolated re-pile. Two independent paths agreeing → the convert was flipped on + the
+  death-watch atomically deleted in `d19ae4d4` (RULE 2 — no parallel paths). The CONVERT itself is
+  hands-on-PENDING (the user tests next).
 
-When this lands, the GRAB direction can move to the same thunk too (worldCtx = a tracked chipPile, actorCls =
-clump → kToClump), retiring the InpActEvt-PRE + held-edge adopt — a future tightening, not required now.
+When the GRAB direction moves to the same thunk too (srcObj = a tracked chipPile, newActor = clump →
+kToClump), it retires the InpActEvt-PRE + held-edge adopt AND closes the eid=0 adopt-miss gap (an UNTRACKED
+clump from a grab the PRE missed currently skips the converter) — the NEXT tightening, unbuilt.
 
 ---
 
@@ -273,4 +300,17 @@ never the input seam, never the client direction. The real gates:
 4. **Pre-handoff checklist (RULE 2026-05-27):** hot-path re-entry table, `wc -l` modularity, deploy ×4, ≥30s
    LAN smoke via the named-window launchers, host+client log diff clean, RSS stable; audit agents.
 5. **User hands-on is the final gate.** "Works" only after that, NEVER from a smoke. (GRAB cleared this;
-   RE-PILE has a hands-on no-dupe but the ~5s known-minor stands until the thunk hook.)
+   the RE-PILE thunk DETECTION cleared the read-only gate; the RE-PILE CONVERT + the triple-sound fix are
+   deployed-PENDING — the next hands-on confirms the grab cue is SINGLE and the re-pile no longer
+   vanish-returns.)
+
+---
+
+## OPEN — the client mirror-staleness dup (the ROBUSTNESS track)
+
+Separate from everything above (the host-side cluster mis-bind the thunk flip fixes). On the CLIENT, a
+join-mirror of a pile (a real `actorChipPile_C`) goes **NOT-LIVE on its own within ~10s** → on the next
+`OnConvert`, `ResolveLiveActorByEid` returns null → "mirror NOT-FOUND" → the client spawns a FRESH clump
+while the original lingers = the dup the user sees. The thunk flip does NOT touch this (it is client-side
+staleness, not a host author/identity problem). Design + RCA:
+**`research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`**.

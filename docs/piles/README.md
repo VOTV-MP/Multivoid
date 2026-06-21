@@ -84,19 +84,23 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
 - **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
-  (2026-06-21, commit `0e56ca39`, proto v82).** Host-authoritative trash-entity identity (eid = logical
-  entity), MTA single-syncer + sync-time-context byte. **GRAB (pile→clump) = VERIFIED hands-on** via the
-  `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE (clump→pile) = AS-BUILT, hands-on no-dupe** via
-  a clump death-watch convert onto the fresh UNTRACKED pile (one ~5s known-minor glitch). **The s35
+  (2026-06-21 session 38, HEAD `fea04c26`, deployed `BA79E705`, proto v82).** Host-authoritative trash-entity
+  identity (eid = logical entity), MTA single-syncer + sync-time-context byte. **GRAB (pile→clump) = VERIFIED
+  hands-on** via the `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE (clump→pile) = the
+  DETERMINISTIC `UFunction::Func` thunk converter** (commit `d19ae4d4`, `ue_wrap/ufunction_hook`): catches the
+  clump's `EX_CallMath BeginDeferred` and converts E onto the EXACT spawned pile the same tick — zero
+  proximity, no reaper race (the ~5s vanish-return is gone by construction). The thunk DETECTION is VERIFIED
+  (read-only pass agreed ptr-for-ptr with the old death-watch); the CONVERT + the triple-grab-cue fix
+  (`fea04c26`) are deployed-pending-hands-on. The proximity death-watch is RETIRED (RULE 2). **The s35
   "BeginDeferred-POST is observable" link was DISPROVEN** (EX_CallMath → invisible; 0 host_spawn_watcher
-  fires; that POST link was removed). The deterministic zero-proximity catch needs a `UFunction::Func`
-  thunk patch (DESIGN, IDA-gated — `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`).
-  Increment 2 (client suppress-native + GrabIntent → host executes the verb on puppet-N; the
-  PILED/HELD/FLYING state machine) is still DESIGN. **Read this for the pile sync.**
-- **[07-MORPH-V2-held-object-channel.md](07-MORPH-V2-held-object-channel.md)** — **SUPERSEDED + RETIRED
-  2026-06-21** (the morph: held-object adopt + PROXIMITY land-watch). Its smoke "VERIFIED" was a FALSE
-  POSITIVE; the real hands-on refuted it (proximity false-fires in clusters; client grab never armed).
-  History only — see 08.
+  fires). **OPEN — the client mirror-staleness dup** (a client join-mirror goes NOT-LIVE within ~10s →
+  fresh-clump spawn + original lingers; the ROBUSTNESS track, separate from the thunk fix:
+  `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`). Increment 2 (client
+  suppress-native + GrabIntent → host executes on puppet-N; the PILED/HELD/FLYING state machine) is still
+  DESIGN. **Read this for the pile sync.**
+- **`_archive/07-MORPH-V2-held-object-channel.md`** — **SUPERSEDED + RETIRED 2026-06-21, archived** (the
+  morph: held-object adopt + PROXIMITY land-watch). Its smoke "VERIFIED" was a FALSE POSITIVE; the real
+  hands-on refuted it (proximity false-fires in clusters; client grab never armed). History only — see 08.
 - `_archive/05-MORPH-SYNC-DESIGN.md` + `_archive/06-AS-BUILT-sync-mirror.md` — **SUPERSEDED** (the FAILED
   take-18 that bet on the clump Init-POST observer firing; it does NOT). Kept for the failure analysis.
 - `_archive/session-log/` — the day-by-day failed-iteration log (s21..s33). Historical.
@@ -138,30 +142,28 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   docs, which are a sibling problem: `votv-kerfur-savetransfer-ghost-prop-RCA-2026-06-15.md`,
   `votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md`).
 
-## Status (2026-06-20, session 32) — DESIGN → AS-BUILT → VERIFIED
+## Status (2026-06-21, session 38) — DESIGN → AS-BUILT → VERIFIED
 
-1. Save-strip REVERTED + the entire s23–s32 thin-client churn REVERTED → restored the
-   **adopt-by-position bind** (HEAD `1272b0a3`). Deployed `C7030D00`.
-2. **Baseline hands-on (user-confirmed): the bind WORKS** — 872 chipPile mirrors bound, no
-   "no piles", no dupes; host-grab → client-pile-vanishes proven. BUT the **morph/held layer**
-   didn't sync (grabbed pile → keyless clump `eid=0`; 0 `PropConvert` morphs) → "no sync-mirror".
-3. **Morph sync ([05](05-MORPH-SYNC-DESIGN.md) DESIGN + [06](06-AS-BUILT-sync-mirror.md) AS-BUILT)
-   was implemented (proto v81), audited+fixed, deployed — and FAILED the hands-on ("nothing works")
-   as a REGRESSION → REVERTED.** Root cause (logs): the clump-adopt correlation keyed on
-   `clump.holdPlayer`, which is NULL at the clump's Init-POST (set later by `toClump()`), so the
-   adopt never fired → no convert; and it had REPLACED the reliable grab `PropDestroy`, so a missed
-   morph = no host-grab sync. See `06` for the full RCA + what the next attempt must MEASURE first.
+The whole saga below (01–04 + the s21–s33 session-log) converged on **08 — the host-authoritative trash
+channel**, which is the CURRENT design + as-built. The day-to-day live state is in the auto-memory
+(`MEMORY.md` index + the top `project_session*` entry); this is the durable summary:
 
-**DEPLOYED BASELINE: `EFD869CBF2D8788F` (proto v80) = the take-17 adopt-BIND** (piles mirror,
-host-grab→client-vanish works; the clump carry / re-pile morph is NOT synced — the open gap).
+1. **GRAB (pile→clump) — VERIFIED hands-on** (`[SYNC-MIRROR OK]`) via the `InpActEvt_use` PRE seam + the
+   held-edge adopt. Identity is the host-minted eid end-to-end, NO proximity.
+2. **RE-PILE (clump→pile) — the DETERMINISTIC `UFunction::Func` thunk converter** (commit `d19ae4d4`,
+   `ue_wrap/ufunction_hook`): the thunk catches the clump's `EX_CallMath BeginDeferred` and converts E onto
+   the EXACT spawned pile the same tick — zero proximity, no reaper race. The thunk DETECTION is **VERIFIED**
+   (a read-only pass agreed ptr-for-ptr with the prior proximity death-watch, which is now RETIRED, RULE 2);
+   the CONVERT flip + the triple-grab-cue fix (`fea04c26`, the ctx-gate requireCurrentGen split) are
+   **AS-BUILT, deployed `BA79E705`, hands-on-PENDING** (the next hands-on confirms a single grab cue + no
+   vanish-return). Runbook: `research/handson_runbook_2026-06-21_repile_thunk.md` (take-22).
+3. **OPEN — the client mirror-staleness dup (ROBUSTNESS track):** a client's join-mirror of a pile goes
+   NOT-LIVE on its own within ~10s → `OnConvert`'s `ResolveLiveActorByEid` returns null → a fresh clump is
+   spawned + the original lingers = a dup. This is NOT the host-side mis-bind the thunk fixes. Design:
+   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
+4. **NEXT (DESIGN, NOT built):** grab-via-thunk (closes the eid=0 adopt-miss gap) + Increment 2 (the
+   client-grab direction — suppress-native + GrabIntent → host executes on puppet-N; proto v83).
 
-4. **MORPH V2 — the carry+re-pile done RIGHT ([07](07-MORPH-V2-held-object-channel.md), session 33).**
-   Built on the bind model, anchored on the PROVEN held-object channel (NOT the un-hookable clump
-   Init-POST / holdPlayer the take-18 bet failed on), with a deferred-destroy fallback so a missed morph
-   never regresses the grab. RETIRES the v52 fresh-eid clump death-watch (RULE 2). Re-skins eid E in
-   place across pile→clump→pile (oldEid==newEid==E). Land via a death-watch poll (re-seed-race-safe).
-   DLL `2f0970276799478c` (proto v81), build clean, **2 adversarial reviews + a 4-agent trace applied**.
-   **STATUS: BUILT + REVIEWED, NOT deployed, NOT verified** (the one unverified link = does the clump
-   become `holding_actor`; needs the `garbage_pickup_probe` + 1 grab) — see `07` AS-BUILT.
-
-Then (separate): the kerfur window-dupe (host-authoritative client-relays-turn-on + form-agnostic adopt).
+**DEPLOYED: `BA79E705` (proto v82) = HEAD `fea04c26`** — the thunk re-pile + the sound fix, pending the
+hands-on confirmation. The earlier `C7030D00` adopt-bind baseline + the FAILED s05/06 morph + the s07
+morph-V2 are all superseded by 08 (the 07 doc is archived).

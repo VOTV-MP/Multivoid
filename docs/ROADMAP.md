@@ -12,13 +12,16 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
-protocol is at **v82** (was v81). **Pile/trash sync is mid-REDESIGN:** the pile MORPH
-(v81) was refuted by a real hands-on (2026-06-21) — proximity land-watch false-fires
-in clusters + the client grab never armed; the current design is the host-authoritative
-trash channel ([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)). **Increment 1
-(host-grab direction) is AS-BUILT, built clean (proto v82, the per-eid sync-time-context
-+ the zero-proximity host_spawn_watcher convert link), NOT yet smoked/verified**; the
-client-grab direction (Increment 2, proto v83) is still pending. **The day-to-day live state is
+protocol is at **v82**. **Pile/trash sync — Increment 1 (host-grab direction) of the
+host-authoritative trash channel ([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)):**
+the pile MORPH (v81) was refuted by a real hands-on; so was the s35 "BeginDeferred-POST
+is observable" link (it is `EX_CallMath` → invisible; 0 host_spawn_watcher fires). The
+GRAB (pile→clump) is **VERIFIED hands-on** (`InpActEvt_use` PRE + held-edge adopt); the
+RE-PILE (clump→pile) is now the **deterministic `UFunction::Func` thunk converter**
+(`ue_wrap/ufunction_hook`, commit `d19ae4d4`) — detection VERIFIED, the convert + the
+triple-grab-cue fix (`fea04c26`) are **AS-BUILT, deployed `BA79E705`, hands-on-PENDING**.
+**OPEN:** the client mirror-staleness dup (a robustness track). The client-grab direction
+(Increment 2, proto v83) is still DESIGN. **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.
 For cross-cutting architecture truth see the new

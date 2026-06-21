@@ -1,3 +1,10 @@
+> **⚠ SUPERSEDED 2026-06-21 (archived).** This take-21 runbook was for the `1fc67aed` build and its central
+> "LINCHPIN" — that the engine passes the source pile as `WorldContextObject` catchable at a
+> `host_spawn_watcher` BeginDeferred POST — **was DISPROVEN** (the chipPile/clump spawn is `EX_CallMath`,
+> invisible to ProcessEvent; 0 fires). The current runbook is
+> `research/handson_runbook_2026-06-21_repile_thunk.md` (take-22): confirm the deterministic `UFunction::Func`
+> thunk re-pile + the triple-grab-cue fix, deployed `BA79E705`. History only.
+
 # Hands-on runbook — take-21 (2026-06-21): Increment 1 host-grab pile sync + `[PILE]` logs
 
 **Deployed:** `votv-coop.dll` md5 `2033e7c9…` (commit `1fc67aed`), **proto v82**, deployed to all 4

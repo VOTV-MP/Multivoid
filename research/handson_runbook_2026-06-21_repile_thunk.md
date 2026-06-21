@@ -1,70 +1,73 @@
-# Hands-on runbook — re-pile thunk READ-ONLY observe pass (2026-06-21)
+# Hands-on runbook — confirm the deterministic re-pile thunk + the triple-grab-cue fix (2026-06-21, take-22)
 
-**Deployed:** `votv-coop.dll` SHA `B7EEB1BF…` to all 4 copies (host/client/client2/dev). Proto **v82**
-(UNCHANGED — this change adds no wire format; it is host-local logging only). HEAD `7cf34571` + UNCOMMITTED
-working tree (the read-only thunk; commit held until this validates). Build CLEAN, audit CLEAN.
+**Deployed:** `votv-coop.dll` SHA `BA79E705…` to all 4 copies (host / copy / copy2 / dev). Proto **v82**
+(UNCHANGED — neither change touches the wire). HEAD `fea04c26`. Build CLEAN, audit folded. The thunk
+DETECTION was already VERIFIED in a prior read-only pass; this run confirms the CONVERT + the SOUND fix.
 
-## What changed (and what did NOT)
-- NEW `ue_wrap/ufunction_hook.{h,cpp}` — patches `BeginDeferredActorSpawnFromClass`'s `UFunction::Func`
-  (@+0xD8) with a transparent forwarder, to catch the clump's chipPile re-pile spawn (`EX_CallMath`,
-  invisible to our ProcessEvent hook). IDA-pinned offsets (Func@0xD8, FFrame::Object@0x18), bytecode-verified
-  source (the clump's ubergraph passes `EX_Self` for WorldContextObject).
-- `trash_collect_sync.cpp` — `OnBeginDeferredSpawnObserve`: **READ-ONLY**. It LOGS the (worldCtx, Result)
-  pair for every chipPile/clump spawn. It has **no path to OnHostConvert** — it cannot convert.
-- **The death-watch is UNCHANGED and still the sole converter.** So gameplay behaves exactly as the last
-  deployed build (the re-pile still works via the death-watch). This pass only adds log lines.
+## What changed since the read-only pass (commits `d19ae4d4` + `fea04c26`)
+- **`d19ae4d4` — the thunk is now the DETERMINISTIC re-pile CONVERTER (no longer read-only).**
+  `OnBeginDeferredSpawnObserve` now calls `OnHostConvert(kToPile)` the SAME tick the clump's `EX_CallMath`
+  re-pile spawn fires (it reads `FFrame::Object`@0x18 = the source clump + `*Result` = the new pile). The
+  proximity death-watch (`WatchClumpForRepile` / `Tick` / `FindNearestUntrackedChipPile_`) is **DELETED**
+  (RULE 2). Net effect you should see: the re-pile converts cleanly with **NO ~5 s vanish-return** (the
+  reaper-vs-rebind race is gone by construction).
+- **`fea04c26` — the triple grab-cue is FIXED.** The trash ctx-gate was split by packet kind: a CARRY POSE
+  now applies ONLY when `ctx == known` (an ahead-of-convert pose is HELD, not applied to the pre-convert
+  pile), a RELEASE keeps `ctx >= known`. Net effect: a host grab should fire the grab cue **ONCE**, not
+  three times.
 
-## The test (host does the work; the thunk logs on the HOST only)
-1. Launch **host** (from `Game_0.9.0n`) + **client** (from `Game_0.9.0n_copy`), get them connected (a real
-   coop session — the thunk gates on `connected()` + `role()==Host`).
-2. On the **HOST**: aim at a chipPile, press **E** to grab it (a clump appears in hand), carry it, **throw**
-   it so it lands and **re-piles** (becomes a chipPile on the ground). Repeat **3–5 times**.
-3. Bonus: do at least one re-pile **inside a dense cluster** of piles (the old morph mis-bound there; the
-   thunk is cluster-immune by construction — worldCtx is the exact clump, zero proximity).
+## The read-only OFFSET gate — already PASSED (do not re-run)
+The prior read-only pass (deployed `B7EEB1BF`) showed many CLEAN `[REPILE]` (`worldCtx` a tracked
+garbageClump `[CLUMP] eid≠0`, `Result` a chipPile), and the thunk's `*Result` was **ptr-for-ptr the SAME
+pile the death-watch's FindNearest found on every isolated re-pile**. Two independent paths agreed → the
+offsets read the right objects → the convert was flipped on. So the offsets are PROVEN on this build; this
+run is the gameplay confirmation, not an offset check.
 
-## What to capture — paste me the RAW lines (host log)
+## The test (host does the work; the thunk converts on the HOST)
+1. Launch **host** (`mp_host_game.bat`, from `Game_0.9.0n`) + **client** (`mp_client_connect.bat`, from
+   `Game_0.9.0n_copy`). **New Game** (fresh save — never an old slot). Let the join settle (world loaded,
+   no churn).
+2. On the **HOST**: aim at a chipPile, press **E** to grab (a clump appears in hand), carry it, **throw**
+   (LMB) so it lands and **re-piles**. Repeat **3–5 times**, at least one inside a **dense cluster**.
+3. Watch + listen on BOTH peers.
+
+## What to confirm (the two things this run gates)
+1. **SINGLE grab cue (the sound fix):** each host grab plays the grab-in sound **ONCE** (not 2–3x). On the
+   client, the grabbed pile becomes a carried clump cleanly — no pre-convert pile-jump, no double cue.
+2. **No vanish-return on re-pile (the thunk convert):** when a thrown clump re-piles, the resulting pile
+   appears and **stays** — it must NOT vanish for ~5 s and return. The other piles in a cluster stay put
+   (no neighbour mis-bind — the thunk is cluster-immune by construction).
+
+## What to capture — paste me the RAW lines (host + client logs)
 Host log: `Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log`
+Client log: `Game_0.9.0n_copy\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log`
 
-PowerShell one-liner to extract exactly what I need:
 ```powershell
 Select-String -Path 'Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log' `
-  -Pattern '\[REPILE\]|\[GRAB\]|\[HB\]|HOST RE-PILE|GRAB ADOPT' | ForEach-Object { $_.Line }
+  -Pattern '\[PILE\]|\[REPILE\]|RE-PILE\(thunk\)|HOST GRAB ADOPT|CLIENT DROP|SYNC-MIRROR' | ForEach-Object { $_.Line }
 ```
-Paste the raw output (ptr/cls/eid intact) — not a summary. 3–5 `[REPILE]` lines + a few `[HB]` for contrast
-is plenty.
 
-## The gate (what the lines must show to enable the convert)
-- **`[HB]` lines present** → the patch is LIVE (so an absent `[REPILE]` would mean "offset wrong", not
-  "thunk never fired").
-- **≥3 CLEAN `[REPILE]`**: `worldCtx=<ptr> cls='prop_garbageClump_C'` (or a variant `_erie/_leaves/…`)
-  marked **`[CLUMP]`** with **`eid≠0`**, and `Result=<ptr> cls='actorChipPile_C'` (or variant).
-- **eid cross-check:** each `[REPILE] … eid=E` should match a death-watch `[PILE] HOST RE-PILE eid=E` for the
-  same re-pile, and the `[REPILE] Result=<ptr>` should match that line's `fresh pile %p`. Two independent
-  paths agreeing = double-confirmation we read the right objects.
-- **ZERO** `[REPILE]` lines with `[NOT-clump]` or `worldCtx=…<bad-read>` (a wrong-offset read).
-- **ZERO** spurious `[GRAB]`/`[REPILE]` whose worldCtx reads as a tracked clump on a non-re-pile spawn.
+## Reading the log — PASS looks like
+- HOST grab: `[PILE] HOST GRAB ADOPT eid=N` then `[PILE] HOST GRAB(pile->clump) eid=N ctx=…`.
+- HOST re-pile: `[PILE] HOST RE-PILE(thunk) eid=N clump=… -> chipPile=… convert IN PLACE (deterministic,
+  same tick as the spawn -- no death-watch, no proximity)` then `[PILE] HOST LAND(clump->pile) eid=N ctx=…`.
+- CLIENT mirror: `[PILE] CLIENT recv convert GRAB(...) eid=N … [SYNC-MIRROR OK]` and the matching
+  `LAND(...)` re-skin, **same eid N** throughout. A `[PILE] CLIENT DROP stale … eid=N` for a late pose is
+  GOOD (the ctx-gate working).
+- **Same eid N** across the grab + throw + re-pile; the cluster's other piles untouched.
 
-If all green → I flip the thunk to convert + **atomically delete the death-watch in the same commit** (no
-window with two converters — the RULE-2 swap; this also removes the ~5s vanish-return). If a line is dirty
-→ the log itself names the problem (bad-read / NOT-clump / eid=0) and we fix before any convert.
+## Watch for the OPEN robustness bug (a separate track — report it but it is NOT this fix)
+The **client mirror-staleness dup**: on the client, a join-mirror of a pile can go NOT-LIVE on its own
+within ~10 s; then a convert for that eid logs **`mirror NOT-FOUND`** → the client spawns a fresh clump and
+the original lingers = a visible dup. **This is NOT fixed by the thunk** (it is client-side staleness, not
+the host-side mis-bind the thunk fixes) — design in
+`research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`. If you see a dup, grab the
+`mirror NOT-FOUND` lines from the CLIENT log and note the eid + roughly how long after join — that feeds the
+robustness track, not this runbook.
 
-## Reading the log — gate interpretation (agreed 2026-06-21, the 5 nuances)
-1. **Liveness** is proven by the `ufunction_hook: patched ufn=… Func @0xD8` install line (the patch took) +
-   the first `[GRAB]` (it fires) — NOT dependent on the sparse `[HB]`. Grab DOES spawn a clump via
-   BeginDeferred (verified: `ExecuteUbergraph_actorChipPile` + `toClump` do `BeginDeferred(self,
-   prop_garbageClump_C,…)`), so a grab always emits a `[GRAB]`.
-2. **`[GRAB]` lines are expected** (worldCtx=`actorChipPile_C`, Result=`prop_garbageClump_C`). Their
-   worldCtx flag will read `[NOT-clump]` — CORRECT (a grab's source is a pile). The `[CLUMP]` flag only
-   validates `[REPILE]`; for `[GRAB]` read `cls=` directly. (The pile's `grime_blood2_C` effect spawn is
-   not trash → won't tag `[GRAB]`/`[REPILE]`.)
-3. **ISOLATED single re-pile:** thunk and death-watch MUST agree on eid AND pile-ptr (no neighbor to
-   mis-pick). Divergence = RED, stop + investigate. **Count the >=3 CLEAN from isolated re-piles.**
-4. **CLUSTER re-pile:** the thunk (worldCtx-clump, Result-pile, eid) is GROUND TRUTH. eid still matches both
-   paths (same clump's adopt eid); the death-watch's `fresh pile %p` can diverge (nearest-untracked picks a
-   neighbor). A thunk≠death-watch pile on a cluster = the death-watch's proximity mis-bind exposed → the
-   thunk is RIGHT, do NOT cut the gate. (Distinguisher: was there a neighbor pile? isolated→must-agree;
-   cluster→thunk-wins. Opposite interpretations.)
-5. **`[REPILE]` is self-sufficient:** a clean `[REPILE]` (`worldCtx 'prop_garbageClump_C' [CLUMP] eid!=0` +
-   `Result 'actorChipPile_C'`) counts on its own. The death-watch pairing is a bonus second witness; its
-   ABSENCE does not make a clean `[REPILE]` dirty (the death-watch is a heuristic, may miss). The pairing
-   only matters when PRESENT + DIVERGENT on an ISOLATED re-pile (then #3 → red).
+## Honest status
+- Thunk DETECTION: **VERIFIED** (the read-only pass agreed ptr-for-ptr with the death-watch).
+- Thunk CONVERT (`d19ae4d4`) + the triple-sound fix (`fea04c26`): **AS-BUILT, deployed (`BA79E705`),
+  hands-on-PENDING** — this run promotes them. They are NOT VERIFIED until this hands-on (single cue + no
+  vanish-return) passes.
+- Client mirror-staleness dup: **OPEN** (the robustness track), unaffected by this run.
