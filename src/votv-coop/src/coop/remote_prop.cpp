@@ -13,6 +13,7 @@
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
 #include "coop/remote_prop_spawn.h"
+#include "coop/trash_channel.h"  // docs/piles/08: per-eid sync-time-context (stale carry/convert drop)
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -340,6 +341,22 @@ bool StickHoldsPhysicsOff(void* actor) {
 }
 
 void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
+    // docs/piles/08: DROP a STALE trash carry pose -- one still in flight from before the entity's last
+    // transition (re-pile/throw bumps ctx). Without this, a late clump-carry pose would re-drive the
+    // re-skinned actor (now a SETTLED PILE) to the dead clump position -- the stale-pose half of the
+    // cluster bug. ctx==0 / unknown eid (a non-trash keyed prop) -> always fresh, so Aprop poses pass.
+    if (pose.elementId != 0 &&
+        !coop::trash_channel::IsInboundStreamCtxFresh(pose.elementId, pose.ctx)) {
+        // Throttle: a short in-flight burst of same-(eid,ctx) stale poses collapses to ONE line.
+        static uint32_t s_lastDropEid = 0; static uint8_t s_lastDropCtx = 0;
+        if (pose.elementId != s_lastDropEid || pose.ctx != s_lastDropCtx) {
+            UE_LOGI("[PILE] CLIENT DROP stale carry pose eid=%u ctx=%u (older than E's last transition -- "
+                    "a clump pose still in flight after re-pile/throw; would re-drive the settled pile)",
+                    pose.elementId, static_cast<unsigned>(pose.ctx));
+            s_lastDropEid = pose.elementId; s_lastDropCtx = pose.ctx;
+        }
+        return;
+    }
     const std::wstring keyW = KeyToWString(pose.key);
     // KEY first (Aprop_C), then EID fallback (the non-keyable clump streams key=None).
     void* prop = nullptr;
@@ -508,10 +525,19 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                              payload.linVelY * payload.linVelY +
                              payload.linVelZ * payload.linVelZ;
     const float linSpeed = std::sqrt(linSpeedSq);
-    UE_LOGI("remote_prop: RELEASE wire '%ls' linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f) deg/s",
-            keyW.c_str(),
+    UE_LOGI("remote_prop: RELEASE wire '%ls' eid=%u ctx=%u linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f) deg/s",
+            keyW.c_str(), payload.elementId, static_cast<unsigned>(payload.ctx),
             payload.linVelX, payload.linVelY, payload.linVelZ, linSpeed,
             payload.angVelX, payload.angVelY, payload.angVelZ);
+    // docs/piles/08: a trash entity (keyless clump) is identified by EID, not key. DROP a STALE release
+    // (ctx older than E's last transition) so a throw delayed past a re-pile / re-grab can never re-apply
+    // velocity to the re-skinned entity. ctx==0 / eid==0 (a keyed Aprop release) -> always fresh, as before.
+    if (payload.elementId != 0 &&
+        !coop::trash_channel::IsInboundStreamCtxFresh(payload.elementId, payload.ctx)) {
+        UE_LOGI("[PILE] CLIENT DROP stale release eid=%u ctx=%u (older than E's last transition)",
+                payload.elementId, static_cast<unsigned>(payload.ctx));
+        return;
+    }
     // Identify the releasing peer by sender slot (carried by the
     // ReliableMessage envelope) rather than by key. FindSlotByKey
     // linear-scans + returns first-match-wins which would clear the
@@ -527,8 +553,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         // doesn't, the sender's drive cache is stale (e.g., a release
         // arrived for a key we never saw a PropPose for, or out-of-order
         // after a disconnect cancel). Fall through to the FindByKeyString
-        // fresh-resolve path below.
-        if (d.actor && KeyMatchesCache(senderSlot, payload.key)) {
+        // fresh-resolve path below. docs/piles/08: a keyless clump (key=None)
+        // matches ANY clump the slot carries, so ALSO require the slot's
+        // driven eid == this release's eid -- else a late E1 throw lands on
+        // E2 after a re-grab (the audit-flagged cross-slot mis-apply).
+        if (d.actor && KeyMatchesCache(senderSlot, payload.key) &&
+            (payload.elementId == 0 || d.lastEid == payload.elementId)) {
             releasedSlot = senderSlot;
             propActor = d.actor;
             meshToActOn = d.mesh;
@@ -537,9 +567,16 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     if (releasedSlot < 0) {
         if (void* prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW)) {
             // Release arrived without a matching drive cache entry --
-            // resolve fresh from the live world.
+            // resolve fresh from the live world (a keyed Aprop).
             propActor = prop;
             meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
+        } else if (payload.elementId != 0) {
+            // docs/piles/08: a keyless trash clump whose slot already moved on (E still a live clump
+            // elsewhere) -- resolve by eid so its throw still applies to the right entity.
+            if (void* prop2 = ResolveLiveActorByEid(payload.elementId)) {
+                propActor = prop2;
+                meshToActOn = ue_wrap::prop::GetStaticMesh(prop2);
+            }
         }
     }
     if (StickHoldsPhysicsOff(propActor)) {
@@ -594,8 +631,9 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             propActor,
             ue_wrap::FVector{payload.linVelX, payload.linVelY, payload.linVelZ},
             ue_wrap::FVector{payload.angVelX, payload.angVelY, payload.angVelZ});
-        UE_LOGI("remote_prop: clump RELEASE -> collision on + physics + velocity |v|=%.1f cm/s (actor=%p)",
-                linSpeed, propActor);
+        UE_LOGI("[PILE] CLIENT applied THROW eid=%u -> clump mirror physics on + velocity |v|=%.1f cm/s (actor=%p) "
+                "-- it now flies + lands; the host's LAND convert will re-skin it to a pile",
+                payload.elementId, linSpeed, propActor);
         // Throw WHOOSH: the clump is a plain AActor with no Aprop_C.thrown() to
         // fire. Same receiver-side swing as the Aprop_C branch (byte-exact RE
         // 2026-06-11: EVERY LMB throw plays `swing` regardless of prop type --
@@ -888,6 +926,10 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     }
     UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u -> destroying local actor %p",
             keyW.c_str(), payload.elementId, actor);
+    if (ue_wrap::prop::IsChipPile(actor) || ue_wrap::prop::IsGarbageClump(actor)) {
+        UE_LOGI("[PILE] CLIENT destroy eid=%u -> mirror %p removed (the pile/clump vanished here too, "
+                "matching the host)", payload.elementId, actor);
+    }
     // If any slot was kinematically driving this prop, clear that slot's
     // cache so we don't try to drive a destroyed actor next tick.
     ClearAnyDriveFor(actor);
@@ -908,22 +950,27 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
 
 void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer, int senderSlot) {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnConvert)");
-    // v81 MORPH V2 -- bind-model re-skin of eid E in place (oldEid == newEid == E). NO fresh eid,
-    // NO second entity. Resolve our current rendering of E, spawn the NEW rendering bound to the
-    // SAME E, rebind, then echo-destroy the old. docs/piles/07-MORPH-V2-held-object-channel.md.
+    // docs/piles/08 host-authoritative trash channel -- bind-model re-skin of eid E in place (oldEid ==
+    // newEid == E). NO fresh eid, NO second entity. Resolve our current rendering of E (the SYNC-MIRROR
+    // the host expects us to have), spawn the NEW rendering bound to the SAME E, rebind, echo-destroy old.
     const uint32_t E = payload.newEid;
+    const bool wantClump = (payload.kind == coop::net::propconvert_kind::kToClump);
+    const char* edge = wantClump ? "GRAB(pile->clump)" : "LAND(clump->pile)";
     if (E == 0u || E == coop::element::kInvalidId) {
-        UE_LOGW("remote_prop::OnConvert: invalid eid E=%u -- dropping", E);
+        UE_LOGW("[PILE] CLIENT recv convert %s -- INVALID eid E=%u, dropping (no entity to re-skin)", edge, E);
         return nullptr;
     }
+    // docs/piles/08: adopt the host's authoritative sync-time-context for E, and DROP a stale/out-of-order
+    // convert (a duplicate, or one older than a transition we already applied). ctx==0 = legacy/non-trash.
+    if (!coop::trash_channel::AdoptInboundConvertCtx(E, payload.ctx)) return nullptr;
     void* cur = ResolveLiveActorByEid(E);
-    const bool wantClump = (payload.kind == coop::net::propconvert_kind::kToClump);
+    const bool hadMirror = (cur != nullptr);   // was a SYNC-MIRROR of E present to re-skin?
     // Idempotency: if our rendering of E already matches the target edge (an echo, a duplicate, or a
     // grab-race loser's convert arriving after we already rendered the same class), this is a no-op
     // -- the winner's held-pose stream drives it. Prevents a spurious re-spawn + actor churn.
     if (cur && ue_wrap::prop::IsGarbageClump(cur) == wantClump) {
-        UE_LOGI("remote_prop::OnConvert: eid=%u already %s -- idempotent no-op",
-                E, wantClump ? "clump" : "pile");
+        UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u -- already %s, idempotent no-op (echo/dup)",
+                edge, E, static_cast<unsigned>(payload.ctx), wantClump ? "clump" : "pile");
         return cur;
     }
     // Spawn the NEW rendering bound to E. ToClump -> a kinematic clump (physFlags=0 -> not simulating;
@@ -946,8 +993,8 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     remote_prop_spawn::OnSpawn(p, senderSlot, localPlayer, /*fromConvert=*/true,
                               /*deferKerfur=*/true, &next, /*skipBind=*/true);
     if (!next) {
-        UE_LOGW("remote_prop::OnConvert: eid=%u %s spawn FAILED -- E left rendering as the old actor",
-                E, wantClump ? "clump" : "pile");
+        UE_LOGW("[PILE] CLIENT recv convert %s eid=%u -- re-skin spawn FAILED, E left as the old actor (DESYNC)",
+                edge, E);
         return nullptr;
     }
     // Rebind E onto the new rendering. RegisterPropMirror is the single rebind entry point -- it routes
@@ -966,10 +1013,14 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
             R::CallFunction(cur, g_destroyActorFn, nullptr);
         }
     }
-    UE_LOGI("remote_prop::OnConvert: eid=%u re-skin -> %s cls='%ls' at (%.1f,%.1f,%.1f) variant=%u",
-            E, wantClump ? "clump" : "pile", cls.c_str(),
-            payload.locX, payload.locY, payload.locZ,
-            static_cast<unsigned>(payload.chipType));
+    UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u -> mirror %s, re-skinned to %s cls='%ls' at "
+            "(%.1f,%.1f,%.1f) variant=%u%s",
+            edge, E, static_cast<unsigned>(payload.ctx),
+            hadMirror ? "FOUND" : "NOT-FOUND",
+            wantClump ? "CLUMP" : "PILE", cls.c_str(),
+            payload.locX, payload.locY, payload.locZ, static_cast<unsigned>(payload.chipType),
+            hadMirror ? " [SYNC-MIRROR OK]"
+                      : " [WARN: no local mirror of E existed -- spawned fresh; was desynced pre-convert]");
     return next;
 }
 

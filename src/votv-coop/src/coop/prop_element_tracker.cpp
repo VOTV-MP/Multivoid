@@ -405,7 +405,7 @@ void RebindLocalElementActor(coop::element::ElementId eid, void* newActor) {
     if (el->IsMirror()) {
         // A mirror eid is the wrong path -- remote_prop::RegisterPropMirror(...,rebindInPlace)
         // owns mirror rebinds (and the reverse map below is host/seed-side local bookkeeping a
-        // mirror was never in). Defensive guard; pile_morph only calls this for an isLocal eid.
+        // mirror was never in). Defensive guard; trash_channel only calls this for an isLocal eid.
         UE_LOGW("prop_element_tracker::RebindLocalElementActor: eid=%u is a MIRROR -- ignoring "
                 "(use RegisterPropMirror rebindInPlace)", eid);
         return;

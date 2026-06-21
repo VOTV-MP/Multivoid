@@ -91,9 +91,9 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
 coop::element::ElementId GetPropElementIdForActor(void* actor);
 
 // Re-point a LOCAL Prop Element (m_mirror=false, owned by THIS peer) from its
-// current actor onto `newActor`, keeping the SAME eid. Used by the bind-model
-// pile morph (pile_morph / remote_prop::OnConvert): when this peer's OWN pile
-// (a local tracker Element) morphs pile-A -> clump -> pile-B, the eid `E` must
+// current actor onto `newActor`, keeping the SAME eid. Used by the host-authoritative
+// trash channel (trash_channel / remote_prop::OnConvert): when this peer's OWN pile
+// (a local tracker Element) re-skins pile-A -> clump -> pile-B, the eid `E` must
 // follow the new UObject so the held-pose stream + a later grab/destroy resolve
 // it. Updates the Element's cached actor/liveness-index AND the reverse map
 // (g_actorToPropElementId): drops the old actor's entry (if it still points at

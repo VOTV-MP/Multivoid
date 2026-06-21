@@ -694,7 +694,27 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 81;  // v81: pile MORPH V2 -- the bind-model grab->carry->
+inline constexpr uint16_t kProtocolVersion = 82;  // v82: HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync
+                                                  // redesign; docs/piles/08). RETIRES the v81 morph
+                                                  // (proximity land-watch false-fired in pile CLUSTERS,
+                                                  // client direction never wired). Adds a per-eid MTA
+                                                  // sync-time-context `ctx` byte to PropConvert (in its
+                                                  // existing pad -- no size change), PropPoseSnapshot
+                                                  // (60->64), and PropReleasePayload (56->64, also +eid
+                                                  // so a keyless clump throw routes by eid not key): host
+                                                  // bumps ctx on EVERY trash-entity transition (PILED/
+                                                  // HELD/FLYING), stamps it on every convert/carry/throw,
+                                                  // and receivers DROP a stale-ctx packet -> a late carry/
+                                                  // land packet for eid E can never re-apply to the
+                                                  // re-skinned entity. Identity is the host-minted eid
+                                                  // end-to-end (position is NEVER identity), so the
+                                                  // cluster mis-bind is impossible by construction. The
+                                                  // clump<->pile link is the host_spawn_watcher convert-
+                                                  // spawn POST (WorldContextObject=source, ReturnValue=
+                                                  // new actor -- zero proximity). coop/trash_channel +
+                                                  // host_spawn_watcher + remote_prop::OnConvert. (v83 adds
+                                                  // the client GrabIntent/ThrowIntent direction.)
+                                                  // v81: pile MORPH V2 -- the bind-model grab->carry->
                                                   // throw->land sync (PropConvert=41 re-skins eid E in
                                                   // place: oldEid==newEid==E, +kind byte ToClump/ToPile).
                                                   // RETIRES the v52 fresh-eid death-watch morph. Anchored
@@ -1865,14 +1885,22 @@ struct PropPoseSnapshot {
     // (legacy keyed prop). Mirrors the mannequin pose path but with our own identity.
     // [[project-bug-trash-chippile-uaf-crash]]
     uint32_t elementId;
+    // v82: MTA sync-time-context for the trash-entity carry stream. The holder stamps the host's
+    // current per-eid ctx (trash_channel::CtxForEid) on every carry pose; the receiver drops a pose
+    // whose ctx is OLDER than the eid's known generation -- so a clump-carry pose still in flight when
+    // the entity re-piles (ToPile bumps ctx) can never re-drive the settled pile (the cluster-mis-bind
+    // / stale-pose guard the morph lacked). 0 = no enforcement (a non-trash keyed prop -- ctx only
+    // applies to eid-identified trash entities, which start at ctx>=1). [grows the snapshot 60->64]
+    uint8_t  ctx;
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(PropPoseSnapshot) == 60, "PropPoseSnapshot must be 60 bytes (v26: +elementId)");
+static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes (v82: +ctx)");
 
 struct PropPosePacket {
     PacketHeader     header;  // 20
-    PropPoseSnapshot pose;    // 60
+    PropPoseSnapshot pose;    // 64
 };
-static_assert(sizeof(PropPosePacket) == 80, "PropPosePacket must be 80 bytes");
+static_assert(sizeof(PropPosePacket) == 84, "PropPosePacket must be 84 bytes (v82: pose +ctx)");
 
 // v37: ONE NPC's pose in the EntityPose batch. Keyed by the Npc Element id (NPCs have
 // no stable BP key -- their identity is the host-allocated elementId, like EntitySpawn).
@@ -2114,8 +2142,20 @@ struct PropReleasePayload {
     float   angVelX;   // deg/s -- GetPhysicsAngularVelocityInDegrees at release
     float   angVelY;
     float   angVelZ;
+    // v82: the trash-entity eid (0 = a keyed Aprop release, resolved by `key` as before). A keyless
+    // clump streams key=None, so the THROW must be routed by eid -- without this the receiver matched
+    // the release to whatever clump the sender's drive slot happened to carry (a late E1 throw landing
+    // on E2 after a re-grab). The receiver requires the slot's driven eid == this, else resolves the
+    // live actor by eid; identity is the eid end-to-end (docs/piles/08). [+4 bytes]
+    uint32_t elementId;
+    // v82: MTA sync-time-context for the trash-entity THROW edge (HELD -> FLYING). Same semantics as
+    // PropPoseSnapshot.ctx: the host stamps its current per-eid ctx; the receiver DROPS a release whose
+    // ctx is older than the eid's known generation (a throw delayed past a re-pile/re-grab can't re-apply
+    // velocity to the re-skinned entity). 0 = no enforcement (a non-trash keyed prop release). [+4 bytes]
+    uint8_t ctx;
+    uint8_t _pad[3];
 };
-static_assert(sizeof(PropReleasePayload) == 56, "PropReleasePayload must be 56 bytes");
+static_assert(sizeof(PropReleasePayload) == 64, "PropReleasePayload must be 64 bytes (v82: +elementId +ctx)");
 // Reliable-fit guard: if the payload ever grows past one datagram's reliable
 // budget, ReliableChannel::Send silently rejects (returns false) -- catch this
 // at compile time. Audit-added 2026-05-24 (Bug B audit issue #4).
@@ -3124,7 +3164,13 @@ struct PropConvertPayload {
     float rotPitch, rotYaw, rotRoll;
     uint8_t chipType;                     // the trash variant (carried across both edges)
     uint8_t kind;                         // propconvert_kind:: kToClump (grab) | kToPile (land)  [was _pad[0]]
-    uint8_t _pad[2];                      // keep the struct 4-aligned + bytes-beyond-pileClass-len zero
+    uint8_t ctx;                          // v82: MTA sync-time-context -- the host's per-eid generation counter
+                                          //      (trash_channel), bumped on EVERY trash-entity transition. The
+                                          //      receiver adopts it (host-authoritative) + drops a later PropPose/
+                                          //      PropConvert for this eid whose ctx is older -> a stale carry/land
+                                          //      packet can never re-apply to the re-skinned entity (the cluster
+                                          //      mis-bind guard the morph lacked). [was _pad[0]]
+    uint8_t _pad[1];                      // keep the struct 4-aligned + bytes-beyond-pileClass-len zero
 };
 static_assert(sizeof(PropConvertPayload) == 100, "PropConvertPayload must be 100 bytes");
 

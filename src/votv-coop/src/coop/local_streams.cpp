@@ -12,7 +12,7 @@
 #include "coop/kerfur_entity.h"  // K-5: GetKerfurMirrorEidForActor (held-kerfur-prop eid fallback)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/pile_morph.h"      // v81 MORPH V2: TryAdoptHeldClump (the proven held-object grab seam)
+#include "coop/trash_channel.h"   // docs/piles/08: CtxForEid (carry) + OnHostRelease (throw) -- the trash sync-time-context
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_stick_sync.h"
 #include "coop/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
@@ -289,24 +289,28 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // floats in front of the puppet via this pose stream (like the mannequin),
         // and gets physics on release. [[project-bug-trash-chippile-uaf-crash]]
         if (heldActor != g_lastHeldProp) {
-            // New-held edge -- the PROVEN held-object grab seam (v81 MORPH V2). If a pile_morph grab is
-            // pending and this newly-held actor is the morphed clump, adopt it onto the grabbed pile's eid
-            // E (rebind + PropConvert{ToClump} + arm the land-watch) and DON'T author it as a fresh-eid
-            // item (the convert + this pose stream own the clump). A non-clump / no-pending held item
-            // falls through to the normal Aprop_C broadcast. Then resolve the wire eid ONCE here -- the
-            // only place the O(n) ResolveMirrorEidByActor fallback (for the morph-bound clump) may run --
-            // and CACHE it (g_lastHeldEid) for the per-tick stream below so the carry hot path is O(1).
-            const bool adopted =
-                coop::pile_morph::TryAdoptHeldClump(session, heldActor);
-            const bool mirrored = adopted
-                ? false
-                : coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
+            // New-held edge. A held trash CLUMP (the chipPile's grab product) is NOT authored here -- it is a
+            // docs/piles/08 host-authoritative trash entity: host_spawn_watcher already caught its convert-
+            // spawn POST and trash_channel broadcast PropConvert{ToClump} + rebound the clump onto the source
+            // pile's eid E, so this stream only CARRIES E's pose (EnsureHeldItemBroadcast returns false for a
+            // clump -- the class gate at trash_collect_sync.cpp). A normal Aprop_C item is broadcast as a
+            // fresh keyed prop. Resolve the wire eid ONCE here (the only place the O(n) ResolveMirrorEidByActor
+            // fallback for the eid-only clump may run) and CACHE it (g_lastHeldEid) so the carry stream is O(1).
+            const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
             g_lastHeldEid = ResolveHeldPropEid(heldActor);
+            const unsigned eidLog =
+                (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid);
             UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' eid=%u -> %s",
                     heldActor, R::ClassNameOf(heldActor).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
-                    (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
-                    adopted ? "MORPH-ADOPT(ToClump)" : (mirrored ? "BROADCAST" : "no"));
+                    eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
+            // [PILE] carry phase: a trash clump (carry-only, eid-identified) is now in hand. The convert
+            // (pile->clump) was already broadcast by host_spawn_watcher; this stream just carries E's pose.
+            if (!mirrored && eidLog != 0 && ue_wrap::prop::IsGarbageClump(heldActor)) {
+                UE_LOGI("[PILE] %s CARRY eid=%u clump in hand -> streaming carry pose (ctx-stamped); "
+                        "clients drive their mirror of E",
+                        (session.role() == coop::net::Role::Host) ? "HOST" : "CLIENT", eidLog);
+            }
         }
         // Stream the held world transform. key (None for the clump) + eid (the
         // clump's cross-peer identity); the receiver resolves the mirror by key,
@@ -322,6 +326,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // ResolveHeldPropEid every tick (the CLAUDE.md per-frame full-scan hot-path regression).
         pp.elementId = (g_lastHeldEid == coop::element::kInvalidId) ? 0u
                                                                     : static_cast<uint32_t>(g_lastHeldEid);
+        // v82 (docs/piles/08): stamp the trash entity's current sync-time-context so the receiver can DROP
+        // a carry pose that arrives after a transition (re-pile/throw); 0 for a non-trash held prop.
+        pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
         const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
         const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
         pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
@@ -381,9 +388,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
                 std::sqrt(linMagSq),
                 vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+        // v82 (docs/piles/08): the HOST owns the trash entity's sync-time-context -- bump it on the throw
+        // (HELD -> FLYING) and stamp the PropRelease so a stale carry can't re-apply post-throw. 0 on a
+        // client / a non-trash release (OnHostRelease returns 0 for an eid it doesn't author). The eid
+        // routes the keyless clump throw (key=None can't disambiguate one clump from another).
+        const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
+                                    ? 0u : static_cast<uint32_t>(g_lastHeldEid);
+        const uint8_t relCtx = (session.role() == coop::net::Role::Host)
+                                   ? coop::trash_channel::OnHostRelease(g_lastHeldEid) : 0u;
+        if (relEid != 0 && relCtx != 0) {
+            UE_LOGI("[PILE] HOST THROW eid=%u -> FLYING (PropRelease ctx=%u |v|=%.0f cm/s) -- clients re-enable physics on the clump mirror",
+                    relEid, static_cast<unsigned>(relCtx), std::sqrt(linMagSq));
+        }
         session.SendPropRelease(g_lastHeldKey,
                                 vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+                                vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, relCtx);
         g_lastHeldProp = nullptr;
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // v81: invalidate the cached held eid on release

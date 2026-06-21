@@ -261,7 +261,9 @@ public:
 
     bool SendPropRelease(const WireKey& key,
                          float linVelX, float linVelY, float linVelZ,
-                         float angVelX, float angVelY, float angVelZ);
+                         float angVelX, float angVelY, float angVelZ,
+                         uint32_t elementId = 0,  // v82: trash-entity eid (0 = keyed Aprop, routed by key)
+                         uint8_t ctx = 0);        // v82: trash-entity sync-time-context (0 = non-trash, no enforcement)
     bool SendPropSpawn(const PropSpawnPayload& payload);
     bool SendPropDestroy(const PropDestroyPayload& payload);
     bool SendEntitySpawn(const EntitySpawnPayload& payload);

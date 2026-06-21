@@ -51,7 +51,7 @@
 #include "coop/window_sync.h"
 #include "coop/join_progress.h"
 #include "coop/garbage_sync.h"
-#include "coop/pile_morph.h"
+#include "coop/trash_channel.h"
 #include "coop/trash_collect_sync.h"
 #include "coop/trash_pile_sync.h"
 #include "coop/save_block.h"
@@ -300,6 +300,7 @@ DisconnectStats DisconnectAll() {
     coop::grime_sync::OnDisconnect();
     coop::trash_pile_sync::OnDisconnect();
     coop::trash_collect_sync::OnDisconnect();
+    coop::trash_channel::OnDisconnect();  // docs/piles/08: drop the per-eid trash sync-time-context map
     coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
     return stats;
 }
@@ -336,7 +337,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable};  coop::npc_mirror::TickClientNpcs(); }  // v37 CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::world_actor_sync::TickPoseStream(); }       // v80 HOST: read event WorldActors -> publish WorldActorPose batch (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable};  coop::world_actor_sync::TickClientWorldActors(); } // v80 CLIENT: apply batch + drive WorldActor mirror interp (client-only, no-op on host)
-    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::pile_morph::Tick(session); }  // v81 MORPH V2: deferred-destroy fallback + land-watch (re-pile on the adopted clump's morph-death). Cheap no-op when idle
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // M2: ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_convert::Tick(); }  // v67: drain deferred kerfur conversion requests/converges (cheap no-op when empty)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // v74: drain menu commands + advance the ownership-follow loop (cheap no-op when idle)

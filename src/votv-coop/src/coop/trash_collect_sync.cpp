@@ -10,7 +10,6 @@
 #include "coop/trash_collect_sync.h"
 
 #include "coop/kerfur_entity.h"  // K-5: IsKerfurActor (the held-kerfur class-gate)
-#include "coop/pile_morph.h"     // v81 MORPH V2: the bind-model grab edge (replaces the v52 death-watch)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"
@@ -43,25 +42,18 @@ namespace P  = ue_wrap::profile;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (stays for process life)
 
-// RULE 1+2 (2026-06-20, v81 MORPH V2): the CLUMP death-watch that used to live here (WatchedClump /
-// g_watchedClumps / WatchClump / BroadcastConvertNear / TickWatchReleasedClumps) is RETIRED. It
-// expressed a held clump as a FRESH-eid keyless PropSpawn then liveness-polled it to emit a fresh-eid
-// PropConvert on land -- the destroy-and-recreate model the robust design condemns: a SECOND cross-peer
-// entity per morph (the dupe), and the host's held clump was suppressed forever by the pre-quiescence
-// guard so it never fired at all. Replaced by coop/pile_morph: the bind-model morph RE-SKINS the pile's
-// eid E in place (pile-A -> clump -> pile-B, oldEid==newEid==E), anchored on the PROVEN held-object
-// channel, with a deferred-destroy fallback. docs/piles/07-MORPH-V2-held-object-channel.md.
+// RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH lived here + in coop/pile_morph (CLUMP death-watch /
+// proximity land-detect / deferred-destroy / TryAdoptHeldClump / OnGrab) and is FULLY RETIRED. It re-skinned
+// eid E in place but detected the land by a proximity FindNearestChipPile(lastPos), which FALSE-FIRED on a
+// NEIGHBOUR pile in a dense CLUSTER (the eid mis-bound -> divergence; the user's "host took piles, nothing
+// synced"). The host-authoritative trash channel replaces it: identity is the host-minted eid end-to-end
+// (POSITION IS NEVER IDENTITY -> a cluster can't mis-bind), the clump<->pile link is the host_spawn_watcher
+// convert-spawn POST (WorldContextObject=source -> trash_channel, ZERO proximity), and a per-eid sync-time-
+// context (ctx) drops stale carry/land packets. This file keeps only EnsureHeldItemBroadcast (the held-item
+// broadcast for normal Aprop trash) + PROBE-A. coop/trash_channel + host_spawn_watcher.
 //
-// NOTE (2026-06-17, RULE 1+2): the mirror-PILE death-watch that used to live here (g_watchedPiles +
-// WatchPile/...) was RETIRED earlier. It inferred "grabbed" from "a watched pile's actor died NEAR the
-// local camera", which is UNSOUND: a chipPile dies near the camera for many non-grab reasons (a peer
-// bump, a physics nudge, a LifeSpan despawn), each misread as a grab -> a spurious PropDestroy -> the
-// pile wiped on BOTH peers (the recurring "piles destroyed when touched a lot" bug). The DECISIVE RE
-// (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md) proved the correct mechanism is OnPileGrabPre
-// below: a PRE observer on the (ProcessEvent-visible) E-press InpActEvt_use that reads lookAtActor ->
-// the pile, still ALIVE + eid-resolvable. It fires ONLY on a real grab (a bump/stream-out/physics-death
-// is not an E-press). OnPileGrabPre now arms the pile_morph grab edge (carry + re-pile) with a
-// deferred-destroy fallback that preserves the working grab->vanish.
+// NOTE: the older mirror-PILE death-watch (g_watchedPiles) was retired earlier for the same unsoundness --
+// it inferred "grabbed" from "a pile died near the camera", which fires for bumps/physics/despawn too.
 
 }  // namespace
 
@@ -78,12 +70,11 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // the HOST this is redundant (its kerfur prop is tracker-known -> the express skip below already
     // returns false), but gating up-front is role-agnostic + explicit.
     if (coop::kerfur_entity::IsKerfurActor(heldActor)) return false;
-    // v81 MORPH V2 class-gate: a garbageClump is the bind-model morph's product -- pile_morph owns its
-    // identity, claiming it at its Init-POST (TryClaimMorphProduct) where it re-skins the grabbed pile's
-    // eid E onto the clump + suppresses the independent expression; the carry then streams under E. The
-    // clump must NEVER be expressed here as a FRESH-eid keyless PropSpawn (the retired v52 death-watch
-    // model = a second cross-peer entity = the dupe). If a clump reaches here it had no live grab to
-    // claim (a stray pickup / a missed morph the deferred-destroy fallback handles) -> never author it.
+    // docs/piles/08 class-gate: a garbageClump is a host-authoritative trash entity -- its identity is the
+    // source pile's eid E, bound by trash_channel::OnHostConvert at the convert-spawn POST; the held-pose
+    // stream then carries E (local_streams). The clump must NEVER be expressed here as a FRESH-eid keyless
+    // PropSpawn (that second cross-peer entity = the dupe). A clump that reaches here (a stray pickup, or a
+    // pile that had no eid to convert) is simply not authored -- carry-only, no dupe.
     if (ue_wrap::prop::IsGarbageClump(heldActor)) return false;
     // Any KEYED interactable: Aprop_C trash items AND the non-Aprop_C
     // garbageClump/chipPile (the actual trash the player carries). CRASH-SAFETY
@@ -255,62 +246,43 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     return true;
 }
 
-// ---- pile-grab destroy: the InpActEvt_use PRE observer (RULE-1 replacement for the death-watch) ----
+// ---- PROBE-A: the chipPile grab-intent diagnostic (docs/piles/08 Step 0) ----------------------------
 //
-// DECISIVE RE (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md, summary table): a chipPile grab
-// is the E-press input action AmainPlayer_C::InpActEvt_use_..._41 -> icast(lookAtActor)->playerGrabbed
-// (spawn clump + pickupObjectDirect(clump) + K2_DestroyActor(self)), all dispatched BP-internally
-// (EX_LocalVirtualFunction / EX_VirtualFunction -> ProcessInternal) and INVISIBLE to our ProcessEvent
-// detour. The ONLY ProcessEvent-observable edge with the pile STILL ALIVE + eid-resolvable is a PRE
-// observer on InpActEvt_use (the native input -> UFunction dispatch DOES hit ProcessEvent -- the same
-// seam door + kerfur-menu sync use), reading mainPlayer.lookAtActor = the pile under the crosshair
-// BEFORE the ubergraph converts+destroys it. This fires ONLY on a real grab: a bump, a stream-out, a
-// physics death, a LifeSpan despawn are NOT an E-press, so they can never enter this path -- which is
-// exactly why it replaces the unsound proximity death-watch (the recurring "piles destroyed when a
-// peer touches them" bug). Symmetric (BOTH roles): the owner re-grabbing its own pile resolves via the
-// forward map (GetPropElementIdForActor); a peer grabbing a host-owned mirror pile resolves via
-// remote_prop::ResolveMirrorEidByActor. Puppets are unpossessed -> never process input -> this only
-// ever fires for the local player.
+// DECISIVE RE (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md): a chipPile grab is the E-press
+// input action AmainPlayer_C::InpActEvt_use_..._41 -> icast(lookAtActor)->playerGrabbed (spawn clump +
+// pickupObjectDirect(clump) + K2_DestroyActor(self)), all dispatched BP-internally (EX_LocalVirtualFunction
+// -> ProcessInternal) and INVISIBLE to our ProcessEvent detour. The one ProcessEvent-observable edge with
+// the pile STILL ALIVE is a PRE observer on InpActEvt_use (the native input->UFunction dispatch DOES hit
+// ProcessEvent). docs/piles/08 makes the HOST grab sync WITHOUT acting here: the BP's own BeginDeferred is
+// caught at the host_spawn_watcher convert-spawn POST (host-authoritative, zero-proximity). So this
+// observer is now PROBE-A only (Increment 1): it logs the carry-slot the clump rides so the client-grab
+// direction (v83) can suppress the native grab + send GrabIntent from this exact seam. Puppets are
+// unpossessed -> never process input -> this only ever fires for the local player.
 static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;  // BOTH roles -- whoever physically grabs
+    if (!s || !s->connected()) return;  // BOTH roles -- whoever physically presses E
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the pile (PRE-conversion, alive)
     if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return;         // E-press not aimed at a pile
-    // HANDS-FULL gate: if the player is ALREADY holding something (a carried clump/item), this E-press
-    // cannot grab the aimed pile -- no morph will happen. Arming a morph (with its deferred PropDestroy
-    // fallback) here would spuriously vanish an un-grabbed pile's mirror on peers. Skip. (PRE observer:
-    // the held state is the player's PRIOR carry; the aimed pile's own morph hasn't run yet.)
-    {
-        ue_wrap::engine::MainPlayerGrabState gs{};
-        if (ue_wrap::engine::ReadMainPlayerGrabState(self, gs) && (gs.grabbingActor || gs.holdingActor))
-            return;
-    }
-    // Cross-peer identity: a pile WE own is in the forward map; a pile WE mirror is in the prop
-    // MirrorManager. Either resolves THE shared host-minted eid the other peer keys its copy on. (The
-    // morph's rebind routes on the Element's authoritative IsMirror() flag inside RegisterPropMirror, so
-    // we no longer need to thread which map it came from.)
-    coop::element::ElementId eid = PT::GetPropElementIdForActor(aimed);
-    if (eid == coop::element::kInvalidId)
-        eid = coop::remote_prop::ResolveMirrorEidByActor(aimed);
-    if (eid == coop::element::kInvalidId || eid == 0u) return;  // untracked pile -> no peer mirror to drop
-    // InpActEvt_use dispatches on BOTH the press AND the release of one tap; the press already
-    // converts+destroys the pile so the release is a natural no-op (lookAtActor no longer the pile),
-    // but collapse a same-eid repeat within a tap window defensively. One E-press grabs one pile, so a
-    // single (eid,time) slot suffices -- no unbounded per-pile map.
-    static coop::element::ElementId s_lastEid = coop::element::kInvalidId;
-    static std::chrono::steady_clock::time_point s_lastTs{};
-    const auto now = std::chrono::steady_clock::now();
-    if (eid == s_lastEid && now - s_lastTs < std::chrono::milliseconds(300)) return;
-    s_lastEid = eid;
-    s_lastTs  = now;
-    // v81 MORPH V2: arm the bind-model morph (carry + re-pile) on the pile's eid E. pile_morph claims the
-    // morphed clump at its Init-POST (rebind E + PropConvert{ToClump} + suppress the clump's independent
-    // identity). A deferred PropDestroy(E) fallback inside pile_morph fires if no clump is claimed in time
-    // -- so this STILL produces the working take-17 grab->vanish when the morph can't sync (no regression),
-    // and the carry/re-pile when it can (the upgrade).
-    const ue_wrap::FVector pilePos = ue_wrap::engine::GetActorLocation(aimed);  // pile alive here
-    coop::pile_morph::OnGrab(*s, eid, pilePos);
+    // PROBE-A (docs/piles/08 Step 0): the HOST grab now syncs WITHOUT arming anything here -- the BP's own
+    // BeginDeferred(clump) is caught at the host_spawn_watcher convert-spawn POST (WorldContextObject=pile
+    // -> trash_channel ToClump; the land clump->pile likewise), zero-proximity + host-authoritative. This
+    // observer's Increment-1 job is purely diagnostic: log the role, the aimed pile's eid (fwd + mirror),
+    // and which carry SLOT the clump rides (grabbing_actor vs holding_actor -- the s34 correction left this
+    // [?]) so the client-grab direction (v83) gates on the right slot. The client suppress-native +
+    // GrabIntent send is added HERE in Increment 2. Read-only; fires only when aiming at a chipPile.
+    coop::element::ElementId fwdEid = PT::GetPropElementIdForActor(aimed);
+    coop::element::ElementId mirEid = coop::remote_prop::ResolveMirrorEidByActor(aimed);
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    ue_wrap::engine::ReadMainPlayerGrabState(self, gs);
+    const unsigned fwd = (fwdEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(fwdEid);
+    const unsigned mir = (mirEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(mirEid);
+    UE_LOGI("[PILE] %s E-PRESS on pile %p -- localEid=%u mirrorEid=%u %s (carry slots: grabbingActor=%p "
+            "holdingActor=%p). PROBE-A; host grab will sync via the spawn-POST convert (Increment 1).",
+            s->role() == coop::net::Role::Host ? "HOST" : "CLIENT", aimed, fwd, mir,
+            (fwd != 0 || mir != 0) ? "[TRACKED -> grab will sync]"
+                                   : "[UNTRACKED -> grab will NOT sync; tracking gap]",
+            gs.grabbingActor, gs.holdingActor);
 }
 
 void Install(coop::net::Session* session) {
@@ -329,13 +301,12 @@ void Install(coop::net::Session* session) {
         return;  // not latched -> retry next Install
     }
     g_grabObserverInstalled = true;
-    UE_LOGI("trash_collect: pile-grab observer installed on InpActEvt_use (E-press on a chipPile -> "
-            "pile_morph grab edge: carry+re-pile, deferred-destroy fallback)");
+    UE_LOGI("trash_collect: pile grab-intent observer installed on InpActEvt_use (PROBE-A diagnostic; "
+            "the host grab syncs via the host_spawn_watcher convert-spawn POST, docs/piles/08)");
 }
 
 void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
-    coop::pile_morph::OnDisconnect();  // clear the morph latches (pending-morph + land-watch)
 }
 
 }  // namespace coop::trash_collect_sync

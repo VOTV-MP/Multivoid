@@ -38,7 +38,7 @@ enum class Bucket {
     Interactable,   // interactable_sync::Tick (door/light/container poll)
     WeatherConnect, // weather_sync::TickConnect
     ItemConnect,    // item_activate::TickConnect
-    TrashWatch,     // pile_morph::Tick (deferred-destroy fallback + land-watch) + host_spawn_watcher etc.
+    TrashWatch,     // host_spawn_watcher::TickWatchedProps (ambient-prop despawn) + kerfur/stick drains etc.
     Balance,        // balance_sync::Tick
     SnapshotDrain,  // prop_snapshot::DrainChunk
     RemoteProp,     // remote_prop::Tick

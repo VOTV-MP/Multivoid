@@ -258,7 +258,7 @@ add_library(votv-coop SHARED
     src/coop/garbage_sync.cpp
     src/coop/ambient_spawner_suppress.cpp
     src/coop/host_spawn_watcher.cpp
-    src/coop/pile_morph.cpp
+    src/coop/trash_channel.cpp
     src/coop/trash_collect_sync.cpp
     src/coop/trash_pile_sync.cpp
     src/coop/weather_sync.cpp

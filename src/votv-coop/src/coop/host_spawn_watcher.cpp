@@ -7,11 +7,14 @@
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
+#include "coop/remote_prop.h"         // ResolveMirrorEidByActor (the trash-convert source eid resolve)
 #include "coop/remote_prop_spawn.h"
+#include "coop/trash_channel.h"       // OnHostConvert (the host-authoritative trash re-skin, docs/piles/08)
+#include "ue_wrap/engine.h"          // GetActorLocation (the source pile's position for the [PILE] log)
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"            // IsDescendantOfProp (the keyed-prop gate)
+#include "ue_wrap/prop.h"            // IsDescendantOfProp (the keyed-prop gate) + IsChipPileClass/IsGarbageClumpClass/GetChipType
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"       // FTransform (the reflected SpawnTransform param layout)
@@ -45,6 +48,9 @@ int32_t g_classParamOff      = -1;   // ActorClass UClass* param
 int32_t g_returnParamOff     = -1;   // ReturnValue AActor* param
 int32_t g_xformParamOff      = -1;   // SpawnTransform param -- THE spawn pose (the
                                      // actor isn't positioned yet at BeginDeferred POST)
+int32_t g_worldCtxParamOff   = -1;   // WorldContextObject param (= the BP `self` that called
+                                     // BeginDeferred -- the SOURCE actor on a trash convert: the
+                                     // dying pile on a grab / the dying clump on a land). docs/piles/08.
 void*   g_finishSpawnFn      = nullptr;  // FinishSpawningActor -- the KEYED Q-menu/sandbox seam
 int32_t g_finishReturnOff    = -1;       // FinishSpawningActor ReturnValue (the finished actor)
 bool    g_observerRegistered = false;  // also the permanent give-up latch
@@ -94,6 +100,78 @@ void WatchSpawnedProp(void* actor, uint32_t eid) {
     g_watched.push_back(WatchedProp{actor, idx, eid});
 }
 
+// Read the SpawnTransform PARAM (NOT GetActorLocation -- the actor is not positioned until
+// FinishSpawningActor) into loc/rot/scale. ue_wrap::FTransform IS the reflected param layout (FQuat@0x00,
+// Translation@0x10, Scale3D@0x20 -- 48B aligned, static_assert'd). Pure reads -> thread-safe. Shared by
+// the ambient-prop PropSpawn (OnSpawnPost) and the trash-convert PropConvert (MaybeBroadcastTrashConvert_).
+void ReadSpawnXform_(const void* params, ue_wrap::FVector& loc, ue_wrap::FRotator& rot,
+                     ue_wrap::FVector& scale) {
+    const auto* xt = reinterpret_cast<const ue_wrap::FTransform*>(
+        reinterpret_cast<const uint8_t*>(params) + g_xformParamOff);
+    loc.X = xt->TX; loc.Y = xt->TY; loc.Z = xt->TZ;
+    scale.X = xt->SX; scale.Y = xt->SY; scale.Z = xt->SZ;
+    const float qx = xt->RotX, qy = xt->RotY, qz = xt->RotZ, qw = xt->RotW;
+    const float sinp  = 2.f * (qw * qy - qz * qx);
+    const float sinpc = sinp > 1.f ? 1.f : (sinp < -1.f ? -1.f : sinp);
+    constexpr float kRadToDeg = 57.29577951308232f;
+    rot.Pitch = std::asin(sinpc) * kRadToDeg;
+    rot.Yaw   = std::atan2(2.f * (qw * qz + qx * qy), 1.f - 2.f * (qy * qy + qz * qz)) * kRadToDeg;
+    rot.Roll  = std::atan2(2.f * (qw * qx + qy * qz), 1.f - 2.f * (qx * qx + qy * qy)) * kRadToDeg;
+}
+
+// HOST: a chipPile/clump just DEFERRED-spawned (the convert-spawn POST -- the docs/piles/08 linchpin).
+// The BeginDeferred WorldContextObject param is the BP `self` that called it -- the dying SOURCE actor:
+// the PILE on a grab (pile->clump) or the CLUMP on a land (clump->pile). If `self` is bound to a tracked
+// trash eid E, this spawn is a RE-SKIN of E (not a fresh seed pile) -> route it through trash_channel
+// (host-authoritative ctx + a PropConvert{E} broadcast). Identity is the WorldContextObject==source link
+// -- ZERO proximity (the v81 morph's cluster-mis-binding FindNearestChipPile is gone). A chipPile spawned
+// by the garbagePileSpawner / connect snapshot has NO bound-eid source -> not a convert -> the keyless
+// pile-expression path (prop_snapshot / seed walk) owns it; we ignore it here. Game thread (caller GT-gated).
+void MaybeBroadcastTrashConvert_(coop::net::Session* s, void* actorClass, void* newActor,
+                                 const void* params) {
+    const bool spawnedClump = ue_wrap::prop::IsGarbageClumpClass(actorClass);
+    if (g_worldCtxParamOff < 0) return;  // WorldContextObject unresolved (warned once at Install) -> can't link
+    void* src = *reinterpret_cast<void* const*>(
+        reinterpret_cast<const uint8_t*>(params) + g_worldCtxParamOff);
+    if (!src || !R::IsLive(src)) return;
+    coop::element::ElementId E = PT::GetPropElementIdForActor(src);   // host owns its pile -> local element
+    if (E == coop::element::kInvalidId)
+        E = coop::remote_prop::ResolveMirrorEidByActor(src);          // (defensive -- a mirror source)
+    if (E == coop::element::kInvalidId || E == 0u) {
+        // No bound source eid. A PILE spawn here is a fresh world/snapshot SEED (expected -- the keyless
+        // pile-expression path owns it). A CLUMP spawn here is a GRAB whose source pile was NOT eid-tracked
+        // -> the convert cannot fire -> the client never sees the grab (cross-peer DESYNC). Surface that
+        // case LOUDLY so the tracking gap (ReSeed timing) is visible, not silent (audit 2026-06-21).
+        if (spawnedClump) {
+            UE_LOGW("[PILE] HOST clump spawned but source %p has NO bound eid -- a GRAB of an UNTRACKED "
+                    "pile; NO PropConvert broadcast => client will NOT see this grab. Pile-tracking gap?", src);
+        } else {
+            static uint32_t s_seedCount = 0;
+            const uint32_t n = ++s_seedCount;
+            if (n <= 3 || (n % 60) == 0)
+                UE_LOGI("[PILE] HOST seed pile #%u spawned (source has no bound eid) -- fresh world seed, "
+                        "snapshot path owns it (NOT a grab/land convert)", n);
+        }
+        return;
+    }
+    // kind from the NEW actor's class (clump => grab, pile => land); chipType from the SOURCE -- the new
+    // clump's own chipType is not written until AFTER BeginDeferred returns (bytecode @2790).
+    const uint8_t kind = spawnedClump ? coop::net::propconvert_kind::kToClump
+                                      : coop::net::propconvert_kind::kToPile;
+    const uint8_t chipType = ue_wrap::prop::GetChipType(src);
+    // The SOURCE is still alive here (the BP self-destructs the pile at the END of playerGrabbed, after this
+    // spawn POST) -- log its real position so the log shows WHICH pile vanished + WHERE (the linchpin fired).
+    const ue_wrap::FVector srcLoc = ue_wrap::engine::GetActorLocation(src);
+    UE_LOGI("[PILE] HOST %s DETECTED eid=%u src=%p@(%.0f,%.0f,%.0f) -> spawning %s "
+            "(WorldContextObject->source linchpin OK)",
+            spawnedClump ? "GRAB" : "LAND", E, src, srcLoc.X, srcLoc.Y, srcLoc.Z,
+            spawnedClump ? "clump (the pile vanishes)" : "pile (the clump re-piles)");
+    ue_wrap::FVector loc{}, scale{};
+    ue_wrap::FRotator rot{};
+    ReadSpawnXform_(params, loc, rot, scale);  // the SpawnTransform PARAM (the resting xform on a land)
+    coop::trash_channel::OnHostConvert(*s, E, kind, newActor, loc, rot, chipType);
+}
+
 // HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY
 // deferred spawn (NPCs, lightning, every prop) -- filtered FAST by exact
 // class-pointer match against the small ambient-prop set before any actor deref.
@@ -107,17 +185,29 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread()) return;
     if (!params || g_classParamOff < 0 || g_returnParamOff < 0 || g_xformParamOff < 0) return;
 
+    // Host-only broadcaster: a client or an idle/disconnected host bails BEFORE any class-hierarchy walk
+    // (just a cheap atomic-acquire load + an enum compare). This keeps the per-spawn cost (the trash-class
+    // WalksToBase pair below) entirely off non-host peers -- they spawn just as many actors (audit 2026-06-21).
+    auto* s = LoadSession();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+
     void* actorClass = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_classParamOff);
-    if (!IsMirroredPropClass(actorClass)) return;          // fast reject (pointer compares)
-
-    auto* s = LoadSession();
-    if (!s || !s->connected()) return;
-    if (s->role() != coop::net::Role::Host) return;        // host-only broadcaster
+    // Two host-authoritative routes share this POST: the ambient-prop mirror (pinecone/stick/crystal ->
+    // keyless PropSpawn) and the TRASH CONVERT re-skin (chipPile/clump -> PropConvert via trash_channel,
+    // docs/piles/08). Fast-reject everything else by pointer-chain BEFORE any actor deref.
+    const bool isTrashConvert = ue_wrap::prop::IsChipPileClass(actorClass) ||
+                                ue_wrap::prop::IsGarbageClumpClass(actorClass);
+    if (!isTrashConvert && !IsMirroredPropClass(actorClass)) return;  // fast reject (pointer compares)
 
     void* actor = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_returnParamOff);
     if (!actor || !R::IsLive(actor)) return;               // spawn failed / dead
+
+    // TRASH CONVERT (chipPile/clump grab or land): route to trash_channel iff the WorldContextObject
+    // source is a tracked trash eid (else it is a fresh seed pile -> ignored here). NEVER falls through
+    // to the ambient PropSpawn below (that would mint a SECOND eid for the new clump = the dupe).
+    if (isTrashConvert) { MaybeBroadcastTrashConvert_(s, actorClass, actor, params); return; }
 
     // Dedupe: if this actor is already a tracked Prop Element (an unexpected
     // overlap with the keyed Init-observer path, or a double POST) skip -- never
@@ -256,6 +346,13 @@ void Install(coop::net::Session* session) {
             g_observerRegistered = true;
             return;
         }
+        // WorldContextObject (= the BP `self` that called BeginDeferred) -- the SOURCE actor for the
+        // trash convert re-skin (docs/piles/08). NON-FATAL if missing: the ambient-prop mirror above is
+        // independent + still installs; only the chipPile/clump grab->land sync needs the source link.
+        g_worldCtxParamOff = R::FindParamOffset(g_beginDeferredFn, L"WorldContextObject");
+        if (g_worldCtxParamOff < 0)
+            UE_LOGW("host_spawn_watcher: BeginDeferred WorldContextObject param not found -- "
+                    "trash convert (pile grab/land) sync disabled (ambient-prop mirror unaffected)");
         // FinishSpawningActor -- the KEYED sandbox-spawn seam (same GameplayStatics
         // class). NON-FATAL if missing: the keyless pinecone detector (BeginDeferred)
         // is independent and still installs.
