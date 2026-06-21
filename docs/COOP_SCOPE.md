@@ -335,10 +335,17 @@ each entity class is classified here before it is replicated), but the
 - **UFunction calls** on any object: DONE — `ue_wrap::ParamFrame` +
   `reflection::FunctionParams` marshal any UFunction by reading its FProperty
   offsets from the live class (no hardcoding). Drives spawn, pose, etc.
-- **UProperty get/set** on any object (read/write a named field): the sibling
-  capability still to build, using the SAME FProperty offset reflection
-  (`Offset_Internal`/`ElementSize`). This is what state replication needs —
-  read an entity's properties on the host, push, write them on the client.
+- **UProperty get/set** on any object (read/write a named field): DONE (AS-BUILT)
+  — `reflection::FindPropertyOffset` (reflection.h:202; prefix variant :211)
+  resolves a named instance field's `Offset_Internal` via the live FProperty
+  chain; the `reflected_offset.{cpp,h}` layer caches per (class, field). Concrete
+  host-read / client-write instance: `ue_wrap/windturbine.cpp`
+  ResolveOff/ReadState/WriteState (lines 34/81/92), wired into the network in
+  `coop/turbine_sync.cpp` (ReadState host:195,241 / WriteState client:140). Same
+  shape in prop.cpp, save_browser.cpp, puppet.cpp, kerfur.cpp. Landed e8c0faa5
+  (reflection primitive, 2026-05-25) + f32ed1b0 (turbine state-sync wiring,
+  2026-06-15). This is what state replication needs — read an entity's
+  properties on the host, push, write them on the client.
 - **Entity manifest/registry**: a per-object-class table (what to replicate,
   how often, host- vs per-machine-authoritative) drives the above. Populated
   per entity class as Phase 1 reflection classifies it (the parked list below).
@@ -445,9 +452,14 @@ Design implications (do NOT build yet; record so the architecture serves it):
   signal-catching) concurrently interactable + analog controls synced**
   added to In scope; user. Widget atlas (`Uui_consolesAtlas_C`) renders
   to RT — state sync = visual sync free. 4 wire packet additions
-  planned. Drone deferred to future. RE pass complete; implementation
-  awaiting user direction (currently bumped down the priority list by
-  the doors+lights scope below).
+  planned. Delivery drone (Adrone_C) body pose + FX/state sync SHIPPED
+  (proto v48 2026-06-08, extended v69 dust anchor). Host-authoritative
+  singleton transform stream (~20 Hz while Active); client suppresses the
+  drone ReceiveTick and mirrors via LerpWindow interp; connect-snapshot
+  adopts a joiner to the live pose. Cargo rides the existing prop pipeline.
+  Code: `coop/drone_sync.{cpp,h}` + `ue_wrap/drone.{cpp,h}`;
+  ReliableKind::DroneState=38 / DroneStatePayload (40 B). Commits 77225106
+  (add) + f32ed1b0 (v69 FX).
 - 2026-05-25 NIGHT — **Doors (E-press + NPC auto-open) + light switches**
   added to In scope; user. Replaces terminals as the immediate sync
   target (simpler protocol surface). Hook/invoke =
@@ -490,7 +502,13 @@ Design implications (do NOT build yet; record so the architecture serves it):
   `CPlayerSpawnPacket` respawn. Design + adversarial-verify must-fixes:
   `research/findings/votv-player-vitals-death-RE-2026-05-30.md`. Concretizes
   the enemies-target-both decision (puppets are what enemies hit; this
-  replicates the resulting health/death). NOT built (design banked).
+  replicates the resulting health/death). SHIPPED across Inc1/Inc2b/Inc3 —
+  see the 2026-05-30/05-31 entries below (commits 6f5949c7 Inc1 health/food/
+  sleep stream + nameplate bar; fee45289 death policy permadeath-rejoinable,
+  respawn/revive CUT; 848c45a9 Inc2b ragdoll/faint stateBit; d66d0022 ragdoll
+  physics v22; d57350da/5acd36b9/1369b8aa Inc3 PlayerDamage relay + hurt-flash).
+  The only deferred sub-part is the real enemy->puppet damage DETECTION hook
+  (player_damage.cpp drives the relay via DebugForceHitPuppet for now).
 - 2026-05-30 — **Death lifecycle policy decided + vitals Inc1 SHIPPED.** User
   decision: **permadeath, rejoinable; host death ends the session.** Both host
   and peer death use VOTV's native SP death->menu flow — NO death->menu intercept

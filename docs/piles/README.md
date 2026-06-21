@@ -83,12 +83,16 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   stack; what to preserve (kerfur/email/harness). (EXECUTED — see Status.)
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
-- **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN (locked
-  2026-06-21).** Host-authoritative trash-entity state machine (eid = logical entity; PILED/HELD_BY(N)/
-  FLYING; position is NEVER identity), MTA single-syncer + sync-time-context byte, cloned from the door
-  channel; client-grab via suppress-native + GrabIntent → host executes the real verb; the clump↔pile
-  link is the zero-proximity convert-spawn POST. The verified chipPile mechanic + both root causes +
-  the 6-step plan. **Read this for the pile sync.** Implementation pending.
+- **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
+  (2026-06-21, commit `0e56ca39`, proto v82).** Host-authoritative trash-entity identity (eid = logical
+  entity), MTA single-syncer + sync-time-context byte. **GRAB (pile→clump) = VERIFIED hands-on** via the
+  `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE (clump→pile) = AS-BUILT, hands-on no-dupe** via
+  a clump death-watch convert onto the fresh UNTRACKED pile (one ~5s known-minor glitch). **The s35
+  "BeginDeferred-POST is observable" link was DISPROVEN** (EX_CallMath → invisible; 0 host_spawn_watcher
+  fires; that POST link was removed). The deterministic zero-proximity catch needs a `UFunction::Func`
+  thunk patch (DESIGN, IDA-gated — `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`).
+  Increment 2 (client suppress-native + GrabIntent → host executes the verb on puppet-N; the
+  PILED/HELD/FLYING state machine) is still DESIGN. **Read this for the pile sync.**
 - **[07-MORPH-V2-held-object-channel.md](07-MORPH-V2-held-object-channel.md)** — **SUPERSEDED + RETIRED
   2026-06-21** (the morph: held-object adopt + PROXIMITY land-watch). Its smoke "VERIFIED" was a FALSE
   POSITIVE; the real hands-on refuted it (proximity false-fires in clusters; client grab never armed).

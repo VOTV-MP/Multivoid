@@ -22,7 +22,7 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 |---|---|---|---|---|
 | Keyed `Aprop_C` props | save-load / spawner / Q-menu (BeginDeferred) / takeObj | seed walk (save-loaded) · Init-POST observer (spawner) · `FinishSpawningActor` POST (Q-menu) · takeObj POST | host eid **+ the BP save Key string** | prop_lifecycle, prop_element_tracker, prop_snapshot, host_spawn_watcher |
 | chipPile (ambient trash pile) | garbagePileSpawner-seeded / save-load | seed walk (keyless-pile lane) → connect snapshot / R1 re-seed | **host eid only (KEYLESS)** | prop_element_tracker, prop_snapshot, remote_prop_spawn (EnsurePileBindIndex) |
-| garbageClump (the carried "ball") | `chipPile.playerGrabbed` on grab (EX_LocalVirtualFunction) | **REDESIGN → host-auth trash channel** (the convert-spawn POST link; the retired morph used proximity) | **host eid only** (re-skins the pile's E) | trash_channel (08) — *pile_morph RETIRED* |
+| garbageClump (the carried "ball") | `chipPile.playerGrabbed` on grab (EX_LocalVirtualFunction); the clump-spawn + re-pile pile-spawn are `EX_CallMath` (INVISIBLE) | **host-auth trash channel (08):** grab = `InpActEvt_use` PRE + held-edge adopt [V]; re-pile = clump death-watch convert onto the fresh UNTRACKED pile [AS-BUILT]; deterministic source = a `UFunction::Func` thunk hook [DESIGN]. *(The BeginDeferred-POST link was DISPROVEN — EX_CallMath, 0 fires; commit 0e56ca39.)* | **host eid only** (re-skins the pile's E) | trash_channel, trash_collect_sync, local_streams (08) — *pile_morph RETIRED* |
 | Held items (Aprop_C in hand) | grabbed | `EnsureHeldItemBroadcast` new-held edge (self-heal for untracked) + the held-pose stream | the item's Key/eid | trash_collect_sync, local_streams |
 | NPCs / Characters | BeginDeferred (VISIBLE) | host `BeginDeferred` interceptor + POST; save-loaded via `RegisterExistingWorldNpcs` walk | host eid (no BP key) | npc_sync, npc_mirror, npc_world_enum, npc_adoption |
 | WorldActors (event actors) | BeginDeferred (VISIBLE) | 2nd `BeginDeferred` interceptor (disjoint, NAME-matched allowlist) | host eid | world_actor_sync |
@@ -56,6 +56,14 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 > real hands-on (2026-06-21) refuted its smoke "VERIFIED": the proximity land-watch
 > (`FindNearestChipPile(lastPos,100cm)`) consumes a NEIGHBOR pile in a cluster → eid mis-binds → divergence,
 > and the client grab never armed. The current design is the **host-authoritative trash channel** (08).
+>
+> **⚠⚠ The 08 "BeginDeferred-POST is observable" claim (the s35 "observability reversal") is ALSO FALSE
+> (corrected 2026-06-21, commit `0e56ca39`).** The chipPile grab clump-spawn + the clump re-pile pile-spawn
+> are dispatched `EX_CallMath` (a native thunk below `UObject::ProcessEvent`) → INVISIBLE to our hook;
+> `host_spawn_watcher`'s POST observer registered fine but logged **0 fires** across 870 piles + every
+> re-pile. The grab/re-pile now sync via VISIBLE seams (below); the deterministic zero-proximity catch needs
+> a `UFunction::Func` thunk patch (DESIGN). See `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-
+> 2026-06-21.md` + COOP_DISPATCH_VISIBILITY "Catching an EX_CallMath call".
 
 **Durable facts (survive the redesign):**
 - **chipPile is KEYLESS** — `setKey` is a no-op; the only identity is the host-minted eid. **[V/RD]**
@@ -65,20 +73,40 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   **sphere-traced RESTING point** — NOT `lastPos`, NOT the source pile pos → why proximity was doomed).
   `trashBitsPile_C` = a SEPARATE COLLECT entity (keyed-Aprop lane). Only `chipType@0x0238` (cosmetic
   variant) carries. **[V/RD]**
-- **OBSERVABILITY:** `playerGrabbed`/`pickupObjectDirect`/`K2_DestroyActor(self)` are INVISIBLE
-  (`EX_LocalVirtualFunction`). BUT **`BeginDeferredActorSpawnFromClass` POST + `FinishSpawningActor` POST
-  ARE VISIBLE** (host_spawn_watcher catches the identical opcode for garbagePileSpawner) → at the
-  convert-spawn POST, ReturnValue (new pile) + WorldContextObject (= self, the dying clump) give a
-  **deterministic ZERO-PROXIMITY clump↔pile link**. **[V: COOP_DISPATCH_VISIBILITY.md:65; host_spawn_watcher.cpp]**
-  (This corrects the old `pass2` RE doc's "BeginDeferred unobservable" claim — FALSE.)
+- **OBSERVABILITY (corrected 2026-06-21):** `playerGrabbed`/`pickupObjectDirect`/`K2_DestroyActor(self)` are
+  INVISIBLE (`EX_LocalVirtualFunction`). **The clump-spawn (grab) + the pile-respawn (re-pile) are ALSO
+  INVISIBLE** — the chipPile/clump ubergraphs issue `BeginDeferredActorSpawnFromClass`/`FinishSpawningActor`
+  as **`EX_CallMath`** (a native thunk below ProcessEvent). `host_spawn_watcher` catches that UFunction only
+  from the NATIVE/SPAWNER caller (pinecone/`garbagePileSpawner`); for the BP-ubergraph caller it logged **0
+  fires** (870 piles + every re-pile, hands-on 2026-06-21, commit `0e56ca39`). **Visibility is the CALLER's
+  opcode, not the callee.** The 2026-06-08 `pass2` RE had this RIGHT; the s35 "BeginDeferred observable"
+  reversal was the regression. `WorldContextObject == EX_Self` (the source) is bytecode-confirmed for both
+  transitions, but it can only be READ via a `UFunction::Func` thunk patch (DESIGN), not a ProcessEvent
+  observer. **[V: COOP_DISPATCH_VISIBILITY.md "Catching an EX_CallMath call"; host_spawn_watcher.cpp:118-122;
+  research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md]**
 
-**The design (08, host-authoritative state machine — pre-implementation):** the eid is a host-minted
-life-stable logical trash entity (state PILED/HELD_BY(N)/FLYING; **position is NEVER identity** → the
-cluster mis-bind is impossible by construction). Host owns the authoritative state; receivers drive a
-local visual from it (door-channel shape, `Channel::Mode::HostAuth`). Client-grab = **suppress-native +
-`GrabIntent` → host executes the real verb** (fixes the dead client direction AND the local dupe). The
-clump→pile link = the convert-spawn POST (no proximity). A sync-time-context byte rejects stale packets.
-**[DESIGN — not yet AS-BUILT; never VERIFIED until a real hands-on in a CLUSTER, both directions.]**
+**The design (08, host-authoritative state machine):** the eid is a host-minted life-stable logical trash
+entity (state PILED/HELD_BY(N)/FLYING; **position is NEVER identity for the GRAB** → the cluster mis-bind is
+impossible by construction). Host owns the authoritative state; receivers drive a local visual from it.
+Client-grab = **suppress-native + `GrabIntent` → host executes the real verb** (DESIGN, Increment 2). A
+sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
+- **GRAB (pile→clump) — [V] VERIFIED hands-on (`[SYNC-MIRROR OK]`), proto v82, commit `0e56ca39`:**
+  `trash_collect_sync::OnPileGrabPre` (the `InpActEvt_use` PRE — a real input event, ProcessEvent-VISIBLE)
+  records the aimed pile's eid (`trash_channel::NotePendingGrab`); `local_streams`' held-edge adopts the
+  spawned clump onto E (`AdoptPendingGrabClump → trash_channel::OnHostConvert(kToClump)`). Identity is the
+  host eid end-to-end; NO proximity.
+- **RE-PILE (clump→pile) — [AS-BUILT], hands-on NO-DUPE:** `WatchClumpForRepile` death-watches the adopted
+  clump; the tick it dies (re-pile), `Tick` finds the fresh **UNTRACKED** chipPile at the clump's resting
+  point (`FindNearestUntrackedChipPile_`, tracked neighbours excluded → NOT the s35 cluster mis-bind) and
+  `OnHostConvert(kToPile)` converts E onto it in place → the client re-skins its ONE mirror (no destroy+spawn
+  dupe). **Known minor [?]:** a ~5s vanish-return on some re-piles (the reaper racing the convert rebind) —
+  removed by the thunk hook.
+- **DETERMINISTIC re-pile source — [DESIGN], IDA-gated, NOT built:** patch `UFunction::Func` of
+  `BeginDeferredActorSpawnFromClass` → read `WorldContextObject`(=source clump) + `ReturnValue`(=new pile) →
+  `OnHostConvert(kToPile)`, ZERO proximity, same tick (no death-watch race). Anchors + validation:
+  `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`.
+- **Increment 2 (CLIENT-grab direction) — [DESIGN], NOT built:** suppress-native + GrabIntent +
+  host-executes-on-puppet-N + the PILED/HELD/FLYING state machine (proto v83).
 
 ### NPCs / Characters
 - Host `BeginDeferred` **interceptor** (allowlist of 14 ACharacter bases) allocs an `Npc` Element + POST
@@ -112,7 +140,7 @@ clump→pile link = the convert-spawn POST (no proximity). A sync-time-context b
 | connect drain ↔ live Init-POST/re-seed during a join | receiver `OnSpawn` exact-key/eid dedup → `RegisterPropMirror` idempotent | [V] |
 | R1 re-seed ↔ a 2nd peer's connect drain | bracket-free additive; receiver dedups; no sweep re-arm | [V] |
 | kerfur converge ↔ R1 re-seed re-expressing the kerfur | `MarkKnownKeyedProp` + `ExpressIncrementalSpawn` kerfur-skip + reaper kerfur-skip | [V] |
-| ~~pile_morph land-watch ↔ host re-seed~~ | **RETIRED** — the morph + its proximity land-watch are gone (08); the landed pile is now claimed by eid at the convert-spawn POST (no re-seed race) | [redesign] |
+| ~~pile_morph land-watch ↔ host re-seed~~ | **RETIRED** — the morph + its 100cm any-pile proximity land-watch are gone (08). The landed pile is claimed by eid via a death-watch convert onto the fresh **UNTRACKED** pile (tracked neighbours excluded → no cluster mis-bind); the rebind re-points E onto the new pile so the reaper sees E alive (no re-seed race). *(The convert-spawn-POST link was DISPROVEN — EX_CallMath; the thunk hook is the planned deterministic replacement.)* | [AS-BUILT / DESIGN] |
 | client save-loaded pile (own eid) ↔ host pile eid (connect bracket) | position-bind retires the client-local identity (`UnmarkKnownKeyedProp`); 08 replaces this with host re-stream on the drain edge (`PileResyncRequest`) | [V] → [redesign] |
 | client grabs host shared-trash ↔ host author path | 08: client SUPPRESSES the native grab + sends `GrabIntent` → host executes authoritatively (the door `OnRequest` shape) — client never authors shared trash, and no local clump dupe | [DESIGN] |
 | NPC interceptor ↔ WorldActor interceptor (same BeginDeferred) | DISJOINT allowlists; multi-interceptor support | [V] |
@@ -122,10 +150,14 @@ clump→pile link = the convert-spawn POST (no proximity). A sync-time-context b
 ## NEEDS-PROBE (do not encode as truth without it)
 - **[?]** (trash redesign 08) PROBE-A: which `OnPileGrabPre` early-return fires on the live client
   (hands-full vs `kInvalidId`) + the carry slot (`grabbing_actor` vs `holding_actor`). One log line + 1 grab.
-- **[?]** (trash redesign 08) does `CallFunction(pile, playerGrabbed, {puppetN, hit})` drive
+- **[?]** (trash 08 Increment 2) does `CallFunction(pile, playerGrabbed, {puppetN, hit})` drive
   `pickupObjectDirect` on a PUPPET (host executes a client's grab intent)?
-- **[?]** (trash redesign 08) does the `BeginDeferred`/`FinishSpawning` POST fire for the clump↔pile
-  convert specifically (confirm at Step 2, the first cluster smoke).
+- **[ANSWERED — NO, 2026-06-21]** does the `BeginDeferred`/`FinishSpawning` POST fire for the clump↔pile
+  convert? **It does NOT** — the chipPile/clump caller issues it `EX_CallMath` (0 fires, 870 piles + every
+  re-pile, commit `0e56ca39`). The deterministic catch needs a `UFunction::Func` thunk patch (DESIGN, IDA-
+  gated); the offsets to pin are the open [?] there.
+- **[?]** (trash 08 thunk hook) the `FFrame::Locals` + `UFunction::Func` offsets on the shipping binary —
+  pin via IDA, READ-ONLY log pass first (see the chippile-dispatch RE finding).
   *(RETIRED morph [?]s removed: the "clump→holding_actor" link [it's grabbing_actor] + the land-claim/re-seed timing margin.)*
 - **[?]** NPC/WorldActor client-suppression assumes spawner BPs null-check before `FinishSpawningActor`
   (UE4 convention; not IDA-confirmed on VOTV spawners).

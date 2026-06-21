@@ -28,7 +28,11 @@ of 2026-06-20: the failed pile save-strip + thin-client-sync approaches. **The C
 is [docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md](../../docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md)** — the
 morph (07) was retired 2026-06-21 (its smoke "VERIFIED" was refuted by a real hands-on); the
 `*-clump-*`/`*-pile-*` RE docs here are durable bytecode facts, but their design conclusions defer to 08
-+ the COOP_* maps. (One now-FALSE claim flagged in place: `...-pass2`'s "BeginDeferred unobservable".)
++ the COOP_* maps. **Correction (2026-06-21):** the `...-pass2` RE's "BeginDeferred (from the chipPile/clump
+ubergraph) is `EX_CallMath` → unobservable" is **TRUE** (verified by a live hands-on: 0 host_spawn_watcher
+fires, commit `0e56ca39`); it was the s35/**08** "observability reversal" (claiming that POST is observable)
+that was FALSE — now corrected in 08 + the COOP_* maps. New durable RE:
+`votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`.
 
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under

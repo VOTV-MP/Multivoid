@@ -289,12 +289,14 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // floats in front of the puppet via this pose stream (like the mannequin),
         // and gets physics on release. [[project-bug-trash-chippile-uaf-crash]]
         if (heldActor != g_lastHeldProp) {
-            // New-held edge. A held trash CLUMP (the chipPile's grab product) is NOT authored here -- it is a
-            // docs/piles/08 host-authoritative trash entity: host_spawn_watcher already caught its convert-
-            // spawn POST and trash_channel broadcast PropConvert{ToClump} + rebound the clump onto the source
-            // pile's eid E, so this stream only CARRIES E's pose (EnsureHeldItemBroadcast returns false for a
-            // clump -- the class gate at trash_collect_sync.cpp). A normal Aprop_C item is broadcast as a
-            // fresh keyed prop. Resolve the wire eid ONCE here (the only place the O(n) ResolveMirrorEidByActor
+            // New-held edge. A held trash CLUMP (the chipPile's grab product) is ADOPTED HERE onto the
+            // grabbed pile's eid E (AdoptPendingGrabClump, below): the clump's BeginDeferred spawn is
+            // EX_CallMath -> invisible to our ProcessEvent hook, so the grab is caught at the InpActEvt_use
+            // PRE (NotePendingGrab) and the clump is bound + the PropConvert{ToClump} broadcast at THIS
+            // held-edge -- NOT at any spawn POST (docs/piles/08; the host_spawn_watcher convert-POST was
+            // disproven 2026-06-21). EnsureHeldItemBroadcast returns false for a clump (class gate at
+            // trash_collect_sync.cpp); a normal Aprop_C item is broadcast as a fresh keyed prop. Resolve the
+            // wire eid ONCE here (the only place the O(n) ResolveMirrorEidByActor
             // fallback for the eid-only clump may run) and CACHE it (g_lastHeldEid) so the carry stream is O(1).
             const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
             // HOST grab adoption (docs/piles/08): a freshly-grabbed trash CLUMP is eid-less here -- bind it
@@ -320,7 +322,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                     eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
             // [PILE] carry phase: a trash clump (carry-only, eid-identified) is now in hand. The convert
-            // (pile->clump) was already broadcast by host_spawn_watcher; this stream just carries E's pose.
+            // (pile->clump) was broadcast by AdoptPendingGrabClump on the new-held edge above; this stream
+            // just carries E's pose.
             if (!mirrored && eidLog != 0 && ue_wrap::prop::IsGarbageClump(heldActor)) {
                 UE_LOGI("[PILE] %s CARRY eid=%u clump in hand -> streaming carry pose (ctx-stamped); "
                         "clients drive their mirror of E",

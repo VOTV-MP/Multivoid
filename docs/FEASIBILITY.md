@@ -80,26 +80,30 @@ is UE's Blueprint VM; "script commands" are `UFunction`s. We hook
 Blueprint events / functions via UE4SS rather than parsing a custom script
 format. Host runs gameplay logic; client receives state. NPC/AI logic
 lives in blueprints + engine — host-authoritative replication applies.
-**(verify)** how much VOTV gameplay is Blueprint vs C++ (`AppMerger` and
-native modules) during Phase 1.
+**RESOLVED:** VOTV gameplay is heavily Blueprint-VM-driven; the full
+dispatch-path split (BP-VM `EX_*` INVISIBLE vs native ProcessEvent VISIBLE) is
+mapped + code-verified in `docs/COOP_DISPATCH_VISIBILITY.md`.
 
 ## 0.7 Save format — UE `SaveGame` (`.sav`)
 
 VOTV uses UE's `USaveGame` serialization (per-slot save files, typically
-under the game's `Saved/SaveGames/`). **(verify)** exact location, layout,
-and whether VOTV encrypts/obfuscates its saves. Coop is host-authoritative:
+under the game's `Saved/SaveGames/`). **RESOLVED:** root
+`%LOCALAPPDATA%\VotV\Saved\SaveGames\`, flat GVAS/UE4.27 `<slot>.sav`
+(unencrypted, ~19.6 MB, photos inline), non-atomic 4-in-place-write gap — see
+`research/findings/votv-save-path-RE-2026-05-30.md`. Coop is host-authoritative:
 host loads their save; client's world is synced from host state. Loading a
-save programmatically is feasible via the game's own load `UFunction`
-(callable through reflection). **(verify)** the load entry point in
-Phase 1.7.
+save programmatically is done via the game's own load `UFunction` (callable
+through reflection) — entry point RE'd + shipped (`ue_wrap/save_browser.cpp`
+via VOTV's native `loadSlots`).
 
-## 0.8 Per-process / per-machine state — single-instance? (verify)
+## 0.8 Per-process / per-machine state — single-instance? RESOLVED
 
-UE4 games are not inherently single-instance, but VOTV may enforce a mutex
-or Steam single-instance check. For same-machine dual-launch testing we
-may need to bypass it; for cross-machine LAN this is irrelevant.
-**(verify)** whether two VOTV instances launch on one machine. Steam DRM
-(if present) only matters for same-machine testing.
+UE4 games are not inherently single-instance. **RESOLVED 2026-05-23:** VOTV
+enforces NO mutex / single-instance lock — two instances launch fine on one
+machine, and same-box two-instance LAN testing is the standard harness
+(`tools/lan-test.ps1`; commit 31726747). No bypass code is needed or present
+in `src/`. Steam DRM (if present) does not block the working two-instance
+harness in active use; cross-machine LAN is unaffected.
 
 ---
 
@@ -112,11 +116,44 @@ world to share). The main risk is not feasibility but **scope** — VOTV is
 a large simulation-heavy game (signal processing, base management, day
 cycle). `docs/COOP_SCOPE.md` must be disciplined.
 
-## Open verification items (carry into Phase 1)
+## Open verification items (carry into Phase 1) — ALL RESOLVED
 
-1. VOTV pawn + player-controller class names (reflection). → 1.2
-2. Confirm `SpawnActor` of a 2nd pawn + controller ticks. → 2.1 derisk
-3. Save file location / layout / encryption. → 1.7
-4. Blueprint-vs-C++ split of gameplay logic. → 1.9
-5. Single-instance enforcement for same-machine testing. → 0.8
-6. Most stable render API for UE4SS ImGui overlay on this build. → 0.3
+All six Phase-0 verification items were answered by the shipping mod across
+later sessions. Recorded here as AS-BUILT (this list was frozen at the Phase 0
+skeleton commit and never updated as Phase 1 closed each item).
+
+1. [RESOLVED] VOTV pawn = `mainPlayer_C`; player-controller = `PlayerController`.
+   Named as profile constants in `src/votv-coop/include/ue_wrap/sdk_profile.h:664`
+   (MainPlayerClass) + `:920` (PlayerControllerClassName); reflection-resolved
+   across the codebase. Done since Phase 2.1 (commit 27f5e9fd) / version-
+   portability profile (22d83066).
+2. [DONE] `SpawnActor` of a 2nd pawn (mainPlayer_C orphan) spawns + ticks:
+   `engine.cpp:526` SpawnActor (commit 79236cb9), wired live via
+   `RemotePlayer::Spawn` (remote_player.cpp:157) on join (net_pump.cpp:862);
+   AnimBP forced-tick (puppet.cpp:549), driven per-frame by ApplyToEngine.
+   NOTE: the evolved design deliberately spawns an UNPOSSESSED orphan — no 2nd
+   PlayerController (engine.cpp:559-575); `GetController()==nullptr` is the
+   puppet discriminator (see CLAUDE.md). Visible-2nd-player subsystem shipped
+   commit bb16b208.
+3. [RESOLVED] Save file location / layout / encryption. Root
+   `%LOCALAPPDATA%\VotV\Saved\SaveGames\`; flat GVAS/UE4.27 `<slot>.sav`
+   (unencrypted, ~19.6 MB, photos inline), `data.sav` meta, `b_*`/subsave
+   files; non-atomic 4-in-place-write gap. See
+   `research/findings/votv-save-path-RE-2026-05-30.md` (commit 88a8a1f8);
+   exploited in `coop/save_transfer.cpp`, `coop/save_block.cpp`,
+   `ue_wrap/save_capture.cpp`, `ue_wrap/save_browser.cpp`.
+4. [RESOLVED] Blueprint-vs-C++ split of gameplay logic. VOTV gameplay is
+   heavily Blueprint-VM-driven; the dispatch-path split (BP-VM `EX_*` INVISIBLE
+   vs native-engine ProcessEvent-dispatched VISIBLE) is fully mapped + code-
+   verified in `docs/COOP_DISPATCH_VISIBILITY.md` (+ companion
+   `COOP_ENTITY_EXPRESSION_MAP.md`) and relied on throughout `src/votv-coop`
+   (e.g. trash_collect_sync.cpp:252-255).
+5. [RESOLVED 2026-05-23] VOTV has NO single-instance lock; two instances run
+   fine on one machine. Same-box two-instance LAN testing is the standard
+   harness (`tools/lan-test.ps1`; commit 31726747; ROADMAP Phase 3 confirmed).
+   No bypass code needed (none exists in src/).
+6. [RESOLVED] Overlay render API = hook `IDXGISwapChain::Present` (DXGI), DX11
+   backend (ImGui_ImplDX11 + ImGui_ImplWin32); DX12 detected + logged, not yet
+   drawn. Implemented in `src/votv-coop/src/ui/imgui_overlay.cpp` (commit
+   5dc7aa67), wired live at `harness.cpp:1092`. NOTE: uses the mod's own
+   vendored ImGui, NOT UE4SS (RULE 3) — the "UE4SS overlay" framing is retired.

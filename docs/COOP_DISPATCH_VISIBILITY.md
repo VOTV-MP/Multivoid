@@ -26,13 +26,21 @@ itself via `EX_VirtualFunction`.
 **VISIBLE (reaches ProcessEvent):** native-engine → UFunction entries — **input action events**
 (`InpActEvt_use`), engine lifecycle for PE-dispatched actors (`ReceiveBeginPlay`/`ReceiveTick`),
 RPC-style + `BlueprintNativeEvent` entry points, `GameplayStatics` calls
-(`BeginDeferredActorSpawnFromClass`, `FinishSpawningActor`), an **engine-initiated** `K2_DestroyActor`,
-and our own `reflection::CallFunction` (re-enters the detour; `t_inPump`-guarded). **[V: the seams fire
-on these in shipped code]**
+(`BeginDeferredActorSpawnFromClass`, `FinishSpawningActor`) **when issued by a native/engine/spawner
+caller**, multicast-delegate `Broadcast()` (`OnComponentHit` `BndEvt__…`), an **engine-initiated**
+`K2_DestroyActor`, and our own `reflection::CallFunction` (re-enters the detour; `t_inPump`-guarded).
+**[V: the seams fire on these in shipped code]**
 
 **INVISIBLE (routes through the BP VM, below the hook):** `EX_LocalVirtualFunction` /
 `EX_VirtualFunction` / `EX_FinalFunction` / `EX_LocalFinalFunction` / `EX_CallMath`, all BP→BP internal
 calls, a BP self-destroy, and native C++ internal calls. **[RD: pass-1 RE §1.2]**
+
+> **The same `GameplayStatics` UFunction is in BOTH lists — visibility is the CALLER's opcode, not the
+> callee.** `BeginDeferredActorSpawnFromClass` reaches PE from the `garbagePileSpawner`/pinecone caller
+> (VISIBLE — host_spawn_watcher fires) but is `EX_CallMath` from a BP ubergraph (the chipPile grab / clump
+> re-pile spawn — INVISIBLE, 0 fires). "Catches it for the spawner ⇒ catches it for the clump" is a
+> category error (the 2026-06-21 false "observability reversal" — see the section at the bottom + commit
+> `0e56ca39`). **[V]**
 
 ## Our hook seams (what each can/can't see)
 
@@ -62,11 +70,12 @@ gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is al
 | `actorChipPile.K2_DestroyActor(self)` (the pile's own grab-destroy) | `EX_VirtualFunction` (BP self-call) | **INVISIBLE** | death-watch / morph model (this is *why* it exists) | [RD: pass-1 RE §2.0] |
 | `Actor.K2_DestroyActor` — engine-initiated destroy of a tracked actor | engine → PE | **VISIBLE** | we hook the **PRE** (`prop_lifecycle.cpp:293`, `npc_sync.cpp:298`) | [V] |
 | **A BP-deferred-spawned actor's `init()`** (chipPile/clump/sandbox Aprop) | `EX_LocalVirtualFunction` from UCS | **INVISIBLE — its Init-POST observer does NOT fire** | the `FinishSpawningActor` POST (keyed) or `BeginDeferred` POST (keyless) seams below | [V: host_spawn_watcher.cpp:130-135,197-208] |
-| `BeginDeferredActorSpawnFromClass` POST | GameplayStatics → PE | **VISIBLE** | actor NOT yet positioned (read the `SpawnTransform` PARAM, not GetActorLocation). `host_spawn_watcher`/`npc_sync`/`world_actor_sync` all POST-observe it | [V] |
+| `BeginDeferredActorSpawnFromClass` POST — **from a native/engine/spawner caller** (`garbagePileSpawner`, ambient pinecone/stick, NPC/WorldActor spawners) | the caller's dispatch reaches PE | **VISIBLE** | actor NOT yet positioned (read the `SpawnTransform` PARAM, not GetActorLocation). `host_spawn_watcher`/`npc_sync`/`world_actor_sync` all POST-observe it | [V] |
+| `BeginDeferredActorSpawnFromClass` / `FinishSpawningActor` — **from a BP ubergraph caller** (the chipPile grab clump-spawn; the clump re-pile pile-spawn) | the CALLER issues it `EX_CallMath` | **INVISIBLE** | a `UFunction::Func` thunk patch — NOT a ProcessEvent observer (see "Catching an EX_CallMath call" below). AS-BUILT interim = the InpActEvt-PRE + held-edge adopt (grab) + a death-watch convert (re-pile), `trash_channel`/`trash_collect_sync` | [V: 0 host_spawn_watcher fires across 870 piles + every re-pile, hands-on 2026-06-21, commit 0e56ca39] |
 | `FinishSpawningActor` POST | GameplayStatics → PE | **VISIBLE** | the keyed sandbox-spawn seam (Key minted by now) → `ExpressSpawnedProp` | [V: host_spawn_watcher.cpp:209] |
 | `ReceiveBeginPlay` — **save-loaded** actor (pre-exists at connect) | no runtime PE our session sees | **caught by the GUObjectArray SEED WALK**, NOT an Init observer | `SeedKnownKeyedProps` / `RegisterExistingWorldNpcs` (the 872 save-loaded piles, the pre-existing NPCs) | [V] |
 | `ReceiveBeginPlay` — a normal runtime-spawned actor | maybe PE | **[?] not separately verified** | probe before relying on it | [?] |
-| `SpawnEmitterAtLocation` + cosmetic `EX_CallMath` spawns | `EX_CallMath` | **INVISIBLE** | **POLL** the result (`event_cue_sync` diffs the PSC set) | [V: event_cue_sync.cpp] |
+| `SpawnEmitterAtLocation` + cosmetic `EX_CallMath` spawns | `EX_CallMath` | **INVISIBLE** | **POLL** the result (`event_cue_sync` diffs the PSC set), or a `UFunction::Func` thunk patch if a deterministic `(source,product)` is needed (the chipPile/clump re-pile plan) | [V: event_cue_sync.cpp] |
 | `UGameplayStatics::SaveGameToSlot` | native C++ | **INVISIBLE to PE** | **native MinHook** (`save_block.cpp`) | [V] |
 | kerfur conversion verbs (`dropKerfurProp`/`spawnKerfuro`) | `EX_CallMath`/`EX_LocalVirtualFunction` | **INVISIBLE** | **POLL** (the kerfur conversion death-watch, `kerfur_convert.cpp:559`) | [RD] |
 
@@ -84,6 +93,10 @@ gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is al
    - **cosmetic / `EX_CallMath` effect or an unobservable BP self-destroy** → **POLL** the result on a
      throttled host tick (`event_cue_sync`; the kerfur conversion poll; the ambient death-watch).
      Proximity/identity-gate a death-watch so a stream-out/bump is not misread as the event.
+   - **an `EX_CallMath` call whose `WorldContextObject`/`ReturnValue` you need DETERMINISTICALLY** (a
+     `(source, product)` pair, e.g. the chipPile/clump re-pile) → a **`UFunction::Func` thunk patch** on the
+     callee — a ProcessEvent observer can NEVER fire on it (see "Catching an EX_CallMath call" below). Do NOT
+     register a BeginDeferred POST for a BP-ubergraph spawn; it won't fire.
    - **an INPUT that triggers a BP-internal action** (the pile grab) → hook the **input UFunction**
      (`InpActEvt_use` PRE) and read what the BP is about to act on — the input is VISIBLE even though
      everything it triggers is not.
@@ -109,10 +122,36 @@ GENERAL — the flashlight (`autotest.cpp:667`), `spawn_menu.cpp:81`, and the sa
   clump lands in **`grabbing_actor`** (the PHC light-grab path), not `holding_actor`. Template + proof:
   `harness/autotest_chippile.cpp`.
 
+## Catching an `EX_CallMath` (BP→native-thunk) call — a `UFunction::Func` patch, NOT a ProcessEvent observer
+
+**The 2026-06-21 correction.** A ProcessEvent observer can NEVER fire on an `EX_CallMath` call (e.g. a BP
+ubergraph's `BeginDeferredActorSpawnFromClass` / `FinishSpawningActor` / a math native): the BP-VM dispatches
+it via `UObject::CallFunction → UFunction::Invoke → (Context->*UFunction::Func)(...)` — the native thunk at
+`UFunction+0xD8` — **one layer BELOW `UObject::ProcessEvent`**, our sole observer seam. ProcessEvent is the
+OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP call. **[V]**
+
+- The s35/08 redesign assumed the chipPile-grab clump-spawn + the clump re-pile pile-spawn were catchable at
+  a `host_spawn_watcher` BeginDeferred POST. **They are not** — those callers issue `BeginDeferred` as
+  `EX_CallMath`. Live proof: **0 host_spawn_watcher fires** across 870 piles + every re-pile, hands-on
+  2026-06-21 (commit `0e56ca39`). `host_spawn_watcher` catches BeginDeferred ONLY from the
+  native/spawner caller (pinecone/`garbagePileSpawner`), whose dispatch reaches PE. **[V]**
+- **To catch an `EX_CallMath` call deterministically (with its `WorldContextObject`=source + `ReturnValue`):
+  patch `UFunction::Func` of the callee** to a transparent native thunk (read params off `FFrame.Locals` +
+  the thunk `Result`, forward to the original). This is below the BP VM, so it sees the inner call. Design +
+  the `FFrame::Locals` / `UFunction::Func` IDA anchors + the read-only-validation plan:
+  `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`. **[DESIGN — IDA-gated, NOT
+  built.]**
+- **Interim (AS-BUILT) when a thunk patch isn't yet in place:** drive off the VISIBLE seams instead — the
+  triggering INPUT (`InpActEvt_use` PRE, for the grab) + a result POLL / death-watch (for the re-pile). This
+  is what ships today (`trash_channel`/`trash_collect_sync`, docs/piles/08). A death-watch convert carries a
+  small race window (the ~5s reaper-vs-rebind glitch) the thunk hook removes. **[V/AS-BUILT]**
+
 ## NEEDS-PROBE
 
 - **[?]** `ReceiveBeginPlay` for a normal runtime-spawned (non-deferred) actor reaching ProcessEvent — not
   verified; probe before hooking it.
+- **[?]** the `FFrame::Locals` + `UFunction::Func` offsets on `VotV-Win64-Shipping.exe` for the thunk-patch
+  plan — pin via IDA before any patch (the READ-ONLY log pass is the proof-on-this-build gate).
 - **[RD→needs symptom probe]** The "`init()` is `EX_LocalVirtualFunction`" root cause is IDA-traced in the
   pass-1 RE; the *symptom* (Init-POST never fires for a Q-menu/morph spawn) is what a runtime probe
   confirms (force-spawn → check for an Init-POST log line vs a Finish-POST line).

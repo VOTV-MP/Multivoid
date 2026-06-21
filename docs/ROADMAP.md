@@ -12,11 +12,13 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
-protocol is at **v81**. **Pile/trash sync is mid-REDESIGN:** the pile MORPH (v81)
-was refuted by a real hands-on (2026-06-21) — proximity land-watch false-fires in
-clusters + the client grab never armed; the current design is the host-authoritative
-trash channel ([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md), proto bump to
-v82 pending implementation). **The day-to-day live state is
+protocol is at **v82** (was v81). **Pile/trash sync is mid-REDESIGN:** the pile MORPH
+(v81) was refuted by a real hands-on (2026-06-21) — proximity land-watch false-fires
+in clusters + the client grab never armed; the current design is the host-authoritative
+trash channel ([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)). **Increment 1
+(host-grab direction) is AS-BUILT, built clean (proto v82, the per-eid sync-time-context
++ the zero-proximity host_spawn_watcher convert link), NOT yet smoked/verified**; the
+client-grab direction (Increment 2, proto v83) is still pending. **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.
 For cross-cutting architecture truth see the new
@@ -141,13 +143,21 @@ LAN (two-machine + same-box-two-instance both confirmed).
 - ☑ Coop chat + session event log (joins / leaves / errors) — DONE
        2026-05-23. Top-right UMG feed; reliable.
 
-### Multiplayer menu — DEFERRED
+### Multiplayer menu — SHIPPED ☑
 
-- ☐ Native UMG menu (Host / Connect / browser) integrated into VOTV's
-       main menu. Currently we use `mp_host_game.bat` / `mp_client_connect.bat`
-       env-var-driven launchers (`tools/`). Design preserved in
-       `docs/MULTIPLAYER_UI.md`; build deferred until the per-feature
-       sync work stabilises.
+- ☑ AS-BUILT (commit 43e2a843, 2026-06-05; refined f32ed1b0): a native UMG
+       "MULTIPLAYER" UButton is injected above NEW GAME in VOTV's `ui_menu_C`
+       main menu (`coop/multiplayer_menu.cpp:78` via
+       `engine::InjectCanvasButton`); clicking it opens an in-process ImGui
+       server browser (`ui/server_browser.cpp`) with Host Game (save picker
+       -> `HostWithSave`), direct-IP Connect, the master-lobby server list
+       + double-click join, and nickname editing. Backends in
+       `coop/session_manager.cpp` (HostWithSave / JoinLobby / ConnectDirect).
+       Wired at `harness.cpp:1104`; rendered at `imgui_overlay.cpp:356`.
+       Matches `docs/MULTIPLAYER_UI.md` (marked BUILT 2026-06-20). The browser
+       panel itself renders in ImGui (in-process overlay), not pure UMG. The
+       `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
+       the autonomous-test entry points.
 
 ## Phase 4 — Replication layers (the bulk) ◐
 
@@ -230,13 +240,22 @@ Each item below is a feature increment series. Cross-referenced in
        direction; the user has since pivoted to simpler doors/lights work
        (5D) as the next sync target.
 
-### 5D — Doors + light switches ◐
+### 5D — Doors + light switches ☑
 - ☑ RE pass complete 2026-05-25
        (`research/findings/votv-doors-and-lightswitches-RE-2026-05-25.md`)
        — class enumeration, hook/invoke = `doorOpen`/`doorClose` +
        `Atrigger_lightRoot_C::SetActive`, 7-increment plan, 6 open
        flags.
-- ☐ Inc1: door Key resolution infrastructure. Queued.
+- ☑ Inc1: door Key resolution infrastructure — AS-BUILT. `AtriggerBase_C::Key`
+       resolved via reflection (`ue_wrap/door.cpp` EnsureResolved/GetKeyString)
+       and wired as the door channel's key->actor index. SHIPPED v27 2026-06-03
+       (commit 43e2a843).
+- ☑ Phase 5D fully SHIPPED beyond Inc1: doors + light switches + container
+       lids + garage + appliances + lockers, host-authoritative, protocol
+       v27->v62 (DoorState=9, LightState=10, DoorOpenRequest=26 v32,
+       GarageDoorState=33 v44, ApplianceState, LockerDoorState=50 v62).
+       Engine in `coop/interactable_channel.h`; adapters in
+       `coop/interactable_sync.cpp`; installed at `subsystems.cpp:89`.
 
 ### Dev convenience features ◑ (one-off shipping)
 - ☑ HOME freecam — flying debug camera with WASD/Space/Ctrl + wheel
@@ -254,21 +273,41 @@ Each item below is a feature increment series. Cross-referenced in
        SHOULD NOT use it (the saving-screenshot toast is distracting);
        autonomous scenarios only.
 
+### Shipped since (moved out of Open / future)
+- ☑ Phase 5D Inc1+ — doors + light switches sync SHIPPED (proto v27,
+       2026-06-03; commit 43e2a843). See the 5D section above (extended to
+       container lids, garage v44, lockers/console v62).
+- ☑ Multiplayer menu in VOTV's main menu — native MULTIPLAYER button
+       injected above NEW GAME into `ui_menu_C` (`coop/multiplayer_menu.cpp`)
+       opening an ImGui server browser (`ui/server_browser.cpp`) with Host
+       Game (save picker), direct-IP Connect, master-lobby list + double-click
+       join, and nickname editing; backends in `coop/session_manager.cpp`.
+       Wired at `harness.cpp:1104`, rendered at `imgui_overlay.cpp:356`.
+       Shipped 43e2a843 (2026-06-05). See the "Multiplayer menu — SHIPPED"
+       section above. The .bat launchers remain a dev/test convenience only.
+- ☑ v66 Voice chat — proximity positional (SetListener + SVC REDUCED-mode
+       pan + distance attenuation) + push-to-talk (default key 'G',
+       `voice.ptt_key` overridable) + activation mode; Opus over the existing
+       coop session (`MsgType::VoiceFrame`), miniaudio capture/playback, jitter
+       buffer, whisper, per-player volume, mute, voice icons on nameplate /
+       scoreboard / HUD. Simple-Voice-Chat port
+       (`research/findings/votv-voice-chat-port-design-2026-06-12.md`). Code:
+       `src/votv-coop/src/coop/voice/*`, `session_voice.cpp`; wired
+       `subsystems.cpp:108`/`:332`. Shipped f32ed1b0, UI refined 9ed8789a.
+- ☑ Master server + opt-in public server browser — SHIPPED. ImGui browser
+       (`ui/server_browser.cpp`) over a master lobby service
+       (`coop/net/lobby_client.cpp` GET /v1/lobbies + `lobby_announcer.cpp`
+       /v1/host /heartbeat /leave /visibility); built-in official VPS endpoint
+       (`config.cpp` kBuiltinMasterUrl), opt-in "Show in server browser"
+       toggle (`scoreboard.cpp` -> /v1/visibility), reference master server at
+       `tools/coop_master_server.py`. Landed in commit 43e2a843.
+
 ### Open / future
 - ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose
        replication (currently NPC AI runs per-client; combat / horror
        loop incoherent without it). See S-1 in
        `research/findings/votv-architecture-audit-2026-05-29.md`.
-- ☐ Phase 5D Inc1+ — doors + light switches sync implementation.
 - ☐ Phase 5T Inc1+ — terminals interactive sync.
-- ☐ Multiplayer menu in VOTV's main menu (currently env-var .bat
-       launchers; design ready in `docs/MULTIPLAYER_UI.md`).
-- ☐ Voice chat (proximity positional + push-to-talk, Plasmo-Voice-style).
-       Out of current scope; mic capture component (`UAudioCaptureComponent`)
-       already on the puppet to destroy.
-- ☐ Master server + opt-in public server browser (WAN concern, Phase 7+).
-       PR-5 design seed landed: MTA `CServerBrowser` shape adapted
-       (`research/findings/votv-master-server-mta-adaptation-2026-05-28.md`).
 - ☐ P2P + ICE / NAT punch (WAN). Design seed:
        `research/findings/votv-gns-p2p-masterserver-plan-2026-05-28.md`.
        `ENABLE_ICE=OFF` today.
