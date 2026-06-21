@@ -13,7 +13,7 @@ NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
 protocol is at **v82**. **Pile/trash sync — the host-authoritative trash channel
-([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `245148c6`, deployed `69405445`:**
+([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `7f1b29ba`, deployed `70f1f04b`:**
 the pile MORPH (v81) was refuted by a real hands-on; so was the s35 "BeginDeferred-POST
 is observable" link (it is `EX_CallMath` → invisible; 0 host_spawn_watcher fires). The
 GRAB (pile→clump) is **VERIFIED hands-on** (`InpActEvt_use` PRE + held-edge adopt); the
@@ -22,16 +22,20 @@ RE-PILE (clump→pile) is now the **deterministic `UFunction::Func` thunk conver
 triple-grab-cue fix (`fea04c26`) are **AS-BUILT** (folded into the deployed proxy build;
 the single-grab-cue + no-vanish-return remain hands-on-PENDING).
 The CLIENT mirror of trash is now a host-authoritative **`AStaticMeshActor` proxy**
-(`coop/trash_proxy`, deployed `69405445`, HEAD `245148c6`) — NO blueprint + `AddToRoot` +
+(`coop/trash_proxy`, deployed `70f1f04b`, HEAD `7f1b29ba`) — NO blueprint + `AddToRoot` +
 eid→actor registry + re-skin in place → the client mirror-staleness dup is impossible by
 construction. **DUP-FIX + VISIBILITY are hands-on VERIFIED** (no doubled piles; resting +
 landed piles mirror visibly — a runtime `AStaticMeshActor` is STATIC by default so it must
 be set Movable, `245148c6`, else `SetStaticMesh` no-ops and the proxy is invisible). **The
-LIVE CLUMP CARRY is the OPEN phase-1 item — it does NOT mirror yet** (a host grab + carry
-leaves the client's proxy a pile at its rest spot: `0` `GRAB-IN`, no ToClump convert
-applied → the pose-drive never establishes; the earlier smoke "functionally green" is
-WITHDRAWN as render-blind + a join-race). Phase 2 (collision + the client-grab direction,
-Increment 2 / proto v83) is **deferred until the live carry works + is hands-on confirmed**.
+LIVE CLUMP CARRY MIRRORS on a settled join — mechanism SMOKE-PROVEN; on-screen VISUAL
+hands-on PENDING** (two clean instrumented smokes, runs `b97z33gyh`/`b7oxr23uy`, show the
+ToClump convert adopt — `known` 0->1 — the clump mesh resolve `dirtball`, `GRAB-IN`, the
+drive `#1..#540 [proxy]` tracking the host, and the LAND re-skin). The earlier "stays a pile
+/ `0` `GRAB-IN` / 2 fps" was the **JOIN RACE** (the autotest grabbed before the client
+expressed its join snapshot), NOT a sync bug — killed by the autotest's new puppet-live
+settle gate; the smoke is render-blind so the on-screen VISUAL still needs a hands-on
+(take-24). Phase 2 (collision + the client-grab direction, Increment 2 / proto v83) is
+**deferred until the carry VISUAL is hands-on confirmed**.
 **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.

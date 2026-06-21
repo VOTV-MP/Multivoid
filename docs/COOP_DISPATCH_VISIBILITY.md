@@ -151,16 +151,20 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   The GRAB direction still uses the VISIBLE InpActEvt-PRE + held-edge adopt (a future tightening moves it to
   the same thunk). **[V/AS-BUILT]**
 - **The thunk catches the HOST's authoring. The CLIENT MIRROR needs no dispatch observation at all** — as of
-  the phase-1 trash proxy (`coop/trash_proxy`, deployed `69405445`), the client's mirror of a chipPile/clump
+  the phase-1 trash proxy (`coop/trash_proxy`, deployed `70f1f04b`), the client's mirror of a chipPile/clump
   is an `AStaticMeshActor` WE spawn/destroy/re-skin via our OWN `SpawnActor`/`DestroyActor`/`SetStaticMesh`
   (driven by the reliable PropSpawn/PropConvert/PropDestroy wire) — **visible by construction; there is no BP
   self-morph/self-destroy dispatch to observe for the mirror anymore.** The EX_CallMath invisibility problem
   here is purely a HOST-side authoring concern (the thunk); the client just renders host-authoritative state.
   **Status:** the dup-gone + the resting/landed-pile mirror are hands-on VERIFIED **[V]** (a runtime
   `AStaticMeshActor` is STATIC-mobility by default → `SetStaticMesh`/`SetActorLocation` no-op, so it MUST be
-  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY does
-  NOT mirror yet [?]** (a host grab does not re-skin/drive the client's mirror — OPEN). **[V dup-fix; [?]
-  live carry.]**
+  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY
+  MIRRORS on a settled join** — mechanism smoke-proven (two clean smokes, runs `b97z33gyh`/`b7oxr23uy`: the
+  ToClump convert adopts `known` 0->1, the clump mesh resolves `dirtball`, `GRAB-IN` fires, the drive
+  `#1..#540 [proxy]` tracks the host, the LAND re-skins). The earlier "does not mirror / `0` `GRAB-IN`" was the
+  JOIN RACE (the autotest grabbed before the client expressed its join snapshot), NOT a sync bug; the on-screen
+  VISUAL is **[?] hands-on PENDING** (the smoke is render-blind — see the caveat below). **[V dup-fix; carry
+  mechanism smoke-proven, [?] on-screen visual hands-on pending.]**
 
 > **⚠ A render-blind smoke caveat (the 2026-06-21 trap).** Our autonomous smoke can verify log markers and
 > that a UFunction `Call()` returned, but it CANNOT verify that the call's *effect* actually landed on the
