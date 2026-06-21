@@ -140,3 +140,11 @@ research/bp_reflection/
 # git clone of simple-voice-chat + a Bukkit .jar). Heavy third-party reference,
 # not collaborative source -- same policy as the other reference binaries above.
 reference/VoiceChatMC/
+
+# Pile-morph smoke logs + transient evidence (autotest_chippile / joinchurn runs -- dev only)
+research/*.out
+research/smoke_shots/
+docs/piles/test-evidence/
+# Consolidated-pile generated RE dumps (bytecode/reflection JSON -- dev/RE only, same policy as
+# research/bp_reflection above; the 419k-line mainGamemode.json etc. -- regenerate, never commit)
+docs/piles/re-artifacts/
