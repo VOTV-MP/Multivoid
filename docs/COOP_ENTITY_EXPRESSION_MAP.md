@@ -22,7 +22,7 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 |---|---|---|---|---|
 | Keyed `Aprop_C` props | save-load / spawner / Q-menu (BeginDeferred) / takeObj | seed walk (save-loaded) · Init-POST observer (spawner) · `FinishSpawningActor` POST (Q-menu) · takeObj POST | host eid **+ the BP save Key string** | prop_lifecycle, prop_element_tracker, prop_snapshot, host_spawn_watcher |
 | chipPile (ambient trash pile) | garbagePileSpawner-seeded / save-load | seed walk (keyless-pile lane) → connect snapshot / R1 re-seed | **host eid only (KEYLESS)** | prop_element_tracker, prop_snapshot, remote_prop_spawn (EnsurePileBindIndex) |
-| garbageClump (the carried "ball") | `chipPile.toClump` on grab (EX_LocalVirtualFunction) | **pile_morph held-object adopt** (Init-POST is DEAD for it) | **host eid only** (re-skins the pile's E) | pile_morph |
+| garbageClump (the carried "ball") | `chipPile.playerGrabbed` on grab (EX_LocalVirtualFunction) | **REDESIGN → host-auth trash channel** (the convert-spawn POST link; the retired morph used proximity) | **host eid only** (re-skins the pile's E) | trash_channel (08) — *pile_morph RETIRED* |
 | Held items (Aprop_C in hand) | grabbed | `EnsureHeldItemBroadcast` new-held edge (self-heal for untracked) + the held-pose stream | the item's Key/eid | trash_collect_sync, local_streams |
 | NPCs / Characters | BeginDeferred (VISIBLE) | host `BeginDeferred` interceptor + POST; save-loaded via `RegisterExistingWorldNpcs` walk | host eid (no BP key) | npc_sync, npc_mirror, npc_world_enum, npc_adoption |
 | WorldActors (event actors) | BeginDeferred (VISIBLE) | 2nd `BeginDeferred` interceptor (disjoint, NAME-matched allowlist) | host eid | world_actor_sync |
@@ -50,32 +50,35 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
   for keyless piles (retires the client-local identity). **[V]**
 
-### chipPile + garbageClump + the MORPH (the dupe-critical family)
-- **chipPile is KEYLESS** — `setKey` is a no-op (the BP re-reads None); the only identity is the host-minted
-  eid. **[V/RD]** Caught by the **seed walk keyless-pile lane** (`IsChipPile` only) → expressed via the
-  connect snapshot or the R1 re-seed. **[V]**
-- **garbageClump (grab morph product): the Init-POST observer does NOT fire for it** (BP-deferred,
-  `EX_LocalVirtualFunction`). **[V: host_spawn_watcher.cpp:132]** It is expressed ONLY by **pile_morph's
-  held-object adopt** (`TryAdoptHeldClump` on the new-held edge → `PropConvert{ToClump}`, oldEid==newEid==E).
-  Every other seam rejects it: `EnsureHeldItemBroadcast` (`IsGarbageClump → return false`), the re-seed
-  (`BuildPropSpawnPayload_` rejects keyless non-chipPile), host_spawn_watcher (not in its ambient set). ⇒
-  **the clump has exactly ONE expresser. No dupe.** **[V]**
-- **Re-piled chipPile (land morph product): TWO potential expressers** — pile_morph's land-watch poll
-  (`PropConvert{ToPile}`) AND the host re-seed (a landed chipPile IS a keyless `IsChipPile` the re-seed
-  would express under a fresh eid). They are mutually exclusive: pile_morph's land claim calls
-  `MarkKnownKeyedProp + MarkProcessedInit` so the re-seed skips it; if the re-seed won the race
-  (`already != E`), pile_morph sends `PropDestroy(E)` (drop the clump) and lets the re-seed's eid stand.
-  **[V]** **[?]** the timing margin (does the land claim always bind before the next re-seed tick, ~4 s
-  cadence vs a per-frame poll) is the one unverified guarantee.
-- **Grab/destroy seam:** `OnPileGrabPre` (the `InpActEvt_use` PRE, reads `lookAtActor`=pile-while-alive) arms
-  `pile_morph::OnGrab` with a 400 ms deferred `PropDestroy(eid)` fallback (= the working take-17
-  grab→vanish if the morph can't sync). **[V]**
-- **[?] THE one runtime-unverified link:** does the morphed clump become `mainPlayer.holding_actor` so
-  `local_streams`' new-held edge sees it → `TryAdoptHeldClump`? `local_streams.cpp:220` flags this as a
-  live-BP question; the `garbage_pickup_probe` ini + ONE user grab settles it. An audit/build/host-grab
-  smoke CANNOT. This is the documented "measure first" item. **[?]**
-- Design vs as-built: `docs/piles/07` is the DESIGN; the `.cpp` is truth (400 ms not 250; 100 cm land
-  search; `isLocal` folded into `RegisterPropMirror`'s `IsMirror()` routing). **[V]**
+### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
+
+> **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch, docs/piles/07) is RETIRED.** A
+> real hands-on (2026-06-21) refuted its smoke "VERIFIED": the proximity land-watch
+> (`FindNearestChipPile(lastPos,100cm)`) consumes a NEIGHBOR pile in a cluster → eid mis-binds → divergence,
+> and the client grab never armed. The current design is the **host-authoritative trash channel** (08).
+
+**Durable facts (survive the redesign):**
+- **chipPile is KEYLESS** — `setKey` is a no-op; the only identity is the host-minted eid. **[V/RD]**
+  Caught by the seed-walk keyless-pile lane (`IsChipPile`) → connect snapshot / R1 re-seed. **[V]**
+- **VERIFIED mechanic (bytecode):** `actorChipPile_C` = CARRY-AND-THROW (E → `playerGrabbed` spawns a
+  clump in hand + destroys the pile; the clump re-piles on its **2nd ground contact** at the clump's
+  **sphere-traced RESTING point** — NOT `lastPos`, NOT the source pile pos → why proximity was doomed).
+  `trashBitsPile_C` = a SEPARATE COLLECT entity (keyed-Aprop lane). Only `chipType@0x0238` (cosmetic
+  variant) carries. **[V/RD]**
+- **OBSERVABILITY:** `playerGrabbed`/`pickupObjectDirect`/`K2_DestroyActor(self)` are INVISIBLE
+  (`EX_LocalVirtualFunction`). BUT **`BeginDeferredActorSpawnFromClass` POST + `FinishSpawningActor` POST
+  ARE VISIBLE** (host_spawn_watcher catches the identical opcode for garbagePileSpawner) → at the
+  convert-spawn POST, ReturnValue (new pile) + WorldContextObject (= self, the dying clump) give a
+  **deterministic ZERO-PROXIMITY clump↔pile link**. **[V: COOP_DISPATCH_VISIBILITY.md:65; host_spawn_watcher.cpp]**
+  (This corrects the old `pass2` RE doc's "BeginDeferred unobservable" claim — FALSE.)
+
+**The design (08, host-authoritative state machine — pre-implementation):** the eid is a host-minted
+life-stable logical trash entity (state PILED/HELD_BY(N)/FLYING; **position is NEVER identity** → the
+cluster mis-bind is impossible by construction). Host owns the authoritative state; receivers drive a
+local visual from it (door-channel shape, `Channel::Mode::HostAuth`). Client-grab = **suppress-native +
+`GrabIntent` → host executes the real verb** (fixes the dead client direction AND the local dupe). The
+clump→pile link = the convert-spawn POST (no proximity). A sync-time-context byte rejects stale packets.
+**[DESIGN — not yet AS-BUILT; never VERIFIED until a real hands-on in a CLUSTER, both directions.]**
 
 ### NPCs / Characters
 - Host `BeginDeferred` **interceptor** (allowlist of 14 ACharacter bases) allocs an `Npc` Element + POST
@@ -109,17 +112,21 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 | connect drain ↔ live Init-POST/re-seed during a join | receiver `OnSpawn` exact-key/eid dedup → `RegisterPropMirror` idempotent | [V] |
 | R1 re-seed ↔ a 2nd peer's connect drain | bracket-free additive; receiver dedups; no sweep re-arm | [V] |
 | kerfur converge ↔ R1 re-seed re-expressing the kerfur | `MarkKnownKeyedProp` + `ExpressIncrementalSpawn` kerfur-skip + reaper kerfur-skip | [V] |
-| **pile_morph land-watch ↔ host re-seed (the landed pile)** | `MarkKnownKeyedProp`+`MarkProcessedInit` suppress; race-loser → `PropDestroy(E)` | [V] / margin [?] |
-| client save-loaded pile (own eid) ↔ host pile eid (connect bracket) | position-bind retires the client-local identity (`UnmarkKnownKeyedProp`) | [V] |
-| client grabs host shared-trash (BP morphs locally) ↔ host author path | client host-authority gate (`EnsureHeldItemBroadcast:114`) — client never authors shared trash | [V] |
+| ~~pile_morph land-watch ↔ host re-seed~~ | **RETIRED** — the morph + its proximity land-watch are gone (08); the landed pile is now claimed by eid at the convert-spawn POST (no re-seed race) | [redesign] |
+| client save-loaded pile (own eid) ↔ host pile eid (connect bracket) | position-bind retires the client-local identity (`UnmarkKnownKeyedProp`); 08 replaces this with host re-stream on the drain edge (`PileResyncRequest`) | [V] → [redesign] |
+| client grabs host shared-trash ↔ host author path | 08: client SUPPRESSES the native grab + sends `GrabIntent` → host executes authoritatively (the door `OnRequest` shape) — client never authors shared trash, and no local clump dupe | [DESIGN] |
 | NPC interceptor ↔ WorldActor interceptor (same BeginDeferred) | DISJOINT allowlists; multi-interceptor support | [V] |
 | nested BeginDeferred steals a pending eid in POST | params-pointer correlation | [V] |
 | client kerfur conversion ghost grabbed → client-eid dupe | `ClaimConversionGhosts` parks/freezes immediately (adopt or reap) | [V] |
 
 ## NEEDS-PROBE (do not encode as truth without it)
-- **[?]** Does the morphed clump reach `mainPlayer.holding_actor` (the morph's one unverified link)?
-  `garbage_pickup_probe` ini + 1 grab.
-- **[?]** pile_morph land-claim vs re-seed timing margin.
+- **[?]** (trash redesign 08) PROBE-A: which `OnPileGrabPre` early-return fires on the live client
+  (hands-full vs `kInvalidId`) + the carry slot (`grabbing_actor` vs `holding_actor`). One log line + 1 grab.
+- **[?]** (trash redesign 08) does `CallFunction(pile, playerGrabbed, {puppetN, hit})` drive
+  `pickupObjectDirect` on a PUPPET (host executes a client's grab intent)?
+- **[?]** (trash redesign 08) does the `BeginDeferred`/`FinishSpawning` POST fire for the clump↔pile
+  convert specifically (confirm at Step 2, the first cluster smoke).
+  *(RETIRED morph [?]s removed: the "clump→holding_actor" link [it's grabbing_actor] + the land-claim/re-seed timing margin.)*
 - **[?]** NPC/WorldActor client-suppression assumes spawner BPs null-check before `FinishSpawningActor`
   (UE4 convention; not IDA-confirmed on VOTV spawners).
 - **[?]** WorldActor 16-name allowlist completeness / all-spawn-via-BeginDeferred — smoke-pending.

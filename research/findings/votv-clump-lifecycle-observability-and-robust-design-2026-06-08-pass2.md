@@ -1,5 +1,14 @@
 # VOTV clump/pile lifecycle — DEFINITIVE ProcessEvent-observability map + robust sync design (pass 2) — 2026-06-08
 
+> **⚠ PARTIALLY SUPERSEDED 2026-06-21 — authority is now [docs/COOP_DISPATCH_VISIBILITY.md](../../docs/COOP_DISPATCH_VISIBILITY.md) + [docs/piles/08](../../docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md).**
+> STILL TRUE: `playerGrabbed`/`pickupObjectDirect`/`K2_DestroyActor(self)` are INVISIBLE (the PRE-observer
+> conclusion). **NOW FALSE: the claim that `BeginDeferredActorSpawnFromClass`/`FinishSpawningActor` are
+> "UNOBSERVABLE"** — they ARE ProcessEvent-VISIBLE (host_spawn_watcher catches the identical opcode live;
+> DISPATCH map line 65). That reverses this doc's design conclusion: the clump↔pile convert is caught at
+> the **convert-spawn POST** (zero proximity), NOT a proximity death-watch. The death-watch design below is
+> RETIRED with the morph (the proximity land-watch false-fired in clusters — hands-on 2026-06-21). Read 08
+> for the current host-authoritative design; this doc is history for the playerGrabbed dispatch facts only.
+
 Supersedes the detection half of `votv-clump-pile-dupe-DECISIVE-RE-2026-06-08.md` and
 `votv-clump-ball-to-pile-conversion-RE-and-event-fix-2026-06-08.md`. The eid-morph
 storyline in those docs is correct; **the one fatal assumption — that

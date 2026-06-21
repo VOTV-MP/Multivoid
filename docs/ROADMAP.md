@@ -12,7 +12,11 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
-protocol is at **v81** (the pile MORPH V2 work). **The day-to-day live state is
+protocol is at **v81**. **Pile/trash sync is mid-REDESIGN:** the pile MORPH (v81)
+was refuted by a real hands-on (2026-06-21) — proximity land-watch false-fires in
+clusters + the client grab never armed; the current design is the host-authoritative
+trash channel ([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md), proto bump to
+v82 pending implementation). **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.
 For cross-cutting architecture truth see the new

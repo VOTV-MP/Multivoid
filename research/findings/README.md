@@ -24,7 +24,11 @@ files. **It is NOT a description of the current state** — each file is a snaps
 
 ## `_archive/` — definitively superseded / abandoned approaches
 Moved out of the active log so they can't be mistaken for a current plan (see `_archive/README.md`). As
-of 2026-06-20: the failed pile save-strip + thin-client-sync approaches (superseded by docs/piles/07).
+of 2026-06-20: the failed pile save-strip + thin-client-sync approaches. **The CURRENT pile/trash design
+is [docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md](../../docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md)** — the
+morph (07) was retired 2026-06-21 (its smoke "VERIFIED" was refuted by a real hands-on); the
+`*-clump-*`/`*-pile-*` RE docs here are durable bytecode facts, but their design conclusions defer to 08
++ the COOP_* maps. (One now-FALSE claim flagged in place: `...-pass2`'s "BeginDeferred unobservable".)
 
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
