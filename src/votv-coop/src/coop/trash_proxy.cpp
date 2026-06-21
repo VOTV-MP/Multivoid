@@ -145,10 +145,18 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
         UE_LOGW("trash_proxy: SpawnActor(StaticMeshActor) failed eid=%u", eid);
         return nullptr;
     }
+    void* comp = E::GetStaticMeshComponent(actor);             // resolve ONCE (invariant for the actor's life)
+    // AStaticMeshActor defaults to STATIC mobility -> at runtime SetStaticMesh AND SetActorLocation
+    // are silently no-ops on a Static component (AreDynamicDataChangesAllowed()==false): the proxy
+    // would be INVISIBLE (mesh never applies) and unable to follow the carry, while the convert/throw
+    // SOUNDS still fire (the events process). The proxy is a kinematic host-driven follower we re-skin
+    // + move every frame, so make it Movable BEFORE the first skin/transform. (Caught hands-on
+    // 2026-06-21: "client hears interaction + throw sounds but no visual mirror" -- the autonomous
+    // smoke can't see this, screenshots are black + it only checks log markers.)
+    E::SetComponentMobility(comp, /*EComponentMobility::Movable=*/2);
     E::SetActorRotation(actor, rot);
     R::AddToRoot(actor);                                        // never GC'd -> never stale -> no dup
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // phase 1 follower
-    void* comp = E::GetStaticMeshComponent(actor);             // resolve ONCE (invariant for the actor's life)
     SkinProxy(actor, comp, chipType, isClump);
     g_proxies[eid] = ProxyEntry{ actor, comp, ownerSlot };
     UE_LOGI("[PILE] trash_proxy: SPAWN eid=%u %s chipType=%u actor=%p ownerSlot=%d "

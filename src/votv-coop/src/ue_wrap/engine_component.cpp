@@ -83,6 +83,16 @@ bool ResolveStaticMeshFn() {
     return g_setStaticMeshFn != nullptr;
 }
 
+void* g_sceneCompMobCls = nullptr;   // owns SetMobility (USceneComponent)
+void* g_setMobilityFn = nullptr;
+
+bool ResolveSetMobilityFn() {
+    if (!g_sceneCompMobCls) g_sceneCompMobCls = R::FindClass(L"SceneComponent");
+    if (g_sceneCompMobCls && !g_setMobilityFn)
+        g_setMobilityFn = R::FindFunction(g_sceneCompMobCls, L"SetMobility");
+    return g_setMobilityFn != nullptr;
+}
+
 void* g_primCompClass = nullptr;     // owns SetMaterial (UPrimitiveComponent)
 void* g_setMaterialFn = nullptr;
 void* g_staticMeshAssetClass = nullptr;  // UStaticMesh (owns GetMaterial(MaterialIndex))
@@ -253,6 +263,18 @@ bool SetStaticMesh(void* component, void* staticMeshAsset) {
     }
     ParamFrame f(g_setStaticMeshFn);
     f.Set<void*>(L"NewMesh", staticMeshAsset);
+    return Call(component, f);
+}
+
+bool SetComponentMobility(void* component, uint8_t mobility) {
+    // USceneComponent::SetMobility(NewMobility). Movable (2) re-registers the render state so a
+    // runtime SetStaticMesh + SetActorLocation actually apply (a Static component no-ops both).
+    if (!component || !ResolveSetMobilityFn()) {
+        UE_LOGE("engine: SetComponentMobility unresolved (comp=%p fn=%p)", component, g_setMobilityFn);
+        return false;
+    }
+    ParamFrame f(g_setMobilityFn);
+    f.Set<uint8_t>(L"NewMobility", mobility);
     return Call(component, f);
 }
 

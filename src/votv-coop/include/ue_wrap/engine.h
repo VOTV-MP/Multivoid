@@ -566,6 +566,15 @@ bool SetAnimClass(void* skeletalMeshComponent, void* animBlueprintClass);
 // call. Rejects null. Game thread only.
 bool SetStaticMesh(void* staticMeshComponent, void* staticMeshAsset);
 
+// USceneComponent::SetMobility(NewMobility) -- set a component's mobility (Static=0,
+// Stationary=1, Movable=2) and re-register its render state. A runtime-spawned
+// AStaticMeshActor defaults to STATIC, on which SetStaticMesh AND SetActorLocation are
+// silently no-ops (AreDynamicDataChangesAllowed()==false) -- the trash proxy is a
+// kinematic host-driven follower we re-skin + move every frame, so its mesh component
+// MUST be Movable BEFORE the first SetStaticMesh or it never renders + can't follow.
+// Game thread only.
+bool SetComponentMobility(void* sceneComponent, uint8_t mobility);
+
 // UPrimitiveComponent::SetMaterial(ElementIndex, Material) -- override one material
 // slot on a component. `material` MAY be null: SetMaterial(0, null) reverts that
 // slot to the mesh asset's own default material (the trash proxy uses this to clear
