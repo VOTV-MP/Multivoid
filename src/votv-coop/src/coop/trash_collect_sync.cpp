@@ -42,7 +42,7 @@ namespace P  = ue_wrap::profile;
 // (re-cached every call for reconnect). Game-thread read inside the observer.
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (stays for process life)
-bool g_simDropThunkInstalled = false;  // read-only simulateDrop Func-thunk latch (the real drop/throw seam)
+bool g_dropGrabThunkInstalled = false;  // read-only dropGrabObject Func-thunk latch (the PHC-grab release seam)
 
 // RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH (proximity FindNearestChipPile land-detect) is FULLY
 // RETIRED -- it mis-bound on a NEIGHBOUR pile in a dense cluster. The host-grab sync is now: the InpActEvt
@@ -88,14 +88,23 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     coop::trash_channel::OnHostConvert(*s, E, coop::net::propconvert_kind::kToPile, newActor, loc, rot, chipType);
 }
 
-// DIAGNOSTIC read-only thunk on AmainPlayer_C::simulateDrop -- the named real-drop event (7 input-handler
-// call sites; throwHoldingProp[0] is `CALLVIRT simulateDrop` so this catches BOTH a plain drop AND a throw).
-// updateHold (the held-puppet recreation = the carry-freeze flicker) NEVER calls simulateDrop -> the seam is
-// distinct (that is exactly the distinguisher the recreation-flicker lacked). PostNativeCallback fires AFTER
-// simulateDrop runs, so holding_actor may already be cleared -> the ROBUST cross-check is AnyCarryingEid()
-// (our latch, untouched by simulateDrop): carrying == the carry-eid in HELD-STATE at this log == the seam
-// fired for the CLUMP drop (you hold one item). The FLIP will close the latch HERE (read-only logs only now).
-void OnSimulateDropObserve(void* player, void* /*result*/) {
+// DIAGNOSTIC read-only thunk on AmainPlayer_C::dropGrabObject -- the PHC-GRAB RELEASE verb (RE-confirmed
+// 2026-06-22, mainPlayer.json: it writes `grabbing_actor = NoObject` @167013 + `grabHandle->ReleaseComponent()`
+// @167059). This is the seam for releasing a PHYSICS-HANDLE-grabbed object: the chipPile clump rides
+// grabbing_actor, NOT holding_actor (confirmed -- neither chipPile nor clump references holding_actor). It
+// catches BOTH a plain drop AND a throw: a throw runs throwShit (SetPhysicsLinearVelocity) + thrown() on the
+// SAME tick immediately BEFORE dropGrabObject, so by this POST the clump already carries its throw velocity (no
+// need to classify drop-vs-throw here -- the release edge reads whatever velocity the clump has). The earlier
+// simulateDrop thunk was the EQUIPMENT drop (throwHoldingProp -> simulateDrop) and NEVER fired for the clump:
+// SIM-DROP=0 across 6 grabs + drops + throws, the live disproof. RULE 2: simulateDrop retired, this is correct.
+// PostNativeCallback fires AFTER dropGrabObject runs, so grabbing_actor is already null -> the ROBUST signal is
+// AnyCarryingEid() (our latch, untouched by dropGrabObject): carrying == the carry-eid in [HELD-STATE] == the
+// release fired for the carried clump. The FLIP will close the latch HERE (read-only logs only now).
+//
+// CONFIRM before the flip: (a) [DROP-GRAB] fires on the real drop AND throw with carrying=<the carry-eid>;
+// (b) it does NOT fire DURING the carry (at a churn re-grab -- the held clump ptr changes ~every 3 s). If it
+// fires on churn, the flip would close the latch mid-carry (regress the smooth carry) -> the close needs a gate.
+void OnDropGrabObserve(void* player, void* /*result*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     const coop::element::ElementId carryEid = coop::trash_channel::AnyCarryingEid();
@@ -103,12 +112,12 @@ void OnSimulateDropObserve(void* player, void* /*result*/) {
     coop::element::ElementId heldEid = coop::element::kInvalidId;
     ue_wrap::engine::MainPlayerGrabState gs{};
     if (player && ue_wrap::engine::ReadMainPlayerGrabState(player, gs)) {
-        held = gs.holdingActor ? gs.holdingActor : gs.grabbingActor;  // POST -> may be null (simulateDrop cleared it)
+        held = gs.grabbingActor ? gs.grabbingActor : gs.holdingActor;  // POST -> grabbing_actor already nulled by dropGrabObject
         if (held && R::IsLive(held)) heldEid = PT::GetPropElementIdForActor(held);
     }
-    UE_LOGI("[SIM-DROP] simulateDrop fired player=%p held=%p(POST) heldEid=%u carrying=%u -- READ-ONLY "
-            "(cross-check carrying vs the carry-eid in [HELD-STATE]; the FLIP closes the latch here -> the "
-            "release edge then fires the throw velocity)",
+    UE_LOGI("[DROP-GRAB] dropGrabObject fired player=%p grabbed=%p(POST) heldEid=%u carrying=%u -- READ-ONLY "
+            "(cross-check carrying vs the carry-eid in [HELD-STATE]; MUST fire on a REAL drop/throw, NOT during "
+            "the carry/churn; the FLIP closes the latch here -> the release edge then ships the throw velocity)",
             player, held,
             static_cast<unsigned>((heldEid  == coop::element::kInvalidId) ? 0u : heldEid),
             static_cast<unsigned>((carryEid == coop::element::kInvalidId) ? 0u : carryEid));
@@ -376,20 +385,23 @@ void Install(coop::net::Session* session) {
         // bdFn null -> GameplayStatics not loaded yet; retry next world-gated Install call.
     }
 
-    // DIAGNOSTIC read-only: Func-thunk on AmainPlayer_C::simulateDrop -- the real drop/throw seam (distinct
-    // from updateHold-recreation). Logs held+carrying eid on every fire; the FLIP will close the carry latch
-    // here so a real drop/throw lets the release edge ship the throw velocity. (simulateDrop is dispatched
-    // EX_CallMath/EX_VirtualFunction -> below ProcessEvent, so a PRE observer can't see it -> the Func-thunk.)
-    if (!g_simDropThunkInstalled) {
+    // DIAGNOSTIC read-only: Func-thunk on AmainPlayer_C::dropGrabObject -- the PHC-GRAB RELEASE verb (the
+    // correct seam; the prior simulateDrop thunk was the EQUIPMENT drop and NEVER fired for the PHC-grabbed
+    // clump -- SIM-DROP=0 live, RULE 2 retired). dropGrabObject writes grabbing_actor = NoObject +
+    // grabHandle->ReleaseComponent(); it is FUNC_BlueprintEvent dispatched EX_LocalVirtualFunction -> below
+    // ProcessEvent, so a PRE observer can't see it -> the Func-thunk catches it. Logs carrying eid; the FLIP
+    // will close the carry latch here so a real drop/throw lets the release edge ship the throw velocity.
+    if (!g_dropGrabThunkInstalled) {
         void* pcls = R::FindClass(P::name::MainPlayerClass);
-        void* sdFn = pcls ? R::FindFunction(pcls, L"simulateDrop") : nullptr;
-        if (sdFn) {
-            ue_wrap::ufunction_hook::InstallPostHook(sdFn, &OnSimulateDropObserve);
-            g_simDropThunkInstalled = true;
-            UE_LOGI("trash_collect: read-only simulateDrop thunk armed (the real drop/throw seam -- logs "
-                    "held+carrying eid; throwHoldingProp routes through simulateDrop so this catches throws too)");
+        void* dgFn = pcls ? R::FindFunction(pcls, L"dropGrabObject") : nullptr;
+        if (dgFn) {
+            ue_wrap::ufunction_hook::InstallPostHook(dgFn, &OnDropGrabObserve);
+            g_dropGrabThunkInstalled = true;
+            UE_LOGI("trash_collect: read-only dropGrabObject thunk armed (the PHC-grab release seam -- logs "
+                    "carrying eid; drop AND throw both route through dropGrabObject; confirm it fires on a REAL "
+                    "release NOT on a churn re-grab before the flip)");
         }
-        // sdFn null -> mainPlayer_C not loaded yet; retry next world-gated Install call.
+        // dgFn null -> mainPlayer_C not loaded yet; retry next world-gated Install call.
     }
 
     if (g_grabObserverInstalled) return;

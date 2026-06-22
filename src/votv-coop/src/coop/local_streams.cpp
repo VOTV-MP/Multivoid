@@ -430,16 +430,17 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // held carry poses (ctx ahead of known) -> frozen. HasPendingSettle could not catch it (recreation
         // has no re-pile/settle). So SUPPRESS the release edge for the WHOLE carry (!carrying). The latch
         // closes via: the land-settle (a drop/throw's landing re-pile -> LAND COMMIT) AND -- after the flip --
-        // the simulateDrop UFunction::Func thunk (the real player drop/throw -> close -> THIS edge then fires
-        // -> PropRelease velocity). In THIS read-only build the thunk only LOGS, so a throw teleports (closes
-        // via the settle, no velocity) until the flip. NO R::IsLive, NO HasPendingSettle.
+        // the dropGrabObject UFunction::Func thunk (the PHC-grab release verb -- the real player drop/throw ->
+        // close -> THIS edge then fires -> PropRelease velocity; simulateDrop was the wrong EQUIPMENT seam,
+        // retired RULE 2). In THIS read-only build the thunk only LOGS, so a throw teleports (closes via the
+        // settle, no velocity) until the flip. NO R::IsLive, NO HasPendingSettle.
         const bool relSkip   = carrying_;
         UE_LOGI("[REL-EDGE] eid=%u carrying=%d pendingSettle=%d -> %s",
                 (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
                 carrying_ ? 1 : 0, pending_ ? 1 : 0, relSkip ? "SKIP(carrying)" : "FIRE(release)");
         if (relSkip) {
             UE_LOGI("[PILE] HOST carry SUPPRESS release eid=%u -- !carrying gate (puppet recreation / churn / "
-                    "a real release whose latch the simulateDrop thunk will close); keep the carry binding",
+                    "a real release whose latch the dropGrabObject thunk will close); keep the carry binding",
                     static_cast<unsigned>(g_lastHeldEid));
         } else {
         // Edge: was holding, now not (NOT carrying -- the latch was already closed by the simulateDrop thunk
