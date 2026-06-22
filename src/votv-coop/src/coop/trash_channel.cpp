@@ -338,6 +338,13 @@ void OnGrabHolderLeft(uint8_t senderSlot) {
     }
 }
 
+void ReleaseClientHold(coop::element::ElementId E) {
+    const uint32_t eid = static_cast<uint32_t>(E);
+    if (g_heldBy.erase(eid))
+        UE_LOGI("[GRAB-INTENT] ReleaseClientHold eid=%u -- clump lost before land; hold cleared (re-grabbable)", eid);
+    ForgetEid(E);   // drop a stranded carry latch/settle (idempotent if the land COMMIT already closed it)
+}
+
 void TickCarry(coop::net::Session& s) {
     ++g_tick;
     // 1. pending-grab TTL (folded from the retired TickPendingGrab).

@@ -52,23 +52,29 @@ void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump) {
 
 void Tick() {
     for (auto it = g_held.begin(); it != g_held.end(); ) {
-        // Guard 1: the clump still live? (cross-tick cached pointer -> IsLiveByIndex, never bare IsLive.)
-        if (!R::IsLiveByIndex(it->clump, it->clumpIdx)) {
-            UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- clump gone (re-piled/GC) -> drive OFF", it->eid, it->slot);
-            it = g_held.erase(it);
-            continue;
-        }
-        // Guard 2: the carry latch still open? A re-pile land COMMIT (trash_channel::TickCarry) closes it;
-        // the clump has become a pile -> stop following. (TickCarry runs BEFORE this in TickGameplay.)
+        // Guard 1: the clump still live? (cross-tick cached pointer -> IsLiveByIndex, never bare IsLive.) If
+        // the clump died WITHOUT a normal land (Guard 2), release the client hold so the eid is re-grabbable
+        // (audit MEDIUM-1: else g_heldBy strands the eid permanently un-grabbable). Order matters: check the
+        // land-close (Guard 2) FIRST so a clean land is NOT mistaken for a lost clump.
         if (!coop::trash_channel::IsCarrying(static_cast<coop::element::ElementId>(it->eid))) {
+            // Guard 2: the carry latch closed = a re-pile land COMMIT (TickCarry, which ran BEFORE this in
+            // TickGameplay + already cleared g_heldBy). The clump became a pile -> stop following, no release.
             UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- carry latch closed (landed) -> drive OFF", it->eid, it->slot);
             it = g_held.erase(it);
             continue;
         }
-        // Guard 3: the puppet still live?
+        if (!R::IsLiveByIndex(it->clump, it->clumpIdx)) {
+            UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- clump gone with NO land -> drive OFF + release hold", it->eid, it->slot);
+            coop::trash_channel::ReleaseClientHold(static_cast<coop::element::ElementId>(it->eid));
+            it = g_held.erase(it);
+            continue;
+        }
+        // Guard 3: the puppet still live? (A not-live puppet without a full disconnect would otherwise strand
+        // the hold -- release it too.)
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(it->slot);
         if (!rp || !rp->valid()) {
-            UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- puppet gone -> drive OFF", it->eid, it->slot);
+            UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- puppet gone -> drive OFF + release hold", it->eid, it->slot);
+            coop::trash_channel::ReleaseClientHold(static_cast<coop::element::ElementId>(it->eid));
             it = g_held.erase(it);
             continue;
         }

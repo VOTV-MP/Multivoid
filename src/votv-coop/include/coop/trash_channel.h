@@ -88,6 +88,12 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot);
 // a ForgetEid so a stranded carry latch can't keep the entity in limbo. Game thread.
 void OnGrabHolderLeft(uint8_t senderSlot);
 
+// HOST: the puppet-held clump for `E` was LOST without a normal land (the clump died / the puppet went
+// not-live -- puppet_carry_drive's non-land drop paths). Clear E's client hold (HELD_BY) + carry latch so
+// the eid is re-grabbable, never stranded. Idempotent (a normal land COMMIT already cleared HELD_BY -> no-op).
+// Game thread.
+void ReleaseClientHold(coop::element::ElementId E);
+
 // ---- CLOSE-B carry latch + land-settle (host-side, 2026-06-22) ----------------------------------------
 // A trash entity E is "carrying" from the real grab (OnHostConvert kToClump while not carrying) until the
 // real land. DURING carry the host's stock churn -- the held clump re-piles on cluster contact ~1/s and the
