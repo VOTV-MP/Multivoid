@@ -169,6 +169,10 @@ bool IsCarrying(coop::element::ElementId E) {
     return g_carry.find(static_cast<uint32_t>(E)) != g_carry.end();
 }
 
+bool HasPendingSettle(coop::element::ElementId E) {
+    return g_settle.find(static_cast<uint32_t>(E)) != g_settle.end();
+}
+
 uint8_t OnHostRelease(coop::element::ElementId E) {
     auto it = g_ctx.find(static_cast<uint32_t>(E));
     if (it == g_ctx.end()) return 0;                      // not a tracked trash entity -> no ctx

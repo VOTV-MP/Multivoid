@@ -136,17 +136,30 @@ churn ToPile commits early, the re-grab re-opens → brief self-correcting `clum
 large → a few frames' land-morph lag. NEITHER strands E. The settle is a host-side hold-then-commit on an
 idempotent, ctx-ordered convert — it races nothing.
 
+## AS-BUILT (2026-06-22, hands-on-iterated)
+- **`65AD883A`** — CLOSE-B v1: the carry latch + land-settle + `OnHostRegrab` + `TickCarry` + `ForgetEid`
+  (`trash_channel.{h,cpp}`) + the held-edge re-grab rebind (`local_streams.cpp`) + `TickCarry(session)`
+  (`subsystems.cpp:363`). **Hands-on:** opened the latch + suppressed the churn (no stuck pile ✓), drop→pile
+  fast ✓, BUT the carry was **frozen between E-events** (the release-flicker, below). The dup (old-pile +
+  new-clump on grab) showed once = a separate intermittent eid-mismatch (`fwdEid` vs the client's mirror eid),
+  NOT the churn — dormant, not fixed.
+- **`C9F28176`** — the release-flicker gate: the held-prop poll's release edge (`local_streams.cpp:379`) had
+  NO carry gate, so the churn's 1-frame `holding_actor` flicker fired it → cleared `g_lastHeldEid` + a spurious
+  PropRelease → the carry binding died until the next E-press. FIX: suppress the release edge ONLY on the churn
+  flicker — `carrying && HasPendingSettle(E)` (a re-pile just started a settle, the flicker's cause) — and fire
+  on a real drop/throw (no pending settle, because a churn re-grab cancels the settle before any throw → a real
+  release never coincides with one) → PropRelease velocity ships + `ForgetEid` closes the latch. **No
+  `R::IsLive`** (UAF on the just-destroyed clump), no input-event RE (`InpActEvt_drop` is UI-gated, `throwPath`
+  is path-aiming). Hands-on-PENDING (take-26).
+
 ## NEXT (resume here)
-1. BUILD CLOSE-B in `trash_channel.{h,cpp}` (carry latch + land-settle + `OnHostRegrab` + `TickCarry` +
-   `ForgetEid`) + the held-edge re-grab rebind in `local_streams.cpp` + `TickCarry(session)` at the host tick
-   (`subsystems.cpp:363`). Option-1 already reverted; **fix #2 KEPT** (`remote_prop.cpp:1148` — the ToPile
-   land snap is the one place the convert positions the proxy; ToClump grab re-skins without teleport).
-2. Audit (hot-path re-entry + modular size) → build Release → `deploy-all` → the take-26 runbook. Acceptance:
-   smooth carry + one form + one land-morph ~50–100 ms; **flicker during carry = raise K**; **eternal-clump
-   after drop = broken CLOSE/safety**; **0.5 fps returns = broken suppression**.
-3. v2 (post-hands-on-verify): the throw-arc fidelity (keep PropRelease velocity, gate the release edge by the
-   carry latch so a churn flicker doesn't spuriously release) + the quiet-carry-safe watchdog; then the
-   grab-via-thunk tightening (retire the InpActEvt-PRE adopt — RULE 2).
+1. Hands-on `C9F28176` (take-26): the carry should now flow **continuously** (not frozen between E). If GREEN,
+   commit-verified. Tune K from the `[TRASH-CH] … CANCEL … gap=N` lines.
+2. **The dup (eid-mismatch)** if it recurs: pin from `E-PRESS … localEid=X mirrorEid=Y` — the grab broadcasts
+   `ToClump{fwdEid}`; if the client mirrors that pile under a different eid, `OnConvert` spawns fresh + leaves
+   the old pile. Separate track from the churn.
+3. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
+   `eid=0` destroy doesn't false-close); then the grab-via-thunk tightening (retire the InpActEvt-PRE adopt — RULE 2).
 
 ## Credit / method note
 This root was found by the **user driving the diagnosis** — rejecting three premature builds (a perf scare, a

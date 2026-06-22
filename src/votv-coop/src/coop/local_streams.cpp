@@ -391,6 +391,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         g_lastHeldProp = heldActor;
         g_lastHeldKey = pp.key;
     } else if (g_lastHeldProp) {
+        // CLOSE-B (2026-06-22): the LATCH owns "carrying", not the flickering holding_actor. A churn re-pile
+        // DESTROYS the held clump -> holding_actor flickers empty for a frame -> this edge would clear
+        // g_lastHeldEid + send a spurious PropRelease, breaking the carry binding (the "position dead between
+        // E-events" symptom). Distinguish the flicker from a REAL release by the RE-PILE RECORD: a flicker is
+        // immediately preceded by a re-pile that started a land-settle (HasPendingSettle); a real drop/throw is
+        // an ALIVE clump with NO pending settle (a churn re-grab cancels the settle before the player could
+        // ever throw -- so a real release never coincides with one). Suppress ONLY (carrying && HasPendingSettle);
+        // a real release fires below + closes the latch so the landing converts as "not carrying". No R::IsLive
+        // (UAF on the just-destroyed clump), no input-event RE (InpActEvt_drop is UI-gated, throwPath is aiming).
+        const bool carrying_ = coop::trash_channel::IsCarrying(g_lastHeldEid);
+        if (carrying_ && coop::trash_channel::HasPendingSettle(g_lastHeldEid)) {
+            UE_LOGI("[PILE] HOST carry flicker eid=%u -- held clump re-piled (settle pending); SUPPRESS release, "
+                    "keep the carry binding (await the auto-re-grab)", static_cast<unsigned>(g_lastHeldEid));
+        } else {
+        if (carrying_) coop::trash_channel::ForgetEid(g_lastHeldEid);  // real drop/throw -> close the latch NOW
         // Edge: was holding, now not. Stop the PropPose stream + send PropRelease.
         // Read the body's CURRENT linear+angular velocity. By the time this branch
         // runs, the engine has executed the BP graph clearing grabbing_actor, the
@@ -437,6 +452,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         g_lastHeldProp = nullptr;
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // v81: invalidate the cached held eid on release
+        }  // end real-release branch (CLOSE-B flicker gate above)
     }
 
     // v22 ragdoll PHYSICS stream. While the local player's native ragdoll

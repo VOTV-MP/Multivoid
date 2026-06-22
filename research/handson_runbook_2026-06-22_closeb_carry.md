@@ -1,9 +1,17 @@
 # Hands-on runbook — CLOSE-B chipPile carry — take-26 (the carry fix; YOUR hands-on is the test)
 
-**Deployed:** `votv-coop.dll` SHA **`65AD883A`** to all 4 copies (host / copy / copy2 / dev). Proto **v82**
-(UNCHANGED — no wire change; PropConvert is gated host-side, the client path is untouched). Build CLEAN
-(Release), perf+correctness audit CLEAN (event-driven latch, no hot-path scan, no stuck-open path).
-**NOT autonomously smoked** — you are on the PC, so this is prepared ground and YOUR hands-on is the test.
+**Deployed:** `votv-coop.dll` SHA **`C9F28176`** to all 4 copies (host / copy / copy2 / dev). Proto **v82**
+(UNCHANGED). Build CLEAN (Release). **NOT autonomously smoked** — you are on the PC, so this is prepared
+ground and YOUR hands-on is the test.
+
+> **Update `C9F28176` (was `65AD883A`) — the release-flicker fix.** The first build (`65AD883A`) opened the
+> latch + suppressed the churn correctly (no stuck pile), but the carry position was **frozen between E-events**:
+> the held-prop poll's release edge (local_streams) had no carry gate, so the churn's 1-frame `holding_actor`
+> flicker fired it -> cleared the held-eid + a spurious PropRelease -> the carry binding died until the next
+> E-event. FIX: the release edge now SUPPRESSES only the churn flicker (`carrying && HasPendingSettle` — a
+> re-pile just started a land-settle), and FIRES on a real drop/throw (no pending settle -> velocity + close
+> the latch). The dup (old-pile + new-clump) is a **separate, intermittent eid-mismatch** that didn't trigger
+> last run — NOT fixed here; if it reappears, grep the `E-PRESS … localEid=X mirrorEid=Y` line.
 
 ## What changed — CLOSE-B (host-side carry latch + land-settle)
 The host's stock chipPile churn — a held clump re-piles on cluster contact ~1/s and the game auto-re-grabs —
@@ -20,9 +28,10 @@ The churn only fires while the held clump touches other piles, so **test in a de
 "staying near piles" case you reported). Host grabs; watch the CLIENT screen.
 
 1. **Carry near the cluster (the main test).** Host taps E on a pile in a cluster, carries it around AT the
-   cluster for ~10 s. On the CLIENT: the clump should **follow smoothly** (no 0.5–2 fps, no trail of piles),
-   stay **ONE clump form** the whole time (no pile↔clump flicker), and the **grab spot should EMPTY** (the
-   proxy follows the host away — nothing lingers where the pile was).
+   cluster for ~10 s. On the CLIENT: the clump should **follow CONTINUOUSLY and smoothly** — the key check is
+   that the position is **NOT frozen between E-presses** (that frozen-between-E behaviour was the `65AD883A`
+   release-flicker, fixed in `C9F28176`); it should track the host the whole carry. Also: **ONE clump form**
+   the whole time (no pile↔clump flicker), and the **grab spot should EMPTY** (the proxy follows the host away).
 2. **Drop / throw.** Host drops or throws the clump. On the CLIENT: exactly **ONE** clump→pile morph at the
    landing spot, ~50–100 ms after the host's (normal client-behind-host latency).
 3. **Two piles (per-eid).** Grab one pile, drop it, immediately grab a different one — the two should not

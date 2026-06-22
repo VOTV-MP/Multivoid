@@ -86,6 +86,12 @@ void OnHostRegrab(coop::element::ElementId E, void* newClump);
 // HOST: is E mid-carry (the latch is OPEN)? local_streams gates the held-edge re-grab rebind on this. Game thread.
 bool IsCarrying(coop::element::ElementId E);
 
+// HOST: is a land-settle pending for E (a re-pile was observed, not yet committed/cancelled)? The release
+// edge uses this to tell a CHURN flicker (holding_actor empties right after a re-pile -> settle pending) from
+// a REAL drop/throw (an alive clump, NO pending settle -- a re-grab cancels the settle before any throw, so a
+// real release never coincides with one). Suppress the release edge only when carrying AND this is true. Game thread.
+bool HasPendingSettle(coop::element::ElementId E);
+
 // HOST: per-gameplay-tick pump -- decays the pending-grab TTL AND counts down the land-settles, COMMITTING a
 // settled land (broadcast the held ToPile + close the latch) when no re-grab arrived within K. Game thread.
 void TickCarry(coop::net::Session& s);
