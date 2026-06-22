@@ -39,10 +39,8 @@ namespace coop::trash_channel {
 void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind, void* newActor,
                    const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType);
 
-// HOST: the local player released/threw the trash entity bound to E (its carry ended -> FLYING). Bumps
-// ctx and returns the new value to stamp on the outgoing PropRelease. Returns 0 if E is not a tracked
-// trash entity (a normal prop release -> no ctx enforcement). Game thread.
-uint8_t OnHostRelease(coop::element::ElementId E);
+// (RULE 2, take-29 #2b: OnHostRelease RETIRED -- the trash throw no longer sends a PropRelease, so the
+// throw-edge ctx bump is obsolete; the LAND COMMIT's BroadcastConvert already bumps the ctx.)
 
 // ---- GRAB ADOPTION (the VISIBLE-seam clump<->pile link, replacing the dead BeginDeferred POST) -------
 // The chipPile's clump spawn is dispatched EX_CallMath (a native thunk) -> INVISIBLE to our ProcessEvent

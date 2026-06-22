@@ -19,7 +19,7 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Per-eid sync-time-context. HOST: the AUTHORITY (BumpCtx writes via OnHostConvert/OnHostRelease).
+// Per-eid sync-time-context. HOST: the AUTHORITY (BumpCtx writes via OnHostConvert -- grab/land converts).
 // CLIENT: a pure MIRROR (AdoptInboundConvertCtx writes). Both are GAME-THREAD-only. The two never run
 // on the same machine for the same eid (the host authors, clients mirror), so there is no contention.
 std::unordered_map<uint32_t, uint8_t> g_ctx;  // eid -> current generation (0 = never transitioned)
@@ -184,12 +184,9 @@ coop::element::ElementId AnyCarryingEid() {
                            : static_cast<coop::element::ElementId>(g_carry.begin()->first);
 }
 
-uint8_t OnHostRelease(coop::element::ElementId E) {
-    auto it = g_ctx.find(static_cast<uint32_t>(E));
-    if (it == g_ctx.end()) return 0;                      // not a tracked trash entity -> no ctx
-    const uint8_t ctx = Bump(static_cast<uint32_t>(E));   // the THROW edge is logged by local_streams (it has |v|)
-    return ctx;
-}
+// (RULE 2, take-29 #2b: OnHostRelease -- the throw-edge ctx bump -- is RETIRED. The trash throw no longer
+// sends a PropRelease (host-auth flight-stream + ToPile own the throw end); the LAND COMMIT's BroadcastConvert
+// already bumps the ctx, so a separate throw bump is obsolete. Removed with its caller in local_streams.)
 
 void NotePendingGrab(coop::element::ElementId pileEid, uint8_t chipType) {
     if (pileEid == 0u || pileEid == coop::element::kInvalidId) return;

@@ -12,7 +12,7 @@
 #include "coop/kerfur_entity.h"  // K-5: GetKerfurMirrorEidForActor (held-kerfur-prop eid fallback)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/trash_channel.h"   // docs/piles/08: CtxForEid (carry) + OnHostRelease (throw) -- the trash sync-time-context
+#include "coop/trash_channel.h"   // docs/piles/08: CtxForEid -- the trash sync-time-context (carry stamp + trash-eid gate)
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_stick_sync.h"
 #include "coop/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
@@ -47,6 +47,12 @@ coop::net::WireKey g_lastHeldKey{};
 // ResolveMirrorEidByActor fallback for a morph-bound clump may run) and reused for the per-tick stream so
 // the hot path stays O(1) -- a held actor's identity is stable for the whole carry. kInvalidId = unkeyed.
 coop::element::ElementId g_lastHeldEid = coop::element::kInvalidId;
+// take-30 (audit): g_lastHeldProp is a raw UObject* cached ACROSS ticks (set on the new-held edge, read on the
+// later release/flight edges). A GC purge between ticks can free the just-re-piled/dropped clump without firing
+// K2_DestroyActor -> a bare R::IsLive(g_lastHeldProp) would deref freed memory (UAF). Cache the clump's stable
+// GUObjectArray index at the new-held edge (while it is known live) and validate via R::IsLiveByIndex on the
+// later edges -- the established cross-tick-pointer pattern (ResolveLiveActorByEid, audit 2026-05-30/06-03).
+int32_t g_lastHeldPropIdx = -1;
 uint64_t g_propEmitCount = 0;
 
 // v22 ragdoll-physics edge detector (same file-scope rationale as g_lastHeldProp:
@@ -194,6 +200,7 @@ void OnSessionStart() {
     g_lastHeldProp = nullptr;
     g_lastHeldKey = {};
     g_lastHeldEid = coop::element::kInvalidId;
+    g_lastHeldPropIdx = -1;
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
@@ -412,6 +419,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         }
         g_lastHeldProp = heldActor;
         g_lastHeldKey = pp.key;
+        // Cache the held actor's GUObjectArray index NOW (heldActor is live in this branch) so the later
+        // release/flight edges can validate the cached pointer GC-safely via R::IsLiveByIndex (see decl).
+        g_lastHeldPropIdx = R::InternalIndexOf(heldActor);
     } else if (g_lastHeldProp) {
         // CLOSE-B (2026-06-22): the LATCH owns "carrying", not the flickering holding_actor. A churn re-pile
         // DESTROYS the held clump -> holding_actor flickers empty for a frame -> this edge would clear
@@ -452,10 +462,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // the elusive drop-verb was meant to be -- a re-pile kills the clump (skip), a real release leaves
             // it flying (stream). The stream ends naturally when the clump re-piles (wherever -- end of arc OR a
             // mid-flight contact): the re-pile thunk's ToPile re-skins the proxy + snaps it to the landed spot.
-            if (R::IsLive(g_lastHeldProp) && ue_wrap::prop::IsGarbageClump(g_lastHeldProp) &&
+            if (R::IsLiveByIndex(g_lastHeldProp, g_lastHeldPropIdx) &&
+                ue_wrap::prop::IsGarbageClump(g_lastHeldProp) &&
                 g_lastHeldEid != coop::element::kInvalidId) {
                 coop::net::PropPoseSnapshot pp{};
-                pp.key.len   = 0;                                  // clump: keyless, the eid is the identity (== carry)
+                // SOUND FIX (take-29 #2a): stream the SAME wire key the carry main branch sends
+                // (GetInteractableKeyString -> "None" for the clump), NOT key.len=0. The receiver's drive-
+                // continuity gate (remote_prop.cpp KeyMatchesCache) re-StartDrives -- replaying the pickup
+                // `use click` -- whenever the wire key CHANGES mid-stream for a live drive. Carry streamed
+                // "None", this flight branch streamed "" -> the mismatch fired a spurious re-GRAB-IN + pickup
+                // sound on EVERY throw (take-29: 2 use-clicks/cycle, 58 total). Identical key across carry+
+                // flight = one continuous drive, one grab sound, no churn. The eid is still the identity.
+                const std::wstring fkeyW = ue_wrap::prop::GetInteractableKeyString(g_lastHeldProp);
+                pp.key.len = 0;
+                for (size_t i = 0; i < fkeyW.size() && i < 31; ++i)
+                    pp.key.data[pp.key.len++] = static_cast<char>(fkeyW[i]);
                 pp.elementId = static_cast<uint32_t>(g_lastHeldEid);
                 pp.ctx       = coop::trash_channel::CtxForEid(g_lastHeldEid);
                 const auto loc = ue_wrap::engine::GetActorLocation(g_lastHeldProp);
@@ -488,43 +509,51 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // impulse-derived velocity, summed into ONE velocity. prop::GetPhysicsVelocity
         // returns 0 for the non-Aprop_C clump (GetStaticMesh is null on it) -- fall
         // back to the GENERIC root-component velocity so the clump throws too.
-        session.SetLocalPropPose(false, {});
-        ue_wrap::prop::VelocityState vel{};
-        if (R::IsLive(g_lastHeldProp)) {
-            vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
-            if (!vel.ok) {
-                ue_wrap::FVector lin{}, ang{};
-                if (ue_wrap::engine::GetActorRootPhysicsVelocity(g_lastHeldProp, lin, ang)) {
-                    vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
-                }
-            }
-        }
-        const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
-                               vel.linearCmS.Y * vel.linearCmS.Y +
-                               vel.linearCmS.Z * vel.linearCmS.Z;
-        UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
-                vel.ok ? 1 : 0,
-                vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                std::sqrt(linMagSq),
-                vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-        // v82 (docs/piles/08): the HOST owns the trash entity's sync-time-context -- bump it on the throw
-        // (HELD -> FLYING) and stamp the PropRelease so a stale carry can't re-apply post-throw. 0 on a
-        // client / a non-trash release (OnHostRelease returns 0 for an eid it doesn't author). The eid
-        // routes the keyless clump throw (key=None can't disambiguate one clump from another).
+        session.SetLocalPropPose(false, {});  // stop the held-pose stream (BOTH paths below)
+        // SOUND/RELEASE FIX (take-29 #2b): a TRASH entity's throw is owned end-to-end by the host-authoritative
+        // channel -- the flight-stream above carries the arc, and the re-pile thunk's ToPile convert is the
+        // authoritative landing (it re-skins + snaps + ClearAnyDriveFor on the client). By the time this FIRE
+        // edge runs for a trash eid, carrying has ALREADY closed (the land committed) -> this PropRelease is
+        // REDUNDANT and HARMFUL: the client turned each one into a spurious `proxy throw` ClearAnyDriveFor that
+        // churned the drive (re-GRAB-IN -> replayed pickup sound) -- take-29: 29 spurious releases + 0 whoosh.
+        // The phase-1 NoCollision proxy must NOT simulate clump throw physics anyway. So for a tracked trash
+        // entity (CtxForEid != 0): stop the stream (done) + clear the held cache (below), but DO NOT send a
+        // PropRelease. A non-trash Aprop_C keeps its normal velocity release (the carry/throw it always had).
         const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
                                     ? 0u : static_cast<uint32_t>(g_lastHeldEid);
-        const uint8_t relCtx = (session.role() == coop::net::Role::Host)
-                                   ? coop::trash_channel::OnHostRelease(g_lastHeldEid) : 0u;
-        if (relEid != 0 && relCtx != 0) {
-            UE_LOGI("[PILE] HOST THROW eid=%u -> FLYING (PropRelease ctx=%u |v|=%.0f cm/s) -- clients re-enable physics on the clump mirror",
-                    relEid, static_cast<unsigned>(relCtx), std::sqrt(linMagSq));
+        const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
+                                 coop::trash_channel::CtxForEid(g_lastHeldEid) != 0);
+        if (isTrashEid) {
+            UE_LOGI("[PILE] HOST trash release eid=%u -- PropRelease SUPPRESSED (host-auth flight-stream + "
+                    "ToPile convert own the throw end; client drives no clump physics, ToPile clears the drive)",
+                    relEid);
+        } else {
+            ue_wrap::prop::VelocityState vel{};
+            if (R::IsLiveByIndex(g_lastHeldProp, g_lastHeldPropIdx)) {
+                vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp);
+                if (!vel.ok) {
+                    ue_wrap::FVector lin{}, ang{};
+                    if (ue_wrap::engine::GetActorRootPhysicsVelocity(g_lastHeldProp, lin, ang)) {
+                        vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
+                    }
+                }
+            }
+            const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
+                                   vel.linearCmS.Y * vel.linearCmS.Y +
+                                   vel.linearCmS.Z * vel.linearCmS.Z;
+            UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
+                    vel.ok ? 1 : 0,
+                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                    std::sqrt(linMagSq),
+                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+            session.SendPropRelease(g_lastHeldKey,
+                                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
         }
-        session.SendPropRelease(g_lastHeldKey,
-                                vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, relCtx);
         g_lastHeldProp = nullptr;
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // v81: invalidate the cached held eid on release
+        g_lastHeldPropIdx = -1;                      // take-30: invalidate the cached GC-safe index too
         }  // end real-release branch (CLOSE-B flicker gate above)
     }
 

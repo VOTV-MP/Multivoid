@@ -78,10 +78,21 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     if (!ue_wrap::prop::IsChipPile(newActor)) return;     // ... spawning a chipPile
     const coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
     if (E == coop::element::kInvalidId) return;           // an UNTRACKED clump (grab-adopt miss; the eid=0 gap) -> skip
-    // The new pile is NOT positioned yet (FinishSpawning runs after BeginDeferred returns); the clump
-    // (srcObj) IS at its sphere-traced resting point, so take loc/rot from it -- the convert position.
+    // LOC from srcObj (the clump's sphere-traced resting point == the pile's landing position -- take-29
+    // hands-on confirmed position is correct). ROTATION must come from newActor (the PILE), NOT srcObj (the
+    // clump): the clump is a live physics actor at its tumbled FLIGHT orientation, whereas the pile's spawn
+    // transform is a deterministic MakeTransform built from the sphere trace (prop_garbageClump bytecode:
+    // SphereTrace -> MakeTransform -> BeginDeferred(SpawnTransform=MakeTransform)). BeginDeferred applies that
+    // transform to newActor immediately at this POST -- proven by GetActorScale3D(newActor) already reading
+    // correctly here (same instant). Reading the clump's rotation made the client pile land "wherever" /
+    // randomly oriented (take-29 #4); reading the pile's makes it deterministic like the host. Symmetric to
+    // the scale read in OnHostConvert. CAVEAT (audit): this POST is PRE-FinishSpawning -> if the chipPile BP's
+    // Construction Script re-orients the actor after the spawn transform, this reads the pre-CS orientation.
+    // The sphere-trace MakeTransform is almost certainly already the final intent (scale read at this same
+    // point was not reported wrong); the take-30 hands-on confirms it. If the pile still lands mis-rotated,
+    // re-read GetActorRotation(newActor) at the land-settle COMMIT (TickCarry, post-FinishSpawning) instead.
     const ue_wrap::FVector  loc      = ue_wrap::engine::GetActorLocation(srcObj);
-    const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(srcObj);
+    const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(newActor);
     const uint8_t           chipType = ue_wrap::prop::GetChipType(srcObj);
     UE_LOGI("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -> chipPile=%p convert IN PLACE (deterministic, same "
             "tick as the spawn -- no death-watch, no proximity)", static_cast<unsigned>(E), srcObj, newActor);
