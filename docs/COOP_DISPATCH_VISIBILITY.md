@@ -151,7 +151,7 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   The GRAB direction still uses the VISIBLE InpActEvt-PRE + held-edge adopt (a future tightening moves it to
   the same thunk). **[V/AS-BUILT]**
 - **The thunk catches the HOST's authoring. The CLIENT MIRROR needs no dispatch observation at all** — as of
-  the phase-1 trash proxy (`coop/trash_proxy`, deployed `EE0DD83C`), the client's mirror of a chipPile/clump
+  the phase-1 trash proxy (`coop/trash_proxy`, deployed `c2a5f49cc98add31`), the client's mirror of a chipPile/clump
   is an `AStaticMeshActor` WE spawn/destroy/re-skin via our OWN `SpawnActor`/`DestroyActor`/`SetStaticMesh`
   (driven by the reliable PropSpawn/PropConvert/PropDestroy wire) — **visible by construction; there is no BP
   self-morph/self-destroy dispatch to observe for the mirror anymore.** The EX_CallMath invisibility problem
@@ -164,14 +164,42 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   carry now (no freeze between E-events). The earlier "carry MIRRORS on a settled join / it was the JOIN RACE"
   claim was **WITHDRAWN as FALSE**; the actual release-edge cause was `updateHold` PUPPET RECREATION (the
   `heldActor` ptr changes with `pendingSettle=0`), NOT a contact-re-pile churn (which is why the `carrying &&
-  HasPendingSettle` gate, commit `16ac153f`, FAILED). **STILL [?] OPEN** (root-found, fix pending): carry JANK
-  (the clump carry pose streams `key.len=4` from its own BP `GetKey` → the receiver resolves KEY-first → moves
-  only on converts; fix = keyless clump carry pose), proxy SCALE (no `SetActorScale`; fix = send+apply scale),
-  an intermittent ORPHAN dup (the eid-resolve race), the `simulateDrop` throw-velocity flip (read-only thunk
-  deployed). Host carries fine; other props mirror fine. Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx
-  gate) is **DISPROVEN by bytecode** — `holdPlayer` is set ONCE on grab and NEVER cleared (DEAD, not pending).
-  Root + fix: `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V dup-fix +
-  visibility + carry-freeze; carry JANK + SCALE + ORPHAN + throw-flip [?] OPEN; option 2 DISPROVEN.]**
+  HasPendingSettle` gate, commit `16ac153f`, FAILED). **Carry JANK — FIXED [V]** (shipped `df158728`): the
+  `key.len=4`→keyless theory was DISPROVEN by bytecode (BP `GetKey` returns the FName `"None"` for BOTH
+  `prop_garbageClump_C` and `actorChipPile_C`, so `key.len=4` is the literal string "None"; the receiver
+  already guards `keyW != "None"`→eid at `remote_prop.cpp:403`, so forcing keyless was a no-op). REAL root
+  (code-proven): an interpolation PHASE-STALL — `BeginLerpToPose` set `lerpStartMs=nowMs`, `AdvanceLerp`
+  sampled the same `nowMs` → alpha=0 every new-pose tick at vsync-60. FIX = fixed-delay snapshot interpolation
+  (`remote_prop.cpp` ActiveDrive buffers 2 timestamped poses, renders `nowMs-span` behind; MTA `CClientVehicle`
+  shape) — user hands-on: carry now SMOOTH. **Proxy SCALE — BUILT v83, hands-on PENDING** (shipped `df158728`,
+  v82→v83): the prior "`PropConvertPayload` has `scaleX/Y/Z`" was WRONG (that was `PropSpawnPayload`); added
+  `scaleX/Y/Z` to `PropConvertPayload` (static_assert 100→112) + `GetActorScale3D`/`SetActorScale3D` +
+  `ApplyProxyScale` on spawn+reskin. **ORPHAN dup — SPLIT by pile origin:** DERIVED (gameplay-born) piles dup
+  GONE [V]; ORIGINAL (level-placed) piles STILL dup — root CONFIRMED (code+log): level-piles get an eid+proxy
+  but the client's NATIVE level-loaded chipPile is NEVER reconciled away → it COEXISTS with the host's proxy
+  (the divergence sweep is BLIND to natives). FIX (NOT built): DESTROY the native at proxy-spawn (exact ~1cm
+  position-match; graceful on 0, exact-or-skip on >1); a read-only PILE-PROBE shipped (`29069f05`,
+  `remote_prop_spawn.cpp:355`). **The `simulateDrop` throw-velocity flip is DEAD — REPLACED by carry/flight
+  stream-continuity** (shipped `136ed779`; see the durable dispatch fact below). Host carries fine; other props
+  mirror fine. Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx gate) is **DISPROVEN by bytecode** —
+  `holdPlayer` is set ONCE on grab and NEVER cleared (DEAD, not pending). Root + fix:
+  `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V dup-fix + visibility +
+  carry-freeze + carry-JANK; SCALE BUILT-pending; throw arc flight-stream hands-on-pending; ORPHAN split
+  (derived gone [V], level-placed native-coexistence root confirmed, fix pending); option 2 DISPROVEN.]**
+
+  > **Durable dispatch fact — BOTH the `simulateDrop` AND `dropGrabObject` Func-thunks fire ZERO times for the
+  > chipPile clump release.** Empirically (7 grab/release cycles, deployed `c2a5f49cc98add31`): `SIM-DROP=0`
+  > AND `DROP-GRAB=0`, while the same `UFunction::Func`-thunk facility (the BeginDeferred slot-0 thunk) fired
+  > all run. The clump's release path uses NEITHER verb — `simulateDrop` is the equipment/`holding_actor`
+  > drop, but the clump rides `grabbing_actor` (the physics-handle PHC grab); RE pinned `dropGrabObject` as the
+  > PHC release verb but it STILL never fired for the clump. So verb-detection for the throw is ABANDONED.
+  > **The throw arc was solved by streaming THROUGH the release, not by hooking a release verb:** the host's
+  > thrown clump really flies (physics) until it re-piles, so `local_streams.cpp`'s release-edge
+  > `!carrying`-SKIP branch CONTINUES streaming `g_lastHeldProp`'s pose under the same eid E while it is a LIVE
+  > garbageClump (`IsLive` is the churn/flight discriminator — a churn re-pile kills the clump → skip; a real
+  > release leaves it flying → stream); the client's fixed-delay interp renders the arc; it ends when the clump
+  > re-piles (ToPile re-skins+snaps). Shipped `136ed779`, hands-on PENDING. The dead `dropGrabObject` read-only
+  > thunk is to be retired RULE 2 next. **[V the zero-fire fact; flight-stream hands-on-pending]**
 
 > **⚠ A render-blind smoke caveat (the 2026-06-21 trap).** Our autonomous smoke can verify log markers and
 > that a UFunction `Call()` returned, but it CANNOT verify that the call's *effect* actually landed on the
