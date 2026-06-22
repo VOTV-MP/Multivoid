@@ -356,37 +356,70 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         const bool isClump = coop::trash_proxy::IsClumpClass(classW);
         ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
-        // [PILE-PROBE] READ-ONLY (2026-06-22) -- confirm the level-pile dup root + the position-match precision
-        // for the destroy-fix (NEXT pass; this build does NOT destroy anything). At a PILE spawn, count the
-        // client's NATIVE actorChipPile_C near the host-expressed pos: a level-placed pile should have exactly
-        // ONE co-located native twin (the dup); a derived (gameplay-born) pile should have ZERO. Reporting both
-        // 1cm and 10cm tells us if the load is bit-exact (1cm catches it -> tight match) or drifted (only 10cm).
-        // SAMPLED (first 12 + every 200th) so the ~870 join spawns don't pay an O(n^2) GUObjectArray walk.
-        if (!isClump) {
-            static uint32_t sProbeN = 0;
-            if (sProbeN < 12 || (sProbeN % 200) == 0) {
-                int near1 = 0, near10 = 0;
-                for (void* o : R::FindObjectsByClass(L"actorChipPile_C")) {
-                    if (!o || !R::IsLive(o)) continue;
-                    const auto p = ue_wrap::engine::GetActorLocation(o);
-                    const float d2 = (p.X - loc.X) * (p.X - loc.X) + (p.Y - loc.Y) * (p.Y - loc.Y) +
-                                     (p.Z - loc.Z) * (p.Z - loc.Z);
-                    if (d2 <= 1.0f)   ++near1;    // within 1 cm  (1 cm^2)
-                    if (d2 <= 100.0f) ++near10;   // within 10 cm (100 cm^2)
-                }
-                UE_LOGI("[PILE-PROBE] before SpawnProxy eid=%u at (%.1f,%.1f,%.1f): native actorChipPile within "
-                        "1cm=%d 10cm=%d [expect 1 for a LEVEL pile (the coexisting native = the dup), 0 for a "
-                        "DERIVED pile; 1cm hit => bit-exact load (tight match safe)]",
-                        payload.elementId, loc.X, loc.Y, loc.Z, near1, near10);
-            }
-            ++sProbeN;
-        }
         void* proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot,
                                                     ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         if (proxy) {
             if (!skipBind)
                 coop::remote_prop::RegisterPropMirror(payload.elementId, proxy, L"", classW, senderSlot);
             if (outSpawned) *outSpawned = proxy;
+            // LEVEL-PILE DUP DESTROY (take-31, probe-greenlit: all 16 PILE-PROBE = 1cm=1). A level-placed
+            // chipPile gets a host eid + THIS proxy, but the client's NATIVE level-loaded chipPile COEXISTS
+            // with the proxy = the visible dup (the sweep is blind to natives -- they enter the Registry
+            // lazily). Destroy the co-located native AFTER the proxy spawns (no visible gap) so the proxy is
+            // the sole mirror. EXACT ~1cm match (the probe confirmed bit-exact load); GRACEFUL on 0 (a DERIVED/
+            // gameplay pile has no native twin -- a thrown pile arrives via PropConvert re-skin, and a derived
+            // pile the joiner spawns has no local native -> skip, never destroy); EXACT-or-SKIP on >1 (a dense
+            // cluster with >1 native within 1cm is ambiguous -> keep both, never destroy the wrong one). NOT
+            // adopt -- adopt reintroduces the BP self-morph/GC/stale-index the proxy model exists to avoid;
+            // destroy + let the proxy own the identity. The join-time index (EnsurePileBindIndex) is built ONCE
+            // before the proxy-spawn burst (one GUObjectArray walk, NOT one per pile) and shrinks as natives are
+            // consumed -- O(index) scan per spawn, no per-spawn full-array walk. Replaces the read-only
+            // PILE-PROBE (RULE 2: the diagnostic is retired now that it greenlit the destroy).
+            //
+            // GATED on g_claimTrackingActive (audit CRITICAL-4): a native level-pile twin to destroy ONLY
+            // exists DURING the join reconcile bracket (where level piles are expressed against the index built
+            // from the just-loaded world). OUTSIDE the bracket the destroy is both pointless (a mid-gameplay
+            // re-pile / derived pile has NO native twin -- they were de-duped at join or never existed) AND
+            // dangerous: EnsurePileBindIndex would REBUILD via a full GUObjectArray walk inside the BeginDeferred
+            // thunk's game-thread stack (a warm-path regression on the first post-bracket pile-land), and a
+            // derived pile landing within 1cm of an UNRELATED level-native could destroy the wrong actor. The
+            // bracket gate (the same one the adopt-bind path uses) closes both windows.
+            if (!isClump && g_claimTrackingActive) {
+                EnsurePileBindIndex();
+                constexpr float kDestroyR2Cm = 1.0f;  // 1 cm^2 -- the probe confirmed a bit-exact (1cm) twin
+                int matchCount = 0, matchIdx = -1;
+                for (int i = 0; i < static_cast<int>(g_pileBindIndex.size()); ++i) {
+                    const auto& c = g_pileBindIndex[i];
+                    const float dx = c.x - loc.X, dy = c.y - loc.Y, dz = c.z - loc.Z;
+                    if (dx * dx + dy * dy + dz * dz > kDestroyR2Cm) continue;
+                    if (c.chipType != payload.chipType) continue;          // same trash variant only
+                    if (!R::IsLiveByIndex(c.actor, c.idx)) continue;       // bracket-long raw ptr: no deref first
+                    ++matchCount;
+                    matchIdx = i;
+                }
+                if (matchCount == 1) {
+                    void* native = g_pileBindIndex[matchIdx].actor;
+                    g_pileBindIndex[matchIdx] = g_pileBindIndex.back();   // O(1) remove (consume the twin)
+                    g_pileBindIndex.pop_back();
+                    // Drop its client-minted eid from the tracker FIRST so the K2_DestroyActor PRE observer
+                    // stays silent (keyless + no eid) -- no stray PropDestroy on the superseded client eid
+                    // (the same fresh-mirror invariant the adopt-bind path enforces, audit 2026-06-10).
+                    coop::prop_element_tracker::UnmarkKnownKeyedProp(native);
+                    ue_wrap::engine::DestroyActor(native);
+                    if (g_pileBindCount < 8 || (g_pileBindCount % 200) == 0)
+                        UE_LOGI("[PILE] DESTROY native level-pile twin eid=%u at (%.1f,%.1f,%.1f) chipType=%u -- "
+                                "proxy is the sole mirror now (dup fixed; %zu native(s) left in index)",
+                                payload.elementId, loc.X, loc.Y, loc.Z,
+                                static_cast<unsigned>(payload.chipType), g_pileBindIndex.size());
+                    ++g_pileBindCount;
+                } else if (matchCount > 1) {
+                    UE_LOGW("[PILE] DESTROY SKIP eid=%u at (%.1f,%.1f,%.1f) -- %d native chipPile twins within "
+                            "1cm (ambiguous cluster) -> keeping all (never destroy the wrong one); dup may persist",
+                            payload.elementId, loc.X, loc.Y, loc.Z, matchCount);
+                }
+                // matchCount == 0: a DERIVED pile (no native twin) -- nothing to destroy, no log (the common
+                // gameplay case; a join with N level piles destroys exactly its N twins).
+            }
         } else {
             UE_LOGW("remote_prop::OnSpawn: trash proxy spawn FAILED for eid=%u class='%ls'",
                     payload.elementId, classW.c_str());
