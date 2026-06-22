@@ -84,7 +84,9 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
 - **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
-  (2026-06-22, HEAD `29069f05`, proto v83; deployed DLL `c2a5f49cc98add31`).** Host-authoritative
+  (2026-06-22, HEAD `c6473d49`, proto v84; deployed DLL `AAEC4D8F3B4341F8`, push held). The carry/throw/dup
+  arc is DONE + verified; the CLIENT-grab direction (Increment 2) HOST-SIDE is now AS-BUILT + [V harness].**
+  Host-authoritative
   trash-entity identity (eid = logical entity), MTA single-syncer + sync-time-context byte. **GRAB
   (pile→clump) = VERIFIED hands-on** via the `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE
   (clump→pile) = the DETERMINISTIC `UFunction::Func` thunk converter** (commit `d19ae4d4`,
@@ -124,8 +126,11 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the live host BP re-arms hit-notify;
   option 2 (the `holdPlayer` convert/ctx gate) is **DISPROVEN by bytecode** — `holdPlayer` is set ONCE on grab
   and NEVER cleared in any BP, so it cannot mark "released" (DEAD, NOT pending). Phase 1 = visual + position +
-  re-skin, NoCollision; collision (the `garbageCollider` hull) + the client-grab direction are PHASE 2 /
-  Increment 2 (still DESIGN), deferred behind the native-destroy + hands-on. Design + AS-BUILT:
+  re-skin, NoCollision. The client-grab direction (Increment 2) **HOST-SIDE is now AS-BUILT + [V harness]**
+  (proto v84, commits `81e8e687`+`2dc5d06e`: `GrabIntent` wire + `OnGrabIntent` executes `playerGrabbed` on
+  the client's puppet + the `puppet_carry_drive` hand-drive; synthetic test VERDICT PASS). What's STILL
+  [DESIGN]: the client-INITIATED path — the client suppress-native at `OnPileGrabPre` + **proxy PHASE 2
+  collision** (the `garbageCollider` hull, so a client can aim a NoCollision proxy) + the feel. Design + AS-BUILT:
   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix:
   `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **Read these for the pile sync.**
 - **`_archive/07-MORPH-V2-held-object-channel.md`** — **SUPERSEDED + RETIRED 2026-06-21, archived** (the
@@ -172,7 +177,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   docs, which are a sibling problem: `votv-kerfur-savetransfer-ghost-prop-RCA-2026-06-15.md`,
   `votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md`).
 
-## Status (2026-06-22; HEAD `29069f05`, deployed `c2a5f49cc98add31`, proto v83) — DESIGN → AS-BUILT → VERIFIED
+## Status (2026-06-22; HEAD `c6473d49`, deployed `AAEC4D8F3B4341F8`, proto v84, push held) — DESIGN → AS-BUILT → VERIFIED
 
 The whole saga below (01–04 + the s21–s33 session-log) converged on **08 — the host-authoritative trash
 channel**, which is the CURRENT design + as-built. The day-to-day live state is in the auto-memory

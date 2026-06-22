@@ -11,7 +11,9 @@
 >   confirmed. The convert fires the SAME tick the pile is constructed → **zero proximity, no reaper race, so
 >   the ~5s vanish-return is gone by construction.** The proximity death-watch is **RETIRED** (RULE 2, same
 >   commit).
-> - **Triple grab-cue — FIXED [AS-BUILT], deployed-pending-hands-on** (commit `fea04c26`): the ctx-gate was
+> - **Triple grab-cue — FIXED, covered by the take-30 [V hands-on] sound verification** (commit `fea04c26`):
+>   the user confirmed the pickup cue is clean ("звук-пикап УШЁЛ") — an extra grab cue would have been audible.
+>   The ctx-gate was
 >   split by packet kind (a carry pose requires `ctx == known`, a release keeps `ctx >= known`) so an
 >   ahead-of-convert carry pose no longer drives the pre-convert pile + re-fires the grab cue.
 > - **CLIENT mirror of trash = the host-authoritative `AStaticMeshActor` PROXY — phase 1 [AS-BUILT];
@@ -95,8 +97,12 @@
 >   (`holdPlayer` never cleared). STILL OPEN: the WHOOSH throw sound (no ReliableKind); retire the dead
 >   `dropGrabObject` thunk (RULE 2). (The s38 grab cue / re-pile vanish-return checks were a separate track,
 >   now folded into the take-30 verified state.)
-> - **CLIENT-grab direction (Increment 2) — [DESIGN], NOT built** (proto v83). Pairs with proxy PHASE 2
->   (collision — the `garbageCollider` hull).
+> - **CLIENT-grab direction (Increment 2) — HOST-SIDE AS-BUILT + VERIFIED [V harness]** (proto **v84**, commits
+>   `81e8e687` + `2dc5d06e`, deployed `AAEC4D8F3B4341F8`, push held): `GrabIntent` wire + 3-place router +
+>   `trash_channel::OnGrabIntent` (executes `playerGrabbed` on puppet-N + broadcasts the convert) + the NEW
+>   `coop/puppet_carry_drive` hand-drive. Synthetic test `VOTVCOOP_RUN_GRAB_INTENT_TEST` VERDICT PASS. See the
+>   "Increment 2" section below. The **client-INITIATED path** (suppress-native + proxy PHASE 2 collision, the
+>   `garbageCollider` hull, + the feel) is **[DESIGN], greenlight-gated**.
 >
 > Supersedes **07** (the MORPH V2 re-skin + proximity land-watch — RETIRED 2026-06-21: it false-fired in
 > dense pile clusters and never wired the client→host direction; the autonomous smoke that "verified" it was

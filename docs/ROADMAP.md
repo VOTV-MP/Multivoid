@@ -78,12 +78,15 @@ same eid E while it is a LIVE garbageClump (the post-release flight); the client
 interp shows the real arc; it ends when the clump re-piles (ToPile re-skins+snaps). The
 churn/flight discriminator is `IsLive` (a churn re-pile kills the clump → skip; a real release
 leaves it flying → stream) — no release verb needed. Carry main branch (heldActor-keyed) is
-byte-identical (additive, audited zero-CRITICAL). HANDS-ON PENDING (the arc). The dead
-`dropGrabObject` read-only thunk is to be retired RULE 2 next. Root + fix:
-`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. NEXT = USER HANDS-ON
-take-29 (carry-smooth verify + the throw arc + the level-pile native-destroy). Phase 2
-(collision + the client-grab direction, Increment 2) is **deferred behind the native-destroy +
-hands-on**.
+byte-identical (additive, audited zero-CRITICAL). **The carry/throw/dup arc is DONE + verified**
+([V hands-on] carry-smooth/rotation/sound/arc; [V harness] Z-fix/level-dup/FPS). Root + fix:
+`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **The CLIENT-grab
+direction (Increment 2) HOST-SIDE is now AS-BUILT + [V harness]** (proto v84, HEAD `c6473d49`,
+deployed `AAEC4D8F3B4341F8`, commits `81e8e687`+`2dc5d06e`: `GrabIntent` wire + `OnGrabIntent`
+executes `playerGrabbed` on the client's puppet + `puppet_carry_drive` hand-drive; synthetic test
+VERDICT PASS). NEXT (greenlight, hands-on): the **client-INITIATED path** — client suppress-native +
+**Phase 2 collision** (the `garbageCollider` hull, so a client can aim a NoCollision proxy) + the
+feel; plus the dead `dropGrabObject` thunk retire (RULE 2) + the whoosh cue.
 **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.

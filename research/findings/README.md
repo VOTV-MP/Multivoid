@@ -69,6 +69,21 @@ human hands-on). Still OPEN: the WHOOSH throw sound (no ReliableKind exists; use
 by hearing), and the dead `dropGrabObject` read-only thunk (to be retired, RULE 2). Canonical finding:
 `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`; the harness: [[reference-pile-test-harness]].
 
+## 2026-06-22 — chipPile CLIENT-grab direction (Increment 2) HOST-SIDE, BUILT + [V harness]
+
+After the carry arc, the CLIENT-grab direction's **host-side** was de-risked then built + harness-verified.
+Two new findings: **`votv-puppet-grab-feasibility-RE-2026-06-22.md`** (the gate — RE + a runtime probe
+proved `playerGrabbed` ENGAGES + HOLDS on an unpossessed puppet with NO controller dependency, but the puppet
+tick does NOT drive the PHC, so the host must kinematically drive the held-clump pose) and
+**`votv-increment2-clientgrab-host-side-DESIGN-2026-06-22.md`** (the build blueprint: proto v84 `GrabIntent`
+wire + 3-place router + `trash_channel::OnGrabIntent` + the new `coop/puppet_carry_drive`). Shipped commits
+`32ccd1bc`(gate) · `81e8e687`(host-side) · `2dc5d06e`(audit MEDIUM-1: hold lifetime tied to clump liveness).
+Verified on the log-truth harness (synthetic `VOTVCOOP_RUN_GRAB_INTENT_TEST`): VERDICT PASS (1 RECEIVED→1
+SUCCESS, 126 hand-drive ticks, client proxy re-skin no dup); carry-test regression 16/16 PASS; post-ship
+audit GO. **Still [DESIGN] (greenlight, hands-on):** the client-INITIATED path — suppress-native at
+`OnPileGrabPre` + phase-2 `garbageCollider` collision (a client can't aim a NoCollision proxy) + the feel.
+HEAD `c6473d49`, deployed `AAEC4D8F3B4341F8`, proto v84, push held.
+
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
 `docs/piles/findings/` (the consolidated pile knowledge base). The originals here are the canonical

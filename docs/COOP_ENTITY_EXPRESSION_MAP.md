@@ -156,8 +156,18 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
 - **GRAB-via-thunk + the eid=0 adopt-miss close — [DESIGN], NOT built:** move the grab (pile→clump) to the
   same thunk (srcObj = tracked chipPile → kToClump), retiring the InpActEvt-PRE + held-edge adopt and
   catching the grab even when the PRE missed (an UNTRACKED clump currently skips the converter). A tightening.
-- **Increment 2 (CLIENT-grab direction) — [DESIGN], NOT built:** suppress-native + GrabIntent +
-  host-executes-on-puppet-N + the PILED/HELD/FLYING state machine (proto v83).
+- **Increment 2 (CLIENT-grab direction) — HOST-SIDE AS-BUILT + VERIFIED [V harness]; client-INITIATED path
+  still [DESIGN]. proto v84, HEAD `2dc5d06e`, deployed `AAEC4D8F3B4341F8` (push held).** Built + harness-
+  verified the host arm: v84 `GrabIntent`(78) CLIENT→HOST + STAGED `ThrowIntent`/`PileResyncRequest`; the
+  3-place router; `trash_channel::OnGrabIntent` (validate → resolve puppet-N + pile → `playerGrabbed` on the
+  puppet → broadcast `PropConvert{kToClump}`) + NEW `coop/puppet_carry_drive.{cpp,h}` (per-tick kinematic
+  drive of the puppet-held clump to head+aim*grabLen — the host streams the clump pose, the puppet tick won't
+  position it) + `ReleaseClientHold` (hold lifetime tied to clump liveness). Synthetic test
+  `VOTVCOOP_RUN_GRAB_INTENT_TEST` (client sends a real GrabIntent): VERDICT PASS (1 RECEIVED→1 SUCCESS, 126
+  DRIVING ticks, client proxy re-skin no dup); carry regression 16/16 PASS; audit GO. Commits `81e8e687` +
+  `2dc5d06e`; `research/findings/votv-increment2-clientgrab-host-side-DESIGN-2026-06-22.md`. **STILL
+  [DESIGN] (greenlight, hands-on):** the client suppress-native at `OnPileGrabPre` + phase-2 collision (the
+  `garbageCollider` hull — a client can't aim a NoCollision proxy) + the feel.
 - **CLIENT MIRROR of trash = a host-authoritative `AStaticMeshActor` PROXY — DUP-FIX (derived) + VISIBILITY +
   CARRY-FREEZE + carry-JANK + THROW-ARC + ROTATION + SOUND all [V hands-on] VERIFIED; Z-fix + LEVEL-PILE
   dup-DESTROY + FPS-fix [V harness]; proxy SCALE AS-BUILT. HEAD `a5282f57`, deployed `015F0AC9590B6B23`,
@@ -282,10 +292,18 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
 | client kerfur conversion ghost grabbed → client-eid dupe | `ClaimConversionGhosts` parks/freezes immediately (adopt or reap) | [V] |
 
 ## NEEDS-PROBE (do not encode as truth without it)
-- **[?]** (trash redesign 08) PROBE-A: which `OnPileGrabPre` early-return fires on the live client
-  (hands-full vs `kInvalidId`) + the carry slot (`grabbing_actor` vs `holding_actor`). One log line + 1 grab.
-- **[?]** (trash 08 Increment 2) does `CallFunction(pile, playerGrabbed, {puppetN, hit})` drive
-  `pickupObjectDirect` on a PUPPET (host executes a client's grab intent)?
+- **[PARTLY ANSWERED]** (trash redesign 08) PROBE-A: the carry slot is **`grabbing_actor`** (the PHC
+  light-grab path, NOT `holding_actor`) — confirmed by the carry-churn finding + the autotest. Which
+  `OnPileGrabPre` early-return fires on a live CLIENT (hands-full vs `kInvalidId`) is still open, but only
+  matters for the client-INITIATED suppress-native path (phase 2, greenlight-gated).
+- **[ANSWERED — YES (engage), 2026-06-22]** does `playerGrabbed(Player=puppet)` drive the grab on a PUPPET
+  (host executes a client's grab intent)? **The grab ENGAGES + HOLDS on an unpossessed puppet**
+  (`grabbing_actor := clump`, no `GetController`/PlayerController/possession dependency — RE + the runtime
+  probe `VOTVCOOP_RUN_PUPPET_GRAB_PROBE`, commit `32ccd1bc`). **BUT the puppet's tick does NOT drive the
+  per-tick PHC** (the clump floats at the spawn spot, `TRACKED=0`), so the host kinematically drives the
+  held-clump pose (`coop/puppet_carry_drive`, `81e8e687`). Finding:
+  `research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md`. This is the Increment-2 gate, now
+  RESOLVED + the host-side BUILT [V harness].
 - **[ANSWERED — NO, 2026-06-21]** does the `BeginDeferred`/`FinishSpawning` POST fire for the clump↔pile
   convert? **It does NOT** — the chipPile/clump caller issues it `EX_CallMath` (0 fires, 870 piles + every
   re-pile, commit `0e56ca39`). The deterministic catch is the **`UFunction::Func` thunk patch — now AS-BUILT**
