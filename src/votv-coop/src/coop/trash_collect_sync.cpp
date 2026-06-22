@@ -42,6 +42,7 @@ namespace P  = ue_wrap::profile;
 // (re-cached every call for reconnect). Game-thread read inside the observer.
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (stays for process life)
+bool g_simDropThunkInstalled = false;  // read-only simulateDrop Func-thunk latch (the real drop/throw seam)
 
 // RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH (proximity FindNearestChipPile land-detect) is FULLY
 // RETIRED -- it mis-bound on a NEIGHBOUR pile in a dense cluster. The host-grab sync is now: the InpActEvt
@@ -85,6 +86,32 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     UE_LOGI("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -> chipPile=%p convert IN PLACE (deterministic, same "
             "tick as the spawn -- no death-watch, no proximity)", static_cast<unsigned>(E), srcObj, newActor);
     coop::trash_channel::OnHostConvert(*s, E, coop::net::propconvert_kind::kToPile, newActor, loc, rot, chipType);
+}
+
+// DIAGNOSTIC read-only thunk on AmainPlayer_C::simulateDrop -- the named real-drop event (7 input-handler
+// call sites; throwHoldingProp[0] is `CALLVIRT simulateDrop` so this catches BOTH a plain drop AND a throw).
+// updateHold (the held-puppet recreation = the carry-freeze flicker) NEVER calls simulateDrop -> the seam is
+// distinct (that is exactly the distinguisher the recreation-flicker lacked). PostNativeCallback fires AFTER
+// simulateDrop runs, so holding_actor may already be cleared -> the ROBUST cross-check is AnyCarryingEid()
+// (our latch, untouched by simulateDrop): carrying == the carry-eid in HELD-STATE at this log == the seam
+// fired for the CLUMP drop (you hold one item). The FLIP will close the latch HERE (read-only logs only now).
+void OnSimulateDropObserve(void* player, void* /*result*/) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    const coop::element::ElementId carryEid = coop::trash_channel::AnyCarryingEid();
+    void* held = nullptr;
+    coop::element::ElementId heldEid = coop::element::kInvalidId;
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    if (player && ue_wrap::engine::ReadMainPlayerGrabState(player, gs)) {
+        held = gs.holdingActor ? gs.holdingActor : gs.grabbingActor;  // POST -> may be null (simulateDrop cleared it)
+        if (held && R::IsLive(held)) heldEid = PT::GetPropElementIdForActor(held);
+    }
+    UE_LOGI("[SIM-DROP] simulateDrop fired player=%p held=%p(POST) heldEid=%u carrying=%u -- READ-ONLY "
+            "(cross-check carrying vs the carry-eid in [HELD-STATE]; the FLIP closes the latch here -> the "
+            "release edge then fires the throw velocity)",
+            player, held,
+            static_cast<unsigned>((heldEid  == coop::element::kInvalidId) ? 0u : heldEid),
+            static_cast<unsigned>((carryEid == coop::element::kInvalidId) ? 0u : carryEid));
 }
 
 }  // namespace
@@ -347,6 +374,22 @@ void Install(coop::net::Session* session) {
                     "(clump re-pile -> OnHostConvert ToPile the same tick as the spawn; death-watch retired)");
         }
         // bdFn null -> GameplayStatics not loaded yet; retry next world-gated Install call.
+    }
+
+    // DIAGNOSTIC read-only: Func-thunk on AmainPlayer_C::simulateDrop -- the real drop/throw seam (distinct
+    // from updateHold-recreation). Logs held+carrying eid on every fire; the FLIP will close the carry latch
+    // here so a real drop/throw lets the release edge ship the throw velocity. (simulateDrop is dispatched
+    // EX_CallMath/EX_VirtualFunction -> below ProcessEvent, so a PRE observer can't see it -> the Func-thunk.)
+    if (!g_simDropThunkInstalled) {
+        void* pcls = R::FindClass(P::name::MainPlayerClass);
+        void* sdFn = pcls ? R::FindFunction(pcls, L"simulateDrop") : nullptr;
+        if (sdFn) {
+            ue_wrap::ufunction_hook::InstallPostHook(sdFn, &OnSimulateDropObserve);
+            g_simDropThunkInstalled = true;
+            UE_LOGI("trash_collect: read-only simulateDrop thunk armed (the real drop/throw seam -- logs "
+                    "held+carrying eid; throwHoldingProp routes through simulateDrop so this catches throws too)");
+        }
+        // sdFn null -> mainPlayer_C not loaded yet; retry next world-gated Install call.
     }
 
     if (g_grabObserverInstalled) return;

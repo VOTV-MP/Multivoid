@@ -1,12 +1,15 @@
 # chipPile carry — the CONTACT-RE-PILE CHURN root + the CLOSE-B carry-latch fix
 
-**Date:** 2026-06-22. **Status:** root **RE-confirmed + hands-on-confirmed**; option 1 (hit-notify) **BUILT +
-FAILED**; option 2 (holdPlayer convert/ctx gate) **DISPROVEN by the bytecode** (holdPlayer is never cleared —
-see that section); **THE FIX = CLOSE-B** (host-side carry latch + land-settle on the convert stream) —
-**DESIGN LOCKED, building**. Supersedes the "carry MIRRORS on a settled join / the failure was the JOIN
-RACE" conclusion in `votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md` (that was FALSE — see "Why
-the smoke lied" below). The filename keeps `holdplayer-gate` for link stability; the gate it names is the
-DISPROVEN option 2, not the fix.
+**Date:** 2026-06-22. **Status:** the **carry-FREEZE is FIXED, hands-on VERIFIED [V]** (`EE0DD83C`, the
+`!carrying` gate). Arc: option 1 (hit-notify) BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode;
+CLOSE-B latch + land-settle SHIPPED (`65AD883A`); the `carrying && HasPendingSettle` release gate
+(`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation, not a re-pile); **`!carrying`
+SHIPPED + VERIFIED — the freeze is gone.** OPEN (root-found, fix pending): carry **JANK** (clump pose
+`key.len=4` → key-first mis-route), proxy **SCALE** (not sent/applied), intermittent **ORPHAN** dup, and the
+`simulateDrop` throw-velocity FLIP. See the AS-BUILT + "Post-`!carrying` open issues" + NEXT. Filename keeps
+`holdplayer-gate` for link stability; that gate is the DISPROVEN option 2, not the fix. Supersedes the false
+"carry MIRRORS on a settled join / JOIN RACE" conclusion in
+`votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
 
 This is the canonical doc for *why the host-carry of a chipPile clump does not mirror cleanly on the client*
 and the fix that is queued. Read it before touching trash carry / the re-pile thunk / `OnHostConvert`.
@@ -143,22 +146,62 @@ idempotent, ctx-ordered convert — it races nothing.
   fast ✓, BUT the carry was **frozen between E-events** (the release-flicker, below). The dup (old-pile +
   new-clump on grab) showed once = a separate intermittent eid-mismatch (`fwdEid` vs the client's mirror eid),
   NOT the churn — dormant, not fixed.
-- **`C9F28176`** — the release-flicker gate: the held-prop poll's release edge (`local_streams.cpp:379`) had
-  NO carry gate, so the churn's 1-frame `holding_actor` flicker fired it → cleared `g_lastHeldEid` + a spurious
-  PropRelease → the carry binding died until the next E-press. FIX: suppress the release edge ONLY on the churn
-  flicker — `carrying && HasPendingSettle(E)` (a re-pile just started a settle, the flicker's cause) — and fire
-  on a real drop/throw (no pending settle, because a churn re-grab cancels the settle before any throw → a real
-  release never coincides with one) → PropRelease velocity ships + `ForgetEid` closes the latch. **No
-  `R::IsLive`** (UAF on the just-destroyed clump), no input-event RE (`InpActEvt_drop` is UI-gated, `throwPath`
-  is path-aiming). Hands-on-PENDING (take-26).
+- **`C9F28176` (committed `16ac153f`) — the `carrying && HasPendingSettle` gate — BUILT + FAILED hands-on.**
+  Theory: suppress the release edge only on a churn re-pile (which starts a land-settle). WRONG MODEL: the
+  release-edge flicker is NOT a chipPile re-pile — it's `updateHold` RECREATING the held puppet (`heldActor`
+  ptr changes, `pendingSettle=0`), so `HasPendingSettle` structurally never caught it. User: "still frozen
+  between E." SUPERSEDED.
+- **`448565A5` — read-only diagnostic** (`[HELD-STATE]`/`[REL-EDGE]`/`[POSE-SKIP]`/`[SIM-DROP]` logs). PROVED
+  the carry data path is WHOLE (host emits 60 fps → client drives the eid proxy → a Movable actor) and that
+  the freeze = the spurious FIRE (`carrying=1 pendingSettle=0`) → ctx churn → client holds carry poses.
+- **`EE0DD83C` — `!carrying` gate — the CARRY-FREEZE FIX, hands-on VERIFIED [V].** The release edge now
+  suppresses the WHOLE carry (`local_streams.cpp` `else if (g_lastHeldProp && !IsCarrying(g_lastHeldEid))`);
+  the latch closes via the land-settle (drop), and — after a future FLIP — via the `simulateDrop` thunk
+  (below). **User hands-on: the freeze is GONE, the clump UPDATES through the carry.** No `R::IsLive`, no
+  `HasPendingSettle` (kept only for the diag log).
 
-## NEXT (resume here)
-1. Hands-on `C9F28176` (take-26): the carry should now flow **continuously** (not frozen between E). If GREEN,
-   commit-verified. Tune K from the `[TRASH-CH] … CANCEL … gap=N` lines.
-2. **The dup (eid-mismatch)** if it recurs: pin from `E-PRESS … localEid=X mirrorEid=Y` — the grab broadcasts
-   `ToClump{fwdEid}`; if the client mirrors that pile under a different eid, `OnConvert` spawns fresh + leaves
-   the old pile. Separate track from the churn.
-3. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
+## Post-`!carrying` open issues (hands-on EE0DD83C, all root-found from log+code)
+1. **JANK [root found, fix pending].** The clump carry pose streams `key.len=4` (host log `net: PropPose emit
+   … key.len=4 eid=4743`). The source is the clump's OWN BP `GetKey(FName&)` (`prop.cpp:233` dispatches it for
+   chipPile/clump — no native Key field; the "non-keyable clump streams key=None" comment was WRONG). The
+   receiver resolves **KEY-first, eid-fallback** (`remote_prop.cpp:401-406`), so the keyed pose routes to a
+   wrong actor instead of the eid proxy → the proxy never drives (zero `drive #`) → it moves only on converts
+   = jank. The key is class/chipType-fixed (not per-instance), so the mis-route is a fixed wrong actor =
+   clump-only jank. **FIX (root, sender):** force the clump carry pose keyless — `IsGarbageClump(heldActor) →
+   pp.key.len=0` (an eid-identified entity must route by eid, never its game-key). `IsGarbageClump` is
+   class-based (`prop.cpp:159`) so it never zeroes a normal keyed prop's key.
+2. **SCALE [root found, fix pending].** The proxy looks SMALLER than the host pile: `PropConvertPayload` HAS
+   `scaleX/Y/Z` (`protocol.h:2208`) but `BroadcastConvert` leaves them 0 AND `trash_proxy.cpp` has NO
+   `SetActorScale` (spawn or re-skin). **FIX (two-sided, per-form):** `BroadcastConvert` sends
+   `GetActorScale3D(newActor)` (the target form's scale); the client applies it on EVERY convert
+   (`ReskinProxy`/`OnConvert`) AND `SpawnProxy`. (User's size-marker: smaller = a correctly-resolved proxy
+   (scale lost); normal-size un-removed = an `isProxy=0` orphan — issue 3.)
+3. **ORPHAN / intermittent dup [open, no repro].** Old piles intermittently NOT removed = the eid-resolve
+   race (`isProxy=0` → spawn-fresh leaves the old pile). This run logged ZERO `isProxy=0` (all re-skinned in
+   place) so it did NOT reproduce — needs an instance to autopsy (grep `isProxy=0` + neighbours next time a
+   NORMAL-size pile won't disappear).
+4. **`simulateDrop` thunk — the throw-velocity seam — read-only deployed (EE0DD83C), UNVALIDATED.**
+   `simulateDrop` is the named real drop/throw execute (`throwHoldingProp[0]` routes through it), provably
+   distinct from `updateHold`-recreation. The thunk (`OnSimulateDropObserve`) currently LOGS only
+   (`[SIM-DROP] held=.. carrying=..`). The FLIP wires it to close the latch → the release edge ships the
+   throw velocity. Deferred behind jank+scale (the user's priority).
+
+## NEXT (resume here — the carry-FREEZE is fixed [V]; build the two root-found fixes)
+1. **BUILD #1 (jank) + #3a (scale)** — both root-confirmed (above), independent of the latch:
+   - #1: `local_streams.cpp` — `IsGarbageClump(heldActor) → pp.key.len = 0` (force the clump carry pose
+     keyless so the receiver routes by eid → the proxy → 60 fps lerp). Root, not patch (the clump's BP GetKey
+     is its game-key; our sync identity is the eid).
+   - #3a: `trash_channel.cpp` `BroadcastConvert` → set `p.scaleX/Y/Z = GetActorScale3D(newActor)`;
+     `trash_proxy.cpp` `SpawnProxy` + `ReskinProxy` (or `remote_prop.cpp OnConvert`) → `SetActorScale3D` from
+     the payload, on EVERY convert (per-form scale). `protocol.h` already has the fields (no proto bump).
+   - Re-test: carry SMOOTH (jank gone) + proxy HOST-SIZED (scale fixed). The size-marker then vanishes, so a
+     remaining un-removed pile is unambiguously the orphan (#3b).
+2. **#3b ORPHAN** — needs a repro. Next NORMAL-size pile that won't disappear: grep client `isProxy=0` +
+   neighbours → the eid-resolve race (registration vs convert timing). Then fix the race.
+3. **The `simulateDrop` FLIP** (throw velocity) — after jank+scale verify, bring the `[SIM-DROP]` lines:
+   `carrying=<carry-eid>` on a drop AND a throw → flip the thunk to close the latch (`ForgetEid`) → the release
+   edge ships the velocity. If `carrying=0`/absent → pin the right seam first.
+4. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
    `eid=0` destroy doesn't false-close); then the grab-via-thunk tightening (retire the InpActEvt-PRE adopt — RULE 2).
 
 ## Credit / method note

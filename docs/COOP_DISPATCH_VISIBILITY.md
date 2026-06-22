@@ -151,24 +151,27 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   The GRAB direction still uses the VISIBLE InpActEvt-PRE + held-edge adopt (a future tightening moves it to
   the same thunk). **[V/AS-BUILT]**
 - **The thunk catches the HOST's authoring. The CLIENT MIRROR needs no dispatch observation at all** — as of
-  the phase-1 trash proxy (`coop/trash_proxy`, deployed `8bc797ef`), the client's mirror of a chipPile/clump
+  the phase-1 trash proxy (`coop/trash_proxy`, deployed `EE0DD83C`), the client's mirror of a chipPile/clump
   is an `AStaticMeshActor` WE spawn/destroy/re-skin via our OWN `SpawnActor`/`DestroyActor`/`SetStaticMesh`
   (driven by the reliable PropSpawn/PropConvert/PropDestroy wire) — **visible by construction; there is no BP
   self-morph/self-destroy dispatch to observe for the mirror anymore.** The EX_CallMath invisibility problem
   here is purely a HOST-side authoring concern (the thunk); the client just renders host-authoritative state.
   **Status:** the dup-gone + the resting/landed-pile mirror are hands-on VERIFIED **[V]** (a runtime
   `AStaticMeshActor` is STATIC-mobility by default → `SetStaticMesh`/`SetActorLocation` no-op, so it MUST be
-  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY is
-  [?] NOT working** — the earlier "carry MIRRORS on a settled join / it was the JOIN RACE" claim is **WITHDRAWN
-  as FALSE.** A real **E-press** carries the clump in **`holding_actor`**, so the native re-pile gate (`@2927`
-  checks `grabbing_actor`, null here) never aborts → the held clump RE-PILES on cluster contact ~1/s → the
-  game auto-re-grabs → CHURN; each `OnHostConvert` teleports the client proxy (0.5–2 fps + a stale pile
-  lingers). Host carries fine; other props mirror fine; ONLY the chipPile is broken client-side. The two clean
-  smokes (`b97z33gyh`/`b7oxr23uy`) LIED because `autotest_chippile.cpp` grabs via `playerGrabbed` → the clump
-  rides `grabbing_actor` → the gate aborts → no churn (the WRONG grab slot — see the caveat below). Option 1
-  FAILED; option 2 (the `holdPlayer` convert/ctx gate) pending. Root + fix:
-  `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V dup-fix + visibility; carry
-  [?] NOT working — contact-re-pile churn, option 2 pending.]**
+  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY-FREEZE
+  is [V] FIXED hands-on** via the **`!carrying` release-edge gate** in `local_streams.cpp` (`else if
+  (g_lastHeldProp && !coop::trash_channel::IsCarrying(g_lastHeldEid))`) — the client clump UPDATES through the
+  carry now (no freeze between E-events). The earlier "carry MIRRORS on a settled join / it was the JOIN RACE"
+  claim was **WITHDRAWN as FALSE**; the actual release-edge cause was `updateHold` PUPPET RECREATION (the
+  `heldActor` ptr changes with `pendingSettle=0`), NOT a contact-re-pile churn (which is why the `carrying &&
+  HasPendingSettle` gate, commit `16ac153f`, FAILED). **STILL [?] OPEN** (root-found, fix pending): carry JANK
+  (the clump carry pose streams `key.len=4` from its own BP `GetKey` → the receiver resolves KEY-first → moves
+  only on converts; fix = keyless clump carry pose), proxy SCALE (no `SetActorScale`; fix = send+apply scale),
+  an intermittent ORPHAN dup (the eid-resolve race), the `simulateDrop` throw-velocity flip (read-only thunk
+  deployed). Host carries fine; other props mirror fine. Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx
+  gate) is **DISPROVEN by bytecode** — `holdPlayer` is set ONCE on grab and NEVER cleared (DEAD, not pending).
+  Root + fix: `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V dup-fix +
+  visibility + carry-freeze; carry JANK + SCALE + ORPHAN + throw-flip [?] OPEN; option 2 DISPROVEN.]**
 
 > **⚠ A render-blind smoke caveat (the 2026-06-21 trap).** Our autonomous smoke can verify log markers and
 > that a UFunction `Call()` returned, but it CANNOT verify that the call's *effect* actually landed on the

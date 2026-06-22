@@ -281,6 +281,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         (ue_wrap::prop::IsFrozen(heldActor) || ue_wrap::prop::IsStatic(heldActor))) {
         heldActor = nullptr;
     }
+    // DIAGNOSTIC (2026-06-22): the held-state at the branch point -- which branch runs each frame.
+    // MAIN(pose) = heldActor live -> the pose stream; RELEASE-EDGE = heldActor null but g_lastHeldProp set;
+    // idle = neither. Distinguishes a dead main branch (heldActor undetected between E) from a firing
+    // release-edge vs a pose-skip. Throttled ~8/s; only logs while something is/was held.
+    if (heldActor || g_lastHeldProp) {
+        static uint32_t sHS = 0;
+        if ((sHS++ % 15) == 0) {
+            const bool hLive = heldActor && R::IsLive(heldActor);
+            UE_LOGI("[HELD-STATE] heldActor=%p(live=%d) g_lastHeldProp=%p g_lastHeldEid=%u carrying=%d -> %s",
+                    heldActor, hLive ? 1 : 0, g_lastHeldProp,
+                    (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
+                    coop::trash_channel::IsCarrying(g_lastHeldEid) ? 1 : 0,
+                    (heldActor && hLive) ? "MAIN(pose)" : (g_lastHeldProp ? "RELEASE-EDGE" : "idle"));
+        }
+    }
     if (heldActor && R::IsLive(heldActor)) {
         // New-held edge: broadcast a PropSpawn so each peer spawns a mirror. Aprop_C
         // items get a force-minted Key; the NON-KEYABLE trash CLUMP rides the SAME
@@ -387,6 +402,13 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                         pp.x, pp.y, pp.z, pp.pitch, pp.yaw, pp.roll,
                         static_cast<int>(pp.key.len), pp.elementId, static_cast<unsigned>(pp.ctx));
             }
+        } else {
+            // DIAGNOSTIC (2026-06-22): the held clump has NO identity (eid=0 AND key.len=0) -> the pose is NOT
+            // streamed. If this fires between E-events while a clump is held, the carry freeze is g_lastHeldEid
+            // going invalid (the eid was cleared), NOT a dead main branch. Throttled ~8/s.
+            static uint64_t sPK = 0;
+            if ((sPK++ % 15) == 0)
+                UE_LOGI("[POSE-SKIP] eid=0 key.len=0 -- held clump has NO identity to stream (g_lastHeldEid invalid -> carry frozen between E)");
         }
         g_lastHeldProp = heldActor;
         g_lastHeldKey = pp.key;
@@ -401,12 +423,27 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // a real release fires below + closes the latch so the landing converts as "not carrying". No R::IsLive
         // (UAF on the just-destroyed clump), no input-event RE (InpActEvt_drop is UI-gated, throwPath is aiming).
         const bool carrying_ = coop::trash_channel::IsCarrying(g_lastHeldEid);
-        if (carrying_ && coop::trash_channel::HasPendingSettle(g_lastHeldEid)) {
-            UE_LOGI("[PILE] HOST carry flicker eid=%u -- held clump re-piled (settle pending); SUPPRESS release, "
-                    "keep the carry binding (await the auto-re-grab)", static_cast<unsigned>(g_lastHeldEid));
+        const bool pending_  = coop::trash_channel::HasPendingSettle(g_lastHeldEid);  // kept only for the diag log
+        // B (2026-06-22, log-confirmed): the LATCH owns "carrying", NOT the flickering holding_actor. The
+        // freeze is the held-puppet RECREATION (updateHold rebuilds holding_actor -> a 1-frame null) firing
+        // this poll edge -> it cleared g_lastHeldEid + sent a spurious PropRelease -> ctx churn -> the client
+        // held carry poses (ctx ahead of known) -> frozen. HasPendingSettle could not catch it (recreation
+        // has no re-pile/settle). So SUPPRESS the release edge for the WHOLE carry (!carrying). The latch
+        // closes via: the land-settle (a drop/throw's landing re-pile -> LAND COMMIT) AND -- after the flip --
+        // the simulateDrop UFunction::Func thunk (the real player drop/throw -> close -> THIS edge then fires
+        // -> PropRelease velocity). In THIS read-only build the thunk only LOGS, so a throw teleports (closes
+        // via the settle, no velocity) until the flip. NO R::IsLive, NO HasPendingSettle.
+        const bool relSkip   = carrying_;
+        UE_LOGI("[REL-EDGE] eid=%u carrying=%d pendingSettle=%d -> %s",
+                (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
+                carrying_ ? 1 : 0, pending_ ? 1 : 0, relSkip ? "SKIP(carrying)" : "FIRE(release)");
+        if (relSkip) {
+            UE_LOGI("[PILE] HOST carry SUPPRESS release eid=%u -- !carrying gate (puppet recreation / churn / "
+                    "a real release whose latch the simulateDrop thunk will close); keep the carry binding",
+                    static_cast<unsigned>(g_lastHeldEid));
         } else {
-        if (carrying_) coop::trash_channel::ForgetEid(g_lastHeldEid);  // real drop/throw -> close the latch NOW
-        // Edge: was holding, now not. Stop the PropPose stream + send PropRelease.
+        // Edge: was holding, now not (NOT carrying -- the latch was already closed by the simulateDrop thunk
+        // or the land-settle, or this is a non-trash prop). Stop the PropPose stream + send PropRelease.
         // Read the body's CURRENT linear+angular velocity. By the time this branch
         // runs, the engine has executed the BP graph clearing grabbing_actor, the
         // PHC.ReleaseComponent call, and any post-release AddImpulse the BP issues.

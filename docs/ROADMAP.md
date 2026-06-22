@@ -13,7 +13,7 @@ NPC sync, WorldActor mirror (proto v80), save snapshot-on-connect, terminals,
 doors+lights+keypads, kerfur (prop⇄NPC conversion), events, voice, and the
 MTA-divergence refactor (incremental re-seed + membership-bounded sweep). The
 protocol is at **v82**. **Pile/trash sync — the host-authoritative trash channel
-([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `70d28df4`, deployed `8bc797ef`:**
+([docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)), HEAD `16ac153f`, deployed `EE0DD83C`:**
 the pile MORPH (v81) was refuted by a real hands-on; so was the s35 "BeginDeferred-POST
 is observable" link (it is `EX_CallMath` → invisible; 0 host_spawn_watcher fires). The
 GRAB (pile→clump) is **VERIFIED hands-on** (`InpActEvt_use` PRE + held-edge adopt); the
@@ -22,26 +22,37 @@ RE-PILE (clump→pile) is now the **deterministic `UFunction::Func` thunk conver
 triple-grab-cue fix (`fea04c26`) are **AS-BUILT** (folded into the deployed proxy build;
 the single-grab-cue + no-vanish-return remain hands-on-PENDING).
 The CLIENT mirror of trash is now a host-authoritative **`AStaticMeshActor` proxy**
-(`coop/trash_proxy`, deployed `8bc797ef`, HEAD `70d28df4`) — NO blueprint + `AddToRoot` +
+(`coop/trash_proxy`, deployed `EE0DD83C`, HEAD `16ac153f`) — NO blueprint + `AddToRoot` +
 eid→actor registry + re-skin in place → the client mirror-staleness dup is impossible by
 construction. **DUP-FIX + VISIBILITY are hands-on VERIFIED** (no doubled piles; resting +
 landed piles mirror visibly — a runtime `AStaticMeshActor` is STATIC by default so it must
 be set Movable, `245148c6`, else `SetStaticMesh` no-ops and the proxy is invisible). **The
-LIVE CLUMP CARRY is NOT fixed (the contact-re-pile churn)** — the earlier "carry MIRRORS on
-a settled join / the failure was the JOIN RACE" claim is **WITHDRAWN as FALSE.** A real
-**E-press** carries the clump in **`holding_actor`**, so the native re-pile gate (`@2927`
-checks `grabbing_actor`, null here) never aborts → the held clump RE-PILES on cluster
-contact ~1/s → the game auto-re-grabs → CHURN; each `OnHostConvert` teleports the client
-proxy → the client's clump morphs run 0.5–2 fps + a stale pile lingers. **Host carries FINE;
-OTHER props mirror fine; ONLY the chipPile** is broken client-side. The two clean smokes LIED
-because `autotest_chippile.cpp` grabs via `playerGrabbed` → `grabbing_actor` → the gate
-aborts → no churn (the wrong, non-representative grab slot). Option 1 (`8bc797ef`,
-`SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the live host BP
-re-arms hit-notify; **option 2 (the `holdPlayer` convert/ctx gate) is DESIGN LOCKED, NOT
-BUILT** (gate the `OnHostConvert` broadcast + ctx bump by the clump's `holdPlayer`). Root +
-fix: `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. Phase 2
-(collision + the client-grab direction, Increment 2 / proto v83) is **deferred until the
-carry mirrors**.
+LIVE CLUMP CARRY-FREEZE is FIXED, hands-on VERIFIED** — the live fix is the **`!carrying`
+release-edge gate** in `local_streams.cpp` (`else if (g_lastHeldProp &&
+!coop::trash_channel::IsCarrying(g_lastHeldEid))`): the client clump now UPDATES through the
+carry instead of freezing between E-events. The earlier "carry MIRRORS on a settled join /
+the failure was the JOIN RACE" claim was WITHDRAWN as FALSE; the actual release-edge cause was
+`updateHold` PUPPET RECREATION (the `heldActor` ptr changes with `pendingSettle=0`, so a
+`HasPendingSettle` gate couldn't catch it) — suppressing the WHOLE carry (`!carrying`) is the
+fix. **Dead ends:** option 1 (`8bc797ef`, `SetNotifyRigidBodyCollision(false)` on the held
+clump) BUILT + FAILED (the live host BP re-arms hit-notify); **option 2 (the `holdPlayer`
+convert/ctx gate) is DISPROVEN by bytecode** — `holdPlayer` (`@0x0240`) is set ONCE on grab
+(`actorChipPile.json` @8492) and NEVER cleared in any BP, so it cannot mark "released" (DEAD,
+not pending); CLOSE-B latch + land-settle SHIPPED `65AD883A` (correct, not the freeze cause);
+the `carrying && HasPendingSettle` release gate (`C9F28176`/commit `16ac153f`) BUILT + FAILED
+(the flicker is puppet recreation, not a re-pile). **STILL OPEN (root-found, fix PENDING):**
+(1) carry JANKY — the clump carry pose streams `key.len=4` (its own BP `GetKey`), the receiver
+resolves KEY-first (`remote_prop.cpp:401-406`) → routes off the eid proxy → no `drive #` →
+moves only on converts; fix = force the clump carry pose keyless (`IsGarbageClump →
+pp.key.len=0`); (2) proxy SCALE smaller — `PropConvertPayload` has `scaleX/Y/Z` but
+`BroadcastConvert` leaves them 0 + `trash_proxy.cpp` has no `SetActorScale`; fix = send
+`GetActorScale3D(newActor)` + apply on spawn+reskin; (3) intermittent ORPHAN dup — the
+eid-resolve race (`isProxy=0` spawn-fresh), did NOT reproduce this run, needs a repro; (4)
+`simulateDrop` throw-velocity FLIP — a read-only `UFunction::Func` thunk on `simulateDrop` is
+deployed (logs only), UNVALIDATED, deferred behind jank+scale. Root + fix:
+`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. NEXT = build #1
+(keyless) + #3a (scale). Phase 2 (collision + the client-grab direction, Increment 2 / proto
+v83) is **deferred behind jank+scale**.
 **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.

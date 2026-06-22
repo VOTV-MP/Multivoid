@@ -92,6 +92,11 @@ bool IsCarrying(coop::element::ElementId E);
 // real release never coincides with one). Suppress the release edge only when carrying AND this is true. Game thread.
 bool HasPendingSettle(coop::element::ElementId E);
 
+// HOST: the (single) currently-carried trash eid, or kInvalidId if none. There is at most one carried clump
+// at a time (one held item). The simulateDrop thunk logs this to cross-check that a real drop/throw is the
+// carried clump (vs an equip drop) before the flip wires the latch-close. Game thread.
+coop::element::ElementId AnyCarryingEid();
+
 // HOST: per-gameplay-tick pump -- decays the pending-grab TTL AND counts down the land-settles, COMMITTING a
 // settled land (broadcast the held ToPile + close the latch) when no re-grab arrived within K. Game thread.
 void TickCarry(coop::net::Session& s);

@@ -4,14 +4,30 @@
 (UNCHANGED). Build CLEAN (Release). **NOT autonomously smoked** — you are on the PC, so this is prepared
 ground and YOUR hands-on is the test.
 
-> **Update `C9F28176` (was `65AD883A`) — the release-flicker fix.** The first build (`65AD883A`) opened the
-> latch + suppressed the churn correctly (no stuck pile), but the carry position was **frozen between E-events**:
-> the held-prop poll's release edge (local_streams) had no carry gate, so the churn's 1-frame `holding_actor`
-> flicker fired it -> cleared the held-eid + a spurious PropRelease -> the carry binding died until the next
-> E-event. FIX: the release edge now SUPPRESSES only the churn flicker (`carrying && HasPendingSettle` — a
-> re-pile just started a land-settle), and FIRES on a real drop/throw (no pending settle -> velocity + close
-> the latch). The dup (old-pile + new-clump) is a **separate, intermittent eid-mismatch** that didn't trigger
-> last run — NOT fixed here; if it reappears, grep the `E-PRESS … localEid=X mirrorEid=Y` line.
+> **Update `EE0DD83C` — the `!carrying` gate (live) + a READ-ONLY `simulateDrop` thunk.** Logs proved the
+> freeze was NOT the re-pile/`HasPendingSettle` model: the held-puppet is RECREATED by `updateHold` (`heldActor`
+> ptr changes, `pendingSettle=0`), so `HasPendingSettle` structurally couldn't catch it; the spurious release →
+> ctx churn → the client held carry poses (`ctx` ahead of `known`) → frozen. The carry data path itself is
+> WHOLE (host emits → client drives the eid=5625 proxy → a Movable actor). FIX (live in this build): the
+> release edge now suppresses the WHOLE carry (`!carrying`); the latch closes via the land-settle (drop) — and,
+> after the FLIP, via the **`simulateDrop` Func-thunk** (the named real drop/throw seam, distinct from
+> `updateHold`; `throwHoldingProp` routes through it so it catches throws too). This build wires the thunk
+> **READ-ONLY (logs only)** to PROVE it fires for the clump before the close depends on it.
+>
+> **This run tests TWO things at once:** (a) **the carry flicker is GONE** (`!carrying` is live — the main
+> check); (b) **`[SIM-DROP]` fires on drop AND throw with `carrying=<the carry-eid>`** (the seam proof). In
+> this read-only build a **throw still teleports** (the thunk only logs; the latch closes via the settle, no
+> velocity) — that's expected, it's restored at the flip.
+>
+> **HANDS-ON RESULT (EE0DD83C, 2026-06-22):** the **carry-FREEZE is GONE — VERIFIED [V]** (the clump updates
+> through the carry; `!carrying` holds). THREE open issues, all root-found from log+code (see the canonical
+> finding `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`): (1) carry **JANKY** — the clump pose
+> streams `key.len=4` (its BP `GetKey`), receiver routes key-first off the eid proxy → no `drive #` → the proxy
+> moves only on converts; FIX = force the clump pose keyless. (2) proxy **SMALLER** — scale never sent
+> (`BroadcastConvert`) nor applied (`trash_proxy`); FIX = send+apply `GetActorScale3D` per-form. (3)
+> intermittent **ORPHAN** dup — did NOT reproduce (zero `isProxy=0`); needs an instance. **NEXT BUILD = #1
+> (keyless) + #3a (scale)**; a fresh runbook (take-28) follows. The `[SIM-DROP]` lines for the throw-flip are
+> still wanted, parked behind jank+scale.
 
 ## What changed — CLOSE-B (host-side carry latch + land-settle)
 The host's stock chipPile churn — a held clump re-piles on cluster contact ~1/s and the game auto-re-grabs —
