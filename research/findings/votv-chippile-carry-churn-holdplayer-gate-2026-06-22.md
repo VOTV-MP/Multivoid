@@ -1,14 +1,17 @@
 # chipPile carry — the CONTACT-RE-PILE CHURN root + the CLOSE-B carry-latch fix
 
-**Date:** 2026-06-22. **Status:** the **carry-FREEZE is FIXED, hands-on VERIFIED [V]** (`EE0DD83C`, the
-`!carrying` gate). Arc: option 1 (hit-notify) BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode;
-CLOSE-B latch + land-settle SHIPPED (`65AD883A`); the `carrying && HasPendingSettle` release gate
-(`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation, not a re-pile); **`!carrying`
-SHIPPED + VERIFIED — the freeze is gone.** Then the carry **JANK** + proxy **SCALE** were root-found and
-**BUILT (`f82943bcd7560724`, proto v83, hands-on PENDING)** — see "Post-`!carrying` open issues" (the jank
-root was CORRECTED: the `key.len=4` key-first theory is DISPROVEN, the real root is an interpolation
-phase-stall). Still OPEN: intermittent **ORPHAN** dup (no repro), the `simulateDrop` throw-velocity FLIP. See
-the AS-BUILT + "Post-`!carrying` open issues" + NEXT. Filename keeps
+**Date:** 2026-06-22. **HEAD `29069f05`, deployed `c2a5f49cc98add31`, proto v83.** **Status:** the
+carry-**FREEZE** [V] (`!carrying`, `0e2a6bca`) AND the carry-**JANK** [V] (fixed-delay interp, `df158728`) are
+both FIXED, hands-on VERIFIED (carry now smooth like a normal object). Proxy **SCALE** BUILT v83 (`df158728`,
+hands-on PENDING — not eyeballed). The **throw ARC** BUILT (`136ed779`, hands-on PENDING) via carry/flight
+stream-**continuity** after the release-VERB hunt died (`simulateDrop` AND `dropGrabObject` both fired ZERO).
+**ORPHAN dup SPLIT:** derived gone [V]; ORIGINAL (level-placed) piles dup — root CONFIRMED (the client's NATIVE
+level-pile COEXISTS with the proxy; the eid-race theory is superseded); a read-only PILE-PROBE shipped
+(`29069f05`) to confirm + size the destroy-fix. Arc of dead ends (don't retry): option 1 (hit-notify)
+BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode; `carrying && HasPendingSettle` gate
+(`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation); the `key.len=4` key-first jank
+theory DISPROVEN; the `simulateDrop`/`dropGrabObject` release-verb flip DEAD (0 fires). See the AS-BUILT +
+"Post-`!carrying` open issues" + NEXT. Filename keeps
 `holdplayer-gate` for link stability; that gate is the DISPROVEN option 2, not the fix. Supersedes the false
 "carry MIRRORS on a settled join / JOIN RACE" conclusion in
 `votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
@@ -197,33 +200,63 @@ idempotent, ctx-ordered convert — it races nothing.
    convert), guarded `>0.001` (rejects zero AND NaN). Covers carry converts + join-placed piles. (User's
    size-marker: with scale fixed, smaller-vs-normal no longer distinguishes proxy from orphan → a dup is now
    unambiguously the `isProxy=0` orphan — issue 3.)
-3. **ORPHAN / intermittent dup [open, no repro].** Old piles intermittently NOT removed = the eid-resolve
-   race (`isProxy=0` → spawn-fresh leaves the old pile). This run logged ZERO `isProxy=0` (all re-skinned in
-   place) so it did NOT reproduce — needs an instance to autopsy (grep `isProxy=0` + neighbours next time a
-   NORMAL-size pile won't disappear).
-4. **`simulateDrop` thunk — the throw-velocity seam — read-only deployed (EE0DD83C), UNVALIDATED.**
-   `simulateDrop` is the named real drop/throw execute (`throwHoldingProp[0]` routes through it), provably
-   distinct from `updateHold`-recreation. The thunk (`OnSimulateDropObserve`) currently LOGS only
-   (`[SIM-DROP] held=.. carrying=..`). The FLIP wires it to close the latch → the release edge ships the
-   throw velocity. Deferred behind jank+scale (the user's priority).
+3. **ORPHAN dup — SPLIT by pile ORIGIN (root CONFIRMED; the eid-race theory SUPERSEDED).** Hands-on: the dup
+   is GONE for **DERIVED** (gameplay-born) piles [V] but PERSISTS for **ORIGINAL** (level-placed) piles. Agent
+   trace (code+log) confirmed the root: a level-placed chipPile DOES get an eid + a proxy (the eidOnly snapshot
+   lane, `prop_snapshot.cpp:262`; the eid is shared both sides — host grab resolves the SAME eid the client
+   proxy has), so the prior "no eid / eid-resolve race / `isProxy=0` spawn-fresh" theory is **WRONG**. The real
+   root: the client's **NATIVE level-loaded chipPile is NEVER reconciled away** — it COEXISTS with the proxy
+   the host expresses on top (~871 native + 870 proxy ≈ 1741 actors for ~870 logical piles, client log
+   `:10806` + 870 `trash_proxy: SPAWN`). The grab-convert correctly re-skins the PROXY (every convert
+   `isProxy=1`), but the native sits untouched = the visible dup. The divergence sweep is BLIND to natives (it
+   walks the element Registry, `remote_prop_spawn.cpp:1044`; native level-piles enter it only lazily). Derived
+   piles never had a native twin (born only as a host convert → a proxy both sides) → no dup. **FIX (NEXT pass,
+   NOT built): DESTROY the native at proxy-spawn** — NOT adopt (adopt = use the native BP as the mirror, which
+   reintroduces the BP self-morph/GC/local-grab the proxy model exists to AVOID — the superseded approach).
+   EXACT position-match (~1cm; deterministic save load; a 5cm radius would grab a cluster neighbour); graceful
+   on 0, exact-or-skip on >1; a join-time position index built ONCE before the proxy-spawns (O(1) lookup). A
+   **read-only PILE-PROBE shipped (`29069f05`, `remote_prop_spawn.cpp:355`)** logs `[PILE-PROBE] ... native
+   actorChipPile within 1cm=N 10cm=M` (expect 1 for level, 0 for derived) to confirm the coexistence + the
+   match precision before the destroy is built.
+4. **The throw-velocity VERB-FLIP is DEAD — REPLACED by carry/flight stream-CONTINUITY (`136ed779`, deployed,
+   hands-on PENDING).** Both candidate verbs fired ZERO times: `simulateDrop` (`SIM-DROP=0`) AND its
+   RE-pinned successor `dropGrabObject` (`DROP-GRAB=0`), across 7 grab/release cycles, while the same
+   `UFunction::Func` facility (the BeginDeferred re-pile thunk, slot 0) fired all run. So the chipPile clump
+   release goes through **neither** verb (`simulateDrop` = the EQUIPMENT/`holding_actor` drop; the clump rides
+   `grabbing_actor` = the physics-handle PHC grab; `dropGrabObject` IS the PHC release verb per RE
+   `mainPlayer.json:167013`+`:167059` but STILL never fired for the clump). The throws confirmed the cost:
+   `|v|=0.0` (the land-settle closes the latch only AFTER the clump re-piled/died). **PIVOT (the elegant one):
+   the arc needs NO verb, NO velocity, NO flip.** The host's thrown clump really FLIES (physics) until it
+   re-piles, so the carry pose-stream just CONTINUES through the release: `local_streams.cpp` — the
+   release-edge `!carrying`-SKIP branch now streams `g_lastHeldProp`'s pose under the SAME eid E while it is a
+   LIVE `garbageClump`; the client's fixed-delay interp shows the REAL arc; it ends when the clump re-piles
+   (the re-pile thunk's ToPile re-skins+snaps the proxy). The churn/flight discriminator is **`IsLive`** — a
+   churn re-pile DESTROYS the clump (skip the gap), a real release leaves it ALIVE+flying (stream the arc) —
+   the verb we never needed. The carry main branch (`heldActor`-keyed) is byte-identical (additive; audit
+   zero-CRITICAL). The dead `dropGrabObject` read-only thunk is to be retired (RULE 2) in the verify build.
 
-## NEXT (resume here — freeze fixed [V]; jank + scale BUILT v83 `f82943bcd7560724`, hands-on PENDING)
-1. **USER HANDS-ON (take-28, `research/handson_runbook_2026-06-22_v83_scale_interp.md`).** Deployed to all 4
-   copies (hash MATCH x4). Acceptance: (1) carry **SMOOTH like a normal held object** (the fixed-delay interp —
-   the MAIN check); (2) pile **HOST-SIZE**, the size-marker GONE (scale); (3) a dup is now **unambiguously an
-   `isProxy=0` orphan** — if seen, grep `isProxy=0` + neighbours; (4) throw still **teleports** — EXPECTED
-   (the `simulateDrop` thunk is read-only this build; the velocity flip is the next pass).
-2. **#3b ORPHAN** — still no repro. With the size-marker gone (#3a), the NEXT normal-size pile that won't
-   disappear is guaranteed the orphan: grep client `isProxy=0` + neighbours → the eid-resolve race
-   (registration vs convert timing). Then fix the race.
-3. **The `simulateDrop` FLIP** (throw velocity) — after carry-smooth + scale verify, bring the `[SIM-DROP]`
-   lines: `carrying=<carry-eid>` on a drop AND a throw → flip the thunk to close the latch (`ForgetEid`) → the
-   release edge ships the velocity. If `carrying=0`/absent → pin the right seam first.
-4. **Modular debt (audit flag, both passes):** `remote_prop.cpp` (1362 LOC) + `remote_prop_spawn.cpp` (1341)
-   are past the 800 soft cap (under 1500 hard; this diff crossed no boundary). The interpolation engine
-   (`ActiveDrive`/`BeginLerpToPose`/`AdvanceLerp`/`LerpAngle`/the lerp constants, ~120 LOC) is the natural
-   extraction → `coop/prop_interp.{cpp,h}` at the NEXT feature touch of remote_prop.cpp.
-5. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
+## NEXT (resume here — carry SMOOTH [V]; throw ARC + level-pile PROBE deployed `c2a5f49cc98add31`, hands-on PENDING)
+1. **USER HANDS-ON (take-29, `research/handson_runbook_2026-06-22_throw_arc_probe.md`).** Deployed all 4 copies
+   (`c2a5f49cc98add31`, MATCH x4). Acceptance: (1) **the throw FLIES AN ARC** on the client (the carry/flight
+   stream-continuity — the MAIN check; host log `[PILE] HOST carry/flight CONTINUE`); (2) carry stayed SMOOTH
+   (the main branch is byte-identical — must not regress); (3) clean LANDING (clump morphs to a pile at the
+   authoritative spot, no hang, no double-pile at the arc's end); (4) **PILE-PROBE numbers** — client log
+   `[PILE-PROBE] ... within 1cm=N 10cm=M` (expect **1cm=1** for level piles = the coexisting native, **0** for
+   derived; 1cm=1 ⇒ bit-exact load ⇒ the tight match is cluster-safe).
+2. **LEVEL-PILE DESTROY-FIX (the dup, NEXT BUILD — gated on the probe numbers).** Per the PROBE: build the
+   join-time chipPile position index (once, before the proxy-spawns), then at a pile proxy-spawn DESTROY the
+   co-located native (`remote_prop_spawn.cpp:355` trash branch) — exact ~1cm match, graceful on 0,
+   exact-or-skip on >1, NOT "nearest in a radius" (cluster-safe). NOT adopt (adopt reintroduces the BP
+   self-morph the proxy model avoids). Reuse the existing `g_pileBindIndex` machinery.
+3. **Throw verify → then retire the dead `dropGrabObject` thunk (RULE 2)** + suppress the now-redundant
+   `PropRelease` for a trash proxy (the flight-stream + ToPile already handle the throw; the `|v|=0` release is
+   dead weight). The `simulateDrop`/`dropGrabObject` VERB approach is fully abandoned — do NOT retry it.
+4. **SCALE (#3a) recheck** — the user did not eyeball the proxy size this run; confirm host-sized on the next.
+5. **Modular debt (audit flag):** `remote_prop.cpp` (1362 LOC) + `remote_prop_spawn.cpp` (1341) past the 800
+   soft cap (under 1500 hard). Extract the interpolation engine
+   (`ActiveDrive`/`BeginLerpToPose`/`AdvanceLerp`/`LerpAngle`/the lerp constants, ~120 LOC) →
+   `coop/prop_interp.{cpp,h}` at the next feature touch of remote_prop.cpp.
+6. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
    `eid=0` destroy doesn't false-close); then the grab-via-thunk tightening (retire the InpActEvt-PRE adopt — RULE 2).
 
 ## Credit / method note
