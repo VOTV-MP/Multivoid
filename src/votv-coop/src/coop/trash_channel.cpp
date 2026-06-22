@@ -58,9 +58,17 @@ struct LandSettle {
     int               countdown;  // ticks until COMMIT (a re-grab CANCELS first)
     int               sincePile;  // ticks since the held ToPile (the ToPile->ToClump gap, logged on CANCEL)
     uint8_t           chipType;
-    ue_wrap::FVector  scale{1.f, 1.f, 1.f};  // v83: the landed pile's GetActorScale3D, committed with the ToPile
-    ue_wrap::FVector  loc;
-    ue_wrap::FRotator rot;
+    // take-31: the spawned pile actor + its GUObjectArray index. At the BeginDeferred POST the pile is NOT yet
+    // positioned (FinishSpawning runs later), so the loc/rot/scale captured then are the CLUMP fallback. At the
+    // COMMIT (K ticks later, post-FinishSpawning) we RE-READ the pile's REAL transform via this pointer
+    // (IsLiveByIndex-guarded -- it is cached across the multi-tick settle). A committing settle (no re-grab
+    // within K) always has a live, settled pile, so the re-read is the authoritative source; loc/rot/scale
+    // below are the fallback if the pile somehow died.
+    void*             pileActor = nullptr;
+    int32_t           pileIdx   = -1;
+    ue_wrap::FVector  scale{1.f, 1.f, 1.f};  // FALLBACK scale (clump/default at the thunk; re-read at COMMIT)
+    ue_wrap::FVector  loc;                    // FALLBACK loc  (the clump's -- ~radius high; re-read at COMMIT)
+    ue_wrap::FRotator rot;                    // FALLBACK rot  (the clump's tumble; re-read at COMMIT)
     std::string       cls;        // the pile class to broadcast at COMMIT
 };
 std::unordered_map<uint32_t, LandSettle> g_settle;
@@ -153,6 +161,9 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
             LandSettle ls{};
             ls.countdown = kLandSettleTicks; ls.sincePile = 0;
             ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls; ls.scale = scale;
+            // take-31: remember the pile actor (+ its index) so the COMMIT can re-read its REAL, settled
+            // transform (newActor is unpositioned NOW; loc/rot/scale above are the clump fallback).
+            ls.pileActor = newActor; ls.pileIdx = R::InternalIndexOf(newActor);
             g_settle[eid] = ls;
             UE_LOGI("[TRASH-CH] HOST land-settle START eid=%u K=%d -- holding the ToPile (re-grab within K = "
                     "churn; no re-grab = the real land)", eid, kLandSettleTicks);
@@ -225,10 +236,24 @@ void TickCarry(coop::net::Session& s) {
         ++ls.sincePile;
         if (--ls.countdown <= 0) {
             const coop::element::ElementId E = static_cast<coop::element::ElementId>(it->first);
-            BroadcastConvert(s, E, coop::net::propconvert_kind::kToPile, ls.loc, ls.rot, ls.scale, ls.chipType,
+            // take-31 FIX: re-read the pile's REAL transform NOW (post-FinishSpawning, the pile is positioned).
+            // The thunk-captured ls.loc/rot/scale are the CLUMP fallback (the pile was unpositioned = (0,0,0)
+            // at the BeginDeferred POST). A committing settle (survived K ticks with no re-grab) is the real
+            // land, so its pile is alive + settled; IsLiveByIndex guards the cross-tick cached pointer.
+            ue_wrap::FVector  cloc   = ls.loc;
+            ue_wrap::FRotator crot   = ls.rot;
+            ue_wrap::FVector  cscale = ls.scale;
+            const bool reread = (ls.pileActor && R::IsLiveByIndex(ls.pileActor, ls.pileIdx));
+            if (reread) {
+                cloc   = ue_wrap::engine::GetActorLocation(ls.pileActor);
+                crot   = ue_wrap::engine::GetActorRotation(ls.pileActor);
+                cscale = ue_wrap::engine::GetActorScale3D(ls.pileActor);
+            }
+            BroadcastConvert(s, E, coop::net::propconvert_kind::kToPile, cloc, crot, cscale, ls.chipType,
                              ls.cls, "LAND COMMIT");
-            UE_LOGI("[TRASH-CH] HOST LAND COMMIT eid=%u -- no re-grab within K -> the real land; carry CLOSED",
-                    static_cast<unsigned>(E));
+            UE_LOGI("[TRASH-CH] HOST LAND COMMIT eid=%u -- no re-grab within K -> the real land; carry CLOSED "
+                    "(transform %s)", static_cast<unsigned>(E),
+                    reread ? "re-read from the settled pile" : "FALLBACK (pile not live -- clump transform)");
             g_carry.erase(it->first);                     // CLOSE the carry latch
             it = g_settle.erase(it);
         } else {

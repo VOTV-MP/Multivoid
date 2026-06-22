@@ -78,22 +78,18 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     if (!ue_wrap::prop::IsChipPile(newActor)) return;     // ... spawning a chipPile
     const coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
     if (E == coop::element::kInvalidId) return;           // an UNTRACKED clump (grab-adopt miss; the eid=0 gap) -> skip
-    // BOTH loc AND rot come from newActor (the PILE), NOT srcObj (the clump). srcObj is a live physics actor
-    // at its tumbled flight orientation AND with its origin ~clump-radius ABOVE the ground (a dirtball rests on
-    // its centre); the pile's spawn transform is a deterministic MakeTransform built from the sphere trace and
-    // anchored AT the ground (prop_garbageClump bytecode: SphereTrace -> MakeTransform ->
-    // BeginDeferred(SpawnTransform=MakeTransform)). BeginDeferred applies that transform to newActor
-    // immediately at this POST -- proven by GetActorScale3D(newActor) AND the take-30 rotation hands-on both
-    // reading correctly here. Reading the clump's ROTATION made the client pile land randomly oriented (take-29
-    // #4 -- FIXED [V]); reading the clump's LOCATION lifted the pile-proxy ~clump-radius high so it "climbed out
-    // of the ground" (take-30 #1 -- the host pile is semi-sunk by the mesh PIVOT, which the proxy shares, so a
-    // proxy at the pile's own ground anchor reproduces the sink exactly; the clump's elevated origin was the
-    // only error). actorChipPile_C's StaticMeshComponent has NO relative-location offset (reflection-verified)
-    // and the BP does no runtime SetActorLocation, so GetActorLocation(newActor) IS the mesh anchor. Symmetric
-    // to the scale read in OnHostConvert. CAVEAT (audit): this POST is PRE-FinishSpawning; if a Construction
-    // Script later re-places/re-orients the actor, re-read newActor's transform at the land-settle COMMIT.
-    const ue_wrap::FVector  loc      = ue_wrap::engine::GetActorLocation(newActor);
-    const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(newActor);
+    // The thunk fires at the BeginDeferred POST, which is PRE-FinishSpawningActor -> newActor (the pile) is NOT
+    // positioned yet: GetActorLocation(newActor) here is (0,0,0) and GetActorRotation is identity. take-31
+    // proved this (host log: every "BROADCAST ToPile ... at (0.0,0.0,0.0)") -- reading newActor's transform
+    // snapped every derived pile to the world origin = "disappeared". (take-30's rotation "worked" only because
+    // an identity rotation LOOKS correct for a flat pile, masking the unset transform; loc came from the clump
+    // then so it stayed visible.) So pass the CLUMP's transform (srcObj IS a fully-spawned, positioned actor)
+    // as the FALLBACK, and re-read the PILE's REAL transform at the land-settle COMMIT (TickCarry, post-
+    // FinishSpawning) in trash_channel -- that is where loc/rot/scale become valid. The clump's loc is
+    // ~clump-radius high + its rotation is the tumble, so srcObj is ONLY the fallback (a committing settle
+    // always has a live settled pile to re-read). [the original "not positioned yet" comment was RIGHT.]
+    const ue_wrap::FVector  loc      = ue_wrap::engine::GetActorLocation(srcObj);
+    const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(srcObj);
     const uint8_t           chipType = ue_wrap::prop::GetChipType(srcObj);
     UE_LOGI("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -> chipPile=%p convert IN PLACE (deterministic, same "
             "tick as the spawn -- no death-watch, no proximity)", static_cast<unsigned>(E), srcObj, newActor);
