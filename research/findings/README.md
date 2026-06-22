@@ -32,7 +32,11 @@ morph (07) was retired 2026-06-21 (its smoke "VERIFIED" was refuted by a real ha
 ubergraph) is `EX_CallMath` → unobservable" is **TRUE** (verified by a live hands-on: 0 host_spawn_watcher
 fires, commit `0e56ca39`); it was the s35/**08** "observability reversal" (claiming that POST is observable)
 that was FALSE — now corrected in 08 + the COOP_* maps. New durable RE:
-`votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`.
+`votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md`. **Correction (2026-06-22):** the CARRY mirror is
+**NOT fixed** — the `*-staleness-*-2026-06-21` finding's "carry MIRRORS on a settled join / it was the JOIN
+RACE" was FALSE (the smoke grabbed via `playerGrabbed`→`grabbing_actor`, where the native re-pile gate aborts;
+a real E-press uses `holding_actor` and CHURNS). The canonical carry root + the queued fix (the `holdPlayer`
+convert/ctx gate, option 2) is `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
 
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
