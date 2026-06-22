@@ -151,20 +151,24 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   The GRAB direction still uses the VISIBLE InpActEvt-PRE + held-edge adopt (a future tightening moves it to
   the same thunk). **[V/AS-BUILT]**
 - **The thunk catches the HOST's authoring. The CLIENT MIRROR needs no dispatch observation at all** — as of
-  the phase-1 trash proxy (`coop/trash_proxy`, deployed `70f1f04b`), the client's mirror of a chipPile/clump
+  the phase-1 trash proxy (`coop/trash_proxy`, deployed `8bc797ef`), the client's mirror of a chipPile/clump
   is an `AStaticMeshActor` WE spawn/destroy/re-skin via our OWN `SpawnActor`/`DestroyActor`/`SetStaticMesh`
   (driven by the reliable PropSpawn/PropConvert/PropDestroy wire) — **visible by construction; there is no BP
   self-morph/self-destroy dispatch to observe for the mirror anymore.** The EX_CallMath invisibility problem
   here is purely a HOST-side authoring concern (the thunk); the client just renders host-authoritative state.
   **Status:** the dup-gone + the resting/landed-pile mirror are hands-on VERIFIED **[V]** (a runtime
   `AStaticMeshActor` is STATIC-mobility by default → `SetStaticMesh`/`SetActorLocation` no-op, so it MUST be
-  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY
-  MIRRORS on a settled join** — mechanism smoke-proven (two clean smokes, runs `b97z33gyh`/`b7oxr23uy`: the
-  ToClump convert adopts `known` 0->1, the clump mesh resolves `dirtball`, `GRAB-IN` fires, the drive
-  `#1..#540 [proxy]` tracks the host, the LAND re-skins). The earlier "does not mirror / `0` `GRAB-IN`" was the
-  JOIN RACE (the autotest grabbed before the client expressed its join snapshot), NOT a sync bug; the on-screen
-  VISUAL is **[?] hands-on PENDING** (the smoke is render-blind — see the caveat below). **[V dup-fix; carry
-  mechanism smoke-proven, [?] on-screen visual hands-on pending.]**
+  set Movable — `SetComponentMobility`, `245148c6` — or the proxy is invisible). The **live clump CARRY is
+  [?] NOT working** — the earlier "carry MIRRORS on a settled join / it was the JOIN RACE" claim is **WITHDRAWN
+  as FALSE.** A real **E-press** carries the clump in **`holding_actor`**, so the native re-pile gate (`@2927`
+  checks `grabbing_actor`, null here) never aborts → the held clump RE-PILES on cluster contact ~1/s → the
+  game auto-re-grabs → CHURN; each `OnHostConvert` teleports the client proxy (0.5–2 fps + a stale pile
+  lingers). Host carries fine; other props mirror fine; ONLY the chipPile is broken client-side. The two clean
+  smokes (`b97z33gyh`/`b7oxr23uy`) LIED because `autotest_chippile.cpp` grabs via `playerGrabbed` → the clump
+  rides `grabbing_actor` → the gate aborts → no churn (the WRONG grab slot — see the caveat below). Option 1
+  FAILED; option 2 (the `holdPlayer` convert/ctx gate) pending. Root + fix:
+  `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V dup-fix + visibility; carry
+  [?] NOT working — contact-re-pile churn, option 2 pending.]**
 
 > **⚠ A render-blind smoke caveat (the 2026-06-21 trap).** Our autonomous smoke can verify log markers and
 > that a UFunction `Call()` returned, but it CANNOT verify that the call's *effect* actually landed on the
@@ -173,6 +177,19 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
 > screenshots are black). A smoke proves dispatch + no-crash; it does NOT prove rendering or that a state
 > push took visual effect. Confirm anything visual (mesh swap, position follow, mobility) on a real hands-on,
 > never from a smoke alone. **[V]**
+>
+> **⚠⚠ A SECOND trap on the same chipPile carry (the 2026-06-22 false "carry proven").** A render-blind smoke
+> that ALSO drives the entity through a non-representative code path can produce a doubly-false PASS.
+> `autotest_chippile.cpp` grabs the clump by calling **`playerGrabbed`** directly → the clump lands in
+> **`grabbing_actor`** (the PHC slot), whereas a real **E-press** carries it in **`holding_actor`** (the
+> chipPile morph slot). That slot decides whether the native re-pile gate aborts (`@2927` checks
+> `holdPlayer.grabbing_actor`): with the autotest's `grabbing_actor` valid, the gate ABORTS → the clump never
+> re-piles while held → a clean carry; a real E-press leaves `grabbing_actor` null → the gate never fires →
+> the held clump re-piles on cluster contact ~1/s → CHURN → the client chokes (0.5–2 fps). So the smoke proved
+> a grab path the user never takes. **Lesson:** an interaction smoke must drive the entity through the SAME
+> seam the player uses (here: `holding_actor`, not `playerGrabbed`→`grabbing_actor`) — a different entry slot
+> can change the engine's branch and hide the real bug. Root + fix:
+> `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V]**
 
 ## NEEDS-PROBE
 

@@ -1,7 +1,7 @@
 # 08 — HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync redesign)
 
-> **Status (2026-06-22 session 38+, HEAD `7f1b29ba`, proto v82 — no wire change; deployed DLL
-> `70f1f04b`):**
+> **Status (2026-06-22 session 38+, HEAD `70d28df4`, proto v82 — no wire change; deployed DLL
+> `8bc797ef`):**
 > - **GRAB (pile→clump) — [V] VERIFIED hands-on** (`[SYNC-MIRROR OK]` in the client log). Driven by the
 >   `InpActEvt_use` PRE seam (a real input event → ProcessEvent-VISIBLE) + the held-object edge adopt.
 > - **RE-PILE (clump→pile) — the DETERMINISTIC `UFunction::Func` thunk converter — [AS-BUILT]; the
@@ -15,33 +15,34 @@
 >   split by packet kind (a carry pose requires `ctx == known`, a release keeps `ctx >= known`) so an
 >   ahead-of-convert carry pose no longer drives the pre-convert pile + re-fires the grab cue.
 > - **CLIENT mirror of trash = the host-authoritative `AStaticMeshActor` PROXY — phase 1 [AS-BUILT];
->   DUP-FIX + VISIBILITY hands-on [V] VERIFIED; the LIVE CLUMP CARRY MIRRORS on a settled join — mechanism
->   SMOKE-PROVEN, on-screen VISUAL hands-on [?] PENDING** (deployed `70f1f04b`). The client's mirror of a
->   chipPile/clump is now an `AStaticMeshActor` WE own (NO blueprint, `AddToRoot`, our eid→actor registry)
->   instead of the real self-morphing BP — so the staleness dup below is impossible BY CONSTRUCTION. **The DUP
->   FIX works (hands-on): no doubled piles; resting + landed piles mirror correctly + VISIBLY** (`0` `mirror
->   NOT-FOUND` in the smoke, 875 proxies, user confirmed). A runtime `AStaticMeshActor` defaults to STATIC
->   mobility, on which `SetStaticMesh`+`SetActorLocation` silently no-op (the proxies were INVISIBLE in the
->   smoke — which is render-blind); FIXED with `engine::SetComponentMobility(Movable)` (`245148c6`), user then
->   confirmed "works visually." **The LIVE CARRY MIRRORS** on a settled join — proven 2026-06-22 by two clean
->   instrumented smokes (runs `b97z33gyh` then the fuller `b7oxr23uy`): the ToClump convert adopts (`known`
->   0->1), the clump mesh resolves (`dirtball`, NOT a pile-fallback), `GRAB-IN` fires, the drive advances
->   `#1..#540 [proxy]` tracking the host's path 1:1, and the LAND re-skins back to a pile. The earlier "stays a
->   PILE / 2 fps / `0` `GRAB-IN`" was the **JOIN RACE** (the autotest grabbed before the client expressed its
->   875-proxy join snapshot), NOT a sync bug — killed by the autotest's new puppet-live settle gate. Phase 1 =
->   visual + position + re-skin, EXPLICIT NoCollision. STILL PENDING: a hands-on to confirm the on-screen
->   VISUAL (the smoke is render-blind — it proves the drive computes the right target positions, not that the
->   pixels follow) + to characterize the user's earlier "2 fps" (most likely the same race). See **"AS-BUILT —
->   the client trash MIRROR is the host-authoritative `AStaticMeshActor` proxy"** below + the **"CARRY-MIRROR —
->   RESOLVED at the mechanism level"** section of
->   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
-> - **DUP-FIX + VISIBILITY VERIFIED [V]; the LIVE CARRY mechanism SMOKE-PROVEN on a settled join, the
->   on-screen VISUAL hands-on [?] PENDING:** the dup is gone + the resting/landed piles mirror visibly
->   (user-confirmed), and the carry's full wire/drive (convert adopt → mesh resolve → GRAB-IN → drive follow →
->   LAND re-skin) is proven by the clean smokes. The next hands-on (runbook take-24) confirms the on-screen
->   VISUAL on a fully settled join — a host grab re-skins the client mirror to a clump in the host's hand and
->   follows it smoothly. Do NOT mark the live carry a flat VERIFIED until then (the mechanism is proven; the
->   visual is not). (The s38 grab cue / re-pile vanish-return checks are a separate deployed-pending-hands-on
+>   DUP-FIX + VISIBILITY hands-on [V] VERIFIED; the LIVE CLUMP CARRY is [?] NOT fixed (the contact-re-pile
+>   churn)** (deployed `8bc797ef`). The client's mirror of a chipPile/clump is now an `AStaticMeshActor` WE own
+>   (NO blueprint, `AddToRoot`, our eid→actor registry) instead of the real self-morphing BP — so the staleness
+>   dup below is impossible BY CONSTRUCTION. **The DUP FIX works (hands-on): no doubled piles; resting + landed
+>   piles mirror correctly + VISIBLY** (`0` `mirror NOT-FOUND` in the smoke, 875 proxies, user confirmed). A
+>   runtime `AStaticMeshActor` defaults to STATIC mobility, on which `SetStaticMesh`+`SetActorLocation`
+>   silently no-op (the proxies were INVISIBLE in the smoke — which is render-blind); FIXED with
+>   `engine::SetComponentMobility(Movable)` (`245148c6`), user then confirmed "works visually." **The LIVE
+>   CARRY does NOT mirror** — the earlier "carry MIRRORS on a settled join / the failure was the JOIN RACE"
+>   claim is **WITHDRAWN as FALSE.** A real **E-press** carries the clump in **`holding_actor`**, so the native
+>   re-pile gate (`@2927` checks `holdPlayer.grabbing_actor`, null here) **never aborts** → the held clump
+>   **RE-PILES on cluster contact ~1/s** (`StaticMesh.OnComponentHit`) → the game auto-re-grabs → **CHURN**;
+>   each `OnHostConvert` teleports the client proxy (`ClearAnyDriveFor` + `SetActorLocation`) → the client's
+>   clump movement + morphs run **0.5–2 fps** + an old pile lingers. **Host carries FINE** (native; the churn
+>   is seamless); **OTHER physics props mirror fine** (pure pose-stream); **ONLY the chipPile** (the lone
+>   convert-machine mirror) is broken **client-side**. The smokes LIED because `autotest_chippile.cpp` grabs via
+>   `playerGrabbed` → the clump lands in `grabbing_actor` → the gate aborts → no churn (the wrong,
+>   non-representative grab slot). Phase 1 = visual + position + re-skin, EXPLICIT NoCollision. **NEXT: user
+>   blesses option 2 → BUILD the `holdPlayer` convert/ctx gate** (option 1, `8bc797ef`,
+>   `SetNotifyRigidBodyCollision(false)` on the held clump, BUILT + FAILED — the live host BP re-arms
+>   hit-notify). See **"AS-BUILT — the client trash MIRROR is the host-authoritative `AStaticMeshActor`
+>   proxy"** below + the new canonical finding
+>   **`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`**.
+> - **DUP-FIX + VISIBILITY VERIFIED [V]; the LIVE CARRY is [?] NOT fixed:** the dup is gone + the resting/landed
+>   piles mirror visibly (user-confirmed). The carry is broken by the contact-re-pile churn (above), NOT by a
+>   join race; option 1 failed; option 2 (the `holdPlayer` convert/ctx gate) is DESIGN LOCKED, NOT BUILT. There
+>   is **no carry hands-on pending right now** — option 2 must be built first. Do NOT mark the live carry
+>   VERIFIED anywhere. (The s38 grab cue / re-pile vanish-return checks are a separate deployed-pending-hands-on
 >   track.)
 > - **CLIENT-grab direction (Increment 2) — [DESIGN], NOT built** (proto v83). Pairs with proxy PHASE 2
 >   (collision — the `garbageCollider` hull).
@@ -330,32 +331,38 @@ never the input seam, never the client direction. The real gates:
 
 ---
 
-## AS-BUILT — the client trash MIRROR is the host-authoritative `AStaticMeshActor` proxy (phase 1) — DUP-FIX + VISIBILITY hands-on VERIFIED; CARRY mechanism SMOKE-PROVEN on a settled join (on-screen VISUAL hands-on PENDING)
+## AS-BUILT — the client trash MIRROR is the host-authoritative `AStaticMeshActor` proxy (phase 1) — DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CARRY is NOT fixed (the contact-re-pile churn)
 
-**HEAD `7f1b29ba`, deployed `70f1f04b` (proto v82 unchanged). [AS-BUILT].** Commits `06685a9c` (core) +
+**HEAD `70d28df4`, deployed `8bc797ef` (proto v82 unchanged). [AS-BUILT].** Commits `06685a9c` (core) +
 `1011e512` (leak) + `3d371349` (HIGH-1/2 + MEDIUM-1) + `095dbf44` (lerp/freeze/teardown) + `8a17faeb` (HOT-1)
-+ `245148c6` (the VISIBILITY/Movable fix); harness `4a1f42a6` + `f1177589` + `cfdd7745`. Per
-[[feedback-docs-piles-living-knowledge-base]] "AS-BUILT" ≠ "VERIFIED".
++ `245148c6` (the VISIBILITY/Movable fix) + `8bc797ef` (option 1 — BUILT + FAILED); harness `4a1f42a6` +
+`f1177589` + `cfdd7745`. Per [[feedback-docs-piles-living-knowledge-base]] "AS-BUILT" ≠ "VERIFIED".
 - **DUP FIX — [V] VERIFIED hands-on.** No doubled piles; resting + landed piles mirror correctly. (Smoke: `0`
   `mirror NOT-FOUND`, 875 proxies, no crash/leak, 300 s stable; the user confirmed it works visually.)
 - **VISIBILITY — [V] VERIFIED hands-on (`245148c6`).** A runtime-spawned `AStaticMeshActor` defaults to
   STATIC mobility, on which `SetStaticMesh`+`SetActorLocation` silently no-op → the proxies were INVISIBLE in
   the (render-blind) smoke. Fixed with `engine::SetComponentMobility(Movable)`; user then confirmed "works
   visually." [[lesson-runtime-staticmeshactor-must-be-movable]]
-- **THE LIVE CLUMP CARRY — MIRRORS on a settled join; mechanism SMOKE-PROVEN, on-screen VISUAL [?] hands-on
-  PENDING.** When the host grabs + carries a pile, the client's proxy re-skins to a clump and follows the
-  host's path — proven 2026-06-22 by two clean instrumented smokes (runs `b97z33gyh` then the fuller
-  `b7oxr23uy`): the ToClump convert adopts (`known` 0->1), the clump mesh resolves (`mesh-src=dirtball`, NOT a
-  pile-fallback), `GRAB-IN` fires, the drive advances `#1..#540 [proxy]` tracking the host 1:1, and the LAND
-  re-skins back to a pile. The earlier "stays a PILE / 2 fps / `0` `GRAB-IN`" was the **JOIN RACE** (the
-  autotest grabbed before the client expressed its 875-proxy join snapshot), NOT a sync bug — killed by the
-  autotest's new puppet-live settle gate. This is the phase-1 north star and the MECHANISM is done; the
-  on-screen VISUAL is still hands-on PENDING (the smoke is render-blind — it proves the drive computes the
-  right target positions, not that the pixels follow), plus a hands-on to characterize the user's earlier "2
-  fps" (most likely the same race). Resolved in the **CARRY-MIRROR — RESOLVED at the mechanism level** section
-  of `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`. Do NOT mark the live
-  carry a flat VERIFIED until a real hands-on confirms the on-screen visual (the mechanism is proven; the
-  visual is not).
+- **THE LIVE CLUMP CARRY — [?] NOT fixed (the contact-re-pile churn).** The earlier "carry MIRRORS on a settled
+  join / the failure was the JOIN RACE" claim is **WITHDRAWN as FALSE.** When the host grabs + carries a pile
+  via a real **E-press**, the clump rides **`holding_actor`**, so the native re-pile gate (`@2927` checks
+  `holdPlayer.grabbing_actor`, null here) **never aborts** → the held clump **RE-PILES on cluster contact ~1/s**
+  (`StaticMesh.OnComponentHit`) → the game auto-re-grabs → **CHURN**; each `OnHostConvert` teleports the client
+  proxy (`ClearAnyDriveFor` + `SetActorLocation`) → the client's clump movement + morphs run **0.5–2 fps** + an
+  old pile lingers. **Host carries FINE** (native; the churn is seamless); **OTHER physics props mirror fine**;
+  **ONLY the chipPile** (the lone convert-machine mirror) is broken **client-side**. This is **stock VOTV**
+  behaviour (a held clump re-piles on contact) — NOT a coop bug in the re-pile; the client just shouldn't
+  mirror it. The two clean smokes (`b97z33gyh`/`b7oxr23uy`) LIED because `autotest_chippile.cpp` grabs via
+  `playerGrabbed` → the clump lands in `grabbing_actor` → the gate aborts → no churn (the wrong,
+  non-representative grab slot); render-blind + wrong slot = the false "proven." **Option 1** (`8bc797ef`,
+  `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the live host BP re-arms hit-notify.
+  **Option 2 (DESIGN LOCKED, NOT BUILT):** gate the convert **broadcast AND the ctx bump** in `OnHostConvert`
+  by the clump's **`holdPlayer`** field (`@0x0240 AmainPlayer_C*`, CXXHeaderDump-confirmed) — `clump→pile`
+  suppressed while `holdPlayer` non-null (churn re-pile); `pile→clump` suppressed while a per-eid "carrying"
+  flag is set (churn re-grab); keep the local rebind → removes the CLIENT lag (the HOST churn stays, transient
+  + self-cleaning). The root + the fix design: the new canonical finding
+  **`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`**. Do NOT mark the live carry
+  VERIFIED — it is NOT fixed; there is no carry hands-on pending until option 2 is built.
 
 ### The dup this fixes (the ROBUSTNESS track — was OPEN, now addressed BY CONSTRUCTION)
 
@@ -423,8 +430,10 @@ Scope: trash only; `Aprop_C` + kerfur mirrors unchanged.
   gap and releases only on the explicit reliable edge (throw / ToPile convert / disconnect); proxy throw =
   freeze + the ToPile convert repositions to the landed pile; the destroy-only-via-`RetireProxy` invariant
   hardened (ForceRelease + OnDisconnectForSlot proxy-aware). HOT-1 dirty-gate skips sub-epsilon writes.
-  **NOW EXERCISED (the settled-join smoke):** the carry pose-drive establishes (`GRAB-IN` → `drive #1..#540
-  [proxy]`), so this lerp/freeze path runs (the VISUAL smoothness is hands-on-pending).
+  **NOT meaningfully exercised by a real carry:** the settled-join smoke drove a clean `#1..#540 [proxy]` only
+  because its `playerGrabbed` grab suppressed the re-pile churn; a real E-press carry teleports the proxy every
+  convert (the churn), defeating the lerp. This lerp/freeze becomes meaningful only once option 2 (the
+  `holdPlayer` convert/ctx gate) suppresses the churn converts so the carry pose-stream drives smoothly.
 - **Hot-path audit `aa8e7d9a` — GO (no CRITICAL/HIGH); HOT-1 folded.**
 - **SMOKE — PARTIAL; the earlier "functionally green" is WITHDRAWN (the smoke is RENDER-BLIND + the autotest
   grabbed DURING the client join). SHA `f2344bab`, 2026-06-21.** What the smoke DID prove (matching real log):
@@ -442,17 +451,19 @@ Scope: trash only; `Aprop_C` + kerfur mirrors unchanged.
     LATER → the grab RACED the join, so this smoke never cleanly tested a post-join carry (the client joined
     AFTER the whole grab→carry→land and correctly showed the final pile). So **"the grab→carry→throw→re-pile
     cycle worked end-to-end" was WITHDRAWN at the time** — this run evidences only the dup-gone + the final
-    landing. **RESOLVED 2026-06-22:** a clean instrumented smoke on a SETTLED join (the autotest's new
-    puppet-live settle gate, runs `b97z33gyh`/`b7oxr23uy`) proves the carry MIRRORS — the convert adopts
-    (`known` 0->1), the clump mesh resolves (`dirtball`), `GRAB-IN` fires, the drive advances `#1..#540
-    [proxy]` tracking the host, and the LAND re-skins; the km-walk lerp/freeze code (`095dbf44`/`8a17faeb`)
-    IS now exercised. So "`0` `GRAB-IN`" here meant "nothing live to drive," NOT "the drive is broken."
-    **HANDS-ON `69405445` (the user's "old pile not removed" / "2 fps"):** most likely the same race (grab
-    before the proxy snapshot expressed) — a hands-on on a FULLY settled join is still needed for the on-screen
-    VISUAL (the smoke is render-blind) + to characterize the "2 fps". See the **CARRY-MIRROR — RESOLVED at the
-    mechanism level** section in
-    `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`. The dup-gone + the visible
-    resting/landed mirror are the hands-on-confirmed part (`research/handson_runbook_2026-06-21_proxy_phase1.md`).
+    landing. **An interim 2026-06-22 "RESOLVED — it was the JOIN RACE" conclusion (from a clean settled-join
+    smoke) was WRONG and is WITHDRAWN.** That smoke drove a clean `#1..#540 [proxy]` carry only because
+    `autotest_chippile.cpp` grabs via `playerGrabbed` → the clump rides `grabbing_actor` → the native re-pile
+    gate aborts (`@2927`) → the autotest clump never re-piles while held → no churn. A real **E-press** carries
+    the clump in `holding_actor` → the gate never fires → the held clump re-piles on cluster contact ~1/s → the
+    game auto-re-grabs → CHURN, which each convert teleports on the client (0.5–2 fps). So the user's hands-on
+    ("old pile not removed" / "2 fps") was REAL — the **contact-re-pile churn**, NOT a race — and the carry is
+    NOT fixed. The km-walk lerp/freeze is therefore NOT meaningfully exercised by a real carry (the churn
+    defeats it). **HANDS-ON `69405445` STANDS as the truth.** Root + fix (option 1 FAILED; option 2 = the
+    `holdPlayer` convert/ctx gate, NOT BUILT): the new canonical finding
+    `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. The dup-gone + the visible
+    resting/landed mirror remain the hands-on-confirmed part
+    (`research/handson_runbook_2026-06-21_proxy_phase1.md`, now take-25).
 
 Full design + RCA: **`research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`** (§2 the
 proxy design, §6 the four mesh/collision requirements, §7 the phase split + C1/C2/C3 + Q1/Q2 + the

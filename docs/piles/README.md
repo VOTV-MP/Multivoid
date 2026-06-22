@@ -84,7 +84,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
 - **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
-  (2026-06-22 session 38+, HEAD `7f1b29ba`, proto v82; deployed DLL `70f1f04b`).** Host-authoritative
+  (2026-06-22 session 38+, HEAD `70d28df4`, proto v82; deployed DLL `8bc797ef`).** Host-authoritative
   trash-entity identity (eid = logical entity), MTA single-syncer + sync-time-context byte. **GRAB
   (pile→clump) = VERIFIED hands-on** via the `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE
   (clump→pile) = the DETERMINISTIC `UFunction::Func` thunk converter** (commit `d19ae4d4`,
@@ -94,22 +94,26 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   the triple-grab-cue fix (`fea04c26`) are deployed-pending-hands-on. The proximity death-watch is RETIRED
   (RULE 2). **The s35 "BeginDeferred-POST is observable" link was DISPROVEN** (EX_CallMath → invisible; 0
   host_spawn_watcher fires). **CLIENT mirror of trash = the host-authoritative `AStaticMeshActor` PROXY —
-  DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CLUMP CARRY MIRRORS on a settled join (mechanism
-  SMOKE-PROVEN; on-screen VISUAL hands-on PENDING)** (deployed `70f1f04b`, `coop/trash_proxy`): an
-  `AStaticMeshActor` WE own (NO blueprint, `AddToRoot`, our eid→actor registry, re-skin in place on convert)
-  replaces the real self-morphing BP mirror → the client mirror-staleness dup is impossible BY CONSTRUCTION
-  (the 3-verdict discriminator / health-poll / serial-check plan is DROPPED as moot). The dup-gone + the
-  resting/landed-pile mirror are hands-on confirmed (incl. the `SetComponentMobility(Movable)` visibility fix,
-  `245148c6` — a runtime `AStaticMeshActor` is STATIC by default → `SetStaticMesh` no-ops). **The host
-  grabbing + carrying a pile MIRRORS on a settled join** — two clean instrumented smokes (runs `b97z33gyh`
-  then `b7oxr23uy`) show the ToClump convert adopt (`known` 0->1), the clump mesh resolve (`dirtball`),
-  `GRAB-IN`, the drive `#1..#540 [proxy]` tracking the host, and the LAND re-skin; the earlier "stays a pile /
-  `0` `GRAB-IN`" was the JOIN RACE (the autotest grabbed before the client expressed its join snapshot), NOT a
-  sync bug — killed by the autotest's new puppet-live settle gate. The on-screen VISUAL is still hands-on
-  PENDING (the smoke is render-blind). Phase 1 = visual + position + re-skin, NoCollision; collision (the
-  `garbageCollider` hull) + the client-grab direction are PHASE 2 / Increment 2 (still DESIGN). Design +
-  AS-BUILT: `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`. **Read this for the
-  pile sync.**
+  DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CLUMP CARRY is NOT fixed (the contact-re-pile churn)**
+  (deployed `8bc797ef`, `coop/trash_proxy`): an `AStaticMeshActor` WE own (NO blueprint, `AddToRoot`, our
+  eid→actor registry, re-skin in place on convert) replaces the real self-morphing BP mirror → the client
+  mirror-staleness dup is impossible BY CONSTRUCTION (the 3-verdict discriminator / health-poll / serial-check
+  plan is DROPPED as moot). The dup-gone + the resting/landed-pile mirror are hands-on confirmed (incl. the
+  `SetComponentMobility(Movable)` visibility fix, `245148c6` — a runtime `AStaticMeshActor` is STATIC by
+  default → `SetStaticMesh` no-ops). **The host grabbing + carrying a pile does NOT mirror** — the earlier
+  "carry MIRRORS on a settled join / the failure was the JOIN RACE" claim is **WITHDRAWN as FALSE.** A real
+  **E-press** carries the clump in **`holding_actor`**, so the native re-pile gate (`@2927` checks
+  `grabbing_actor`, null here) never aborts → the held clump RE-PILES on cluster contact ~1/s → the game
+  auto-re-grabs → CHURN; each `OnHostConvert` teleports the client proxy → the client's clump morphs run
+  0.5–2 fps + a stale pile lingers. **Host carries FINE; OTHER props mirror fine; ONLY the chipPile** (the lone
+  convert-machine mirror) is broken client-side. The two clean smokes LIED because `autotest_chippile.cpp`
+  grabs via `playerGrabbed` → `grabbing_actor` → the gate aborts → no churn (the wrong, non-representative grab
+  slot). Option 1 (`8bc797ef`, `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the
+  live host BP re-arms hit-notify; option 2 (the `holdPlayer` convert/ctx gate) is DESIGN LOCKED, NOT BUILT.
+  Phase 1 = visual + position + re-skin, NoCollision; collision (the `garbageCollider` hull) + the client-grab
+  direction are PHASE 2 / Increment 2 (still DESIGN). Design + AS-BUILT:
+  `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix:
+  `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **Read these for the pile sync.**
 - **`_archive/07-MORPH-V2-held-object-channel.md`** — **SUPERSEDED + RETIRED 2026-06-21, archived** (the
   morph: held-object adopt + PROXIMITY land-watch). Its smoke "VERIFIED" was a FALSE POSITIVE; the real
   hands-on refuted it (proximity false-fires in clusters; client grab never armed). History only — see 08.
@@ -154,7 +158,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   docs, which are a sibling problem: `votv-kerfur-savetransfer-ghost-prop-RCA-2026-06-15.md`,
   `votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md`).
 
-## Status (2026-06-22, session 38+; HEAD `7f1b29ba`, deployed `70f1f04b`) — DESIGN → AS-BUILT → VERIFIED
+## Status (2026-06-22, session 38+; HEAD `70d28df4`, deployed `8bc797ef`) — DESIGN → AS-BUILT → VERIFIED
 
 The whole saga below (01–04 + the s21–s33 session-log) converged on **08 — the host-authoritative trash
 channel**, which is the CURRENT design + as-built. The day-to-day live state is in the auto-memory
@@ -171,39 +175,49 @@ channel**, which is the CURRENT design + as-built. The day-to-day live state is 
    `69405445`). The single grab cue + no vanish-return remain hands-on-PENDING. Runbook:
    `research/handson_runbook_2026-06-21_repile_thunk.md` (take-22).
 3. **CLIENT mirror-staleness dup — phase-1 proxy: DUP-FIX + VISIBILITY hands-on VERIFIED; the LIVE CLUMP
-   CARRY MIRRORS on a settled join (mechanism SMOKE-PROVEN; on-screen VISUAL hands-on PENDING). HEAD
-   `7f1b29ba`, deployed `70f1f04b`** (the dup was OPEN, now fixed by construction). The client's mirror of
-   trash is now a host-authoritative `AStaticMeshActor` we own (NO blueprint, `AddToRoot`, our eid→actor
-   registry; re-skin in place on convert) instead of the real self-morphing BP — so the staleness dup (a
-   join-mirror going NOT-LIVE within ~10s → fresh-clump spawn + original lingering) is impossible BY
-   CONSTRUCTION. **The dup is GONE and the resting + landed piles mirror VISIBLY (hands-on confirmed):** `0`
-   `mirror NOT-FOUND` in the smoke + the user confirmed it works; a runtime `AStaticMeshActor` is STATIC
-   mobility by default (on which `SetStaticMesh` no-ops → the proxies were INVISIBLE in the render-blind
-   smoke), fixed with `SetComponentMobility(Movable)` (`245148c6`). Commits `06685a9c` + `1011e512` (CRITICAL
-   per-slot-disconnect leak) + `3d371349` (HIGH-1/2 + MEDIUM-1) + `095dbf44`/`8a17faeb` (lerp/freeze) +
-   `245148c6` (Movable). Phase 1 = visual + position + re-skin, NoCollision. **The LIVE CARRY MIRRORS on a
-   settled join** — two clean instrumented smokes (runs `b97z33gyh` then the fuller `b7oxr23uy`) show the
-   ToClump convert adopt (`known` 0->1), the clump mesh resolve (`mesh-src=dirtball`, NOT a pile-fallback),
-   `GRAB-IN`, the drive `#1..#540 [proxy]` tracking the host's path 1:1, and the LAND re-skin back to a pile;
-   the km-walk lerp/freeze is now exercised. The earlier "stays a PILE / `0` `GRAB-IN`" was the **JOIN RACE**
-   (the autotest grabbed before the client expressed its 875-proxy join snapshot — it joined AFTER the whole
-   grab→carry→land), NOT a sync bug — killed by the autotest's new puppet-live settle gate. **STILL PENDING:
-   a hands-on to confirm the on-screen VISUAL** (the smoke is render-blind — it proves the drive computes the
-   right target positions, not that the pixels follow) + to characterize the user's earlier "2 fps" (most
-   likely the same race). The 3-verdict discriminator / health-poll / serial-check plan is DROPPED (moot).
-   Design + the CARRY-MIRROR — RESOLVED at the mechanism level:
-   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
-4. **NEXT — user hands-on take-24 to confirm the VISUAL on a settled join.** Load a fresh save, let the client
-   join FULLY settle (loading cleared + the world populated), then a host grab + walk: confirm the client
-   mirror re-skins to a clump in the host's hand and follows smoothly on-screen (the mechanism is smoke-proven;
-   the render is not), and characterize the earlier "2 fps" if it persists. THEN: grab-via-thunk (closes the
-   eid=0 adopt-miss gap); then proxy PHASE 2 (collision — the `garbageCollider` hull) + Increment 2 (the
-   client-grab direction — suppress-native + GrabIntent → host executes on puppet-N; proto v83). Phase 2 is
-   deferred until the carry VISUAL is hands-on confirmed.
+   CARRY is NOT fixed (the contact-re-pile churn). HEAD `70d28df4`, deployed `8bc797ef`** (the dup was OPEN,
+   now fixed by construction). The client's mirror of trash is now a host-authoritative `AStaticMeshActor` we
+   own (NO blueprint, `AddToRoot`, our eid→actor registry; re-skin in place on convert) instead of the real
+   self-morphing BP — so the staleness dup (a join-mirror going NOT-LIVE within ~10s → fresh-clump spawn +
+   original lingering) is impossible BY CONSTRUCTION. **The dup is GONE and the resting + landed piles mirror
+   VISIBLY (hands-on confirmed):** `0` `mirror NOT-FOUND` in the smoke + the user confirmed it works; a runtime
+   `AStaticMeshActor` is STATIC mobility by default (on which `SetStaticMesh` no-ops → the proxies were
+   INVISIBLE in the render-blind smoke), fixed with `SetComponentMobility(Movable)` (`245148c6`). Commits
+   `06685a9c` + `1011e512` (CRITICAL per-slot-disconnect leak) + `3d371349` (HIGH-1/2 + MEDIUM-1) +
+   `095dbf44`/`8a17faeb` (lerp/freeze). Phase 1 = visual + position + re-skin, NoCollision. **The LIVE CARRY
+   does NOT mirror** — the earlier "carry MIRRORS on a settled join / the failure was the JOIN RACE" claim is
+   **WITHDRAWN as FALSE.** A real **E-press** carries the clump in **`holding_actor`**, so the native re-pile
+   gate (`@2927` checks `grabbing_actor`, null here) never aborts → the held clump RE-PILES on cluster contact
+   ~1/s (`StaticMesh.OnComponentHit`) → the game auto-re-grabs → CHURN; each `OnHostConvert` teleports the
+   client proxy (`ClearAnyDriveFor` + `SetActorLocation`) → the client's clump morphs run 0.5–2 fps + a stale
+   pile lingers. **Host carries FINE; OTHER props mirror fine; ONLY the chipPile** (the lone convert-machine
+   mirror) is broken client-side; this is stock VOTV behaviour (the client just shouldn't mirror it). The two
+   clean smokes LIED because `autotest_chippile.cpp` grabs via `playerGrabbed` → the clump rides
+   `grabbing_actor` → the gate aborts → no churn (the wrong, non-representative grab slot), and the smoke is
+   render-blind. So the km-walk lerp/freeze is NOT meaningfully exercised by a real carry (the churn defeats
+   it). **Option 1** (`8bc797ef`, `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the
+   live host BP re-arms hit-notify. **Option 2 (DESIGN LOCKED, NOT BUILT):** gate the convert broadcast AND the
+   ctx bump in `OnHostConvert` by the clump's `holdPlayer` field (`@0x0240`, CXXHeaderDump-confirmed) —
+   `clump→pile` suppressed while `holdPlayer` non-null, `pile→clump` suppressed while a per-eid carrying flag is
+   set; keep the local rebind → removes the CLIENT lag (the HOST churn stays, transient + self-cleaning). The
+   3-verdict discriminator / health-poll / serial-check plan is DROPPED (moot). Design + AS-BUILT:
+   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix (the
+   canonical doc): `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
+4. **NEXT — user blesses option 2 → build the `holdPlayer` convert/ctx gate.** The carry is NOT fixed; there is
+   no carry hands-on pending right now. Build option 2 (gate the `OnHostConvert` broadcast + ctx bump by the
+   clump's `holdPlayer` + a per-eid carrying flag, suppressing churn converts; keep the local rebind; add
+   `prop::GetClumpHoldPlayer` in `ue_wrap`); REVERT option 1 (RULE 2 — proven non-working); KEEP fix #2 (the
+   `OnConvert` `pile→clump` no-teleport re-skin). THEN hands-on the carry on a settled join, then re-check the
+   non-disappearing-pile symptom separately. AFTER the carry: grab-via-thunk (closes the eid=0 adopt-miss gap);
+   then proxy PHASE 2 (collision — the `garbageCollider` hull) + Increment 2 (the client-grab direction —
+   suppress-native + GrabIntent → host executes on puppet-N; proto v83). Phase 2 is deferred until the carry
+   mirrors.
 
-**DEPLOYED: `70f1f04b` (proto v82) = HEAD `7f1b29ba`** — the phase-1 trash proxy (incl. the Movable
-visibility fix), folding in the s38 thunk re-pile + sound fix. The proxy's **dup-fix + visibility are
-hands-on confirmed**; the **live clump carry MIRRORS on a settled join (mechanism smoke-proven), with the
-on-screen VISUAL hands-on pending** — see the Status above. The earlier `BA79E705` (HEAD `fea04c26`, the
-thunk re-pile + sound fix) and `C7030D00` adopt-bind baseline + the FAILED s05/06 morph + the s07 morph-V2
-are all superseded by 08 (the 07 doc is archived).
+**DEPLOYED: `8bc797ef` (proto v82) = HEAD `70d28df4`** — the phase-1 trash proxy (incl. the Movable
+visibility fix) + option 1 (the held-clump `SetNotifyRigidBodyCollision(false)`, BUILT + FAILED — STILL
+CHURNS), folding in the s38 thunk re-pile + sound fix. The proxy's **dup-fix + visibility are hands-on
+confirmed**; the **live clump carry is NOT fixed** (the contact-re-pile churn) — option 2 (the `holdPlayer`
+convert/ctx gate) is designed-not-built; see the Status above + the canonical finding
+`research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. The earlier `70f1f04b` (HEAD
+`7f1b29ba`) proxy build, `BA79E705` (HEAD `fea04c26`, the thunk re-pile + sound fix), `C7030D00` adopt-bind
+baseline, the FAILED s05/06 morph, and the s07 morph-V2 are all superseded by 08 (the 07 doc is archived).

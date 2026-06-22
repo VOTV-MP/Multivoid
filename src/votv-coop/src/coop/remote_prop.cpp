@@ -1137,14 +1137,15 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     // that beat its OnSpawn) keep the legacy spawn+rebind path below.
     if (coop::trash_proxy::IsProxy(E)) {
         void* proxy = coop::trash_proxy::ReskinProxy(E, payload.chipType, wantClump);
-        // Reposition the proxy to the convert's authoritative transform + stop any active carry
-        // drive. ESSENTIAL for ToPile (LAND): the carry stream stopped at the throw and the proxy
-        // froze mid-air at release; this convert carries the LANDED rest position, so without the
-        // reposition the re-skinned pile would float where the throw began. Harmless for ToClump
-        // (GRAB): the incoming carry pose stream re-targets it immediately. ClearAnyDriveFor also
-        // resets the lerp so a later stream re-snaps from the new position (no crawl from the stale
-        // frozen pose).
-        if (proxy) {
+        // ToPile (LAND) ONLY: stop the drive + snap to the authoritative LANDED rest position (the carry
+        // stream ended at the throw + the proxy froze mid-air, so without this the re-skinned pile would
+        // float where the throw began). For ToClump (GRAB) we must NOT teleport or reset the drive: the
+        // clump is being CARRIED -- the live carry pose stream drives its position with pose+lerp, exactly
+        // like every other prop. Clearing + snapping on every grab convert reset lerpSeeded so the next pose
+        // SNAPPED; with the host's re-pile churn that became the 2fps teleporting the user reported. The
+        // re-skin alone changes the form in place; the pose stream leads the position. (2026-06-22 carry fix:
+        // one convert in = re-skin only, pose+lerp the carry, one convert out = land snap.)
+        if (proxy && !wantClump) {
             ClearAnyDriveFor(proxy);
             E::SetActorLocation(proxy, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
             E::SetActorRotation(proxy, ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
