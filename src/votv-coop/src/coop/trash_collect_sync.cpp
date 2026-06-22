@@ -434,4 +434,14 @@ void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
 }
 
+bool DebugSendGrabIntent(uint32_t eid) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Client) {
+        UE_LOGW("trash_collect: DebugSendGrabIntent eid=%u -- no running client session", eid);
+        return false;
+    }
+    coop::trash_channel::SendGrabIntent(*s, eid);
+    return true;
+}
+
 }  // namespace coop::trash_collect_sync

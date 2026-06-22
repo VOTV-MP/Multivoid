@@ -263,6 +263,7 @@ add_library(votv-coop SHARED
     src/coop/trash_collect_sync.cpp
     src/coop/trash_pile_sync.cpp
     src/coop/trash_proxy.cpp
+    src/coop/puppet_carry_drive.cpp
     src/coop/weather_sync.cpp
     src/coop/weather_fog.cpp
     src/coop/weather_lightning.cpp

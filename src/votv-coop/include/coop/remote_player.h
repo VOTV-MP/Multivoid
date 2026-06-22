@@ -88,6 +88,12 @@ public:
     // meshOffsetZ_) + a small Z offset to float just above the head.
     ue_wrap::FVector GetHeadPosition() const;
 
+    // Unit forward vector from the puppet's SYNCED aim (curYaw_+curHeadYawDelta_, curPitch_) --
+    // the SAME convention DriveHeadLookAtWorld uses, so it points where the puppet looks. Used by
+    // puppet_carry_drive to position a puppet-held trash clump at the hand (the puppet's own tick
+    // does NOT drive the PHC -- votv-puppet-grab-feasibility-RE-2026-06-22). Game thread.
+    ue_wrap::FVector GetSyncedAimDirection() const;
+
     // The raw engine puppet actor pointer (mainPlayer_C or ASkeletalMeshActor
     // depending on puppet kind). Used by nameplate::Update to exclude
     // puppet actors from its "find the local viewer" GUObjectArray scan --

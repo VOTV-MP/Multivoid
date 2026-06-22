@@ -49,6 +49,7 @@
 #include "coop/remote_player.h"        // RemotePlayer::GetActor (client-in-world readiness gate)
 #include "coop/prop_element_tracker.h"
 #include "coop/remote_prop.h"
+#include "coop/trash_collect_sync.h"   // DebugSendGrabIntent (Increment-2 synthetic wire test)
 #include "coop/trash_proxy.h"          // NearestPileProxy (CLIENT visual showcase: aim at a mirrored pile)
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -627,8 +628,99 @@ void RunPuppetGrabProbe() {
                 "on the puppet each tick from the synced remote aim (verdict B-fallback).", distLast, dzLast);
 }
 
+// ---------------------------------------------------------------------------------------------------
+// SYNTHETIC GrabIntent test (docs/piles/08 Increment-2 HOST-SIDE) -- VOTVCOOP_RUN_GRAB_INTENT_TEST=1.
+//
+// The CLIENT picks a mirrored pile proxy, resolves its (host-authoritative) eid, and SENDS a GrabIntent
+// over the wire (trash_collect_sync::DebugSendGrabIntent -> trash_channel::SendGrabIntent). This exercises
+// the FULL client->host path WITHOUT the phase-2 client suppress-native / collision prerequisite: the wire
+// (proto v84 GrabIntent), the 3-place router (event_feed -> event_dispatch_state), the host OnGrabIntent
+// (validate + playerGrabbed on puppet-N + PropConvert{kToClump} broadcast), and the host puppet hand-drive.
+//
+// VERDICT is the log-truth harness (tools/pile-test-assert.ps1):
+//   HOST log:  [GRAB-INTENT] RECEIVED eid=N slot=1 -> EXEC -> SUCCESS ; [PUPPET-DRIVE] DRIVING eid=N slot=1
+//   CLIENT log: the PropConvert{ToClump} echo applied to the proxy (remote_prop OnConvert / GRAB-IN).
+// The CLIENT drives; the HOST is the authority that executes + broadcasts.
+void RunGrabIntentTest() {
+    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    if (isHost) {
+        UE_LOGI("grab_intent_test: HOST -- the authority. Watch THIS log for the grab-intent RECEIVED/EXEC/"
+                "SUCCESS + puppet-drive markers when the client sends its synthetic grab.");
+        return;
+    }
+
+    // 1. Wait for the client to be in-world + its pile proxies expressed (same settle as the showcase).
+    UE_LOGI("grab_intent_test: CLIENT -- waiting 70s for join + the host pile work + proxy express, then "
+            "picking a mirrored pile + sending GrabIntent");
+    ::Sleep(70000);
+
+    struct Pick { void* player = nullptr; void* pile = nullptr; uint32_t eid = 0; ue_wrap::FVector pilePos{}; float dist = 0.f; };
+    auto pk = std::make_shared<Pick>();
+    if (RunGT([pk](std::atomic<int>& d) {
+            void* p = coop::players::Registry::Get().Local();
+            if (!p || !R::IsLive(p) || !E::GetController(p)) {
+                UE_LOGW("grab_intent_test: no possessed local player"); d.store(2); return; }
+            float dist = -1.f;
+            void* pile = coop::trash_proxy::NearestPileProxy(E::GetActorLocation(p), &dist);
+            if (!pile) { UE_LOGW("grab_intent_test: no pile proxy to grab yet"); d.store(2); return; }
+            coop::element::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(pile);
+            if (eid == coop::element::kInvalidId) {
+                UE_LOGW("grab_intent_test: nearest pile proxy %p has no resolvable eid", pile); d.store(2); return; }
+            pk->player = p; pk->pile = pile; pk->eid = static_cast<uint32_t>(eid);
+            pk->pilePos = E::GetActorLocation(pile); pk->dist = dist;
+            UE_LOGI("grab_intent_test: picked pile proxy=%p eid=%u pos=(%.0f,%.0f,%.0f) dist=%.0fcm",
+                    pile, pk->eid, pk->pilePos.X, pk->pilePos.Y, pk->pilePos.Z, dist);
+            d.store(1);
+        }) != 1) { UE_LOGW("grab_intent_test: could not pick a pile -- aborting"); return; }
+
+    // 2. Teleport the client to a standoff facing the chosen pile, so its puppet (host-driven from the
+    //    client pose) stands at the pile -- the host's grab spawns the clump there and the hand-drive holds
+    //    it in front of the puppet. (Not required for the grab to ENGAGE, but it makes the geometry sane.)
+    RunGT([pk](std::atomic<int>& d) {
+        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
+        float ax = at.X - pk->pilePos.X, ay = at.Y - pk->pilePos.Y;
+        const float h = std::sqrt(ax * ax + ay * ay);
+        if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
+        const ue_wrap::FVector stand{ pk->pilePos.X + ax * 180.f, pk->pilePos.Y + ay * 180.f, pk->pilePos.Z + 90.f };
+        const ue_wrap::FRotator face = LookAt(stand, pk->pilePos);
+        E::TeleportTo(pk->player, stand, face);
+        E::SetControlRotation(E::GetController(pk->player), face);
+        UE_LOGI("grab_intent_test: client at a standoff facing the pile; sending GrabIntent in 2s");
+        d.store(1);
+    });
+    ::Sleep(2000);
+
+    // 3. SEND the GrabIntent (the client-grab REQUEST). The host validates + executes playerGrabbed on this
+    //    client's puppet + broadcasts PropConvert{ToClump}; its puppet_carry_drive holds the clump at the hand.
+    RunGT([pk](std::atomic<int>& d) {
+        const bool sent = coop::trash_collect_sync::DebugSendGrabIntent(pk->eid);
+        UE_LOGI("grab_intent_test: >>> sent GrabIntent eid=%u sent=%d -- the HOST log should now show "
+                "[GRAB-INTENT] RECEIVED -> EXEC -> SUCCESS + [PUPPET-DRIVE] DRIVING; THIS client log should "
+                "show the ToClump convert applied to proxy eid=%u <<<", pk->eid, sent ? 1 : 0, pk->eid);
+        d.store(1);
+    });
+
+    // 4. Hold ~12s so the host processes + drives + the convert echoes back; re-face the pile each second so
+    //    the puppet aim (hence the host hand-drive holdPoint) moves -> the harness can assert the drive tracks.
+    for (int i = 0; i < 12; ++i) {
+        ::Sleep(1000);
+        RunGT([pk](std::atomic<int>& d) {
+            E::SetControlRotation(E::GetController(pk->player),
+                                  LookAt(E::GetActorLocation(pk->player), pk->pilePos));
+            d.store(1);
+        });
+    }
+    UE_LOGI("grab_intent_test: CLIENT done -- verdict is the log-truth harness (host [GRAB-INTENT]/[PUPPET-DRIVE], "
+            "client ToClump convert applied). eid=%u", pk->eid);
+}
+
 DWORD WINAPI ChipPileTestThread(LPVOID /*arg*/) {
     RunAutonomousChipPileTest();
+    return 0;
+}
+
+DWORD WINAPI GrabIntentTestThread(LPVOID /*arg*/) {
+    RunGrabIntentTest();
     return 0;
 }
 

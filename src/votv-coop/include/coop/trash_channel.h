@@ -63,6 +63,31 @@ coop::element::ElementId AdoptPendingGrabClump(coop::net::Session& s, void* held
                                                const ue_wrap::FVector& clumpLoc,
                                                const ue_wrap::FRotator& clumpRot);
 
+// ---- CLIENT-GRAB direction (Increment 2, v84, docs/piles/08) -- the host arm of the door OnRequest --
+// A client sent GrabIntent{eid} (suppress-native + request, the interactable_channel.h:220 OnRequest shape;
+// MTA CStaticFunctionDefinitions::AttachElements). The HOST validates + executes the real grab on puppet-N
+// (probe-proven: research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md -- the grab ENGAGES on an
+// unpossessed puppet, NO controller dependency) + broadcasts the authoritative PropConvert{kToClump}, then
+// registers puppet_carry_drive (the puppet tick does NOT drive the PHC, so the host drives the hold pose).
+
+// CLIENT: send a GrabIntent{eid} to the host (the client-grab REQUEST). The phase-2 OnPileGrabPre client arm
+// calls this after suppressing the native grab; the synthetic harness test calls it to exercise the wire.
+// No-op if `s` is not a running client. Game thread.
+void SendGrabIntent(coop::net::Session& s, uint32_t eid);
+
+// HOST: a client at peer `senderSlot` requested to grab trash entity `eid`. Gates (mirror the door OnRequest
+// CanOpen + per-peer holdOpen_): eid not already carrying, eid tracked (has a ctx generation), the sender
+// not already holding any eid. On pass: resolve puppet-N + the pile actor, run playerGrabbed(Player=puppet)
+// via the probe-proven ParamFrame, read grabbing_actor synchronously, OnHostConvert(kToClump) (opens the
+// carry latch + broadcasts), record HELD_BY(senderSlot), and NotePuppetHeld for the per-tick hand drive.
+// No-op (logged DENIED) on any gate fail or a dead puppet/pile. Host-only. Game thread.
+void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot);
+
+// HOST: peer `senderSlot` disconnected -- clear any HELD_BY it owns (the eid becomes re-grabbable). The
+// puppet vanishes on disconnect so the clump is already physics-released; this is the state cleanup +
+// a ForgetEid so a stranded carry latch can't keep the entity in limbo. Game thread.
+void OnGrabHolderLeft(uint8_t senderSlot);
+
 // ---- CLOSE-B carry latch + land-settle (host-side, 2026-06-22) ----------------------------------------
 // A trash entity E is "carrying" from the real grab (OnHostConvert kToClump while not carrying) until the
 // real land. DURING carry the host's stock churn -- the held clump re-piles on cluster contact ~1/s and the

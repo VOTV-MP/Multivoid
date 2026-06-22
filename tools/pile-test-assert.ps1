@@ -61,9 +61,11 @@ $Invariants = @(
     @{ Name='ToPile-loc-nonzero'; Severity='CRITICAL'; Check={
         $tp = Matches $H 'BROADCAST ToPile .* at \(([-0-9.]+),([-0-9.]+),([-0-9.]+)\)'
         $zero = $tp | Where-Object { $_ -match 'at \(0\.0,\s*0\.0,\s*0\.0\)' }
-        @{ Pass = ($tp.Count -gt 0 -and $zero.Count -eq 0)
+        # The regression is a convert AT (0,0,0). Absence of converts is NOT the regression (a grab-only
+        # scenario has no land), so the FAIL condition is a zero-loc convert, not the lack of converts.
+        @{ Pass = ($zero.Count -eq 0)
            Detail = "$($tp.Count) ToPile convert(s), $($zero.Count) at (0,0,0)" +
-                    $(if ($tp.Count -eq 0) { ' [no ToPile converts in log -- scenario ran no throw?]' } else { '' }) }
+                    $(if ($tp.Count -eq 0) { ' [no ToPile converts -- scenario had no land]' } else { '' }) }
     }},
 
     # ---- take-31 FIX positive proof: the LAND COMMIT must re-read the SETTLED pile's
@@ -172,6 +174,41 @@ $Invariants = @(
         $rate = [math]::Round($rs.Count / $span, 3)
         @{ Pass = ($rate -lt 0.15)
            Detail = "client steady re-seed rate=$rate/s ($($rs.Count) over ${span}s; pre-fix ~0.25/s every 4s, fixed <0.15)" }
+    }},
+
+    # ---- Increment 2 (CLIENT-grab, v84): the synthetic GrabIntent test
+    # (VOTVCOOP_RUN_GRAB_INTENT_TEST). These gate on the HOST receiving a GrabIntent, so they pass
+    # as "not exercised" for the carry/throw scenario (no GRAB-INTENT markers) -- one unified harness.
+    #
+    # Round-trip: a received GrabIntent must reach SUCCESS (executed playerGrabbed on the puppet +
+    # broadcast the convert), not stall at a DENIED gate. Proves the full wire + router + handler.
+    @{ Name='grab-intent-roundtrip'; Severity='CRITICAL'; Check={
+        $recv = Count $H '\[GRAB-INTENT\] RECEIVED'
+        if ($recv -eq 0) { return @{ Pass = $true; Detail = 'no GrabIntent received (test not run this scenario)' } }
+        $succ = Count $H '\[GRAB-INTENT\] SUCCESS'
+        $den  = Count $H '\[GRAB-INTENT\] DENIED'
+        @{ Pass = ($succ -gt 0)
+           Detail = "$recv RECEIVED, $succ SUCCESS, $den DENIED (a received intent must reach SUCCESS)" }
+    }},
+
+    # The host puppet hand-drive must run after a successful client grab (the probe proved the puppet
+    # tick won't position the clump, so the host drives it -- this is the verdict-B fix, exercised).
+    @{ Name='puppet-drive-active'; Severity='CRITICAL'; Check={
+        $succ = Count $H '\[GRAB-INTENT\] SUCCESS'
+        if ($succ -eq 0) { return @{ Pass = $true; Detail = 'no GrabIntent success (test not run this scenario)' } }
+        $drv = Count $H '\[PUPPET-DRIVE\] DRIVING'
+        @{ Pass = ($drv -gt 0)
+           Detail = "$drv PUPPET-DRIVE DRIVING tick(s) after $succ host grab (the host drives the held clump)" }
+    }},
+
+    # The client must receive the host's authoritative ToClump echo (the proxy re-skins to a clump),
+    # proving the host->all broadcast closed the loop back to the requester.
+    @{ Name='grab-intent-client-echo'; Severity='WARN'; Check={
+        $succ = Count $H '\[GRAB-INTENT\] SUCCESS'
+        if ($succ -eq 0) { return @{ Pass = $true; Detail = 'no GrabIntent success (test not run this scenario)' } }
+        $echo = Count $C 'recv convert GRAB'
+        @{ Pass = ($echo -gt 0)
+           Detail = "$echo client ToClump convert echo(es) for $succ host grab(s)" }
     }},
 
     # ---- Crash/health: neither log should carry a SEH crash dump or our [Error] from

@@ -21,6 +21,7 @@
 #include "coop/interactable_sync.h"
 #include "coop/kerfur_convert.h"
 #include "coop/kerfur_command.h"
+#include "coop/trash_channel.h"
 #include "coop/keypad_sync.h"
 #include "coop/order_sync.h"
 #include "coop/power_sync.h"
@@ -686,6 +687,43 @@ void HandleStateEvent(net::Session& session,
         coop::kerfur_command::OnCommandRequest(p, senderSlot);
         break;
     }
+    case net::ReliableKind::GrabIntent: {
+        // v84 (Increment 2, docs/piles/08): CLIENT->HOST chipPile grab REQUEST. Host-authoritative
+        // (the DoorOpenRequest shape). The host validates the eid is a tracked PILED pile + the sender
+        // isn't already holding one, executes playerGrabbed on puppet-N (probe-proven, see
+        // research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md), and broadcasts the
+        // authoritative PropConvert{kToClump}. coop::trash_channel::OnGrabIntent.
+        // NOTE (modular, RULE 2026-05-25): this file is ~757 LOC after this case (past the 800 soft cap
+        // is near) -- the NEXT trash-intent handler (ThrowIntent/PileResyncRequest, phase 2) MUST extract
+        // the trash-intent cases into a new event_dispatch_trash.cpp.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: GrabIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: GrabIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::GrabIntentPayload)) {
+            UE_LOGW("event_feed: GrabIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::GrabIntentPayload));
+            break;
+        }
+        net::GrabIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.eid == 0) {
+            UE_LOGW("event_feed: GrabIntent eid==0 -- dropping");
+            break;
+        }
+        UE_LOGI("[GRAB-INTENT] RECEIVED eid=%u slot=%d", p.eid, msg.senderPeerSlot);
+        coop::trash_channel::OnGrabIntent(session, p.eid, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::ThrowIntent:        // v84 STAGED (Increment 2 phase 2) -- ID reserved, no handler yet
+    case net::ReliableKind::PileResyncRequest:  // v84 STAGED (Increment 2 phase 2) -- ID reserved, no handler yet
+        UE_LOGI("event_feed: STAGED ReliableKind=%u from slot=%d -- no handler yet",
+                static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
+        break;
     case net::ReliableKind::KerfurConvert: {
         // v78: HOST->ALL kerfur form-transition broadcast -- the SOLE conversion-transition signal
         // (kerfur redesign 10.3). CLIENT-only apply: the host converged its OWN conversion inline via

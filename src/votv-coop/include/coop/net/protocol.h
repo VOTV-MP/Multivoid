@@ -694,7 +694,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 83;  // v83: trash PROXY per-form SCALE -- PropConvertPayload gains
+inline constexpr uint16_t kProtocolVersion = 84;  // v84: Increment 2 (chipPile CLIENT-grab direction,
+                                                  // docs/piles/08) -- new CLIENT->HOST GrabIntent (78) +
+                                                  // STAGED ThrowIntent (79) / PileResyncRequest (80). The host
+                                                  // executes playerGrabbed on puppet-N (probe-proven) + drives
+                                                  // the puppet-held clump's hold pose (the puppet tick is dead).
+                                                  // Prior:
+                                                  // v83: trash PROXY per-form SCALE -- PropConvertPayload gains
                                                   // scaleX/Y/Z (the host's real GetActorScale3D(newActor)); the
                                                   // proxy applies it on every convert+spawn so the mirror is
                                                   // host-sized (it rendered smaller -- scale was never sent on
@@ -1701,6 +1707,23 @@ enum class ReliableKind : uint8_t {
                        //     (elementId only). Host K2_DestroyActor PRE observer broadcasts; the client
                        //     tears down its mirror. Host-authoritative; shares the Bulk lane with
                        //     WorldActorSpawn (in-order spawn-before-destroy, same as EntitySpawn/Destroy).
+    GrabIntent = 78,   // 2026-06-22 (v84): CLIENT->HOST chipPile grab REQUEST (Increment 2, docs/piles/08).
+                       //     The client-grab direction, structurally the door OnRequest shape
+                       //     (interactable_channel.h:220, Channel::Mode::HostAuth) + MTA AttachElements
+                       //     (CStaticFunctionDefinitions.cpp:1602). CLIENT: suppress the native grab (null
+                       //     lookAtActor for the dispatch) at OnPileGrabPre + send this. HOST: validate
+                       //     PILED && !HELD, execute playerGrabbed on puppet-N (probe-proven, see
+                       //     votv-puppet-grab-feasibility-RE-2026-06-22), bump ctx, broadcast
+                       //     PropConvert{kToClump} to ALL incl. the requester. CLIENT->HOST only; NOT
+                       //     relayable; host gates senderPeerSlot!=0 + role==Host. Payload: GrabIntentPayload.
+    ThrowIntent = 79,  // 2026-06-22 (v84, STAGED -- ID reserved, no handler yet): CLIENT->HOST throw of a
+                       //     puppet-held clump. The existing flight-stream + ToPile re-pile convert already
+                       //     own the throw end-to-end on the host, so this is wired only when the
+                       //     client-initiated path (phase 2) needs an explicit release edge. Payload:
+                       //     ThrowIntentPayload.
+    PileResyncRequest = 80, // 2026-06-22 (v84, STAGED -- ID reserved, no handler yet): CLIENT->HOST drain-
+                       //     survive (MTA EntityAdd-on-rescope). On a shadow-drain the client asks the host
+                       //     to re-stream PropSpawn per live pile (host eid preserved). No body.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -3185,6 +3208,39 @@ struct PropConvertPayload {
     uint8_t _pad[1];                      // keep the struct 4-aligned + bytes-beyond-pileClass-len zero
 };
 static_assert(sizeof(PropConvertPayload) == 112, "PropConvertPayload must be 112 bytes");
+
+// GrabIntentPayload (GrabIntent=78, v84) -- CLIENT->HOST chipPile grab REQUEST (Increment 2,
+// docs/piles/08; the door OnRequest shape). The client sends ONLY the eid of the mirrored pile it
+// wants to grab; the host validates (PILED && !HELD), executes playerGrabbed on puppet-N, and
+// broadcasts the authoritative PropConvert{kToClump}. No state push from the client -- intent only
+// (MTA CStaticFunctionDefinitions::AttachElements :1602). Host gates senderPeerSlot!=0 + role==Host.
+struct GrabIntentPayload {
+    uint32_t eid;        // the trash entity eid the client requests to grab
+    uint8_t  _pad[4];    // 8-byte alignment; bytes-beyond-eid zero
+};
+static_assert(sizeof(GrabIntentPayload) == 8, "GrabIntentPayload must be 8 bytes");
+static_assert(sizeof(GrabIntentPayload) <= 256 - 20 - 8, "GrabIntentPayload must fit one datagram");
+
+// ThrowIntentPayload (ThrowIntent=79, v84 STAGED -- ID reserved, no handler yet) -- CLIENT->HOST
+// throw of a puppet-held clump, carrying the client's local clump velocity at release. Wired only
+// when the client-initiated path (phase 2) needs an explicit release edge; today the host's
+// flight-stream + ToPile re-pile convert own the throw end-to-end.
+struct ThrowIntentPayload {
+    uint32_t eid;
+    float    linVelX, linVelY, linVelZ;  // client's local clump linear velocity at throw (cm/s)
+    float    angVelX, angVelY, angVelZ;  // angular velocity (deg/s)
+};
+static_assert(sizeof(ThrowIntentPayload) == 28, "ThrowIntentPayload must be 28 bytes");
+static_assert(sizeof(ThrowIntentPayload) <= 256 - 20 - 8, "ThrowIntentPayload must fit one datagram");
+
+// PileResyncRequestPayload (PileResyncRequest=80, v84 STAGED -- ID reserved, no handler yet) --
+// CLIENT->HOST drain-survive (MTA EntityAdd-on-rescope): on a shadow-drain the client asks the host
+// to re-stream PropSpawn per live pile (host eid preserved). No body; the senderPeerSlot identifies
+// whom to re-stream to.
+struct PileResyncRequestPayload {
+    uint8_t _pad[8];     // no payload body; kept 8 bytes for a uniform minimum datagram
+};
+static_assert(sizeof(PileResyncRequestPayload) == 8, "PileResyncRequestPayload must be 8 bytes");
 
 // TimeSyncPayload -- the host-authoritative WORLD CLOCK (TimeSync=29, v36). The cycle's
 // totalTime/Day/TimeScale (AdaynightCycle_C) are not otherwise replicated, so a fresh joiner

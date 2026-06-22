@@ -823,6 +823,17 @@ ue_wrap::FVector RemotePlayer::GetLocation() const {
     return E::GetActorLocation(actor_);
 }
 
+ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
+    // Mirror DriveHeadLookAtWorld's convention (ApplyToEngine above): yaw = body yaw + head-yaw-delta,
+    // pitch = controller pitch. The unit forward is (cp*cos y, cp*sin y, sin p). Same pitch-sign caveat:
+    // if a hands-on shows the held clump rising when the puppet looks DOWN, flip the Z sign here too.
+    constexpr float kDeg2Rad = 0.01745329252f;
+    const float yawRad   = (curYaw_ + curHeadYawDelta_) * kDeg2Rad;
+    const float pitchRad = curPitch_ * kDeg2Rad;
+    const float cp = std::cos(pitchRad);
+    return { cp * std::cos(yawRad), cp * std::sin(yawRad), std::sin(pitchRad) };
+}
+
 ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     if (!valid()) return {};
     // 2026-05-25 NIGHT (user retest +2): pre-fix this read the puppet's 'head'

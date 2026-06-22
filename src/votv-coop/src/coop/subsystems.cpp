@@ -52,6 +52,7 @@
 #include "coop/join_progress.h"
 #include "coop/garbage_sync.h"
 #include "coop/trash_channel.h"
+#include "coop/puppet_carry_drive.h"
 #include "coop/trash_collect_sync.h"
 #include "coop/trash_proxy.h"
 #include "coop/trash_pile_sync.h"
@@ -244,6 +245,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // hold GLOBAL state that DisconnectAll handles correctly on full
     // disconnect.
     coop::trash_proxy::OnDisconnectForSlot(slot);   // phase 1: retire the leaver's trash proxies BEFORE the generic mirror drain (else the rooted AStaticMeshActor leaks -- CRITICAL-1)
+    coop::trash_channel::OnGrabHolderLeft(slot);    // v84 Increment 2: free any pile the leaver held via a client grab
+    coop::puppet_carry_drive::OnPeerLeft(slot);     // v84 Increment 2: drop the leaver's puppet-held clump drive
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
     coop::device_occupancy::OnDisconnectForSlot(slot);  // v63: release a leaver's device claims
@@ -308,6 +311,7 @@ DisconnectStats DisconnectAll() {
     coop::trash_pile_sync::OnDisconnect();
     coop::trash_collect_sync::OnDisconnect();
     coop::trash_channel::OnDisconnect();  // docs/piles/08: drop the per-eid trash sync-time-context map
+    coop::puppet_carry_drive::OnDisconnect();  // v84 Increment 2: drop all puppet-held clump drives
     coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
     return stats;
 }
@@ -361,7 +365,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       const bool inTransition = fleeing || coop::join_progress::Active();
       coop::trash_pile_sync::Tick(inTransition); }  // counter poll + depletion death-watch (transition-gated)
     if (isHost) { PP::Scope _s{PP::Bucket::TrashWatch};
-      coop::trash_channel::TickCarry(session); }        // docs/piles/08 + CLOSE-B: pending-grab TTL + land-settle commit (closes the carry latch on the real land)
+      coop::trash_channel::TickCarry(session);          // docs/piles/08 + CLOSE-B: pending-grab TTL + land-settle commit (closes the carry latch on the real land)
+      coop::puppet_carry_drive::Tick(); }               // v84 Increment 2: drive each puppet-held clump to its hand (AFTER TickCarry so the carry latch is current)
       // (trash_collect_sync::Tick -- the proximity re-pile death-watch -- is RETIRED 2026-06-21, RULE 2:
       //  the re-pile is caught deterministically at its BeginDeferred via the UFunction::Func thunk.)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply

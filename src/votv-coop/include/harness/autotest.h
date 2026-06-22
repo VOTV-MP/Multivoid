@@ -56,6 +56,14 @@ DWORD WINAPI ChipPileTestThread(LPVOID arg);
 void RunPuppetGrabProbe();
 DWORD WINAPI PuppetGrabProbeThread(LPVOID arg);
 
+// Synthetic GrabIntent test (env VOTVCOOP_RUN_GRAB_INTENT_TEST=1, docs/piles/08 Increment-2 host-side).
+// The CLIENT picks a mirrored pile proxy, resolves its eid, and sends a GrabIntent over the wire; the HOST
+// validates + executes playerGrabbed on the puppet + broadcasts the convert + drives the puppet-held clump.
+// Exercises the full client->host wire + router + handler + hand-drive WITHOUT the phase-2 client
+// suppress-native / collision prerequisite. Verdict = the log-truth harness (host [GRAB-INTENT]/[PUPPET-DRIVE]).
+void RunGrabIntentTest();
+DWORD WINAPI GrabIntentTestThread(LPVOID arg);
+
 // Clump VISIBILITY probe (env VOTVCOOP_RUN_CLUMPVIS_PROBE=1). Solo. Spawns a bare
 // prop_garbageClump_C in front of the player + logs whether its StaticMesh asset is
 // null (empty) or named (visible) -- gates the mannequin-model rework. Launch via mp.py clumpvis.

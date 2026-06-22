@@ -78,4 +78,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* session);
 // cleared separately by trash_channel::OnDisconnect.
 void OnDisconnect();
 
+// TEST-ONLY (Increment 2 synthetic harness, VOTVCOOP_RUN_GRAB_INTENT_TEST): send a GrabIntent{eid} from
+// THIS client to the host, using the cached client session. Exercises the full client->host wire + the
+// host OnGrabIntent + the puppet hand-drive without the phase-2 client suppress-native / collision path.
+// No-op if the session isn't a running client. Returns true iff sent. Game thread.
+bool DebugSendGrabIntent(uint32_t eid);
+
 }  // namespace coop::trash_collect_sync

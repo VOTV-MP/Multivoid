@@ -452,7 +452,10 @@ void Update(net::Session& session, void* localPlayer) {
         case net::ReliableKind::KerfurCommand:  // v74 host-authoritative kerfur menu command relay
         case net::ReliableKind::DeskLogLine:   // v70 (route fix 2026-06-13: missed at ship -- the idle smokes never exercised the wire)
         case net::ReliableKind::SleepState:    // v71
-        case net::ReliableKind::PlayerInventoryBlob: {  // v73 per-player inventory stream
+        case net::ReliableKind::PlayerInventoryBlob:  // v73 per-player inventory stream
+        case net::ReliableKind::GrabIntent:    // v84 CLIENT->HOST chipPile grab request (Increment 2)
+        case net::ReliableKind::ThrowIntent:   // v84 STAGED CLIENT->HOST clump throw
+        case net::ReliableKind::PileResyncRequest: {  // v84 STAGED CLIENT->HOST drain-resync
             HandleStateEvent(session, msg, localPlayer);
             break;
         }

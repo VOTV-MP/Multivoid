@@ -52,6 +52,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // to the puppet's hand (tick alive) vs floats at the spawn spot. Settles the one [?] the bytecode
     // could not -- whether an unpossessed puppet's ReceiveTick dispatches. Client just stands.
     SpawnIf("VOTVCOOP_RUN_PUPPET_GRAB_PROBE", "puppet-grab probe", &PuppetGrabProbeThread, role);
+    // Synthetic GrabIntent test (docs/piles/08 Increment-2 host-side): the CLIENT sends a GrabIntent for a
+    // mirrored pile eid; the HOST executes playerGrabbed on the puppet + broadcasts the convert + drives the
+    // held clump. Exercises the full client->host wire/router/handler/hand-drive (no client suppress/collision).
+    SpawnIf("VOTVCOOP_RUN_GRAB_INTENT_TEST", "synthetic GrabIntent test", &GrabIntentTestThread, role);
     // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
     // peer's puppet should reflect it via the ItemActivate wire path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);

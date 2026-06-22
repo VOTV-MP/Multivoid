@@ -4,10 +4,16 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/element/registry.h"    // Registry::Get(eid) -- resolve the pile to grab (Increment 2)
+#include "coop/players_registry.h"    // Puppet(slot) -- the client-grab direction (Increment 2)
+#include "coop/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
+#include "coop/remote_player.h"       // RemotePlayer::GetActor / valid
 #include "coop/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
-#include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale)
+#include "ue_wrap/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
+#include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + ReadMainPlayerGrabState
 #include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"  // ClassNameOf
+#include "ue_wrap/prop.h"        // IsChipPile / IsGarbageClump / GetChipType
+#include "ue_wrap/reflection.h"  // ClassNameOf / ClassOf / FindFunction
 #include "ue_wrap/types.h"       // FVector / FRotator / NormalizeAxis
 
 #include <cstdint>
@@ -72,6 +78,13 @@ struct LandSettle {
     std::string       cls;        // the pile class to broadcast at COMMIT
 };
 std::unordered_map<uint32_t, LandSettle> g_settle;
+
+// Increment 2 (v84): eid -> the peer slot whose puppet currently holds it via a client-initiated grab.
+// The door holdOpen_ analog: a client-initiated grab is EXCLUSIVE (one holder per eid; one held eid per
+// peer). Cleared on the land COMMIT (TickCarry), on the holder's disconnect (OnGrabHolderLeft), and on
+// a gross reset (OnDisconnect). HOST-only, game-thread.
+std::unordered_map<uint32_t, uint8_t> g_heldBy;
+
 uint32_t g_tick = 0;
 constexpr int kLandSettleTicks = 6;   // K: > a synchronous churn re-grab (~1 frame). TUNE from the CANCEL-gap log.
 
@@ -220,6 +233,111 @@ coop::element::ElementId AdoptPendingGrabClump(coop::net::Session& s, void* held
     return E;
 }
 
+void SendGrabIntent(coop::net::Session& s, uint32_t eid) {
+    if (eid == 0u || eid == coop::element::kInvalidId) return;
+    if (s.role() != coop::net::Role::Client) {
+        UE_LOGW("[GRAB-INTENT] SendGrabIntent called on a non-client -- ignoring (host grabs directly)");
+        return;
+    }
+    coop::net::GrabIntentPayload p{};
+    p.eid = eid;
+    s.SendReliable(coop::net::ReliableKind::GrabIntent, &p, sizeof(p));
+    UE_LOGI("[GRAB-INTENT] CLIENT SENT eid=%u -> host", eid);
+}
+
+void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
+    if (eid == 0u || eid == coop::element::kInvalidId) return;
+    // GATE 1 (door CanOpen analog): already carrying -> mid-hold, deny. The host's PropConvert stream
+    // already conveys the true state to the requester; no correction packet needed.
+    if (g_carry.find(eid) != g_carry.end()) {
+        UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- already HELD (carry latch open)", eid, senderSlot);
+        return;
+    }
+    // (No "ctx generation" gate: g_ctx is written only when an eid has ALREADY transitioned (a convert
+    // Bumps it). A RESTING pile that has never been grabbed has an eid + proxy but NO ctx entry yet -- which
+    // is the COMMON grab case. The real "is this a valid grab target" check is the live-pile resolve below,
+    // not g_ctx presence. The 2026-06-22 smoke caught this: a fresh pile (eid 4424) was wrongly DENIED here.)
+    // GATE 2 (door per-peer holdOpen_ analog): one held eid per peer. If this slot already holds something,
+    // deny (it must release first).
+    for (const auto& kv : g_heldBy) {
+        if (kv.second == senderSlot) {
+            UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- slot already holds eid=%u", eid, senderSlot, kv.first);
+            return;
+        }
+    }
+
+    // Resolve puppet-N + the pile actor.
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
+    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    if (!puppet) {
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live", eid, senderSlot);
+        return;
+    }
+    // Resolve eid -> the host's pile actor via the canonical Element Registry. IsLiveByIndex-guarded (the
+    // cached GUObjectArray slot, NOT a deref of a possibly-GC'd pointer -- the [[feedback-islive-unsafe...]]
+    // pattern, same as remote_prop's internal resolver).
+    coop::element::Element* pe = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
+    void* pa   = pe ? pe->GetActor() : nullptr;
+    void* pile = (pa && R::IsLiveByIndex(pa, pe->GetInternalIdx())) ? pa : nullptr;
+    if (!pile || !ue_wrap::prop::IsChipPile(pile)) {
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- pile actor not live / not a chipPile", eid, senderSlot);
+        return;
+    }
+
+    // EXECUTE the real grab on puppet-N. The PROBE-PROVEN pattern (votv-puppet-grab-feasibility-RE-2026-06-22):
+    // pile->playerGrabbed(Player=puppet); HitResult left zeroed (not a gate). The pile self-destructs in the
+    // call (K2_DestroyActor(self)) -- do NOT deref `pile` afterwards. playerGrabbed sets the puppet's
+    // grabbing_actor SYNCHRONOUSLY (pickupObject has no tick gate, RE-confirmed), so we read it on return.
+    UE_LOGI("[GRAB-INTENT] EXEC puppet=%p pile=%p eid=%u slot=%u", puppet, pile, eid, senderSlot);
+    void* pileCls = R::ClassOf(pile);
+    void* grabFn  = pileCls ? R::FindFunction(pileCls, L"playerGrabbed") : nullptr;
+    if (!grabFn) {
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- playerGrabbed UFunction not found", eid, senderSlot);
+        return;
+    }
+    {
+        ue_wrap::ParamFrame pf(grabFn);
+        pf.Set<void*>(L"Player", puppet);
+        ue_wrap::Call(pile, pf);   // pile self-destructs HERE; `pile` is now dangling
+    }
+
+    // Read the clump the puppet now holds (grabbing_actor, the PHC slot -- the carry-churn RE established the
+    // clump rides grabbing_actor, NOT holding_actor).
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    void* clump = nullptr;
+    if (ue_wrap::engine::ReadMainPlayerGrabState(puppet, gs))
+        clump = (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? gs.grabbingActor : nullptr;
+    if (!clump) {
+        UE_LOGW("[GRAB-INTENT] eid=%u slot=%u -- playerGrabbed ran but no clump in grabbing_actor (denying)",
+                eid, senderSlot);
+        return;
+    }
+
+    // Record HELD_BY before the convert (OnHostConvert opens the carry latch). Then convert E onto the clump
+    // (bumps ctx + broadcasts PropConvert{kToClump} to ALL incl. the requester) + register the per-tick hand
+    // drive (the puppet's own tick won't position the clump -- the probe's verdict).
+    g_heldBy[eid] = senderSlot;
+    const ue_wrap::FVector  clumpLoc = ue_wrap::engine::GetActorLocation(clump);
+    const ue_wrap::FRotator clumpRot = ue_wrap::engine::GetActorRotation(clump);
+    const uint8_t chipType = ue_wrap::prop::GetChipType(clump);
+    OnHostConvert(s, static_cast<coop::element::ElementId>(eid), coop::net::propconvert_kind::kToClump,
+                  clump, clumpLoc, clumpRot, chipType);
+    coop::puppet_carry_drive::NotePuppetHeld(static_cast<coop::element::ElementId>(eid), senderSlot, clump);
+    UE_LOGI("[GRAB-INTENT] SUCCESS eid=%u clump=%p slot=%u -- ToClump broadcast + hand-drive armed",
+            eid, clump, senderSlot);
+}
+
+void OnGrabHolderLeft(uint8_t senderSlot) {
+    for (auto it = g_heldBy.begin(); it != g_heldBy.end(); ) {
+        if (it->second == senderSlot) {
+            UE_LOGI("[GRAB-INTENT] OnGrabHolderLeft slot=%u -- clearing HELD_BY eid=%u + ForgetEid",
+                    senderSlot, it->first);
+            ForgetEid(static_cast<coop::element::ElementId>(it->first));  // drop a stranded carry latch/settle
+            it = g_heldBy.erase(it);
+        } else { ++it; }
+    }
+}
+
 void TickCarry(coop::net::Session& s) {
     ++g_tick;
     // 1. pending-grab TTL (folded from the retired TickPendingGrab).
@@ -255,6 +373,7 @@ void TickCarry(coop::net::Session& s) {
                     "(transform %s)", static_cast<unsigned>(E),
                     reread ? "re-read from the settled pile" : "FALLBACK (pile not live -- clump transform)");
             g_carry.erase(it->first);                     // CLOSE the carry latch
+            g_heldBy.erase(it->first);                    // v84: the land ends a client-grab hold (re-grabbable)
             it = g_settle.erase(it);
         } else {
             ++it;
@@ -315,6 +434,7 @@ void OnDisconnect() {
     g_pendingGrab = PendingGrab{};
     g_carry.clear();    // CLOSE-B: drop all carry latches + settles (gross reset)
     g_settle.clear();
+    g_heldBy.clear();   // v84: drop all client-grab HELD_BY records
     g_tick = 0;
 }
 
