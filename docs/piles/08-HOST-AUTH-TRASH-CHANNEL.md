@@ -350,12 +350,41 @@ clump from a grab the PRE missed currently skips the converter) — the NEXT tig
 
 ---
 
-## Increment 2 — the CLIENT-grab direction (DESIGN, NOT built, proto v83→v84)
+## Increment 2 — the CLIENT-grab direction (HOST-SIDE AS-BUILT + [V harness]; client-INITIATED path DESIGN; proto v84)
 
 The suppress-native + `GrabIntent` → host-executes-on-puppet-N path (the door `OnRequest` shape, above) + the
-PILED/HELD/FLYING state machine + the drain-resync (`PileResyncRequest`). **[DESIGN.]** The
-PROBE-A diagnostic (`OnPileGrabPre` logs the carry slot `grabbing_actor` vs `holding_actor`) feeds this — the
-client suppress + GrabIntent send is added at that exact seam.
+PILED/HELD/FLYING state machine + the drain-resync (`PileResyncRequest`). The PROBE-A diagnostic
+(`OnPileGrabPre` logs the carry slot `grabbing_actor` vs `holding_actor`) feeds this — the client suppress +
+GrabIntent send is added at that exact seam.
+
+> **HOST-SIDE — AS-BUILT + VERIFIED [V harness] (2026-06-22, commits `81e8e687` + MEDIUM-1 `2dc5d06e`,
+> deployed `AAEC4D8F3B4341F8`, proto v84, push held).** The full client→host wire + router + handler + drive,
+> verified end-to-end on the autonomous log-truth harness (synthetic `GrabIntent`, no human). What shipped:
+> - **Proto v84:** `GrabIntent`(78) CLIENT→HOST + STAGED `ThrowIntent`(79)/`PileResyncRequest`(80) (IDs
+>   reserved, no handler). 3-place router (`event_feed.cpp` fall-through + `event_dispatch_state.cpp` handler).
+> - **`trash_channel::OnGrabIntent`** (the door `OnRequest` arm): gates (role==Host, slot in range, not
+>   carrying, sender not already holding) → resolve puppet-N + the pile (Element Registry, IsLiveByIndex) →
+>   `playerGrabbed(Player=puppet)` (the probe's `ParamFrame`) → read `grabbing_actor` synchronously →
+>   `OnHostConvert(kToClump)` (broadcast) → register HELD_BY + the hand-drive. `SendGrabIntent` (client send).
+> - **`coop/puppet_carry_drive.{cpp,h}`** (NEW): per-tick kinematic drive of each puppet-held clump to
+>   `GetHeadPosition() + GetSyncedAimDirection()*grabLen` — because the host streams the clump's pose to all,
+>   it must BE at the puppet hand on the host (the probe proved the puppet tick won't position it).
+> - **Lifetime (audit MEDIUM-1, `2dc5d06e`):** the client hold (`g_heldBy`) is cleared on the land COMMIT,
+>   on disconnect, AND (via `ReleaseClientHold`) whenever the drive drops a clump that died without a land —
+>   so an eid can never strand as un-grabbable.
+>
+> **Harness VERDICT PASS:** `grab-intent-roundtrip` (1 RECEIVED→1 SUCCESS→0 DENIED), `puppet-drive-active`
+> (126 DRIVING ticks), `grab-intent-client-echo` (client proxy re-skinned to CLUMP, SYNC-MIRROR OK no dup),
+> no-crash. Carry-test regression 16/16 PASS (no regression to the existing pile work). The harness CAUGHT a
+> real bug pre-ship: an over-strict `g_ctx` "tracked" gate denied a never-transitioned resting pile (removed).
+> Test: `VOTVCOOP_RUN_GRAB_INTENT_TEST=1` (the client sends a synthetic GrabIntent). Findings:
+> `research/findings/votv-increment2-clientgrab-host-side-DESIGN-2026-06-22.md` +
+> `votv-puppet-grab-feasibility-RE-2026-06-22.md`.
+>
+> **STILL OPEN — the CLIENT-INITIATED path (greenlight-gated, hands-on):** the client suppress-native at
+> `OnPileGrabPre` + **phase-2 collision** (the `garbageCollider` hull, so a client can aim a NoCollision
+> proxy to initiate the grab) + the FEEL (PHC-jitter, the head-vs-camera hold offset). The host-side above is
+> provable now via the synthetic intent; the real client press needs collision first.
 
 **The gating `[?]` is RESOLVED (2026-06-22, RE + runtime probe — `[V harness]`).** Full result:
 `research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md`. The puppet-grab probe

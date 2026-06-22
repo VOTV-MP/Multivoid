@@ -63,6 +63,13 @@ override per-run config without editing the ini:
   + tracks the clump. Verdict (2026-06-22): ENGAGED+HELD but NOT tracked — the
   puppet's tick doesn't drive the PHC, so Increment 2 must drive the hold pose
   host-side. Finding: `research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md`.
+- `VOTVCOOP_RUN_GRAB_INTENT_TEST=1` — the Increment-2 host-side synthetic test. The
+  CLIENT picks a mirrored pile proxy, resolves its eid, and sends a `GrabIntent` over
+  the wire; the HOST validates + executes `playerGrabbed` on the puppet + broadcasts
+  the convert + drives the held clump. Exercises the full client→host wire + router +
+  handler + hand-drive WITHOUT the phase-2 client suppress-native / collision. Assert
+  via `pile-test-assert.ps1` (`grab-intent-roundtrip`, `puppet-drive-active`,
+  `grab-intent-client-echo`). VERDICT PASS 2026-06-22.
 
 ## Pile carry/throw log-truth harness (2026-06-22) — the autonomous self-test loop
 
