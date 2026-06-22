@@ -38,9 +38,14 @@ client clump updates through the carry). The `*-staleness-*-2026-06-21` finding'
 join / it was the JOIN RACE" was FALSE, and so was the interim "contact-re-pile churn" diagnosis: the actual
 release-edge cause was `updateHold` PUPPET RECREATION (the `heldActor` ptr changing with `pendingSettle=0`),
 NOT a re-pile. Option 2 (the `holdPlayer` convert/ctx gate) is **DISPROVEN by bytecode** — `holdPlayer` is set
-once on grab and never cleared in any BP. STILL OPEN [?] (root-found, fix pending): carry JANK (keyless-pose
-fix), proxy SCALE (no `SetActorScale`), an intermittent ORPHAN dup (eid-resolve race), the throw-velocity flip.
-The canonical carry root + the open-item fixes: `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
+once on grab and never cleared in any BP. **Update (2026-06-22, HEAD `29069f05`, deployed `c2a5f49cc98add31`):**
+carry **JANK FIXED [V]** (fixed-delay snapshot interp, `df158728` — the keyless-pose theory was DISPROVEN, the
+real root was an interp phase-stall); proxy **SCALE BUILT v83** (`df158728`, hands-on PENDING); the
+throw-velocity **VERB-FLIP is DEAD** (both `simulateDrop` AND `dropGrabObject` Func-thunks fired ZERO) →
+REPLACED by carry/flight stream-**continuity** (`136ed779`, hands-on PENDING — the arc); the **ORPHAN dup SPLIT**
+— derived gone [V], ORIGINAL (level-placed) piles dup, root CONFIRMED (the client's native level-pile coexists
+with the proxy; the eid-race theory superseded), a read-only PILE-PROBE shipped (`29069f05`), DESTROY-fix NEXT.
+The canonical carry root + all open-item fixes: `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
 
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
