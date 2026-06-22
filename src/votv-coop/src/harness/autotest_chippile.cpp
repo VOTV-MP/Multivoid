@@ -432,13 +432,22 @@ void RunAutonomousChipPileTest() {
     if (heldClump) {
         RunGT([rsv, heldClump](std::atomic<int>& d) {
             const bool rel = E::ReleaseMainPlayerGrabIfHolding(rsv->player, heldClump);
-            ue_wrap::FVector at = E::GetActorLocation(heldClump);
-            at.Z += 400.f;                                  // lift 4 m so the fall impact triggers re-pile
-            const bool tp = E::SetActorLocation(heldClump, at);
-            UE_LOGI("chippile_test: Phase B re-pile -- released PHC=%d + lifted clump +400cm=%d -> expect "
-                    "fall -> impact -> re-pile -> host '[PILE] HOST RE-PILE(thunk)' + '[TRASH-CH] HOST LAND COMMIT "
-                    "(transform re-read from the settled pile)'",
-                    rel ? 1 : 0, tp ? 1 : 0);
+            // DIRECTIONAL THROW (not a vertical drop): give the freed clump a horizontal+up velocity so it
+            // flies a real ARC -- the host's flight-stream then streams a genuine arc (many 'carry/flight
+            // CONTINUE') instead of just the 1-frame release flicker, so the harness arc invariant tests the
+            // actual throw. Direction = from the player toward the held clump (it sits in front), ~6 m/s
+            // forward + 4 m/s up -> lands a few metres ahead, then impact-re-piles.
+            const ue_wrap::FVector pp = E::GetActorLocation(rsv->player);
+            const ue_wrap::FVector cp = E::GetActorLocation(heldClump);
+            float fx = cp.X - pp.X, fy = cp.Y - pp.Y;
+            const float hl = std::sqrt(fx * fx + fy * fy);
+            if (hl < 1.f) { fx = 1.f; fy = 0.f; } else { fx /= hl; fy /= hl; }
+            const ue_wrap::FVector lin{ fx * 600.f, fy * 600.f, 400.f };   // cm/s: ~6 m/s fwd + 4 m/s up
+            const bool vel = E::SetActorRootPhysicsVelocity(heldClump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
+            UE_LOGI("chippile_test: Phase B THROW -- released PHC=%d + threw clump dir=(%.2f,%.2f) up |v|set=%d "
+                    "-> expect a flight ARC (host '[PILE] HOST carry/flight CONTINUE' x many) -> impact -> re-pile "
+                    "-> '[PILE] HOST RE-PILE(thunk)' + '[TRASH-CH] HOST LAND COMMIT (re-read from the settled pile)'",
+                    rel ? 1 : 0, fx, fy, vel ? 1 : 0);
             d.store(1);
         });
     } else {
