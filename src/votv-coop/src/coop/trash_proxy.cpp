@@ -38,6 +38,16 @@ void* g_smaClass  = nullptr;  // AStaticMeshActor UClass (the proxy class)
 void* g_chipBase  = nullptr;  // actorChipPile_C     (class-kind base)
 void* g_clumpBase = nullptr;  // prop_garbageClump_C (class-kind base)
 
+// v83: apply the host's per-form scale to the proxy. An AStaticMeshActor defaults to unit
+// scale, so without this the proxy rendered SMALLER than the host's real pile/clump. The
+// comparison guard rejects a degenerate scale (zero OR NaN -- NaN > x is false) so a malformed
+// packet can never collapse the mirror invisibly; a v83 sender always sends a real scale.
+void ApplyProxyScale(void* actor, const ue_wrap::FVector& scale) {
+    if (!actor) return;
+    if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f)
+        E::SetActorScale3D(actor, scale);
+}
+
 // Cached per-className class-kind: IsTrashProxyClass runs once per PropSpawn (a
 // ~2000-prop join burst) and FindClass is a ~237k-entry GUObjectArray walk -- the
 // cache makes only the ~dozen distinct class names ever walk. Folds IsClumpClass
@@ -127,7 +137,7 @@ bool IsTrashProxyClass(const std::wstring& className) { return ResolveClassKind(
 bool IsClumpClass(const std::wstring& className)      { return ResolveClassKind(className).isClump; }
 
 void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, int ownerSlot,
-                 const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+                 const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, const ue_wrap::FVector& scale) {
     UE_ASSERT_GAME_THREAD("trash_proxy::SpawnProxy");
     if (!g_smaClass) g_smaClass = R::FindClass(L"StaticMeshActor");
     if (!g_smaClass) {
@@ -164,6 +174,7 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     R::AddToRoot(actor);                                        // never GC'd -> never stale -> no dup
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // phase 1 follower
     SkinProxy(actor, comp, chipType, isClump);
+    ApplyProxyScale(actor, scale);                              // v83: host-sized (else default unit -> too small)
     g_proxies[eid] = ProxyEntry{ actor, comp, ownerSlot };
     UE_LOGI("[PILE] trash_proxy: SPAWN eid=%u %s chipType=%u actor=%p ownerSlot=%d "
             "(AStaticMeshActor, rooted, NoCollision)",
@@ -171,13 +182,14 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     return actor;
 }
 
-void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump) {
+void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, const ue_wrap::FVector& scale) {
     UE_ASSERT_GAME_THREAD("trash_proxy::ReskinProxy");
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return nullptr;
     void* actor = it->second.actor;
     if (!actor || !R::IsLive(actor)) return nullptr;  // a rooted proxy is never stale -- defensive
     SkinProxy(actor, it->second.comp, chipType, isClump);  // in place -> binding untouched -> no dup
+    ApplyProxyScale(actor, scale);                         // v83: re-apply the per-form scale (clump != pile size)
     return actor;
 }
 

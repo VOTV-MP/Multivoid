@@ -894,6 +894,7 @@ inline constexpr const wchar_t* CollectGarbageFn = L"CollectGarbage";  // Kismet
 inline constexpr const wchar_t* PropInventoryContainerPlayerClass = L"prop_inventoryContainer_player_C";  // PER-PLAYER inventory container -- never snapshot-expressed/broadcast/swept (prop_lifecycle::IsPerPlayerPropClass)
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
+inline constexpr const wchar_t* SetActorScale3DFn = L"SetActorScale3D";  // AActor::SetActorScale3D(FVector NewScale3D) -> void (v83 trash-proxy per-form scale)
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
 inline constexpr const wchar_t* DestroyActorFn = L"K2_DestroyActor";
 inline constexpr const wchar_t* TeleportToFn = L"K2_TeleportTo";  // bool(FVector, FRotator); large-distance teleport that survives Character/CMC constraints

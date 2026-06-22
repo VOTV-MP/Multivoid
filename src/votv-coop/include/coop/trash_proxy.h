@@ -58,14 +58,18 @@ bool IsClumpClass(const std::wstring& className);
 // instead of leaking a second actor. Returns the actor (the caller
 // RegisterPropMirror's it for the pose drive + OnConvert resolve), or nullptr on
 // failure. Game thread.
+// `scale` is the host's real GetActorScale3D for this form (v83): an AStaticMeshActor
+// defaults to unit scale, so without it the proxy rendered SMALLER than the host's pile/clump.
+// Applied on the FRESH spawn only (a convergence re-spawn keeps the convert-owned form+scale).
 void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, int ownerSlot,
-                 const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
+                 const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, const ue_wrap::FVector& scale);
 
 // Re-skin proxy `eid` in place (pile<->clump) -- the dup-killing convert path:
 // SetStaticMesh on the SAME actor; the eid->actor binding is NEVER touched (no
-// spawn-fresh, no orphan). Returns the proxy actor, or nullptr if `eid` is not a
-// tracked proxy. Game thread.
-void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump);
+// spawn-fresh, no orphan). Also applies `scale` (v83): a clump and a pile differ
+// in size, so the per-form host scale must be re-applied on every convert. Returns
+// the proxy actor, or nullptr if `eid` is not a tracked proxy. Game thread.
+void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, const ue_wrap::FVector& scale);
 
 // Retire proxy `eid`: Destroy -> RemoveFromRoot -> unbind the Prop mirror. The
 // single teardown helper (order per the GC-window analysis: destroy marks

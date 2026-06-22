@@ -491,6 +491,7 @@ void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
 void* g_setTickFn = nullptr;
 void* g_getScaleFn = nullptr;
+void* g_setScaleFn = nullptr;
 
 // ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
 // (the orphan must exist even if it overlaps geometry).
@@ -517,6 +518,7 @@ bool ResolveActorFns() {
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
         if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
+        if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
     }
     return g_actorClass && g_getLocFn && g_setLocFn;
 }
@@ -768,6 +770,18 @@ bool SetActorRotation(void* actor, const FRotator& rotation) {
     f.Set<bool>(L"bTeleportPhysics", true);
     if (!Call(actor, f)) return false;
     return f.Get<bool>(L"ReturnValue");
+}
+
+bool SetActorScale3D(void* actor, const FVector& scale) {
+    if (!actor || !ResolveActorFns() || !g_setScaleFn) {
+        UE_LOGE("engine: SetActorScale3D unresolved (fn=%p)", g_setScaleFn);
+        return false;
+    }
+    // AActor::SetActorScale3D(FVector NewScale3D) -> void (no ReturnValue); success
+    // is the success of the ProcessEvent call.
+    ParamFrame f(g_setScaleFn);
+    f.SetRaw(L"NewScale3D", &scale, sizeof(scale));
+    return Call(actor, f);
 }
 
 FRotator GetComponentWorldRotation(void* component) {

@@ -65,20 +65,28 @@ struct ActiveDrive {
     // Set at drive (re)start. A non-proxy Aprop_C held item keeps the 500 ms timeout
     // (it has no such reliable end-of-carry guarantee). [[feedback-follow-mta-architecture]]
     bool         isProxy = false;
-    // MTA-style interpolation, SCOPED TO THE TRASH PROXY (the km-walk smoothness goal): a
-    // ~sendHz pose stream renders smoothly at frame rate by lerping position + rotation between
-    // consecutive host poses, instead of snapping to each packet. A non-proxy Aprop_C held item
-    // is EXEMPT -- it keeps its proven teleport-to-latest behavior (interpolation latency would
-    // regress that unrequested). For a proxy: the first pose snaps; subsequent poses lerp from the
-    // CURRENT rendered transform to the new target over the measured interval; a far jump (gap /
-    // teleport) snaps. (Vehicle/ped interp shape: reference/mtasa-blue CClientPed/CClientVehicle.)
-    bool              lerpSeeded = false;  // identity seeded (first pose snapped)
-    bool              lerpActive = false;  // a lerp in progress (false => frozen at target)
-    ue_wrap::FVector  startLoc{}, targetLoc{}, renderedLoc{};
-    ue_wrap::FRotator startRot{}, targetRot{}, renderedRot{};
-    uint64_t          lerpStartMs = 0;
-    uint64_t          lerpDurMs   = 0;     // measured pose interval (clamped)
-    uint64_t          lastPoseMs  = 0;     // arrival time of the previous pose (interval measure)
+    // FIXED-DELAY SNAPSHOT INTERPOLATION, SCOPED TO THE TRASH PROXY (the km-walk smoothness goal). Render
+    // between the two MOST RECENT timestamped poses at a small fixed delay (= the measured inter-pose
+    // interval) BEHIND the newest, so the render clock (nowMs) advances INDEPENDENTLY of pose arrival. A
+    // non-proxy Aprop_C held item is EXEMPT -- it keeps its proven teleport-to-latest snap. For a proxy: the
+    // first pose primes (snap), a far jump re-primes (snap), otherwise interpolate prev->last. On a stream
+    // STOP the render clock advances past `last`s timestamp -> alpha clamps to 1 -> the proxy reaches the
+    // last pose and FREEZES (no extrapolation; control released at the reliable edge -- OnRelease freeze /
+    // OnConvert ToPile ClearAnyDriveFor). MTA shape: render-behind interpolation between the two most recent
+    // snapshots (reference/mtasa-blue CClientVehicle::UpdateTargetPosition -- fAlpha = Unlerp(ulStartTime,
+    // ulCurrentTime, ulFinishTime) against an INDEPENDENT render clock). [[feedback-follow-mta-architecture]]
+    //
+    // RETIRED 2026-06-22 (the carry JANK root, code-proven): the prior scheme lerped renderedLoc->latest over
+    // the measured interval, resetting lerpStartMs = nowMs on every pose -- and AdvanceLerp sampled the SAME
+    // nowMs that tick => alpha = 0 => ZERO movement on every new-pose tick. At vsync-60 (pose rate ~= tick
+    // rate) nearly every tick was a new-pose tick, so the proxy barely advanced and lurched on the rare
+    // pose-free tick = the jank. Classic netcode error (reset the interp clock to "now", then sample at "now").
+    bool              lerpSeeded   = false;  // identity primed (first pose snapped)
+    bool              haveTwoSnaps = false;  // >=2 buffered poses -> interpolate (else sit at the single snap)
+    ue_wrap::FVector  prevLoc{}, lastLoc{}, renderedLoc{};
+    ue_wrap::FRotator prevRot{}, lastRot{}, renderedRot{};
+    uint64_t          prevPoseMs = 0;  // arrival time (ms) of the OLDER buffered pose
+    uint64_t          lastPoseMs = 0;  // arrival time (ms) of the NEWEST buffered pose
 };
 std::array<ActiveDrive, coop::players::kMaxPeers> g_drives{};
 
@@ -466,10 +474,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // Host-authoritative trash proxy? -> freeze-not-timeout end-of-carry policy (a
     // network gap mid-km-walk freezes; release only on the explicit reliable edge).
     g_drives[slot].isProxy = (pose.elementId != 0 && coop::trash_proxy::IsProxy(pose.elementId));
-    // Fresh drive identity: the next pose SNAPS (no drift-in from the spawn/rest
-    // position), then subsequent poses interpolate.
-    g_drives[slot].lerpSeeded = false;
-    g_drives[slot].lerpActive = false;
+    // Fresh drive identity: the next pose PRIMES (snaps, no drift-in from the spawn/rest
+    // position), then subsequent poses interpolate prev->last.
+    g_drives[slot].lerpSeeded   = false;
+    g_drives[slot].haveTwoSnaps = false;
     // Seed the timeout clock with NOW. Without this, lastApplyMs stays at
     // zero (struct default); the stream-stop timeout at Tick() compares
     // (NowMs() - lastApplyMs > 500) and fires immediately, releasing the
@@ -494,8 +502,8 @@ void ResetDriveState(ActiveDrive& d) {
     d.lastKey.clear();
     d.lastEid    = 0;
     d.isProxy    = false;
-    d.lerpSeeded = false;
-    d.lerpActive = false;
+    d.lerpSeeded   = false;
+    d.haveTwoSnaps = false;   // drop the interpolation buffer -> a re-acquire re-primes (snaps) cleanly
 }
 
 // Record a new host pose as the lerp TARGET. First pose for an identity (or a far jump)
@@ -504,80 +512,82 @@ void ResetDriveState(ActiveDrive& d) {
 void BeginLerpToPose(ActiveDrive& d, const coop::net::PropPoseSnapshot& pose, uint64_t nowMs) {
     const ue_wrap::FVector  nloc{pose.x, pose.y, pose.z};
     const ue_wrap::FRotator nrot{pose.pitch, pose.yaw, pose.roll};
-    const float dx = nloc.X - d.renderedLoc.X, dy = nloc.Y - d.renderedLoc.Y, dz = nloc.Z - d.renderedLoc.Z;
-    // Interpolation is scoped to the host-authoritative trash PROXY (the km-walk smoothness
-    // requirement). A non-proxy Aprop_C held item keeps its proven teleport-to-latest behavior
-    // (snap every pose) -- adding interpolation latency to it would regress unrequested, proven
-    // sync. So a non-proxy ALWAYS snaps; a proxy snaps only on the first pose or a far jump.
+    // Distance from the LAST RECEIVED pose (not the rendered position): detects a teleport / post-gap
+    // catch-up that should snap rather than crawl across the map. (Comparing to renderedLoc would mistake
+    // a normal render-delay lag for a teleport.)
+    const float dx = nloc.X - d.lastLoc.X, dy = nloc.Y - d.lastLoc.Y, dz = nloc.Z - d.lastLoc.Z;
+    // A non-proxy Aprop_C held item ALWAYS snaps (its proven teleport-to-latest behavior -- interpolation
+    // latency would regress unrequested, proven sync). A proxy snaps only to PRIME (first pose) or on a far
+    // jump (gap / teleport -- crawling across the map would look worse than a snap).
     if (!d.isProxy || !d.lerpSeeded || (dx * dx + dy * dy + dz * dz) > kSnapDistSq) {
-        // Snap: non-proxy (teleport), OR first pose (no drift-in from spawn/rest), OR a jump too
-        // large to interpolate (post-gap catch-up / teleport -- crawling across the map would
-        // look worse than a snap).
-        d.startLoc = d.targetLoc = d.renderedLoc = nloc;
-        d.startRot = d.targetRot = d.renderedRot = nrot;
+        // Snap + prime BOTH buffer slots at the pose, so the next pose has a valid `prev` to interpolate from.
+        d.prevLoc = d.lastLoc = d.renderedLoc = nloc;
+        d.prevRot = d.lastRot = d.renderedRot = nrot;
+        d.prevPoseMs = d.lastPoseMs = nowMs;
+        d.haveTwoSnaps = false;     // only one distinct sample -> sit at it until the next pose
+        d.lerpSeeded   = true;
         if (d.actor && R::IsLive(d.actor)) {
             E::SetActorLocation(d.actor, nloc);
             E::SetActorRotation(d.actor, nrot);
         }
-        d.lerpActive = false;       // already at target (frozen until the next pose)
-        d.lerpSeeded = true;
-        d.lastPoseMs = nowMs;
         return;
     }
-    uint64_t interval = nowMs - d.lastPoseMs;
-    if (interval < kLerpMinMs) interval = kLerpMinMs;
-    if (interval > kLerpMaxMs) interval = kLerpMaxMs;
-    d.lastPoseMs  = nowMs;
-    d.startLoc    = d.renderedLoc;  // continue from where we are actually rendering
-    d.startRot    = d.renderedRot;
-    d.targetLoc   = nloc;
-    d.targetRot   = nrot;
-    d.lerpStartMs = nowMs;
-    d.lerpDurMs   = interval;
-    d.lerpActive  = true;
+    // Proxy steady state: shift the newest sample to `prev` and append this pose as `last`. Both carry their
+    // REAL arrival timestamps; AdvanceLerp interpolates prev->last by the render clock (now - span).
+    d.prevLoc = d.lastLoc; d.prevRot = d.lastRot; d.prevPoseMs = d.lastPoseMs;
+    d.lastLoc = nloc;      d.lastRot = nrot;      d.lastPoseMs = nowMs;
+    d.haveTwoSnaps = true;
 }
 
 // Advance an in-progress lerp one tick (called EVERY tick, not only on a new pose, so
 // the follow is smooth and a stream gap FREEZES at the target rather than dropping).
 // No-op when no lerp is active (frozen) or the actor died. Game thread.
 void AdvanceLerp(ActiveDrive& d, uint64_t nowMs) {
-    if (!d.lerpActive || !d.actor) return;
-    if (!R::IsLive(d.actor)) { d.lerpActive = false; return; }
-    float alpha = d.lerpDurMs
-        ? static_cast<float>(nowMs - d.lerpStartMs) / static_cast<float>(d.lerpDurMs) : 1.f;
-    if (alpha < 0.f) alpha = 0.f;
-    if (alpha > 1.f) alpha = 1.f;
-    const bool done = (alpha >= 1.f);
+    if (!d.actor) return;
+    if (!R::IsLive(d.actor)) { d.haveTwoSnaps = false; return; }
+    if (!d.isProxy || !d.haveTwoSnaps) return;   // non-proxy snapped in BeginLerp; <2 samples -> sit at the pose
+    // Render `span` BEHIND the newest pose. span = the REAL interval between the two buffered poses (clamped).
+    // At steady 60 fps span ~= 16 ms (one frame): renderTime sweeps prev->last across exactly one inter-pose
+    // gap -> minimal latency, full smoothing, and -- crucially -- it advances with nowMs EVERY tick, not only
+    // on a new-pose tick (the stall the old scheme had). A dropped pose widens span: the interp just takes
+    // longer to cross, then clamps. The form-changing converts are position-authoritative (ToClump re-skins in
+    // place; ToPile ClearAnyDriveFor + SetActorLocation to the host's landed loc), so the ~one-frame carry lag
+    // is cosmetic and is discarded at the land -- it never mis-places the morph.
+    uint64_t span = (d.lastPoseMs > d.prevPoseMs) ? (d.lastPoseMs - d.prevPoseMs) : kLerpMinMs;
+    if (span < kLerpMinMs) span = kLerpMinMs;
+    if (span > kLerpMaxMs) span = kLerpMaxMs;
+    const uint64_t renderTime = (nowMs > span) ? (nowMs - span) : 0;
+    // alpha by REAL timestamps. renderTime >= last (stream STOP / caught up) clamps to 1 -> reach `last` and
+    // FREEZE (no extrapolation -- there is no velocity term; control is released at the reliable edge).
+    float alpha;
+    if (renderTime <= d.prevPoseMs)      alpha = 0.f;
+    else if (renderTime >= d.lastPoseMs) alpha = 1.f;
+    else alpha = static_cast<float>(renderTime - d.prevPoseMs) /
+                 static_cast<float>(d.lastPoseMs - d.prevPoseMs);
     const ue_wrap::FVector loc{
-        d.startLoc.X + (d.targetLoc.X - d.startLoc.X) * alpha,
-        d.startLoc.Y + (d.targetLoc.Y - d.startLoc.Y) * alpha,
-        d.startLoc.Z + (d.targetLoc.Z - d.startLoc.Z) * alpha };
+        d.prevLoc.X + (d.lastLoc.X - d.prevLoc.X) * alpha,
+        d.prevLoc.Y + (d.lastLoc.Y - d.prevLoc.Y) * alpha,
+        d.prevLoc.Z + (d.lastLoc.Z - d.prevLoc.Z) * alpha };
     const ue_wrap::FRotator rot{
-        LerpAngle(d.startRot.Pitch, d.targetRot.Pitch, alpha),
-        LerpAngle(d.startRot.Yaw,   d.targetRot.Yaw,   alpha),
-        LerpAngle(d.startRot.Roll,  d.targetRot.Roll,  alpha) };
-    // Dirty-gate: skip the SetActorLocation/Rotation (each a ParamFrame heap alloc +
-    // ProcessEvent) when neither position nor any axis moved beyond an epsilon since the
-    // LAST WRITTEN transform. A held-but-still clump (target == last pose) or a sub-cm
-    // creep then costs ZERO engine writes; the skipped delta accumulates (renderedLoc/Rot
-    // unchanged) until it crosses the epsilon, then one write catches up. Active motion
-    // (> eps/tick) writes every tick -> still smooth. On the final frame we still skip if
-    // already within epsilon (the actor is there) but ALWAYS deactivate.
+        LerpAngle(d.prevRot.Pitch, d.lastRot.Pitch, alpha),
+        LerpAngle(d.prevRot.Yaw,   d.lastRot.Yaw,   alpha),
+        LerpAngle(d.prevRot.Roll,  d.lastRot.Roll,  alpha) };
+    // Dirty-gate: skip the SetActorLocation/Rotation (each a ParamFrame heap alloc + ProcessEvent) when
+    // neither position nor any axis moved beyond an epsilon since the LAST WRITTEN transform. A held-but-still
+    // clump or a sub-cm creep then costs ZERO engine writes; the skipped delta accumulates (renderedLoc/Rot
+    // unchanged) until it crosses, then one write catches up. When frozen at `last` (alpha=1) the first tick
+    // writes it, every tick after is within epsilon -> no redundant writes. Active motion writes every tick.
     const float dl = (loc.X - d.renderedLoc.X) * (loc.X - d.renderedLoc.X)
                    + (loc.Y - d.renderedLoc.Y) * (loc.Y - d.renderedLoc.Y)
                    + (loc.Z - d.renderedLoc.Z) * (loc.Z - d.renderedLoc.Z);
     const float dr = std::fabs(ue_wrap::NormalizeAxis(rot.Pitch - d.renderedRot.Pitch))
                    + std::fabs(ue_wrap::NormalizeAxis(rot.Yaw   - d.renderedRot.Yaw))
                    + std::fabs(ue_wrap::NormalizeAxis(rot.Roll  - d.renderedRot.Roll));
-    if (dl < kLerpEpsLocSq && dr < kLerpEpsRotDeg) {
-        if (done) d.lerpActive = false;  // settled within epsilon -> stop (no redundant write)
-        return;
-    }
+    if (dl < kLerpEpsLocSq && dr < kLerpEpsRotDeg) return;   // within epsilon -> no redundant write
     E::SetActorLocation(d.actor, loc);
     E::SetActorRotation(d.actor, rot);
     d.renderedLoc = loc;
     d.renderedRot = rot;
-    if (done) d.lerpActive = false;  // reached target -> freeze
 }
 
 }  // namespace
@@ -1136,7 +1146,8 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     // the dup is structurally unreachable. Non-proxy converts (Aprop_C / kerfur, or a rare trash convert
     // that beat its OnSpawn) keep the legacy spawn+rebind path below.
     if (coop::trash_proxy::IsProxy(E)) {
-        void* proxy = coop::trash_proxy::ReskinProxy(E, payload.chipType, wantClump);
+        void* proxy = coop::trash_proxy::ReskinProxy(E, payload.chipType, wantClump,
+                                                     ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         // ToPile (LAND) ONLY: stop the drive + snap to the authoritative LANDED rest position (the carry
         // stream ended at the throw + the proxy froze mid-air, so without this the re-skinned pile would
         // float where the throw began). For ToClump (GRAB) we must NOT teleport or reset the drive: the
@@ -1166,7 +1177,8 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
         ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
         void* proxy = coop::trash_proxy::SpawnProxy(E, payload.chipType, /*isClump=*/wantClump,
-                                                    senderSlot, loc, rot);
+                                                    senderSlot, loc, rot,
+                                                    ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         if (proxy) {
             RegisterPropMirror(E, proxy, L"", R::ClassNameOf(proxy), senderSlot);
             UE_LOGI("[PILE] CLIENT recv convert %s eid=%u ctx=%u -> proxy SPAWNED %s (convert beat its spawn) "

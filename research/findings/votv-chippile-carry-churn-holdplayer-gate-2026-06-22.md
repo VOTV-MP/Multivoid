@@ -4,9 +4,11 @@
 `!carrying` gate). Arc: option 1 (hit-notify) BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode;
 CLOSE-B latch + land-settle SHIPPED (`65AD883A`); the `carrying && HasPendingSettle` release gate
 (`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation, not a re-pile); **`!carrying`
-SHIPPED + VERIFIED — the freeze is gone.** OPEN (root-found, fix pending): carry **JANK** (clump pose
-`key.len=4` → key-first mis-route), proxy **SCALE** (not sent/applied), intermittent **ORPHAN** dup, and the
-`simulateDrop` throw-velocity FLIP. See the AS-BUILT + "Post-`!carrying` open issues" + NEXT. Filename keeps
+SHIPPED + VERIFIED — the freeze is gone.** Then the carry **JANK** + proxy **SCALE** were root-found and
+**BUILT (`f82943bcd7560724`, proto v83, hands-on PENDING)** — see "Post-`!carrying` open issues" (the jank
+root was CORRECTED: the `key.len=4` key-first theory is DISPROVEN, the real root is an interpolation
+phase-stall). Still OPEN: intermittent **ORPHAN** dup (no repro), the `simulateDrop` throw-velocity FLIP. See
+the AS-BUILT + "Post-`!carrying` open issues" + NEXT. Filename keeps
 `holdplayer-gate` for link stability; that gate is the DISPROVEN option 2, not the fix. Supersedes the false
 "carry MIRRORS on a settled join / JOIN RACE" conclusion in
 `votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
@@ -161,21 +163,40 @@ idempotent, ctx-ordered convert — it races nothing.
   `HasPendingSettle` (kept only for the diag log).
 
 ## Post-`!carrying` open issues (hands-on EE0DD83C, all root-found from log+code)
-1. **JANK [root found, fix pending].** The clump carry pose streams `key.len=4` (host log `net: PropPose emit
-   … key.len=4 eid=4743`). The source is the clump's OWN BP `GetKey(FName&)` (`prop.cpp:233` dispatches it for
-   chipPile/clump — no native Key field; the "non-keyable clump streams key=None" comment was WRONG). The
-   receiver resolves **KEY-first, eid-fallback** (`remote_prop.cpp:401-406`), so the keyed pose routes to a
-   wrong actor instead of the eid proxy → the proxy never drives (zero `drive #`) → it moves only on converts
-   = jank. The key is class/chipType-fixed (not per-instance), so the mis-route is a fixed wrong actor =
-   clump-only jank. **FIX (root, sender):** force the clump carry pose keyless — `IsGarbageClump(heldActor) →
-   pp.key.len=0` (an eid-identified entity must route by eid, never its game-key). `IsGarbageClump` is
-   class-based (`prop.cpp:159`) so it never zeroes a normal keyed prop's key.
-2. **SCALE [root found, fix pending].** The proxy looks SMALLER than the host pile: `PropConvertPayload` HAS
-   `scaleX/Y/Z` (`protocol.h:2208`) but `BroadcastConvert` leaves them 0 AND `trash_proxy.cpp` has NO
-   `SetActorScale` (spawn or re-skin). **FIX (two-sided, per-form):** `BroadcastConvert` sends
-   `GetActorScale3D(newActor)` (the target form's scale); the client applies it on EVERY convert
-   (`ReskinProxy`/`OnConvert`) AND `SpawnProxy`. (User's size-marker: smaller = a correctly-resolved proxy
-   (scale lost); normal-size un-removed = an `isProxy=0` orphan — issue 3.)
+1. **JANK — root CORRECTED, then BUILT (`f82943bcd7560724`, v83, hands-on PENDING).**
+   - **The first theory was WRONG (disproven by bytecode + log + the receiver guard).** It was: the clump
+     pose streams `key.len=4` → key-first mis-route → no drive. But (a) the BP `GetKey` for BOTH
+     `prop_garbageClump_C` AND `actorChipPile_C` returns the FName literal **`"None"`** UNCONDITIONALLY
+     (`docs/piles/re-artifacts/bp_reflection/prop_garbageClump.json:19625`, `actorChipPile.json:41480`) — so
+     `key.len=4` is literally the **string** `"None"` (`ToString(FName_None)`), not a real key, and it is
+     FIXED, never per-instance. (b) The receiver ALREADY guards it: `if (!keyW.empty() && keyW != L"None")`
+     (`remote_prop.cpp:403`) → for `"None"` this is false → it skips `ResolveLiveActorByKey` and falls to the
+     eid. Forcing `pp.key.len=0` produces the IDENTICAL routing — a **no-op** for the jank. (c) The
+     `EE0DD83C` client log proved it: **15 `drive #` lines at a clean 60/s**, eid-resolved proxy, ONE ctx
+     HOLD, ZERO `no local match` — the proxy WAS being driven. "Zero drive" was wrong too.
+   - **The REAL root (code-PROVEN):** an interpolation **phase-stall**. `remote_prop::Tick` calls
+     `BeginLerpToPose` (set `lerpStartMs = nowMs`) then `AdvanceLerp` **in the same tick** with the **same**
+     `nowMs` → `alpha = (nowMs - lerpStartMs)/dur = 0` → renders the start pos, ZERO movement on every
+     new-pose tick. At vsync-60 (pose rate ≈ tick rate) almost every tick is a new-pose tick → the proxy
+     barely advances, lurching on the rare pose-free tick = the jank. Classic netcode error (reset the interp
+     clock to "now", then sample at "now"); the interp added "for smoothness" was WORSE than the non-proxy
+     snap-to-latest.
+   - **FIX (BUILT, RULE-1, MTA-aligned):** fixed-delay snapshot interpolation. `ActiveDrive` now buffers the
+     two most recent timestamped poses (`prevLoc/prevPoseMs`, `lastLoc/lastPoseMs`); `AdvanceLerp` renders at
+     `nowMs - span` BEHIND the newest (span = the measured inter-pose interval, clamped [16,200]ms ≈ one frame
+     at 60fps), `alpha` by REAL timestamps. The render clock advances EVERY tick independent of pose arrival →
+     smooth at any frame rate; on a stream gap `alpha` clamps to 1 → reach last + FREEZE (no extrapolation).
+     `reference/mtasa-blue` CClientVehicle::UpdateTargetPosition shape. Both audits (perf + correctness) PASS
+     clean. (`remote_prop.cpp` `ActiveDrive`/`BeginLerpToPose`/`AdvanceLerp`/`ResetDriveState`.)
+2. **SCALE — claim CORRECTED, then BUILT (v83, hands-on PENDING).** The proxy looked SMALLER. The prior claim
+   "`PropConvertPayload` HAS `scaleX/Y/Z` (`protocol.h:2208`)" was **WRONG** — that line is `PropSpawnPayload`;
+   `PropConvertPayload` had **NO** scale fields. **FIX (proto v82→v83):** added `scaleX/Y/Z` to
+   `PropConvertPayload` (`static_assert` 100→112); `BroadcastConvert` sends the host's real
+   `GetActorScale3D(newActor)` PER FORM (clump vs pile differ); the proxy applies it via new
+   `ue_wrap::engine::SetActorScale3D` (no setter existed) in `SpawnProxy` (fresh) + `ReskinProxy` (every
+   convert), guarded `>0.001` (rejects zero AND NaN). Covers carry converts + join-placed piles. (User's
+   size-marker: with scale fixed, smaller-vs-normal no longer distinguishes proxy from orphan → a dup is now
+   unambiguously the `isProxy=0` orphan — issue 3.)
 3. **ORPHAN / intermittent dup [open, no repro].** Old piles intermittently NOT removed = the eid-resolve
    race (`isProxy=0` → spawn-fresh leaves the old pile). This run logged ZERO `isProxy=0` (all re-skinned in
    place) so it did NOT reproduce — needs an instance to autopsy (grep `isProxy=0` + neighbours next time a
@@ -186,22 +207,23 @@ idempotent, ctx-ordered convert — it races nothing.
    (`[SIM-DROP] held=.. carrying=..`). The FLIP wires it to close the latch → the release edge ships the
    throw velocity. Deferred behind jank+scale (the user's priority).
 
-## NEXT (resume here — the carry-FREEZE is fixed [V]; build the two root-found fixes)
-1. **BUILD #1 (jank) + #3a (scale)** — both root-confirmed (above), independent of the latch:
-   - #1: `local_streams.cpp` — `IsGarbageClump(heldActor) → pp.key.len = 0` (force the clump carry pose
-     keyless so the receiver routes by eid → the proxy → 60 fps lerp). Root, not patch (the clump's BP GetKey
-     is its game-key; our sync identity is the eid).
-   - #3a: `trash_channel.cpp` `BroadcastConvert` → set `p.scaleX/Y/Z = GetActorScale3D(newActor)`;
-     `trash_proxy.cpp` `SpawnProxy` + `ReskinProxy` (or `remote_prop.cpp OnConvert`) → `SetActorScale3D` from
-     the payload, on EVERY convert (per-form scale). `protocol.h` already has the fields (no proto bump).
-   - Re-test: carry SMOOTH (jank gone) + proxy HOST-SIZED (scale fixed). The size-marker then vanishes, so a
-     remaining un-removed pile is unambiguously the orphan (#3b).
-2. **#3b ORPHAN** — needs a repro. Next NORMAL-size pile that won't disappear: grep client `isProxy=0` +
-   neighbours → the eid-resolve race (registration vs convert timing). Then fix the race.
-3. **The `simulateDrop` FLIP** (throw velocity) — after jank+scale verify, bring the `[SIM-DROP]` lines:
-   `carrying=<carry-eid>` on a drop AND a throw → flip the thunk to close the latch (`ForgetEid`) → the release
-   edge ships the velocity. If `carrying=0`/absent → pin the right seam first.
-4. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
+## NEXT (resume here — freeze fixed [V]; jank + scale BUILT v83 `f82943bcd7560724`, hands-on PENDING)
+1. **USER HANDS-ON (take-28, `research/handson_runbook_2026-06-22_v83_scale_interp.md`).** Deployed to all 4
+   copies (hash MATCH x4). Acceptance: (1) carry **SMOOTH like a normal held object** (the fixed-delay interp —
+   the MAIN check); (2) pile **HOST-SIZE**, the size-marker GONE (scale); (3) a dup is now **unambiguously an
+   `isProxy=0` orphan** — if seen, grep `isProxy=0` + neighbours; (4) throw still **teleports** — EXPECTED
+   (the `simulateDrop` thunk is read-only this build; the velocity flip is the next pass).
+2. **#3b ORPHAN** — still no repro. With the size-marker gone (#3a), the NEXT normal-size pile that won't
+   disappear is guaranteed the orphan: grep client `isProxy=0` + neighbours → the eid-resolve race
+   (registration vs convert timing). Then fix the race.
+3. **The `simulateDrop` FLIP** (throw velocity) — after carry-smooth + scale verify, bring the `[SIM-DROP]`
+   lines: `carrying=<carry-eid>` on a drop AND a throw → flip the thunk to close the latch (`ForgetEid`) → the
+   release edge ships the velocity. If `carrying=0`/absent → pin the right seam first.
+4. **Modular debt (audit flag, both passes):** `remote_prop.cpp` (1362 LOC) + `remote_prop_spawn.cpp` (1341)
+   are past the 800 soft cap (under 1500 hard; this diff crossed no boundary). The interpolation engine
+   (`ActiveDrive`/`BeginLerpToPose`/`AdvanceLerp`/`LerpAngle`/the lerp constants, ~120 LOC) is the natural
+   extraction → `coop/prop_interp.{cpp,h}` at the NEXT feature touch of remote_prop.cpp.
+5. v3: the quiet-carry-safe host watchdog + the on-destroy `ForgetEid` hook (guarded so a churn re-pile's
    `eid=0` destroy doesn't false-close); then the grab-via-thunk tightening (retire the InpActEvt-PRE adopt — RULE 2).
 
 ## Credit / method note

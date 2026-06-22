@@ -5,6 +5,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
+#include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale)
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"  // ClassNameOf
 #include "ue_wrap/types.h"       // FVector / FRotator / NormalizeAxis
@@ -57,6 +58,7 @@ struct LandSettle {
     int               countdown;  // ticks until COMMIT (a re-grab CANCELS first)
     int               sincePile;  // ticks since the held ToPile (the ToPile->ToClump gap, logged on CANCEL)
     uint8_t           chipType;
+    ue_wrap::FVector  scale{1.f, 1.f, 1.f};  // v83: the landed pile's GetActorScale3D, committed with the ToPile
     ue_wrap::FVector  loc;
     ue_wrap::FRotator rot;
     std::string       cls;        // the pile class to broadcast at COMMIT
@@ -75,7 +77,8 @@ std::string NarrowAscii(const std::wstring& w) {          // BP class names are 
 // not-carrying land; TickCarry calls it for the settle COMMIT (the real land). `why` is a log tag.
 uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind,
                          const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
-                         uint8_t chipType, const std::string& cls, const char* why) {
+                         const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls,
+                         const char* why) {
     const uint8_t ctx = Bump(static_cast<uint32_t>(E));
     coop::net::PropConvertPayload p{};
     p.oldEid = static_cast<uint32_t>(E);                  // bind model: oldEid == newEid == E
@@ -86,6 +89,8 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
+    // v83: the host's real per-form scale (a clump and a pile differ) so the proxy is host-sized.
+    p.scaleX = scale.X; p.scaleY = scale.Y; p.scaleZ = scale.Z;
     p.chipType = chipType;
     p.kind     = kind;
     p.ctx      = ctx;
@@ -118,13 +123,14 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
 
     RebindE(E, newActor);                                 // ALWAYS track the live actor locally (keep the rebind)
     const std::string cls = NarrowAscii(R::ClassNameOf(newActor));
+    const ue_wrap::FVector scale = ue_wrap::engine::GetActorScale3D(newActor);  // v83: the new form's real scale
 
     if (toClump) {
         if (!carrying) {
             // OPEN: the REAL grab (pile->clump, via AdoptPendingGrabClump). Broadcast the one ToClump + start
             // the carry session; the host's churn (re-pile + auto-re-grab) is SUPPRESSED until the real land.
             g_carry[eid] = g_tick;
-            BroadcastConvert(s, E, kind, loc, rot, chipType, cls, "GRAB OPEN");
+            BroadcastConvert(s, E, kind, loc, rot, scale, chipType, cls, "GRAB OPEN");
             UE_LOGI("[TRASH-CH] HOST carry OPEN eid=%u -- churn re-pile/re-grab suppressed until the land", eid);
         } else {
             // Defensive: a ToClump reaching OnHostConvert while carrying (the held-edge OnHostRegrab is the
@@ -138,7 +144,7 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
         if (!carrying) {
             // A re-pile we are NOT tracking as a carry (an ambient/untracked clump, or a land after we already
             // closed) -- no churn to fold -> broadcast immediately.
-            BroadcastConvert(s, E, kind, loc, rot, chipType, cls, "LAND (not carrying)");
+            BroadcastConvert(s, E, kind, loc, rot, scale, chipType, cls, "LAND (not carrying)");
         } else {
             // CARRYING: this re-pile is EITHER a churn re-pile (a re-grab follows within K -> CancelSettle) OR
             // the real land (no re-grab -> TickCarry COMMITs it). Hold the broadcast + ctx bump; capture the
@@ -146,7 +152,7 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
             g_carry[eid] = g_tick;
             LandSettle ls{};
             ls.countdown = kLandSettleTicks; ls.sincePile = 0;
-            ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls;
+            ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls; ls.scale = scale;
             g_settle[eid] = ls;
             UE_LOGI("[TRASH-CH] HOST land-settle START eid=%u K=%d -- holding the ToPile (re-grab within K = "
                     "churn; no re-grab = the real land)", eid, kLandSettleTicks);
@@ -222,8 +228,8 @@ void TickCarry(coop::net::Session& s) {
         ++ls.sincePile;
         if (--ls.countdown <= 0) {
             const coop::element::ElementId E = static_cast<coop::element::ElementId>(it->first);
-            BroadcastConvert(s, E, coop::net::propconvert_kind::kToPile, ls.loc, ls.rot, ls.chipType, ls.cls,
-                             "LAND COMMIT");
+            BroadcastConvert(s, E, coop::net::propconvert_kind::kToPile, ls.loc, ls.rot, ls.scale, ls.chipType,
+                             ls.cls, "LAND COMMIT");
             UE_LOGI("[TRASH-CH] HOST LAND COMMIT eid=%u -- no re-grab within K -> the real land; carry CLOSED",
                     static_cast<unsigned>(E));
             g_carry.erase(it->first);                     // CLOSE the carry latch

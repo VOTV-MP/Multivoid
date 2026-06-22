@@ -130,6 +130,13 @@ FVector GetActorLocation(void* actor);
 // pre-v54 senders hardcoded 1,1,1). Game thread only.
 FVector GetActorScale3D(void* actor);
 
+// AActor::SetActorScale3D(FVector NewScale3D) on `actor` (root component relative
+// scale). Returns the success of the UFunction call (the engine fn itself is void).
+// v83: the host-authoritative trash proxy applies the host's real per-form scale
+// (clump vs pile differ) on every convert/spawn so the mirror is host-sized -- the
+// proxy-looks-smaller bug (scale was never sent on PropConvert nor applied). Game thread only.
+bool SetActorScale3D(void* actor, const FVector& scale);
+
 // UKismetSystemLibrary::CollectGarbage -- schedules a full GC purge at the
 // end of the current frame (the engine's own post-level-transition pattern).
 // The adoption sweep pairs its ~1k-actor destruction burst with this so the

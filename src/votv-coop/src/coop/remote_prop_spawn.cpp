@@ -356,7 +356,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         const bool isClump = coop::trash_proxy::IsClumpClass(classW);
         ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
-        void* proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot);
+        void* proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot,
+                                                    ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         if (proxy) {
             if (!skipBind)
                 coop::remote_prop::RegisterPropMirror(payload.elementId, proxy, L"", classW, senderSlot);

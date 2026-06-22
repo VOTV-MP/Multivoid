@@ -694,7 +694,14 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 82;  // v82: HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync
+inline constexpr uint16_t kProtocolVersion = 83;  // v83: trash PROXY per-form SCALE -- PropConvertPayload gains
+                                                  // scaleX/Y/Z (the host's real GetActorScale3D(newActor)); the
+                                                  // proxy applies it on every convert+spawn so the mirror is
+                                                  // host-sized (it rendered smaller -- scale was never sent on
+                                                  // convert nor applied to the AStaticMeshActor proxy). The carry
+                                                  // JANK fix (fixed-delay snapshot interpolation) is receiver-only
+                                                  // -- no wire change. Prior:
+                                                  // v82: HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync
                                                   // redesign; docs/piles/08). RETIRES the v81 morph
                                                   // (proximity land-watch false-fired in pile CLUSTERS,
                                                   // client direction never wired). Adds a per-eid MTA
@@ -3162,6 +3169,11 @@ struct PropConvertPayload {
     WireClassName pileClass;              // ToPile: the chipPile leaf class; ToClump: the clump leaf class
     float locX, locY, locZ;               // resting/grab transform of the new rendering
     float rotPitch, rotYaw, rotRoll;
+    float scaleX, scaleY, scaleZ;         // v83: the host's real GetActorScale3D(newActor), PER FORM (a clump
+                                          //      and a pile scale differ). The trash PROXY is an AStaticMeshActor
+                                          //      WE own; without this it kept the default scale and rendered
+                                          //      SMALLER than the host's pile/clump. Applied on every convert
+                                          //      (OnConvert ReskinProxy/spawn) + the join PropSpawn proxy.
     uint8_t chipType;                     // the trash variant (carried across both edges)
     uint8_t kind;                         // propconvert_kind:: kToClump (grab) | kToPile (land)  [was _pad[0]]
     uint8_t ctx;                          // v82: MTA sync-time-context -- the host's per-eid generation counter
@@ -3172,7 +3184,7 @@ struct PropConvertPayload {
                                           //      mis-bind guard the morph lacked). [was _pad[0]]
     uint8_t _pad[1];                      // keep the struct 4-aligned + bytes-beyond-pileClass-len zero
 };
-static_assert(sizeof(PropConvertPayload) == 100, "PropConvertPayload must be 100 bytes");
+static_assert(sizeof(PropConvertPayload) == 112, "PropConvertPayload must be 112 bytes");
 
 // TimeSyncPayload -- the host-authoritative WORLD CLOCK (TimeSync=29, v36). The cycle's
 // totalTime/Day/TimeScale (AdaynightCycle_C) are not otherwise replicated, so a fresh joiner
