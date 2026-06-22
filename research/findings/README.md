@@ -47,6 +47,28 @@ REPLACED by carry/flight stream-**continuity** (`136ed779`, hands-on PENDING —
 with the proxy; the eid-race theory superseded), a read-only PILE-PROBE shipped (`29069f05`), DESTROY-fix NEXT.
 The canonical carry root + all open-item fixes: `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
 
+**Update (2026-06-22 FINAL, HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83 — all committed, push held):**
+the throw-arc/probe state above is now the SHIPPED+VERIFIED final state. **Pile-landing ROTATION + throw SOUND
+both FIXED [V hands-on take-30]** — rotation re-read from the SETTLED pile at the land-settle COMMIT
+(`trash_channel.cpp:248`); the pickup-sound-on-throw KILLED (the flight branch streams the carry key without a
+re-StartDrive; a trash eid sends no PropRelease; `OnHostRelease` RETIRED, RULE 2). The **throw ARC flies** —
+VERIFIED [V hands-on take-29 + harness] (the user: "дуга ЛЕТИТ"; the autotest does a real directional throw).
+The **Z/HEIGHT regressed in take-31** (the pile transform read from `newActor` at the BeginDeferred POST was
+`(0,0,0)` — unpositioned pre-FinishSpawning → derived piles snapped to world origin); the **take-32 FIX re-reads
+the pile's REAL transform at the land-settle COMMIT** (`trash_channel.cpp:248-256`) — drift=0cm [V harness] (the
+native-destroy was INNOCENT, harness-confirmed; the bug was the `(0,0,0)` loc). The **LEVEL-PILE DUP DESTROY is
+BUILT + VERIFIED [V harness]** (`remote_prop_spawn.cpp:387-410` destroys the co-located native at a pile
+proxy-spawn — exact ~1cm + chipType + IsLive, exact-or-skip on >1, gated on the join bracket only; harness 12
+twins / 0 SKIP) — this REPLACES the read-only PILE-PROBE (RULE 2, retired). A **FPS stutter fix** also shipped
+[V harness] (`net_pump.cpp:559` guards the steady-world re-seed on the GUObjectArray high-water mark + a ~20s
+census so the ~237k walk is skipped at rest; re-seed rate 0.073/s, was ~0.25/s). **Proxy SCALE** is AS-BUILT
+(re-read `GetActorScale3D` at the same COMMIT). The verification standard this session became the **autonomous
+log-truth harness** (`tools/pile-test-assert.ps1`, 13 invariants, VERDICT PASS) driven by the scripted
+`autotest_chippile.cpp` — [V harness] means the harness asserted it against real autonomous-run logs (NOT a
+human hands-on). Still OPEN: the WHOOSH throw sound (no ReliableKind exists; user-deprioritized, best confirmed
+by hearing), and the dead `dropGrabObject` read-only thunk (to be retired, RULE 2). Canonical finding:
+`votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`; the harness: [[reference-pile-test-harness]].
+
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
 `docs/piles/findings/` (the consolidated pile knowledge base). The originals here are the canonical

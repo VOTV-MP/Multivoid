@@ -1,3 +1,5 @@
+> SUPERSEDED (2026-06-22) -- this take's work is FIXED + verified; see research/handson_runbook_2026-06-22_regression_and_harness.md + the canonical finding.
+
 # Hands-on runbook — take-28 — carry JANK (fixed-delay interp) + proxy SCALE (#3a)
 
 **Deployed:** `votv-coop.dll` SHA **`f82943bcd7560724`** to all 4 copies (host / copy / copy2 / dev) — verified

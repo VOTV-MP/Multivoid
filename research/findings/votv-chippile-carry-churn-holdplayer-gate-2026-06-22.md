@@ -1,19 +1,42 @@
 # chipPile carry — the CONTACT-RE-PILE CHURN root + the CLOSE-B carry-latch fix
 
-**Date:** 2026-06-22. **HEAD `29069f05`, deployed `c2a5f49cc98add31`, proto v83.** **Status:** the
-carry-**FREEZE** [V] (`!carrying`, `0e2a6bca`) AND the carry-**JANK** [V] (fixed-delay interp, `df158728`) are
-both FIXED, hands-on VERIFIED (carry now smooth like a normal object). Proxy **SCALE** BUILT v83 (`df158728`,
-hands-on PENDING — not eyeballed). The **throw ARC** BUILT (`136ed779`, hands-on PENDING) via carry/flight
-stream-**continuity** after the release-VERB hunt died (`simulateDrop` AND `dropGrabObject` both fired ZERO).
-**ORPHAN dup SPLIT:** derived gone [V]; ORIGINAL (level-placed) piles dup — root CONFIRMED (the client's NATIVE
-level-pile COEXISTS with the proxy; the eid-race theory is superseded); a read-only PILE-PROBE shipped
-(`29069f05`) to confirm + size the destroy-fix. Arc of dead ends (don't retry): option 1 (hit-notify)
-BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode; `carrying && HasPendingSettle` gate
-(`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation); the `key.len=4` key-first jank
-theory DISPROVEN; the `simulateDrop`/`dropGrabObject` release-verb flip DEAD (0 fires). See the AS-BUILT +
-"Post-`!carrying` open issues" + NEXT. Filename keeps
-`holdplayer-gate` for link stability; that gate is the DISPROVEN option 2, not the fix. Supersedes the false
-"carry MIRRORS on a settled join / JOIN RACE" conclusion in
+**Date:** 2026-06-22.
+
+> ## FINAL STATE (take-30 → take-33) — HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83, ALL COMMITTED
+> The whole chipPile carry/throw/dup arc is now FIXED. Verification standard for this stretch shifted to the
+> **autonomous log-truth harness** (`tools/pile-test-assert.ps1`, 13 invariants, **VERDICT PASS 13/13**) +
+> a scripted actor (`autotest_chippile.cpp`: grab → 8 s carry → directional throw → re-pile) — see
+> `[[reference-pile-test-harness]]` and `docs/AUTONOMOUS_TESTING.md`. `[V hands-on]` = a human confirmed it;
+> `[V harness]` = the harness asserted it against real autonomous-run logs.
+> - **Carry FREEZE + JANK** — FIXED **[V hands-on]** (`!carrying` `0e2a6bca`; fixed-delay interp `df158728`).
+> - **ROTATION + pickup-SOUND-on-throw** — FIXED **[V hands-on take-30]** (`91a6399a`): rotation now from the
+>   settled pile; the wrong pickup sound killed (flight key symmetry + a trash eid sends NO `PropRelease`;
+>   `OnHostRelease` retired RULE 2).
+> - **Throw ARC** (carry/flight stream-continuity) — **[V hands-on take-29]** ("дуга ЛЕТИТ") **+ [V harness]**.
+> - **Z/HEIGHT** — REGRESSED in take-31 (read the pile transform from `newActor` at the BeginDeferred POST =
+>   `(0,0,0)`, pile unpositioned pre-FinishSpawning → derived piles snapped to the world origin; the DESTROY
+>   was INNOCENT, harness-confirmed) → FIXED in take-32 (`3ccb49e3`): **re-read the pile transform at the
+>   land-settle COMMIT** (post-FinishSpawning; `LandSettle` stores pileActor+idx, IsLiveByIndex-guarded; thunk
+>   passes the clump as fallback) — fixes Z + rotation + scale together. **[V harness]** (client-render drift=0).
+> - **Proxy SCALE** — AS-BUILT (re-read at the COMMIT; not separately eyeballed).
+> - **LEVEL-PILE DUP** — DESTROY the co-located native at a pile proxy-spawn (`remote_prop_spawn.cpp:387-410`,
+>   exact ~1cm + chipType + IsLiveByIndex, exact-or-skip on >1, graceful on 0, GATED on `g_claimTrackingActive`
+>   = join bracket only; audit CRITICAL folded). **BUILT + [V harness]** (12 twins / 0 SKIP). The read-only
+>   PILE-PROBE is RETIRED (RULE 2) — it greenlit the destroy (`1cm=1` × 16).
+> - **FPS ~4 s stutter** — FIXED (`c718bf7e`): the steady-world re-seed (`net_pump.cpp:559`) is guarded on the
+>   GUObjectArray high-water mark + a ~20 s safety census → no full ~237k walk at rest. **[V harness]** (idle
+>   client re-seed rate 0.25 → 0.073/s).
+> - **OPEN / NEXT:** the WHOOSH-on-throw cue (no `ReliableKind` yet — deferred, sound timing best HEARD);
+>   retire the dead `dropGrabObject` read-only thunk (`trash_collect_sync.cpp:99-126`, RULE 2); extract the
+>   pile-dedup from `remote_prop_spawn.cpp` (1391 LOC). Runbook: `research/handson_runbook_2026-06-22_regression_and_harness.md`.
+
+**Pre-take-30 status (historical — superseded by the FINAL STATE above):** carry-FREEZE [V] + carry-JANK [V]
+fixed; SCALE/throw-ARC/level-pile-DESTROY were then BUILT-pending or NOT-built. Arc of dead ends (don't retry):
+option 1 (hit-notify) BUILT+FAILED; option 2 (holdPlayer gate) DISPROVEN by bytecode; `carrying &&
+HasPendingSettle` gate (`C9F28176`) BUILT+FAILED (the flicker is `updateHold` puppet recreation); the
+`key.len=4` key-first jank theory DISPROVEN; the `simulateDrop`/`dropGrabObject` release-verb flip DEAD (0
+fires). Filename keeps `holdplayer-gate` for link stability; that gate is the DISPROVEN option 2, not the fix.
+Supersedes the false "carry MIRRORS on a settled join / JOIN RACE" conclusion in
 `votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`.
 
 This is the canonical doc for *why the host-carry of a chipPile clump does not mirror cleanly on the client*
@@ -235,7 +258,7 @@ idempotent, ctx-ordered convert — it races nothing.
    the verb we never needed. The carry main branch (`heldActor`-keyed) is byte-identical (additive; audit
    zero-CRITICAL). The dead `dropGrabObject` read-only thunk is to be retired (RULE 2) in the verify build.
 
-## NEXT (resume here — carry SMOOTH [V]; throw ARC + level-pile PROBE deployed `c2a5f49cc98add31`, hands-on PENDING)
+## NEXT (SUPERSEDED — see the FINAL STATE block at the top; this section is the take-29 point-in-time plan, now mostly DONE)
 1. **USER HANDS-ON (take-29, `research/handson_runbook_2026-06-22_throw_arc_probe.md`).** Deployed all 4 copies
    (`c2a5f49cc98add31`, MATCH x4). Acceptance: (1) **the throw FLIES AN ARC** on the client (the carry/flight
    stream-continuity — the MAIN check; host log `[PILE] HOST carry/flight CONTINUE`); (2) carry stayed SMOOTH

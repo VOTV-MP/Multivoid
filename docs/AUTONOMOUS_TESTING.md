@@ -51,6 +51,46 @@ override per-run config without editing the ini:
 - `VOTVCOOP_RUN_GRAB_TEST=1` — autonomous grab test on both peers.
 - `VOTVCOOP_NPC_SYNC=1` — enable the wire-layer NPC detection (Phase
   5N1 Inc2 gate).
+- `VOTVCOOP_RUN_CHIPPILE_TEST=1` — the chipPile scripted actor (host drives
+  a real grab → 8 s moving carry → directional throw → re-pile; client
+  scan-only). See the pile harness below.
+- `VOTVCOOP_PILE_SHOWCASE=1` — (with the above) the CLIENT teleports to a
+  standoff facing the nearest mirrored pile proxy and holds, so an external
+  window capture frames the client rendering a pile.
+
+## Pile carry/throw log-truth harness (2026-06-22) — the autonomous self-test loop
+
+Built when the user stepped out of the manual-tester role ("истина в логах,
+не в пикселях"). The whole pile carry/throw/dup feature is regression-tested
+with NO human, by asserting invariants over the host+client logs. Canonical:
+the auto-memory `[[reference-pile-test-harness]]`.
+
+- **`tools/pile-test-assert.ps1`** — reads the host + client `votv-coop.log`
+  and checks **13 log-truth invariants** (ToPile-loc-nonzero, land-commit-reread,
+  client-render-matches-host = the proxy lands at the host pose drift<5cm,
+  sound x2, dup-destroy, arc, carry-stuck, fps-reseed-rate, no-crash, …),
+  prints a PASS/FAIL table + VERDICT + exit code (DATA-DRIVEN: add an invariant
+  by appending to `$Invariants`). This REPLACES the per-round manual greps.
+  ```powershell
+  pwsh tools/pile-test-assert.ps1                       # default host/client logs
+  ```
+- **The scripted actor** = `src/votv-coop/src/harness/autotest_chippile.cpp`
+  (env `VOTVCOOP_RUN_CHIPPILE_TEST=1`): a REAL host scenario — find a tracked
+  chipPile, teleport to a standoff, GRAB via the production `InpActEvt_use` +
+  `playerGrabbed`, 8 s moving carry, then a DIRECTIONAL throw
+  (`SetActorRootPhysicsVelocity`) so the flight ARC path runs (not a drop).
+- **Run a full scenario headless** (host + client + grab/carry/throw, then assert):
+  ```
+  VOTVCOOP_RUN_CHIPPILE_TEST=1 python tools/mp.py smoke --duration 200 --join-grace 90
+  pwsh tools/pile-test-assert.ps1
+  ```
+  Read the LOGS for the pile verdict, not the smoke's own exit (which only
+  checks RSS/connectivity). The DLL writes `[PILE] CLIENT ToPile SNAP ...
+  drift=Ncm` so the harness can assert the client renders the host pose.
+- **Window capture (for an eyeball screenshot):** `tools/capture-pile-shots.ps1`
+  (joined/carry/landed) + `tools/capture-showcase.ps1` (the client-facing-pile
+  hold) shoot both windows by title→PID (PrintWindow → foreground-BitBlt
+  fallback for real frames). Used to send pile screenshots to the user's phone.
 
 ## Available scripts
 

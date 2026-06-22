@@ -22,7 +22,7 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 |---|---|---|---|---|
 | Keyed `Aprop_C` props | save-load / spawner / Q-menu (BeginDeferred) / takeObj | seed walk (save-loaded) · Init-POST observer (spawner) · `FinishSpawningActor` POST (Q-menu) · takeObj POST | host eid **+ the BP save Key string** | prop_lifecycle, prop_element_tracker, prop_snapshot, host_spawn_watcher |
 | chipPile (ambient trash pile) | garbagePileSpawner-seeded / save-load | seed walk (keyless-pile lane) → connect snapshot / R1 re-seed | **host eid only (KEYLESS)** | prop_element_tracker, prop_snapshot, remote_prop_spawn (EnsurePileBindIndex) |
-| chipPile/garbageClump CLIENT MIRROR | our own `SpawnActor`/`DestroyActor` (VISIBLE by construction — NO BP dispatch to observe) | **host-auth `AStaticMeshActor` PROXY (`coop/trash_proxy`, Movable, NoCollision):** `OnSpawn` trash-class branch → `SpawnProxy`; re-skin = `OnConvert`→`ReskinProxy`; retire = `OnDestroy`/disconnect→`RetireProxy`. Dup-gone (derived) + visible + the carry-FREEZE + the carry-JANK all **[V]** hands-on (`245148c6` + the `!carrying` release-edge gate + fixed-delay snapshot interp `df158728`, deployed `c2a5f49cc98add31`, HEAD `29069f05`, proto v83); carry JANK **FIXED [V]** (interp PHASE-STALL → fixed-delay snapshot interp; the `key.len=4`→keyless theory DISPROVEN — `GetKey`=`"None"` both forms); proxy SCALE **BUILT v83, hands-on PENDING** (added `scaleX/Y/Z` to `PropConvertPayload` + `SetActorScale3D` + `ApplyProxyScale`); the throw-velocity flip is **DEAD — REPLACED by carry/flight stream-continuity** (`136ed779`: both `simulateDrop`+`dropGrabObject` thunks fire ZERO; stream the LIVE clump's flight under E until re-pile, `IsLive`-gated; hands-on PENDING); ORPHAN dup **SPLIT** — derived gone [V], ORIGINAL (level-placed) STILL dup (native level-pile coexists with the host proxy; fix = destroy native at proxy-spawn, NOT built). Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx gate) DISPROVEN by bytecode (`holdPlayer` never cleared). See `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md` | **host eid in `g_proxies` + the Prop mirror** (NO blueprint, `AddToRoot` → never self-morphs/GCs/stale) | trash_proxy |
+| chipPile/garbageClump CLIENT MIRROR | our own `SpawnActor`/`DestroyActor` (VISIBLE by construction — NO BP dispatch to observe) | **host-auth `AStaticMeshActor` PROXY (`coop/trash_proxy`, Movable, NoCollision):** `OnSpawn` trash-class branch → `SpawnProxy`; re-skin = `OnConvert`→`ReskinProxy`; retire = `OnDestroy`/disconnect→`RetireProxy`. Dup-gone (derived) + visible + carry-FREEZE + carry-JANK + THROW-ARC + ROTATION + SOUND all **[V hands-on]** (`245148c6` + the `!carrying` gate + fixed-delay snapshot interp `df158728` + flight-stream `136ed779`, HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83); carry JANK **FIXED [V hands-on]** (interp PHASE-STALL → fixed-delay snapshot interp; the `key.len=4`→keyless theory DISPROVEN — `GetKey`=`"None"` both forms); THROW ARC **VERIFIED [V hands-on take-29 + harness]** (the arc flies; flight-stream, not a release verb); ROTATION + SOUND **FIXED [V hands-on take-30]** (rot re-read from the settled pile at the land-settle COMMIT `trash_channel.cpp:248`; pickup-cue killed, `OnHostRelease` retired); Z/HEIGHT **FIXED [V harness]** (take-31 read `(0,0,0)` at the BeginDeferred POST → regressed; take-32 re-reads the real transform at the COMMIT, drift=0cm; the native-destroy was INNOCENT); proxy SCALE **AS-BUILT** (re-read `GetActorScale3D` at the same COMMIT); LEVEL-PILE DUP DESTROY **BUILT + VERIFIED [V harness]** (`remote_prop_spawn.cpp:387-410` destroys the co-located native at proxy-spawn, ~1cm + chipType + IsLive, exact-or-skip on >1, join-bracket-gated; harness 12 twins/0 SKIP; the read-only PILE-PROBE is REPLACED, RULE 2); FPS ~4s stutter **FIXED [V harness]** (`net_pump.cpp:559` guards the re-seed on the GUObjectArray high-water mark + ~20s census; rate 0.073/s); the throw-velocity flip is **DEAD — REPLACED by carry/flight stream-continuity** (`136ed779`: both `simulateDrop`+`dropGrabObject` thunks fire ZERO; stream the LIVE clump's flight under E until re-pile, `IsLive`-gated). Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx gate) DISPROVEN by bytecode (`holdPlayer` never cleared). STILL OPEN: WHOOSH throw sound (no ReliableKind; deferred); the dead `dropGrabObject` read-only thunk (retire RULE 2). Harness: `[[reference-pile-test-harness]]`. See `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md` | **host eid in `g_proxies` + the Prop mirror** (NO blueprint, `AddToRoot` → never self-morphs/GCs/stale) | trash_proxy |
 | garbageClump (the carried "ball" — HOST authoring) | `chipPile.playerGrabbed` on grab (EX_LocalVirtualFunction); the clump-spawn + re-pile pile-spawn are `EX_CallMath` (INVISIBLE) | **host-auth trash channel (08):** grab = `InpActEvt_use` PRE + held-edge adopt [V]; re-pile = the **`UFunction::Func` thunk converter** (`ue_wrap/ufunction_hook`) — reads the source clump + spawned pile off the `EX_CallMath BeginDeferred`, converts E the same tick [AS-BUILT; detection [V] read-only `B7EEB1BF`]. *(The BeginDeferred-POST ProcessEvent link was DISPROVEN — EX_CallMath, 0 fires, `0e56ca39`; the proximity death-watch that briefly replaced it is RETIRED, RULE 2, `d19ae4d4`.)* | **host eid only** (re-skins the pile's E) | trash_channel, trash_collect_sync, local_streams, ue_wrap/ufunction_hook (08) — *pile_morph + death-watch RETIRED* |
 | Held items (Aprop_C in hand) | grabbed | `EnsureHeldItemBroadcast` new-held edge (self-heal for untracked) + the held-pose stream | the item's Key/eid | trash_collect_sync, local_streams |
 | NPCs / Characters | BeginDeferred (VISIBLE) | host `BeginDeferred` interceptor + POST; save-loaded via `RegisterExistingWorldNpcs` walk | host eid (no BP key) | npc_sync, npc_mirror, npc_world_enum, npc_adoption |
@@ -69,33 +69,46 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 > "Catching an EX_CallMath call".
 >
 > **⚠⚠⚠ The CLIENT MIRROR of trash is NO LONGER a real `actorChipPile_C`/`prop_garbageClump_C` BP — it is a
-> host-authoritative `AStaticMeshActor` PROXY** (`coop/trash_proxy`, Movable, NoCollision; deployed
-> `c2a5f49cc98add31`, HEAD `29069f05`, proto v83). The durable facts below (KEYLESS, the bytecode mechanic, the OBSERVABILITY) describe the
-> GAME's chipPile/clump on the HOST (where the real verbs run); on the CLIENT we no longer instantiate the BP
-> at all — we own an `AStaticMeshActor` (NO blueprint, `AddToRoot`, eid→actor registry, re-skin in place).
-> This **closed the client mirror-staleness dup (hands-on [V]; piles mirror VISIBLY after the Movable fix)**,
-> and the **live clump carry-FREEZE is now [V] FIXED hands-on** via the **`!carrying` release-edge gate** in
-> `local_streams.cpp` (the client clump UPDATES through the carry — no freeze between E-events). The earlier
-> "carry MIRRORS on a settled join / it was the JOIN RACE" claim was **WITHDRAWN as FALSE**; the actual
-> release-edge cause was `updateHold` PUPPET RECREATION (the `heldActor` ptr changes with `pendingSettle=0`),
-> NOT a contact-re-pile churn. **Carry JANK — FIXED [V]** (shipped `df158728`): the `key.len=4`→keyless theory
-> was DISPROVEN (BP `GetKey` returns the FName `"None"` for both forms → the receiver already guards
-> `keyW != "None"`→eid; keyless was a no-op); REAL root = interp PHASE-STALL (`BeginLerpToPose` set
-> `lerpStartMs=nowMs`, `AdvanceLerp` sampled the same `nowMs` → alpha=0 every new-pose tick); FIX = fixed-delay
-> snapshot interpolation (2 timestamped poses, render behind, MTA `CClientVehicle` shape) → carry now SMOOTH.
-> **Proxy SCALE — BUILT v83, hands-on PENDING** (shipped `df158728`): added `scaleX/Y/Z` to `PropConvertPayload`
-> + `GetActorScale3D`/`SetActorScale3D` + `ApplyProxyScale` (the prior "@protocol.h had scale" was
-> `PropSpawnPayload`, not `PropConvertPayload`). **ORPHAN dup — SPLIT by pile origin:** DERIVED piles dup GONE
-> [V]; ORIGINAL (level-placed) piles STILL dup — the client's NATIVE level-loaded chipPile is never reconciled
-> away → it coexists with the host's proxy (the sweep is blind to natives); FIX (NOT built) = destroy the
-> native at proxy-spawn (exact ~1cm match). **The `simulateDrop` throw-velocity flip is DEAD — REPLACED by
-> carry/flight stream-continuity** (shipped `136ed779`: both `simulateDrop` AND `dropGrabObject` thunks fired
-> ZERO times for the clump; the release-edge `!carrying`-SKIP branch now streams the LIVE clump's flight pose
-> under E until it re-piles, `IsLive`-gated; hands-on PENDING). Host carries fine; other props mirror fine.
-> Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx gate) is **DISPROVEN by bytecode** — `holdPlayer` is
-> set ONCE on grab and NEVER cleared in any BP (DEAD, not pending). See the proxy bullet under "The design
-> (08…)" below + the new canonical finding
-> `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
+> host-authoritative `AStaticMeshActor` PROXY** (`coop/trash_proxy`, Movable, NoCollision; HEAD `a5282f57`,
+> deployed `015F0AC9590B6B23`, proto v83). The durable facts below (KEYLESS, the bytecode mechanic, the
+> OBSERVABILITY) describe the GAME's chipPile/clump on the HOST (where the real verbs run); on the CLIENT we no
+> longer instantiate the BP at all — we own an `AStaticMeshActor` (NO blueprint, `AddToRoot`, eid→actor
+> registry, re-skin in place). This **closed the client mirror-staleness dup (hands-on [V]; piles mirror
+> VISIBLY after the Movable fix)**, and the **live clump carry-FREEZE is now [V hands-on] FIXED** via the
+> **`!carrying` release-edge gate** in `local_streams.cpp` (the client clump UPDATES through the carry — no
+> freeze between E-events). The earlier "carry MIRRORS on a settled join / it was the JOIN RACE" claim was
+> **WITHDRAWN as FALSE**; the actual release-edge cause was `updateHold` PUPPET RECREATION (the `heldActor` ptr
+> changes with `pendingSettle=0`), NOT a contact-re-pile churn. **Carry JANK — FIXED [V hands-on]** (shipped
+> `df158728`): the `key.len=4`→keyless theory was DISPROVEN (BP `GetKey` returns the FName `"None"` for both
+> forms → the receiver already guards `keyW != "None"`→eid; keyless was a no-op); REAL root = interp
+> PHASE-STALL (`BeginLerpToPose` set `lerpStartMs=nowMs`, `AdvanceLerp` sampled the same `nowMs` → alpha=0 every
+> new-pose tick); FIX = fixed-delay snapshot interpolation (2 timestamped poses, render behind, MTA
+> `CClientVehicle` shape) → carry now SMOOTH. **THROW ARC — VERIFIED [V hands-on take-29 + harness]** (shipped
+> `136ed779`): the arc flies (the autotest does a real directional throw; harness arc-flight-stream PASS),
+> streamed THROUGH the release (`!carrying`-SKIP streams the LIVE clump's flight under E until it re-piles,
+> `IsLive`-gated; both `simulateDrop` AND `dropGrabObject` thunks fired ZERO → verb-detection ABANDONED).
+> **Pile-landing ROTATION + throw SOUND — FIXED [V hands-on take-30]:** rot re-read from the SETTLED pile at the
+> land-settle COMMIT (`trash_channel.cpp:248`; thunk passes the clump as fallback `trash_collect_sync.cpp:91`);
+> the pickup-cue killed (flight branch streams the carry key, no re-StartDrive; a trash eid sends NO
+> PropRelease; `OnHostRelease` RETIRED, RULE 2). **Z/HEIGHT — FIXED [V harness]** (regression arc): take-31 read
+> the pile transform from `newActor` at the BeginDeferred POST = `(0,0,0)` (unpositioned pre-FinishSpawning) →
+> derived piles snapped to world origin; take-32 re-reads the real transform at the land-settle COMMIT
+> (`trash_channel.cpp:248-256`), harness drift=0cm; the native-destroy was INNOCENT (harness-confirmed), the bug
+> was the `(0,0,0)` loc. **Proxy SCALE — AS-BUILT** (re-read `GetActorScale3D` at the same COMMIT; the prior
+> "@protocol.h had scale" was `PropSpawnPayload`, not `PropConvertPayload`). **ORPHAN dup — DESTROY BUILT +
+> VERIFIED [V harness]:** DERIVED piles dup GONE [V hands-on]; ORIGINAL (level-placed) piles' NATIVE
+> level-loaded chipPile coexisted with the host proxy (the sweep is blind to natives) → now
+> `remote_prop_spawn.cpp:387-410` DESTROYS the co-located native at proxy-spawn (exact ~1cm + chipType +
+> IsLiveByIndex, exact-or-skip on >1, graceful on 0, join-bracket-gated; harness 12 twins/0 SKIP; the read-only
+> PILE-PROBE is REPLACED, RULE 2). **FPS ~4s stutter — FIXED [V harness]** (`net_pump.cpp:559` guards the
+> steady-world re-seed on the GUObjectArray high-water mark + a ~20s census so the ~237k walk is skipped at
+> rest; rate 0.073/s, was ~0.25/s). The **`simulateDrop` throw-velocity flip is DEAD** — see THROW ARC above.
+> Host carries fine; other props mirror fine. Option 1 FAILED; option 2 (the `holdPlayer` convert/ctx gate) is
+> **DISPROVEN by bytecode** — `holdPlayer` is set ONCE on grab and NEVER cleared in any BP (DEAD, not pending).
+> STILL OPEN: the WHOOSH throw sound (no ReliableKind in `protocol.h`; user-deprioritized); the dead
+> `dropGrabObject` read-only thunk (retire RULE 2). The autonomous harness:
+> `[[reference-pile-test-harness]]`. See the proxy bullet under "The design (08…)" below + the new canonical
+> finding `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
 
 **Durable facts (survive the redesign):**
 - **chipPile is KEYLESS** — `setKey` is a no-op; the only identity is the host-minted eid. **[V/RD]**
@@ -135,7 +148,8 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
   pile); a TRACKED clump → `OnHostConvert(kToPile)` converts E onto the EXACT spawned pile the SAME tick →
   the client re-skins its ONE mirror (no destroy+spawn dupe). **Zero proximity, no reaper race.** Detection
   VERIFIED hands-on (read-only `B7EEB1BF`: thunk `*Result` ptr-for-ptr == the old death-watch's pile); the
-  CONVERT flip is deployed-pending-hands-on. The proximity death-watch (`WatchClumpForRepile` /
+  CONVERT flip is now VERIFIED [V hands-on take-30] (re-pile + rotation correct at the land-settle COMMIT). The
+  proximity death-watch (`WatchClumpForRepile` /
   `FindNearestUntrackedChipPile_`) is RETIRED (RULE 2). **Former known-minor [RESOLVED]:** the ~5s
   vanish-return (reaper-vs-rebind) is gone by construction (the convert lands the new pile under E the same
   tick the clump dies). RE: `research/findings/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md` §3/§6.
@@ -145,10 +159,9 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
 - **Increment 2 (CLIENT-grab direction) — [DESIGN], NOT built:** suppress-native + GrabIntent +
   host-executes-on-puppet-N + the PILED/HELD/FLYING state machine (proto v83).
 - **CLIENT MIRROR of trash = a host-authoritative `AStaticMeshActor` PROXY — DUP-FIX (derived) + VISIBILITY +
-  the CARRY-FREEZE + the carry-JANK all [V] hands-on VERIFIED; proxy SCALE BUILT v83 hands-on-PENDING; the
-  throw arc is now a flight-stream (hands-on PENDING); the ORPHAN dup is SPLIT (derived gone [V], level-placed
-  native-coexistence root confirmed, fix pending). Deployed `c2a5f49cc98add31` (HEAD
-  `29069f05`, proto v83):** the client's mirror of a chipPile/clump is NO LONGER the real self-morphing BP — it is an
+  CARRY-FREEZE + carry-JANK + THROW-ARC + ROTATION + SOUND all [V hands-on] VERIFIED; Z-fix + LEVEL-PILE
+  dup-DESTROY + FPS-fix [V harness]; proxy SCALE AS-BUILT. HEAD `a5282f57`, deployed `015F0AC9590B6B23`,
+  proto v83:** the client's mirror of a chipPile/clump is NO LONGER the real self-morphing BP — it is an
   `AStaticMeshActor` WE own (`coop/trash_proxy`): NO blueprint (never self-morphs), `AddToRoot` (never GC'd →
   never stale-index), our eid→actor registry (`g_proxies`), re-skin (`SetStaticMesh`) IN PLACE on convert
   (never spawn-fresh). **Spawn** = `trash_proxy::SpawnProxy` (caught at the `OnSpawn` trash-class branch,
@@ -168,7 +181,7 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
   ptr changes with `pendingSettle=0`), NOT a contact-re-pile churn — which is why the `carrying &&
   HasPendingSettle` gate (`C9F28176`/commit `16ac153f`) FAILED and suppressing the WHOLE carry (`!carrying`) is
   the fix. **Host carries FINE** (native); **OTHER props mirror fine** (pose-stream). **NOW FIXED/BUILT this
-  session:** (1) carry **JANK — FIXED [V]** (shipped `df158728`): the `key.len=4`→keyless theory was DISPROVEN
+  session:** (1) carry **JANK — FIXED [V hands-on]** (shipped `df158728`): the `key.len=4`→keyless theory was DISPROVEN
   by bytecode (BP `GetKey` returns the FName `"None"` for BOTH `prop_garbageClump_C` and `actorChipPile_C`, so
   `key.len=4` is the literal string "None"; the receiver already guards `keyW != "None"`→eid at
   `remote_prop.cpp:403`, so forcing keyless was a no-op). REAL root (code-proven): an interpolation
@@ -176,25 +189,33 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
   every new-pose tick at vsync-60. FIX = fixed-delay snapshot interpolation (`remote_prop.cpp` ActiveDrive
   buffers 2 timestamped poses prevLoc/lastLoc + prevPoseMs/lastPoseMs; renders `nowMs-span` behind; alpha by
   real timestamps; MTA `CClientVehicle` shape). User hands-on: carry now SMOOTH like a normal object. (2) proxy
-  **SCALE — BUILT v83, hands-on PENDING** (shipped `df158728`, proto v82→v83): the prior "`PropConvertPayload`
-  has `scaleX/Y/Z` @protocol.h:2208" was WRONG (that was `PropSpawnPayload`); added `scaleX/Y/Z` to
-  `PropConvertPayload` (static_assert 100→112), `BroadcastConvert` sends per-form `GetActorScale3D(newActor)`,
-  new `ue_wrap::engine::SetActorScale3D`, the proxy applies it via `ApplyProxyScale` (guarded >0.001) in
-  `SpawnProxy`+`ReskinProxy`; NOT eyeballed yet. (3) **ORPHAN dup — SPLIT by pile origin.** DERIVED
-  (gameplay-born) piles: dup GONE [V] (born only as a host convert → a proxy on both sides, no native twin).
-  ORIGINAL (level-placed) piles: STILL dup — root CONFIRMED (code+log, agent trace): level-piles DO get an
-  eid+proxy (eidOnly lane, shared eid both sides) but the client's NATIVE level-loaded chipPile is NEVER
-  reconciled away → it COEXISTS with the proxy the host expresses on top (~871 native + 870 proxy for ~870
-  logical piles); the grab-convert correctly re-skins the PROXY (all converts `isProxy=1`); the native sits
-  untouched = the visible dup; the divergence sweep is BLIND to natives (it walks the element Registry; native
-  level-piles enter it only lazily). (Supersedes the prior "eid-resolve race / `isProxy=0` spawn-fresh"
-  theory — it is native coexistence, not a failed convert.) FIX (next pass, NOT built): DESTROY the native at
-  proxy-spawn — NOT adopt (adopt re-introduces the BP self-morph/GC/local-grab the proxy avoids) — exact
-  position-match (~1cm; a 5cm radius would grab a cluster neighbor), graceful on 0 matches, exact-or-skip on
-  >1, join-time position index built once before the proxy-spawns (O(1) lookup). A read-only PILE-PROBE shipped
-  (`29069f05`, `remote_prop_spawn.cpp:355`) logs `[PILE-PROBE] ... native actorChipPile within 1cm=N 10cm=M`
-  (expect 1 for level, 0 for derived). (4) **the `simulateDrop` throw-velocity FLIP is DEAD — REPLACED by
-  carry/flight stream-continuity** (shipped `136ed779`): both the `simulateDrop` thunk AND its successor
+  **SCALE — AS-BUILT** (shipped `df158728`, proto v82→v83; the COMMIT re-reads `GetActorScale3D`): the prior
+  "`PropConvertPayload` has `scaleX/Y/Z` @protocol.h:2208" was WRONG (that was `PropSpawnPayload`); added
+  `scaleX/Y/Z` to `PropConvertPayload` (static_assert 100→112), `BroadcastConvert` sends per-form
+  `GetActorScale3D(newActor)`, new `ue_wrap::engine::SetActorScale3D`, the proxy applies it via `ApplyProxyScale`
+  (guarded >0.001) in `SpawnProxy`+`ReskinProxy`; not separately eyeballed (covered by the commit re-read).
+  (2b) pile-landing **ROTATION + throw SOUND — FIXED [V hands-on take-30]:** rot is re-read from the SETTLED
+  pile at the land-settle COMMIT (`trash_channel.cpp:248`; the thunk passes the clump as a fallback
+  `trash_collect_sync.cpp:91`); the pickup-cue-on-throw is killed (the flight branch streams the carry key
+  without a re-StartDrive + a trash eid sends NO PropRelease; `OnHostRelease` RETIRED, RULE 2). (2c) the
+  **Z/HEIGHT regression arc — FIXED [V harness]:** take-31 read the pile transform from `newActor` at the
+  BeginDeferred POST = `(0,0,0)` (pile unpositioned pre-FinishSpawning) → derived piles snapped to world origin;
+  the take-32 FIX re-reads the pile's REAL transform at the land-settle COMMIT (`trash_channel.cpp:248-256`),
+  harness client-render-matches-host drift=0cm; the native-destroy was INNOCENT (harness-confirmed), the bug was
+  the `(0,0,0)` loc. (3) **ORPHAN dup — SPLIT by pile origin; the DESTROY is now BUILT + VERIFIED [V harness].**
+  DERIVED (gameplay-born) piles: dup GONE [V hands-on] (born only as a host convert → a proxy on both sides, no
+  native twin). ORIGINAL (level-placed) piles: the client's NATIVE level-loaded chipPile coexisted with the
+  host proxy (root CONFIRMED: level-piles get an eid+proxy via the eidOnly lane; the divergence sweep is BLIND
+  to natives) — now `remote_prop_spawn.cpp:387-410` DESTROYS the co-located native at a pile proxy-spawn (exact
+  ~1cm + chipType + IsLiveByIndex; exact-or-skip on >1; graceful on 0 matches; GATED on `g_claimTrackingActive`
+  = the join bracket only; harness dup-destroy-clean 12 twins / 0 SKIP). NOT adopt (adopt re-introduces the BP
+  self-morph the proxy avoids). The read-only PILE-PROBE that confirmed coexistence is REPLACED by this destroy
+  (RULE 2, retired). (Supersedes the prior "eid-resolve race / `isProxy=0` spawn-fresh" theory — it was native
+  coexistence.) (3b) **FPS — the ~4s stutter FIXED [V harness]:** `net_pump.cpp:559` guards the steady-world
+  re-seed on the GUObjectArray high-water mark (NumObjects) + a ~20s safety census, so the ~237k-object walk is
+  SKIPPED at rest; harness fps-reseed-rate 0.073/s (was ~0.25/s every 4s). (4) **the `simulateDrop`
+  throw-velocity FLIP is DEAD — REPLACED by carry/flight stream-continuity; the THROW ARC is VERIFIED [V
+  hands-on take-29 + harness]** (shipped `136ed779`): both the `simulateDrop` thunk AND its successor
   `dropGrabObject` thunk fired ZERO times across 7 grab/release cycles (the clump release uses NEITHER verb —
   the clump rides `grabbing_actor`, the PHC handle, not `holding_actor`) though the same Func-thunk facility
   fired all run; verb-detection ABANDONED. PIVOT: the throw needs no verb/velocity — the host's thrown clump
@@ -202,19 +223,22 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
   CONTINUES streaming `g_lastHeldProp`'s pose under the same eid E while it is a LIVE garbageClump (`IsLive` is
   the churn/flight discriminator — a churn re-pile kills the clump → skip; a real release leaves it flying →
   stream); the client's fixed-delay interp shows the arc; it ends when the clump re-piles (ToPile
-  re-skins+snaps). Hands-on PENDING. The dead `dropGrabObject` read-only thunk is to be retired RULE 2 next.
+  re-skins+snaps). The arc FLIES (user: "дуга ЛЕТИТ"; the autotest now does a real DIRECTIONAL throw). The dead
+  `dropGrabObject` read-only thunk (`trash_collect_sync.cpp:45,99-126,396`) is STILL PRESENT — to be retired
+  RULE 2 next.
   **Dead ends:** **Option 1** (`8bc797ef`,
   `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the live host BP re-arms hit-notify.
   **Option 2 (DISPROVEN by bytecode, NOT pending):** the `holdPlayer` convert/ctx gate is DEAD — `holdPlayer`
   (`@0x0240 AmainPlayer_C*`, CXXHeaderDump-confirmed) is set ONCE on grab (`actorChipPile.json` @8492) and
   NEVER cleared in any BP, so it cannot mark "released." (CLOSE-B latch + land-settle SHIPPED `65AD883A` —
   correct, not the freeze cause.) **Phase 1 = visual + position + re-skin, EXPLICIT NoCollision**; collision
-  (the `garbageCollider` hull) is PHASE 2 with Increment 2, deferred behind the native-destroy + hands-on.
-  Design + AS-BUILT:
+  (the `garbageCollider` hull) is PHASE 2 with Increment 2. Design + AS-BUILT:
   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix (the
-  canonical doc): `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. NEXT = USER
-  HANDS-ON take-29 (carry-smooth + the throw arc + the level-pile native-destroy).
-  **[V dup-fix(derived) + visibility + carry-freeze + carry-JANK; SCALE BUILT-pending; throw arc flight-stream hands-on-pending; ORPHAN split (level-placed native-coexistence root confirmed, fix pending); option 2 DISPROVEN.]**
+  canonical doc): `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`; the autonomous
+  harness: `[[reference-pile-test-harness]]`. **STILL OPEN (NEXT):** the WHOOSH throw sound (no ReliableKind in
+  `protocol.h`; user-deprioritized, best confirmed by hearing); retire the dead `dropGrabObject` read-only thunk
+  (RULE 2); Increment 2 (client-grab) + phase-2 collision.
+  **[V hands-on: dup-fix(derived) + visibility + carry-freeze + carry-JANK + throw-arc + rotation + sound; V harness: Z-fix + level-pile dup-DESTROY + FPS-fix; SCALE AS-BUILT; option 2 DISPROVEN.]**
 
 ### NPCs / Characters
 - Host `BeginDeferred` **interceptor** (allowlist of 14 ACharacter bases) allocs an `Npc` Element + POST
@@ -250,8 +274,8 @@ sync-time-context byte rejects stale packets (AS-BUILT, proto v82).
 | kerfur converge ↔ R1 re-seed re-expressing the kerfur | `MarkKnownKeyedProp` + `ExpressIncrementalSpawn` kerfur-skip + reaper kerfur-skip | [V] |
 | ~~pile_morph land-watch ↔ host re-seed~~ | **RETIRED** — the morph + its 100cm any-pile proximity land-watch are gone (08); the proximity death-watch that briefly replaced them is ALSO retired (RULE 2). The landed pile is now claimed by eid via the **`UFunction::Func` thunk converter** (commit `d19ae4d4`): the thunk reads the exact `(source clump, spawned pile)` off the `EX_CallMath BeginDeferred` and converts E onto the spawned pile the same tick → zero proximity, no re-seed/reaper race (the rebind re-points E onto the live pile). *(The convert-spawn-POST ProcessEvent link was DISPROVEN — EX_CallMath; the thunk is the deterministic catch.)* | [AS-BUILT; detection [V]] |
 | client save-loaded pile (own eid) ↔ host pile eid (connect bracket) | position-bind retires the client-local identity (`UnmarkKnownKeyedProp`); 08 replaces this with host re-stream on the drain edge (`PileResyncRequest`) | [V] → [redesign] |
-| client real-BP trash mirror self-morphs/GCs/goes-stale → `OnConvert` NOT-FOUND → spawn-fresh dup | **RETIRED** — the client mirror of trash is no longer a real BP; it is the host-authoritative `AStaticMeshActor` proxy (`coop/trash_proxy`, deployed `c2a5f49cc98add31`): NO blueprint + `AddToRoot` + eid→actor registry + re-skin-in-place → the stale-mirror → spawn-fresh dup path is structurally unreachable. (Discriminator/health-poll/serial-check DROPPED as moot.) **Derived-pile dup-gone + piles mirror visibly = hands-on confirmed.** *(Separate item, not a dup: the live clump CARRY-FREEZE is FIXED hands-on via the `!carrying` release-edge gate in `local_streams.cpp`, and carry JANK is now FIXED [V] via fixed-delay snapshot interp (`df158728`, interp PHASE-STALL root; the keyless theory DISPROVEN). PROXY SCALE BUILT v83 hands-on-PENDING. The throw-velocity flip is DEAD — REPLACED by carry/flight stream-continuity (`136ed779`: both `simulateDrop`+`dropGrabObject` thunks fire ZERO; stream the LIVE clump's flight under E until re-pile; hands-on PENDING). Option 2 (the `holdPlayer` convert/ctx gate) DISPROVEN by bytecode (`holdPlayer` never cleared); see the trash CLIENT MIRROR row above + `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.)* | [V — derived dup-fix + carry-freeze + carry-JANK hands-on] |
-| client NATIVE level-loaded chipPile ↔ host proxy expressed on top (ORIGINAL/level-placed piles) | **STILL DUP — root CONFIRMED, fix NOT built.** Level-piles get an eid+proxy (eidOnly lane, shared eid both sides) but the client's NATIVE level-loaded chipPile is NEVER reconciled away → it COEXISTS with the host's proxy (~871 native + 870 proxy for ~870 logical piles); the divergence sweep is BLIND to natives. FIX (next pass): DESTROY the native at proxy-spawn (exact ~1cm position-match; NOT adopt; graceful on 0, exact-or-skip on >1). A read-only PILE-PROBE shipped (`29069f05`, `remote_prop_spawn.cpp:355`) to confirm coexistence before the destroy is built. | [root [V]; fix pending] |
+| client real-BP trash mirror self-morphs/GCs/goes-stale → `OnConvert` NOT-FOUND → spawn-fresh dup | **RETIRED** — the client mirror of trash is no longer a real BP; it is the host-authoritative `AStaticMeshActor` proxy (`coop/trash_proxy`, deployed `c2a5f49cc98add31`): NO blueprint + `AddToRoot` + eid→actor registry + re-skin-in-place → the stale-mirror → spawn-fresh dup path is structurally unreachable. (Discriminator/health-poll/serial-check DROPPED as moot.) **Derived-pile dup-gone + piles mirror visibly = hands-on confirmed.** *(Separate item, not a dup: the live clump CARRY-FREEZE is FIXED hands-on via the `!carrying` release-edge gate in `local_streams.cpp`, and carry JANK is FIXED [V hands-on] via fixed-delay snapshot interp (`df158728`, interp PHASE-STALL root; the keyless theory DISPROVEN). The THROW ARC + ROTATION + SOUND are FIXED [V hands-on take-29/30] (the throw-velocity flip is DEAD — REPLACED by carry/flight stream-continuity `136ed779`: both `simulateDrop`+`dropGrabObject` thunks fire ZERO; stream the LIVE clump's flight under E until re-pile; rot re-read at the land-settle COMMIT; pickup-cue killed). PROXY SCALE AS-BUILT; Z/HEIGHT FIXED [V harness]. Option 2 (the `holdPlayer` convert/ctx gate) DISPROVEN by bytecode (`holdPlayer` never cleared); see the trash CLIENT MIRROR row above + `votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.)* | [V — derived dup-fix + carry-freeze + carry-JANK + throw-arc + rotation + sound hands-on] |
+| client NATIVE level-loaded chipPile ↔ host proxy expressed on top (ORIGINAL/level-placed piles) | **DUP-DESTROY BUILT + VERIFIED [V harness].** Level-piles get an eid+proxy (eidOnly lane, shared eid both sides) but the client's NATIVE level-loaded chipPile was NEVER reconciled away → it COEXISTED with the host's proxy (the divergence sweep is BLIND to natives). FIX (shipped): `remote_prop_spawn.cpp:387-410` DESTROYS the co-located native at a pile proxy-spawn (exact ~1cm + chipType + IsLiveByIndex; NOT adopt; graceful on 0, exact-or-skip on >1; GATED on `g_claimTrackingActive` = the join bracket only; harness dup-destroy-clean 12 twins / 0 SKIP). The read-only PILE-PROBE is REPLACED by this destroy (RULE 2, retired). | [V harness] |
 | client grabs host shared-trash ↔ host author path | 08: client SUPPRESSES the native grab + sends `GrabIntent` → host executes authoritatively (the door `OnRequest` shape) — client never authors shared trash, and no local clump dupe | [DESIGN] |
 | NPC interceptor ↔ WorldActor interceptor (same BeginDeferred) | DISJOINT allowlists; multi-interceptor support | [V] |
 | nested BeginDeferred steals a pending eid in POST | params-pointer correlation | [V] |

@@ -1,3 +1,5 @@
+> SUPERSEDED (2026-06-22) -- this take's work is FIXED + verified; see research/handson_runbook_2026-06-22_regression_and_harness.md + the canonical finding.
+
 # Hands-on runbook — take-29 — throw ARC (carry/flight stream-continuity) + level-pile PILE-PROBE
 
 **Deployed:** `votv-coop.dll` SHA **`c2a5f49cc98add31`** to all 4 copies (host / copy / copy2 / dev) — verified

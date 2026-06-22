@@ -1,3 +1,5 @@
+> SUPERSEDED (2026-06-22) -- this take's work is FIXED + verified; see research/handson_runbook_2026-06-22_regression_and_harness.md + the canonical finding.
+
 # Hands-on runbook — CLOSE-B chipPile carry — take-26 (the carry fix; YOUR hands-on is the test)
 
 **Deployed:** `votv-coop.dll` SHA **`C9F28176`** to all 4 copies (host / copy / copy2 / dev). Proto **v82**
