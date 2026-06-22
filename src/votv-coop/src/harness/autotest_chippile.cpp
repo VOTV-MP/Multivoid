@@ -40,6 +40,7 @@
 #include "coop/remote_player.h"        // RemotePlayer::GetActor (client-in-world readiness gate)
 #include "coop/prop_element_tracker.h"
 #include "coop/remote_prop.h"
+#include "coop/trash_proxy.h"          // NearestPileProxy (CLIENT visual showcase: aim at a mirrored pile)
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -105,9 +106,54 @@ coop::element::ElementId EidOf(void* pile) {
 void RunAutonomousChipPileTest() {
     const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
     if (!isHost) {
-        UE_LOGI("chippile_test: CLIENT scan-only -- verify in THIS log: 'remote_prop::OnConvert: "
-                "eid=N re-skin -> clump' (the carry mirrored), then '-> pile' (the re-pile). The "
-                "host drives the grab; the convert arrives over the wire.");
+        if (ReadEnv("VOTVCOOP_PILE_SHOWCASE") != "1") {
+            UE_LOGI("chippile_test: CLIENT scan-only -- verify in THIS log: 'remote_prop::OnConvert: "
+                    "eid=N re-skin -> clump' (the carry mirrored), then '-> pile' (the re-pile). The "
+                    "host drives the grab; the convert arrives over the wire.");
+            return;
+        }
+        // VISUAL SHOWCASE (VOTVCOOP_PILE_SHOWCASE=1): aim the client camera at a MIRRORED pile + hold, so an
+        // external window capture gets a clean client view of a pile rendering (de-duped, host height/rotation
+        // -- the eyeball complement to the log harness). Waits for the host's pile work + proxy express, then
+        // teleports to a standoff facing the nearest PILE-form proxy and holds, re-facing each second.
+        UE_LOGI("chippile_test: CLIENT SHOWCASE -- waiting 70s for join + the host pile work + proxy express, "
+                "then facing a mirrored pile proxy");
+        ::Sleep(70000);
+        struct CShow { void* player = nullptr; void* pile = nullptr; ue_wrap::FVector pos{}; float dist = 0.f; };
+        auto cs = std::make_shared<CShow>();
+        if (RunGT([cs](std::atomic<int>& d) {
+                void* p = coop::players::Registry::Get().Local();
+                if (!p || !R::IsLive(p) || !E::GetController(p)) {
+                    UE_LOGW("chippile_test: CLIENT showcase -- no possessed local player"); d.store(2); return; }
+                float dist = -1.f;
+                void* pile = coop::trash_proxy::NearestPileProxy(E::GetActorLocation(p), &dist);
+                if (!pile) { UE_LOGW("chippile_test: CLIENT showcase -- no pile proxy to face yet"); d.store(2); return; }
+                cs->player = p; cs->pile = pile; cs->pos = E::GetActorLocation(pile); cs->dist = dist;
+                UE_LOGI("chippile_test: CLIENT showcase -- nearest pile proxy=%p pos=(%.0f,%.0f,%.0f) dist=%.0fcm",
+                        pile, cs->pos.X, cs->pos.Y, cs->pos.Z, dist);
+                d.store(1);
+            }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no player/pile)"); return; }
+        RunGT([cs](std::atomic<int>& d) {                       // teleport to a 180 cm standoff facing the pile
+            const ue_wrap::FVector at = E::GetActorLocation(cs->player);
+            float ax = at.X - cs->pos.X, ay = at.Y - cs->pos.Y;
+            const float h = std::sqrt(ax * ax + ay * ay);
+            if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
+            const ue_wrap::FVector stand{ cs->pos.X + ax * 180.f, cs->pos.Y + ay * 180.f, cs->pos.Z + 90.f };
+            const ue_wrap::FRotator face = LookAt(stand, cs->pos);
+            E::TeleportTo(cs->player, stand, face);
+            E::SetControlRotation(E::GetController(cs->player), face);
+            UE_LOGI("chippile_test: CLIENT showcase -- teleported to (%.0f,%.0f,%.0f) facing the pile; holding 60s",
+                    stand.X, stand.Y, stand.Z);
+            d.store(1);
+        });
+        for (int i = 0; i < 60; ++i) {                          // hold 60 s, re-facing the pile each second
+            ::Sleep(1000);
+            RunGT([cs](std::atomic<int>& d) {
+                E::SetControlRotation(E::GetController(cs->player), LookAt(E::GetActorLocation(cs->player), cs->pos));
+                d.store(1);
+            });
+        }
+        UE_LOGI("chippile_test: CLIENT showcase -- done holding on the pile");
         return;
     }
 

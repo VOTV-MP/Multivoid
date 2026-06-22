@@ -13,6 +13,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/types.h"          // FVector / FRotator
 
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <unordered_map>
@@ -28,6 +29,7 @@ struct ProxyEntry {
     void* actor     = nullptr;
     void* comp      = nullptr;  // cached UStaticMeshComponent (invariant for the actor's life)
     int   ownerSlot = -1;       // originating peer slot (for the per-slot disconnect retire)
+    bool  isClump   = false;    // current FORM (re-skinned pile<->clump) -- so NearestPileProxy can skip clumps
 };
 
 // eid -> proxy. GAME-THREAD only (every entry point runs on the net-pump game
@@ -175,7 +177,7 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // phase 1 follower
     SkinProxy(actor, comp, chipType, isClump);
     ApplyProxyScale(actor, scale);                              // v83: host-sized (else default unit -> too small)
-    g_proxies[eid] = ProxyEntry{ actor, comp, ownerSlot };
+    g_proxies[eid] = ProxyEntry{ actor, comp, ownerSlot, isClump };
     UE_LOGI("[PILE] trash_proxy: SPAWN eid=%u %s chipType=%u actor=%p ownerSlot=%d "
             "(AStaticMeshActor, rooted, NoCollision)",
             eid, isClump ? "clump" : "pile", static_cast<unsigned>(chipType), actor, ownerSlot);
@@ -190,6 +192,7 @@ void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, 
     if (!actor || !R::IsLive(actor)) return nullptr;  // a rooted proxy is never stale -- defensive
     SkinProxy(actor, it->second.comp, chipType, isClump);  // in place -> binding untouched -> no dup
     ApplyProxyScale(actor, scale);                         // v83: re-apply the per-form scale (clump != pile size)
+    it->second.isClump = isClump;                          // track the new form (NearestPileProxy skips clumps)
     return actor;
 }
 
@@ -220,6 +223,23 @@ void RetireProxy(coop::element::ElementId eid) {
 
 bool IsProxy(coop::element::ElementId eid) {
     return g_proxies.find(eid) != g_proxies.end();
+}
+
+void* NearestPileProxy(const ue_wrap::FVector& fromLoc, float* outDistCm) {
+    UE_ASSERT_GAME_THREAD("trash_proxy::NearestPileProxy");
+    void* best = nullptr;
+    float best2 = -1.f;
+    for (const auto& kv : g_proxies) {
+        const ProxyEntry& e = kv.second;
+        if (e.isClump) continue;                          // want a PILE form (a clump is the transient carry)
+        if (!e.actor || !R::IsLive(e.actor)) continue;
+        const ue_wrap::FVector p = E::GetActorLocation(e.actor);
+        const float dx = p.X - fromLoc.X, dy = p.Y - fromLoc.Y, dz = p.Z - fromLoc.Z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (best2 < 0.f || d2 < best2) { best2 = d2; best = e.actor; }
+    }
+    if (outDistCm) *outDistCm = (best2 >= 0.f) ? std::sqrt(best2) : -1.f;
+    return best;
 }
 
 void OnDisconnectForSlot(int slot) {

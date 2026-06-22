@@ -81,6 +81,11 @@ void RetireProxy(coop::element::ElementId eid);
 // RetireProxy instead of the BP spawn-fresh path. Game thread.
 bool IsProxy(coop::element::ElementId eid);
 
+// Nearest PILE-form proxy actor to `fromLoc` (skips clump-form proxies + dead ones).
+// nullptr if none. `outDistCm` (optional) gets the distance, or -1 on miss. Used by the
+// visual-verification showcase (aim the client camera at a mirrored pile). Game thread.
+void* NearestPileProxy(const ue_wrap::FVector& fromLoc, float* outDistCm);
+
 // Retire every proxy owned by `slot` (a PER-SLOT disconnect -- a single peer
 // dropping while the session stays up). MUST be called before the generic
 // per-slot mirror drain (remote_prop::OnDisconnectForSlot -> DrainMirrorsForSlot),
