@@ -356,6 +356,31 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         const bool isClump = coop::trash_proxy::IsClumpClass(classW);
         ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
+        // [PILE-PROBE] READ-ONLY (2026-06-22) -- confirm the level-pile dup root + the position-match precision
+        // for the destroy-fix (NEXT pass; this build does NOT destroy anything). At a PILE spawn, count the
+        // client's NATIVE actorChipPile_C near the host-expressed pos: a level-placed pile should have exactly
+        // ONE co-located native twin (the dup); a derived (gameplay-born) pile should have ZERO. Reporting both
+        // 1cm and 10cm tells us if the load is bit-exact (1cm catches it -> tight match) or drifted (only 10cm).
+        // SAMPLED (first 12 + every 200th) so the ~870 join spawns don't pay an O(n^2) GUObjectArray walk.
+        if (!isClump) {
+            static uint32_t sProbeN = 0;
+            if (sProbeN < 12 || (sProbeN % 200) == 0) {
+                int near1 = 0, near10 = 0;
+                for (void* o : R::FindObjectsByClass(L"actorChipPile_C")) {
+                    if (!o || !R::IsLive(o)) continue;
+                    const auto p = ue_wrap::engine::GetActorLocation(o);
+                    const float d2 = (p.X - loc.X) * (p.X - loc.X) + (p.Y - loc.Y) * (p.Y - loc.Y) +
+                                     (p.Z - loc.Z) * (p.Z - loc.Z);
+                    if (d2 <= 1.0f)   ++near1;    // within 1 cm  (1 cm^2)
+                    if (d2 <= 100.0f) ++near10;   // within 10 cm (100 cm^2)
+                }
+                UE_LOGI("[PILE-PROBE] before SpawnProxy eid=%u at (%.1f,%.1f,%.1f): native actorChipPile within "
+                        "1cm=%d 10cm=%d [expect 1 for a LEVEL pile (the coexisting native = the dup), 0 for a "
+                        "DERIVED pile; 1cm hit => bit-exact load (tight match safe)]",
+                        payload.elementId, loc.X, loc.Y, loc.Z, near1, near10);
+            }
+            ++sProbeN;
+        }
         void* proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot,
                                                     ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         if (proxy) {
