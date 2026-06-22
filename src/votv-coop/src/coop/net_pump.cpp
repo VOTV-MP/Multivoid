@@ -546,14 +546,37 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // (its own tracking) but broadcasts nothing. (retriggerReadySlots stays --
                 // the episode-end + small-travel branches above legitimately re-bracket on
                 // a real world transition, where the client SHOULD re-reconcile.)
-                std::vector<void*> newProps;
-                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps(&newProps);
-                if (added > 0) {
-                    UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
-                            "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
-                            "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", added);
-                    for (void* a : newProps) coop::prop_snapshot::ExpressIncrementalSpawn(a);
+                // PERF (FPS #3, user 2026-06-22 -- a periodic ~4s FPS stutter on BOTH peers): ReSeedKnownKeyedProps
+                // is a FULL ~237k-entry GUObjectArray census (+ a ToString(NameOf) string-alloc per keyed-
+                // interactable + a second full walk for the world). Running it every ~4s unconditionally cost the
+                // whole walk even when nothing spawned (added==0). GUARD it on the GUObjectArray HIGH-WATER MARK:
+                // NumObjects() grows when a new UObject is appended (the common case for a spawn-menu/toolgun/
+                // ambient/morph prop), so do the census EXACTLY then and SKIP the no-op walk while NumObjects is
+                // unchanged -- eliminating the at-rest stutter (the idle client never walks). A spawn that reuses
+                // a freed slot leaves NumObjects flat; a periodic SAFETY census every ~5th invocation (~20s)
+                // bounds that coverage gap, and any later array growth catches it immediately. The join/world-
+                // change branches above are UNGATED (they always re-seed in full), so snapshot coherence is intact.
+                static int32_t sLastSteadyNum = -1;
+                static int     sSinceFullWalk = 0;
+                const int32_t  curNum   = R::NumObjects();
+                const bool     grew     = (curNum != sLastSteadyNum);
+                const bool     periodic = (++sSinceFullWalk >= 5);   // ~20s safety walk (this branch runs ~0.25 Hz)
+                if (grew || periodic) {
+                    if (periodic && !grew)
+                        UE_LOGI("net_pump: steady-world re-seed -- periodic SAFETY census (NumObjects flat at %d; "
+                                "catches any free-slot-reused spawn the high-water guard skipped)", curNum);
+                    sLastSteadyNum  = curNum;
+                    sSinceFullWalk  = 0;
+                    std::vector<void*> newProps;
+                    const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps(&newProps);
+                    if (added > 0) {
+                        UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
+                                "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
+                                "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", added);
+                        for (void* a : newProps) coop::prop_snapshot::ExpressIncrementalSpawn(a);
+                    }
                 }
+                // else: NumObjects unchanged -> nothing newly allocated -> SKIP the full census (the FPS fix).
             }
         }
     }

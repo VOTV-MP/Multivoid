@@ -146,6 +146,22 @@ $Invariants = @(
         @{ Pass = ($worst -le 40); Detail = "max HOLD-per-eid=$worst ($($byEid.Count) eid(s) held; >40 for one eid = stuck ctx)" }
     }},
 
+    # ---- FPS #3: the steady-world re-seed (a full ~237k GUObjectArray census) must NOT run
+    # every ~4s at rest -- that was the periodic stutter. The high-water guard skips the no-op
+    # walk; on the IDLE client the re-seed rate should drop from ~0.25/s (every 4s) to ~0.05/s
+    # (the ~20s safety walk). Rate = count / (last-first timestamp span) over the client log.
+    @{ Name='fps-reseed-rate'; Severity='WARN'; Check={
+        $rs = $C | Select-String -Pattern 're-seed found .*\[snapshot-completeness\]'
+        if ($rs.Count -lt 3) { return @{ Pass = $true; Detail = "$($rs.Count) client re-seed(s) -- too few to rate" } }
+        $ts = @($rs | ForEach-Object {
+            if ($_.Line -match '^\[(\d\d):(\d\d):(\d\d)\]') { [int]$matches[1]*3600 + [int]$matches[2]*60 + [int]$matches[3] } })
+        $span = $ts[-1] - $ts[0]
+        if ($span -le 0) { return @{ Pass = $true; Detail = "$($rs.Count) re-seeds, span 0s" } }
+        $rate = [math]::Round($rs.Count / $span, 3)
+        @{ Pass = ($rate -lt 0.15)
+           Detail = "client steady re-seed rate=$rate/s ($($rs.Count) over ${span}s; pre-fix ~0.25/s every 4s, fixed <0.15)" }
+    }},
+
     # ---- Crash/health: neither log should carry a SEH crash dump or our [Error] from
     # the DLL during the scenario.
     @{ Name='no-crash-or-error'; Severity='CRITICAL'; Check={
