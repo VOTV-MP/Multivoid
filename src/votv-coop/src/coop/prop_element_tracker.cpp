@@ -699,20 +699,43 @@ void CollectTrackedPileTransforms(
     // scratch save was serialized -- save_transfer::OnRequest, same game-thread tick) is the
     // value the save holds (saveObjects read GetTransform the same instant), so it == what the
     // joining client loads its native at. KEYLESS chipPile only (a keyed Aprop_C is covered by
-    // the R2 key-diff; only the keyless pile duped on a host-moved-in-window). An UNSEEDED pile
-    // (no eid yet) is skipped -- no stable key, so the receiver falls back to the live pose for
-    // it. One GUObjectArray walk, cold connect-edge path, game thread (engine reads).
+    // the R2 key-diff; only the keyless pile duped on a host-moved-in-window).
+    //
+    // SELF-SEED (take-4 ROOT FIX, 2026-06-23): a live chipPile with no eid here is simply
+    // NOT-YET-RE-MINTED, not absent. The host's world-change re-seed can still be DEFERRED at
+    // the connect instant -- net_pump parks it through the menu->game mass-purge drain
+    // (net_pump.cpp:528), and because VOTV is ONE persistent UWorld the world-stamp stays LIVE,
+    // so IsRegistrySeededForCurrentWorld() is TRUE and is no signal at all (the take-3 gate that
+    // never fired). Empirically (take-2 + take-3 logs) this leaves EVERY pile eid==0 at capture
+    // -> the eid-keyed map is EMPTY -> the client can't twin-destroy a host-moved-in-window pile
+    // -> the join-window DUP. So MINT the eid right here (register-only, idempotent -- the SAME
+    // path SeedWalk_ phase 2 uses at :618) instead of skipping. The eid is identical to the one
+    // the connect drain later broadcasts (MarkPropElement no-ops on the now-tracked actor when
+    // the deferred re-seed runs), so the client's save-time-position key resolves. The capture
+    // now OWNS its precondition rather than trusting a seed-timing gate. One GUObjectArray walk,
+    // cold connect-edge path, game thread (engine reads + register-only mints, no broadcast).
     const int32_t n = R::NumObjects();
+    int minted = 0;
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         if (!ue_wrap::prop::IsChipPile(obj)) continue;                 // lineage test, pure pointer walks
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
-        const coop::element::ElementId eid = GetPropElementIdForActor(obj);
-        if (eid == coop::element::kInvalidId || eid == 0u) continue;    // unseeded -> no stable cross-peer key
+        coop::element::ElementId eid = GetPropElementIdForActor(obj);
+        if (eid == coop::element::kInvalidId || eid == 0u) {
+            MarkPropElement(obj, L"", R::ClassNameOf(obj));            // mint now (register-only, idempotent)
+            eid = GetPropElementIdForActor(obj);                      // resolves in-call (minted before return)
+            if (eid == coop::element::kInvalidId || eid == 0u)
+                continue;  // mint declined (registry full) -> live-pose fallback for this pile
+            ++minted;
+        }
         out[eid] = ue_wrap::engine::GetActorLocation(obj);
     }
+    if (minted > 0)
+        UE_LOGI("prop_element_tracker: CollectTrackedPileTransforms self-seeded %d unseeded live "
+                "chipPile(s) (world-change re-seed still deferred at capture) -> %zu pile save-time xform(s)",
+                minted, out.size());
 }
 
 bool HasSeededOnce() {

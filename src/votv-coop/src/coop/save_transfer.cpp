@@ -348,29 +348,6 @@ void OnRequest(int peerSlot) {
             UE_LOGI("save_transfer: slot %d streaming LIVE host world (%u bytes, %u chunks, "
                     "crc=0x%08X)",
                     peerSlot, static_cast<uint32_t>(hs.blob.size()), hs.chunkCount, crc);
-            // ROOT FIX (v86 Path 1c, take-3 2026-06-23): both baselines below read our
-            // eid/key overlay. After a menu->game mass-purge, net_pump DEFERS the
-            // world-change re-seed to drain-complete (net_pump.cpp:528 -- avoids opening
-            // a snapshot bracket against a majority-dead registry). A client that requests
-            // the save while that re-seed is still pending (the host just loaded in) lands
-            // on a registry with NO eid for the live world's keyless chipPiles ->
-            // CollectTrackedPileTransforms skips every one (0 keys) -> the client can't
-            // twin-destroy a host-moved-in-window pile -> the join-window DUP. (take-2
-            // hands-on: "0 pile save-time xforms" captured at 19:04:24; the deferred
-            // re-seed bound 869 chipPile eids 8s later at 19:04:32.) Force the re-seed
-            // HERE when the registry isn't seeded for the live world, so the capture sees
-            // the SAME eids the connect drain (ConnectReplayForSlot -> TriggerForSlot at
-            // world-ready, ~8s out) will broadcast. Purge-safe: SeedWalk_ IsLive-filters
-            // dying actors and is idempotent (adds 0 when already seeded -> a healthy
-            // connect, where the world long-seeded, is byte-identical to before -- this is
-            // a no-op on the common path). Opens NO snapshot bracket. The scratch save was
-            // JUST captured above, proving the gamemode/world is live + saveable.
-            if (!coop::prop_element_tracker::IsRegistrySeededForCurrentWorld()) {
-                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
-                UE_LOGI("save_transfer: slot %d -- forced pre-capture re-seed (world-change re-seed "
-                        "was still deferred; current-world pile/prop eids were unbound) -> %zu tracked",
-                        peerSlot, added);
-            }
             // R2 baseline: record the keyed-prop set this blob contains (== the host's
             // live keyed props this instant -- the blob was just serialized from them).
             // SendBlobDivergenceDeletes diffs it at the connect edge. LIVE-capture path
