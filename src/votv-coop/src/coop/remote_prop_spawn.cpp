@@ -1296,6 +1296,10 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // One GUObjectArray walk, once per join (cold path), pointer-compare class filter before any read.
     if (g_pileBindIndexBuilt) {
         int live = 0, le5 = 0, mid = 0, gt30 = 0, none = 0;
+        int totalLive = 0, proxyMatched = 0;   // DIAGNOSTIC: distinguish "0 orphans because all natives DIED"
+                                               // (totalLive==0) from "0 because every survivor is 1cm-proxy-matched"
+                                               // (totalLive==proxyMatched). The 2026-06-23 same-machine drift hit
+                                               // census=0 -- this says which: consumed (incl. wrong-consumption) vs no-divergence.
         const bool verbose = PileDeltaProbeOn();
         const int32_t n = R::NumObjects();
         for (int32_t i = 0; i < n; ++i) {
@@ -1303,11 +1307,12 @@ static void RunDivergenceSweep_(void* localPlayer) {
             if (!o || !R::IsLive(o)) continue;
             if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only (NOT our proxy)
             if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+            ++totalLive;
             const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
             float d = -1.f;
             void* prox = coop::trash_proxy::NearestPileProxy(loc, &d);
             const bool hasProx = (prox != nullptr && d >= 0.f);
-            if (hasProx && d <= 1.0f) continue;   // a 1cm-matched twin the burst should have destroyed -> not an orphan
+            if (hasProx && d <= 1.0f) { ++proxyMatched; continue; }   // a 1cm-matched twin -> not an orphan
             ++live;
             // The >50%% valve early-returns on an incomplete snapshot before this census is reached, so the
             // proxy set is complete here -> "no proxy near" means the host genuinely has no pile there.
@@ -1325,10 +1330,10 @@ static void RunDivergenceSweep_(void* localPlayer) {
                             loc.X, loc.Y, loc.Z, ct);
             }
         }
-        UE_LOGI("[PILE-CENSUS] %d live orphan native(s) (of %d built, FRESH walk): le5=%d (near-miss dup) "
-                "5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- live native chipPiles the "
-                "proxy burst did NOT 1cm-claim; the Phase-2 absence-removal candidates (READ-ONLY this build)",
-                live, g_pileIndexBuiltCount, le5, mid, gt30, none);
+        UE_LOGI("[PILE-CENSUS] %d live orphan native(s) (of %d built, FRESH walk; totalLiveNatives=%d proxyMatched<=1cm=%d): "
+                "le5=%d (near-miss dup) 5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- "
+                "[totalLive==0 => all natives DIED/consumed; totalLive>0 & orphans=0 => survivors all proxy-matched]",
+                live, g_pileIndexBuiltCount, totalLive, proxyMatched, le5, mid, gt30, none);
     }
 
     g_claimedActors.clear();

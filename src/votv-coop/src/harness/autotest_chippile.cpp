@@ -834,11 +834,16 @@ void RunPileDriftScenario() {
         for (void* a : sel->move) {
             if (!R::IsLive(a)) continue;
             const ue_wrap::FVector p = E::GetActorLocation(a);
-            const ue_wrap::FVector to{ p.X + 60.f, p.Y + 60.f, p.Z };   // ~85 cm horizontal -> a clear >30cm orphan
+            // Move STRAIGHT UP 30m into empty air -- NOT +85cm horizontal into the dense cluster. The +85cm
+            // horizontal made the moved proxy land within 1cm of a same-chipType NEIGHBOUR's native and
+            // 1cm-WRONG-CONSUME it (the dense-cluster mis-consumption that masked the census, 2026-06-23 trace).
+            // Empty air = no neighbour to wrong-consume -> the moved proxy is cleanly un-mirrored AND the client
+            // native at the OLD position survives as a true orphan the census can count.
+            const ue_wrap::FVector to{ p.X, p.Y, p.Z + 3000.f };
             E::SetActorLocation(a, to);
             ++moved;
-            UE_LOGI("[PILE-DRIFT] HOST moved pile #%d @(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) -- moved orphan (the "
-                    "client native stays at the OLD pos; its proxy spawns at the new one)",
+            UE_LOGI("[PILE-DRIFT] HOST moved pile #%d @(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) [+30m UP, empty air] -- "
+                    "moved orphan (client native stays at OLD pos; proxy spawns up high, no neighbour to wrong-consume)",
                     moved, p.X, p.Y, p.Z, to.X, to.Y, to.Z);
         }
         UE_LOGI("[PILE-DRIFT] HOST drift COMPLETE -- %d destroyed + %d moved = %d orphans seeded BEFORE the client "
