@@ -1286,35 +1286,49 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // indistinguishable from a census that never ran (the exact ambiguity the 2026-06-23 clean same-machine
     // smoke hit: 869 built, all matched, no [PILE-CENSUS] line -> looked broken). The summary line is the
     // proof the census ran + the count; N=0 on a clean join is the expected, INFORMATIVE result.
+    // FRESH walk at the sweep (GC-ROBUST) -- do NOT re-use g_pileBindIndex's build-time internal indices.
+    // The 2026-06-23 calibration proved why: a mass-purge runs right at the sweep (prop_element_tracker
+    // reaps 256 dead Prop Elements/call, draining the join-tail backlog -- log-confirmed at the SAME second
+    // as the sweep, repeating every ~4s), churning the GUObjectArray so every stored internalIdx goes STALE
+    // -> IsLiveByIndex(actor, idx) false-negatives on every survivor -> "0 live of 17" while the drift had
+    // seeded 8 orphans. So re-enumerate live native chipPiles with FRESH indices: the burst's 1cm twin-
+    // destroy already removed every MATCHED native, so the live survivors ARE the orphan set directly.
+    // One GUObjectArray walk, once per join (cold path), pointer-compare class filter before any read.
     if (g_pileBindIndexBuilt) {
         int live = 0, le5 = 0, mid = 0, gt30 = 0, none = 0;
         const bool verbose = PileDeltaProbeOn();
-        for (const auto& c : g_pileBindIndex) {
-            if (!R::IsLiveByIndex(c.actor, c.idx)) continue;   // already GC'd -- not an orphan
-            ++live;
+        const int32_t n = R::NumObjects();
+        for (int32_t i = 0; i < n; ++i) {
+            void* o = R::ObjectAt(i);
+            if (!o || !R::IsLive(o)) continue;
+            if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only (NOT our proxy)
+            if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+            const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
             float d = -1.f;
-            void* prox = coop::trash_proxy::NearestPileProxy(ue_wrap::FVector{c.x, c.y, c.z}, &d);
+            void* prox = coop::trash_proxy::NearestPileProxy(loc, &d);
             const bool hasProx = (prox != nullptr && d >= 0.f);
-            // noProxy is unambiguous HERE: the >50%% valve early-returns on an incomplete snapshot
-            // (before this census is ever reached), so by now the proxy set is complete -> "no proxy
-            // near this native" means the host genuinely has no pile there, not "the proxy is still coming".
-            if (!hasProx)        ++none;   // no host pile anywhere near -> COLLECTED orphan
-            else if (d <= 5.f)   ++le5;    // a proxy sits ~here -> the host pile settled slightly off = near-miss DUP
-            else if (d <= 30.f)  ++mid;    // ambiguous (settle drift vs neighbour) -> watch this band
-            else                 ++gt30;   // nearest host pile is far -> MOVED/true orphan
+            if (hasProx && d <= 1.0f) continue;   // a 1cm-matched twin the burst should have destroyed -> not an orphan
+            ++live;
+            // The >50%% valve early-returns on an incomplete snapshot before this census is reached, so the
+            // proxy set is complete here -> "no proxy near" means the host genuinely has no pile there.
+            if (!hasProx)        ++none;   // no host pile anywhere near      -> COLLECTED orphan
+            else if (d <= 5.f)   ++le5;    // a proxy sits ~here              -> host pile settled slightly off = near-miss DUP
+            else if (d <= 30.f)  ++mid;    // ambiguous (settle vs neighbour) -> watch this band
+            else                 ++gt30;   // nearest host pile is far        -> MOVED / true orphan
             if (verbose) {
+                const unsigned ct = static_cast<unsigned>(ue_wrap::prop::GetChipType(o));
                 if (hasProx)
                     UE_LOGI("[PILE-CENSUS] orphan native @(%.1f,%.1f,%.1f) chipType=%u nearestProxy_d=%.1fcm",
-                            c.x, c.y, c.z, static_cast<unsigned>(c.chipType), d);
+                            loc.X, loc.Y, loc.Z, ct, d);
                 else
                     UE_LOGI("[PILE-CENSUS] orphan native @(%.1f,%.1f,%.1f) chipType=%u nearestProxy_d=NONE",
-                            c.x, c.y, c.z, static_cast<unsigned>(c.chipType));
+                            loc.X, loc.Y, loc.Z, ct);
             }
         }
-        UE_LOGI("[PILE-CENSUS] %d live orphan native(s) (%zu in index of %d built): le5=%d (near-miss dup) "
-                "5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- host-drift natives the "
-                "proxy burst did NOT claim; the Phase-2 absence-removal candidates (READ-ONLY this build)",
-                live, g_pileBindIndex.size(), g_pileIndexBuiltCount, le5, mid, gt30, none);
+        UE_LOGI("[PILE-CENSUS] %d live orphan native(s) (of %d built, FRESH walk): le5=%d (near-miss dup) "
+                "5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- live native chipPiles the "
+                "proxy burst did NOT 1cm-claim; the Phase-2 absence-removal candidates (READ-ONLY this build)",
+                live, g_pileIndexBuiltCount, le5, mid, gt30, none);
     }
 
     g_claimedActors.clear();
