@@ -55,6 +55,13 @@ orphan: adopt DEAD (3 gates), the "12/871 destroys" was a LOG artifact (fired ~8
 host-drift orphans, fix designed (reconcile after `HasLoadTailQuiesced`).** **L2 RE done** (mod-drive the
 native `ui_UI_C` window; suppress `PlaySound2D(use_deny)`; eye-anchor). Full RE + the L5 lesson:
 `votv-pile-L1orphan-L2window-L5fps-reckoning-2026-06-23.md`.
+**Update (2026-06-23 LATEST, decisive hands-on) — L1 ROOT REVERSED: it is a JOIN-WINDOW two-channel DUP,
+NOT a join orphan.** A controlled hands-on (kerfur control clean, pile dups) proved a chipPile moved
+DURING the join-load window dups on the client (scratch-save native @old + broadcast-convert proxy @new,
+>1cm → the 1cm dedup can't match). Pre-connect divergence does NOT exist (fresh scratch save at connect
+captures it) → every census=0 was correct → the "orphan census + absence-removal at the JOIN" line is
+CANCELLED. Dup is CLIENT-LOCAL (host correct) + persistent. Fix designed (client-side: hold-broadcast-til-
+load OR dedup-by-eid), not built. Canonical: **`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**.
 
 **Update (2026-06-22 FINAL, HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83 — all committed, push held):**
 the throw-arc/probe state above is now the SHIPPED+VERIFIED final state. **Pile-landing ROTATION + throw SOUND

@@ -1,5 +1,18 @@
 # 08 — HOST-AUTHORITATIVE TRASH CHANNEL (the pile-sync redesign)
 
+> **UPDATE 2026-06-23 (LATEST, decisive hands-on) — L1 ROOT IS A JOIN-WINDOW DUP, not a join orphan.**
+> A controlled hands-on (6 items: 2 kerfur + 4 pile, host moves them onto asphalt DURING the join-load
+> window) proved: a chipPile MOVED in the window [scratch-save ... client-load-100%] DUPS on the client
+> (scratch-save native @old + broadcast-convert proxy @new, >1cm apart → the 1cm position-dedup can't
+> match → 2 objects). Kerfur (single channel = save only) does NOT dup = the clean control. The dup is
+> CLIENT-LOCAL (host state correct) + PERSISTENT (two real objects, not self-resolving). **Pre-connect
+> divergence does NOT exist** (the fresh scratch save at connect captures it), so the earlier "[PILE-CENSUS]
+> orphan census + absence-removal AT THE JOIN" direction is CANCELLED (it hunted join-orphans the save-
+> transfer makes impossible — hence every census=0, correct). FIX (designed, not built, CLIENT-side):
+> (a) hold the broadcast convert until client load-100%, or (b) dedup match-by-eid not 1cm. Canonical:
+> `research/findings/votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`. **The L1 bits in the banner
+> below (level-pile client->host / absence-removal) are HISTORICAL.**
+
 > **UPDATE 2026-06-23 (HEAD `54a3a332`) — a real two-peer HANDS-ON of the v85 chain found 5 layers; this
 > session drove them. Corrections to the status below:**
 > - **L3 carry-JITTER + L4 wild-THROW: FIXED [V hands-on + V harness]** (`92a76f27`). The carry was NOT

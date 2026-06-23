@@ -1,5 +1,15 @@
 # Pile L1 (orphan) + L2 (interaction window) + L5 (FPS) reckoning — 2026-06-23
 
+> **CORRECTION 2026-06-23 (later, decisive hands-on) — the L1 "orphan / absence-removal at the JOIN"
+> direction in this doc is SUPERSEDED + CANCELLED.** A controlled hands-on proved the real L1 bug is a
+> JOIN-WINDOW two-channel DUP, not a join-time orphan: pre-connect host moves go INTO the fresh scratch
+> save → no pre-connect divergence exists, which is why every census read 0 (correct, not a bug). The
+> real dup is a host pile MOVED during the join-load window — the scratch-save native (old pos) + the
+> broadcast-convert proxy (new pos) diverge >1cm and the 1cm position-dedup can't match them. Canonical:
+> **`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**. The L1 sections below (adopt-dead / the
+> 3 gates / absence-removal-after-quiescence) are HISTORICAL — adopt is still dead, but the FIX target
+> moved off the join entirely. **L2 + L5 sections below are still current.**
+
 Point-in-time DESIGN + durable RE. A real two-peer HANDS-ON of the v85 chipPile client-grab chain
 (dll `11135488`) surfaced 5 layers. L3 (carry jitter) + L4 (wild throw) were FIXED + `[V hands-on +
 V harness]` (commit `92a76f27`, see `docs/piles/08`). This finding records the durable RE for the three
