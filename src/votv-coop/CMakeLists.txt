@@ -250,6 +250,7 @@ add_library(votv-coop SHARED
     src/coop/npc_world_enum.cpp
     src/coop/world_actor_sync.cpp
     src/coop/prop_echo_suppress.cpp
+    src/coop/pile_reconcile.cpp
     src/coop/prop_element_tracker.cpp
     src/coop/prop_lifecycle.cpp
     src/coop/prop_snapshot.cpp
