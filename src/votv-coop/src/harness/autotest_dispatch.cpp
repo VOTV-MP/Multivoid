@@ -56,6 +56,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // mirrored pile eid; the HOST executes playerGrabbed on the puppet + broadcasts the convert + drives the
     // held clump. Exercises the full client->host wire/router/handler/hand-drive (no client suppress/collision).
     SpawnIf("VOTVCOOP_RUN_GRAB_INTENT_TEST", "synthetic GrabIntent test", &GrabIntentTestThread, role);
+    // HOST-DRIFT scenario (L1 orphan census driver, docs/piles/08): the HOST destroys + moves some of its
+    // own native chipPiles in the pre-connect window so its join snapshot diverges from the save the client
+    // loaded -> the client's join-sweep [PILE-CENSUS] populates with real orphans. Read-only census this build.
+    SpawnIf("VOTVCOOP_RUN_PILE_DRIFT", "host-drift pile scenario", &PileDriftScenarioThread, role);
     // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
     // peer's puppet should reflect it via the ItemActivate wire path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);

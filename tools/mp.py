@@ -704,6 +704,13 @@ def cmd_smoke(args) -> None:
         kill_all()
         sys.exit(1)
 
+    # Optional host-solo settle BEFORE the client launches (default 0 = unchanged). A pre-connect
+    # window so a host-drift scenario (VOTVCOOP_RUN_PILE_DRIFT) can diverge the host's world before
+    # the snapshot is taken -- the only way to seed real orphans for the client's [PILE-CENSUS].
+    if getattr(args, "host_settle", 0) and args.host_settle > 0:
+        log(f"host-settle {args.host_settle}s (solo window for a host-drift scenario before connect)...")
+        time.sleep(args.host_settle)
+
     log("--- CLIENT LAUNCH ---")
     # Client: 720p on secondary monitor (per established hands-on pattern --
     # see [[feedback-user-prefers-1080-windows]]). If only one monitor is
@@ -2306,6 +2313,10 @@ def main() -> None:
                          help="seconds to wait for host UDP bind")
     p_smoke.add_argument("--ram-kill-mb", type=int, default=8000,
                          help="hard kill threshold (born from 19 GB install-loop incident)")
+    p_smoke.add_argument("--host-settle", type=int, default=0,
+                         help="seconds the host runs SOLO after binding UDP before the client launches "
+                              "(default 0 = unchanged). Use a pre-connect window for a host-drift scenario "
+                              "(VOTVCOOP_RUN_PILE_DRIFT) so the host can diverge its world before the snapshot.")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
 

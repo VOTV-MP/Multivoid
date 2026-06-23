@@ -260,6 +260,9 @@ struct PileBindCandidate {
 std::vector<PileBindCandidate> g_pileBindIndex;
 bool g_pileBindIndexBuilt = false;
 int  g_pileBindCount = 0;  // per-bracket bind counter (throttles the log)
+int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orphan-census valve denominator:
+                                 // leftovers / built = the host-drift fraction; a huge fraction = wire loss,
+                                 // not divergence -> the census/removal must refuse it, like the >50%% sweep valve)
 
 // [PILE-DELTA] probe gate (L1 orphan histogram): env VOTVCOOP_PILE_DELTA_PROBE, read ONCE + cached. Ships
 // dark (off => zero cost). When on, the destroy loop's matchCount==0 branch logs the per-orphan nearest-
@@ -277,6 +280,7 @@ void ResetPileBindIndex() {
     g_pileBindIndex.shrink_to_fit();
     g_pileBindIndexBuilt = false;
     g_pileBindCount = 0;
+    g_pileIndexBuiltCount = 0;
 }
 
 void EnsurePileBindIndex() {
@@ -299,6 +303,7 @@ void EnsurePileBindIndex() {
             {obj, R::InternalIndexOf(obj), loc.X, loc.Y, loc.Z,
              ue_wrap::prop::GetChipType(obj)});
     }
+    g_pileIndexBuiltCount = static_cast<int>(g_pileBindIndex.size());  // census valve denominator (pre-consume size)
     UE_LOGI("remote_prop_spawn: pile-bind index built -- %zu local chipPile candidate(s)",
             g_pileBindIndex.size());
 }
@@ -1253,6 +1258,60 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // >50%% valve make any REMAINING re-fire (only a genuine world transition re-brackets
     // now) bounded and safe -- a re-sweep can no longer thrash the world or doom mirrors
     // (mirrors are excluded at the source). So there is nothing left to latch against.
+
+    // ---- L1 ORPHAN CENSUS (2026-06-23, READ-ONLY -- insertion #2). We are now post-quiescence
+    // (g_sweepFired set above), post-burst, and past the >50%% valve. The leftover g_pileBindIndex
+    // entries are native level-chipPiles that NO arriving proxy claimed within 1cm. The PropSpawn
+    // bracket is PROVABLY drained before this sweep fires (in-lane FIFO Begin->[every PropSpawn]->
+    // Complete on Lane::Bulk; SnapshotComplete only ARMS the sweep -- agent-verified 2026-06-23),
+    // so a leftover is a real host-DRIFT orphan: the host MOVED the pile (its proxy is elsewhere)
+    // or COLLECTED it (no proxy) since the save the client loaded. These are EXACTLY the orphans
+    // the sweep's Registry doom above MISSES -- a level-native enters the Prop Registry lazily, so
+    // SnapshotActorsByType(Prop) never enumerates it. This is the L1 hole: a human aims at one of
+    // these surviving natives, grabs it through the REAL interaction system (it is a real
+    // actorChipPile_C, not our proxy), so no GrabIntent is sent and the host never sees the grab.
+    //
+    // READ-ONLY for now (absence-removal is Phase 2): band each orphan by the distance to the
+    // nearest live PILE-form proxy + log the histogram, so the removal thresholds come from REAL
+    // host-drift data (measure before cut). DIVERGES from MTA, which removes purely by ID/
+    // membership (Client/.../CPacketHandler.cpp Packet_EntityRemove deletes only the exact IDs the
+    // server names, never by position): our chipPiles are KEYLESS + deterministically level-placed,
+    // so the host pile and the client native share NO cross-peer id -> position is the only key.
+    // MTA's client starts EMPTY (it never holds a local save), so it never has this orphan class;
+    // the position+valve approach is the justified adaptation (RULE 2026-05-28 divergence note --
+    // the >50%% valve is the partial-snapshot guard MTA gets for free from its empty-start + JOINED
+    // gate). Cold path (once per join), bounded (a few dozen leftovers x a proxy-set walk each).
+    if (g_pileBindIndexBuilt && !g_pileBindIndex.empty()) {
+        int live = 0, le5 = 0, mid = 0, gt30 = 0, none = 0;
+        const bool verbose = PileDeltaProbeOn();
+        for (const auto& c : g_pileBindIndex) {
+            if (!R::IsLiveByIndex(c.actor, c.idx)) continue;   // already GC'd -- not an orphan
+            ++live;
+            float d = -1.f;
+            void* prox = coop::trash_proxy::NearestPileProxy(ue_wrap::FVector{c.x, c.y, c.z}, &d);
+            const bool hasProx = (prox != nullptr && d >= 0.f);
+            // noProxy is unambiguous HERE: the >50%% valve early-returns on an incomplete snapshot
+            // (before this census is ever reached), so by now the proxy set is complete -> "no proxy
+            // near this native" means the host genuinely has no pile there, not "the proxy is still coming".
+            if (!hasProx)        ++none;   // no host pile anywhere near -> COLLECTED orphan
+            else if (d <= 5.f)   ++le5;    // a proxy sits ~here -> the host pile settled slightly off = near-miss DUP
+            else if (d <= 30.f)  ++mid;    // ambiguous (settle drift vs neighbour) -> watch this band
+            else                 ++gt30;   // nearest host pile is far -> MOVED/true orphan
+            if (verbose) {
+                if (hasProx)
+                    UE_LOGI("[PILE-CENSUS] orphan native @(%.1f,%.1f,%.1f) chipType=%u nearestProxy_d=%.1fcm",
+                            c.x, c.y, c.z, static_cast<unsigned>(c.chipType), d);
+                else
+                    UE_LOGI("[PILE-CENSUS] orphan native @(%.1f,%.1f,%.1f) chipType=%u nearestProxy_d=NONE",
+                            c.x, c.y, c.z, static_cast<unsigned>(c.chipType));
+            }
+        }
+        UE_LOGI("[PILE-CENSUS] %d live orphan native(s) (%zu in index of %d built): le5=%d (near-miss dup) "
+                "5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- host-drift natives the "
+                "proxy burst did NOT claim; the Phase-2 absence-removal candidates (READ-ONLY this build)",
+                live, g_pileBindIndex.size(), g_pileIndexBuiltCount, le5, mid, gt30, none);
+    }
+
     g_claimedActors.clear();
     g_claimTrackingActive = false;
     ResetPileBindIndex();  // bracket over: drop candidate pointers (would dangle past the GC below)

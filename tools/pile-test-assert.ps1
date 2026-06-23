@@ -330,6 +330,36 @@ $Invariants = @(
         @{ Pass = $true; Detail = "orphan deltas: $near in 0-5cm (tight-pos), $mid in 5-30cm, $far in >30cm (absence), $none NONE ($($pd.Count) total)" }
     }},
 
+    # ---- L1 [PILE-CENSUS] orphan histogram (insertion #2, user 2026-06-23): the client's join-sweep
+    # enumerates the leftover g_pileBindIndex (native chipPiles NO proxy claimed within 1cm = host-drift
+    # orphans the Registry-doom sweep misses, since a level-native enters the Prop Registry lazily). One
+    # summary line, banded by nearest-PROXY distance. INFO -- this is the data that picks the Phase-2
+    # absence-removal thresholds. Reports the band split + the leftover-vs-built fraction (the valve input).
+    @{ Name='pile-census-orphans'; Severity='INFO'; Check={
+        $cz = $C | Select-String -Pattern '\[PILE-CENSUS\] (\d+) live orphan native.* of (\d+) built\): le5=(\d+) .*5_30=(\d+) .*gt30=(\d+) .*noProxy=(\d+)'
+        if ($cz.Count -eq 0) { return @{ Pass = $true; Detail = 'no [PILE-CENSUS] summary (no join sweep, or no pile-bind index built this run)' } }
+        $m = $cz[-1].Matches[0]   # last (most recent) join census
+        $live=[int]$m.Groups[1].Value; $built=[int]$m.Groups[2].Value
+        $le5=[int]$m.Groups[3].Value; $mid=[int]$m.Groups[4].Value; $gt30=[int]$m.Groups[5].Value; $none=[int]$m.Groups[6].Value
+        $frac = if ($built -gt 0) { [math]::Round($live / $built, 3) } else { 0 }
+        @{ Pass = $true; Detail = "$live orphan(s) of $built built (frac=$frac): le5=$le5 (near-miss dup), 5_30=$mid (ambiguous), gt30=$gt30 (moved), noProxy=$none (collected)" }
+    }},
+
+    # ---- L1 host-drift seeded -> censused: when the host-drift scenario ran (VOTVCOOP_RUN_PILE_DRIFT ->
+    # '[PILE-DRIFT] HOST drift COMPLETE'), the client's [PILE-CENSUS] MUST report >0 orphans (the seeded
+    # divergence was actually observed by the census). A 0-orphan census after a drift = the drift raced the
+    # snapshot (ran too late) OR the census missed the leftovers -> the diagnostic itself is broken. WARN
+    # (gated on the drift scenario running; a non-drift scenario passes as not-exercised).
+    @{ Name='pile-drift-censused'; Severity='WARN'; Check={
+        $drift = Matches $H '\[PILE-DRIFT\] HOST drift COMPLETE -- (\d+) destroyed \+ (\d+) moved = (\d+) orphans seeded'
+        if ($drift.Count -eq 0) { return @{ Pass = $true; Detail = 'no host-drift scenario this run (not exercised)' } }
+        $seeded = [int]$drift[-1].Matches[0].Groups[3].Value
+        $cz = $C | Select-String -Pattern '\[PILE-CENSUS\] (\d+) live orphan native'
+        $orphans = if ($cz.Count -gt 0) { [int]$cz[-1].Matches[0].Groups[1].Value } else { 0 }
+        @{ Pass = ($orphans -gt 0)
+           Detail = "host seeded $seeded orphan(s); client census found $orphans (drift must be observed; 0 = raced the snapshot or census broken)" }
+    }},
+
     # ---- Crash/health: neither log should carry a SEH crash dump or our [Error] from
     # the DLL during the scenario.
     @{ Name='no-crash-or-error'; Severity='CRITICAL'; Check={

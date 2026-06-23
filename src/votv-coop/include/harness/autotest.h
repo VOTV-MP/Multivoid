@@ -64,6 +64,15 @@ DWORD WINAPI PuppetGrabProbeThread(LPVOID arg);
 void RunGrabIntentTest();
 DWORD WINAPI GrabIntentTestThread(LPVOID arg);
 
+// HOST-DRIFT scenario (env VOTVCOOP_RUN_PILE_DRIFT=1, L1 orphan census driver). HOST-only. During the
+// pre-connect solo window (use mp.py smoke --host-settle to guarantee it) the host edits its OWN world --
+// DESTROYS N native chipPiles + MOVES M -- so its join snapshot diverges from the save both peers loaded.
+// The client then spawns proxies at the host's drifted poses; the unmatched client natives survive as
+// orphans, which the client's join-sweep [PILE-CENSUS] reports (banded by nearest-proxy distance). The ONLY
+// way to populate the orphan histogram autonomously (a clean same-save join has zero drift = zero orphans).
+void RunPileDriftScenario();
+DWORD WINAPI PileDriftScenarioThread(LPVOID arg);
+
 // Clump VISIBILITY probe (env VOTVCOOP_RUN_CLUMPVIS_PROBE=1). Solo. Spawns a bare
 // prop_garbageClump_C in front of the player + logs whether its StaticMesh asset is
 // null (empty) or named (visible) -- gates the mannequin-model rework. Launch via mp.py clumpvis.

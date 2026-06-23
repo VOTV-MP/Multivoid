@@ -60,6 +60,7 @@
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -756,8 +757,105 @@ void RunGrabIntentTest() {
             "[GRAB-INTENT]/[THROW-INTENT]/[TRASH-CARRY], client APPLY + ToPile SNAP). useReal=%d", pk->eid, useReal ? 1 : 0);
 }
 
+// ---------------------------------------------------------------------------------------------------
+// HOST-DRIFT scenario (L1 orphan census driver) -- VOTVCOOP_RUN_PILE_DRIFT=1, HOST-only.
+//
+// Creates KNOWN host-vs-save divergence so the client's join-time orphan census ([PILE-CENSUS] in
+// remote_prop_spawn.cpp RunDivergenceSweep_) populates. Both peers load the SAME save (all chipPiles at
+// the saved positions). This runs on the HOST during the PRE-CONNECT solo window (use mp.py smoke
+// --host-settle to guarantee it) and drifts the host's OWN piles BEFORE the client's snapshot is taken:
+//   - DESTROY N piles -> the host snapshot OMITS them      -> the client native has NO proxy   (collected orphan)
+//   - MOVE   M piles  -> the host snapshot has them MOVED   -> the client native is far from its proxy (moved orphan)
+// The client loads all piles at the saved positions, spawns proxies at the host's (drifted) positions, the
+// 1cm twin-destroy consumes only the UNMOVED twins, and the N+M drifted natives survive as orphans ->
+// the client's join-sweep [PILE-CENSUS] reports them, banded by nearest-proxy distance. This is the ONLY
+// way to populate the histogram autonomously (a clean same-save join has ZERO drift = zero orphans).
+//
+// READ-ONLY on the client side this build (the census does not yet remove -- Phase 2). The host just edits
+// its own world. MUST finish before the client connects; logs a timestamped COMPLETE line to verify in the
+// host log that the drift preceded the snapshot. For a real HANDS-ON the user creates the same divergence
+// by playing (collecting/moving piles as host) before the client joins -- this scenario only automates it.
+void RunPileDriftScenario() {
+    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    if (!isHost) {
+        UE_LOGI("pile_drift: CLIENT -- nothing to do (the HOST drifts its world pre-connect). The orphan census "
+                "runs on THIS client at the join sweep -- watch for '[PILE-CENSUS]' lines.");
+        return;
+    }
+    UE_LOGI("pile_drift: HOST -- waiting for the save's chipPiles to load, then drifting in the pre-connect window "
+            "(destroy 5 + move 3). MUST complete before the client connects.");
+    struct DriftSel { std::vector<void*> destroy; std::vector<void*> move; };
+    auto sel = std::make_shared<DriftSel>();
+    const int kWaitCapS = 90;
+    int waitedS = 0; bool ready = false;
+    while (waitedS < kWaitCapS) {
+        const int r = RunGT([sel](std::atomic<int>& d) {
+            void* player = coop::players::Registry::Get().Local();
+            if (!player || !R::IsLive(player) || !E::GetController(player)) { d.store(2); return; }
+            const ue_wrap::FVector at = E::GetActorLocation(player);
+            // Collect the live chipPiles nearest the player (deterministic by distance): the 5 nearest to
+            // DESTROY, the next 3 to MOVE. One GUObjectArray walk (cold, pre-connect, not a hot path).
+            struct Cand { void* a; float d2; };
+            std::vector<Cand> cands;
+            const int32_t n = R::NumObjects();
+            for (int32_t i = 0; i < n; ++i) {
+                void* o = R::ObjectAt(i);
+                if (!o || !R::IsLive(o)) continue;
+                if (!ue_wrap::prop::IsChipPile(o)) continue;
+                if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+                const ue_wrap::FVector p = E::GetActorLocation(o);
+                const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
+                cands.push_back({o, dx * dx + dy * dy + dz * dz});
+            }
+            if (cands.size() < 8) { d.store(2); return; }   // not enough piles yet -> world still loading, keep waiting
+            std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.d2 < b.d2; });
+            for (int i = 0; i < 5; ++i) sel->destroy.push_back(cands[i].a);
+            for (int i = 5; i < 8; ++i) sel->move.push_back(cands[i].a);
+            d.store(1);
+        });
+        if (r == 1) { ready = true; break; }
+        ::Sleep(1000); ++waitedS;
+    }
+    if (!ready) {
+        UE_LOGW("pile_drift: fewer than 8 chipPiles loaded in %d s (or no possessed player) -- aborting (cannot drift)",
+                kWaitCapS);
+        return;
+    }
+    RunGT([sel](std::atomic<int>& d) {
+        int destroyed = 0, moved = 0;
+        for (void* a : sel->destroy) {
+            if (!R::IsLive(a)) continue;
+            const ue_wrap::FVector p = E::GetActorLocation(a);
+            E::DestroyActor(a);
+            ++destroyed;
+            UE_LOGI("[PILE-DRIFT] HOST destroyed pile #%d @(%.1f,%.1f,%.1f) -- collected orphan (the client native "
+                    "there will get NO proxy)", destroyed, p.X, p.Y, p.Z);
+        }
+        for (void* a : sel->move) {
+            if (!R::IsLive(a)) continue;
+            const ue_wrap::FVector p = E::GetActorLocation(a);
+            const ue_wrap::FVector to{ p.X + 60.f, p.Y + 60.f, p.Z };   // ~85 cm horizontal -> a clear >30cm orphan
+            E::SetActorLocation(a, to);
+            ++moved;
+            UE_LOGI("[PILE-DRIFT] HOST moved pile #%d @(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) -- moved orphan (the "
+                    "client native stays at the OLD pos; its proxy spawns at the new one)",
+                    moved, p.X, p.Y, p.Z, to.X, to.Y, to.Z);
+        }
+        UE_LOGI("[PILE-DRIFT] HOST drift COMPLETE -- %d destroyed + %d moved = %d orphans seeded BEFORE the client "
+                "connects. The client's join [PILE-CENSUS] should report ~%d live orphan natives (READ-ONLY census "
+                "this build; Phase-2 absence-removal will destroy the confident bands).",
+                destroyed, moved, destroyed + moved, destroyed + moved);
+        d.store(1);
+    });
+}
+
 DWORD WINAPI ChipPileTestThread(LPVOID /*arg*/) {
     RunAutonomousChipPileTest();
+    return 0;
+}
+
+DWORD WINAPI PileDriftScenarioThread(LPVOID /*arg*/) {
+    RunPileDriftScenario();
     return 0;
 }
 
