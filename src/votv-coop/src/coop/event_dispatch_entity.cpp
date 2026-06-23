@@ -130,18 +130,22 @@ void HandleEntityEvent(net::Session& session,
         net::PropSpawnPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         // Trust-boundary validation: any of the 18 floats (loc/rot/scale +
-        // 2 vel vectors) NaN/Inf or out-of-bound -> SpawnActor +
-        // SetPhysics* could crash PhysX. Reject before dispatch.
+        // 2 vel vectors + v86 the Path 1c save-time match key) NaN/Inf or
+        // out-of-bound -> SpawnActor + SetPhysics* could crash PhysX, and a
+        // NaN matchX/Y/Z would slip past the twin-destroy's `dist > 1cm`
+        // guard (NaN compares false) and destroy a wrong local native pile.
+        // Reject before dispatch. matchX/Y/Z are 0 (finite) on a non-stamped
+        // payload, so validating all 18 is always safe.
         const float vals[18] = {
             p.locX, p.locY, p.locZ,
             p.rotPitch, p.rotYaw, p.rotRoll,
             p.scaleX, p.scaleY, p.scaleZ,
             p.initLinVelX, p.initLinVelY, p.initLinVelZ,
             p.initAngVelX, p.initAngVelY, p.initAngVelZ,
-            0.f, 0.f, 0.f  // pad
+            p.matchX, p.matchY, p.matchZ  // v86 Path 1c save-time key
         };
         bool finite = true;
-        for (int i = 0; i < 15; ++i) {  // skip the 3 pad slots
+        for (int i = 0; i < 18; ++i) {
             if (!std::isfinite(vals[i])) { finite = false; break; }
         }
         if (!finite) {
