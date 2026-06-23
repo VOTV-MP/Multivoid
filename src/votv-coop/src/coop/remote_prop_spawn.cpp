@@ -337,11 +337,18 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // derived pile landing within 1cm of an UNRELATED level-native could destroy the wrong actor. The
             // bracket gate (the same one the adopt-bind path uses) closes both windows.
             if (!isClump && g_claimTrackingActive) {
-                // Twin-destroy extracted to coop/pile_reconcile (2026-06-23, file hit the 1500 LOC cap).
-                // The match position is a PARAMETER -- here the proxy's current render pose `loc`; v86
-                // Path 1c changes this call-site to pass the pile's SAVE-TIME position instead. The gate
-                // (a native level-pile twin exists ONLY during the join bracket) stays at this call-site.
-                coop::pile_reconcile::TryDestroyTwin(payload, loc, g_claimedActors);
+                // Twin-destroy (coop/pile_reconcile). v86 Path 1c: match the client's save-loaded NATIVE
+                // against the pile's SAVE-TIME position (payload.matchX/Y/Z, stamped by the host's join
+                // snapshot from g_blobPileXforms) -- the frozen value BOTH peers loaded from the same save.
+                // A pile the host MOVED in the join-load window spawns its proxy @new (`loc`) but its native
+                // loaded @old; matching on the save-time key reconciles them (pre-1c the match was `loc`,
+                // which goes >1cm-blind on a moved pile = the two-channel DUP). No key stamped (a mid-game
+                // spawn / unseeded-at-save pile leaves hasMatchPos=0) -> fall back to `loc`. The gate (a
+                // native level-pile twin exists ONLY during the join bracket) stays at this call-site.
+                const ue_wrap::FVector twinMatchPos =
+                    payload.hasMatchPos ? ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}
+                                        : loc;
+                coop::pile_reconcile::TryDestroyTwin(payload, twinMatchPos, g_claimedActors);
             }
         } else {
             UE_LOGW("remote_prop::OnSpawn: trash proxy spawn FAILED for eid=%u class='%ls'",

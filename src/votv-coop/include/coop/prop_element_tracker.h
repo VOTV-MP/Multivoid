@@ -45,9 +45,11 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "ue_wrap/types.h"  // ue_wrap::FVector (v86 Path 1c pile save-time map)
 
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -160,6 +162,17 @@ void IndexActorKey(void* actor, const std::wstring& key);
 // keyed-Aprop_C only. O(tracked) copy under the key-index leaf mutex; no
 // reflection, no GUObjectArray walk. Game-thread or worker safe.
 void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out);
+
+// v86 Path 1c: collect the SAVE-TIME position of every live tracked chipPile,
+// keyed by its host ElementId. Called once at the scratch-save instant
+// (save_transfer::OnRequest) so the host can later stamp each pile's snapshot
+// with the position the client loaded it at (the cross-peer-stable key the
+// join-window two-channel DUP fix matches on). KEYLESS chipPiles only (the
+// thing that duped); an unseeded pile (no eid yet) is skipped -> no key, the
+// receiver falls back to the current pose for it. One GUObjectArray walk on the
+// game thread (same cold connect-edge cost as CollectTrackedKeyedPropKeys).
+void CollectTrackedPileTransforms(
+    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 
 // ---- One-shot seed -------------------------------------------------------
 // GUObjectArray walk that populates KnownKeyedProps + creates Prop Element

@@ -18,6 +18,7 @@
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
 #include "coop/remote_prop.h"
+#include "coop/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -237,7 +238,7 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
 // routes it down the eidOnly lane (its cross-peer identity is the ElementId, not
 // a key); anything else keyless is not expressible.
 bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t internalIdx,
-                            coop::net::PropSpawnPayload& p) {
+                            coop::net::PropSpawnPayload& p, int matchSlot) {
     if (!obj) return false;
     // IsLiveByIndex (NOT IsLive) reads only the GUObjectArray slot, never obj's
     // (possibly freed) memory -- so a candidate GC-purged since enumeration is
@@ -315,6 +316,20 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // a no-op 0 for classes without a chipType property).
     p.chipType = ue_wrap::prop::GetChipType(obj);
     p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
+    // v86 Path 1c: for a chipPile in the JOIN snapshot (matchSlot = the target joiner), stamp its
+    // SAVE-TIME position from the host's blob map so the client twin-destroy matches the save-loaded
+    // native @old even if the host MOVED the pile @new in the join-load window (the two-channel DUP
+    // fix). Only the join drain passes a real matchSlot; the mid-game incremental express passes -1
+    // (no twin on the client -> no stamp). No map entry (unseeded/post-save pile) -> no stamp, the
+    // receiver falls back to the current pose `loc`.
+    p.hasMatchPos = 0;
+    if (matchSlot >= 1 && p.elementId != 0 && ue_wrap::prop::IsChipPile(obj)) {
+        ue_wrap::FVector sv;
+        if (coop::save_transfer::TryGetSaveTimePileXform(matchSlot, p.elementId, sv)) {
+            p.matchX = sv.X; p.matchY = sv.Y; p.matchZ = sv.Z;
+            p.hasMatchPos = 1;
+        }
+    }
     return true;
 }
 
@@ -491,7 +506,9 @@ void DrainChunk() {
         // handling, wire-suppress + per-player skips, v54 physics + identity). A
         // non-expressible candidate returns false -> skip. cachedIdx already
         // re-validated liveness above, so pass -1 (don't repeat IsLiveByIndex).
-        if (!BuildPropSpawnPayload_(obj, eid, -1, p)) continue;
+        // v86 Path 1c: this is the JOIN drain -- pass the target joiner slot so a pile gets its
+        // save-time match key stamped (g_currentTargetSlot is this drain's single target).
+        if (!BuildPropSpawnPayload_(obj, eid, -1, p, g_currentTargetSlot)) continue;
         // Send to ONE slot only. Other peers (already-connected) already
         // have these props from their own connect-edge drain.
         s->SendReliableToSlot(g_currentTargetSlot,
@@ -528,7 +545,9 @@ void ExpressIncrementalSpawn(void* actor) {
     coop::net::PropSpawnPayload p{};
     // internalIdx -1: liveness just confirmed above (IsLive); the builder's idx
     // guard is only for the drain's cached-index path.
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p)) return;  // not expressible -- skip silently
+    // v86 Path 1c: mid-game incremental express (NOT a join) -- matchSlot=-1, no save-time stamp
+    // (a runtime-spawned pile reaching a long-connected peer has no save-loaded native twin).
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible -- skip silently
     // Broadcast ONE additive PropSpawn to all ready peers (MTA CEntityAddPacket /
     // BroadcastOnlyJoined; the SAME s->SendPropSpawn the Init-POST observer uses for
     // an organically-spawned prop). NO SnapshotBegin/Complete bracket -> the client's

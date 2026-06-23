@@ -139,6 +139,12 @@ void Update(net::Session& session, void* localPlayer) {
             // replaces the pre-v56 connect-edge replay).
             if (session.role() == net::Role::Host &&
                 msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers) {
+                // v86 Path 1c hands-on marker: the joiner just hit load-100%, so the JOIN-WINDOW
+                // is now CLOSED for it. A host pile MOVED before this line is in-window (its save-time
+                // key reconciles the client native); a move AFTER this is a normal post-load live edit.
+                // The test drops piles BEFORE this marker appears in the host log.
+                UE_LOGI("[PILE-1C] slot %d world-ready -- JOIN-WINDOW CLOSED (in-window host pile moves are "
+                        "now save-time-key reconciled by the connect replay)", msg.senderPeerSlot);
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
                 // "<nick> joined the game" fires HERE -- the authoritative in-world moment -- NOT on the

@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -94,6 +95,16 @@ HostStream g_host[coop::net::kMaxPeers];
 // lived). Lives OUTSIDE HostStream because HostStream is freed when the chunk stream
 // completes (TickHost), which is BEFORE the client finishes loading + announces ready.
 std::unordered_set<std::wstring> g_blobKeys[coop::net::kMaxPeers];
+
+// v86 Path 1c: the SAVE-TIME position of every live keyless chipPile at the blob
+// instant, keyed by host eid. Captured in OnRequest right after the scratch save is
+// serialized (== the positions the joining client loads its natives at). The connect
+// replay (prop_snapshot::BuildPropSpawnPayload_) reads it via TryGetSaveTimePileXform
+// to stamp each pile's join snapshot with its save-time key, so the client twin-destroy
+// matches the save-loaded native at @old even when the host MOVED the pile @new in the
+// join-load window (the two-channel DUP fix). Same lifetime/threading as g_blobKeys.
+std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
+    g_blobPileXforms[coop::net::kMaxPeers];
 
 // How many chunks one TickHost pass may push per slot. 4 x 56KB at 60 Hz = ~13
 // MB/s ceiling; the GNS send buffer's backpressure (send failure -> stop, retry
@@ -335,9 +346,16 @@ void OnRequest(int peerSlot) {
             // sweep keeps full responsibility for that join (clean degradation).
             g_blobKeys[peerSlot].clear();
             coop::prop_element_tracker::CollectTrackedKeyedPropKeys(g_blobKeys[peerSlot]);
-            UE_LOGI("save_transfer: slot %d -- captured %zu keyed-prop keys at blob instant "
-                    "(R2 blob-vs-live divergence baseline)",
-                    peerSlot, g_blobKeys[peerSlot].size());
+            // v86 Path 1c: capture every live keyless chipPile's SAVE-TIME position (keyed by host
+            // eid) at this SAME blob instant -- the positions the joining client loads its natives at.
+            // The connect replay stamps each pile's snapshot with its key so the client twin-destroy
+            // reconciles a host-moved-in-window pile (native@old vs save-time key@old). LIVE-capture
+            // path only (the stale-fallback leaves it empty -> the receiver uses the live pose).
+            g_blobPileXforms[peerSlot].clear();
+            coop::prop_element_tracker::CollectTrackedPileTransforms(g_blobPileXforms[peerSlot]);
+            UE_LOGI("save_transfer: slot %d -- captured %zu keyed-prop keys + %zu pile save-time xforms "
+                    "at blob instant (R2 + Path 1c baselines)",
+                    peerSlot, g_blobKeys[peerSlot].size(), g_blobPileXforms[peerSlot].size());
             return;
         }
         UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
@@ -395,6 +413,19 @@ void CancelForSlot(int peerSlot) {
         UE_LOGI("save_transfer: slot %d left mid-stream -- cancelled", peerSlot);
     g_host[peerSlot] = HostStream{};
     g_blobKeys[peerSlot].clear();  // R2: drop any unconsumed blob baseline
+    g_blobPileXforms[peerSlot].clear();  // v86 Path 1c: drop the unconsumed save-time pile map
+}
+
+// v86 Path 1c: the save-time position of pile `eid` captured at the blob instant for
+// `peerSlot` (empty for the stale-fallback join, or for a pile that was unseeded at
+// capture / spawned after the save). Game thread (the connect replay builder calls it).
+bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out) {
+    if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
+    const auto& m = g_blobPileXforms[peerSlot];
+    auto it = m.find(eid);
+    if (it == m.end()) return false;
+    out = it->second;
+    return true;
 }
 
 void SendBlobDivergenceDeletes(int peerSlot) {
@@ -525,6 +556,7 @@ void OnDisconnect() {
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_host[slot] = HostStream{};
         g_blobKeys[slot].clear();  // R2: no blob baseline survives a session end
+        g_blobPileXforms[slot].clear();  // v86 Path 1c: nor the save-time pile map
     }
 }
 

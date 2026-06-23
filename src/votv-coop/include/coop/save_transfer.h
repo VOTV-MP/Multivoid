@@ -30,7 +30,9 @@
 
 #pragma once
 
+#include "coop/element/element.h"  // ElementId (v86 Path 1c save-time pile map)
 #include "coop/net/protocol.h"
+#include "ue_wrap/types.h"  // ue_wrap::FVector
 
 #include <cstdint>
 #include <string>
@@ -75,6 +77,14 @@ void TickHost();
 
 // Peer left mid-stream -- drop its pump state (net_pump disconnect edge).
 void CancelForSlot(int peerSlot);
+
+// v86 Path 1c: the SAVE-TIME position of keyless chipPile `eid` for `peerSlot`,
+// captured at the blob instant (OnRequest). Returns false (out untouched) for a
+// stale-fallback join, an unseeded/post-save pile, or an out-of-range slot. The
+// connect-replay snapshot builder (prop_snapshot) stamps it onto the pile's
+// PropSpawn so the client twin-destroy reconciles a host-moved-in-window pile.
+// Game thread.
+bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
 
 // R2 (2026-06-17, MTA Packet_EntityRemove): send EXPLICIT per-key PropDestroy to
 // `peerSlot` for every keyed prop its save-transfer BLOB contained that the host's

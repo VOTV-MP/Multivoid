@@ -13,6 +13,7 @@
 #include "coop/element/registry.h"
 #include "coop/kerfur_entity.h"  // K-5: IsKerfurActor (the client-mint gate)
 #include "coop/net/session.h"
+#include "ue_wrap/engine.h"  // GetActorLocation (v86 Path 1c pile save-time map)
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
@@ -689,6 +690,29 @@ void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out) {
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
     out.reserve(out.size() + g_keyToActor.size());
     for (const auto& kv : g_keyToActor) out.insert(kv.first);
+}
+
+void CollectTrackedPileTransforms(
+    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
+    // v86 Path 1c: the host's save-time pile positions, keyed by host eid. Walk the
+    // GUObjectArray for live keyless chipPiles; the position read HERE (right after the
+    // scratch save was serialized -- save_transfer::OnRequest, same game-thread tick) is the
+    // value the save holds (saveObjects read GetTransform the same instant), so it == what the
+    // joining client loads its native at. KEYLESS chipPile only (a keyed Aprop_C is covered by
+    // the R2 key-diff; only the keyless pile duped on a host-moved-in-window). An UNSEEDED pile
+    // (no eid yet) is skipped -- no stable key, so the receiver falls back to the live pose for
+    // it. One GUObjectArray walk, cold connect-edge path, game thread (engine reads).
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        if (!ue_wrap::prop::IsChipPile(obj)) continue;                 // lineage test, pure pointer walks
+        if (!R::IsLive(obj)) continue;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
+        const coop::element::ElementId eid = GetPropElementIdForActor(obj);
+        if (eid == coop::element::kInvalidId || eid == 0u) continue;    // unseeded -> no stable cross-peer key
+        out[eid] = ue_wrap::engine::GetActorLocation(obj);
+    }
 }
 
 bool HasSeededOnce() {

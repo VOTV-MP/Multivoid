@@ -694,7 +694,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 85;  // v85: Increment 2 carry VISIBILITY -- HOST-AUTHORITATIVE
+inline constexpr uint16_t kProtocolVersion = 86;  // v86: Path 1c join-window pile DUP fix -- PropSpawnPayload
+                                                  // 200->212 (+hasMatchPos +matchX/Y/Z: the pile's SAVE-TIME
+                                                  // position, stamped on the join snapshot from the host's
+                                                  // g_blobPileXforms map; the client twin-destroy matches the
+                                                  // save-loaded native against it so a host-moved-in-window
+                                                  // pile reconciles instead of duping the two channels). Prior:
+                                                  // v85: Increment 2 carry VISIBILITY -- HOST-AUTHORITATIVE
                                                   // trash-clump carry/flight pose stream (new MsgType
                                                   // TrashCarryPose=34 + TrashClumpPoseSnapshot, host-originated
                                                   // per-eid batch). A client-grabbed clump is host-driven; this
@@ -2286,7 +2292,8 @@ struct PropSpawnPayload {
                                   //     of the saved transform SP restores, see propName)
     uint8_t       physFlags;        // 1
     uint8_t       chipType;         // 1 (v28: trash-clump variant selector enum_chipPileType; 0 for non-trash props)
-    uint8_t       _pad[2];          // 2 (v16: senderContext byte removed; v28: 1 byte -> chipType)
+    uint8_t       hasMatchPos;      // 1 (v86 Path 1c: 1 => matchX/Y/Z carry this pile's SAVE-TIME position)
+    uint8_t       _pad;             // 1 (v16: senderContext byte removed; v28: chipType; v86: hasMatchPos)
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- throw velocity (cm/s); usually
                                   //     (0,0,0). (v29's kFreshLanded landing-velocity use was
                                   //     retired v52 with turnToPile.)
@@ -2303,9 +2310,20 @@ struct PropSpawnPayload {
     // the slots are disjoint between ranges so host self-echo bounces
     // collide-fail RegisterMirror harmlessly (defensive).
     uint32_t      elementId;        // 4
-    uint32_t      _pad2;            // 4 -- 8-byte alignment
+    // v86 Path 1c -- the join-window two-channel pile DUP fix. For a chipPile expressed in the JOIN
+    // connect-replay snapshot, the host stamps the pile's position AT SCRATCH-SAVE time (the frozen
+    // value BOTH peers loaded from the same transferred save -- save_transfer's g_blobPileXforms map,
+    // keyed by the host eid which survives a grab/re-pile convert). The client's join twin-destroy
+    // matches its save-loaded NATIVE against THIS (not the current render pose `loc`): a pile the host
+    // MOVED in the join-load window renders @new but its save-time key is @old == where the client's
+    // native loaded, so the native is reconciled (destroyed, proxy = sole mirror). Pre-1c the match was
+    // the proxy's current pose, which goes >1cm-blind on a moved pile = the two distinct objects = DUP.
+    // Valid IFF hasMatchPos (only the join snapshot stamps it; a mid-game/incremental spawn leaves it 0,
+    // and the receiver falls back to `loc`). See votv-pile-dup-join-window-two-channel-RE-2026-06-23.
+    float         matchX, matchY, matchZ;   // 12 -- save-time position (world cm); valid iff hasMatchPos
+    uint32_t      _pad2;            // 4 -- alignment (size 212)
 };
-static_assert(sizeof(PropSpawnPayload) == 200, "PropSpawnPayload must be 200 bytes");
+static_assert(sizeof(PropSpawnPayload) == 212, "PropSpawnPayload must be 212 bytes (v86: +matchX/Y/Z save-time key)");
 static_assert(sizeof(PropSpawnPayload) <= 256 - 20 - 8,
               "PropSpawnPayload must fit in one reliable datagram");
 
