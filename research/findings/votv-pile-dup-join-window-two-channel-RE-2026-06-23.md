@@ -1,10 +1,13 @@
 # chipPile JOIN-WINDOW DUP — the two-channel race (DECISIVE, hands-on) — 2026-06-23
 
-**Status: ROOT CONFIRMED (hands-on). Fix BUILT (Path 1c + the load-tail timing follow-up) + audit GO;
-HANDS-ON take-2 PENDING (the user is re-testing). Deployed `F9B6589E1F62955F`, proto v86, HEAD `81de32dd`,
-push HELD.** See "## AS-BUILT (2026-06-23 take 2)" below for the shipped fix; the gate-check + (a)/(b)
-fix-options sections lower down are SUPERSEDED by it (the real fix is neither (a) hold-broadcast nor (b)
-match-by-eid — it is match-by-SAVE-TIME-position reconciled at the post-quiescence sweep). This whole
+**Status: ROOT CONFIRMED (hands-on). Fix BUILT in THREE layers (Path 1c key + the load-tail sweep retry +
+the OnRequest pre-capture re-seed) + audit GO-WITH-NITS (0 critical); HANDS-ON take-3 PENDING. Deployed
+`06104FED9F72ED7B7DEE19F7336E2F73` (MD5), proto v86, push HELD.** See "## AS-BUILT (2026-06-23 take 3)"
+below for the DECISIVE break — take-2 STILL duped because the host captured **`0 pile save-time xforms`**
+(the eid-keyed map was EMPTY, so neither the key nor the sweep retry had anything to act on); root = the
+host's world-change re-seed is DEFERRED at the connect instant, so the live chipPiles have no eid yet. The
+take-2 section ("the REAL break was TIMING") is the SECOND layer and remains correct ONCE a key exists, but
+it was downstream of an empty map; the (a)/(b) fix-options sections lower down stay SUPERSEDED. This whole
 finding supersedes the "L1 orphan / absence-removal at the join" line — that chased a bug that **does not
 exist** (see "What is now FALSE").
 
@@ -124,6 +127,59 @@ deferred sweep (level travel / a racing re-seed bracket during the multi-second 
 persists. It **fails SAFE** (never an over-destroy) and is largely self-healing (the new bracket re-expresses
 + re-reconciles), and it does NOT affect the single-join in-window-drop repro. Fix-if-needed: decouple the
 pending set from the bracket Reset (survive a re-bracket), or re-arm it on the new bracket.
+
+## AS-BUILT (2026-06-23 take 3) — the DECISIVE break: the host captured an EMPTY save-time map
+Take-2 (Path 1c key + the load-tail sweep retry, deployed `F9B6589E1F62955F`) shipped + was hands-on tested
+and STILL DUPED (client saw 8). Grepping the chain step-by-step found the FIRST break is EARLIER than either
+prior theory and is on the **HOST**: at the connect instant the host log printed
+
+    save_transfer: slot 1 -- captured 191 keyed-prop keys + 0 pile save-time xforms at blob instant
+
+**`0` pile save-time xforms.** The eid-keyed save-time map (`g_blobPileXforms`) was EMPTY — so there was no
+key on the wire at all, and BOTH the take-1 match and the take-2 sweep retry were operating on nothing
+(they only ever mattered once a key existed). Everything downstream was correct but starved.
+
+**Root cause — the capture races AHEAD of the world-change re-seed.** Host timeline (take-2 log):
+- `19:03:52` boot seed: `2434 live actors (... 34 keyless chipPile element(s) ...)` — the menu/transient world.
+- `19:03:56` `net_pump: mass-purge detected (reaped 256 >= 64) -- world-change re-seed deferred to drain-complete`
+  (the host's own menu→game world swap; net_pump parks the re-seed to avoid opening a bracket against a
+  majority-dead registry, `net_pump.cpp:528`).
+- `19:04:24` client connects → `save_transfer::OnRequest`: takes the live scratch save AND captures the
+  baselines — but the registry is still pre-re-seed, so the NEW world's keyless chipPiles have **no host eid**
+  (`GetPropElementIdForActor == 0`). `CollectTrackedPileTransforms` skips every pile with `eid == 0`
+  (`prop_element_tracker.cpp:713`) → **0 captured.** (The keyed side was starved too: only 191 keys, vs the
+  ~3000 the world really has.)
+- `19:04:32` the deferred re-seed finally runs: `re-seed found 3241 live keyed props, added 2993 NEW
+  (869 keyless chipPile element(s))` — the eids the capture needed, bound **8 s too late.**
+
+So Path 1c's premise (an eid-keyed save-time map) was never satisfied when a client connected DURING the
+host's own load. The runbook's "Honest scope" had even predicted this ("an UNSEEDED-at-save pile … skipped
+… rare; flag if seen") — but it is NOT rare: a join right after the host loads in (the autonomous-test
+timing AND the user's take-2) leaves EVERY pile unseeded.
+
+**FIX (this commit):** force the world-change re-seed at `OnRequest` BEFORE the baseline captures, gated on
+`!prop_element_tracker::IsRegistrySeededForCurrentWorld()` (so it fires only when the registry is stale for
+the live world — a no-op, byte-identical, on a host that was up a while, which is why take-1 captured 870):
+
+    if (!IsRegistrySeededForCurrentWorld()) { added = ReSeedKnownKeyedProps(); UE_LOGI("forced pre-capture re-seed ... -> %zu tracked", added); }
+
+`SeedWalk_` is purge-safe (double IsLive filter + idempotent `MarkPropElement`) and the eid it mints is the
+SAME one the connect drain later broadcasts (idempotent → net_pump's deferred re-seed adds 0, eids
+unchanged), so the client's save-time-position key now resolves. It opens NO snapshot bracket (the slot-1
+drain is `ConnectReplayForSlot` at world-ready, ~8 s out), and the joining slot is NOT starved — its snapshot
+comes from `ConnectReplayForSlot → TriggerForSlot` independent of net_pump's `retriggerReadySlots`. Bonus: the
+keyed R2 baseline (`g_blobKeys`) is now complete too. Audit verdict **GO-WITH-NITS** (0 critical; the only
+nits are the carry-forward `prop_element_tracker.cpp` 927-LOC extraction + a comment wording note).
+**Hands-on take-3 PENDING** (deployed MD5 `06104FED9F72ED7B7DEE19F7336E2F73`, proto v86). Acceptance gate:
+the host log must show **`captured K keyed-prop keys + P pile save-time xforms`** with **P non-zero**
+(hundreds — the whole world's piles), and (if the host connected mid-load) the `forced pre-capture re-seed`
+line; THEN the take-2 sweep retry resolves the visible dup to 4 within ~10-15 s.
+
+**Lesson:** a connect-edge baseline that reads our engine-overlay identity (eid/key) must guarantee the
+overlay is SEEDED for the live world at capture time — net_pump's mass-purge re-seed deferral means a
+client connecting during the host's own world-load lands on an unseeded registry, and any eid-keyed capture
+silently records nothing. Force-seed (idempotent, gated on stale-world) at the capture, don't assume the
+periodic seed already ran.
 
 ## NEXT (build, after the 2 gate checks)
 1. Trace the save-transfer + join-load timeline: when is the scratch save taken, when does the client
