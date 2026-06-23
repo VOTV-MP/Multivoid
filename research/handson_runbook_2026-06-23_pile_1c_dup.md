@@ -1,6 +1,11 @@
 # Hands-on runbook -- Path 1c: join-window pile DUP fix (in-window drop repro)
 
-**Deployed:** `votv-coop.dll` MD5 `D3C5BEA2A10799BF1CA35ABAEA9A5391` (host + client + copy2 + dev), proto **v86** (no wire change -- host-side capture fix).
+**Deployed:** `votv-coop.dll` MD5 `FD9D2DC67496CF96B7953F72282067EE` (host + client + copy2 + dev), proto **v86**.
+> NOTE (2026-06-23, L5 work after take-4): the deployed DLL is no longer the take-4 pile build (`D3C5BEA`) --
+> the L5 FPS-hitch work rebuilt on top. **The take-4 PILE self-seed fix is intact in this build** (committed
+> `5b01bc0e`); the L5 changes are an UNVERIFIED interactable migration (door detection regresses to ~50/57 --
+> irrelevant to the pile test) + diagnostic instrumentation + `perf_probe=1`. For the PILE hands-on below,
+> the door regression does not matter; ignore any door-sync oddity. The save-time pile capture is unchanged.
 **HEAD:** take-4 fix `5b01bc0e` (1c `4c286cae` + load-tail `124fbc9d` + **self-seed the capture, this commit**; the take-3 OnRequest gate `57ad49e5` was REMOVED -- it never fired). Push HELD.
 **Test flag:** `pile_delta_probe=1` is set in both deployed inis -> the in-game JOIN-WINDOW cues + the
 `[PILE-DELTA]`/`[PILE-CENSUS]` probe logs are ON.

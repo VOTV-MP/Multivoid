@@ -65,7 +65,17 @@ both died on the gate checks): match the save-loaded native by the pile's SAVE-T
 the POST-QUIESCENCE sweep (take-1 proved the key is bit-for-bit correct but the world-ready twin-destroy runs
 before the native async-loads = a load-tail timing race). Commits `4c286cae`+`124fbc9d`, audit GO, deployed
 `F9B6589E1F62955F` v86, HANDS-ON take-2 PENDING, push HELD.** Canonical (full as-built + take-1 timing RE):
-**`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**.
+**`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**. (Pile fix later reached take-4 self-seed,
+committed `5b01bc0e`, fix#1 auto-verified P 0->870; end-to-end move-in-window hands-on still pending.)
+
+**Update (2026-06-23 — L5 persistent ~2s FPS-hitch ROOT PROVEN by data; fix NOT verified yet):** the
+all-game both-peers stutter = `interactable_sync`'s 6 channels each FULL-walking the ~237k GUObjectArray
+every 2s (`Channel::RebuildIndex`, `kRetryRebuildThrottle=2s`). GC hypothesis refuted twice with data
+([HITCH]/[HITCH-SRC] + perf_probe buckets + per-sync ScopedWalkTimer). Fix = migrate to
+`coop::util::IncrementalObjectScan`; ATTEMPTED TWICE, BOTH FAIL the N-match gate (doors stream progressively
+into recycled slots -> tail-scan misses them: take-1 door 57->19, take-2 stream-settle door 57->50). NOT
+verified, working-tree only, deployed `FD9D2DC...`. device_occupancy (80x30ms) is the co-dominant 2nd
+culprit. Design fork pending. Canonical: **`votv-L5-fps-hitch-interactable-fullwalk-RE-2026-06-23.md`**.
 
 **Update (2026-06-22 FINAL, HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83 — all committed, push held):**
 the throw-arc/probe state above is now the SHIPPED+VERIFIED final state. **Pile-landing ROTATION + throw SOUND
