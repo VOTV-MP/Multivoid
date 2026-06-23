@@ -348,7 +348,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 const ue_wrap::FVector twinMatchPos =
                     payload.hasMatchPos ? ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}
                                         : loc;
-                coop::pile_reconcile::TryDestroyTwin(payload, twinMatchPos, g_claimedActors);
+                coop::pile_reconcile::TryDestroyTwin(payload, twinMatchPos, payload.hasMatchPos != 0,
+                                                     g_claimedActors);
             }
         } else {
             UE_LOGW("remote_prop::OnSpawn: trash proxy spawn FAILED for eid=%u class='%ls'",
@@ -1164,6 +1165,12 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // seeded 8 orphans. So re-enumerate live native chipPiles with FRESH indices: the burst's 1cm twin-
     // destroy already removed every MATCHED native, so the live survivors ARE the orphan set directly.
     // One GUObjectArray walk, once per join (cold path), pointer-compare class filter before any read.
+    // v86 Path 1c: retry the save-time twin-destroys that MISSED at the world-ready burst (the moved
+    // pile's native@old had not async-loaded yet). We are now post-quiescence (this whole sweep is gated
+    // by TickClientReconcile on kSweepQuiesceScans stable scans) + past the >50%% valve above, so the late
+    // natives are present (the census below SEES them). Keyed by save-time position (not blind proximity),
+    // with its own >50% abort-valve. Runs BEFORE the census so the census reflects the removals.
+    coop::pile_reconcile::SweepReconcileSaveTimeTwins();
     coop::pile_reconcile::LogCensus();  // extracted 2026-06-23 (FRESH GC-robust walk; no-op if no index built)
 
     g_claimedActors.clear();

@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>   // getenv -- the read-only [PILE-DELTA] probe gate (L1 orphan histogram)
+#include <unordered_map>
 #include <vector>
 
 namespace coop::pile_reconcile {
@@ -50,6 +51,16 @@ struct PileBindCandidate {
 std::vector<PileBindCandidate> g_pileBindIndex;
 bool g_pileBindIndexBuilt = false;
 int  g_pileBindCount = 0;  // per-bracket bind counter (throttles the log)
+
+// v86 Path 1c -- save-time twin-destroys that MISSED at the world-ready snapshot burst
+// (the moved pile's native@save-time-key had not async-loaded/indexed yet -- world-ready
+// fires before the native-pile load-tail drains). Keyed by host eid; retried at the post-
+// quiescence sweep (SweepReconcileSaveTimeTwins) where the late native is present.
+struct PendingTwin {
+    float   x, y, z;     // the save-time key (the native@old position to destroy)
+    uint8_t chipType;
+};
+std::unordered_map<uint32_t, PendingTwin> g_pendingSaveTimeTwin;
 int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orphan-census valve denominator:
                                  // leftovers / built = the host-drift fraction; a huge fraction = wire loss,
                                  // not divergence -> the census/removal must refuse it, like the >50%% sweep valve)
@@ -103,10 +114,12 @@ void Reset() {
     g_pileBindIndexBuilt = false;
     g_pileBindCount = 0;
     g_pileIndexBuiltCount = 0;
+    g_pendingSaveTimeTwin.clear();
 }
 
 void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
                     const ue_wrap::FVector& matchPos,
+                    bool isSaveTimeKey,
                     const std::unordered_set<void*>& claimed) {
     EnsureIndex(claimed);
     constexpr float kDestroyR2Cm = 1.0f;  // 1 cm^2 -- the probe confirmed a bit-exact (1cm) twin
@@ -140,12 +153,22 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
                 "1cm (ambiguous cluster) -> keeping all (never destroy the wrong one); dup may persist",
                 payload.elementId, matchPos.X, matchPos.Y, matchPos.Z, matchCount);
     }
-    // matchCount == 0: a DERIVED pile (no native twin) -- nothing to destroy, no log (the common
-    // gameplay case; a join with N level piles destroys exactly its N twins). EXCEPT when the
-    // [PILE-DELTA] probe is on: during the join bracket every proxy is a LEVEL pile, so a no-match
-    // here is a host-DRIFT candidate (the native is not at the proxy's pose). Log its nearest-
-    // native delta so the harness can band the orphans (read-only; no destroy, no index mutation).
-    else if (DeltaProbeOn() && !g_pileBindIndex.empty()) {
+    // matchCount == 0: no twin within 1cm of matchPos in the CURRENT index.
+    else if (matchCount == 0) {
+        // v86 Path 1c: if matchPos was a SAVE-TIME key (a stamped pile that SHOULD have a save-loaded
+        // twin), the miss is almost always TIMING -- this runs in the world-ready snapshot burst, BEFORE
+        // the client's async native-pile load-tail has drained, so the native@save-time-key has not
+        // loaded/indexed yet (it appears ~10s later, at the post-quiescence sweep). Record it for a retry
+        // there (SweepReconcileSaveTimeTwins), where the late native is present. (A non-save-time miss is a
+        // genuine DERIVED pile with no twin -- the common gameplay case -- so do NOT record it.)
+        if (isSaveTimeKey && payload.elementId != 0)
+            g_pendingSaveTimeTwin[payload.elementId] =
+                PendingTwin{matchPos.X, matchPos.Y, matchPos.Z, payload.chipType};
+    }
+    // [PILE-DELTA] dark probe: during the join bracket every proxy is a LEVEL pile, so a no-match here
+    // is a host-DRIFT candidate (the native is not at the proxy's pose). Log its nearest-native delta so
+    // the harness can band the orphans (read-only; no destroy, no index mutation).
+    if (matchCount == 0 && DeltaProbeOn() && !g_pileBindIndex.empty()) {
         float bestD2 = 3.4e38f; int bestI = -1;
         for (int i = 0; i < static_cast<int>(g_pileBindIndex.size()); ++i) {
             const auto& c = g_pileBindIndex[i];
@@ -260,6 +283,70 @@ void LogCensus() {
             "le5=%d (near-miss dup) 5_30=%d (ambiguous) gt30=%d (true orphan/moved) noProxy=%d (collected) -- "
             "[totalLive==0 => all natives DIED/consumed; totalLive>0 & orphans=0 => survivors all proxy-matched]",
             live, g_pileIndexBuiltCount, totalLive, proxyMatched, le5, mid, gt30, none);
+}
+
+int SweepReconcileSaveTimeTwins() {
+    if (g_pendingSaveTimeTwin.empty()) return 0;
+    const size_t pendingN = g_pendingSaveTimeTwin.size();
+
+    // FRESH GC-robust walk of live native chipPiles (the world-ready index is stale: built BEFORE
+    // these natives async-loaded; the same reason LogCensus re-walks). Pointer-compare class filter
+    // before any read; no stored internal indices (a sweep-time mass-purge stales them).
+    struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; bool consumed; };
+    std::vector<LiveNative> natives;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only (NOT our proxy)
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
+        natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o), false});
+    }
+
+    // Match each pending save-time key to the now-loaded native within 1cm + same chipType. Claim-track
+    // (consumed) so two keys never claim one native. 1cm is exact (the save round-trip is bit-for-bit;
+    // the key IS the native's loaded position -- proven by the 2026-06-23 hands-on: census orphan @old
+    // == matchKey @old to 0.1cm).
+    constexpr float kR2Cm = 1.0f;
+    std::vector<void*> toRemove;
+    toRemove.reserve(pendingN);
+    for (const auto& [eid, p] : g_pendingSaveTimeTwin) {
+        for (auto& nv : natives) {
+            if (nv.consumed) continue;
+            if (nv.chipType != p.chipType) continue;
+            const float dx = nv.x - p.x, dy = nv.y - p.y, dz = nv.z - p.z;
+            if (dx * dx + dy * dy + dz * dz > kR2Cm) continue;
+            if (!R::IsLiveByIndex(nv.actor, nv.idx)) continue;
+            nv.consumed = true;
+            toRemove.push_back(nv.actor);
+            break;
+        }
+    }
+
+    // SAFETY VALVE (mirrors RunDivergenceSweep_'s >50% valve): removing MORE THAN HALF the live native
+    // piles is not a handful of moved-in-window twins -- it is a racing/incomplete bracket where the
+    // load-tail is STILL draining (so most "matches" would be wrong). Refuse it; the natives stay.
+    if (!natives.empty() && static_cast<int>(toRemove.size()) * 2 > static_cast<int>(natives.size())) {
+        UE_LOGW("[PILE-1C] sweep-reconcile ABORTED -- %zu save-time twin removals of %zu live native(s) "
+                "(>50%%); racing/incomplete bracket, not divergence -- keeping all natives",
+                toRemove.size(), natives.size());
+        g_pendingSaveTimeTwin.clear();
+        return 0;
+    }
+
+    for (void* native : toRemove) {
+        // Drop the client-minted eid FIRST so the K2_DestroyActor PRE observer stays silent (no stray
+        // PropDestroy on the superseded client eid) -- the same fresh-mirror invariant the world-ready
+        // twin-destroy enforces.
+        coop::prop_element_tracker::UnmarkKnownKeyedProp(native);
+        ue_wrap::engine::DestroyActor(native);
+    }
+    UE_LOGI("[PILE-1C] sweep-reconcile -- %zu of %zu pending save-time twin(s) removed at post-quiescence "
+            "(the late-loaded native@old destroyed; the proxy@new is the sole mirror -- join-window dup fixed)",
+            toRemove.size(), pendingN);
+    g_pendingSaveTimeTwin.clear();
+    return static_cast<int>(toRemove.size());
 }
 
 }  // namespace coop::pile_reconcile
