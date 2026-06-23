@@ -12,6 +12,7 @@
 
 #include "coop/balance_sync.h"
 #include "coop/chat_feed.h"
+#include "coop/ini_config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactable_sync.h"
 #include "coop/join_progress.h"
 #include "coop/net/session.h"
@@ -145,6 +146,8 @@ void Update(net::Session& session, void* localPlayer) {
                 // The test drops piles BEFORE this marker appears in the host log.
                 UE_LOGI("[PILE-1C] slot %d world-ready -- JOIN-WINDOW CLOSED (in-window host pile moves are "
                         "now save-time-key reconciled by the connect replay)", msg.senderPeerSlot);
+                if (coop::ini_config::IsIniKeyTrue("pile_delta_probe"))
+                    coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)");
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
                 // "<nick> joined the game" fires HERE -- the authoritative in-world moment -- NOT on the

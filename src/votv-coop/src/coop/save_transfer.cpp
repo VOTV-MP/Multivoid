@@ -2,6 +2,8 @@
 
 #include "coop/save_transfer.h"
 
+#include "coop/chat_feed.h"  // v86 Path 1c hands-on: in-game JOIN-WINDOW OPEN cue (gated on pile_delta_probe)
+#include "coop/ini_config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/save_guard.h"
@@ -315,6 +317,13 @@ void OnRequest(int peerSlot) {
     if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
     HostStream& hs = g_host[peerSlot];
     hs = HostStream{};  // reset any prior stream for this slot (rejoin)
+
+    // v86 Path 1c hands-on cue (gated on the pile_delta_probe test flag, OFF in normal play): the joiner
+    // just requested the save -- the JOIN-WINDOW is now OPEN. A host pile MOVED from here until the
+    // joiner hits world-ready ([PILE-1C] / "JOIN-WINDOW CLOSED") is in-window and its save-time key
+    // reconciles the client native. Drop the test piles AFTER this line appears, BEFORE the CLOSED cue.
+    if (coop::ini_config::IsIniKeyTrue("pile_delta_probe"))
+        coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')");
 
     // ROOT-CAUSE FIX (2026-06-15): serialize the host's world LIVE, right now, into
     // a throwaway scratch slot -- instead of shipping the stale on-disk .sav. An
