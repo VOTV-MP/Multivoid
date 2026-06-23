@@ -76,9 +76,11 @@
 >   the clump re-piles (ToPile re-skins+snaps). The arc FLIES (user: "дуга ЛЕТИТ"; the autotest does a real
 >   DIRECTIONAL throw). The dead `dropGrabObject` read-only thunk (`trash_collect_sync.cpp:45,99-126,396`) is
 >   STILL PRESENT — to be retired RULE 2 next. **Host carries FINE** (native); **OTHER physics props mirror
->   fine** (pure pose-stream). Phase 1 = visual + position + re-skin, EXPLICIT NoCollision. **STILL OPEN (NEXT):
->   the WHOOSH throw sound (no ReliableKind in `protocol.h`; user-deprioritized, best confirmed by hearing);
->   retire the dead `dropGrabObject` thunk (RULE 2); Increment 2 (client-grab) + phase-2 collision.** **Dead
+>   fine** (pure pose-stream). The proxy is NoCollision (the client-grab aim is a camera-ray cone, not
+>   collision). **STILL OPEN (NEXT):** a `garbageCollider`-analog SHAPE component on the proxy (occlusion-
+>   correct aim + movement-block — the cone ignores walls, the proxy is walk-through); the WHOOSH throw sound
+>   (no ReliableKind; user-deprioritized, best confirmed by hearing); retire the dead `dropGrabObject` thunk
+>   (RULE 2). **(Increment 2 client-grab full chain is AS-BUILT v85 — see the bullet below.)** **Dead
 >   ends:** option 1
 >   (`8bc797ef`, `SetNotifyRigidBodyCollision(false)` on the held clump)
 >   BUILT + FAILED (the live host BP re-arms hit-notify); option 2 (the `holdPlayer` convert/ctx gate) is
@@ -374,12 +376,13 @@ clump from a grab the PRE missed currently skips the converter) — the NEXT tig
 
 ---
 
-## Increment 2 — the CLIENT-grab direction (HOST-SIDE AS-BUILT + [V harness]; client-INITIATED path DESIGN; proto v84)
+## Increment 2 — the CLIENT-grab direction (the FULL CHAIN, AS-BUILT + [V harness], proto v85)
 
-The suppress-native + `GrabIntent` → host-executes-on-puppet-N path (the door `OnRequest` shape, above) + the
-PILED/HELD/FLYING state machine + the drain-resync (`PileResyncRequest`). The PROBE-A diagnostic
-(`OnPileGrabPre` logs the carry slot `grabbing_actor` vs `holding_actor`) feeds this — the client suppress +
-GrabIntent send is added at that exact seam.
+The `GrabIntent` → host-executes-on-puppet-N path (the door `OnRequest` shape, above) + the carry pose
+stream + `ThrowIntent`. **The client-INITIATED path is now BUILT** (camera-ray cone recognition, NOT the
+originally-planned suppress-native): the host arm (below, v84) carries it, plus the v85 carry-visibility +
+throw + camera-cone recognition. See the consolidated AS-BUILT finding
+`research/findings/votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`.
 
 > **HOST-SIDE — AS-BUILT + VERIFIED [V harness] (2026-06-22, commits `81e8e687` + MEDIUM-1 `2dc5d06e`,
 > deployed `AAEC4D8F3B4341F8`, proto v84, push held).** The full client→host wire + router + handler + drive,
@@ -405,10 +408,15 @@ GrabIntent send is added at that exact seam.
 > `research/findings/votv-increment2-clientgrab-host-side-DESIGN-2026-06-22.md` +
 > `votv-puppet-grab-feasibility-RE-2026-06-22.md`.
 >
-> **STILL OPEN — the CLIENT-INITIATED path (greenlight-gated, hands-on):** the client suppress-native at
-> `OnPileGrabPre` + **phase-2 collision** (the `garbageCollider` hull, so a client can aim a NoCollision
-> proxy to initiate the grab) + the FEEL (PHC-jitter, the head-vs-camera hold offset). The host-side above is
-> provable now via the synthetic intent; the real client press needs collision first.
+> **AS-BUILT (2026-06-23, v85, HEAD `29353191`) — the CLIENT-INITIATED path + carry visibility + throw.**
+> Recognition is a **camera-ray cone** (`trash_proxy::EidForAimedPileProxy` in `OnPileGrabPre`), NOT the
+> originally-planned suppress-native + read-`lookAtActor`: a bare AStaticMeshActor proxy can never be
+> `lookAtActor` (the `int_player_C` filter) AND the worn pile mesh has no simple collision body (harness
+> `trace-gate hit=0`) — that approach is RETIRED (RULE 2). Carry visibility = the new host-authoritative
+> per-eid `TrashCarryPose` stream. Throw = `OnThrowIntent`. Verified via the REAL E-press path (the harness
+> injects InpActEvt_use, the cone recognizes). **STILL OPEN (greenlight): a `garbageCollider`-analog SHAPE
+> component** on the proxy — for occlusion-correct aim AND movement-block (the cone ignores walls; the proxy
+> is still walk-through). Plus the FEEL (PHC-jitter, head-vs-camera offset) at a real hands-on.
 
 **The gating `[?]` is RESOLVED (2026-06-22, RE + runtime probe — `[V harness]`).** Full result:
 `research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md`. The puppet-grab probe
@@ -429,17 +437,22 @@ GrabIntent send is added at that exact seam.
 **Refined Increment-2 build (the probe added step 4):**
 1. wire `GrabIntent`/`ThrowIntent`/`PileResyncRequest` (proto v83→**v84**, the 3-place ReliableKind router
    per `[[feedback-reliablekind-router-checklist]]`);
-2. client suppress-native (null `lookAtActor` for the dispatch) + send `GrabIntent{eid}` at the `OnPileGrabPre`
-   seam;
-3. host `OnGrabIntent` (role==Host) → validate `PILED && !HELD` → `playerGrabbed` on puppet-N → bump ctx →
-   broadcast `PropConvert{kToClump}`;
-4. **NEW (from the probe):** the host KINEMATICALLY drives the puppet-held clump's hold pose each tick
-   (`puppetCamLoc + syncedForward * grabLen`, or set the clump's actor transform to the puppet's hand
-   directly) — the same kinematic drive `local_streams` already applies to host-held props; the puppet's
-   synced aim is already streamed. Do NOT rely on the puppet tick / `grabHandle`.
+2. **[AS-BUILT v85, corrected]** client recognition = a CAMERA-RAY CONE (`EidForAimedPileProxy`) at the
+   `OnPileGrabPre` seam → send `GrabIntent{eid}`. (The planned suppress-native + read-`lookAtActor` is
+   RETIRED — a bare proxy can't be `lookAtActor` + the pile mesh has no collision body; harness `trace-gate
+   hit=0`.) No suppress needed (the proxy fails the native `int_player_C` cast on its own);
+3. host `OnGrabIntent` (role==Host) → validate `!HELD` + the eid is a live chipPile → `playerGrabbed` on
+   puppet-N → bump ctx → broadcast `PropConvert{kToClump}`;
+4. **[AS-BUILT v84]** the host KINEMATICALLY drives the puppet-held clump's hold pose each tick
+   (`GetHeadPosition() + GetSyncedAimDirection()*grabLen`) AND **[AS-BUILT v85]** PUBLISHES it into the
+   host-authoritative per-eid `TrashCarryPose` batch so every client renders the carry/flight (a client only
+   drives slot 0 + the relay can't echo to the grabber → the pose MUST be host-originated);
+5. **[AS-BUILT v85]** `ThrowIntent` → `OnThrowIntent` releases the puppet grab + applies physics velocity →
+   the clump self-re-piles via its own ground-hit thunk → `PropConvert{kToPile}`.
 
-Plus phase-2 collision (the `garbageCollider` hull) is a separate prerequisite — a client cannot aim a
-NoCollision proxy to initiate the grab. All UNBUILT, greenlight-gated.
+**STILL OPEN (greenlight):** a `garbageCollider`-analog SHAPE component on the proxy (occlusion-correct aim +
+movement-block — the cone ignores walls, the proxy is walk-through); the whoosh-on-throw cue; the
+`event_dispatch_trash.cpp` extraction; `PileResyncRequest` (phase 3, still [DESIGN]).
 
 ---
 

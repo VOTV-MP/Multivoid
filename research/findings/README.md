@@ -78,11 +78,25 @@ tick does NOT drive the PHC, so the host must kinematically drive the held-clump
 **`votv-increment2-clientgrab-host-side-DESIGN-2026-06-22.md`** (the build blueprint: proto v84 `GrabIntent`
 wire + 3-place router + `trash_channel::OnGrabIntent` + the new `coop/puppet_carry_drive`). Shipped commits
 `32ccd1bc`(gate) · `81e8e687`(host-side) · `2dc5d06e`(audit MEDIUM-1: hold lifetime tied to clump liveness).
-Verified on the log-truth harness (synthetic `VOTVCOOP_RUN_GRAB_INTENT_TEST`): VERDICT PASS (1 RECEIVED→1
-SUCCESS, 126 hand-drive ticks, client proxy re-skin no dup); carry-test regression 16/16 PASS; post-ship
-audit GO. **Still [DESIGN] (greenlight, hands-on):** the client-INITIATED path — suppress-native at
-`OnPileGrabPre` + phase-2 `garbageCollider` collision (a client can't aim a NoCollision proxy) + the feel.
-HEAD `c6473d49`, deployed `AAEC4D8F3B4341F8`, proto v84, push held.
+Verified on the log-truth harness (synthetic `VOTVCOOP_RUN_GRAB_INTENT_TEST`): VERDICT PASS; carry regression
+PASS; audit GO. HEAD `c6473d49`, proto v84. **SUPERSEDED 2026-06-23 by the full chain (below) — the host-side
+DESIGN doc is now historical; the `host-side-DESIGN` finding carries a superseded banner.**
+
+## 2026-06-23 — chipPile CLIENT-grab FULL CHAIN, AS-BUILT + [V harness] (v85)
+
+The complete client-initiated chain shipped: a client AIMS at a mirrored pile, GRABS, CARRIES, THROWS, it
+re-piles. **`votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`** is the canonical as-built record
+(supersedes the host-side DESIGN doc). Two gating discoveries: (1) a bare AStaticMeshActor proxy can NEVER be
+`lookAtActor` (the `int_player_C` filter at LookAtFunction @3250) AND the worn pile mesh has no simple
+collision body (harness `trace-gate hit=0`) → the trace/`lookatActorCurrent`/proxy-collision approach is
+RETIRED (RULE 2); recognition is a **camera-ray cone**. (2) A client only drives pose slot 0 + the relay
+can't echo to the grabber → the carry pose MUST be host-ORIGINATED (the new per-eid `MsgType::TrashCarryPose`
+batch, the `StoreRemoteWorldActorBatch` pattern). The interp was extracted to `coop/active_drive.h`
+(remote_prop 1375→1222). Harness VERDICT PASS 0-CRITICAL via the REAL E-press path (camera-cone recognition,
+7 PUBLISH→9 APPLY, throw→re-pile drift 0cm) + carry-regression PASS. Audit HIGH fixed (clump-lost-mid-carry →
+`ReleaseClientHold` broadcasts `PropDestroy`). **NEXT (greenlight):** a `garbageCollider`-analog SHAPE
+component on the proxy (occlusion-correct aim + movement-block — the cone ignores walls, the proxy is
+walk-through). HEAD `29353191`, deployed `BB94A120A969A51E`, proto v85, committed, push held.
 
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under

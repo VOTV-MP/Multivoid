@@ -259,9 +259,11 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   (the `garbageCollider` hull) is PHASE 2 with Increment 2. Design + AS-BUILT:
   `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix (the
   canonical doc): `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`; the autonomous
-  harness: `[[reference-pile-test-harness]]`. **STILL OPEN (NEXT):** the WHOOSH throw sound (no ReliableKind in
-  `protocol.h`; user-deprioritized, best confirmed by hearing); retire the dead `dropGrabObject` read-only thunk
-  (RULE 2); Increment 2 (client-grab) + phase-2 collision.
+  harness: `[[reference-pile-test-harness]]`. **STILL OPEN (NEXT):** a `garbageCollider`-analog SHAPE component
+  on the proxy (occlusion-correct aim + movement-block — the client-grab camera cone ignores walls, the proxy
+  is walk-through); the WHOOSH throw sound (no ReliableKind; user-deprioritized, best confirmed by hearing);
+  retire the dead `dropGrabObject` read-only thunk (RULE 2); the `event_dispatch_trash.cpp` extraction.
+  (Increment 2 client-grab FULL CHAIN is AS-BUILT v85 — see the dedicated bullet above.)
   **[V hands-on: dup-fix(derived) + visibility + carry-freeze + carry-JANK + throw-arc + rotation + sound; V harness: Z-fix + level-pile dup-DESTROY + FPS-fix; SCALE AS-BUILT; option 2 DISPROVEN.]**
 
 ### NPCs / Characters
@@ -306,10 +308,11 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
 | client kerfur conversion ghost grabbed → client-eid dupe | `ClaimConversionGhosts` parks/freezes immediately (adopt or reap) | [V] |
 
 ## NEEDS-PROBE (do not encode as truth without it)
-- **[PARTLY ANSWERED]** (trash redesign 08) PROBE-A: the carry slot is **`grabbing_actor`** (the PHC
-  light-grab path, NOT `holding_actor`) — confirmed by the carry-churn finding + the autotest. Which
-  `OnPileGrabPre` early-return fires on a live CLIENT (hands-full vs `kInvalidId`) is still open, but only
-  matters for the client-INITIATED suppress-native path (phase 2, greenlight-gated).
+- **[ANSWERED]** (trash redesign 08) PROBE-A: the carry slot is **`grabbing_actor`** (the PHC light-grab
+  path, NOT `holding_actor`) — confirmed by the carry-churn finding + the autotest. (The old sub-question
+  "which `OnPileGrabPre` early-return fires on a live CLIENT" is MOOT — the client-grab recognition is a
+  camera-ray cone, NOT suppress-native; no `lookAtActor` read is involved.
+  `[[lesson-proxy-never-lookatactor-use-camera-cone]]`.)
 - **[ANSWERED — YES (engage), 2026-06-22]** does `playerGrabbed(Player=puppet)` drive the grab on a PUPPET
   (host executes a client's grab intent)? **The grab ENGAGES + HOLDS on an unpossessed puppet**
   (`grabbing_actor := clump`, no `GetController`/PlayerController/possession dependency — RE + the runtime

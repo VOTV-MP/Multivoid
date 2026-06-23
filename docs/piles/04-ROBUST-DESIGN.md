@@ -8,8 +8,9 @@
 > **Still valid (2026-06-21) — its principles are realized by [08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md).**
 > Principle 5 here ("client interactions relay, never author — the host does it + broadcasts; every peer
 > mirrors") is exactly what the morph (07) VIOLATED (the client morphed locally → the dead direction + the
-> dupe) and what 08 RESTORES (client suppress-native + `GrabIntent` → host executes). Read 08 for the
-> concrete host-authoritative realization.
+> dupe) and what 08 RESTORES (client recognizes the aimed pile via a camera-ray cone + `GrabIntent` → the
+> host executes on puppet-N + broadcasts). Read 08 for the concrete host-authoritative realization (AS-BUILT
+> v85, the full chain).
 
 ## The fact that reframes everything
 

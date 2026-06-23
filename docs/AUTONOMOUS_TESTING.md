@@ -63,13 +63,16 @@ override per-run config without editing the ini:
   + tracks the clump. Verdict (2026-06-22): ENGAGED+HELD but NOT tracked — the
   puppet's tick doesn't drive the PHC, so Increment 2 must drive the hold pose
   host-side. Finding: `research/findings/votv-puppet-grab-feasibility-RE-2026-06-22.md`.
-- `VOTVCOOP_RUN_GRAB_INTENT_TEST=1` — the Increment-2 host-side synthetic test. The
-  CLIENT picks a mirrored pile proxy, resolves its eid, and sends a `GrabIntent` over
-  the wire; the HOST validates + executes `playerGrabbed` on the puppet + broadcasts
-  the convert + drives the held clump. Exercises the full client→host wire + router +
-  handler + hand-drive WITHOUT the phase-2 client suppress-native / collision. Assert
-  via `pile-test-assert.ps1` (`grab-intent-roundtrip`, `puppet-drive-active`,
-  `grab-intent-client-echo`). VERDICT PASS 2026-06-22.
+- `VOTVCOOP_RUN_GRAB_INTENT_TEST=1` — the Increment-2 CLIENT-grab FULL-CHAIN test. The
+  CLIENT picks a mirrored pile proxy, teleports facing it, and injects a REAL
+  `InpActEvt_use` (E-press) so `OnPileGrabPre`'s camera-ray cone recognizes the pile →
+  `GrabIntent`; the HOST executes `playerGrabbed` on the puppet + publishes the carry
+  pose; the client injects E-press again to THROW; the clump self-re-piles. (Falls back
+  to `DebugSendGrabIntent`/`DebugSendThrowIntent` only if `InpActEvt_use` can't be
+  resolved.) Assert via `pile-test-assert.ps1`: `clientgrab-recognition` (the real cone
+  path, not the bypass), `grab-intent-roundtrip`, `puppet-hand-drive`,
+  `carry-pose-published`/`-applied`, `throw-intent-roundtrip`, `throw-repile`. VERDICT
+  PASS 2026-06-23 (proto v85, deployed `BB94A120A969A51E`).
 
 ## Pile carry/throw log-truth harness (2026-06-22) — the autonomous self-test loop
 

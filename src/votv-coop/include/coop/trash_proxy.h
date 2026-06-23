@@ -16,11 +16,13 @@
 // poll / serial-check are all moot).
 //
 // The proxy is a kinematic host-driven follower (the host owns physics / grab /
-// state). COLLISION (phase 2, client-grab Increment 2): a PILE-form proxy is
-// QueryOnly so the client's interaction trace (TraceTypeQuery1) can AIM at it to
-// initiate a grab (ApplyProxyCollision); a CLUMP-form proxy stays NoCollision (the
-// transient carry/flight body is not grabbable). Scope: trash only (chipPile /
-// clump + variants); Aprop_C and kerfur mirrors are unchanged.
+// state) and stays NoCollision. The client-grab AIM is a CAMERA-RAY CONE
+// (EidForAimedPileProxy), NOT the game's interaction trace -- a bare AStaticMeshActor
+// proxy can never be lookAtActor (the int_player_C filter) AND the worn pile mesh has
+// no simple collision body (harness trace-gate hit=0), so the trace/collision approach
+// was RETIRED (RULE 2). The FAITHFUL future collision (occlusion-correct aim +
+// movement-block) is a garbageCollider-analog SHAPE component on the proxy. Scope:
+// trash only (chipPile / clump + variants); Aprop_C and kerfur mirrors are unchanged.
 //
 // LIFECYCLE: this module OWNS the eid->proxy registry + the rooting. Every retire
 // path funnels through RetireProxy (Destroy -> RemoveFromRoot -> unbind, in that

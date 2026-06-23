@@ -1,4 +1,11 @@
-# Increment 2 (chipPile CLIENT-grab) — HOST-SIDE implementation blueprint — DESIGN
+> **SUPERSEDED 2026-06-23 by `votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`.** This was the
+> host-side arm only (v84), verified via a SYNTHETIC GrabIntent. The FULL CHAIN is now AS-BUILT + [V harness]
+> (v85, HEAD `29353191`): the client-initiated recognition is a CAMERA-RAY CONE (NOT the suppress-native +
+> `garbageCollider`-collision plan this doc sketched — that was disproven: a bare proxy can't be `lookAtActor`
+> + the pile mesh has no collision body, harness `trace-gate hit=0`, RETIRED RULE 2), plus the host-auth carry
+> pose stream + the throw. This doc is kept as point-in-time history; read the FULL-CHAIN finding for truth.
+
+# Increment 2 (chipPile CLIENT-grab) — HOST-SIDE implementation blueprint — DESIGN (SUPERSEDED)
 
 **Date:** 2026-06-22. **Status:** DESIGN (code-architect blueprint, agent-derived + cited). Gated by the
 RESOLVED puppet-grab `[?]` (`votv-puppet-grab-feasibility-RE-2026-06-22.md`, commit `32ccd1bc`). Mirrors the

@@ -81,12 +81,14 @@ leaves it flying → stream) — no release verb needed. Carry main branch (held
 byte-identical (additive, audited zero-CRITICAL). **The carry/throw/dup arc is DONE + verified**
 ([V hands-on] carry-smooth/rotation/sound/arc; [V harness] Z-fix/level-dup/FPS). Root + fix:
 `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **The CLIENT-grab
-direction (Increment 2) HOST-SIDE is now AS-BUILT + [V harness]** (proto v84, HEAD `c6473d49`,
-deployed `AAEC4D8F3B4341F8`, commits `81e8e687`+`2dc5d06e`: `GrabIntent` wire + `OnGrabIntent`
-executes `playerGrabbed` on the client's puppet + `puppet_carry_drive` hand-drive; synthetic test
-VERDICT PASS). NEXT (greenlight, hands-on): the **client-INITIATED path** — client suppress-native +
-**Phase 2 collision** (the `garbageCollider` hull, so a client can aim a NoCollision proxy) + the
-feel; plus the dead `dropGrabObject` thunk retire (RULE 2) + the whoosh cue.
+direction (Increment 2) is the FULL CHAIN, AS-BUILT + [V harness]** (proto v85, HEAD `29353191`,
+deployed `BB94A120A969A51E`): a client AIMS at a mirrored pile (a camera-ray cone — the
+trace/`lookatActorCurrent`/collision approach RETIRED, RULE 2), GRABS (real E-press → GrabIntent),
+CARRIES (the new host-auth per-eid `TrashCarryPose` stream), THROWS (self-re-piles), all via the
+REAL E-press path. Finding: `research/findings/votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`.
+NEXT (greenlight): a `garbageCollider`-analog SHAPE component on the proxy (occlusion-correct aim +
+movement-block — the cone ignores walls, the proxy is walk-through) + the feel; the dead
+`dropGrabObject` thunk retire (RULE 2); the whoosh cue; the `event_dispatch_trash.cpp` extraction.
 **The day-to-day live state is
 in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
 file** — this roadmap is the phase-gate structure; the memory is the running log.

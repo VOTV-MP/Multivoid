@@ -1,3 +1,9 @@
+> **UPDATE 2026-06-23: the RE below is DURABLE + still true (the puppet grab ENGAGES with no controller dep;
+> its tick won't drive the PHC → the host drives the hold pose). The "Consequence for Increment 2" steps at
+> the bottom are now AS-BUILT** (the full chain, `votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`)
+> — with ONE correction: step 2's "client suppress-native" is RETIRED; recognition is a camera-ray cone (a
+> bare proxy can't be `lookAtActor`; the pile mesh has no collision body). The probe itself is unchanged truth.
+
 # Puppet-grab feasibility — can the host execute a chipPile grab ON a puppet? — RE + runtime probe
 
 **Date:** 2026-06-22. **Status:** the open `[?]` in `docs/piles/08-HOST-AUTH-TRASH-CHANNEL.md`

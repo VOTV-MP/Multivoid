@@ -84,8 +84,8 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust
   native-looking pile sync + the anti-patterns we did wrong (the deterministic-placement insight).
 - **[08-HOST-AUTH-TRASH-CHANNEL.md](08-HOST-AUTH-TRASH-CHANNEL.md)** — **THE CURRENT DESIGN + AS-BUILT
-  (2026-06-22, HEAD `c6473d49`, proto v84; deployed DLL `AAEC4D8F3B4341F8`, push held). The carry/throw/dup
-  arc is DONE + verified; the CLIENT-grab direction (Increment 2) HOST-SIDE is now AS-BUILT + [V harness].**
+  (2026-06-23, HEAD `29353191`, proto v85; deployed DLL `BB94A120A969A51E`, push held). The carry/throw/dup
+  arc is DONE + verified; the CLIENT-grab direction (Increment 2) is the FULL CHAIN, AS-BUILT + [V harness].**
   Host-authoritative
   trash-entity identity (eid = logical entity), MTA single-syncer + sync-time-context byte. **GRAB
   (pile→clump) = VERIFIED hands-on** via the `InpActEvt_use` PRE seam + the held-edge adopt. **RE-PILE
@@ -126,12 +126,14 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   `SetNotifyRigidBodyCollision(false)` on the held clump) BUILT + FAILED — the live host BP re-arms hit-notify;
   option 2 (the `holdPlayer` convert/ctx gate) is **DISPROVEN by bytecode** — `holdPlayer` is set ONCE on grab
   and NEVER cleared in any BP, so it cannot mark "released" (DEAD, NOT pending). Phase 1 = visual + position +
-  re-skin, NoCollision. The client-grab direction (Increment 2) **HOST-SIDE is now AS-BUILT + [V harness]**
-  (proto v84, commits `81e8e687`+`2dc5d06e`: `GrabIntent` wire + `OnGrabIntent` executes `playerGrabbed` on
-  the client's puppet + the `puppet_carry_drive` hand-drive; synthetic test VERDICT PASS). What's STILL
-  [DESIGN]: the client-INITIATED path — the client suppress-native at `OnPileGrabPre` + **proxy PHASE 2
-  collision** (the `garbageCollider` hull, so a client can aim a NoCollision proxy) + the feel. Design + AS-BUILT:
-  `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix:
+  re-skin, NoCollision. The client-grab direction (Increment 2) is the **FULL CHAIN, AS-BUILT + [V harness]**
+  (proto **v85**, HEAD `29353191`, deployed `BB94A120A969A51E`): a client AIMS at a mirrored pile (a
+  camera-ray cone — the trace/`lookatActorCurrent`/collision approach RETIRED, RULE 2: a bare proxy can't be
+  `lookAtActor` + the pile mesh has no collision body), GRABS, CARRIES (the new host-auth per-eid
+  `TrashCarryPose` stream), THROWS (self-re-piles), all via the REAL E-press path. What's STILL OPEN
+  (greenlight): a `garbageCollider`-analog SHAPE component on the proxy (occlusion-correct aim +
+  movement-block — the cone ignores walls, the proxy is walk-through) + the feel. As-built:
+  `research/findings/votv-increment2-clientgrab-FULL-CHAIN-AS-BUILT-2026-06-23.md`; the carry root + fix:
   `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **Read these for the pile sync.**
 - **`_archive/07-MORPH-V2-held-object-channel.md`** — **SUPERSEDED + RETIRED 2026-06-21, archived** (the
   morph: held-object adopt + PROXIMITY land-watch). Its smoke "VERIFIED" was a FALSE POSITIVE; the real
@@ -177,7 +179,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
   docs, which are a sibling problem: `votv-kerfur-savetransfer-ghost-prop-RCA-2026-06-15.md`,
   `votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md`).
 
-## Status (2026-06-22; HEAD `c6473d49`, deployed `AAEC4D8F3B4341F8`, proto v84, push held) — DESIGN → AS-BUILT → VERIFIED
+## Status (2026-06-23; HEAD `29353191`, deployed `BB94A120A969A51E`, proto v85, push held) — DESIGN → AS-BUILT → VERIFIED
 
 The whole saga below (01–04 + the s21–s33 session-log) converged on **08 — the host-authoritative trash
 channel**, which is the CURRENT design + as-built. The day-to-day live state is in the auto-memory
@@ -243,16 +245,17 @@ channel**, which is the CURRENT design + as-built. The day-to-day live state is 
    discriminator / health-poll / serial-check plan is DROPPED (moot). Design + AS-BUILT:
    `research/findings/votv-pile-mirror-staleness-robustness-DESIGN-2026-06-21.md`; the carry root + fix (the
    canonical doc): `research/findings/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`.
-4. **NEXT — USER HANDS-ON take-29** (carry-smooth verify + the throw arc + the level-pile native-destroy). The
-   carry-freeze AND the carry JANK are now FIXED (fixed-delay snapshot interp); proxy SCALE is built v83
-   (hands-on pending); the throw arc is the flight-stream (`136ed779`, hands-on pending). KEEP fix #2 (the
-   `OnConvert` `pile→clump` no-teleport re-skin) + the CLOSE-B latch (`65AD883A`). THEN build the level-pile
-   native-destroy (the ORIGINAL-pile dup root; the PILE-PROBE confirms coexistence first) and retire the dead
-   `dropGrabObject` thunk (RULE 2). AFTER those: grab-via-thunk (closes the eid=0 adopt-miss gap); then proxy
-   PHASE 2 (collision — the `garbageCollider` hull) + Increment 2 (the client-grab direction — suppress-native
-   + GrabIntent → host executes on puppet-N). Phase 2 is deferred behind the native-destroy + hands-on.
+4. **STATUS (2026-06-23): the items this roadmap listed are SHIPPED.** carry-freeze + carry-JANK FIXED
+   [V hands-on take-30/32]; throw arc + ROTATION + Z-height [V]; the level-pile native-destroy [V harness];
+   proxy SCALE AS-BUILT; the client-grab FULL CHAIN (recognition camera-cone + carry stream + throw)
+   AS-BUILT + [V harness] v85 (HEAD `29353191`). **The NEXT (greenlight) is now the `garbageCollider`-analog
+   SHAPE component** on the proxy (occlusion-correct aim + movement-block — the camera cone ignores walls, the
+   proxy is still walk-through); the WHOOSH cue; retire the dead `dropGrabObject` thunk (RULE 2); the
+   `event_dispatch_trash.cpp` extraction. (The "suppress-native" client plan is RETIRED, RULE 2 — recognition
+   is the camera cone.)
 
-**DEPLOYED: `c2a5f49cc98add31` (proto v83) = HEAD `29069f05`** — the phase-1 trash proxy (incl. the Movable
+**DEPLOYED: `BB94A120A969A51E` (proto v85) = HEAD `29353191`** — the client-grab FULL CHAIN (camera-cone
+recognition + the host-auth `TrashCarryPose` stream + throw, [V harness]), on top of the phase-1 trash proxy (incl. the Movable
 visibility fix), the CLOSE-B latch + land-settle (`65AD883A`), the **`!carrying` release-edge gate** (the
 CARRY-FREEZE FIX), the **carry JANK fix** (fixed-delay snapshot interp, `df158728`) + **proxy SCALE v83**
 (`df158728`), the **throw arc flight-stream** (`136ed779`), and the read-only **PILE-PROBE** (`29069f05`),

@@ -17,7 +17,7 @@
 #include "coop/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/remote_prop_spawn.h"
 #include "coop/trash_channel.h"      // NotePendingGrab (the VISIBLE-seam grab->clump link; docs/piles/08)
-#include "coop/trash_proxy.h"        // EidForPileProxyActor (Increment 2: client-grab proxy recognition)
+#include "coop/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
 #include "ue_wrap/log.h"
