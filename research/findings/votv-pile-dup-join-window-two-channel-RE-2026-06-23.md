@@ -1,8 +1,12 @@
 # chipPile JOIN-WINDOW DUP — the two-channel race (DECISIVE, hands-on) — 2026-06-23
 
-**Status: ROOT CONFIRMED by a controlled hands-on. Fix DESIGNED, NOT built (gated on 2 code checks).**
-This supersedes the entire "L1 orphan / absence-removal at the join" line of work from earlier this
-session — that was chasing a class of bug that **does not exist** (see "What is now FALSE" below).
+**Status: ROOT CONFIRMED (hands-on). Fix BUILT (Path 1c + the load-tail timing follow-up) + audit GO;
+HANDS-ON take-2 PENDING (the user is re-testing). Deployed `F9B6589E1F62955F`, proto v86, HEAD `81de32dd`,
+push HELD.** See "## AS-BUILT (2026-06-23 take 2)" below for the shipped fix; the gate-check + (a)/(b)
+fix-options sections lower down are SUPERSEDED by it (the real fix is neither (a) hold-broadcast nor (b)
+match-by-eid — it is match-by-SAVE-TIME-position reconciled at the post-quiescence sweep). This whole
+finding supersedes the "L1 orphan / absence-removal at the join" line — that chased a bug that **does not
+exist** (see "What is now FALSE").
 
 ## The decisive hands-on (user, 2026-06-23)
 Setup: 6 items on a path — **2 kerfur + 4 chipPile** — host saves. Then, **in the join window** (the
@@ -65,7 +69,14 @@ dedup ordering on the client).
 - The autonomous **same-machine identical-save drift smoke cannot reproduce the real bug** — the bug needs
   the JOIN-LOAD WINDOW + a host move in it, which the drift scenario (pre-connect) structurally can't make.
 
-## The fix — DESIGNED, 2 options, NOT built (gated on 2 code checks)
+## The fix — DESIGNED, 2 options [SUPERSEDED by the AS-BUILT section above]
+> **SUPERSEDED 2026-06-23: the gate checks below resolved BOTH (a) and (b) as DEAD, and the shipped fix is
+> a THIRD path — match by SAVE-TIME position, reconciled at the post-quiescence sweep (see "## AS-BUILT").**
+> Gate (a) hold-broadcast: MISTARGETED — the live convert is ALREADY dropped by the pre-world gate; the
+> @new proxy arrives via the POST-load replay snapshot, so holding the convert changes nothing. Gate (b)
+> match-by-eid: IMPOSSIBLE — the save-native carries a client-minted peer-range eid, the proxy a host-range
+> eid; disjoint, no bridge, chipPile keyless. Kept below for the audit trail of why the shipped fix differs.
+
 The dup = one pile expressed as TWO objects (scratch-native@old + broadcast-proxy@new) that the
 position-dedup can't reconcile because they diverged in the window. The clean fixes:
 - **(a) HOLD the broadcast convert until the client signals load-100%** (queue host pile-converts during

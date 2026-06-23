@@ -8,8 +8,13 @@
 > CLIENT-LOCAL (host state correct) + PERSISTENT (two real objects, not self-resolving). **Pre-connect
 > divergence does NOT exist** (the fresh scratch save at connect captures it), so the earlier "[PILE-CENSUS]
 > orphan census + absence-removal AT THE JOIN" direction is CANCELLED (it hunted join-orphans the save-
-> transfer makes impossible — hence every census=0, correct). FIX (designed, not built, CLIENT-side):
-> (a) hold the broadcast convert until client load-100%, or (b) dedup match-by-eid not 1cm. Canonical:
+> transfer makes impossible — hence every census=0, correct). **FIX BUILT (2026-06-23, NOT (a)/(b) — both
+> died on the gate checks): match the client's save-loaded native by the pile's SAVE-TIME position (the
+> host stamps it on the join snapshot from a g_blobPileXforms map), reconciled at the POST-QUIESCENCE sweep
+> (take-1 proved the key is correct but the world-ready twin-destroy runs BEFORE the native async-loads —
+> a load-tail timing race; the sweep waits for quiescence where the late native is present). Commits
+> `4c286cae`(stamp/match) + `124fbc9d`(sweep-reconcile timing fix). Audit GO; HANDS-ON take-2 PENDING.
+> Deployed `F9B6589E1F62955F`, proto v86.** Canonical (with the full as-built + the take-1 timing RE):
 > `research/findings/votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`. **The L1 bits in the banner
 > below (level-pile client->host / absence-removal) are HISTORICAL.**
 

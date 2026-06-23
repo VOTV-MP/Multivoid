@@ -60,8 +60,12 @@ NOT a join orphan.** A controlled hands-on (kerfur control clean, pile dups) pro
 DURING the join-load window dups on the client (scratch-save native @old + broadcast-convert proxy @new,
 >1cm → the 1cm dedup can't match). Pre-connect divergence does NOT exist (fresh scratch save at connect
 captures it) → every census=0 was correct → the "orphan census + absence-removal at the JOIN" line is
-CANCELLED. Dup is CLIENT-LOCAL (host correct) + persistent. Fix designed (client-side: hold-broadcast-til-
-load OR dedup-by-eid), not built. Canonical: **`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**.
+CANCELLED. Dup is CLIENT-LOCAL (host correct) + persistent. **FIX BUILT (NOT hold-broadcast/dedup-by-eid —
+both died on the gate checks): match the save-loaded native by the pile's SAVE-TIME position, reconciled at
+the POST-QUIESCENCE sweep (take-1 proved the key is bit-for-bit correct but the world-ready twin-destroy runs
+before the native async-loads = a load-tail timing race). Commits `4c286cae`+`124fbc9d`, audit GO, deployed
+`F9B6589E1F62955F` v86, HANDS-ON take-2 PENDING, push HELD.** Canonical (full as-built + take-1 timing RE):
+**`votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`**.
 
 **Update (2026-06-22 FINAL, HEAD `a5282f57`, deployed `015F0AC9590B6B23`, proto v83 — all committed, push held):**
 the throw-arc/probe state above is now the SHIPPED+VERIFIED final state. **Pile-landing ROTATION + throw SOUND
