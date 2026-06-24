@@ -1,8 +1,9 @@
 # COMBINED hands-on runbook (2026-06-24) -- instant-world visual + extract 3-instance re-verify + pile-move repro
 
-**Deployed: MD5 `f155181d` (instant-world) on HOST + CLIENT + CLIENT2 + DEV. Proto v88 (UNCHANGED -- both
-peers run this DLL). HEAD `dcf56f3d` (5 ahead of origin/main `24ee5220`, push HELD).** One playthrough covers
-everything below.
+**Deployed: MD5 `E249A0D3` (instant-world + extract + puppet-head probe) on HOST + CLIENT + CLIENT2 + DEV.
+Proto v88 (UNCHANGED -- both peers run this DLL). Supersedes the earlier `f155181d` deploy (SAME instant-world
++ extract code, PLUS the diagnostic head probe -- no gameplay change). HEAD `(probe commit)`, push HELD.**
+One playthrough covers everything below (TEST 4 = the puppet head-freeze probe, added 2026-06-24 PM).
 
 ## What is ALREADY autonomously verified (no hands-on needed -- for context)
 - **Extract L1 pile-dup regress = PASS** (L1 pile-drift smoke, build f155181d): host drifted 5 destroyed + 3
@@ -49,6 +50,19 @@ it** (it re-piles). Watch the client.
   an unreconciled proxy) on the client. I need to see whether instant-world's deferred-hide changes how it
   presents (the proxy may now be hidden until quiescence -> the dup may be less visible, or resolve under the
   cover). Tell me what you see; the fix (self-seed the eid at the grab edge) is designed but not built.
+
+### TEST 4 -- PUPPET HEAD-FREEZE probe (positive-confirm the LookAtClamp; needs your back-turn + look-back)
+The host ini `votv-coop.ini` already has `puppet_head_probe=1` (observer-side, ~1 Hz, off for everyone else).
+- With the client connected, have the **client player turn so their puppet's BACK is to you (the host)**, then
+  have the client **sweep their mouse to look back toward you / far to the side** (past ~67deg off their body).
+- Read the host log line `[HEAD-PROBE] ... DESIRED off=X | TWIST head=Y ... reach~67.5 ... <verdict>`:
+  - facing you / small look: `DESIRED` small, `TWIST` tracks it, verdict `within clamp`.
+  - back-turned + look-back: `DESIRED` grows past ~67, `TWIST head` **pins ~67** -> verdict
+    **`PINNED -- CLAMP CONFIRMED`**. That is the positive proof.
+- **Screenshot for your phone:** the puppet with its frozen head AND (if you can) the host log `[HEAD-PROBE]`
+  line showing DESIRED > TWIST(~67). `clamp head=45.0 neck=45.0` is already confirmed live by the smoke.
+- On `CLAMP CONFIRMED` -> I widen the LookAtClamp to ~90deg puppet-only (kerfur untouched). If `TWIST` keeps
+  tracking `DESIRED` with no pin -> the mechanism is NOT the clamp and I re-RE before any fix.
 
 ## After the run -- paste / tell me
 TEST 1: did the cover fade to an assembled world with no dance? any stuck-black or missing props?
