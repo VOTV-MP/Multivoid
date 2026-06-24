@@ -647,6 +647,7 @@ inline constexpr size_t LookAtMod_BoneToModify    = 0xC8;   // FBoneReference (F
 // FAnimNode_LookAt specifics:
 inline constexpr size_t LookAt_LookAtTarget       = 0xE0;   // FBoneSocketTarget (0x60 bytes)
 inline constexpr size_t LookAt_LookAtLocation     = 0x140;  // FVector (fallback if no socket target)
+inline constexpr size_t LookAt_Clamp              = 0x170;  // float degrees (FAnimNode_LookAt::LookAtClamp; class-default 45)
 // FAnimNode_ModifyBone specifics (for direct head-rotation writes):
 inline constexpr size_t ModBone_Translation       = 0xD8;   // FVector
 inline constexpr size_t ModBone_Rotation          = 0xE4;   // FRotator

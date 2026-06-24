@@ -122,4 +122,34 @@ bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& out
     return false;
 }
 
+bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot) {
+    if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
+    // SceneComponent::GetSocketRotation (a bone name is a valid socket name) -- resolved
+    // lazily here so GetBoneWorldZByName (location-only) stays unaffected.
+    static void* g_socketRotFn = nullptr;
+    if (!g_socketRotFn) {
+        if (void* sc = R::FindClass(P::name::SceneComponentClass))
+            g_socketRotFn = R::FindFunction(sc, L"GetSocketRotation");
+    }
+    if (!g_socketRotFn) return false;
+    int32_t n = 0;
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    if (n <= 0) return false;
+    for (int32_t i = 0; i < n; ++i) {
+        uint8_t name[8] = {};
+        { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
+          if (!Call(skelMeshComp, nf)) continue;
+          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
+        const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
+        if (s == boneName) {
+            ParamFrame rf(g_socketRotFn);
+            rf.SetRaw(L"InSocketName", name, sizeof(name));
+            if (!Call(skelMeshComp, rf)) return false;
+            outRot = rf.Get<FRotator>(L"ReturnValue");
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace ue_wrap::engine

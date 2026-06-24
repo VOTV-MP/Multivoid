@@ -1,5 +1,6 @@
 #include "coop/remote_player.h"
 
+#include "coop/dev/puppet_head_probe.h"
 #include "coop/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -810,6 +811,12 @@ void RemotePlayer::ApplyToEngine() {
             head.Z + std::sin(pitchRad) * kLookDist,
         };
         Pup::DriveHeadLookAtWorld(actor_, worldLook);
+        // Positive-confirm probe (ini [votvcoop] puppet_head_probe=1, ~1 Hz, no-op
+        // otherwise): measures the DESIRED head twist (look-input vs body yaw) vs the
+        // ACTUAL rendered 'head' bone twist + the native LookAtClamp -- proves whether
+        // the back-turned freeze is the ~67deg clamp pin before we widen it puppet-only.
+        coop::puppet_head_probe::Tick(actor_, bodyYaw_.Yaw(),
+                                      curYaw_ + curHeadYawDelta_, curPitch_);
     }
 }
 

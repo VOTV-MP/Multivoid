@@ -533,6 +533,12 @@ void DumpAllBonesWorldZ(void* skelMeshComp);
 // authored-but-invisible bones in a multi-variant skeleton). Game thread only.
 bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ);
 
+// WORLD rotation of a named bone/socket (SceneComponent::GetSocketRotation -- a bone
+// name is a valid socket name). Returns false if the bone is not found or the function
+// is unresolved. Game thread only. Used by the puppet-head-freeze probe to measure the
+// head/neck twist against the native LookAt clamp.
+bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot);
+
 // ACharacter capsule half-height read (UCapsuleComponent::CapsuleHalfHeight at the
 // fixed offset). 0.f if `mainPlayerPawn` is null or has no capsule. Used by
 // RemotePlayer's foot-on-ground placement (puppet visible feet at world Z =

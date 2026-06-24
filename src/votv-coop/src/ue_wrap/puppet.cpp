@@ -733,6 +733,29 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     }
 }
 
+bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out) {
+    out = {};
+    void* comp = GetSkeletalMeshComponent(puppetActor);
+    if (!comp || !R::IsLive(comp)) return false;
+    // LookAtClamp (degrees) read off the puppet's OWN kerfur AnimInstance -- the two
+    // FAnimNode_LookAt nodes (head @kKerfurLookAt_1, neck @kKerfurLookAt), clamp @+0x170.
+    void* anim = LiveAnimInstance(comp);
+    if (anim && IsKerfurAnimBP(anim)) {
+        out.headClampDeg = ReadAt<float>(anim, P::anim::kKerfurLookAt_1 + P::anim::LookAt_Clamp);
+        out.neckClampDeg = ReadAt<float>(anim, P::anim::kKerfurLookAt   + P::anim::LookAt_Clamp);
+        out.haveClamp = true;
+    }
+    // Resolved WORLD rotation of the 'head' + 'neck' bones (the actual rendered twist).
+    ue_wrap::FRotator hr{}, nr{};
+    if (E::GetBoneWorldRotationByName(comp, L"head", hr)) {
+        out.headWorldYaw = hr.Yaw; out.headWorldPitch = hr.Pitch; out.haveHead = true;
+    }
+    if (E::GetBoneWorldRotationByName(comp, L"neck", nr)) {
+        out.neckWorldYaw = nr.Yaw; out.haveNeck = true;
+    }
+    return out.haveClamp || out.haveHead;
+}
+
 bool ReadKerfurLookAt(void* npcActor, FVector& outWorldTarget) {
     return ReadLookAtOnAnim(NpcBodyAnimInstance(npcActor), outWorldTarget);
 }
