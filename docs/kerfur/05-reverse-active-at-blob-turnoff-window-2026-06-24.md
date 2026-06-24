@@ -1,6 +1,12 @@
 # 05 — REVERSE symptom: client GHOST active kerfur (follow) — ROOT FOUND + FIX BUILT
 
-**STATUS 2026-06-24: ROOT FOUND + FIX BUILT+DEPLOYED (MD5 `239b231c`), hands-on verify PENDING.**
+**STATUS 2026-06-24: ROOT FOUND + FIX BUILT+DEPLOYED (MD5 `239b231c`) + HANDS-ON VERIFIED (13:15) + COMMITTED
+`91948b83` (push HELD). The reverse follow-ghost is CLOSED.** Verify log: client `13:15:19 npc-mirror[reconcile]:
+destroyed untracked ghost NPC actor=...7F07D580 kerfurOmega_C` -> `post-snapshot ghost sweep complete (1
+untracked orphan(s) destroyed; adoption converged + load tail quiesced)` -- the sweep fired AFTER quiescence and
+killed the late twin (user saw it flicker ~2s then vanish = the destroy moment; flicker is expected/cosmetic).
+A SEPARATE symptom surfaced in the same verify (OBS-2: one save kerfur OBJECT missing on the client, 4 of 5) ->
+NOT the reverse (no turn_off that session) -> diagnosis in `docs/kerfur/06`.
 
 ## ROOT (CONFIRMED by 3-session timing compare) — a JOIN-TIME DUPLICATE + a one-shot sweep that fires too early
 
@@ -35,9 +41,11 @@ fresh-spawn (same file) and the prop divergence sweep already use. Now the one-s
 twin is present before it runs + latches; deadline-capped in `remote_prop_spawn` so it can't hang; re-armed per
 `OnClientWorldReady` (`g_ghostSwept=false`) for the 2-level-load. Minimal, reuses a proven pattern, no new state.
 
-**Hands-on verify (PENDING):** in-window turn_off of an active+idle kerfur -> client shows NO follow-ghost
-(host object only); grep the client log for `post-snapshot ghost sweep complete (N untracked orphan(s)
-destroyed; adoption converged + load tail quiesced)` with the sweep firing AFTER load-tail quiescence.
+**Hands-on VERIFIED 2026-06-24 (13:15):** client `post-snapshot ghost sweep complete (1 untracked orphan(s)
+destroyed; adoption converged + load tail quiesced)` -- the sweep fired AFTER quiescence (2164ms after arm) and
+destroyed the late twin (actor ...7F07D580); NO follow-ghost. The ~2s flicker before the destroy is expected by
+design (the gate must wait for quiescence to guarantee the twin is present); cosmetic, logged. COMMITTED
+`91948b83` (push held).
 
 ---
 ## (SUPERSEDED) earlier R-client-retire investigation -- kept for the audit trail; the turn_off retire was a red herring
