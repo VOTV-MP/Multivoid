@@ -1,11 +1,11 @@
 # COMBINED hands-on runbook (2026-06-24) -- instant-world visual + extract 3-instance re-verify + pile-move repro
 
-**Deployed: MD5 `d7b535d7` (instant-world) on HOST + CLIENT + CLIENT2 + DEV. Proto v88 (UNCHANGED -- both
+**Deployed: MD5 `b0130c29` (instant-world) on HOST + CLIENT + CLIENT2 + DEV. Proto v88 (UNCHANGED -- both
 peers run this DLL). HEAD `dcf56f3d` (5 ahead of origin/main `24ee5220`, push HELD).** One playthrough covers
 everything below.
 
 ## What is ALREADY autonomously verified (no hands-on needed -- for context)
-- **Extract L1 pile-dup regress = PASS** (L1 pile-drift smoke, build d7b535d7): host drifted 5 destroyed + 3
+- **Extract L1 pile-dup regress = PASS** (L1 pile-drift smoke, build b0130c29): host drifted 5 destroyed + 3
   moved; client `[PILE-1C] sweep-reconcile -- 18 of 18 pending save-time twin(s) removed` -> `[PILE-CENSUS] 0
   live orphan native(s)`. The extract-migrated pile sweep WORKS. (research/smoke_L1drift_instantworld_2026-06-24.txt)
 - **Instant-world lifecycle = WORKS** (both the L1 smoke + a joinchurn): `mirror_defer: ARMED` -> `lift-reveal
@@ -40,7 +40,7 @@ The harness cannot turn a kerfur ON during the join window. Setup: a fresh save 
   client log `kerfur_reconcile: ARMED off->active ... (from npc EntitySpawn)` -> `sweep-retire 1 of 1`. Under
   instant-world the active NPC is a fresh-spawn -> hidden until reveal, so you should NOT even see a flicker.
 - This is the one extract-migrated path the autonomous smoke can't reach (validated at 18:30 pre-instant-world;
-  re-confirm it still holds on d7b535d7).
+  re-confirm it still holds on b0130c29).
 
 ### TEST 3 -- PILE grabbed/moved IN the window (the 4th mirror-identity bug repro; needs your manipulation)
 Setup: a pile near where you'll be. Client connects; **during the join window, GRAB a chip-pile, move it, drop
