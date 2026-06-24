@@ -14,7 +14,9 @@
 #include "coop/chat_feed.h"
 #include "coop/ini_config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactable_sync.h"
+#include "coop/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
 #include "coop/join_progress.h"
+#include "coop/mirror_defer.h"  // instant-world SEAM 2+3: arm deferred-hide / reveal-confirmed at the lift
 #include "coop/net/session.h"
 #include "coop/subsystems.h"
 #include "coop/npc_adoption.h"
@@ -366,6 +368,12 @@ void Update(net::Session& session, void* localPlayer) {
             net::SnapshotBeginPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             coop::join_progress::BeginSnapshot(p.propTotal);
+            // instant-world ARM (SEAM 1+2): the host snapshot is starting to arrive (client-side; the spawn
+            // burst follows). Raise the curtain + open the deferred-hide window so every host mirror spawned
+            // below is hidden until the lift (SnapshotComplete) / quiescence reveal. Backup untouched -- this
+            // only controls VISIBILITY (worst case = today's dance, best case = instant).
+            coop::join_curtain::Show();
+            coop::mirror_defer::Arm();
             // P2 (2026-06-10): arm the connect-snapshot claim set. Every
             // PropSpawn dispatched below (inline, same drain, same lane ->
             // strictly after this) claims the client actor it binds; the
@@ -401,6 +409,13 @@ void Update(net::Session& session, void* localPlayer) {
             }
             if (session.role() == net::Role::Host) break;
             coop::join_progress::Complete();
+            // instant-world curtain LIFT (SEAM 1+3): the primary world is assembled -- every host
+            // PropSpawn/EntitySpawn in this snapshot has been applied above. Fade the curtain out and reveal
+            // the CONFIRMED mirrors NOW (~2s BEFORE quiescence -> the world fades in already-assembled, no
+            // long blank). The HELD tail (save-time-keyed forms whose local twin is still visible) stays
+            // hidden -> the quiescence backstop reveals it after the sweep armed below resolves the dups.
+            coop::join_curtain::BeginDismiss();
+            coop::mirror_defer::RevealConfirmedAtLift();
             // P2 (2026-06-10): the snapshot drained -- every host prop has
             // claimed its client actor. The unclaimed RNG-divergent locals (the
             // client's own fresh-New-Game litter, OR the stale blob objects the

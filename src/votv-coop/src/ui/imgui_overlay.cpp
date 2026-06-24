@@ -41,6 +41,7 @@
 #include "coop/chat_sync.h"
 #include "coop/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
+#include "coop/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
 #include "coop/join_progress.h"
 #include "coop/session_manager.h"
 #include "coop/dev/perf_probe.h"
@@ -359,6 +360,11 @@ void RenderFrameGuarded() {
         // The console (bottom log panel) then the loading screen (centered) draw LAST, so the
         // connecting UI sits on top of everything during a join.
         if (ConsoleOpen()) ui::console::Render();
+        // instant-world curtain: a full-viewport cover on the BACKGROUND draw list (over the game world,
+        // BEHIND the loading panel below + every window above). Drawn unconditionally -- it no-ops when
+        // inactive and fades out AFTER the loading panel closes at SnapshotComplete (so it can't be gated on
+        // LoadingOpen). Its own alpha-fade clock runs off ImGui::GetTime().
+        coop::join_curtain::Render();
         if (LoadingOpen()) ui::loading_screen::Render();
         DrawToasts();  // top-center notices (the v59 version toast) above everything
 

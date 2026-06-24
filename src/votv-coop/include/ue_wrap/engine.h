@@ -187,6 +187,16 @@ bool SetComponentWorldRotation(void* component, const FRotator& rotation);
 // destroy). Game thread only.
 bool SetActorTickEnabled(void* actor, bool enabled);
 
+// AActor::SetActorHiddenInGame -- VISUAL ONLY (bHidden @0x58; collision is the
+// separate bActorEnableCollision @0x5C). The instant-world deferred-spawn upper
+// layer hides a host mirror until reconcile resolves, then reveals it. Game thread.
+bool SetActorHiddenInGame(void* actor, bool hidden);
+
+// AActor::SetActorEnableCollision -- pair with SetActorHiddenInGame(true) on a
+// deferred-hidden mirror so it is not grab-trace-hittable / physics-active while
+// invisible (hide alone leaves collision on). Game thread.
+bool SetActorEnableCollision(void* actor, bool enabled);
+
 // APawn::GetController on `pawn` -- returns the AController* (or nullptr).
 void* GetController(void* pawn);
 

@@ -492,6 +492,8 @@ void* g_setRotFn = nullptr;
 void* g_setTickFn = nullptr;
 void* g_getScaleFn = nullptr;
 void* g_setScaleFn = nullptr;
+void* g_setHiddenFn = nullptr;     // SetActorHiddenInGame (visual-only; instant-world deferred-hide)
+void* g_setCollisionFn = nullptr;  // SetActorEnableCollision (paired with hide so a hidden mirror is not grabbable)
 
 // ESpawnActorCollisionHandlingMethod::AlwaysSpawn -- spawn no matter what
 // (the orphan must exist even if it overlaps geometry).
@@ -519,6 +521,8 @@ bool ResolveActorFns() {
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
         if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
         if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
+        if (!g_setHiddenFn) g_setHiddenFn = R::FindFunction(g_actorClass, P::name::SetActorHiddenInGameFn);
+        if (!g_setCollisionFn) g_setCollisionFn = R::FindFunction(g_actorClass, P::name::SetActorEnableCollisionFn);
     }
     return g_actorClass && g_getLocFn && g_setLocFn;
 }
@@ -850,6 +854,32 @@ bool SetActorTickEnabled(void* actor, bool enabled) {
     }
     ParamFrame f(g_setTickFn);
     f.Set<bool>(L"bEnabled", enabled);
+    return Call(actor, f);
+}
+
+bool SetActorHiddenInGame(void* actor, bool hidden) {
+    // AActor::SetActorHiddenInGame -- VISUAL ONLY (bHidden @0x58; collision is the
+    // SEPARATE bActorEnableCollision @0x5C). The instant-world deferred-spawn upper
+    // layer hides a mirror until reconcile resolves, then reveals it. Game thread.
+    if (!actor || !ResolveActorFns() || !g_setHiddenFn) {
+        UE_LOGE("engine: SetActorHiddenInGame unresolved (fn=%p)", g_setHiddenFn);
+        return false;
+    }
+    ParamFrame f(g_setHiddenFn);
+    f.Set<bool>(L"bNewHidden", hidden);
+    return Call(actor, f);
+}
+
+bool SetActorEnableCollision(void* actor, bool enabled) {
+    // AActor::SetActorEnableCollision -- paired with SetActorHiddenInGame(true) on a
+    // deferred-hidden mirror so it is not grab-trace-hittable / physics-active while
+    // invisible (the SDK proves hide alone leaves collision on). Game thread.
+    if (!actor || !ResolveActorFns() || !g_setCollisionFn) {
+        UE_LOGE("engine: SetActorEnableCollision unresolved (fn=%p)", g_setCollisionFn);
+        return false;
+    }
+    ParamFrame f(g_setCollisionFn);
+    f.Set<bool>(L"bNewActorEnableCollision", enabled);
     return Call(actor, f);
 }
 

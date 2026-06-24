@@ -15,6 +15,7 @@
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/kerfur_convert.h"  // FindParkedGhostNpcNear -- adopt the client's own turn-on result
+#include "coop/mirror_defer.h"  // instant-world: hide a freshly-spawned NPC mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"
@@ -376,6 +377,12 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     // looping timers (timer_face/timer_kerf/checkDoor) that keep running local AI on the parked
     // mirror (the 200s timer_kerf can flip it into a local spooky-kill state). No-op on non-kerfur.
     ue_wrap::kerfur::NeutralizeAiTimers(spawned);
+
+    // instant-world: hide the freshly-spawned + Install'd NPC mirror until reveal (AFTER Install so it is
+    // enumerable). A fresh-spawn NPC is a host-only NPC the client has NO local twin for -> CONFIRMED
+    // (holdUntilQuiescence=false, reveal at the curtain-lift). collisionOff=true (the capsule must not block
+    // the player while invisible). The kerfur off->active HOLD case is an ADOPT (bind-local), not this path.
+    coop::mirror_defer::OnMirrorSpawned(elementId, spawned, /*collisionOff=*/true, /*holdUntilQuiescence=*/false);
 
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             elementId, classW.c_str(), spawned, locX, locY, locZ);

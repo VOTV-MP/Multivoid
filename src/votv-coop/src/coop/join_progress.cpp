@@ -2,6 +2,7 @@
 
 #include "coop/join_progress.h"
 
+#include "coop/join_curtain.h"  // instant-world: drop the curtain on a join ABORT (not the normal Complete path)
 #include "ue_wrap/log.h"
 
 #include <atomic>
@@ -122,6 +123,10 @@ void Reset() {
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
+    // instant-world: an ABORT from a non-Idle phase (cancel / connect-fail / failsafe) reached here (the
+    // normal SnapshotComplete path uses Complete(), which fades the curtain via BeginDismiss and never calls
+    // Reset from non-Idle). Drop the cover so it can't trap the menu black. (Idle-already early-returned above.)
+    coop::join_curtain::Reset();
     UE_LOGI("join_progress: Reset -- loading screen hidden");
 }
 

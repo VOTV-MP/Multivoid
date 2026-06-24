@@ -20,6 +20,7 @@
 #include "coop/kerfur_entity.h"  // GetKerfurMirrorEidForActor -- exempt host-driven kerfur mirrors in the grab-guard predicate (the SWEEP excludes mirrors structurally via pr.mirror since R3)
 #include "coop/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
 #include "coop/kerfur_reconcile.h"  // scope A: post-quiescence retry of the kerfur off->active dup retire
+#include "coop/mirror_defer.h"  // instant-world: hide a freshly-spawned host mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
 #include "coop/pile_reconcile.h"  // extracted 2026-06-23: keyless-pile join twin-destroy / adopt / census
@@ -312,8 +313,16 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         void* proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot,
                                                     ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
         if (proxy) {
-            if (!skipBind)
+            if (!skipBind) {
                 coop::remote_prop::RegisterPropMirror(payload.elementId, proxy, L"", classW, senderSlot);
+                // instant-world: hide the freshly-registered proxy until reveal. Proxies are already
+                // collision-less (collisionOff=false). hasMatchPos => a moved-save pile whose local native@old
+                // is still visible -> HOLD to quiescence; else (derived/window pile, no native twin) reveal at
+                // the curtain-lift. (skipBind = a convert re-skin of an existing proxy -> OnConvert owns it;
+                // g_revealed also guards against re-hiding an already-revealed one.)
+                coop::mirror_defer::OnMirrorSpawned(payload.elementId, proxy, /*collisionOff=*/false,
+                                                    /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
+            }
             if (outSpawned) *outSpawned = proxy;
             // LEVEL-PILE DUP DESTROY (take-31, probe-greenlit: all 16 PILE-PROBE = 1cm=1). A level-placed
             // chipPile gets a host eid + THIS proxy, but the client's NATIVE level-loaded chipPile COEXISTS
@@ -952,6 +961,12 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // kinematic drive could never start and the clump would appear but not
     // follow the collector's hand. Harmless + faster for Aprop_C mirrors too.
     coop::prop_element_tracker::IndexActorKey(spawned, keyW);
+    // instant-world: hide the freshly-spawned + registered prop mirror until reveal (AFTER the bind so it is
+    // always enumerable). Real prop -> collisionOff=true (hide alone leaves collision on; a hidden mirror
+    // must not be grab-trace-hittable / physics-active). hasMatchPos => a save-time-keyed form whose local
+    // twin is still visible -> HOLD to quiescence; else (host-only/derived form, no twin) reveal at the lift.
+    coop::mirror_defer::OnMirrorSpawned(payload.elementId, spawned, /*collisionOff=*/true,
+                                        /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
     // (The chipPile MIRROR used to be enrolled in the mirror-pile death-watch here. RETIRED
     // 2026-06-17, RULE 1+2: the death-watch's near-camera "grabbed" inference was unsound -- a peer
     // bumping a pile until it died near the camera read as a grab and wiped the pile on both peers
@@ -1316,6 +1331,11 @@ void TickClientReconcile() {
     g_sweepPending = false;
     g_sweepFired = true;  // load tail drained -> npc_adoption may now fresh-spawn no-twin save NPCs
     RunDivergenceSweep_(localPlayer);
+    // instant-world quiescence BACKSTOP: the sweep just destroyed the join-window ghosts/dups, so reveal
+    // every still-hidden survivor (the held tail + anything spawned after the curtain-lift) and close the
+    // deferred-hide window. Ghosts destroyed above are liveness-skipped inside mirror_defer. Worst case this
+    // is exactly today's end-state -- the backup is untouched; this only un-hides what it resolved.
+    coop::mirror_defer::RevealAllSurvivorsAtQuiescence();
 }
 
 bool IsInDivergenceUniverseUnclaimed(void* actor) {
@@ -1375,6 +1395,7 @@ void ResetClaimTracking() {
     g_sweepLastUnsettledCount = -1;
     coop::pile_reconcile::Reset();  // dangling-pointer hygiene across sessions (mirrors the claim set)
     coop::kerfur_reconcile::Reset();  // scope A: drop any unconsumed save-time kerfur retire across sessions
+    coop::mirror_defer::Reset();  // instant-world: reveal any still-hidden mirror + disarm the deferred-hide window
 }
 
 }  // namespace coop::remote_prop_spawn

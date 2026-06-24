@@ -243,6 +243,8 @@ add_library(votv-coop SHARED
     src/coop/inventory_pickup_sync.cpp
     src/coop/shutdown.cpp
     src/coop/players_registry.cpp
+    src/coop/mirror_defer.cpp
+    src/coop/join_curtain.cpp
     src/coop/npc_adoption.cpp
     src/coop/npc_mirror.cpp
     src/coop/npc_pose_drive.cpp
