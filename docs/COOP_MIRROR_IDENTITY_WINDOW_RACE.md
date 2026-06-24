@@ -6,8 +6,13 @@ This is a cross-cutting class doc. Discipline: **make each instance WORK first, 
 done. A 4TH instance (pile grabbed/moved in-window) was RE'd 2026-06-24 (`docs/piles/09-*`) -- the
 MOVE-scenario this doc anticipated; fix not yet built.
 
-> **AS-BUILT (extract, `b6fb2638`, built clean Release MD5 `72ff5560`, NEEDS the 3 hands-on re-verifies
-> before push):** the shared kernel is `coop/save_time_retire_util.h` (header-only, ~70 LOC, zero state):
+> **AS-BUILT (extract, `b6fb2638`; now shipping inside the instant-world build, deployed `f155181d`).
+> RE-VERIFY STATUS (2026-06-24): L1 pile-dup = AUTONOMOUSLY VALIDATED (pile-drift smoke: `[PILE-1C]
+> sweep-reconcile 18 of 18` + `[PILE-CENSUS] 0 orphans` -> the migrated pile sweep works); kerfur fuzzy =
+> intact (kerfurtoggle de-duped a camera prop); kerfur forward off->active = the one path the harness can't
+> reach (corroborated 17:23/18:30; re-confirm in the combined runbook). Push still HELD until the user's
+> hands-on (forward + the instant-world visual).** the shared kernel is `coop/save_time_retire_util.h`
+> (header-only, ~70 LOC, zero state):
 > `FindExactMatch` (1cm^2 exact match + consumed[] claim-track + ambiguous(>1)->skip), `UnmarkAndDestroy`
 > (UnmarkKnownKeyedProp+DestroyActor), `kExactMatchR2Cm`. pile_reconcile + kerfur_reconcile call it. The
 > per-class seams STAY in each .cpp -- crucially the >50% ratio VALVE is NOT in the header (pile keeps it,

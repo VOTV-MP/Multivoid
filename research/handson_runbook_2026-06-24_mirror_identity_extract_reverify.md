@@ -1,5 +1,14 @@
 # Hands-on runbook -- mirror-identity extract (b6fb2638) NO-REGRESS re-verify (3 tests)
 
+> **SUPERSEDED 2026-06-24 by `research/handson_runbook_2026-06-24_COMBINED_instantworld_and_reverify.md`**
+> (the extract now ships inside the instant-world build, deployed `f155181d`, NOT the `72ff5560` below).
+> STATUS UPDATE since this was written: TEST 1 (L1 pile-dup) was AUTONOMOUSLY VALIDATED -- a pile-drift smoke
+> on the extract+instant-world build gave `[PILE-1C] sweep-reconcile 18 of 18` + `[PILE-CENSUS] 0 orphans`
+> (the migrated pile sweep works). TEST 2 (kerfur fuzzy) -- fuzzy machinery confirmed intact (kerfurtoggle
+> de-duped a camera prop). TEST 3 (kerfur forward off->active) -- the one path the harness can't reach;
+> corroborated working at 17:23/18:30, re-confirm in the COMBINED runbook. Use the COMBINED runbook; this file
+> is the historical extract-only plan.
+
 **Purpose:** the shared-kernel extraction (`coop/save_time_retire_util.h` -- `FindExactMatch` +
 `UnmarkAndDestroy` + `kExactMatchR2Cm`) refactored TWO verified reconcile instances
 (pile_reconcile + kerfur_reconcile). This run confirms it did NOT regress any of the THREE verified

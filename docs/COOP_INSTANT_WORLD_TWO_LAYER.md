@@ -1,9 +1,21 @@
-# Instant-world on connect -- a TWO-LAYER visual design (DESIGN, review-before-code)
+# Instant-world on connect -- a TWO-LAYER visual layer (AS-BUILT)
 
-**Status: DESIGN (2026-06-24), design-review FIRST then code (user directive, like the extract). NOT built.**
+**Status: AS-BUILT (2026-06-24) -- design reviewed + seams approved + open-(a) audit CLEAN -> built +
+deployed + AUTONOMOUSLY VERIFIED (smokes) + post-deploy audited (2 fixes applied). VISUAL hands-on PENDING
+(the dynamic first-second dance-vs-instant needs the user's eye; the autonomous census proves no
+stuck-hidden/dup but not the cosmetic fade).** Commits dcf56f3d (layer) + 98bfa5f3 (thread-safety) +
+bf770161 (audit fixes). Deployed MD5 `f155181d` (proto v88). HEAD `bf770161` (push HELD).
 Goal: the joining client sees the host-world AS-ASSEMBLED IMMEDIATELY, without the ~1-2s visible "dance"
 (dup props/kerfurs flicker in, ghosts, wrong positions, self-correct). The current reconcile is correct
 in END-STATE; this is a TIMING/VISUAL layer on top.
+
+> **AS-BUILT note on SEAM 3 (the open-(a) refinement #3 below is SUPERSEDED):** the design-review draft
+> proposed `IsPendingSaveTimeTwin`/`IsPendingKerfurRetire` predicates in the reconcile files. AS BUILT those
+> were REVERTED to honor the hard `git diff reconcile = 0` constraint -- `mirror_defer` instead takes the
+> confirmed/hold decision from `payload.hasMatchPos` AT THE HOOK SITE (a save-time-keyed mirror = its local
+> twin still visible = HOLD; no key = host-only/derived = reveal at lift). Same partition, zero reconcile
+> touch. The reveal backstop is `mirror_defer`'s own `g_hidden` map (every hidden mirror tracked there ->
+> revealed at quiescence -> stuck-hidden impossible), not a MirrorManager walk.
 
 ## The frame -- two layers, the backup is UNTOUCHED
 - **LOWER layer = the current reconcile** (quiescence-gated sweeps: `pile_reconcile::SweepReconcileSaveTimeTwins`,
