@@ -291,6 +291,7 @@ add_library(votv-coop SHARED
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
     src/coop/save_transfer.cpp
+    src/coop/save_indicator_suppress.cpp
     src/coop/session_manager.cpp
     src/coop/join_progress.cpp
     src/coop/net_pump.cpp

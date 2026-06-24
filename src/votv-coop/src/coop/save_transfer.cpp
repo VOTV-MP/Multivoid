@@ -7,6 +7,7 @@
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/save_guard.h"
+#include "coop/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
 #include "ue_wrap/log.h"
 #include "ue_wrap/save_capture.h"
 
@@ -346,7 +347,16 @@ void OnRequest(int peerSlot) {
     // thread (net_pump::Tick asserts it), so the save UFunctions are legal here; the
     // scratch file is read synchronously (no torn-read window -- we just wrote it)
     // then deleted.
-    if (ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot)) {
+    // Suppress the native "SAVED..." HUD ONLY for THIS join scratch-save: bracket the
+    // capture so the saveAnim/addHint indicator (fired BP-internally inside saveObjects)
+    // is detected here (this build: log-only -> later no-op). A manual F5/menu save uses
+    // the BP save()/autosave() path the mod never calls, so its SAVED is untouched. The
+    // bracket is the coop call site (NOT inside ue_wrap save_capture -> layering); it
+    // spans the entire synchronous capture, the tight window the indicator fires in.
+    coop::save_indicator_suppress::Begin();
+    const bool captured = ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot);
+    coop::save_indicator_suppress::End();
+    if (captured) {
         const fs::path scratchFile =
             coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
         std::vector<uint8_t> bytes;
