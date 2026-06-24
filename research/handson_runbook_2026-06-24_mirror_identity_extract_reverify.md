@@ -5,7 +5,7 @@
 (pile_reconcile + kerfur_reconcile). This run confirms it did NOT regress any of the THREE verified
 mirror-identity instances. It is a behavior-preservation check, not a new feature.
 
-**Deployed:** MD5 `510fbd28` (short) on HOST (`Game_0.9.0n`) + CLIENT (`Game_0.9.0n_copy`) + CLIENT2
+**Deployed:** MD5 `72ff5560` (short) on HOST (`Game_0.9.0n`) + CLIENT (`Game_0.9.0n_copy`) + CLIENT2
 (`Game_0.9.0n_copy2`) + DEV (`Game_0.9.0n_dev`). **Proto v88** (UNCHANGED -- the extract touched no
 protocol; both peers run the same DLL). Build clean Release. HEAD `b6fb2638` (1 ahead of origin/main
 `24ee5220`, push HELD until all 3 PASS).
@@ -54,5 +54,5 @@ format string differs / what duplicated; do NOT push. The extract is a refactor,
 seam was mis-drawn -- diagnose against the pre-extract behavior (HEAD 24ee5220), no blind fix.
 
 **Note:** the held L5 instrumentation (interactable_channel.h + subsystems.cpp + device_screen.cpp) is
-compiled into `510fbd28` exactly as it was in the 17:23 scope-A-PASS build -- it is orthogonal to
+compiled into `72ff5560` exactly as it was in the 17:23 scope-A-PASS build -- it is orthogonal to
 pile/kerfur reconcile and is the same baseline, so it does not confound this A/B.

@@ -7,14 +7,13 @@
 #include "coop/kerfur_entity.h"        // IsKerfurPropClass
 #include "coop/net/session.h"
 #include "coop/npc_sync.h"             // GetSession (the shared client gate)
-#include "coop/prop_element_tracker.h" // UnmarkKnownKeyedProp (silence the K2_DestroyActor PRE observer)
-#include "coop/save_time_retire_util.h" // FindExactMatch + UnmarkAndDestroy (the shared kernel)
-#include "ue_wrap/engine.h"            // GetActorLocation + DestroyActor
+#include "coop/save_time_retire_util.h" // FindExactMatch + UnmarkAndDestroy (the shared kernel; pulls in
+                                         // prop_element_tracker for the Unmark+Destroy retire)
+#include "ue_wrap/engine.h"            // GetActorLocation (the local off-prop world pos)
 #include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
-#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 #include <unordered_set>

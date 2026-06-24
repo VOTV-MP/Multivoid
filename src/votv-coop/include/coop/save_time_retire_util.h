@@ -65,16 +65,14 @@ inline void UnmarkAndDestroy(void* actor) {
 // `cands` (same size); the CALLER marks the returned index consumed.
 //
 // Returns the matched index, or -1 if the match is ambiguous (>1) or absent
-// (0) -- in BOTH cases the caller retires nothing (never the wrong one). The
-// raw match count is written to *outMatchCount when provided (for the caller's
-// ambiguous-cluster log). This function is PURE: it mutates nothing and
-// destroys nothing -- the caller owns the consume + the retire.
+// (0) -- in BOTH cases the caller retires nothing (never the wrong one). This
+// function is PURE: it mutates nothing and destroys nothing -- the caller owns
+// the consume + the retire.
 template <typename Cand, typename SecondaryMatch>
 int FindExactMatch(const std::vector<Cand>& cands,
                    const std::vector<bool>& consumed,
                    const ue_wrap::FVector& key,
-                   SecondaryMatch secondaryOk,
-                   int* outMatchCount = nullptr) {
+                   SecondaryMatch secondaryOk) {
     int matchCount = 0, matchIdx = -1;
     for (int i = 0; i < static_cast<int>(cands.size()); ++i) {
         if (consumed[i]) continue;
@@ -87,7 +85,6 @@ int FindExactMatch(const std::vector<Cand>& cands,
         ++matchCount;
         matchIdx = i;
     }
-    if (outMatchCount) *outMatchCount = matchCount;
     return (matchCount == 1) ? matchIdx : -1;
 }
 

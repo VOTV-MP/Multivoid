@@ -6,7 +6,7 @@ This is a cross-cutting class doc. Discipline: **make each instance WORK first, 
 done. A 4TH instance (pile grabbed/moved in-window) was RE'd 2026-06-24 (`docs/piles/09-*`) -- the
 MOVE-scenario this doc anticipated; fix not yet built.
 
-> **AS-BUILT (extract, `b6fb2638`, built clean Release MD5 `510fbd28`, NEEDS the 3 hands-on re-verifies
+> **AS-BUILT (extract, `b6fb2638`, built clean Release MD5 `72ff5560`, NEEDS the 3 hands-on re-verifies
 > before push):** the shared kernel is `coop/save_time_retire_util.h` (header-only, ~70 LOC, zero state):
 > `FindExactMatch` (1cm^2 exact match + consumed[] claim-track + ambiguous(>1)->skip), `UnmarkAndDestroy`
 > (UnmarkKnownKeyedProp+DestroyActor), `kExactMatchR2Cm`. pile_reconcile + kerfur_reconcile call it. The
