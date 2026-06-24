@@ -210,7 +210,9 @@ void Tick() {
     }
 
     // (2) ONE-SHOT ghost sweep, only after the connect snapshot is fully delivered AND every armed
-    // adoption has converged -- so a local twin is NEVER swept before its adoption could bind.
+    // adoption has converged AND the save load tail has QUIESCED -- so a local twin is NEVER swept
+    // before its adoption could bind, AND a LATE-spawning untracked twin is present before the sweep
+    // (which latches off forever) runs.
     // WARNING: this sweep MUST stay here in Tick, NEVER inline in OnSnapshotComplete. At the instant
     // OnSnapshotComplete sets g_snapshotDelivered, g_pending is EMPTY (the EntitySpawn->ArmAdoption
     // tasks are game_thread::Post'd and still queued). FIFO game-thread ordering guarantees those
@@ -218,12 +220,23 @@ void Tick() {
     // (then drained by adoption) before the sweep fires. Sweeping inline at SnapshotComplete would
     // run with g_pending empty and K2-destroy the client's own not-yet-adopted local save-kerfur --
     // re-introducing the exact double/missing-NPC bug v75 fixes.
+    //
+    // HasLoadTailQuiesced GATE (2026-06-24, reverse-kerfur follow-ghost RCA): g_pending.empty() alone
+    // is NOT enough. The async live-save load spawns a DUPLICATE active kerfur (the real save-kerfur is
+    // adopted; a second untracked kerfurOmega_C twin materializes SECONDS later in the load tail). If
+    // the one-shot sweep fires the instant g_pending drains -- which can be well BEFORE the tail
+    // settles (hands-on 12:30:17 sweep "0 orphans", load tail not quiesced until 12:30:23) -- it finds
+    // 0, latches g_ghostSwept, and the late twin survives as a follow-ghost active kerfur the host's
+    // turn_off later strands. Gate on the SAME load-tail quiescence the ResolvePending fresh-spawn
+    // (above) + the prop divergence sweep already use, so the sweep waits until every late twin is
+    // present (deadline-capped in remote_prop_spawn, so it can't hang). Re-armed per OnClientWorldReady.
     if (g_snapshotDelivered && g_pending.empty() && !g_ghostSwept &&
-        coop::npc_sync::IsInstalled()) {
+        coop::npc_sync::IsInstalled() &&
+        coop::remote_prop_spawn::HasLoadTailQuiesced()) {
         g_ghostSwept = true;
         const int swept = coop::npc_mirror::DestroyUntrackedClientNpcs();
         UE_LOGI("npc-adopt: post-snapshot ghost sweep complete (%d untracked orphan(s) destroyed; "
-                "adoption converged)", swept);
+                "adoption converged + load tail quiesced)", swept);
     }
 }
 
