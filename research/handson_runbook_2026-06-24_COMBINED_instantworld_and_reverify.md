@@ -1,9 +1,9 @@
 # COMBINED hands-on runbook (2026-06-24) -- instant-world visual + extract 3-instance re-verify + pile-move repro
 
-**Deployed: MD5 `E249A0D3` (instant-world + extract + puppet-head probe) on HOST + CLIENT + CLIENT2 + DEV.
-Proto v88 (UNCHANGED -- both peers run this DLL). Supersedes the earlier `f155181d` deploy (SAME instant-world
-+ extract code, PLUS the diagnostic head probe -- no gameplay change). HEAD `(probe commit)`, push HELD.**
-One playthrough covers everything below (TEST 4 = the puppet head-freeze probe, added 2026-06-24 PM).
+**Deployed: MD5 `DA4E758B` (instant-world + extract + puppet-head probe + SAVED-text detect) on HOST + CLIENT
++ CLIENT2 + DEV. Proto v88 (UNCHANGED -- both peers run this DLL). Supersedes `f155181d`/`E249A0D3` (SAME
+instant-world + extract + head probe; PLUS the read-only SAVED-detect log -- no gameplay change). Push HELD.**
+One playthrough covers everything (TEST 4 = puppet head-freeze probe; TEST 5 = SAVED-text detect; both 06-24 PM).
 
 ## What is ALREADY autonomously verified (no hands-on needed -- for context)
 - **Extract L1 pile-dup regress = PASS** (L1 pile-drift smoke, build f155181d): host drifted 5 destroyed + 3
@@ -63,6 +63,19 @@ The host ini `votv-coop.ini` already has `puppet_head_probe=1` (observer-side, ~
   line showing DESIRED > TWIST(~67). `clamp head=45.0 neck=45.0` is already confirmed live by the smoke.
 - On `CLAMP CONFIRMED` -> I widen the LookAtClamp to ~90deg puppet-only (kerfur untouched). If `TWIST` keeps
   tracking `DESIRED` with no pin -> the mechanism is NOT the clamp and I re-RE before any fix.
+
+### TEST 5 -- SAVED-text DETECT (read-only; just connect a peer and watch your screen + host log)
+The host shows native "SAVED..." every peer-join; we want to suppress ONLY that, never a manual save. This
+build is the READ-ONLY DETECT step (SAVED still shows) to confirm WHICH function paints it before the no-op.
+- **Just connect the client** (any normal join). Watch: do you SEE "SAVED..." on the HOST screen on the join?
+- Then grep the **host** log for `[SAVED-DETECT]`:
+  - If you see `saveAnim FIRED [IN-WINDOW]` or `[DEFERRED-post-window]` -> saveAnim paints it -> I no-op
+    saveAnim (next build). Likewise if `addHint FIRED`.
+  - If the log says `in-window saveAnim=0 addHint=0` AND no deferred fire, **but you DID see "SAVED..."** ->
+    the indicator is a DIFFERENT path; tell me and I widen the hunt (the autonomous smoke showed 0, likely
+    because the smoke host doesn't render the save HUD -- your real session is the true test).
+- Tell me: (a) did "SAVED..." show on the join? (b) which `[SAVED-DETECT]` line fired (saveAnim / addHint /
+  none)? That picks the no-op target. The save itself + world transfer are UNTOUCHED (read-only this build).
 
 ## After the run -- paste / tell me
 TEST 1: did the cover fade to an assembled world with no dance? any stuck-black or missing props?
