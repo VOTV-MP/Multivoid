@@ -8,17 +8,20 @@
 > >50% valve). Module `coop/pile_reconcile.{h,cpp}`. Canonical RE:
 > `research/findings/votv-pile-dup-join-window-two-channel-RE-2026-06-23.md`.
 >
-> **NEW OPEN (2026-06-24, hands-on 17:23, NOT yet fully diagnosed) — pile GRABBED-AND-DROPPED/MOVED in the
-> connect window dups (a DIFFERENT scenario from L1).** The user moved a pile near the kerfurs during the join
-> window; it re-piled host-side as a HIGH/late eid (`[PILE] HOST RE-PILE(thunk) eid=5283`) and the client showed
-> `[PILE-DELTA] eid=5283 ... nearestNative_d=NONE (no live native in the index)` -> a window-SPAWNED pile
-> (post-blob -> NO `g_blobPileXforms` save-time key) reached the client as a proxy with no save-native to
-> reconcile -> apparent dup. NOT L1 (L1 = a pile PRESENT at blob the host moves; the save-time key matches). It
-> is the **window-SPAWN / held-pile-in-window** edge -- overlaps [[project-prop-appearance-delay-backlog-2026-06-23]]
-> (a grabbed pile is a CLUMP not a chipPile -> never in the save-time map -> window-spawned on drop). Possibly
-> the **4th mirror-identity instance** (object SPAWNS/changes position in-window, not save-dup) -> see
-> `docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md` MOVE-scenario headroom. NEEDS full RE BEFORE a fix. The older
-> "native-destroy fix not built" / take-31/32 framing below is HISTORICAL.
+> **OPEN, ROOT RE'd (2026-06-24, hands-on 17:23) — pile GRABBED-AND-DROPPED/MOVED in the connect window
+> dups (DIFFERENT from L1; the 4TH mirror-identity instance).** Full RE in
+> [09-WINDOW-GRABBED-PILE-DUP-RE-2026-06-24.md](09-WINDOW-GRABBED-PILE-DUP-RE-2026-06-24.md). ROOT = the
+> **eid-0-at-grab gap**: the HOST grabbed an UNTRACKED pile -> `NotePendingGrab` skipped
+> (`trash_collect_sync.cpp:408-411`) -> the clump rides eid-less -> on drop the re-pile mints a fresh
+> high eid (`[PILE] HOST RE-PILE(thunk) eid=5283`) and the periodic re-seed broadcasts it `hasMatchPos=0`
+> -> the client's save-loaded native@old never reconciles (its `TryDestroyTwin` matches @new, misses @old,
+> and `isSaveTimeKey=false` skips the sweep) -> `[PILE-DELTA] eid=5283 ... nearestNative_d=NONE` -> dup.
+> NOT L1 (L1 = a pile PRESENT at blob the host moves; the save-time key matches). It is the MOVE-scenario
+> the class doc anticipated (`docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md:79-87` -- identity changes mid-window).
+> **FIX direction (NOT built):** close the eid-0-at-grab gap (self-seed the eid at the grab edge, take-4
+> pattern) so the existing save-time-stamp machinery carries the PRE-GRAB position as the key -- unchanged.
+> One open point needs a hands-on probe (was the pile truly untracked at grab). The older "native-destroy
+> fix not built" / take-31/32 framing below is HISTORICAL.
 
 > Single source of truth for the `actorChipPile_C` ("ambient trash pile") multiplayer
 > sync problem. Assembled 2026-06-20 (session 32) after the save-strip attempt FAILED

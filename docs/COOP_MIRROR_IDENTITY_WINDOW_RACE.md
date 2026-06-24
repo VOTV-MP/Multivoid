@@ -1,9 +1,20 @@
 # Mirror-identity JOIN-WINDOW race — a PROBLEM CLASS (not one object's bug)
 
-**Recognized 2026-06-24 (user architectural instinct). Rule-of-three MET 2026-06-24 (3 working instances) ->
-the shared layer is now a clean EXTRACT candidate.** This is a cross-cutting class doc. Discipline: **make each
-instance WORK first, generalize AFTER N>=3** -- done; the extract DESIGN is below, **design-review FIRST, then
-refactor** (this is a refactor of THREE working+verified instances; regress is unacceptable).
+**Recognized 2026-06-24 (user architectural instinct). Rule-of-three MET 2026-06-24 (3 working instances).
+EXTRACT BUILT 2026-06-24 (`b6fb2638`) -- a MINIMAL shared kernel, NOT a full unification; details below.**
+This is a cross-cutting class doc. Discipline: **make each instance WORK first, generalize AFTER N>=3** --
+done. A 4TH instance (pile grabbed/moved in-window) was RE'd 2026-06-24 (`docs/piles/09-*`) -- the
+MOVE-scenario this doc anticipated; fix not yet built.
+
+> **AS-BUILT (extract, `b6fb2638`, built clean Release MD5 `510fbd28`, NEEDS the 3 hands-on re-verifies
+> before push):** the shared kernel is `coop/save_time_retire_util.h` (header-only, ~70 LOC, zero state):
+> `FindExactMatch` (1cm^2 exact match + consumed[] claim-track + ambiguous(>1)->skip), `UnmarkAndDestroy`
+> (UnmarkKnownKeyedProp+DestroyActor), `kExactMatchR2Cm`. pile_reconcile + kerfur_reconcile call it. The
+> per-class seams STAY in each .cpp -- crucially the >50% ratio VALVE is NOT in the header (pile keeps it,
+> kerfur has none; a shared valve = the 17:06 regression). Instance 2 (fuzzy-gate) stays separate. One
+> transparent delta: the pile SWEEP loop adopted the kernel's explicit ambiguous->skip (was break-on-first)
+> -- identical on the position-unique real path, strictly safer otherwise, consistent with pile's own
+> TryDestroyTwin. Re-verify runbook: `research/handson_runbook_2026-06-24_mirror_identity_extract_reverify.md`.
 
 ## The class
 
@@ -34,10 +45,24 @@ unique per instance -> kills the dup (1) AND the cluster collision (3).
 | safety | exact 1cm key + chipType + `>50%` valve (denominator = ALL live piles) | own-key != pending-key -> never steal | exact 1cm key + uniqueness + ambiguous-skip + non-mirror gate (**NO ratio valve** -- see lesson) |
 | status | **VERIFIED + PUSHED** (`960e4650`) | **VERIFIED** (`8c96d7aa`) | **VERIFIED hands-on 17:23** (`7c67b00b`) |
 
-## EXTRACT DESIGN (proposed -- DESIGN-REVIEW PENDING, do NOT code before sign-off)
+**(4) pile GRABBED/moved in-window (RE'd 2026-06-24, `docs/piles/09-*`, fix NOT built).** The MOVE-scenario
+this doc anticipated: the host grabs an UNTRACKED pile in-window -> the clump rides eid-less -> re-pile
+mints a NEW eid (post-blob, `hasMatchPos=0`) -> the client's save-loaded native@old never reconciles ->
+dup. The twist vs (1)-(3): the entity's IDENTITY (eid) changes mid-window, so neither eid nor the frozen
+save-time pos of *this* eid ties the two channels. ROOT = the eid-0-at-grab gap; FIX = self-seed the eid
+at the grab edge so the save-time-stamp machinery carries the PRE-GRAB position (the just-built kernel's
+4th caller). Key type = save-time position frozen at the GRAB edge (not the blob).
 
-Target: a shared `coop/mirror_identity_reconcile.{h,cpp}` that the three instances reuse via parameters/hooks,
-without changing their verified behavior. Extract the COMMON core; keep the class-specific seams as hooks.
+## EXTRACT DESIGN (AS-BUILT `b6fb2638` -- a MINIMAL kernel, narrower than the original conceptual design)
+
+**As-built decision (architect blueprint + own code read converged):** the genuinely-shared surface is
+THINNER than the conceptual "common core" below implied. The shared kernel is `coop/save_time_retire_util.h`
+(NOT `mirror_identity_reconcile.{h,cpp}`): just the 1cm match + claim-track + ambiguous-skip (`FindExactMatch`),
+the `UnmarkAndDestroy` retire, and the constant. The "capture / carry / post-quiescence-sweep / pending-map"
+the conceptual core listed turned out to be per-class (different value types, drivers, arm callers, mirror-
+exclusion) and STAY in each .cpp -- forcing them through one configurable function would re-create the 17:06
+mis-port surface. The conceptual core below is retained as the rationale; the as-built boundary is "share the
+match kernel + destroy + constant, keep everything else per-class." Target file shipped: `save_time_retire_util.h`.
 
 ### COMMON core (parameterized, into the shared module)
 - **Save-time exact-position capture** -- `g_blob*Xforms[slot][hostEid] = P_live` at the blob instant, with
