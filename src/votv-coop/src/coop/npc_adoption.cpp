@@ -9,6 +9,7 @@
 #include "coop/npc_mirror.h"
 #include "coop/npc_sync.h"
 #include "coop/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
+#include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: re-arm the kerfur census on world-ready / session-end
 #include "ue_wrap/engine.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
 #include "ue_wrap/kerfur.h"
@@ -263,6 +264,7 @@ void OnClientWorldReady() {
     g_pending.clear();
     g_snapshotDelivered = false;
     g_ghostSwept = false;
+    coop::kerfur_census::Reset();  // DIAGNOSTIC: re-census the new world
 }
 
 void OnSessionEnd() {
@@ -270,6 +272,7 @@ void OnSessionEnd() {
     g_pending.clear();
     g_snapshotDelivered = false;
     g_ghostSwept = false;
+    coop::kerfur_census::Reset();  // DIAGNOSTIC
 }
 
 }  // namespace coop::npc_adoption

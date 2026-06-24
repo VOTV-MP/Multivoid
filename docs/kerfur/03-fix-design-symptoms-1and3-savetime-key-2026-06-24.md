@@ -1,7 +1,27 @@
 # 03 — FIX DESIGN (DRAFT): symptoms 1+3 shared save-time EXACT-key reconcile
 
-**Status: DESIGN DRAFT -- edge-vet PENDING (user vets before code, L1 Path 1c style). NOT built.**
+**Status: DESIGN READY + GREENLIT TO BUILD (2026-06-24). Root CENSUS-PINNED to identity-key; edges vetted; the
+forward off->active dup (doc 07) is EXACTLY this scenario. NOT YET built -- this is the NEXT build.**
 Covers symptom 1 (window dup) + symptom 3 (identity-collision). Symptom 2 (camera) = a SEPARATE design (doc 04, later).
+
+> **CENSUS PIN (2026-06-24, doc 07 + `research/kerfur_forward_census_1543/`):** the forward off->active dup's
+> silent half = an **UNCLAIMED `prop_kerfurOmega_C`** (Nrby, a stale local off-prop the host no longer has as
+> off because it turned the kerfur ON), **0 UNTRACKED NPC** -> identity-key, retire-side ruled out. Two faces of
+> one missing stable key: 15:43 the off-prop SURVIVES (dup); 15:41 it fuzzy-collapses onto a neighbour active's
+> position (skew). Scope A's save-time exact key fixes BOTH.
+>
+> **VERIFIED RETIRE REQUIREMENT (critical, 2026-06-24):** the existing divergence sweep does NOT close this. In
+> the 15:43 run the bracket armed CLEANLY (`claim tracking ARMED` -> `divergence sweep FIRING 2439ms after arm`),
+> the sweep fired and doomed 80 trashBitsPile + 1 swinger + 1 mushroom -- but **NOT the unclaimed Nrby off-prop.**
+> So scope A must do more than DEDUP: it must **RETIRE** the stale local off-prop, keyed by save-time position,
+> when the host now has that kerfur ACTIVE. The retire is **identity-key-driven, NOT convert-driven** (the window
+> conversions do NOT sync as KerfurConvert -- they fold into the snapshot; the client sees the host's active
+> kerfur via the npc channel + its own stale off-prop via the prop channel, with no convert linking them). The
+> save-time key is what links "my local off-prop was Nrby at P_save" to "the host's active kerfur carries P_save"
+> -> retire the off-prop. **A pure dedup-by-key leaves the dup; the build MUST include the save-time-keyed RETIRE
+> of an unclaimed local off-prop whose kerfur the host expresses ACTIVE.** (Open build sub-question: WHY the
+> divergence sweep skipped Nrby -- not-tracked-element vs claimed -- determines whether `kerfur_reconcile` reuses
+> the sweep's propPairs or walks kerfur props itself; settle at build time.)
 
 ## Root (confirmed, doc 02): kerfur object identity falls to POSITION-FUZZY
 

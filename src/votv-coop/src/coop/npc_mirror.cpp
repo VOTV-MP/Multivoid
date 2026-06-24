@@ -20,6 +20,7 @@
 #include "coop/npc_adoption.h"
 #include "coop/kerfur_prop_adoption.h"  // K-6: deferred prop-form kerfur adoption (driven from the client tick)  // v75: deferred class-match adoption for save-persisted NPCs
 #include "coop/remote_prop_spawn.h"  // TickClientReconcile (deferred prop divergence sweep)
+#include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: one-shot kerfur census at quiescence (forward-dup root)
 #include "coop/npc_sync.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -639,6 +640,11 @@ void TickClientNpcs() {
     // save prop is destroyed with its real key instead of keyless-skipped into a ghost. NO-OP (single
     // bool read) when no sweep is armed -- the same client tick already gated to non-host above.
     coop::remote_prop_spawn::TickClientReconcile();
+
+    // DIAGNOSTIC (2026-06-24, doc kerfur/07): one-shot kerfur census at quiescence, AFTER both
+    // sweeps, to catch the "silent" forward-dup half (an un-reconciled local kerfur form no
+    // bind/spawn/sweep line names). Reads + logs only; fires once. Remove once the root is settled.
+    coop::kerfur_census::TickOnceAtQuiescence();
 }
 
 }  // namespace coop::npc_mirror

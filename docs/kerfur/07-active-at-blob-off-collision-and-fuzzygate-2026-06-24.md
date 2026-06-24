@@ -72,6 +72,48 @@ no class+pose match -> it now REACHES the fresh-spawn fallback (where the OBS-2 
 xXPHX a DISTINCT fresh off-prop body -> potentially a full 5-object fix. If the body doesn't appear, fix#1
 still succeeds: collision -> clean "no body" (symptom 2), which fix#2 closes.
 
+## FORWARD off->active dup (15:11 / 15:41 / 15:43) -- CENSUS-PINNED to identity-key (scope A)
+
+A SEPARATE forward case (host turns an OFF kerfur ON in the window): the client shows the turned-on kerfur as
+active + object (dup), OR (15:41) the off-prop collapses onto the WRONG position (under an active) instead of
+its save-time position. The 15:11 log could not show the dup's stale half (a "silent" un-reconciled local
+actor). A one-shot client **census probe** (`coop/dev/kerfur_census.cpp`, diagnostic-only, fires at quiescence
+after both sweeps, enumerates every live kerfur form with bound status) NAMED it.
+
+**[KERFUR CENSUS] 15:43 run (preserved `research/kerfur_forward_census_1543/`):**
+```
+PROP gPXK... pos=(1675.5,-997.4) BOUND eid=4349
+PROP CZvy... pos=(1826.4,-1130.3) BOUND eid=4350
+PROP p0KP... pos=(1636.5,-891.7) BOUND eid=4351
+PROP Nrby-tq-... pos=(1670.4,-772.2) *** UNCLAIMED (no host mirror -- stale local off-prop) ***
+NPC  kerfurOmega_C pos=(1729.1,-527.2) BOUND eid=3145
+NPC  kerfurOmega_C pos=(1732.1,-745.5) BOUND eid=3147
+TOTAL 2 live NPC (0 UNTRACKED) + 4 live PROP (1 UNCLAIMED)
+```
+**VERDICT: identity-key root. The silent extra form is an UNCLAIMED `prop_kerfurOmega_C` (Nrby), NOT an
+untracked NPC (0 untracked -> retire-side RULED OUT).** Nrby was OFF in the save (client has a local off-prop)
+and the host turned it ON in the window, so the host never broadcasts a Nrby off-prop -> the client's local
+Nrby off-prop has no host mirror to claim/retire it -> it survives (15:43 dup) or, lacking a stable save-time
+key, fuzzy-collapses onto a neighbour active's position (15:41 position-skew). Both faces = the SAME missing
+stable cross-peer key. **This IS doc 03 scope A's designed scenario (off-at-blob -> host turns ON);** the
+save-time exact-position key links the client's local off-prop to the host's now-active kerfur so the client
+RETIRES the stale off-prop (and never mis-positions it). Scope A fixes BOTH the dup (15:43) and the
+position-skew (15:41).
+
+**NON-DETERMINISM:** 15:41 (count matched, position skewed) vs 15:43 (dup) = the same stale Nrby off-prop
+reconciling differently -- consistent with the SnapshotBegin-lost / bracket-arming flake (arms -> off-prop
+partially reconciles; doesn't -> survives whole). The census for 15:41 was truncated on the 15:43 relaunch
+(only 15:43 preserved), but the 15:43 census is unambiguous and the 15:41 symptom corroborates.
+
+**Audit-map (generalize):** forward-dup = the **THIRD mirror-identity window-race instance** (collapse-by-stable
+-key), with L1 pile dup + the kerfur fuzzy-gate collision. Rule-of-three MET -> the mirror-identity layer
+(save-time exact key + post-quiescence reconcile + uniqueness anti-collision) is now a clean
+generalize candidate (`docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md`). NOT a retire-authority instance (census
+ruled out the untracked-NPC path).
+
+**NEXT: build scope A** (doc 03, design ready) -- it closes the forward dup + the position-skew. Census probe
+STAYS (new rule 2026-06-24: RULE 2 does not apply to probes/diagnostics/tools).
+
 ## FIX#2 -- active-at-blob -> OFF body (NOT built; SEPARATE design pass)
 The host-turned-off kerfur's client twin is an ACTIVE NPC; giving it the correct off-prop body means either
 (a) converting the client's active NPC -> off-prop at join (the KerfurConvert path applied in-window), or
