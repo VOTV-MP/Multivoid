@@ -86,6 +86,16 @@ void CancelForSlot(int peerSlot);
 // Game thread.
 bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
 
+// docs/piles/09 (4th mirror-identity instance): record the PRE-GRAB position of pile `eid` into
+// every active join slot's blob pile map. Called by OnPileGrabPre (host, game thread) at the
+// InpActEvt PRE edge, BEFORE the BP morphs the pile -> clump (so the pos == its save/native pos).
+// No-op outside a join. Lets the kToPile LAND convert carry the save-time key for the client.
+void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVector& preGrabLoc);
+
+// docs/piles/09: like TryGetSaveTimePileXform but searches ALL active join slots (BroadcastConvert
+// is a single fan-out, not per-joiner; a pile eid is unique). Game thread.
+bool TryGetSaveTimePileXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out);
+
 // scope A (kerfur off->active dup retire, 2026-06-24): the SAVE-TIME position of OFF-form kerfur `eid`,
 // captured at the blob instant (OnRequest), searched across ALL active peer slots' blob maps (the host
 // turn-on broadcast that carries this is a single fan-out, not per-joiner, and a kerfur off-prop's host

@@ -464,6 +464,41 @@ bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap
     return true;
 }
 
+// docs/piles/09: record the PRE-GRAB position of pile `eid` into every ACTIVE join slot's
+// blob pile map. Called from OnPileGrabPre (host, game thread) at the InpActEvt PRE edge,
+// immediately BEFORE the BP morphs the pile -> clump -- so the position read here == the
+// pile's save/native position (it has not moved yet), == the exact key the joining client's
+// native@old sits at. By stamping it into g_blobPileXforms[slot][eid], the kToPile LAND
+// convert (BroadcastConvert) reads it via TryGetSaveTimePileXformAnySlot and carries it so the
+// client arms a pending save-time twin. A slot is "active" iff its blob map is non-empty (a
+// join captured piles into it); outside a join no slot qualifies -> no-op (the fix is scoped
+// to the join window). Idempotent: a re-grab of the same eid overwrites with the latest pos.
+void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVector& preGrabLoc) {
+    if (eid == 0u || eid == coop::element::kInvalidId) return;
+    int slots = 0;
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        if (g_blobPileXforms[slot].empty()) continue;   // no active join captured piles here
+        g_blobPileXforms[slot][eid] = preGrabLoc;
+        ++slots;
+    }
+    if (slots > 0)
+        UE_LOGI("[PILE-09] HOST pre-grab pos recorded eid=%u at (%.1f,%.1f,%.1f) -> %d active join slot(s) "
+                "(the kToPile convert will carry it as the save-time key)",
+                static_cast<unsigned>(eid), preGrabLoc.X, preGrabLoc.Y, preGrabLoc.Z, slots);
+}
+
+// docs/piles/09: like TryGetSaveTimePileXform but searches ALL active join slots. BroadcastConvert
+// is a single fan-out (not per-joiner), so it can't pass a slot -- same shape as
+// TryGetSaveTimeKerfurXformAnySlot. A pile eid is unique, so at most one slot holds it.
+bool TryGetSaveTimePileXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out) {
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        const auto& m = g_blobPileXforms[slot];
+        auto it = m.find(eid);
+        if (it != m.end()) { out = it->second; return true; }
+    }
+    return false;
+}
+
 bool TryGetSaveTimeKerfurXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out) {
     // The host turn-on broadcast (KerfurConvert) is a single fan-out, not per-joiner, and a kerfur
     // off-prop's host eid is unique -- so search all active slots' blob maps and take the first hit.

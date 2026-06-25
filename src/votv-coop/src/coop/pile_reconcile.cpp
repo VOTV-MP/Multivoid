@@ -288,6 +288,17 @@ void LogCensus() {
             live, g_pileIndexBuiltCount, totalLive, proxyMatched, le5, mid, gt30, none);
 }
 
+void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType) {
+    if (eid == 0u || eid == coop::element::kInvalidId) return;
+    // docs/piles/09: record the GRAB-edge save-time key for the post-quiescence sweep. No bracket
+    // index needed -- the sweep does a FRESH GUObjectArray walk for the late-loaded native@old and
+    // matches this key via the shared kernel. Idempotent per eid (the latest grab/land wins).
+    g_pendingSaveTimeTwin[eid] = PendingTwin{savePos.X, savePos.Y, savePos.Z, chipType};
+    UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u "
+            "(in-window GRABBED/moved pile -> sweep will retire the stale native@old at quiescence)",
+            static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType));
+}
+
 int SweepReconcileSaveTimeTwins() {
     if (g_pendingSaveTimeTwin.empty()) return 0;
     const size_t pendingN = g_pendingSaveTimeTwin.size();

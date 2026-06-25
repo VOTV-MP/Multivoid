@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "coop/element/element.h"  // coop::element::ElementId (ArmPendingSaveTimeTwin)
 #include "coop/net/protocol.h"
 #include "ue_wrap/types.h"  // ue_wrap::FVector
 
@@ -68,6 +69,15 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
 // own valve) refuses a removal that big = a racing/incomplete bracket, not real divergence.
 // Returns the count removed. Game-thread only (the sweep). Clears the pending set.
 int SweepReconcileSaveTimeTwins();
+
+// docs/piles/09 (4th mirror-identity instance): arm a pending save-time twin DIRECTLY from
+// the wire (not via TryDestroyTwin's bracket-scoped index). The client calls this from
+// remote_prop::OnConvert when a kToPile LAND carries hasMatchPos=1 (the host self-seeded the
+// eid at an in-window grab + stamped the pre-grab pos). The bracket-independent
+// SweepReconcileSaveTimeTwins then retires the stale native@old at quiescence -- the same
+// L1 cure, but keyed at the GRAB edge so it survives the in-window identity (eid) change.
+// Idempotent per eid (a re-grab/land overwrites with the latest key). Game-thread only.
+void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType);
 
 // eid-only adopt: find + CONSUME (remove from the index) a live same-`classW`,
 // same-chipType native within 30cm of payload.loc. Returns the pile actor (the

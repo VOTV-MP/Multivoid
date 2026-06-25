@@ -9,6 +9,7 @@
 #include "coop/element/registry.h"
 #include "coop/kerfur_entity.h"  // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
 #include "coop/net/session.h"
+#include "coop/pile_reconcile.h"   // docs/piles/09: ArmPendingSaveTimeTwin (in-window grabbed-pile dup)
 #include "coop/players_registry.h"
 #include "coop/prop_echo_suppress.h"
 #include "coop/prop_element_tracker.h"
@@ -987,6 +988,14 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     // docs/piles/08: adopt the host's authoritative sync-time-context for E, and DROP a stale/out-of-order
     // convert (a duplicate, or one older than a transition we already applied). ctx==0 = legacy/non-trash.
     if (!coop::trash_channel::AdoptInboundConvertCtx(E, payload.ctx)) return nullptr;
+    // docs/piles/09 (4th mirror-identity instance): a kToPile LAND carrying a save-time key means the host
+    // self-seeded this eid at an in-window grab + stamped its PRE-GRAB position. Arm a pending save-time twin
+    // so the bracket-independent quiescence sweep (SweepReconcileSaveTimeTwins) retires our stale native@old
+    // -- the L1 cure, keyed at the grab edge so it survives the in-window eid change. Done here (after the ctx
+    // gate, before the proxy branch) so it fires whether or not the ToClump created a proxy first.
+    if (!wantClump && payload.hasMatchPos)
+        coop::pile_reconcile::ArmPendingSaveTimeTwin(
+            E, ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}, payload.chipType);
     // PROXY PATH (phase 1, THE dup fix): if E's mirror is our host-authoritative trash proxy, re-skin it
     // IN PLACE (pile<->clump). The eid->actor binding is NEVER touched -> no spawn-fresh, no orphan, no
     // dup; and a rooted proxy never goes stale, so the "mirror NOT-FOUND -> spawn fresh" path that caused

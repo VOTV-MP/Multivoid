@@ -9,6 +9,7 @@
 #include "coop/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
 #include "coop/remote_player.h"       // RemotePlayer::GetActor / valid
 #include "coop/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
+#include "coop/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
 #include "ue_wrap/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
 #include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + ReadMainPlayerGrabState
 #include "ue_wrap/log.h"
@@ -123,11 +124,25 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     p.chipType = chipType;
     p.kind     = kind;
     p.ctx      = ctx;
+    // docs/piles/09: a kToPile LAND carries the pile's PRE-GRAB save-time position IF one was recorded
+    // (the host grabbed an UNTRACKED pile in a join window -> OnPileGrabPre self-seeded the eid +
+    // RecordGrabTimePileXform stamped the pre-grab pos into the blob map). ANY-SLOT lookup (this is a
+    // single fan-out; the eid is unique). The client OnConvert then arms a pending save-time twin so the
+    // quiescence sweep retires its stale native@old. kToClump carries no key (no native twin at that edge).
+    p.hasMatchPos = 0;
+    if (kind == coop::net::propconvert_kind::kToPile && static_cast<uint32_t>(E) != 0u) {
+        ue_wrap::FVector sv;
+        if (coop::save_transfer::TryGetSaveTimePileXformAnySlot(E, sv)) {
+            p.matchX = sv.X; p.matchY = sv.Y; p.matchZ = sv.Z;
+            p.hasMatchPos = 1;
+        }
+    }
     s.SendReliable(coop::net::ReliableKind::PropConvert, &p, sizeof(p));
-    UE_LOGI("[TRASH-CH] HOST BROADCAST %s eid=%u ctx=%u (%s) at (%.1f,%.1f,%.1f) variant=%u",
+    UE_LOGI("[TRASH-CH] HOST BROADCAST %s eid=%u ctx=%u (%s) at (%.1f,%.1f,%.1f) variant=%u%s",
             kind == coop::net::propconvert_kind::kToClump ? "ToClump" : "ToPile",
             static_cast<unsigned>(E), static_cast<unsigned>(ctx), why,
-            p.locX, p.locY, p.locZ, static_cast<unsigned>(chipType));
+            p.locX, p.locY, p.locZ, static_cast<unsigned>(chipType),
+            p.hasMatchPos ? " [+saveTimeKey docs/piles/09]" : "");
     return ctx;
 }
 

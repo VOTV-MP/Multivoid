@@ -16,6 +16,7 @@
 #include "coop/prop_synth_key.h"
 #include "coop/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/remote_prop_spawn.h"
+#include "coop/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
 #include "coop/trash_channel.h"      // NotePendingGrab (the VISIBLE-seam grab->clump link; docs/piles/08)
 #include "coop/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
 #include "ue_wrap/engine.h"
@@ -405,10 +406,31 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
             (fwd != 0 || mir != 0) ? "[TRACKED -> grab will sync]"
                                    : "[UNTRACKED -> grab will NOT sync; tracking gap]",
             gs.grabbingActor, gs.holdingActor);
-    const coop::element::ElementId grabEid =
+    coop::element::ElementId grabEid =
         (fwdEid != coop::element::kInvalidId) ? fwdEid : mirEid;
-    if (grabEid != coop::element::kInvalidId)
+    // docs/piles/09 SELF-SEED (the 4th mirror-identity instance): if the aimed pile is UNTRACKED
+    // (no eid -- the post-blob/menu->game mass-purge gap the connect window straddles), MINT its eid
+    // RIGHT NOW (register-only/idempotent, no broadcast -- the take-4 pattern CollectTrackedPileTransforms
+    // uses). This closes the eid-0-at-grab gap: NotePendingGrab below then arms with a real eid, the
+    // clump rides it through the morph, and the re-pile broadcasts a PropConvert (not a keyless re-seed
+    // PropSpawn) carrying the eid -- so the save-time key can ride to the joining client.
+    if (grabEid == coop::element::kInvalidId) {
+        PT::MarkPropElement(aimed, L"", R::ClassNameOf(aimed));
+        grabEid = PT::GetPropElementIdForActor(aimed);
+        if (grabEid != coop::element::kInvalidId)
+            UE_LOGI("[PILE-09] HOST self-seeded UNTRACKED grabbed pile %p -> eid=%u (eid-0-at-grab gap closed)",
+                    aimed, static_cast<unsigned>(grabEid));
+    }
+    if (grabEid != coop::element::kInvalidId) {
+        // docs/piles/09: freeze the pile's PRE-GRAB position as the save-time key. It has NOT moved yet
+        // (this is the InpActEvt PRE edge), so GetActorLocation == its save/native position -- the exact
+        // place the joining client loaded its native@old. RecordGrabTimePileXform stamps it into the active
+        // join slot(s)' blob map so the kToPile LAND convert carries it; the client then arms a pending
+        // save-time twin and the quiescence sweep retires native@old (the L1 cure, keyed at the grab edge).
+        const ue_wrap::FVector preGrabLoc = ue_wrap::engine::GetActorLocation(aimed);
+        coop::save_transfer::RecordGrabTimePileXform(grabEid, preGrabLoc);
         coop::trash_channel::NotePendingGrab(grabEid, ue_wrap::prop::GetChipType(aimed));
+    }
 }
 
 void Install(coop::net::Session* session) {

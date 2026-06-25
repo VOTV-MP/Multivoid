@@ -694,7 +694,16 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 88;  // v88: scope A v1 kerfur off->active dup RETIRE on the
+inline constexpr uint16_t kProtocolVersion = 89;  // v89: pile GRAB-edge self-seed (docs/piles/09, 4th
+                                                  // mirror-identity instance). PropConvertPayload 112->124
+                                                  // (+hasMatchPos +matchX/Y/Z): a kToPile LAND carries the
+                                                  // pre-grab save-time pos when the host grabbed an UNTRACKED
+                                                  // pile in the join window (self-seeded its eid at OnPileGrabPre
+                                                  // so NotePendingGrab arms + the pre-grab pos rides the convert).
+                                                  // Client OnConvert arms a pending save-time twin -> the
+                                                  // bracket-independent SweepReconcileSaveTimeTwins retires
+                                                  // native@old. Closes the eid-0-at-grab gap. Prior:
+                                                  // v88: scope A v1 kerfur off->active dup RETIRE on the
                                                   // NPC CHANNEL -- EntitySpawnPayload 96->108 (+hasMatchPos
                                                   // +matchX/Y/Z: a join-window-turned-ON kerfur's SAVE-TIME
                                                   // pos, carried on the npc EntitySpawn that DOES reach the
@@ -3285,9 +3294,16 @@ struct PropConvertPayload {
                                           //      PropConvert for this eid whose ctx is older -> a stale carry/land
                                           //      packet can never re-apply to the re-skinned entity (the cluster
                                           //      mis-bind guard the morph lacked). [was _pad[0]]
-    uint8_t _pad[1];                      // keep the struct 4-aligned + bytes-beyond-pileClass-len zero
+    uint8_t hasMatchPos;                  // v89 (docs/piles/09, the 4th mirror-identity instance): 1 => matchX/Y/Z
+                                          //      carry this pile's PRE-GRAB save-time position. ONLY a kToPile LAND
+                                          //      stamps it, and ONLY when the host self-seeded the eid at an
+                                          //      in-window grab (OnPileGrabPre) + recorded the pre-grab pos into the
+                                          //      blob map. The client's OnConvert then arms a pending save-time twin
+                                          //      so the bracket-independent quiescence sweep retires its stale
+                                          //      native@old (the L1 mechanism, extended to the in-window MOVE). [was _pad[0]]
+    float   matchX, matchY, matchZ;       // v89: the pre-grab position (world cm); valid IFF hasMatchPos && kToPile.
 };
-static_assert(sizeof(PropConvertPayload) == 112, "PropConvertPayload must be 112 bytes");
+static_assert(sizeof(PropConvertPayload) == 124, "PropConvertPayload must be 124 bytes (v89: +hasMatchPos +matchX/Y/Z)");
 
 // GrabIntentPayload (GrabIntent=78, v84) -- CLIENT->HOST chipPile grab REQUEST (Increment 2,
 // docs/piles/08; the door OnRequest shape). The client sends ONLY the eid of the mirrored pile it
