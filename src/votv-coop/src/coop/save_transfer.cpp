@@ -6,6 +6,7 @@
 #include "coop/ini_config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
+#include "coop/save_identity_map.h"  // Phase 1B: host-side keyless index->eid map build + log (gated, no wire)
 #include "coop/save_guard.h"
 #include "coop/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
 #include "ue_wrap/log.h"
@@ -391,6 +392,15 @@ void OnRequest(int peerSlot) {
                     "save-time xforms at blob instant (R2 + Path 1c + scope A baselines)",
                     peerSlot, g_blobKeys[peerSlot].size(), g_blobPileXforms[peerSlot].size(),
                     g_blobKerfurXforms[peerSlot].size());
+            // Phase 1B (gated checkpoint, NO wire): build the {objectsData-order -> eid} identity map for the
+            // keyless natives + LOG it, to verify it lands the right 874 entries (eids == S8.2 capture-eids)
+            // BEFORE the sidecar transport + client bind (step 2) are built. Same frame as saveObjects (just
+            // ran inside the capture). [dev] save_identity_map_log=1 only; absent = the shipping capture path
+            // is untouched (the wired, unconditional build comes with the transport in step 2).
+            if (coop::ini_config::IsIniKeyTrue("save_identity_map_log")) {
+                coop::save_identity_map::IdMap idMap;
+                coop::save_identity_map::BuildHostMap(idMap);  // logs its own summary; map discarded (no wire yet)
+            }
             return;
         }
         UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
