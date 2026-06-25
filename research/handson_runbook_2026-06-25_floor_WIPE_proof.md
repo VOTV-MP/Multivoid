@@ -38,6 +38,16 @@ WATCH (client log, say "ready" -> I grep):
 - If a cycle shows `N in-universe` small (like 88) and `0 destroyed`: that was a CLEAN run (no wipe
   condition); the floor correctly stayed dormant -> RETRY.
 
+## PATH B ATTEMPT 2026-06-25 14:11 = INCONCLUSIVE (the simple injection did NOT reproduce the wipe)
+The forcing flag was BUILT (`force_overdestroy_test`: `[dev] force_chippile_unclaim=1` host-skip +
+`[dev] disable_completeness_floor=1` client floor-disable) and run autonomously. It ARMED on the host
+(`force_overdestroy_test: ARMED`) and the census built 871 -- but the CLIENT sweep STILL showed
+`88 in-universe, 88 claimed, 0 destroyed` (clean run). The client SEEDED 871 natives yet only 88 reached
+the sweep's in-universe set. So **host-skip alone does NOT create the 871-unclaimed-in-universe state**.
+NEW open root (docs/piles/10): why ~871 seeded natives collapse to 88 in-universe by sweep time. The
+injection must be CORRECTED (force the CLIENT's natives unclaimed-AND-in-universe) before it can prove
+the floor. The flag + toggle are committed (dev-only) but the injection point needs rework.
+
 ## PATH B -- deterministic proof (recommended; I build a dev-only forcing flag on your OK)
 Hoping a catastrophe recurs is a weak way to prove a catastrophe guard. The sure path is to INJECT the
 wipe condition deterministically with a dev-only, ini-gated test flag (RULE-2-exempt probe, ships in no

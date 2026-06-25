@@ -311,6 +311,19 @@ eid and the in-window move is irrelevant.
   doomed-non-empty sweep WITH piles surviving (runbook
   `research/handson_runbook_2026-06-25_floor_WIPE_proof.md`; PATH B = a dev-only
   forcing flag for a deterministic proof). Build Phase 1 only AFTER this.
+  **PATH B AUTONOMOUS ATTEMPT 2026-06-25 14:11 = INCONCLUSIVE (did NOT reproduce the
+  wipe).** The `force_chippile_unclaim` flag ARMED on the host
+  (`force_overdestroy_test: ARMED`), the host skipped ALL chipPile expression, the
+  census built 871 -- yet the CLIENT sweep STILL showed `88 in-universe, 88 claimed,
+  0 destroyed`, identical to a clean run. The client SEEDED 871 natives but only 88
+  reached the sweep's in-universe set. **NEW OPEN ROOT: why do ~871 seeded native
+  chipPiles collapse to 88 in-universe by sweep time even when the host expresses
+  ZERO of them?** "Host under-expresses" does NOT inject the 11:16 condition -- the
+  over-destroy is a deeper race (the 953-unclaimed at 11:16 was an anomalous state,
+  not the steady 88). The forcing flag + floor-disable toggle are committed (dev-only,
+  HEAD) but need the injection point CORRECTED (force the CLIENT's natives
+  unclaimed-AND-in-universe, not just host-skip). This also RE-OPENS the docs/piles/10
+  root (the over-destroy is harder to trigger than first modeled).
 - **Phase 1 — host map build + host self-assign.** Host builds `eidByIndex` at
   save-capture; assigns eids to its own save-loaded actors at quiescence; logs
   counts. No wire change yet. Validate: host-side eids match

@@ -66,6 +66,18 @@ Decisive isolation (await user): does the over-destroy reproduce with a **pure p
 kerfur toggle**? If yes -> kerfur is coincidental, the pile-expression is just flaky. If only-with-kerfur
 -> the kerfur toggle is causal. Then grep the HOST log's pile-expression path for that run.
 
+**UPDATE 2026-06-25 14:11 (PATH B forcing experiment -- the over-destroy is HARDER to trigger than
+modeled).** A dev forcing flag made the host SKIP expressing ALL chipPiles (`force_overdestroy_test:
+ARMED`), so the joiner should have been left with ~870 unclaimed-in-universe natives -> a deterministic
+wipe. It did NOT happen: the client SEEDED 871 natives (`seeded ... 871 keyless chipPile element(s)`)
+but its claim sweep still showed `88 in-universe, 88 claimed, 0 destroyed` -- IDENTICAL to a clean run.
+So "host expresses 0 piles" does NOT by itself create the 870-unclaimed-in-universe state. **NEW PRIMARY
+OPEN QUESTION: why do ~871 SEEDED native chipPiles collapse to only 88 in the sweep's in-universe set
+(non-mirror local Prop Elements) by sweep time, even with zero host expression?** The 11:16 953-unclaimed
+was an ANOMALOUS state (the natives stayed in-universe AND unclaimed); the steady state is 88. Pinning
+this collapse (where do the other ~783 go -- claimed-as-mirror? doomed earlier? a re-bracket reset?) is
+the real root of both (a) reproducing the wipe to prove the Phase 0 floor and (b) the 11:16 bug itself.
+
 ## FIX DIRECTIONS (design only — NOT built; pick after the root is pinned)
 - **Safety net (defends regardless of root): a PER-CLASS floor on the claim sweep.** Never destroy ~100%
   of a class (esp. chipPile) when the host expressed 0 of it — treat "0 expressed of N>threshold loaded"
