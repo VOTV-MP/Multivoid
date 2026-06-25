@@ -6,17 +6,17 @@
 // (the same blob the client loads), sends it as a save_transfer SIDECAR, and the client binds each loaded
 // native to its host eid by SPAWN ORDER (1A PROVED the BeginDeferred thunk catches every keyless load-spawn).
 //
-// PHASE 1B (THIS FILE, first cut): HOST-side BUILD + LOG only, NO wire. Proves the map builds with the right
-// entries (874 = 870 chipPile + 4 kerfurOff, eids == the S8.2 capture-eids) BEFORE any transport/bind. The
-// SIDECAR transport (S2) + the client BindLocalNativeToHostEid (mini-design b) come AFTER 1B is verified.
-//
-// ORDER: the map is built by replaying saveObjects' gather -- GetAllActorsWithInterface(int_save_C), the
-// SAME call + order saveObjects uses (bytecode saveObjects_dump.txt [32]) -- so the keyless entries are in
-// objectsData order == the client's loadObjects spawn order. (1B skips the per-actor ignoreSave() gate that
-// saveObjects applies: the keyless families are never ignoreSave'd, so every one appears regardless; the
-// exact ignoreSave-filtered objectsData INDEX is a S3.3 bijection-backstop refinement, not needed by the
-// spawn-order PRIMARY, and is added in step 2 if the bijection is ever built. `index` here is the int_save
-// gather ordinal -- the keyless RELATIVE order is exact, which is all the spawn-order bind needs.)
+// ORDER (Phase A, parse-objectsData -- the assumption-free fix after the 2b smoke): the map is built by
+// reading the LIVE saveSlot->objectsData array (saveSlot+0x300) that saveObjects just rebuilt and the client's
+// loadObjects replays IN INDEX ORDER. The objectsData index IS the stable cross-peer ordinal. (The earlier 1B
+// cut re-gathered GetAllActorsWithInterface live at join time and used the gather ordinal -- the 2b smoke
+// FALSIFIED that: the live GUObjectArray order (chip-first) != the captured objectsData order (kerfur-first),
+// so the bind's family tripwire fired at k=0. Reading objectsData directly removes the order ASSUMPTION --
+// don't assume the order, read it.) Filter: keyless (key_64 == None) chip/kerfur class -- exactly the client's
+// fresh-spawn set (keyed entries adopt-by-key, no BeginDeferred). Each entry's host eid is resolved by a
+// host-LOCAL exact class+location join against the live actors' eids (CollectTracked{Pile,Kerfur}Transforms,
+// same capture instant); the location is the host-internal lookup key, NOT a cross-peer identity (that stays
+// the eid). Same-class-same-location M>1 -> deterministic rank-pairing bijection (benign; see the .cpp).
 //
 // Game-thread only (built at save-capture, save_transfer::OnRequest, the same frame as saveObjects).
 #pragma once
@@ -31,20 +31,22 @@ namespace coop::save_identity_map {
 // map -- they bind by their stable cross-peer key (S3.1), not by the eid map.
 enum class Family : uint8_t { ChipPile = 0, KerfurOff = 1 };
 
-// One entry per keyless save-loaded native. NO position, NO key: `index` (gather ordinal) is the anchor,
-// `eid` (host-minted) is the identity. 9 bytes on the wire (S1) when the sidecar transport lands (step 2).
+// One entry per keyless save-loaded native, EMITTED IN objectsData INDEX ORDER (== the client's loadObjects
+// keyless fresh-spawn order). The bind correlates by SEQUENCE position (the k-th entry <-> the client's k-th
+// keyless spawn); `index` is the objectsData index (logging + a future bijection backstop), `eid` the identity.
 struct IdEntry {
-    uint32_t index;   // int_save gather ordinal (== objectsData order for the keyless subsequence)
+    uint32_t index;   // objectsData array index (== client loadObjects spawn order for the keyless subsequence)
     uint32_t eid;     // host ElementId (the S8.2-stable capture-eid)
     uint8_t  family;  // Family
 };
 
 using IdMap = std::vector<IdEntry>;
 
-// HOST (game thread, at save-capture): build `outMap` by replaying GetAllActorsWithInterface(int_save_C) and
-// emitting an entry for every keyless-family actor (eid resolved via prop_element_tracker; self-seeded if
-// unseeded, the same idempotent mint CollectTrackedPileTransforms uses). Logs a per-family summary. Returns
-// the entry count. NO wire (Phase 1B). Leak-free (frees the engine-allocated OutActors array via EngineFree).
+// HOST (game thread, at save-capture): build `outMap` by reading the live saveSlot->objectsData array in index
+// order, filtering keyless chip/kerfur entries, and joining each to its host eid by a host-local class+location
+// match against the live actors (CollectTracked{Pile,Kerfur}Transforms). Logs a per-family summary + counts of
+// keyed-excluded / unmatched / ambiguous-location entries. Returns the entry count. Reads engine-owned memory
+// only (no allocation to free). Aborts (returns 0) if the struct_save stride sanity gate fails.
 int BuildHostMap(IdMap& outMap);
 
 // ---- Phase 2 sidecar wire framing (transport) ----------------------------------------------------------
