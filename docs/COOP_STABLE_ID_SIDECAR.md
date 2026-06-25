@@ -1,9 +1,14 @@
 # COOP_STABLE_ID — save-loaded identity via a stable ID, not position
 
-**Status: BUILDING (2026-06-25). Phase 0 (floor + purge-aware sweep timing gate) PROVEN + PUSHED;
-Phase 1 probe-first complete (1A spawn-order + §8.2 eid-stability PASS), 1B host map BUILT+VERIFIED
-(NO wire), Phase 2 (sidecar transport + client bind) NEXT. Supersedes the position-as-identity
-reconcile as the ROOT fix for the join-window race class. See §6 for the phase ledger.**
+**Status: BUILDING (2026-06-26). Phase 0 PROVEN+PUSHED. Phase 2a sidecar transport VERIFIED (874 entries
+arrive intact). Phase 2b client eid-range bind VERIFIED at the MECHANISM level — autonomous re-smoke binds
+874/874 (870 chipPile + 4 kerfurOff), family tripwire SILENT, all case(i) fresh-mirror — BUT NOT end-to-end:
+the bound chipPile natives are then destroyed by the existing host-proxy reconcile (`TryDestroyTwin`), so
+`totalLiveNatives=0`. The fix is the (X) NATIVE-AUTHORITATIVE design (keep the native as the host-eid mirror,
+suppress the proxy per-eid) — `research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md`,
+DESIGN ON REVIEW, every mechanism RE/probe-proven, ZERO code. Off-kerfurs are already native-authoritative
+(no proxy). The 1B "gather-ordinal == objectsData order" assumption was FALSIFIED (2b smoke k=0 desync) and
+replaced by PATH A (parse the live `saveSlot.objectsData`+`primitivesData` arrays in load order). See §6.**
 
 > Filename keeps the user-chosen `COOP_STABLE_ID_SIDECAR` slug, but the
 > **RECOMMENDED** design is the **in-memory index->eid map** (zero disk
@@ -316,29 +321,43 @@ eid and the in-window move is irrelevant.
   attempt + the "871->88 collapse OPEN ROOT" are RESOLVED -- it was the mid-purge race the timing
   fix now closes; see `docs/piles/10` "FIX PROVEN".) Caveat: autonomous=rendering-blind (floor
   KEEP is engine-truth from the re-seed pile count); a hands-on visual confirm is optional.
-- **Phase 1 — host map build + host self-assign. STATUS 2026-06-25: probe-first COMPLETE, 1B BUILT+VERIFIED.**
-  All Phase-1 assumptions PROVEN by read-only probes: **1A** (`coop/dev/spawn_order_probe`) -- the
-  BeginDeferred thunk catches EVERY keyless load-spawn (chipPile fired=870, kerfurOff 4/4 CAUGHT-ALL)
-  -> spawn-order is the §3.2 PRIMARY; **§8.2** (`coop/dev/eid_lifetime_trace`) -- capture-eid ==
-  wire-eid (874/874 matched) -> the eid is STABLE capture->wire, the bind model is sound. **1B
-  BUILT+VERIFIED** (`coop/save_identity_map.{h,cpp}`, commit `18d0f311`, binary `7F9DA172`, gated
-  `[dev] save_identity_map_log=1`, NO wire): `BuildHostMap` replays `GetAllActorsWithInterface(int_save_C)`
-  -> 874 entries (870 chipPile + 4 kerfurOff) in objectsData order, eids == the §8.2 capture-eids,
-  keyed excluded, EngineFree clean. Validate: DONE (host log).
-- **Phase 2 — transfer + client assign. NEXT.** The IdMap rides the `save_transfer` SIDECAR
-  (decision (a); NOT a new ReliableKind); client binds via §3 (spawn-order PRIMARY confirmed) by
-  installing each keyless native as a MIRROR at the host eid (mini-design `phase1-eid-range-bind`,
-  the `BindLocalNativeToHostEid` op) BEFORE the claim sweep. The position reconcile (`g_blobPileXforms`,
-  `SweepReconcileSaveTimeTwins`, `kerfur_reconcile`, `save_time_retire_util.h`) STAYS as a parallel
-  safety-net. Validate: client census 0 unclaimed, eids agree host<->client, L1/kerfur unregressed.
-- **Phase 3 — reconcile matches by eid; sweep uses §4 manifest.** Replace the
-  position-equality match in the reconcile/sweep with eid-equality now that
-  save-loaded forms carry a cross-peer eid at load.
-- **Phase 4 — retire the position layer (RULE 2).** Delete `g_blobPileXforms`,
-  `g_blobKerfurXforms`, `SweepReconcileSaveTimeTwins`,
-  `SweepReconcileSaveTimeKerfurs`, `save_time_retire_util.h`, the
-  mirror-identity reconcile layer — fully and immediately — ONLY after the eid
-  path is hands-on-verified across ~a dozen sessions. Not before.
+- **Phase 1 — host map build. STATUS 2026-06-26: BUILT+VERIFIED, but the build approach CHANGED (1B
+  gather → PATH A parse).** Probes (read-only, all PASS): **1A** (`spawn_order_probe`) thunk catches every
+  keyless load-spawn; **§8.2** (`eid_lifetime_trace`) capture-eid == wire-eid (874/874). **1B FALSIFIED in
+  practice:** `BuildHostMap` first replayed a LIVE `GetAllActorsWithInterface(int_save_C)` re-gather and used
+  the gather ordinal as the index — the 2b smoke proved the live GUObjectArray order (chip-first) != the
+  saved objectsData order (kerfur-first), so the bind's family tripwire fired at k=0 (`save_identity_map.cpp`
+  header documents this). **PATH A (the fix, commit `6e0ede3b`, binary `F0D8951F`):** `BuildHostMap` reads the
+  LIVE save arrays in load order — `saveSlot.objectsData` (off-kerfurs, `Fstruct_save` stride 0x100) THEN
+  `saveSlot.primitivesData` (chipPiles, `Fstruct_primitiveSave` stride 0x60 — chipPile.ignoreSave==TRUE so it
+  persists via the dedicated primitives path, NOT objectsData), filters keyless chip/kerfur by class, joins
+  each to its host eid by a host-LOCAL exact class+location match (`CollectTracked{Pile,Kerfur}Transforms`).
+  VERIFIED: host map 874, 0 unmatched/undrained/ambiguous, correct order.
+- **Phase 2a — sidecar transport. VERIFIED (commit `c9f8babd`, binary `4E7552AF`).** The IdMap rides the
+  `save_transfer` blob SIDECAR (decision (a), PREPENDED in-band: one stream, one CRC `0xB9971117` — cannot
+  desync; `SaveTransferBeginPayload.sidecarBytes`). Smoke: client received 874 entries byte-identical,
+  `.sav` stripped + loaded clean. Gated `[dev] save_identity_map_log=1`.
+- **Phase 2b — client eid-range bind. VERIFIED at MECHANISM level, NOT end-to-end (commit `06cc2c6a`).**
+  `coop/save_identity_bind.{h,cpp}`: the k-th keyless BeginDeferred load-spawn binds to the host map's k-th
+  entry (`UnmarkKnownKeyedProp` retire local + `RegisterPropMirror` host-eid + `MarkBoundMirrorNative` guard so
+  the re-seed won't re-localize). Re-smoke: **874/874 bound, tripwire SILENT, all case(i) E-free**, free-win
+  confirmed (sweep doomed zero chipPiles). **END-TO-END BLOCKED:** the bound natives are then destroyed by the
+  host-proxy reconcile (`[PILE] DESTROY native twin eid=2275 … proxy is the sole mirror`) → `totalLiveNatives=0`.
+  Gated `[dev] save_identity_bind=1`. Root RE'd: the autonomous purge is VOTV's intrinsic `loadObjects` rebuild
+  (host SP too); the real killer is `TryDestroyTwin`, not a pre-quiescence race (bound eids == destroyed eids).
+- **(X) NATIVE-AUTHORITATIVE — the end-to-end fix. DESIGN ON REVIEW (zero code), all mechanisms RE/probe-proven.**
+  `research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md`. Keep the native as the
+  host-eid mirror; **per-eid SUPPRESS the proxy** (2 guards on `IsBoundMirrorNative`: skip `SpawnProxy` + skip
+  `TryDestroyTwin`; + `RetireProxy` for the race) — NOT a wholesale delete (runtime/host-only piles + clumps
+  still need the proxy). This RESTORES the native interaction window the proxy lacks (proxy = bare
+  `AStaticMeshActor`, no `lookAtActor`/collision/occlusion — through-wall grab, walk-through). Grab routes via
+  `GrabIntent` (host-auth); the native local `playerGrabbed` is suppressed by **clearing `lookAtActor` on the
+  `OnPileGrabPre` edge** (probe-proven clean: read fresh after the PRE observer, self-heals next trace tick).
+  KEEP Path-A (quiescence-pivot DROPPED — evidence: the bind survives the rebuild). Blast radius NIL (per-eid).
+  Pulls Phase 4 (retire proxy for save-loaded piles) onto the critical path because of the INTERACTION gap.
+- **Phase 3 — reconcile matches by eid.** After (X), the bound native IS the eid mirror; eid-equality reconcile.
+- **Phase 4 — retire the position layer (RULE 2).** Only after the eid path is hands-on-verified across ~a
+  dozen sessions. (X) already retires the camera-cone + proxy/`TryDestroyTwin` for bound save-loaded piles.
 
 The 3 verified instances (L1 pile, kerfur fuzzy-gate, kerfur forward) and
 instant-world are NOT touched until Phase 4, and only then on proof.

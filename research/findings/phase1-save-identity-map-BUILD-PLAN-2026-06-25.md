@@ -1,5 +1,13 @@
 # Phase 1 — save-loaded identity via in-memory index->eid map — BUILD PLAN (2026-06-25)
 
+> **SUPERSEDED (2026-06-26) — point-in-time. BUILT + VERIFIED (mechanism), but two specifics here changed:**
+> (1) the 1B "host map = replay `GetAllActorsWithInterface` gather ordinal" was FALSIFIED (live gather order !=
+> saved objectsData order) and replaced by **PATH A** (read the live `saveSlot.objectsData`+`primitivesData`
+> arrays in load order — see `docs/COOP_STABLE_ID_SIDECAR.md` §6 + `[[lesson-chippile-saved-in-primitivesData-not-objectsData]]`);
+> (2) the spawn-time bind is verified but the bound chipPiles die to the host-proxy `TryDestroyTwin`, so the
+> end-to-end fix is the **(X) native-authoritative** design
+> (`research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md`). Read those for current state.
+
 **ON REVIEW, ZERO code.** Build-plan-level detail for `docs/COOP_STABLE_ID_SIDECAR.md` §2.1/§3/§3.6
 (design greenlit-in-principle). Covers BOTH keyless save-loaded families — chipPiles AND off-prop kerfurs
 (`prop_kerfurOmega_C`) — with ONE mechanism. Phase 0 (the completeness floor + the purge-aware timing gate)
