@@ -21,4 +21,17 @@ bool HostSkipChipPileExpression() {
     return s;
 }
 
+bool FloorDisabledForTest() {
+    static const bool s = [] {
+        const bool on = coop::ini_config::IsIniKeyTrue("disable_completeness_floor");
+        if (on) {
+            UE_LOGW("force_overdestroy_test: completeness FLOOR DISABLED for test -- the claim sweep "
+                    "will behave like a no-floor baseline (the BEFORE half). With force_chippile_unclaim "
+                    "set this WIPES the unclaimed piles; the same binary with this OFF KEEPs them.");
+        }
+        return on;
+    }();
+    return s;
+}
+
 }  // namespace coop::dev::force_overdestroy_test

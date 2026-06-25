@@ -28,4 +28,12 @@ namespace coop::dev::force_overdestroy_test {
 // chipPile (BuildPropSpawnPayload_ returns false for it). Latched + logged once.
 bool HostSkipChipPileExpression();
 
+// True when `[dev] disable_completeness_floor=1`: the CLIENT's claim sweep SKIPS the
+// Phase 0 completeness floor (behaves like a no-floor baseline) -- the "BEFORE" half
+// of the controlled proof. With force_chippile_unclaim also set, the sweep then WIPES
+// the unclaimed piles, confirming the injection genuinely creates the catastrophe; the
+// SAME binary with this OFF KEEPs them, isolating exactly the floor as the only variable.
+// Dev-only, ini-gated, RULE-2-exempt; absent in any shipped config. Latched + logged once.
+bool FloorDisabledForTest();
+
 }  // namespace coop::dev::force_overdestroy_test

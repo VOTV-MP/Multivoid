@@ -25,6 +25,7 @@
 #include "coop/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
 #include "coop/pile_reconcile.h"  // extracted 2026-06-23: keyless-pile join twin-destroy / adopt / census
 #include "coop/snapshot_census.h"  // Phase 0: per-class completeness floor for the claim sweep
+#include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/prop_echo_suppress.h"
 #include "coop/prop_element_tracker.h"
 #include "coop/prop_lifecycle.h"
@@ -1125,7 +1126,8 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // no census entry / count 0 -> claimed >= count -> doomed as a real deletion). A class with no
     // census entry is unaffected (the >50% valve still guards it). Applied BEFORE the valve so the
     // valve sees the genuine-divergence remainder.
-    if (coop::snapshot_census::HasCensus() && !doomed.empty()) {
+    if (coop::snapshot_census::HasCensus() && !doomed.empty() &&
+        !coop::dev::force_overdestroy_test::FloorDisabledForTest()) {
         std::vector<void*> keptDoomed;
         std::vector<std::wstring> keptDoomedClass;
         keptDoomed.reserve(doomed.size());
