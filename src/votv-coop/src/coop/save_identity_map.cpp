@@ -80,40 +80,19 @@ int BuildHostMap(IdMap& outMap) {
     UE_ASSERT_GAME_THREAD("save_identity_map::BuildHostMap");
     outMap.clear();
 
-    // 1. Resolve saveSlot->objectsData -- the LIVE array saveObjects just (re)built and loadObjects replays in
-    //    index order. Reading THIS (not a fresh GetAllActorsWithInterface re-gather) is the assumption-free fix:
-    //    the objectsData index IS the cross-peer ordinal. The 2b smoke FALSIFIED the live-gather order (chip-
-    //    first) == objectsData order (kerfur-first); the bind tripwire caught it. saveSlot is a persistent
-    //    gamemode member, alive after the capture (save_capture.cpp:57 reads it the same way).
+    // 1. Resolve saveSlot -- the persistent gamemode member (alive post-capture; save_capture.cpp:57 reads it
+    //    the same way). Its Fstruct_save arrays are what loadObjects replays; reading THEM (not a fresh
+    //    GetAllActorsWithInterface re-gather) is the assumption-free fix -- the array index IS the cross-peer
+    //    ordinal. The 2b smoke FALSIFIED the live-gather order; the bind tripwire caught it at k=0.
     void* gm = R::FindObjectByClass(P::name::GamemodeClass);
     if (!gm) { UE_LOGW("save_identity_map: cannot build -- gamemode not found"); return 0; }
     void* saveSlot = *reinterpret_cast<void* const*>(
         reinterpret_cast<const uint8_t*>(gm) + P::off::AmainGamemode_saveSlot);
     if (!saveSlot) { UE_LOGW("save_identity_map: cannot build -- saveSlot null (no capture yet?)"); return 0; }
-    const uint8_t* arrHdr = reinterpret_cast<const uint8_t*>(saveSlot) + P::off::UsaveSlot_objectsData;
-    void* const data = *reinterpret_cast<void* const*>(arrHdr + 0x0);
-    const int32_t num = *reinterpret_cast<const int32_t*>(arrHdr + 0x8);
-    if (!data || num <= 0) {
-        UE_LOGW("save_identity_map: objectsData empty (data=%p num=%d) -- nothing to map", data, num);
-        return 0;
-    }
 
-    // Stride/offset sanity gate (the one load-bearing assumption): element 0..4's class_3 must be plausible
-    // UClasses. A wrong stride reads junk here -> ABORT rather than emit a garbage map that could mis-bind.
-    for (int32_t i = 0; i < num && i < 5; ++i) {
-        void* cls = *reinterpret_cast<void* const*>(
-            reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride + kOffClass);
-        if (!PlausibleClass_(cls)) {
-            UE_LOGE("save_identity_map: objectsData element %d class_3 not a plausible UClass (cls=%p) -- "
-                    "stride/offset WRONG for this build (expected stride 0x%zX); ABORTING (no map, no bind).",
-                    i, cls, kStructSaveStride);
-            return 0;
-        }
-    }
-
-    // 2. Build the location->eid bridge from the LIVE keyless actors (self-seeding -- the same idempotent mint
-    //    CollectTracked{Pile,Kerfur}Transforms do; they ran at this capture instant). eid->location inverted
-    //    into per-location, per-family ASCENDING eid buckets.
+    // 2. Build the location->eid bridge from the LIVE keyless actors ONCE (self-seeding -- the same idempotent
+    //    mint CollectTracked{Pile,Kerfur}Transforms do; they ran at this capture instant). eid->location is
+    //    inverted into per-location, per-family ASCENDING eid buckets, CONSUMED across all arrays via a cursor.
     void* chipBase = R::FindClass(L"actorChipPile_C");
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector> pileXf, kerfurXf;
     PT::CollectTrackedPileTransforms(pileXf);
@@ -126,60 +105,95 @@ int BuildHostMap(IdMap& outMap) {
         std::sort(kv.second.kerfur.begin(), kv.second.kerfur.end());
     }
 
-    // 3. Walk objectsData IN INDEX ORDER; for each keyless chip/kerfur entry, transform-join it to a host eid.
-    //    The emitted sequence == the client's keyless fresh-spawn order (loadObjects spawns objectsData[i] in i
-    //    order; keyed entries take the adopt-by-key path -> never fresh-spawn -> excluded by key==None).
+    // 3. Parse the Fstruct_save save arrays IN THE CLIENT'S LOAD ORDER and concatenate their keyless chip/kerfur
+    //    entries. objectsData (the off-kerfurs + keyed world objects) loads first, then trashPilesData (the
+    //    chipPiles): chipPiles persist in saveSlot->trashPilesData (saveSlot.hpp:76; save-path RE), NOT
+    //    objectsData -- the first Path-A smoke found 0 chipPiles in objectsData. The order objectsData ->
+    //    trashPilesData is confirmed by the 2b smoke's kerfur-first spawn (the only objectsData keyless entries
+    //    are the off-kerfurs; the chips all come from the trash array after). Both are TArray<Fstruct_save>
+    //    (saveSlot.hpp:37,76) -> one parser. The emitted SEQUENCE == the client's keyless fresh-spawn order.
     //    TIEBREAK (same-class-same-location, the user's explicit requirement): M identical entries at one
-    //    quantized location (M>1) pair to the M ascending-sorted eids by RANK -- the i-th such entry to the
-    //    i-th-smallest eid. This is a deterministic BIJECTION; it is BENIGN because the M props are physically
-    //    identical (same class, same location), so the client's M indistinguishable natives may bind to the M
-    //    eids in ANY consistent order -- the eid stays the identity, the rank-pairing just makes it reproducible.
-    int chip = 0, kerfur = 0, missed = 0, ambiguousLocs = 0, nonKeyless = 0;
-    for (int32_t i = 0; i < num; ++i) {
-        const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride;
-        void* cls = *reinterpret_cast<void* const*>(e + kOffClass);
-        if (!cls) continue;
-        Family fam;
-        if (chipBase && R::IsDescendantOfAny(cls, &chipBase, 1)) fam = Family::ChipPile;
-        else if (coop::kerfur_entity::IsKerfurPropClass(cls))    fam = Family::KerfurOff;
-        else continue;  // not a chip/kerfur-prop class
-        // Filter by CLASS (chip/kerfur-PROP lineage == inherently keyless == the client's class-based thunk
-        // classification; the gather-based 1B proved this yields exactly 874). The key is read only as a
-        // DIAGNOSTIC: a chip/kerfur-prop entry with a non-None key would be unexpected (it would adopt-by-key,
-        // not fresh-spawn) -- if nonKeyless>0 the class==keyless assumption needs revisiting (the bind tripwire
-        // would also catch the resulting ordinal shift). Not a hard gate (getData's keyless-key format is
-        // unverified; a hard key==None gate risks wrongly dropping every pile if it writes a placeholder).
-        const R::FName key = *reinterpret_cast<const R::FName*>(e + kOffKey);
-        if (!R::NameEquals(key, L"None")) ++nonKeyless;
+    //    quantized location (M>1) pair to the M ascending-sorted eids by RANK (i-th entry <-> i-th-smallest
+    //    eid) -- a deterministic BIJECTION, BENIGN because the M props are physically identical (any consistent
+    //    pairing is correct; the eid stays the identity, the rank-pairing just makes it reproducible).
+    constexpr size_t kOffTrashPilesData = 0x818;  // saveSlot.hpp:76, TArray<Fstruct_save>
+    struct ArraySpec { size_t off; const wchar_t* name; };
+    const ArraySpec kArrays[] = {
+        { P::off::UsaveSlot_objectsData, L"objectsData" },     // 0x300 -- off-kerfurs (+ keyed world objects)
+        { kOffTrashPilesData,            L"trashPilesData" },  // 0x818 -- chipPiles
+    };
+    int chip = 0, kerfur = 0, missed = 0, ambiguousLocs = 0, nonKeyless = 0, totalRecords = 0;
+    uint32_t ordinal = 0;  // running keyless ordinal across arrays (== the client bind's k; logged as index)
+    for (const ArraySpec& spec : kArrays) {
+        const uint8_t* hdr = reinterpret_cast<const uint8_t*>(saveSlot) + spec.off;
+        void* const data = *reinterpret_cast<void* const*>(hdr + 0x0);
+        const int32_t num = *reinterpret_cast<const int32_t*>(hdr + 0x8);
+        if (!data || num <= 0) { UE_LOGI("save_identity_map: %ls empty (num=%d) -- skipped", spec.name, num); continue; }
+        // Stride/offset sanity gate (the one load-bearing assumption): element 0..4's class_3 must be plausible
+        // UClasses. A wrong stride reads junk here -> ABORT rather than emit a garbage map that could mis-bind.
+        for (int32_t i = 0; i < num && i < 5; ++i) {
+            void* cls = *reinterpret_cast<void* const*>(
+                reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride + kOffClass);
+            if (!PlausibleClass_(cls)) {
+                UE_LOGE("save_identity_map: %ls element %d class_3 not a plausible UClass (cls=%p) -- stride/"
+                        "offset WRONG for this build (expected stride 0x%zX); ABORTING (no map, no bind).",
+                        spec.name, i, cls, kStructSaveStride);
+                outMap.clear();
+                return 0;
+            }
+        }
+        totalRecords += num;
+        for (int32_t i = 0; i < num; ++i) {
+            const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride;
+            void* cls = *reinterpret_cast<void* const*>(e + kOffClass);
+            if (!cls) continue;
+            Family fam;
+            if (chipBase && R::IsDescendantOfAny(cls, &chipBase, 1)) fam = Family::ChipPile;
+            else if (coop::kerfur_entity::IsKerfurPropClass(cls))    fam = Family::KerfurOff;
+            else continue;  // not a chip/kerfur-prop class
+            // Filter by CLASS (chip/kerfur-PROP lineage == the client's class-based thunk classification). The
+            // key is a DIAGNOSTIC only (nonKeyless): a hard key==None gate risks wrongly dropping piles if
+            // getData writes a placeholder -- the gather-based 1B proved class-only yields the right set.
+            const R::FName key = *reinterpret_cast<const R::FName*>(e + kOffKey);
+            if (!R::NameEquals(key, L"None")) ++nonKeyless;
 
-        const ue_wrap::FVector loc = *reinterpret_cast<const ue_wrap::FVector*>(e + kOffLocation);
-        auto it = byLoc.find(Quantize_(loc));
-        std::vector<uint32_t>* vec = nullptr; size_t* curp = nullptr;
-        if (it != byLoc.end()) {
-            if (fam == Family::ChipPile) { vec = &it->second.chip;   curp = &it->second.chipCur; }
-            else                         { vec = &it->second.kerfur; curp = &it->second.kerfurCur; }
+            const ue_wrap::FVector loc = *reinterpret_cast<const ue_wrap::FVector*>(e + kOffLocation);
+            auto it = byLoc.find(Quantize_(loc));
+            std::vector<uint32_t>* vec = nullptr; size_t* curp = nullptr;
+            if (it != byLoc.end()) {
+                if (fam == Family::ChipPile) { vec = &it->second.chip;   curp = &it->second.chipCur; }
+                else                         { vec = &it->second.kerfur; curp = &it->second.kerfurCur; }
+            }
+            if (!vec || *curp >= vec->size()) {
+                ++missed;  // saved entry with no live keyless twin at this loc -- surfaced below, never mis-bound
+                continue;
+            }
+            if (*curp == 0 && vec->size() > 1) ++ambiguousLocs;  // M>1 identical entries at this loc (count once)
+            const uint32_t eid = (*vec)[(*curp)++];              // rank-pairing tiebreak (i-th entry <-> i-th eid)
+            outMap.push_back(IdEntry{ordinal++, eid, static_cast<uint8_t>(fam)});
+            if (fam == Family::ChipPile) ++chip; else ++kerfur;
         }
-        if (!vec || *curp >= vec->size()) {
-            ++missed;  // saved entry with no live keyless twin at this loc (purged/moved post-capture, or a
-            continue;  // stride mis-read slipping past the gate) -- surfaced in the summary, never mis-bound
-        }
-        if (*curp == 0 && vec->size() > 1) ++ambiguousLocs;   // M>1 identical entries at this loc (count once)
-        const uint32_t eid = (*vec)[(*curp)++];               // rank-pairing tiebreak (i-th entry <-> i-th eid)
-        outMap.push_back(IdEntry{static_cast<uint32_t>(i), eid, static_cast<uint8_t>(fam)});
-        if (fam == Family::ChipPile) ++chip; else ++kerfur;
     }
 
-    UE_LOGI("save_identity_map: HOST map built (Phase A, parse-objectsData) -- %zu entries (%d chipPile + %d "
-            "kerfurOff) from %d objectsData records [%d with non-None key (diag, expect 0), %d unmatched, %d "
-            "ambiguous same-loc bucket(s)]. index = OBJECTSDATA index (== client loadObjects spawn order); eid "
-            "via host-local class+location join (bridge: %zu pile + %zu kerfur live eids).",
-            outMap.size(), chip, kerfur, num, nonKeyless, missed, ambiguousLocs, pileXf.size(), kerfurXf.size());
+    // Bridge-drain diagnostic: count live keyless eids NOT consumed by a save entry (a live actor with no save
+    // record at its location -> it would be unmapped; expect 0 if every keyless native is saved + matched).
+    int undrained = 0;
+    for (const auto& kv : byLoc) {
+        undrained += static_cast<int>(kv.second.chip.size() - kv.second.chipCur);
+        undrained += static_cast<int>(kv.second.kerfur.size() - kv.second.kerfurCur);
+    }
+    UE_LOGI("save_identity_map: HOST map built (Phase A, parse save arrays) -- %zu entries (%d chipPile + %d "
+            "kerfurOff) from %d records across objectsData+trashPilesData [%d non-None key (diag), %d unmatched, "
+            "%d undrained bridge eid(s), %d ambiguous same-loc]. index = keyless ordinal (== client loadObjects "
+            "spawn order); eid via host-local class+location join (bridge: %zu pile + %zu kerfur live eids).",
+            outMap.size(), chip, kerfur, totalRecords, nonKeyless, missed, undrained, ambiguousLocs,
+            pileXf.size(), kerfurXf.size());
     // Sample the first + last few entries so the host log shows the objIndex->eid->family pairs concretely.
     const size_t n = outMap.size();
     for (size_t j = 0; j < n; ++j) {
         if (j < 5 || j + 5 >= n) {
             const IdEntry& en = outMap[j];
-            UE_LOGI("save_identity_map:   [%zu] objIndex=%u eid=%u family=%s", j, en.index, en.eid,
+            UE_LOGI("save_identity_map:   [%zu] ordinal=%u eid=%u family=%s", j, en.index, en.eid,
                     en.family == static_cast<uint8_t>(Family::ChipPile) ? "chipPile" : "kerfurOff");
         } else if (j == 5 && n > 10) {
             UE_LOGI("save_identity_map:   ... %zu more ...", n - 10);
