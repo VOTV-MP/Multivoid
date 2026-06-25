@@ -4,6 +4,14 @@
 NOT a regression (the docs/piles/09 fix was NOT deployed). FIX NOT built — one open root (why the host
 failed to express the piles this join). This is WORSE than the dup: a full-class WIPE, not a duplicate.**
 
+> **PLAN (2026-06-25, DESIGN on-review): the catastrophe guard is specified in
+> `docs/COOP_STABLE_ID_SIDECAR.md` §4 — a per-class COMPLETENESS FLOOR (a positive host->client
+> per-class census manifest; the claim sweep may doom class C only when `claimedCount[C] >=
+> manifest[C]`, else KEEP as incomplete). Ships as Phase 0, INDEPENDENT of the stable-ID work and FIRST.
+> NOT a crude `>N%` threshold (that would block a legitimate mass-clear). A stable ID does NOT fix this
+> (no expression -> no ID on the wire); the floor is the dedicated guard. Open root (WHY the host
+> under-expressed) still needs the host expression-trace + the pure-pile-throw-no-kerfur isolation.**
+
 ## The symptom (user, 2 runs, hands-on)
 - **11:14: clean** — all piles present on the client.
 - **11:16: ALL piles VANISHED on the client** — the user threw piles NEAR kerfurs and toggled those
