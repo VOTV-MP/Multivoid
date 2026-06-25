@@ -205,6 +205,38 @@ backstop.
 
 ---
 
+## 3.6 Kerfur off-prop forms — the SAME keyless class, the SAME map covers them
+
+Phase 1 must cover BOTH keyless save-loaded form families with ONE mechanism: chipPiles AND **off-prop
+kerfurs** (`prop_kerfurOmega_C`, the inanimate object form). The 2026-06-25 13:21 hands-on proved they
+are the same root (live-log evidence, client `Game_0.9.0n_copy`):
+
+- A save off-kerfur `key='jUuC_tdW...'` was **UNTRACKED on the host at join** -- the snapshot enumerated
+  3084 Prop Elements but jUuC was not one (only 3 off-kerfurs reached the client: eids 3471/3472/3473).
+  So the host never expressed it -> **no client mirror**.
+- The client DID load jUuC from the transferred blob, but its native off-kerfur is **not key-indexed in
+  the remote_prop maps** (only host-expressed mirrors are indexed) -- the same "local save off-prop NOT
+  key-resolvable" fact the kerfur scope-A work already hit.
+- When the host later GRABBED jUuC (13:21:56) it minted a late eid 5278 and streamed `PropPose key=jUuC
+  eid=5278`; the client logged `no local match (key or eid)` repeatedly -> the pose drove nothing ->
+  **the kerfur stayed missing even on grab** (the user's exact symptom).
+
+This is the identical disease to the chipPile eid-0: an untracked-at-join, save-loaded, keyless form
+with no stable cross-peer identity. The in-memory `objectsData-index -> eid` map (§2.1) fixes BOTH,
+because it is built from the SAVE BLOB's `objectsData` -- which contains EVERY save object regardless of
+the runtime Prop-registry tracking. jUuC is in `objectsData`; the map assigns it an eid; the client
+binds its local jUuC to that eid at load; the host expresses/poses jUuC by that eid; pose streams match
+by eid. The off-kerfur appears + syncs. This SUPERSEDES the kerfur scope-A position retire and the
+class+pose fuzzy adoption for save-loaded off-kerfurs (those stay only for runtime off<->active
+transitions, not save-loaded identity).
+
+**Coverage note:** the off-kerfur correlation uses §3.1 (by key) when the host DOES express it, and the
+§3.2/§3.3 untracked path when it does not -- but crucially the index->eid map gives even the UNTRACKED
+ones (jUuC) an identity, which neither the key path nor scope-A could. The kerfur active<->object
+transition (off-prop <-> NPC) keeps its own seam (npc channel + scope-A trigger); only the save-loaded
+IDENTITY moves to the map. Phase 1 design + tests MUST include an off-kerfur untracked-at-join case
+(grab the missing one -> it appears + poses) alongside the chipPile case.
+
 ## 4. The 11:16 over-destroy fix — per-class completeness floor (SEPARATE, ships FIRST)
 
 `docs/piles/10`: all 870 keyless piles vanished because the host failed to
@@ -269,6 +301,16 @@ eid and the in-window move is irrelevant.
 
 - **Phase 0 — per-class completeness floor (§4).** Independent catastrophe
   guard for 11:16. Ships first. Position reconcile untouched.
+  **STATUS 2026-06-25: BUILT + audited (perf + correctness clean) + DEPLOYED
+  (floor-on-baseline MD5 `68633342`, pile-09 reverted out for clean
+  attribution). NOT YET VERIFIED LIVE** -- the 13:21 hands-on held its piles but
+  the floor did NOT fire (sweep saw only 88 in-universe, `doomed` empty, floor
+  skipped); the 11:16 wipe condition (mass tracked-unclaimed natives) did not
+  recur that run. Phase 0 stays UNVERIFIED until the line
+  `completeness FLOOR kept K unclaimed 'actorChipPile_C'` is seen on a
+  doomed-non-empty sweep WITH piles surviving (runbook
+  `research/handson_runbook_2026-06-25_floor_WIPE_proof.md`; PATH B = a dev-only
+  forcing flag for a deterministic proof). Build Phase 1 only AFTER this.
 - **Phase 1 — host map build + host self-assign.** Host builds `eidByIndex` at
   save-capture; assigns eids to its own save-loaded actors at quiescence; logs
   counts. No wire change yet. Validate: host-side eids match
