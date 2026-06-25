@@ -1,7 +1,9 @@
 # COOP_STABLE_ID — save-loaded identity via a stable ID, not position
 
-**Status: DESIGN (2026-06-25). NO code. On-review before build. Supersedes the
-position-as-identity reconcile as the ROOT fix for the join-window race class.**
+**Status: BUILDING (2026-06-25). Phase 0 (floor + purge-aware sweep timing gate) PROVEN + PUSHED;
+Phase 1 probe-first complete (1A spawn-order + §8.2 eid-stability PASS), 1B host map BUILT+VERIFIED
+(NO wire), Phase 2 (sidecar transport + client bind) NEXT. Supersedes the position-as-identity
+reconcile as the ROOT fix for the join-window race class. See §6 for the phase ledger.**
 
 > Filename keeps the user-chosen `COOP_STABLE_ID_SIDECAR` slug, but the
 > **RECOMMENDED** design is the **in-memory index->eid map** (zero disk
@@ -299,42 +301,36 @@ eid and the in-window move is irrelevant.
 
 ## 6. Phased migration (do not regress the 3 working instances + instant-world)
 
-- **Phase 0 — per-class completeness floor (§4).** Independent catastrophe
-  guard for 11:16. Ships first. Position reconcile untouched.
-  **STATUS 2026-06-25: BUILT + audited (perf + correctness clean) + DEPLOYED
-  (floor-on-baseline MD5 `68633342`, pile-09 reverted out for clean
-  attribution). NOT YET VERIFIED LIVE** -- the 13:21 hands-on held its piles but
-  the floor did NOT fire (sweep saw only 88 in-universe, `doomed` empty, floor
-  skipped); the 11:16 wipe condition (mass tracked-unclaimed natives) did not
-  recur that run. Phase 0 stays UNVERIFIED until the line
-  `completeness FLOOR kept K unclaimed 'actorChipPile_C'` is seen on a
-  doomed-non-empty sweep WITH piles surviving (runbook
-  `research/handson_runbook_2026-06-25_floor_WIPE_proof.md`; PATH B = a dev-only
-  forcing flag for a deterministic proof). Build Phase 1 only AFTER this.
-  **PATH B AUTONOMOUS ATTEMPT 2026-06-25 14:11 = INCONCLUSIVE (did NOT reproduce the
-  wipe).** The `force_chippile_unclaim` flag ARMED on the host
-  (`force_overdestroy_test: ARMED`), the host skipped ALL chipPile expression, the
-  census built 871 -- yet the CLIENT sweep STILL showed `88 in-universe, 88 claimed,
-  0 destroyed`, identical to a clean run. The client SEEDED 871 natives but only 88
-  reached the sweep's in-universe set. **NEW OPEN ROOT: why do ~871 seeded native
-  chipPiles collapse to 88 in-universe by sweep time even when the host expresses
-  ZERO of them?** "Host under-expresses" does NOT inject the 11:16 condition -- the
-  over-destroy is a deeper race (the 953-unclaimed at 11:16 was an anomalous state,
-  not the steady 88). The forcing flag + floor-disable toggle are committed (dev-only,
-  HEAD) but need the injection point CORRECTED (force the CLIENT's natives
-  unclaimed-AND-in-universe, not just host-skip). This also RE-OPENS the docs/piles/10
-  root (the over-destroy is harder to trigger than first modeled).
-- **Phase 1 — host map build + host self-assign.** Host builds `eidByIndex` at
-  save-capture; assigns eids to its own save-loaded actors at quiescence; logs
-  counts. No wire change yet. Validate: host-side eids match
-  `prop_element_tracker`.
-- **Phase 2 — transfer + client assign.** New reliable packet carries
-  `eidByIndex`; client binds via §3 (spawn-order primary, exact-transform
-  bijection fallback, key for keyed); assigns at quiescence BEFORE the claim
-  sweep. The position reconcile (`g_blobPileXforms`,
-  `SweepReconcileSaveTimeTwins`, `kerfur_reconcile`,
-  `save_time_retire_util.h`) STAYS as a parallel safety-net. Validate: client
-  census 0 unclaimed, eids agree host<->client, L1/kerfur unregressed.
+- **Phase 0 — per-class completeness floor (§4) + the purge-aware sweep TIMING gate.**
+  **STATUS 2026-06-25: PROVEN + PUSHED (origin/main `f83f9635`).** The 11:16 over-destroy
+  was RE-DIAGNOSED as a RACE, not a host under-express: the claim sweep fired against a
+  MID-PURGE registry (`docs/piles/10`). So Phase 0 is TWO complementary layers, both shipped:
+  (1) the **purge-aware quiescence gate** (commit `5e91519a`, `remote_prop_spawn.cpp`
+  `kSweepHardCapMs`/`g_sweepLastProgressAt` + the `!HasSeededOnce()||InPurgeEpisode()` hold)
+  = the RULE-1 root, so the sweep only adjudicates the fully-reloaded world; (2) the per-class
+  **completeness floor** (commit `88a50890`, `snapshot_census` + the `claimed<census` KEEP) =
+  the NET for a genuine under-express at true quiescence. **PROVEN by a deterministic A/B**
+  (binary `BCDD46DA`, dev `force_chippile_unclaim` injection, one var = floor toggle): floor OFF
+  -> 870 piles WIPED; floor ON -> `completeness FLOOR kept 870` + piles survive; BOTH fired at
+  full-world (3082/3106 in-universe) via `load tail quiesced`. (The 14:11 PATH-B-INCONCLUSIVE
+  attempt + the "871->88 collapse OPEN ROOT" are RESOLVED -- it was the mid-purge race the timing
+  fix now closes; see `docs/piles/10` "FIX PROVEN".) Caveat: autonomous=rendering-blind (floor
+  KEEP is engine-truth from the re-seed pile count); a hands-on visual confirm is optional.
+- **Phase 1 — host map build + host self-assign. STATUS 2026-06-25: probe-first COMPLETE, 1B BUILT+VERIFIED.**
+  All Phase-1 assumptions PROVEN by read-only probes: **1A** (`coop/dev/spawn_order_probe`) -- the
+  BeginDeferred thunk catches EVERY keyless load-spawn (chipPile fired=870, kerfurOff 4/4 CAUGHT-ALL)
+  -> spawn-order is the §3.2 PRIMARY; **§8.2** (`coop/dev/eid_lifetime_trace`) -- capture-eid ==
+  wire-eid (874/874 matched) -> the eid is STABLE capture->wire, the bind model is sound. **1B
+  BUILT+VERIFIED** (`coop/save_identity_map.{h,cpp}`, commit `18d0f311`, binary `7F9DA172`, gated
+  `[dev] save_identity_map_log=1`, NO wire): `BuildHostMap` replays `GetAllActorsWithInterface(int_save_C)`
+  -> 874 entries (870 chipPile + 4 kerfurOff) in objectsData order, eids == the §8.2 capture-eids,
+  keyed excluded, EngineFree clean. Validate: DONE (host log).
+- **Phase 2 — transfer + client assign. NEXT.** The IdMap rides the `save_transfer` SIDECAR
+  (decision (a); NOT a new ReliableKind); client binds via §3 (spawn-order PRIMARY confirmed) by
+  installing each keyless native as a MIRROR at the host eid (mini-design `phase1-eid-range-bind`,
+  the `BindLocalNativeToHostEid` op) BEFORE the claim sweep. The position reconcile (`g_blobPileXforms`,
+  `SweepReconcileSaveTimeTwins`, `kerfur_reconcile`, `save_time_retire_util.h`) STAYS as a parallel
+  safety-net. Validate: client census 0 unclaimed, eids agree host<->client, L1/kerfur unregressed.
 - **Phase 3 — reconcile matches by eid; sweep uses §4 manifest.** Replace the
   position-equality match in the reconcile/sweep with eid-equality now that
   save-loaded forms carry a cross-peer eid at load.
