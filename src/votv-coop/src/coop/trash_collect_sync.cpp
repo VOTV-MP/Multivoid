@@ -10,6 +10,8 @@
 #include "coop/trash_collect_sync.h"
 
 #include "coop/dev/spawn_order_probe.h"  // Phase 1 step 1A: client load-spawn coverage probe (read-only)
+#include "coop/save_identity_bind.h"     // Phase 1 step 2b: client eid-range bind (mutating)
+#include "coop/save_identity_map.h"      // Family
 #include "coop/kerfur_entity.h"  // K-5: IsKerfurActor (the held-kerfur class-gate); IsKerfurPropClass (off-prop)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -79,14 +81,26 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     // Phase 1 step 1A PROBE (read-only, CLIENT-side, before the host gate): record every keyless-family
     // load-spawn this thunk sees, so EmitVerdictAtQuiescence can test whether spawn-order catches every
     // surviving native (build plan 1A; docs/COOP_STABLE_ID_SIDECAR.md S3.2). Observe-only, mutates nothing.
-    if (newActor && s && s->connected() && s->role() == coop::net::Role::Client &&
-        coop::dev::spawn_order_probe::IsEnabled()) {
-        if (ue_wrap::prop::IsChipPile(newActor)) {
-            coop::dev::spawn_order_probe::NoteKeylessSpawn(
-                newActor, coop::dev::spawn_order_probe::Family::ChipPile);
-        } else if (void* c = R::ClassOf(newActor); c && coop::kerfur_entity::IsKerfurPropClass(c)) {
-            coop::dev::spawn_order_probe::NoteKeylessSpawn(
-                newActor, coop::dev::spawn_order_probe::Family::KerfurOff);
+    // Phase 1 step 2b BIND (CLIENT, before the host gate): same keyless-family classification feeds the 1A
+    // probe (read-only) AND the eid-range bind (mutating) -- the bind binds the k-th keyless load-spawn to the
+    // k-th received-map entry's host eid (save_identity_bind). Both are independently gated; one classification.
+    if (newActor && s && s->connected() && s->role() == coop::net::Role::Client) {
+        const bool probeOn = coop::dev::spawn_order_probe::IsEnabled();
+        const bool bindOn = coop::save_identity_bind::IsEnabled();
+        if (probeOn || bindOn) {
+            int fam = -1;  // 0 = chipPile, 1 = kerfurOff, -1 = not a keyless family
+            if (ue_wrap::prop::IsChipPile(newActor)) fam = 0;
+            else if (void* c = R::ClassOf(newActor); c && coop::kerfur_entity::IsKerfurPropClass(c)) fam = 1;
+            if (fam >= 0) {
+                if (probeOn)
+                    coop::dev::spawn_order_probe::NoteKeylessSpawn(
+                        newActor, fam == 0 ? coop::dev::spawn_order_probe::Family::ChipPile
+                                           : coop::dev::spawn_order_probe::Family::KerfurOff);
+                if (bindOn)
+                    coop::save_identity_bind::OnKeylessLoadSpawn(
+                        newActor, fam == 0 ? coop::save_identity_map::Family::ChipPile
+                                           : coop::save_identity_map::Family::KerfurOff);
+            }
         }
     }
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;  // host authors converts

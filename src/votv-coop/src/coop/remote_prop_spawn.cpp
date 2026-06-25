@@ -25,6 +25,7 @@
 #include "coop/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
 #include "coop/pile_reconcile.h"  // extracted 2026-06-23: keyless-pile join twin-destroy / adopt / census
 #include "coop/dev/spawn_order_probe.h"  // Phase 1 step 1A: keyless load-spawn coverage probe (read-only)
+#include "coop/save_identity_bind.h"     // Phase 1 step 2b: eid-range bind summary at quiescence
 #include "coop/snapshot_census.h"  // Phase 0: per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/prop_echo_suppress.h"
@@ -1447,6 +1448,8 @@ void TickClientReconcile() {
     RunDivergenceSweep_(localPlayer);
     // Phase 1 step 1A probe: load tail has quiesced -> emit the keyless-spawn coverage verdict (read-only).
     coop::dev::spawn_order_probe::EmitVerdictAtQuiescence();
+    // Phase 1 step 2b bind: load tail has quiesced -> emit the eid-range bind summary (bound count, case i/ii).
+    coop::save_identity_bind::EmitBindSummary();
     // instant-world quiescence BACKSTOP: the sweep just destroyed the join-window ghosts/dups, so reveal
     // every still-hidden survivor (the held tail + anything spawned after the curtain-lift) and close the
     // deferred-hide window. Ghosts destroyed above are liveness-skipped inside mirror_defer. Worst case this

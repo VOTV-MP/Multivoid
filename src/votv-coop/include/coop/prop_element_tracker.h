@@ -92,6 +92,20 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
 // not tracked.
 coop::element::ElementId GetPropElementIdForActor(void* actor);
 
+// ---- Phase 1 step 2b: bound-mirror guard (save_identity_bind) -------------
+// Mark `actor` as bound to a host-range MIRROR by the eid-range bind, so MarkPropElement / SeedWalk_ will NOT
+// re-mint a peer-range LOCAL element on it at the next post-load re-seed (which would double-element + create a
+// sweep-doomable local twin). Stored actor->internalIdx so a recycled address self-heals (IsLiveByIndex).
+// Game-thread (the bind runs on the BeginDeferred thunk). Cleared by ClearBoundMirrorNatives + UnmarkKnownKeyedProp.
+void MarkBoundMirrorNative(void* actor);
+
+// Drop ALL bound-mirror guard flags (save_identity_bind arm / disconnect -- the set is join-scoped).
+void ClearBoundMirrorNatives();
+
+// True iff `actor` is currently bound as a host-range mirror (live; self-heals a recycled entry). The bind
+// uses it to ignore a double-fire of the BeginDeferred thunk for an already-bound native (no double-bind).
+bool IsBoundMirrorNative(void* actor);
+
 // Re-point a LOCAL Prop Element (m_mirror=false, owned by THIS peer) from its
 // current actor onto `newActor`, keeping the SAME eid. Used by the host-authoritative
 // trash channel (trash_channel / remote_prop::OnConvert): when this peer's OWN pile

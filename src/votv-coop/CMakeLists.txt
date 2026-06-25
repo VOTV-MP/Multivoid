@@ -256,6 +256,7 @@ add_library(votv-coop SHARED
     src/coop/pile_reconcile.cpp
     src/coop/snapshot_census.cpp
     src/coop/save_identity_map.cpp
+    src/coop/save_identity_bind.cpp
     src/coop/dev/force_overdestroy_test.cpp
     src/coop/prop_element_tracker.cpp
     src/coop/prop_lifecycle.cpp

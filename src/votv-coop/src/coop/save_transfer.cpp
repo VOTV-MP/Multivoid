@@ -6,6 +6,7 @@
 #include "coop/ini_config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
 #include "coop/net/session.h"
 #include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
+#include "coop/save_identity_bind.h"  // Phase 2b: client eid-range bind (SetReceivedMap / OnDisconnect)
 #include "coop/save_identity_map.h"  // Phase 1B: host-side keyless index->eid map build + log (gated, no wire)
 #include "coop/save_guard.h"
 #include "coop/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
@@ -268,7 +269,10 @@ void MaybeFinishLocked_() {
         size_t consumed = 0;
         if (coop::save_identity_map::DeserializeSidecar(g_cliBuf.data(), g_cliSidecarBytes, rxMap, consumed) &&
             consumed == g_cliSidecarBytes) {
-            coop::save_identity_map::LogReceivedMap(rxMap);  // Phase 2a transport checkpoint -- log, NO bind
+            coop::save_identity_map::LogReceivedMap(rxMap);  // Phase 2a transport checkpoint -- log
+            // Phase 2b: hand the map to the eid-range bind + arm it BEFORE the harness loads the slot (the
+            // natives spawn during the subsequent loadObjects). No-op unless [dev] save_identity_bind=1.
+            coop::save_identity_bind::SetReceivedMap(rxMap);
         } else {
             UE_LOGE("save_transfer: identity sidecar parse failed (sidecarBytes=%u consumed=%zu) -- map "
                     "ignored (stripping the bytes anyway; the .sav blob follows)", g_cliSidecarBytes, consumed);
@@ -685,6 +689,7 @@ void OnDisconnect() {
         g_cliBuf.clear();
         g_cliBuf.shrink_to_fit();
     }
+    coop::save_identity_bind::OnDisconnect();  // Phase 2b: drop the received map + bound-native guard set
     const fs::path dir = coop::save_guard::SaveGamesDir();
     if (!dir.empty()) {
         DeleteFileLogged_(dir / (CoopSlotFileNameNoExt_() + L".sav"));
