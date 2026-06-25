@@ -321,6 +321,7 @@ add_library(votv-coop SHARED
     src/ui/voice_panel.cpp
     src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
+    src/coop/dev/eid_lifetime_trace.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/perf_probe.cpp

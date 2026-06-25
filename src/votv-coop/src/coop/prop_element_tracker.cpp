@@ -7,6 +7,7 @@
 
 #include "coop/prop_element_tracker.h"
 
+#include "coop/dev/eid_lifetime_trace.h"  // Phase 1 S8.2: record the capture-eid (read-only host trace)
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
@@ -731,6 +732,7 @@ void CollectTrackedPileTransforms(
             ++minted;
         }
         out[eid] = ue_wrap::engine::GetActorLocation(obj);
+        coop::dev::eid_lifetime_trace::RecordCaptureEid(obj, static_cast<uint32_t>(eid));  // S8.2 capture-eid
     }
     if (minted > 0)
         UE_LOGI("prop_element_tracker: CollectTrackedPileTransforms self-seeded %d unseeded live "
@@ -767,6 +769,7 @@ void CollectTrackedKerfurTransforms(
             ++minted;
         }
         out[eid] = ue_wrap::engine::GetActorLocation(obj);
+        coop::dev::eid_lifetime_trace::RecordCaptureEid(obj, static_cast<uint32_t>(eid));  // S8.2 capture-eid
     }
     if (minted > 0)
         UE_LOGI("prop_element_tracker: CollectTrackedKerfurTransforms self-seeded %d unseeded live "

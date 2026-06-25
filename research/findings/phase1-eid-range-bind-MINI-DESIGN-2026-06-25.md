@@ -92,9 +92,14 @@ This reuses the dedup already shipped for the connect re-snapshot; no new dedup 
 1. **rebindInPlace default for the bind:** S5 prefers bind-first (case i), so the bind passes
    `rebindInPlace=true` defensively for the (ii) race only. Confirm the OnSpawn dedup path already rebinds a
    host PropSpawn onto a bound native (it should -- it is the morph-rebind path).
-2. **eid-lifetime trace (build plan S9.3 / design S9.3):** confirm the host eid assigned at SAVE-CAPTURE (the
-   self-seed mint) is the SAME eid the host later POSES on the wire (so the client's bound mirror E matches
-   the host's `PropPose(E)`). This is the last correctness link; trace `elementId` continuity capture->pose.
+2. **eid-lifetime trace (build plan S9.3 / design S9.3): DONE 2026-06-25, PASS.** The read-only host trace
+   (`coop/dev/eid_lifetime_trace.{h,cpp}`, binary `F4A3F122`) recorded the capture-eid (Collect{Pile,Kerfur}
+   Transforms) and compared it to the wire-eid (BuildPropSpawnPayload_) per actor: **captured=874
+   (870 piles + 4 kerfurs), wire-checked=874, matched=874, mismatched=0 -> STABLE.** The host eid is
+   identical capture->wire for every keyless native, so a bind keyed on the capture-eid matches the host's
+   wire expression. The last correctness link is closed; the bind model is sound. (Pose-eid for a GRABBED
+   kerfur is the same GetPropElementIdForActor resolution -> covered by the same stability; a hands-on grab
+   would confirm the pose path directly if ever doubted.)
 3. **Unbind on migration retirement (Phase 4 only):** when the position layer retires, nothing changes here
    (the bind is the eid path); noted only so Phase 4 does not re-introduce a peer-range local for a pile.
 4. **Per-player exemption stays:** the bind is for shared piles/kerfurs only; per-player state props are never

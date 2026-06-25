@@ -20,6 +20,7 @@
 #include "coop/remote_prop.h"
 #include "coop/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
 #include "coop/snapshot_census.h"  // Phase 0: per-class completeness census appended to SnapshotComplete
+#include "coop/dev/eid_lifetime_trace.h"  // Phase 1 S8.2: read-only capture-eid vs wire-eid trace
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: inject the over-destroy to PROVE the floor
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
@@ -234,6 +235,7 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
     }
     UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent)",
             g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal);
+    coop::dev::eid_lifetime_trace::EmitVerdict();  // S8.2: capture-eid vs wire-eid verdict (read-only)
     ClearDrainState_();
     // Dequeue the next pending slot(s) through the gated entry point (fresh
     // enumeration -- the world may have changed since this drain started).
@@ -292,6 +294,10 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
             p.key.data[p.key.len++] = static_cast<char>(keyStr[j]);
         }
     }
+    // S8.2 eid-lifetime trace (read-only, host): this is the wire-eid the host is about to send for `obj`;
+    // the trace compares it to the eid recorded for `obj` at save-capture (no-op unless [dev]
+    // eid_lifetime_trace=1 AND obj was captured). Proves capture-eid == wire-eid before the bind is built.
+    coop::dev::eid_lifetime_trace::CheckWireEid(obj, static_cast<uint32_t>(eid));
     const auto loc = ue_wrap::engine::GetActorLocation(obj);
     const auto rot = ue_wrap::engine::GetActorRotation(obj);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
