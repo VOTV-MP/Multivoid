@@ -26,15 +26,16 @@ namespace PT = coop::prop_element_tracker;
 
 namespace {
 
-// struct_save (the objectsData element) layout -- SDK CXXHeaderDump struct_save.hpp + FTransform (types.h):
-//   class_3 @ +0x00 (TSubclassOf<AActor> == UClass*) | transform_8 @ +0x10 (FTransform; translation @ +0x10
-//   within it -> +0x20) | key_64 @ +0x40 (FName). Raw size 0xF8 -> 16-ALIGNED stride 0x100 (a TArray<struct>
-//   element stride is the ALIGNED size, NOT the raw size -- [[feedback-tarray-stride-aligned-not-raw-size]];
-//   runtime-gated below). objectsData TArray header @ saveSlot+0x300 == {Data@0x0, Num@0x8, Max@0xC}.
-constexpr size_t kStructSaveStride = 0x100;
-constexpr size_t kOffClass         = 0x00;
-constexpr size_t kOffLocation      = 0x20;  // transform_8 (+0x10) + FTransform translation (+0x10)
-constexpr size_t kOffKey           = 0x40;
+// The two save-array element structs share an identical {class_3@+0x00 (UClass*), transform_8@+0x10 (FTransform;
+// translation @ +0x10 -> location @ +0x20), key_64@+0x40 (FName)} prefix; only the STRIDE differs (a TArray<
+// struct> element stride is the 16-ALIGNED struct size, NOT the raw size -- [[feedback-tarray-stride-aligned-
+// not-raw-size]]; runtime-gated below):
+//   Fstruct_save           (objectsData)    raw 0xF8 -> stride 0x100  (struct_save.hpp)
+//   Fstruct_primitiveSave  (primitivesData) raw 0x58 -> stride 0x60   (struct_primitiveSave.hpp)
+// Each TArray header @ saveSlot+off == {Data@0x0, Num@0x8, Max@0xC}.
+constexpr size_t kOffClass    = 0x00;
+constexpr size_t kOffLocation = 0x20;  // transform_8 (+0x10) + FTransform translation (+0x10)
+constexpr size_t kOffKey      = 0x40;
 
 // Quantize a world location to a 0.01-unit grid so the host-local join tolerates any sub-0.01 FP jitter
 // between saveObjects' getTransform (-> objectsData) and GetActorLocation (-> the eid bridge) while keeping
@@ -105,22 +106,21 @@ int BuildHostMap(IdMap& outMap) {
         std::sort(kv.second.kerfur.begin(), kv.second.kerfur.end());
     }
 
-    // 3. Parse the Fstruct_save save arrays IN THE CLIENT'S LOAD ORDER and concatenate their keyless chip/kerfur
-    //    entries. objectsData (the off-kerfurs + keyed world objects) loads first, then trashPilesData (the
-    //    chipPiles): chipPiles persist in saveSlot->trashPilesData (saveSlot.hpp:76; save-path RE), NOT
-    //    objectsData -- the first Path-A smoke found 0 chipPiles in objectsData. The order objectsData ->
-    //    trashPilesData is confirmed by the 2b smoke's kerfur-first spawn (the only objectsData keyless entries
-    //    are the off-kerfurs; the chips all come from the trash array after). Both are TArray<Fstruct_save>
-    //    (saveSlot.hpp:37,76) -> one parser. The emitted SEQUENCE == the client's keyless fresh-spawn order.
-    //    TIEBREAK (same-class-same-location, the user's explicit requirement): M identical entries at one
-    //    quantized location (M>1) pair to the M ascending-sorted eids by RANK (i-th entry <-> i-th-smallest
-    //    eid) -- a deterministic BIJECTION, BENIGN because the M props are physically identical (any consistent
-    //    pairing is correct; the eid stays the identity, the rank-pairing just makes it reproducible).
-    constexpr size_t kOffTrashPilesData = 0x818;  // saveSlot.hpp:76, TArray<Fstruct_save>
-    struct ArraySpec { size_t off; const wchar_t* name; };
+    // 3. Parse the two save arrays IN THE CLIENT'S LOAD ORDER and concatenate their keyless chip/kerfur entries.
+    //    objectsData (Fstruct_save, the off-kerfurs + keyed world objects) is loaded by Load Objects FIRST, then
+    //    primitivesData (Fstruct_primitiveSave, the chipPiles) by Load Primitives. chipPile.ignoreSave returns
+    //    TRUE unconditionally -> chipPiles are EXCLUDED from objectsData and persist via the dedicated primitives
+    //    path (RE: mainGamemode Save/Load Primitives; saveSlot.hpp:108 primitivesData@0xE30). The order
+    //    objectsData -> primitivesData is confirmed by the 2b smoke's kerfur-first spawn (objectsData's only
+    //    keyless entries are the 4 off-kerfurs; the 870 chips all come from primitivesData after). The emitted
+    //    SEQUENCE == the client's keyless fresh-spawn order. TIEBREAK (same-class-same-location, the user's
+    //    explicit requirement): M identical entries at one quantized location (M>1) pair to the M ascending-
+    //    sorted eids by RANK (i-th entry <-> i-th-smallest eid) -- a deterministic BIJECTION, BENIGN because the
+    //    M props are physically identical (any consistent pairing is correct; the eid stays the identity).
+    struct ArraySpec { size_t off; size_t stride; const wchar_t* name; };
     const ArraySpec kArrays[] = {
-        { P::off::UsaveSlot_objectsData, L"objectsData" },     // 0x300 -- off-kerfurs (+ keyed world objects)
-        { kOffTrashPilesData,            L"trashPilesData" },  // 0x818 -- chipPiles
+        { P::off::UsaveSlot_objectsData, 0x100, L"objectsData" },     // Fstruct_save          -- off-kerfurs
+        { 0x0E30,                        0x60,  L"primitivesData" },  // Fstruct_primitiveSave -- chipPiles
     };
     int chip = 0, kerfur = 0, missed = 0, ambiguousLocs = 0, nonKeyless = 0, totalRecords = 0;
     uint32_t ordinal = 0;  // running keyless ordinal across arrays (== the client bind's k; logged as index)
@@ -133,18 +133,18 @@ int BuildHostMap(IdMap& outMap) {
         // UClasses. A wrong stride reads junk here -> ABORT rather than emit a garbage map that could mis-bind.
         for (int32_t i = 0; i < num && i < 5; ++i) {
             void* cls = *reinterpret_cast<void* const*>(
-                reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride + kOffClass);
+                reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * spec.stride + kOffClass);
             if (!PlausibleClass_(cls)) {
                 UE_LOGE("save_identity_map: %ls element %d class_3 not a plausible UClass (cls=%p) -- stride/"
                         "offset WRONG for this build (expected stride 0x%zX); ABORTING (no map, no bind).",
-                        spec.name, i, cls, kStructSaveStride);
+                        spec.name, i, cls, spec.stride);
                 outMap.clear();
                 return 0;
             }
         }
         totalRecords += num;
         for (int32_t i = 0; i < num; ++i) {
-            const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * kStructSaveStride;
+            const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * spec.stride;
             void* cls = *reinterpret_cast<void* const*>(e + kOffClass);
             if (!cls) continue;
             Family fam;
@@ -183,7 +183,7 @@ int BuildHostMap(IdMap& outMap) {
         undrained += static_cast<int>(kv.second.kerfur.size() - kv.second.kerfurCur);
     }
     UE_LOGI("save_identity_map: HOST map built (Phase A, parse save arrays) -- %zu entries (%d chipPile + %d "
-            "kerfurOff) from %d records across objectsData+trashPilesData [%d non-None key (diag), %d unmatched, "
+            "kerfurOff) from %d records across objectsData+primitivesData [%d non-None key (diag), %d unmatched, "
             "%d undrained bridge eid(s), %d ambiguous same-loc]. index = keyless ordinal (== client loadObjects "
             "spawn order); eid via host-local class+location join (bridge: %zu pile + %zu kerfur live eids).",
             outMap.size(), chip, kerfur, totalRecords, nonKeyless, missed, undrained, ambiguousLocs,
