@@ -20,6 +20,7 @@
 #include "coop/remote_prop.h"
 #include "coop/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
 #include "coop/snapshot_census.h"  // Phase 0: per-class completeness census appended to SnapshotComplete
+#include "coop/dev/force_overdestroy_test.h"  // dev-only: inject the over-destroy to PROVE the floor
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -253,6 +254,13 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
 bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t internalIdx,
                             coop::net::PropSpawnPayload& p, int matchSlot) {
     if (!obj) return false;
+    // Phase 0 PROOF (dev-only, ini-gated): inject the docs/piles/10 over-destroy by SKIPPING chipPile
+    // expression, so the joiner's seeded natives stay UNCLAIMED -> its claim sweep dooms them en masse
+    // (the floor binary KEEPs them; a no-floor baseline WIPES them). Host-only choke (this builder runs
+    // only on the expressing host). No-op in any shipped config (the ini key is absent).
+    if (coop::dev::force_overdestroy_test::HostSkipChipPileExpression() && ue_wrap::prop::IsChipPile(obj)) {
+        return false;
+    }
     // IsLiveByIndex (NOT IsLive) reads only the GUObjectArray slot, never obj's
     // (possibly freed) memory -- so a candidate GC-purged since enumeration is
     // rejected without faulting (the connect-edge crash root-caused 2026-05-30).
