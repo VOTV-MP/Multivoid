@@ -1,6 +1,27 @@
 # VOTV puppet head-look FREEZE when back-turned — RE (mechanism) 2026-06-24
 
-> **STATUS: RE ONLY (probe-don't-guess). No fix built.** This pins WHICH of the 3
+> **2026-06-25 UPDATE — THE CLAMP HYPOTHESIS IS REFUTED BY THE HANDS-ON PROBE. The
+> freeze is NOT the 45° LookAtClamp; the widen-clamp fix below would have been a no-op.**
+> A positive-confirm probe (`coop/dev/puppet_head_probe`) was built + deployed (MD5
+> `b70f9aec`) and the user ran the back-turn freeze. The 10:40 host log is decisive:
+> `DESIRED off=38 -> TWIST head=36.9` (head TRACKS) vs `DESIRED off=43 -> TWIST head=0.5`
+> (head FROZEN) — same ~40°, BOTH well INSIDE the ~67.5° clamp reach. When it freezes
+> the head SNAPS TO NEUTRAL (TWIST→0), it does NOT pin at ~67°. So the clamp never bites;
+> the head-look is GATED OFF when the puppet faces away. `clamp head=45.0` was read live,
+> but that confirmed the clamp EXISTS, not that it is what freezes the head. This is the
+> probe-don't-guess win: by-elimination + a positive sub-fact ≠ proof of the mechanism;
+> the probe killed the wrong fix BEFORE it was built ([[feedback-probe-dont-guess-rule]]).
+> **The clamp diagnosis + the "widen the LookAtClamp" fix in the §CONFIRMED + §REFRAME
+> sections below are HISTORICAL/WRONG — kept for the audit trail, do NOT build them.**
+> **NOW (re-RE in flight):** the probe was EXTENDED (b70f9aec) to log the LookAt node
+> ALPHA + `lookingAtPlayer` + `customLookAt` so the next freeze names the actual gate
+> (alpha blended to 0? `lookingAtPlayer` state-switch? `customLookAt` reclaimed by BUA?).
+> A smoke (standing, DESIRED~0) showed `alpha h=1.00 n=0.50 lookingAtPlayer=0 customLookAt=1`
+> — so `lookingAtPlayer=0` alone does NOT drop the alpha; the freeze-moment gate values
+> (the user's back-turn repro on b70f9aec) are still pending. **NO head fix until the gate
+> is NAMED by the freeze-moment data.**
+>
+> **STATUS (original): RE ONLY (probe-don't-guess). No fix built.** This pins WHICH of the 3
 > candidate freeze-causes is real, WHERE the gate is, whether the puppet+kerfur path
 > is shared, and WHERE to branch a puppet-only fix. One behavioral discriminator is
 > left for the user to confirm before any code (clamp-saturation vs anim-tick freeze).

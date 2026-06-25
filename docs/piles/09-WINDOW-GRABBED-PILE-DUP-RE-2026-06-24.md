@@ -1,8 +1,29 @@
 # 09 -- window-GRABBED/moved pile dup (eid 5283, 17:23) -- ROOT RE
 
-**Status: ROOT RE'd (static, log+code proven). FIX NOT built (needs a hands-on probe on one open point).
-The 4TH mirror-identity window-race instance.** Diagnosed 2026-06-24 from the 17:23 mixed hands-on run.
-Different from L1 (the VERIFIED+PUSHED save-time-key dup); same CLASS.
+**Status: ROOT RE'd (static, log+code proven). FIX BUILT 2026-06-25 (compile-clean MD5 `f837fbad`, proto
+v89), NOT DEPLOYED, HELD.** The 4TH mirror-identity window-race instance. Diagnosed 2026-06-24 from the
+17:23 mixed hands-on run. Different from L1 (the VERIFIED+PUSHED save-time-key dup); same CLASS.
+
+> **FIX AS-BUILT 2026-06-25 (uncommitted->committed this session; NOT deployed; HELD pending the 11:16
+> over-destroy root — see `docs/piles/10`).** Six changes implement the design in §Fix direction:
+> (1) `protocol.h` PropConvertPayload 112->124 (+`hasMatchPos`+`matchX/Y/Z`), proto 88->**89**;
+> (2) `trash_collect_sync.cpp::OnPileGrabPre` self-seeds the eid (`MarkPropElement`, take-4 pattern) +
+> `RecordGrabTimePileXform(preGrabLoc)` when the aimed pile is UNTRACKED; (3) `save_transfer.{h,cpp}`
+> `RecordGrabTimePileXform` + `TryGetSaveTimePileXformAnySlot`; (4) `trash_channel.cpp::BroadcastConvert`
+> stamps the save-time key on the kToPile LAND; (5) `remote_prop.cpp::OnConvert` arms a pending twin
+> when a kToPile carries `hasMatchPos`; (6) `pile_reconcile.{h,cpp}` `ArmPendingSaveTimeTwin` (feeds the
+> bracket-independent `SweepReconcileSaveTimeTwins`, the shared kernel). It COMPILES (f837fbad); it is
+> NOT verified (no deploy, no hands-on). **Why held:** the 2026-06-25 11:16 hands-on surfaced a WORSE,
+> SEPARATE bug — pile×kerfur in-window -> ALL piles UNCLAIMED -> a valve-free claim sweep mass-destroyed
+> all 870 (`docs/piles/10`). That over-destroy is orthogonal to this fix (this fix adds a key to the
+> convert; the over-destroy is the piles never being EXPRESSED/claimed at all), so this fix neither
+> causes nor cures it — but the over-destroy is more dangerous and is diagnosed first. A blueprint agent
+> (feature-dev:code-explorer) mapped the change; its "PropSpawn is the primary carrier, skip the client
+> OnConvert" conclusion was CORRECTED here — the connect-snapshot is built PRE-grab, so the CONVERT is
+> load-bearing and the client OnConvert MUST arm the twin (instrumented so a mid-window reliable-deliver
+> failure shows in the log, the kerfur-scope-A lesson). VERIFY GATE before trusting it:
+> `nearestNative_d` is no longer `NONE`, `[PILE-09] CLIENT armed pending save-time twin`, then
+> `[PILE-1C] sweep-reconcile` removes the moved native; AND L1 unregressed; AND NO over-destroy.
 
 ## The scenario
 During the client's join-load window, the **HOST** grabs a chipPile, moves it near the kerfurs, drops

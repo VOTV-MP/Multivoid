@@ -4,7 +4,8 @@
 EXTRACT BUILT 2026-06-24 (`b6fb2638`) -- a MINIMAL shared kernel, NOT a full unification; details below.**
 This is a cross-cutting class doc. Discipline: **make each instance WORK first, generalize AFTER N>=3** --
 done. A 4TH instance (pile grabbed/moved in-window) was RE'd 2026-06-24 (`docs/piles/09-*`) -- the
-MOVE-scenario this doc anticipated; fix not yet built.
+MOVE-scenario this doc anticipated; FIX BUILT 2026-06-25 (compile-clean, NOT deployed, HELD pending the
+separate `docs/piles/10` mass-unclaim over-destroy root).
 
 > **AS-BUILT (extract, `b6fb2638`; now shipping inside the instant-world build, deployed `f155181d`).
 > RE-VERIFY STATUS (2026-06-24): L1 pile-dup = AUTONOMOUSLY VALIDATED (pile-drift smoke: `[PILE-1C]
@@ -50,7 +51,8 @@ unique per instance -> kills the dup (1) AND the cluster collision (3).
 | safety | exact 1cm key + chipType + `>50%` valve (denominator = ALL live piles) | own-key != pending-key -> never steal | exact 1cm key + uniqueness + ambiguous-skip + non-mirror gate (**NO ratio valve** -- see lesson) |
 | status | **VERIFIED + PUSHED** (`960e4650`) | **VERIFIED** (`8c96d7aa`) | **VERIFIED hands-on 17:23** (`7c67b00b`) |
 
-**(4) pile GRABBED/moved in-window (RE'd 2026-06-24, `docs/piles/09-*`, fix NOT built).** The MOVE-scenario
+**(4) pile GRABBED/moved in-window (RE'd 2026-06-24, `docs/piles/09-*`, FIX BUILT 2026-06-25 compile-clean
+`f837fbad` proto v89, NOT deployed, HELD pending the `docs/piles/10` over-destroy root).** The MOVE-scenario
 this doc anticipated: the host grabs an UNTRACKED pile in-window -> the clump rides eid-less -> re-pile
 mints a NEW eid (post-blob, `hasMatchPos=0`) -> the client's save-loaded native@old never reconciles ->
 dup. The twist vs (1)-(3): the entity's IDENTITY (eid) changes mid-window, so neither eid nor the frozen
