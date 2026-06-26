@@ -23,14 +23,30 @@ namespace PT  = coop::prop_element_tracker;
 namespace MAP = coop::save_identity_map;
 
 std::mutex g_mu;  // SetReceivedMap (net thread) vs OnKeylessLoadSpawn (game thread)
-MAP::IdMap g_map;          // the received {index->eid} map (gather order == loadObjects spawn order)
+MAP::IdMap g_map;          // the full received map (kept for the total count + the per-family split)
+
+// Build 3 (per-family ordinal, 2026-06-26): the bind keys on the saveSlot ARRAY INDEX, not a global spawn
+// ordinal. RE (loadObjects/Load Primitives bytecode) proved: each replay loop is a synchronous in-loop BP
+// for-loop (BeginDeferred->FinishSpawning same iteration, no async), so the k-th client chipPile spawn IS
+// primitivesData[k] and the k-th off-kerfur spawn IS objectsData[k] -- the within-array spawn order == the
+// array index order BY CONSTRUCTION. The ONLY disorder was CROSS-array: the client spawns the two arrays as
+// two phases (Load Primitives vs the objectsData loop) whose RELATIVE order varies run-to-run, while the host
+// map concatenates [objectsData(kerfur) -> primitivesData(chip)] in a fixed order. A GLOBAL ordinal therefore
+// mis-pairs the moment the phases land out of the map's order (observed: k=0 chipPile vs map[0] kerfurOff ->
+// disarm). Splitting the cursor by FAMILY isolates each array, so the per-family rank == the array index
+// regardless of which phase spawns first. This is the same stable cross-peer anchor Path A uses host-side
+// (same blob -> same array index on both peers), accessed via the proven-deterministic within-array order --
+// NOT position, zero transport change, no co-located ambiguity. [[lesson-chippile-saved-in-primitivesData-not-objectsData]]
+std::vector<MAP::IdEntry> g_chipEntries;    // map entries with family==ChipPile, in array index order
+std::vector<MAP::IdEntry> g_kerfurEntries;  // map entries with family==KerfurOff, in array index order
 bool       g_armed = false;
-size_t     g_ordinal = 0;  // the next keyless spawn's index into g_map
+size_t     g_chipCursor   = 0;  // next chipPile spawn's index into g_chipEntries
+size_t     g_kerfurCursor = 0;  // next off-kerfur spawn's index into g_kerfurEntries
 
 // per-join bind tallies (for the quiescence summary)
 int g_boundChip = 0, g_boundKerfur = 0;
 int g_caseI = 0, g_caseII = 0;
-bool g_desynced = false;
+int g_overflowChip = 0, g_overflowKerfur = 0;  // spawns beyond the per-family map count (unexpected -- logged)
 
 const char* FamName(MAP::Family f) { return f == MAP::Family::ChipPile ? "chipPile" : "kerfurOff"; }
 
@@ -114,66 +130,87 @@ void SetReceivedMap(const MAP::IdMap& map) {
     if (!IsEnabled()) return;
     std::lock_guard<std::mutex> lk(g_mu);
     g_map = map;            // copy (the source is the client's transient receive buffer)
-    g_ordinal = 0;
+    // Build 3: split the map into the two per-family lists, PRESERVING map order (== saveSlot array index
+    // order, since BuildHostMap walks objectsData then primitivesData in array index order). The k-th entry of
+    // each list is that family's array index k.
+    g_chipEntries.clear();
+    g_kerfurEntries.clear();
+    g_chipEntries.reserve(g_map.size());
+    g_kerfurEntries.reserve(8);
+    for (const MAP::IdEntry& e : g_map) {
+        if (e.family == static_cast<uint8_t>(MAP::Family::ChipPile)) g_chipEntries.push_back(e);
+        else                                                          g_kerfurEntries.push_back(e);
+    }
+    g_chipCursor = g_kerfurCursor = 0;
     g_armed = true;
-    g_desynced = false;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
-    UE_LOGI("save_identity_bind: ARMED with %zu-entry host eid map -- will bind each keyless load-spawn by "
-            "spawn order (first mutating step; mini-design S3). [dev] save_identity_bind=1", g_map.size());
+    g_overflowChip = g_overflowKerfur = 0;
+    UE_LOGI("save_identity_bind: ARMED with %zu-entry host eid map (%zu chipPile + %zu kerfurOff) -- per-family "
+            "ordinal bind (Build 3: key on saveSlot array index, immune to cross-array spawn order). [dev] "
+            "save_identity_bind=1", g_map.size(), g_chipEntries.size(), g_kerfurEntries.size());
 }
 
 void OnKeylessLoadSpawn(void* newActor, MAP::Family family) {
     if (!newActor || !IsEnabled()) return;
     std::lock_guard<std::mutex> lk(g_mu);
-    if (!g_armed || g_desynced) return;
-    // Ignore a double-fire of the thunk for a native we already bound (keeps the ordinal aligned to distinct
-    // natives; 1A saw the thunk can re-fire at a recycled address). Already-bound -> no double-bind, no advance.
+    if (!g_armed) return;
+    // Ignore a double-fire of the thunk for a native we already bound (keeps the per-family cursor aligned to
+    // distinct natives; 1A saw the thunk can re-fire at a recycled address). Already-bound -> no double-bind.
     if (PT::IsBoundMirrorNative(newActor)) return;
-    if (g_ordinal >= g_map.size()) {
-        UE_LOGW("save_identity_bind: keyless spawn #%zu but the map holds only %zu entries -- more client "
-                "keyless spawns than the host mapped; NOT binding (disarming, order assumption broken)",
-                g_ordinal, g_map.size());
-        g_desynced = true;
+
+    // Build 3: pick THIS family's list + cursor. The k-th spawn of a family binds to that family's k-th map
+    // entry == that family's saveSlot array index k (RE Q1: within-array spawn order == array index order). No
+    // cross-family tripwire is possible/needed now -- the family selects the list, so a mismatch cannot occur;
+    // the cross-array phase ordering (the global-ordinal failure) is structurally bypassed.
+    std::vector<MAP::IdEntry>& fam    = (family == MAP::Family::ChipPile) ? g_chipEntries : g_kerfurEntries;
+    size_t&                    cursor = (family == MAP::Family::ChipPile) ? g_chipCursor  : g_kerfurCursor;
+    if (cursor >= fam.size()) {
+        // More client keyless spawns of this family than the host mapped. Unexpected (both peers load the same
+        // blob -> same per-family count); stop binding THIS family (the cursor naturally blocks further binds)
+        // but DO NOT touch the other family. Count + log once for the summary; never bind a non-existent entry.
+        int& ov = (family == MAP::Family::ChipPile) ? g_overflowChip : g_overflowKerfur;
+        if (ov == 0)
+            UE_LOGW("save_identity_bind: %s keyless spawn beyond the mapped %zu %s entries -- NOT binding this "
+                    "or further %s spawns (per-family count mismatch; other family unaffected)",
+                    FamName(family), fam.size(), FamName(family), FamName(family));
+        ++ov;
         return;
     }
-    const MAP::IdEntry& e = g_map[g_ordinal];
-    if (e.family != static_cast<uint8_t>(family)) {
-        // Order desync: the k-th client keyless spawn's family disagrees with the k-th map entry. 1A + S8.2
-        // proved the order is deterministic, so this should never fire; if it does, DO NOT bind a wrong eid --
-        // disarm and report (diagnose-before-fix). The smoke surfaces exactly where the order diverged.
-        UE_LOGE("save_identity_bind: ORDER DESYNC at k=%zu -- spawn family=%s but map entry family=%s "
-                "(index=%u eid=%u). Disarming; %d bound before the divergence. NO wrong bind.",
-                g_ordinal, FamName(family), e.family == 0 ? "chipPile" : "kerfurOff", e.index, e.eid,
-                g_boundChip + g_boundKerfur);
-        g_desynced = true;
-        return;
-    }
+    const MAP::IdEntry& e = fam[cursor];
     if (e.eid == 0u || e.eid == coop::element::kInvalidId) {
-        UE_LOGW("save_identity_bind: map entry k=%zu has invalid eid=%u -- skipping (no bind)", g_ordinal, e.eid);
-        ++g_ordinal;
+        UE_LOGW("save_identity_bind: %s map entry k=%zu (array index=%u) has invalid eid=%u -- skipping (no bind)",
+                FamName(family), cursor, e.index, e.eid);
+        ++cursor;
         return;
     }
-    BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e.eid), family, g_ordinal);
-    ++g_ordinal;
+    BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e.eid), family, cursor);
+    ++cursor;
 }
 
 void EmitBindSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_armed) return;
-    UE_LOGW("save_identity_bind: BIND SUMMARY -- bound %d/%zu map entries (%d chipPile + %d kerfurOff); "
-            "case(i) E-free=%d, case(ii) race-rebind=%d; ordinal reached=%zu%s. (bound natives are host-range "
-            "MIRRORs -> excluded from the divergence sweep doom set, remote_prop_spawn.cpp:1080 -- free win #1.)",
-            g_boundChip + g_boundKerfur, g_map.size(), g_boundChip, g_boundKerfur, g_caseI, g_caseII,
-            g_ordinal, g_desynced ? " [DESYNCED -- bind stopped early, see the ORDER DESYNC line]" : "");
+    const bool overflow = (g_overflowChip + g_overflowKerfur) > 0;
+    UE_LOGW("save_identity_bind: BIND SUMMARY -- bound %d/%zu map entries (%d/%zu chipPile + %d/%zu kerfurOff); "
+            "case(i) E-free=%d, case(ii) race-rebind=%d; per-family cursors chip=%zu kerfur=%zu. (bound natives "
+            "are host-range MIRRORs -> excluded from the divergence sweep doom set, remote_prop_spawn.cpp:1080 -- "
+            "free win #1. Build 3: per-family ordinal == saveSlot array index, immune to cross-array spawn order.)",
+            g_boundChip + g_boundKerfur, g_map.size(), g_boundChip, g_chipEntries.size(), g_boundKerfur,
+            g_kerfurEntries.size(), g_caseI, g_caseII, g_chipCursor, g_kerfurCursor);
+    if (overflow)
+        UE_LOGW("save_identity_bind: OVERFLOW -- %d chipPile + %d kerfurOff spawn(s) exceeded the mapped per-family "
+                "count (per-family count mismatch -- investigate the save vs the map)", g_overflowChip, g_overflowKerfur);
 }
 
 void OnDisconnect() {
     std::lock_guard<std::mutex> lk(g_mu);
     g_map.clear();
+    g_chipEntries.clear();
+    g_kerfurEntries.clear();
     g_armed = false;
-    g_ordinal = 0;
-    g_desynced = false;
+    g_chipCursor = g_kerfurCursor = 0;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
+    g_overflowChip = g_overflowKerfur = 0;
     PT::ClearBoundMirrorNatives();
 }
 
