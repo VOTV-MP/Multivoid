@@ -1079,6 +1079,15 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
         } else {
             UE_LOGW("[PILE] CLIENT recv convert %s eid=%u -- proxy spawn-on-convert FAILED (DESYNC)", edge, E);
         }
+        // #3 release-path fix (2026-06-26): the IsProxy branch confirms the client carry-state toggle on a
+        // ToClump matching our pending grab (line ~1039); THIS branch (a client grab of a bound save-loaded
+        // NATIVE pile -> morph hand-off, OR a convert that beat its spawn) must honor the SAME contract, else
+        // g_clientCarry never arms -> the THROW toggle never fires -> the carried pile sticks forever + the
+        // host slot stays latched (every later grab DENIED). carry-confirm = "received a ToClump for our
+        // pending grab", true for BOTH trash branches; the morph branch simply omitted it. ToPile (land)
+        // re-enters via the IsProxy branch (the native is a proxy by then) -> symmetric clear. Host no-op
+        // (g_clientPendingGrab==0). Spawn-fail (proxy==null) self-heals via the toggle's stale-proxy guard.
+        coop::trash_channel::NoteClientConvertObserved(E, wantClump);
         return proxy;
     }
     void* cur = ResolveLiveActorByEid(E);
