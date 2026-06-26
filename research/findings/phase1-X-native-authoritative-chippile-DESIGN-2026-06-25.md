@@ -1,8 +1,19 @@
-# Phase 1 (X) — native-authoritative chipPile: FIX DESIGN (on review, ZERO code)
+# Phase 1 (X) — native-authoritative chipPile: FIX DESIGN
 
-Status: **DESIGN on review.** Fork (X) confirmed (interaction RE: proxy loses the native interaction window;
+> **BUILT + VERIFIED (autonomous engine-truth) 2026-06-26 — commits `f299229f` (X) + `51ff9a34` (Build 3).**
+> The 8-item delta below was built as designed. TWO deltas the build added: (1) **CRITICAL-1** — the morph
+> hand-off (this doc's gap-(b), §3b) was UNDER-SPECIFIED; a host grab of a bound pile left the pile unmorphed
+> (the trash-branch `RegisterPropMirror(rebindInPlace=false)` REJECTED against the still-live native). FIXED in
+> `remote_prop.cpp` OnConvert: when `wantClump && eid resolves to a bound native`, hand the eid to the runtime
+> clump proxy (rebindInPlace=true re-skin) + retire the orphaned native. (2) **Build 3** — the spawn-time bind
+> (item 1, "KEEP the spawn-time bind") used a GLOBAL ordinal that desynced when the client's cross-array spawn
+> order varied; replaced by a PER-FAMILY ordinal (keys on the saveSlot array index per family). VERIFIED: 870
+> natives persist, DESTROY-twin=0, bind 874/874, morph "native-authoritative hand-off" no-dup, pile-test-assert
+> 27/27. NOT verified: hands-on. See [[project-stable-id-native-authoritative-2026-06-26]].
+
+Status: **BUILT + VERIFIED.** Fork (X) confirmed (interaction RE: proxy loses the native interaction window;
 only a kept native restores it). This design covers the full change + the tests, and **separates the two
-levels explicitly** (the user's critical requirement). Build only after review.
+levels explicitly** (the user's critical requirement).
 
 ## 0. The two levels — separated explicitly (NOT "all native")
 

@@ -1,14 +1,19 @@
 # COOP_STABLE_ID — save-loaded identity via a stable ID, not position
 
-**Status: BUILDING (2026-06-26). Phase 0 PROVEN+PUSHED. Phase 2a sidecar transport VERIFIED (874 entries
-arrive intact). Phase 2b client eid-range bind VERIFIED at the MECHANISM level — autonomous re-smoke binds
-874/874 (870 chipPile + 4 kerfurOff), family tripwire SILENT, all case(i) fresh-mirror — BUT NOT end-to-end:
-the bound chipPile natives are then destroyed by the existing host-proxy reconcile (`TryDestroyTwin`), so
-`totalLiveNatives=0`. The fix is the (X) NATIVE-AUTHORITATIVE design (keep the native as the host-eid mirror,
-suppress the proxy per-eid) — `research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md`,
-DESIGN ON REVIEW, every mechanism RE/probe-proven, ZERO code. Off-kerfurs are already native-authoritative
-(no proxy). The 1B "gather-ordinal == objectsData order" assumption was FALSIFIED (2b smoke k=0 desync) and
-replaced by PATH A (parse the live `saveSlot.objectsData`+`primitivesData` arrays in load order). See §6.**
+**Status: VERIFIED end-to-end (autonomous engine-truth), 2026-06-26. push HELD for user review + hands-on.**
+Phase 0 PROVEN+PUSHED. Phase 2a sidecar transport VERIFIED (874 arrive intact). Phase 2b client bind +
+**Path A** (parse the live `saveSlot.objectsData`+`primitivesData` arrays) VERIFIED. **(X) NATIVE-AUTHORITATIVE
+BUILT+VERIFIED** (`f299229f`): keep the bound native AS the host-range mirror, per-eid SUPPRESS the proxy ->
+JOIN smoke shows 870 natives PERSIST, `[PILE] DESTROY native twin`=0 (was ~800), proxy SPAWN=0. The
+**CRITICAL-1 morph hand-off** (a host grab of a bound pile -> ToClump -> the client hands the eid to a runtime
+clump proxy + retires the orphaned native; the design's gap-(b), audit-caught + fixed in `remote_prop.cpp`
+OnConvert) is VERIFIED (grab smoke: "native-authoritative hand-off", no dup, 27/27 invariants). **Build 3
+per-family ordinal bind** (`51ff9a34`): the bind keys on the saveSlot ARRAY INDEX per family (g_chipEntries/
+g_kerfurEntries + per-family cursors) -- fixes the GLOBAL-ordinal desync (the client replays the two save
+arrays as two phases whose cross-array order varies run-to-run; RE [V]: within-array order == array index by
+construction). VERIFIED 874/874, two independent per-family k=0, no desync. NOT verified: hands-on (native
+collision/occlusion/jUuC visual). The 1B "gather-ordinal == objectsData order" assumption was FALSIFIED and
+replaced by Path A; the GLOBAL-ordinal bind was then FALSIFIED and replaced by Build 3 per-family. See §6.**
 
 > Filename keeps the user-chosen `COOP_STABLE_ID_SIDECAR` slug, but the
 > **RECOMMENDED** design is the **in-memory index->eid map** (zero disk
@@ -341,21 +346,35 @@ eid and the in-window move is irrelevant.
   `coop/save_identity_bind.{h,cpp}`: the k-th keyless BeginDeferred load-spawn binds to the host map's k-th
   entry (`UnmarkKnownKeyedProp` retire local + `RegisterPropMirror` host-eid + `MarkBoundMirrorNative` guard so
   the re-seed won't re-localize). Re-smoke: **874/874 bound, tripwire SILENT, all case(i) E-free**, free-win
-  confirmed (sweep doomed zero chipPiles). **END-TO-END BLOCKED:** the bound natives are then destroyed by the
-  host-proxy reconcile (`[PILE] DESTROY native twin eid=2275 … proxy is the sole mirror`) → `totalLiveNatives=0`.
-  Gated `[dev] save_identity_bind=1`. Root RE'd: the autonomous purge is VOTV's intrinsic `loadObjects` rebuild
-  (host SP too); the real killer is `TryDestroyTwin`, not a pre-quiescence race (bound eids == destroyed eids).
-- **(X) NATIVE-AUTHORITATIVE — the end-to-end fix. DESIGN ON REVIEW (zero code), all mechanisms RE/probe-proven.**
-  `research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md`. Keep the native as the
-  host-eid mirror; **per-eid SUPPRESS the proxy** (2 guards on `IsBoundMirrorNative`: skip `SpawnProxy` + skip
-  `TryDestroyTwin`; + `RetireProxy` for the race) — NOT a wholesale delete (runtime/host-only piles + clumps
-  still need the proxy). This RESTORES the native interaction window the proxy lacks (proxy = bare
-  `AStaticMeshActor`, no `lookAtActor`/collision/occlusion — through-wall grab, walk-through). Grab routes via
-  `GrabIntent` (host-auth); the native local `playerGrabbed` is suppressed by **clearing `lookAtActor` on the
-  `OnPileGrabPre` edge** (probe-proven clean: read fresh after the PRE observer, self-heals next trace tick).
-  KEEP Path-A (quiescence-pivot DROPPED — evidence: the bind survives the rebuild). Blast radius NIL (per-eid).
-  Pulls Phase 4 (retire proxy for save-loaded piles) onto the critical path because of the INTERACTION gap.
+  confirmed (sweep doomed zero chipPiles). (Was END-TO-END BLOCKED: the bound natives were destroyed by the
+  host-proxy reconcile `TryDestroyTwin` → `totalLiveNatives=0`. Root RE'd: the autonomous purge is VOTV's
+  intrinsic `loadObjects` rebuild (host SP too); the killer is `TryDestroyTwin`, not a pre-quiescence race. FIXED
+  by (X) below.) Gated `[dev] save_identity_bind=1`.
+- **(X) NATIVE-AUTHORITATIVE — the end-to-end fix. BUILT + VERIFIED (`f299229f`).**
+  `research/findings/phase1-X-native-authoritative-chippile-DESIGN-2026-06-25.md` (BUILT+VERIFIED banner). Keep
+  the native as the host-eid mirror; **per-eid SUPPRESS the proxy** (guard (a) skip `SpawnProxy` on live
+  `IsBoundMirrorNative`; guard (b) exempt bound natives from the reconcile destroy set [EnsureIndex + sweep +
+  consume-site re-check]; + `RetireProxy` for the case-ii race) — NOT a wholesale delete (runtime/host-only
+  piles + clumps still need the proxy). RESTORES the native interaction window (proxy = bare `AStaticMeshActor`,
+  no `lookAtActor`/collision/occlusion). Grab routes via `GrabIntent`; the native local `playerGrabbed` is
+  suppressed by **clearing `lookAtActor` on the `OnPileGrabPre` edge** (the cone stays for unbound proxies).
+  JOIN smoke VERIFIED: **870 natives PERSIST, DESTROY-twin=0, proxy SPAWN=0, bind 874/874.** Blast radius NIL.
+- **CRITICAL-1 morph hand-off (in `f299229f`, audit-caught — this doc's gap-b was under-specified).** A host grab
+  of a bound pile → ToClump → on the client the trash branch `RegisterPropMirror(rebindInPlace=false)` REJECTED
+  against the still-live native → pile never morphed. FIX (`remote_prop.cpp` OnConvert): wantClump + bound native
+  → hand the eid to the runtime clump proxy (rebindInPlace re-skin) + `UnmarkKnownKeyedProp`+`DestroyActor`
+  retire the orphaned native (no dup, no stray PropDestroy — keyless+no-eid returns at `prop_lifecycle.cpp:333`).
+  GRAB smoke VERIFIED: "native-authoritative hand-off", 869 natives persist, pile-test-assert 27/27 PASS.
+- **Build 3 — per-family ordinal bind (`51ff9a34`).** The GLOBAL-ordinal bind DESYNCED ("ORDER DESYNC at k=0")
+  because the client replays the two save arrays (Load Primitives chips vs objectsData kerfurs) as two phases
+  whose CROSS-array order varies run-to-run. RE [V]: WITHIN each array order == array index BY CONSTRUCTION
+  (synchronous in-loop). Direct index-read NOT viable (BP stack-local); position-match sound but worse. FIX:
+  split the bind cursor BY FAMILY (`g_chipEntries`/`g_kerfurEntries` + per-family cursors) → keys on the saveSlot
+  ARRAY INDEX, immune to spawn order, ZERO transport. VERIFIED 874/874 (two independent per-family k=0, no
+  desync). [[lesson-chippile-saved-in-primitivesData-not-objectsData]]
 - **Phase 3 — reconcile matches by eid.** After (X), the bound native IS the eid mirror; eid-equality reconcile.
+- **NOT verified:** hands-on (native collision/occlusion/jUuC visual). **Queued (separate commits):** modularity
+  extract `remote_prop_spawn.cpp` trash branch (1536 LOC); host `BuildHostMap` co-located tiebreak by array index.
 - **Phase 4 — retire the position layer (RULE 2).** Only after the eid path is hands-on-verified across ~a
   dozen sessions. (X) already retires the camera-cone + proxy/`TryDestroyTwin` for bound save-loaded piles.
 
