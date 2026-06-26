@@ -88,6 +88,40 @@ by the gate; interaction-convergence stays as the fallback. Audit SHIP (event-dr
 block). Builds Release, deployed + hash-verified `1155147789AA`. **NOT a guaranteed fix — an attempt +
 observability** until the next run's drift log; #1/#2 (no dup, identity) already VERIFIED and must stay PASS.
 
+#### b2 hands-on 16:42 — VERIFIED for delivered converts; surfaced the REAL stuck-pile root (dropped convert)
+Two piles moved in-window. Logs preserved `research/joinwindow_16-42_{host,client}_2026-06-26.log`.
+- **eid 2309 (CORRECT on both peers).** Host LAND COMMIT broadcast 16:42:09 at `(1374.2,-459.5,6098.8)`; client
+  **received** the convert (`recv convert LAND ctx=2` 16:42:09) → convert-beat-spawn → **b2 SNAP drift=0.00cm**;
+  bind 16:42:12 **PROXY-WINS** (isProxy=1, ctx=2) → native@old retired. Host re-read the SAME XY at the later
+  16:42:51 grab (`GRAB OPEN ctx=3 at (1374.2,-459.5,6123.8)`) → **the host pile did NOT drift after landing.**
+  So host==client==`(1374.2,-459.5)`. **b2 works; physics-settle/b2.1 is REFUTED** (nothing drifted).
+- **eid 3144 (STUCK at OLD position — the pile the user saw).** Host moved it 16:42:05-06, LAND COMMIT broadcast
+  **16:42:06** at `(1216.2,-903.7)`. **The client NEVER received that convert** — its first `recv convert eid=3144`
+  is **16:42:48** (`ctx=3, known=0` — the client's OWN later grab). So at bind (16:42:12) there was no proxy and
+  no ctx → the bind took **case(i) "E free: fresh mirror"** and bound the client's save-loaded NATIVE at its
+  **OLD save position `(1672.1,-379.4)`**. The host's moved position never reached the client until the user
+  grabbed it (16:42:48), which is the convergence-on-interaction fallback the user saw "snap into place."
+
+**ROOT (proven, not physics-settle, not a b2 failure — b2 isn't even on 3144's path):** an in-window
+move-convert sent *before the joining client's reliable channel is ready* is **DROPPED** (the B2 pre-world gate,
+no retry — by design, IDENTICAL to the kerfur #1 dropped `KerfurConvert`). With no convert, the save-identity
+bind has no signal the pile moved, so case(i) cements the client's native at its STALE save position. The
+2309-works / 3144-stuck split is **pure timing**: 2309 moved at 16:42:08-09 (channel ready → convert delivered →
+PROXY-WINS) vs 3144 at 16:42:05-06 (channel not ready → convert dropped → native@old). This is the SAME class as
+#1/#2 ("the bind trusts the save-loaded native's position is current, but the host mutated it in-window") — #2
+covers the *delivered*-convert case; **3144 is the *dropped*-convert case, uncovered.**
+
+**Fix direction = b3 (DESIGN, NOT built — on review, RULE-1 root):** re-deliver the dropped in-window mutations
+once the joiner is world-ready, instead of firing them pre-world and losing them. The host tracks the eids it
+mutated during a joiner's connect window and **flushes their current authoritative convert/position to that
+joiner at quiescence** (a delivered, post-world channel); the client applies them (PROXY-WINS / snap the bound
+native). This is the minimal, root slice of the deferred **(c) host-gate generalization** — and 3144 proves (c)
+is not optional polish but the actual fix for dropped-convert position-staleness; it also subsumes the kerfur
+dropped-`KerfurConvert` class under one mechanism. **b2.1 (host streams settled pos) is the WRONG fix** here —
+the host position was already correct and stable; it was never the problem. b2 stays (it correctly handles every
+*delivered* in-window LAND convert, drift=0). push of the #2 rubicon stays HELD until b3 lands the moved pile on
+the client at join (no interaction needed).
+
 ## 4. Verification-gap lesson (recurring)
 Every bug this session was invisible to the autonomous smoke because the smoke does CLEAN joins + HOST-driven
 grabs and is rendering-blind. The client-grab-release (#3), the LMB input (#2-throw), and the in-window host
