@@ -70,19 +70,23 @@ item-4 path (native wins) is unchanged. Inverse of the morph hand-off (#3) for t
 **VERIFIED 15:42:** `PROXY-WINS ... case(ii)-converted ... ctx=2`, bind 874/874, **chipPile overflow=0** (12:02
 had it → b1 eliminated the overflow-native that was the 12:02 dup's second pile). Dup gone, identity correct.
 
-#### #2 positional nuance + b2 (DESIGN — not built)
+#### #2 positional nuance + b2 (AS-BUILT, commit `2829ce6d` — hands-on PENDING)
 After b1 the moved pile renders as a proxy. The in-window ToPile convert carries BOTH the **moved** position
 (`locX/Y/Z`, e.g. host `BROADCAST ToPile ... at (1403.8,-442.3,...)`) AND the **old save-time key**
 (`matchX/Y/Z`, docs/piles/09). `SpawnProxy` is given `loc=moved` (E::SpawnActor at the spawn transform), and
 nothing repositions it afterward (a landed pile streams no resting pose) — so per the code the proxy SHOULD be
 at moved. The user observed a divergence (pile appeared at the old place, then converged when grabbed). **The
-exact divergence is NOT pinnable from the 15:42 logs:** the convert-beat-spawn path (`isProxy=0`) logs NO
-position-verify (unlike the re-skin path's `ToPile SNAP ... drift=` line). **b2 (DESIGN):** add the explicit
-`SetActorLocation(proxy, {locX,locY,locZ})` + drift-verify log to that path (mirror the re-skin path) — forces
-the moved position (belt-and-suspenders) AND proves it next hands-on (drift=0 → was already moved, divergence
-is physics-settle/perception; drift>0 → the snap fixed it). Isolated to the in-window LAND-beat-spawn case;
-the interaction-convergence stays as the fallback. b2 lives in `remote_prop.cpp` OnConvert (where `loc` is
-available), NOT the bind. **NOT a guaranteed fix — an attempt + observability** until the next run's drift log.
+exact divergence was NOT pinnable from the 15:42 logs:** the convert-beat-spawn path (`isProxy=0`) logged NO
+position-verify (unlike the re-skin path's `ToPile SNAP ... drift=` line). **b2 (AS-BUILT, `2829ce6d`):** in the
+`IsTrashProxyClass` convert-beat-spawn branch of `remote_prop.cpp` OnConvert (where `loc` is available, NOT the
+bind), gated `proxy && !wantClump` (LAND only), an explicit `SetActorLocation/SetActorRotation(proxy,{loc/rot})`
++ read-back `[PILE] CLIENT ToPile SNAP(spawn-on-convert) ... drift=Xcm` (mirrors the re-skin snap ~:1018). Forces
+the moved position (belt-and-suspenders vs a static-mobility no-op) AND proves it next hands-on (drift≈0 → was
+already moved, divergence is physics-settle/perception → **b2.1** host-streams-settled-pos; drift>0 → the snap
+fixed it). Isolated to the in-window LAND-beat-spawn case; carry / clean-join / morphBoundNative hand-off excluded
+by the gate; interaction-convergence stays as the fallback. Audit SHIP (event-driven clone of the audited re-skin
+block). Builds Release, deployed + hash-verified `1155147789AA`. **NOT a guaranteed fix — an attempt +
+observability** until the next run's drift log; #1/#2 (no dup, identity) already VERIFIED and must stay PASS.
 
 ## 4. Verification-gap lesson (recurring)
 Every bug this session was invisible to the autonomous smoke because the smoke does CLEAN joins + HOST-driven
@@ -92,9 +96,12 @@ it never covered these paths. See [[feedback-interaction-smoke-not-join-smoke]].
 
 ## Deployed / committed (end of session)
 - origin/main `eb85ddfb` (grab/throw + stable-id stack, pushed + hands-on verified).
-- HEAD `acc416eb` = `eb85ddfb` + #1 `39a381b0` + #2 `acc416eb` (2 ahead, push HELD pending b2 + user OK).
-- Deployed + hash-verified `FE87964A893A` (Release) host+client+dev. `[dev]` ini: `save_identity_bind=1` +
-  `save_identity_map_log=1`.
-- NEXT: review b2 → build (separate commit on top) → ONE hands-on (kerfur turn-on + pile move in window) with
-  the drift log → push #1/#2(+b2) as the #2 rubicon. Then optional (c) host-gate generalization (defer all
-  in-window mutations until joiner quiescence — the consistent long-term design, larger, separate).
+- HEAD `2829ce6d` = `eb85ddfb` + #1 `39a381b0` + #2 `acc416eb` + docs `22f15f84` + b2 `2829ce6d` (4 ahead,
+  push HELD pending the b2 hands-on).
+- Deployed + hash-verified `1155147789AA` (Release, b2) host+client+dev (was `FE87964A893A` pre-b2). `[dev]`
+  ini: `save_identity_bind=1` + `save_identity_map_log=1`.
+- NEXT: ONE hands-on (b2 re-run) — kerfur turn-on + pile move in window (runbook
+  `research/handson_runbook_2026-06-26_joinwindow_1_2.md`, updated for b2); confirm the moved pile renders at the
+  MOVED position + read the `ToPile SNAP(spawn-on-convert) drift=` log → push the #2 rubicon WHOLE
+  (#1/#2/docs/b2). If 2b fails with drift≈0 → b2.1 (host streams settled pos). Then optional (c) host-gate
+  generalization (defer all in-window mutations until joiner quiescence — larger, separate).

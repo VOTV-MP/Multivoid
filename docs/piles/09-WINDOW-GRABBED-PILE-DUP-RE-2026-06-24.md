@@ -8,8 +8,10 @@ on the in-window kToPile LAND). But the actual DUP cure is now the **(X) native-
 (`CtxForEid>0`), the bind keeps the host-authored proxy and retires the redundant save-loaded native, instead
 of binding native@old. **VERIFIED hands-on 2026-06-26 15:42** (`PROXY-WINS ... case(ii)-converted`, chipPile
 overflow=0, no dup). The remaining edge is positional only (the moved pile may render at the old spot until
-interaction) — tracked as **b2** (DESIGN, not built) in
-`research/findings/coop-grab-throw-and-join-window-bind-RE-2026-06-26.md`. The `f837fbad` MD5 below is a dead
+interaction) — tracked as **b2** (AS-BUILT commit `2829ce6d`, hands-on PENDING: an explicit
+`SetActorLocation`+`ToPile SNAP(spawn-on-convert) drift=` log in `remote_prop.cpp` OnConvert's convert-beat-spawn
+LAND branch — forces the moved pos + closes the observability hole; attempt+observability, not a guaranteed fix)
+in `research/findings/coop-grab-throw-and-join-window-bind-RE-2026-06-26.md`. The `f837fbad` MD5 below is a dead
 ancestor (its content re-landed via `08e35d77`); read the RE below for the original diagnosis, but the cure is
 #2. The 4TH mirror-identity window-race instance; same CLASS as L1.
 
