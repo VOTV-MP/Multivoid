@@ -85,6 +85,9 @@ using IdMap = std::vector<IdEntry>;   // sparse over objectsData (keyless subset
 
 **Wire format** (little-endian, mirrors `snapshot_census`'s explicit layout):
 `uint16 version` (=1), `uint16 count`, then `count` * `{ uint32 index, uint32 eid, uint8 family }` = 9 B/entry.
+> **AS-BUILT diverged (see `save_identity_map.h`):** header is `['V','C','I','D']` magic(4) + `u32 version` +
+> `u32 count` = 12 B; and **v2 (2026-06-27)** added `savePosX/Y/Z` (3xf32) -> **21 B/entry** for the purge-race
+> position re-bind (`research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md`).
 ~870 chipPiles + a handful of off-kerfurs ≈ ~8 KB. **This EXCEEDS the 228 B reliable payload cap**, so it does
 NOT ride a SnapshotComplete tail (that is why the census could and this cannot). It rides the **chunked
 `save_transfer` pipeline** (§3) — same transport as the ~19 MB blob, so the map and the blob arrive as one

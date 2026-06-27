@@ -1,5 +1,13 @@
 # 10 — in-window pile MASS-UNCLAIM over-destroy (ALL piles vanish) — RE 2026-06-25
 
+> **CONTINUATION (2026-06-27): the join-window PURGE-TIMING race.** A related but DISTINCT join-window pile bug
+> was RE'd + fixed: UE's incremental GC sporadically destroys + re-instantiates a SPARSE handful (~2 of 870) of
+> save-placed natives mid-join; they re-create UNBOUND = ghost piles (the bulk SURVIVE — the "purge re-creates
+> all 870" model is FALSE). Lever (a) reaper-escalation (`bfe9182a`, drain 37s->1s, VERIFIED 11:32) + VARIANT 1
+> host-wire position re-bind (`54ee4b06`, sidecar v2, audit SHIP, HANDS-ON PENDING). A `cursor-reset` attempt was
+> built, REFUTED (mis-bind), and REVERTED (`86bca8cb`). Full:
+> `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `[[project-grab-throw-joinwindow-2026-06-26]]`.
+
 **Status: ROOT PINNED (a RACE — sweep fires mid-purge) + BOTH-LAYER FIX BUILT + PROVEN by a deterministic
 controlled A/B (2026-06-25, binary `BCDD46DA`). Root fix = the purge-aware quiescence gate (commit
 `5e91519a`); the per-class floor (Phase 0) is the complementary NET. Proof below (§FIX PROVEN). Remaining:

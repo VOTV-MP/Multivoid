@@ -1,10 +1,22 @@
 # Purge-timing reconcile race (the 09:54 ghost) — root + fix design (2026-06-27)
 
-**Status: DESIGN (on review, NOT built).** Root-cause of the 09:54 hands-on regression (ghost piles + ghost
-kerfur, interaction doesn't leak to host). **b3 is INNOCENT** (proven below); do NOT roll it back. This is a
-pre-existing fragility ([[feedback-snapshot-before-state-ready]] / [[feedback-recurring-bug-is-architectural]] /
-docs/piles/10) bigger than b3. Logs: `research/joinwindow_09-54_{host,client}_2026-06-27.log` (09:54 ghost) vs
-`research/joinwindow_16-42_{host,client}_2026-06-26.log` (worked).
+**Status (2026-06-27, latest at top):**
+- **Lever (a) reaper escalation — BUILT + VERIFIED** (commit `bfe9182a`; 11:32 real log: mass-purge->re-seed gap
+  collapsed 37s->1s). KEEP.
+- **(b) cursor-reset (option 3) — BUILT (`685c9662`) -> REFUTED at 12:29 hands-on (MIS-BIND) -> REVERTED
+  (`86bca8cb`).** The re-create is a SPARSE engine-GC subset (~2 of 870), NOT a full array-order batch, so
+  resetting the cursor bound the lone re-create to entry[0] = a foreign eid (the black pile). DEAD; §2.5/2.6 are
+  the post-mortem (kept for the lesson, NOT the plan).
+- **VARIANT 1 host-wire — BUILT (`54ee4b06`), audit SHIP, deployed `D54AB5B8` (sidecar v2), HANDS-ON PENDING.**
+  The host ships each eid's save-position; the client re-binds the sparse GC-churned natives by an authoritative
+  1cm position match at quiescence (§2.8 = AS-BUILT). Runbook: `research/handson_runbook_2026-06-27_purge_v1_combined.md`.
+- **b3 is INNOCENT** (proven below); never rolled back.
+
+This is a pre-existing fragility ([[feedback-snapshot-before-state-ready]] / [[feedback-recurring-bug-is-architectural]] /
+docs/piles/10). Logs: `research/joinwindow_09-54_{host,client}_2026-06-27.log` (09:54 ghost) ·
+`research/purgefix_12-29_{host,client}_2026-06-27.log` (12:29 cursor-reset mis-bind, the variant-3 refutation) ·
+`research/purgeprobe_11-32_{host,client}_2026-06-27.log` (lever (a) confirmed).
+**Read order: §2.7 (TRUE mechanism + no-wire refuted) -> §2.8 (variant-1 AS-BUILT). §1-§2.6 are the saga/post-mortem.**
 
 ## 1. The proven root (corrected — accurate this time)
 
@@ -318,7 +330,9 @@ b3 already relies on). Capturing at bind captures garbage.
 read-only `GetActorLocation` probe at the top of BindLocalNativeToHostEid_ would make it probe-certain if desired,
 but it is well-established -- not a new unverified invariant.)
 
-## 2.8 VARIANT 1 host-wire -- FULL DESIGN (on review, NOT built). Clean base = `86bca8cb` ((b) reverted, (a) kept)
+## 2.8 VARIANT 1 host-wire -- AS-BUILT (`54ee4b06`, deployed `D54AB5B8`, audit SHIP, HANDS-ON PENDING)
+(Clean base = `86bca8cb` ((b) reverted, (a) kept). The design below is what was built; integration points were
+code-verified before writing, not assumed. Kerfur INCLUDED (off-prop is a save-placed actor that can GC-churn).)
 
 **Goal:** re-bind the sparse (~2/join) client-local engine-GC-churned chipPile natives -- which re-create at their
 save position, UNBOUND (= the 09:54/11:32 ghosts) -- to their correct host eid, ORDER/COUNT/TIMING-independent.

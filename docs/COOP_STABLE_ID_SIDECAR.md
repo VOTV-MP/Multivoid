@@ -9,6 +9,24 @@ hands-on VERIFIED 15:42 (commits `39a381b0` #1 + `acc416eb` #2, **2 ahead of ori
 small b2 positional polish -- DESIGNED, not built). Full session detail: the new finding
 `research/findings/coop-grab-throw-and-join-window-bind-RE-2026-06-26.md` +
 `[[project-grab-throw-joinwindow-2026-06-26]]`.
+
+**UPDATE 2026-06-27 — the join-window PURGE-TIMING race + the SIDECAR v2 position re-bind.** A 2nd hands-on
+class surfaced: during a joiner's connect, UE's incremental GC sporadically destroys + re-instantiates a SPARSE
+handful (~2 of 870) of save-placed chip/kerfur natives at their save position; they re-create UNBOUND (the
+per-family cursor was already consumed by the first load -> they overflow-drop = ghost piles, interaction
+doesn't leak). A `cursor-reset` attempt (option 3 / "variant 3") was BUILT then REFUTED (it mis-bound the sparse
+re-create to entry[0] in GC-order != array-index = a black/foreign pile) and REVERTED (`86bca8cb`). The fix is
+**VARIANT 1 host-wire (`54ee4b06`, deployed `D54AB5B8`, audit SHIP, HANDS-ON PENDING):** the **sidecar bumped to
+v2** (`IdEntry` += `savePosX/Y/Z`, 9->21 B/entry; the host populates it from the `loc` it already reads for the
+host-local join), and the client re-binds each GC-churned native by an authoritative 1cm position match at
+quiescence (`save_identity_bind::BindUnboundReCreatesByPosition`, in `RunDivergenceSweep_` after the twin sweep,
+before b3's apply) -- order/count/timing-independent (no client-side eid->pos source exists: the bind seam is
+pre-FinishSpawning = (0,0,0), and a churned eid has no survivor to capture from). Also: **lever (a) reaper
+escalation** (`bfe9182a`, drains a mass-purge backlog at frame cadence; 11:32 log: 37s->1s) is the independent
+timing companion. Full saga + the TRUE mechanism (the "purge re-creates all 870" model is FALSE -- the bulk
+survive) + the two refuted approaches: `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md`
+(read §2.7 then §2.8). NOTE: the §2/§4 sidecar layout below describes **v1** (9 B/entry); v2 adds the 3 savePos
+floats per the purge-race doc.
 Phase 0 PROVEN+PUSHED. Phase 2a sidecar transport VERIFIED (874 arrive intact). Phase 2b client bind +
 **Path A** (parse the live `saveSlot.objectsData`+`primitivesData` arrays) VERIFIED. **(X) NATIVE-AUTHORITATIVE
 BUILT+VERIFIED** (`f299229f`): keep the bound native AS the host-range mirror, per-eid SUPPRESS the proxy ->

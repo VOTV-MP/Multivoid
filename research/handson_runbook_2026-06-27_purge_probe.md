@@ -1,3 +1,9 @@
+> **SUPERSEDED (2026-06-27).** This was the [BIND-PROBE] probe run that picked option 3 (cursor-reset) — which
+> 12:29 then REFUTED (mis-bind) and which was REVERTED (`86bca8cb`). The [BIND-PROBE] no longer exists in the
+> code. Kept only as the point-in-time record of the probe; do NOT run it. CURRENT runbook:
+> `research/handson_runbook_2026-06-27_purge_v1_combined.md` (variant-1 host-wire). Saga:
+> `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md`.
+
 # Hands-on runbook — purge-timing race: lever (a) + **[BIND-PROBE]** (decides the (b) fork)
 
 **Date:** 2026-06-27
