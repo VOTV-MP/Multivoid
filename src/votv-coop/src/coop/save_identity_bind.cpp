@@ -110,10 +110,6 @@ void BindLocalNativeToHostEid_(void* native, coop::element::ElementId E, MAP::Fa
     // UnmarkKnownKeyedProp drains the local Prop Element + erases g_actorToPropElementId + the key index,
     // leaving the actor ALIVE (it becomes the mirror's rendering). Identical to the position-adopt retire.
     PT::UnmarkKnownKeyedProp(native);
-    // Guard: mark the native as a bound mirror so the client's post-load SeedWalk_ does NOT re-mint a peer-range
-    // LOCAL element on it (MarkPropElement's idempotency only knows g_actorToPropElementId, which mirrors are
-    // not in -> without this it would double-element). The root fix for binding-as-mirror at load time.
-    PT::MarkBoundMirrorNative(native);
     // (ii) proxy-before-bind race (X item 4): if a host PropSpawn beat the bind and spawned a trash PROXY at
     // E (a chipPile mirror), retire it PROPERLY *before* re-binding. RetireProxy does Destroy -> RemoveFromRoot
     // -> Take(E)/unbind, so it MUST precede RegisterPropMirror (otherwise Take(E) would destroy the element we
@@ -128,6 +124,12 @@ void BindLocalNativeToHostEid_(void* native, coop::element::ElementId E, MAP::Fa
     // Step 3.2: install the host-range MIRROR at E onto the native. rebindInPlace=true handles the (ii) race
     // (re-points an already-bound E onto the native instead of HEAD-rejecting). senderSlot=0 (host owns it).
     coop::remote_prop::RegisterPropMirror(E, native, key, cls, /*senderSlot*/ 0, /*rebindInPlace*/ true);
+    // (D1 enabler, sync-refactor 2026-06-27): flag the Element at E as a save-loaded native. Now that E is
+    // bound to the native (RegisterPropMirror above wrote the unified reverse), the flag lives WITH the
+    // identity -- IsBoundMirrorNative reads it via the Element, so it can never desync from the binding the
+    // way the retired g_boundMirrorNatives set could (the 15:01:49 morphBoundNative=false root). Set
+    // unconditionally on the bound Element (case(i) fresh + case(ii) rebind both land here with E->native).
+    if (coop::element::Element* el = coop::element::Registry::Get().Get(E)) el->SetSaveNative(true);
     // (ii) non-proxy race (kerfur, or any non-proxy actor at E): a host PropSpawn already spawned a SEPARATE
     // fresh actor at E -> after the rebind that actor is orphaned (element-less); echo-destroy it so no dup
     // survives (mini-design S4(ii)). Skipped when the proxy path above already tore the proxy down.
@@ -304,7 +306,8 @@ void OnDisconnect() {
     g_chipCursor = g_kerfurCursor = 0;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
     g_overflowChip = g_overflowKerfur = 0;
-    PT::ClearBoundMirrorNatives();
+    // (sync-refactor 2026-06-27) No bound-mirror SET to clear: is-save-native is an Element flag that dies when
+    // the save-native mirror Element is drained on disconnect (DrainMirrorsOnly).
 }
 
 }  // namespace coop::save_identity_bind

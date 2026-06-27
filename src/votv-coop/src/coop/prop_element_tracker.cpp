@@ -118,26 +118,13 @@ inline coop::element::MirrorManager<coop::element::Prop>& PropMirrors() {
 std::mutex g_actorToPropElementIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToPropElementId;
 
-// Phase 1 step 2b (save_identity_bind): actors bound as a host-range MIRROR by the eid-range bind
-// (save_identity_bind::BindLocalNativeToHostEid). A mirror is NOT in g_actorToPropElementId, so MarkPropElement's
-// idempotency check (which keys on that map) would re-mint a SECOND, peer-range LOCAL element on a bound native
-// at the next post-load SeedWalk_ -> a double element + a sweep-doomable local twin. This guard set lets
-// MarkPropElement SKIP an actor already bound as a mirror. Stored actor->internalIdx so a recycled address
-// (a freed bound native whose slot a NEW prop now occupies) is rejected via IsLiveByIndex (self-healing).
-// Own leaf mutex (never nested); cleared per join (save_identity_bind arm/disconnect) + on UnmarkKnownKeyedProp.
-std::mutex g_boundMirrorMutex;
-std::unordered_map<void*, int32_t> g_boundMirrorNatives;
-
-// True iff `actor` is currently bound as a mirror AND still the live occupant of its slot. Self-heals a stale
-// (recycled) entry to false. Caller must NOT hold g_boundMirrorMutex.
-bool IsBoundMirrorActive_(void* actor) {
-    std::lock_guard<std::mutex> lk(g_boundMirrorMutex);
-    auto it = g_boundMirrorNatives.find(actor);
-    if (it == g_boundMirrorNatives.end()) return false;
-    if (R::IsLiveByIndex(actor, it->second)) return true;  // still the same live bound native
-    g_boundMirrorNatives.erase(it);                        // recycled/dead -> stale; let the new prop mint
-    return false;
-}
+// (sync-refactor 2026-06-27) The is-save-native question is now an Element field
+// (Element::IsSaveNative), set by save_identity_bind at bind. The old
+// g_boundMirrorNatives actor-keyed SET is RETIRED: it existed only because a
+// mirror was absent from the locals-only g_actorToPropElementId reverse, and it
+// could read STALE relative to the binding (the 15:01:49 D1 root). The unified
+// Registry actor->eid reverse + the Element flag replace it -- see
+// IsBoundMirrorNative below.
 
 // ---- Key -> live-actor index (O(1) FindByKeyString replacement) ----------
 // Maintained alongside g_actorToPropElementId: every keyed prop that commits a
@@ -275,12 +262,8 @@ void UnmarkKnownKeyedProp(void* actor) {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
         g_knownKeyedProps.erase(actor);
     }
-    // 2b: drop any bound-mirror guard flag (the actor is being retired/destroyed -- if it was a bound native,
-    // its mirror lifecycle is owned by the MirrorManager from here). Harmless no-op for a normal keyed prop.
-    {
-        std::lock_guard<std::mutex> lk(g_boundMirrorMutex);
-        g_boundMirrorNatives.erase(actor);
-    }
+    // (sync-refactor 2026-06-27) The is-save-native flag now lives on the Element and dies with it (the mirror
+    // lifecycle is owned by the MirrorManager); no separate set to clear here.
     // Evict the key->actor index entry (only if it still points at THIS actor --
     // an address-recycle that re-indexed a newer prop is left intact). Done
     // first, under its own leaf mutex with nothing else held.
@@ -311,20 +294,20 @@ void UnmarkKnownKeyedProp(void* actor) {
     coop::element::ElementDeleter::Get().Enqueue(PropMirrors().Take(eid));
 }
 
-// ---- Phase 1 step 2b: bound-mirror guard (save_identity_bind) -------------
-void MarkBoundMirrorNative(void* actor) {
-    if (!actor) return;
-    std::lock_guard<std::mutex> lk(g_boundMirrorMutex);
-    g_boundMirrorNatives[actor] = R::InternalIndexOf(actor);
-}
-
-void ClearBoundMirrorNatives() {
-    std::lock_guard<std::mutex> lk(g_boundMirrorMutex);
-    g_boundMirrorNatives.clear();
-}
-
+// ---- is-save-native (sync-refactor 2026-06-27, was the bound-mirror guard) ----
+// True iff `actor` is a SAVE-LOADED NATIVE bound as a host-range mirror (the
+// Element::IsSaveNative flag, set by save_identity_bind at bind) AND still the
+// live occupant of its slot. Sourced from the unified Registry reverse + the
+// Element field instead of the retired g_boundMirrorNatives set, so it can never
+// read stale relative to the binding (the D1 root). Self-heals: a recycled
+// address whose Element no longer matches the live slot reads false.
 bool IsBoundMirrorNative(void* actor) {
-    return IsBoundMirrorActive_(actor);
+    if (!actor) return false;
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
+    if (eid == coop::element::kInvalidId) return false;
+    coop::element::Element* el = coop::element::Registry::Get().Get(eid);
+    if (!el || !el->IsSaveNative()) return false;
+    return R::IsLiveByIndex(actor, el->GetInternalIdx());  // recycled/dead -> false
 }
 
 // ---- Prop Element shadow ------------------------------------------------
@@ -355,11 +338,11 @@ bool IsBoundMirrorNative(void* actor) {
 // manager + let the destructor FreeId our just-allocated eid.
 void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls) {
     if (!actor) return;
-    // Phase 1 step 2b guard: never mint a LOCAL element on an actor already bound as a host-range MIRROR
+    // Guard: never mint a LOCAL element on an actor already bound as a host-range save-native MIRROR
     // (save_identity_bind). Without this the post-load SeedWalk_ would re-localize every bound native (the
-    // line-334 idempotency check only knows g_actorToPropElementId, which a mirror is not in). No-op in normal
-    // play (the set is empty unless the eid-range bind ran).
-    if (IsBoundMirrorActive_(actor)) return;
+    // g_actorToPropElementId idempotency check below does not know mirrors). Now sourced from the Element
+    // flag via IsBoundMirrorNative (sync-refactor 2026-06-27). No-op in normal play.
+    if (IsBoundMirrorNative(actor)) return;
     // Audit fix 2026-05-29: capture role INSIDE the same locked block as the
     // idempotency check. Reading role after the lock release would race
     // SetSession / role-change between the two reads -- a seed-time

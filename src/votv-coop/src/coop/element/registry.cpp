@@ -145,6 +145,7 @@ ElementId Registry::AllocHostId(Element* e) {
     }
     m_byId[id] = e;
     e->SetId_(id);
+    if (void* a = e->GetActor()) m_byActor[a] = id;  // actor set before id -> reverse here
     return id;
 }
 
@@ -168,6 +169,7 @@ ElementId Registry::AllocLocalId(Element* e) {
     }
     m_byId[id] = e;
     e->SetId_(id);
+    if (void* a = e->GetActor()) m_byActor[a] = id;  // actor set before id -> reverse here
     return id;
 }
 
@@ -216,6 +218,7 @@ bool Registry::RegisterMirror(ElementId id, Element* e) {
     m_byId[id] = e;
     e->SetId_(id);
     e->SetMirror_(true);
+    if (void* a = e->GetActor()) m_byActor[a] = id;  // mirror actor often set before Install -> reverse here
     return true;
 }
 

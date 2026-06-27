@@ -92,18 +92,13 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
 // not tracked.
 coop::element::ElementId GetPropElementIdForActor(void* actor);
 
-// ---- Phase 1 step 2b: bound-mirror guard (save_identity_bind) -------------
-// Mark `actor` as bound to a host-range MIRROR by the eid-range bind, so MarkPropElement / SeedWalk_ will NOT
-// re-mint a peer-range LOCAL element on it at the next post-load re-seed (which would double-element + create a
-// sweep-doomable local twin). Stored actor->internalIdx so a recycled address self-heals (IsLiveByIndex).
-// Game-thread (the bind runs on the BeginDeferred thunk). Cleared by ClearBoundMirrorNatives + UnmarkKnownKeyedProp.
-void MarkBoundMirrorNative(void* actor);
-
-// Drop ALL bound-mirror guard flags (save_identity_bind arm / disconnect -- the set is join-scoped).
-void ClearBoundMirrorNatives();
-
-// True iff `actor` is currently bound as a host-range mirror (live; self-heals a recycled entry). The bind
-// uses it to ignore a double-fire of the BeginDeferred thunk for an already-bound native (no double-bind).
+// ---- is-save-native (sync-refactor 2026-06-27, was the bound-mirror guard) ----
+// True iff `actor` is a SAVE-LOADED NATIVE bound as a host-range mirror by the eid-range bind
+// (save_identity_bind), live (self-heals a recycled entry). Sourced from Element::IsSaveNative via the unified
+// Registry actor->eid reverse -- NOT a separate set, so it cannot read stale relative to the binding (the D1
+// root). MarkPropElement / SeedWalk_ use it to skip re-minting a LOCAL element on a bound native; the pile/
+// kerfur reconcile use it to exclude a bound native from the save-time-twin doom set. The flag is set by
+// save_identity_bind right after RegisterPropMirror and dies with the Element (no explicit clear needed).
 bool IsBoundMirrorNative(void* actor);
 
 // Re-point a LOCAL Prop Element (m_mirror=false, owned by THIS peer) from its
