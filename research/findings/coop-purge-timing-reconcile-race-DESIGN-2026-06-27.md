@@ -76,6 +76,36 @@ new natives, WITHOUT a full re-announce/re-snapshot (the anti-dupe suppression m
   survived the purge must NOT double-bind); (iii) ordering — re-bind must precede the divergence sweep's
   unclaimed-destroy so the re-seeded natives are claimed, not doomed.
 
+### (b) COMPLICATION surfaced by the bind RE (2026-06-27, save_identity_bind.cpp read) — the re-bind KEY
+`save_identity_bind` (Build 3) keys the bind on **SPAWN ORDER**: the k-th keyless spawn of a family binds to
+that family's k-th map entry == saveSlot array index k (RE-proven: within-array spawn order == array index by
+construction). `OnKeylessLoadSpawn` advances a per-family **cursor** (`g_chipCursor`/`g_kerfurCursor`); after the
+initial bind the cursors sit at `fam.size()` (all consumed), so naively re-firing `OnKeylessLoadSpawn` overflows
+(the `cursor >= fam.size()` guard → "NOT binding"). **After a re-seed the spawn order is GONE** — the re-seeded
+natives exist as a SET, but a fresh `GUObjectArray` walk is in object-index order, NOT saveSlot/array-index order
+(recycled slots), so the ordinal→native correspondence the bind relies on can't be re-derived from a walk. So a
+`RebindAllTracked()` cannot simply re-walk + re-assign ordinals.
+**Idempotency is fine** (`OnKeylessLoadSpawn` early-returns on `IsBoundMirrorNative(newActor)`; survivors stay
+bound, only the new re-seeded natives need binding) — the hard part is purely the KEY for the new ones.
+**Re-bind key options (decide on build):**
+1. **Position-keyed re-bind** — both peers loaded the SAME save → a re-seeded native sits at its save position;
+   the host eid's save-time position is known (`save_transfer` map / the host map). Bind the re-seeded native to
+   the eid whose save position it matches (1cm). This is the pre-Build-3 position-adopt approach; its known
+   weakness is co-located piles (>1 within 1cm → ambiguous). docs/piles: "piles deterministic → position is a
+   key" — acceptable with the ambiguous-skip + the leftover handled by the divergence sweep.
+2. **Re-seed preserves spawn order** — make `ReSeedKnownKeyedProps` (or a parallel pass) enumerate the re-loaded
+   natives in load order and feed `OnKeylessLoadSpawn` (reset cursors first), IF the BP re-load loop is
+   synchronous/deterministic like the initial load (it is — same `loadObjects` path). Needs verifying the
+   re-seed sees them in array-index order (the re-load loop order), which the initial-load RE supports but the
+   GUObjectArray walk does not preserve — so this likely needs a load-order capture, not a walk.
+3. **Capture the ordinal at first bind** — store, per host eid at the initial bind, a STABLE re-find key (the
+   save position is the only cross-peer-stable one for a keyless pile), then on re-seed re-bind by that key.
+   (Converges with option 1.)
+**Leaning option 1 (position-keyed re-bind), bounded by ambiguous-skip + the existing sweep**, because it needs
+no load-order plumbing and reuses the deterministic-position fact — but this is exactly the call to make on build,
+and it foreshadows the sync-module refactor (the bind/re-bind/position-key/ordinal all want to live behind one
+coherent identity API). **Lever (a) is unaffected and ready** (a 1-2 line throttle-skip, fully understood).
+
 ### Why both
 (b) is the root: the reconcile must bind the FINAL (post-re-seed) world, regardless of purge timing — this fixes
 the ghost deterministically. (a) makes the purge fast so the user never sees a 45 s broken world AND shrinks the
