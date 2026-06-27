@@ -49,6 +49,16 @@ int g_boundChip = 0, g_boundKerfur = 0;
 int g_caseI = 0, g_caseII = 0;
 int g_overflowChip = 0, g_overflowKerfur = 0;  // spawns beyond the per-family map count (unexpected -- logged)
 
+// [BIND-PROBE] (read-only diagnostic, 2026-06-27, purge-race option-3 viability -- RULE-2-exempt, no mutation).
+// Counts bind-seam fires that land DURING a purge episode (the same-world Load-Primitives re-create). Decides
+// option 3 (cursor-reset) vs option 1 (position wire-extension): if the ~870 re-created chipPiles fire the seam
+// here in bulk (high count) a cursor-reset (+ clearing the bound-mirror flags so recycled-address re-creates
+// aren't mistaken for survivors) would re-bind them; if ~0 fire, the re-create bypasses this seam -> option 1.
+// The 09:54 log's anomaly (overflow only 2 vs ~870 expected if they fired fresh) is exactly what this resolves:
+// it logs, per fire, whether the native is a survivor (IsBoundMirrorNative -> recycled-address false-positive)
+// vs a fresh exhausted-cursor fire. Throttled to bound log volume. Counters are cumulative across episodes.
+int g_probeChipFires = 0, g_probeKerfurFires = 0;
+
 const char* FamName(MAP::Family f) { return f == MAP::Family::ChipPile ? "chipPile" : "kerfurOff"; }
 
 // The bind (mini-design S3): retire the native's peer-range LOCAL element, then install a host-range MIRROR
@@ -176,6 +186,23 @@ void SetReceivedMap(const MAP::IdMap& map) {
 void OnKeylessLoadSpawn(void* newActor, MAP::Family family) {
     if (!newActor || !IsEnabled()) return;
     std::lock_guard<std::mutex> lk(g_mu);
+    // [BIND-PROBE] read-only diagnostic (2026-06-27): every seam fire reaching the bind DURING a purge episode,
+    // logged BEFORE the armed/survivor/cursor gates so the raw fire is counted regardless of bind state. The
+    // per-fire breakdown (survivor vs exhausted-cursor) + the running count decide option 3 vs option 1. Logging
+    // only (no mutation). Throttled: first 8 + every 100th, so a ~870-fire bulk shows magnitude without spam.
+    if (PT::InPurgeEpisode()) {
+        const size_t curp = (family == MAP::Family::ChipPile) ? g_chipCursor : g_kerfurCursor;
+        const size_t szp  = (family == MAP::Family::ChipPile) ? g_chipEntries.size() : g_kerfurEntries.size();
+        const bool   surv = PT::IsBoundMirrorNative(newActor);
+        int& seen = (family == MAP::Family::ChipPile) ? g_probeChipFires : g_probeKerfurFires;
+        ++seen;
+        if (seen <= 8 || (seen % 100) == 0)
+            UE_LOGW("[BIND-PROBE] %s seam fire #%d during purge episode: cursor=%zu/%zu armed=%d survivor=%d "
+                    "exhausted=%d -- reset-would-rebind=%d (surv=recycled-addr false-positive; "
+                    "exhausted=fresh past-map fire; reset-would-rebind=armed&!surv&exhausted)",
+                    FamName(family), seen, curp, szp, (int)g_armed, (int)surv, (int)(curp >= szp),
+                    (int)(g_armed && !surv && curp >= szp));
+    }
     if (!g_armed) return;
     // Ignore a double-fire of the thunk for a native we already bound (keeps the per-family cursor aligned to
     // distinct natives; 1A saw the thunk can re-fire at a recycled address). Already-bound -> no double-bind.
