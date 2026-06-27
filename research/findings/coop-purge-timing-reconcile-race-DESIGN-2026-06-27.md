@@ -210,6 +210,53 @@ dwell), whether `ResetForReseed` clears the bind tallies (cosmetic) too, and whe
 widen (drop `InPurgeEpisode`, gate on `armed && cursor>=size`) for a clean confirmation run — likely unnecessary
 since the overflow lines already prove it.
 
+## 2.6 12:29 HANDS-ON: VARIANT 3 REFUTED (mis-bind) -> fall back to VARIANT 1 (position-key)
+
+Logs: `research/purgefix_12-29_{host,client}_2026-06-27.log` (deployed SHA 2663BD72 = lever (a) + (b) cursor-reset).
+Symptoms: (1) client turns ONE kerfur on -> TWO activate (kerfurs sharing identity); (2) client grabs a LOCAL pile
+-> it turns BLACK / wrong type (bound to a FOREIGN eid). Both = mis-bind.
+
+**Proven root -- the re-create is a SPARSE SUBSET, not a full array-order batch:**
+- 12:30:05 first load bound IN ORDER: k=0->eid 4435, k=1->4434, k=2->4433 ... (cursors 870/4, 874 bound).
+- 12:30:09 mass-purge -> RESET-FOR-RESEED (cursors->0, ALL 874 bound-mirror flags cleared) + sweep re-arm.
+- 12:30:14 **exactly ONE** chipPile re-fired the seam: `[BIND-PROBE] re-create #1 cursor=0/870` -> `BOUND k=0 ->
+  eid 4435 [case(i) fresh mirror]`. The lone re-create bound to **entry[0]=4435** because the cursor was reset to 0.
+- 12:30:25 `SETTLED chip 1/870 kerfur 0/4 (no-progress-dwell)`; `BIND SUMMARY bound 875/874, cursors chip=1 kerfur=0`.
+- `re-seed found 871 keyless chipPile, added 0 NEW` = the 869 other piles + 4 kerfurs **SURVIVED** (re-tracked,
+  not re-spawned); they kept their correct first-load binds.
+
+So **Part 3 (k-th re-spawn == array index k) is FALSE for the re-create**: only a SPARSE subset re-creates (1 of
+870 here; 2 at 09:54/11:32 -- the `overflow=2` I misread as "bulk fires"), so resetting the cursor to 0 binds the
+k-th re-spawn to entry[k] -- but the k-th re-spawn is an arbitrary array index, so it gets the WRONG eid (the lone
+re-create -> 4435 -> a foreign identity = the black pile). The whole of variant 3 stood on this unproven invariant
+(the probe couldn't confirm it -- lever (a) broke the gate); 12:29 disproves it. **Variant 3 REFUTED.**
+
+**Bonus damage:** ResetForReseed cleared ALL 874 bound-mirror flags though ~1 native re-created -- the 869+4
+survivors lost flags needlessly; the kerfur cursor stayed 0 (no kerfur re-bind), so the two-kerfurs-one-input is
+the flag-clear side effect, not a cursor mis-bind. Reverting (b) removes it.
+
+**VERDICT: revert (b)'s cursor-reset + flag-clear + reseed gate + sweep re-arm (parts 1+2); KEEP lever (a)
+(independent, drain 37s->1s, confirmed 11:32); design VARIANT 1 (position-key), which is ORDER- and
+COUNT-independent so a sparse subset re-creating is fine.**
+
+### Variant 1 direction (design on review, NOT built)
+The bulk (869/870) SURVIVE with correct binds; only the sparse re-creates (the OLD overflow-drop path = the
+09:54/11:32 ghosts) need re-binding. So: on a **past-cursor (re-create) seam fire** -- the existing
+`cursor >= fam.size()` overflow branch in OnKeylessLoadSpawn -- instead of DROPPING it, **position-match the
+re-create to its correct eid and bind** (no cursor reset, no flag clear, surviving binds untouched). Each
+re-create matches its OWN save position -> its OWN eid, regardless of order/count.
+- **Enabler (eid -> save position):** capturable **client-side at first-load bind** (store
+  `g_eidSavePos[eid] = GetActorLocation(native)` in BindLocalNativeToHostEid_, since the first-load native sits
+  at its save position) -- so likely **NO wire-extension needed** (better than the originally-scoped +FVector on
+  IdEntry; settle on review). A moved-in-window pile's re-create is at SAVE pos on the client (it doesn't know the
+  host moved it) -> matches save-pos -> correct eid; b3 delivers the moved position separately.
+- **Co-located ambiguity** (>1 pile within ~1cm of the same save pos): ambiguous -> skip (the rare residual stays
+  a ghost; the divergence sweep's chipPile-exemption keeps it from being wrongly destroyed). This is the same
+  weakness Build 3 left position-adopt for -- acceptable for the sparse re-create minority.
+- Open design points (settle on review): exact match tolerance, whether to ALSO handle the kerfur family by
+  position (only 4, co-location unlikely), and whether the b3 PendingPosCorrection apply still works (it resolves
+  by eid via the registry -- unaffected, since the re-create now binds to the correct eid).
+
 ## 3. b3 stays (unblocked by the fix)
 b3's host-detect + client-arm are log-verified correct; only its apply is unverified (blocked by the purge). With
 (b) the bind survives the re-seed → the sweep adjudicates a stable world → b3 corrections + kerfur retire + mirror
