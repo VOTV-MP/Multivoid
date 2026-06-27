@@ -53,6 +53,14 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 
 ### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
 
+> **IDENTITY UPDATE 2026-06-27 [RD] — save-loaded chip/kerfur natives gained a position RE-BIND safety-net.**
+> The primary identity is the save-identity ORDINAL bind (Build 3, by saveSlot array index). But UE's incremental
+> GC sporadically destroys + re-instantiates a SPARSE handful of save-placed natives mid-join; they re-create at
+> their save pos UNBOUND (the cursor was consumed) = ghosts. Variant-1 (`54ee4b06`, sidecar v2, HANDS-ON PENDING)
+> re-binds them at quiescence by an authoritative host-sent save-position (1cm, ambiguous-skip) — the bind seam
+> can't supply the position itself (BeginDeferred POST = `(0,0,0)`, below). See
+> `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/COOP_STABLE_ID_SIDECAR.md`.
+
 > **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch, docs/piles/07) is RETIRED.** A
 > real hands-on (2026-06-21) refuted its smoke "VERIFIED": the proximity land-watch
 > (`FindNearestChipPile(lastPos,100cm)`) consumes a NEIGHBOR pile in a cluster → eid mis-binds → divergence,
