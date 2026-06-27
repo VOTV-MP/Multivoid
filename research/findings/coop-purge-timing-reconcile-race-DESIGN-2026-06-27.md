@@ -157,6 +157,59 @@ the ghost deterministically. (a) makes the purge fast so the user never sees a 4
 window where a late purge can orphan the bind. (a) without (b) = fast but still races a late GC purge; (b) without
 (a) = correct but the user still waits up to ~45 s for the slow drain. Together = fast + correct, matching 16:42.
 
+## 2.5 PROBE RESULT (11:32 hands-on, 2026-06-27) — VERDICT: OPTION 3, with one design refinement
+
+Logs: `research/purgeprobe_11-32_{host,client}_2026-06-27.log` (deployed SHA 258A8F0D = lever (a) + [BIND-PROBE]).
+Client timeline: bind ARMED 11:31:49 (874 map, cursors->870/4) · mass-purge detected 11:32:01 · **re-seed added 2999
+the SAME SECOND** · kerfurOff `keyless spawn beyond` 11:32:04 (+ kerfur retire 1/1, census 0 unclaimed) · chipPile
+`keyless spawn beyond` 11:32:19 · divergence sweep fired 11:32:04 · b3 armed eid 4436 but NEVER applied.
+
+**(a) CONFIRMED working:** the mass-purge -> re-seed gap collapsed from **37 s (09:54) to <1 s (11:32)**. The
+reaper escalation drains the backlog at frame cadence as designed. KEEP it.
+
+**(a) does NOT fix the pile ghost (as designed):** the chipPile `keyless spawn beyond the mapped 870` at 11:32:19
+proves the re-created piles still hit the exhausted cursor and DON'T bind = ghosts. (a) is timing; (b) is the
+correctness fix — confirmed.
+
+**[BIND-PROBE] logged ZERO — but NOT because the seam is silent.** Lever (a) collapsed the `InPurgeEpisode`
+window to <1 s (re-seed completes the same second the purge is detected), while the re-created natives fire the
+bind seam over the NEXT ~18 s (kerfur :04, chip :19 — the Load-Primitives respawn TRICKLES in, it is not
+instantaneous). So the `InPurgeEpisode`-gated probe never overlapped the re-spawns. **The probe and the fix it
+shipped with interfered.** Honest miss in the probe gate; salvaged below.
+
+**The question is ANSWERED by the pre-existing overflow instrumentation:** the `keyless spawn beyond the mapped`
+lines (save_identity_bind.cpp:196) ARE `OnKeylessLoadSpawn` firing for re-created natives. That branch sits
+**after** the `IsBoundMirrorNative` survivor early-return (line 182), so a native reaching it is a **fresh
+actor with the cursor exhausted** — i.e. `survivor=0 exhausted=1`. **This is option 3's signature: the re-create
+DOES go through the bind seam, fresh, with the cursor consumed by the first load.** => **VERDICT: OPTION 3
+(cursor-reset). Option 1 (wire-extension) is NOT needed. The seam fires; no position channel required.**
+
+### Option-3 design (refined by the 11:32 evidence) — all ZERO wire change
+1. **At mass-purge episode-START** (net_pump.cpp:530, `SetInPurgeEpisode(true)`), call a new
+   `save_identity_bind::ResetForReseed()` that (i) resets the per-family cursors (`g_chipCursor=g_kerfurCursor=0`,
+   map + entries untouched) AND (ii) clears the bound-mirror flags of the purged natives. The cursor-reset lets
+   the fresh exhausted-cursor re-creates (proven at :04/:19) rebind via the proven Build-3 ordinal. The
+   flag-clear covers the un-ruled-out **silent** case: a re-create landing at a RECYCLED address of a
+   just-destroyed bound native would hit `IsBoundMirrorNative==true` and early-return (NO log — invisible in the
+   11:32 run), so clearing the flags ensures those rebind too. The 11:32 log proves the fresh half directly and
+   cannot rule out the recycled half, so the robust fix does BOTH (cheap, safe: at a mass purge ALL bound natives
+   are in the purge, so clearing all bound flags orphans nothing).
+2. **Re-arm AFTER the re-create TRICKLE finishes, not at the early quiescence.** 11:32 shows the divergence sweep
+   fired at :04 while chip re-creates were still spawning until :19, and b3 (eid 4436) armed but never applied
+   because its target was mid-re-create. So the re-bind + divergence sweep + kerfur-retire + b3
+   `ApplyPendingPosCorrections` must adjudicate the world AFTER the Load-Primitives respawn settles (the
+   quiescence gate must not declare "load tail quiesced" while keyless re-spawns are still arriving — gate it on
+   the per-family spawn count reaching the mapped count, or on a no-new-keyless-spawn dwell). This is the
+   `[[feedback-snapshot-before-state-ready]]` class again: the sweep snapshotted before the re-create was ready.
+3. **Array-order correctness:** the re-create is the same Load-Primitives loop (objectsData then primitivesData),
+   so within each family the k-th re-spawn == array index k — the cursor-reset rebind maps correctly (the same
+   invariant Build 3 relies on). The :04-kerfur-before-:19-chip ordering matches objectsData-before-primitivesData.
+
+**Open points for the (b) design doc (settle on review):** the exact re-arm trigger (spawn-count-complete vs
+dwell), whether `ResetForReseed` clears the bind tallies (cosmetic) too, and whether the [BIND-PROBE] gate should
+widen (drop `InPurgeEpisode`, gate on `armed && cursor>=size`) for a clean confirmation run — likely unnecessary
+since the overflow lines already prove it.
+
 ## 3. b3 stays (unblocked by the fix)
 b3's host-detect + client-arm are log-verified correct; only its apply is unverified (blocked by the purge). With
 (b) the bind survives the re-seed → the sweep adjudicates a stable world → b3 corrections + kerfur retire + mirror
