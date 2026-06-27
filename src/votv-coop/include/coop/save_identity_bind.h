@@ -52,6 +52,17 @@ void OnKeylessLoadSpawn(void* newActor, coop::save_identity_map::Family family);
 // i/ii breakdown, any overflow). No-op when disabled / not armed. Game thread.
 void EmitBindSummary();
 
+// CLIENT quiescence (RunDivergenceSweep_, after SweepReconcileSaveTimeTwins, before ApplyPendingPosCorrections):
+// re-bind the sparse engine-GC-churned save natives. The cursor bind handles the bulk first load; a native UE's
+// incremental GC destroyed + re-instantiated mid-join re-creates at its save position UNBOUND (the cursor was
+// consumed -> it overflow-dropped = the 09:54/11:32 ghost). This walks live chipPile + off-kerfur natives that
+// are NOT bound mirrors, and for each currently-UNBOUND host eid finds the re-create at its save-time position
+// (the sidecar-v2 savePos, authoritative from the host) within 1cm + binds it -- order/count/timing-independent
+// (no client-side eid->pos source exists; the host supplies it). Co-located (>1 within 1cm) -> ambiguous-skip.
+// Bulk survivors (IsBoundMirrorNative) are skipped; bound eids are skipped (no double-bind). No-op when disabled
+// / not armed / the map carries no positions (v1 peer). Game thread. Returns the count re-bound (for the log).
+int BindUnboundReCreatesByPosition();
+
 // CLIENT session end (save_transfer::OnDisconnect): drop the map + both per-family lists/cursors + the
 // bound-native guard set.
 void OnDisconnect();

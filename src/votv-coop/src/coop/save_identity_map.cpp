@@ -170,7 +170,9 @@ int BuildHostMap(IdMap& outMap) {
             }
             if (*curp == 0 && vec->size() > 1) ++ambiguousLocs;  // M>1 identical entries at this loc (count once)
             const uint32_t eid = (*vec)[(*curp)++];              // rank-pairing tiebreak (i-th entry <-> i-th eid)
-            outMap.push_back(IdEntry{ordinal++, eid, static_cast<uint8_t>(fam)});
+            // sidecar v2: carry the save-time position (the `loc` already read above -- the SAME value the
+            // host-local join used) so the client can re-bind a GC-churned save native by position at quiescence.
+            outMap.push_back(IdEntry{ordinal++, eid, static_cast<uint8_t>(fam), loc.X, loc.Y, loc.Z});
             if (fam == Family::ChipPile) ++chip; else ++kerfur;
         }
     }
@@ -210,6 +212,11 @@ void AppendU32_(std::vector<uint8_t>& v, uint32_t x) {
     std::memcpy(b, &x, 4);  // little-endian (x64); same-endian raw as the rest of the protocol
     v.insert(v.end(), b, b + 4);
 }
+void AppendF32_(std::vector<uint8_t>& v, float x) {
+    uint8_t b[4];
+    std::memcpy(b, &x, 4);  // raw IEEE-754 little-endian, same-endian as the rest of the protocol
+    v.insert(v.end(), b, b + 4);
+}
 }  // namespace
 
 void SerializeSidecar(const IdMap& map, std::vector<uint8_t>& out) {
@@ -223,6 +230,9 @@ void SerializeSidecar(const IdMap& map, std::vector<uint8_t>& out) {
         AppendU32_(out, e.index);
         AppendU32_(out, e.eid);
         out.push_back(e.family);
+        AppendF32_(out, e.savePosX);  // sidecar v2
+        AppendF32_(out, e.savePosY);
+        AppendF32_(out, e.savePosZ);
     }
 }
 
@@ -244,6 +254,9 @@ bool DeserializeSidecar(const uint8_t* data, size_t len, IdMap& outMap, size_t& 
         std::memcpy(&e.index, p, 4);
         std::memcpy(&e.eid, p + 4, 4);
         e.family = p[8];
+        std::memcpy(&e.savePosX, p + 9, 4);   // sidecar v2
+        std::memcpy(&e.savePosY, p + 13, 4);
+        std::memcpy(&e.savePosZ, p + 17, 4);
         p += kSidecarEntryBytes;
         outMap.push_back(e);
     }

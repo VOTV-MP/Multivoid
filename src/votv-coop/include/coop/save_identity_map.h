@@ -38,6 +38,12 @@ struct IdEntry {
     uint32_t index;   // objectsData array index (== client loadObjects spawn order for the keyless subsequence)
     uint32_t eid;     // host ElementId (the S8.2-stable capture-eid)
     uint8_t  family;  // Family
+    // Save-time world position of this native (sidecar v2, 2026-06-27). The host already reads it from the save
+    // array to do the host-local location->eid join; carrying it lets the CLIENT re-bind a sparse engine-GC
+    // -churned save native (which re-creates at its save position, UNBOUND) by an authoritative position match at
+    // quiescence -- the order/count/timing-independent fix for the purge-timing ghost (no client-side eid->pos
+    // source exists; see coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md 2.7/2.8).
+    float    savePosX, savePosY, savePosZ;
 };
 
 using IdMap = std::vector<IdEntry>;
@@ -52,11 +58,14 @@ int BuildHostMap(IdMap& outMap);
 // ---- Phase 2 sidecar wire framing (transport) ----------------------------------------------------------
 // The map travels PREPENDED to the save-transfer blob stream (one stream, one CRC) so it can never desync
 // from the blob it indexes. Self-describing layout (little-endian; the whole protocol is same-endian raw on
-// x64 Windows): ['V','C','I','D'] magic | u32 version | u32 count | count x { u32 index, u32 eid, u8 family }.
+// x64 Windows): ['V','C','I','D'] magic | u32 version | u32 count | count x { u32 index, u32 eid, u8 family,
+// f32 savePosX, f32 savePosY, f32 savePosZ }. v2 (2026-06-27) added savePos -- a version mismatch fails the
+// parse gracefully (DeserializeSidecar returns false -> the bind stays in cursor-only mode; both peers must run
+// the same mod version, already gated by the handshake).
 inline constexpr uint8_t  kSidecarMagic[4]    = {'V', 'C', 'I', 'D'};
-inline constexpr uint32_t kSidecarVersion     = 1u;
+inline constexpr uint32_t kSidecarVersion     = 2u;
 inline constexpr size_t   kSidecarHeaderBytes = 12u;  // magic(4) + version(4) + count(4)
-inline constexpr size_t   kSidecarEntryBytes  = 9u;   // index(4) + eid(4) + family(1)
+inline constexpr size_t   kSidecarEntryBytes  = 21u;  // index(4) + eid(4) + family(1) + savePos 3xf32(12)
 
 // HOST: serialize `map` into `out` (cleared first) as the framed sidecar -- always writes the 12-byte header,
 // even for an empty map. `out.size()` == the value the host stamps into SaveTransferBeginPayload.sidecarBytes.

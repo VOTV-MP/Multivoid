@@ -1302,6 +1302,11 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // natives are present (the census below SEES them). Keyed by save-time position (not blind proximity),
     // with its own >50% abort-valve. Runs BEFORE the census so the census reflects the removals.
     coop::pile_reconcile::SweepReconcileSaveTimeTwins();
+    // Variant 1 (purge-race, 2026-06-27): re-bind the sparse engine-GC-churned save natives that re-created
+    // UNBOUND (the cursor was consumed by the first load) by an authoritative host-wire position match -- AFTER
+    // the twin sweep (so a dup-twin is destroyed, not re-bound) and BEFORE b3's apply (so the re-bound eid
+    // resolves for the position correction). Fixes the 09:54/11:32 ghost without the (b) cursor-reset mis-bind.
+    coop::save_identity_bind::BindUnboundReCreatesByPosition();
     coop::pile_reconcile::ApplyPendingPosCorrections();  // b3 (v90): snap any save-authoritative pile the host moved in-window (dropped convert) now that the bind+load-tail settled
     coop::pile_reconcile::LogCensus();  // extracted 2026-06-23 (FRESH GC-robust walk; no-op if no index built)
     // NOTE: the kerfur off->active retire sweep (scope A) is NOT driven here -- it runs from the kerfur

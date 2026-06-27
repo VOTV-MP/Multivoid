@@ -5,16 +5,20 @@
 #include "coop/element/element.h"          // Element, ElementId, kInvalidId
 #include "coop/element/registry.h"         // Registry::Get().Get(eid)
 #include "coop/ini_config.h"               // IsIniKeyTrue
+#include "coop/kerfur_entity.h"            // IsKerfurPropClass (variant-1 position re-bind: kerfur family)
 #include "coop/prop_element_tracker.h"     // UnmarkKnownKeyedProp, GetPropElementIdForActor, MarkBoundMirrorNative
 #include "coop/remote_prop.h"              // RegisterPropMirror, ConsumeLocalActor
+#include "coop/save_time_retire_util.h"    // FindExactMatch (variant-1 position re-bind, shared 1cm kernel)
 #include "coop/trash_proxy.h"              // (X) item 4: IsProxy / RetireProxy (proxy-before-bind race)
 #include "coop/trash_channel.h"            // b1 (#2): CtxForEid -- was E converted in-window? (proxy-wins discriminator)
+#include "ue_wrap/engine.h"                // GetActorLocation (variant-1 position re-bind)
 #include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                  // GetInteractableKeyString
-#include "ue_wrap/reflection.h"            // ClassNameOf, IsLive
+#include "ue_wrap/prop.h"                  // GetInteractableKeyString, IsChipPile
+#include "ue_wrap/reflection.h"            // ClassNameOf, IsLive, ClassOf
 
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace coop::save_identity_bind {
 namespace {
@@ -223,6 +227,72 @@ void EmitBindSummary() {
     if (overflow)
         UE_LOGW("save_identity_bind: OVERFLOW -- %d chipPile + %d kerfurOff spawn(s) exceeded the mapped per-family "
                 "count (per-family count mismatch -- investigate the save vs the map)", g_overflowChip, g_overflowKerfur);
+}
+
+// Variant 1 (host-wire position re-bind, 2026-06-27). The cursor bind handles the bulk first load; UE's
+// incremental GC sporadically destroys + re-instantiates a SPARSE handful of save natives mid-join (12:29: 2 of
+// 870), which re-create at their save position UNBOUND (the cursor was already consumed -> they overflow-dropped
+// = the 09:54/11:32 ghost). No client-side eid->save-pos source exists (the bind seam is pre-FinishSpawning ->
+// (0,0,0); the churned eids have no survivor to capture from), so the host ships the authoritative save-time
+// position per eid (sidecar v2). Here, at quiescence, we re-bind each churned native by an exact (1cm) position
+// match -- ORDER/COUNT/TIMING-independent (the host stated the positions before any churn). Reuses the proven
+// FindExactMatch kernel (claim-tracked, ambiguous->skip). Sibling of pile_reconcile's twin sweep
+// (position-match -> DESTROY a dup); this is position-match -> BIND a sole re-create. Game thread (the sweep).
+int BindUnboundReCreatesByPosition() {
+    if (!IsEnabled()) return 0;
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_armed) return 0;  // not a coop join with a received map -> nothing to re-bind
+
+    // FRESH GC-robust walk of live UNBOUND save natives (both families). Excludes bound mirrors (the bulk
+    // survivors + anything already bound) so only sparse re-creates / orphans remain. Pointer-compare class
+    // filter before any read; capture InternalIndex for FindExactMatch's GC-robust liveness check.
+    struct LiveNative { void* actor; int32_t idx; float x, y, z; };
+    std::vector<LiveNative> chipN, kerfurN;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;       // CDO
+        if (PT::IsBoundMirrorNative(o)) continue;                          // already bound (survivor) -> not a re-create
+        const bool isChip = ue_wrap::prop::IsChipPile(o);
+        bool isKerfur = false;
+        if (!isChip) { void* c = R::ClassOf(o); isKerfur = c && coop::kerfur_entity::IsKerfurPropClass(c); }
+        if (!isChip && !isKerfur) continue;
+        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
+        (isChip ? chipN : kerfurN).push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z});
+    }
+    if (chipN.empty() && kerfurN.empty()) return 0;  // no unbound natives -> nothing to do (the common case)
+
+    int rebound = 0;
+    auto tryFamily = [&](const std::vector<MAP::IdEntry>& entries, std::vector<LiveNative>& nats,
+                         MAP::Family fam) {
+        std::vector<bool> used(nats.size(), false);
+        for (const MAP::IdEntry& e : entries) {
+            if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
+            // Skip a still-BOUND eid (a survivor occupies it) -- never double-bind. Only a churned (unbound) eid
+            // gets a position re-bind.
+            coop::element::Element* el =
+                coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
+            void* boundActor = el ? el->GetActor() : nullptr;
+            if (boundActor && R::IsLive(boundActor)) continue;
+            const ue_wrap::FVector key{e.savePosX, e.savePosY, e.savePosZ};
+            const int idx = coop::save_time_retire_util::FindExactMatch(
+                nats, used, key, [](const LiveNative&) { return true; });  // position-only (1cm exact)
+            if (idx < 0) continue;  // 0 (no re-create for this eid -- normal) or >1 (ambiguous co-located -> skip)
+            used[idx] = true;
+            BindLocalNativeToHostEid_(nats[idx].actor, static_cast<coop::element::ElementId>(e.eid), fam, e.index);
+            ++rebound;
+            UE_LOGI("save_identity_bind: RE-BIND by position -- %s native=%p -> host eid=%u @save-pos=(%.1f,%.1f,"
+                    "%.1f) (GC-churned save native re-created unbound; authoritative host-wire position match)",
+                    FamName(fam), nats[idx].actor, e.eid, e.savePosX, e.savePosY, e.savePosZ);
+        }
+    };
+    tryFamily(g_chipEntries, chipN, MAP::Family::ChipPile);
+    tryFamily(g_kerfurEntries, kerfurN, MAP::Family::KerfurOff);
+    if (rebound > 0 || !chipN.empty() || !kerfurN.empty())
+        UE_LOGI("save_identity_bind: position re-bind pass -- %d sparse GC-churned native(s) re-bound "
+                "(walked %zu unbound chip + %zu unbound kerfur native(s))", rebound, chipN.size(), kerfurN.size());
+    return rebound;
 }
 
 void OnDisconnect() {
