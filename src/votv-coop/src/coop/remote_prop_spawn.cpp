@@ -1449,18 +1449,6 @@ void TickClientReconcile() {
             return;  // population still changing -> load tail (props, piles, or NPCs) not drained, keep waiting
         }
         if (++g_sweepStableScans < kSweepQuiesceScans) return;  // stable, but not for long enough yet
-        // Reseed-rebind gate (2026-06-27, purge-race option-3 part 2). The population probe above settles when the
-        // re-created natives PHYSICALLY re-spawn, but the save-identity BIND lags (11:32: population stable ~3s
-        // after the purge, but the bind re-bound the re-create trickle over ~18s). Firing on population alone left
-        // the re-created piles UNBOUND = ghosts + b3 never applied (eid 4436 armed-but-never-applied). Hold the
-        // sweep until the bind cursors re-reach the mapped count -- IsReseedRebindSettled owns its own
-        // no-progress-dwell + hard-cap fallback so a re-create count that never catches up can't hang us, and the
-        // absolute ceiling (deadlineHit) above still bounds everything. (No reseed in flight -> returns true
-        // immediately; normal joins unaffected.) Re-bind in progress IS progress -> hold off the no-progress timer.
-        if (!coop::save_identity_bind::IsReseedRebindSettled()) {
-            g_sweepLastProgressAt = now;
-            return;
-        }
     }
 
     // Gate satisfied (quiesced or deadline) -- run the one real sweep. Re-resolve

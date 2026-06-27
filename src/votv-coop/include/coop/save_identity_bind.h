@@ -52,23 +52,6 @@ void OnKeylessLoadSpawn(void* newActor, coop::save_identity_map::Family family);
 // i/ii breakdown, any overflow). No-op when disabled / not armed. Game thread.
 void EmitBindSummary();
 
-// CLIENT mass-purge episode START (net_pump, where SetInPurgeEpisode(true) fires): a same-world Load-Primitives
-// re-create is about to reap + re-spawn the save-authoritative natives. The bind keys on spawn ORDER, and the
-// per-family cursors were already consumed by the FIRST load -- so the re-spawns would hit the exhausted cursor
-// and NOT bind (= the 09:54/11:32 ghosts). Reset the per-family cursors to 0 + clear the bound-mirror guard set
-// (so a re-create at a recycled address of a just-destroyed bound native isn't mistaken for a survivor), then
-// the existing per-spawn seam re-binds the re-creates via the proven Build-3 ordinal (purge-race fix part 1).
-// Arms the reseed-rebind window (IsReseedRebindSettled). No-op when disabled / not armed. Game thread.
-void ResetForReseed();
-
-// CLIENT: true when NO reseed-rebind is in flight, OR the re-create trickle has finished re-binding (per-family
-// cursors back to the mapped count), OR a no-progress dwell / hard-cap fallback expired (so a re-create count
-// that never reaches the mapped count can't hang the gate). The divergence sweep (TickClientReconcile) defers
-// its fire until this is true, so the sweep + b3 (ApplyPendingPosCorrections) + the kerfur retire (both gate on
-// the sweep's quiescence) adjudicate the RE-BOUND world -- not the physically-repopulated-but-not-yet-rebound
-// one the population probe alone would fire on (purge-race fix part 2). Latches true once settled. Game thread.
-bool IsReseedRebindSettled();
-
 // CLIENT session end (save_transfer::OnDisconnect): drop the map + both per-family lists/cursors + the
 // bound-native guard set.
 void OnDisconnect();

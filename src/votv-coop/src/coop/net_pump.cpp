@@ -24,8 +24,7 @@
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"
 #include "coop/kerfur_prop_adoption.h"  // K-6  // OnClientWorldReady (v75 deferred-adoption per-world reset)
-#include "coop/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset) + ArmDivergenceSweep
-#include "coop/save_identity_bind.h"  // purge-race option-3: ResetForReseed at a same-world mass-purge episode-start
+#include "coop/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/prop_element_tracker.h"
@@ -550,21 +549,6 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                     coop::prop_element_tracker::SetInPurgeEpisode(true);
                     UE_LOGI("net_pump: mass-purge detected (reaped %zu >= %zu) -- world-change re-seed deferred to drain-complete",
                             reaped, kReseedPurge);
-                    // Purge-race option-3 (2026-06-27), CLIENT-only. A same-world Load-Primitives re-create is
-                    // about to reap + re-spawn the save-authoritative chipPile/off-kerfur natives. Their per-family
-                    // bind cursors were consumed by the FIRST load, so the re-spawns would hit the exhausted cursor
-                    // -> NOT bound = ghosts (the 09:54/11:32 regression). (1) ResetForReseed resets the cursors +
-                    // clears the bound-mirror flags so the re-creates re-bind via the proven ordinal seam; (2)
-                    // re-arm the divergence sweep so it (and b3 + the kerfur retire that gate on its quiescence)
-                    // re-adjudicates the RE-BOUND world -- the sweep now defers on IsReseedRebindSettled until the
-                    // re-create trickle finishes binding. Host authors no bind -> client-only. (a)'s fast drain
-                    // collapses the episode but the re-creates trickle in over ~18s, so this rides the bind, not
-                    // the episode flag. ArmDivergenceSweep self-skips if claim-tracking isn't active (post-join
-                    // late purge) -- harmless; the in-join case (the target) always has tracking armed.
-                    if (session.role() == coop::net::Role::Client) {
-                        coop::save_identity_bind::ResetForReseed();
-                        coop::remote_prop_spawn::ArmDivergenceSweep();
-                    }
                 }
             } else if (coop::prop_element_tracker::InPurgeEpisode()) {
                 // Drain caught up: the old level's dead Prop Elements are fully
