@@ -318,6 +318,76 @@ b3 already relies on). Capturing at bind captures garbage.
 read-only `GetActorLocation` probe at the top of BindLocalNativeToHostEid_ would make it probe-certain if desired,
 but it is well-established -- not a new unverified invariant.)
 
+## 2.8 VARIANT 1 host-wire -- FULL DESIGN (on review, NOT built). Clean base = `86bca8cb` ((b) reverted, (a) kept)
+
+**Goal:** re-bind the sparse (~2/join) client-local engine-GC-churned chipPile natives -- which re-create at their
+save position, UNBOUND (= the 09:54/11:32 ghosts) -- to their correct host eid, ORDER/COUNT/TIMING-independent.
+The cursor bind stays for the bulk first load (proven 874/874); this ADDS a quiescence safety-net for the
+re-creates the cursor missed. No cursor-reset, no flag-clear (reverted).
+
+### Why host-wire (recap): no robust client-only `eid->save-pos` exists
+The bind seam is pre-FinishSpawning -> GetActorLocation=(0,0,0); the churned eids have no survivor at quiescence
+to capture from; a pre-churn capture is GC-timing-fragile. So the host -- which holds the authoritative save
+positions -- sends them. Order/count/timing-independent, no transform-unset problem.
+
+### HOST side -- send `eid -> save-position` in the existing sidecar (verified integration points)
+1. **`IdEntry`** (save_identity_map.h:37, currently `{uint32 index; uint32 eid; uint8 family}`): add `float
+   savePosX, savePosY, savePosZ` (the save-time world location).
+2. **`BuildHostMap`** (save_identity_map.cpp:80) already builds the location->eid byLoc bridge from
+   `CollectTrackedPileTransforms` (:99) -- the save-time location for each eid is ALREADY in hand at emit time.
+   Populate `IdEntry.savePos` from it (zero extra work; same value the host-local join already uses).
+3. **`SerializeSidecar`/`DeserializeSidecar`** (save_identity_map.cpp:215/229): bump `kSidecarVersion` 1->2;
+   append/read the 3 floats per entry. The deser already rejects a version mismatch (:237) -> an
+   old-version peer fails the parse gracefully (bind stays in its current cursor-only mode = today's behavior,
+   no crash). Both peers on the new mod version -> full fix. (Mod-version handshake already gates compatibility.)
+   Wire cost: +12 B x ~870 ~= 10 KB once per join -- negligible.
+
+### CLIENT side -- position-match the UNBOUND re-creates at quiescence
+1. **`SetReceivedMap`** (save_identity_bind.cpp): the map now carries `savePos` per entry -> build an
+   `eid -> savePos` lookup (and a `savePos -> eid` acceleration structure, e.g. the same quantized-location
+   bucket BuildHostMap uses, for the match).
+2. **At quiescence -- graft onto `SweepReconcileSaveTimeTwins`** (pile_reconcile.cpp:321), which already does a
+   FRESH GC-robust GUObjectArray walk of live chipPile natives + a 1cm exact match + ambiguous-skip + a >50%
+   valve. ADD a step: for each live chipPile native that is **UNBOUND** (`!IsBoundMirrorNative` AND not already an
+   eid mirror -- i.e. a sparse re-create / orphan), read its (now valid, post-FinishSpawning) position, match it
+   against the received `savePos->eid` (1cm exact = `kExactMatchR2Cm`), and on a UNIQUE match **BIND it** to that
+   host eid via the existing terminal op (`save_identity_bind::BindLocalNativeToHostEid_` / `RegisterPropMirror`).
+   - `matchCount > 1` (co-located within 1cm) -> **ambiguous-skip** (the rare residual stays a ghost; chipPile
+     doom-exemption prevents wrong-destroy). Same policy the twin sweep already uses.
+   - This is a position-match -> **BIND** (vs the twin sweep's position-match -> destroy); it's a sibling action
+     on the same walk, not a replacement.
+
+### Why this is correct + robust (the invariants, each checked)
+- **Bulk survivors untouched:** they are `IsBoundMirrorNative==true` -> the unbound-only filter skips them; their
+  cursor binds stand (proven 874/874). The position-match only ever touches the sparse unbound re-creates.
+- **No cursor conflict:** after the first load the cursor is exhausted, so re-creates never cursor-bind (they
+  overflowed = were dropped); only the position-match handles them. A native can't be both cursor-bound and
+  position-matched (the filter excludes bound mirrors).
+- **Moved-in-window pile that churned:** the client re-creates it at its SAVE position (it never knew the host
+  moved it) -> matches the host-sent SAVE position -> correct eid; b3 `ApplyPendingPosCorrections` (by eid)
+  delivers the moved position separately at the same quiescence. (At 12:29 the churned piles were NOT moved --
+  this just covers the case.)
+- **Timing-independent:** the host sends ALL eid->savePos at join, before any churn; the client matches whenever
+  the re-create appears (at quiescence, position valid). No dependency on capturing before the GC churn, no
+  transform-unset window. This removes the entire fragility class that bit cursor-reset + the no-wire capture.
+- **Kerfur family (4 off-kerfurs):** OPEN -- include in the position-match for symmetry, OR leave to the existing
+  kerfur retire/adopt path (the 12:29 kerfur-double was the (b) flag-clear, now reverted, so kerfurs may already
+  be fine). Decide on build; positions are sent for kerfurs too (CollectTrackedKerfurTransforms exists), so
+  including them is cheap.
+
+### Scope / proportionality
+The bug is small (~2 ghost piles/join, GC-timed) -- but it's the sync ETALON, and host-wire is the proportional
+robust fix: a trivial sidecar field + a graft onto an existing quiescence walk, no new subsystem. The alternative
+(a per-re-create host request/response) is lighter on the wire (~2 lookups vs +10 KB) but adds a round-trip
+protocol + async wait -- more complexity for less robustness; the bulk-send is simpler and one-shot. Recommend
+bulk-send; flag request/response as the lighter-wire alternative if the +10 KB/join is ever a concern.
+
+### Build order (after review)
+(1) host IdEntry+savePos + sidecar v2 (serialize/deser); (2) client SetReceivedMap savePos lookup; (3) the
+quiescence unbound-native position-match->bind in SweepReconcileSaveTimeTwins; (4) decide kerfur inclusion;
+(5) audit (hot-path: the match is one extra read per unbound native on an existing cold quiescence walk -- O(few));
+(6) hands-on (no ghost, no mis-bind, b3 applies, kerfur ok, #1/#2/b2/clean-join/grab/throw unregressed).
+
 ## 3. b3 stays (unblocked by the fix)
 b3's host-detect + client-arm are log-verified correct; only its apply is unverified (blocked by the purge). With
 (b) the bind survives the re-seed → the sweep adjudicates a stable world → b3 corrections + kerfur retire + mirror
