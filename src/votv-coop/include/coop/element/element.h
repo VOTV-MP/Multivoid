@@ -137,7 +137,15 @@ public:
     // can never be silently omitted -- a stale/-1 index would make the actor
     // read as not-live and drop it from snapshots. Pass -1 only for an element
     // with no engine actor.
-    void  SetActor(void* a, int32_t internalIdx) { m_actor = a; m_internalIdx = internalIdx; }
+    // Non-inline (defined in element.cpp): besides writing m_actor/m_internalIdx
+    // it maintains the Registry's unified actor->eid reverse index so
+    // Registry::EidForActor(a) is always consistent with the live binding
+    // (sync-refactor 2026-06-27: subsumes prop_element_tracker's
+    // g_actorToPropElementId locals-only reverse AND g_boundMirrorNatives, which
+    // existed only because mirrors weren't in that reverse). Covers EVERY element
+    // type (Prop/Npc/WorldActor) uniformly -- one reverse for the whole registry,
+    // the MTA CClientEntity shape (game-ptr owned by the entity; reverse implicit).
+    void  SetActor(void* a, int32_t internalIdx);
 
     // Cached GUObjectArray InternalIndex of m_actor (see SetActor); -1 if none.
     // Feed to reflection::IsLiveByIndex to validate m_actor after a possible GC.
@@ -166,6 +174,17 @@ public:
     // NOT pushed onto the client's free stack (it was never allocated from
     // it -- mirrors borrow ids from the host's allocation space).
     bool IsMirror() const { return m_mirror; }
+
+    // True iff this Element is a SAVE-LOADED NATIVE pile/kerfur the client bound
+    // as the host-range mirror via save_identity_bind::BindLocalNativeToHostEid.
+    // (sync-refactor 2026-06-27, the D1 enabler): this REPLACES
+    // prop_element_tracker's g_boundMirrorNatives actor-keyed SET, which could
+    // read stale relative to the binding (15:01:49 morphBoundNative=false root).
+    // As an Element field it is atomic with the binding -- the answer to "is this
+    // a bound save-native" lives with the identity, not in a satellite set that
+    // can desync. Set by the bind, cleared when the Element is retired.
+    bool IsSaveNative() const   { return m_saveNative; }
+    void SetSaveNative(bool b)  { m_saveNative = b; }
 
     // For a wire MIRROR (IsMirror()==true): the peer slot of the ORIGINATING
     // peer -- the logical origin the host relay stamps into the reliable
@@ -197,6 +216,7 @@ private:
     int32_t     m_internalIdx  = -1;     // cached GUObjectArray slot of m_actor
     bool        m_beingDeleted = false;
     bool        m_mirror       = false;
+    bool        m_saveNative   = false;  // bound save-loaded native (D1 enabler); see IsSaveNative
     int8_t      m_ownerSlot    = -1;     // originating peer slot for mirrors (D1-7); -1 = none
 };
 

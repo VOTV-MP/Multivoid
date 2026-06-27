@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::element { class Element; }
@@ -109,6 +110,29 @@ public:
     // O(1) lookup. Returns nullptr if `id` is kInvalidId, out of range, or
     // not currently allocated.
     Element* Get(ElementId id) const;
+
+    // ---- Unified actor -> eid reverse index (sync-refactor 2026-06-27) ----
+    //
+    // The SOLE actor->eid reverse for the whole registry, covering BOTH locals
+    // (AllocAndInstall'd) and mirrors (RegisterMirror'd). Subsumes
+    // prop_element_tracker's g_actorToPropElementId (locals-only) and removes the
+    // reason g_boundMirrorNatives existed (mirrors absent from the locals-only
+    // reverse). Maintained automatically by Element::SetActor / ~Element via
+    // NoteActorRebind -- so it is always consistent with the live actor binding.
+    //
+    // O(1). Returns kInvalidId if `actor` is null or not currently bound to any
+    // Element. Does NOT validate engine liveness (the actor may be GC-purged) --
+    // callers that hold the pointer across ticks must re-validate via
+    // reflection::IsLiveByIndex (Element::GetInternalIdx), same contract as the
+    // old reverse maps.
+    ElementId EidForActor(void* actor) const;
+
+    // Called by Element::SetActor (rebind) and ~Element (clear): drop oldActor's
+    // entry if it still maps to `id`, then point newActor at `id`. "newest live
+    // binding wins" on a recycled actor address (matches the old key-index
+    // overwrite semantics). Pass newActor=nullptr to clear. Internal plumbing --
+    // only Element calls it.
+    void NoteActorRebind(ElementId id, void* oldActor, void* newActor);
 
     // Quick range check. `kInvalidId` returns false on both.
     static bool IsHostId(ElementId id)  { return id < kHostRangeSize; }
@@ -202,6 +226,10 @@ private:
 
     mutable std::mutex m_mutex;
     Element* m_byId[kMaxElements] = {};   // index = ElementId; nullptr = free
+    // Unified actor->eid reverse (sync-refactor 2026-06-27). Guarded by m_mutex
+    // (same lock as m_byId -- they mutate together at bind/unbind). Covers locals
+    // + mirrors. Maintained via NoteActorRebind from Element::SetActor / ~Element.
+    std::unordered_map<void*, ElementId> m_byActor;
     // FREE LISTS: deque (not vector). Fresh (never-allocated) ids pop_back from the back; a FREED
     // id push_front to the FRONT so it is only re-issued after the fresh pool above it drains
     // (deferred FIFO reuse -- prevents the handle-recycling race where a transient clump grabs a

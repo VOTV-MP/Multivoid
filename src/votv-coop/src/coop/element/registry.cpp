@@ -241,6 +241,25 @@ Element* Registry::Get(ElementId id) const {
     return m_byId[id];
 }
 
+ElementId Registry::EidForActor(void* actor) const {
+    if (!actor) return kInvalidId;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    auto it = m_byActor.find(actor);
+    return (it == m_byActor.end()) ? kInvalidId : it->second;
+}
+
+void Registry::NoteActorRebind(ElementId id, void* oldActor, void* newActor) {
+    if (oldActor == newActor) return;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    if (oldActor) {
+        auto it = m_byActor.find(oldActor);
+        // Only erase if it still points at US -- a recycled address already
+        // re-pointed to a newer Element must not be clobbered by our teardown.
+        if (it != m_byActor.end() && it->second == id) m_byActor.erase(it);
+    }
+    if (newActor) m_byActor[newActor] = id;  // newest live binding wins
+}
+
 size_t Registry::HostCount() const {
     std::lock_guard<std::mutex> lk(m_mutex);
     // Host range owns ids [1, kHostRangeSize) -- that's kHostRangeSize - 1

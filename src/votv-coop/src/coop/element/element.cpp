@@ -42,11 +42,27 @@ Element::Element(ElementType type) : m_type(type) {
     // m_id stays kInvalidId until then.
 }
 
+// Maintains the Registry's unified actor->eid reverse alongside the local
+// fields, so Registry::EidForActor stays consistent with the live binding.
+// Non-inline (vs the header) because it must reach the (incomplete-in-header)
+// Registry. Called at every bind/rebind/clear across all element types.
+void Element::SetActor(void* a, int32_t internalIdx) {
+    void* old = m_actor;
+    m_actor       = a;
+    m_internalIdx = internalIdx;
+    if (m_id != kInvalidId && old != a &&
+        !g_registryShuttingDown.load(std::memory_order_acquire)) {
+        Registry::Get().NoteActorRebind(m_id, old, a);
+    }
+}
+
 Element::~Element() {
     if (m_id == kInvalidId) return;
     // Static-destruction-order safety: skip Registry calls if the Registry has
     // already been torn down. The OS reclaims memory on process exit.
     if (g_registryShuttingDown.load(std::memory_order_acquire)) return;
+    // Drop our actor from the unified reverse before releasing the id.
+    if (m_actor) Registry::Get().NoteActorRebind(m_id, m_actor, nullptr);
     // Mirrors borrowed the id from the host's allocation space; releasing the
     // id back to the local free stack would corrupt it with foreign entries
     // over a long session. UnregisterMirror just clears m_byId[id].
