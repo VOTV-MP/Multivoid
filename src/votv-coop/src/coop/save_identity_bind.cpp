@@ -13,6 +13,7 @@
 #include "ue_wrap/prop.h"                  // GetInteractableKeyString
 #include "ue_wrap/reflection.h"            // ClassNameOf, IsLive
 
+#include <chrono>
 #include <mutex>
 #include <string>
 
@@ -48,6 +49,18 @@ size_t     g_kerfurCursor = 0;  // next off-kerfur spawn's index into g_kerfurEn
 int g_boundChip = 0, g_boundKerfur = 0;
 int g_caseI = 0, g_caseII = 0;
 int g_overflowChip = 0, g_overflowKerfur = 0;  // spawns beyond the per-family map count (unexpected -- logged)
+
+// Option-3 purge-race fix (2026-06-27): the reseed-rebind window. ResetForReseed (mass-purge episode-start)
+// resets the per-family cursors + clears the bound-mirror flags so the same-world Load-Primitives re-creates
+// re-bind via the proven ordinal seam; the divergence sweep then defers (IsReseedRebindSettled) until the
+// re-create trickle has re-bound, so it (and b3 + the kerfur retire that gate on its quiescence) adjudicate the
+// RE-BOUND world. The dwell + hard-cap fallbacks ensure a re-create count that never reaches the mapped count
+// can't hang the gate forever.
+bool g_reseedRebindActive = false;
+std::chrono::steady_clock::time_point g_reseedResetAt{};
+std::chrono::steady_clock::time_point g_reseedLastAdvance{};
+constexpr int kReseedTrickleDwellMs   = 10000;  // no new re-bind for this long => trickle settled (count-never-reaches-mapped fallback)
+constexpr int kReseedTrickleHardCapMs = 60000;  // absolute ceiling from reset (< the sweep's 120s hard cap so the rebind settles first)
 
 // [BIND-PROBE] (read-only diagnostic, 2026-06-27, purge-race option-3 viability -- RULE-2-exempt, no mutation).
 // Counts bind-seam fires that land DURING a purge episode (the same-world Load-Primitives re-create). Decides
@@ -176,6 +189,7 @@ void SetReceivedMap(const MAP::IdMap& map) {
     }
     g_chipCursor = g_kerfurCursor = 0;
     g_armed = true;
+    g_reseedRebindActive = false;  // a fresh arm = a new join; no reseed-rebind in flight
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
     g_overflowChip = g_overflowKerfur = 0;
     UE_LOGI("save_identity_bind: ARMED with %zu-entry host eid map (%zu chipPile + %zu kerfurOff) -- per-family "
@@ -186,22 +200,24 @@ void SetReceivedMap(const MAP::IdMap& map) {
 void OnKeylessLoadSpawn(void* newActor, MAP::Family family) {
     if (!newActor || !IsEnabled()) return;
     std::lock_guard<std::mutex> lk(g_mu);
-    // [BIND-PROBE] read-only diagnostic (2026-06-27): every seam fire reaching the bind DURING a purge episode,
-    // logged BEFORE the armed/survivor/cursor gates so the raw fire is counted regardless of bind state. The
-    // per-fire breakdown (survivor vs exhausted-cursor) + the running count decide option 3 vs option 1. Logging
-    // only (no mutation). Throttled: first 8 + every 100th, so a ~870-fire bulk shows magnitude without spam.
-    if (PT::InPurgeEpisode()) {
+    // [BIND-PROBE] read-only diagnostic (2026-06-27, repurposed for the option-3 FIX verification). Originally
+    // gated on InPurgeEpisode to decide option 3 vs 1; lever (a) collapsed that window to <1s while the
+    // re-creates fire over ~18s, so it logged zero (the overflow lines answered it instead). Now gated on the
+    // reseed-rebind WINDOW (ResetForReseed..settled): logs each re-create re-binding from the reset cursor =
+    // direct evidence the fix works (cursor climbs 0 -> mapped, survivor=0, exhausted=0). Throttled: first 8 +
+    // every 100th. Logging only (no mutation).
+    if (g_reseedRebindActive) {
         const size_t curp = (family == MAP::Family::ChipPile) ? g_chipCursor : g_kerfurCursor;
         const size_t szp  = (family == MAP::Family::ChipPile) ? g_chipEntries.size() : g_kerfurEntries.size();
         const bool   surv = PT::IsBoundMirrorNative(newActor);
         int& seen = (family == MAP::Family::ChipPile) ? g_probeChipFires : g_probeKerfurFires;
         ++seen;
         if (seen <= 8 || (seen % 100) == 0)
-            UE_LOGW("[BIND-PROBE] %s seam fire #%d during purge episode: cursor=%zu/%zu armed=%d survivor=%d "
-                    "exhausted=%d -- reset-would-rebind=%d (surv=recycled-addr false-positive; "
-                    "exhausted=fresh past-map fire; reset-would-rebind=armed&!surv&exhausted)",
+            UE_LOGW("[BIND-PROBE] %s re-create #%d in reseed-rebind window: cursor=%zu/%zu armed=%d survivor=%d "
+                    "exhausted=%d -- will-rebind=%d (cursor climbing 0->mapped = fix working; survivor/exhausted "
+                    "should be 0)",
                     FamName(family), seen, curp, szp, (int)g_armed, (int)surv, (int)(curp >= szp),
-                    (int)(g_armed && !surv && curp >= szp));
+                    (int)(g_armed && !surv && curp < szp));
     }
     if (!g_armed) return;
     // Ignore a double-fire of the thunk for a native we already bound (keeps the per-family cursor aligned to
@@ -235,6 +251,50 @@ void OnKeylessLoadSpawn(void* newActor, MAP::Family family) {
     }
     BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e.eid), family, cursor);
     ++cursor;
+    if (g_reseedRebindActive) g_reseedLastAdvance = std::chrono::steady_clock::now();  // re-bind progress -> reset the dwell
+}
+
+// Purge-race option-3 part 1 (2026-06-27): mass-purge episode-start -- reset the per-family cursors so the
+// same-world Load-Primitives re-creates re-bind via the proven ordinal seam, and clear the bound-mirror guard
+// set so a re-create at a recycled address of a just-destroyed bound native isn't taken for a survivor (the
+// silent half the 11:32 log couldn't see; safe -- at a mass purge ALL bound natives are in the purge, so this
+// orphans nothing). Arms the reseed-rebind window the divergence sweep defers on (part 2).
+void ResetForReseed() {
+    if (!IsEnabled()) return;
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_armed) return;  // never armed -> nothing to re-bind
+    g_chipCursor = g_kerfurCursor = 0;
+    PT::ClearBoundMirrorNatives();
+    g_probeChipFires = g_probeKerfurFires = 0;  // fresh [BIND-PROBE] count for this re-bind
+    g_reseedRebindActive = true;
+    const auto now = std::chrono::steady_clock::now();
+    g_reseedResetAt = now;
+    g_reseedLastAdvance = now;
+    UE_LOGI("save_identity_bind: RESET-FOR-RESEED -- per-family cursors->0 + bound-mirror flags cleared; "
+            "reseed-rebind window armed. The same-world Load-Primitives re-create now re-binds the %zu chipPile + "
+            "%zu kerfurOff natives via the proven ordinal seam; the divergence sweep defers (IsReseedRebindSettled) "
+            "until the re-create trickle settles.", g_chipEntries.size(), g_kerfurEntries.size());
+}
+
+// Purge-race option-3 part 2 (2026-06-27): the sweep-fire gate. True when no reseed is in flight, the re-create
+// trickle has fully re-bound (cursors back to mapped), or a no-progress dwell / hard-cap fallback expired (so a
+// re-create count that never reaches mapped can't hang the sweep). Latches once settled.
+bool IsReseedRebindSettled() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_reseedRebindActive) return true;  // no reseed in flight -> never blocks a normal join
+    const auto now = std::chrono::steady_clock::now();
+    const bool allRebound = (g_chipCursor >= g_chipEntries.size()) && (g_kerfurCursor >= g_kerfurEntries.size());
+    const auto sinceAdvance = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_reseedLastAdvance).count();
+    const auto sinceReset   = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_reseedResetAt).count();
+    if (allRebound || sinceAdvance >= kReseedTrickleDwellMs || sinceReset >= kReseedTrickleHardCapMs) {
+        g_reseedRebindActive = false;  // latch settled
+        UE_LOGI("save_identity_bind: reseed-rebind SETTLED (chip %zu/%zu kerfur %zu/%zu; reason=%s) -- divergence "
+                "sweep + b3 + kerfur-retire may now adjudicate the re-bound world",
+                g_chipCursor, g_chipEntries.size(), g_kerfurCursor, g_kerfurEntries.size(),
+                allRebound ? "all-rebound" : (sinceAdvance >= kReseedTrickleDwellMs ? "no-progress-dwell" : "hard-cap"));
+        return true;
+    }
+    return false;
 }
 
 void EmitBindSummary() {
@@ -259,8 +319,10 @@ void OnDisconnect() {
     g_kerfurEntries.clear();
     g_armed = false;
     g_chipCursor = g_kerfurCursor = 0;
+    g_reseedRebindActive = false;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
     g_overflowChip = g_overflowKerfur = 0;
+    g_probeChipFires = g_probeKerfurFires = 0;
     PT::ClearBoundMirrorNatives();
 }
 
