@@ -1,8 +1,23 @@
 # Sync-tree reorganization — ready-to-execute spec (2026-06-28)
 
-STATUS: **PLANNED, GATED.** Execute ONLY after the sync module is hands-on-verified + PUSHED (clean
-baseline) AND the user green-lights. A ~40-file move mid-refactor would wreck the pending hands-on +
-bloat the unpushed diff + ruin bisect. This doc is the prep so the moment the gate opens it's mechanical.
+STATUS: **DONE 2026-06-28** (user green-lit after the autonomous verification; executed on `main` atop the
+verified-but-unpushed module stack -- 4 cluster commits, each build-GREEN, bisectable). 46 files moved into
+4 subdirs (world 9 / social 11 / host 10 / devices 16); flat coop/ root ~93 -> 53 .cpp; 0 straggler includes;
+working tree (incl. the held L5 WIP) builds GREEN. Commits: world `9247c472`, social `daa5c919`,
+host `b5414c83`, devices `be0794a1`.
+- DEVIATION from the original gate: ran BEFORE the push (module was autonomously verified, so the reorg
+  stacks on a verified base; pushes together with the module). On `main`, not a side branch (consistent with
+  this effort's main-based workflow).
+- HELD L5 WIP (subsystems.cpp/interactable_channel.h/device_screen.cpp): parked via `git stash` during the
+  reorg, popped back cleanly afterward (auto-merge, no conflict -- reorg touched include lines, L5 touched
+  logging). subsystems' world/social/host/devices include-rewrites ARE committed (it consumes them); its L5
+  logging stays uncommitted. (First world attempt mistakenly swept the WIP via `git add -A`; reset + surgically
+  recommitted include-only -> LESSON: stash held WIP before a tree-wide reorg, never `git add -A` over it.)
+- STILL EXCLUDED: `interactable_channel` (.h/.cpp) -- has held L5 WIP, so it stayed at root (moving it would
+  break the stash-pop path-match). It joins coop/devices/ in a follow-up once that WIP lands. interactable_sync
+  (moved to devices/) still includes "coop/interactable_channel.h" at root -- correct.
+
+ORIGINAL PLAN (executed as below):
 
 Companion to `docs/COOP_SYNC_MAP.md` (the layer taxonomy). The map is the *logical* overlay; this is the
 *physical* move that makes the filesystem mirror it — PARTIALLY (peripheral cohesive clusters only), not a

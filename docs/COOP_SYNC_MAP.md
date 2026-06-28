@@ -16,6 +16,13 @@ principle is **what each thing replicates**, NOT the word "sync":
 
 Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from name/kind.
 
+> **PHYSICAL LAYOUT (reorg DONE 2026-06-28, `research/findings/sync-reorg-PLAN-2026-06-28.md`):** L2/L3/L4/L5
+> are now physical subdirs -- `coop/devices/` (L2), `coop/world/` (L3), `coop/social/` (L4), `coop/host/` (L5)
+> -- plus the pre-existing `coop/element/` `coop/sync/` `coop/net/` `coop/voice/`. The L1 identity core +
+> transport STAY at the `coop/` root (deeply coupled). One exception: `interactable_channel` is still at root
+> (held L5 WIP); it joins `coop/devices/` once that lands. Tables below list bare names; prepend the layer's
+> subdir for the path.
+
 > **Where does a NEW sync feature go?** If it has an eid and can be created/destroyed/
 > morphed at runtime as a mirror → it's an entity, use the `coop/sync/` identity layer
 > (`CreateOrAdopt` / `MirrorManager` / `ElementDeleter`). If it's "set field K on the
