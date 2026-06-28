@@ -31,6 +31,7 @@
 #include "coop/prop_snapshot.h"
 #include "coop/remote_player.h"
 #include "coop/remote_prop.h"
+#include "coop/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreatesByPosition (09:54 ghost fix)
 #include "coop/save_transfer.h"
 #include "coop/subsystems.h"
 
@@ -560,8 +561,31 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // evicted and the new level has loaded. Re-seed now (clean -- no
                 // recycled-address collisions) + catch up connected peers.
                 coop::prop_element_tracker::SetInPurgeEpisode(false);
+                // (a) RE-SEED-ORPHAN FIX (2026-06-28, the 09:54 ghost root). The episode-defer above already
+                // waits for the reap backlog to fall below kReseedPurge, BUT the reaper Take()s each dead Prop
+                // Element and DEFERS ~Element to ElementDeleter::Flush (worker-thread safety, element_deleter.h).
+                // The top-of-Tick Flush ran BEFORE this Tick's reaper, so the natives the reaper just Took THIS
+                // Tick are still pending -- their registry actor->eid reverse is STALE until ~Element. A re-seed
+                // running now would adjudicate that half-gone state (MarkPropElement's IsBoundMirrorNative /
+                // EidForActor guards read a Taken-but-not-yet-destructed Element), orphaning a churned save-native
+                // bind into a tracked-but-unbound ghost. Flush the pending deferred-deletes FIRST so the re-seed
+                // sees SETTLED state -- force the precondition, don't race it. [[feedback-snapshot-before-state-ready]]
+                coop::element::ElementDeleter::Get().Flush();
                 const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
                 UE_LOGI("net_pump: world-change re-seed added %zu live keyed prop(s) (snapshot-completeness)", added);
+                // (b) RE-BIND ON RE-SEED (2026-06-28). A GC-churned save-native re-creates UNBOUND at its save
+                // position (the per-family cursor was already consumed -> it overflow-drops). Re-bind it BY
+                // POSITION right HERE -- the purge-surviving stable key is the host-shipped save-time position
+                // (1cm exact; the moved-in-window case is handled by b3 PropSnapPos / proxy-wins). Don't wait
+                // ~30s for the late quiescence divergence sweep to do it -- that gap IS the 09:54 orphan window.
+                // Cheap early-out (returns 0) when nothing churned; only the rare post-purge re-seed pays the
+                // GUObjectArray walk -- NOT the 0.25 Hz steady re-seed below (W-2 perf rule).
+                if (coop::save_identity_bind::IsEnabled()) {
+                    const int rebound = coop::save_identity_bind::BindUnboundReCreatesByPosition();
+                    if (rebound > 0)
+                        UE_LOGI("net_pump: post-purge re-seed re-bound %d GC-churned save-native(s) by position "
+                                "(09:54 orphan window closed at the re-seed edge, not the late sweep)", rebound);
+                }
                 if (added > 0) retriggerReadySlots();
                 // CLIENT: re-announce world-ready so the host re-replays its authoritative state into
                 // the new world (re-binds our keyless chipPiles to host eids) -- but ONLY if the world
