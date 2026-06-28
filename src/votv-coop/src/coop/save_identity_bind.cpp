@@ -3,6 +3,8 @@
 #include "coop/save_identity_bind.h"
 
 #include "coop/element/element.h"          // Element, ElementId, kInvalidId
+#include "coop/element/mirror_manager.h"   // MirrorManager<Prop>::Take (force_save_churn probe unbind)
+#include "coop/element/prop.h"             // coop::element::Prop (MirrorManager<Prop>)
 #include "coop/element/registry.h"         // Registry::Get().Get(eid)
 #include "coop/ini_config.h"               // IsIniKeyTrue
 #include "coop/kerfur_entity.h"            // IsKerfurPropClass (variant-1 position re-bind: kerfur family)
@@ -295,6 +297,37 @@ int BindUnboundReCreatesByPosition() {
         UE_LOGI("save_identity_bind: position re-bind pass -- %d sparse GC-churned native(s) re-bound "
                 "(walked %zu unbound chip + %zu unbound kerfur native(s))", rebound, chipN.size(), kerfurN.size());
     return rebound;
+}
+
+void ForceSaveChurnForTest() {
+    static const bool s_on = coop::ini_config::IsIniKeyTrue("force_save_churn");
+    if (!s_on) return;
+    static bool s_done = false;
+    if (s_done) return;  // one-shot: churn once, just before the quiescence sweep
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_armed) return;
+    constexpr int kChurnN = 3;
+    int churned = 0;
+    for (const MAP::IdEntry& e : g_chipEntries) {
+        if (churned >= kChurnN) break;
+        if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
+        coop::element::Element* el =
+            coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
+        void* actor = el ? el->GetActor() : nullptr;
+        if (!actor || !R::IsLive(actor)) continue;  // only churn a currently-bound, live save-native
+        // Unbind: Take the mirror Element (the actor stays alive at its save position). ~Element clears the
+        // registry slot + the unified actor->eid reverse, so variant-1 sees an UNBOUND native at savePos.
+        coop::element::MirrorManager<coop::element::Prop>::Instance().Take(
+            static_cast<coop::element::ElementId>(e.eid));
+        ++churned;
+        UE_LOGW("save_identity_bind: [force_save_churn] UNBOUND chip eid=%u native=%p @save-pos=(%.1f,%.1f,%.1f) "
+                "-- synthetic GC churn; variant-1 must re-bind it by position",
+                static_cast<unsigned>(e.eid), actor, e.savePosX, e.savePosY, e.savePosZ);
+    }
+    s_done = true;
+    if (churned)
+        UE_LOGW("save_identity_bind: [force_save_churn] unbound %d save-native(s) before the sweep -- expect "
+                "%d 'RE-BIND by position' line(s) next", churned, churned);
 }
 
 void OnDisconnect() {

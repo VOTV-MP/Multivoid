@@ -63,6 +63,15 @@ void EmitBindSummary();
 // / not armed / the map carries no positions (v1 peer). Game thread. Returns the count re-bound (for the log).
 int BindUnboundReCreatesByPosition();
 
+// DEV PROBE (gated on [dev] ini `force_save_churn`, RULE-2-exempts-probes): deterministically reproduce the
+// variant-1 precondition for a hands-on verify. The real engine-GC churn is non-deterministic (a sparse ~2 of
+// 870), so a clean run may never exercise BindUnboundReCreatesByPosition (N=0). This UNBINDS the first N
+// currently-bound chipPile save-natives (Takes their mirror Element; the actor stays alive at its save
+// position) right before the quiescence sweep -- so variant-1 then sees N unbound natives at save positions and
+// re-binds them by the host-wire savePos. The verify: log shows `RE-BIND by position` N>0 binding the right
+// native to the right eid. One-shot (latched). No-op unless the flag is set. Game thread (the sweep tick).
+void ForceSaveChurnForTest();
+
 // CLIENT session end (save_transfer::OnDisconnect): drop the map + both per-family lists/cursors + the
 // bound-native guard set.
 void OnDisconnect();

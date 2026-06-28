@@ -1474,6 +1474,7 @@ void TickClientReconcile() {
             static_cast<long long>(msSince(g_sweepLastProgressAt)));
     g_sweepPending = false;
     g_sweepFired = true;  // load tail drained -> npc_adoption may now fresh-spawn no-twin save NPCs
+    coop::save_identity_bind::ForceSaveChurnForTest();  // [dev] force_save_churn: synthetic unbind so variant-1 runs N>0 (verify probe)
     RunDivergenceSweep_(localPlayer);
     // Phase 1 step 1A probe: load tail has quiesced -> emit the keyless-spawn coverage verdict (read-only).
     coop::dev::spawn_order_probe::EmitVerdictAtQuiescence();
