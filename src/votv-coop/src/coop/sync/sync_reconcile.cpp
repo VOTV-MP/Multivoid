@@ -47,11 +47,14 @@ void OnReconcileTick() {
     // load tail has drained -- before that, the join one-shot owns reconcile and a
     // mid-load native set is not yet trustworthy. Then: only when there is armed
     // reconcile work, and only on the debounce edge, do the (bounded) walk.
-    if (!coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
     const auto now = std::chrono::steady_clock::now();
-    // Track the purge: while draining, just remember when. The re-creates land AFTER it clears.
+    // Track the purge BEFORE the quiescence gate: the join-window mass-purge happens DURING the load tail
+    // (before the sweep fires = before HasLoadTailQuiesced), so recording it must NOT be gated on quiescence
+    // (the 15:44 bug: the gate ran first, so g_lastPurgeAt was never set and the post-purge window never
+    // opened). We only ACT (run the reconcile) post-quiescence, but we always REMEMBER the purge.
     const bool purging = coop::prop_element_tracker::InPurgeEpisode();
     if (purging) g_lastPurgeAt = now;
+    if (!coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
     const bool postPurge = g_lastPurgeAt.time_since_epoch().count() != 0 && !purging &&
                            (now - g_lastPurgeAt) < kPostPurgeWindow;
     // Run when there's armed twin/b3 work (D1) OR we're in the post-purge window (variant-1 re-binds the
