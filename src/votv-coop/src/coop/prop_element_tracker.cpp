@@ -99,13 +99,14 @@ std::atomic<bool> g_knownKeyedPropsOverflowLogged{false};
 // FreeId vs UnregisterMirror, and the disconnect drain selects mirrors only --
 // see DrainMirrorsOnly). See mirror_manager.h class-doc EXCEPTION.
 //
-// We keep ONE bespoke map -- g_actorToPropElementId (actor* -> local eid) --
-// the reverse lookup the K2_DestroyActor PRE gate + the Init-POST broadcast
-// elementId stamp need. It is host/seed-side bookkeeping (not Element
-// identity), so it stays here, mirroring npc_sync's g_actorToNpcId. Its mutex
-// is a LEAF: every path releases it BEFORE calling PropMirrors().AllocAndInstall
-// /Take (type mutex) or destructing a Prop (Registry mutex via FreeId), so it
-// never nests with either -> ABBA-free by construction.
+// The actor* -> local eid reverse lookup the K2_DestroyActor PRE gate + the Init-POST
+// broadcast elementId stamp need is now the UNIFIED Registry reverse (Registry::EidForActor,
+// sync-refactor 2026-06-28). The old bespoke g_actorToPropElementId map (+ its leaf mutex) is
+// RETIRED: it was a LOCALS-ONLY satellite of the registry; EidForActor covers locals AND
+// mirrors in one owner, so GetPropElementIdForActor re-imposes the locals-only contract with an
+// IsMirror filter. The two-concurrent-mint TOCTOU is resolved by MarkPropElement's post-alloc
+// double-check on the reverse (the old mutex never prevented it either -- it released between
+// the check and the commit).
 //
 // We DON'T preserve a thread_local PRE->POST handoff because, unlike NPCs,
 // the Prop Element is created at Init POST time (engine already has the
@@ -114,9 +115,6 @@ std::atomic<bool> g_knownKeyedPropsOverflowLogged{false};
 inline coop::element::MirrorManager<coop::element::Prop>& PropMirrors() {
     return coop::element::MirrorManager<coop::element::Prop>::Instance();
 }
-
-std::mutex g_actorToPropElementIdMutex;
-std::unordered_map<void*, coop::element::ElementId> g_actorToPropElementId;
 
 // (sync-refactor 2026-06-27) The is-save-native question is now an Element field
 // (Element::IsSaveNative), set by save_identity_bind at bind. The old
@@ -283,15 +281,17 @@ void UnmarkKnownKeyedProp(void* actor) {
     // AllocAndInstall cannot re-pop it -- no eid-reuse collision (unlike a wire
     // mirror's remote-controlled eid, which is why the game-thread mirror destroy
     // paths stay inline; see remote_prop::UnregisterPropMirror).
-    coop::element::ElementId eid = coop::element::kInvalidId;
-    {
-        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-        auto it = g_actorToPropElementId.find(actor);
-        if (it == g_actorToPropElementId.end()) return;
-        eid = it->second;
-        g_actorToPropElementId.erase(it);
-    }
-    coop::element::ElementDeleter::Get().Enqueue(PropMirrors().Take(eid));
+    // Resolve the local eid via the unified Registry reverse (sync-refactor 2026-06-28;
+    // g_actorToPropElementId retired). LOCALS-ONLY: a mirror actor is not ours to drain here.
+    // The reverse map entry is cleared by ~Element at the deferred Flush (not erased here) --
+    // and the IsBeingDeleted flag (set the instant the first Unmark Enqueued this Element)
+    // gates a concurrent second Unmark on the same actor, replacing the old erase-once guard.
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
+    if (eid == coop::element::kInvalidId) return;
+    coop::element::Element* el = coop::element::Registry::Get().Get(eid);
+    if (!el || el->IsMirror() || el->IsBeingDeleted()) return;
+    if (auto taken = PropMirrors().Take(eid))
+        coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
 }
 
 // ---- is-save-native (sync-refactor 2026-06-27, was the bound-mirror guard) ----
@@ -328,14 +328,14 @@ bool IsBoundMirrorNative(void* actor) {
 // and broadcast PropSpawn for these seed elements, their elementId will be
 // in peer range (clients route them as MIRROR entries which is correct).
 //
-// TOCTOU safety (audit fix 2026-05-28, retained through Inc3 2026-05-30): the
-// idempotency check and the commit both hold g_actorToPropElementIdMutex, but
-// the alloc step (PropMirrors().AllocAndInstall -> Registry::Alloc{Host,Local}Id
-// + the manager's type-mutex emplace) runs with that leaf mutex RELEASED to
-// keep the lock order leaf -> {type, Registry} non-nested. The double-check on
-// re-acquire handles the race: if a concurrent thread committed the same actor
-// while we were inside the manager, we drop ours -- Take it back out of the
-// manager + let the destructor FreeId our just-allocated eid.
+// TOCTOU safety (sync-refactor 2026-06-28, was audit fix 2026-05-28): idempotency is
+// now a Registry::EidForActor probe (the reverse is registry-mutex-guarded), and the
+// commit IS the AllocAndInstall (it writes the reverse at id-assignment). The
+// post-alloc double-check (EidForActor(actor) != our eid) handles the race: if a
+// concurrent MarkPropElement minted the same actor and won the reverse, we drop ours --
+// Take it back out of the manager + let the deferred destructor FreeId our eid. (The
+// old g_actorToPropElementIdMutex never actually serialized the check-vs-commit -- it
+// released across AllocAndInstall -- so the double-check was always the real guard.)
 void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls) {
     if (!actor) return;
     // Guard: never mint a LOCAL element on an actor already bound as a host-range save-native MIRROR
@@ -359,14 +359,17 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
     // KerfurId at the first conversion, so no host-side first-sighting is needed here. Read OUTSIDE the
     // lock (reflection-only, no mutex), gate INSIDE it on the same role read the alloc-range uses.
     const bool isKerfur = coop::kerfur_entity::IsKerfurActor(actor);
-    bool isHost = false;
-    {
-        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-        if (g_actorToPropElementId.count(actor) > 0) return;  // idempotent
-        auto* s = LoadSession();
-        isHost = (s != nullptr && s->role() == coop::net::Role::Host);
-        if (isKerfur && s != nullptr && s->role() == coop::net::Role::Client) return;  // no client mint
-    }
+    // Idempotency via the unified Registry reverse (sync-refactor 2026-06-28; g_actorToPropElementId
+    // retired). ANY existing binding for this actor -- local OR mirror -- means it is already tracked,
+    // so never mint a second LOCAL on top. This is STRICTLY SAFER than the old locals-only count: it
+    // also blocks minting a local over a live mirror actor (a latent dup the locals-only map couldn't
+    // see). The post-alloc double-check below resolves the two-concurrent-mint TOCTOU (the old leaf
+    // mutex never prevented that either -- it released between the check and the commit; the
+    // double-check was always the real guard).
+    if (coop::element::Registry::Get().EidForActor(actor) != coop::element::kInvalidId) return;
+    auto* s = LoadSession();
+    const bool isHost = (s != nullptr && s->role() == coop::net::Role::Host);
+    if (isKerfur && s != nullptr && s->role() == coop::net::Role::Client) return;  // K-5: no client mint
     auto el = std::make_unique<coop::element::Prop>();
     auto toStr = [](const std::wstring& w) {
         std::string s; s.reserve(w.size());
@@ -394,40 +397,37 @@ void MarkPropElement(void* actor, const std::wstring& key, const std::wstring& c
                 actor, key.c_str());
         return;
     }
-    // Re-check after the alloc window (the leaf mutex was released across
-    // AllocAndInstall). If a concurrent MarkPropElement committed the same
-    // actor meanwhile, drop ours.
-    std::unique_lock<std::mutex> lk(g_actorToPropElementIdMutex);
-    if (g_actorToPropElementId.count(actor) > 0) {
-        // Lost the race. Release the leaf mutex, then extract our just-installed
-        // Element and route it through ElementDeleter (Inc4) -- this MarkPropElement
-        // can run on a parallel-anim WORKER thread (Init POST), so ~Prop ->
-        // Registry::FreeId must NOT run inline at this worker instant. Deferred to
-        // the game-thread Flush, being-deleted-flagged on Enqueue; the dtor returns
-        // `eid` to its origin stack + clears m_byId[eid] there. ABBA-safe: Take
-        // (type mutex) + Enqueue (deleter leaf mutex) run with the leaf reverse-map
-        // mutex released. (eid is in [1, kMaxElements) -- AllocHostId/AllocLocalId
-        // never return 0 -- so Take won't treat it as the wire-sentinel and no-op.)
-        lk.unlock();
-        coop::element::ElementDeleter::Get().Enqueue(PropMirrors().Take(eid));
+    // Re-check after the alloc window. AllocAndInstall wrote the unified Registry reverse
+    // (actor -> eid) at id-assignment. If a concurrent MarkPropElement also minted this actor
+    // and its write WON the reverse (reverse != our eid), drop ours: extract our just-installed
+    // Element + route it through ElementDeleter -- this MarkPropElement can run on a parallel-anim
+    // WORKER thread (Init POST), so ~Prop -> Registry::FreeId must NOT run inline at this worker
+    // instant. Deferred to the game-thread Flush, being-deleted-flagged on Enqueue. (eid is in
+    // [1, kMaxElements) -- AllocHostId/AllocLocalId never return 0 -- so Take won't no-op on the
+    // wire-sentinel.) Exactly ONE of the two racers' reverse writes wins, so exactly one survives.
+    if (coop::element::Registry::Get().EidForActor(actor) != eid) {
+        if (auto taken = PropMirrors().Take(eid))
+            coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
         return;
     }
-    g_actorToPropElementId[actor] = eid;
-    lk.unlock();
-    // Index key -> live actor for the O(1) wire-key de-dupe used by the connect
-    // re-snapshot (remote_prop::OnSpawn). Done AFTER the commit + OUTSIDE the
-    // reverse-map mutex so g_keyIndexMutex stays a non-nested leaf, and only on
-    // the winning commit path (the lost-race path above returns without
-    // indexing -> index/eid-map stay consistent).
+    // Index key -> live actor for the O(1) wire-key de-dupe used by the connect re-snapshot
+    // (remote_prop::OnSpawn). Done AFTER the commit + only on the winning path (the lost-race
+    // path above returns without indexing -> the key index + the registry reverse stay consistent).
     IndexKeyForActor_(actor, key, internalIdx);
 }
 
 coop::element::ElementId GetPropElementIdForActor(void* actor) {
     if (!actor) return coop::element::kInvalidId;
-    std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-    auto it = g_actorToPropElementId.find(actor);
-    if (it == g_actorToPropElementId.end()) return coop::element::kInvalidId;
-    return it->second;
+    // Sourced from the unified Registry reverse (sync-refactor 2026-06-28; the bespoke
+    // g_actorToPropElementId map is RETIRED). The reverse covers BOTH locals and mirrors,
+    // so re-impose this accessor's LOCALS-ONLY contract: a mirror actor resolves to
+    // kInvalidId here (the K2_DestroyActor PRE gate + the Init-POST broadcast stamp act on
+    // owned locals only; the mirror side has its own ResolveMirrorEidByActor).
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
+    if (eid == coop::element::kInvalidId) return coop::element::kInvalidId;
+    coop::element::Element* el = coop::element::Registry::Get().Get(eid);
+    if (!el || el->IsMirror()) return coop::element::kInvalidId;
+    return eid;
 }
 
 void RebindLocalElementActor(coop::element::ElementId eid, void* newActor) {
@@ -446,19 +446,10 @@ void RebindLocalElementActor(coop::element::ElementId eid, void* newActor) {
     void* oldActor = el->GetActor();
     if (oldActor == newActor) return;  // idempotent
     // Re-point the canonical Element (+ cached liveness index) so ResolveLiveActorByEid(eid)
-    // now resolves the new rendering of E.
+    // now resolves the new rendering of E. SetActor maintains the unified Registry reverse
+    // (NoteActorRebind: drops oldActor->eid, sets newActor->eid) -- the bespoke
+    // g_actorToPropElementId re-point is RETIRED (sync-refactor 2026-06-28).
     el->SetActor(newActor, R::InternalIndexOf(newActor));
-    // Re-point the reverse map: drop the OLD actor's entry only if it still names THIS eid
-    // (an address-recycle by a newer prop must not be disturbed), then bind newActor -> eid.
-    {
-        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-        if (oldActor) {
-            auto it = g_actorToPropElementId.find(oldActor);
-            if (it != g_actorToPropElementId.end() && it->second == eid)
-                g_actorToPropElementId.erase(it);
-        }
-        g_actorToPropElementId[newActor] = eid;
-    }
     UE_LOGI("prop_element_tracker::RebindLocalElementActor: eid=%u re-pointed %p -> %p (morph re-skin)",
             eid, oldActor, newActor);
 }
@@ -853,19 +844,15 @@ size_t ReapDeadLocalPropElements(size_t maxEvictions,
         if (evicted >= maxEvictions) break;
         if (pr.mirror) continue;                                   // wire mirror -> host's PropDestroy owns it
         if (R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;  // actor alive -> keep
-        // Dead LOCAL Prop Element. Clear the actor-keyed bookkeeping ONLY where it
-        // still maps to THIS eid: if pr.actor's address was recycled by a newer
-        // keyed prop, g_actorToPropElementId[pr.actor] now points at the new eid
-        // and must NOT be disturbed (that would un-track the live new Element).
-        bool ownActorEntry = false;
-        {
-            std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-            auto it = g_actorToPropElementId.find(pr.actor);
-            if (it != g_actorToPropElementId.end() && it->second == pr.id) {
-                g_actorToPropElementId.erase(it);
-                ownActorEntry = true;
-            }
-        }
+        // Dead LOCAL Prop Element. Clear the actor-keyed bookkeeping ONLY where the
+        // unified Registry reverse still maps pr.actor to THIS eid: if pr.actor's
+        // address was recycled by a newer keyed prop, EidForActor(pr.actor) now names
+        // the new eid and must NOT be disturbed (that would un-track the live new
+        // Element). The reverse entry itself is cleared by ~Element at the deferred
+        // Flush (NoteActorRebind, same ownership gate) -- no manual erase here
+        // (sync-refactor 2026-06-28; g_actorToPropElementId retired).
+        const bool ownActorEntry =
+            (coop::element::Registry::Get().EidForActor(pr.actor) == pr.id);
         if (ownActorEntry) {
             {
                 std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
@@ -931,10 +918,8 @@ bool DebugCheckPropElementReap() {
         UE_LOGW("propreap_test: FAIL -- AllocAndInstall returned kInvalidId (Registry exhausted?)");
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-        g_actorToPropElementId[deadActor] = deadEid;
-    }
+    // (AllocAndInstall already wrote the unified Registry reverse deadActor->deadEid at
+    // id-assignment; the bespoke g_actorToPropElementId write is retired 2026-06-28.)
     MarkKnownKeyedProp(deadActor);
     MarkProcessedInit(deadActor);
 
@@ -964,10 +949,7 @@ bool DebugCheckPropElementReap() {
         liveEl->SetName("synth-reap-live");
         liveEl->SetActor(liveActor, liveIdx);
         liveEid = PropMirrors().AllocAndInstall(std::move(liveEl), isHost);
-        if (liveEid != coop::element::kInvalidId) {
-            std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-            g_actorToPropElementId[liveActor] = liveEid;
-        }
+        // (AllocAndInstall wrote the registry reverse liveActor->liveEid; no bespoke map write.)
     }
 
     const bool preRegistered = (coop::element::Registry::Get().Get(deadEid) != nullptr) &&
@@ -980,9 +962,11 @@ bool DebugCheckPropElementReap() {
 
     const size_t reaped = ReapDeadLocalPropElements(256);
 
-    // Reverse map + processed-init must be cleared SYNCHRONOUSLY by the reaper.
-    const bool mapsCleared = (GetPropElementIdForActor(deadActor) == coop::element::kInvalidId) &&
-                             !HasProcessedInit(deadActor);
+    // processed-init is cleared SYNCHRONOUSLY by the reaper. The unified Registry reverse
+    // (deadActor->deadEid) is now owned by the Element lifecycle -- it clears at the deferred
+    // ~Element Flush (checked below with eidFreed), not synchronously in the reaper
+    // (sync-refactor 2026-06-28; g_actorToPropElementId retired).
+    const bool initCleared = !HasProcessedInit(deadActor);
     // The LIVE control must SURVIVE (IsLiveByIndex true -> reaper skips it). Read
     // BEFORE the cleanup below. Vacuously true only if we found no live object to
     // bind (impossible in a live process; defensive).
@@ -993,25 +977,23 @@ bool DebugCheckPropElementReap() {
     // The eid is freed only when the parked unique_ptr destructs -- force the
     // controlled game-thread Flush now (we ARE on the game thread) and re-check.
     coop::element::ElementDeleter::Get().Flush();
-    const bool eidFreed = (coop::element::Registry::Get().Get(deadEid) == nullptr);
+    // After the Flush the dead Element's dtor has run: its eid is freed AND the unified
+    // Registry reverse entry (deadActor->deadEid) is cleared (NoteActorRebind in ~Element).
+    const bool eidFreed = (coop::element::Registry::Get().Get(deadEid) == nullptr) &&
+                          (GetPropElementIdForActor(deadActor) == coop::element::kInvalidId);
 
     // Clean up the live control so the test leaves no synthetic element bound to a
-    // random live UObject in the real registry.
+    // random live UObject in the real registry. (The registry reverse clears at ~Element;
+    // no bespoke map erase needed.)
     if (liveEid != coop::element::kInvalidId) {
-        {
-            std::lock_guard<std::mutex> lk(g_actorToPropElementIdMutex);
-            auto it = g_actorToPropElementId.find(liveActor);
-            if (it != g_actorToPropElementId.end() && it->second == liveEid) {
-                g_actorToPropElementId.erase(it);
-            }
-        }
-        coop::element::ElementDeleter::Get().Enqueue(PropMirrors().Take(liveEid));
+        if (auto taken = PropMirrors().Take(liveEid))
+            coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
         coop::element::ElementDeleter::Get().Flush();
     }
 
-    const bool pass = (reaped >= 1) && mapsCleared && eidFreed && livePreserved;
-    UE_LOGI("propreap_test: forced-dead reap check %s -- reaped=%zu mapsCleared=%d eidFreed=%d livePreserved=%d (deadEid=%u, liveEid=%u, isHost=%d)",
-            pass ? "PASS" : "FAIL", reaped, mapsCleared ? 1 : 0, eidFreed ? 1 : 0,
+    const bool pass = (reaped >= 1) && initCleared && eidFreed && livePreserved;
+    UE_LOGI("propreap_test: forced-dead reap check %s -- reaped=%zu initCleared=%d eidFreed=%d livePreserved=%d (deadEid=%u, liveEid=%u, isHost=%d)",
+            pass ? "PASS" : "FAIL", reaped, initCleared ? 1 : 0, eidFreed ? 1 : 0,
             livePreserved ? 1 : 0, deadEid, liveEid, isHost ? 1 : 0);
     return pass;
 }

@@ -19,14 +19,16 @@
 //      Element. The Element is OWNED by the shared singleton
 //      coop::element::MirrorManager<Prop>::Instance() (the SAME manager
 //      remote_prop uses for wire mirrors) -- the bespoke g_propElementsById
-//      owner map is retired (RULE 2). This module keeps just ONE bespoke map:
-//      g_actorToPropElementId (actor* -> local eid), the reverse lookup the
-//      destroy gate + the Init-POST broadcast elementId stamp need. Lifetime
-//      mirrors npc_sync: MarkPropElement AllocAndInstall's the Element into
-//      the manager (m_mirror=false -> dtor FreeId) + records the reverse
-//      entry; UnmarkKnownKeyedProp erases the reverse entry then Take's the
-//      Element out of the manager + lets the dtor run outside the lock
-//      (ABBA-safe; FreeId acquires element::Registry::m_mutex).
+//      owner map is retired (RULE 2). The actor* -> local eid reverse the
+//      destroy gate + the Init-POST broadcast elementId stamp need is now the
+//      UNIFIED Registry reverse (Registry::EidForActor, sync-refactor
+//      2026-06-28; the bespoke g_actorToPropElementId map is RETIRED).
+//      GetPropElementIdForActor re-imposes the LOCALS-ONLY contract (mirror ->
+//      kInvalidId). Lifetime mirrors npc_sync: MarkPropElement AllocAndInstall's
+//      the Element into the manager (m_mirror=false -> dtor FreeId, which clears
+//      the registry reverse via NoteActorRebind); UnmarkKnownKeyedProp resolves
+//      the eid via the reverse then Take's the Element out + lets the dtor run
+//      outside the lock (ABBA-safe; FreeId acquires element::Registry::m_mutex).
 //
 // Extracted from prop_lifecycle.cpp 2026-05-29 (M-1 follow-up to prop_synth_key);
 // owner-map migrated to MirrorManager<Prop> 2026-05-30 (PR-FOUNDATION-3 Inc3).
@@ -106,9 +108,9 @@ bool IsBoundMirrorNative(void* actor);
 // trash channel (trash_channel / remote_prop::OnConvert): when this peer's OWN pile
 // (a local tracker Element) re-skins pile-A -> clump -> pile-B, the eid `E` must
 // follow the new UObject so the held-pose stream + a later grab/destroy resolve
-// it. Updates the Element's cached actor/liveness-index AND the reverse map
-// (g_actorToPropElementId): drops the old actor's entry (if it still points at
-// `eid`) and binds `newActor -> eid`. No-op for an unknown eid / a mirror eid
+// it. Updates the Element's cached actor/liveness-index; the unified Registry reverse
+// follows automatically (SetActor -> NoteActorRebind drops the old actor's entry if it
+// still names `eid` and binds `newActor -> eid`). No-op for an unknown eid / a mirror eid
 // (mirrors are rebound by remote_prop::RegisterPropMirror with rebindInPlace).
 // Game-thread only (the morph edges all run on the game thread). Keyless props
 // only -- it does NOT touch the key index (chipPile/clump carry Key=None).
