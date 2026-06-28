@@ -70,8 +70,30 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
 
 THE WHOLE REFACTOR IS BUILT to its RULE-1-correct end: the identity module (one eid<->actor owner across create / adopt
 / morph / destroy) is ASSEMBLED, the router is consolidated, and the residue/authority items were assessed -- folding
-rejected as a perf-regression/churn, the one real open item (D2 corrective-pose) is the deferred symptom. NEXT: hands-on
-the whole module (3 symptoms + D1/D2 + regression) -> push the assembled module as the sync ETALON.
+rejected as a perf-regression/churn, the one real open item (D2 corrective-pose) is the deferred symptom.
+
+### AUTONOMOUS VERIFICATION 2026-06-28 (~20:50, user off-PC + green-lit; binary hash-verified `0E04B197` both peers)
+Two real LAN scenarios PASS against the assembled module -- the two MOST-refactored paths are non-regressed:
+- **`mp.py kerfurtoggle`** (convert/identity path): client toggled a kerfur off->on; BOTH adopts went BY EID
+  (`adopted parked turn-off/-on ghost ... by eid -- deterministic, no fuzzy miss`), `orphan_destroy=0`, `cascade=0`,
+  `out_of_range=0`, host `ElementDeleter: flushed 1 deferred element`. Keystone bound the kerfur prop AND chipPiles
+  via `CreateOrAdoptPropMirror`; router dispatched both families w/ ZERO `unknown ReliableKind`; clean teardown
+  (`UnregisterPropMirror eid drained`). => keystone + SyncRouter + convert + destroy funnel CLEAN on a real toggle.
+  (The scenario's own verdict FALSE-FAILed on the RETIRED `Gap-I-1 FUZZY MATCH` marker -- the D2 fix adopts by-eid;
+  harness assertion fixed `62780b92`.) The 970 `BeginDeferred null` = fresh-boot world-load-window spawn-nulls
+  (orthogonal to the refactor; the spawn factory is upstream of the bind; world recovered + piles bound).
+- **`mp.py joinchurn` PASS** (join/reconcile path, real s_1234 save-world join): `divergence-sweep=1` (fired once,
+  no churn re-arm), `incremental-PropSpawn=3`, `unclaimed-destroyed=0` (NO world-wipe -- the >50% valve held),
+  `no-local-match-flood=0`, `kerfur materialized=1` with `0 spurious converts`, `malformed_drops=0`, RSS stable
+  ~3150MB. => join census + reconcile + pile-presence + kerfur-mirror + liveness all clean.
+
+NOT autonomously closable (VISUAL / needs the user's eyes): #1 kerfur twitch + #2 hang-in-air-on-off -- downstream of
+a clean adopt, not reproduced (0 spurious converts) but neither scenario sustained a converted kerfur long enough to
+expose them. #3 pile-host-only looks CLEARED (joinchurn unclaimed-destroyed=0 = client piles not dropped) -> likely the
+transitional noise predicted. PUSH HELD for the user's explicit go (push asks; the visual symptoms want a human pass).
+
+NEXT: user eyeballs #1/#2 (+ a client steady-grab for D1) via `research/handson_runbook_2026-06-28_whole_module.md`,
+OR green-lights the push of the autonomously-verified assembled module as the sync ETALON.
 
 ### OPEN SYMPTOMS seen 2026-06-28 (DO NOT FIX NOW -- verify-after-assembly)
 Decided 2026-06-28: the hands-on D1/D2 check was PREMATURE -- the module is half-moved (reconcile/bind
