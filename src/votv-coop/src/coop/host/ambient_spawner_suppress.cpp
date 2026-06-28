@@ -17,7 +17,7 @@
 // tick), the precedent-proven interceptable shapes (changeWindOrigin v50,
 // prop_openContainer ReceiveTick) -- NOT the v44 EX_LocalVirtualFunction trap.
 
-#include "coop/ambient_spawner_suppress.h"
+#include "coop/host/ambient_spawner_suppress.h"
 
 #include "coop/net/session.h"
 #include "ue_wrap/game_thread.h"

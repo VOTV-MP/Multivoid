@@ -5,7 +5,7 @@
 #include "coop/net/lobby_announcer.h"
 #include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask)
 #include "coop/join_progress.h"
-#include "coop/shutdown.h"
+#include "coop/host/shutdown.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>

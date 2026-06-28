@@ -1,8 +1,8 @@
 // coop/moderation.cpp -- see coop/moderation.h.
 
-#include "coop/moderation.h"
+#include "coop/host/moderation.h"
 
-#include "coop/ban_list.h"
+#include "coop/host/ban_list.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/net/session.h"
 #include "coop/player_handshake.h"

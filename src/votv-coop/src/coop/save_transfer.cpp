@@ -10,8 +10,8 @@
 #include "coop/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/save_identity_bind.h"  // Phase 2b: client eid-range bind (SetReceivedMap / OnDisconnect)
 #include "coop/save_identity_map.h"  // Phase 1B: host-side keyless index->eid map build + log (gated, no wire)
-#include "coop/save_guard.h"
-#include "coop/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
+#include "coop/host/save_guard.h"
+#include "coop/host/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
 #include "ue_wrap/engine.h"      // b3: GetActorLocation/GetActorRotation (host current pile pos)
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"  // b3: IsLive (skip a dead/mid-carry host actor)

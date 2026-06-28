@@ -2,7 +2,7 @@
 
 #include "coop/dev/dev_gate.h"
 #include "coop/players_registry.h"
-#include "coop/shutdown.h"
+#include "coop/host/shutdown.h"
 #include "coop/ini_config.h"
 
 #include "ue_wrap/engine.h"

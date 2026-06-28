@@ -4,7 +4,7 @@
 
 #include "coop/ini_config.h"
 #include "coop/players_registry.h"
-#include "coop/shutdown.h"
+#include "coop/host/shutdown.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"

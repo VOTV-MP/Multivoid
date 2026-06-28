@@ -21,7 +21,7 @@
 #include "coop/voice/voice_chat.h"
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/pinecone_probe.h"
-#include "coop/ambient_spawner_suppress.h"  // Fork C: client ambient flora/forage spawner suppression
+#include "coop/host/ambient_spawner_suppress.h"  // Fork C: client ambient flora/forage spawner suppression
 #include "coop/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/kerfur_convert.h"  // v67: host-authoritative kerfur on/off conversion (the dupe fix)
 #include "coop/kerfur_command.h"  // v74: host-authoritative kerfur menu command relay + ownership follow
@@ -50,15 +50,15 @@
 #include "coop/world/time_sync.h"
 #include "coop/window_sync.h"
 #include "coop/join_progress.h"
-#include "coop/garbage_sync.h"
+#include "coop/host/garbage_sync.h"
 #include "coop/trash_channel.h"
 #include "coop/puppet_carry_drive.h"
 #include "coop/trash_clump_pose_stream.h"
 #include "coop/trash_collect_sync.h"
 #include "coop/trash_proxy.h"
 #include "coop/trash_pile_sync.h"
-#include "coop/save_block.h"
-#include "coop/save_button_disable.h"
+#include "coop/host/save_block.h"
+#include "coop/host/save_button_disable.h"
 #include "coop/grab_observer.h"
 #include "coop/social/item_activate.h"
 #include "coop/social/player_damage.h"

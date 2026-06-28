@@ -1,6 +1,6 @@
 // coop/shutdown.cpp -- see shutdown.h.
 
-#include "coop/shutdown.h"
+#include "coop/host/shutdown.h"
 
 #include "coop/net/session.h"
 #include "coop/social/player_inventory_sync.h"  // v73: flush inventories on shutdown

@@ -1,5 +1,5 @@
 // save_indicator_suppress -- see header. PHASE 1: detect-log (read-only), host-side.
-#include "coop/save_indicator_suppress.h"
+#include "coop/host/save_indicator_suppress.h"
 
 #include <chrono>
 

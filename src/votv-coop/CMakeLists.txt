@@ -203,11 +203,11 @@ add_library(votv-coop SHARED
     src/ue_wrap/spawn_menu.cpp
     src/coop/remote_player.cpp
     src/coop/remote_prop.cpp
-    src/coop/save_guard.cpp
+    src/coop/host/save_guard.cpp
     src/coop/world/balance_sync.cpp
-    src/coop/save_block.cpp
-    src/coop/save_button_disable.cpp
-    src/coop/multiplayer_menu.cpp
+    src/coop/host/save_block.cpp
+    src/coop/host/save_button_disable.cpp
+    src/coop/host/multiplayer_menu.cpp
     src/coop/nameplate.cpp
     src/coop/social/chat_feed.cpp
     src/coop/event_feed.cpp
@@ -241,7 +241,7 @@ add_library(votv-coop SHARED
     src/coop/social/flashlight_click_sound.cpp
     src/coop/prop_sound.cpp
     src/coop/social/inventory_pickup_sync.cpp
-    src/coop/shutdown.cpp
+    src/coop/host/shutdown.cpp
     src/coop/players_registry.cpp
     src/coop/mirror_defer.cpp
     src/coop/join_curtain.cpp
@@ -264,8 +264,8 @@ add_library(votv-coop SHARED
     src/coop/prop_stick_sync.cpp
     src/coop/prop_synth_key.cpp
     src/coop/remote_prop_spawn.cpp
-    src/coop/garbage_sync.cpp
-    src/coop/ambient_spawner_suppress.cpp
+    src/coop/host/garbage_sync.cpp
+    src/coop/host/ambient_spawner_suppress.cpp
     src/coop/host_spawn_watcher.cpp
     src/coop/trash_channel.cpp
     src/coop/trash_collect_sync.cpp
@@ -297,7 +297,7 @@ add_library(votv-coop SHARED
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
     src/coop/save_transfer.cpp
-    src/coop/save_indicator_suppress.cpp
+    src/coop/host/save_indicator_suppress.cpp
     src/coop/session_manager.cpp
     src/coop/join_progress.cpp
     src/coop/net_pump.cpp
@@ -364,8 +364,8 @@ add_library(votv-coop SHARED
     src/ui/toast.cpp
     src/ui/chat_input.cpp
     src/coop/roster.cpp
-    src/coop/ban_list.cpp
-    src/coop/moderation.cpp
+    src/coop/host/ban_list.cpp
+    src/coop/host/moderation.cpp
     src/harness/harness.cpp
     src/harness/harness_diag.cpp
     src/harness/autotest.cpp

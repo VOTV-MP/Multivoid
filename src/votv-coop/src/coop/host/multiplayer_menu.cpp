@@ -7,7 +7,7 @@
 // by ue_wrap::engine::InjectCanvasButton (engine substrate); this file owns the
 // feature: which menu, where, and that the click opens the browser.
 
-#include "coop/multiplayer_menu.h"
+#include "coop/host/multiplayer_menu.h"
 
 #include "coop/ini_config.h"
 #include "coop/join_progress.h"

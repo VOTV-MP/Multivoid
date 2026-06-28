@@ -7,7 +7,7 @@
 #include "coop/npc_sync.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"   // RemotePlayer::GetActor (the on-client wisp test spawn)
-#include "coop/shutdown.h"
+#include "coop/host/shutdown.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"

@@ -17,7 +17,7 @@
 // any future garbage-only subclass of openContainer) cancels. Storage
 // suitcases / drawers / other open containers tick normally.
 
-#include "coop/garbage_sync.h"
+#include "coop/host/garbage_sync.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
