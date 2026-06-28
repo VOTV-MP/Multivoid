@@ -1220,6 +1220,13 @@ static void RunDivergenceSweep_(void* localPlayer) {
                 "actor(s) (>50%%); the host snapshot is INCOMPLETE (partial/racing bracket), not a "
                 "divergence. Keeping the loaded world (%d claimed stay converged).",
                 doomed.size(), inClass, claimedCount);
+        // (sync-refactor 2026-06-27) The membership DOOM-destroy is aborted (incomplete snapshot), but the
+        // IDENTITY reconcile must STILL run -- it is per-eid, armed-bounded (re-bind/retire by stable
+        // position/eid), NEVER a mass-destroy, so it is safe even on an incomplete world. Skipping it here
+        // was why variant-1 / twin-retire / b3 never ran on a save-transfer join with a mass-purge (the
+        // 15:25 verify: valve aborted -> reconcile skipped -> purge-churned natives left unbound). Run it
+        // BEFORE pile_reconcile::Reset() clears the pending twins/corrections.
+        coop::sync::RunIdentityReconcile(/*joinSweep=*/false);
         g_claimedActors.clear();
         g_claimTrackingActive = false;
         coop::pile_reconcile::Reset();

@@ -3,6 +3,7 @@
 #include "coop/sync/sync_reconcile.h"
 
 #include "coop/pile_reconcile.h"
+#include "coop/prop_element_tracker.h"  // InPurgeEpisode (post-purge re-bind trigger)
 #include "coop/remote_prop_spawn.h"   // HasLoadTailQuiesced
 #include "coop/save_identity_bind.h"
 #include "ue_wrap/log.h"
@@ -19,6 +20,14 @@ namespace {
 // static is safe.
 constexpr auto kSteadyReconcileDebounce = std::chrono::milliseconds(250);
 std::chrono::steady_clock::time_point g_lastSteadyReconcile{};
+
+// Post-purge re-bind window (the variant-1 trigger). A mass-purge (engine GC during a save-transfer join)
+// reaps the bound save-natives; the game then RE-CREATES them UNBOUND. The join one-shot sweep often fires
+// DURING the purge (before the re-creates land) or aborts on the incomplete snapshot, so variant-1 must
+// also run AFTER the purge drains. While InPurgeEpisode is active we just remember the time; for this window
+// AFTER it clears we run RunIdentityReconcile on the debounce so variant-1 re-binds the re-created natives.
+constexpr auto kPostPurgeWindow = std::chrono::seconds(6);
+std::chrono::steady_clock::time_point g_lastPurgeAt{};
 }  // namespace
 
 void RunIdentityReconcile(bool joinSweep) {
@@ -39,12 +48,20 @@ void OnReconcileTick() {
     // mid-load native set is not yet trustworthy. Then: only when there is armed
     // reconcile work, and only on the debounce edge, do the (bounded) walk.
     if (!coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
-    if (!coop::pile_reconcile::HasPendingWork()) return;
     const auto now = std::chrono::steady_clock::now();
+    // Track the purge: while draining, just remember when. The re-creates land AFTER it clears.
+    const bool purging = coop::prop_element_tracker::InPurgeEpisode();
+    if (purging) g_lastPurgeAt = now;
+    const bool postPurge = g_lastPurgeAt.time_since_epoch().count() != 0 && !purging &&
+                           (now - g_lastPurgeAt) < kPostPurgeWindow;
+    // Run when there's armed twin/b3 work (D1) OR we're in the post-purge window (variant-1 re-binds the
+    // re-created natives). Otherwise nothing to do -- no GUObjectArray walk (perf rule).
+    if (!coop::pile_reconcile::HasPendingWork() && !postPurge) return;
     if (now - g_lastSteadyReconcile < kSteadyReconcileDebounce) return;
     g_lastSteadyReconcile = now;
-    UE_LOGI("sync_reconcile: steady-state identity reconcile (pending work past quiescence -- "
-            "a save-pile grabbed/moved after the join sweep; retiring its stale twin)");
+    UE_LOGI("sync_reconcile: steady-state identity reconcile (%s past quiescence)",
+            postPurge ? "post-purge window -- re-binding GC-churned natives (variant-1)"
+                      : "pending twin/b3 work -- a save-pile grabbed/moved after the join sweep");
     RunIdentityReconcile(/*joinSweep=*/false);
 }
 
