@@ -1455,6 +1455,12 @@ def cmd_kerfurtoggle(args) -> None:
     c_on = _log_count(client_log, "POLL turn-on")
     c_claim_prop = _log_count(client_log, "(prop turn-off)")
     c_claim_npc = _log_count(client_log, "(NPC turn-on)")
+    # Prop turn-off adopt: the D2 fix (df589591) adopts the parked ghost BY EID
+    # ("adopted parked turn-off ghost as PROP mirror ... by eid"), which REPLACED the
+    # old Gap-I-1 fuzzy-position match. Accept either: by-eid is the primary path,
+    # fuzzy is the legacy fallback. (Checking only the fuzzy marker false-FAILed the
+    # whole scenario once adopt went by-eid -- 2026-06-28.)
+    c_prop_adopt = _log_count(client_log, "adopted parked turn-off ghost as PROP mirror")
     c_fuzzy = _log_count(client_log, "Gap-I-1 FUZZY MATCH 'prop_kerfurOmega")
     c_adopt = _log_count(client_log, "npc-mirror[adopt]: bound EXISTING")
     c_orphan = _log_count(client_log, "orphan conversion ghost")
@@ -1469,7 +1475,7 @@ def cmd_kerfurtoggle(args) -> None:
     log("--- KERFURTOGGLE VERDICT ---")
     log(f"client: toggled={c_toggled} turn_off={c_off} turn_on={c_on} "
         f"claim_prop={c_claim_prop} claim_npc={c_claim_npc} "
-        f"fuzzy_prop_adopt={c_fuzzy} npc_adopt={c_adopt} orphan_destroy={c_orphan} cascade={c_cascade}")
+        f"prop_adopt(eid)={c_prop_adopt} fuzzy_fallback={c_fuzzy} npc_adopt={c_adopt} orphan_destroy={c_orphan} cascade={c_cascade}")
     log(f"host: exec_off={h_off} exec_on={h_on} out_of_range_req={h_outofrange}")
     fails: list[str] = []
     if c_toggled < 2:
@@ -1482,8 +1488,8 @@ def cmd_kerfurtoggle(args) -> None:
         fails.append("client did NOT claim+freeze the turn-off ghost prop")
     if c_claim_npc < 1:
         fails.append("client did NOT claim+park the turn-on ghost NPC")
-    if c_fuzzy < 1:
-        fails.append("PROP ADOPT FAILED: no Gap-I-1 fuzzy match of the frozen ghost (kerfur moved >30cm? or host prop not broadcast)")
+    if c_prop_adopt < 1 and c_fuzzy < 1:
+        fails.append("PROP ADOPT FAILED: no by-eid adopt ('adopted parked turn-off ghost as PROP mirror') AND no Gap-I-1 fuzzy fallback -- the frozen ghost was not adopted (host prop not broadcast? eid mismatch?)")
     if c_adopt < 1:
         fails.append("NPC ADOPT FAILED: no 'bound EXISTING' -> the turn-on fresh-spawned a duplicate beside the ghost (the dupe)")
     if c_orphan > 0:
