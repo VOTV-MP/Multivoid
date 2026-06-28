@@ -339,10 +339,15 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
 
     // Deferred-element destruction flush (MTA CElementDeleter shape; see
     // coop/element/element_deleter.h). Drains, on the game thread at one
-    // controlled point, any Elements parked for destruction by owner-map
-    // drains since the last tick. Steady-state cost is a single uncontended
-    // mutex acquire + empty-queue check (no producer routes destruction here
-    // yet -- that lands with the Npc/Prop ownership migration).
+    // controlled point, any Elements parked for destruction since the last
+    // tick. Steady-state cost is a single uncontended mutex acquire +
+    // empty-queue check. This IS the sync module's single deferred-retire
+    // funnel: prop_element_tracker (reap/unmark), npc_sync, npc_world_enum,
+    // trash_proxy, world_actor_sync, and kerfur_reconcile all route Element
+    // teardown through ElementDeleter::Enqueue (13 producers as of the
+    // 2026-06-28 sync consolidation). Bare-actor retires that carry site-
+    // specific pre-steps (proxy un-root, echo-suppressed convert destroy)
+    // stay direct -- only their Element bookkeeping funnels here.
     coop::element::ElementDeleter::Get().Flush();
 
     // Dead-Prop-Element reconciliation (PR-FOUNDATION 2026-05-30). A mass GC

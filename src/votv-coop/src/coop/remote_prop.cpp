@@ -1090,9 +1090,9 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     }
     // Rebind E onto the new rendering. RegisterPropMirror is the single rebind entry point -- it routes
     // on the Element's authoritative IsMirror() flag (a MIRROR -> SetActor; a host's OWN local element ->
-    // RebindLocalElementActor, keeping the forward map consistent), so this is correct even when cur is
-    // momentarily dead (findings 3/6/7/15 -- the old eIsLocal-from-live-cur guess silently mis-routed a
-    // local element through the mirror path and desynced g_actorToPropElementId).
+    // RebindLocalElementActor, keeping the unified actor->eid reverse consistent), so this is correct even
+    // when cur is momentarily dead (findings 3/6/7/15 -- the old eIsLocal-from-live-cur guess silently
+    // mis-routed a local element through the mirror path and desynced the actor->eid reverse).
     const std::wstring cls = R::ClassNameOf(next);
     RegisterPropMirror(E, next, L"", cls, senderSlot, /*rebindInPlace=*/true);
     // Echo-destroy the OLD rendering AFTER the rebind (so E always resolves to a live actor -- no

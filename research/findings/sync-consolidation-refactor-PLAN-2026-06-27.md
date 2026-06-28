@@ -36,10 +36,31 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
   is a high-churn sweep across the whole packet dispatch that silently breaks ALL sync on one missed case -- do it
   FRESH, compile-verified, not at the tail of a long turn.
 
-**REMAINING:** SyncRouter (scoped above) -> convert pipeline (the OnConvert morph retire-then-rebind centralizes
-INTO CreateOrAdopt = the collision-reconcile "retire-stale" half) -> SyncDestroyQueue (ElementDeleter IS the core;
-route the scattered DestroyActor sites through it) -> SyncAuthority (D2 kerfur predict->relay lands here) -> step-8
-residue. THEN hands-on whole (3 symptoms + D1/D2 + regression) -> push the assembled module as the etalon.
+- **CONVERT pipeline = ALREADY CONSOLIDATED at the identity layer (verified 2026-06-28, no move needed).** Both
+  morph call sites -- `remote_prop.cpp:1010` (trash convert-beat-spawn hand-off, `rebindInPlace=morphBoundNative`)
+  and `remote_prop.cpp:1097` (aprop/kerfur re-skin, `rebindInPlace=true`) -- route through
+  `RegisterPropMirror` -> `CreateOrAdoptPropMirror`, whose `morph` path IS the single rebind decision (SetActor for
+  a MIRROR / RebindLocalElementActor for a LOCAL, on the Element's authoritative IsMirror flag). The OLD-actor
+  RETIRE correctly STAYS at the call site: it carries convert-DOMAIN pre-steps (`MarkIncomingDestroy` echo-suppress,
+  `ClearAnyDriveFor`, `UnmarkKnownKeyedProp`) that must NOT be smeared into the identity keystone (RULE 1 / RULE 7).
+  The retire ORDER (rebind-then-destroy, so the eid never resolves to a dead actor) is already the invariant. The
+  earlier plan note ("centralize the retire INTO CreateOrAdopt") was REJECTED on inspection -- it would split
+  domain concerns. Convert is done.
+- **SyncDestroyQueue = ALREADY THE FUNNEL (verified 2026-06-28, no move needed).** `element::ElementDeleter`
+  (Enqueue any-thread -> Flush game-thread at `net_pump.cpp:346`, top of Tick) is the single deferred Element-retire
+  funnel. 13 producers route through `ElementDeleter::Get().Enqueue`: prop_element_tracker (4: reap/unmark/double-
+  check), npc_sync (5), npc_world_enum (1), trash_proxy (1), world_actor_sync (2), kerfur_reconcile (1). The
+  remaining DIRECT actor destroys (trash_proxy un-root `:223`, OnConvert echo-suppressed `:1104`, the LOCAL native
+  pile `:1013`) are bare-actor retires with site-specific pre-steps -- only their ELEMENT bookkeeping funnels here,
+  which is correct. The stale "no producer routes destruction here yet" comment at net_pump was corrected this run.
+
+**REMAINING (genuinely open):** SyncAuthority (D2 kerfur predict->relay = the host->client corrective-pose mechanism;
+this is the deferred-symptom work, NOT a consolidation move -- there is no scattered authority code to gather beyond
+the existing host-authoritative convert in kerfur_convert.cpp) · SyncRouter (scoped above -- orthogonal dispatch
+hygiene, a LATERAL trade not an identity fix; do fresh) · step-8 residue (purge-flag 3-way / g_seedWorld vs
+g_reapWorld / re-seed asymmetry -> coop::sync::Tick lifecycle). THE IDENTITY MODULE ITSELF (the subject of this
+refactor: one eid<->actor owner across create/adopt/morph/destroy) IS ASSEMBLED. THEN hands-on whole (3 symptoms +
+D1/D2 + regression) -> push the assembled module as the etalon.
 
 ### OPEN SYMPTOMS seen 2026-06-28 (DO NOT FIX NOW -- verify-after-assembly)
 Decided 2026-06-28: the hands-on D1/D2 check was PREMATURE -- the module is half-moved (reconcile/bind

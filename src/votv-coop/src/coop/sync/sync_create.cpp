@@ -56,8 +56,9 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         // Route on the Element's AUTHORITATIVE m_mirror flag -- NOT a caller's
         // runtime guess: a MIRROR rebinds via SetActor here; a LOCAL element (a host
         // applying a client's convert against its OWN pile) MUST go through
-        // RebindLocalElementActor so the forward map g_actorToPropElementId stays
-        // consistent. Only the morph callers pass true.
+        // RebindLocalElementActor so the unified actor->eid reverse (Registry::
+        // EidForActor, maintained by NoteActorRebind) stays consistent. Only the
+        // morph callers pass true.
         if (morph) {
             if (existing->IsMirror()) {
                 existing->SetActor(actor, R::InternalIndexOf(actor));
