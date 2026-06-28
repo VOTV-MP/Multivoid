@@ -1,10 +1,10 @@
 // coop/player_inventory_sync.cpp -- see coop/player_inventory_sync.h.
 
-#include "coop/player_inventory_sync.h"
+#include "coop/social/player_inventory_sync.h"
 
 #include "coop/blob_chunks.h"
 #include "coop/ini_config.h"
-#include "coop/inventory_wire.h"
+#include "coop/social/inventory_wire.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player_handshake.h"

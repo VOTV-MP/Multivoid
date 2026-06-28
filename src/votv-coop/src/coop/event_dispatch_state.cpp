@@ -12,8 +12,8 @@
 #include "coop/signal_catch_sync.h"
 #include "coop/sleep_sync.h"
 #include "coop/device_occupancy.h"
-#include "coop/email_sync.h"
-#include "coop/player_inventory_sync.h"  // v73 inventory blob receiver
+#include "coop/social/email_sync.h"
+#include "coop/social/player_inventory_sync.h"  // v73 inventory blob receiver
 #include "coop/signal_sync.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/drone_sync.h"

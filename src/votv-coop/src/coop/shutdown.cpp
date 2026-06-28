@@ -3,7 +3,7 @@
 #include "coop/shutdown.h"
 
 #include "coop/net/session.h"
-#include "coop/player_inventory_sync.h"  // v73: flush inventories on shutdown
+#include "coop/social/player_inventory_sync.h"  // v73: flush inventories on shutdown
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"

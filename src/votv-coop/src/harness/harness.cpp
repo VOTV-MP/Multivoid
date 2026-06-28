@@ -19,16 +19,16 @@
 #include "coop/event_feed.h"
 #include "coop/garbage_sync.h"
 #include "coop/grab_observer.h"
-#include "coop/item_activate.h"
+#include "coop/social/item_activate.h"
 #include "coop/players_registry.h"
 #include "coop/ban_list.h"
 #include "coop/moderation.h"
 #include "coop/ini_config.h"
 #include "coop/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
-#include "coop/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
+#include "coop/social/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
 #include "coop/session_manager.h"
 #include "coop/nameplate.h"
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 #include "coop/roster.h"
 #include "coop/net/session.h"
 #include "coop/net_pump.h"

@@ -2,7 +2,7 @@
 
 #include "coop/sleep_sync.h"
 
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 #include "coop/net/session.h"
 #include "coop/world/time_sync.h"
 

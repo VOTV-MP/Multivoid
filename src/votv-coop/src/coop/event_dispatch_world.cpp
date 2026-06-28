@@ -8,10 +8,10 @@
 
 #include "coop/element/registry.h"
 
-#include "coop/chat_sync.h"
+#include "coop/social/chat_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/firefly_sync.h"
-#include "coop/inventory_pickup_sync.h"
+#include "coop/social/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
 #include "coop/world/weather_sync.h"

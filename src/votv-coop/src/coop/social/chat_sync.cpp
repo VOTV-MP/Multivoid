@@ -1,8 +1,8 @@
 // coop/chat_sync.cpp -- see coop/chat_sync.h.
 
-#include "coop/chat_sync.h"
+#include "coop/social/chat_sync.h"
 
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player_handshake.h"

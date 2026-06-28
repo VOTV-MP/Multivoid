@@ -2,7 +2,7 @@
 
 #include "ui/chat_input.h"
 
-#include "coop/chat_sync.h"
+#include "coop/social/chat_sync.h"
 
 #include "imgui.h"
 

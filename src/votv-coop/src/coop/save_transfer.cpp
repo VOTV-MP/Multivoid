@@ -2,7 +2,7 @@
 
 #include "coop/save_transfer.h"
 
-#include "coop/chat_feed.h"  // v86 Path 1c hands-on: in-game JOIN-WINDOW OPEN cue (gated on pile_delta_probe)
+#include "coop/social/chat_feed.h"  // v86 Path 1c hands-on: in-game JOIN-WINDOW OPEN cue (gated on pile_delta_probe)
 #include "coop/element/element.h"   // b3: Element::GetActor() (resolve the host pile actor by eid)
 #include "coop/element/registry.h"  // b3: Registry::Get().Get(eid) (the host eid->actor lookup)
 #include "coop/ini_config.h"  // IsIniKeyTrue -- the hands-on test-cue gate

@@ -3,7 +3,7 @@
 #include "coop/dev/inventory_probe.h"
 
 #include "coop/ini_config.h"
-#include "coop/inventory_wire.h"
+#include "coop/social/inventory_wire.h"
 #include "ue_wrap/inventory.h"
 #include "ue_wrap/log.h"
 

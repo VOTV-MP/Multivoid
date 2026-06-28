@@ -5,7 +5,7 @@
 // click-sound subsystem is conceptually distinct from the flashlight
 // state-sync wire / observer logic).
 
-#include "coop/flashlight_click_sound.h"
+#include "coop/social/flashlight_click_sound.h"
 
 #include "coop/players_registry.h"
 #include "ue_wrap/call.h"

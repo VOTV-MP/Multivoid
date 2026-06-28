@@ -12,10 +12,10 @@
 //   3) ApplyToPuppet() is the RECEIVER path -- invoked from event_feed
 //      ::Update's drain loop with the puppet's actor pointer.
 
-#include "coop/item_activate.h"
+#include "coop/social/item_activate.h"
 
 #include "coop/element/element.h"
-#include "coop/flashlight_click_sound.h"
+#include "coop/social/flashlight_click_sound.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/players_registry.h"

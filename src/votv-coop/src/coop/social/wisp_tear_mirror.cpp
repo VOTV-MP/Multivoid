@@ -1,6 +1,6 @@
 // coop/wisp_tear_mirror.cpp -- see coop/wisp_tear_mirror.h.
 
-#include "coop/wisp_tear_mirror.h"
+#include "coop/social/wisp_tear_mirror.h"
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"

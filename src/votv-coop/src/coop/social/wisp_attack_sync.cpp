@@ -1,6 +1,6 @@
 // coop/wisp_attack_sync.cpp -- see coop/wisp_attack_sync.h.
 
-#include "coop/wisp_attack_sync.h"
+#include "coop/social/wisp_attack_sync.h"
 
 #include "coop/element/element.h"
 #include "coop/element/mirror_manager.h"
@@ -11,7 +11,7 @@
 #include "coop/net/session.h"
 #include "coop/npc_sync.h"
 #include "coop/players_registry.h"
-#include "coop/wisp_tear_mirror.h"
+#include "coop/social/wisp_tear_mirror.h"
 
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"

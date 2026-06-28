@@ -29,7 +29,7 @@
 
 #include "harness/autotest.h"
 
-#include "coop/item_activate.h"
+#include "coop/social/item_activate.h"
 #include "coop/players_registry.h"
 #include "coop/prop_element_tracker.h"
 #include "coop/remote_player.h"

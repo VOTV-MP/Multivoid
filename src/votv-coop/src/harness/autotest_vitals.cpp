@@ -30,7 +30,7 @@
 #include "harness/screenshot.h"
 
 #include "coop/net_pump.h"
-#include "coop/player_damage.h"
+#include "coop/social/player_damage.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "coop/dev/teleport_client.h"

@@ -1,6 +1,6 @@
 // coop/email_sync.cpp -- see coop/email_sync.h.
 
-#include "coop/email_sync.h"
+#include "coop/social/email_sync.h"
 
 #include "coop/blob_chunks.h"
 #include "coop/net/session.h"

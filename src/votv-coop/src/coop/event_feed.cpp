@@ -11,7 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/world/balance_sync.h"
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 #include "coop/ini_config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactable_sync.h"
 #include "coop/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
@@ -21,8 +21,8 @@
 #include "coop/subsystems.h"
 #include "coop/npc_adoption.h"
 #include "coop/kerfur_prop_adoption.h"  // K-6  // v75: OnSnapshotComplete (deferred-adoption ghost-sweep gate)
-#include "coop/player_damage.h"
-#include "coop/wisp_tear_mirror.h"  // v72 Killer Wisp: WispGrab/WispTear receivers
+#include "coop/social/player_damage.h"
+#include "coop/social/wisp_tear_mirror.h"  // v72 Killer Wisp: WispGrab/WispTear receivers
 #include "coop/player_handshake.h"
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"

@@ -5,7 +5,7 @@
 // + Inc3 hurt-flash) is already wired, so this module's job ends at causing the
 // owner's local saveSlot.health to drop.
 
-#include "coop/player_damage.h"
+#include "coop/social/player_damage.h"
 
 #include "coop/element/element.h"
 #include "coop/element/player.h"

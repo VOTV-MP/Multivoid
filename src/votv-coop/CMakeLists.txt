@@ -209,12 +209,12 @@ add_library(votv-coop SHARED
     src/coop/save_button_disable.cpp
     src/coop/multiplayer_menu.cpp
     src/coop/nameplate.cpp
-    src/coop/chat_feed.cpp
+    src/coop/social/chat_feed.cpp
     src/coop/event_feed.cpp
     src/coop/event_dispatch_entity.cpp
     src/coop/event_dispatch_state.cpp
     src/coop/event_dispatch_world.cpp
-    src/coop/chat_sync.cpp
+    src/coop/social/chat_sync.cpp
     src/coop/turbine_sync.cpp
     src/coop/interactable_sync.cpp
     src/coop/kerfur_convert.cpp
@@ -236,11 +236,11 @@ add_library(votv-coop SHARED
     src/coop/grime_sync.cpp
     src/coop/player_handshake.cpp
     src/coop/grab_observer.cpp
-    src/coop/item_activate.cpp
-    src/coop/player_damage.cpp
-    src/coop/flashlight_click_sound.cpp
+    src/coop/social/item_activate.cpp
+    src/coop/social/player_damage.cpp
+    src/coop/social/flashlight_click_sound.cpp
     src/coop/prop_sound.cpp
-    src/coop/inventory_pickup_sync.cpp
+    src/coop/social/inventory_pickup_sync.cpp
     src/coop/shutdown.cpp
     src/coop/players_registry.cpp
     src/coop/mirror_defer.cpp
@@ -307,12 +307,12 @@ add_library(votv-coop SHARED
     src/coop/console_state_sync.cpp
     src/coop/signal_catch_sync.cpp
     src/coop/sleep_sync.cpp
-    src/coop/wisp_attack_sync.cpp
-    src/coop/wisp_tear_mirror.cpp
-    src/coop/player_inventory_sync.cpp
-    src/coop/inventory_wire.cpp
+    src/coop/social/wisp_attack_sync.cpp
+    src/coop/social/wisp_tear_mirror.cpp
+    src/coop/social/player_inventory_sync.cpp
+    src/coop/social/inventory_wire.cpp
     src/ue_wrap/inventory.cpp
-    src/coop/email_sync.cpp
+    src/coop/social/email_sync.cpp
     src/coop/blob_chunks.cpp
     src/coop/signal_wire.cpp
     src/coop/signal_sync.cpp

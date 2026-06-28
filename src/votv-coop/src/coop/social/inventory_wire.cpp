@@ -1,6 +1,6 @@
 // coop/inventory_wire.cpp -- see coop/inventory_wire.h.
 
-#include "coop/inventory_wire.h"
+#include "coop/social/inventory_wire.h"
 
 #include "coop/signal_wire.h"  // reuse the proven 0x70 signal-row serializer
 #include "ue_wrap/log.h"

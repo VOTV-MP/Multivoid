@@ -1,4 +1,4 @@
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 
 #include <atomic>
 #include <chrono>

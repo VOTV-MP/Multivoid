@@ -9,13 +9,13 @@
 #include "coop/comp_sync.h"
 #include "coop/console_state_sync.h"
 #include "coop/device_occupancy.h"
-#include "coop/email_sync.h"
+#include "coop/social/email_sync.h"
 #include "coop/signal_catch_sync.h"
 #include "coop/signal_sync.h"
 #include "coop/sleep_sync.h"
-#include "coop/wisp_attack_sync.h"   // Killer Wisp coop: host detect + neutralize + relay
-#include "coop/wisp_tear_mirror.h"   // Killer Wisp coop: victim kill + tear mirror
-#include "coop/player_inventory_sync.h"  // v73 per-player inventory (host file scaffold)
+#include "coop/social/wisp_attack_sync.h"   // Killer Wisp coop: host detect + neutralize + relay
+#include "coop/social/wisp_tear_mirror.h"   // Killer Wisp coop: victim kill + tear mirror
+#include "coop/social/player_inventory_sync.h"  // v73 per-player inventory (host file scaffold)
 #include "coop/dev/inventory_probe.h"    // v73 Inc4: SP self-test for the apply (engine write) path
 #include "coop/dev/sleep_probe.h"
 #include "coop/voice/voice_chat.h"
@@ -41,8 +41,8 @@
 #include "coop/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/firefly_sync.h"
-#include "coop/inventory_pickup_sync.h"
-#include "coop/chat_sync.h"
+#include "coop/social/inventory_pickup_sync.h"
+#include "coop/social/chat_sync.h"
 #include "coop/turbine_sync.h"
 #include "coop/keypad_sync.h"
 #include "coop/power_sync.h"
@@ -60,8 +60,8 @@
 #include "coop/save_block.h"
 #include "coop/save_button_disable.h"
 #include "coop/grab_observer.h"
-#include "coop/item_activate.h"
-#include "coop/player_damage.h"
+#include "coop/social/item_activate.h"
+#include "coop/social/player_damage.h"
 #include "coop/net/session.h"
 #include "coop/npc_adoption.h"
 #include "coop/kerfur_prop_adoption.h"  // K-6

@@ -8,7 +8,7 @@
 #include "coop/element/player.h"
 #include "coop/element/registry.h"
 
-#include "coop/item_activate.h"
+#include "coop/social/item_activate.h"
 #include "coop/join_progress.h"
 #include "coop/npc_mirror.h"
 #include "coop/pile_reconcile.h"  // b3: ArmPendingPosCorrection / ApplyPendingPosCorrections (PropSnapPos)

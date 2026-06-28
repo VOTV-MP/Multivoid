@@ -8,7 +8,7 @@
 #include "coop/players_registry.h"
 #include "coop/remote_player.h"
 #include "ue_wrap/hot_path_guard.h"
-#include "coop/chat_feed.h"
+#include "coop/social/chat_feed.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>

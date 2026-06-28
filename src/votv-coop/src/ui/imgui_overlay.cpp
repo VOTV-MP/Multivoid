@@ -38,7 +38,7 @@
 #include "ui/toast.h"
 #include "ui/chat_input.h"
 #include "ui/voice_panel.h"
-#include "coop/chat_sync.h"
+#include "coop/social/chat_sync.h"
 #include "coop/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
