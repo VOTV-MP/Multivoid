@@ -17,9 +17,29 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
 | 6b [fix] D2: kerfur ghost adopted by STABLE EID not fuzzy position | `df589591` | **AS-BUILT** (not hands-on-verified; the toggle scenario untested) | kerfur_convert.cpp `TakeParkedGhostByEid` |
 | 7 [probe] variant-1 force-churn dev probe + runbook + GATE diag | `425633d7`,`4d6f2afb`,`2033cdb6` | **PARTIAL** -- probe moot (real purge pre-empts the synthetic churn); 15:44 world ended CLEAN (variant-1 N=0=no-churn-needed); fix #1 confirmed | save_identity_bind.cpp `ForceSaveChurnForTest` |
 
-**NOT started** (still future): plan steps 0/2/3/5/8 + the module assembly proper (one `SyncRouter`,
-`CreateOrAdopt` collision-reconcile, `SyncDestroyQueue` deferred funnel, `SyncAuthority` relay, props
-moved inside). The reconcile engine (`coop/sync/sync_reconcile`) is the ONLY module piece born so far.
+### ASSEMBLY PROGRESS (2026-06-28, STAGE 3)
+- **KEYSTONE COMPLETE (build GREEN):** `ecdc527c` `[move]` `coop/sync/sync.h` facade + `CreateOrAdoptPropMirror`
+  (RegisterPropMirror body verbatim; forwards) -> `6aeaf55c` `[fix]` `g_actorToPropElementId` RETIRED onto the
+  unified `Registry::EidForActor` (every reader; LOCALS-ONLY filter kept; idempotency safer -- blocks
+  minting-over-mirror; TOCTOU double-check `EidForActor!=ourEid`; UnmarkKnownKeyedProp IsBeingDeleted guard; Reap
+  gate `EidForActor==pr.id`; self-test adjusted). Prop identity = ONE owner end-to-end. Both g_propElementsById +
+  g_actorToPropElementId + g_boundMirrorNatives satellites now gone.
+- **OnSpawn fold = ACHIEVED at the identity layer (no code change needed):** OnSpawn (`remote_prop_spawn.cpp`) is
+  the PropApplier (find-or-spawn the engine actor: key/eid dedup, fuzzy fallback, claim, grab/drive skips,
+  epsilon-converge); its identity binds ALL funnel through `RegisterPropMirror` -> `CreateOrAdoptPropMirror`. The
+  applier logic correctly STAYS (pulling engine-actor-spawn into the identity primitive would be wrong, RULE 7).
+- **SyncRouter = SCOPED, deferred to a focused turn (NOT a rush job):** `event_dispatch.h` documents the 3-family
+  split as a CONSCIOUS tradeoff (bodies split for the 1500-LOC cap; the kind->family switch in event_feed.cpp is
+  the "greppable table in one place"; handlers already no-op on non-family kinds). The worthwhile consolidation
+  (collapse the 3-place hazard to 2: enum + handler) = convert all 53 family cases to a `bool`-return chain
+  (`OnReliable = HandleEntity || HandleState || HandleWorld`, event_feed drops the family-membership switch). That
+  is a high-churn sweep across the whole packet dispatch that silently breaks ALL sync on one missed case -- do it
+  FRESH, compile-verified, not at the tail of a long turn.
+
+**REMAINING:** SyncRouter (scoped above) -> convert pipeline (the OnConvert morph retire-then-rebind centralizes
+INTO CreateOrAdopt = the collision-reconcile "retire-stale" half) -> SyncDestroyQueue (ElementDeleter IS the core;
+route the scattered DestroyActor sites through it) -> SyncAuthority (D2 kerfur predict->relay lands here) -> step-8
+residue. THEN hands-on whole (3 symptoms + D1/D2 + regression) -> push the assembled module as the etalon.
 
 ### OPEN SYMPTOMS seen 2026-06-28 (DO NOT FIX NOW -- verify-after-assembly)
 Decided 2026-06-28: the hands-on D1/D2 check was PREMATURE -- the module is half-moved (reconcile/bind
