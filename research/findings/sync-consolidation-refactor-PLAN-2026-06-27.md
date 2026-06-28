@@ -1,10 +1,14 @@
 # Sync-consolidation refactor — PLAN + AS-BUILT LEDGER (2026-06-27)
 
-STATUS: **APPROVED + EXECUTION IN PROGRESS (mode: embryonic/fast -- marker-protection lifted, move/fix
-split kept only for bisect).** The FOUNDATION + the D1/D2 fixes are SHIPPED (commits below); the full
-module assembly (SyncRouter / CreateOrAdopt / SyncDestroyQueue / SyncAuthority, props inside) is NOT yet
-started. HEAD `8b85cb2e`, deployed `2D0230013D35481A`, push HELD. Author: Claude. Grounded in a 4-agent
-structural map + the MTA:SA client architecture (`reference/mtasa-blue/`, per RULE 2026-05-28).
+STATUS: **ASSEMBLED (2026-06-28) -- awaiting hands-on the WHOLE module, then push (mode: embryonic/fast,
+move/fix split kept only for bisect).** The FOUNDATION + D1/D2 fixes are SHIPPED + the 16:06 reconcile pair
+VERIFIED; the module is now ASSEMBLED: CreateOrAdopt keystone (`ecdc527c`/`6aeaf55c`) + the
+g_actorToPropElementId retire, convert + destroy found ALREADY-funneled (no move), SyncRouter consolidated
+(`fcf5b1b1`), residue-fold REJECTED on inspection (perf/RULE-1), authority model NAMED in coop/sync/sync.h.
+The ONE open behavior change is the deferred D2 corrective-pose (built WITH its hands-on). HEAD `fcf5b1b1`+
+(doc commit pending), build GREEN, deployed binary still the pre-keystone `2D0230013D35481A` (NOT redeployed
+-- no hands-on until the user green-lights the whole-module test), push HELD. Author: Claude. Grounded in a
+4-agent structural map + the MTA:SA client architecture (`reference/mtasa-blue/`, per RULE 2026-05-28).
 Topic: [[project-sync-module-refactor-2026-06-27]].
 
 ### SHIPPED THIS ARC (2026-06-27, 11 commits) -- the AS-BUILT ledger
@@ -28,14 +32,6 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
   the PropApplier (find-or-spawn the engine actor: key/eid dedup, fuzzy fallback, claim, grab/drive skips,
   epsilon-converge); its identity binds ALL funnel through `RegisterPropMirror` -> `CreateOrAdoptPropMirror`. The
   applier logic correctly STAYS (pulling engine-actor-spawn into the identity primitive would be wrong, RULE 7).
-- **SyncRouter = SCOPED, deferred to a focused turn (NOT a rush job):** `event_dispatch.h` documents the 3-family
-  split as a CONSCIOUS tradeoff (bodies split for the 1500-LOC cap; the kind->family switch in event_feed.cpp is
-  the "greppable table in one place"; handlers already no-op on non-family kinds). The worthwhile consolidation
-  (collapse the 3-place hazard to 2: enum + handler) = convert all 53 family cases to a `bool`-return chain
-  (`OnReliable = HandleEntity || HandleState || HandleWorld`, event_feed drops the family-membership switch). That
-  is a high-churn sweep across the whole packet dispatch that silently breaks ALL sync on one missed case -- do it
-  FRESH, compile-verified, not at the tail of a long turn.
-
 - **CONVERT pipeline = ALREADY CONSOLIDATED at the identity layer (verified 2026-06-28, no move needed).** Both
   morph call sites -- `remote_prop.cpp:1010` (trash convert-beat-spawn hand-off, `rebindInPlace=morphBoundNative`)
   and `remote_prop.cpp:1097` (aprop/kerfur re-skin, `rebindInPlace=true`) -- route through
@@ -54,13 +50,28 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
   pile `:1013`) are bare-actor retires with site-specific pre-steps -- only their ELEMENT bookkeeping funnels here,
   which is correct. The stale "no producer routes destruction here yet" comment at net_pump was corrected this run.
 
-**REMAINING (genuinely open):** SyncAuthority (D2 kerfur predict->relay = the host->client corrective-pose mechanism;
-this is the deferred-symptom work, NOT a consolidation move -- there is no scattered authority code to gather beyond
-the existing host-authoritative convert in kerfur_convert.cpp) · SyncRouter (scoped above -- orthogonal dispatch
-hygiene, a LATERAL trade not an identity fix; do fresh) · step-8 residue (purge-flag 3-way / g_seedWorld vs
-g_reapWorld / re-seed asymmetry -> coop::sync::Tick lifecycle). THE IDENTITY MODULE ITSELF (the subject of this
-refactor: one eid<->actor owner across create/adopt/morph/destroy) IS ASSEMBLED. THEN hands-on whole (3 symptoms +
-D1/D2 + regression) -> push the assembled module as the etalon.
+- **SyncRouter = DONE (`fcf5b1b1` `[move]`, build GREEN).** HandleEntity/State/WorldEvent now return bool (true iff
+  the kind is in that family); event_feed::Update drops the three parallel family case-label groups and chains them in
+  its default (break on first owner, else the existing unknown-kind log). Minimal transform -- every internal break
+  untouched; each switch gained `default: return false` + a trailing `return true`. The family switch is now the SINGLE
+  membership declaration: a new ReliableKind wires in 2 places (enum + family switch), not 3. Net -53 LOC. The inline
+  special cases (Join/Balance/Teleport/Wisp/Snapshot/handshake) are disjoint from every family and keep priority.
+- **Step-8 residue = folding REJECTED on inspection (2026-06-28).** The two world-ptr caches (g_seedWorld in
+  prop_element_tracker vs g_reapWorld in net_pump) are CONSCIOUSLY separate: the seeder's piggybacks the seed walk's
+  existing GUObjectArray iteration (perf audit W-2 forbids a per-walk FindObjectsByClass -- the 120->60fps lesson); the
+  reaper's is a throttled FindObjectByClass for its gameplay-vs-menu name check (documented net_pump.cpp:425 +
+  engine.cpp:60). The purge-episode flag is already a clean single-writer pub/sub (net_pump detects -> tracker owns the
+  atomic -> gate/sweep/reconcile read). Folding either into a coop::sync::Tick would regress perf or couple subsystems
+  for zero functional gain = a crutch (RULE 1) + churn (RULE 2). Left as-is; the finding is recorded in coop/sync/sync.h.
+- **SyncAuthority = the model is now NAMED (coop/sync/sync.h AUTHORITY CONTRACT), behavior unchanged.** There is no
+  scattered authority code to gather -- host-auth convert (kerfur_convert) + client-relay grab/throw already exist
+  cleanly. The ONE open behavior change is the D2 host->client corrective-pose for an adopted kerfur off-prop, which is
+  the DEFERRED symptom-fix (built WITH its hands-on, not scaffolded speculatively -- RULE 2). See the 3 OPEN SYMPTOMS.
+
+THE WHOLE REFACTOR IS BUILT to its RULE-1-correct end: the identity module (one eid<->actor owner across create / adopt
+/ morph / destroy) is ASSEMBLED, the router is consolidated, and the residue/authority items were assessed -- folding
+rejected as a perf-regression/churn, the one real open item (D2 corrective-pose) is the deferred symptom. NEXT: hands-on
+the whole module (3 symptoms + D1/D2 + regression) -> push the assembled module as the sync ETALON.
 
 ### OPEN SYMPTOMS seen 2026-06-28 (DO NOT FIX NOW -- verify-after-assembly)
 Decided 2026-06-28: the hands-on D1/D2 check was PREMATURE -- the module is half-moved (reconcile/bind
