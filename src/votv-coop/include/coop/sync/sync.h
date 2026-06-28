@@ -7,6 +7,13 @@
 // pump, the engine hooks) talk to sync THROUGH this surface; the eid-bind /
 // divergence-valve / purge-escalation / mirror-teardown complexity is private.
 //
+// THIS MODULE IS THE *ENTITY-IDENTITY* LAYER ONLY -- not "everything that sends a
+// packet". Keyed-state replicators (doors/keypads/power/grime/atv...), global
+// scalars (clock/sky/weather), and player-scoped/social (inventory/chat/voice)
+// are SIBLINGS that route through the same dispatch but have no identity race, so
+// they stay as their own small *_sync.cpp files. The full who-lives-where map is
+// docs/COOP_SYNC_MAP.md (the discoverability index across all ~95 coop files).
+//
 // FOUNDATION DISCOVERY (plan section 1): the identity owner (`SyncRegistry`) is
 // ALREADY played by `element::Registry` (the sole eid<->actor array, host/peer
 // ranges, RegisterMirror/Get/FreeId/EidForActor) + `MirrorManager<T>` (the
