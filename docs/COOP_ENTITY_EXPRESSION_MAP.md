@@ -56,9 +56,10 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 > **IDENTITY UPDATE 2026-06-27 [RD] — save-loaded chip/kerfur natives gained a position RE-BIND safety-net.**
 > The primary identity is the save-identity ORDINAL bind (Build 3, by saveSlot array index). But UE's incremental
 > GC sporadically destroys + re-instantiates a SPARSE handful of save-placed natives mid-join; they re-create at
-> their save pos UNBOUND (the cursor was consumed) = ghosts. Variant-1 (`54ee4b06`, sidecar v2, HANDS-ON PENDING)
-> re-binds them at quiescence by an authoritative host-sent save-position (1cm, ambiguous-skip) — the bind seam
-> can't supply the position itself (BeginDeferred POST = `(0,0,0)`, below). See
+> their save pos UNBOUND (the cursor was consumed) = ghosts. Variant-1 (`54ee4b06`, absorbed into
+> `coop/sync/sync_reconcile`; VERIFIED real log 16:06 2026-06-28 — `RE-BIND by position` x242 on the valve-abort
+> path, world ended clean) re-binds them at quiescence by an authoritative host-sent save-position (1cm,
+> ambiguous-skip) — the bind seam can't supply the position itself (BeginDeferred POST = `(0,0,0)`, below). See
 > `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/COOP_STABLE_ID_SIDECAR.md`.
 
 > **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch, docs/piles/07) is RETIRED.** A
@@ -121,17 +122,23 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 **Durable facts (survive the redesign):**
 - **chipPile is KEYLESS** — `setKey` is a no-op; the only identity is the host-minted eid. **[V/RD]**
   Caught by the seed-walk keyless-pile lane (`IsChipPile`) → connect snapshot / R1 re-seed. **[V]**
-- **IDENTITY MECHANISM UPDATE (2026-06-27, sync-consolidation refactor) [RD]:** (1) "is this actor a
-  bound save-loaded native" (`IsBoundMirrorNative`) now resolves `actor → eid` via the unified
-  `element::Registry::EidForActor` reverse → `Element::IsSaveNative()` + liveness. The old
-  `g_boundMirrorNatives` actor-keyed SET is DELETED — the flag now lives WITH the identity (the Element),
-  so it can never read stale relative to the binding (was the 15:01:49 D1 root). (2) The join reconcile
-  (twin-retire / variant-1 position re-bind / b3) is NO LONGER a join-window one-shot: it lives in
+- **IDENTITY MECHANISM UPDATE (2026-06-27/28, sync-consolidation refactor) [RD]:** Prop identity is now ONE
+  owner end-to-end — `element::Registry` (the unified `actor→eid` reverse `EidForActor`) + the
+  `coop::sync::CreateOrAdoptPropMirror` bind keystone. THREE leaked satellites are now DELETED:
+  `g_propElementsById` (earlier), `g_boundMirrorNatives` (the is-save-native SET → now `Element::IsSaveNative`,
+  `066d0a49`), and `g_actorToPropElementId` (the locals-only actor→eid map → now `EidForActor`, `6aeaf55c`;
+  `GetPropElementIdForActor` re-imposes the locals-only contract with an `IsMirror` filter, and idempotency is
+  now safer — it also blocks minting a local over a live mirror, a dup the old map couldn't see).
+  `RegisterPropMirror` is now a thin forwarder to `CreateOrAdoptPropMirror` (`ecdc527c`). (2) "is this actor a
+  bound save-loaded native" (`IsBoundMirrorNative`) resolves `actor→eid` via `EidForActor` → `IsSaveNative()` +
+  liveness — atomic with the binding, can never read stale (was the 15:01:49 D1 root). (3) The join reconcile
+  (twin-retire / variant-1 / b3) is NO LONGER a join-window one-shot: it lives in
   `coop/sync/sync_reconcile::RunIdentityReconcile`, driven by the join sweep AND a steady trigger
-  (`OnReconcileTick`: pending-twin/b3 work OR a 6s post-purge window) AND the >50% valve-ABORT path. So a
-  save-pile grabbed/moved in steady state, and the GC-churned natives a mass-purge re-creates, both have a
-  consumer. Commits `ce132e0d`/`066d0a49`/`47384057`/`432183ce`/`8b85cb2e`. AS-BUILT (fix #1 valve-abort
-  path VERIFIED 15:44; the rest not yet hands-on-verified). See [[project-sync-module-refactor-2026-06-27]].
+  (`OnReconcileTick`: pending-twin/b3 work OR a 6s post-purge window) AND the >50% valve-ABORT path.
+  Commits `ce132e0d`/`066d0a49`/`47384057`/`432183ce`/`8b85cb2e`/`ecdc527c`/`6aeaf55c`. **VERIFIED real log
+  16:06 2026-06-28: fix #1 (valve-abort reconcile, 242 RE-BIND) + fix #2 (post-purge window, 13 fires) BOTH
+  fired, world clean.** Keystone (CreateOrAdopt + satellite retires) build GREEN. NOT-yet-hands-on: D1
+  grab-no-dup, D2 kerfur-no-flash (the interaction scenarios). See [[project-sync-module-refactor-2026-06-27]].
 - **VERIFIED mechanic (bytecode):** `actorChipPile_C` = CARRY-AND-THROW (E → `playerGrabbed` spawns a
   clump in hand + destroys the pile; the clump re-piles on its **2nd ground contact** at the clump's
   **sphere-traced RESTING point** — NOT `lastPos`, NOT the source pile pos → why proximity was doomed).

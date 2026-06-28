@@ -22,6 +22,18 @@ separate `docs/piles/10` mass-unclaim over-destroy root).
 > -- identical on the position-unique real path, strictly safer otherwise, consistent with pile's own
 > TryDestroyTwin. Re-verify runbook: `research/handson_runbook_2026-06-24_mirror_identity_extract_reverify.md`.
 
+> **FULL STRUCTURAL UNIFICATION ARRIVED 2026-06-27/28 (the `coop/sync` module) — supersedes the "minimal
+> kernel, not a full unification" caveat above.** The user's pivot: D1 (steady-grab ghost-dup) + D2 (kerfur
+> flash) are ONE class with no single identity owner; fix the STRUCTURE so each instance closes once. SHIPPED +
+> build GREEN: (1) ONE identity owner — `element::Registry` (`EidForActor`) + `coop::sync::CreateOrAdoptPropMirror`
+> (the MTA `Packet_EntityAdd` collision-reconcile analog; `RegisterPropMirror` forwards). THREE leaked satellites
+> DELETED (`g_propElementsById`, `g_boundMirrorNatives`→`Element::IsSaveNative`, `g_actorToPropElementId`→`EidForActor`).
+> (2) the reconcile is NON-one-shot (`coop/sync/sync_reconcile`: join + steady + valve-abort + post-purge triggers)
+> — VERIFIED real log 16:06 2026-06-28 (242 RE-BIND + 13 post-purge fires, world clean). STILL BUILDING (STAGE 3):
+> SyncRouter / convert-pipeline / SyncDestroyQueue / SyncAuthority (D2 kerfur predict→relay) / residue — then
+> hands-on the whole + push. The bug-class closes in ONE place (CreateOrAdopt + SyncAuthority), as designed.
+> Detail: `research/findings/sync-consolidation-refactor-PLAN-2026-06-27.md` + [[project-sync-module-refactor-2026-06-27]].
+
 ## The class
 
 Any entity that reaches a joining client via **TWO channels at once** -- (a) the transferred SAVE the client
