@@ -58,6 +58,12 @@
 #include <unordered_map>
 #include <vector>
 
+// The SOLE gateway authorized to call MirrorManager::Install (the wire-mirror
+// bind). Defined in coop/sync (sync_create.cpp). A wire mirror can therefore ONLY
+// be bound through sync::CreateOrAdopt* -- a feature file cannot reach into a
+// manager and Install its own binding (the "someone to watch them" compile wall).
+namespace coop::sync { struct MirrorInstallAccess; }
+
 namespace coop::element {
 
 template <typename T>
@@ -82,6 +88,14 @@ public:
     // host-relay logical origin). -1 leaves the mirror untagged (never matched
     // by a per-slot drain) -- used where per-slot eviction does not apply (e.g.
     // host-authoritative NPC mirrors, which only vacate on full teardown).
+  private:
+    // SEALED (Inc C, 2026-06-29): Install is the wire-mirror bind, reachable ONLY
+    // through coop::sync (the MirrorInstallAccess friend below). After the Inc-A
+    // funnel routing, sync::CreateOrAdopt{Prop,Npc,WorldActor}Mirror are the only
+    // callers -- so binding a wire mirror outside the sync authority is now a
+    // COMPILE error, not a convention. AllocAndInstall (host-authoritative mint)
+    // and the Take/Drop/Drain teardown stay public (per-type-authority ops).
+    friend struct coop::sync::MirrorInstallAccess;
     bool Install(ElementId wireEid, std::unique_ptr<T> mirror, int ownerSlot = -1) {
         if (wireEid == 0u) return false;            // wire sentinel "no Element"
         if (wireEid == kInvalidId) {
@@ -138,6 +152,7 @@ public:
         return true;
     }
 
+  public:
     // AUTHORITATIVE-ROLE ownership path (vs Install, the mirror-role path).
     // Allocates a FRESH ElementId from the Registry -- host range when
     // `isHost`, peer range otherwise -- binds `element` to it, and emplaces

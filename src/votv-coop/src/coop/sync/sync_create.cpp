@@ -21,6 +21,20 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
+namespace coop::sync {
+// The friended gateway to the sealed MirrorManager::Install (Inc C, 2026-06-29).
+// Defined here in coop::sync so a wire-mirror bind can ONLY originate from this
+// module; the CreateOrAdopt* funnels are its only users. mirror_manager.h friends
+// exactly this struct -- Install is private to everyone else (the compile wall).
+struct MirrorInstallAccess {
+    template <typename T>
+    static bool Install(coop::element::MirrorManager<T>& m, coop::element::ElementId eid,
+                        std::unique_ptr<T> el, int ownerSlot) {
+        return m.Install(eid, std::move(el), ownerSlot);
+    }
+};
+}  // namespace coop::sync
+
 namespace {
 namespace R = ue_wrap::reflection;
 
@@ -56,7 +70,7 @@ bool CreateOrAdoptSimpleMirror(coop::element::MirrorManager<T>& mgr,
     auto mirror = std::make_unique<T>();
     if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
     mirror->SetActor(actor, R::InternalIndexOf(actor));
-    return mgr.Install(eid, std::move(mirror), ownerSlot);
+    return coop::sync::MirrorInstallAccess::Install(mgr, eid, std::move(mirror), ownerSlot);
 }
 }  // namespace
 
@@ -109,7 +123,7 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
     if (!key.empty()) mirror->SetName(NarrowAscii(key));
     if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
     mirror->SetActor(actor, R::InternalIndexOf(actor));
-    if (PropMirrors().Install(eid, std::move(mirror), ownerSlot)) {
+    if (MirrorInstallAccess::Install(PropMirrors(), eid, std::move(mirror), ownerSlot)) {
         UE_LOGI("sync::CreateOrAdoptPropMirror: eid=%u bound to actor=%p "
                 "key='%ls' cls='%ls' ownerSlot=%d",
                 eid, actor, key.c_str(), cls.c_str(), ownerSlot);
