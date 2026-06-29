@@ -10,6 +10,24 @@ Reading order: this doc → `docs/kerfur/README.md` (kerfur knowledge base) →
 Related memory: [[project-kerfur-identity-authority-refactor-2026-06-29]],
 [[feedback-recurring-bug-is-architectural]], [[feedback-follow-mta-architecture]].
 
+## SCOPE — TOTAL, STRICT, NO EXCEPTIONS (user mandate 2026-06-29)
+
+This refactor touches the **WHOLE project — every file** — and that is **strict**. It is NOT a partial
+pass and no file is exempt:
+- **Part 3 (taxonomy):** EVERY file under `src/votv-coop/` is placed in a strict, mechanic-named module
+  by what it DOES (read the code, never the filename). `coop/` flat root is fully dissolved; `social/`,
+  `host/`, `devices/` are fully dissolved/renamed. The `ue_wrap/` engine-wrapper subtree is itself
+  reviewed for strict per-engine-class placement (principle 7), and the loader/reflection/hook layer is
+  checked for the same module discipline. No "leftover" or "misc" folder.
+- **Part 2 (authority):** the passkey boundary is enforced **project-wide** — NO file outside
+  `coop/sync` + `coop/element` may mutate identity (compile-time enforced). EVERY file that currently
+  touches eid↔actor state is converted to an intent submitter. The audit must enumerate every such file
+  and leave ZERO un-converted call sites (a single un-routed `RegisterPropMirror`/`Take`/`FreeId` is a
+  failure of the pass).
+- **Acceptance for "done":** a tree-wide grep proves no feature file calls the raw identity mutators,
+  every file lives under a mechanic-named module, and the two dissolved-folder names no longer exist.
+  Anything less is not the refactor the user asked for.
+
 ---
 
 ## 0. The 10:30 hands-on evidence (what triggered this)
