@@ -22,6 +22,7 @@
 #include "coop/element/registry.h"
 #include "coop/element/world_actor.h"
 #include "coop/sync/sync_create.h"   // the single WorldActor mirror create funnel (Inc A)
+#include "coop/sync/sync_destroy.h"  // RetireMirror (the single destroy funnel, Inc B)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -150,7 +151,7 @@ void WorldActorSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
     void* spawnedActor = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_spawnReturnParamOff);
     if (!spawnedActor) {
-        coop::element::ElementDeleter::Get().Enqueue(WaMirrors().Take(eid));
+        coop::sync::RetireMirror(eid);
         UE_LOGW("world-actor[host POST]: BeginDeferredSpawn returned null for eid=%u -- released", eid);
         return;
     }
@@ -185,7 +186,7 @@ void WorldActorDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
         eid = it->second;
         g_actorToWaId.erase(it);
     }
-    coop::element::ElementDeleter::Get().Enqueue(WaMirrors().Take(eid));
+    coop::sync::RetireMirror(eid);
     UE_LOGI("world-actor[host destroy PRE]: actor=%p WorldActor eid=%u released (deferred)", self, eid);
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;

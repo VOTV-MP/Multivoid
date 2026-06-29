@@ -80,3 +80,4 @@
 
 #include "coop/sync/sync_reconcile.h"   // RunIdentityReconcile / OnReconcileTick (the non-one-shot reconcile)
 #include "coop/sync/sync_create.h"      // CreateOrAdopt (the one collision-reconcile create/bind path)
+#include "coop/sync/sync_destroy.h"     // RetireMirror (the one type-dispatched mirror destroy funnel)

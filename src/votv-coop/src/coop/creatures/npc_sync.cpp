@@ -16,6 +16,7 @@
 
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
+#include "coop/sync/sync_destroy.h"   // RetireMirror (the single destroy funnel, Inc B)
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_entity.h"   // K-4b: reserve the stable KerfurId when a fresh kerfur NPC binds
@@ -235,7 +236,7 @@ void NpcSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
         // ~Npc/FreeId to net_pump::Tick's controlled drain point instead of
         // running it on the worker. Take returns null if the element was
         // already drained (OnDisconnect race); Enqueue(null) is a no-op.
-        coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+        coop::sync::RetireMirror(eid);
         UE_LOGW("npc-sync[host POST]: BeginDeferredSpawn returned null for eid=%u; "
                 "released Element back to Registry (deferred to ElementDeleter)", eid);
         return;
@@ -313,7 +314,7 @@ void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     // is released above, so Take's type mutex and the deferred FreeId's Registry
     // mutex never nest with it. Take returns null on an already-drained eid
     // (double K2 / OnDisconnect race); Enqueue(null) is a no-op.
-    coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+    coop::sync::RetireMirror(eid);
     UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released (deferred)", self, eid);
     // Broadcast EntityDestroy so client mirrors tear down their copy.
     // Client-side receiver materialization lands in a future PR; for now
@@ -847,7 +848,7 @@ coop::element::ElementId RegisterHostNpcSilent(void* actor, const std::wstring& 
     }
     coop::element::Npc* el = NpcMirrors().Get(eid);
     if (!el) {
-        coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+        coop::sync::RetireMirror(eid);
         UE_LOGW("npc-sync[silent register]: eid=%u not retrievable after AllocAndInstall -- drained",
                 static_cast<uint32_t>(eid));
         return coop::element::kInvalidId;
