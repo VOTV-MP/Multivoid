@@ -130,7 +130,14 @@ void Reset() {
     g_pileBindCount = 0;
     g_pileIndexBuiltCount = 0;
     g_pendingSaveTimeTwin.clear();
-    g_pendingPosCorrection.clear();  // b3: drop any undrained corrections at bracket teardown / world-ready reset
+    // b3: drop any undrained corrections at bracket teardown / world-ready reset. PROBE (2026-06-28,
+    // moved-pile-misplaced hands-on): if a moved-in-window pile's correction is still pending here, it is
+    // being DROPPED before it ever applied -- the silent failure that leaves the pile at its stale save pos.
+    // Log it so the next hands-on pins "armed but never applied -> dropped by Reset" vs "never bound".
+    if (!g_pendingPosCorrection.empty())
+        UE_LOGW("[PILE-B3] Reset DROPPING %zu undrained pos-correction(s) -- moved-in-window pile(s) left at "
+                "STALE save pos (never bound/applied before this teardown)", g_pendingPosCorrection.size());
+    g_pendingPosCorrection.clear();
 }
 
 void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,

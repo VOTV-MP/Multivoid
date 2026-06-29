@@ -304,8 +304,16 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, coop::ele
                                                       /*rebindInPlace=*/false);
                 ue_wrap::engine::SetActorLocation(ghost, ue_wrap::FVector{lx, ly, lz});
                 ue_wrap::engine::SetActorRotation(ghost, ue_wrap::FRotator{rp, ry, rr});
+                // HANG-IN-AIR FIX (2026-06-28, hands-on 10:15). The claim froze this ghost via
+                // SetActorSimulatePhysics(false) (ClaimConversionGhosts ~:556) to keep it inside the fuzzy
+                // window; the adopt-by-eid above made it the authoritative PROP mirror, so the freeze has done
+                // its job. RE-ENABLE physics so the off-prop FALLS + rests on the ground like the host's does
+                // (the host settles by gravity). Without this it stays kinematic-frozen at the NPC death height
+                // = "hangs in the air". The off-prop is NOT held (no held-pose stream owns it), so local gravity
+                // settle is correct + safe -- it lands on the same floor the host's copy rests on.
+                ue_wrap::engine::SetActorSimulatePhysics(ghost, true);
                 UE_LOGI("kerfur_convert[client]: adopted parked turn-off ghost as PROP mirror eid=%u (by eid -- "
-                        "deterministic, no fuzzy miss)", eid);
+                        "deterministic, no fuzzy miss; physics re-enabled -> settles to rest)", eid);
                 return;
             }
         }
