@@ -99,6 +99,13 @@ bool IsKerfurEid(coop::element::ElementId currentEid);
 // position match (v91; replaces GetSaveTimePosForEid). Game thread.
 coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentEid);
 
+// HOST only: the host eid the kerfur currently at `currentEid` most recently converted FROM (the BindFormActor
+// oldEid). The mid-session-turn-on npc EntitySpawn builder carries it as convertFromEid so the INITIATING
+// client adopts its parked conversion ghost by EXACT eid (npc_mirror::OnEntitySpawn -> TakeParkedGhostByEid),
+// replacing FindParkedGhostNpcNear's 500cm position match. kInvalidId for a never-converted (save-active)
+// kerfur -> the builder leaves convertFromEid=0. Game thread.
+coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid);
+
 // ---- K-5 CLIENT held-pose eid map ------------------------------------------------------------------
 // A kerfur prop on a CLIENT is a host-owned MIRROR (m_mirror=true, host-range eid) -- NOT in
 // prop_element_tracker's local g_actorToPropElementId map, so GetPropElementIdForActor returns

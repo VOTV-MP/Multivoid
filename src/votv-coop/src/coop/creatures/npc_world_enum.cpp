@@ -142,6 +142,12 @@ int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {
             // that eid, so their eid-keyed sweep finds nothing and retires nothing.
             const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
             p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
+            // v91 deterministic turn-on ghost adopt: carry the eid this kerfur converted FROM. A MidSessionConverge
+            // turn-on reaches the INITIATING peer (which parked a ghost tagged with that eid) -- it adopts by EXACT
+            // eid (npc_mirror -> TakeParkedGhostByEid), not the old FindParkedGhostNpcNear 500cm match. A non-
+            // initiator / save-active NPC -> kInvalidId -> 0 -> no eid ghost adopt (fresh-spawn / npc_adoption).
+            const coop::element::ElementId fromEid = coop::kerfur_entity::GetConvertFromEidForEid(eid);
+            p.convertFromEid = (fromEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(fromEid);
             if (!s->SendEntitySpawn(p)) {
                 UE_LOGW("npc-sync[world-enum]: SendEntitySpawn failed for newly-registered eid=%u",
                         p.elementId);

@@ -97,14 +97,14 @@ void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& payload, vo
 // empty. Game thread (net-pump tick).
 void Tick();
 
-// CLIENT: the actor of the parked turn-on conversion-ghost NPC nearest (x,y,z), or nullptr.
-// The client's own turn-on spawns a local kerfur NPC via the un-hookable EX_CallMath path; the
-// poll PARKS it (AI off) pending the host's authoritative EntitySpawn rather than destroying it.
-// npc_mirror::OnEntitySpawn calls this to ADOPT that exact actor as the host mirror instead of
-// fresh-spawning a duplicate (no destroy/respawn pop; no untracked ghost a grab could cascade
-// into a dupe). Returns nullptr for a peer that did not initiate the toggle -> it fresh-spawns.
+// CLIENT (D2 relay): TAKE (find + remove) the parked conversion-ghost tagged with `srcEid` of the requested
+// form (wantNpc -> the parked turn-on NPC; !wantNpc -> the frozen turn-off prop), returning its actor or
+// nullptr. The client's own toggle spawns a local kerfur via the un-hookable EX_CallMath path; the poll
+// PARKS it (AI/physics off) tagged with the converting eid. npc_mirror::OnEntitySpawn (turn-on) and
+// OnKerfurConvert adopt THAT exact actor by EXACT eid -- deterministic, replacing the old 500cm position
+// match (FindParkedGhostNpcNear, removed v91). nullptr for a peer that did not initiate -> it fresh-spawns.
 // Game thread.
-void* FindParkedGhostNpcNear(float x, float y, float z);
+void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc);
 
 // Clear per-session state (the pending queue). Net disconnect.
 void OnDisconnect();

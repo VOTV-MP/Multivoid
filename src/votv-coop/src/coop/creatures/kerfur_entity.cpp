@@ -49,6 +49,12 @@ struct KerfurRecord {
     // stale local off-prop MIRROR bound at that EXACT eid (no fuzzy 1cm position match). kInvalidId =
     // always-active (never an in-window turn-on) -> nothing to retire on the joiner.
     coop::element::ElementId originOffEid = coop::element::kInvalidId;
+    // scope A (v91 deterministic turn-on ghost adopt): the host eid this kerfur most-recently converted FROM
+    // (the BindFormActor oldEid). The mid-session turn-on npc EntitySpawn carries it as convertFromEid so the
+    // INITIATING client adopts its parked conversion ghost (tagged with that eid) by EXACT eid in
+    // npc_mirror::OnEntitySpawn, replacing FindParkedGhostNpcNear's 500cm position match. kInvalidId until the
+    // first conversion.
+    coop::element::ElementId lastConvertFromEid = coop::element::kInvalidId;
 };
 
 std::mutex g_mutex;  // guards every table below (game thread in practice; locked for the worker-thread predicates)
@@ -181,6 +187,20 @@ coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentE
     return rit->second.originOffEid;
 }
 
+coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid) {
+    // scope A (v91 deterministic turn-on ghost adopt): the host eid the kerfur currently at `currentEid` most
+    // recently converted FROM. The mid-session-turn-on npc EntitySpawn builder carries it as convertFromEid so
+    // the INITIATING client adopts its parked ghost by EXACT eid. kInvalidId for a never-converted kerfur (a
+    // save-active NPC) -> the builder leaves convertFromEid=0 (no ghost to adopt by eid). HOST only in practice.
+    if (currentEid == coop::element::kInvalidId) return coop::element::kInvalidId;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    auto eit = g_eidToKerfurId.find(currentEid);
+    if (eit == g_eidToKerfurId.end()) return coop::element::kInvalidId;
+    auto rit = g_byKerfurId.find(eit->second);
+    if (rit == g_byKerfurId.end()) return coop::element::kInvalidId;
+    return rit->second.lastConvertFromEid;
+}
+
 // ---- K-5 CLIENT held-pose map -----------------------------------------------------------------------
 
 void NotifyKerfurPropMirrorBound(void* actor, coop::element::ElementId eid) {
@@ -302,6 +322,10 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
             if (coop::save_transfer::TryGetSaveTimeKerfurXformAnySlot(oldEid, sv))
                 rec.originOffEid = oldEid;
         }
+        // scope A (v91 deterministic turn-on ghost adopt): record the form we converted FROM. A mid-session
+        // turn-on's npc EntitySpawn carries this as convertFromEid so the INITIATING client adopts its parked
+        // ghost (tagged ClaimConversionGhosts(oldEid)) by EXACT eid -- not FindParkedGhostNpcNear's 500cm match.
+        rec.lastConvertFromEid = oldEid;
     }
 
     // Broadcast the SOLE conversion-transition packet (host fan-out to all peers).

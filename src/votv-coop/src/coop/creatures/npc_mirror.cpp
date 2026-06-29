@@ -16,7 +16,7 @@
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/element/identity_create.h"   // the single NPC mirror create funnel (Inc A)
-#include "coop/creatures/kerfur_convert.h"  // FindParkedGhostNpcNear -- adopt the client's own turn-on result
+#include "coop/creatures/kerfur_convert.h"  // TakeParkedGhostByEid -- adopt the client's own turn-on ghost by eid
 #include "coop/session/mirror_defer.h"  // instant-world: hide a freshly-spawned NPC mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -192,16 +192,20 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                                         payload.rotPitch, payload.rotYaw, payload.rotRoll);
         return;
     }
-    // CONVERSION ADOPT (2026-06-15 hands-on): a kerfur the THIS client just turned ON arrives here
-    // as a savePersisted=0 mid-session spawn. The client already spawned its own local kerfur via
-    // the un-hookable EX_CallMath conversion path; kerfur_convert's poll parked it. Bind THAT actor
-    // as the mirror instead of fresh-spawning a duplicate next to it (the "two kerfurs out of one
-    // object" dupe + the destroy/respawn flicker). Only the initiating client has a parked ghost
-    // near this pose -> other peers get nullptr here and fresh-spawn normally below.
-    if (void* ghost = coop::kerfur_convert::FindParkedGhostNpcNear(payload.locX, payload.locY, payload.locZ)) {
-        if (AdoptExistingNpcAsMirror(ghost, payload.elementId, classW)) return;
-        // Adopt failed (eid collision) -> fall through to a fresh mirror; the orphan ghost is
-        // reaped by kerfur_convert's cleanup.
+    // CONVERSION ADOPT (2026-06-15 hands-on; v91 DETERMINISTIC): a kerfur THIS client just turned ON arrives
+    // here as a savePersisted=0 mid-session spawn. The client already spawned its own local kerfur via the
+    // un-hookable EX_CallMath conversion path; kerfur_convert's poll PARKED it tagged with the converting eid.
+    // Bind THAT exact actor (by eid -- payload.convertFromEid, the eid it converted from) as the mirror instead
+    // of fresh-spawning a duplicate next to it (the "two kerfurs out of one object" dupe + respawn flicker).
+    // Replaces the old FindParkedGhostNpcNear 500cm position match -> the EntitySpawn-vs-KerfurConvert race can
+    // no longer fuzzy-miss. Only the INITIATING client has a ghost at this eid -> other peers / save-active NPCs
+    // (convertFromEid 0 or no ghost) fall through to fresh-spawn below.
+    if (payload.convertFromEid != 0) {
+        if (void* ghost = coop::kerfur_convert::TakeParkedGhostByEid(payload.convertFromEid, /*wantNpc=*/true)) {
+            if (AdoptExistingNpcAsMirror(ghost, payload.elementId, classW)) return;
+            // Adopt failed (eid collision) -> fall through to a fresh mirror; the orphan ghost is
+            // reaped by kerfur_convert's cleanup.
+        }
     }
     SpawnFreshNpcMirror(classW, actorClass, payload.elementId,
                         payload.locX, payload.locY, payload.locZ,

@@ -694,15 +694,17 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 91;  // v91: kerfur off->active dup retire goes DETERMINISTIC --
-                                                  // EntitySpawnPayload 108->100: hasMatchPos + matchX/Y/Z
-                                                  // (the join-window-turned-ON kerfur's SAVE-TIME position,
-                                                  // matched fuzzily within 1cm) REPLACED by retireOffEid (the
-                                                  // host eid of the off-prop it replaced). The joiner retires
-                                                  // its off-prop MIRROR by that exact eid (it already binds the
-                                                  // save-loaded off-prop to the host eid via save_identity_bind),
-                                                  // killing the position-fuzzy collision class (the recurring
-                                                  // 5-of-6 / dup). See the runbook RESULT 13:21 + topic memory.
+inline constexpr uint16_t kProtocolVersion = 91;  // v91: kerfur reconcile goes DETERMINISTIC (kill the
+                                                  // position-fuzzy class). EntitySpawnPayload 108->104:
+                                                  // hasMatchPos + matchX/Y/Z (the join-window-turned-ON kerfur's
+                                                  // SAVE-TIME position, matched fuzzily within 1cm) REPLACED by
+                                                  // retireOffEid (the host eid of the off-prop it replaced -- the
+                                                  // joiner retires its off-prop MIRROR by that exact eid, already
+                                                  // bound via save_identity_bind); PLUS convertFromEid (the host
+                                                  // eid the kerfur converted FROM -- the initiator adopts its
+                                                  // parked turn-on ghost by that eid, replacing FindParkedGhostNpcNear's
+                                                  // 500cm match). Kills the 5-of-6 / dup + the turn-on respawn-pop.
+                                                  // See the runbook RESULT 13:21 + topic memory.
                                                   // Prior:
                                                   // v90 (b3): PropSnapPos=81 + PropSnapPosPayload (28B) --
                                                   // a join-window position correction for save-authoritative
@@ -2947,8 +2949,18 @@ struct EntitySpawnPayload {
                                    //      position match, no fuzzy collision (the recurring 5-of-6 / dup class).
                                    //      0 = not a window turn-on (always-active NPC, or a transient enemy;
                                    //      WorldActorSpawn reuse leaves it 0).
+    uint32_t      convertFromEid;  // 4 -- v91 (kerfur turn-on ghost adopt, DETERMINISTIC): non-zero => this
+                                   //      kerfur NPC EntitySpawn is a MID-SESSION turn-on, and convertFromEid is
+                                   //      the host eid of the form it converted FROM (KerfurConvert oldEid =
+                                   //      KerfurRecord.lastConvertFromEid). The INITIATING client parked a local
+                                   //      conversion ghost tagged with that exact eid (ClaimConversionGhosts);
+                                   //      npc_mirror::OnEntitySpawn adopts THAT ghost by eid (TakeParkedGhostByEid)
+                                   //      instead of the old FindParkedGhostNpcNear 500cm position match -- so the
+                                   //      EntitySpawn-vs-KerfurConvert race can't fuzzy-miss into a respawn-pop/dup.
+                                   //      A non-initiator peer has no ghost at that eid -> null -> fresh-spawns. 0 =
+                                   //      not a conversion (a save/connect-snapshot NPC; WorldActorSpawn leaves it 0).
 };
-static_assert(sizeof(EntitySpawnPayload) == 100, "EntitySpawnPayload must be 100 bytes (v91: position-fuzzy matchX/Y/Z replaced by deterministic retireOffEid)");
+static_assert(sizeof(EntitySpawnPayload) == 104, "EntitySpawnPayload must be 104 bytes (v91: deterministic retireOffEid + convertFromEid, no position-fuzzy fields)");
 static_assert(sizeof(EntitySpawnPayload) <= 256 - 20 - 8,
               "EntitySpawnPayload must fit in one reliable datagram");
 
