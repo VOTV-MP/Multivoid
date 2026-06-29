@@ -16,12 +16,26 @@ principle is **what each thing replicates**, NOT the word "sync":
 
 Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from name/kind.
 
-> **PHYSICAL LAYOUT (reorg DONE 2026-06-28, `research/findings/sync-reorg-PLAN-2026-06-28.md`):** L2/L3/L4/L5
-> are now physical subdirs -- `coop/devices/` (L2), `coop/world/` (L3), `coop/social/` (L4), `coop/host/` (L5)
-> -- plus the pre-existing `coop/element/` `coop/sync/` `coop/net/` `coop/voice/`. The L1 identity core +
-> transport STAY at the `coop/` root (deeply coupled). One exception: `interactable_channel` is still at root
-> (held L5 WIP); it joins `coop/devices/` once that lands. Tables below list bare names; prepend the layer's
-> subdir for the path.
+> **PHYSICAL LAYOUT (STRICT reorg REDONE by behaviour 2026-06-29, commit `33945284`;
+> `research/findings/kerfur-identity-authority-and-module-refactor-DESIGN-2026-06-29.md` Part 3).** The
+> 2026-06-28 `coop/{world,social,host,devices}` layout was filename-guessed and WRONG; it was dissolved and
+> re-placed by what each file DOES. The coop/ root is now FLAT into mechanic-named modules:
+> - `coop/element/` `coop/sync/` -- L1 identity core (Registry / MirrorManager / ElementDeleter / the
+>   CreateOrAdopt + RetireMirror funnels). `coop/net/` -- transport. `coop/voice/` `coop/dev/`.
+> - `coop/creatures/` -- NPCs + kerfur (all forms) + wisps + WorldActor event entities.
+> - `coop/props/` -- grabbable physics props: chipPile/trash/grab-throw/proxy/pile-reconcile + save-identity.
+> - `coop/interactables/` -- the E-press objects: doors/keypad/power/window/grime/turbine/ATV/drone/
+>   console/signal/comp + `interactable_channel` (was held L5 WIP, now placed) + `device_occupancy`.
+> - `coop/world/` -- time/sky/weather/firefly/event-cue/balance + `email_sync` (story-bot mail, NOT social).
+> - `coop/player/` -- remote-player puppets, inventory-pickup/flashlight/damage, sleep, nameplate, roster.
+> - `coop/items/` -- inventory persistence + wire + delivery `order_sync`. `coop/comms/` -- chat sync + feed.
+> - `coop/session/` -- handshake/save-transfer/join-curtain/event-feed+dispatch/net-pump/subsystems +
+>   the former `host/` (ban/moderation/save-guard/shutdown/multiplayer-menu -- "host" was a role, not a mechanic).
+>
+> `social/` and `host/` are FULLY DISSOLVED (no such folders). Tables below list bare names; find the file's
+> module by its behaviour above (or `git ls-files`). NPC + WorldActor wire binds now ALSO funnel through
+> `coop/sync` (CreateOrAdoptNpc/WorldActorMirror); the destroy funnel is `sync::RetireMirror`; and
+> `MirrorManager::Install` is SEALED to sync (a feature-file wire-mirror bind is a compile error). [Inc A/B/C]
 
 > **Where does a NEW sync feature go?** If it has an eid and can be created/destroyed/
 > morphed at runtime as a mirror → it's an entity, use the `coop/sync/` identity layer
@@ -52,7 +66,7 @@ The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<
 
 | File(s) | Entity | ReliableKind(s) |
 |---|---|---|
-| `coop/sync/sync.h`, `sync_create.cpp` (`CreateOrAdopt`), `sync_reconcile.cpp` | THE keystone: bind / adopt / morph / reconcile. `[V]` | — |
+| `coop/sync/sync.h`, `sync_create.cpp` (`CreateOrAdopt{Prop,Npc,WorldActor}Mirror` -- the ONE wire-mirror bind, sealed sync-only), `sync_destroy.cpp` (`RetireMirror` -- the ONE type-dispatched destroy), `sync_reconcile.cpp` | THE keystone: bind / adopt / morph / reconcile / retire, for all 3 streamed kinds (Prop/Npc/WorldActor). `[V]` | — |
 | `element/registry.*`, `mirror_manager.h`, `element.*`, `element_deleter.*`, `prop.h`, `npc.h`, `player.h` | The identity owner + the deferred-destroy funnel. `[V]` | — |
 | `remote_prop.cpp`, `remote_prop_spawn.cpp`, `prop_element_tracker.cpp`, `prop_lifecycle.cpp`, `prop_echo_suppress.cpp`, `prop_stick_sync.cpp`, `prop_synth_key.cpp` | Props (Aprop_C, chipPile, etc.) | PropSpawn/Destroy/Convert/Release/SnapPos/StickState `[V]` |
 | `pile_reconcile.cpp`, `trash_proxy.cpp`, `trash_channel.cpp`, `trash_collect_sync.cpp`, `trash_pile_sync.cpp`, `trash_clump_pose_stream.cpp` | chipPiles / trash clumps (mirror proxies + carry) | PropConvert, TrashPileState, GrabIntent/ThrowIntent/PileResyncRequest `[V]` |
