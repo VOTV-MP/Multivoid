@@ -21,6 +21,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/registry.h"
 #include "coop/element/world_actor.h"
+#include "coop/sync/sync_create.h"   // the single WorldActor mirror create funnel (Inc A)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -575,15 +576,9 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
         }
     }
 
-    auto mirror = std::make_unique<coop::element::WorldActor>();
-    std::string typeName8;
-    typeName8.reserve(classW.size());
-    for (wchar_t c : classW) typeName8.push_back(static_cast<char>(c));
-    mirror->SetTypeName(std::move(typeName8));
-    mirror->SetActor(spawned, R::InternalIndexOf(spawned));
     const coop::element::ElementId eid = static_cast<coop::element::ElementId>(payload.elementId);
-    if (!WaMirrors().Install(eid, std::move(mirror))) {
-        UE_LOGW("world-actor[client OnSpawn]: Install(eid=%u) failed -- destroying orphan actor %p",
+    if (!coop::sync::CreateOrAdoptWorldActorMirror(eid, spawned, classW, /*senderSlot=*/-1)) {
+        UE_LOGW("world-actor[client OnSpawn]: CreateOrAdoptWorldActorMirror(eid=%u) failed -- destroying orphan actor %p",
                 payload.elementId, spawned);
         if (g_k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, g_k2DestroyFn, nullptr);
         return;

@@ -12,6 +12,8 @@
 
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
+#include "coop/element/npc.h"          // CreateOrAdoptNpcMirror
+#include "coop/element/world_actor.h"  // CreateOrAdoptWorldActorMirror
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
@@ -34,6 +36,27 @@ std::string NarrowAscii(const std::wstring& w) {
     std::string s; s.reserve(w.size());
     for (wchar_t c : w) s.push_back(static_cast<char>(c & 0xFF));
     return s;
+}
+
+// The single-owner bind decision for a "simple" wire mirror (NPC / WorldActor) --
+// no save Key, no morph re-skin, no kerfur held-pose notify (those are prop-only).
+// Idempotent-adopt (same actor -> true), HEAD live-conflict reject (a different
+// live actor at `eid` -> false), else build the Element + Install at `eid`.
+template <typename T>
+bool CreateOrAdoptSimpleMirror(coop::element::MirrorManager<T>& mgr,
+                               coop::element::ElementId eid, void* actor,
+                               const std::wstring& cls, int senderSlot) {
+    if (!actor) return false;
+    if (auto* existing = coop::element::Registry::Get().Get(eid)) {
+        return existing->GetActor() == actor;  // ADOPT idempotent (true) / REJECT divergent (false)
+    }
+    const int ownerSlot =
+        (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers))
+            ? senderSlot : -1;
+    auto mirror = std::make_unique<T>();
+    if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
+    mirror->SetActor(actor, R::InternalIndexOf(actor));
+    return mgr.Install(eid, std::move(mirror), ownerSlot);
 }
 }  // namespace
 
@@ -98,6 +121,24 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
     }
     // On false: Install already logged the failure (sentinel id, duplicate, or
     // RegisterMirror failure).
+}
+
+bool CreateOrAdoptNpcMirror(coop::element::ElementId eid, void* actor,
+                            const std::wstring& cls, int senderSlot) {
+    const bool ok = CreateOrAdoptSimpleMirror(
+        coop::element::MirrorManager<coop::element::Npc>::Instance(), eid, actor, cls, senderSlot);
+    if (ok)
+        UE_LOGI("sync::CreateOrAdoptNpcMirror: eid=%u bound to actor=%p cls='%ls'", eid, actor, cls.c_str());
+    return ok;
+}
+
+bool CreateOrAdoptWorldActorMirror(coop::element::ElementId eid, void* actor,
+                                   const std::wstring& cls, int senderSlot) {
+    const bool ok = CreateOrAdoptSimpleMirror(
+        coop::element::MirrorManager<coop::element::WorldActor>::Instance(), eid, actor, cls, senderSlot);
+    if (ok)
+        UE_LOGI("sync::CreateOrAdoptWorldActorMirror: eid=%u bound to actor=%p cls='%ls'", eid, actor, cls.c_str());
+    return ok;
 }
 
 }  // namespace coop::sync

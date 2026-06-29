@@ -39,4 +39,21 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                              const std::wstring& key, const std::wstring& cls,
                              int senderSlot, bool morph);
 
+// CreateOrAdopt for a wire-received NPC MIRROR (the client binds the host's NPC
+// eid to a local actor). Same single-owner bind decision as the prop keystone,
+// minus the prop-only concerns (no save Key, no morph re-skin -- an NPC that
+// changes form is a kerfur and routes through kerfur_convert, not a morph here;
+// no kerfur held-pose notify). Returns true iff the mirror is now bound to
+// `actor` (idempotent re-bind of the same actor returns true; a different live
+// actor already at `eid` is REJECTED -> false, the HEAD live-conflict guard).
+// The caller does the NPC-specific post-bind setup (tick-disable / AI-neutralize).
+bool CreateOrAdoptNpcMirror(coop::element::ElementId eid, void* actor,
+                            const std::wstring& cls, int senderSlot);
+
+// CreateOrAdopt for a wire-received WORLDACTOR MIRROR (UFOs/ships/jellyfish --
+// the non-Character host-authoritative event actors). Same contract as the NPC
+// funnel. The caller does the WorldActor-specific post-bind setup.
+bool CreateOrAdoptWorldActorMirror(coop::element::ElementId eid, void* actor,
+                                   const std::wstring& cls, int senderSlot);
+
 }  // namespace coop::sync

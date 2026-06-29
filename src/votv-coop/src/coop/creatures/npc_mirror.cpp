@@ -14,6 +14,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
+#include "coop/sync/sync_create.h"   // the single NPC mirror create funnel (Inc A)
 #include "coop/creatures/kerfur_convert.h"  // FindParkedGhostNpcNear -- adopt the client's own turn-on result
 #include "coop/session/mirror_defer.h"  // instant-world: hide a freshly-spawned NPC mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
@@ -218,15 +219,9 @@ bool AdoptExistingNpcAsMirror(void* actor, uint32_t elementId, const std::wstrin
     // Same Element build + Install + park as SpawnFreshNpcMirror's tail, but binding an EXISTING
     // actor (no BeginDeferred/FinishSpawning). The actor is the client's own real game-spawned
     // kerfur -> camera-safe, fully initialized.
-    auto mirror = std::make_unique<coop::element::Npc>();
-    std::string typeName8;
-    typeName8.reserve(classW.size());
-    for (wchar_t c : classW) typeName8.push_back(static_cast<char>(c));
-    mirror->SetTypeName(std::move(typeName8));
-    mirror->SetActor(actor, R::InternalIndexOf(actor));
     const coop::element::ElementId eid = static_cast<coop::element::ElementId>(elementId);
-    if (!NpcMirrors().Install(eid, std::move(mirror))) {
-        UE_LOGW("npc-mirror[adopt]: Install(eid=%u) failed for existing actor %p -- leaving it for "
+    if (!coop::sync::CreateOrAdoptNpcMirror(eid, actor, classW, /*senderSlot=*/-1)) {
+        UE_LOGW("npc-mirror[adopt]: CreateOrAdoptNpcMirror(eid=%u) failed for existing actor %p -- leaving it for "
                 "kerfur_convert ghost cleanup", elementId, actor);
         return false;
     }
@@ -347,18 +342,11 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     // Build mirror Element + hand off to MirrorManager::Install (alloc-under-lock +
     // RegisterMirror + rollback-on-fail). Install returns false on duplicate-eid race or
     // Registry::RegisterMirror failure -- we own the orphan actor and must K2_DestroyActor it.
-    auto mirror = std::make_unique<coop::element::Npc>();
-    std::string typeName8;
-    typeName8.reserve(classW.size());
-    for (wchar_t c : classW) typeName8.push_back(static_cast<char>(c));
-    mirror->SetTypeName(std::move(typeName8));
-    mirror->SetActor(spawned, R::InternalIndexOf(spawned));
-
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(elementId);
 
-    if (!NpcMirrors().Install(eid, std::move(mirror))) {
-        UE_LOGW("npc-sync[client OnSpawn]: MirrorManager::Install(eid=%u) failed "
+    if (!coop::sync::CreateOrAdoptNpcMirror(eid, spawned, classW, /*senderSlot=*/-1)) {
+        UE_LOGW("npc-sync[client OnSpawn]: CreateOrAdoptNpcMirror(eid=%u) failed "
                 "(duplicate eid race / Registry collision) -- destroying orphan actor %p",
                 eid, spawned);
         if (g_k2DestroyFn && R::IsLive(spawned)) {
