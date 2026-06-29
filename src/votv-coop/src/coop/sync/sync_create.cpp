@@ -13,9 +13,9 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
-#include "coop/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
-#include "coop/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
+#include "coop/creatures/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
+#include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
+#include "coop/props/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 

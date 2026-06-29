@@ -2,7 +2,7 @@
 
 #include "coop/dev/eid_lifetime_trace.h"
 
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 #include "ue_wrap/log.h"
 
 #include <unordered_map>

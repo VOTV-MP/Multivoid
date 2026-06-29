@@ -2,9 +2,9 @@
 
 #include "ui/hud.h"
 
-#include "coop/social/chat_feed.h"
+#include "coop/comms/chat_feed.h"
 #include "coop/dev/object_overlay.h"
-#include "coop/nameplate.h"
+#include "coop/player/nameplate.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/voice_icons.h"
 

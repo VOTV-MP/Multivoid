@@ -2,10 +2,10 @@
 
 #include "coop/voice/voice_chat.h"
 
-#include "coop/ini_config.h"  // IsOurWindowForeground -- the cross-process key gate
+#include "coop/session/ini_config.h"  // IsOurWindowForeground -- the cross-process key gate
 #include "coop/net/session.h"
-#include "coop/players_registry.h"
-#include "coop/remote_player.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/voice/voice_capture.h"
 #include "coop/voice/voice_playback.h"
 

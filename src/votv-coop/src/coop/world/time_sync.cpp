@@ -4,7 +4,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/players_registry.h"  // coop::players::kMaxPeers
+#include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
 #include "ue_wrap/daynightcycle.h"
 #include "ue_wrap/log.h"

@@ -32,7 +32,7 @@
 #pragma once
 
 #include "coop/element/element.h"
-#include "coop/lerp_window.h"
+#include "coop/interactables/lerp_window.h"
 #include "ue_wrap/types.h"  // FVector
 
 namespace coop::net { struct WorldActorPoseSnapshot; }

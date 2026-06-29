@@ -24,7 +24,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
-#include "coop/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
+#include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
 
 #include <array>
 #include <atomic>

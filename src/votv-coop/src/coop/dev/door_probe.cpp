@@ -10,7 +10,7 @@
 
 #include "coop/dev/door_probe.h"
 
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/door.h"
 #include "ue_wrap/log.h"

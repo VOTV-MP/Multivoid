@@ -2,10 +2,10 @@
 
 #include "coop/sync/sync_reconcile.h"
 
-#include "coop/pile_reconcile.h"
-#include "coop/prop_element_tracker.h"  // InPurgeEpisode (post-purge re-bind trigger)
-#include "coop/remote_prop_spawn.h"   // HasLoadTailQuiesced
-#include "coop/save_identity_bind.h"
+#include "coop/props/pile_reconcile.h"
+#include "coop/props/prop_element_tracker.h"  // InPurgeEpisode (post-purge re-bind trigger)
+#include "coop/props/remote_prop_spawn.h"   // HasLoadTailQuiesced
+#include "coop/props/save_identity_bind.h"
 #include "ue_wrap/log.h"
 
 #include <chrono>

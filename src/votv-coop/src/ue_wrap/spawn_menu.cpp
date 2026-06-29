@@ -2,7 +2,7 @@
 
 #include "ue_wrap/spawn_menu.h"
 
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"      // GetController -- the local player's PlayerController for input mode
 #include "ue_wrap/log.h"

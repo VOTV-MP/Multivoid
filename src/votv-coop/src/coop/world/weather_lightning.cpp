@@ -5,7 +5,7 @@
 #include "coop/element/element.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"

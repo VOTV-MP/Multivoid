@@ -28,7 +28,7 @@
 
 #include "harness/autotest.h"
 
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"

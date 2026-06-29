@@ -2,8 +2,8 @@
 
 #include "coop/dev/spawn_order_probe.h"
 
-#include "coop/ini_config.h"
-#include "coop/kerfur_entity.h"   // IsKerfurPropClass (off-prop kerfur family)
+#include "coop/session/ini_config.h"
+#include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (off-prop kerfur family)
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"         // IsChipPile
 #include "ue_wrap/reflection.h"

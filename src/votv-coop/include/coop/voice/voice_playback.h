@@ -21,7 +21,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
-#include "coop/players_registry.h"  // kMaxPeers
+#include "coop/player/players_registry.h"  // kMaxPeers
 
 #include <atomic>
 #include <cstdint>

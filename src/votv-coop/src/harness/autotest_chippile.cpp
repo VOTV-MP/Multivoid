@@ -45,12 +45,12 @@
 
 #include "harness/autotest.h"
 
-#include "coop/players_registry.h"
-#include "coop/remote_player.h"        // RemotePlayer::GetActor (client-in-world readiness gate)
-#include "coop/prop_element_tracker.h"
-#include "coop/remote_prop.h"
-#include "coop/trash_collect_sync.h"   // DebugSendGrabIntent (Increment-2 synthetic wire test)
-#include "coop/trash_proxy.h"          // NearestPileProxy (CLIENT visual showcase: aim at a mirrored pile)
+#include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"        // RemotePlayer::GetActor (client-in-world readiness gate)
+#include "coop/props/prop_element_tracker.h"
+#include "coop/props/remote_prop.h"
+#include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent (Increment-2 synthetic wire test)
+#include "coop/props/trash_proxy.h"          // NearestPileProxy (CLIENT visual showcase: aim at a mirrored pile)
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"

@@ -8,10 +8,10 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/prop.h"
-#include "coop/kerfur_entity.h"        // IsKerfurClass / IsKerfurPropClass
+#include "coop/creatures/kerfur_entity.h"        // IsKerfurClass / IsKerfurPropClass
 #include "coop/net/session.h"          // Session::role() + net::Role (complete type)
-#include "coop/npc_sync.h"             // GetSession (client-only gate)
-#include "coop/remote_prop_spawn.h"    // HasLoadTailQuiesced
+#include "coop/creatures/npc_sync.h"             // GetSession (client-only gate)
+#include "coop/props/remote_prop_spawn.h"    // HasLoadTailQuiesced
 #include "ue_wrap/engine.h"            // GetActorLocation
 #include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"

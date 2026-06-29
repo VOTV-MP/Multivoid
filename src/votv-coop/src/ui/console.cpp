@@ -2,7 +2,7 @@
 
 #include "ui/console.h"
 
-#include "coop/join_progress.h"
+#include "coop/session/join_progress.h"
 #include "ue_wrap/log.h"
 
 #include "imgui.h"

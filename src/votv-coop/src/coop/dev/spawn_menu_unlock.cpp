@@ -3,8 +3,8 @@
 #include "coop/dev/spawn_menu_unlock.h"
 
 #include "coop/dev/dev_gate.h"
-#include "coop/ini_config.h"
-#include "coop/host/shutdown.h"
+#include "coop/session/ini_config.h"
+#include "coop/session/shutdown.h"
 
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"

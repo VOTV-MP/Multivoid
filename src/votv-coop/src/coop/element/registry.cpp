@@ -15,7 +15,7 @@
 
 #include "coop/element/registry.h"
 
-#include "coop/players_registry.h"  // kMaxPeers (peer-band count, D9-2)
+#include "coop/player/players_registry.h"  // kMaxPeers (peer-band count, D9-2)
 #include "ue_wrap/log.h"
 
 namespace coop::element {

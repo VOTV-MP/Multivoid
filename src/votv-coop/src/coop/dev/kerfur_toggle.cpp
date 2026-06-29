@@ -2,9 +2,9 @@
 
 #include "coop/dev/kerfur_toggle.h"
 
-#include "coop/ini_config.h"
-#include "coop/players_registry.h"
-#include "coop/host/shutdown.h"
+#include "coop/session/ini_config.h"
+#include "coop/player/players_registry.h"
+#include "coop/session/shutdown.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"

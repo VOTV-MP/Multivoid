@@ -5,7 +5,7 @@
 #include <cmath>
 #include <unordered_map>
 
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 #include "ue_wrap/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"           // PuppetHeadLookProbe + ReadPuppetHeadLookProbe

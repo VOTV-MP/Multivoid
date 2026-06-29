@@ -2,9 +2,9 @@
 
 #include "ui/scoreboard.h"
 
-#include "coop/host/moderation.h"
-#include "coop/session_manager.h"  // ListedState / SetListed (the host hide toggle)
-#include "coop/roster.h"
+#include "coop/session/moderation.h"
+#include "coop/session/session_manager.h"  // ListedState / SetListed (the host hide toggle)
+#include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/dev_menu.h"
 #include "ui/voice_icons.h"

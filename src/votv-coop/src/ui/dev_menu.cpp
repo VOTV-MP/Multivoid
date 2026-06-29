@@ -14,7 +14,7 @@
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 
 #include <cctype>
 #include <cstring>

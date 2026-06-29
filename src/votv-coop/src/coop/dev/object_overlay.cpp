@@ -4,8 +4,8 @@
 
 #include "coop/dev/dev_gate.h"
 #include "coop/element/registry.h"
-#include "coop/ini_config.h"
-#include "coop/players_registry.h"
+#include "coop/session/ini_config.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"

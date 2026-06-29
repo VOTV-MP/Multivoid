@@ -38,12 +38,12 @@
 #include "ui/toast.h"
 #include "ui/chat_input.h"
 #include "ui/voice_panel.h"
-#include "coop/social/chat_sync.h"
-#include "coop/host/multiplayer_menu.h"
+#include "coop/comms/chat_sync.h"
+#include "coop/session/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
-#include "coop/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
-#include "coop/join_progress.h"
-#include "coop/session_manager.h"
+#include "coop/session/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
+#include "coop/session/join_progress.h"
+#include "coop/session/session_manager.h"
 #include "coop/dev/perf_probe.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"

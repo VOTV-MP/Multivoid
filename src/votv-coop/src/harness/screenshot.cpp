@@ -1,6 +1,6 @@
 #include "harness/screenshot.h"
 
-#include "coop/host/shutdown.h"
+#include "coop/session/shutdown.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>

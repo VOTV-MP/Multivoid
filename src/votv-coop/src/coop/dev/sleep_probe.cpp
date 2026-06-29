@@ -2,7 +2,7 @@
 
 #include "coop/dev/sleep_probe.h"
 
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/sleep.h"
 

@@ -14,7 +14,7 @@
 
 #include "ui/host_save_picker.h"
 #include "coop/net/protocol.h"  // kProtocolVersion (the v59 "Ver" mismatch tint)
-#include "coop/session_manager.h"
+#include "coop/session/session_manager.h"
 #include "harness/config.h"   // local-only ini persistence for the name + last direct address
 #include "ue_wrap/log.h"
 

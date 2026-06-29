@@ -2,7 +2,7 @@
 
 #include "ui/loading_screen.h"
 
-#include "coop/join_progress.h"
+#include "coop/session/join_progress.h"
 
 #include "imgui.h"
 

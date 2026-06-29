@@ -35,7 +35,7 @@
 #include "harness/autotest.h"
 #include "harness/screenshot.h"
 
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"

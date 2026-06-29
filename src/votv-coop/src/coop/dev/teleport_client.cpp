@@ -1,6 +1,6 @@
 #include "coop/dev/teleport_client.h"
 
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/call.h"

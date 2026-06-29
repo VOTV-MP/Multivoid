@@ -3,8 +3,8 @@
 #include "ui/host_save_picker.h"
 
 #include "ui/server_browser.h"
-#include "coop/join_progress.h"
-#include "coop/session_manager.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/session_manager.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/save_browser.h"
 

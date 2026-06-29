@@ -3,11 +3,11 @@
 #include "coop/dev/spawn_npc.h"
 
 #include "coop/dev/dev_gate.h"
-#include "coop/ini_config.h"
-#include "coop/npc_sync.h"
-#include "coop/players_registry.h"
-#include "coop/remote_player.h"   // RemotePlayer::GetActor (the on-client wisp test spawn)
-#include "coop/host/shutdown.h"
+#include "coop/session/ini_config.h"
+#include "coop/creatures/npc_sync.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"   // RemotePlayer::GetActor (the on-client wisp test spawn)
+#include "coop/session/shutdown.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"

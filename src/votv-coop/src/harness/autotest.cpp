@@ -29,10 +29,10 @@
 
 #include "harness/autotest.h"
 
-#include "coop/social/item_activate.h"
-#include "coop/players_registry.h"
-#include "coop/prop_element_tracker.h"
-#include "coop/remote_player.h"
+#include "coop/player/item_activate.h"
+#include "coop/player/players_registry.h"
+#include "coop/props/prop_element_tracker.h"
+#include "coop/player/remote_player.h"
 #include "coop/world/weather_sync.h"
 #include "coop/dev/flashlight_setup.h"
 #include "harness/screenshot.h"

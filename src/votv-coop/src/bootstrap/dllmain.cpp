@@ -7,7 +7,7 @@
 // (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
 // in later steps, behind ue_wrap/.
 
-#include "coop/host/shutdown.h"
+#include "coop/session/shutdown.h"
 #include "coop/version.h"
 #include "harness/harness.h"
 #include "ue_wrap/game_thread.h"

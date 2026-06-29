@@ -2,7 +2,7 @@
 
 #include "coop/voice/voice_capture.h"
 
-#include "coop/ini_config.h"  // IsOurWindowForeground -- the cross-process PTT gate
+#include "coop/session/ini_config.h"  // IsOurWindowForeground -- the cross-process PTT gate
 #include "ue_wrap/log.h"
 
 #include <Windows.h>

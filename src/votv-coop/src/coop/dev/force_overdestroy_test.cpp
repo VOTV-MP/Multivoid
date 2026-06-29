@@ -2,7 +2,7 @@
 
 #include "coop/dev/force_overdestroy_test.h"
 
-#include "coop/ini_config.h"
+#include "coop/session/ini_config.h"
 #include "ue_wrap/log.h"
 
 namespace coop::dev::force_overdestroy_test {

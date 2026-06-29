@@ -30,7 +30,7 @@
 
 #include "coop/net/session.h"
 
-#include "coop/players_registry.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/log.h"
 
 #pragma warning(push)

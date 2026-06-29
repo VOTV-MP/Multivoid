@@ -2,9 +2,9 @@
 
 #include "coop/dev/pinecone_probe.h"
 
-#include "coop/ini_config.h"
-#include "coop/npc_sync.h"            // GetDevSpawnRefs (generic GameplayStatics spawn fns)
-#include "coop/players_registry.h"
+#include "coop/session/ini_config.h"
+#include "coop/creatures/npc_sync.h"            // GetDevSpawnRefs (generic GameplayStatics spawn fns)
+#include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"

@@ -201,83 +201,83 @@ add_library(votv-coop SHARED
     src/ue_wrap/prop.cpp
     src/ue_wrap/vitals.cpp
     src/ue_wrap/spawn_menu.cpp
-    src/coop/remote_player.cpp
-    src/coop/remote_prop.cpp
-    src/coop/host/save_guard.cpp
+    src/coop/player/remote_player.cpp
+    src/coop/props/remote_prop.cpp
+    src/coop/session/save_guard.cpp
     src/coop/world/balance_sync.cpp
-    src/coop/host/save_block.cpp
-    src/coop/host/save_button_disable.cpp
-    src/coop/host/multiplayer_menu.cpp
-    src/coop/nameplate.cpp
-    src/coop/social/chat_feed.cpp
-    src/coop/event_feed.cpp
-    src/coop/event_dispatch_entity.cpp
-    src/coop/event_dispatch_state.cpp
-    src/coop/event_dispatch_world.cpp
-    src/coop/social/chat_sync.cpp
-    src/coop/devices/turbine_sync.cpp
-    src/coop/devices/interactable_sync.cpp
-    src/coop/kerfur_convert.cpp
-    src/coop/kerfur_command.cpp
-    src/coop/kerfur_menu_input.cpp
-    src/coop/kerfur_entity.cpp
-    src/coop/kerfur_prop_adoption.cpp
-    src/coop/kerfur_reconcile.cpp
-    src/coop/devices/keypad_sync.cpp
+    src/coop/session/save_block.cpp
+    src/coop/session/save_button_disable.cpp
+    src/coop/session/multiplayer_menu.cpp
+    src/coop/player/nameplate.cpp
+    src/coop/comms/chat_feed.cpp
+    src/coop/session/event_feed.cpp
+    src/coop/session/event_dispatch_entity.cpp
+    src/coop/session/event_dispatch_state.cpp
+    src/coop/session/event_dispatch_world.cpp
+    src/coop/comms/chat_sync.cpp
+    src/coop/interactables/turbine_sync.cpp
+    src/coop/interactables/interactable_sync.cpp
+    src/coop/creatures/kerfur_convert.cpp
+    src/coop/creatures/kerfur_command.cpp
+    src/coop/creatures/kerfur_menu_input.cpp
+    src/coop/creatures/kerfur_entity.cpp
+    src/coop/creatures/kerfur_prop_adoption.cpp
+    src/coop/creatures/kerfur_reconcile.cpp
+    src/coop/interactables/keypad_sync.cpp
     src/coop/world/time_sync.cpp
     src/coop/world/sky_sync.cpp
-    src/coop/devices/power_sync.cpp
-    src/coop/devices/atv_sync.cpp
-    src/coop/devices/drone_sync.cpp
-    src/coop/devices/order_sync.cpp
+    src/coop/interactables/power_sync.cpp
+    src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/drone_sync.cpp
+    src/coop/items/order_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/event_cue_sync.cpp
-    src/coop/devices/window_sync.cpp
-    src/coop/devices/grime_sync.cpp
-    src/coop/player_handshake.cpp
-    src/coop/grab_observer.cpp
-    src/coop/social/item_activate.cpp
-    src/coop/social/player_damage.cpp
-    src/coop/social/flashlight_click_sound.cpp
-    src/coop/prop_sound.cpp
-    src/coop/social/inventory_pickup_sync.cpp
-    src/coop/host/shutdown.cpp
-    src/coop/players_registry.cpp
-    src/coop/mirror_defer.cpp
-    src/coop/join_curtain.cpp
-    src/coop/npc_adoption.cpp
-    src/coop/npc_mirror.cpp
-    src/coop/npc_pose_drive.cpp
-    src/coop/npc_pose_host.cpp
-    src/coop/npc_sync.cpp
-    src/coop/npc_world_enum.cpp
-    src/coop/world_actor_sync.cpp
-    src/coop/prop_echo_suppress.cpp
-    src/coop/pile_reconcile.cpp
-    src/coop/snapshot_census.cpp
-    src/coop/save_identity_map.cpp
-    src/coop/save_identity_bind.cpp
+    src/coop/interactables/window_sync.cpp
+    src/coop/interactables/grime_sync.cpp
+    src/coop/session/player_handshake.cpp
+    src/coop/props/grab_observer.cpp
+    src/coop/player/item_activate.cpp
+    src/coop/player/player_damage.cpp
+    src/coop/player/flashlight_click_sound.cpp
+    src/coop/props/prop_sound.cpp
+    src/coop/player/inventory_pickup_sync.cpp
+    src/coop/session/shutdown.cpp
+    src/coop/player/players_registry.cpp
+    src/coop/session/mirror_defer.cpp
+    src/coop/session/join_curtain.cpp
+    src/coop/creatures/npc_adoption.cpp
+    src/coop/creatures/npc_mirror.cpp
+    src/coop/creatures/npc_pose_drive.cpp
+    src/coop/creatures/npc_pose_host.cpp
+    src/coop/creatures/npc_sync.cpp
+    src/coop/creatures/npc_world_enum.cpp
+    src/coop/creatures/world_actor_sync.cpp
+    src/coop/props/prop_echo_suppress.cpp
+    src/coop/props/pile_reconcile.cpp
+    src/coop/props/snapshot_census.cpp
+    src/coop/props/save_identity_map.cpp
+    src/coop/props/save_identity_bind.cpp
     src/coop/dev/force_overdestroy_test.cpp
-    src/coop/prop_element_tracker.cpp
-    src/coop/prop_lifecycle.cpp
-    src/coop/prop_snapshot.cpp
-    src/coop/prop_stick_sync.cpp
-    src/coop/prop_synth_key.cpp
-    src/coop/remote_prop_spawn.cpp
-    src/coop/host/garbage_sync.cpp
-    src/coop/host/ambient_spawner_suppress.cpp
-    src/coop/host_spawn_watcher.cpp
-    src/coop/trash_channel.cpp
-    src/coop/trash_collect_sync.cpp
-    src/coop/trash_pile_sync.cpp
-    src/coop/trash_proxy.cpp
-    src/coop/puppet_carry_drive.cpp
-    src/coop/trash_clump_pose_stream.cpp
+    src/coop/props/prop_element_tracker.cpp
+    src/coop/props/prop_lifecycle.cpp
+    src/coop/props/prop_snapshot.cpp
+    src/coop/props/prop_stick_sync.cpp
+    src/coop/props/prop_synth_key.cpp
+    src/coop/props/remote_prop_spawn.cpp
+    src/coop/interactables/garbage_sync.cpp
+    src/coop/session/ambient_spawner_suppress.cpp
+    src/coop/props/host_spawn_watcher.cpp
+    src/coop/props/trash_channel.cpp
+    src/coop/props/trash_collect_sync.cpp
+    src/coop/props/trash_pile_sync.cpp
+    src/coop/props/trash_proxy.cpp
+    src/coop/player/puppet_carry_drive.cpp
+    src/coop/props/trash_clump_pose_stream.cpp
     src/coop/world/weather_sync.cpp
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp
     src/coop/world/weather_redsky.cpp
-    src/coop/ini_config.cpp
+    src/coop/session/ini_config.cpp
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
@@ -296,27 +296,27 @@ add_library(votv-coop SHARED
     src/coop/net/http_client.cpp
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
-    src/coop/save_transfer.cpp
-    src/coop/host/save_indicator_suppress.cpp
-    src/coop/session_manager.cpp
-    src/coop/join_progress.cpp
-    src/coop/net_pump.cpp
-    src/coop/subsystems.cpp
-    src/coop/local_streams.cpp
-    src/coop/devices/device_occupancy.cpp
-    src/coop/devices/console_state_sync.cpp
-    src/coop/devices/signal_catch_sync.cpp
-    src/coop/devices/sleep_sync.cpp
-    src/coop/social/wisp_attack_sync.cpp
-    src/coop/social/wisp_tear_mirror.cpp
-    src/coop/social/player_inventory_sync.cpp
-    src/coop/social/inventory_wire.cpp
+    src/coop/session/save_transfer.cpp
+    src/coop/session/save_indicator_suppress.cpp
+    src/coop/session/session_manager.cpp
+    src/coop/session/join_progress.cpp
+    src/coop/session/net_pump.cpp
+    src/coop/session/subsystems.cpp
+    src/coop/player/local_streams.cpp
+    src/coop/interactables/device_occupancy.cpp
+    src/coop/interactables/console_state_sync.cpp
+    src/coop/interactables/signal_catch_sync.cpp
+    src/coop/player/sleep_sync.cpp
+    src/coop/creatures/wisp_attack_sync.cpp
+    src/coop/creatures/wisp_tear_mirror.cpp
+    src/coop/items/player_inventory_sync.cpp
+    src/coop/items/inventory_wire.cpp
     src/ue_wrap/inventory.cpp
-    src/coop/social/email_sync.cpp
-    src/coop/blob_chunks.cpp
-    src/coop/devices/signal_wire.cpp
-    src/coop/devices/signal_sync.cpp
-    src/coop/devices/comp_sync.cpp
+    src/coop/world/email_sync.cpp
+    src/coop/session/blob_chunks.cpp
+    src/coop/interactables/signal_wire.cpp
+    src/coop/interactables/signal_sync.cpp
+    src/coop/interactables/comp_sync.cpp
     src/coop/voice/voice_chat.cpp
     src/coop/voice/voice_capture.cpp
     src/coop/voice/voice_playback.cpp
@@ -363,9 +363,9 @@ add_library(votv-coop SHARED
     src/ui/hud.cpp
     src/ui/toast.cpp
     src/ui/chat_input.cpp
-    src/coop/roster.cpp
-    src/coop/host/ban_list.cpp
-    src/coop/host/moderation.cpp
+    src/coop/player/roster.cpp
+    src/coop/session/ban_list.cpp
+    src/coop/session/moderation.cpp
     src/harness/harness.cpp
     src/harness/harness_diag.cpp
     src/harness/autotest.cpp
