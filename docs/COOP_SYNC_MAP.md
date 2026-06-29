@@ -5,7 +5,7 @@ sync, and which layer does it belong to?" without grepping 95 files. The organiz
 principle is **what each thing replicates**, NOT the word "sync":
 
 - **Identity / mirror-entity lifecycle** — an eid↔actor mapping with create / adopt /
-  morph / destroy. This is the only thing the `coop/sync/` module consolidates (it was
+  morph / destroy. This is the only thing the `coop/element/` module consolidates (it was
   built to kill the mirror-identity-race class, D1/D2). MTA analogue: `CElementIDs` +
   the `CClient*Manager` family + `CClientEntity`.
 - **Keyed state** — apply a value to a NAMED native actor (keyed by its save Key). No
@@ -20,8 +20,10 @@ Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from 
 > `research/findings/kerfur-identity-authority-and-module-refactor-DESIGN-2026-06-29.md` Part 3).** The
 > 2026-06-28 `coop/{world,social,host,devices}` layout was filename-guessed and WRONG; it was dissolved and
 > re-placed by what each file DOES. The coop/ root is now FLAT into mechanic-named modules:
-> - `coop/element/` `coop/sync/` -- L1 identity core (Registry / MirrorManager / ElementDeleter / the
->   CreateOrAdopt + RetireMirror funnels). `coop/net/` -- transport. `coop/voice/` `coop/dev/`.
+> - `coop/element/` -- THE entity-identity layer (Registry / MirrorManager / the 3 managers / ElementDeleter
+>   / the typed Elements + the CreateOrAdopt bind + RetireMirror destroy + reconcile authority). The former
+>   `coop/sync/` was DISSOLVED into here 2026-06-29 (folder + namespace `coop::sync`→`coop::element`) -- one
+>   entity concept, one folder. `coop/net/` -- transport. `coop/voice/` `coop/dev/`.
 > - `coop/creatures/` -- NPCs + kerfur (all forms) + wisps + WorldActor event entities.
 > - `coop/props/` -- grabbable physics props: chipPile/trash/grab-throw/proxy/pile-reconcile + save-identity.
 > - `coop/interactables/` -- the E-press objects: doors/keypad/power/window/grime/turbine/ATV/drone/
@@ -32,13 +34,13 @@ Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from 
 > - `coop/session/` -- handshake/save-transfer/join-curtain/event-feed+dispatch/net-pump/subsystems +
 >   the former `host/` (ban/moderation/save-guard/shutdown/multiplayer-menu -- "host" was a role, not a mechanic).
 >
-> `social/` and `host/` are FULLY DISSOLVED (no such folders). Tables below list bare names; find the file's
-> module by its behaviour above (or `git ls-files`). NPC + WorldActor wire binds now ALSO funnel through
-> `coop/sync` (CreateOrAdoptNpc/WorldActorMirror); the destroy funnel is `sync::RetireMirror`; and
-> `MirrorManager::Install` is SEALED to sync (a feature-file wire-mirror bind is a compile error). [Inc A/B/C]
+> `social/`, `host/`, and `sync/` are FULLY DISSOLVED (no such folders). Tables below list bare names; find the
+> file's module by its behaviour above (or `git ls-files`). NPC + WorldActor wire binds now ALSO funnel through
+> `coop::element` (CreateOrAdoptNpc/WorldActorMirror); the destroy funnel is `coop::element::RetireMirror`; and
+> `MirrorManager::Install` is SEALED to `coop::element` (a feature-file wire-mirror bind is a compile error). [Inc A/B/C]
 
 > **Where does a NEW sync feature go?** If it has an eid and can be created/destroyed/
-> morphed at runtime as a mirror → it's an entity, use the `coop/sync/` identity layer
+> morphed at runtime as a mirror → it's an entity, use the `coop/element/` identity layer
 > (`CreateOrAdopt` / `MirrorManager` / `ElementDeleter`). If it's "set field K on the
 > named actor" → it's keyed state, make a small `*_sync.cpp` next to `keypad_sync` /
 > `power_sync`. If it's one global value → an even smaller one next to `time_sync`. All
@@ -60,13 +62,13 @@ Not "sync features" — the pipes. Read these to understand HOW a packet flows, 
 | `save_transfer.cpp`, `blob_chunks.cpp` | Menu-mode world-save streaming to a joiner. `[V]` |
 | `prop_snapshot.cpp`, `snapshot_census.cpp`, `join_progress.cpp`, `join_curtain.cpp`, `mirror_defer.cpp` | Connect-snapshot drain + the join-window reconcile gating (quiescence, claim sweep, curtain). `[V]` |
 
-## L1 — Entity identity & lifecycle = THE `coop/sync/` module
+## L1 — Entity identity & lifecycle = THE `coop/element/` module
 The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<T>` / `Element` /
 `ElementDeleter`, and binds via `CreateOrAdopt`.
 
 | File(s) | Entity | ReliableKind(s) |
 |---|---|---|
-| `coop/sync/sync.h`, `sync_create.cpp` (`CreateOrAdopt{Prop,Npc,WorldActor}Mirror` -- the ONE wire-mirror bind, sealed sync-only), `sync_destroy.cpp` (`RetireMirror` -- the ONE type-dispatched destroy), `sync_reconcile.cpp` | THE keystone: bind / adopt / morph / reconcile / retire, for all 3 streamed kinds (Prop/Npc/WorldActor). `[V]` | — |
+| `coop/element/identity.h`, `identity_create.cpp` (`CreateOrAdopt{Prop,Npc,WorldActor}Mirror` -- the ONE wire-mirror bind, sealed to `coop::element`), `identity_destroy.cpp` (`RetireMirror` -- the ONE type-dispatched destroy), `identity_reconcile.cpp` | THE keystone: bind / adopt / morph / reconcile / retire, for all 3 streamed kinds (Prop/Npc/WorldActor). `[V]` | — |
 | `element/registry.*`, `mirror_manager.h`, `element.*`, `element_deleter.*`, `prop.h`, `npc.h`, `player.h` | The identity owner + the deferred-destroy funnel. `[V]` | — |
 | `remote_prop.cpp`, `remote_prop_spawn.cpp`, `prop_element_tracker.cpp`, `prop_lifecycle.cpp`, `prop_echo_suppress.cpp`, `prop_stick_sync.cpp`, `prop_synth_key.cpp` | Props (Aprop_C, chipPile, etc.) | PropSpawn/Destroy/Convert/Release/SnapPos/StickState `[V]` |
 | `pile_reconcile.cpp`, `trash_proxy.cpp`, `trash_channel.cpp`, `trash_collect_sync.cpp`, `trash_pile_sync.cpp`, `trash_clump_pose_stream.cpp` | chipPiles / trash clumps (mirror proxies + carry) | PropConvert, TrashPileState, GrabIntent/ThrowIntent/PileResyncRequest `[V]` |
@@ -76,7 +78,7 @@ The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<
 | `remote_player.cpp`, `nameplate.cpp`, `local_streams.cpp`, `puppet_carry_drive.cpp` | Remote-player puppets + the local pose/held streams | (pose lane) + PlayerJoined/Damage/Wisp* `[V]` |
 | `save_identity_bind.cpp`, `save_identity_map.cpp` | The stable-ID sidecar: bind save-loaded natives to host eids in the join window | (rides PropSpawn match key) `[V]` |
 
-> The **authority contract** for this layer is written down in `coop/sync/sync.h`
+> The **authority contract** for this layer is written down in `coop/element/identity.h`
 > (host-auth lifecycle+convert / client-relay grab-throw / peer-symmetric pose). The one
 > deferred behavior change (D2 host→client corrective-pose) lives there too.
 
@@ -136,9 +138,9 @@ Per-player or broadcast; not world entities.
 ---
 
 ## The boundary, restated
-`coop/sync/` is the **L1 identity engine** — not "everything that sends a packet." L2/L3/L4
+`coop/element/` is the **L1 identity engine** — not "everything that sends a packet." L2/L3/L4
 replicators route through the **same SyncRouter dispatch** and the same session/transport, but
 they have no identity race to consolidate, so they stay as their own small single-responsibility
 files (RULE 2: don't churn working, well-factored code into a different folder for a name). If we
-ever deliberately rescope `coop/sync/` to mean "all wire replication," that's a conscious, separate
+ever deliberately rescope `coop/element/` to mean "all wire replication," that's a conscious, separate
 decision — record it here and update the boundary above.

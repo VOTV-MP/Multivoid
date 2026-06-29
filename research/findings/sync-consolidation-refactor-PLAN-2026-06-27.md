@@ -3,7 +3,7 @@
 STATUS: **SHIPPED + PUSHED to origin/main `63aa4c01` (2026-06-28).** The whole arc is on origin: foundation +
 D1/D2 reconcile (VERIFIED 16:06) + the CreateOrAdopt keystone (`ecdc527c`/`6aeaf55c`, g_actorToPropElementId
 retired) + convert/destroy found ALREADY-funneled (`ee19ec8c`) + SyncRouter bool-chain (`fcf5b1b1`) + residue-
-fold REJECTED on inspection (perf/RULE-1) + authority model NAMED (coop/sync/sync.h) + the partial sync-tree
+fold REJECTED on inspection (perf/RULE-1) + authority model NAMED (coop/element/identity.h) + the partial sync-tree
 REORG (coop/{world,social,host,devices}) + the **09:54 re-seed-orphan ghost FIX (`ddaec1fa`), PROVEN by an
 in-process self-test (`c6192d06`, VERDICT=PASS both peers)**. Autonomously verified: kerfurtoggle + joinchurn PASS.
 HANDS-ON 10:15 (post-push): #1 kerfur twitch = CLEARED (gone); #2 kerfur HANG-IN-AIR on turn-off = CONFIRMED REAL,
@@ -22,13 +22,13 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
 |---|---|---|---|
 | 1 [move] unified actor->eid reverse absorbed into element::Registry (`EidForActor`/`NoteActorRebind`) + `Element::m_saveNative` | `ce132e0d` | **AS-BUILT** (builds; 15:44 binds used it) | registry.cpp/element.cpp/element.h |
 | 1b [fix] D1 enabler: `g_boundMirrorNatives` SET DELETED; `IsBoundMirrorNative` via `Element::IsSaveNative`+liveness | `066d0a49` | **AS-BUILT** (not hands-on-verified for the grab scenario) | prop_element_tracker.cpp:326, save_identity_bind.cpp |
-| 4b [fix] D1 close: reconcile NON-one-shot (`coop/sync/sync_reconcile`, join + steady triggers) | `47384057` | **AS-BUILT** | sync_reconcile.{h,cpp}; remote_prop_spawn.cpp:1304,1477 |
+| 4b [fix] D1 close: reconcile NON-one-shot (`coop/element/identity_reconcile`, join + steady triggers) | `47384057` | **AS-BUILT** | sync_reconcile.{h,cpp}; remote_prop_spawn.cpp:1304,1477 |
 | 4b+ [fix] reconcile runs on the valve-ABORT path; post-purge steady trigger | `432183ce`,`8b85cb2e` | **BOTH VERIFIED (16:06 log).** fix #1: valve-abort reconcile re-bound **242** GC-churned natives by save-pos (`RE-BIND by position` x242 on the abort path). fix #2: `post-purge window` steady reconcile **fired 13x** (16:06:52->56) -- the `8b85cb2e` gate-order fix opened the window. World ended CLEAN (KERFUR 6/6, 0 UNCLAIMED, 0 orphans). NOTE: fix #2's 13 fires were no-ops (fix #1's abort path had already re-bound all 242 first) -- proven-to-FIRE, its catch-the-trickle value not stressed this run. | remote_prop_spawn.cpp:1226, sync_reconcile.cpp |
 | 6b [fix] D2: kerfur ghost adopted by STABLE EID not fuzzy position | `df589591` | **AS-BUILT** (not hands-on-verified; the toggle scenario untested) | kerfur_convert.cpp `TakeParkedGhostByEid` |
 | 7 [probe] variant-1 force-churn dev probe + runbook + GATE diag | `425633d7`,`4d6f2afb`,`2033cdb6` | **PARTIAL** -- probe moot (real purge pre-empts the synthetic churn); 15:44 world ended CLEAN (variant-1 N=0=no-churn-needed); fix #1 confirmed | save_identity_bind.cpp `ForceSaveChurnForTest` |
 
 ### ASSEMBLY PROGRESS (2026-06-28, STAGE 3)
-- **KEYSTONE COMPLETE (build GREEN):** `ecdc527c` `[move]` `coop/sync/sync.h` facade + `CreateOrAdoptPropMirror`
+- **KEYSTONE COMPLETE (build GREEN):** `ecdc527c` `[move]` `coop/element/identity.h` facade + `CreateOrAdoptPropMirror`
   (RegisterPropMirror body verbatim; forwards) -> `6aeaf55c` `[fix]` `g_actorToPropElementId` RETIRED onto the
   unified `Registry::EidForActor` (every reader; LOCALS-ONLY filter kept; idempotency safer -- blocks
   minting-over-mirror; TOCTOU double-check `EidForActor!=ourEid`; UnmarkKnownKeyedProp IsBeingDeleted guard; Reap
@@ -67,9 +67,9 @@ Topic: [[project-sync-module-refactor-2026-06-27]].
   existing GUObjectArray iteration (perf audit W-2 forbids a per-walk FindObjectsByClass -- the 120->60fps lesson); the
   reaper's is a throttled FindObjectByClass for its gameplay-vs-menu name check (documented net_pump.cpp:425 +
   engine.cpp:60). The purge-episode flag is already a clean single-writer pub/sub (net_pump detects -> tracker owns the
-  atomic -> gate/sweep/reconcile read). Folding either into a coop::sync::Tick would regress perf or couple subsystems
-  for zero functional gain = a crutch (RULE 1) + churn (RULE 2). Left as-is; the finding is recorded in coop/sync/sync.h.
-- **SyncAuthority = the model is now NAMED (coop/sync/sync.h AUTHORITY CONTRACT), behavior unchanged.** There is no
+  atomic -> gate/sweep/reconcile read). Folding either into a coop::element::Tick would regress perf or couple subsystems
+  for zero functional gain = a crutch (RULE 1) + churn (RULE 2). Left as-is; the finding is recorded in coop/element/identity.h.
+- **SyncAuthority = the model is now NAMED (coop/element/identity.h AUTHORITY CONTRACT), behavior unchanged.** There is no
   scattered authority code to gather -- host-auth convert (kerfur_convert) + client-relay grab/throw already exist
   cleanly. The ONE open behavior change is the D2 host->client corrective-pose for an adopted kerfur off-prop, which is
   the DEFERRED symptom-fix (built WITH its hands-on, not scaffolded speculatively -- RULE 2). See the 3 OPEN SYMPTOMS.
@@ -122,7 +122,7 @@ OR green-lights the push of the autonomously-verified assembled module as the sy
 
 ### OPEN SYMPTOMS seen 2026-06-28 (DO NOT FIX NOW -- verify-after-assembly)
 Decided 2026-06-28: the hands-on D1/D2 check was PREMATURE -- the module is half-moved (reconcile/bind
-partly in `coop/sync/`, authority/spawn paths still scattered), so testing the transitional state catches
+partly in `coop/element/`, authority/spawn paths still scattered), so testing the transitional state catches
 under-assembled noise, not real bugs. These three symptoms are RECORDED, not fixed; re-check them AFTER
 the module is fully assembled (gone = transitional noise; remain = real bugs fixed on the whole path):
 1. **Kerfurs TWITCH** -- "want to face both host and client at once" = two authority sources tugging the
@@ -186,7 +186,7 @@ packet dispatch** + **one generic entity-add with collision-reconcile baked in**
 funnel** + **a staleness-gated apply** under **host-granted relay authority** (never optimistic predict).
 We adopt that shape, skipping the parts RULE 3/1 exclude (Lua, anti-cheat, asset/ASE/CEGUI, Dimensions).
 
-New subtree: **`src/votv-coop/{src,include}/coop/sync/`** (principle-7 gameplay/network side; engine
+New subtree: **`src/votv-coop/{src,include}/coop/element/`** (principle-7 gameplay/network side; engine
 access stays behind `ue_wrap/`). One conceptual sync engine, physically one module, behind a clean API.
 
 ### FOUNDATION DISCOVERY (2026-06-27, on reading the actual code) — the registry already exists
@@ -302,7 +302,7 @@ flips a marker (D1 dup gone) and is verified on its own.
 
 | # | Step (commit kind) | What | Behavior check |
 |---|---|---|---|
-| 0 | move | Create `coop/sync/` skeleton + facade header; no code moved yet, just the namespace + a forwarding shim so callers compile. | builds; smoke identical |
+| 0 | move | Create `coop/element/` skeleton + facade header; no code moved yet, just the namespace + a forwarding shim so callers compile. | builds; smoke identical |
 | 1 | **move** | **Absorb the 3 satellites into the existing `element::Registry`/`MirrorManager`/`Element`** (NOT a new class — see Foundation Discovery). 1a: add ONE unified actor->eid reverse index on `MirrorManager<Prop>` (or Registry), written at every Install/AllocAndInstall/RegisterMirror, cleared at Take/Unregister/Free — covering BOTH locals and mirrors; repoint `g_actorToPropElementId` readers + `ResolveMirrorEidByActor` at it. 1a': move the key->actor index onto the same owner. Semantics identical (same set/clear points). Biggest/riskiest — FIRST (all rests on it). | smoke identical; SAME bind + grab/throw/#1/#2/b2/b3 marker stream |
 | 1b | **fix** | **D1 enabler**: add `Element::m_saveNative` (set by `save_identity_bind` at bind); answer "is actor a bound save-native" via `Resolve(EidOf(actor))->IsSaveNative()` instead of the `g_boundMirrorNatives` set; DELETE the satellite set. The flag is now atomic with the binding -> cannot read stale relative to it (the 15:01:49 `morphBoundNative=false` cause). Separate commit; may already cut D1's orphan before the reconcile unify. | D1 grab: morphBoundNative TRUE, native NOT orphaned (marker flips) |
 | 2 | move | **Consolidate the convert pipeline** — OnConvert decision tree + OnHostConvert authoring + the re-pile thunk trigger → one `convert` applier path calling `CreateOrAdopt`/`ApplyUpdate`. Carry/hold state (today in 4 places) collapses into the registry entry + authority. | smoke identical; same convert markers |
