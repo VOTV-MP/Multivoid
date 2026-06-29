@@ -31,7 +31,7 @@
 #include "coop/props/prop_snapshot.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
-#include "coop/props/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreatesByPosition (09:54 ghost fix)
+#include "coop/props/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreates (09:54 ghost fix)
 #include "coop/session/save_transfer.h"
 #include "coop/session/subsystems.h"
 
@@ -585,10 +585,10 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // Cheap early-out (returns 0) when nothing churned; only the rare post-purge re-seed pays the
                 // GUObjectArray walk -- NOT the 0.25 Hz steady re-seed below (W-2 perf rule).
                 if (coop::save_identity_bind::IsEnabled()) {
-                    const int rebound = coop::save_identity_bind::BindUnboundReCreatesByPosition();
+                    const int rebound = coop::save_identity_bind::BindUnboundReCreates();
                     if (rebound > 0)
-                        UE_LOGI("net_pump: post-purge re-seed re-bound %d GC-churned save-native(s) by position "
-                                "(09:54 orphan window closed at the re-seed edge, not the late sweep)", rebound);
+                        UE_LOGI("net_pump: post-purge re-seed re-bound %d unbound save-native(s) (chip by position, "
+                                "kerfur by key; 09:54 orphan window closed at the re-seed edge, not the late sweep)", rebound);
                 }
                 if (added > 0) retriggerReadySlots();
                 // CLIENT: re-announce world-ready so the host re-replays its authoritative state into

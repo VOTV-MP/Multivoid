@@ -40,36 +40,36 @@ bool IsEnabled();
 // loadObjects spawns the natives). Copies the map. No-op when disabled. Thread-safe (net thread).
 void SetReceivedMap(const coop::save_identity_map::IdMap& map);
 
-// CLIENT BeginDeferred thunk (trash_collect_sync::OnBeginDeferredSpawnObserve client branch): the k-th
-// load-spawn OF `family`. Binds `newActor` to that family's k-th map entry's host eid (Build 3 per-family
-// cursor == that family's saveSlot array index). The family selects the list, so a cross-family mismatch is
-// structurally impossible (no tripwire needed); a per-family count overflow stops only that family. No-op when
-// disabled / not armed. Game thread.
-void OnKeylessLoadSpawn(void* newActor, coop::save_identity_map::Family family);
+// CLIENT BeginDeferred thunk (trash_collect_sync::OnBeginDeferredSpawnObserve client branch): a save-load
+// spawn OF `family`. Binds `newActor` to its host eid by the family's PAIRING RULE (sidecar v3): a chipPile
+// (keyless) binds by per-family ordinal cursor == its saveSlot array index; a kerfurOff (keyed) binds by its
+// PORTABLE save key (FindKerfurEntryByKey_) -> a cross-peer-stable eid (the 15:55 retire-regression fix). A
+// kerfur whose key isn't readable yet at this PRE-FinishSpawning seam is deferred to the quiescence sweep
+// (BindUnboundReCreates) -- NEVER cursor-bound (that was the bug). No-op when disabled / not armed. Game thread.
+void OnSaveLoadSpawn(void* newActor, coop::save_identity_map::Family family);
 
 // CLIENT load quiescence (remote_prop_spawn TickClientReconcile, the sweep-fire point -- same seam the 1A
-// probe's EmitVerdictAtQuiescence uses): log the per-join bind summary (bound count, per-family cursors, case
-// i/ii breakdown, any overflow). No-op when disabled / not armed. Game thread.
+// probe's EmitVerdictAtQuiescence uses): log the per-join bind summary (bound count, chip cursor, case i/ii
+// breakdown, any chip overflow; kerfurOff is key-bound -> no cursor). No-op when disabled / not armed. GT.
 void EmitBindSummary();
 
 // CLIENT quiescence (RunDivergenceSweep_, after SweepReconcileSaveTimeTwins, before ApplyPendingPosCorrections):
-// re-bind the sparse engine-GC-churned save natives. The cursor bind handles the bulk first load; a native UE's
-// incremental GC destroyed + re-instantiated mid-join re-creates at its save position UNBOUND (the cursor was
-// consumed -> it overflow-dropped = the 09:54/11:32 ghost). This walks live chipPile + off-kerfur natives that
-// are NOT bound mirrors, and for each currently-UNBOUND host eid finds the re-create at its save-time position
-// (the sidecar-v2 savePos, authoritative from the host) within 1cm + binds it -- order/count/timing-independent
-// (no client-side eid->pos source exists; the host supplies it). Co-located (>1 within 1cm) -> ambiguous-skip.
-// Bulk survivors (IsBoundMirrorNative) are skipped; bound eids are skipped (no double-bind). No-op when disabled
-// / not armed / the map carries no positions (v1 peer). Game thread. Returns the count re-bound (for the log).
-int BindUnboundReCreatesByPosition();
+// re-bind save natives left UNBOUND after the seam, each by ITS intrinsic identity now that the natives are
+// fully spawned. (1) a chipPile that UE's incremental GC destroyed + re-instantiated mid-join re-creates at its
+// save position UNBOUND (the cursor was consumed -> the 09:54/11:32 ghost) -> POSITION match against the
+// authoritative host-wire savePos (sidecar v2) within 1cm. (2) a kerfurOff whose key wasn't readable at the
+// PRE-FinishSpawning seam -> KEY match against its portable save key (sidecar v3): the keyed family's GUARANTEED
+// bind, never position, never cursor. Bound eids are skipped (no double-bind); co-located chips (>1 within 1cm)
+// ambiguous-skip. No-op when disabled / not armed / a v1/v2 peer (no keys). GT. Returns the count re-bound.
+int BindUnboundReCreates();
 
 // DEV PROBE (gated on [dev] ini `force_save_churn`, RULE-2-exempts-probes): deterministically reproduce the
 // variant-1 precondition for a hands-on verify. The real engine-GC churn is non-deterministic (a sparse ~2 of
-// 870), so a clean run may never exercise BindUnboundReCreatesByPosition (N=0). This UNBINDS the first N
-// currently-bound chipPile save-natives (Takes their mirror Element; the actor stays alive at its save
-// position) right before the quiescence sweep -- so variant-1 then sees N unbound natives at save positions and
-// re-binds them by the host-wire savePos. The verify: log shows `RE-BIND by position` N>0 binding the right
-// native to the right eid. One-shot (latched). No-op unless the flag is set. Game thread (the sweep tick).
+// 870), so a clean run may never exercise the chip position re-bind in BindUnboundReCreates (N=0). This UNBINDS
+// the first N currently-bound chipPile save-natives (Takes their mirror Element; the actor stays alive at its
+// save position) right before the quiescence sweep -- so the sweep then sees N unbound natives at save positions
+// and re-binds them by the host-wire savePos. The verify: log shows `RE-BIND chipPile by position` N>0 binding
+// the right native to the right eid. One-shot (latched). No-op unless the flag is set. Game thread (sweep tick).
 void ForceSaveChurnForTest();
 
 // DEV SELF-TEST (gated [dev] reseed_orphan_selftest=1, one-shot, runs wherever live chipPile natives exist --
@@ -77,7 +77,7 @@ void ForceSaveChurnForTest();
 // save-native actor -- no save-transfer-join, no rendering, so it CANNOT false-green the way a clean smoke does.
 // Self-arms a 1-entry map at a live native's position, binds it to a free host eid, Takes the Element + enqueues
 // it deferred (the reaper's Take-but-not-Flushed window), then runs the fix sequence (ElementDeleter::Flush ->
-// ReSeedKnownKeyedProps -> BindUnboundReCreatesByPosition) and asserts the churned native is RE-BOUND to its host
+// ReSeedKnownKeyedProps -> BindUnboundReCreates) and asserts the churned native is RE-BOUND to its host
 // eid (not orphaned). Logs `VERDICT=PASS/FAIL`; restores the subject native after. Returns true on PASS. Requires
 // save_identity_bind=1. Game thread. [[feedback-rule2-exempts-probes-diagnostics-tools]]
 bool RunReseedOrphanSelfTest();

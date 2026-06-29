@@ -23,17 +23,25 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace coop::save_identity_map {
 
-// The two keyless save-loaded families the map covers. Keyed forms (Aprop_C, keyed kerfurs) are NOT in the
-// map -- they bind by their stable cross-peer key (S3.1), not by the eid map.
+// The two save-loaded families the map covers. The map is the TRANSPORT for both (only it sees every save
+// object regardless of runtime tracking -- a save-loaded off-kerfur is UNTRACKED/not-key-indexed at join, so
+// the keyed mirror path S3.1 cannot resolve it; see COOP_STABLE_ID_SIDECAR.md S3.6). But the PAIRING RULE
+// inside the map splits keyed-vs-keyless (sidecar v3, 2026-06-29): a kerfurOff carries a PORTABLE save key
+// (`p0KP` byte-identical on both peers) -> the client pairs it native<->eid BY KEY (cross-peer-stable). A
+// chipPile is genuinely keyless -> the client pairs it by per-family ORDINAL cursor (load order). Pairing the
+// keyed family by load-order cursor was the 2026-06-29 15:55 retire regression root
+// ([[lesson-eid-not-cross-peer-stable-loadorder-bind]]): the cursor floats under async-load/GC churn, so the
+// same physical kerfur bound different eids across peers. Aprop_C keyed forms still bind off-map via S3.1.
 enum class Family : uint8_t { ChipPile = 0, KerfurOff = 1 };
 
-// One entry per keyless save-loaded native, EMITTED IN objectsData INDEX ORDER (== the client's loadObjects
-// keyless fresh-spawn order). The bind correlates by SEQUENCE position (the k-th entry <-> the client's k-th
-// keyless spawn); `index` is the objectsData index (logging + a future bijection backstop), `eid` the identity.
+// One entry per save-loaded native. chipPile entries pair by per-family ordinal (the array index == the
+// client's k-th keyless spawn); kerfurOff entries pair by `key` (the portable save key). `index` is the
+// objectsData index (logging + the chip ordinal); `eid` is the cross-peer identity.
 struct IdEntry {
     uint32_t index;   // objectsData array index (== client loadObjects spawn order for the keyless subsequence)
     uint32_t eid;     // host ElementId (the S8.2-stable capture-eid)
@@ -44,6 +52,11 @@ struct IdEntry {
     // quiescence -- the order/count/timing-independent fix for the purge-timing ghost (no client-side eid->pos
     // source exists; see coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md 2.7/2.8).
     float    savePosX, savePosY, savePosZ;
+    // The portable save key (sidecar v3, 2026-06-29). EMPTY for a chipPile (genuinely keyless -> ordinal pair).
+    // Non-empty for a kerfurOff: the host reads it from the save array (+0x40) -- the SAME blob both peers load,
+    // so it is cross-peer-stable -- and the client pairs its loading off-kerfur to the entry whose key matches
+    // `GetInteractableKeyString(native)`, making the bound eid cross-peer-stable (the retire-regression fix).
+    std::wstring key;
 };
 
 using IdMap = std::vector<IdEntry>;
@@ -59,13 +72,14 @@ int BuildHostMap(IdMap& outMap);
 // The map travels PREPENDED to the save-transfer blob stream (one stream, one CRC) so it can never desync
 // from the blob it indexes. Self-describing layout (little-endian; the whole protocol is same-endian raw on
 // x64 Windows): ['V','C','I','D'] magic | u32 version | u32 count | count x { u32 index, u32 eid, u8 family,
-// f32 savePosX, f32 savePosY, f32 savePosZ }. v2 (2026-06-27) added savePos -- a version mismatch fails the
-// parse gracefully (DeserializeSidecar returns false -> the bind stays in cursor-only mode; both peers must run
-// the same mod version, already gated by the handshake).
-inline constexpr uint8_t  kSidecarMagic[4]    = {'V', 'C', 'I', 'D'};
-inline constexpr uint32_t kSidecarVersion     = 2u;
-inline constexpr size_t   kSidecarHeaderBytes = 12u;  // magic(4) + version(4) + count(4)
-inline constexpr size_t   kSidecarEntryBytes  = 21u;  // index(4) + eid(4) + family(1) + savePos 3xf32(12)
+// f32 savePosX, f32 savePosY, f32 savePosZ, u16 keyLen, keyLen x u8 key (ASCII, byte-narrowed) }. v3
+// (2026-06-29) made entries VARIABLE-length by appending the portable save key (empty for chipPile, the
+// off-kerfur key for kerfurOff) -- a version mismatch fails the parse gracefully (DeserializeSidecar returns
+// false -> the bind stays in cursor-only mode; both peers must run the same mod version, gated by the handshake).
+inline constexpr uint8_t  kSidecarMagic[4]        = {'V', 'C', 'I', 'D'};
+inline constexpr uint32_t kSidecarVersion         = 3u;
+inline constexpr size_t   kSidecarHeaderBytes     = 12u;  // magic(4) + version(4) + count(4)
+inline constexpr size_t   kSidecarFixedEntryBytes = 23u;  // index(4)+eid(4)+family(1)+savePos 3xf32(12)+keyLen(2)
 
 // HOST: serialize `map` into `out` (cleared first) as the framed sidecar -- always writes the 12-byte header,
 // even for an empty map. `out.size()` == the value the host stamps into SaveTransferBeginPayload.sidecarBytes.

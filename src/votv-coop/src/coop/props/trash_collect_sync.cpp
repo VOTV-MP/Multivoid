@@ -97,7 +97,7 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
                         newActor, fam == 0 ? coop::dev::spawn_order_probe::Family::ChipPile
                                            : coop::dev::spawn_order_probe::Family::KerfurOff);
                 if (bindOn)
-                    coop::save_identity_bind::OnKeylessLoadSpawn(
+                    coop::save_identity_bind::OnSaveLoadSpawn(
                         newActor, fam == 0 ? coop::save_identity_map::Family::ChipPile
                                            : coop::save_identity_map::Family::KerfurOff);
             }

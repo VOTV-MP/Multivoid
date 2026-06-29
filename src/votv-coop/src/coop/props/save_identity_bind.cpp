@@ -30,7 +30,7 @@ namespace R   = ue_wrap::reflection;
 namespace PT  = coop::prop_element_tracker;
 namespace MAP = coop::save_identity_map;
 
-std::mutex g_mu;  // SetReceivedMap (net thread) vs OnKeylessLoadSpawn (game thread)
+std::mutex g_mu;  // SetReceivedMap (net thread) vs OnSaveLoadSpawn (game thread)
 MAP::IdMap g_map;          // the full received map (kept for the total count + the per-family split)
 
 // Build 3 (per-family ordinal, 2026-06-26): the bind keys on the saveSlot ARRAY INDEX, not a global spawn
@@ -48,15 +48,40 @@ MAP::IdMap g_map;          // the full received map (kept for the total count + 
 std::vector<MAP::IdEntry> g_chipEntries;    // map entries with family==ChipPile, in array index order
 std::vector<MAP::IdEntry> g_kerfurEntries;  // map entries with family==KerfurOff, in array index order
 bool       g_armed = false;
-size_t     g_chipCursor   = 0;  // next chipPile spawn's index into g_chipEntries
-size_t     g_kerfurCursor = 0;  // next off-kerfur spawn's index into g_kerfurEntries
+size_t     g_chipCursor   = 0;  // next chipPile spawn's index into g_chipEntries (keyless ordinal bind)
+// (kerfurOff has NO cursor since sidecar v3: the keyed family binds by KEY, not by spawn order -- see
+// FindKerfurEntryByKey_ / OnSaveLoadSpawn. The cursor floated under churn = the 15:55 retire regression root.)
+
+// DEV PROBE state ([dev] force_kerfur_unmap, RULE-2-exempts-probes): deterministically inject the jUuC HOLE
+// case (a kerfurOff untracked on the host -> NO map entry) so a hands-on can verify HOLE-TOLERANCE, not just
+// the happy path. At arm time we drop ONE kerfur entry; that kerfur's native must then stay UNBOUND while every
+// OTHER kerfur still key-binds to its correct eid (no rank/cursor shift). EmitBindSummary asserts the dropped
+// eid was never bound. The 15:55 regression was ON a hole -- a happy-path test would miss a hole-shift regression.
+bool        g_holeInjected = false;
+std::wstring g_holeKey;            // the key of the dropped kerfurOff entry (must stay unbound)
+uint32_t    g_holeEid = 0;        // its host eid (no other native may bind it)
 
 // per-join bind tallies (for the quiescence summary)
 int g_boundChip = 0, g_boundKerfur = 0;
 int g_caseI = 0, g_caseII = 0;
-int g_overflowChip = 0, g_overflowKerfur = 0;  // spawns beyond the per-family map count (unexpected -- logged)
+int g_overflowChip = 0;  // chipPile spawns beyond the mapped count (unexpected -- logged). No kerfur overflow:
+                         // the keyed family binds by key (no cursor to overflow).
 
 const char* FamName(MAP::Family f) { return f == MAP::Family::ChipPile ? "chipPile" : "kerfurOff"; }
+
+// sidecar v3 (2026-06-29): find the kerfurOff map entry whose PORTABLE save key matches `nativeKey`. The off-
+// kerfur key is intrinsic + cross-peer-stable (same blob both peers) -> pairing native<->eid by key makes the
+// bound eid cross-peer-stable, the root fix for the 2026-06-29 15:55 retire regression (a load-order cursor
+// floated -> the same physical kerfur bound different eids across peers -> retire-by-eid killed the wrong one;
+// [[lesson-eid-not-cross-peer-stable-loadorder-bind]]). HOLE-TOLERANT: an off-kerfur untracked on the host (no
+// entry, e.g. jUuC) returns nullptr WITHOUT shifting any other kerfur's pairing -- the exact failure a rank/
+// cursor scheme cannot survive. Caller holds g_mu. Returns nullptr for an empty/None key or no match.
+const MAP::IdEntry* FindKerfurEntryByKey_(const std::wstring& nativeKey) {
+    if (nativeKey.empty() || nativeKey == L"None") return nullptr;
+    for (const MAP::IdEntry& e : g_kerfurEntries)
+        if (!e.key.empty() && e.key == nativeKey) return &e;
+    return nullptr;
+}
 
 // The bind (mini-design S3): retire the native's peer-range LOCAL element, then install a host-range MIRROR
 // at E onto the native. Caller holds g_mu. `family` selects the key convention (keyless pile vs keyed kerfur).
@@ -173,84 +198,131 @@ void SetReceivedMap(const MAP::IdMap& map) {
         if (e.family == static_cast<uint8_t>(MAP::Family::ChipPile)) g_chipEntries.push_back(e);
         else                                                          g_kerfurEntries.push_back(e);
     }
-    g_chipCursor = g_kerfurCursor = 0;
+    g_chipCursor = 0;
     g_armed = true;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
-    g_overflowChip = g_overflowKerfur = 0;
-    UE_LOGI("save_identity_bind: ARMED with %zu-entry host eid map (%zu chipPile + %zu kerfurOff) -- per-family "
-            "ordinal bind (Build 3: key on saveSlot array index, immune to cross-array spawn order). [dev] "
-            "save_identity_bind=1", g_map.size(), g_chipEntries.size(), g_kerfurEntries.size());
+    g_overflowChip = 0;
+    // [dev] force_kerfur_unmap: deterministically inject the jUuC HOLE -- drop the LAST kerfurOff entry so its
+    // native finds no key-match (== untracked-on-host). Hole-tolerance verify: that kerfur stays unbound, every
+    // OTHER kerfur binds correctly, no other native steals its eid (checked in EmitBindSummary).
+    g_holeInjected = false; g_holeKey.clear(); g_holeEid = 0;
+    if (coop::ini_config::IsIniKeyTrue("force_kerfur_unmap") && !g_kerfurEntries.empty()) {
+        const MAP::IdEntry dropped = g_kerfurEntries.back();
+        g_kerfurEntries.pop_back();
+        g_holeInjected = true; g_holeKey = dropped.key; g_holeEid = dropped.eid;
+        UE_LOGW("save_identity_bind: [force_kerfur_unmap] HOLE INJECTED -- dropped kerfurOff key='%ls' eid=%u from "
+                "the map. That kerfur MUST stay UNBOUND; no other kerfur may bind eid=%u (hole-tolerance test).",
+                g_holeKey.c_str(), g_holeEid, g_holeEid);
+    }
+    UE_LOGI("save_identity_bind: ARMED with %zu-entry host eid map (%zu chipPile [ordinal bind] + %zu kerfurOff "
+            "[KEY bind, sidecar v3]). chipPile keyless->cursor; kerfurOff keyed->key-match (cross-peer-stable "
+            "eid). [dev] save_identity_bind=1", g_map.size(), g_chipEntries.size(), g_kerfurEntries.size());
 }
 
-void OnKeylessLoadSpawn(void* newActor, MAP::Family family) {
+void OnSaveLoadSpawn(void* newActor, MAP::Family family) {
     if (!newActor || !IsEnabled()) return;
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_armed) return;
-    // Ignore a double-fire of the thunk for a native we already bound (keeps the per-family cursor aligned to
-    // distinct natives; 1A saw the thunk can re-fire at a recycled address). Already-bound -> no double-bind.
+    // Ignore a double-fire of the thunk for a native we already bound (1A saw the thunk can re-fire at a recycled
+    // address). Already-bound -> no double-bind.
     if (PT::IsBoundMirrorNative(newActor)) return;
 
-    // Build 3: pick THIS family's list + cursor. The k-th spawn of a family binds to that family's k-th map
-    // entry == that family's saveSlot array index k (RE Q1: within-array spawn order == array index order). No
-    // cross-family tripwire is possible/needed now -- the family selects the list, so a mismatch cannot occur;
-    // the cross-array phase ordering (the global-ordinal failure) is structurally bypassed.
-    std::vector<MAP::IdEntry>& fam    = (family == MAP::Family::ChipPile) ? g_chipEntries : g_kerfurEntries;
-    size_t&                    cursor = (family == MAP::Family::ChipPile) ? g_chipCursor  : g_kerfurCursor;
-    if (cursor >= fam.size()) {
-        // More client keyless spawns of this family than the host mapped. Unexpected (both peers load the same
-        // blob -> same per-family count); stop binding THIS family (the cursor naturally blocks further binds)
-        // but DO NOT touch the other family. Count + log once for the summary; never bind a non-existent entry.
-        int& ov = (family == MAP::Family::ChipPile) ? g_overflowChip : g_overflowKerfur;
-        if (ov == 0)
-            UE_LOGW("save_identity_bind: %s keyless spawn beyond the mapped %zu %s entries -- NOT binding this "
-                    "or further %s spawns (per-family count mismatch; other family unaffected)",
-                    FamName(family), fam.size(), FamName(family), FamName(family));
-        ++ov;
+    if (family == MAP::Family::KerfurOff) {
+        // KEYED family (sidecar v3): pair native<->eid BY KEY, NEVER by cursor. The cursor floated under async-
+        // load/GC churn -> the same physical kerfur bound different eids across peers -> the 15:55 retire killed
+        // the wrong one. The key is intrinsic + portable (same blob) -> the bound eid is cross-peer-stable.
+        const std::wstring nkey = ue_wrap::prop::GetInteractableKeyString(newActor);
+        const MAP::IdEntry* e = FindKerfurEntryByKey_(nkey);
+        if (!e) {
+            // No host entry for this key. Either the key isn't readable yet at this PRE-FinishSpawning seam, or
+            // the off-kerfur is untracked on the host (e.g. jUuC). Do NOT cursor-bind (that was the bug) -- the
+            // quiescence sweep (BindUnboundReCreates) re-tries the key-match once the key is guaranteed readable.
+            UE_LOGI("save_identity_bind: kerfurOff native=%p key='%ls' -- no map entry at seam; deferring to the "
+                    "quiescence key-match (key not ready pre-FinishSpawning, or untracked-on-host)",
+                    newActor, nkey.c_str());
+            return;
+        }
+        if (e->eid == 0u || e->eid == coop::element::kInvalidId) {
+            UE_LOGW("save_identity_bind: kerfurOff key='%ls' map entry has invalid eid=%u -- skipping (no bind)",
+                    nkey.c_str(), e->eid);
+            return;
+        }
+        BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e->eid),
+                                  MAP::Family::KerfurOff, e->index);
         return;
     }
-    const MAP::IdEntry& e = fam[cursor];
+
+    // KEYLESS family (chipPile): per-family ordinal cursor. Build 3: the k-th chip spawn binds to chipEntries[k]
+    // == saveSlot primitivesData[k] (RE: within-array spawn order == array index by construction). A genuinely
+    // keyless native -- no intrinsic key to match; position is (0,0,0) at this PRE-FinishSpawning seam, so order
+    // is the only observable signal here (the position re-bind at quiescence is the GC-churn backstop below).
+    if (g_chipCursor >= g_chipEntries.size()) {
+        if (g_overflowChip == 0)
+            UE_LOGW("save_identity_bind: chipPile keyless spawn beyond the mapped %zu chipPile entries -- NOT "
+                    "binding this or further chipPile spawns (per-family count mismatch)", g_chipEntries.size());
+        ++g_overflowChip;
+        return;
+    }
+    const MAP::IdEntry& e = g_chipEntries[g_chipCursor];
     if (e.eid == 0u || e.eid == coop::element::kInvalidId) {
-        UE_LOGW("save_identity_bind: %s map entry k=%zu (array index=%u) has invalid eid=%u -- skipping (no bind)",
-                FamName(family), cursor, e.index, e.eid);
-        ++cursor;
+        UE_LOGW("save_identity_bind: chipPile map entry k=%zu (array index=%u) has invalid eid=%u -- skipping",
+                g_chipCursor, e.index, e.eid);
+        ++g_chipCursor;
         return;
     }
-    BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e.eid), family, cursor);
-    ++cursor;
+    BindLocalNativeToHostEid_(newActor, static_cast<coop::element::ElementId>(e.eid), MAP::Family::ChipPile,
+                              g_chipCursor);
+    ++g_chipCursor;
 }
 
 void EmitBindSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_armed) return;
-    const bool overflow = (g_overflowChip + g_overflowKerfur) > 0;
-    UE_LOGW("save_identity_bind: BIND SUMMARY -- bound %d/%zu map entries (%d/%zu chipPile + %d/%zu kerfurOff); "
-            "case(i) E-free=%d, case(ii) race-rebind=%d; per-family cursors chip=%zu kerfur=%zu. (bound natives "
-            "are host-range MIRRORs -> excluded from the divergence sweep doom set, remote_prop_spawn.cpp:1080 -- "
-            "free win #1. Build 3: per-family ordinal == saveSlot array index, immune to cross-array spawn order.)",
+    UE_LOGW("save_identity_bind: BIND SUMMARY -- bound %d/%zu map entries (%d/%zu chipPile [ordinal] + %d/%zu "
+            "kerfurOff [KEY, sidecar v3]); case(i) E-free=%d, case(ii) race-rebind=%d; chip cursor=%zu. (bound "
+            "natives are host-range MIRRORs -> excluded from the divergence sweep doom set, "
+            "remote_prop_spawn.cpp:1080 -- free win #1. kerfurOff eid is now cross-peer-stable via key-match.)",
             g_boundChip + g_boundKerfur, g_map.size(), g_boundChip, g_chipEntries.size(), g_boundKerfur,
-            g_kerfurEntries.size(), g_caseI, g_caseII, g_chipCursor, g_kerfurCursor);
-    if (overflow)
-        UE_LOGW("save_identity_bind: OVERFLOW -- %d chipPile + %d kerfurOff spawn(s) exceeded the mapped per-family "
-                "count (per-family count mismatch -- investigate the save vs the map)", g_overflowChip, g_overflowKerfur);
+            g_kerfurEntries.size(), g_caseI, g_caseII, g_chipCursor);
+    if (g_overflowChip > 0)
+        UE_LOGW("save_identity_bind: OVERFLOW -- %d chipPile spawn(s) exceeded the mapped count (per-family count "
+                "mismatch -- investigate the save vs the map)", g_overflowChip);
+    // [dev] force_kerfur_unmap hole-tolerance verdict: the dropped eid must be UNBOUND (no native -- not the
+    // hole kerfur itself, and crucially not some OTHER kerfur that a rank/cursor shift would have mis-bound here).
+    if (g_holeInjected) {
+        coop::element::Element* el =
+            coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(g_holeEid));
+        void* boundActor = el ? el->GetActor() : nullptr;
+        const bool free = !(boundActor && R::IsLive(boundActor));
+        UE_LOGW("save_identity_bind: [force_kerfur_unmap] HOLE VERDICT=%s -- dropped kerfurOff key='%ls' eid=%u "
+                "boundActor=%p. %s",
+                free ? "PASS" : "FAIL", g_holeKey.c_str(), g_holeEid, boundActor,
+                free ? "the unmapped kerfur stayed unbound + no other kerfur stole its eid (key-match is hole-"
+                       "tolerant -- a rank/cursor scheme would have shifted a wrong native onto this eid)"
+                     : "an actor bound the dropped eid -- HOLE-TOLERANCE BROKEN (a shift mis-bound a native; this "
+                       "is the regression class the key-match was meant to kill)");
+    }
 }
 
-// Variant 1 (host-wire position re-bind, 2026-06-27). The cursor bind handles the bulk first load; UE's
-// incremental GC sporadically destroys + re-instantiates a SPARSE handful of save natives mid-join (12:29: 2 of
-// 870), which re-create at their save position UNBOUND (the cursor was already consumed -> they overflow-dropped
-// = the 09:54/11:32 ghost). No client-side eid->save-pos source exists (the bind seam is pre-FinishSpawning ->
-// (0,0,0); the churned eids have no survivor to capture from), so the host ships the authoritative save-time
-// position per eid (sidecar v2). Here, at quiescence, we re-bind each churned native by an exact (1cm) position
-// match -- ORDER/COUNT/TIMING-independent (the host stated the positions before any churn). Reuses the proven
-// FindExactMatch kernel (claim-tracked, ambiguous->skip). Sibling of pile_reconcile's twin sweep
-// (position-match -> DESTROY a dup); this is position-match -> BIND a sole re-create. Game thread (the sweep).
-int BindUnboundReCreatesByPosition() {
+// Quiescence re-bind sweep (2026-06-27 variant-1, extended to key-match 2026-06-29). Catches save natives left
+// UNBOUND after the seam: UE's incremental GC sporadically destroys + re-instantiates a SPARSE handful mid-join
+// (12:29: 2 of 870), which re-create UNBOUND (the 09:54/11:32 ghost); kerfurs whose key wasn't readable at the
+// PRE-FinishSpawning seam also land here. At quiescence the natives are fully spawned, so BOTH intrinsic keys
+// are now observable -- and each family binds by ITS intrinsic identity:
+//   - chipPile  -> POSITION (genuinely keyless): an exact (1cm) match against the authoritative host-wire save
+//     position (sidecar v2). ORDER/COUNT/TIMING-independent. (Pile master-fix = promote this to PRIMARY; today
+//     the cursor is primary at the seam and this is the sparse-churn backstop.) Reuses FindExactMatch.
+//   - kerfurOff -> KEY (sidecar v3): the portable save key, GUARANTEED readable post-FinishSpawning. This is the
+//     keyed family's PRIMARY+GUARANTEED bind -- no fuzzy radius, no cursor float, hole-tolerant. NEVER position.
+// Game thread (the sweep).
+int BindUnboundReCreates() {
     if (!IsEnabled()) return 0;
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_armed) return 0;  // not a coop join with a received map -> nothing to re-bind
 
     // FRESH GC-robust walk of live UNBOUND save natives (both families). Excludes bound mirrors (the bulk
-    // survivors + anything already bound) so only sparse re-creates / orphans remain. Pointer-compare class
-    // filter before any read; capture InternalIndex for FindExactMatch's GC-robust liveness check.
+    // survivors + anything already bound) so only sparse re-creates / seam-deferred kerfurs remain. Pointer-
+    // compare class filter before any read; capture InternalIndex for FindExactMatch's GC-robust liveness check.
     struct LiveNative { void* actor; int32_t idx; float x, y, z; };
     std::vector<LiveNative> chipN, kerfurN;
     const int32_t n = R::NumObjects();
@@ -258,7 +330,7 @@ int BindUnboundReCreatesByPosition() {
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o)) continue;
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;       // CDO
-        if (PT::IsBoundMirrorNative(o)) continue;                          // already bound (survivor) -> not a re-create
+        if (PT::IsBoundMirrorNative(o)) continue;                          // already bound (survivor) -> skip
         const bool isChip = ue_wrap::prop::IsChipPile(o);
         bool isKerfur = false;
         if (!isChip) { void* c = R::ClassOf(o); isKerfur = c && coop::kerfur_entity::IsKerfurPropClass(c); }
@@ -269,34 +341,49 @@ int BindUnboundReCreatesByPosition() {
     if (chipN.empty() && kerfurN.empty()) return 0;  // no unbound natives -> nothing to do (the common case)
 
     int rebound = 0;
-    auto tryFamily = [&](const std::vector<MAP::IdEntry>& entries, std::vector<LiveNative>& nats,
-                         MAP::Family fam) {
-        std::vector<bool> used(nats.size(), false);
-        for (const MAP::IdEntry& e : entries) {
-            if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
-            // Skip a still-BOUND eid (a survivor occupies it) -- never double-bind. Only a churned (unbound) eid
-            // gets a position re-bind.
-            coop::element::Element* el =
-                coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
-            void* boundActor = el ? el->GetActor() : nullptr;
-            if (boundActor && R::IsLive(boundActor)) continue;
+    // Helper: an eid is FREE to (re)bind iff no live actor currently occupies it (never double-bind a survivor).
+    auto eidFree = [](uint32_t eid) {
+        coop::element::Element* el = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
+        void* boundActor = el ? el->GetActor() : nullptr;
+        return !(boundActor && R::IsLive(boundActor));
+    };
+
+    // chipPile arm -- POSITION match (keyless).
+    {
+        std::vector<bool> used(chipN.size(), false);
+        for (const MAP::IdEntry& e : g_chipEntries) {
+            if (e.eid == 0u || e.eid == coop::element::kInvalidId || !eidFree(e.eid)) continue;
             const ue_wrap::FVector key{e.savePosX, e.savePosY, e.savePosZ};
             const int idx = coop::save_time_retire_util::FindExactMatch(
-                nats, used, key, [](const LiveNative&) { return true; });  // position-only (1cm exact)
-            if (idx < 0) continue;  // 0 (no re-create for this eid -- normal) or >1 (ambiguous co-located -> skip)
+                chipN, used, key, [](const LiveNative&) { return true; });  // position-only (1cm exact)
+            if (idx < 0) continue;  // 0 (no re-create -- normal) or >1 (ambiguous co-located -> skip)
             used[idx] = true;
-            BindLocalNativeToHostEid_(nats[idx].actor, static_cast<coop::element::ElementId>(e.eid), fam, e.index);
+            BindLocalNativeToHostEid_(chipN[idx].actor, static_cast<coop::element::ElementId>(e.eid),
+                                      MAP::Family::ChipPile, e.index);
             ++rebound;
-            UE_LOGI("save_identity_bind: RE-BIND by position -- %s native=%p -> host eid=%u @save-pos=(%.1f,%.1f,"
-                    "%.1f) (GC-churned save native re-created unbound; authoritative host-wire position match)",
-                    FamName(fam), nats[idx].actor, e.eid, e.savePosX, e.savePosY, e.savePosZ);
+            UE_LOGI("save_identity_bind: RE-BIND chipPile by position -- native=%p -> host eid=%u @save-pos=(%.1f,"
+                    "%.1f,%.1f) (GC-churned re-create; authoritative host-wire position match)",
+                    chipN[idx].actor, e.eid, e.savePosX, e.savePosY, e.savePosZ);
         }
-    };
-    tryFamily(g_chipEntries, chipN, MAP::Family::ChipPile);
-    tryFamily(g_kerfurEntries, kerfurN, MAP::Family::KerfurOff);
+    }
+
+    // kerfurOff arm -- KEY match (sidecar v3): the GUARANTEED kerfur bind. Each unbound kerfur native's portable
+    // key resolves its host eid directly -- no fuzzy position, no cursor. The eidFree guard makes same-key
+    // duplicates (shouldn't occur) idempotent: the first binds, the rest see the eid occupied and skip.
+    for (LiveNative& kn : kerfurN) {
+        const std::wstring nkey = ue_wrap::prop::GetInteractableKeyString(kn.actor);
+        const MAP::IdEntry* e = FindKerfurEntryByKey_(nkey);
+        if (!e || e->eid == 0u || e->eid == coop::element::kInvalidId || !eidFree(e->eid)) continue;
+        BindLocalNativeToHostEid_(kn.actor, static_cast<coop::element::ElementId>(e->eid),
+                                  MAP::Family::KerfurOff, e->index);
+        ++rebound;
+        UE_LOGI("save_identity_bind: RE-BIND kerfurOff by KEY -- native=%p key='%ls' -> host eid=%u "
+                "(deterministic intrinsic-key bind; no position, no cursor)", kn.actor, nkey.c_str(), e->eid);
+    }
+
     if (rebound > 0 || !chipN.empty() || !kerfurN.empty())
-        UE_LOGI("save_identity_bind: position re-bind pass -- %d sparse GC-churned native(s) re-bound "
-                "(walked %zu unbound chip + %zu unbound kerfur native(s))", rebound, chipN.size(), kerfurN.size());
+        UE_LOGI("save_identity_bind: quiescence re-bind pass -- %d native(s) re-bound (walked %zu unbound chip "
+                "[by position] + %zu unbound kerfur [by key])", rebound, chipN.size(), kerfurN.size());
     return rebound;
 }
 
@@ -407,7 +494,7 @@ bool RunReseedOrphanSelfTest() {
     EL::ElementDeleter::Get().Flush();
     const EL::ElementId eidAfterFlush = EL::Registry::Get().EidForActor(native);   // expect kInvalid (settled)
     PT::ReSeedKnownKeyedProps();                  // re-seeds the unbound native as a fresh local (the GC-recreate analog)
-    const int rebound = BindUnboundReCreatesByPosition();  // (b): re-bind by position
+    const int rebound = BindUnboundReCreates();  // (b): re-bind (chip by position; this self-test is a chipPile)
 
     // 6. VERDICT: the churned native must be RE-BOUND to hostEid as a host-range mirror = no orphan.
     const EL::ElementId finalEid = EL::Registry::Get().EidForActor(native);
@@ -438,9 +525,10 @@ void OnDisconnect() {
     g_chipEntries.clear();
     g_kerfurEntries.clear();
     g_armed = false;
-    g_chipCursor = g_kerfurCursor = 0;
+    g_chipCursor = 0;
     g_boundChip = g_boundKerfur = g_caseI = g_caseII = 0;
-    g_overflowChip = g_overflowKerfur = 0;
+    g_overflowChip = 0;
+    g_holeInjected = false; g_holeKey.clear(); g_holeEid = 0;
     // (sync-refactor 2026-06-27) No bound-mirror SET to clear: is-save-native is an Element flag that dies when
     // the save-native mirror Element is drained on disconnect (DrainMirrorsOnly).
 }

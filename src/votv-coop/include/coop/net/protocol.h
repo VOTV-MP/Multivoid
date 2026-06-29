@@ -694,7 +694,18 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 91;  // v91: kerfur reconcile goes DETERMINISTIC (kill the
+inline constexpr uint16_t kProtocolVersion = 92;  // v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
+                                                  // retireOffEid keyed off a save_identity_bind eid that was
+                                                  // bound by a LOAD-ORDER CURSOR -- it floated under join-window
+                                                  // churn (15:55 regression: retire killed the WRONG kerfur on
+                                                  // both peers). FIX: the sidecar (save_identity_map) now carries
+                                                  // the off-kerfur's PORTABLE save key (sidecar v3, variable-len
+                                                  // entries) and the client pairs kerfurOff native<->eid BY KEY,
+                                                  // not by cursor -> the bound eid is intrinsic + cross-peer-
+                                                  // stable -> retireOffEid resolves the SAME kerfur on both peers.
+                                                  // chipPiles stay keyless ordinal+position. Wire: sidecar v2->v3.
+                                                  // Prior:
+                                                  // v91: kerfur reconcile goes DETERMINISTIC (kill the
                                                   // position-fuzzy class). EntitySpawnPayload 108->104:
                                                   // hasMatchPos + matchX/Y/Z (the join-window-turned-ON kerfur's
                                                   // SAVE-TIME position, matched fuzzily within 1cm) REPLACED by

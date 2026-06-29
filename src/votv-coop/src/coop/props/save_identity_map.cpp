@@ -151,11 +151,17 @@ int BuildHostMap(IdMap& outMap) {
             if (chipBase && R::IsDescendantOfAny(cls, &chipBase, 1)) fam = Family::ChipPile;
             else if (coop::kerfur_entity::IsKerfurPropClass(cls))    fam = Family::KerfurOff;
             else continue;  // not a chip/kerfur-prop class
-            // Filter by CLASS (chip/kerfur-PROP lineage == the client's class-based thunk classification). The
-            // key is a DIAGNOSTIC only (nonKeyless): a hard key==None gate risks wrongly dropping piles if
-            // getData writes a placeholder -- the gather-based 1B proved class-only yields the right set.
+            // Filter by CLASS (chip/kerfur-PROP lineage == the client's class-based thunk classification). For
+            // chipPile the key is a DIAGNOSTIC only (nonKeyless) -- piles are genuinely keyless (ordinal pair).
+            // For kerfurOff the key is the PAIRING IDENTITY (sidecar v3): it is the portable save key both peers
+            // load from this same blob, so the client pairs its loading off-kerfur to this eid BY KEY (the
+            // cursor-float retire regression fix). A key==None off-kerfur (untracked/jUuC) leaves the entry
+            // keyless -> the client falls back to the ordinal cursor for it (unchanged from v2 behaviour).
             const R::FName key = *reinterpret_cast<const R::FName*>(e + kOffKey);
-            if (!R::NameEquals(key, L"None")) ++nonKeyless;
+            const bool keyed = !R::NameEquals(key, L"None");
+            if (keyed) ++nonKeyless;
+            std::wstring entryKey;
+            if (fam == Family::KerfurOff && keyed) entryKey = R::ToString(key);
 
             const ue_wrap::FVector loc = *reinterpret_cast<const ue_wrap::FVector*>(e + kOffLocation);
             auto it = byLoc.find(Quantize_(loc));
@@ -172,7 +178,10 @@ int BuildHostMap(IdMap& outMap) {
             const uint32_t eid = (*vec)[(*curp)++];              // rank-pairing tiebreak (i-th entry <-> i-th eid)
             // sidecar v2: carry the save-time position (the `loc` already read above -- the SAME value the
             // host-local join used) so the client can re-bind a GC-churned save native by position at quiescence.
-            outMap.push_back(IdEntry{ordinal++, eid, static_cast<uint8_t>(fam), loc.X, loc.Y, loc.Z});
+            // sidecar v3: carry the kerfurOff portable key (`entryKey`, empty for chipPile) so the client pairs
+            // the keyed family native<->eid BY KEY (cross-peer-stable) instead of by the load-order cursor.
+            outMap.push_back(IdEntry{ordinal++, eid, static_cast<uint8_t>(fam), loc.X, loc.Y, loc.Z,
+                                     std::move(entryKey)});
             if (fam == Family::ChipPile) ++chip; else ++kerfur;
         }
     }
@@ -195,8 +204,9 @@ int BuildHostMap(IdMap& outMap) {
     for (size_t j = 0; j < n; ++j) {
         if (j < 5 || j + 5 >= n) {
             const IdEntry& en = outMap[j];
-            UE_LOGI("save_identity_map:   [%zu] ordinal=%u eid=%u family=%s", j, en.index, en.eid,
-                    en.family == static_cast<uint8_t>(Family::ChipPile) ? "chipPile" : "kerfurOff");
+            UE_LOGI("save_identity_map:   [%zu] ordinal=%u eid=%u family=%s key='%ls'", j, en.index, en.eid,
+                    en.family == static_cast<uint8_t>(Family::ChipPile) ? "chipPile" : "kerfurOff",
+                    en.key.c_str());  // sidecar v3: key non-empty for kerfurOff (the cross-peer pairing identity)
         } else if (j == 5 && n > 10) {
             UE_LOGI("save_identity_map:   ... %zu more ...", n - 10);
         }
@@ -222,7 +232,7 @@ void AppendF32_(std::vector<uint8_t>& v, float x) {
 void SerializeSidecar(const IdMap& map, std::vector<uint8_t>& out) {
     out.clear();
     const uint32_t count = static_cast<uint32_t>(map.size());
-    out.reserve(kSidecarHeaderBytes + static_cast<size_t>(count) * kSidecarEntryBytes);
+    out.reserve(kSidecarHeaderBytes + static_cast<size_t>(count) * (kSidecarFixedEntryBytes + 8));  // +8 ~= avg key
     out.insert(out.end(), kSidecarMagic, kSidecarMagic + 4);
     AppendU32_(out, kSidecarVersion);
     AppendU32_(out, count);
@@ -233,6 +243,12 @@ void SerializeSidecar(const IdMap& map, std::vector<uint8_t>& out) {
         AppendF32_(out, e.savePosX);  // sidecar v2
         AppendF32_(out, e.savePosY);
         AppendF32_(out, e.savePosZ);
+        // sidecar v3: portable save key (ASCII keys -- off-kerfur keys are alphanumeric identifiers; byte-narrow
+        // each wchar like the protocol's className[64]). u16 length-prefixed; 0 for a keyless chipPile entry.
+        const uint16_t keyLen = static_cast<uint16_t>(e.key.size() > 0xFFFFu ? 0xFFFFu : e.key.size());
+        out.push_back(static_cast<uint8_t>(keyLen & 0xFF));
+        out.push_back(static_cast<uint8_t>((keyLen >> 8) & 0xFF));
+        for (uint16_t i = 0; i < keyLen; ++i) out.push_back(static_cast<uint8_t>(e.key[i] & 0xFF));
     }
 }
 
@@ -245,11 +261,13 @@ bool DeserializeSidecar(const uint8_t* data, size_t len, IdMap& outMap, size_t& 
     std::memcpy(&ver, data + 4, 4);
     std::memcpy(&count, data + 8, 4);
     if (ver != kSidecarVersion) return false;
-    const size_t need = kSidecarHeaderBytes + static_cast<size_t>(count) * kSidecarEntryBytes;
-    if (len < need) return false;  // truncated
+    // sidecar v3: entries are VARIABLE-length (the trailing key) -- walk + bounds-check each, never trust a
+    // fixed stride. Any field/key that would read past `len` aborts the whole parse (caller treats as no map).
     outMap.reserve(count);
-    const uint8_t* p = data + kSidecarHeaderBytes;
+    const uint8_t* p   = data + kSidecarHeaderBytes;
+    const uint8_t* end = data + len;
     for (uint32_t i = 0; i < count; ++i) {
+        if (static_cast<size_t>(end - p) < kSidecarFixedEntryBytes) { outMap.clear(); return false; }  // truncated
         IdEntry e{};
         std::memcpy(&e.index, p, 4);
         std::memcpy(&e.eid, p + 4, 4);
@@ -257,10 +275,17 @@ bool DeserializeSidecar(const uint8_t* data, size_t len, IdMap& outMap, size_t& 
         std::memcpy(&e.savePosX, p + 9, 4);   // sidecar v2
         std::memcpy(&e.savePosY, p + 13, 4);
         std::memcpy(&e.savePosZ, p + 17, 4);
-        p += kSidecarEntryBytes;
-        outMap.push_back(e);
+        const uint16_t keyLen = static_cast<uint16_t>(p[21] | (static_cast<uint16_t>(p[22]) << 8));  // sidecar v3
+        p += kSidecarFixedEntryBytes;
+        if (static_cast<size_t>(end - p) < keyLen) { outMap.clear(); return false; }  // truncated key
+        if (keyLen > 0) {
+            e.key.reserve(keyLen);
+            for (uint16_t j = 0; j < keyLen; ++j) e.key.push_back(static_cast<wchar_t>(p[j]));  // ASCII widen
+            p += keyLen;
+        }
+        outMap.push_back(std::move(e));
     }
-    consumed = need;
+    consumed = static_cast<size_t>(p - data);
     return true;
 }
 
@@ -277,8 +302,8 @@ void LogReceivedMap(const IdMap& map) {
     for (size_t j = 0; j < n; ++j) {
         if (j < 5 || j + 5 >= n) {
             const IdEntry& e = map[j];
-            UE_LOGI("save_identity_map:   rx[%zu] index=%u eid=%u family=%s", j, e.index, e.eid,
-                    e.family == static_cast<uint8_t>(Family::ChipPile) ? "chipPile" : "kerfurOff");
+            UE_LOGI("save_identity_map:   rx[%zu] index=%u eid=%u family=%s key='%ls'", j, e.index, e.eid,
+                    e.family == static_cast<uint8_t>(Family::ChipPile) ? "chipPile" : "kerfurOff", e.key.c_str());
         } else if (j == 5 && n > 10) {
             UE_LOGI("save_identity_map:   ... %zu more ...", n - 10);
         }

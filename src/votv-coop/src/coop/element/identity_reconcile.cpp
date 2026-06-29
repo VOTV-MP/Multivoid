@@ -37,7 +37,7 @@ void RunIdentityReconcile(bool joinSweep) {
     // eid). Each step is internally bounded to armed/pending work, so a steady-
     // state pass with nothing pending is cheap (early-returns inside each).
     coop::pile_reconcile::SweepReconcileSaveTimeTwins();          // D1: retire stale native@old
-    coop::save_identity_bind::BindUnboundReCreatesByPosition();   // variant-1: re-bind GC-churned natives
+    coop::save_identity_bind::BindUnboundReCreates();             // re-bind unbound natives (chip=pos, kerfur=key)
     coop::pile_reconcile::ApplyPendingPosCorrections();           // b3: snap window-moved piles
     if (joinSweep) coop::pile_reconcile::LogCensus();             // one-shot orphan census (join only)
 }
