@@ -1,5 +1,14 @@
 # Purge-timing reconcile race (the 09:54 ghost) — root + fix design (2026-06-27)
 
+> **RESOLVED + PUSHED 2026-06-28 (origin/main `63aa4c01`).** The 09:54 re-seed-orphan ghost is FIXED (`ddaec1fa`)
+> and PROVEN by a deterministic in-process self-test (`c6192d06`, VERDICT=PASS both peers — NOT a clean-join smoke).
+> FINAL ROOT (refined from the design below): the reaper Take()s a purged bound save-native's Element but DEFERS
+> ~Element -> the registry actor->eid reverse is STALE in that window -> the post-purge re-seed orphans the
+> GC-churned native. FIX at net_pump's purge-drain re-seed edge: (a) ElementDeleter::Flush() before
+> ReSeedKnownKeyedProps + (b) BindUnboundReCreatesByPosition() right after (re-bind by position immediately). See
+> the PLAN doc's "09:54 RE-SEED-ORPHAN GHOST" section + [[project-sync-module-refactor-2026-06-27]]. The design below
+> is the point-in-time 2026-06-27 thinking that led here.
+
 **Status (2026-06-27, latest at top):**
 - **Lever (a) reaper escalation — BUILT + VERIFIED** (commit `bfe9182a`; 11:32 real log: mass-purge->re-seed gap
   collapsed 37s->1s). KEEP.

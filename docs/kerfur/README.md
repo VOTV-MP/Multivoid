@@ -1,5 +1,11 @@
 # Kerfur — the coop knowledge base (kerfurOmega NPC <-> prop sync)
 
+> **PUSH STATUS (2026-06-28): every commit at/below origin/main `63aa4c01` is now PUSHED.** Any "push HELD" /
+> "N ahead of origin" status below referencing a 2026-06-23..28 commit is STALE (the whole sync arc shipped to
+> origin on 2026-06-28). LATEST kerfur bug (hands-on 10:15): the **turn-off off-prop HANGS IN AIR** (frozen
+> kinematic, physics never re-enabled after adopt) -> FIX BUILT `150da133` (SetActorSimulatePhysics(ghost,true)
+> after the adopt-snap; AS-BUILT, re-test pending). #1 turn-on twitch = CLEARED. See [[project-sync-module-refactor-2026-06-27]].
+>
 > Single source of truth for the **kerfur** multiplayer sync problem, mirroring `docs/piles/`.
 > Created 2026-06-24 when the user opened the **OFF-state non-replication** track. Living KB:
 > every kerfur design / diagnosis / as-built updates a doc here; mark each claim **DESIGN** /

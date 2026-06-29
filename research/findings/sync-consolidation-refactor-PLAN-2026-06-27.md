@@ -1,14 +1,16 @@
 # Sync-consolidation refactor — PLAN + AS-BUILT LEDGER (2026-06-27)
 
-STATUS: **ASSEMBLED (2026-06-28) -- awaiting hands-on the WHOLE module, then push (mode: embryonic/fast,
-move/fix split kept only for bisect).** The FOUNDATION + D1/D2 fixes are SHIPPED + the 16:06 reconcile pair
-VERIFIED; the module is now ASSEMBLED: CreateOrAdopt keystone (`ecdc527c`/`6aeaf55c`) + the
-g_actorToPropElementId retire, convert + destroy found ALREADY-funneled (no move), SyncRouter consolidated
-(`fcf5b1b1`), residue-fold REJECTED on inspection (perf/RULE-1), authority model NAMED in coop/sync/sync.h.
-The ONE open behavior change is the deferred D2 corrective-pose (built WITH its hands-on). HEAD `fcf5b1b1`+
-(doc commit pending), build GREEN, deployed binary still the pre-keystone `2D0230013D35481A` (NOT redeployed
--- no hands-on until the user green-lights the whole-module test), push HELD. Author: Claude. Grounded in a
-4-agent structural map + the MTA:SA client architecture (`reference/mtasa-blue/`, per RULE 2026-05-28).
+STATUS: **SHIPPED + PUSHED to origin/main `63aa4c01` (2026-06-28).** The whole arc is on origin: foundation +
+D1/D2 reconcile (VERIFIED 16:06) + the CreateOrAdopt keystone (`ecdc527c`/`6aeaf55c`, g_actorToPropElementId
+retired) + convert/destroy found ALREADY-funneled (`ee19ec8c`) + SyncRouter bool-chain (`fcf5b1b1`) + residue-
+fold REJECTED on inspection (perf/RULE-1) + authority model NAMED (coop/sync/sync.h) + the partial sync-tree
+REORG (coop/{world,social,host,devices}) + the **09:54 re-seed-orphan ghost FIX (`ddaec1fa`), PROVEN by an
+in-process self-test (`c6192d06`, VERDICT=PASS both peers)**. Autonomously verified: kerfurtoggle + joinchurn PASS.
+HANDS-ON 10:15 (post-push): #1 kerfur twitch = CLEARED (gone); #2 kerfur HANG-IN-AIR on turn-off = CONFIRMED REAL,
+**fix built `150da133`** (re-enable physics on adopt-by-eid -- AS-BUILT, not yet hands-on-RE-verified); moved-in-
+window piles MISPLACED on client = CONFIRMED REAL, **probe added (no blind fix)** -> next hands-on pins the root.
+HEAD `7e89b1d1` (2 ahead: the #2 fix + probe + runbook, NOT pushed). Deployed `E3E6BEAB` (hash-verified host+client).
+Author: Claude. Grounded in a 4-agent structural map + MTA:SA (`reference/mtasa-blue/`, RULE 2026-05-28).
 Topic: [[project-sync-module-refactor-2026-06-27]].
 
 ### SHIPPED THIS ARC (2026-06-27, 11 commits) -- the AS-BUILT ledger

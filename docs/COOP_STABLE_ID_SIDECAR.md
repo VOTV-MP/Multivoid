@@ -5,8 +5,10 @@
 (commit `2db3df27`, hands-on 12:36 -- the morph hand-off arms the client carry-latch) + **LMB hard-throw**
 (commit `eb85ddfb`, hands-on 13:53 -- native camera-driven velocity, separate `InpActEvt_fire` input). Then
 the **join-window bind-vs-live-mutation class** (#1 kerfur turn-on dup + #2 pile-move dup) was RE'd + fixed +
-hands-on VERIFIED 15:42 (commits `39a381b0` #1 + `acc416eb` #2, **2 ahead of origin, push HELD** pending the
-small b2 positional polish -- DESIGNED, not built). Full session detail: the new finding
+hands-on VERIFIED 15:42 (commits `39a381b0` #1 + `acc416eb` #2 -- **now PUSHED on origin/main `63aa4c01`**, 2026-06-28,
+as part of the sync-consolidation arc). NOTE (2026-06-28 hands-on 10:15): the b2 moved-in-window pile is STILL
+misplaced on the client (correction dropped by pile_reconcile::Reset; probe added, fix pending the next hands-on --
+see `[[project-sync-module-refactor-2026-06-27]]`). Full session detail: the new finding
 `research/findings/coop-grab-throw-and-join-window-bind-RE-2026-06-26.md` +
 `[[project-grab-throw-joinwindow-2026-06-26]]`.
 
