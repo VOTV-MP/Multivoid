@@ -75,23 +75,10 @@ int32_t g_offArcadeScrWidge = -1;   // prop_arcade_C::scrWidge
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
 
-// CORE resolve only (player class + setActiveInterface fn + the activeInterface/lookAt/HitResult
-// offsets). Throttled to 2 s, and STOPS the moment the core latches (g_coreResolved). The device +
-// widget CLASS pointers are NOT resolved here any more -- they resolve lazily at the interaction edge
-// (FillDeviceSlotFromClass / FillWidgetSlotFromClass below).
-//
-// WHY (L5 device_occupancy hitch root, 2026-06-24): the old per-2 s
-// `for (d : g_devices) if (!d.cls) d.cls = FindClass(d.name)` loop name-walked all ~237k UObjects EVERY
-// 2 s for any class that had not loaded -- and the BUYABLE props (prop_arcade_C / prop_portablePc_C) only
-// load when PURCHASED, so an un-bought one walked FOREVER (~30 ms/2 s, the measured device_occupancy half
-// of the steady hitch). A settle-bound poll-stop would strand a genuinely-late buy; resolving from a live
-// instance's ClassOf at the edge is walk-free AND late-buy-safe by construction (you cannot aim at / enter
-// a device that does not exist -- the instant it does, ClassOf resolves it inline, before the claim check
-// in the SAME dispatch). [[lesson-periodic-hitch-not-the-walk-by-period-coincidence]] cousin: it WAS a
-// real walk here, just a class-resolution walk, not an instance-index walk -> the fix is edge-resolve, not
-// IncrementalObjectScan.
+// Throttled lazy resolve: FindClass is a GUObjectArray walk -- never run the
+// misses per tick (the 15-FPS lesson). One pass every 2 s fills whatever has
+// loaded since; the core (player class + offsets + setActiveInterface) latches.
 void ResolvePass() {
-    if (g_coreResolved) return;  // core latched -- nothing left to poll (classes are edge-lazy now)
     const auto now = std::chrono::steady_clock::now();
     if (now < g_nextResolve) return;
     g_nextResolve = now + std::chrono::seconds(2);
@@ -102,63 +89,27 @@ void ResolvePass() {
         if (g_setActiveInterfaceFn)
             UE_LOGI("device_screen: setActiveInterface resolved (force-exit ready)");
     }
+    for (auto& w : g_widgets) if (!w.cls) w.cls = R::FindClass(w.name);
+    for (auto& d : g_devices) if (!d.cls) d.cls = R::FindClass(d.name);
+    if (g_offTfmrWidgetInst < 0 && g_devices[6].cls)
+        g_offTfmrWidgetInst = R::FindPropertyOffset(g_devices[6].cls, L"widgetInst");
+    if (g_offArcadeScrWidge < 0 && g_devices[7].cls)
+        g_offArcadeScrWidge = R::FindPropertyOffset(g_devices[7].cls, L"scrWidge");
+
     const bool core = g_playerCls && g_setActiveInterfaceFn &&
                       RO::MainPlayer_activeInterface() >= 0 &&
                       RO::MainPlayer_lookAtActor() >= 0 &&
                       RO::MainPlayer_HitResult() >= 0;
-    if (core) {
+    if (core && !g_coreResolved) {
         g_coreResolved = true;
-        UE_LOGI("device_screen: core resolved (activeInterface=0x%X lookAt=0x%X hit=0x%X); device/widget "
-                "classes now resolve lazily at the interaction edge (per-2s FindClass poll removed)",
+        int w = 0, d = 0;
+        for (auto& x : g_widgets) if (x.cls) ++w;
+        for (auto& x : g_devices) if (x.cls) ++d;
+        UE_LOGI("device_screen: core resolved (activeInterface=0x%X lookAt=0x%X hit=0x%X); "
+                "%d/7 widget + %d/8 device classes loaded (rest lazy)",
                 RO::MainPlayer_activeInterface(), RO::MainPlayer_lookAtActor(),
-                RO::MainPlayer_HitResult());
+                RO::MainPlayer_HitResult(), w, d);
     }
-}
-
-// ---- Edge-lazy class resolution (beta, 2026-06-24) ------------------------
-// Fill a device/widget cache slot DIRECTLY from a live instance's ClassOf -- the aimed/entered object IS
-// an instance of its class, so ClassOf(obj) is the exact UClass with NO GUObjectArray walk. Exact-name
-// match into the fixed slot list; idempotent (early-out if already cached). Exact match is correct: none
-// of the 8 device / 7 widget BPs is subclassed (RE census + reflection-dump subclass scan 2026-06-24),
-// and this is behaviour-IDENTICAL to the prior exact-ClassOf comparison the deny gate already relied on.
-// Called only at the interaction EDGE (E-press deny / activeInterface rising edge), never per-tick.
-void FillDeviceSlotFromClass(void* cls) {
-    if (!cls) return;
-    for (auto& d : g_devices) if (d.cls == cls) return;  // already cached
-    const std::wstring nm = R::ToString(R::NameOf(cls));
-    for (size_t i = 0; i < 8; ++i) {
-        if (g_devices[i].cls || nm != g_devices[i].name) continue;
-        g_devices[i].cls = cls;
-        if (i == 6) g_offTfmrWidgetInst = R::FindPropertyOffset(cls, L"widgetInst");
-        if (i == 7) g_offArcadeScrWidge = R::FindPropertyOffset(cls, L"scrWidge");
-        UE_LOGI("device_screen: device class '%ls' resolved at edge (lazy, no walk)", nm.c_str());
-        return;
-    }
-}
-void FillWidgetSlotFromClass(void* cls) {
-    if (!cls) return;
-    for (auto& w : g_widgets) if (w.cls == cls) return;  // already cached
-    const std::wstring nm = R::ToString(R::NameOf(cls));
-    for (auto& w : g_widgets) {
-        if (w.cls || nm != w.name) continue;
-        w.cls = cls;
-        UE_LOGI("device_screen: widget class '%ls' resolved at edge (lazy, no walk)", nm.c_str());
-        return;
-    }
-}
-// The per-instance device classes (transformer [6] / arcade [7]) map a per-instance widget back to its
-// owning actor via FindOwnerByWidgetField, which needs the backref OFFSET (-> needs the device class). The
-// E-press deny path normally resolves this first (OnUseInputPre -> ClassifyDeviceActorClaimKey), but to
-// guarantee NO bypass (Check 2) -- any enter that skips the deny path -- resolve it here too: ONE edge-rate
-// FindClass on actual enter (the device provably exists, so it resolves in a single walk + caches). This is
-// NOT the removed per-2s poll; it is a once-ever resolve on real interaction.
-void EnsurePerInstanceDevice(size_t i) {
-    if (g_devices[i].cls) return;
-    g_devices[i].cls = R::FindClass(g_devices[i].name);
-    if (!g_devices[i].cls) return;
-    if (i == 6) g_offTfmrWidgetInst = R::FindPropertyOffset(g_devices[i].cls, L"widgetInst");
-    if (i == 7) g_offArcadeScrWidge = R::FindPropertyOffset(g_devices[i].cls, L"scrWidge");
-    UE_LOGI("device_screen: per-instance device '%ls' resolved at enter edge", g_devices[i].name);
 }
 
 // Quantized-position identity for the per-instance devices (the turbine
@@ -231,11 +182,9 @@ std::wstring ClassifyWidgetClaimKey(void* widget) {
     if (!widget || !R::IsLive(widget)) return {};
     void* cls = R::ClassOf(widget);
     if (!cls) return {};
-    FillWidgetSlotFromClass(cls);  // beta: resolve this widget's class from its own ClassOf (late-buy safe), inline before the match
     for (size_t i = 0; i < 5; ++i)
         if (g_widgets[i].cls && cls == g_widgets[i].cls) return g_widgetKeys[i];
     if (g_widgets[5].cls && cls == g_widgets[5].cls) {
-        EnsurePerInstanceDevice(6);  // transformer device class + widgetInst offset (no-bypass guarantee)
         if (void* owner = FindOwnerByWidgetField(L"transformerMGPanel_C",
                                                  g_offTfmrWidgetInst, widget))
             return PosKey(L"tfm_", owner);
@@ -243,7 +192,6 @@ std::wstring ClassifyWidgetClaimKey(void* widget) {
         return {};
     }
     if (g_widgets[6].cls && cls == g_widgets[6].cls) {
-        EnsurePerInstanceDevice(7);  // arcade device class + scrWidge offset (no-bypass guarantee)
         if (void* owner = FindOwnerByWidgetField(L"prop_arcade_C",
                                                  g_offArcadeScrWidge, widget))
             return PosKey(L"arc_", owner);
@@ -257,7 +205,6 @@ std::wstring ClassifyDeviceActorClaimKey(void* actor) {
     if (!actor) return {};
     void* cls = R::ClassOf(actor);
     if (!cls) return {};
-    FillDeviceSlotFromClass(cls);  // beta: resolve this device's class from its own ClassOf (late-buy safe), inline before the match
     for (size_t i = 0; i < 6; ++i)
         if (g_devices[i].cls && cls == g_devices[i].cls) return g_deviceKeys[i];
     if (g_devices[6].cls && cls == g_devices[6].cls) return PosKey(L"tfm_", actor);
