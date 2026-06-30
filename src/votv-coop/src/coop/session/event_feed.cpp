@@ -27,6 +27,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/snapshot_census.h"  // Phase 0: parse the completeness census tail on SnapshotComplete
 #include "coop/session/save_transfer.h"
 #include "coop/dev/restore_vitals.h"
@@ -379,7 +380,7 @@ void Update(net::Session& session, void* localPlayer) {
             // capture join" was the crutch that re-introduced the dupe; the world-wipe
             // it guarded against is now prevented by the >50% safety valve in
             // RunDivergenceSweep_, not by skipping the reconcile.)
-            coop::remote_prop_spawn::BeginClaimTracking();
+            coop::join_membership_sweep::BeginClaimTracking();
             break;
         }
         case net::ReliableKind::SnapshotComplete: {
@@ -424,7 +425,7 @@ void Update(net::Session& session, void* localPlayer) {
             // changing = the async load has fully settled). localPlayer is re-
             // resolved at sweep time. Runs for EVERY join incl. live-capture -- see
             // the SnapshotBegin note; the >50% valve guards the world-wipe.
-            coop::remote_prop_spawn::ArmDivergenceSweep();
+            coop::join_membership_sweep::ArmDivergenceSweep();
             // v75: the connect snapshot is fully delivered, so every save-persisted EntitySpawn
             // (the kerfur) has arrived + armed its deferred adoption. Tell npc_adoption: once those
             // pending adoptions converge it may run its one-shot ghost sweep (the NPC analogue of

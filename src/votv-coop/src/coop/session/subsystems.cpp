@@ -74,6 +74,7 @@
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/log.h"
@@ -274,7 +275,7 @@ DisconnectStats DisconnectAll() {
     coop::remote_prop::ForceRelease();
     // P2: a disconnect mid-snapshot must drop the armed claim set (dangling
     // actor pointers must not survive into the next session); no sweep.
-    coop::remote_prop_spawn::ResetClaimTracking();
+    coop::join_membership_sweep::ResetClaimTracking();
     DisconnectStats stats;
     stats.initProcessedDropped = coop::prop_lifecycle::OnDisconnect().initProcessedDropped;
     stats.snapPending = coop::prop_snapshot::OnDisconnect();

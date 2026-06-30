@@ -37,6 +37,7 @@
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"        // OnDestroy (eid teardown of the old prop mirror in OnKerfurConvert)
 #include "coop/props/remote_prop_spawn.h"  // OnSpawn (prop materialize) + HasLoadTailQuiesced (poll gate)
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "ue_wrap/engine.h"      // GetActorLocation + SetActorSimulatePhysics (freeze a ghost prop)
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/kerfur.h"      // NeutralizeAiTimers -- park a claimed conversion-ghost NPC
@@ -634,7 +635,7 @@ void PollKerfurConversions() {
     // the host never arms that sweep (HasLoadTailQuiesced is permanently false there), and
     // the host has no transferred-save load tail -- its own kerfurs are stable from boot,
     // so it polls immediately and only ever sees real host-side conversions.
-    if (isClient && !coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
+    if (isClient && !coop::join_membership_sweep::HasLoadTailQuiesced()) return;
     // scope A (kerfur off->active dup retire) is NO LONGER driven here. Its SEQUENCING moved to the ONE
     // join-window order owner (coop::element::quiescence_drain::RunReconcile, whose steady-state tick is
     // bracket-INDEPENDENT and ORs kerfur_reconcile::HasPendingRetire into its HasPendingWork gate). This poll

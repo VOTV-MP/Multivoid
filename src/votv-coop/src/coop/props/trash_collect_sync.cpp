@@ -19,6 +19,7 @@
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
 #include "coop/props/trash_channel.h"      // NotePendingGrab (the VISIBLE-seam grab->clump link; docs/piles/08)
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
@@ -224,7 +225,7 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // would claim the ghost past the pending sweep (permanently rescuing it). Let
     // the deferred sweep destroy it. A genuinely client-originated drop is claimed
     // via the takeObj path, so it is NOT a candidate and streams normally here.
-    if (coop::remote_prop_spawn::IsPendingSweepCandidate(heldActor)) {
+    if (coop::join_membership_sweep::IsPendingSweepCandidate(heldActor)) {
         UE_LOGI("trash_collect: held item %p is a pending divergence-sweep candidate "
                 "(unclaimed ghost) -- NOT expressing (the deferred sweep will destroy it)", heldActor);
         return false;
@@ -241,8 +242,8 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // (our held copy is then key/fuzzy-matched + claimed -> the held-pose stream mirrors it, no dupe),
     // or the sweep destroys our copy if the host converted it away. HasLoadTailQuiesced flips true the
     // instant the sweep fires, so this gates ONLY the join window -- never steady-state gameplay.
-    if (!coop::remote_prop_spawn::HasLoadTailQuiesced() &&
-        coop::remote_prop_spawn::IsInDivergenceUniverseUnclaimed(heldActor)) {
+    if (!coop::join_membership_sweep::HasLoadTailQuiesced() &&
+        coop::join_membership_sweep::IsInDivergenceUniverseUnclaimed(heldActor)) {
         UE_LOGI("trash_collect: held item %p cls='%ls' grabbed PRE-QUIESCENCE (join window not yet "
                 "reconciled) -- NOT expressing (host expresses its own / the sweep adjudicates ours; "
                 "prevents the off+grab host dupe)", heldActor, R::ClassNameOf(heldActor).c_str());
@@ -347,7 +348,7 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     s->SendPropSpawn(p);
     // Fork B 2c: self-claim -- this peer just wire-expressed the held item;
     // an open bracket's sweep must not destroy it as "unclaimed".
-    coop::remote_prop_spawn::RecordClaimIfTracking(heldActor);
+    coop::join_membership_sweep::RecordClaimIfTracking(heldActor);
     // (v81 MORPH V2: the former clump WatchClump enroll is GONE -- clumps return early above; the
     // bind-model pile_morph owns the clump's identity + its land conversion.)
     return true;

@@ -12,6 +12,7 @@
 #include "coop/net/session.h"          // Session::role() + net::Role (complete type)
 #include "coop/creatures/npc_sync.h"             // GetSession
 #include "coop/props/remote_prop_spawn.h"    // HasLoadTailQuiesced
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/ini_config.h"             // IsIniKeyTrue
 #include "ue_wrap/engine.h"            // GetActorLocation
 #include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
@@ -134,7 +135,7 @@ void Tick() {
     // Default mode: the original CLIENT-only, one-shot-at-quiescence forward-dup diagnostic.
     if (isHost) return;
     if (g_oneShotDone) return;
-    if (!coop::remote_prop_spawn::HasLoadTailQuiesced()) return;  // capture the FINAL reconciled state
+    if (!coop::join_membership_sweep::HasLoadTailQuiesced()) return;  // capture the FINAL reconciled state
     g_oneShotDone = true;
     EmitCensus(/*isHost=*/false);
 }

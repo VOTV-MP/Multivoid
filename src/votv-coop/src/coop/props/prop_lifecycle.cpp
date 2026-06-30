@@ -15,6 +15,7 @@
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -285,7 +286,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     s->SendPropSpawn(p);
     // Fork B 2c: self-claim -- this peer just wire-expressed the spawn; an
     // open snapshot bracket's sweep must not destroy it as "unclaimed".
-    coop::remote_prop_spawn::RecordClaimIfTracking(self);
+    coop::join_membership_sweep::RecordClaimIfTracking(self);
 }
 
 // K2_DestroyActor PRE -- bidirectional destroy broadcast (host + client),
@@ -467,7 +468,7 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             p.elementId);
     s->SendPropSpawn(p);  // channel queues internally
     // Fork B 2c: self-claim (see the Init POST site).
-    coop::remote_prop_spawn::RecordClaimIfTracking(spawnedActor);
+    coop::join_membership_sweep::RecordClaimIfTracking(spawnedActor);
 }
 
 // Late-load catch for the non-Aprop_C keyed-interactable garbage/trash classes

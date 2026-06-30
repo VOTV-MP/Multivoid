@@ -25,6 +25,7 @@
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6  // OnClientWorldReady (v75 deferred-adoption per-world reset)
 #include "coop/props/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
@@ -767,7 +768,7 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // K-6: drop stale prop-kerfur pending
                 // Same per-world reset for the deferred PROP divergence sweep -- a sweep armed for
                 // the prior world must not fire against this fresh one (save-transfer = two loads).
-                coop::remote_prop_spawn::OnClientWorldReadyResetSweep();
+                coop::join_membership_sweep::OnClientWorldReadyResetSweep();
                 UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent%s)",
                         reAnnounce ? " -- re-announce after world-change" : "");
             }

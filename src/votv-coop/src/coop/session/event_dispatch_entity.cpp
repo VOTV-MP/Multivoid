@@ -18,6 +18,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/trash_pile_sync.h"
 
 #include "ue_wrap/game_thread.h"
@@ -405,7 +406,7 @@ bool HandleEntityEvent(net::Session& session,
         coop::element::quiescence_drain::ArmPendingPosCorrection(
             p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ},
             ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
-        if (coop::remote_prop_spawn::HasLoadTailQuiesced())
+        if (coop::join_membership_sweep::HasLoadTailQuiesced())
             coop::element::quiescence_drain::ApplyPendingPosCorrections();
         break;
     }

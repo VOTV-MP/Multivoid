@@ -17,7 +17,7 @@
 //   6. (joinSweep only) LogCensus()                  -- the one-shot L1 orphan census
 //
 // TWO TRIGGERS, both at/after quiescence:
-//   - the join-window quiescence sweep (remote_prop_spawn::RunDivergenceSweep_, joinSweep=true), and
+//   - the join-window quiescence sweep (join_membership_sweep::RunDivergenceSweep_, joinSweep=true), and
 //   - a steady-state throttled tick (OnTick) -- fires whenever there is armed-but-unconsumed work past
 //     load-tail quiescence (the D1 structural fix: a save-pile grabbed/moved AFTER the join one-shot, or a
 //     kerfur turned on when no pile bracket armed, would otherwise leave a pending queue nothing drains).
@@ -42,6 +42,7 @@
 #pragma once
 
 #include "coop/element/element.h"  // coop::element::ElementId
+#include "coop/props/join_membership_sweep.h"
 #include "coop/net/protocol.h"     // PropDestroyPayload
 #include "ue_wrap/types.h"         // ue_wrap::FVector / FRotator
 
@@ -87,7 +88,7 @@ void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
 bool HasPendingWork();
 
 // Drop the deferred queues (save-time twins + pos-corrections + destroys). Called ONLY at session teardown
-// (remote_prop_spawn::ResetClaimTracking, the disconnect/world-drop edge). The queues deliberately SURVIVE
+// (join_membership_sweep::ResetClaimTracking, the disconnect/world-drop edge). The queues deliberately SURVIVE
 // bracket close -- they drain at
 // quiescence / steady-state, never dropped per-bracket (that was the latent "Reset DROPPING undrained
 // pos-correction" data loss the anti-smear split removed). Game-thread only.

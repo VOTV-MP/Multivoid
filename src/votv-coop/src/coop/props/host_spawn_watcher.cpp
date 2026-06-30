@@ -8,6 +8,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
@@ -197,7 +198,7 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     }
     // Self-claim (an open connect-snapshot bracket must not sweep our fresh prop)
     // + enroll the death-watch for the SetLifeSpan-expiry / consumption despawn.
-    coop::remote_prop_spawn::RecordClaimIfTracking(actor);
+    coop::join_membership_sweep::RecordClaimIfTracking(actor);
     WatchSpawnedProp(actor, p.elementId);
 }
 

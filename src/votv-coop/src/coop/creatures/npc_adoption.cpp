@@ -11,6 +11,7 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/props/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: re-arm the kerfur census on world-ready / session-end
 #include "ue_wrap/engine.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
@@ -139,7 +140,7 @@ void ResolvePending() {
                 resolved = true;
             }
             // bind failed -> leave pending; retry next scan (do not consume the candidate).
-        } else if (coop::remote_prop_spawn::HasLoadTailQuiesced() ||
+        } else if (coop::join_membership_sweep::HasLoadTailQuiesced() ||
                    MsSince(e.armedAt) >= kAdoptTimeoutMs) {
             // No local twin -- and the save load tail has DRAINED (the divergence sweep fired,
             // HasLoadTailQuiesced), or the last-resort timeout elapsed. CRITICAL: quiescence now
@@ -151,7 +152,7 @@ void ResolvePending() {
             // and is bound by the scan above (bestIdx>=0) -- so this branch only ever fires for a
             // twin that is GENUINELY absent (a host kerfur turned on AFTER the live-capture instant;
             // the blob has no record of it), where a fresh mirror is correct, not a duplicate.
-            const bool quiesced = coop::remote_prop_spawn::HasLoadTailQuiesced();
+            const bool quiesced = coop::join_membership_sweep::HasLoadTailQuiesced();
             UE_LOGW("npc-adopt: eid=%u class='%ls' -- no local twin (%s); fresh-spawning a mirror",
                     e.eid, e.classW.c_str(),
                     quiesced ? "load tail quiesced (props+NPCs settled)" : "last-resort timeout");
@@ -228,7 +229,7 @@ void Tick() {
     // present (deadline-capped in remote_prop_spawn, so it can't hang). Re-armed per OnClientWorldReady.
     if (g_snapshotDelivered && g_pending.empty() && !g_ghostSwept &&
         coop::npc_sync::IsInstalled() &&
-        coop::remote_prop_spawn::HasLoadTailQuiesced()) {
+        coop::join_membership_sweep::HasLoadTailQuiesced()) {
         g_ghostSwept = true;
         const int swept = coop::npc_mirror::DestroyUntrackedClientNpcs();
         UE_LOGI("npc-adopt: post-snapshot ghost sweep complete (%d untracked orphan(s) destroyed; "

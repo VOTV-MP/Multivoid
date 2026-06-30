@@ -13,6 +13,7 @@
 #include "coop/player/players_registry.h"     // Local()
 #include "coop/props/remote_prop.h"          // RegisterPropMirror
 #include "coop/props/remote_prop_spawn.h"    // OnSpawn (fresh-spawn fallback) + RecordClaimIfTracking + HasLoadTailQuiesced
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "ue_wrap/engine.h"            // GetActorLocation + SetActorSimulatePhysics
 #include "ue_wrap/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)
 #include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
@@ -69,7 +70,7 @@ bool BindAsMirror(const Pending& e, void* obj) {
     coop::remote_prop::RegisterPropMirror(eid, obj, key, e.classW, /*senderSlot=*/0);
     auto* el = PropMirrors().Get(eid);
     if (!el || el->GetActor() != obj) return false;  // install failed / bound a different actor
-    coop::remote_prop_spawn::RecordClaimIfTracking(obj);  // host accounts for it -> survive the sweep
+    coop::join_membership_sweep::RecordClaimIfTracking(obj);  // host accounts for it -> survive the sweep
     ue_wrap::engine::SetActorSimulatePhysics(obj, false); // a host-driven mirror, not a local sim
     coop::kerfur_entity::NotifyKerfurPropMirrorBound(obj, eid);  // held-pose eid stream (K-5)
     return true;
@@ -157,13 +158,13 @@ void ResolvePending() {
                 resolved = true;
             }
             // bind failed -> leave pending; retry next scan.
-        } else if (coop::remote_prop_spawn::HasLoadTailQuiesced() ||
+        } else if (coop::join_membership_sweep::HasLoadTailQuiesced() ||
                    MsSince(e.armedAt) >= kAdoptTimeoutMs) {
             // No local twin AND the save load tail has drained (or the last-resort timeout) -> the
             // kerfur is genuinely absent on this peer (an asymmetric form, or a host kerfur created
             // after the client's world snapshot). Fresh-spawn a mirror via the normal receiver, with
             // deferKerfur=false so it does NOT re-arm here (one-shot fresh spawn, no defer loop).
-            const bool quiesced = coop::remote_prop_spawn::HasLoadTailQuiesced();
+            const bool quiesced = coop::join_membership_sweep::HasLoadTailQuiesced();
             UE_LOGW("kerfur-prop-adopt: eid=%u class='%ls' -- no local twin (%s); fresh-spawning a mirror",
                     e.payload.elementId, e.classW.c_str(),
                     quiesced ? "load tail quiesced" : "last-resort timeout");

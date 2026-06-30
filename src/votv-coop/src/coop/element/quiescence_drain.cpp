@@ -18,6 +18,7 @@
 #include "coop/props/prop_element_tracker.h"   // IsBoundMirrorNative / InPurgeEpisode
 #include "coop/props/remote_prop.h"            // TryApplyDestroy + KeyToWString (deferred destroy-before-load re-apply)
 #include "coop/props/remote_prop_spawn.h"      // HasLoadTailQuiesced (the quiescence gate)
+#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/save_identity_bind.h"     // BindUnboundReCreates (identity layer the sequence calls)
 #include "coop/props/save_time_retire_util.h"  // FindExactMatch + UnmarkAndDestroy (shared kernel)
 #include "ue_wrap/engine.h"
@@ -239,7 +240,7 @@ void OnTick() {
     // opened). We only ACT (run the reconcile) post-quiescence, but we always REMEMBER the purge.
     const bool purging = coop::prop_element_tracker::InPurgeEpisode();
     if (purging) g_lastPurgeAt = now;
-    if (!coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
+    if (!coop::join_membership_sweep::HasLoadTailQuiesced()) return;
     const bool postPurge = g_lastPurgeAt.time_since_epoch().count() != 0 && !purging &&
                            (now - g_lastPurgeAt) < kPostPurgeWindow;
     // Run when there's armed twin/b3/destroy/kerfur work (D1) OR we're in the post-purge window (variant-1
