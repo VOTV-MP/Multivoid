@@ -203,6 +203,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/spawn_menu.cpp
     src/coop/player/remote_player.cpp
     src/coop/props/remote_prop.cpp
+    src/coop/props/remote_prop_destroy.cpp
     src/coop/session/save_guard.cpp
     src/coop/world/balance_sync.cpp
     src/coop/session/save_block.cpp
