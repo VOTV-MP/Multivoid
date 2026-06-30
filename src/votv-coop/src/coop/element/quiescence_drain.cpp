@@ -57,9 +57,19 @@ struct PendingPosCorrection { float x, y, z, pitch, yaw, roll; };
 std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
 
 // DESTROY-BEFORE-LOAD (2026-06-30): PropDestroys that arrived before this peer loaded the doomed prop. Armed
-// by remote_prop::OnDestroy (the event handler CAPTURES), applied at the quiescence sweep AFTER the rebind (the
-// order owner SEQUENCES) -- never dropped. [[feedback-one-owner-order-axis]]
-std::vector<coop::net::PropDestroyPayload> g_pendingDestroy;
+// by remote_prop::OnDestroy (the event handler CAPTURES) ONLY during the load tail (pre-quiescence -- a true
+// before-load race); applied at the quiescence sweep AFTER the rebind (the order owner SEQUENCES).
+// BOUNDED (2026-06-30 FPS fix): the defer is a load-tail BRIDGE, not a permanent retry. An entry that cannot
+// resolve within kMaxDeferApplies post-quiescence passes is DROPPED -- the load tail is definitively over, so
+// the target never loaded here (host-only / already-gone). Forever-retry pinned HasPendingWork() true -> the
+// full-array reconcile ran 4x/sec in perpetuity (the 15:34 client-FPS death: 500+ "still has no local actor"
+// retries on a steady-state death-watch destroy for an eid this peer never mirrored). [[feedback-one-owner-order-axis]]
+struct PendingDestroy {
+    coop::net::PropDestroyPayload payload;
+    int failedApplies = 0;  // post-quiescence apply attempts that still found no target
+};
+std::vector<PendingDestroy> g_pendingDestroy;
+constexpr int kMaxDeferApplies = 8;  // ~2s at the 250ms reconcile debounce -- grace for a late bind, then drop
 
 // ---- Trigger timing (the steady-state reconcile) ----
 
@@ -141,13 +151,22 @@ int SweepReconcileSaveTimeTwins() {
 
 void ApplyPendingDestroys() {
     if (g_pendingDestroy.empty()) return;
+    // This runs ONLY post-quiescence (OnTick gates on HasLoadTailQuiesced), so the load tail is over: a target
+    // that is ever going to load has loaded (BindUnboundReCreates ran in step 2 of THIS pass, before us). An
+    // entry that still cannot resolve, after a small grace for a late bind, never will -> DROP it. Never keep a
+    // deferred destroy forever -- that pins HasPendingWork() true and runs the full-array reconcile 4x/sec.
     for (auto it = g_pendingDestroy.begin(); it != g_pendingDestroy.end(); ) {
-        if (coop::remote_prop::TryApplyDestroy(*it)) {
+        if (coop::remote_prop::TryApplyDestroy(it->payload)) {
             UE_LOGI("[DESTROY-DEFER] CLIENT applied deferred destroy eid=%u -- target finally loaded -> destroyed "
-                    "(out-of-order destroy reconciled; no dup)", it->elementId);
+                    "(out-of-order destroy reconciled; no dup)", it->payload.elementId);
+            it = g_pendingDestroy.erase(it);
+        } else if (++it->failedApplies >= kMaxDeferApplies) {
+            UE_LOGI("[DESTROY-DEFER] CLIENT dropping unresolvable deferred destroy eid=%u after %d post-quiescence "
+                    "attempt(s) -- target never loaded here (host-only / already-gone); a load-tail bridge does "
+                    "not outlive the load tail (FPS pin guard)", it->payload.elementId, it->failedApplies);
             it = g_pendingDestroy.erase(it);
         } else {
-            ++it;  // target still not loaded -- retry next drain
+            ++it;  // target still not loaded -- retry next drain (within the grace)
         }
     }
 }
@@ -199,11 +218,11 @@ void ApplyPendingPosCorrections() {
 }
 
 void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload) {
-    for (const coop::net::PropDestroyPayload& p : g_pendingDestroy)
-        if (p.elementId == payload.elementId &&
-            std::memcmp(&p.key, &payload.key, sizeof(payload.key)) == 0)
+    for (const PendingDestroy& p : g_pendingDestroy)
+        if (p.payload.elementId == payload.elementId &&
+            std::memcmp(&p.payload.key, &payload.key, sizeof(payload.key)) == 0)
             return;  // already queued
-    g_pendingDestroy.push_back(payload);
+    g_pendingDestroy.push_back({payload, 0});
     UE_LOGI("[DESTROY-DEFER] CLIENT armed deferred destroy key='%ls' eid=%u -- arrived before the target loaded; "
             "the drain-edge applies it post-bind at quiescence (destroy-before-load order fix)",
             coop::remote_prop::KeyToWString(payload.key).c_str(), payload.elementId);

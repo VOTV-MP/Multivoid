@@ -19,6 +19,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"     // PropMirrors() (UnregisterPropMirror)
 #include "coop/element/quiescence_drain.h"    // ArmPendingDestroy (destroy-before-load capture)
+#include "coop/props/join_membership_sweep.h" // HasLoadTailQuiesced (steady-state vs load-tail gate for the defer)
 #include "coop/creatures/kerfur_entity.h"     // ForgetKerfurPropMirror (mirror-teardown choke-point)
 #include "coop/player/players_registry.h"     // players::Registry::Get().Local() (TryApplyDestroy)
 #include "coop/props/prop_echo_suppress.h"    // MarkIncomingDestroy
@@ -146,9 +147,21 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
             return false;
         }
         if (allowDefer) {
-            // DESTROY-BEFORE-LOAD: the doomed save-loaded prop hasn't materialized on this peer yet. Hand the
-            // destroy to the drain-edge ORDER OWNER instead of dropping it -- it re-applies at the quiescence
-            // sweep, AFTER the bind, so delivery order can't leak a dup. [[feedback-one-owner-order-axis]]
+            // DESTROY-BEFORE-LOAD is a LOAD-TAIL BRIDGE: defer ONLY while the world is still async-loading
+            // (pre-quiescence), where the doomed save-prop may yet materialize. In STEADY STATE (load tail
+            // quiesced) there is no "before load" -- an absent eid is a host-only / already-gone prop this peer
+            // never mirrored, so the destroy is an idempotent NO-OP. Arming it would pin the order owner's
+            // HasPendingWork() true FOREVER (a host steady-state death-watch vanish for an eid we never had),
+            // running the full-array reconcile 4x/sec in perpetuity (the 15:34 client-FPS death). Drop it.
+            if (coop::join_membership_sweep::HasLoadTailQuiesced()) {
+                UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u no local actor in STEADY state (load tail "
+                        "quiesced) -- no-op drop (nothing to destroy; not a before-load race; no perpetual defer)",
+                        keyW.c_str(), payload.elementId);
+                return false;
+            }
+            // Pre-quiescence: a genuine before-load race. Hand the destroy to the drain-edge ORDER OWNER instead
+            // of dropping it -- it re-applies at the quiescence sweep, AFTER the bind, so delivery order can't
+            // leak a dup (and the order owner now drops it if the target never loads). [[feedback-one-owner-order-axis]]
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u has no local actor YET -- DEFERRING to the "
                     "quiescence drain-edge (destroy-before-load; the order owner applies it post-bind)",
                     keyW.c_str(), payload.elementId);
