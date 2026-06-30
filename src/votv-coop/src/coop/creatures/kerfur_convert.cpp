@@ -304,16 +304,13 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, coop::ele
                                                       /*rebindInPlace=*/false);
                 ue_wrap::engine::SetActorLocation(ghost, ue_wrap::FVector{lx, ly, lz});
                 ue_wrap::engine::SetActorRotation(ghost, ue_wrap::FRotator{rp, ry, rr});
-                // HANG-IN-AIR FIX (2026-06-28, hands-on 10:15). The claim froze this ghost via
-                // SetActorSimulatePhysics(false) (ClaimConversionGhosts ~:556) to keep it inside the fuzzy
-                // window; the adopt-by-eid above made it the authoritative PROP mirror, so the freeze has done
-                // its job. RE-ENABLE physics so the off-prop FALLS + rests on the ground like the host's does
-                // (the host settles by gravity). Without this it stays kinematic-frozen at the NPC death height
-                // = "hangs in the air". The off-prop is NOT held (no held-pose stream owns it), so local gravity
-                // settle is correct + safe -- it lands on the same floor the host's copy rests on.
-                ue_wrap::engine::SetActorSimulatePhysics(ghost, true);
+                // HANG-IN-AIR ROOT FIX (2026-06-30, hands-on 14:42). The claim NO LONGER freezes this ghost
+                // (ClaimConversionGhosts dropped the SetActorSimulatePhysics(false) -- it was RULE-2 baggage from
+                // the Gap-I-1 fuzzy era; the eid adopt finds the ghost wherever it settled). So the off-prop
+                // already FELL + settled by LOCAL physics during the host round-trip (SP-like, no air-hang); the
+                // adopt is just the authoritative-pose snap above (sub-meter, same floor). No physics toggle here.
                 UE_LOGI("kerfur_convert[client]: adopted parked turn-off ghost as PROP mirror eid=%u (by eid -- "
-                        "deterministic, no fuzzy miss; physics re-enabled -> settles to rest)", eid);
+                        "deterministic, no fuzzy miss; settled by local physics, snapped to host pose)", eid);
                 return;
             }
         }
@@ -455,14 +452,15 @@ void SendConvertRequestDirect(uint32_t eid, uint8_t toProp) {
 // entity the host mirrors -> the cascade behind "A LOT of dupes on host" (proven by
 // eid 44116: a turn-off ghost prop, grabbed, broadcast client-range, then toggled).
 // ROOT FIX: never leave an untracked ghost. The instant the poll detects our toggle,
-// CLAIM the ghost (park NPC / freeze prop so it stays put + stops local AI/physics),
-// then ADOPT it as the host mirror when the authoritative entity arrives:
+// CLAIM the ghost (park the NPC so it stops local AI/physics; the PROP is left to settle by local physics),
+// then ADOPT it as the host mirror when the authoritative entity arrives -- BY EXACT srcEid (tagged below):
 //   - NPC (turn-on):  npc_mirror::OnEntitySpawn adopts the ghost by EXACT eid
 //                     (TakeParkedGhostByEid(convertFromEid), AdoptExistingNpcAsMirror) -- no respawn pop.
-//   - PROP (turn-off): the EXISTING Gap-I-1 fuzzy match (remote_prop_spawn::OnSpawn)
-//                     binds the frozen prop. Freezing is the enabler: the dropped prop
-//                     used to FALL out of Gap-I-1's 30 cm window before the host's
-//                     PropSpawn arrived; frozen, it stays put and the match lands.
+//   - PROP (turn-off): MaterializeKerfurMirror adopts the ghost by EXACT eid (TakeParkedGhostByEid). The prop
+//                     is NOT frozen (2026-06-30 14:42): the old SetActorSimulatePhysics(false) held it inside
+//                     Gap-I-1's 30 cm FUZZY window, but the eid adopt finds it wherever it settled -- so the
+//                     freeze was RULE-2 baggage that pinned it at the NPC's standing height (the air-hang). It
+//                     now falls + settles by LOCAL physics like single-player; the adopt snaps it to the host pose.
 // A ghost the host never confirms (sentient-kerfur reject / dropped request) is
 // destroyed by CleanupParkedGhosts after a timeout, so it can never be grabbed.
 struct ParkedGhost {
@@ -558,9 +556,13 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
         if (wantNpc) {
             ue_wrap::puppet::DisableCharacterTicks(obj);  // park: the streamed pose becomes authoritative
             ue_wrap::kerfur::NeutralizeAiTimers(obj);      // stop the kerfur AI timers on the ghost
-        } else {
-            ue_wrap::engine::SetActorSimulatePhysics(obj, false);  // freeze -> stays inside Gap-I-1's 30 cm
         }
+        // PROP (turn-off) ghost: do NOT freeze its physics. The old `SetActorSimulatePhysics(false)` here held
+        // the dropped prop inside the Gap-I-1 30cm FUZZY window; adopt is now DETERMINISTIC by srcEid
+        // (TakeParkedGhostByEid finds it by eid wherever it settled), so the freeze was RULE-2 baggage that
+        // pinned the prop at the NPC's STANDING height for the ~0.4s host round-trip = the "hang in the air then
+        // snap" (2026-06-30 14:42 hands-on). Let it fall + settle by LOCAL physics like single-player;
+        // MaterializeKerfurMirror rebinds it in place by eid (a sub-meter snap to the host's settled pose).
         g_parkedGhosts.push_back(ParkedGhost{obj, R::InternalIndexOf(obj),
                                              wantNpc ? uint8_t(0) : uint8_t(1), srcEid, now});
         ++claimed;
