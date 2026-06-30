@@ -1,8 +1,10 @@
 # Hands-on runbook 2026-06-30 -- kerfur DELIVERY axis (the 13:30 5-vs-6) + the OWNER BOUNDARY
 
-**Deployed:** `votv-coop.dll` SHA256 `7026AE4E...` (short `7026AE4E`), proto **92** (UNCHANGED -- the fix
-reuses the existing `PropSpawn` ReliableKind; no wire-format change). Hash-verified MATCH on all 4 folders
-(host / copy / copy2 / dev). Build GREEN (Release).
+**Deployed:** `votv-coop.dll` SHA256 short **`421AC283`**, proto **92** (UNCHANGED -- reuses the existing
+`PropSpawn` ReliableKind; no wire-format change). Hash-verified MATCH on all 4 folders (host / copy / copy2 /
+dev). Build GREEN (Release). NOTE: `421AC283` carries BOTH the delivery fix (the 5-vs-6, verified 14:42 on the
+earlier `7026AE4E` build) AND the client-turn-off hang-in-air fix (`3fff00d3`) -- so a re-test also covers a
+client turn-off (expect an SP-like flop to the floor, NO ~0.4s air-hang).
 
 **What changed (3 code files + 3 boundary guards):**
 - `prop_snapshot.cpp/.h`: NEW `DeliverLateRegisteredProps` (the named late-registration deliver-missing
