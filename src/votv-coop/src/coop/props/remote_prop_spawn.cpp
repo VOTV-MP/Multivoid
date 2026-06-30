@@ -1319,9 +1319,11 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // mechanisms were join-window-one-shot, so a save-pile grabbed/moved AFTER this sweep armed a twin nothing
     // consumed = the 15:01:49 ghost). joinSweep=true logs the one-shot orphan census. See coop/element/quiescence_drain.h.
     coop::element::quiescence_drain::RunReconcile(/*joinSweep=*/true);
-    // NOTE: the kerfur off->active retire sweep (scope A) is NOT driven here -- it runs from the kerfur
-    // client poll (kerfur_convert::PollKerfurConversions, also quiescence-gated) so it fires even when no
-    // pile bracket armed (the SnapshotBegin-lost flake leaves g_sweepPending false). Single driver, RULE 2.
+    // NOTE: the kerfur off->active retire sweep (scope A) IS driven here now -- it is step 3 of RunReconcile
+    // (anti-smear 2026-06-30; it used to be a separate driver in kerfur_convert::PollKerfurConversions = a 3rd
+    // parallel order owner, now removed). The bracket-not-armed case (SnapshotBegin-lost flake leaves
+    // g_sweepPending false) is covered by quiescence_drain::OnTick, which runs every client tick before the
+    // g_sweepPending gate and ORs kerfur_reconcile::HasPendingRetire into its HasPendingWork. [[feedback-one-owner-order-axis]]
 
     g_claimedActors.clear();
     g_claimTrackingActive = false;

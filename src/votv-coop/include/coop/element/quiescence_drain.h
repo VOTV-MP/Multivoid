@@ -87,7 +87,8 @@ void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
 bool HasPendingWork();
 
 // Drop the deferred queues (save-time twins + pos-corrections + destroys). Called ONLY at session teardown
-// (remote_prop_spawn::OnLeaveSession). The queues deliberately SURVIVE bracket close -- they drain at
+// (remote_prop_spawn::ResetClaimTracking, the disconnect/world-drop edge). The queues deliberately SURVIVE
+// bracket close -- they drain at
 // quiescence / steady-state, never dropped per-bracket (that was the latent "Reset DROPPING undrained
 // pos-correction" data loss the anti-smear split removed). Game-thread only.
 void Reset();
