@@ -23,7 +23,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // coop::players::kMaxPeers
-#include "coop/util/incremental_object_scan.h"  // L5 fix: tail-scan instead of full GUObjectArray walk
+#include "coop/scan/incremental_object_scan.h"  // L5 fix: tail-scan instead of full GUObjectArray walk
 
 #include "ue_wrap/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
 #include "ue_wrap/log.h"
@@ -503,16 +503,16 @@ public:
         // re-arms the full walk. Under the tail-scan: REMOVAL is pruned each tick (cached idx +
         // IsLiveByIndex, the ResolveFast/reaper pattern), state is read every tick by PollAndBroadcast, and
         // the ~5min NextRange backstop (staggered per channel) is the slot-reuse safety net.
-        coop::util::ScanRange range;
+        coop::scan::ScanRange range;
         const bool settled = (streamStableScans_ >= kStreamSettleScans);
         if (!settled) {
-            range = coop::util::ScanRange{0, R::NumObjects(), true};  // still streaming -> FULL walk (no miss)
+            range = coop::scan::ScanRange{0, R::NumObjects(), true};  // still streaming -> FULL walk (no miss)
             scan_.scannedTo = range.end;                              // park the tail cursor at the live end so the
             scan_.sinceFull = staggerOffset_;                        // first post-settle tail-scan starts clean AND
                                                                       // the 60s backstop counter resumes STAGGERED
                                                                       // (not 0 -> not re-correlated across channels)
         } else {
-            range = coop::util::NextRange(scan_, kBackstopFullEvery); // settled -> tail-scan + 60s FULL backstop
+            range = coop::scan::NextRange(scan_, kBackstopFullEvery); // settled -> tail-scan + 60s FULL backstop
         }
         std::vector<std::pair<std::wstring, Ref>> found;
         found.reserve(64);
@@ -636,7 +636,7 @@ private:
 
     std::mutex indexMutex_;
     std::unordered_map<std::wstring, Ref> byKey_;
-    coop::util::IncrementalObjectScan scan_;  // L5 fix: tail-scan cursor (per-channel; staggered in the ctor)
+    coop::scan::IncrementalObjectScan scan_;  // L5 fix: tail-scan cursor (per-channel; staggered in the ctor)
     int streamStableScans_ = 0;               // L5 fix: consecutive unchanged-count scans (full-walk until >= kStreamSettleScans)
     int staggerOffset_ = 0;                   // L5 take-3: per-channel backstop phase (coprime stride; re-seeded each stream-phase full walk so the stagger survives streaming)
 

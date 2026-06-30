@@ -20,7 +20,7 @@
 #include "ue_wrap/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity (release)
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
-#include "coop/util/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
+#include "coop/scan/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
 #include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
 #include "ue_wrap/types.h"           // FVector, FRotator, NormalizeAxis
 
@@ -263,8 +263,8 @@ size_t RebuildIndex() {
     // every ~5min (the slot-reuse backstop). A purchased ATV APPENDS, so the tail-scan catches it; the
     // rare full safety covers any drift. The capturing baseline + purchase-detect orderings are preserved
     // below (see the commit section): the first call scans [0, N) so the initial save-set is fully captured.
-    static coop::util::IncrementalObjectScan sScan;
-    const auto r = coop::util::NextRange(sScan);
+    static coop::scan::IncrementalObjectScan sScan;
+    const auto r = coop::scan::NextRange(sScan);
 
     struct Found { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };
     std::vector<Found> found;

@@ -27,7 +27,7 @@
 #include "ue_wrap/grime.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
-#include "coop/util/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
+#include "coop/scan/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
 #include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
 
 #include <algorithm>
@@ -167,8 +167,8 @@ size_t RebuildIndex() {
     // every ~5min (the slot-reuse backstop). A grime decal is a level-loaded Agrime_C, so the tail-scan
     // catches it at stream-in; the rare full safety covers any slot-reuse drift. The PosKey cache below
     // is maintained incrementally (new actors compute + cache; the full scan rebuilds it from scratch).
-    static coop::util::IncrementalObjectScan sScan;
-    const auto r = coop::util::NextRange(sScan);
+    static coop::scan::IncrementalObjectScan sScan;
+    const auto r = coop::scan::NextRange(sScan);
     std::unordered_map<void*, std::wstring> nextCache;  // populated only on a full scan
     std::vector<std::pair<std::wstring, Ref>> found;
     found.reserve(64);

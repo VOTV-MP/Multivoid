@@ -14,7 +14,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
 #include "ue_wrap/reflection.h"
-#include "coop/util/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
+#include "coop/scan/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
 #include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
 #include "ue_wrap/types.h"
 
@@ -77,8 +77,8 @@ void RebuildIndex() {
     // catches the common case immediately; the 60s full safety is the slot-reuse backstop (a depleted pile
     // self-destructs + a spawner re-spawns -> a freed slot may be reused below the tail). 60s (not the 5min
     // default) because this class churns at runtime, so a tighter backstop bounds the counter-sync delay.
-    static coop::util::IncrementalObjectScan sScan;
-    const auto r = coop::util::NextRange(sScan, /*fullEvery*/ 30);
+    static coop::scan::IncrementalObjectScan sScan;
+    const auto r = coop::scan::NextRange(sScan, /*fullEvery*/ 30);
     for (int32_t i = r.begin; i < r.end; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;

@@ -72,7 +72,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/passwordlock.h"
 #include "ue_wrap/reflection.h"
-#include "coop/util/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
+#include "coop/scan/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
 #include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
 
 #include <atomic>
@@ -174,8 +174,8 @@ size_t RebuildIndex() {
     // re-scan every ~5min (the slot-reuse backstop). A keypad is a level-loaded ApasswordLock_C, so
     // the tail-scan catches it at load; static actors rarely reuse slots, so the rare full safety
     // covers any drift.
-    static coop::util::IncrementalObjectScan sScan;
-    const auto r = coop::util::NextRange(sScan);
+    static coop::scan::IncrementalObjectScan sScan;
+    const auto r = coop::scan::NextRange(sScan);
     std::vector<std::pair<std::wstring, Ref>> found;
     found.reserve(32);
     for (int32_t i = r.begin; i < r.end; ++i) {

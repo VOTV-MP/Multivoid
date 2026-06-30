@@ -9,7 +9,7 @@
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
-#include "coop/util/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
+#include "coop/scan/incremental_object_scan.h"  // L5: scan only NEW objects (no 237k walk)
 #include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
 #include "ue_wrap/windturbine.h"
 
@@ -118,8 +118,8 @@ bool PayloadFinite(const coop::net::TurbineStatePayload& p) {
 // covers any drift. WT::IsTurbine is the same cheap class-descendant filter the old
 // FindObjectsByClass(L"windturbine_C") applied, now run per-object on the tail range.
 void RebuildIndex() {
-    static coop::util::IncrementalObjectScan sScan;
-    const auto r = coop::util::NextRange(sScan);
+    static coop::scan::IncrementalObjectScan sScan;
+    const auto r = coop::scan::NextRange(sScan);
     std::vector<std::pair<std::wstring, Ref>> found;
     for (int32_t i = r.begin; i < r.end; ++i) {
         void* obj = R::ObjectAt(i);
