@@ -58,8 +58,15 @@ You (user) launch hands-on: `mp_host_game.bat` (host), then `mp_client_connect.b
 
 ## One-command verdict (run after BOTH scenarios, or per scenario)
 ```
+# after a run that played BOTH Scenario A and Scenario B in one session:
+pwsh tools/kerfur-delivery-assert.ps1 -Scenario both-sides -BoundaryTest
+# or, per single-scenario run (no both-sides requirement):
 pwsh tools/kerfur-delivery-assert.ps1 -Scenario join-turnoff
 ```
+`-BoundaryTest` REQUIRES both sides were actually exercised this run -- side A owner-fired>=1 (PROVES the
+join-window race was reproduced: a convert-delivered off-prop is marked-known and can NEVER reach the owner,
+so a race-MISS shows as owner=0 = FAIL, never a false green) AND side B convert-fired>=1 (the steady-state
+primary path). Run it only on a session that did BOTH turn-offs.
 - CRITICAL invariants (exit 0 iff all hold): `kerfur-census-parity` (host TOTAL == client TOTAL),
   `owner-boundary-no-converted` (0 boundary WARNs), `boundary-discriminator` (no eid both converted AND
   owner-delivered), `no-stray-divergence-rearm` (the late-delivery did NOT re-arm the divergence sweep:

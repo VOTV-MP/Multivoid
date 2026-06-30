@@ -46,7 +46,8 @@ param(
     # Assert that BOTH boundary sides were ACTUALLY exercised this run (refuses a vacuous green): side A
     # (join-window turn-off -> owner fired) AND side B (steady-state turn-off -> convert fired). Without
     # this, boundary-discriminator can pass with 0 converted + 0 owner-delivered = tested nothing. Pass
-    # -BoundaryTest only on a run that played BOTH runbook scenarios (or the autonomous both-sides driver).
+    # -BoundaryTest only on a run that played BOTH runbook scenarios in ONE session: the user's two-scenario
+    # hands-on (Scenario A = turn off a kerfur DURING the join window; Scenario B = turn one off AFTER settle).
     [switch]$BoundaryTest
 )
 
@@ -134,13 +135,17 @@ $Invariants = @(
     # BOTH sides were actually exercised -- side A (owner fired for a join-window orphan) AND side B (convert
     # fired for a steady-state turn-off). Without this, boundary-discriminator passes vacuously (0/0). This
     # is what stops the executable guard from itself becoming a "by design" untested-assumption hole.
+    # (the user's hands-on plays both sides; -BoundaryTest then proves the run actually exercised both.)
     @{ Name='both-boundary-sides-exercised'; Severity=$(if($BoundaryTest){'CRITICAL'}else{'INFO'}); Check={
         $owner   = Count $H 'incremental PropSpawn for runtime-adopted kerfur-off prop'
         $convert = Count $H 'kerfur_convert: POLL turn_off'
         @{ Pass = (-not $BoundaryTest) -or ($owner -ge 1 -and $convert -ge 1)
            Detail = "side A owner-fired=$owner, side B convert-fired=$convert" +
-                    $(if ($BoundaryTest) { ' (BoundaryTest: BOTH must be >=1 -- else the boundary was not exercised)' }
-                      else { ' (informational; pass -BoundaryTest to REQUIRE both)' }) }
+                    $(if ($BoundaryTest) { ' (BoundaryTest: BOTH must be >=1. owner>=1 PROVES side A reproduced the' +
+                                           ' join-window registration race -- a convert-delivered off-prop is marked-known' +
+                                           ' and can NEVER reach the owner, so a race-MISS shows as owner=0 = FAIL, never a' +
+                                           ' false green. convert>=1 PROVES side B took the steady-state primary path.)' }
+                      else { ' (informational; pass -BoundaryTest to REQUIRE both -- owner>=1 = race reproduced, convert>=1 = steady path)' }) }
     }},
 
     # ---- (4) The deliver-missing owner actually FIRED for the late off-prop (the fix worked).
