@@ -1,7 +1,7 @@
 # Hands-on runbook -- DESTROY-BEFORE-LOAD fix + ANTI-SMEAR refactor + census (2026-06-30)
 
-Deployed: **`043D756B`** (votv-coop.dll, hash-verified host = client = client2 = dev). **Proto 92** (unchanged
-wire). Build GREEN, audits CLEAN. HEAD **`db0c358f`** on main. Launch via the named-window bats
+Deployed: **`DFABFBF4`** (votv-coop.dll, hash-verified host = client = client2 = dev). **Proto 92** (unchanged
+wire). Build GREEN, audits CLEAN. HEAD **`6a9dd7af`** on main. Launch via the named-window bats
 (`mp_host_game.bat` + `mp_client_connect.bat`).
 
 **THIS ONE RUN GATES TWO THINGS** (the anti-smear refactor merged the destroy logic into the new order owner,
