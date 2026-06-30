@@ -552,6 +552,28 @@ void DrainChunk() {
     }
 }
 
+// Build + broadcast ONE additive PropSpawn for `actor` to all ready peers (MTA CEntityAddPacket;
+// the SAME s->SendPropSpawn the Init-POST observer uses). NO SnapshotBegin/Complete bracket -> the
+// client's destructive divergence sweep is NOT re-armed (the entire point of R1). A peer that also
+// enumerates this prop in its own in-flight connect drain just dedupes it via RegisterPropMirror.
+// `s` host-validated + `actor` liveness-confirmed by the caller. RULE 2: ONE builder, shared by the
+// generic incremental express and the kerfur-off deliver-missing owner (no parallel copy). `kindTag`
+// is a log-only prefix ("" generic / "kerfur-off ").
+static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, const char* kindTag) {
+    // eid was minted by the seed walk that yielded this actor (phase 2 of SeedWalk_, before it
+    // returned), so this resolves.
+    const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
+    coop::net::PropSpawnPayload p{};
+    // internalIdx -1: liveness just confirmed by the caller (IsLive); the builder's idx guard is only
+    // for the drain's cached-index path. matchSlot -1: mid-game incremental express (NOT a join), no
+    // save-time stamp (a runtime-spawned form reaching a peer has no save-loaded native twin).
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible -- skip silently
+    s->SendPropSpawn(p);
+    UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted %sprop %p (eid=%u, key='%.*s') "
+            "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
+            kindTag, actor, p.elementId, static_cast<int>(p.key.len), p.key.data);
+}
+
 void ExpressIncrementalSpawn(void* actor) {
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     // Host-authoritative: only the host broadcasts world spawns. The steady-world
@@ -560,31 +582,81 @@ void ExpressIncrementalSpawn(void* actor) {
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!actor || !R::IsLive(actor)) return;
     // Kerfur exclusion (2026-06-18 backstop to the MarkKnownKeyedProp close in
-    // RegisterHostPropSilent): a kerfur's ONLY wire signal is KerfurConvert -- never the
-    // generic incremental PropSpawn. Re-expressing a kerfur prop here with its real BP key
-    // dupes it on a client fuzzy-miss (the host turn-on/off dupe). The connect snapshot's
-    // drain handles a kerfur prop differently (the client adopts it); only THIS steady-state
-    // express must skip it.
+    // RegisterHostPropSilent): a kerfur's ONLY steady-state wire signal is KerfurConvert -- never the
+    // generic incremental PropSpawn. Re-expressing a CONVERTED kerfur prop here with its real BP key
+    // dupes it on a client fuzzy-miss (the host turn-on/off dupe). The connect snapshot's drain handles
+    // a kerfur prop differently (the client adopts it); only THIS generic express must skip it. A kerfur
+    // off-prop that NO convert delivered (the join-window registration race) is delivered instead by
+    // ExpressIncrementalKerfurOffProp -- routed from the same re-seed loop via DeliverLateRegisteredProps.
     if (coop::kerfur_entity::IsKerfurActor(actor)) return;
-    // eid was minted by the seed walk that yielded this actor (phase 2 of
-    // SeedWalk_, before it returned), so this resolves.
-    const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
-    coop::net::PropSpawnPayload p{};
-    // internalIdx -1: liveness just confirmed above (IsLive); the builder's idx
-    // guard is only for the drain's cached-index path.
-    // v86 Path 1c: mid-game incremental express (NOT a join) -- matchSlot=-1, no save-time stamp
-    // (a runtime-spawned pile reaching a long-connected peer has no save-loaded native twin).
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible -- skip silently
-    // Broadcast ONE additive PropSpawn to all ready peers (MTA CEntityAddPacket /
-    // BroadcastOnlyJoined; the SAME s->SendPropSpawn the Init-POST observer uses for
-    // an organically-spawned prop). NO SnapshotBegin/Complete bracket -> the client's
-    // destructive divergence sweep is NOT re-armed (the entire point of R1). A peer
-    // that also enumerates this prop in its own in-flight connect drain just dedupes
-    // it via RegisterPropMirror.
-    s->SendPropSpawn(p);
-    UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted prop %p (eid=%u, key='%.*s') "
-            "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
-            actor, p.elementId, static_cast<int>(p.key.len), p.key.data);
+    BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"");
+}
+
+void ExpressIncrementalKerfurOffProp(void* actor) {
+    auto* s = g_session_ptr.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) return;
+    if (!actor || !R::IsLive(actor)) return;
+    // DeliverLateRegisteredProps routes ONLY kerfur actors here; a non-kerfur would be a routing bug.
+    // A re-seed-NEW kerfur is always the OFF-prop form (the re-seed adopts keyed PROPS, never the
+    // active NPC).
+    if (!coop::kerfur_entity::IsKerfurActor(actor)) return;
+    // BOUNDARY ENFORCEMENT (runtime, every session). The owner delivers ONLY an UN-converted off-prop.
+    // A CONVERTED off-prop has a stable KerfurId bound to its eid by BindFormActor -- KerfurConvert owns
+    // its delivery, the owner must never touch it. The MarkKnownKeyedProp discriminator (prop_lifecycle.cpp:646)
+    // keeps a converted off-prop OUT of the re-seed-NEW set, so reaching here with a KerfurId-bound eid is
+    // a boundary REGRESSION. Skip + WARN (Arm would dedup by eid anyway, but the invariant is that the owner
+    // never re-delivers a convert-owned kerfur). The kerfur-delivery autotest greps this WARN (must be 0).
+    {
+        const coop::element::ElementId checkEid = PT::GetPropElementIdForActor(actor);
+        if (coop::kerfur_entity::GetKerfurIdForEid(checkEid) != coop::element::kInvalidId) {
+            UE_LOGW("prop_snapshot: kerfur-off deliver-missing owner SKIPPED a convert-owned kerfur eid=%u "
+                    "(KerfurId-bound -> KerfurConvert owns it) -- OWNER BOUNDARY violation (a converted off-prop "
+                    "leaked into the re-seed-NEW set; the MarkKnownKeyedProp discriminator regressed)",
+                    static_cast<uint32_t>(checkEid));
+            return;
+        }
+    }
+    // DELIVER-MISSING OWNER (join-window; N=3 of the snapshot-before-state-ready class
+    // [[feedback-snapshot-before-state-ready]]). A kerfur off-prop created by a host turn-off DURING a
+    // client's join window has NO delivery channel: it post-dates the join snapshot, the generic
+    // incremental express above SKIPS it (:568), and the death-watch poll never fired a KerfurConvert
+    // (its source NPC was never a watched live Npc Element -- the host registers world NPCs once at
+    // join, and the turn-off can race that scan). Because a CONVERTED off-prop is marked known BEFORE
+    // it can surface as a re-seed-NEW prop (prop_lifecycle.cpp:646), a re-seed-NEW kerfur off-prop is
+    // BY DEFINITION un-converted -> delivering it here never double-delivers a converted one. Dupe-safe
+    // across all orderings: the client receives this via OnSpawn(deferKerfur=true) ->
+    // kerfur_prop_adoption::Arm, which no-ops an already-bound eid (kerfur_prop_adoption.cpp:198) and
+    // refreshes an already-pending eid; the off-prop's wire eid is the host Prop Element eid (idempotent
+    // per actor -- MarkPropElement), so even if a KerfurConvert later arrives for the same actor the
+    // client dedups by that shared eid. A client with no local twin fresh-spawns it exactly once at
+    // load-tail quiescence (ResolvePending).
+    //
+    // OWNER BOUNDARY -- JOIN-EDGE ONLY. This owner exists because the join-window registration race can
+    // drop the KerfurConvert. In STEADY STATE the death-watch is reliable (the NPC is long-registered,
+    // no race), so KerfurConvert stays PRIMARY for kerfur transitions and a converted off-prop never
+    // reaches this path (it is marked known). Do NOT generalize "channels are accelerators" into steady
+    // state or demote KerfurConvert to an accelerator without FIRST adding a periodic steady-state
+    // reconcile -- that would open a steady-state delivery hole. The boundary is asserted by the
+    // kerfur-delivery autotest. See docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md.
+    BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"kerfur-off ");
+}
+
+void DeliverLateRegisteredProps(const std::vector<void*>& lateProps) {
+    // THE host-side LATE-REGISTRATION deliver-missing owner (the join-edge backstop half of "deliver the
+    // host's authoritative set to every peer"; the connect snapshot is the at-join full-state half).
+    // The steady-world re-seed (net_pump) hands us every prop it newly adopted into tracking -- i.e. a
+    // prop NO fast channel (connect snapshot / Init-POST express / KerfurConvert) had delivered yet
+    // (a converted/organically-spawned prop is already `known` and never reaches here). We deliver each
+    // exactly once; the client's idempotent apply absorbs any overlap. This is what demotes the per-
+    // mutation channels to accelerators on the JOIN edge: correctness no longer depends on which channel
+    // caught a window mutation -- this owner reconciles to the host's authoritative registered set.
+    // A generic prop broadcasts an incremental PropSpawn; a kerfur OFF-prop (skipped by the generic
+    // express) takes the convert-safe deferred-adoption path. See ExpressIncrementalKerfurOffProp for
+    // the dupe-safety + OWNER BOUNDARY (join-edge only; steady-state stays KerfurConvert-primary).
+    for (void* a : lateProps) {
+        if (coop::kerfur_entity::IsKerfurActor(a)) ExpressIncrementalKerfurOffProp(a);
+        else                                       ExpressIncrementalSpawn(a);
+    }
 }
 
 void CancelForSlot(int peerSlot) {

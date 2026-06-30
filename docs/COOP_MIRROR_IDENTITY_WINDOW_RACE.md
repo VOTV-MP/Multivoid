@@ -42,6 +42,35 @@ separate `docs/piles/10` mass-unclaim over-destroy root).
 > hands-on the whole + push. The bug-class closes in ONE place (CreateOrAdopt + SyncAuthority), as designed.
 > Detail: `research/findings/sync-consolidation-refactor-PLAN-2026-06-27.md` + [[project-sync-module-refactor-2026-06-27]].
 
+> **DELIVERY-OWNERSHIP facet 2026-06-30 (the INVERSE axis; fix SHIPPED in code, hands-on PENDING).** The
+> instances below are the IDENTITY-COLLISION axis: an entity reaches the joiner via **two** channels at once
+> and, lacking a stable key, the client keeps both (dup). The 2026-06-30 5-vs-6 kerfur is the **inverse**:
+> a host turn-off DURING the join window creates an off-prop that reaches the joiner via **ZERO** channels --
+> (a) it post-dates the connect snapshot; (b) the KerfurConvert death-watch never fired because its source
+> NPC was never a watched live Npc Element (the host registers world NPCs ONCE at join via a world-enum scan,
+> and the turn-off races that scan); (c) the generic incremental express deliberately SKIPS kerfurs
+> (prop_snapshot.cpp:568). Three "by design" closures summed to **no owner of "deliver the host's authoritative
+> final state at quiescence"** -- same join-window root as this class ([[feedback-snapshot-before-state-ready]]),
+> different axis. **Fix:** name the existing steady-world re-seed as what it already is -- the host-side
+> **late-registration deliver-missing owner** (`prop_snapshot::DeliverLateRegisteredProps`); a re-seed-NEW kerfur
+> off-prop (BY DEFINITION un-converted -- a converted one is `MarkKnownKeyedProp`'d before it can surface as new,
+> prop_lifecycle.cpp:646) is delivered via `ExpressIncrementalKerfurOffProp` down the dupe-safe deferKerfur path
+> (the client dedups by eid via `kerfur_prop_adoption::Arm`:198). :568 is UNTOUCHED (still the generic-path
+> backstop). **THE UNIFIED TWO-PHASE OWNER (one invariant, two arms):** `prop_snapshot` owns "every host entity
+> reaches every peer, idempotently" via (1) the **at-join full-state** arm (the bracketed snapshot drain) + (2)
+> the **late-registration delta** arm (`DeliverLateRegisteredProps`, bracket-FREE). The two arms stay separate
+> functions on purpose -- the bracket re-arms the client's destructive divergence sweep, so merging them risks a
+> future "unify the delivery" accidentally bracketing the incremental arm (= join-churn). The cross-half guard
+> is the END-TO-END delivery autotest (host TOTAL == client TOTAL), which goes red if EITHER arm breaks -- not a
+> shared name. **OWNER BOUNDARY -- JOIN-EDGE ONLY:** the deliver-missing owner exists because the join-window
+> registration race can drop a KerfurConvert. In STEADY STATE the death-watch is reliable (NPC long-registered,
+> no race), so KerfurConvert stays PRIMARY and a converted off-prop NEVER reaches the owner (marked known). The
+> per-mutation channels are accelerators ONLY on the join edge; do NOT demote KerfurConvert in steady state
+> without first adding a periodic steady-state reconcile (= a steady-state delivery hole otherwise). The boundary
+> is **runtime-self-enforced**: `ExpressIncrementalKerfurOffProp` WARNs + skips if it ever sees a KerfurId-bound
+> (= converted) eid (`kerfur_entity::GetKerfurIdForEid`), and the autotest asserts that WARN count is 0. See
+> [[feedback-one-owner-order-axis]] (the ORDER-axis sibling: this is the DELIVERY-axis owner).
+
 ## The class
 
 Any entity that reaches a joining client via **TWO channels at once** -- (a) the transferred SAVE the client

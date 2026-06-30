@@ -675,7 +675,11 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                         UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
                                 "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
                                 "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", added);
-                        for (void* a : newProps) coop::prop_snapshot::ExpressIncrementalSpawn(a);
+                        // The late-registration deliver-missing owner: a generic prop broadcasts an
+                        // incremental PropSpawn; a kerfur OFF-prop (skipped by the generic express, no
+                        // KerfurConvert fired) takes the convert-safe deferred path. See
+                        // coop::prop_snapshot::DeliverLateRegisteredProps + the OWNER BOUNDARY there.
+                        coop::prop_snapshot::DeliverLateRegisteredProps(newProps);
                     }
                 }
                 // else: NumObjects unchanged -> nothing newly allocated -> SKIP the full census (the FPS fix).

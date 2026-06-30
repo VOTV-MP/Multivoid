@@ -24,6 +24,7 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -62,6 +63,21 @@ void DrainChunk();
 // Mirrors MTA: one CEntityAddPacket per runtime entity, never a world re-send
 // (Server/.../CStaticFunctionDefinitions.cpp:8349).
 void ExpressIncrementalSpawn(void* actor);
+
+// Deliver a kerfur OFF-prop that the generic ExpressIncrementalSpawn deliberately skips (:568) -- the
+// join-window deliver-missing owner for a host turn-off whose KerfurConvert never fired (the death-watch
+// raced the host's one-shot world-NPC registration; the off-prop also post-dates the join snapshot).
+// Only safe for a re-seed-NEW (== un-converted) off-prop; the client dedups by eid via
+// kerfur_prop_adoption::Arm. OWNER BOUNDARY -- JOIN-EDGE ONLY (steady-state stays KerfurConvert-primary);
+// see the .cpp + docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md. Host-only.
+void ExpressIncrementalKerfurOffProp(void* actor);
+
+// THE host-side late-registration deliver-missing owner: the steady-world re-seed (net_pump) hands this
+// every prop it newly adopted into tracking (one no fast channel had delivered yet) and this delivers
+// each exactly once -- a generic prop via ExpressIncrementalSpawn, a kerfur off-prop via
+// ExpressIncrementalKerfurOffProp. The join-edge backstop that makes the per-mutation channels
+// accelerators. Host-only; the client's idempotent apply absorbs any overlap.
+void DeliverLateRegisteredProps(const std::vector<void*>& lateProps);
 
 // Abort any pending or in-progress drain for `peerSlot`. Called from
 // the harness's per-slot disconnect edge so a peer drop mid-drain
