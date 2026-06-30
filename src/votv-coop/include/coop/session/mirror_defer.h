@@ -5,7 +5,7 @@
 // quiescence-gated reconcile resolves them. This module hides each freshly-spawned host
 // mirror at the spawn choke-points, then reveals it -- either at the curtain-lift (the
 // confirmed ones) or at the quiescence backstop (the rest). The reconcile BACKUP
-// (pile_reconcile / kerfur_reconcile sweeps) is UNTOUCHED -- this is a pure visibility
+// (quiescence_drain / kerfur_reconcile sweeps) is UNTOUCHED -- this is a pure visibility
 // layer on top of it (worst case = today's dance, best case = instant). See
 // docs/COOP_INSTANT_WORLD_TWO_LAYER.md.
 //

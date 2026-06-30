@@ -10,7 +10,7 @@
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_entity.h"  // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
 #include "coop/net/session.h"
-#include "coop/props/pile_reconcile.h"   // docs/piles/09: ArmPendingSaveTimeTwin (in-window grabbed-pile dup)
+#include "coop/element/quiescence_drain.h"   // the order owner: ArmPendingDestroy + ArmPendingSaveTimeTwin (capture-only)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
@@ -835,7 +835,7 @@ void ClearAnyDriveFor(void* actor) {
 }
 
 // The terminal local teardown of a RESOLVED doomed actor -- shared by the in-time OnDestroy and the deferred
-// re-apply (pile_reconcile::ApplyPendingDestroys -> TryApplyDestroy). Clears any drive, releases a local grab,
+// re-apply (quiescence_drain::ApplyPendingDestroys -> TryApplyDestroy). Clears any drive, releases a local grab,
 // echo-suppresses, then K2_DestroyActor. Game thread.
 void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
                                 const coop::net::PropDestroyPayload& payload, void* localPlayer) {
@@ -862,7 +862,7 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
 
 // Core PropDestroy handler. `allowDefer`=true is the in-time event path: if the doomed save-loaded prop has NOT
 // materialized on this peer yet (it loads on its own timeline; the host's destroy raced ahead), the destroy is
-// QUEUED on the drain-edge order owner (pile_reconcile::ArmPendingDestroy) and re-applied AFTER the bind at the
+// QUEUED on the drain-edge order owner (quiescence_drain::ArmPendingDestroy) and re-applied AFTER the bind at the
 // quiescence sweep -- NEVER dropped (the 2026-06-30 destroy-before-load 5-vs-7 race: a host destroy arrived 9s
 // before the client loaded its Nrby off-prop -> "no local actor" -> the prop then loaded unopposed -> a dup).
 // `allowDefer`=false is the deferred re-apply (TryApplyDestroy): a still-missing actor just returns false to
@@ -915,7 +915,7 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u has no local actor YET -- DEFERRING to the "
                     "quiescence drain-edge (destroy-before-load; the order owner applies it post-bind)",
                     keyW.c_str(), payload.elementId);
-            coop::pile_reconcile::ArmPendingDestroy(payload);
+            coop::element::quiescence_drain::ArmPendingDestroy(payload);
         } else {
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u still has no local actor -- keep pending",
                     keyW.c_str(), payload.elementId);
@@ -930,7 +930,7 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
     OnDestroyImpl_(payload, localPlayer, /*allowDefer=*/true);
 }
 
-// Deferred re-apply, called by the drain-edge order owner (pile_reconcile::ApplyPendingDestroys) at the
+// Deferred re-apply, called by the drain-edge order owner (quiescence_drain::ApplyPendingDestroys) at the
 // quiescence sweep. Resolves the local player itself (the sweep has no caller-passed pawn). Returns true iff
 // the doomed actor has now loaded + was destroyed (so the order owner erases it from the pending queue); false
 // keeps it queued for the next drain. NEVER re-arms (allowDefer=false) -- the order owner already owns it.
@@ -967,7 +967,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
     // -- the L1 cure, keyed at the grab edge so it survives the in-window eid change. Done here (after the ctx
     // gate, before the proxy branch) so it fires whether or not the ToClump created a proxy first.
     if (!wantClump && payload.hasMatchPos)
-        coop::pile_reconcile::ArmPendingSaveTimeTwin(
+        coop::element::quiescence_drain::ArmPendingSaveTimeTwin(
             E, ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}, payload.chipType);
     // PROXY PATH (phase 1, THE dup fix): if E's mirror is our host-authoritative trash proxy, re-skin it
     // IN PLACE (pile<->clump). The eid->actor binding is NEVER touched -> no spawn-fresh, no orphan, no

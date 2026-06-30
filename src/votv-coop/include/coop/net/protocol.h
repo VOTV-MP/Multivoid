@@ -1812,7 +1812,7 @@ enum class ReliableKind : uint8_t {
                        //     SetActorLocation's the bound native at the quiescence sweep (identity preserved,
                        //     position-only, idempotent). HOST->CLIENT only; NOT relayable; NOT pre-world-sendable
                        //     (sent AFTER the gate opens at ClientWorldReady). Payload: PropSnapPosPayload.
-                       //     event_dispatch_entity dispatches it -> pile_reconcile::ArmPendingPosCorrection.
+                       //     event_dispatch_entity dispatches it -> quiescence_drain::ArmPendingPosCorrection.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not

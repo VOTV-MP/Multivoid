@@ -33,7 +33,6 @@
 #include "coop/creatures/npc_mirror.h"     // OnEntityDestroy + adopt/spawn mirror helpers (client apply)
 #include "coop/creatures/npc_sync.h"       // RegisterHostNpcSilent / ReleaseNpcElementSilent (silent host ops)
 #include "coop/creatures/kerfur_entity.h"  // BindFormActor / BroadcastConvertRejected + the resolved classes
-#include "coop/creatures/kerfur_reconcile.h"  // scope A: retire a stale local off-prop on a join-window turn-on
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"        // OnDestroy (eid teardown of the old prop mirror in OnKerfurConvert)
@@ -636,12 +635,12 @@ void PollKerfurConversions() {
     // the host has no transferred-save load tail -- its own kerfurs are stable from boot,
     // so it polls immediately and only ever sees real host-side conversions.
     if (isClient && !coop::remote_prop_spawn::HasLoadTailQuiesced()) return;
-    // scope A (kerfur off->active dup retire): post-quiescence retry of any retire that MISSED at
-    // KerfurConvert-apply (its stale local off-prop had not async-loaded yet). Driven HERE -- the client
-    // poll, already load-tail-quiescence-gated -- NOT the pile divergence sweep, so it fires even when no
-    // pile bracket armed (the SnapshotBegin-lost / bracket-not-armed flake; the sweep there is gated on
-    // g_sweepPending). Zero cost when nothing is pending (empty-set early-out); self-clears each run.
-    if (isClient) coop::kerfur_reconcile::SweepReconcileSaveTimeKerfurs();
+    // scope A (kerfur off->active dup retire) is NO LONGER driven here. Its SEQUENCING moved to the ONE
+    // join-window order owner (coop::element::quiescence_drain::RunReconcile, whose steady-state tick is
+    // bracket-INDEPENDENT and ORs kerfur_reconcile::HasPendingRetire into its HasPendingWork gate). This poll
+    // was a THIRD parallel order owner for the join-window axis -- removed in the 2026-06-30 anti-smear
+    // refactor. [[feedback-one-owner-order-axis]] This poll keeps its OWN job: detecting ALIVE->DEAD kerfur
+    // conversions (below).
     std::unordered_set<uint32_t> seen;
 
     // turn_OFF: a kerfur NPC mirror whose actor died.

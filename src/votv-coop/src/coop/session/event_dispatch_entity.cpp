@@ -11,7 +11,7 @@
 #include "coop/player/item_activate.h"
 #include "coop/session/join_progress.h"
 #include "coop/creatures/npc_mirror.h"
-#include "coop/props/pile_reconcile.h"  // b3: ArmPendingPosCorrection / ApplyPendingPosCorrections (PropSnapPos)
+#include "coop/element/quiescence_drain.h"  // b3: ArmPendingPosCorrection / ApplyPendingPosCorrections (PropSnapPos)
 #include "coop/player/players_registry.h"
 #include "coop/creatures/world_actor_sync.h"  // v80 (B3b): non-Character event-actor mirror receivers
 #include "coop/props/prop_stick_sync.h"
@@ -402,11 +402,11 @@ bool HandleEntityEvent(net::Session& session,
             UE_LOGW("event_feed: PropSnapPos eid=0x%08x not a valid host-allocated id -- dropping", p.eid);
             break;
         }
-        coop::pile_reconcile::ArmPendingPosCorrection(
+        coop::element::quiescence_drain::ArmPendingPosCorrection(
             p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ},
             ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
         if (coop::remote_prop_spawn::HasLoadTailQuiesced())
-            coop::pile_reconcile::ApplyPendingPosCorrections();
+            coop::element::quiescence_drain::ApplyPendingPosCorrections();
         break;
     }
     case net::ReliableKind::EntitySpawn: {

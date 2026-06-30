@@ -23,10 +23,10 @@
 #include "coop/session/mirror_defer.h"  // instant-world: hide a freshly-spawned host mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/creatures/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
-#include "coop/props/pile_reconcile.h"  // extracted 2026-06-23: keyless-pile join twin-destroy / adopt / census
+#include "coop/props/pile_spawn_bind.h"  // anti-smear 2026-06-30: pile spawn-time twin-destroy / adopt / census
 #include "coop/dev/spawn_order_probe.h"  // Phase 1 step 1A: keyless load-spawn coverage probe (read-only)
 #include "coop/props/save_identity_bind.h"     // Phase 1 step 2b: eid-range bind summary at quiescence
-#include "coop/element/identity_reconcile.h"    // sync-refactor: identity reconcile engine (join + steady triggers)
+#include "coop/element/quiescence_drain.h"    // anti-smear 2026-06-30: the join-window order owner (sequence + steady triggers + deferred queues)
 #include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/props/prop_echo_suppress.h"
@@ -256,9 +256,12 @@ void RecordClaim(void* actor) {
 }
 
 // The keyless-pile position-bind index + its twin-destroy / 30cm-adopt / orphan-
-// census were EXTRACTED to coop/pile_reconcile.{h,cpp} on 2026-06-23 (the file hit
-// the 1500 LOC hard cap). This file keeps only the claim set (above) + the OnSpawn /
-// sweep call-sites below, which drive pile_reconcile:: with g_claimedActors.
+// census live in coop/props/pile_spawn_bind.{h,cpp} (the spawn-time mechanism); the
+// deferred reconcile queues + the drain-edge sequence live in coop/element/quiescence_drain
+// (the join-window ORDER owner). This file keeps only the claim set (above) + the OnSpawn /
+// sweep call-sites below, which drive pile_spawn_bind:: with g_claimedActors and fire the
+// quiescence_drain sequence. (Anti-smear refactor 2026-06-30; the old single coop/pile_reconcile
+// held all three concepts + a generic kerfur destroy queue in a "pile"-named file.)
 
 }  // namespace
 
@@ -381,7 +384,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // derived pile landing within 1cm of an UNRELATED level-native could destroy the wrong actor. The
             // bracket gate (the same one the adopt-bind path uses) closes both windows.
             if (!isClump && g_claimTrackingActive) {
-                // Twin-destroy (coop/pile_reconcile). v86 Path 1c: match the client's save-loaded NATIVE
+                // Twin-destroy (coop/props/pile_spawn_bind). v86 Path 1c: match the client's save-loaded NATIVE
                 // against the pile's SAVE-TIME position (payload.matchX/Y/Z, stamped by the host's join
                 // snapshot from g_blobPileXforms) -- the frozen value BOTH peers loaded from the same save.
                 // A pile the host MOVED in the join-load window spawns its proxy @new (`loc`) but its native
@@ -392,7 +395,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 const ue_wrap::FVector twinMatchPos =
                     payload.hasMatchPos ? ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}
                                         : loc;
-                coop::pile_reconcile::TryDestroyTwin(payload, twinMatchPos, payload.hasMatchPos != 0,
+                coop::pile_spawn_bind::TryDestroyTwin(payload, twinMatchPos, payload.hasMatchPos != 0,
                                                      g_claimedActors);
             }
         } else {
@@ -572,13 +575,13 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // host created AFTER its save has no local twin -- it must spawn; a
     // local pile the host no longer has stays unclaimed -> swept).
     if (eidOnly && g_claimTrackingActive && !fromConvert && payload.elementId != 0) {
-        // 30cm adopt find+consume extracted to coop/pile_reconcile (2026-06-23). Returns the matched
+        // 30cm adopt find+consume lives in coop/props/pile_spawn_bind. Returns the matched
         // native pile (already removed from the index) + the matched squared distance + the shared
         // per-bracket bind-log seq; the host-eid mirror registration + physics reconcile below STAY here
         // (remote_prop internals -- RegisterPropMirror / ReconcileToHostPhysics / RestoreCollisionIfNeeded).
         float bestD2 = 0.f;
         int   nBind  = 0;
-        void* pile = coop::pile_reconcile::FindAndConsumeAdoptCandidate(
+        void* pile = coop::pile_spawn_bind::FindAndConsumeAdoptCandidate(
             payload, classW, g_claimedActors, &bestD2, &nBind);
         if (pile) {
             RecordClaim(pile);
@@ -1024,7 +1027,7 @@ void BeginClaimTracking() {
     g_sweepLastUnsettledCount = -1;
     // A fresh bracket re-enumerates pile-bind candidates (a re-bracket runs
     // against the post-sweep world; stale entries would be dead pointers).
-    coop::pile_reconcile::Reset();
+    coop::pile_spawn_bind::Reset();  // index only -- the deferred reconcile queues (quiescence_drain) survive the bracket
     // Phase 0: drop any completeness census from a prior bracket; SnapshotComplete delivers this
     // bracket's. Until then HostCountForClass returns -1 (the floor is a no-op -> >50% valve only).
     coop::snapshot_census::Reset();
@@ -1225,11 +1228,12 @@ static void RunDivergenceSweep_(void* localPlayer) {
         // position/eid), NEVER a mass-destroy, so it is safe even on an incomplete world. Skipping it here
         // was why variant-1 / twin-retire / b3 never ran on a save-transfer join with a mass-purge (the
         // 15:25 verify: valve aborted -> reconcile skipped -> purge-churned natives left unbound). Run it
-        // BEFORE pile_reconcile::Reset() clears the pending twins/corrections.
-        coop::element::RunIdentityReconcile(/*joinSweep=*/false);
+        // (The deferred twins/corrections/destroys SURVIVE this bracket now -- they drain at the steady-state
+        // tick; only the spawn-time index is reset here. Anti-smear split 2026-06-30.)
+        coop::element::quiescence_drain::RunReconcile(/*joinSweep=*/false);
         g_claimedActors.clear();
         g_claimTrackingActive = false;
-        coop::pile_reconcile::Reset();
+        coop::pile_spawn_bind::Reset();
         return;
     }
 
@@ -1309,19 +1313,20 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // by TickClientReconcile on kSweepQuiesceScans stable scans) + past the >50%% valve above, so the late
     // natives are present (the census below SEES them). Keyed by save-time position (not blind proximity),
     // with its own >50% abort-valve. Runs BEFORE the census so the census reflects the removals.
-    // The identity reconcile (twin-retire -> variant-1 re-bind -> b3 pos-correction -> census) now lives in
-    // coop::element::RunIdentityReconcile, driven HERE at the join-window quiescence sweep AND by the steady-state
-    // coop::element::OnReconcileTick (the D1 structural fix: the mechanisms were join-window-one-shot, so a save-pile
-    // grabbed/moved AFTER this sweep armed a twin nothing consumed = the 15:01:49 ghost). joinSweep=true logs the
-    // one-shot orphan census. See coop/element/identity_reconcile.h.
-    coop::element::RunIdentityReconcile(/*joinSweep=*/true);
+    // The join-window reconcile (twin-retire -> re-bind -> kerfur-retire -> deferred-destroy -> b3 pos-correction
+    // -> census) is the ONE order owner coop::element::quiescence_drain::RunReconcile, driven HERE at the join-window
+    // quiescence sweep AND by the steady-state coop::element::quiescence_drain::OnTick (the D1 structural fix: the
+    // mechanisms were join-window-one-shot, so a save-pile grabbed/moved AFTER this sweep armed a twin nothing
+    // consumed = the 15:01:49 ghost). joinSweep=true logs the one-shot orphan census. See coop/element/quiescence_drain.h.
+    coop::element::quiescence_drain::RunReconcile(/*joinSweep=*/true);
     // NOTE: the kerfur off->active retire sweep (scope A) is NOT driven here -- it runs from the kerfur
     // client poll (kerfur_convert::PollKerfurConversions, also quiescence-gated) so it fires even when no
     // pile bracket armed (the SnapshotBegin-lost flake leaves g_sweepPending false). Single driver, RULE 2.
 
     g_claimedActors.clear();
     g_claimTrackingActive = false;
-    coop::pile_reconcile::Reset();  // bracket over: drop candidate pointers (would dangle past the GC below)
+    coop::pile_spawn_bind::Reset();  // bracket over: drop candidate pointers (would dangle past the GC below). The
+                                     // deferred reconcile queues (quiescence_drain) survive -> the steady tick drains them.
     // Pair the mass destruction with the engine's own purge (end-of-frame
     // CollectGarbage, the post-level-transition pattern). Without it the
     // sweep's pending-kill actors + the ~3k-spawn bracket's transients sit
@@ -1426,7 +1431,7 @@ void TickClientReconcile() {
     // when the join one-shot is disarmed -- it self-gates cheaply (a quiescence bool + a pending-work bool +
     // a 250 ms debounce) and only walks the array when a save-pile grabbed/moved after the join sweep armed a
     // twin. Below this line is the join-window one-shot trigger (disarmed = zero cost). See coop/sync.
-    coop::element::OnReconcileTick();
+    coop::element::quiescence_drain::OnTick();
     if (!g_sweepPending) return;  // zero cost when disarmed (the steady state)
     UE_ASSERT_GAME_THREAD("remote_prop_spawn::TickClientReconcile");  // no-mutex: all sweep state is GT-only
     const auto now = std::chrono::steady_clock::now();
@@ -1549,7 +1554,8 @@ void ResetClaimTracking() {
     g_sweepFired = false;
     g_sweepStableScans = 0;
     g_sweepLastUnsettledCount = -1;
-    coop::pile_reconcile::Reset();  // dangling-pointer hygiene across sessions (mirrors the claim set)
+    coop::pile_spawn_bind::Reset();  // session teardown: drop the spawn-time index (dangling-pointer hygiene)
+    coop::element::quiescence_drain::Reset();  // session teardown: drop the deferred reconcile queues (the ONLY site that clears them)
     coop::kerfur_reconcile::Reset();  // scope A: drop any unconsumed save-time kerfur retire across sessions
     coop::mirror_defer::Reset();  // instant-world: reveal any still-hidden mirror + disarm the deferred-hide window
 }

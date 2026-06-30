@@ -39,6 +39,8 @@ void Reset() {
     g_pendingRetire.clear();
 }
 
+bool HasPendingRetire() { return !g_pendingRetire.empty(); }
+
 void ArmPendingRetireByEid(coop::element::ElementId offEid) {
     UE_ASSERT_GAME_THREAD("kerfur_reconcile::ArmPendingRetireByEid");
     if (offEid == coop::element::kInvalidId) return;

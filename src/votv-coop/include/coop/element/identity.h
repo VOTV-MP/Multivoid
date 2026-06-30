@@ -98,6 +98,6 @@
 
 #pragma once
 
-#include "coop/element/identity_reconcile.h"   // RunIdentityReconcile / OnReconcileTick (the non-one-shot reconcile)
+#include "coop/element/quiescence_drain.h"     // the join-window order owner (RunReconcile / OnTick + the deferred queues)
 #include "coop/element/identity_create.h"      // CreateOrAdopt (the one collision-reconcile create/bind path)
 #include "coop/element/identity_destroy.h"     // RetireMirror (the one type-dispatched mirror destroy funnel)

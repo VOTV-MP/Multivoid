@@ -253,7 +253,7 @@ add_library(votv-coop SHARED
     src/coop/creatures/npc_world_enum.cpp
     src/coop/creatures/world_actor_sync.cpp
     src/coop/props/prop_echo_suppress.cpp
-    src/coop/props/pile_reconcile.cpp
+    src/coop/props/pile_spawn_bind.cpp
     src/coop/props/snapshot_census.cpp
     src/coop/props/save_identity_map.cpp
     src/coop/props/save_identity_bind.cpp
@@ -282,7 +282,7 @@ add_library(votv-coop SHARED
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
     src/coop/element/world_actor.cpp
-    src/coop/element/identity_reconcile.cpp
+    src/coop/element/quiescence_drain.cpp
     src/coop/element/identity_create.cpp
     src/coop/element/identity_destroy.cpp
     src/coop/net/session.cpp

@@ -4,7 +4,7 @@
 // Three verified instances of the mirror-identity window-race pattern
 // (docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md) post-quiescence-retire a STALE
 // save-loaded local form by matching the host's save-time EXACT position key:
-//   - pile_reconcile  (object<->object: stale native chipPile@old vs proxy@new)
+//   - pile_spawn_bind / quiescence_drain  (object<->object: stale native chipPile@old vs proxy@new)
 //   - kerfur_reconcile (class-change: stale off-prop kerfur vs the active NPC)
 // Both use the SAME inner kernel: a 1cm^2 exact match with consumed[] claim-
 // tracking (no two keys claim one actor) + ambiguous(>1)->skip (never destroy

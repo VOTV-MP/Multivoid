@@ -1,19 +1,20 @@
-// coop/pile_reconcile.cpp -- join-bracket keyless-pile reconcile (see header).
+// coop/props/pile_spawn_bind.cpp -- the pile spawn-time native-bind mechanism (see header).
 //
-// EXTRACTED from coop/remote_prop_spawn.cpp 2026-06-23. Behavior preserved
-// byte-for-byte; the only shape change is that TryDestroyTwin takes the match
-// position as a PARAMETER (the in-line code matched the proxy's current pose;
-// v86 Path 1c passes the pile's save-time position instead -- the caller chooses).
+// EXTRACTED from coop/props/pile_reconcile.cpp 2026-06-30 (anti-smear refactor): this is
+// pile_reconcile's group A -- the bracket-scoped GUObjectArray pile-bind index + the two
+// spawn-time bind paths (TryDestroyTwin / FindAndConsumeAdoptCandidate) + the [PILE-DELTA]
+// dark probe. Behavior preserved byte-for-byte; the ONLY change is that the save-time-key
+// MISS now ARMS the order owner (coop::element::quiescence_drain::ArmPendingSaveTimeTwin)
+// across modules instead of writing a local pending map (which moved to quiescence_drain).
+// [[feedback-one-owner-order-axis]]
 
-#include "coop/props/pile_reconcile.h"
+#include "coop/props/pile_spawn_bind.h"
 
-#include "coop/element/element.h"   // b3: Element::GetActor() (resolve the bound native by eid)
-#include "coop/element/registry.h"  // b3: Registry::Get().Get(eid) (the eid->actor lookup)
+#include "coop/element/quiescence_drain.h"  // ArmPendingSaveTimeTwin (the spawn mechanism CAPTURES into the order owner)
 #include "coop/session/ini_config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (votv-coop.ini [dev], not bats/env)
-#include "coop/props/prop_element_tracker.h"  // UnmarkKnownKeyedProp / GetPropElementIdForActor
-#include "coop/props/remote_prop.h"  // TryApplyDestroy + KeyToWString (deferred destroy-before-load re-apply)
-#include "coop/props/save_time_retire_util.h"  // FindExactMatch + UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
-#include "coop/props/trash_proxy.h"  // NearestPileProxy (the census)
+#include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
+#include "coop/props/save_time_retire_util.h"  // UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
+#include "coop/props/trash_proxy.h"  // NearestPileProxy (the L1 orphan census)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -23,11 +24,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>   // getenv -- the read-only [PILE-DELTA] probe gate (L1 orphan histogram)
-#include <cstring>   // memcmp -- deferred-destroy dedup by key bytes
-#include <unordered_map>
 #include <vector>
 
-namespace coop::pile_reconcile {
+namespace coop::pile_spawn_bind {
 namespace {
 
 namespace R = ue_wrap::reflection;
@@ -56,38 +55,16 @@ struct PileBindCandidate {
 std::vector<PileBindCandidate> g_pileBindIndex;
 bool g_pileBindIndexBuilt = false;
 int  g_pileBindCount = 0;  // per-bracket bind counter (throttles the log)
-
-// v86 Path 1c -- save-time twin-destroys that MISSED at the world-ready snapshot burst
-// (the moved pile's native@save-time-key had not async-loaded/indexed yet -- world-ready
-// fires before the native-pile load-tail drains). Keyed by host eid; retried at the post-
-// quiescence sweep (SweepReconcileSaveTimeTwins) where the late native is present.
-struct PendingTwin {
-    float   x, y, z;     // the save-time key (the native@old position to destroy)
-    uint8_t chipType;
-};
-std::unordered_map<uint32_t, PendingTwin> g_pendingSaveTimeTwin;
-
-// b3 (v90, PropSnapPos) -- a join-window position correction for a save-authoritative chipPile the host moved
-// while our reliable channel wasn't ready (the move's PropConvert was dropped; chipPiles carry no position in
-// the connect-snapshot). Armed on receipt (event_dispatch_entity), applied at the quiescence sweep (the bind
-// has registered the native + the load tail is settled). Keyed by host eid; the latest correction wins.
-struct PendingPosCorrection { float x, y, z, pitch, yaw, roll; };
-std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
-
-// DESTROY-BEFORE-LOAD (2026-06-30): PropDestroys that arrived before this peer loaded the doomed prop. Armed by
-// remote_prop::OnDestroy (the event handler CAPTURES), applied at the quiescence sweep AFTER the rebind (the
-// order owner SEQUENCES) -- never dropped. [[feedback-one-owner-order-axis]]
-std::vector<coop::net::PropDestroyPayload> g_pendingDestroy;
 int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orphan-census valve denominator:
                                  // leftovers / built = the host-drift fraction; a huge fraction = wire loss,
                                  // not divergence -> the census/removal must refuse it, like the >50%% sweep valve)
 
-// [PILE-DELTA] / per-orphan [PILE-CENSUS] probe gate (L1 orphan histogram), read ONCE + cached. Ships dark
-// (off => zero cost). When on, logs the per-orphan nearest-proxy/native deltas so we can band the host-drift
-// orphans (0-5cm near-miss vs >30cm true drift). HANDS-ON FLAG: lives in votv-coop.ini [dev]
-// `pile_delta_probe=1` (the established probe pattern -- perf_probe/leak_probe -- the user toggles in the ini,
-// NOT in the launch bats). The env is kept ONLY as the autonomous mp.py-harness override.
-// [[feedback-test-flags-in-ini-not-bats-or-env]]
+// [PILE-DELTA]/[PILE-CENSUS] probe gate (L1 orphan histogram), read ONCE + cached. Ships dark (off => zero
+// cost). When on, logs the per-orphan nearest-proxy/native deltas so we can band the host-drift orphans
+// (0-5cm near-miss vs >30cm true drift). HANDS-ON FLAG: votv-coop.ini [dev] `pile_delta_probe=1` (the
+// established probe pattern; the user toggles the ini, NOT the launch bats). The env is the autonomous
+// mp.py-harness override only. [[feedback-test-flags-in-ini-not-bats-or-env]] Used by TryDestroyTwin's
+// delta-log AND LogCensus's verbose mode -- ONE concept, ONE gate, file-local to this module.
 bool DeltaProbeOn() {
     static const bool on = coop::ini_config::IsIniKeyTrue("pile_delta_probe") || [] {
         const char* v = std::getenv("VOTVCOOP_PILE_DELTA_PROBE");
@@ -124,7 +101,7 @@ void EnsureIndex(const std::unordered_set<void*>& claimed) {
              ue_wrap::prop::GetChipType(obj)});
     }
     g_pileIndexBuiltCount = static_cast<int>(g_pileBindIndex.size());  // census valve denominator (pre-consume size)
-    UE_LOGI("pile_reconcile: pile-bind index built -- %zu local chipPile candidate(s)",
+    UE_LOGI("pile_spawn_bind: pile-bind index built -- %zu local chipPile candidate(s)",
             g_pileBindIndex.size());
 }
 
@@ -136,21 +113,6 @@ void Reset() {
     g_pileBindIndexBuilt = false;
     g_pileBindCount = 0;
     g_pileIndexBuiltCount = 0;
-    g_pendingSaveTimeTwin.clear();
-    // b3: drop any undrained corrections at bracket teardown / world-ready reset. PROBE (2026-06-28,
-    // moved-pile-misplaced hands-on): if a moved-in-window pile's correction is still pending here, it is
-    // being DROPPED before it ever applied -- the silent failure that leaves the pile at its stale save pos.
-    // Log it so the next hands-on pins "armed but never applied -> dropped by Reset" vs "never bound".
-    if (!g_pendingPosCorrection.empty())
-        UE_LOGW("[PILE-B3] Reset DROPPING %zu undrained pos-correction(s) -- moved-in-window pile(s) left at "
-                "STALE save pos (never bound/applied before this teardown)", g_pendingPosCorrection.size());
-    g_pendingPosCorrection.clear();
-    // Deferred destroys: a tombstone unresolved by teardown = a destroy whose target never loaded on this peer
-    // (host removed it before the joiner's copy ever materialized) -> safe to drop (nothing to destroy here).
-    if (!g_pendingDestroy.empty())
-        UE_LOGI("[DESTROY-DEFER] Reset dropping %zu unresolved deferred destroy(s) -- target never loaded here "
-                "(host-removed before our copy materialized; benign)", g_pendingDestroy.size());
-    g_pendingDestroy.clear();
 }
 
 void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
@@ -200,12 +162,12 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
         // v86 Path 1c: if matchPos was a SAVE-TIME key (a stamped pile that SHOULD have a save-loaded
         // twin), the miss is almost always TIMING -- this runs in the world-ready snapshot burst, BEFORE
         // the client's async native-pile load-tail has drained, so the native@save-time-key has not
-        // loaded/indexed yet (it appears ~10s later, at the post-quiescence sweep). Record it for a retry
-        // there (SweepReconcileSaveTimeTwins), where the late native is present. (A non-save-time miss is a
-        // genuine DERIVED pile with no twin -- the common gameplay case -- so do NOT record it.)
+        // loaded/indexed yet (it appears ~10s later, at the post-quiescence sweep). ARM it on the ORDER
+        // OWNER for a retry there (quiescence_drain::SweepReconcileSaveTimeTwins), where the late native is
+        // present. (A non-save-time miss is a genuine DERIVED pile with no twin -- the common gameplay case
+        // -- so do NOT record it.) The spawn mechanism only CAPTURES; the order owner drains.
         if (isSaveTimeKey && payload.elementId != 0)
-            g_pendingSaveTimeTwin[payload.elementId] =
-                PendingTwin{matchPos.X, matchPos.Y, matchPos.Z, payload.chipType};
+            coop::element::quiescence_drain::ArmPendingSaveTimeTwin(payload.elementId, matchPos, payload.chipType);
     }
     // [PILE-DELTA] dark probe: during the join bracket every proxy is a LEVEL pile, so a no-match here
     // is a host-DRIFT candidate (the native is not at the proxy's pose). Log its nearest-native delta so
@@ -327,148 +289,4 @@ void LogCensus() {
             live, g_pileIndexBuiltCount, totalLive, proxyMatched, le5, mid, gt30, none);
 }
 
-void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType) {
-    if (eid == 0u || eid == coop::element::kInvalidId) return;
-    // docs/piles/09: record the GRAB-edge save-time key for the post-quiescence sweep. No bracket
-    // index needed -- the sweep does a FRESH GUObjectArray walk for the late-loaded native@old and
-    // matches this key via the shared kernel. Idempotent per eid (the latest grab/land wins).
-    g_pendingSaveTimeTwin[eid] = PendingTwin{savePos.X, savePos.Y, savePos.Z, chipType};
-    UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u "
-            "(in-window GRABBED/moved pile -> sweep will retire the stale native@old at quiescence)",
-            static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType));
-}
-
-int SweepReconcileSaveTimeTwins() {
-    if (g_pendingSaveTimeTwin.empty()) return 0;
-    const size_t pendingN = g_pendingSaveTimeTwin.size();
-
-    // FRESH GC-robust walk of live native chipPiles (the world-ready index is stale: built BEFORE
-    // these natives async-loaded; the same reason LogCensus re-walks). Pointer-compare class filter
-    // before any read; no stored internal indices (a sweep-time mass-purge stales them).
-    struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; };
-    std::vector<LiveNative> natives;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only (NOT our proxy)
-        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
-        if (coop::prop_element_tracker::IsBoundMirrorNative(o)) continue;  // (X) bound native is the mirror -- never a save-time twin
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
-        natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o)});
-    }
-
-    // Match each pending save-time key to the now-loaded native within 1cm + same chipType via the shared
-    // mirror-identity kernel (claim-track so two keys never claim one native; ambiguous(>1)->skip never
-    // destroys the wrong one). 1cm is exact (the save round-trip is bit-for-bit; the key IS the native's
-    // loaded position -- proven by the 2026-06-23 hands-on: census orphan @old == matchKey @old to 0.1cm).
-    std::vector<bool> consumedFlags(natives.size(), false);
-    std::vector<void*> toRemove;
-    toRemove.reserve(pendingN);
-    for (const auto& [eid, p] : g_pendingSaveTimeTwin) {
-        (void)eid;
-        const ue_wrap::FVector key{p.x, p.y, p.z};
-        const int idx = coop::save_time_retire_util::FindExactMatch(
-            natives, consumedFlags, key,
-            [&p](const LiveNative& nv) { return nv.chipType == p.chipType; });
-        if (idx >= 0) { consumedFlags[idx] = true; toRemove.push_back(natives[idx].actor); }
-    }
-
-    // SAFETY VALVE (mirrors RunDivergenceSweep_'s >50% valve): removing MORE THAN HALF the live native
-    // piles is not a handful of moved-in-window twins -- it is a racing/incomplete bracket where the
-    // load-tail is STILL draining (so most "matches" would be wrong). Refuse it; the natives stay.
-    if (!natives.empty() && static_cast<int>(toRemove.size()) * 2 > static_cast<int>(natives.size())) {
-        UE_LOGW("[PILE-1C] sweep-reconcile ABORTED -- %zu save-time twin removals of %zu live native(s) "
-                "(>50%%); racing/incomplete bracket, not divergence -- keeping all natives",
-                toRemove.size(), natives.size());
-        g_pendingSaveTimeTwin.clear();
-        return 0;
-    }
-
-    for (void* native : toRemove)
-        // Drop the client-minted eid FIRST so the K2_DestroyActor PRE observer stays silent (no stray
-        // PropDestroy on the superseded client eid) -- the same fresh-mirror invariant the world-ready
-        // twin-destroy enforces.
-        coop::save_time_retire_util::UnmarkAndDestroy(native);
-    UE_LOGI("[PILE-1C] sweep-reconcile -- %zu of %zu pending save-time twin(s) removed at post-quiescence "
-            "(the late-loaded native@old destroyed; the proxy@new is the sole mirror -- join-window dup fixed)",
-            toRemove.size(), pendingN);
-    g_pendingSaveTimeTwin.clear();
-    return static_cast<int>(toRemove.size());
-}
-
-// b3 (v90): arm a join-window position correction for save-authoritative pile `eid`. The latest wins (a pile
-// the host moved twice in-window resolves to its final pos). Applied at the quiescence sweep (or immediately
-// by the caller if already quiesced). Game-thread only (the event_feed drain).
-void ArmPendingPosCorrection(coop::element::ElementId eid,
-                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
-    g_pendingPosCorrection[static_cast<uint32_t>(eid)] =
-        PendingPosCorrection{loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll};
-    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) -- a save-authoritative pile "
-            "the host moved in-window (convert dropped); snap the bound native at quiescence",
-            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z);
-}
-
-// b3 (v90): drain the armed corrections. For each, resolve the bound actor by eid (the save_identity_bind
-// registered the native in the element Registry; for an eid that DID receive its convert this is the proxy --
-// either way Registry::Get(eid) is the authoritative local rendering of E) and SNAP it to the host's pos,
-// then read the transform back and log drift (drift~0 => the snap took; drift>0 with a Static-mobility native
-// would expose a no-op -- the lesson). Identity untouched (position-only). Applied entries are erased; an eid
-// whose actor isn't resolvable (never bound) is left for the next drain and cleared by Reset() at sweep end.
-void ApplyPendingPosCorrections() {
-    if (g_pendingPosCorrection.empty()) return;  // game-thread only (the event_feed drain / the sweep), by contract
-    for (auto it = g_pendingPosCorrection.begin(); it != g_pendingPosCorrection.end(); ) {
-        const uint32_t eid = it->first;
-        const PendingPosCorrection& c = it->second;
-        coop::element::Element* el = coop::element::Registry::Get().Get(eid);
-        void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !R::IsLive(actor)) { ++it; continue; }  // native not bound/loaded yet -- retry next drain
-        const ue_wrap::FVector  loc{c.x, c.y, c.z};
-        const ue_wrap::FRotator rot{c.pitch, c.yaw, c.roll};
-        ue_wrap::engine::SetActorLocation(actor, loc);
-        ue_wrap::engine::SetActorRotation(actor, rot);
-        const ue_wrap::FVector got = ue_wrap::engine::GetActorLocation(actor);
-        const float dx = got.X - c.x, dy = got.Y - c.y, dz = got.Z - c.z;
-        UE_LOGI("[PILE-B3] CLIENT pos-correction APPLIED eid=%u applied=(%.1f,%.1f,%.1f) host=(%.1f,%.1f,%.1f) "
-                "drift=%.2fcm -- join-window moved pile snapped to host pos (no interaction needed)",
-                static_cast<unsigned>(eid), got.X, got.Y, got.Z, c.x, c.y, c.z,
-                std::sqrt(dx * dx + dy * dy + dz * dz));
-        it = g_pendingPosCorrection.erase(it);
-    }
-}
-
-// DESTROY-BEFORE-LOAD: capture a PropDestroy whose target hasn't loaded yet (remote_prop::OnDestroy hands it
-// here on "no local actor"). The event handler only CAPTURES; this queue + ApplyPendingDestroys is the order
-// owner. Dedup by (eid, key bytes) so a resent destroy doesn't pile up. Game-thread only.
-void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload) {
-    for (const coop::net::PropDestroyPayload& p : g_pendingDestroy)
-        if (p.elementId == payload.elementId &&
-            std::memcmp(&p.key, &payload.key, sizeof(payload.key)) == 0)
-            return;  // already queued
-    g_pendingDestroy.push_back(payload);
-    UE_LOGI("[DESTROY-DEFER] CLIENT armed deferred destroy key='%ls' eid=%u -- arrived before the target loaded; "
-            "the drain-edge applies it post-bind at quiescence (destroy-before-load order fix)",
-            coop::remote_prop::KeyToWString(payload.key).c_str(), payload.elementId);
-}
-
-// Drain the armed deferred destroys. For each, re-dispatch through remote_prop::TryApplyDestroy: if the target
-// has now loaded + bound it is destroyed (erase); if it still hasn't materialized it stays queued for the next
-// drain. Sequenced AFTER BindUnboundReCreates so a just-bound native is resolvable. Game-thread only.
-void ApplyPendingDestroys() {
-    if (g_pendingDestroy.empty()) return;
-    for (auto it = g_pendingDestroy.begin(); it != g_pendingDestroy.end(); ) {
-        if (coop::remote_prop::TryApplyDestroy(*it)) {
-            UE_LOGI("[DESTROY-DEFER] CLIENT applied deferred destroy eid=%u -- target finally loaded -> destroyed "
-                    "(out-of-order destroy reconciled; no dup)", it->elementId);
-            it = g_pendingDestroy.erase(it);
-        } else {
-            ++it;  // target still not loaded -- retry next drain
-        }
-    }
-}
-
-bool HasPendingWork() {
-    return !g_pendingSaveTimeTwin.empty() || !g_pendingPosCorrection.empty() || !g_pendingDestroy.empty();
-}
-
-}  // namespace coop::pile_reconcile
+}  // namespace coop::pile_spawn_bind
