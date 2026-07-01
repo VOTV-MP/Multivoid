@@ -40,4 +40,13 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
                   const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace);
 
+// CLAIM an already-bound save-loaded native pile as the LAND mirror: reposition + re-skin it to the host's
+// landed transform (loc + chipType + the host's visible-mesh `meshWorldRot` + scale). NO spawn, NO bind --
+// the native is already the Element's bound mirror. This is the LAND-side symmetric half of the GRAB morph
+// hand-off (remote_prop::OnConvert): on a re-pile LAND for an eid already bound to a save-loaded native, the
+// native IS the correct resting form, so we reuse it instead of spawning a parallel proxy the duplicate-eid
+// guard would reject (leaving a split-tracked dup the save-time sweep can't see). Game thread.
+void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,
+                           const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale);
+
 }  // namespace coop::native_pile_mirror

@@ -36,6 +36,17 @@ void* ResolvePileClass(const std::wstring& className) {
     return cls;
 }
 
+// Apply the host-authoritative APPEARANCE to a chipPile native (chipType + scale + the host's visible-mesh
+// WORLD rotation). Shared by Materialize (a fresh spawn) and RepositionBoundNative (an already-bound native
+// we reuse). Does NOT spawn / root / position / bind -- pure appearance. See Materialize for the rationale
+// on each line (init()-drives-both-mesh-components + mesh-COMPONENT rotation to avoid the double-rotate).
+void SkinPileNative(void* native, uint8_t chipType, const ue_wrap::FRotator& meshWorldRot,
+                    const ue_wrap::FVector& scale) {
+    ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
+    if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f) E::SetActorScale3D(native, scale);
+    if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
+}
+
 }  // namespace
 
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
@@ -58,24 +69,11 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     E::SetActorTickEnabled(native, false);         // no autonomous per-frame ubergraph
     E::SetActorSimulatePhysics(native, false);     // kinematic resting pile (the host positions it)
     E::SetActorRootMovable(native);                // else SetActorLocation (host pose / b3) silently no-ops on a Static root
-    // Skin the host's chipType the GAME's OWN way: write chipType + dispatch the pile's init(), which does
-    // getChipPileType(chipType) -> SetStaticMesh on BOTH the pile's StaticMesh AND Collision components (RE:
-    // actorChipPile 'init' export 80 -- the same call loadData/loadPrimitiveData make). The fresh SpawnActor
-    // above already ran init once via UserConstructionScript, but with the DEFAULT chipType=0 -> a type-0
-    // pile; this re-init re-skins it to the host's variant. An external single SetStaticMesh CANNOT do this
-    // (the pile owns two mesh components + a per-variant collision mesh), which is why the runtime mirror
-    // showed a wrong-type / wrong-texture pile. The per-instance random mesh rotation from UCS is preserved
-    // (init only touches the meshes, not the component rotation).
-    ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
-    if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f) E::SetActorScale3D(native, scale);
-    // Consume the HOST's authoritative visible-mesh rotation (host->client, the SAME delivery axis as
-    // chipType): the pile's visual roll lives on the StaticMesh COMPONENT's rotation, and the host captured
-    // it via GetVisibleMeshWorldRotation (f79bbe84). Apply it to the SAME mesh component's WORLD rotation
-    // (symmetric with the capture) so the client MATCHES the host -- NOT SetActorRotation on the root, which
-    // would compound on top of the component's UCS random roll = a double-rotate. Without this the native
-    // kept its own random roll and diverged ~50% per pile. (init() above skins the mesh but does not touch
-    // rotation, so the UCS roll is what we override here.)
-    if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
+    // Skin the host's chipType the GAME's OWN way (chipType via the pile's init() -> both mesh components;
+    // scale; and the host's visible-mesh WORLD rotation on the mesh COMPONENT, not the root -> no
+    // double-rotate). The fresh SpawnActor above ran init once via UCS with the DEFAULT chipType=0; this
+    // re-skins it to the host's variant + consumes the host's rotation (host->client, same axis as chipType).
+    SkinPileNative(native, chipType, meshWorldRot, scale);
 
     if (!skipBind) {
         coop::remote_prop::RegisterPropMirror(eid, native, L"", className, senderSlot, rebindInPlace);
@@ -85,6 +83,19 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
             "(rooted, tick-off, kinematic, Movable, native collision) -- native hover GUI + rotation free",
             eid, native, className.c_str(), static_cast<unsigned>(chipType));
     return native;
+}
+
+void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,
+                           const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale) {
+    if (!native) return;
+    UE_ASSERT_GAME_THREAD("native_pile_mirror::RepositionBoundNative");
+    // Reuse an already-bound save-loaded native as the LAND mirror -- reposition + re-skin it to the host's
+    // landed transform. NO spawn, NO bind (it is already the Element's bound mirror). Movable-force first:
+    // a save-loaded native may be Static, so SetActorLocation would silently no-op (the b3 lesson). This is
+    // the create-edge CLAIM (reuse the local result) that suppresses the parallel proxy spawn entirely.
+    E::SetActorRootMovable(native);
+    E::SetActorLocation(native, loc);
+    SkinPileNative(native, chipType, meshWorldRot, scale);
 }
 
 }  // namespace coop::native_pile_mirror

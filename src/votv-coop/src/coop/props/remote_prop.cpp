@@ -926,6 +926,30 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
             wantClump && boundNative && coop::prop_element_tracker::IsBoundMirrorNative(boundNative);
         ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
+        // (X-LAND) the missing symmetric HALF of the GRAB morph hand-off above. E is ALREADY bound to a
+        // save-loaded NATIVE pile (adopted at join) and this is a re-pile LAND -- the native IS already the
+        // correct resting form. CLAIM it: reposition + re-skin to the host's landed transform, then RETURN --
+        // SUPPRESSING the SpawnProxy entirely. If we spawned, RegisterPropMirror(rebindInPlace=false) would
+        // REJECT against the still-bound native (identity_create.cpp:111) -> a proxy in g_proxies + the Element
+        // still bound to the native = a split-tracked DUP (two live actors, one eid) the save-time-twin sweep
+        // can't see (it skips IsBoundMirrorNative). Suppress-the-spawn (NOT spawn-then-clean) avoids the same
+        // destroy-before-load hazard the whole track fights. This dup was a STRUCTURAL hole from this branch's
+        // birth (GRAB had morphBoundNative, LAND never did), not a nativization regression.
+        // [[feedback-recurring-bug-is-architectural]]
+        if (!wantClump && boundNative && coop::prop_element_tracker::IsBoundMirrorNative(boundNative)) {
+            coop::native_pile_mirror::RepositionBoundNative(
+                boundNative, payload.chipType, loc, rot,
+                ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});
+            const ue_wrap::FVector got = E::GetActorLocation(boundNative);
+            const float dx = got.X - loc.X, dy = got.Y - loc.Y, dz = got.Z - loc.Z;
+            UE_LOGI("[PILE] CLIENT ToPile LAND eid=%u ctx=%u -> CLAIMED bound save-loaded native=%p "
+                    "repositioned to (%.1f,%.1f,%.1f) host=(%.1f,%.1f,%.1f) drift=%.2fcm "
+                    "[create-edge reconcile -- no parallel spawn, no dup]",
+                    E, static_cast<unsigned>(payload.ctx), boundNative,
+                    got.X, got.Y, got.Z, loc.X, loc.Y, loc.Z, std::sqrt(dx * dx + dy * dy + dz * dz));
+            coop::trash_channel::NoteClientConvertObserved(E, false);
+            return boundNative;
+        }
         void* proxy = coop::trash_proxy::SpawnProxy(E, payload.chipType, /*isClump=*/wantClump,
                                                     senderSlot, loc, rot,
                                                     ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ});

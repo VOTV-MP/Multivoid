@@ -142,9 +142,20 @@ int SweepReconcileSaveTimeTwins() {
         // PropDestroy on the superseded client eid) -- the same fresh-mirror invariant the world-ready
         // twin-destroy enforces.
         coop::save_time_retire_util::UnmarkAndDestroy(native);
-    UE_LOGI("[PILE-1C] sweep-reconcile -- %zu of %zu pending save-time twin(s) removed at post-quiescence "
-            "(the late-loaded native@old destroyed; the proxy@new is the sole mirror -- join-window dup fixed)",
-            toRemove.size(), pendingN);
+    // Honest logging (2026-07-01): this sweep's ONLY domain is the LATE-LOADED, still-UNBOUND native@old
+    // (line 108 skips IsBoundMirrorNative, so it can NEVER see a native already adopted as the bound mirror).
+    // The bound-at-convert dup case (host moved a pile the client had already adopted) is owned by the
+    // create-edge LAND claim in remote_prop::OnConvert -- NOT this sweep. So `0 removed` means "no stale
+    // late-loaded native", NOT "dup fixed"; the old message lied and masked the split-tracked dup for weeks.
+    if (!toRemove.empty()) {
+        UE_LOGI("[PILE-1C] sweep-reconcile -- %zu of %zu pending twin(s): late-loaded UNBOUND native@old "
+                "destroyed (the proxy@new is the sole mirror -- late-load join-window dup fixed)",
+                toRemove.size(), pendingN);
+    } else {
+        UE_LOGI("[PILE-1C] sweep-reconcile -- 0 of %zu pending twin(s) matched a late-loaded UNBOUND native "
+                "(none stale here; the bound-at-convert case is reconciled at the create-edge LAND claim)",
+                pendingN);
+    }
     g_pendingSaveTimeTwin.clear();
     return static_cast<int>(toRemove.size());
 }
