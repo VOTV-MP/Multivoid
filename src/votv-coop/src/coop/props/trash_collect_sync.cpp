@@ -355,22 +355,28 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     return true;
 }
 
-// ---- PROBE-A: the chipPile grab-intent diagnostic (docs/piles/08 Step 0) ----------------------------
+// ---- The client-grab INTERCEPTOR on InpActEvt_use (docs/piles/08) ------------------------------------
 //
 // DECISIVE RE (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md): a chipPile grab is the E-press
 // input action AmainPlayer_C::InpActEvt_use_..._41 -> icast(lookAtActor)->playerGrabbed (spawn clump +
 // pickupObjectDirect(clump) + K2_DestroyActor(self)), all dispatched BP-internally (EX_LocalVirtualFunction
-// -> ProcessInternal) and INVISIBLE to our ProcessEvent detour. The one ProcessEvent-observable edge with
-// the pile STILL ALIVE is a PRE observer on InpActEvt_use (the native input->UFunction dispatch DOES hit
-// ProcessEvent). docs/piles/08 makes the HOST grab sync WITHOUT acting here: the BP's own BeginDeferred is
-// caught at the host_spawn_watcher convert-spawn POST (host-authoritative, zero-proximity). So this
-// observer is now PROBE-A only (Increment 1): it logs the carry-slot the clump rides so the client-grab
-// direction (v83) can suppress the native grab + send GrabIntent from this exact seam. Puppets are
-// unpossessed -> never process input -> this only ever fires for the local player.
-static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
-    if (!self) return;
+// -> ProcessInternal) and INVISIBLE to our ProcessEvent detour. InpActEvt_use itself IS ProcessEvent-visible
+// (the native input->UFunction dispatch), and it is a thin stub: `CALL ExecuteUbergraph_mainPlayer(112867)`
+// -- the whole use flow (the grab AND `useAction`, which plays `use_deny` on its fail branches) is that one
+// event's ubergraph entry.
+//
+// This is a PRE-INTERCEPTOR (returns true -> the native InpActEvt_use dispatch is CANCELLED entirely, never
+// reaching the ubergraph). On the CLIENT, whenever we route the press to the host (a pile GRAB or a carry
+// THROW), we return true: the native grab AND its `use_deny` "EHHH" both die at the source (RE 2026-07-01 --
+// nulling lookAtActor was a HALF-suppression: it killed the grab but `useAction` re-traces on its own and
+// still hit a deny branch, playing use_deny in parallel with our synthesized pickup cue -- the suppression
+// axis, not delivery). For any non-pile E-press (and for the HOST, which grabs natively) we return false ->
+// the native use runs unchanged (devices, legit denies, the host's own grab). Puppets are unpossessed ->
+// never process input -> this only ever fires for the local player.
+static bool OnPileUseIntercept(void* self, void* /*params*/) {
+    if (!self) return false;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;  // BOTH roles -- whoever physically presses E
+    if (!s || !s->connected()) return false;  // no coop session -> native use runs normally (SP / disconnected)
 
     // CLIENT (Increment 2, the client-grab direction): the client has NO real actorChipPile_C -- every pile it
     // sees is an AStaticMeshActor PROXY (trash_proxy). Recognition is a CAMERA-RAY CONE (EidForAimedPileProxy):
@@ -393,43 +399,39 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
                         "through to grab", static_cast<unsigned>(carry));
                 coop::trash_channel::ClearClientCarry(static_cast<uint32_t>(carry));
             } else {
-                UE_LOGI("[THROW-INTENT] CLIENT E-PRESS while carrying eid=%u -> requesting release(E-drop) from host",
-                        static_cast<unsigned>(carry));
+                UE_LOGI("[THROW-INTENT] CLIENT E-PRESS while carrying eid=%u -> requesting release(E-drop) from host "
+                        "(native use CANCELLED -- no use_deny)", static_cast<unsigned>(carry));
                 coop::trash_channel::SendThrowIntent(*s, static_cast<uint32_t>(carry),
                                                      coop::net::throw_mode::kRelease, ue_wrap::FVector{});
-                return;
+                return true;  // handled: cancel the native InpActEvt_use (the client holds no native clump -> would deny)
             }
         }
         // (X) native-authoritative GRAB recognition (items 5+6). A save-loaded pile the client BOUND as the
         // host-range mirror (save_identity_bind) is a REAL actorChipPile_C native -> it IS the game's own
         // lookAtActor (the int_player_C interaction trace), occlusion-correct + collision-blocked, unlike a
-        // bare proxy. PREFER it: read lookAtActor; if it's a bound native pile, SUPPRESS the native's LOCAL
-        // playerGrabbed by NULLING lookAtActor on THIS InpActEvt_use PRE edge -- the ubergraph reads
-        // lookAtActor FRESH at the icast(lookAtActor)->playerGrabbed cast that runs AFTER this PRE observer,
-        // so NoObject -> the cast fails -> playerGrabbed is skipped -> no client-authored clump/destroy/dup --
-        // and route the grab via GrabIntent (host-auth, the sole author of the shared mutation; the host runs
-        // playerGrabbed on the requester's puppet). lookAtActor is a plain ObjectProperty re-derived by the
-        // interaction trace next tick, so the clear SELF-HEALS (prompt/aim return) and collision is untouched.
-        // The camera-cone below stays only for UNBOUND proxy piles (runtime/host-only piles + carried clumps,
-        // no native to bind) which can never be lookAtActor. RULE 2: the cone is retired for bound piles.
+        // bare proxy. PREFER it: read lookAtActor; if it's a bound native pile, CANCEL the whole native
+        // InpActEvt_use dispatch (return true below) -- the ubergraph's grab (icast(lookAtActor)->playerGrabbed)
+        // AND `useAction`'s `use_deny` both die at the source. (RULE 2, 2026-07-01: the old NULL-lookAtActor
+        // suppression is RETIRED -- it was a HALF-suppression that killed the grab but let useAction re-trace
+        // and play use_deny "EHHH" in parallel; cancelling the dispatch subsumes it, no field mutation.) Route
+        // the grab via GrabIntent (host-auth, the sole author of the shared mutation; the host runs
+        // playerGrabbed on the requester's puppet). The camera-cone below stays only for UNBOUND proxy piles.
         {
             void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
             if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative) && PT::IsBoundMirrorNative(aimedNative)) {
                 const coop::element::ElementId beid = coop::remote_prop::ResolveMirrorEidByActor(aimedNative);
                 if (beid != coop::element::kInvalidId) {
-                    ue_wrap::engine::WriteMainPlayerLookAtActor(self, nullptr);  // suppress the native's local grab dispatch
-                    // Pickup cue: the native local grab was just suppressed (lookAtActor nulled) so the grabbing
-                    // client would otherwise hear NOTHING for its own grab -- the `use` click + material soft cue
-                    // both run only in the (now-skipped) native playerGrabbed chain. Synthesize them locally at the
-                    // pile so the grabber hears the same feedback the host does (the host runs playerGrabbed on the
-                    // puppet -> native sound in the host's world; observers hear it via ResolveAndStartDrive).
+                    // Pickup cue: the native grab (which plays the `use` click + material soft cue in its
+                    // playerGrabbed chain) is CANCELLED for this press, so synthesize the same feedback locally
+                    // at the pile -- the grabber hears its own grab (the host hears it natively via playerGrabbed
+                    // on the puppet; observers via ResolveAndStartDrive).
                     coop::prop_sound::PlayUseClick(aimedNative);
                     coop::prop_sound::PlayGrabSound(aimedNative);
                     UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS on BOUND native pile eid=%u (lookAtActor, occlusion-correct) "
-                            "-> suppressed local grab (cleared lookAtActor) + requesting grab from host",
+                            "-> native use CANCELLED (no grab, no use_deny) + requesting grab from host",
                             static_cast<unsigned>(beid));
                     coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(beid));
-                    return;
+                    return true;  // handled: cancel the native InpActEvt_use dispatch entirely
                 }
             }
         }
@@ -444,22 +446,24 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
         const ue_wrap::FVector camFwd{ cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch) };
         const coop::element::ElementId eid =
             coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f, /*minDot=*/0.94f);
-        if (eid == coop::element::kInvalidId) return;                   // not aiming at a mirrored pile within reach
-        // Pickup cue at the aimed proxy pile (same as the bound-native branch -- the native grab no-ops on a proxy
-        // by construction, so the grabber hears nothing without this). ProxyActorForEid gives the proxy actor.
+        if (eid == coop::element::kInvalidId)
+            return false;  // not aiming at a mirrored pile -> let the native use run (devices, other interactions)
+        // Pickup cue at the aimed proxy pile (same as the bound-native branch -- the native use is CANCELLED
+        // below, so the grabber hears nothing without this). ProxyActorForEid gives the proxy actor.
         if (void* proxyActor = coop::trash_proxy::ProxyActorForEid(eid)) {
             coop::prop_sound::PlayUseClick(proxyActor);
             coop::prop_sound::PlayGrabSound(proxyActor);
         }
-        UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS aimed at pile proxy eid=%u (camera-ray cone) -> requesting grab from host",
-                static_cast<unsigned>(eid));
+        UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS aimed at pile proxy eid=%u (camera-ray cone) -> native use CANCELLED "
+                "(no use_deny) + requesting grab from host", static_cast<unsigned>(eid));
         coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(eid));
-        return;
+        return true;  // handled: cancel the native InpActEvt_use dispatch (a bare proxy would deny)
     }
 
-    // HOST: aim at a REAL chipPile (it implements int_player_C -> it IS lookAtActor).
+    // HOST: aim at a REAL chipPile (it implements int_player_C -> it IS lookAtActor). The host ALWAYS runs the
+    // native use (it grabs natively) -- this branch only records the pending grab; every host path returns false.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the pile (PRE-conversion, alive)
-    if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return;         // E-press not aimed at a pile
+    if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return false;   // E-press not aimed at a pile -> native use runs
     // The HOST grab syncs WITHOUT arming anything here -- the BP's own BeginDeferred(clump) is caught at the
     // re-pile/convert thunk; the held-edge adopts the spawned clump onto THIS pile's eid (local_streams ->
     // AdoptPendingGrabClump) + broadcasts PropConvert{ToClump}. Log the aimed pile's eid (fwd + mirror) + the
@@ -501,6 +505,7 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
         coop::save_transfer::RecordGrabTimePileXform(grabEid, preGrabLoc);
         coop::trash_channel::NotePendingGrab(grabEid, ue_wrap::prop::GetChipType(aimed));
     }
+    return false;  // HOST: never cancel -- the native grab must run
 }
 
 // (X) LMB hard-throw bridge (2026-06-26). The NATIVE throw input is InpActEvt_fire (LMB) -> throwHoldingProp
@@ -586,13 +591,14 @@ void Install(coop::net::Session* session) {
         g_grabObserverInstalled = true;  // permanent give-up (don't re-walk the class forever)
         return;
     }
-    if (!GT::RegisterPreObserver(fn, &OnPileGrabPre)) {
-        UE_LOGW("trash_collect: InpActEvt_use PRE observer register failed (table full?)");
+    if (!GT::RegisterInterceptor(fn, &OnPileUseIntercept)) {
+        UE_LOGW("trash_collect: InpActEvt_use PRE interceptor register failed (table full?)");
         return;  // not latched -> retry next Install
     }
     g_grabObserverInstalled = true;
-    UE_LOGI("trash_collect: pile grab observer installed on InpActEvt_use (records the aimed pile's eid "
-            "as a pending grab -> the held-edge adopts the spawned clump; docs/piles/08)");
+    UE_LOGI("trash_collect: pile use INTERCEPTOR installed on InpActEvt_use (host: records the pending grab, "
+            "always runs native; client: cancels the native use for a pile GRAB/THROW -> no native grab, no "
+            "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host; docs/piles/08)");
 
     // LMB hard-throw bridge: PRE-observe BOTH fire handlers (_58/_59 = press/release). The OnFirePre gate on
     // ClientCarryEid + SendThrowIntent's optimistic carry-clear mean only the press edge that finds a live

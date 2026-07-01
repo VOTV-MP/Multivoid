@@ -73,6 +73,29 @@ Two receiver-side gaps, both fixed 2026-07-01 (this increment):
    host-authored EVENT delivered by the convert, so it fires uniformly whether the host or a client
    threw the pile.
 
+## 2b. The native DENY "EHHH" on the client's own grab/throw — the suppression axis (hands-on 16:23)
+
+Hands-on found the pickup/land sounds correct BUT a spurious deny "EHHH" playing on the client's own
+E-grab AND E-release, IN PARALLEL with the correct synthesized cue. Root cause (RE): the client-grab
+suppression was HALF-done. We nulled `lookAtActor` to suppress the native GRAB — but the E-press
+dispatch `InpActEvt_use_41` is a thin stub `CALL ExecuteUbergraph_mainPlayer(112867)`, and that same
+ubergraph entry ALSO runs `AmainPlayer_C::useAction`, which does its OWN interaction trace (not
+lookAtActor) and plays `/Game/audio/interface/use_deny` (`PlaySound2D`, vol 0.25) on every fail
+branch (asProp-invalid / not-secure / no-action). So nulling lookAtActor killed the grab but left
+`useAction` to re-trace, fail, and deny. **Suppression axis, not delivery: the action was muted, its
+refusal sound was not.**
+
+**Fix (RULE 1 + 2):** the client-grab seam already sits on a PRE hook of `InpActEvt_use`. Convert it
+from a pre-OBSERVER (native always runs) to a pre-INTERCEPTOR (`GT::RegisterInterceptor`): when the
+client routes the press to the host (a pile GRAB or a carry THROW), RETURN TRUE → the entire native
+`InpActEvt_use` dispatch is cancelled → the ubergraph (grab AND `useAction`/`use_deny`) never runs.
+For a non-pile E-press (and for the HOST, which grabs natively) RETURN FALSE → native runs unchanged
+(devices, legit denies, the host's own grab). This SUBSUMES the lookAtActor null, which is RETIRED
+(RULE 2 — no field mutation needed once the whole dispatch is cancelled). The synthesized pickup cue
+(`PlayUseClick`+`PlayGrabSound`) stays and is now the ONLY sound (no parallel deny).
+`useAction` use_deny sites (mainPlayer bytecode): `useAction` [29]/[32]/[36]/[52], `useSelectedAction`
+[14], plus the dead/ragdoll `ExecuteUbergraph` [739].
+
 ## 3. Honesty / open
 
 - `physSound.impact` is the faithful native asset by the game's own data model, but I did NOT find the
