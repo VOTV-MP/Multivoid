@@ -47,8 +47,17 @@ namespace R = ue_wrap::reflection;
 struct PendingTwin {
     float   x, y, z;     // the save-time key (the native@old position to destroy)
     uint8_t chipType;
+    int     unresolvedPasses = 0;  // bounded-keep: a twin held (unconfirmed) or unmatched across passes is
+                                   // dropped after kMaxTwinPasses so it can never pin HasPendingWork() forever.
 };
 std::unordered_map<uint32_t, PendingTwin> g_pendingSaveTimeTwin;
+// A twin retires when its eid is CONFIRMED moved @new: E's currently-bound native lives farther than this
+// from the twin's save-pos (a real host move is meters; a same-spot re-bind is ~0). (50 cm)^2.
+constexpr float kTwinMovedThresholdCm2 = 2500.f;
+// Keep an unconfirmed/unmatched twin at most this many drain passes (~10 s at the 250 ms debounce) so a moved
+// pile's @new native has time to arrive+bind and CONFIRM the move; then drop it (the @old stays -- the safe
+// fallback -- rather than pinning the reconcile forever). Spans the join-window convert delivery.
+constexpr int kMaxTwinPasses = 40;
 
 // b3 (v90, PropSnapPos) -- a join-window position correction for a save-authoritative chipPile the host moved
 // while our reliable channel wasn't ready. Armed on receipt, applied at the quiescence sweep (the bind has
@@ -94,9 +103,10 @@ int SweepReconcileSaveTimeTwins() {
     if (g_pendingSaveTimeTwin.empty()) return 0;
     const size_t pendingN = g_pendingSaveTimeTwin.size();
 
-    // FRESH GC-robust walk of live native chipPiles (the world-ready index is stale: built BEFORE these
-    // natives async-loaded; the same reason LogCensus re-walks). Pointer-compare class filter before any
-    // read; no stored internal indices (a sweep-time mass-purge stales them).
+    // FRESH GC-robust walk of live UNBOUND native chipPiles (candidate stale twins@old). The world-ready index
+    // is stale (built BEFORE these async-loaded); no stored internal indices (a sweep-time mass-purge stales
+    // them). A BOUND native is the mirror -- never a twin -- so skip it (the twin@old we retire is the leftover
+    // UNBOUND save-loaded copy, distinct from E's authoritative @new mirror).
     struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; };
     std::vector<LiveNative> natives;
     const int32_t n = R::NumObjects();
@@ -105,59 +115,76 @@ int SweepReconcileSaveTimeTwins() {
         if (!o || !R::IsLive(o)) continue;
         if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only (NOT our proxy)
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
-        if (coop::prop_element_tracker::IsBoundMirrorNative(o)) continue;  // (X) bound native is the mirror -- never a save-time twin
+        if (coop::prop_element_tracker::IsBoundMirrorNative(o)) continue;  // bound native is the mirror, not a twin
         const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
         natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o)});
     }
 
-    // Match each pending save-time key to the now-loaded native within 1cm + same chipType via the shared
-    // mirror-identity kernel (claim-track so two keys never claim one native; ambiguous(>1)->skip never
-    // destroys the wrong one). 1cm is exact (the save round-trip is bit-for-bit; the key IS the native's
-    // loaded position).
+    // Per-eid decision. A twin is CONFIRMED-moved iff E's currently-bound native lives FAR from the twin's
+    // save-pos -- positive evidence the host moved E @new, so the save-pos native@old is definitively stale
+    // and is retired PER-EID with NO aggregate cap. The >50% cap (a mass-move of a cluster looks like a
+    // racing/incomplete-bracket world-wipe) then applies ONLY to the UNCONFIRMED remainder -- the case it was
+    // born for. CRITICAL (17:10 mass-move dup): this sweep can run BEFORE a moved pile's @new native has even
+    // arrived (@new PropSpawn+materialize landed ~4 s AFTER the sweep), so at that pass ALL twins are
+    // unconfirmed. The OLD code then CLEARED the whole twin map -> no later pass could ever retire them ->
+    // the >50%-capped 5 stale @old natives survived = the dup cluster. Now unconfirmed/unmatched twins are
+    // KEPT pending (bounded by kMaxTwinPasses) so the NEXT pass -- once @new binds E -- confirms + retires.
     std::vector<bool> consumedFlags(natives.size(), false);
-    std::vector<void*> toRemove;
-    toRemove.reserve(pendingN);
-    for (const auto& [eid, p] : g_pendingSaveTimeTwin) {
-        (void)eid;
+    struct Decision { uint32_t eid; void* candidate; bool confirmed; };
+    std::vector<Decision> decisions;
+    std::vector<uint32_t> resolvedEids;  // erase from the pending map (retired OR dropped-after-N)
+    for (auto& [eid, p] : g_pendingSaveTimeTwin) {
         const ue_wrap::FVector key{p.x, p.y, p.z};
         const int idx = coop::save_time_retire_util::FindExactMatch(
             natives, consumedFlags, key,
             [&p](const LiveNative& nv) { return nv.chipType == p.chipType; });
-        if (idx >= 0) { consumedFlags[idx] = true; toRemove.push_back(natives[idx].actor); }
+        bool confirmed = false;
+        if (coop::element::Element* el =
+                coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid))) {
+            if (void* bound = el->GetActor(); bound && R::IsLive(bound)) {
+                const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(bound);
+                const float ddx = bl.X - p.x, ddy = bl.Y - p.y, ddz = bl.Z - p.z;
+                confirmed = (ddx * ddx + ddy * ddy + ddz * ddz) > kTwinMovedThresholdCm2;  // E moved @new
+            }
+        }
+        if (idx >= 0) {
+            consumedFlags[idx] = true;
+            decisions.push_back({eid, natives[idx].actor, confirmed});
+        } else if (++p.unresolvedPasses >= kMaxTwinPasses) {
+            resolvedEids.push_back(eid);  // no native@old ever materialized here -> stop retrying (FPS-pin guard)
+        }
     }
 
-    // SAFETY VALVE (mirrors RunDivergenceSweep_'s >50% valve): removing MORE THAN HALF the live native piles
-    // is not a handful of moved-in-window twins -- it is a racing/incomplete bracket where the load-tail is
-    // STILL draining (so most "matches" would be wrong). Refuse it; the natives stay.
-    if (!natives.empty() && static_cast<int>(toRemove.size()) * 2 > static_cast<int>(natives.size())) {
-        UE_LOGW("[PILE-1C] sweep-reconcile ABORTED -- %zu save-time twin removals of %zu live native(s) "
-                "(>50%%); racing/incomplete bracket, not divergence -- keeping all natives",
-                toRemove.size(), natives.size());
-        g_pendingSaveTimeTwin.clear();
-        return 0;
+    // The >50% cap is computed over the UNCONFIRMED matches only.
+    int unconfirmedMatches = 0;
+    for (const Decision& d : decisions) if (!d.confirmed) ++unconfirmedMatches;
+    const bool capTrips = !natives.empty() && unconfirmedMatches * 2 > static_cast<int>(natives.size());
+
+    int confirmedRetired = 0, cappedRetired = 0, held = 0;
+    for (const Decision& d : decisions) {
+        if (d.confirmed) {
+            coop::save_time_retire_util::UnmarkAndDestroy(d.candidate);  // per-eid evidence -> no cap
+            resolvedEids.push_back(d.eid);
+            ++confirmedRetired;
+        } else if (!capTrips) {
+            coop::save_time_retire_util::UnmarkAndDestroy(d.candidate);  // small handful -> retire as before
+            resolvedEids.push_back(d.eid);
+            ++cappedRetired;
+        } else {
+            // Unconfirmed AND the cap trips (mass-move looks like a wipe): HOLD -- keep pending for a later
+            // confirmed-move pass. Bound it so a twin whose @new never arrives is eventually dropped.
+            auto it = g_pendingSaveTimeTwin.find(d.eid);
+            if (it != g_pendingSaveTimeTwin.end() && ++it->second.unresolvedPasses >= kMaxTwinPasses)
+                resolvedEids.push_back(d.eid);
+            ++held;
+        }
     }
 
-    for (void* native : toRemove)
-        // Drop the client-minted eid FIRST so the K2_DestroyActor PRE observer stays silent (no stray
-        // PropDestroy on the superseded client eid) -- the same fresh-mirror invariant the world-ready
-        // twin-destroy enforces.
-        coop::save_time_retire_util::UnmarkAndDestroy(native);
-    // Honest logging (2026-07-01): this sweep's ONLY domain is the LATE-LOADED, still-UNBOUND native@old
-    // (line 108 skips IsBoundMirrorNative, so it can NEVER see a native already adopted as the bound mirror).
-    // The bound-at-convert dup case (host moved a pile the client had already adopted) is owned by the
-    // create-edge LAND claim in remote_prop::OnConvert -- NOT this sweep. So `0 removed` means "no stale
-    // late-loaded native", NOT "dup fixed"; the old message lied and masked the split-tracked dup for weeks.
-    if (!toRemove.empty()) {
-        UE_LOGI("[PILE-1C] sweep-reconcile -- %zu of %zu pending twin(s): late-loaded UNBOUND native@old "
-                "destroyed (the proxy@new is the sole mirror -- late-load join-window dup fixed)",
-                toRemove.size(), pendingN);
-    } else {
-        UE_LOGI("[PILE-1C] sweep-reconcile -- 0 of %zu pending twin(s) matched a late-loaded UNBOUND native "
-                "(none stale here; the bound-at-convert case is reconciled at the create-edge LAND claim)",
-                pendingN);
-    }
-    g_pendingSaveTimeTwin.clear();
-    return static_cast<int>(toRemove.size());
+    for (uint32_t e : resolvedEids) g_pendingSaveTimeTwin.erase(e);
+    UE_LOGI("[PILE-1C] sweep-reconcile -- %zu pending twin(s): %d confirmed-moved retired (per-eid, no cap), "
+            "%d unconfirmed retired, %d HELD (>50%% unconfirmed -> kept for a later confirmed pass), %zu still "
+            "pending", pendingN, confirmedRetired, cappedRetired, held, g_pendingSaveTimeTwin.size());
+    return confirmedRetired + cappedRetired;
 }
 
 void ApplyPendingDestroys() {

@@ -54,7 +54,32 @@ already bound to the convert-landed **rooted materialized native `8C72C680 @new`
 The `>50%` cap STAYS as the fallback for true no-convert-evidence stale natives (verify-before-retire: the cap
 was born from a real world-wipe; it's relieved of load, not removed).
 
-## Status
-Built Release, deployed `aa2249b163de` (4/4 hash-verified). NOT hands-on yet — needs the mass grab/throw
-join-window repro. Expect: no dup cluster (E stays @new), the host's piles recognized → no EHHH, and (likely)
-the air-clumps gone (same rooted-leak). Runbook: `research/handson_runbook_2026-07-01_massmove_dup.md`.
+## Status (CONVERT-WINS, aa2249b163de) -- INSUFFICIENT
+Hands-on 17:10: did NOT fix the corner (still filled). CONVERT-WINS fired only 4x (all viaProxy); it
+addressed a real-but-minor sub-case, not the dominant one.
+
+## CORRECTED ROOT (2 read-only forensic agents + census converged, 17:10 log)
+The dup is exactly the ~5 piles the host moved in-window: census CLIENT 874 vs HOST 869 = 5 extras. At
+17:09:53 THREE guards each named "5" and KEPT the stale native@old:
+`join_membership_sweep: completeness FLOOR kept 5 unclaimed 'actorChipPile_C'`,
+`[PILE-1C] sweep-reconcile ABORTED -- 4 twin removals of 5 live native(s) (>50%) -- keeping all natives`,
+`save_identity_bind: OVERFLOW -- 5 chipPile spawn(s) exceeded the mapped count`.
+**Primary = the aggregate >50% cap on SweepReconcileSaveTimeTwins.** A legit mass-move (host clears a cluster)
+makes the moved piles >50% of live natives -> the cap reads it as a racing/incomplete-bracket world-wipe ->
+aborts -> the 5 stale @old twins survive. **Worse: the sweep then g_pendingSaveTimeTwin.clear()'d the twin map
+-- and it ran ~4s BEFORE the moved piles' @new PropSpawn+materialize arrived (17:09:53 sweep vs 17:09:57 @new),
+so at sweep time NONE were confirmable, and clearing them meant no later pass could ever retire them.**
+(Compounding: the twin-sweep only retires UNBOUND natives, but GC pointer-reuse RE-BIND re-bound some @old
+natives to wrong eids, e.g. 4965<->4967, so they were never in the doom set.) CONVERT-WINS missed this because
+it only touched the save_identity_bind bind-seam, not the twin sweep.
+
+## FIX (per-eid confirmed-move retire; cca97fa3c93f)
+Rewrote SweepReconcileSaveTimeTwins (quiescence_drain.cpp): split each pending twin into CONFIRMED-moved
+(E's currently-bound native lives >50cm from the twin's save-pos = the host moved E @new, positive per-eid
+evidence -> retire the stale @old twin with NO aggregate cap) vs UNCONFIRMED (E not yet bound @new). The >50%
+cap now applies ONLY to the unconfirmed remainder (the racing-bracket case it was born for), and
+unconfirmed/unmatched twins are KEPT pending (bounded by kMaxTwinPasses=40 ~10s) instead of cleared -- so the
+NEXT drain pass, once @new binds E, confirms the move and retires @old per-eid. This is "per-eid convert IS the
+proof; the cap becomes the fallback." Deployed cca97fa3c93f (4/4). RESIDUAL (honest): the GC pointer-reuse
+class (1-2 of 5, @old re-bound to a wrong eid -> excluded by the UNBOUND-only walk) may persist -- separate
+follow-up if hands-on still shows 1-2. Runbook: research/handson_runbook_2026-07-01_massmove_dup.md.
