@@ -1,14 +1,24 @@
 # Piles — the complete knowledge base (ambient trash pile coop sync)
 
-> **DONE + VERIFIED (2026-07-01): pile mirror proxy → NATIVE nativization.** The resting/re-piled PILE form is
-> now a rooted real `actorChipPile_C` native (native hover GUI + collision + host-synced rotation + host-synced
-> chipType); the in-hand CLUMP stays a proxy. Shipped: inc 1 spawn-seam (`abfaaed8`), inc 2 re-pile→native +
-> chipType root-fix (`dabf84de`), rotation sync (`3b72aba0`), held-clump-at-join dup fix (`fa8bc344`). All
-> **[V hands-on]**; deployed `1C242F82` = HEAD, 6 commits ahead of origin (push pending). The ONE open axis is
-> SOUND-events (pickup/land, event-delivery). Full as-built + the RE (chipType `init()` export 80; the dup
-> two-owner map): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
-> · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form +
-> the in-bracket join-window fallback, which remain proxy.)
+> **DONE + VERIFIED + PUSHED (2026-07-01): pile mirror proxy → NATIVE nativization.** The resting/re-piled PILE
+> form is now a rooted real `actorChipPile_C` native (native hover GUI + collision + host-synced rotation +
+> host-synced chipType); the in-hand CLUMP stays a proxy. Shipped: inc 1 spawn-seam (`abfaaed8`), inc 2
+> re-pile→native + chipType root-fix (`dabf84de`), rotation sync (`3b72aba0`), held-clump-at-join dup fix
+> (`fa8bc344`) — all **[V hands-on]**, PUSHED to origin/main (`de492af8`). Full as-built + the RE (chipType
+> `init()` export 80): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
+> · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form.)
+>
+> **FOLLOW-ON (2026-07-01, LOCAL commits, NOT pushed — pending hands-on):**
+> - **SOUND-events (pickup + land) = VERIFIED [V hands-on 16:23]** (`8f2b689c`) + a native-`use_deny`-"EHHH"
+>   suppression on the client's own grab/throw (`dc8bd6af`, interceptor on `InpActEvt_use`). RE: the chipPile
+>   BP has NO dedicated pickup/land sound — pickup = `use`+`physSound.soft`, land = `physSound.impact`
+>   (`research/findings/votv-pile-pickup-land-sound-RE-2026-07-01.md`). See doc 11 § Sound-events.
+> - **JOIN-WINDOW MASS-MOVE DUP (host clears a cluster in-window → client sees ~5 stale piles @old) — AS-BUILT,
+>   UNDER HANDS-ON.** Root = the `>50%` cap on `SweepReconcileSaveTimeTwins` KEEPS the moved-away twins + clears
+>   them before the `@new` arrives. FIX (`46e35edd`): per-eid CONFIRMED-move retire (cap → fallback). Deployed
+>   `cca97fa3c93f`. Canonical: **[12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md)** +
+>   `research/findings/votv-joinwindow-massmove-dup-RE-2026-07-01.md`. (An earlier attempt `76257bb0` CONVERT-WINS
+>   was insufficient.)
 
 > **L1 JOIN-WINDOW DUP (host MOVES a SAVE-LOADED pile in-window) = VERIFIED + PUSHED (origin/main `960e4650`).**
 > A save-loaded chipPile the host moves during the join-load window duped (native@old + proxy@new, >1cm → the

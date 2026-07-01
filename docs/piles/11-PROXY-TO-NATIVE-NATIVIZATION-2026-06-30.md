@@ -1,9 +1,11 @@
 # 11 — Pile mirror: proxy → NATIVE nativization (2026-06-30 → 2026-07-01)
 
-**Status: AS-BUILT + VERIFIED (hands-on). The pile form is now a rooted real `actorChipPile_C` native.**
-Committed `abfaaed8` (inc 1) · `dabf84de` (inc 2 + chipType) · `3b72aba0` (rotation) · `fa8bc344` (join-dup
-fix). Deployed `1C242F82` (= HEAD `fa8bc344`), 6 commits ahead of `origin/main`. Living doc; the one open
-axis is SOUND-events (see NEXT). [[project-pile-nativization-2026-06-30]]
+**Status: nativization AS-BUILT + VERIFIED (hands-on). The pile form is now a rooted real `actorChipPile_C`
+native.** Committed `abfaaed8` (inc 1) · `dabf84de` (inc 2 + chipType) · `3b72aba0` (rotation) · `fa8bc344`
+(join-dup fix) — all pushed to `origin/main` (`de492af8`). Follow-on threads (2026-07-01, local, NOT pushed):
+SOUND-events (VERIFIED, below), and the JOIN-WINDOW MASS-MOVE dup (a SEPARATE class, still under hands-on —
+see **`docs/piles/12`** + `research/findings/votv-joinwindow-massmove-dup-RE-2026-07-01.md`).
+[[project-pile-nativization-2026-06-30]]
 
 ## The decision (root-cause, user-driven)
 The client's mirror of a host-authoritative trash PILE was a bare `AStaticMeshActor` PROXY
@@ -100,14 +102,23 @@ log (0-of-N states its real disjoint domain, no longer claims "dup fixed").
   WITHOUT the rotation change (`35CABA63`), same held-clump join → reproduced the dup. Single variable (code);
   dup persisted → the rotation commit is innocent, the hole is structural (this branch never had the LAND half).
 
-### The dup class — two-owner map (docs/piles/09 class)
-- **bound-at-convert** (native already adopted when the convert lands) → the **create-edge LAND claim** (this fix).
-- **late-load-unbound** (native async-loads AFTER the convert bound a proxy@new) → `SweepReconcileSaveTimeTwins`
-  (disjoint domain; unverified in practice — `0-of-N` in every observed run, i.e. the late-load case didn't
-  occur locally — but correctly owned). Full merge of the two owners is a later generalization (fix-then-generalize, N≥3).
+### The dup class — owner map (docs/piles/09 + 12)
+- **bound-at-convert** (native already adopted when the convert lands) → the **create-edge LAND claim** (this fix, fa8bc344).
+- **late-load-unbound / moved-in-window twin** → `SweepReconcileSaveTimeTwins`. **REWRITTEN 2026-07-01 (`46e35edd`)**
+  to a **per-eid CONFIRMED-move retire** (E's bound native >50cm from the twin save-pos = moved @new → retire the
+  stale @old, no aggregate cap; the `>50%` cap is now the fallback for UNCONFIRMED twins; unconfirmed twins are
+  KEPT pending, not cleared). This is the fix for the **mass-move corner dup** — see `docs/piles/12`. (The old
+  `0-of-N` "disjoint domain" note is superseded: the sweep is now the primary owner of the moved-in-window twin,
+  not a rarely-hit backstop.)
 
-## Sound-events — AS-BUILT 2026-07-01 (pending hands-on)
-The pickup + land SOUNDS increment. **RE (`research/findings/votv-pile-pickup-land-sound-RE-2026-07-01.md`):
+## Sound-events — VERIFIED 2026-07-01 (hands-on 16:23 sounds work; deny-fix AS-BUILT) — commits `8f2b689c` + `dc8bd6af`
+The pickup + land SOUNDS increment. **[V hands-on 16:23: "протестил работает" — sounds play.]** A follow-on
+`dc8bd6af` killed a spurious native `use_deny` "EHHH" on the client's OWN pile grab/throw: the client-grab seam
+was converted from a pre-OBSERVER to a pre-INTERCEPTOR on `InpActEvt_use` (return true → the whole native use
+dispatch, incl. `useAction`'s `use_deny`, is cancelled), retiring the `lookAtActor`-null half-suppression (RULE 2).
+[V: EHHH gone on RECOGNIZED piles. NOTE: EHHH still fires on UNRECOGNIZED host-moved piles — that's a SYMPTOM of
+the mass-move dup (unbound → interceptor returns false → native denies), NOT a sound bug; it resolves when
+`docs/piles/12` lands.] **RE (`research/findings/votv-pile-pickup-land-sound-RE-2026-07-01.md`):
 the chipPile/clump BP plays NO dedicated pickup or land sound** — `shovelDig_Cue` is the recycle-to-scrap
 action, `flesh_impact_Cue` is a damage/hit reaction, and the clump→pile conversion + the pile's BeginPlay/init
 are silent. The native sounds are the physics-material `lib_C::physSound` table: `.soft` = the grab pickup cue

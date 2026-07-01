@@ -1,5 +1,11 @@
 # 09 -- window-GRABBED/moved pile dup (eid 5283, 17:23) -- ROOT RE
 
+> **2026-07-01 UPDATE: this doc covers the SINGLE moved-pile dup. The MASS version (host clears a whole
+> cluster in-window → ~5 stale piles @old) is a distinct class — see [12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md).
+> Note: `SweepReconcileSaveTimeTwins` (referenced below) was REWRITTEN 2026-07-01 (`46e35edd`) to a per-eid
+> CONFIRMED-move retire with the `>50%` cap as a fallback + unconfirmed twins kept pending — the old aggregate
+> "matched-then-capped-then-cleared" description is superseded.**
+
 **Status (2026-06-26): the window-moved-pile dup is FIXED + HANDS-ON VERIFIED, but by a DIFFERENT mechanism
 than this doc's original f837fbad approach.** The `matchPos`/`ArmPendingSaveTimeTwin` machinery this doc
 designed DID land (commit `08e35d77`, in the pushed stack — the host still stamps `+saveTimeKey docs/piles/09`
