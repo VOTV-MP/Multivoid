@@ -1,6 +1,7 @@
 #include "coop/player/remote_player.h"
 
 #include "coop/dev/puppet_head_probe.h"
+#include "coop/player/client_model.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -48,7 +49,7 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 
 }  // namespace
 
-bool RemotePlayer::Spawn() {
+bool RemotePlayer::Spawn(bool useClientModel) {
     // A-5 v2 (2026-05-29 post-ship audit): use players::Registry::Local()
     // first (controller-filtered: picks the genuine local in 3-peer
     // scenarios where puppets are also mainPlayer_C instances). Fall back
@@ -90,6 +91,19 @@ bool RemotePlayer::Spawn() {
         return false;
     }
     void* animClass = Pup::GetMeshPlayerVisibleAnimClass(local);
+
+    // Custom client model (docs/COOP_CLIENT_MODEL.md): a puppet representing a
+    // remote CLIENT peer wears the custom body mesh from scientist.pak instead of
+    // the local kel skin. Same kerfurOmegaV1_Skeleton, so the local anthro
+    // AnimClass (kept as-is) drives it 1:1. Graceful-degrade: if the pak is
+    // absent GetClientPuppetMesh() returns null and we keep the kel skin.
+    if (useClientModel) {
+        if (void* customMesh = coop::client_model::GetClientPuppetMesh()) {
+            skin = customMesh;
+            UE_LOGI("RemotePlayer::Spawn: CLIENT peer -> custom client mesh %p "
+                    "(anthro AnimClass %p kept, same skeleton)", customMesh, animClass);
+        }
+    }
 
     // Both offsets captured from the LOCAL's mesh_playerVisible -- same
     // mainPlayer_C BP on every peer.

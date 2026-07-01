@@ -147,6 +147,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/log.cpp
     src/ue_wrap/sig_scan.cpp
     src/ue_wrap/reflection.cpp
+    src/ue_wrap/asset_load.cpp
     src/ue_wrap/engine_heap.cpp
     src/ue_wrap/hook.cpp
     src/ue_wrap/game_thread.cpp
@@ -202,6 +203,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/vitals.cpp
     src/ue_wrap/spawn_menu.cpp
     src/coop/player/remote_player.cpp
+    src/coop/player/client_model.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_destroy.cpp
     src/coop/session/save_guard.cpp

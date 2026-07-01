@@ -42,6 +42,13 @@ $targets = @(
 
 $deployScript = Join-Path $PSScriptRoot "deploy-loader.ps1"
 
+# Custom client-puppet mesh pak (docs/COOP_CLIENT_MODEL.md). Shipped to EVERY
+# peer (client-side visual asset); UE4 auto-mounts any .pak under Content/Paks/
+# at startup, so dropping it under Content/Paks/LogicMods/votv-coop/ makes the
+# mesh resident before our boot thread runs. Optional: absent pak == puppets keep
+# the kel skin (graceful-degrade in coop::client_model).
+$clientPak = Join-Path $root "research\pak_re\scientist.pak"
+
 foreach ($t in $targets) {
     if (-not (Test-Path $t.Path)) {
         Write-Host "[deploy-all] SKIP $($t.Name): path does not exist -- $($t.Path)" -ForegroundColor Yellow
@@ -54,6 +61,21 @@ foreach ($t in $targets) {
     if ($Standalone -and $t.Name -eq "DEV") { $args.Standalone = $true }
     if ($Remove) { $args.Remove = $true }
     & $deployScript @args
+
+    # Deploy (or, with -Remove, remove) the client-model pak. $t.Path is
+    # ...\VotV\Binaries\Win64; the pak lives under ...\VotV\Content\Paks\LogicMods.
+    $votvDir = Split-Path -Parent (Split-Path -Parent $t.Path)   # Win64 -> Binaries -> VotV
+    $pakDir  = Join-Path $votvDir "Content\Paks\LogicMods\votv-coop"
+    $pakDest = Join-Path $pakDir "scientist.pak"
+    if ($Remove) {
+        if (Test-Path $pakDest) { Remove-Item $pakDest -Force; Write-Host "  removed client pak" -ForegroundColor DarkGray }
+    } elseif (Test-Path $clientPak) {
+        if (-not (Test-Path $pakDir)) { New-Item -ItemType Directory -Force -Path $pakDir | Out-Null }
+        Copy-Item $clientPak $pakDest -Force
+        Write-Host "  client pak -> $pakDest" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  SKIP client pak: source missing ($clientPak)" -ForegroundColor Yellow
+    }
 }
 
 Write-Host "[deploy-all] done." -ForegroundColor Green

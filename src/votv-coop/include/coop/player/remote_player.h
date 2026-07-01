@@ -36,7 +36,13 @@ public:
     // Spawn the puppet in the live world, offset from the local player, wearing
     // the local player's skin. Requires gameplay loaded (mainPlayer_C present)
     // and the game thread. Returns true on success; sets actor().
-    bool Spawn();
+    //
+    // useClientModel: this puppet represents a remote CLIENT peer (spawn site
+    // passes slot != host). When true AND the custom-client-mesh pak is present,
+    // the puppet wears the custom body mesh (coop::client_model) instead of the
+    // local kel skin; the AnimClass stays the local anthro AnimBP (same skeleton,
+    // drives the custom mesh 1:1). False (host puppet / no pak) -> kel skin.
+    bool Spawn(bool useClientModel = false);
 
     bool valid() const;
 
