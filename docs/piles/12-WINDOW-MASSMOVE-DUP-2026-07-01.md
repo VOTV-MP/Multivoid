@@ -1,9 +1,12 @@
 # 12 — Join-window MASS-MOVE pile dup (2026-07-01)
 
-**Status: AS-BUILT (take 3.1 — OWNER + grabbed-clump gate), UNDER HANDS-ON.** Deployed `F22C0521BD250B7C`
-(4/4 hash-verified).
+**Status: the MASS-MOVE DUP is VERIFIED FIXED [V hands-on 19:06 "всё на своих местах"]** — owner (take 3) +
+grabbed-clump gate (take 3.1). Two follow-on issues that surfaced during the same test are AS-BUILT + deployed
+but NOT yet hands-on: the EHH-on-every-E deny (multi-seam fix) and client FPS (walk alloc-storm). Latest deploy
+`3A8BB6AD6D2FC9A3` (4/4 hash-verified; carries the dup fix + EHH + FPS). Owner commits: `d43956f6` (owner) +
+`0e7e5349` (grabbed-clump gate). See the "EHH" and "FPS" sections at the bottom for those two threads.
 
-## 18:52 — the owner over-reached onto actively-grabbed piles (fixed) [log-V]
+## 18:52 — the owner over-reached onto actively-grabbed piles (fixed 0e7e5349, then VERIFIED 19:06) [V]
 Take-3 owner FIRED and worked for the @old-resurrect class: the HOST late-arm delivered late moves (eid 4930 at
 drift 2134cm — the 5271-class gap closed), 22 identity-updates, 22 HOST-VACATE, 169 retires. But a new dup
 signature appeared: grabbing a pile pulled TWO clumps (a native + a co-located extra). NOT materialize-fail
@@ -18,12 +21,11 @@ clump (a clump is a live actor). Fix: `if (!ue_wrap::prop::IsChipPile(actor)) co
 chipPile native gets a correction; a grabbed clump is owned by the convert stream. This is NOT a separate track —
 it was the owner over-reaching; the gate confines it to moved-and-settled piles (the case it was built for).
 
-## Take 3 — the OWNER (host-authoritative pile identity through the join tail) [AS-BUILT]
+## Take 3 — the OWNER (host-authoritative pile identity through the join tail) [VERIFIED 19:06]
 Host + client. NO protocol bump (reuses PropSnapPos). Full RE + timeline:
 `research/findings/votv-joinwindow-massmove-dup-RE-2026-07-01.md`. SEPARATE class from `docs/piles/09`
 (single held-clump-at-join) and `docs/piles/11` (nativization) — the MASS version. [[project-pile-nativization-2026-06-30]]
 
-## Take 3 — the OWNER (host-authoritative pile identity through the join tail) [AS-BUILT]
 Takes 1-4 (`fa8bc344` create-edge, `76257bb0` CONVERT-WINS, `46e35edd` twin-sweep, `110b1bde` DUP-RETIRE) each
 removed a slice and left a new-named tail (FLOOR-kept → RE-BIND-resurrect → air) — the classic
 [[feedback-recurring-bug-is-architectural]] signal that the PATCH LEVEL was wrong. A 2nd forensic trace (18:17)
@@ -128,8 +130,32 @@ the world-wipe protection (verify-before-retire, [[feedback-join-reconcile-sweep
   + `ConsumeLocalActor` un-root) is CORRECT but was insufficient alone (fired only on the proxy sub-case). It
   stays (defense-in-depth); the twin-sweep rewrite is the actual mass-move fix.
 
-## Verify (hands-on)
-Runbook `research/handson_runbook_2026-07-01_massmove_dup.md`. Expect: the corner CLEARS (each moved pile once,
-`@new`; original spot empty), EHHH gone on the moved piles, clean-join no regression. Log:
-`[PILE-1C] sweep-reconcile -- N confirmed-moved retired (per-eid, no cap) ...`. If 1–2 dups linger → the
-pointer-reuse residual.
+## Verify (hands-on) — DUP DONE
+Runbook `research/handson_runbook_2026-07-01_massmove_dup.md`. **19:06 hands-on: "всё на своих местах" = the
+corner clears, no dup, no mid-air clumps [V].** The GC-pointer-reuse residual + air-clumps notes above were the
+take-2 concern; the owner + grabbed-clump gate resolved them (the 19:06 run was clean).
+
+## EHH — deny on EVERY client E-press (AS-BUILT `d7620ed5`, deployed `3A8BB6AD6D2FC9A3`, NOT hands-on) [RD]
+Surfaced 19:06: `use_deny` "EHHH" plays on every client E-grab/release even for a recognized pile whose grab
+succeeds — and the log shows the `_41` interceptor DID cancel (`native use CANCELLED, no use_deny`). So the deny
+is on a SEPARATE seam than `_41`. RE (`mainPlayer.json` Export 483 `InputActionDelegateBinding_0`): the "use"
+action has **THREE** delegate bindings — `_41` (IE_Pressed, the grab press we hook), `_38` (a SECOND IE_Pressed),
+`_42` (IE_Released) — all three reach `useAction`'s `use_deny`. Hooking only `_41` left `_38` firing on every
+E-press and playing the deny in parallel with our cancelled grab. The `dc8bd6af` comment's claim that cancelling
+the `_41` dispatch "subsumes" the deny was WRONG (covers 1 of 3 seams). Fix: a side-effect-free deny-suppressor
+(`OnPileUseDenySuppress`, `trash_collect_sync.cpp`) on `_38` + `_42` — client-only; on a pile interaction
+(carrying, or aimed at a bound-native/proxy pile) it ONLY cancels the dispatch (no grab/throw intent, no cue;
+`_42`-on-release must never throw). `_41` stays the sole intent sender. RE finding:
+`research/findings/votv-use-action-three-bindings-RE-2026-07-01.md`. Lesson: [[lesson-input-action-multiple-delegate-bindings]].
+
+## FPS — client hitch during the mass-move (AS-BUILT `70e0d899`, deployed `3A8BB6AD6D2FC9A3`, NOT hands-on) [RD]
+Surfaced 19:06: `net_pump::Tick` hitching 48-57ms. `[HITCH-SRC]` attributed it to OUR code (not GC); `[WALK-TIME]`
+named `sync:npc_client` = `npc_mirror::TickClientNpcs` → `join_membership_sweep::TickClientReconcile` →
+`quiescence_drain` reconcile. Root: the reconcile's re-bind walk (`save_identity_bind::BindUnboundReCreates`) ran
+`NameOf` (a wstring ALLOCATION) + `NameStartsWith` on ALL ~330k GUObjectArray objects EVERY pass, 4 Hz while
+HOST-VACATE/twin pending work kept the reconcile hot — BEFORE the cheap class filter. 330k allocs/pass = the
+spike. Fix: reorder so the alloc-free class filter (`IsChipPile`/`IsKerfurPropClass`) runs FIRST; `NameOf` now
+runs only for the ~870 real piles/kerfurs. Behavior-preserving. The twin sweep already filtered cheap-first —
+only this walk was mis-ordered. Lesson: [[lesson-full-array-walk-cheap-filter-before-nameof]]. Follow-up if still
+hitchy: merge sweep+re-bind into one shared walk (2 scans→1); `sync:interactable` 33ms was likely a one-time
+re-index (chase only if it persists).
