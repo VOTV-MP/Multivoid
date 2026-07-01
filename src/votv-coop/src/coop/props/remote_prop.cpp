@@ -860,14 +860,14 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
             void* native = coop::native_pile_mirror::Materialize(
                 E, pileCls, payload.chipType,
                 ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+                ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll},  // host mesh-world rotation (consumed)
                 ue_wrap::FVector{payload.scaleX, payload.scaleY, payload.scaleZ},
                 senderSlot, /*skipBind=*/false, /*rebindInPlace=*/true);
             if (native) {
                 coop::trash_proxy::RetireProxyActorOnly(E);       // destroy the proxy actor; Element KEPT (rebound to native)
-                // NO SetActorRotation -- the native applies its OWN per-instance random mesh roll (the fix for
-                // "every proxy pile looked identical"); its SpawnActor(loc) already positions it at the land.
-                // Read the native's world location back + log drift vs the host payload (the automated "client
-                // renders the host pose" gate, same eyeball-in-log the proxy snap gave).
+                // Materialize applied the host's mesh-world rotation to the native's mesh component (host->client,
+                // same axis as chipType) + positioned it via SpawnActor(loc). Read the native's world location
+                // back + log drift vs the host payload (the automated "client renders the host pose" gate).
                 const ue_wrap::FVector got = E::GetActorLocation(native);
                 const float dx = got.X - payload.locX, dy = got.Y - payload.locY, dz = got.Z - payload.locZ;
                 UE_LOGI("[PILE] CLIENT ToPile LAND eid=%u ctx=%u -> NATIVIZED native=%p at (%.1f,%.1f,%.1f) "

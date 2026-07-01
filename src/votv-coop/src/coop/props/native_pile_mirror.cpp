@@ -39,8 +39,8 @@ void* ResolvePileClass(const std::wstring& className) {
 }  // namespace
 
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
-                  const ue_wrap::FVector& loc, const ue_wrap::FVector& scale, int senderSlot,
-                  bool skipBind, bool rebindInPlace) {
+                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
+                  const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace) {
     UE_ASSERT_GAME_THREAD("native_pile_mirror::Materialize");
     void* cls = ResolvePileClass(className);
     if (!cls) {
@@ -68,6 +68,14 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     // (init only touches the meshes, not the component rotation).
     ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
     if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f) E::SetActorScale3D(native, scale);
+    // Consume the HOST's authoritative visible-mesh rotation (host->client, the SAME delivery axis as
+    // chipType): the pile's visual roll lives on the StaticMesh COMPONENT's rotation, and the host captured
+    // it via GetVisibleMeshWorldRotation (f79bbe84). Apply it to the SAME mesh component's WORLD rotation
+    // (symmetric with the capture) so the client MATCHES the host -- NOT SetActorRotation on the root, which
+    // would compound on top of the component's UCS random roll = a double-rotate. Without this the native
+    // kept its own random roll and diverged ~50% per pile. (init() above skins the mesh but does not touch
+    // rotation, so the UCS roll is what we override here.)
+    if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
 
     if (!skipBind) {
         coop::remote_prop::RegisterPropMirror(eid, native, L"", className, senderSlot, rebindInPlace);

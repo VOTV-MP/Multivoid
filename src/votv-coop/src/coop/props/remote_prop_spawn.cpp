@@ -292,8 +292,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         void* proxy = nullptr;
         if (nativePile) {
             // Materialize binds + marks save-native internally (unless skipBind, where OnConvert owns the bind).
+            // payload.rot is the host's captured visible-mesh rotation for a chipPile (prop_snapshot uses
+            // GetVisibleMeshWorldRotation) -> the native consumes it (host->client) so its roll matches the host.
+            ue_wrap::FRotator meshRot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
             proxy = coop::native_pile_mirror::Materialize(payload.elementId, classW, payload.chipType,
-                                                          loc, scale, senderSlot, skipBind, /*rebindInPlace=*/false);
+                                                          loc, meshRot, scale, senderSlot, skipBind, /*rebindInPlace=*/false);
         } else {
             ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
             proxy = coop::trash_proxy::SpawnProxy(payload.elementId, payload.chipType, isClump, senderSlot, loc, rot, scale);

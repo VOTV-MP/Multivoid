@@ -24,18 +24,20 @@
 #include <cstdint>
 #include <string>
 
-namespace ue_wrap { struct FVector; }
+namespace ue_wrap { struct FVector; struct FRotator; }
 
 namespace coop::native_pile_mirror {
 
 // Spawn a rooted real chipPile native of `className` for trash eid `eid`, force the inert recipe
-// (AddToRoot + tick-off + SimulatePhysics off + Movable), skin the `chipType` pile mesh (keeping the
-// native's own random mesh rotation + its Collision component), apply `scale`, and -- unless `skipBind`
-// -- RegisterPropMirror it at `eid` (rebindInPlace per `rebindInPlace`) + mark it save-native so the
-// bound-native machinery adopts it. Returns the native actor, or nullptr on failure (class not loaded /
-// spawn failed). Game thread.
+// (AddToRoot + tick-off + SimulatePhysics off + Movable), skin the `chipType` pile mesh (via the pile's
+// own init(), which skins both mesh components), apply the HOST's authoritative `meshWorldRot` to the
+// visible StaticMesh COMPONENT (so the client matches the host's pile roll instead of the native's own
+// random UCS roll -- host->client, the same delivery axis as chipType), apply `scale`, and -- unless
+// `skipBind` -- RegisterPropMirror it at `eid` (rebindInPlace per `rebindInPlace`) + mark it save-native
+// so the bound-native machinery adopts it. `meshWorldRot` is the host's captured GetVisibleMeshWorldRotation
+// (the wire rotation). Returns the native actor, or nullptr on failure. Game thread.
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
-                  const ue_wrap::FVector& loc, const ue_wrap::FVector& scale, int senderSlot,
-                  bool skipBind, bool rebindInPlace);
+                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
+                  const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace);
 
 }  // namespace coop::native_pile_mirror
