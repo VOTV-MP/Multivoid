@@ -112,25 +112,36 @@ void BindLocalNativeToHostEid_(void* native, coop::element::ElementId E, MAP::Fa
     const bool sameActor = (oldActor == native);
     const bool caseII = (preE && oldActor && !sameActor && R::IsLive(oldActor));  // host PropSpawn beat the bind
 
-    // b1 (#2, 2026-06-26): PROXY-WINS when a convert already touched E. If a trash proxy beat the bind AND a
-    // PropConvert was adopted for E (CtxForEid>0), the host grabbed+MOVED this pile IN the join window: the
-    // proxy absorbed the ToClump/ToPile and IS the authoritative current rendering (at the moved position/
-    // form), while the save-loaded native loaded at the now-STALE save position -> it is the redundant dup.
-    // Keep E bound to the proxy; retire the native (drain its local element + echo-suppressed destroy). This
-    // is the morph-hand-off shape (#3) inverted for the converted save-loaded case. Distinct from the X item-4
-    // race BELOW (a FRESH host-PropSpawn proxy, no convert -> CtxForEid==0 -> the native at its untouched save
-    // position wins, RetireProxy + bind native). Isolation: clean-join save-loaded piles get no in-window
-    // convert -> CtxForEid==0 -> unchanged; only a pile converted in-window before its bind reaches here.
-    if (caseII && family == MAP::Family::ChipPile && coop::trash_proxy::IsProxy(E) &&
-        coop::trash_channel::CtxForEid(E) > 0) {
+    // b1 (#2, 2026-06-26; extended 2026-07-01): CONVERT-WINS when a convert already touched E. If a
+    // PropConvert was adopted for E (CtxForEid>0), the host grabbed+MOVED this pile IN the join window: E's
+    // CURRENT rendering absorbed the ToClump/ToPile and IS the authoritative current form (at the moved
+    // position), while THIS save-loaded native loaded at the now-STALE save position -> it is the redundant
+    // dup. Keep E bound to its current rendering; retire the fresh save-native (drain its local element +
+    // echo-suppressed destroy).
+    //
+    // The current rendering is EITHER a trash proxy (IsProxy(E)) OR the convert-landed NATIVE itself
+    // (nativization 2026-06-30: a ToPile LAND now materializes a rooted actorChipPile native, so E is bound to
+    // a native, not a proxy). The ORIGINAL 2026-06-26 guard only checked IsProxy(E) -> the nativized case fell
+    // through to the plain rebind below, which (a) re-pointed E to THIS stale-save-pos native (the cluster
+    // reverted to @old) and (b) ConsumeLocalActor'd the ROOTED landed native WITHOUT RemoveFromRoot -> it
+    // leaked live @new = the join-window mass-move DUP (host clears a cluster -> client sees both @old and @new;
+    // 16:42 hands-on, eid 4958: LAND @new then rebound to a fresh save-native @old, landed native orphaned).
+    // Extend to IsBoundMirrorNative(oldActor): the landed native @new is authoritative the SAME as a proxy.
+    // Isolation: a clean-join save-loaded pile gets no in-window convert -> CtxForEid==0 -> unchanged; only a
+    // pile converted in-window before its bind reaches here. Distinct from the X item-4 race BELOW (a FRESH
+    // host-PropSpawn proxy, no convert -> CtxForEid==0 -> the native at its untouched save position wins).
+    if (caseII && family == MAP::Family::ChipPile &&
+        coop::trash_channel::CtxForEid(E) > 0 &&
+        (coop::trash_proxy::IsProxy(E) || PT::IsBoundMirrorNative(oldActor))) {
         const unsigned ctx = coop::trash_channel::CtxForEid(E);
-        PT::UnmarkKnownKeyedProp(native);                  // drain the native's peer-range LOCAL element (if any)
-        coop::remote_prop::ConsumeLocalActor(native);      // echo-suppressed destroy of the redundant stale-pos native
-        ++g_boundChip;                                     // E IS satisfied (bound to the proxy) -> count for the 874/874 summary
+        const bool viaProxy = coop::trash_proxy::IsProxy(E);
+        PT::UnmarkKnownKeyedProp(native);                  // drain the fresh native's peer-range LOCAL element (if any)
+        coop::remote_prop::ConsumeLocalActor(native);      // echo-suppressed destroy of the redundant stale-save-pos native
+        ++g_boundChip;                                     // E IS satisfied (bound to its convert rendering) -> count for the 874/874 summary
         ++g_caseII;
-        UE_LOGI("save_identity_bind: PROXY-WINS k=%zu chipPile native=%p -> host eid=%u [case(ii)-converted: "
-                "pile grabbed/moved in-window (ctx=%u) -> proxy authoritative, redundant save-loaded native retired]",
-                k, native, static_cast<unsigned>(E), ctx);
+        UE_LOGI("save_identity_bind: CONVERT-WINS k=%zu chipPile freshNative=%p -> host eid=%u [case(ii)-converted: "
+                "pile grabbed/moved in-window (ctx=%u) -> %s authoritative @new, redundant save-loaded native@old retired]",
+                k, native, static_cast<unsigned>(E), ctx, viaProxy ? "proxy" : "landed native");
         return;
     }
 

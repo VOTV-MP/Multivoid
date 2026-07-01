@@ -208,6 +208,11 @@ void ConsumeLocalActor(void* actor) {
         return;
     }
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);
+    // A rooted materialized native (native_pile_mirror) reaching here (e.g. a redundant convert-landed pile the
+    // save-load consumes) MUST be un-rooted first: K2_DestroyActor on a rooted actor only sets PendingKill while
+    // the root keeps it ALIVE -> it leaks as a live orphan (the 16:42 join-window mass-move dup). Same un-root
+    // the authoritative OnDestroy path already does; no-op on an unrooted game-native (the common consume case).
+    R::RemoveFromRoot(actor);
     R::CallFunction(actor, g_destroyActorFn, nullptr);
 }
 
