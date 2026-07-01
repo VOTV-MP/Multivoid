@@ -53,16 +53,23 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 
 ### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
 
-> **NATIVIZATION 2026-06-30 [V probe / AS-BUILT inc1] — the PILE-form CLIENT MIRROR is moving from the bare
-> `AStaticMeshActor` proxy (row "chipPile/garbageClump CLIENT MIRROR" below) to a ROOTED REAL `actorChipPile_C`
-> NATIVE** (`coop/props/native_pile_mirror`), bound+marked save-native so it rides the `IsBoundMirrorNative`
-> machinery. A real pile IS `int_player_C` → native hover GUI + collision + per-instance rotation + occlusion +
-> movement-block, FREE. Inertness PROVEN hands-on (inert probe 60s collision-ON GO; user saw the native GUI on
-> aim). The in-hand/flying **CLUMP stays the bare proxy** (LifeSpan + autonomous re-pile = too live). Increment 1
-> (steady-state spawn-seam) deployed `75CB1762`, UNCOMMITTED (no-regression gate); re-pile + full proxy retire =
-> increment 2+. The camera-cone grab recognition is retired for piles (a native IS `lookAtActor` — the grab route
-> at `trash_collect_sync.cpp:414` already reads it). Canonical: [docs/piles/11](piles/11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)
-> · [[project-pile-nativization-2026-06-30]]. The proxy rows below stay TRUE for the clump + the not-yet-nativized
+> **NATIVIZATION 2026-06-30→07-01 [V hands-on — DONE] — the resting/re-piled PILE-form CLIENT MIRROR is now a
+> ROOTED REAL `actorChipPile_C` NATIVE** (`coop/props/native_pile_mirror::Materialize`), not the bare
+> `AStaticMeshActor` proxy (row below). Bound + marked save-native → rides the `IsBoundMirrorNative` machinery; a
+> real pile IS `int_player_C` → native hover GUI + collision + rotation + occlusion + movement-block, FREE.
+> SHIPPED + VERIFIED: inc 1 spawn-seam (`abfaaed8`), inc 2 re-pile LAND→native (`dabf84de`), chipType via the
+> pile's own `init()` (RE export 80 — DEFAULT chipType=0 on a bare spawn, so `SetChipTypeAndRebuild` writes it +
+> re-inits; `dabf84de`), rotation consumed host→client on the mesh COMPONENT (`3b72aba0`; `f79bbe84` is the
+> delivery half, NOT retirable), and the held-clump-at-join **dup fix** (`fa8bc344`). The in-hand/flying **CLUMP
+> stays the bare proxy** (LifeSpan + autonomous re-pile = too live). **[V] the join-window dup was TWO-ACTORS-per-eid
+> (adopted save-loaded native @save-pos + convert-beat-spawn proxy @landed-pos); root = the convert-beat-spawn
+> branch lacked the LAND-side symmetric half of GRAB's `morphBoundNative`, and `SweepReconcileSaveTimeTwins` is
+> structurally BLIND to it (skips `IsBoundMirrorNative` = the leaked half). Fix = create-edge LAND CLAIM
+> (`RepositionBoundNative` reuses the bound native, suppresses the parallel spawn). Two-owner map: bound-at-convert
+> → create-edge claim; late-load-unbound → the sweep (disjoint).** The camera-cone grab recognition is dead for
+> piles (a native IS `lookAtActor`). Deployed `1C242F82` = HEAD `fa8bc344`, 6 ahead of origin. Canonical:
+> [docs/piles/11](piles/11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md) · [[project-pile-nativization-2026-06-30]].
+> The proxy rows below stay TRUE for the clump + the not-yet-nativized
 > pile paths.
 
 > **IDENTITY UPDATE 2026-06-27 [RD] — save-loaded chip/kerfur natives gained a position RE-BIND safety-net.**

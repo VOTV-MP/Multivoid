@@ -1,14 +1,14 @@
 # Piles — the complete knowledge base (ambient trash pile coop sync)
 
-> **CURRENT TRACK (2026-06-30): pile mirror proxy → NATIVE nativization.** The bare `AStaticMeshActor` PILE
-> proxy (no int_player_C → no native hover GUI, no collision, wrong rotation) is being REPLACED by a rooted
-> real `actorChipPile_C` native (in-hand CLUMP stays a proxy). Inertness PROVEN hands-on (probe 60s collision-ON
-> GO + native GUI confirmed live). Increment 1 (spawn-seam) deployed `75CB1762`, UNCOMMITTED — no-regression
-> test is the commit gate; increment 2 (re-pile → native) = the observable win, NEXT. Full design + as-built +
-> NEXT: **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)** ·
-> [[project-pile-nativization-2026-06-30]]. (Much of the proxy-centric framing below is being superseded as
-> the pile form goes native; the proxy stays load-bearing for clumps + the in-bracket fallback + the not-yet-
-> nativized re-pile path.)
+> **DONE + VERIFIED (2026-07-01): pile mirror proxy → NATIVE nativization.** The resting/re-piled PILE form is
+> now a rooted real `actorChipPile_C` native (native hover GUI + collision + host-synced rotation + host-synced
+> chipType); the in-hand CLUMP stays a proxy. Shipped: inc 1 spawn-seam (`abfaaed8`), inc 2 re-pile→native +
+> chipType root-fix (`dabf84de`), rotation sync (`3b72aba0`), held-clump-at-join dup fix (`fa8bc344`). All
+> **[V hands-on]**; deployed `1C242F82` = HEAD, 6 commits ahead of origin (push pending). The ONE open axis is
+> SOUND-events (pickup/land, event-delivery). Full as-built + the RE (chipType `init()` export 80; the dup
+> two-owner map): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
+> · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form +
+> the in-bracket join-window fallback, which remain proxy.)
 
 > **L1 JOIN-WINDOW DUP (host MOVES a SAVE-LOADED pile in-window) = VERIFIED + PUSHED (origin/main `960e4650`).**
 > A save-loaded chipPile the host moves during the join-load window duped (native@old + proxy@new, >1cm → the
