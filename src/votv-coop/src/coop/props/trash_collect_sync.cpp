@@ -373,6 +373,35 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
 // axis, not delivery). For any non-pile E-press (and for the HOST, which grabs natively) we return false ->
 // the native use runs unchanged (devices, legit denies, the host's own grab). Puppets are unpossessed ->
 // never process input -> this only ever fires for the local player.
+// The "use" action has THREE delegate bindings (mainPlayer.json Export 483): _41 (IE_Pressed, the grab press we
+// fully intercept below), _38 (a SECOND IE_Pressed), and _42 (IE_Released). All three reach useAction's use_deny
+// "EHHH". Hooking only _41 left _38 firing on every E-press -> the native deny played in PARALLEL with our
+// cancelled grab (the 19:06 regression -- RE 2026-07-01: the deny is on a SEPARATE seam than the one _41
+// cancels). This SIDE-EFFECT-FREE suppressor covers the other two seams: on a CLIENT pile interaction it only
+// CANCELS the dispatch (kills the parallel deny) -- it does NOT send a grab/throw intent or play a cue (_41 is
+// the sole author of those; and _42 on RELEASE must never throw). Same recognition as OnPileUseIntercept's
+// client branch: carrying, or aimed at a bound-native / proxy pile.
+static bool OnPileUseDenySuppress(void* self, void* /*params*/) {
+    if (!self) return false;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host) return false;  // client-only; host runs native
+    if (coop::trash_channel::ClientCarryEid() != coop::element::kInvalidId)
+        return true;  // carrying a clump -> a use press/release on it would deny natively -> cancel
+    void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+    if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative) && PT::IsBoundMirrorNative(aimedNative))
+        return true;  // aimed at a bound native pile -> a grab press that would deny -> cancel
+    const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
+    const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
+    const float d2r = 3.14159265f / 180.f;
+    const float yaw = camRot.Yaw * d2r, pitch = camRot.Pitch * d2r;
+    const float cp = std::cos(pitch);
+    const ue_wrap::FVector camFwd{ cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch) };
+    if (coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f, /*minDot=*/0.94f) !=
+        coop::element::kInvalidId)
+        return true;  // aimed at a proxy pile -> cancel
+    return false;  // not a pile interaction -> let the native use run (devices, other interactions, SP deny)
+}
+
 static bool OnPileUseIntercept(void* self, void* /*params*/) {
     if (!self) return false;
     auto* s = g_session.load(std::memory_order_acquire);
@@ -599,6 +628,19 @@ void Install(coop::net::Session* session) {
     UE_LOGI("trash_collect: pile use INTERCEPTOR installed on InpActEvt_use (host: records the pending grab, "
             "always runs native; client: cancels the native use for a pile GRAB/THROW -> no native grab, no "
             "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host; docs/piles/08)");
+
+    // The "use" action's OTHER two bindings (_38 = 2nd IE_Pressed, _42 = IE_Released) also reach useAction's
+    // use_deny -- hooking only _41 left the client hearing "EHHH" on every E-press (parallel deny). Install the
+    // side-effect-free deny-suppressor on both so a client pile grab/throw cancels ALL use-dispatch seams. Best-
+    // effort (a missing ordinal after a BP recook just means the deny returns on that seam -- sdk_check flags it).
+    int denySeams = 0;
+    for (const wchar_t* useFn : { P::name::MainPlayerUseInputEventFn38, P::name::MainPlayerUseInputEventFn42R }) {
+        if (void* uf = R::FindFunction(cls, useFn))
+            if (GT::RegisterInterceptor(uf, &OnPileUseDenySuppress)) ++denySeams;
+    }
+    UE_LOGI("trash_collect: use_deny suppressor installed on %d/2 extra 'use' seam(s) (_38 2nd-Pressed + _42 "
+            "Released) -- client pile grab/throw now cancels EVERY use dispatch -> no parallel 'EHHH' (RE 2026-07-01)",
+            denySeams);
 
     // LMB hard-throw bridge: PRE-observe BOTH fire handlers (_58/_59 = press/release). The OnFirePre gate on
     // ClientCarryEid + SendThrowIntent's optimistic carry-clear mean only the press edge that finds a live

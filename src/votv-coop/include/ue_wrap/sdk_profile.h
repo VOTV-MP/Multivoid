@@ -1126,6 +1126,14 @@ inline constexpr const wchar_t* AddImpulseFn                           = L"AddIm
 inline constexpr const wchar_t* MainPlayerGrabUpdateFn       = L"grab__UpdateFunc";
 inline constexpr const wchar_t* MainPlayerGrabFinishedFn     = L"grab__FinishedFunc";
 inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K2Node_InputActionEvent_41";
+// The "use" action has THREE delegate bindings (InputActionDelegateBinding, mainPlayer.json Export 483): _41 =
+// IE_Pressed (the grab press we intercept), _38 = a SECOND IE_Pressed binding, _42 = IE_Released. All three run
+// the use flow that can reach useAction's `use_deny` "EHHH". Hooking only _41 left _38 firing on every E-press
+// (playing the deny in parallel with our cancelled grab -- the 19:06 regression). The client suppresses the deny
+// on these two extra seams too (side-effect-free cancel; _41 stays the sole grab/throw-intent sender). Ordinals
+// are BP-recook-fragile (sdk_check flags it). RE 2026-07-01.
+inline constexpr const wchar_t* MainPlayerUseInputEventFn38  = L"InpActEvt_use_K2Node_InputActionEvent_38";
+inline constexpr const wchar_t* MainPlayerUseInputEventFn42R = L"InpActEvt_use_K2Node_InputActionEvent_42";
 // LMB (fire) input action -- the NATIVE throw-when-holding seam (InpActEvt_fire -> throwHoldingProp; SEPARATE
 // from use/E). Two handlers (_58/_59, press/release); the client registers BOTH + gates on ClientCarryEid so
 // only the press edge that finds a live carry acts (SendThrowIntent clears the carry -> the other no-ops).
