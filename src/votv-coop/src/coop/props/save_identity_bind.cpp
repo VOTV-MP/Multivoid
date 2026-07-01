@@ -6,6 +6,7 @@
 #include "coop/element/element_deleter.h"  // reseed_orphan_selftest: Enqueue/Flush (reproduce the Take-but-not-Flushed race)
 #include "coop/element/mirror_manager.h"   // MirrorManager<Prop>::Take (force_save_churn probe unbind)
 #include "coop/element/prop.h"             // coop::element::Prop (MirrorManager<Prop>)
+#include "coop/element/quiescence_drain.h" // ArmPendingSaveTimeTwin (DUP-RETIRE: FLOOR-kept mass-move twin, docs/piles/12)
 #include "coop/element/registry.h"         // Registry::Get().Get(eid)
 #include "coop/session/ini_config.h"               // IsIniKeyTrue
 #include "coop/creatures/kerfur_entity.h"            // IsKerfurPropClass (variant-1 position re-bind: kerfur family)
@@ -359,23 +360,58 @@ int BindUnboundReCreates() {
         return !(boundActor && R::IsLive(boundActor));
     };
 
-    // chipPile arm -- POSITION match (keyless).
+    // chipPile arm -- POSITION match (keyless). Two SYMMETRIC cases per identity-map entry {eid=E, savePos=@old},
+    // both keyed on OUR OWN save-time map (both peers loaded the identical save, so the client holds eid<->savePos
+    // even though a pile is otherwise keyless -- this is how we recover the eid a FLOOR-kept orphan lacks):
+    //   (a) E is FREE (no live bound native)  -> RE-BIND an unbound native@save-pos to E (a GC-churned re-create).
+    //   (b) E is BOUND @new AND moved FAR from its save-pos -> a stale UNBOUND native still @save-pos is E's
+    //       leftover @old twin: the join-window MASS-MOVE dup (docs/piles/12). The completeness FLOOR
+    //       (join_membership_sweep, docs/piles/10) KEEPS that unclaimed local -- it can't tell a moved-away twin
+    //       from a legit under-expressed pile on COUNT alone -- but never registers it for retire. Here we ARM
+    //       the save-time twin for E so the sweep retires it PER-EID (the sweep re-confirms E moved -> no cap).
+    //       Positive per-eid evidence (E's bound native lives >50cm from @old) makes this verify-before-retire
+    //       safe -- same discipline as the twin sweep, seeded from the map instead of a (droppable) convert.
     {
+        constexpr float kMovedCm2 = 50.f * 50.f;  // >50cm from save-pos = E genuinely moved @new (matches the sweep)
         std::vector<bool> used(chipN.size(), false);
+        int dupArmed = 0;
         for (const MAP::IdEntry& e : g_chipEntries) {
-            if (e.eid == 0u || e.eid == coop::element::kInvalidId || !eidFree(e.eid)) continue;
+            if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
             const ue_wrap::FVector key{e.savePosX, e.savePosY, e.savePosZ};
+            coop::element::Element* el =
+                coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
+            void* bound = el ? el->GetActor() : nullptr;
+            if (!(bound && R::IsLive(bound))) {
+                // (a) eid FREE -> RE-BIND (GC-churned re-create; authoritative host-wire position match).
+                const int idx = coop::save_time_retire_util::FindExactMatch(
+                    chipN, used, key, [](const LiveNative&) { return true; });  // position-only (1cm exact)
+                if (idx < 0) continue;  // 0 (no re-create -- normal) or >1 (ambiguous co-located -> skip)
+                used[idx] = true;
+                BindLocalNativeToHostEid_(chipN[idx].actor, static_cast<coop::element::ElementId>(e.eid),
+                                          MAP::Family::ChipPile, e.index);
+                ++rebound;
+                UE_LOGI("save_identity_bind: RE-BIND chipPile by position -- native=%p -> host eid=%u @save-pos="
+                        "(%.1f,%.1f,%.1f) (GC-churned re-create; authoritative host-wire position match)",
+                        chipN[idx].actor, e.eid, e.savePosX, e.savePosY, e.savePosZ);
+                continue;
+            }
+            // (b) eid BOUND @new -> DUP-RETIRE the stale @old twin if E moved away from its save-pos.
+            const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(bound);
+            const float ddx = bl.X - e.savePosX, ddy = bl.Y - e.savePosY, ddz = bl.Z - e.savePosZ;
+            if (ddx * ddx + ddy * ddy + ddz * ddz <= kMovedCm2) continue;  // E still @save-pos -> not moved
             const int idx = coop::save_time_retire_util::FindExactMatch(
-                chipN, used, key, [](const LiveNative&) { return true; });  // position-only (1cm exact)
-            if (idx < 0) continue;  // 0 (no re-create -- normal) or >1 (ambiguous co-located -> skip)
+                chipN, used, key, [](const LiveNative&) { return true; });  // unbound native still @old?
+            if (idx < 0) continue;  // no stale orphan @old (E moved cleanly, or ambiguous co-located) -> nothing
             used[idx] = true;
-            BindLocalNativeToHostEid_(chipN[idx].actor, static_cast<coop::element::ElementId>(e.eid),
-                                      MAP::Family::ChipPile, e.index);
-            ++rebound;
-            UE_LOGI("save_identity_bind: RE-BIND chipPile by position -- native=%p -> host eid=%u @save-pos=(%.1f,"
-                    "%.1f,%.1f) (GC-churned re-create; authoritative host-wire position match)",
-                    chipN[idx].actor, e.eid, e.savePosX, e.savePosY, e.savePosZ);
+            const uint8_t chipType = ue_wrap::prop::GetChipType(chipN[idx].actor);
+            coop::element::quiescence_drain::ArmPendingSaveTimeTwin(
+                static_cast<coop::element::ElementId>(e.eid), key, chipType);
+            ++dupArmed;
         }
+        if (dupArmed)
+            UE_LOGI("save_identity_bind: DUP-RETIRE -- armed %d save-time twin(s) from the identity map (eid bound "
+                    "@new but a stale UNBOUND native lingers @save-pos = FLOOR-kept mass-move dup, docs/piles/12) "
+                    "-> the sweep retires each per-eid (confirmed -> no cap)", dupArmed);
     }
 
     // kerfurOff arm -- KEY match (sidecar v3): the GUARANTEED kerfur bind. Each unbound kerfur native's portable
