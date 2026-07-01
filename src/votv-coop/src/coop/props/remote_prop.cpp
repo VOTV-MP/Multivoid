@@ -874,6 +874,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
                         "host=(%.1f,%.1f,%.1f) drift=%.2fcm [native hover GUI + rotation + collision -- proxy retired]",
                         E, static_cast<unsigned>(payload.ctx), native, got.X, got.Y, got.Z,
                         payload.locX, payload.locY, payload.locZ, std::sqrt(dx * dx + dy * dy + dz * dz));
+                coop::prop_sound::PlayLandSound(native);  // host-authoritative LAND event: the material impact thud
                 coop::trash_channel::NoteClientConvertObserved(E, false);
                 return native;
             }
@@ -887,6 +888,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
                 E::SetActorRotation(proxy, ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
                 UE_LOGW("[PILE] CLIENT ToPile LAND eid=%u -- native materialize FAILED, fell back to proxy re-skin "
                         "(pile class '%ls' not loaded?)", E, pileCls.c_str());
+                coop::prop_sound::PlayLandSound(proxy);  // land thud even on the fallback path
             }
             coop::trash_channel::NoteClientConvertObserved(E, false);
             return proxy;
@@ -947,6 +949,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
                     "[create-edge reconcile -- no parallel spawn, no dup]",
                     E, static_cast<unsigned>(payload.ctx), boundNative,
                     got.X, got.Y, got.Z, loc.X, loc.Y, loc.Z, std::sqrt(dx * dx + dy * dy + dz * dz));
+            coop::prop_sound::PlayLandSound(boundNative);  // land thud on the claim-reuse edge
             coop::trash_channel::NoteClientConvertObserved(E, false);
             return boundNative;
         }
@@ -990,6 +993,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
                     E, got.X, got.Y, got.Z, payload.locX, payload.locY, payload.locZ,
                     std::sqrt(dx * dx + dy * dy + dz * dz),
                     gotR.Pitch, gotR.Yaw, gotR.Roll, payload.rotPitch, payload.rotYaw, payload.rotRoll);
+            coop::prop_sound::PlayLandSound(proxy);  // land thud on the convert-beat-spawn LAND
         }
         // #3 release-path fix (2026-06-26): the IsProxy branch confirms the client carry-state toggle on a
         // ToClump matching our pending grab (line ~1039); THIS branch (a client grab of a bound save-loaded

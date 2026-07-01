@@ -58,6 +58,20 @@ void PlayGrabSound(void* propActor);
 // released prop. Caller applies the throw-vs-drop speed gate.
 void PlayThrowWhoosh(void* propActor);
 
+// The material IMPACT "thud" a trash pile makes when it lands / re-piles,
+// spatialized at the landed pile (vol 1.0 / pitch 1.0 / att_default -- the
+// flesh_impact PlaySoundAtLocation params the chipPile uses for its own impact
+// reaction). RE (2026-07-01, docs/piles/re-artifacts): the chipPile/clump BP
+// plays NO dedicated land sound (shovelDig_Cue = the recycle-to-scrap action;
+// flesh_impact_Cue = a damage/hit reaction) -- the native "land thud" is the
+// physics-material IMPACT cue: lib_C::physSound(physmat) returns
+// {step, impact, soft}, and this reads the `impact` row -- the sibling of the
+// `soft` row PlayGrabSound already uses. Silent when the material has no impact
+// row (native parity, same as the grab soft-miss). Receiver side of the
+// host-authoritative kToPile LAND convert (a genuine clump->pile edge only, not
+// an idempotent echo).
+void PlayLandSound(void* propActor);
+
 // The inventory-collect BLIP (inventory_Cue -- natively PlaySound2D, 2D and
 // collector-only) spatialized at a REMOTE collector's broadcast position
 // (vol 1.0 / pitch 1.1, the native @659 values; att_default). Receiver side

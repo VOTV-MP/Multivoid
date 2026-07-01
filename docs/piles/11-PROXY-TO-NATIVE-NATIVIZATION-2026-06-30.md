@@ -106,11 +106,22 @@ log (0-of-N states its real disjoint domain, no longer claims "dup fixed").
   (disjoint domain; unverified in practice — `0-of-N` in every observed run, i.e. the late-load case didn't
   occur locally — but correctly owned). Full merge of the two owners is a later generalization (fix-then-generalize, N≥3).
 
-## NEXT (the one open axis)
-**Sound-events** — the host-authoritative pickup + land SOUNDS are an EVENT that isn't delivered or locally
-triggered on the client (a bare proxy never had them; the native materializes silently, and the client's grab
-routes to the host so the local pickup cue is suppressed). This is the **event-delivery** axis (distinct from
-the property-delivery axis chipType/rotation closed) — the next increment.
+## Sound-events — AS-BUILT 2026-07-01 (pending hands-on)
+The pickup + land SOUNDS increment. **RE (`research/findings/votv-pile-pickup-land-sound-RE-2026-07-01.md`):
+the chipPile/clump BP plays NO dedicated pickup or land sound** — `shovelDig_Cue` is the recycle-to-scrap
+action, `flesh_impact_Cue` is a damage/hit reaction, and the clump→pile conversion + the pile's BeginPlay/init
+are silent. The native sounds are the physics-material `lib_C::physSound` table: `.soft` = the grab pickup cue
+(already synthesized), `.impact` = the land thud (the sibling row). Two receiver-side gaps closed:
+- **Client's own grab** (native suppressed → routed to host) was silent for the grabber → play
+  `PlayUseClick`+`PlayGrabSound` locally at the aimed pile at both client GrabIntent seams
+  (`trash_collect_sync.cpp` OnPileGrabPre).
+- **Pile LAND** was silent on the client → new `prop_sound::PlayLandSound` (= `physSound.impact` at the pile,
+  vol 1.0/pitch 1.0/att_default) fired on the host-authoritative `kToPile` LAND convert at every genuine-land
+  edge in `remote_prop::OnConvert` (native nativize, proxy fallback, `RepositionBoundNative` claim,
+  convert-beat-spawn) — never the idempotent echo, never a ToClump grab. Closes the `remote_prop_spawn.cpp:898`
+  "impact dust+sound is a deferred polish (needs the correct verb)" TODO.
+Deployed `8b0d4576…` (4/4 hash-verified). Runbook: `research/handson_runbook_2026-07-01_pile_sounds.md`.
+Open: if a trash material has no `impact` row the land is silent (logs `land thud SKIP`) → pick a fallback asset.
 
 ## RULE-2 / cleanup queue (after sound-events)
 - Retire `EidForAimedPileProxy`-for-pile (the camera cone is dead once all resting piles are native).

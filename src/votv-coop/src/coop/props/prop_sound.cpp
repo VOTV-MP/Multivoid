@@ -33,11 +33,15 @@ void* ResolveAttenuation() {
     return sAtt;
 }
 
+// Which row of the material's Fstruct_physSound to pull.
+enum class PhysCue { kSoft, kImpact };
+
 // The FRESH DataTable lookup the local grab itself does (mainPlayer uber
 // @100003: lib_C::physSound(hit.PhysMat)). The lookup's `return` bool is the
 // @100067 row-miss gate: false -> NO sound, same as the local grabber hears
-// for unmapped materials. Null physmat / unresolved lib -> null.
-void* SoftCueFromPhysMat(void* physmat, void* worldCtx) {
+// for unmapped materials. Null physmat / unresolved lib -> null. `which`
+// selects the row: kSoft = the grab pickup cue; kImpact = the land/impact thud.
+void* CueFromPhysMat(void* physmat, void* worldCtx, PhysCue which) {
     if (!physmat || !R::IsLive(physmat)) return nullptr;
     static void* sLibCdo = nullptr;
     static void* sPhysSoundFn = nullptr;
@@ -54,8 +58,9 @@ void* SoftCueFromPhysMat(void* physmat, void* worldCtx) {
     if (!ue_wrap::Call(sLibCdo, f) || !f.Get<bool>(L"return")) return nullptr;
     // Fstruct_physSound out-param head: step@0, impact@8, soft_30@0x10.
     struct PhysSoundHead { void* step; void* impact; void* soft; };
-    void* soft = f.Get<PhysSoundHead>(L"Data").soft;
-    return (soft && R::IsLive(soft)) ? soft : nullptr;
+    const PhysSoundHead head = f.Get<PhysSoundHead>(L"Data");
+    void* cue = (which == PhysCue::kImpact) ? head.impact : head.soft;
+    return (cue && R::IsLive(cue)) ? cue : nullptr;
 }
 
 }  // namespace
@@ -84,7 +89,7 @@ void PlayGrabSound(void* propActor) {
             path = "fresh";
             void* physmat = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(impactComp) + P::off::CompPhysImpact_PhysMat);
-            soft = SoftCueFromPhysMat(physmat, propActor);
+            soft = CueFromPhysMat(physmat, propActor, PhysCue::kSoft);
         }
     } else {
         // Generic-actor path (hands-on 2026-06-11: the trash clump derives from
@@ -93,8 +98,8 @@ void PlayGrabSound(void* propActor) {
         // the physmat the way the grabber's trace did -- root surface material ->
         // physical material -- and feed the same physSound lookup.
         path = "root-mat";
-        soft = SoftCueFromPhysMat(
-            ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor);
+        soft = CueFromPhysMat(
+            ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kSoft);
     }
     if (!soft || !R::IsLive(soft)) {
         UE_LOGI("prop_sound: grab cue SKIP -- no soft cue (%s miss; actor=%p)",
@@ -156,6 +161,28 @@ void PlayThrowWhoosh(void* propActor) {
     // improvement -- natively NOBODY else hears a throw).
     ue_wrap::engine::PlaySoundAtLocation(propActor, sSwing, loc, att, 0.8f, 1.05f);
     UE_LOGI("prop_sound: swing whoosh at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
+}
+
+void PlayLandSound(void* propActor) {
+    if (!propActor || !R::IsLive(propActor)) return;
+    // The pile's landed-material IMPACT cue (physSound.impact) -- the sibling of
+    // the grab's soft cue. A pile is a plain actor (not Aprop_C), so resolve the
+    // physmat the same way the generic-actor grab path does: root surface
+    // material -> physical material -> the physSound row. Silent on a row miss
+    // (native parity, the @100067 gate). RE (2026-07-01): the clump->pile
+    // conversion + the pile's BeginPlay/init play NO explicit sound; the native
+    // "thud" is this material impact.
+    void* impact = CueFromPhysMat(
+        ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kImpact);
+    if (!impact || !R::IsLive(impact)) {
+        UE_LOGI("prop_sound: land thud SKIP -- no impact cue (root-mat miss; pile=%p)", propActor);
+        return;
+    }
+    void* att = ResolveAttenuation();
+    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(propActor);
+    // Native flesh_impact PlaySoundAtLocation params: vol 1.0 / pitch 1.0 / att_default.
+    ue_wrap::engine::PlaySoundAtLocation(propActor, impact, loc, att, 1.0f, 1.0f);
+    UE_LOGI("prop_sound: pile land thud at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }
 
 void PlayDenyClick(void* playerActor) {

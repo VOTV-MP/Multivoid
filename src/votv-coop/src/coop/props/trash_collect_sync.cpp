@@ -16,6 +16,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
@@ -417,6 +418,13 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
                 const coop::element::ElementId beid = coop::remote_prop::ResolveMirrorEidByActor(aimedNative);
                 if (beid != coop::element::kInvalidId) {
                     ue_wrap::engine::WriteMainPlayerLookAtActor(self, nullptr);  // suppress the native's local grab dispatch
+                    // Pickup cue: the native local grab was just suppressed (lookAtActor nulled) so the grabbing
+                    // client would otherwise hear NOTHING for its own grab -- the `use` click + material soft cue
+                    // both run only in the (now-skipped) native playerGrabbed chain. Synthesize them locally at the
+                    // pile so the grabber hears the same feedback the host does (the host runs playerGrabbed on the
+                    // puppet -> native sound in the host's world; observers hear it via ResolveAndStartDrive).
+                    coop::prop_sound::PlayUseClick(aimedNative);
+                    coop::prop_sound::PlayGrabSound(aimedNative);
                     UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS on BOUND native pile eid=%u (lookAtActor, occlusion-correct) "
                             "-> suppressed local grab (cleared lookAtActor) + requesting grab from host",
                             static_cast<unsigned>(beid));
@@ -437,6 +445,12 @@ static void OnPileGrabPre(void* self, void* /*function*/, void* /*params*/) {
         const coop::element::ElementId eid =
             coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f, /*minDot=*/0.94f);
         if (eid == coop::element::kInvalidId) return;                   // not aiming at a mirrored pile within reach
+        // Pickup cue at the aimed proxy pile (same as the bound-native branch -- the native grab no-ops on a proxy
+        // by construction, so the grabber hears nothing without this). ProxyActorForEid gives the proxy actor.
+        if (void* proxyActor = coop::trash_proxy::ProxyActorForEid(eid)) {
+            coop::prop_sound::PlayUseClick(proxyActor);
+            coop::prop_sound::PlayGrabSound(proxyActor);
+        }
         UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS aimed at pile proxy eid=%u (camera-ray cone) -> requesting grab from host",
                 static_cast<unsigned>(eid));
         coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(eid));
