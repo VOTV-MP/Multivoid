@@ -4,9 +4,11 @@
 местах"]** — owner (take 3) + grabbed-clump gate (take 3.1); commits `d43956f6` + `0e7e5349`. **ONE residual
 local dup remains** (user, post-19:41) — the [DUP-PROBE] diagnostic (`26dea6e4`) is ARMED to pin its cause on
 the next mass-move run (see the RESIDUAL section below; it did not fire on 20:17 because an ini-reader bug
-silently disabled the flag — root-fixed `f81256e4`). Thread statuses at the bottom: EHH = AS-BUILT with log
-evidence (2/2 suppressors installed; no EHH report in 4+ subsequent hands-on runs — not explicitly confirmed);
-FPS `70e0d899` = **REFUTED-insufficient** by the 19:41 log (see FPS section). Latest deploy `a142e2bc`.
+silently disabled the flag — root-fixed `f81256e4`). Thread statuses at the bottom: EHH = `d7620ed5` proved
+INCOMPLETE by 2026-07-02 hands-on (drop-EHH leaked on the `_42` release seam) → re-root-fixed `2b2e0531`
+(gesture-pairing latch, verdict pending); NEW: GHOST-WEDGE section (silent dead-eid deny → `d4833b9b`
+PropDestroy drain; keyed-churn re-bind = next thread); FPS `70e0d899` = **REFUTED-insufficient** by the
+19:41 log (see FPS section). Latest deploy DLL `BD70FB08`.
 
 ## 18:52 — the owner over-reached onto actively-grabbed piles (fixed 0e7e5349, then VERIFIED 19:06) [V]
 Take-3 owner FIRED and worked for the @old-resurrect class: the HOST late-arm delivered late moves (eid 4930 at
@@ -147,9 +149,20 @@ every inline-`;`-commented ini flag as absent — root-fixed `f81256e4` (strip c
 (20:17 sweep data point: 10 twins DID retire that run — 8+1+1 confirmed — so twin-retire works when
 FindExactMatch hits; the 21-pending cluster is the anomaly the probe will decode.)
 
-## EHH — deny on EVERY client E-press (AS-BUILT `d7620ed5`; install log-verified 19:41 `use_deny suppressor
-## installed on 2/2 extra 'use' seam(s)`; no EHH report in 4+ subsequent hands-on runs — not explicitly
-## user-confirmed) [RD + install-log-V]
+## EHH — deny on EVERY client E-press (`d7620ed5` was INCOMPLETE — the RELEASE seam leaked on E-drop;
+## re-root-fixed `2b2e0531`+`9eda3faf` 2026-07-02, gesture-pairing latch; audit all-PASS; verdict pending)
+
+**2026-07-02 hands-on DISPROVED completeness:** "EHHH всё еще есть но только для клиента и когда он
+E-RELEASE/DROP делает". The `d7620ed5` `_42` suppressor RE-DERIVED the press conditions at release time —
+but `SendThrowIntent` optimistically clears the carry at the PRESS edge (`trash_channel.cpp:283`), so
+"carrying?" read false at the release and the post-drop aim missed the cone → the native release ran →
+deny. The same re-derivation could also EAT a legit native release (dropping a natively-held prop while
+aiming at a pile). Root shape: release-time condition re-derivation is wrong in BOTH directions. Fix =
+GESTURE PAIRING: every cancelled client use-PRESS (3 `_41` cancel sites + the `_38` suppressor) arms
+`g_cancelPairedUseRelease`; the pairing-only `_42` callback (`OnPileUseReleaseSuppress`) consumes it —
+no conditions at release. UE FlushPressedKeys guarantees release delivery → no stale latch (+ reset on
+disconnect, `9eda3faf`). Log marker per drop: `[USE-RELEASE] paired E-release CANCELLED`. The original
+3-binding RE below stands [V].
 Surfaced 19:06: `use_deny` "EHHH" plays on every client E-grab/release even for a recognized pile whose grab
 succeeds — and the log shows the `_41` interceptor DID cancel (`native use CANCELLED, no use_deny`). So the deny
 is on a SEPARATE seam than `_41`. RE (`mainPlayer.json` Export 483 `InputActionDelegateBinding_0`): the "use"
@@ -161,6 +174,34 @@ the `_41` dispatch "subsumes" the deny was WRONG (covers 1 of 3 seams). Fix: a s
 (carrying, or aimed at a bound-native/proxy pile) it ONLY cancels the dispatch (no grab/throw intent, no cue;
 `_42`-on-release must never throw). `_41` stays the sole intent sender. RE finding:
 `research/findings/votv-use-action-three-bindings-RE-2026-07-01.md`. Lesson: [[lesson-input-action-multiple-delegate-bindings]].
+
+## GHOST-WEDGE — a pile permanently ungrabbable for the client (root pinned from logs 2026-07-02;
+## delivery-half fixed `d4833b9b`, audit all-PASS, verdict pending; UPSTREAM = the next thread)
+
+Hands-on: client grab/dropped piles, then ONE pile refused every grab until the HOST hand-cycled it. Host
+log: 12x `[GRAB-INTENT] DENIED eid=2947 -- pile actor not live / not a chipPile` (13:37:44-59) — a SILENT
+deny, so the client re-sent the same doomed grab forever. Evidence chain (both logs): eid 2947 = a
+save-loaded keyed trashBitsPile (`AtrashBitsPile_C : Aactor_save_C`, NOT chipPile lineage — bytecode-
+grounded 2026-06-10 finding), adopted+claimed at join 13:33:32. GC-churn re-created its actor; **keyed
+props have NO churn re-bind** (chipPiles re-bind BY POSITION: `save_identity_bind: RE-BIND chipPile`), so
+the mirror row kept the freed pointer AND the pointer-keyed sweep claim orphaned → the join sweep doomed
+the re-created twin as unclaimed (13:33:43 `trash_pile: wire destroy ... unwatched`); a chipPile later
+RECYCLED the freed address → the stale reverse entry mis-resolved the client's aim to the dead eid 2947.
+The host-side row was equally unresolvable. Host hand-cycling the real pile self-seeded a fresh eid = the
+unwedge.
+
+**Fix `d4833b9b` (the delivery half):** the not-live deny arm now broadcasts `PropDestroy(eid)` — positive
+per-eid host-authoritative evidence ([[feedback-join-reconcile-sweep-safety]] shape); every peer DRAINS its
+ghost row (`UnregisterPropMirror`; a stale row resolves no live actor → nothing destroyed in-world; absent
+rows no-op) and the requester's next aim re-resolves to the real entity. The wrong-class arm is split out:
+deny-only + class name logged (never destroy a live entity on mismatch). Log marker:
+`broadcasting PropDestroy(eid) so every peer drains its stale ghost row`.
+
+**NEXT THREAD (the upstream root):** keyed-prop GC-churn RE-BIND by KEY — the chipPile position-re-bind
+analog, trivially exact for keyed props (on churn re-create, if a mirror row holds the KEY with a dead
+actor, rebind row→new actor; the claim transfers → the sweep stops dooming re-created claimed props).
+Kills the ghost-forming at the source. Own commit + smoke ([[feedback-snapshot-before-state-ready]]
+recurring class, keyed-family instance).
 
 ## FPS — client hitch during the mass-move (`70e0d899` = REFUTED-INSUFFICIENT by the 19:41 log) [log-V]
 

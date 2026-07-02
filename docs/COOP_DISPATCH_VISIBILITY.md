@@ -135,8 +135,9 @@ on the AnimBP's OWN `BlueprintUpdateAnimation` override** (it dispatches through
 whether called via PE or not) — the callback runs after the recompute, before the copies. Instance
 filtering happens IN the callback (e.g. puppet-only by identity: outer chain → `mainPlayer_C` with
 null `Controller`). Guard: verify `OuterOf(fn) == the BP class` — resolving a SUPER's declaration
-would over-hook every AnimInstance. **[V-static + AS-BUILT `5b2cb5ff` (HeadGateBUAPost); take-1
-hands-on proved the mechanism on the CLIENT peer.]**
+would over-hook every AnimInstance. **[V — hands-on 2026-07-02 take-2, BOTH peers (`5b2cb5ff` +
+capacity fix `b77793d7`): head tracks back-turned on host and client screens; kerfur NPCs stay
+native by the identity filter.]**
 
 **Install-capacity caveat (2026-07-02, `b77793d7`): the Func-patch table refusal is PER-PEER.**
 Peer roles are asymmetric — the HOST installs host-authoritative Func hooks a client never does —

@@ -20,9 +20,13 @@
 >   remains (19:41); the per-twin `[DUP-PROBE]` (`26dea6e4`) is ARMED for the next mass-move run — it was
 >   flag-dead on 20:17 because inline `;`-comments silently disabled ini flags (root-fixed `f81256e4`).
 >   Canonical: **[12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md)**.
-> - **EHH deny = AS-BUILT + install-log-verified** (`d7620ed5`; 19:41 log `use_deny suppressor installed on
->   2/2 extra 'use' seam(s)`; no EHH report in 4+ later runs — not explicitly user-confirmed). THREE "use"
->   delegate bindings (`_41` hooked, `_38`+`_42` suppressors) — `votv-use-action-three-bindings-RE`.
+> - **EHH deny: `d7620ed5` proved INCOMPLETE (2026-07-02 hands-on: drop-EHH leaked on `_42` release) →
+>   re-root-fixed `2b2e0531` GESTURE PAIRING** (cancelled press → paired release dies; release-time
+>   condition re-derivation retired), verdict pending. THREE "use" bindings RE stands. Doc 12 § EHH.
+> - **NEW: GHOST-WEDGE (2026-07-02) — a silent dead-eid GrabIntent deny wedged a pile forever** (GC-churned
+>   keyed trashBitsPile; keyed props have NO churn re-bind; address recycled → stale aim resolve). Delivery
+>   half fixed `d4833b9b` (deny → PropDestroy(eid) broadcast, peers drain the ghost row); UPSTREAM = keyed
+>   re-bind BY KEY, the next thread. Doc 12 § GHOST-WEDGE.
 > - **Client FPS `70e0d899` = REFUTED-INSUFFICIENT [log-V 19:41]:** `sync:npc_client` still 20-51ms with the
 >   reorder deployed. Real root: ~330k iteration × multiple walks/pass × 4Hz, pinned hot by never-retiring
 >   twins (`HasPendingWork`) — the dup residual and the FPS hitch SHARE this root. Walk-merge (N scans→1)

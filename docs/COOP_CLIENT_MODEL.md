@@ -4,11 +4,16 @@
 model (the user's own mesh) while the HOST stays Dr. Kel. First model = a Half-Life 1
 GoldSrc scientist. The pipeline generalizes to any HL1 humanoid `.mdl`.
 
-**STATUS (2026-07-02: FEATURE COMPLETE -- every axis VERIFIED in-game including the coop
-visual [V hands-on "Работает amazing"]: host sees the client puppet as the textured
-scientist, client sees the host as kel (role gate). Probe client_model_probe retained
-per the probes-exempt-from-RULE-2 rule as the solo visual harness for the NEXT model,
-flag off.):**
+**STATUS (2026-07-02 evening: FEATURE COMPLETE [V x4 incl. coop visual "Работает amazing"]
++ the NEW REPOSE PROFILE and the ORIGINAL-NAME rename are AS-BUILT `6f4d41d1`, in-game
+verdict PENDING.** The model + pak + packages are now `hl_einstein_v1sc` (the "scientist"
+naming is retired); the repose profile comes from the `tools/client_model/profiles/`
+LIBRARY -- v2 "wide" (format-2 R+t local deltas, learned from the user's
+`hl_einstein_v1sc_new_profile.psk` at residual 0.00005) is the DEFAULT, v1 "narrow" is
+kept. Two pipeline root-fixes en route: learn's up-axis is a CONSTANT of the target space
+(argmax-bbox broke when the wide arm span exceeded the height), and format-2 profiles
+carry JOINT TRANSLATIONS that rotation-only silently dropped. Probe client_model_probe
+retained per the probes-exempt rule, flag off.)**
 - **RUNTIME = DONE + PROVEN WORKING (§3), commit `320c0ab4`.** Autonomous 2-peer LAN test
   (host s_1234 + fresh client): pak auto-mounts, `URyRuntimeObjectHelpers::LoadObject` returns
   OUR package's SkeletalMesh, `RemotePlayer::Spawn` applies it to the client puppet (role-gated:
@@ -79,15 +84,17 @@ flag off.):**
 OFFLINE (dev machine, tools/client_model/):   [DONE, automated]
   hl_einstein_v1sc.mdl
    → mdl_extract.py   → model.obj + model.bones.json(+bone WORLD mats) + tex/*.png
-   → repose.py apply  → scientist_tpose.obj        (auto A-pose→VOTV T-pose + scale, §5)
+   → repose.py apply  → hl_einstein_v1sc_tpose.obj  (auto A-pose→VOTV T-pose + scale, §5;
+                                                     profiles/ LIBRARY, `default` = v2 wide)
    → atlas.py         → atlas.png + atlas.json      (19 tiles → 512x256, 1px gutter)
-   → ue_cook.py       → scientist.uasset/.uexp      (Y-mirror to cooked space, HL→anthro
+   → ue_cook.py       → hl_einstein_v1sc.uasset/.uexp (Y-mirror to cooked space, HL→anthro
                                                      rigid bone remap, per-face atlas UV remap,
                                                      TEMPLATE-MATCHED winding, splice into template)
-   → ue_tex.py        → tex_scientist.uasset/.uexp  (atlas.png → cooked UTexture2D, §8 rename)
-   → repak pack       → scientist.pak               (VotV/Content/Mods/VOTVCoop/*, V11, 4 files)
-SHIP: scientist.pak deployed to EVERY peer by tools/deploy-all.ps1 (Content/Paks/LogicMods/votv-coop/).
-RUNTIME (mod):   [DONE + PROVEN -- §3, commits 320c0ab4 + 8df26e05 + rung-4]
+   → ue_tex.py        → tex_hl_einstein_v1sc.uasset/.uexp (atlas.png → cooked UTexture2D, §8 rename)
+   → repak pack       → hl_einstein_v1sc.pak        (VotV/Content/Mods/VOTVCoop/*, V11, 4 files)
+SHIP: hl_einstein_v1sc.pak deployed to EVERY peer by tools/deploy-all.ps1
+      (Content/Paks/LogicMods/votv-coop/; the pre-rename scientist.pak is auto-removed).
+RUNTIME (mod):   [DONE + PROVEN -- §3, commits 320c0ab4 + 8df26e05 + rung-4; paths renamed 6f4d41d1]
   UE auto-mounts the pak → client_model::GetClientPuppetMesh() LoadObjects the mesh once →
   net_pump role gate (slot 0 host = kel; slots >= 1 clients = custom) →
   RemotePlayer::Spawn(useClientModel) → SpawnPuppet applies the skin to BOTH body slots
@@ -96,7 +103,8 @@ RUNTIME (mod):   [DONE + PROVEN -- §3, commits 320c0ab4 + 8df26e05 + rung-4]
 ```
 
 Two halves: the offline cook (§4/§5, geometry+texture+winding VERIFIED in-game) and the
-runtime (§3 + the texture bind, DONE; coop visual VERIFIED 2026-07-02).
+runtime (§3 + the texture bind, DONE; coop visual VERIFIED 2026-07-02). The 2026-07-02
+evening re-cook (new profile + rename) is AS-BUILT; its in-game verdict is pending.
 
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
 adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repak` (no Blender).
@@ -141,19 +149,20 @@ VOTV ships reflection-callable pak plugins (call via the mod's `R::FindClass` /
 `R::FindFunction` / `ParamFrame` on the game thread):
 - **`URyRuntimeObjectHelpers::LoadObject(FString fullObjectPath) → UObject*`** —
   synchronous load by `/Game/...` path. **Use:**
-  `LoadObject("/Game/Mods/VOTVCoop/scientist.kerfurOmega_KelSkin")` → the `USkeletalMesh*`.
-  (The OBJECT name is `kerfurOmega_KelSkin`, not `scientist` — §6a; rename is §8.)
+  `LoadObject("/Game/Mods/VOTVCoop/hl_einstein_v1sc.kerfurOmega_KelSkin")` → the
+  `USkeletalMesh*`. (The OBJECT name is `kerfurOmega_KelSkin`, not the package name —
+  §6a; rename is §8.)
 - `URyRuntimePakHelpers::MountPakFile(FString path) → bool` — mount from an explicit path.
 - `UPakLoaderLibrary::{MountPakFile, GetPakFileObject, GetPakFileClass}` — 2nd plugin (fallback).
 - **UE4 auto-mounts any `.pak` under `Content/Paks/` at startup.** Simplest deploy:
-  drop `scientist.pak` at `…/VotV/Content/Paks/LogicMods/votv-coop/scientist.pak`; it's
+  drop `hl_einstein_v1sc.pak` at `…/VotV/Content/Paks/LogicMods/votv-coop/`; it's
   mounted before the mod boots → the mesh is resident → `LoadObject` returns it. Mount
   root `/Game/Mods/VOTVCoop/`.
 - Call context: resolve the plugin CDO/target + `FindFunction` + `ParamFrame` (mirror
   the feasibility doc's ~40-LOC `LoadCoopAssetClass` POC). Game thread, after world-ready.
   Graceful-degrade if the pak/asset is missing (keep the default mesh).
-- **Deploy:** `scientist.pak` must ship to EVERY peer (client-side visual) — extend
-  `tools/deploy-all.ps1` to copy the pak into each peer's `Content/Paks/LogicMods/…`.
+- **Deploy:** `hl_einstein_v1sc.pak` ships to EVERY peer (client-side visual) via
+  `tools/deploy-all.ps1` (which also removes the pre-rename `scientist.pak` once).
 
 ### 3B. Apply to client puppets (the seam)
 At the §2 seam (`RemotePlayer::Spawn`), pick the skin by the **remote peer's ROLE**:
@@ -166,7 +175,7 @@ At the §2 seam (`RemotePlayer::Spawn`), pick the skin by the **remote peer's RO
   already knows peer role (session / `net.role`).
 
 ### 3C. IN-GAME TEST RECIPE (the gate) — how to test "напялить на клиента"
-Preconditions: build+deploy the 3A/3B runtime change; deploy `scientist.pak` to BOTH peers.
+Preconditions: build+deploy the 3A/3B runtime change; deploy `hl_einstein_v1sc.pak` to BOTH peers.
 1. Launch a LAN session (host + client) per the named-window launchers
    (`mp_host_game.bat` + `mp_client_connect.bat`). Fresh/New-Game save only.
 2. Client joins. **On the HOST screen, look at the CLIENT's puppet** (and vice-versa the
@@ -236,12 +245,13 @@ Tools (all in `tools/client_model/`, dev-only, RULE 3):
 - `mesh_extract/` (C#/CUE4Parse) — game-mesh study. `cue4parse_ref/` — CUE4Parse reader
   sources (MIT) = the byte-order spec. `SPEC.md` — byte-exact cook spec.
 
-**The deliverable:** `research/pak_re/scientist.pak` (~570 KB, V11, 4 files) →
-`VotV/Content/Mods/VOTVCoop/{scientist,tex_scientist}.uasset/.uexp` → load as
-`/Game/Mods/VOTVCoop/scientist` (object `kerfurOmega_KelSkin`) + `.../tex_scientist`
-(512x256 PF_B8G8R8A8 atlas). Cooked mesh: 1 section, 1062 verts, 708 tris, 101-bone anthro
-rig, rigid (1 influence), 0 pelvis-fallbacks, atlas-remapped UVs (19 tiles), winding
-template-matched (signed volume -102223, same side as the template's -161625 -- see STATUS).
+**The deliverable:** `research/pak_re/hl_einstein_v1sc.pak` (~570 KB, V11, 4 files) →
+`VotV/Content/Mods/VOTVCoop/{hl_einstein_v1sc,tex_hl_einstein_v1sc}.uasset/.uexp` → load as
+`/Game/Mods/VOTVCoop/hl_einstein_v1sc` (object `kerfurOmega_KelSkin`) +
+`.../tex_hl_einstein_v1sc` (512x256 PF_B8G8R8A8 atlas). Cooked mesh (v2 wide profile):
+1 section, 1062 verts, 708 tris, 101-bone anthro rig, rigid (1 influence),
+0 pelvis-fallbacks, atlas-remapped UVs (19 tiles), winding template-matched (signed volume
+-107216, same side as the template's -161625 -- see STATUS).
 
 Workspace: `research/pak_re/` (gitignored) — `mesh_out/` (mdl_extract outputs),
 `modpak/` (pak staging), `extracted/` (repak-extracted game meshes = the cook template),
@@ -255,40 +265,49 @@ Workspace: `research/pak_re/` (gitignored) — `mesh_out/` (mdl_extract outputs)
 out). Animations authored for the T-pose bind over-rotate an A-pose mesh's arms. The mesh
 must be reposed to the T-pose bind (and scaled to dr_kel size) BEFORE cooking.
 
-**Solution — learn it once, apply forever.** The user did it manually ONE time (SourceIO
-imports the mdl on its HL Bip01 rig; import `dr_kel.psk` as the size/pose reference; pose +
-scale the scientist to VOTV's T-pose; export `hl_einstein_v1sc.psk`). Key facts measured
-from that example (`repose.py learn`):
+**Solution — learn it once, apply forever.** The user poses ONE manual example in Blender
+(SourceIO imports the mdl on its HL Bip01 rig; `dr_kel.psk` as the size/pose reference;
+export a posed PSK); `repose.py learn` extracts a transferable PROFILE from it. Key facts:
 - GoldSrc skinning is **rigid (1 bone/vertex)** → the manual repose is EXACTLY a per-bone
-  rigid transform.
-- **Uniform scale 2.580, identical across all 22 bones** (73.6 → 189.9 units = dr_kel height).
-- Bone head offsets are rest-invariant under posing → the whole repose reduces to ONE
-  transferable quantity per bone: a **LOCAL pose rotation** (in that bone's own frame) +
-  a target height. That IS the VOTV T-pose standard → `votv_tpose_profile.json`.
+  rigid transform. **Uniform scale** (2.580 across all 22 bones on both examples).
+- **Profile format 2 (2026-07-02, `6f4d41d1`): per-bone LOCAL pose = a FULL rigid delta
+  (R + t) in the bone's rest frame** + target height. Format 1 stored rotation-only —
+  enough for a pure re-pose (the v1 narrow example, residual 0.00009) but it silently
+  DROPPED JOINT TRANSLATIONS: the v2 wide example moves shoulder/arm joints outward and
+  rotation-only left a 16-unit residual. Both formats load (normalized to 4x4 at read).
+- **The `up` axis is a CONSTANT of the target space (UE Z-up; the cook is a pure
+  Y-negation)** — never inferred from the mesh bbox: the v2 wide arm span (X=209.5)
+  exceeds the height (Z=190.2), so the old argmax-bbox heuristic measured "height" along
+  the arms and grounded the model sideways (residual 17.58 until fixed).
 
-**Validation:** applying the profile back to the A-pose (`repose.py apply`) reproduces the
-manual PSK to **max residual 0.00009 / mean 0.00005** on a ~190-unit model (floating-point
-zero — visually confirmed identical in Blender by the user). The profile stores only 22
-rotations + a height, yet reconstructs all 379 verts exactly → the representation is lossless.
+**The PROFILE LIBRARY (`tools/client_model/profiles/`, user 2026-07-02: keep a base of
+profiles):** `tpose_v2_wide_2026-07-02.json` (format 2, learned from
+`hl_einstein_v1sc_new_profile.psk`, **DEFAULT** via `repose.py` DEFAULT_PROFILE / CLI
+`default`) + `tpose_v1_narrow_2026-07-01.json` (format 1, kept). provenance table:
+`profiles/README.md`.
 
-**Generalization:** the profile is model-INDEPENDENT (local bone rotations; bone lengths
-come from each model's own skeleton; scale derives from target height). Any HL Bip01 model:
-`mdl_extract → repose.py apply <profile>` → T-posed geometry, no Blender. (Not yet tested on
-a 2nd model — expected to work for same-skeleton HL humanoids; a wildly different rig would
-need a re-`learn` from a new manual example.)
+**Validation:** each profile reproduces ITS example to float-zero — v2: max 0.00005;
+v1: max 0.00009 (379 verts, ~190-unit model). Lossless representation.
 
-**Re-learn (if the target/rig changes):**
+**Generalization:** the profile is model-INDEPENDENT (local deltas in each bone's own rest
+frame; bone lengths come from each model's skeleton; scale derives from target height).
+Any HL Bip01 model: `mdl_extract → repose.py apply <origDir> default <out.obj>` →
+T-posed geometry, no Blender. (Not yet tested on a 2nd model.)
+
+**Re-learn (a new look/standard):**
 ```
-python tools/client_model/repose.py learn <mdl_extract_dir> <manually_posed.psk> <profile.json>
+python tools/client_model/repose.py learn <mdl_extract_dir> <manually_posed.psk> tools/client_model/profiles/<name>.json
+# then point DEFAULT_PROFILE (repose.py) at it if it becomes the standard
 ```
 
 ---
 
 ## 6. Caveats — updated after the in-game runs (2026-07-02)
-a. **CLOSED [V]:** object name `kerfurOmega_KelSkin` at the new package path loads fine --
-   `LoadObject('/Game/Mods/VOTVCoop/scientist.kerfurOmega_KelSkin')` returns OUR object
-   (log: `outer='/Game/Mods/VOTVCoop/scientist'`). No rename needed for the mesh. (The
-   texture package IS cleanly renamed -- ue_tex.py does the full rename, §8 recipe.)
+a. **CLOSED [V]:** object name `kerfurOmega_KelSkin` at OUR package path loads fine --
+   proven pre-rename as `LoadObject('/Game/Mods/VOTVCoop/scientist.kerfurOmega_KelSkin')`
+   (log: `outer='/Game/Mods/VOTVCoop/scientist'`); the 2026-07-02 rename moved only the
+   PACKAGE name (file placement in the pak) to `hl_einstein_v1sc` -- same mechanism, mesh
+   object unrenamed. (The texture package IS cleanly renamed -- ue_tex.py full rename, §8.)
 b. **Still approximate (visually acceptable so far):** tangents (computed normal + a
    perpendicular); ImportedBounds = template's; vertex colors = white.
 c. **REOPENED by rung 4, then ROOT-FIXED [V]:** the earlier "no inside-out look" call was
@@ -340,10 +359,10 @@ The scientist's own textures ARE extracted: `research/pak_re/mesh_out/hl_einstei
 ---
 
 ## 8. Name-map rename (fix for §6a/§6d, only if the in-game test needs it)
-Repath the package `kerfurOmega_KelSkin` → `scientist` inside the `.uasset` name map so
-LoadObject is clean (`/Game/Mods/VOTVCoop/scientist.scientist`). Rewrite the 2 name-map
-entries, recompute their FName hashes, shift post-name-map summary offsets + export
-SerialOffset + BulkDataStartOffset by the length delta.
+Repath a package/object inside the `.uasset` name map (e.g. mesh object →
+`/Game/Mods/VOTVCoop/hl_einstein_v1sc.hl_einstein_v1sc` — NOT needed for the mesh, §6a).
+Rewrite the name-map entries, recompute their FName hashes, shift post-name-map summary
+offsets + export SerialOffset + BulkDataStartOffset by the length delta.
 **FName hashes CRACKED for real (validated 19/19 BOTH slots vs tex_kel3_skin, 2026-07-02;
 the earlier "verified 6/6" formula was WRONG on the NonCase slot):** each name-map entry
 stores 2 uint16 after the FString, in this order —
@@ -370,12 +389,12 @@ originally deferred.
 
 ## 10. References
 - `tools/client_model/README.md` + `SPEC.md` — pipeline/tools + byte-exact cook spec.
-- `tools/client_model/repose.py` + `votv_tpose_profile.json` — repose automation (§5).
+- `tools/client_model/repose.py` + `profiles/` (library; v2 wide = default) — repose automation (§5).
 - `research/findings/votv-mp-pak-mount-feasibility-2026-05-25.md` — pak plugins, auto-mount,
   the LoadObject POC (basis for §3A).
 - Code seams: `coop/player/remote_player.cpp:87/92/158`, `ue_wrap/puppet.cpp:341-680,525`,
   `ue_wrap/engine_component.cpp:212-222,241-250`.
 - SourceIO (`tools/SourceIO/`) — the Blender addon that imports GoldSrc `.mdl` natively
   (used for the manual example); psk-psa (`reference/psk-psa-v9.1.2/`) — PSK import/export.
-- Deliverable: `research/pak_re/scientist.pak`.
+- Deliverable: `research/pak_re/hl_einstein_v1sc.pak`.
 ```

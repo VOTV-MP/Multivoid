@@ -1,5 +1,12 @@
 # Hands-on runbook — puppet HEAD-FREEZE root fix (state-gate defeat, 2026-07-02)
 
+## OUTCOME — VERIFIED BOTH PEERS (take-2 hands-on, "работает отлично")
+
+Take-2 hands-on (13:33 session): head tracks back-turned on BOTH screens; host log 13:33:31
+`head-look state-gate hook installed`, zero `table full` lines. THREAD CLOSED. (The kerfur
+NPC constraint held by construction; a separate kerfur-mirror gaze flap was observed once and
+is a pre-existing v39 two-writer seam — see the session notes, not this fix.)
+
 ## TAKE 2 — host-side FAILED install root-fixed (`b77793d7`)
 
 **Deployed:** DLL `AFDCC37FFD359142`, all 4 install folders hash-verified. Pak unchanged
