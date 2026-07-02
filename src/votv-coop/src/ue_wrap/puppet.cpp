@@ -539,6 +539,18 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
         UE_LOGI("puppet[MainPlayer]: copied skin asset %p onto mesh_playerVisible "
                 "(SetSkeletalMesh ret=%d, field-after=%p, matches=%d)",
                 skeletalMeshAsset, setOk ? 1 : 0, after, (after == skeletalMeshAsset) ? 1 : 0);
+        // Two-body invariant (client-model probe take 3, hands-on-verified 2026-07-02): the actor
+        // renders TWO overlapping bodies -- mesh_playerVisible AND its AttachParent
+        // ACharacter::Mesh (class-default kel). Identical skins overlap invisibly (the game's own
+        // shape); a CUSTOM skin on mesh_playerVisible alone stays MASKED by the slot's kel (probe
+        // take 1), and hiding the slot kills the child too (take 2: UE gates a child's rendering
+        // by its AttachParent's visibility regardless of the propagate flag). So preserve the
+        // invariant: the given skin goes into BOTH slots. For the stock kel skin this is a no-op
+        // (UE early-outs on an identical mesh).
+        if (void* nativeSlot = ReadPtr(actor, P::off::ACharacter_Mesh);
+            nativeSlot && R::IsLive(nativeSlot)) {
+            E::SetSkeletalMesh(nativeSlot, skeletalMeshAsset);
+        }
     } else {
         UE_LOGW("puppet[MainPlayer]: no skin asset provided -- puppet will render whatever the class default carried (often blank)");
     }
