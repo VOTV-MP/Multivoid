@@ -78,6 +78,7 @@ const char* CategoryName(Category c) {
         case Category::Physics:  return "Physics";
         case Category::Dream:    return "Dream";
         case Category::World:    return "World";
+        case Category::Weather:  return "Weather";
         default:                 return "Other";
     }
 }
@@ -167,7 +168,16 @@ const std::vector<EventInfo>& Events() {
         { "paperGray",    D::RunEvent,     C::Prop, -1, "trigger",  "arms a paper-gray prop scare",    Risk::Safe },
         { "cookiebox",    D::SpecialEvent, C::Prop, -1, "rep-gated","spawns prop_cookiebox_C (gift)",  Risk::Safe },
         { "trashPiles",   D::SpecialEvent, C::Prop, -1, "rep-gated","trash props at doorways",         Risk::Safe },
-        { "arirGraff",    D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal (grime_arirGraffiti_C)", Risk::Safe },
+        // arirGraff: the switch has ONLY the 7 per-variant cases (arirGraff_0..6) -- a bare
+        // "arirGraff" falls through the SwitchName to RETURN, a silent no-op (2026-07-03 fix
+        // of the exact bug the user reported: "не все ивенты в списке").
+        { "arirGraff_0",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 0 (grime_arirGraffiti_C)", Risk::Safe },
+        { "arirGraff_1",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 1", Risk::Safe },
+        { "arirGraff_2",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 2", Risk::Safe },
+        { "arirGraff_3",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 3", Risk::Safe },
+        { "arirGraff_4",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 4", Risk::Safe },
+        { "arirGraff_5",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 5", Risk::Safe },
+        { "arirGraff_6",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 6", Risk::Safe },
         { "vaccine",      D::SpecialEvent, C::Prop, -1, "rep-gated","spawns event_vaccine_C",          Risk::Caution },
         { "oil",          D::SpecialEvent, C::Prop, -1, "rep-gated","spawns oilStainSpawn_C x8",       Risk::Caution },
         { "begos",        D::SpecialEvent, C::Prop, -1, "rep-gated","spawns begoExplosion_C x4",       Risk::Dangerous },
@@ -205,6 +215,17 @@ const std::vector<EventInfo>& Events() {
         { "lightswitch",D::SpecialEvent, C::World, -1, "rep-gated","lights turn off (event_lightsTurnoffer_C)", Risk::Caution },
         { "keypadGuess",D::SpecialEvent, C::World, -1, "rep-gated","door keypad guessed (event_passwordGuesser_C)", Risk::Caution },
         { "atvExplode", D::SpecialEvent, C::World, -1, "rep-gated","ATV boobytrap (car.trap = true)",    Risk::Dangerous },
+
+        // ---- Weather (the AMBIENT layer -- daynightCycle/mainGamemode timer verbs, not the eventer;
+        //      each button calls the SAME UFunction the game's own timer/RNG calls, on the live instance) ----
+        { "spawnFog",       D::Ambient, C::Weather, -1, "ambient", "thick rolling fog NOW (weatherFogController_C, 5-20 min)", Risk::Safe },
+        { "rain ON",        D::Ambient, C::Weather, -1, "ambient", "daynightCycle.causeRain(true)",                Risk::Safe },
+        { "rain OFF",       D::Ambient, C::Weather, -1, "ambient", "daynightCycle.causeRain(false)",               Risk::Safe },
+        { "spawnRedSky",    D::Ambient, C::Weather, -1, "ambient", "red-sky ambience (mainGamemode.spawnRedSky)",  Risk::Caution },
+        { "spawnBlackFog",  D::Ambient, C::Weather, -1, "ambient", "BLACK fog + eyer_C ghosts (mainGamemode)",     Risk::Caution },
+        { "badSun",         D::Ambient, C::Weather, -1, "ambient", "bad sun (mainGamemode.'Spawn Bad Sun')",       Risk::Caution },
+        { "flowerSpawner",  D::Ambient, C::Weather, -1, "ambient", "anomalous flowers (mainGamemode.flowerSpawner)", Risk::Safe },
+        { "trySpawnInsomniac", D::Ambient, C::Weather, -1, "ambient", "insomniac spawn attempt (internally gated -- may no-op)", Risk::Caution },
     };
     return kEvents;
 }
@@ -223,6 +244,44 @@ bool Trigger(const EventInfo& ev) {
     const std::string name = ev.name;
     const Dispatch dispatch = ev.dispatch;
     GT::Post([name, dispatch] {
+        if (dispatch == Dispatch::Ambient) {
+            // The ambient/weather layer: these verbs are NOT eventer cases -- the game fires them
+            // from daynightCycle/mainGamemode timers + RNG rolls. "Maximally native" here = call
+            // the SAME UFunction the timer's success-arm calls, on the live instance (the exact
+            // pattern the autonomous fogprobe proved; autotest_fog_probe.cpp).
+            struct AmbientVerb { const wchar_t* cls; const wchar_t* fn; int boolArg; const wchar_t* boolName; };
+            static const struct { const char* key; AmbientVerb v; } kAmbient[] = {
+                { "spawnFog",          { L"daynightCycle_C", L"spawnFog",          -1, nullptr } },
+                { "rain ON",           { L"daynightCycle_C", L"causeRain",          1, L"isRaining" } },
+                { "rain OFF",          { L"daynightCycle_C", L"causeRain",          0, L"isRaining" } },
+                { "spawnRedSky",       { L"mainGamemode_C",  L"spawnRedSky",       -1, nullptr } },
+                { "spawnBlackFog",     { L"mainGamemode_C",  L"spawnBlackFog",     -1, nullptr } },
+                { "badSun",            { L"mainGamemode_C",  L"Spawn Bad Sun",     -1, nullptr } },
+                { "flowerSpawner",     { L"mainGamemode_C",  L"flowerSpawner",     -1, nullptr } },
+                { "trySpawnInsomniac", { L"mainGamemode_C",  L"trySpawnInsomniac", -1, nullptr } },
+            };
+            const AmbientVerb* verb = nullptr;
+            for (const auto& a : kAmbient) if (name == a.key) { verb = &a.v; break; }
+            if (!verb) { UE_LOGW("event_trigger: unknown ambient verb '%s'", name.c_str()); return; }
+            void* inst = nullptr;
+            for (void* obj : R::FindObjectsByClass(verb->cls)) {
+                if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
+                    inst = obj;
+                    break;
+                }
+            }
+            if (!inst) { UE_LOGW("event_trigger: no live %ls instance (world not up?)", verb->cls); return; }
+            void* fn = R::FindFunction(R::ClassOf(inst), verb->fn);
+            if (!fn) { UE_LOGW("event_trigger: %ls::%ls unresolved", verb->cls, verb->fn); return; }
+            ue_wrap::ParamFrame f(fn);
+            if (!f.valid()) return;
+            if (verb->boolArg >= 0) f.Set<bool>(verb->boolName, verb->boolArg != 0);
+            if (ue_wrap::Call(inst, f))
+                UE_LOGI("event_trigger: ambient %ls::%ls dispatched ('%s')", verb->cls, verb->fn, name.c_str());
+            else
+                UE_LOGW("event_trigger: ambient %ls::%ls dispatch FAILED", verb->cls, verb->fn);
+            return;
+        }
         void* eventer = Eventer();
         if (!eventer) {
             UE_LOGW("event_trigger: no live trigger_eventer (world not up?)");

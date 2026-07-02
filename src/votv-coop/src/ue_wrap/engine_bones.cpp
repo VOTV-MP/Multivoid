@@ -16,10 +16,13 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace ue_wrap::engine {
 namespace {
@@ -30,6 +33,11 @@ namespace R = reflection;
 void* g_numBonesFn = nullptr, *g_boneNameFn = nullptr, *g_socketLocFn = nullptr;
 
 bool ResolveBoneFns() {
+    // All-resolved latch FIRST (audit F1 2026-07-03): without it every call paid TWO full
+    // GUObjectArray FindClass walks -- 60-120 walks/s with the bone overlay ON (the exact
+    // per-frame-walk anti-pattern the c7a0f5de pile-fps fix killed). UFunctions are
+    // process-lifetime; resolve once.
+    if (g_numBonesFn && g_boneNameFn && g_socketLocFn) return true;
     if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass)) {
         if (!g_numBonesFn) g_numBonesFn = R::FindFunction(sk, P::name::GetNumBonesFn);
         if (!g_boneNameFn) g_boneNameFn = R::FindFunction(sk, P::name::GetBoneNameFn);
@@ -38,6 +46,53 @@ bool ResolveBoneFns() {
         if (!g_socketLocFn) g_socketLocFn = R::FindFunction(sc, P::name::GetSocketLocationFn);
     }
     return g_numBonesFn && g_boneNameFn && g_socketLocFn;
+}
+
+// ---- bone-graph cache (CollectSkeletonBonePoints) ---------------------------------
+// The graph (bone FNames + parent links) is constant per skeleton asset; only positions
+// change per frame. Cache it per component so a visualizer refresh pays N GetSocketLocation
+// calls, not N*(name+parent) enumerations. Keyed by comp pointer + bone count: a recycled
+// pointer with a DIFFERENT skeleton almost surely differs in count and rebuilds; a same-
+// count recycle re-resolves identical names for the only skeleton this is used on (the
+// player-body rig) -- dev-diagnostic tolerance, documented here.
+struct BoneGraphCache {
+    int32_t n = 0;
+    std::vector<std::array<uint8_t, 8>> names;  // per-bone FName bytes (the socket-loc key)
+    std::vector<int32_t> parent;                // per-bone parent index, -1 = root
+};
+std::unordered_map<void*, BoneGraphCache> g_boneGraphs;  // game-thread only (like all of this TU)
+
+bool BuildBoneGraph_(void* comp, int32_t n, BoneGraphCache& out) {
+    // GetParentBone lives on USkinnedMeshComponent (runtime parent-chain: FName -> FName).
+    static void* s_parentFn = nullptr;
+    if (!s_parentFn) {
+        if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass))
+            s_parentFn = R::FindFunction(sk, L"GetParentBone");
+    }
+    if (!s_parentFn) return false;
+    out.n = n;
+    out.names.assign(static_cast<size_t>(n), {});
+    out.parent.assign(static_cast<size_t>(n), -1);
+    for (int32_t i = 0; i < n; ++i) {
+        ParamFrame nf(g_boneNameFn);
+        nf.Set<int32_t>(L"BoneIndex", i);
+        if (!Call(comp, nf)) return false;
+        nf.GetRaw(L"ReturnValue", out.names[static_cast<size_t>(i)].data(), 8);
+    }
+    for (int32_t i = 0; i < n; ++i) {
+        ParamFrame pf(s_parentFn);
+        pf.SetRaw(L"BoneName", out.names[static_cast<size_t>(i)].data(), 8);
+        if (!Call(comp, pf)) continue;  // root/unresolved -> stays -1
+        uint8_t pn[8] = {};
+        pf.GetRaw(L"ReturnValue", pn, sizeof(pn));
+        for (int32_t j = 0; j < n; ++j) {
+            if (std::memcmp(pn, out.names[static_cast<size_t>(j)].data(), 8) == 0) {
+                if (j != i) out.parent[static_cast<size_t>(i)] = j;
+                break;
+            }
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -120,6 +175,31 @@ bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& out
         }
     }
     return false;
+}
+
+int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
+    out.clear();
+    if (!skelMeshComp || !ResolveBoneFns()) return 0;
+    int32_t n = 0;
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    if (n <= 0) return 0;
+    // Eviction valve (audit F2): ragdoll bodies churn per episode and entries are keyed by
+    // comp pointer -- clear the whole map past a small bound (next Collect rebuilds one graph;
+    // dead keys are never dereferenced, this only caps growth).
+    if (g_boneGraphs.size() > 32) g_boneGraphs.clear();
+    BoneGraphCache& cache = g_boneGraphs[skelMeshComp];
+    if (cache.n != n) {
+        if (!BuildBoneGraph_(skelMeshComp, n, cache)) { g_boneGraphs.erase(skelMeshComp); return 0; }
+    }
+    out.reserve(static_cast<size_t>(n));
+    for (int32_t i = 0; i < n; ++i) {
+        ParamFrame lf(g_socketLocFn);
+        lf.SetRaw(L"InSocketName", cache.names[static_cast<size_t>(i)].data(), 8);
+        if (!Call(skelMeshComp, lf)) { out.clear(); return 0; }  // all-or-nothing: parent
+                                                                 // indices reference the FULL array
+        out.push_back(BonePoint{lf.Get<FVector>(L"ReturnValue"), cache.parent[static_cast<size_t>(i)]});
+    }
+    return static_cast<int>(out.size());
 }
 
 bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot) {

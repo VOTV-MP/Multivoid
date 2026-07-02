@@ -263,6 +263,17 @@ bool GetRagdollBodyPelvisRotation(void* body, FRotator& outRot) {
     return true;
 }
 
+void* GetRagdollBodyMesh(void* ragdollActor) {
+    return RagdollMeshOf(ragdollActor);  // null-safe + liveness-guarded inside
+}
+
+void* GetLocalRagdollBodyMesh(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
+    void* ragdollActor =
+        *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + kMainPlayer_ragdollActor);
+    return RagdollMeshOf(ragdollActor);
+}
+
 bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& outRot,
                                    FVector& outLinVel, FVector& outAngVel) {
     outLoc = FVector{}; outRot = FRotator{}; outLinVel = FVector{}; outAngVel = FVector{};

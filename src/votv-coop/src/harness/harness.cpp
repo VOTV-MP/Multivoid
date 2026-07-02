@@ -10,6 +10,7 @@
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
+#include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/session/save_transfer.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_menu_unlock.h"
@@ -306,7 +307,7 @@ void DriveMenuModeJoinWorldBoot() {
         PostPumpComposite([] {
             coop::net_pump::Tick(g_session, 0.f);
             coop::nameplate::Update();
-            coop::dev::object_overlay::Update();
+            coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
             coop::chat_feed::Tick();
             TickShutdownHooks();
         });
@@ -344,7 +345,7 @@ void DriveMenuModeJoinWorldBoot() {
             PostPumpComposite([] {
                 coop::net_pump::Tick(g_session, 0.f);
                 coop::nameplate::Update();
-                coop::dev::object_overlay::Update();
+                coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
                 coop::chat_feed::Tick();
                 TickShutdownHooks();
             });
@@ -662,7 +663,7 @@ void RunPlayLoop(bool idleInGameplay) {
             // no-ops when idle. Same for the dev object overlay (one atomic load
             // while its menu toggle is off).
             coop::nameplate::Update();
-            coop::dev::object_overlay::Update();
+            coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
             coop::chat_feed::Tick();
             // ALWAYS: the HWND close subclass + window title must work at the menu
             // too (the user may X-close before ever hosting -- the teardown path).
@@ -975,7 +976,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         while (!coop::shutdown::IsShuttingDown()) {
             // Coalesced like every other composite poster (audit WARN-1): the
             // loopback world can stall in loads too; never stack composites.
-            PostPumpComposite([] { coop::net_pump::Tick(g_session, 250.f); coop::nameplate::Update(); coop::dev::object_overlay::Update(); coop::chat_feed::Tick(); coop::roster::Refresh(); TickShutdownHooks(); });
+            PostPumpComposite([] { coop::net_pump::Tick(g_session, 250.f); coop::nameplate::Update(); coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update(); coop::chat_feed::Tick(); coop::roster::Refresh(); TickShutdownHooks(); });
             if (++tick % 120 == 0) {  // ~every 2 s at 60 Hz
                 Post([] {
                     UE_LOGI("netloopback: state=%d sent=%llu recv=%llu puppet=%d",
@@ -1088,6 +1089,7 @@ void Start() {
     // Dev object-overlay labels: menu-toggled normally; [dev] object_overlay=1
     // force-enables at boot so the autonomous smoke exercises the draw path.
     coop::dev::object_overlay::InitFromIni();
+    coop::dev::ragdoll_bone_overlay::InitFromIni();
     // v56 save-transfer: register the bulk sink with the session + sweep stale
     // crash-leftover zcoop_* slots (age-gated -- never a live sibling's).
     coop::save_transfer::Install(&g_session);

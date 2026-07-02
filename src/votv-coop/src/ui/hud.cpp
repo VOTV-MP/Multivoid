@@ -4,6 +4,7 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/object_overlay.h"
+#include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/player/nameplate.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/voice_icons.h"
@@ -217,6 +218,7 @@ void DrawChat() {
 bool IsActive() {
     return coop::nameplate::HasAny() || coop::chat_feed::HasAny() ||
            coop::dev::object_overlay::IsEnabled() ||
+           coop::dev::ragdoll_bone_overlay::IsEnabled() ||
            coop::voice_chat::Enabled();  // v66: the local mic indicator works pre-join too
 }
 
@@ -246,8 +248,45 @@ void DrawLocalVoiceIcon() {
     ui::voice_icons::Draw(dl, ImVec2(170.f, io.DisplaySize.y - 36.f), 28.f, icon, 0.9f);
 }
 
+// Dev ragdoll skeleton ESP (coop::dev::ragdoll_bone_overlay snapshot): bone->parent
+// lines + joint dots for every ACTIVE ragdoll body. Orange = the local player's own
+// native ragdoll; cyan = a remote peer's mirror body (the v22 pelvis-coupled one).
+void DrawRagdollBones() {
+    namespace RB = coop::dev::ragdoll_bone_overlay;
+    if (!RB::IsEnabled()) return;
+    RB::Snapshot rs;
+    RB::GetSnapshot(rs);
+
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const ImGuiIO& io = ImGui::GetIO();
+
+    if (rs.status[0]) {
+        constexpr float kStatusPx = 13.f;
+        const ImVec2 sz = font->CalcTextSizeA(kStatusPx, FLT_MAX, 0.f, rs.status);
+        TextOutlined(dl, font, kStatusPx,
+                     ImVec2(io.DisplaySize.x - sz.x - 10.f, 26.f),
+                     IM_COL32(255, 190, 120, 235), IM_COL32(0, 0, 0, 200), rs.status);
+    }
+
+    for (int i = 0; i < rs.count; ++i) {
+        const auto& L = rs.lines[i];
+        // Cull segments fully outside the viewport (margin keeps partially-visible limbs).
+        const float m = 80.f;
+        if ((L.x1 < -m && L.x2 < -m) || (L.y1 < -m && L.y2 < -m) ||
+            (L.x1 > io.DisplaySize.x + m && L.x2 > io.DisplaySize.x + m) ||
+            (L.y1 > io.DisplaySize.y + m && L.y2 > io.DisplaySize.y + m)) continue;
+        const ImU32 col = (L.kind == 0) ? IM_COL32(255, 170, 64, 235)    // local native ragdoll
+                                        : IM_COL32(110, 205, 255, 235);  // remote mirror body
+        dl->AddLine(ImVec2(L.x1, L.y1), ImVec2(L.x2, L.y2), col, 1.6f);
+        dl->AddCircleFilled(ImVec2(L.x1, L.y1), 2.2f, col);
+        dl->AddCircleFilled(ImVec2(L.x2, L.y2), 2.2f, col);
+    }
+}
+
 void Render() {
     DrawObjectOverlay();   // first: debug labels sit UNDER the player nameplates
+    DrawRagdollBones();    // skeleton lines under the nameplates too
     DrawNameplates();
     DrawChat();
     DrawLocalVoiceIcon();

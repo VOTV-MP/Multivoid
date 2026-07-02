@@ -364,6 +364,7 @@ add_library(votv-coop SHARED
     src/coop/dev/teleport_client.cpp
     src/coop/dev/menu_proceed.cpp
     src/coop/dev/object_overlay.cpp
+    src/coop/dev/ragdoll_bone_overlay.cpp
     src/ui/imgui_overlay.cpp
     src/ui/dev_menu.cpp
     src/ui/skins_panel.cpp

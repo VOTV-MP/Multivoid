@@ -1,6 +1,8 @@
 # Hands-on runbook 2026-07-03 — THE RE-BIND THREAD (dup pile + 4 Hz drain root fix)
 
-**Deployed:** DLL `77BB5D58CFB15505` on all 4 installs (hash-verified). Protocol UNCHANGED v94 —
+**Deployed:** DLL `8BAD59B4887DBDFC` on all 4 installs (hash-verified; supersedes `77BB5D58` —
+same re-bind fixes + the 2026-07-03 dev tools, see `handson_runbook_2026-07-03_devtools.md`).
+Protocol UNCHANGED v94 —
 mixed old/new peers are wire-compatible, but BOTH peers should run the new DLL (the fix has host
 AND client halves). Paks unchanged (hl_einstein `AE49002C`, rvi `ED666BE5`).
 
@@ -44,7 +46,7 @@ was a client-side NO-OP (the re-assert was silently rejected as a duplicate eid)
    half — eid=3129 class); a kerfur native whose eid row holds a foreign actor (address recycle)
    re-binds by key, never destroying the foreign actor.
 
-## Your tests (host + client, both on `77BB5D58`)
+## Your tests (host + client, both on `8BAD59B4`)
 
 1. **THE 20:27 repro — mass-move during join**: host: stand at a pile cluster, start
    grab-throwing piles across the room WHILE the client menu-joins; keep moving them through the

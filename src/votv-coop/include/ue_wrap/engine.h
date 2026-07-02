@@ -549,6 +549,22 @@ bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& out
 // head/neck twist against the native LookAt clamp.
 bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot);
 
+// One bone of a skeletal mesh's CURRENTLY-EVALUATED pose (ragdoll bone visualizer):
+// world position + the index of its PARENT bone within the same output array (-1 = root).
+struct BonePoint {
+    FVector world;
+    int32_t parent;
+};
+
+// Fill `out` (cleared first) with every bone's current world position + parent index on
+// `skelMeshComp`. The bone GRAPH (names + parent links via USkinnedMeshComponent::
+// GetNumBones/GetBoneName/GetParentBone) is cached per component; each call re-reads only
+// the positions (SceneComponent::GetSocketLocation -- a bone name is a valid socket name).
+// Returns the bone count (0 on null comp / unresolved functions). COST: one UFunction call
+// PER BONE per invocation -- a dev-diagnostic budget; never call from an always-on hot
+// path. Game thread only.
+int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out);
+
 // ACharacter capsule half-height read (UCapsuleComponent::CapsuleHalfHeight at the
 // fixed offset). 0.f if `mainPlayerPawn` is null or has no capsule. Used by
 // RemotePlayer's foot-on-ground placement (puppet visible feet at world Z =
@@ -911,6 +927,16 @@ bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& 
 // PropRelease apply pair) so the mirror body tumbles to TRACK the sender's real ragdoll
 // instead of free-simulating. No-op-safe if body/mesh/pelvis won't resolve. GT only.
 void DriveRagdollBodyPelvisVelocity(void* body, const FVector& linVel, const FVector& angVel);
+
+// The simulating SkeletalMesh component (Aragdoll_C::SkeletalMesh @0x230) of a ragdoll
+// ACTOR -- our spawned mirror body OR the game's native AplayerRagdoll_C. Null if the
+// actor is null/dead or the mesh is unresolved. Game thread only (ragdoll bone visualizer).
+void* GetRagdollBodyMesh(void* ragdollActor);
+
+// The LOCAL player's native ragdoll body mesh: mainPlayer.ragdollActor @0xC40 (spawned by
+// the C-key / faint / trip ragdollMode, destroyed on wakeup -- non-null IS the "is
+// ragdolling" signal) -> its SkeletalMesh. Null while not ragdolling. GT only.
+void* GetLocalRagdollBodyMesh(void* mainPlayer);
 
 // A long-lived UObject suitable as a WorldContextObject for the deferred-spawn
 // pair (BeginDeferredActorSpawnFromClass + FinishSpawningActor). Tries the

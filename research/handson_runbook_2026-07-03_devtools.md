@@ -1,0 +1,71 @@
+# Hands-on runbook 2026-07-03 (take 2) — ragdoll bone visualizer + events menu completion
+
+**Deployed:** DLL `8BAD59B4887DBDFC` on all 4 installs (hash-verified; contains the re-bind
+thread `2ab718d5` — test its runbook `handson_runbook_2026-07-03_rebind_thread.md` in the same
+session — plus these two dev features). Protocol still v94, no wire change. Host ini already
+carries `[dev] ragdoll_bone_overlay=1` from my autonomous verify — remove it if you want the
+checkbox to start OFF.
+
+## 1. Ragdoll bone visualizer (your ask: "checkbox which visualizes the bones ... of the RAGDOLL")
+
+**Where:** F1 → Player → HUD → **"Ragdoll bone skeleton"** (host-only, like every dev overlay).
+
+**What it draws:** for every ACTIVE ragdoll body — bone->parent lines + joint dots projected on
+screen (ESP style, visible through walls; ImGui, zero engine objects — the native DrawDebugLine
+is compiled OUT of the shipping exe, IDA-verified, so engine debug-draw was a dead end):
+- **orange** = YOUR own native ragdoll (press **C**; also faints/trips). The game's ragdoll is a
+  separate invisible actor (`playerRagdoll_C` — invisible because ragdollMode marks its mesh
+  SceneCapture-only; your camera rides its head bone).
+- **cyan** = a remote peer's MIRROR ragdoll body (spawns while that peer is ragdolled — the v22
+  pelvis-coupled body).
+
+**Verified autonomously:** the full chain ran in-process on a live real-ragdollMode body:
+`[BONE-OVERLAY-CHAIN] bones=6 parented-lines=5` — note the ragdoll body's skeleton is a
+SIMPLIFIED 6-bone physics rig (pelvis/chest/head/limb bodies), so expect ~5 lines per body, not
+a full anim skeleton. The status line (top-right, "ragdoll bones: ...") renders live — screenshot-
+proven. The lines themselves kept dodging the autonomous screenshots (the native auto-getup ends
+a still ragdoll in ~4 s and the capture pipeline is slower) — your 10-second check: tick the box,
+press C, look down/around; on recover the lines vanish.
+
+**Your original question — "map/attach every bone of the puppet to the ragdoll":** assessment
+from the RE: there is NO runtime per-bone write UFunction (bone writes are AnimGraph-only), so a
+bone-by-bone copy is out. The promising one-call mechanism is
+`SetMasterPoseComponent(ragdollBodyMesh)` on the puppet's two kel meshes while the mirror body is
+active (engine-driven full-bone copy, restore with nullptr on recover) — reflection-callable,
+UNVERIFIED (needs its own probe; the 2026-06-01 "master-pose issues" memory was about a different
+approach). With only 6 bones on the ragdoll rig, the visual gain over the current pelvis-attach
+may be modest — the visualizer is exactly the tool to judge that by eye. Say the word and I build
+the master-pose probe next.
+
+## 2. Events menu — completion + your campfire question
+
+**The campfire + map-wide smoke event = `treehouse_0`** (day-16: the ariral treehouse camp SE of
+the base; one of its four artifacts is `campfire_2.runTrigger(_,1)` → the `eff_campfireSmoke`
+column visible across the map; the same event also advances the treehouse build stage — that is
+one event by design). **It is already in the menu:** F1 → Game → Events → Story →
+**`treehouse_0`** (red = Dangerous → **Ctrl+click**).
+
+**IMPORTANT for your sync-mirror test:** today the campfire will light ONLY on the host. It
+flips a LEVEL-PLACED actor's state — the one event class none of our channels carries yet. The
+root-cause channel is designed (host broadcasts `EventFire{rowName, special}`; client replays the
+same `eventer.runEvent` reflected; `saveSlot.passEvents` (TArray<FName> @0xC8) is the dedupe +
+the host-side observation seam — the eventer dispatch itself is a BP→BP call, invisible to every
+hook per COOP_DISPATCH_VISIBILITY). That channel is the next build — after it, your campfire test
+should light BOTH peers natively.
+
+**Menu fixes you asked for ("не все ивенты в списке"):**
+- `arirGraff` was a SILENT NO-OP (the game's switch has only per-variant cases) — replaced with
+  **arirGraff_0 … arirGraff_6** (7 graffiti variants, Prop category).
+- NEW **Weather** category — the ambient layer that never went through the eventer (fired by
+  daynightCycle/mainGamemode timers+RNG; each button calls the exact UFunction the timer calls):
+  `spawnFog` (thick rolling fog NOW, 5-20 min), `rain ON`/`rain OFF`, `spawnRedSky`,
+  `spawnBlackFog` (black fog + eyer ghosts — Caution), `badSun`, `flowerSpawner`,
+  `trySpawnInsomniac` (internally gated, may no-op).
+- Deliberately NOT exposed (documented in the header): `superFogEvent` (a literal 5% roll inside
+  — a deterministic lever needs the superFog_C spawn transform, follow-up), fleshRain/errorObject
+  (need transforms), Eye Moon / jellyfish (verb owner unverified in the current dump).
+
+**Test:** F1 → Game → Events → Weather → `spawnFog` — fog rolls in within seconds on the host
+(clients already mirror rolling fog via the weather channel — check the client sees it too);
+`rain ON` / `rain OFF` toggles rain. Story → `treehouse_0` Ctrl+click → campfire+smoke on the
+HOST (client NOT expected yet — see above).

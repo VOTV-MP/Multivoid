@@ -54,6 +54,9 @@ enum class Category : uint8_t {
     Physics,   // loose-physics manipulation
     Dream,     // enters the sleep/dream subsystem
     World,     // mutates non-prop world/device state (ATV, keypad/console/lights devices)
+    Weather,   // the AMBIENT layer: fog/rain/sky verbs fired by daynightCycle/mainGamemode timers+RNG,
+               // NOT by the eventer dispatchers -- the dev trigger calls the SAME UFunction the game's
+               // own timer calls on the live instance (the fogprobe-proven pattern). 2026-07-03.
     COUNT
 };
 
@@ -65,6 +68,12 @@ enum class Dispatch : uint8_t {
     RunEvent,      // runEvent(name, "None") -- the normal 65-case path
     RandomPrank,   // runEvent("arirInteraction_0", "ariralPrank") -- a RANDOM rep-tiered ariral prank
     SpecialEvent,  // runSpecialEvent(name) -- ONE specific, addressable ariral prank
+    Ambient,       // an ambient/weather verb on daynightCycle_C / mainGamemode_C (ev.name keys the
+                   // verb table in the .cpp) -- the exact UFunction the game's own timer/RNG calls.
+                   // NOT exposed (documented, deliberate): superFogEvent (a literal 5%% roll inside --
+                   // a deterministic lever needs the superFog_C spawn transform, follow-up),
+                   // fleshRain/spawnErrorObject (need a spawn transform), skysphere setEye +
+                   // jellyfishPath spawn (verb/owner not confirmed in the current CXX dump).
 };
 
 struct EventInfo {

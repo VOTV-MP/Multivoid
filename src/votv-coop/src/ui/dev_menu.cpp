@@ -7,6 +7,7 @@
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
+#include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/add_points.h"
 #include "coop/dev/restore_vitals.h"
@@ -125,6 +126,16 @@ void RenderObjectOverlay() {
     ImGui::Unindent(22.f);
 }
 
+void RenderRagdollBones() {
+    namespace RB = coop::dev::ragdoll_bone_overlay;
+    bool on = RB::IsEnabled();
+    if (ImGui::Checkbox("Ragdoll bone skeleton", &on)) RB::SetEnabled(on);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(lines between every bone of an ACTIVE ragdoll body)");
+    ImGui::TextDisabled("The native ragdoll (C key / faint / trip) is an invisible separate actor;");
+    ImGui::TextDisabled("orange = your own ragdoll, cyan = a remote peer's mirror body.");
+}
+
 void RenderSpawnNpc() {
     if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
     ImGui::SameLine();
@@ -177,7 +188,8 @@ bool StrContainsI(const char* hay, const char* needle) {
 
 void RenderEvents() {
     namespace ET = coop::dev::event_trigger;
-    ImGui::TextDisabled("Trigger any game event (host only; runEvent + runSpecialEvent). Grouped by strict");
+    ImGui::TextDisabled("Trigger any game event (host only; runEvent + runSpecialEvent + ambient verbs).");
+    ImGui::TextDisabled("Grouped by strict");
     ImGui::TextDisabled("category. 'day N' = unlock day. The cyan TIME column is the native trigger time-of-");
     ImGui::TextDisabled("day (HH:MM anchor) / 'trigger' (story/build) / 'rep' (ariral-reputation prank pool).");
     static char filter[32] = {};
@@ -224,6 +236,7 @@ void RenderEvents() {
             } else {
                 const char* path = (ev.dispatch == ET::Dispatch::SpecialEvent) ? "runSpecialEvent (specific prank)"
                                  : (ev.dispatch == ET::Dispatch::RandomPrank)  ? "runEvent (RANDOM rep-tier prank)"
+                                 : (ev.dispatch == ET::Dispatch::Ambient)      ? "direct ambient UFunction (daynight/gamemode)"
                                  :                                               "runEvent";
                 ImGui::SetTooltip("%s  |  native time: %s  |  via %s\n%s", catName, ev.time, path, ev.mechanism);
             }
@@ -256,7 +269,7 @@ const std::vector<Cat>& Tree() {
         { "Player", {
             { "Movement", { { &RenderTeleportClients, true }, { &RenderFreecam, true } }, true },
             { "Vitals",   { { &RenderRestoreVitals, true } }, true },
-            { "HUD",      { { &RenderPosHud, true }, { &RenderObjectOverlay, true } }, true },
+            { "HUD",      { { &RenderPosHud, true }, { &RenderObjectOverlay, true }, { &RenderRagdollBones, true } }, true },
         }, true },
         { "Game", {
             { "Weather",  { { &RenderSnow, true } }, true },
