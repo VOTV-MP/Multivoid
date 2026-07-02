@@ -123,6 +123,28 @@ GENERAL — the flashlight (`autotest.cpp:667`), `spawn_menu.cpp:81`, and the sa
   clump lands in **`grabbing_actor`** (the PHC light-grab path), not `holding_actor`. Template + proof:
   `harness/autotest_chippile.cpp`.
 
+## Overriding an AnimBP variable that BUA recomputes — the POST-BUA `Func` patch (2026-07-02)
+
+**A game-thread tick write to an AnimInstance variable that `BlueprintUpdateAnimation` recomputes
+ALWAYS loses.** Per-anim-update order (UE4.27, game thread): **BUA (event graph, recomputes the var)
+→ the PropertyAccess FastPath copy batch (samples class vars into node pins) → the anim-graph node
+update (state machines evaluate transitions from the just-copied pins)**. Any write landing outside
+that window is overwritten by the next BUA before the copies read it — which is why FOUR attempts at
+the puppet head-freeze failed before the seam was named. **The seam: `ufunction_hook::InstallPostHook`
+on the AnimBP's OWN `BlueprintUpdateAnimation` override** (it dispatches through `UFunction::Func`
+whether called via PE or not) — the callback runs after the recompute, before the copies. Instance
+filtering happens IN the callback (e.g. puppet-only by identity: outer chain → `mainPlayer_C` with
+null `Controller`). Guard: verify `OuterOf(fn) == the BP class` — resolving a SUPER's declaration
+would over-hook every AnimInstance. **[V-static + AS-BUILT `5b2cb5ff` (HeadGateBUAPost); hands-on
+pending.]**
+
+**Corollary (the head-freeze lesson): a node's Alpha field ≠ its effective weight.** Anim nodes
+hosted INSIDE a state-machine state contribute NOTHING when the machine leaves that state — the
+node's own fields read unchanged (Alpha 1.0) while its output is ignored. Before trusting "the node
+is on, alpha=1", check WHERE the node lives (BakedStateMachines + CDO pose-link trace in the
+bp_reflection JSON). The kerfur AnimBP hosts BOTH head/neck `FAnimNode_LookAt` nodes inside state
+`lookAtPlayer`; `lookingAtPlayer` gates that state's transitions = the de-facto head on/off. **[V-static]**
+
 ## Catching an `EX_CallMath` (BP→native-thunk) call — a `UFunction::Func` patch, NOT a ProcessEvent observer
 
 **The 2026-06-21 correction.** A ProcessEvent observer can NEVER fire on an `EX_CallMath` call (e.g. a BP

@@ -131,7 +131,8 @@ adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repa
 > AS-BUILT differs from the original plan below in ONE load-bearing way: the skin is applied to
 > BOTH body slots (SpawnPuppetMainPlayer writes it to mesh_playerVisible AND the native
 > ACharacter::Mesh AttachParent) -- see the STATUS block's two-body invariant. The 3C coop test
-> recipe below is still the pending FINAL visual (host+client see each other as kel vs scientist).
+> PASSED [V hands-on 2026-07-02 "Работает amazing"]: host+client facing each other, client
+> puppet = textured scientist on the host's screen, host puppet = kel on the client's.
 
 Prior RE: `research/findings/votv-mp-pak-mount-feasibility-2026-05-25.md`.
 
@@ -176,17 +177,17 @@ Preconditions: build+deploy the 3A/3B runtime change; deploy `scientist.pak` to 
    - **Animation is correct:** idle/walk drive the scientist with the anthro AnimBP;
      **arms do NOT over-rotate** (this is what the §5 repose fixed — verify it held).
    - The HOST's own puppet (seen by the client) stays Dr. Kel (role gating works).
-4. **EXPECTED-WRONG (not a failure):** the scientist's **texture is garbled** — it's
-   currently the kel material sampled through the scientist's UVs (§7). Shape/rig/anim
-   are the real test; textures are the next feature.
+4. ~~EXPECTED-WRONG: garbled texture~~ **RESOLVED** — the §7 atlas ladder shipped; the
+   scientist renders with its real textures (rung-4 [V]).
 5. If load CRASHES or the asset won't resolve by name → do the name-map rename (§8) and
    retest. If arms over-rotate → the repose/AnimBP retarget needs a look (§5).
 6. Screenshots are for autonomous runs only (per project rule); for a hands-on test the
    user observes directly.
 
-Open questions: (1) auto-mount `Content/Paks/LogicMods/…` vs mod `MountPakFile`; auto
-first. (2) confirm each `RemotePlayer` carries host/client role at `Spawn()` time.
-(3) client seeing its OWN body as scientist (local pawn) — separate, later.
+Former open questions — resolved: (1) **auto-mount wins** [V]: UE mounts
+`Content/Paks/LogicMods/…` at startup, no MountPakFile call needed (320c0ab4 runtime proof).
+(2) **role at Spawn = the peer SLOT** [V]: net_pump role gate (slot 0 = host).
+Still open (separate, later): (3) client seeing its OWN body as scientist (local pawn).
 
 ---
 

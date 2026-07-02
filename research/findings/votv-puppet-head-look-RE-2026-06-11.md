@@ -430,12 +430,12 @@ sets `customLookAt=true`. The puppet AnimBP IS the kerfur AnimBP, so the gate pa
   (`kKerfurModifyBone`, `ModBone_Rotation`, `ModBone_RotationMode`, the SkelCtl_Alpha writes).
   Keep the ones still used by `DumpKerfurHeadGraph` (diagnostic) but drop any left dead. **Fix the
   wrong comment regardless:** `ModBone_RotationMode` should read `(0=Ignore,1=Replace,2=Additive)`.
-- `lookingAtPlayer = false` per-tick write (puppet.cpp:663) — it only gates two state-machine
-  transitions (idle/look STATE), not the head aim (2026-06-07 RE Q3). Leaving it forced-false makes
-  the puppet never pick the "looking at player" idle variant, which is actually correct for a puppet
-  (the puppet isn't an NPC reacting to a player). It is harmless either way; drop the redundant
-  per-tick write if you want the puppet to use the native state selection. (Low priority — not the
-  head bug.)
+- `lookingAtPlayer = false` per-tick write (puppet.cpp:663) — **2026-07-02 CORRECTION: this
+  paragraph's premise ("only gates a STATE, not the head aim", 2026-06-07 RE Q3) is WRONG — the
+  LookAt nodes live INSIDE that state, so the flag IS the head-look on/off.** Forced/seeded false
+  was actively harmful (pushes the machine to `lookStraight` = frozen head); the seed is now TRUE
+  and a post-BUA Func hook re-asserts it every anim update, puppet-only (`5b2cb5ff`). Topology
+  proof: `votv-puppet-head-freeze-backturned-RE-2026-06-24.md` top banner.
 
 ### Wire format: NO new field needed
 

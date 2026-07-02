@@ -1,5 +1,15 @@
 # VOTV kerfur HEAD-LOOK sync — AnimBP BP-disassembly ground truth + coop design (2026-06-07)
 
+> **2026-07-02 CORRECTION — Q3's "lookingAtPlayer does NOT gate the head twist" is WRONG.**
+> The graph TOPOLOGY (BakedStateMachines + CDO pose-link trace) proves the two FAnimNode_LookAt
+> nodes are the ENTIRE sub-graph of state `lookAtPlayer` in trunk machine "New State Machine_1";
+> the `lookingAtPlayer` FastPath copies into TransitionResult_7/_5 gate THAT state pair — so the
+> flag exits the look state and the head-look contribution zeroes (head snaps to NEUTRAL). "The
+> node Alphas are static 1.0/0.5" was true but irrelevant: the STATE weight is what dies. Full
+> proof + the puppet-only fix (post-BUA Func hook, `5b2cb5ff`):
+> `votv-puppet-head-freeze-backturned-RE-2026-06-24.md` top banner. **Everything else in this doc
+> (the lookAt/customLookAt data flow, FastPath copies, Design C for the NPC mirror) stands.**
+
 **Goal:** the kerfur mirror's head points where the *client's* local player is, not where the
 *host* kerfur is actually looking (user hands-on: "kerfur was looking in another direction on
 client, but on host kerfur looked on host"). This doc RE's the kerfur AnimBP head-look pipeline

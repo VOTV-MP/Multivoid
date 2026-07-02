@@ -92,11 +92,13 @@ void* GetSkeletalMeshComponent(void* puppetActor);
 // RE: research/findings/votv-puppet-head-look-RE-2026-06-11.md.
 void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 
-// PROBE support (puppet-head-freeze positive-confirm, 2026-06-24): read the puppet's
-// own kerfur AnimInstance LookAtClamp (head + neck nodes) AND the resolved WORLD
-// rotation of the 'head'/'neck' bones, so the coop/dev probe can compare the DESIRED
-// head twist (look-input vs body yaw) against the ACTUAL twist and the clamp -- proving
-// whether the frozen head is PINNED at the ~45+22deg clamp. Read-only; game thread.
+// PROBE support (puppet-head-freeze, 2026-06-24; root NAMED + fixed 2026-07-02): read the
+// puppet's own kerfur AnimInstance LookAtClamp/alphas/gate flags AND the resolved WORLD
+// rotation of the 'head'/'neck' bones. History: the clamp-pin theory was REFUTED by this
+// probe (TWIST snapped to 0, alphas stayed 1.0/0.5); the real gate = the LookAt nodes live
+// INSIDE state `lookAtPlayer`, exited when lookingAtPlayer flips false (see HeadGateBUAPost
+// in puppet.cpp). The probe now doubles as the fix's verifier: with the post-BUA hook,
+// `lookingAtPlayer` must read TRUE on puppet instances every sample. Read-only; game thread.
 struct PuppetHeadLookProbe {
     float headClampDeg = 0.f;    // FAnimNode_LookAt head node LookAtClamp (class-default 45)
     float neckClampDeg = 0.f;    // neck node LookAtClamp (class-default 45, Alpha 0.5)

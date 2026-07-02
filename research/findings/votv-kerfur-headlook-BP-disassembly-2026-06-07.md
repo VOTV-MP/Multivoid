@@ -1,5 +1,11 @@
 # VOTV kerfur AnimBP head-look — BP DISASSEMBLY + PropertyAccess ground truth (2026-06-07)
 
+> **2026-07-02 CORRECTION — §2 Q3's "gates state-machine transitions ... NOT the LookAt nodes'
+> on/off" is WRONG in its consequence:** the LookAt nodes live INSIDE the very state those
+> transitions select (`lookAtPlayer` in "New State Machine_1"), so the transition gate IS the
+> head-look on/off. Topology proof + fix: `votv-puppet-head-freeze-backturned-RE-2026-06-24.md`
+> top banner (`5b2cb5ff`). The data-flow facts and Design C in this doc stand.
+
 **Question:** how does the kerfur head-look animate, and what is the cleanest way for a CLIENT
 mirror (AI suppressed, AnimBP still ticking) to make its head point where the HOST kerfur's head
 points?
