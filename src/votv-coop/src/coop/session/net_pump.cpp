@@ -928,7 +928,27 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // One-shot install of the per-subsystem observers (idempotent).
         { PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
         // Outbound local streams: pose + held-prop + ragdoll (coop/local_streams).
-        coop::local_streams::Tick(session, g_netLocal, g_netLocalController);
+        //
+        // v94 JOIN-JUMP root fix (user 2026-07-02: "хост видит как клиенты ПРЫГАЮТ
+        // по позициям где проходил ХОСТ"): a joining client's pawn EXISTS through
+        // the whole 30-60 s load window -- first the menu/loading pawn, then the
+        // gameplay pawn being TELEPORTED through the HOST-SAVE positions as
+        // loadObjects applies the downloaded save -- and every one of those
+        // positions was streamed as OUR pose. The host spawns the puppet on the
+        // first pose, so it jumped through the host's own history. The data is
+        // garbage AT THE SOURCE, so the SENDER gates (one owner): stream only when
+        // our world is authoritative -- host: a gameplay world is up; client: the
+        // SAME coherence predicate that fired our ClientWorldReady (announced +
+        // no world-change re-seed pending). The last pre-gate pose never exists
+        // for a first join (nothing streamed yet), so the host-side puppet now
+        // spawns at the client's REAL first in-world position; a mid-session
+        // world change pauses the stream (peers see the puppet stand, not jump).
+        const bool poseAuthoritative =
+            isHost ? worldUp
+                   : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
+                      !g_reAnnounceWorldReady.load(std::memory_order_relaxed));
+        if (poseAuthoritative)
+            coop::local_streams::Tick(session, g_netLocal, g_netLocalController);
     }
 
     // Per-slot pose drive. Iterate ALL peer slots [0, kMaxPeers) and skip
