@@ -16,6 +16,17 @@ namespace R = ue_wrap::reflection;
 
 // Game-thread only (pump tick + BP Func dispatch) -> plain statics, no atomics.
 bool    g_installed     = false;
+// True once ANY pump tick ran without the gameplay GM class loaded (menu / pre-world).
+// Discriminates the two "pawn already live at install time" cases: a menu-join client's
+// install can only land on the FIRST POST-TRAVEL tick (`open untitled_1` BLOCKS the game
+// thread, so gm class + the parked possessed pawn appear to us in the same tick) -- there
+// the world came up DURING this session and its loadObjects is still coming (the ubergraph
+// stages it across rendered frames), so the pre-session stamp must NOT fire. A first
+// session started from INSIDE a world (browser-flow host / in-world joiner) never sees a
+// pre-world tick -> its world predates the hook -> stamp. Later sessions in the same
+// process need no install-time stamp at all: the process-lifetime POST hook already
+// stamped every world load since.
+bool    g_sawPreWorldTick = false;
 void*   g_appliedAnchor = nullptr;  // gm instance (POST path) or the pawn itself (pre-session stamp)
 int32_t g_anchorIdx     = -1;       // its GUObjectArray slot -- IsLiveByIndex revalidation
 void*   g_appliedPawn   = nullptr;  // the local pawn the placement belongs to
@@ -44,7 +55,10 @@ void OnLoadObjectsPost(void* src, void* /*res*/) {
 void EnsureInstalled() {
     if (g_installed) return;
     void* gmCls = R::FindClass(L"mainGamemode_C");
-    if (!gmCls) return;  // gameplay GM class not loaded yet (menu window) -- retry next tick
+    if (!gmCls) {
+        g_sawPreWorldTick = true;  // ticking before any gameplay world this session
+        return;                    // retry next tick (class loads with the map)
+    }
     void* fn = R::FindFunction(gmCls, L"loadObjects");
     if (!fn) {
         static bool s_warned = false;
@@ -65,21 +79,24 @@ void EnsureInstalled() {
         return;
     }
     g_installed = true;
-    // Pre-session world: a local pawn already live at hook-install time means this world's
-    // loadObjects pre-dates the hook (browser-flow host clicking Host mid-game, or an
-    // in-world joiner before its save-transfer reload). Its load is definitionally done --
-    // stamp now, with the pawn itself as the liveness anchor. A fresh boot (env host /
-    // menu-join client) has NO pawn yet at this point, so the POST latch alone decides.
+    // Pre-session world: a pawn already live at install time AND no pre-world tick seen
+    // this session means the world predates the hook entirely (first session started from
+    // INSIDE a world: browser-flow host / in-world joiner) -- its load is definitionally
+    // done, stamp now with the pawn itself as the liveness anchor. With a pre-world tick
+    // on record the pawn is the PARKED mid-load pawn of a world that came up during this
+    // session (menu-join: the blocking travel makes gm class + possessed pawn appear to
+    // us in the same tick) -- do NOT stamp; this world's loadObjects POST decides.
     void* pawn = coop::players::Registry::Get().Local();
-    if (pawn) {
+    if (pawn && !g_sawPreWorldTick) {
         g_appliedAnchor = pawn;
         g_anchorIdx     = R::InternalIndexOf(pawn);
         g_appliedPawn   = pawn;
-        UE_LOGI("save_apply_gate: loadObjects POST latch installed (fn=%p); local pawn %p was "
-                "already live -> pre-session world stamped as placed", fn, pawn);
+        UE_LOGI("save_apply_gate: loadObjects POST latch installed (fn=%p); pre-session world "
+                "(no pre-world tick this session) -> local pawn %p stamped as placed", fn, pawn);
     } else {
         UE_LOGI("save_apply_gate: loadObjects POST latch installed (fn=%p); awaiting this "
-                "world's loadObjects for the placement stamp", fn);
+                "world's loadObjects for the placement stamp (pawn=%p preWorldTick=%d)",
+                fn, pawn, g_sawPreWorldTick ? 1 : 0);
     }
 }
 
