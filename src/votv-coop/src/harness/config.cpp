@@ -388,14 +388,16 @@ std::wstring ReadNickname() {
 std::string ReadPlayerSkin() {
     // v93 skins: the persisted body-skin choice, stored NEXT TO the player identity
     // (votv-coop.ini "player_skin=", same file as player_guid -- user 2026-07-02).
-    // A NEW identity (absent/malformed key) is assigned the CURRENT scientist,
-    // hl_einstein_v1sc, and the default is persisted immediately (like the guid).
+    // v95: a NEW identity (absent/malformed key) rolls a RANDOM starter from the
+    // curated converter-skin list (user: "для НОВЫХ пиров случайный скин из списка"),
+    // filtered to paks present on this install -- hl_einstein_v1sc when none is.
+    // Persisted immediately (like the guid), so the roll happens ONCE per identity.
     std::string skin = ReadIniValue("player_skin", "");
     if (!coop::skins::IsValidSkinName(skin)) {
-        skin = coop::skins::kDefaultSkinName;
+        skin = coop::skins::PickRandomStarterSkin();
         WriteIniValue("player_skin", skin.c_str());
-        UE_LOGI("config: player_skin absent/invalid -> default '%s' (persisted to votv-coop.ini)",
-                skin.c_str());
+        UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (persisted to "
+                "votv-coop.ini)", skin.c_str());
     }
     return skin;
 }

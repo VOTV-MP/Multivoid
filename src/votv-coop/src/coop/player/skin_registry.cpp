@@ -7,6 +7,7 @@
 
 #include <cwctype>
 #include <filesystem>
+#include <random>   // PickRandomStarterSkin -- one roll per NEW identity (boot path)
 
 namespace coop::skins {
 
@@ -78,6 +79,36 @@ const wchar_t* BuiltinSkinPath(const std::string& name) {
     for (const auto& b : kBuiltinSkins)
         if (name == b.name) return b.path;
     return nullptr;
+}
+
+std::string PickRandomStarterSkin() {
+    // v95 (user 2026-07-02): the curated "coolest" converter skins a NEW peer starts
+    // with. Names are pak stems; a name only qualifies when its pak is present here,
+    // so a fresh install without the bundle still boots with a loadable body.
+    static constexpr const char* kStarterSkins[] = {
+        "walter_v1sc", "sci_v1sc", "rvi_scientist_v1sc",
+        "luther_v1sc", "twhl_scientist2_v1sc", "twhl_scientist3_v1sc",
+    };
+    std::vector<const char*> present;
+    const std::wstring dirW = PakDir();
+    if (!dirW.empty()) {
+        std::error_code ec;
+        for (const char* s : kStarterSkins) {
+            fs::path cand = fs::path(dirW) / s;
+            cand += L".pak";
+            if (fs::is_regular_file(cand, ec)) present.push_back(s);
+        }
+    }
+    if (present.empty()) {
+        UE_LOGI("skin_registry: no starter-list pak present -- new identity falls back to '%s'",
+                kDefaultSkinName);
+        return kDefaultSkinName;
+    }
+    std::mt19937 rng{std::random_device{}()};
+    const char* pick = present[rng() % present.size()];
+    UE_LOGI("skin_registry: new identity rolled starter skin '%s' (%zu of %zu list paks present)",
+            pick, present.size(), std::size(kStarterSkins));
+    return pick;
 }
 
 std::wstring PakDir() {

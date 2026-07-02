@@ -30,10 +30,18 @@ namespace coop::skins {
 // The native (pak-less) skin: Dr. Kel, the stock player body.
 inline constexpr const char* kNativeSkinName = "dr_kel";
 
-// The factory default for a NEW player identity (user 2026-07-02: a new player
-// starts as the CURRENT scientist). Written to votv-coop.ini player_skin= on
-// first launch, right where player_guid= is generated.
+// The factory default for a NEW player identity when NONE of the curated starter
+// paks (PickRandomStarterSkin) is installed. Written to votv-coop.ini player_skin=
+// on first launch, right where player_guid= is generated.
 inline constexpr const char* kDefaultSkinName = "hl_einstein_v1sc";
+
+// v95 random starter (user 2026-07-02: "для НОВЫХ пиров случайный скин из списка"):
+// pick a random skin for a NEW player identity from the curated converter-skin list,
+// filtered to the paks actually PRESENT in LogicMods/votv-coop on this install (a
+// pick that cannot load would pin the new player to the native fallback body).
+// Returns kDefaultSkinName when none of the list is installed. Boot thread (config
+// read path) -- touches the filesystem once.
+std::string PickRandomStarterSkin();
 
 struct SkinEntry {
     std::string  name;         // pak stem = package name = wire name
