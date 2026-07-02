@@ -54,10 +54,20 @@ void OnLoadObjectsPost(void* src, void* /*res*/) {
 
 void EnsureInstalled() {
     if (g_installed) return;
+    // Throttle the WHOLE unlatched path to ~1 Hz (perf audit 2026-07-02): FindClass is a
+    // full GUObjectArray walk (there is no name->class cache), and this runs per pump tick
+    // through the entire menu-join download window -- unthrottled it is 60 walks/s on the
+    // same thread draining the transfer (the firefly_sync %-throttle precedent). The first
+    // call still attempts immediately; a ~1 s install granularity is safe -- the gm class
+    // loads at map open and loadObjects fires at the load tail, >=4 s later. Also bounds
+    // the two permanent-failure branches below (fn-null / hook-refused) to 1 walk/s
+    // instead of per-tick, without failing the gate closed forever on a transient refuse.
+    static uint32_t s_throttle = 0;
+    if ((s_throttle++ % 64) != 0) return;  // call #1 attempts immediately (0 % 64 == 0)
     void* gmCls = R::FindClass(L"mainGamemode_C");
     if (!gmCls) {
         g_sawPreWorldTick = true;  // ticking before any gameplay world this session
-        return;                    // retry next tick (class loads with the map)
+        return;                    // retry (throttled) -- the class loads with the map
     }
     void* fn = R::FindFunction(gmCls, L"loadObjects");
     if (!fn) {
