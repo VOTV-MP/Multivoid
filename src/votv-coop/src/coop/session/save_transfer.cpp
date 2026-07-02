@@ -656,6 +656,27 @@ void TickPileFlushLateArm() {
         if (now >= g_pileFlushArmUntil[slot]) {                                    // window expired -> disarm + free dedup
             g_pileFlushArmUntil[slot] = {};
             g_lastFlushedPilePos[slot].clear();
+            // JOIN WINDOW CLOSED for this slot (2026-07-02 client-FPS storm): the save-time blob
+            // maps are JOIN-WINDOW structures, but "active join" was defined as map-non-empty and
+            // nothing ever emptied them -- so for the whole session every host pile grab kept
+            // stamping its pre-grab key (RecordGrabTimePileXform) and every kToPile LAND kept
+            // carrying a save-time key. The client then armed a HOPELESS pending twin per
+            // steady-state drop (its native@old was already retired at the grab hand-off), and
+            // each twin pinned the quiescence drain for kMaxTwinPasses x 250 ms of full-
+            // GUObjectArray sweeps (the 19:23 [HITCH-SRC] 21-22 ms storm at 4-5 Hz during pile
+            // play). The b3 late flush is the LAST consumer of these maps: at its expiry the
+            // joiner has long quiesced + reconciled (in-window converts delivered, connect replay
+            // drained), and a LATE kerfur turn-on resolves by EID against its already-bound prop
+            // (the save-time key only serves the in-window unbound race). Retire the maps ->
+            // steady-state grabs stop stamping keys -> clients stop arming hopeless twins.
+            if (!g_blobPileXforms[slot].empty() || !g_blobKerfurXforms[slot].empty()) {
+                UE_LOGI("[PILE-09] slot %d join window CLOSED (b3 late-flush expiry) -- retiring "
+                        "save-time maps (%zu pile + %zu kerfur xform(s)); steady-state grabs no "
+                        "longer stamp save-time keys for this joiner",
+                        slot, g_blobPileXforms[slot].size(), g_blobKerfurXforms[slot].size());
+                g_blobPileXforms[slot].clear();
+                g_blobKerfurXforms[slot].clear();
+            }
             continue;
         }
         if (now - g_pileFlushLastRun[slot] < kPileFlushCadence) continue;          // debounce to the cadence
