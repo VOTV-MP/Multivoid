@@ -1,10 +1,9 @@
 # Hands-on runbook 2026-07-03 — THE RE-BIND THREAD (dup pile + 4 Hz drain root fix)
 
-**Deployed:** DLL `8BAD59B4887DBDFC` on all 4 installs (hash-verified; supersedes `77BB5D58` —
-same re-bind fixes + the 2026-07-03 dev tools, see `handson_runbook_2026-07-03_devtools.md`).
-Protocol UNCHANGED v94 —
-mixed old/new peers are wire-compatible, but BOTH peers should run the new DLL (the fix has host
-AND client halves). Paks unchanged (hl_einstein `AE49002C`, rvi `ED666BE5`).
+**Deployed (UPDATED take 3):** DLL `DF0C0295B6E7613F` on all 4 installs (hash-verified;
+supersedes `8BAD59B4` — same re-bind fixes + dev tools PLUS the v95 EventFire channel, see
+`handson_runbook_2026-07-03_eventfire.md`). Protocol now v95 — BOTH peers must run the new DLL.
+Paks unchanged (hl_einstein `AE49002C`, rvi `ED666BE5`).
 
 **Autonomous smoke:** PASS (fresh client vs s_1234 host, 12 s past join, kill clean). Evidence:
 626 join-window twins converged in TWO drain passes (dead-premise drops; the old code burned 40
@@ -46,7 +45,7 @@ was a client-side NO-OP (the re-assert was silently rejected as a duplicate eid)
    half — eid=3129 class); a kerfur native whose eid row holds a foreign actor (address recycle)
    re-binds by key, never destroying the foreign actor.
 
-## Your tests (host + client, both on `8BAD59B4`)
+## Your tests (host + client, both on `DF0C0295`)
 
 1. **THE 20:27 repro — mass-move during join**: host: stand at a pile cluster, start
    grab-throwing piles across the room WHILE the client menu-joins; keep moving them through the

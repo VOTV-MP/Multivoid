@@ -3,64 +3,25 @@
 #include "coop/dev/event_trigger.h"
 
 #include "coop/dev/dev_gate.h"
+#include "coop/world/event_fire_sync.h"
 #include "ue_wrap/call.h"
-#include "ue_wrap/fname_utils.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
-#include <chrono>
 #include <string>
+
+// The eventer resolution + the reflected runEvent/runSpecialEvent dispatch moved to
+// coop/world/event_fire_sync (v95, one owner): the menu's fire must be the SAME seam that
+// broadcasts EventFire to clients (a direct runEvent never reaches passEvents, so the host
+// observation poll cannot see menu fires). Only the ambient/weather verb table stays here --
+// those are dev-only levers on daynightCycle/mainGamemode timers, never on the wire.
 
 namespace coop::dev::event_trigger {
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
-
-void* g_gmCls = nullptr;
-void* g_gm = nullptr;
-int32_t g_gmIdx = -1;
-int32_t g_offEventer = -1;          // mainGamemode.eventer (trigger_eventer_C*)
-void* g_eventerCls = nullptr;
-void* g_runEventFn = nullptr;        // runEvent(FName Event, FName Special)
-void* g_runSpecialEventFn = nullptr; // runSpecialEvent(FName eventName1) -> bool  (the per-name prank switch)
-std::chrono::steady_clock::time_point g_nextResolve{};
-bool g_resolved = false;
-
-void ResolvePass() {
-    const auto now = std::chrono::steady_clock::now();
-    if (now < g_nextResolve) return;
-    g_nextResolve = now + std::chrono::seconds(2);
-    if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
-    if (!g_eventerCls) g_eventerCls = R::FindClass(L"trigger_eventer_C");
-    if (!g_gmCls || !g_eventerCls) return;
-    if (g_offEventer < 0) g_offEventer = R::FindPropertyOffset(g_gmCls, L"eventer");
-    if (!g_runEventFn) g_runEventFn = R::FindFunction(g_eventerCls, L"runEvent");
-    if (!g_runSpecialEventFn) g_runSpecialEventFn = R::FindFunction(g_eventerCls, L"runSpecialEvent");
-    if (!g_resolved && g_offEventer >= 0 && g_runEventFn) {
-        g_resolved = true;
-        UE_LOGI("event_trigger: resolved (eventer off=0x%X runEvent=yes runSpecialEvent=%s, %zu menu entries)",
-                g_offEventer, g_runSpecialEventFn ? "yes" : "no", Events().size());
-    }
-}
-
-void* Eventer() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        g_gm = nullptr;
-        if (!g_gmCls) return nullptr;
-        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-            if (obj && R::IsLive(obj)) {
-                g_gm = obj;
-                g_gmIdx = R::InternalIndexOf(obj);
-                break;
-            }
-        }
-    }
-    if (!g_gm || g_offEventer < 0) return nullptr;
-    void* ev = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm) + g_offEventer);
-    return (ev && R::IsLive(ev)) ? ev : nullptr;
-}
 
 }  // namespace
 
@@ -235,91 +196,59 @@ bool Trigger(const EventInfo& ev) {
         UE_LOGW("event_trigger: REFUSED -- dev features are disabled while connected as a client");
         return false;
     }
-    ResolvePass();
-    if (!g_resolved) {
-        UE_LOGW("event_trigger: not resolved yet (gamemode/eventer/runEvent pending)");
-        return false;
-    }
     // Copy the POD fields -- the GT task may outlive this render-thread frame.
     const std::string name = ev.name;
     const Dispatch dispatch = ev.dispatch;
-    GT::Post([name, dispatch] {
-        if (dispatch == Dispatch::Ambient) {
-            // The ambient/weather layer: these verbs are NOT eventer cases -- the game fires them
-            // from daynightCycle/mainGamemode timers + RNG rolls. "Maximally native" here = call
-            // the SAME UFunction the timer's success-arm calls, on the live instance (the exact
-            // pattern the autonomous fogprobe proved; autotest_fog_probe.cpp).
-            struct AmbientVerb { const wchar_t* cls; const wchar_t* fn; int boolArg; const wchar_t* boolName; };
-            static const struct { const char* key; AmbientVerb v; } kAmbient[] = {
-                { "spawnFog",          { L"daynightCycle_C", L"spawnFog",          -1, nullptr } },
-                { "rain ON",           { L"daynightCycle_C", L"causeRain",          1, L"isRaining" } },
-                { "rain OFF",          { L"daynightCycle_C", L"causeRain",          0, L"isRaining" } },
-                { "spawnRedSky",       { L"mainGamemode_C",  L"spawnRedSky",       -1, nullptr } },
-                { "spawnBlackFog",     { L"mainGamemode_C",  L"spawnBlackFog",     -1, nullptr } },
-                { "badSun",            { L"mainGamemode_C",  L"Spawn Bad Sun",     -1, nullptr } },
-                { "flowerSpawner",     { L"mainGamemode_C",  L"flowerSpawner",     -1, nullptr } },
-                { "trySpawnInsomniac", { L"mainGamemode_C",  L"trySpawnInsomniac", -1, nullptr } },
-            };
-            const AmbientVerb* verb = nullptr;
-            for (const auto& a : kAmbient) if (name == a.key) { verb = &a.v; break; }
-            if (!verb) { UE_LOGW("event_trigger: unknown ambient verb '%s'", name.c_str()); return; }
-            void* inst = nullptr;
-            for (void* obj : R::FindObjectsByClass(verb->cls)) {
-                if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-                    inst = obj;
-                    break;
-                }
-            }
-            if (!inst) { UE_LOGW("event_trigger: no live %ls instance (world not up?)", verb->cls); return; }
-            void* fn = R::FindFunction(R::ClassOf(inst), verb->fn);
-            if (!fn) { UE_LOGW("event_trigger: %ls::%ls unresolved", verb->cls, verb->fn); return; }
-            ue_wrap::ParamFrame f(fn);
-            if (!f.valid()) return;
-            if (verb->boolArg >= 0) f.Set<bool>(verb->boolName, verb->boolArg != 0);
-            if (ue_wrap::Call(inst, f))
-                UE_LOGI("event_trigger: ambient %ls::%ls dispatched ('%s')", verb->cls, verb->fn, name.c_str());
-            else
-                UE_LOGW("event_trigger: ambient %ls::%ls dispatch FAILED", verb->cls, verb->fn);
-            return;
-        }
-        void* eventer = Eventer();
-        if (!eventer) {
-            UE_LOGW("event_trigger: no live trigger_eventer (world not up?)");
-            return;
-        }
+    if (dispatch != Dispatch::Ambient) {
+        // The three eventer paths route through the SHARED fire seam (native dispatch +
+        // the v95 EventFire broadcast so connected clients replay per policy).
+        namespace efs = coop::event_fire_sync;
         const std::wstring wname(name.begin(), name.end());
-        if (dispatch == Dispatch::SpecialEvent) {
-            // A specific, addressable ariral prank: runSpecialEvent(name) -- a flat per-name switch,
-            // NO rep/random gating (the RANDOM path is RandomPrank below). 2 of the 36 cases are
-            // no-ops (agrav -> use runEvent; arirEgg -> April-Fools-gated); those are not exposed.
-            if (!g_runSpecialEventFn) {
-                UE_LOGW("event_trigger: runSpecialEvent unresolved -- cannot fire prank '%s'", name.c_str());
-                return;
-            }
-            ue_wrap::ParamFrame f(g_runSpecialEventFn);
-            if (!f.valid()) return;
-            f.Set<R::FName>(L"eventName1", ue_wrap::fname_utils::StringToFName(wname));
-            if (ue_wrap::Call(eventer, f))
-                UE_LOGI("event_trigger: runSpecialEvent('%s') dispatched", name.c_str());
-            else
-                UE_LOGW("event_trigger: runSpecialEvent('%s') dispatch FAILED", name.c_str());
-            return;
-        }
-        // RunEvent + RandomPrank both go through runEvent(Event, Special). RandomPrank keys on
-        // Special="ariralPrank" (Event ignored -> summonArirPrank random rep-tier draw); a normal
-        // event passes its own name with Special="None".
-        ue_wrap::ParamFrame f(g_runEventFn);
-        if (!f.valid()) return;
         const bool random = (dispatch == Dispatch::RandomPrank);
-        const std::wstring eventName   = random ? L"arirInteraction_0" : wname;
-        const std::wstring specialName = random ? L"ariralPrank" : L"None";
-        f.Set<R::FName>(L"event", ue_wrap::fname_utils::StringToFName(eventName));
-        f.Set<R::FName>(L"special", ue_wrap::fname_utils::StringToFName(specialName));
-        if (ue_wrap::Call(eventer, f))
-            UE_LOGI("event_trigger: runEvent('%ls'%s) dispatched", eventName.c_str(),
-                    random ? ", special=ariralPrank" : "");
+        const bool special = (dispatch == Dispatch::SpecialEvent);
+        // false only on the client-role refusal (HostFire logs it); resolution + the world-up
+        // check happen inside the posted game-thread task and warn loudly on their own.
+        return efs::HostFire(
+            special ? efs::FireKind::SpecialEvent : efs::FireKind::RunEvent,
+            random ? L"arirInteraction_0" : wname,
+            random ? L"ariralPrank" : L"None");
+    }
+    // Ambient/weather layer: these verbs are NOT eventer cases -- the game fires them from
+    // daynightCycle/mainGamemode timers + RNG rolls. "Maximally native" here = call the SAME
+    // UFunction the timer's success-arm calls, on the live instance (the exact pattern the
+    // autonomous fogprobe proved; autotest_fog_probe.cpp). Dev-only, never on the wire.
+    GT::Post([name] {
+        struct AmbientVerb { const wchar_t* cls; const wchar_t* fn; int boolArg; const wchar_t* boolName; };
+        static const struct { const char* key; AmbientVerb v; } kAmbient[] = {
+            { "spawnFog",          { L"daynightCycle_C", L"spawnFog",          -1, nullptr } },
+            { "rain ON",           { L"daynightCycle_C", L"causeRain",          1, L"isRaining" } },
+            { "rain OFF",          { L"daynightCycle_C", L"causeRain",          0, L"isRaining" } },
+            { "spawnRedSky",       { L"mainGamemode_C",  L"spawnRedSky",       -1, nullptr } },
+            { "spawnBlackFog",     { L"mainGamemode_C",  L"spawnBlackFog",     -1, nullptr } },
+            { "badSun",            { L"mainGamemode_C",  L"Spawn Bad Sun",     -1, nullptr } },
+            { "flowerSpawner",     { L"mainGamemode_C",  L"flowerSpawner",     -1, nullptr } },
+            { "trySpawnInsomniac", { L"mainGamemode_C",  L"trySpawnInsomniac", -1, nullptr } },
+        };
+        const AmbientVerb* verb = nullptr;
+        for (const auto& a : kAmbient) if (name == a.key) { verb = &a.v; break; }
+        if (!verb) { UE_LOGW("event_trigger: unknown ambient verb '%s'", name.c_str()); return; }
+        void* inst = nullptr;
+        for (void* obj : R::FindObjectsByClass(verb->cls)) {
+            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
+                inst = obj;
+                break;
+            }
+        }
+        if (!inst) { UE_LOGW("event_trigger: no live %ls instance (world not up?)", verb->cls); return; }
+        void* fn = R::FindFunction(R::ClassOf(inst), verb->fn);
+        if (!fn) { UE_LOGW("event_trigger: %ls::%ls unresolved", verb->cls, verb->fn); return; }
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid()) return;
+        if (verb->boolArg >= 0) f.Set<bool>(verb->boolName, verb->boolArg != 0);
+        if (ue_wrap::Call(inst, f))
+            UE_LOGI("event_trigger: ambient %ls::%ls dispatched ('%s')", verb->cls, verb->fn, name.c_str());
         else
-            UE_LOGW("event_trigger: runEvent('%ls') dispatch FAILED", eventName.c_str());
+            UE_LOGW("event_trigger: ambient %ls::%ls dispatch FAILED", verb->cls, verb->fn);
     });
     return true;
 }

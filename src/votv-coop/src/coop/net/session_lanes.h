@@ -190,6 +190,14 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     // (g_pendingApply); it assumes NO world. Without this it was blocked until ClientWorldReady ==
     // too late, so the apply never ran ("no apply blob arrived" -- the user's "inventory never worked").
     case ReliableKind::PlayerInventoryBlob:
+    // v95 EventFire: the receiver is engine-free pre-world BY DESIGN -- event_fire_sync::
+    // OnReliable only policy-checks + QUEUES until the eventer resolves (world-ready drain), so a
+    // story row fired while a joiner is in its 30-60 s transfer/load window is replayed instead
+    // of silently swallowed by this gate (perf-audit 2026-07-03 W-2 -- the same "mutation during
+    // the window" class as SkinChange above). The save snapshot covers everything BEFORE the
+    // slot connected; this covers the window between the snapshot and world-ready; the client's
+    // passEvents dedupe makes the overlap idempotent.
+    case ReliableKind::EventFire:
     case ReliableKind::ClientWorldReady:
         return true;
     default:

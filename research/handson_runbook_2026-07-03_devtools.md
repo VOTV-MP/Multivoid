@@ -1,10 +1,11 @@
 # Hands-on runbook 2026-07-03 (take 2) — ragdoll bone visualizer + events menu completion
 
-**Deployed:** DLL `8BAD59B4887DBDFC` on all 4 installs (hash-verified; contains the re-bind
-thread `2ab718d5` — test its runbook `handson_runbook_2026-07-03_rebind_thread.md` in the same
-session — plus these two dev features). Protocol still v94, no wire change. Host ini already
-carries `[dev] ragdoll_bone_overlay=1` from my autonomous verify — remove it if you want the
-checkbox to start OFF.
+**Deployed (UPDATED take 3):** DLL `DF0C0295B6E7613F` on all 4 installs (hash-verified; contains
+the re-bind thread `2ab718d5` — test its runbook `handson_runbook_2026-07-03_rebind_thread.md` in
+the same session — plus these two dev features PLUS the v95 EventFire channel,
+`handson_runbook_2026-07-03_eventfire.md`). Protocol now v95 (both peers need the new DLL). Host
+ini already carries `[dev] ragdoll_bone_overlay=1` from my autonomous verify — remove it if you
+want the checkbox to start OFF.
 
 ## 1. Ragdoll bone visualizer (your ask: "checkbox which visualizes the bones ... of the RAGDOLL")
 
@@ -45,13 +46,9 @@ column visible across the map; the same event also advances the treehouse build 
 one event by design). **It is already in the menu:** F1 → Game → Events → Story →
 **`treehouse_0`** (red = Dangerous → **Ctrl+click**).
 
-**IMPORTANT for your sync-mirror test:** today the campfire will light ONLY on the host. It
-flips a LEVEL-PLACED actor's state — the one event class none of our channels carries yet. The
-root-cause channel is designed (host broadcasts `EventFire{rowName, special}`; client replays the
-same `eventer.runEvent` reflected; `saveSlot.passEvents` (TArray<FName> @0xC8) is the dedupe +
-the host-side observation seam — the eventer dispatch itself is a BP→BP call, invisible to every
-hook per COOP_DISPATCH_VISIBILITY). That channel is the next build — after it, your campfire test
-should light BOTH peers natively.
+**UPDATE (same day, take 3): the EventFire channel is BUILT (v95, DLL `DF0C0295`)** — the
+campfire now replays on the client too. This section's caveat is superseded; the campfire test
+moved to `handson_runbook_2026-07-03_eventfire.md` test 1.
 
 **Menu fixes you asked for ("не все ивенты в списке"):**
 - `arirGraff` was a SILENT NO-OP (the game's switch has only per-variant cases) — replaced with
@@ -67,5 +64,5 @@ should light BOTH peers natively.
 
 **Test:** F1 → Game → Events → Weather → `spawnFog` — fog rolls in within seconds on the host
 (clients already mirror rolling fog via the weather channel — check the client sees it too);
-`rain ON` / `rain OFF` toggles rain. Story → `treehouse_0` Ctrl+click → campfire+smoke on the
-HOST (client NOT expected yet — see above).
+`rain ON` / `rain OFF` toggles rain. Story → `treehouse_0` Ctrl+click → campfire+smoke on BOTH
+peers now (the v95 EventFire channel — full steps in `handson_runbook_2026-07-03_eventfire.md`).

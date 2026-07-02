@@ -258,4 +258,13 @@ DWORD WINAPI FogProbeThread(LPVOID arg);
 void RunAutonomousMoveOsc();
 DWORD WINAPI MoveOscThread(LPVOID arg);
 
+// v95 EventFire replay-channel smoke (2026-07-03, harness/autotest_eventfire.cpp). HOST-ONLY:
+// after the join settles, fires solar (RunEvent, replay-allowlisted) + arirGraff_0 (SpecialEvent,
+// replay-allowlisted) + enasus (RunEvent, prop-lane no-replay) through the SAME
+// event_fire_sync::HostFire seam the F1 menu uses -- the client log proves the receive policy
+// (2x REPLAY, 1x NOT-replayed) + the structural suppression line. Gated by env
+// VOTVCOOP_RUN_EVENTFIRE_TEST=1 (host+client LAN pair).
+void RunAutonomousEventFireTest();
+DWORD WINAPI EventFireTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

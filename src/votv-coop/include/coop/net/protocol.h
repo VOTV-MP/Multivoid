@@ -694,7 +694,24 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 94;  // v94: per-player DISPLAY PREFS -- a [u8 flags] byte appended
+inline constexpr uint16_t kProtocolVersion = 95;  // v95: scheduled-event REPLAY channel -- ReliableKind::
+                                                  // EventFire=84 (32 B: [u8 dispatch][name[31]]). The story
+                                                  // scheduler (saveSlot::settime -> eventer.runEvent) is
+                                                  // BP->BP invisible to every hook; the HOST observes fires
+                                                  // by polling saveSlot.passEvents GROWTH (settime Array_Adds
+                                                  // each fired row -- bytecode-verified) + the F1 dev menu
+                                                  // broadcasts at dispatch (a direct runEvent never appends).
+                                                  // CLIENTS: scheduler suppressed structurally (allEvents.Num=0;
+                                                  // settime's walk source; boot rebuilds it every load) and
+                                                  // replay ONLY policy-allowlisted rows (level/save/cosmetic
+                                                  // flips no lane carries -- treehouse/campfire, breaks,
+                                                  // obelisk/piramid, forceObjects signals, solar/call0, scare
+                                                  // arms, graffiti). Lane-covered rows (prop/npc/atv/sleep/
+                                                  // wisp/cue/device) are NOT replayed (double-delivery = the
+                                                  // client-local dup class); ariralPrank special never crosses
+                                                  // (host-local RNG). Module: coop/world/event_fire_sync.
+                                                  // Prior:
+                                                  // v94: per-player DISPLAY PREFS -- a [u8 flags] byte appended
                                                   // to Join + PlayerJoined (after each skin field); bit0 =
                                                   // "show my nameplate" (user 2026-07-02: any peer can hide its
                                                   // OWN plate, SYNCED so a late joiner agrees), bits 1..7
@@ -1853,6 +1870,14 @@ enum class ReliableKind : uint8_t {
                        //     PRE-WORLD-SENDABLE: receiver is a plain flag store, engine-free -- the
                        //     SkinChange load-window lesson applied from birth. Slot resets to VISIBLE
                        //     on disconnect (a slot reuse must not inherit the departed peer's pref).
+    EventFire = 84,    // 2026-07-03 (v95): HOST->ALL scheduled/story event fired -- clients replay
+                       //     the native verb reflected, PER-ROW POLICY (coop/world/event_fire_sync;
+                       //     the dupe matrix from votv-event-system-RE-2026-06-13.md section 10).
+                       //     Payload: EventFirePayload (32 B) = [u8 dispatch: 0 runEvent / 1
+                       //     runSpecialEvent][char name[31] ASCII NUL-bound]. No special field BY
+                       //     DESIGN: the only native special is 'ariralPrank' (a host-local RNG
+                       //     prank roll -- replaying it would roll a DIFFERENT prank per peer).
+                       //     Host-only origin (senderPeerSlot must be 0); host receiving one drops.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2675,6 +2700,18 @@ struct SleepStatePayload {
     uint8_t total;  // 1 -- Tally: world-ready peers
 };
 static_assert(sizeof(SleepStatePayload) == 4, "SleepStatePayload must be 4 bytes");
+
+// v95: HOST->ALL "a scripted/story event fired" (ReliableKind::EventFire). Origin = the host's
+// passEvents growth poll (scheduler fires) or the F1 dev menu at dispatch (a direct runEvent
+// never appends passEvents -- bytecode-verified). Receivers replay the native verb reflected
+// ONLY for policy-allowlisted rows (coop/world/event_fire_sync -- the dupe matrix; lane-covered
+// rows would double-deliver). dispatch: 0 = runEvent(name, None), 1 = runSpecialEvent(name).
+// NO special field by design (the only native special, 'ariralPrank', is a host-local RNG roll).
+struct EventFirePayload {
+    uint8_t dispatch;  // 1 -- event_fire_sync::FireKind (0 runEvent / 1 runSpecialEvent)
+    char name[31];     // 31 -- the row/case FName, ASCII, NUL-bound (longest live row = 18 chars)
+};
+static_assert(sizeof(EventFirePayload) == 32, "EventFirePayload must be 32 bytes");
 
 // v64/v65: one chunk of a variable-length serialized blob. Shared by every
 // chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);

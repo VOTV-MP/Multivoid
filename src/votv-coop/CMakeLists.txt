@@ -238,6 +238,7 @@ add_library(votv-coop SHARED
     src/coop/items/order_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/event_cue_sync.cpp
+    src/coop/world/event_fire_sync.cpp
     src/coop/interactables/window_sync.cpp
     src/coop/interactables/grime_sync.cpp
     src/coop/session/player_handshake.cpp
@@ -388,6 +389,7 @@ add_library(votv-coop SHARED
     src/harness/autotest_ragdoll_spawn_probe.cpp
     src/harness/autotest_menutravel_probe.cpp
     src/harness/autotest_fog_probe.cpp
+    src/harness/autotest_eventfire.cpp
     src/harness/autotest_move_osc.cpp
     src/harness/autotest_saveui.cpp
     src/harness/config.cpp

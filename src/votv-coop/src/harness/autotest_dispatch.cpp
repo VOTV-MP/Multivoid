@@ -119,6 +119,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // the host-authoritative weather fix (client mist while host clear). No connection.
     SpawnIf("VOTVCOOP_RUN_FOG_PROBE", "fog probe", &FogProbeThread, role);
 
+    // v95 EventFire replay-channel smoke: host fires solar/arirGraff_0/enasus through
+    // event_fire_sync::HostFire; the client log proves the replay policy + suppression.
+    SpawnIf("VOTVCOOP_RUN_EVENTFIRE_TEST", "EventFire replay smoke", &EventFireTestThread, role);
+
     // TEST-ONLY local-player movement oscillator: circles the local player so the OTHER
     // peer's interp has a MOVING source. Verification rig for the interp-starvation fix
     // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the

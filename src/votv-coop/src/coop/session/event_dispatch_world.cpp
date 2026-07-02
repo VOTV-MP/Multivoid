@@ -10,6 +10,7 @@
 
 #include "coop/comms/chat_sync.h"
 #include "coop/world/event_cue_sync.h"
+#include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
 #include "coop/player/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
@@ -97,6 +98,30 @@ bool HandleWorldEvent(net::Session& session,
         net::EventCuePayload ep{};
         std::memcpy(&ep, msg.payload, sizeof(ep));
         coop::event_cue_sync::OnReliable(ep);
+        break;
+    }
+    case net::ReliableKind::EventFire: {
+        // v95: HOST-AUTHORITATIVE scheduled/story event fired -- the client replays the native
+        // verb per the event_fire_sync replay policy (level/save/cosmetic flips no lane carries;
+        // lane-covered rows are logged + skipped there). World-mutating -> host trust-bound like
+        // WeatherState (no eid in the payload; identity = the transport slot).
+        if (msg.payloadLen < sizeof(net::EventFirePayload)) {
+            UE_LOGW("event_feed: EventFire payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::EventFirePayload));
+            break;
+        }
+        if (session.role() == net::Role::Host) {
+            UE_LOGI("event_feed: EventFire received on host -- dropping (host is the authority)");
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EventFire from non-host senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::EventFirePayload fp{};
+        std::memcpy(&fp, msg.payload, sizeof(fp));
+        coop::event_fire_sync::OnReliable(fp);
         break;
     }
     case net::ReliableKind::InventoryPickup: {

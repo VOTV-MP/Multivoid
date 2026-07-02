@@ -139,15 +139,30 @@ Per-player or broadcast; not world entities.
 
 ---
 
-## DESIGNED, NOT BUILT (2026-07-03 — the two queued wire features; do not re-derive)
+## EventFire — scheduled/story event replay `[AS-BUILT v95 2026-07-03]`
 
-- **EventFire replay channel** (scheduled-event sync; the campfire/`treehouse_0` test target): host
-  broadcasts `EventFire{rowName, special}`; client replays the same `eventer.runEvent` reflected;
-  `saveSlot.passEvents` (TArray<FName> @0xC8) = the dedupe set AND the host-side observation seam
-  (poll growth — the eventer dispatch is BP->BP INVISIBLE, see COOP_DISPATCH_VISIBILITY); dev-menu
-  fires broadcast at dispatch; client scheduled fires suppressed by pre-marking passEvents (verify
-  TArray-append mechanics first). Protocol v94->v95 + the 3-place ReliableKind checklist.
-  Design source: `research/findings/_events_catalog_B_scheduler.md` §5A + the 2026-07-03 verification.
+`coop/world/event_fire_sync.{h,cpp}` + `ReliableKind::EventFire=84` (32 B: u8 dispatch + name[31]).
+One owner of the whole scheduled-event authority axis — the mechanics DIVERGED from the original
+design sketch after bytecode verification (better seams found; do not re-derive):
+- **Host observation** = `saveSlot.passEvents` GROWTH poll, 1 Hz (settime `Array_Add`s each fired
+  row — settime is the ONLY appender; `runEvent` itself never touches the array).
+- **Dev fires** (F1 menu) dispatch THROUGH `event_fire_sync::HostFire` = native fire + broadcast at
+  dispatch (a direct runEvent never appends passEvents, so the poll can't see menu fires).
+- **Client suppression** = `saveSlot.allEvents.Num = 0` (settime's walk SOURCE; one int write; the
+  boot ubergraph rebuilds allEvents from the DataTable unconditionally every load → self-healing,
+  no save poisoning) — NOT the sketched passEvents pre-mark (needed an engine allocator we don't
+  bind). Restored on disconnect. Closes the sleep-accelerate hole (client settime RUNS at
+  TimeScale=1 during v71 accelerated nights and would natively fire 00:00 rows).
+- **Client replay** = reflected `runEvent(name, None)` / `runSpecialEvent(name)` gated by the
+  PER-ROW policy table in the .cpp (the dupe matrix from votv-event-system-RE-2026-06-13.md §10):
+  replay ONLY level/save/cosmetic flips no lane carries (treehouse_0..5 — the campfire, breaks,
+  obelisk/piramid, forceObjects signal rows, solar/call0, scare arms, arirGraff_*); lane-covered
+  rows (prop/npc/atv/sleep/wisp/event_cue/device) log + skip. `ariralPrank` never crosses the wire
+  (host-local RNG). One-shot rows dedupe vs the client's own passEvents + a session replayed-set;
+  specials are repeatable. Join window: replays queue until the eventer resolves (cap 64, loud).
+
+## DESIGNED, NOT BUILT (the queued wire feature; do not re-derive)
+
 - **Screens/panels gap list** (the rest of "sync every screen and panel"): reactor rods ->
   generator/transformer OUTCOME -> SAT console LogText release-snapshot -> TV keyed state -> laptop
   tasks roll -> serverBox RE. Shapes + boundaries: `research/findings/votv-screens-panels-sync-DESIGN-2026-07-03.md`
