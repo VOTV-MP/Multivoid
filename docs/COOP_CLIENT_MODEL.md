@@ -4,8 +4,11 @@
 model (the user's own mesh) while the HOST stays Dr. Kel. First model = a Half-Life 1
 GoldSrc scientist. The pipeline generalizes to any HL1 humanoid `.mdl`.
 
-**STATUS (2026-07-02, ALL axes VERIFIED in-game -- geometry + texture + winding; the coop
-visual (host+client facing each other, §3C) is the last unexercised step):**
+**STATUS (2026-07-02: FEATURE COMPLETE -- every axis VERIFIED in-game including the coop
+visual [V hands-on "Работает amazing"]: host sees the client puppet as the textured
+scientist, client sees the host as kel (role gate). Probe client_model_probe retained
+per the probes-exempt-from-RULE-2 rule as the solo visual harness for the NEXT model,
+flag off.):**
 - **RUNTIME = DONE + PROVEN WORKING (§3), commit `320c0ab4`.** Autonomous 2-peer LAN test
   (host s_1234 + fresh client): pak auto-mounts, `URyRuntimeObjectHelpers::LoadObject` returns
   OUR package's SkeletalMesh, `RemotePlayer::Spawn` applies it to the client puppet (role-gated:
@@ -53,8 +56,8 @@ visual (host+client facing each other, §3C) is the last unexercised step):**
 - **FEATURE texture bind wired (not just the probe):** `client_model::GetClientPuppetTexture()`
   (one-shot cache) + `ApplyClientPuppetTexture()` (slot-0 MID + 'tex' on BOTH body slots);
   `RemotePlayer::Spawn` calls it right after SpawnPuppet on custom-mesh puppets. Client puppets
-  get mesh + texture; host puppet stays kel. The COOP VISUAL (host+client facing each other,
-  §3C) is the only not-yet-exercised path -- solo probe verified the probe-side bind only.
+  get mesh + texture; host puppet stays kel. COOP VISUAL VERIFIED [V hands-on 2026-07-02
+  "Работает amazing"]: host+client facing each other, both role-gated looks correct.
 - Deployed state: DLL `fff53e04` + pak `5edabac7` (4 files: winding-fixed atlas-UV mesh +
   512x256 atlas texture), all 4 install folders hash-verified 8/8. Audit (2026-07-02): all
   functions COLD-path, zero findings >= 80 confidence; remote_player.cpp 913 LOC past the
@@ -93,7 +96,7 @@ RUNTIME (mod):   [DONE + PROVEN -- §3, commits 320c0ab4 + 8df26e05 + rung-4]
 ```
 
 Two halves: the offline cook (§4/§5, geometry+texture+winding VERIFIED in-game) and the
-runtime (§3 + the texture bind, DONE; coop visual pending).
+runtime (§3 + the texture bind, DONE; coop visual VERIFIED 2026-07-02).
 
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
 adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repak` (no Blender).

@@ -6,6 +6,12 @@
 > flagged remote_player.cpp 913 LOC > 800 soft cap -> queued extraction (ragdoll subsystem ->
 > remote_player_ragdoll.{h,cpp}). Remaining: the coop two-peer visual (section below).
 
+> **OUTCOME (coop visual, same day): VERIFIED — user "Работает amazing".** Host+client facing
+> each other: the client's puppet = textured scientist on the host's screen, the host's puppet
+> = kel on the client's (role gate). FEATURE COMPLETE. (Launch was blocked first by a
+> triple-masked launcher failure — pak locked by the running host + mp.py UnicodeEncodeError +
+> instantly-closing .bat — root-fixed in `c1403fd7`.)
+
 > **Take-2 look verdict: INSIDE-OUT** ("смотрю спереди — вижу спину... как будто изнутри") — all
 > front faces culled: the cook's winding heuristic ("geometric-outward = front") was an ASSUMPTION
 > and it was backwards vs the engine. Measured (signed volume, divergence theorem): the game's own
