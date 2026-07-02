@@ -76,19 +76,23 @@ void Tick(bool connected, bool /*isHost*/) {
         const ue_wrap::FVector leftSpot { center.X + rx * 80.f, center.Y + ry * 80.f, center.Z };
         const ue_wrap::FVector rightSpot{ center.X - rx * 80.f, center.Y - ry * 80.f, center.Z };
 
-        // CONFOUND FIX (take 2, 2026-07-02): take 1 showed BOTH puppets as clean kel -- but a
-        // 1062-vert scientist cannot draw a pixel-perfect kel under ANY material, so the kel
-        // pixels were NOT our mesh's render data: mainPlayer_C carries a SECOND body on the
-        // inherited ACharacter::Mesh slot (mesh_playerVisible's AttachParent) that overlaps it
-        // 1:1 (puppet.cpp spawn notes) and was covering the subject. Hide that slot on BOTH
-        // puppets (propagate=false -- the child mesh_playerVisible keeps its own visibility)
-        // so what you see IS mesh_playerVisible's mesh: LEFT kel control / RIGHT our mesh.
-        auto hideNativeSlot = [](void* actor, const wchar_t* which) {
+        // TAKE 3 (2026-07-02). Take 1: both puppets read as clean kel -- the byte-parse proved our
+        // cooked buffers ARE the scientist (1062v/52KB vs kel 17132v/1.78MB), so the kel pixels came
+        // from the SECOND body: the inherited ACharacter::Mesh slot (mesh_playerVisible's
+        // AttachParent) carries its own kel 1:1 overlap (puppet.cpp spawn notes). Take 2: hiding that
+        // slot (SetVisibility+SetHiddenInGame, BOTH with propagate=false -- wrapper verified honest,
+        // engine_component.cpp:173) made BOTH bodies vanish -> MEASURED: UE4 implicitly gates a
+        // child's rendering by its AttachParent's visibility regardless of the propagate flag.
+        // Hiding the parent is a dead end. Take 3 uses NO visibility flags: write the SAME mesh into
+        // BOTH slots -- the game's own invariant ("identical skin asset on both, overlapping as ONE
+        // body") preserved with our mesh. RIGHT then has scientist in BOTH layers: masking impossible.
+        auto applyToNativeSlot = [](void* actor, void* mesh, const wchar_t* which) {
             void* slot = Pup::GetNativeBodyMeshComponent(actor);
-            void* slotAsset = Pup::GetComponentSkeletalMeshAsset(slot);
-            const bool ok = slot && E::SetComponentVisible(slot, false, /*propagate=*/false);
-            UE_LOGI("[CLIENTMODEL-PROBE] %ls native ACharacter::Mesh slot=%p carried asset=%p -> hidden=%d "
-                    "(the 1:1 overlap body that masked take 1)", which, slot, slotAsset, ok ? 1 : 0);
+            void* was = Pup::GetComponentSkeletalMeshAsset(slot);
+            const bool ok = slot && E::SetSkeletalMesh(slot, mesh);
+            UE_LOGI("[CLIENTMODEL-PROBE] %ls native ACharacter::Mesh slot=%p asset %p -> %p (set=%d; "
+                    "same-mesh-in-both-slots, the game's own two-body invariant)",
+                    which, slot, was, mesh, ok ? 1 : 0);
         };
 
         // LEFT: the local kel skin -- the known-good CONTROL (proves a display puppet renders here).
@@ -101,22 +105,22 @@ void Tick(bool connected, bool /*isHost*/) {
             break;  // world mid-transition -- retry next tick
         }
         E::SetActorRotation(kelA, ue_wrap::FRotator{0.f, YawToward(leftSpot, pl), 0.f});
-        hideNativeSlot(kelA, L"LEFT");
+        applyToNativeSlot(kelA, kelSkin, L"LEFT");
         UE_LOGI("[CLIENTMODEL-PROBE] LEFT control kel puppet=%p mesh=%p @(%.0f,%.0f,%.0f)",
                 kelA, kelSkin, leftSpot.X, leftSpot.Y, leftSpot.Z);
 
-        // RIGHT: our pak scientist mesh -- the SUBJECT.
+        // RIGHT: our pak scientist mesh -- the SUBJECT, in BOTH body slots.
         if (sciMesh) {
             void* sciA = Pup::SpawnPuppet(rightSpot, sciMesh, animCls);
             if (sciA) {
                 E::SetActorRotation(sciA, ue_wrap::FRotator{0.f, YawToward(rightSpot, pl), 0.f});
-                hideNativeSlot(sciA, L"RIGHT");
+                applyToNativeSlot(sciA, sciMesh, L"RIGHT");
             }
             UE_LOGI("[CLIENTMODEL-PROBE] RIGHT scientist puppet=%p mesh=%p @(%.0f,%.0f,%.0f) -- verdicts "
-                    "(native slot now hidden on BOTH): LEFT kel + RIGHT humanoid-blob/scientist = cook "
+                    "(same mesh in BOTH slots, nothing hidden): LEFT kel + RIGHT humanoid-blob = cook "
                     "geometry WORKS (garbled texture EXPECTED); LEFT kel + RIGHT empty = our render data "
-                    "fails to draw; LEFT empty too = the hide killed the child as well (probe bug, not cook).",
-                    sciA, sciMesh, rightSpot.X, rightSpot.Y, rightSpot.Z);
+                    "fails to draw in-engine; RIGHT still a clean kel = something re-applies the class "
+                    "default (new fact).", sciA, sciMesh, rightSpot.X, rightSpot.Y, rightSpot.Z);
         } else {
             UE_LOGW("[CLIENTMODEL-PROBE] scientist mesh NULL (pak absent / load failed) -- only the LEFT "
                     "kel control spawned");
