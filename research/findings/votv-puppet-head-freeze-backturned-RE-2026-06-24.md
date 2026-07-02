@@ -1,5 +1,23 @@
 # VOTV puppet head-look FREEZE when back-turned — RE (mechanism) 2026-06-24
 
+> **2026-07-02 FINAL — THE GATE IS NAMED (static topology proof) + ROOT-FIXED (`5b2cb5ff`).**
+> The cooked AnimBP's BakedStateMachines + CDO pose-link trace
+> (research/bp_reflection/AnimBlueprint_kerfurOmega_regular.json) prove: the two
+> FAnimNode_LookAt nodes are NOT on the anim-graph trunk — they are the ENTIRE sub-graph of
+> state **`lookAtPlayer`** in trunk machine "New State Machine_1" (states zombieRise /
+> lookAtPlayer / lookStraight; the state's root node = the LookAt chain output
+> ComponentToLocalSpace_3). `lookingAtPlayer` (BUA @515, observer-angle dot) is FastPath-copied
+> into TransitionResult_7/_5 = that state pair's transition rules. Back-turned to the OBSERVER
+> ⇒ the look state EXITS (0.25 s crossfade) ⇒ the LookAt contribution zeroes ⇒ head snaps to
+> NEUTRAL. This explains the 2026-06-25 probe exactly (TWIST→0 with node Alphas still 1.0/0.5:
+> the STATE weight died, not the nodes). **The old Q3 claim "lookingAtPlayer is only a cosmetic
+> state switch, not the aim gate" is DISPROVEN — the state IS the aim.** Why every tick-write
+> attempt failed: BUA RECOMPUTES the flag each anim update after our writes and before the
+> copies sample it. **FIX (`5b2cb5ff`, puppet.cpp `HeadGateBUAPost`): post-BUA UFunction::Func
+> hook on the AnimBP's own BlueprintUpdateAnimation re-asserts lookingAtPlayer=true — puppet-only
+> by identity (outer chain = mainPlayer_C with NULL Controller); kerfur NPCs + the local player
+> byte-untouched. Spawn seed flipped false→true.** Hands-on pending.
+
 > **2026-06-25 UPDATE — THE CLAMP HYPOTHESIS IS REFUTED BY THE HANDS-ON PROBE. The
 > freeze is NOT the 45° LookAtClamp; the widen-clamp fix below would have been a no-op.**
 > A positive-confirm probe (`coop/dev/puppet_head_probe`) was built + deployed (MD5
