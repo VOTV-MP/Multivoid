@@ -159,3 +159,7 @@ tools/client_model/mesh_extract/obj/
 # third-party model assets (Valve/COF), local only -- never commit
 tools/cof_simonkitty_v1sc/
 tools/hl_einstein_v1sc/
+
+# portable client-model converter build output (game-derived template bytes + binaries)
+tools/client_model/portable/dist/
+tools/client_model/portable/build/

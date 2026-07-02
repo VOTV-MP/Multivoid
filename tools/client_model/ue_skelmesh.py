@@ -112,11 +112,11 @@ def find_refskel(payload, names, start):
     raise RuntimeError("RefSkeleton not found")
 
 
-def main():
-    base = DEFAULT
+def main(base=None):
     verbose = "--verbose" in sys.argv
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if args: base = args[0]
+    if base is None:
+        args = [a for a in sys.argv[1:] if not a.startswith("--")]
+        base = args[0] if args else DEFAULT
     payload, names = load(base)
     END = len(payload)
     print(f"{base.split(chr(92))[-1]}: payload {END} bytes")
@@ -170,8 +170,10 @@ def main():
             print(f"    sec{k}: tris={nt} verts={nv} boneMap={nbm} maxInf={mbi}")
 
     delta = END - c.o
-    tag = "ROUND-TRIP OK (tail keep-blob)" if 0 <= delta < 64 else "DRIFT (color buffer / bHasVertexColors?)"
+    ok = 0 <= delta < 64
+    tag = "ROUND-TRIP OK (tail keep-blob)" if ok else "DRIFT (color buffer / bHasVertexColors?)"
     print(f"  reached @{c.o} of {END}, remaining {delta}B -> {tag}")
+    return ok
 
 
 if __name__ == "__main__":

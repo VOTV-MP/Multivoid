@@ -36,6 +36,17 @@ retired). Profiles: `profiles/README.md` — v1 "narrow" is the DEFAULT (in-game
 Adding a NEW HL model = the six steps above (no Blender). See `docs/COOP_CLIENT_MODEL.md §4`
 for exact commands. Use `python` (has numpy), not `python3`.
 
+**PORTABLE ONE-SHOT (`portable/`, 2026-07-02):** `python portable/make_portable.py [--exe]`
+bundles the LIVE modules above (unmodified — single source of truth, the originals stay) +
+the embedded cook templates + the default profile into `portable/dist/`:
+`convert_model.pyz` (needs python+numpy+pillow) / `convert_model.exe` (needs nothing) +
+`repak.exe` + `convert.bat` + `README.txt` (RU). Drop the dist files into any folder with a
+`.mdl`, run `convert.bat` — the `.pak` appears right there. Flags: `--name` (cook under the
+DLL's fixed `hl_einstein_v1sc` name to swap the in-game model), `--profile`, `--keep-work`.
+Verified 2026-07-02: pyz and exe runs both reproduce the deployed pak content 4/4
+byte-identical. `dist/`+`build/` are gitignored (game-derived template bytes); rebuild after
+any module change.
+
 ## Tools here
 - **`mdl_extract.py`** — GoldSrc/HL1 `.mdl` → `model.obj` (A-pose) + `model.bones.json`
   (hierarchy + per-vertex bone + **HL bone WORLD matrices**) + `tex/*.png`. Pure Python.
@@ -45,7 +56,10 @@ for exact commands. Use `python` (has numpy), not `python3`.
   0.00005 max). See `docs/COOP_CLIENT_MODEL.md §5`.
 - **`profiles/`** — the profile LIBRARY (one json per learned example; format 1 =
   rotation-only, format 2 = full R+t local deltas). `profiles/README.md` = provenance
-  table; DEFAULT_PROFILE in repose.py names the default (v2 wide).
+  table; DEFAULT_PROFILE in repose.py names the default (v1 narrow).
+- **`portable/`** — the drop-in-folder converter: `driver.py` (orchestrates the six steps
+  in the model's own folder, embedded templates/profile) + `make_portable.py` (builds
+  dist/: pyz + optional PyInstaller exe + repak.exe + convert.bat + README.txt).
 - **`atlas.py`** — shelf-packs `tex/*.png` into ONE atlas + `atlas.json` name→pixel-rect map
   (1px clamp-extend gutter; no mips cooked so 1px kills bilinear bleed).
 - **`ue_cook.py`** — THE COOK. Sources the reposed OBJ, applies the exact PSK→cooked Y-mirror,

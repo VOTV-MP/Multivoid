@@ -154,7 +154,7 @@ def pack_pn(x, y, z, w):
     return struct.pack("<I", (data ^ 0x80808080) & 0xFFFFFFFF)
 
 
-def cook(template_base, geom_obj, bones_json, out_base):
+def cook(template_base, geom_obj, bones_json, out_base, atlas_json=ATLAS):
     ua, uexp, names, kv = load_full(template_base)
     payload = uexp[:-4]; tag4 = uexp[-4:]
     segs, has_colors = parse_segments(payload, names)
@@ -176,7 +176,7 @@ def cook(template_base, geom_obj, bones_json, out_base):
     # V-orientation: GoldSrc t=0 = texture TOP; the OBJ carries v = 1 - t/th
     # (v-up), while cooked sampling is v-DOWN with mip row 0 = PNG row 0 (ue_tex
     # keeps PIL row order). So undo the OBJ flip (vd = 1-v) and place y-down.
-    atl = json.load(open(ATLAS))
+    atl = json.load(open(atlas_json))
     AW, AH = atl["canvas"]; TILES = atl["tiles"]
     missing = sorted({m for m in FM if m not in TILES} | ({None} if None in FM else set()))
     assert not missing, f"faces with no atlas tile: {missing}"

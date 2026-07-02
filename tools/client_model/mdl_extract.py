@@ -76,10 +76,7 @@ def write_png(path, w, h, rgb):
     open(path, "wb").write(png)
 
 
-def main():
-    if len(sys.argv) < 3:
-        print("usage: mdl_extract <model.mdl> <outDir>"); return 2
-    path, out = sys.argv[1], sys.argv[2]
+def extract(path, out):
     os.makedirs(os.path.join(out, "tex"), exist_ok=True)
     b = open(path, "rb").read()
     gi = lambda o: struct.unpack_from("<i", b, o)[0]
@@ -186,6 +183,12 @@ def main():
     print(f"[mdl_extract] verts={allV.shape[0]} tris={len(obj_faces)} textures={nt}")
     print(f"[mdl_extract] bbox (HL units) = {bb.round(1)}  (humanoid ~one axis 60-75)")
     print(f"[mdl_extract] wrote model.obj + model.bones.json + tex/*.png -> {out}")
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: mdl_extract <model.mdl> <outDir>"); return 2
+    extract(sys.argv[1], sys.argv[2])
 
 
 if __name__ == "__main__":

@@ -204,10 +204,19 @@ Still open (separate, later): (3) client seeing its OWN body as scientist (local
 
 ## 4. Offline pipeline — BUILT (tools/client_model/) + how to reproduce
 
-Reproduce the pak from the source mdl (all pure Python; `python`, not `python3`, has numpy).
+**PORTABLE ONE-SHOT (2026-07-02 evening):** `tools/client_model/portable/make_portable.py
+[--exe]` builds `portable/dist/` — `convert_model.pyz` (zipapp of the SAME live modules +
+embedded cook templates + default profile) / `convert_model.exe` (PyInstaller onefile, no
+python needed) + `repak.exe` + `convert.bat` + `README.txt`. Drop next to any `.mdl`, run,
+the `.pak` appears in that folder (`--name`, `--profile`, `--keep-work` flags; the driver
+warns that the DLL loads the fixed name `hl_einstein_v1sc`). Verified: pyz AND exe runs
+reproduce the deployed pak content byte-identically (4/4 sha256). dist/ is gitignored
+(game-derived template bytes); rebuild after any module change.
+
+Manual step-by-step (same modules; `python`, not `python3`, has numpy).
 2026-07-02: the model carries its ORIGINAL name `hl_einstein_v1sc` (the early "scientist"
 naming is retired); the repose profile comes from the `tools/client_model/profiles/` LIBRARY
-(`default` = v2 "wide", format 2 R+t deltas — see profiles/README.md):
+(`default` = v1 "narrow" — see profiles/README.md):
 ```
 # 1. extract HL model -> geometry + per-vertex bone + bone WORLD matrices + textures
 python tools/client_model/mdl_extract.py tools/hl_einstein_v1sc/hl_einstein_v1sc.mdl \
@@ -240,8 +249,10 @@ Tools (all in `tools/client_model/`, dev-only, RULE 3):
 - `ue_skelmesh.py` — general UE4.27 cooked-SkeletalMesh parser; round-trips kerfurOmega +
   kel_lmao byte-perfect. Validates the cook output.
 - `ue_pkg.py` — UE4.27 package (de)serializer; round-trips byte-identical.
-- `votv_tpose_profile.json` — the learned "VOTV T-pose standard" for HL Bip01 (22 per-bone
-  local rotations + target height). Reusable across models.
+- `profiles/` — the repose profile LIBRARY (v1 narrow = default; provenance in
+  profiles/README.md). Replaced the old single root `votv_tpose_profile.json`.
+- `portable/` — `driver.py` (the drop-in-folder orchestrator) + `make_portable.py`
+  (bundles the live modules into dist/: pyz + optional exe + repak.exe + bat + README).
 - `skin_to_rig.py` — SUPERSEDED for the final asset (an early rigid-remap→glb Blender-view
   helper). Not in the cook path; kept as a viewing aid only.
 - `mesh_extract/` (C#/CUE4Parse) — game-mesh study. `cue4parse_ref/` — CUE4Parse reader

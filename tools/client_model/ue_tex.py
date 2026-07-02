@@ -80,9 +80,9 @@ def name_entry(s):
 
 
 # ---- template load ----
-def load_template():
-    ua = open(TEMPLATE + ".uasset", "rb").read()
-    uexp = open(TEMPLATE + ".uexp", "rb").read()
+def load_template(template=TEMPLATE):
+    ua = open(template + ".uasset", "rb").read()
+    uexp = open(template + ".uexp", "rb").read()
     c = ue_pkg.parse_summary(ua)
     kv = {t[1]: t[3] for t in c.tok if t[1] and t[3] is not None}
     names, hashes = [], []
@@ -94,8 +94,8 @@ def load_template():
     return ua, uexp, c, kv, names, hashes, o  # o = name map END offset
 
 
-def selftest():
-    ua, uexp, c, kv, names, hashes, nm_end = load_template()
+def selftest(template=TEMPLATE):
+    ua, uexp, c, kv, names, hashes, nm_end = load_template(template)
     ok = sum(1 for n, (h1, h2) in zip(names, hashes)
              if (noncase_hash16(n), case_hash16(n)) == (h1, h2))
     print(f"hash self-test: {ok}/{len(names)}")
@@ -109,20 +109,21 @@ def selftest():
 
 
 # ---- cook ----
-def cook(png_path, out_base):
-    ua, uexp, c, kv, names, hashes, nm_end = load_template()
-    selftest()
+def cook(png_path, out_base, pkg_path=NEW_PKG_PATH, obj_name=NEW_OBJ_NAME,
+         template=TEMPLATE):
+    ua, uexp, c, kv, names, hashes, nm_end = load_template(template)
+    selftest(template)
 
     img = Image.open(png_path).convert("RGBA")
     W, H = img.size
     rgba = np.asarray(img, dtype=np.uint8)
     bgra = rgba[:, :, [2, 1, 0, 3]].tobytes()  # UE PF_B8G8R8A8 byte order
-    print(f"cook: {png_path} {W}x{H} -> {NEW_PKG_PATH}.{NEW_OBJ_NAME} ({NEW_PF}, 1 mip, inline)")
+    print(f"cook: {png_path} {W}x{H} -> {pkg_path}.{obj_name} ({NEW_PF}, 1 mip, inline)")
 
     # -- new name map: 3 in-place renames, all hashes recomputed --
     new_names = list(names)
-    new_names[0] = NEW_PKG_PATH        # was /Game/meshes/kel/4/tex_kel3_skin
-    new_names[15] = NEW_OBJ_NAME       # was tex_kel3_skin
+    new_names[0] = pkg_path            # was /Game/meshes/kel/4/tex_kel3_skin
+    new_names[15] = obj_name           # was tex_kel3_skin
     new_names[13] = NEW_PF             # was PF_DXT1
     nm_blob = b"".join(name_entry(n) for n in new_names)
     delta = len(nm_blob) - (nm_end - kv["nameOffset"])

@@ -45,11 +45,7 @@ def shelf_pack(sizes, canvas_w):
     return pos, y + row_h
 
 
-def main():
-    if len(sys.argv) < 3:
-        print(__doc__)
-        return 2
-    tex_dir, out_base = sys.argv[1], sys.argv[2]
+def pack(tex_dir, out_base):
     tiles = []
     for fn in sorted(os.listdir(tex_dir)):
         if not fn.lower().endswith(".png"):
@@ -97,6 +93,13 @@ def main():
     area = sum(w * h for _, w, h in sizes)
     print(f"[atlas] {len(tiles)} tiles -> {W}x{H} ({100.0 * area / (W * H):.0f}% filled), "
           f"gutter={GUTTER}px  -> {out_base}.png/.json")
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(__doc__)
+        return 2
+    pack(sys.argv[1], sys.argv[2])
 
 
 if __name__ == "__main__":
