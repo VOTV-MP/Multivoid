@@ -31,8 +31,13 @@ persists).
 3. **Live change**: pick another skin mid-game — your body changes instantly, the OTHER
    peer sees your puppet change within a second, chat line "<nick> changed skin to ...".
 4. **Persistence**: quit the client, rejoin — the skin came back from the ini.
-5. **rvi_scientist_v1sc**: pick it — both your body and your puppet on the other screen
-   should wear it (the pak is on all installs).
+5. **rvi_scientist_v1sc — RE-COOKED (late 2026-07-02)**: your first converted pak was
+   broken (A-posed arm chunks; toe-half of each foot pinned to the pelvis) — the
+   converter postmortem found 106/764 verts silently mis-skinned + a foreign repose
+   profile. The pak on all 4 installs is now cooked FROM YOUR OWN manual pose
+   (`..._my_pose_good.psk`, reproduced to 9e-5; toes ride the feet, the head prop rides
+   the head; pak `ED666BE5`, old bad hash was `0AC43284`). Pick it — expect YOUR pose
+   and proper limb tracking on both your body and your puppet on the other screen.
 6. **dr_kel revert**: pick dr_kel — body back to kel WITHOUT the atlas texture stuck on
    it (the material override clear).
 Log markers: `local_body: native kel mesh captured`, `client_model: ... -> skin '<name>'`,

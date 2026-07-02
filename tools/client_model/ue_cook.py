@@ -10,6 +10,7 @@ Spec: SPEC.md. Dev/RE tool (RULE 3).
 """
 import json
 import os
+import re
 import struct
 import sys
 
@@ -120,23 +121,61 @@ def read_obj(path):
     return np.array(V, np.float64), (np.array(VT, np.float64) if VT else np.zeros((1, 2))), F, FM
 
 
-def hl_to_anthro_name(hl):
-    s = hl.lower(); toks = s.split()
-    side = "L" if "l" in toks else ("R" if "r" in toks else None)
+def bone_keyword(name):
+    """HL/Source bone name -> anthro deform-bone name, or None when no keyword
+    matches. Tokens split on space/underscore/dot/dash so 'Bip01 L Arm1',
+    'Bip01_L_UpperArm' and 'ValveBiped.Bip01_R_Calf' all resolve; side comes from a
+    standalone l/r/left/right token. Callers MUST route None through
+    resolve_bone_targets (nearest mapped ancestor) -- the old constant-pelvis
+    fallback rigid-glued every unknown bone to the hip (rvi_scientist 2026-07-02:
+    toes/fingers/head-prop = 106/764 verts pinned to pelvis, boot toes stayed
+    behind the walking foot)."""
+    s = name.lower()
+    toks = re.split(r"[ _.\-]+", s)
+    side = "L" if ("l" in toks or "left" in toks) else \
+           ("R" if ("r" in toks or "right" in toks) else None)
     sd = lambda base: f"{base}_{side}" if side else base
-    c = s.replace(" ", "")
+    c = re.sub(r"[ _.\-]+", "", s)
     if "head" in s: return "head"
     if "neck" in s: return "neck"
-    if "hand" in s: return sd("hand")
-    if "arm2" in c: return sd("forearm")
-    if "arm1" in c: return sd("upperarm")
+    if "finger" in s or "thumb" in s: return sd("hand")   # anthro fingers exist, but a
+    if "hand" in s or "wrist" in s or "ulna" in s: return sd("hand")  # rigid HL mitt rides the hand
+    if "forearm" in c or "arm2" in c: return sd("forearm")
+    if "upperarm" in c or "arm1" in c or "bicep" in c: return sd("upperarm")
+    if "clavicle" in s or "shoulder" in s: return "chest"
     if "arm" in s: return sd("upperarm")
-    if "foot" in s: return sd("foot")
-    if "leg1" in c: return sd("lowerLeg")
-    if "leg" in s: return sd("thigh")
+    if "toe" in s: return sd("foot")                      # anthro rig has no toe bones
+    if "foot" in s or "ankle" in s: return sd("foot")
+    if "calf" in c or "shin" in c or "leg1" in c: return sd("lowerLeg")
+    if "thigh" in s or "leg" in s: return sd("thigh")
     if "spine" in s: return "chest" if any(d in c for d in ("1", "2", "3")) else "belly"
-    if "pelvis" in s or s.strip() == "bip01": return "pelvis"
-    return "pelvis"
+    if "pelvis" in s or "hip" in toks or s.strip() == "bip01": return "pelvis"
+    return None
+
+
+def resolve_bone_targets(names, parent, ri):
+    """Per-bone anthro target: keyword match, else the NEAREST KEYWORD-MAPPED
+    ANCESTOR (an attachment/helper bone follows the limb it hangs off -- e.g.
+    rvi_scientist's Bone02 under Dummy08 under Head is head geometry), else pelvis
+    counted as a real MISS. Returns [(anthro_name, how)] aligned with names; how is
+    'direct', 'ancestor <name>', or 'MISS'. ri = anthro bone name -> index."""
+    fallback = "pelvis" if "pelvis" in ri else next(iter(ri))
+    direct = []
+    for n in names:
+        t = bone_keyword(n)
+        direct.append(t if t is not None and t in ri else None)
+    out = []
+    for i in range(len(names)):
+        if direct[i]:
+            out.append((direct[i], "direct")); continue
+        j = parent[i]
+        while j >= 0 and direct[j] is None:
+            j = parent[j]
+        if j >= 0:
+            out.append((direct[j], f"ancestor {names[j]}"))
+        else:
+            out.append((fallback, "MISS"))
+    return out
 
 
 def refskel_bone_names(payload, rs, names):
@@ -220,9 +259,31 @@ def cook(template_base, geom_obj, bones_json, out_base, atlas_json=ATLAS):
             fn = np.cross(G[b] - G[a], G[c] - G[a]); N[a] += fn; N[b] += fn; N[c] += fn
         ln = np.linalg.norm(N, axis=1, keepdims=True); return N / np.where(ln > 1e-8, ln, 1)
     N = normals(fp if sv_o > 0 else [(a, c, b) for a, b, c in fp])
-    pbone = np.array([ri.get(hl_to_anthro_name(bnames[vbone[p]]), ri.get("pelvis", 0)) for p in range(len(V))])
-    miss = sum(1 for p in range(len(V)) if hl_to_anthro_name(bnames[vbone[p]]) not in ri)
-    print(f"  HL->anthro: {len(set(pbone.tolist()))} anthro bones used, {miss}/{len(V)} verts fell back to pelvis")
+    # Bone targets via keyword + nearest-mapped-ancestor (resolve_bone_targets).
+    # The accounting is per RESOLUTION KIND -- the old counter tested "target not in
+    # refskel", which the constant-pelvis fallback made 0 by construction while 106
+    # rvi verts sat mis-skinned (2026-07-02): count how each bone RESOLVED instead.
+    bparent = [bn["parent"] for bn in meta["bones"]]
+    targets = resolve_bone_targets(bnames, bparent, ri)
+    pbone = np.array([ri[targets[vbone[p]][0]] for p in range(len(V))])
+    vcnt = np.bincount(np.asarray(vbone), minlength=len(bnames))
+    n_anc = n_miss = 0
+    for bi in range(len(bnames)):
+        if not vcnt[bi]:
+            continue
+        tgt, how = targets[bi]
+        if how != "direct":
+            print(f"  bone-map: '{bnames[bi]}' -> {tgt} ({how}, {int(vcnt[bi])} verts)")
+        if how == "MISS":
+            n_miss += int(vcnt[bi])
+        elif how != "direct":
+            n_anc += int(vcnt[bi])
+    print(f"  HL->anthro: {len(set(pbone.tolist()))} anthro bones used; "
+          f"{len(V) - n_anc - n_miss}/{len(V)} verts direct, {n_anc} via-ancestor, "
+          f"{n_miss} MISS")
+    if n_miss:
+        print(f"  WARNING: {n_miss} verts have no mapped bone anywhere up their chain -- "
+              f"pinned to the pelvis, they will NOT follow any limb in-game.")
 
     vmap = {}; POS = []; UVs = []; NR = []; BN = []; IDX = []
     for tri, mat in zip(F, FM):

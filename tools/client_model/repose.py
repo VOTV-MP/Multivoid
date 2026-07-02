@@ -1,27 +1,41 @@
 #!/usr/bin/env python3
 """repose -- auto scale+repose a GoldSrc A-pose model to the VOTV T-pose standard.
 
-LEARNED from a single manual example (the user posed+scaled one HL scientist onto
-dr_kel's anthro T-pose in Blender). Because GoldSrc skinning is RIGID (1 bone/vertex),
-the manual repose is EXACTLY a per-bone rigid transform, and -- since bone head offsets
-are rest-invariant under posing -- it reduces to ONE transferable quantity per bone: a
-LOCAL POSE ROTATION (in that bone's own frame). That set of local rotations + a target
-height IS the "VOTV T-pose standard" and generalizes to any model on the same HL Bip01
-skeleton. Validated: applying the learned profile back to the source reproduces the
-manual PSK to floating-point zero.
+LEARNED from manual examples: the user poses+scales ONE model onto dr_kel's anthro
+T-pose in Blender and exports a PSK. Because GoldSrc skinning is RIGID (1 bone/vertex),
+that manual repose is EXACTLY a per-bone rigid transform, and -- since bone head
+offsets are rest-invariant under posing -- it reduces to ONE transferable quantity per
+bone: a LOCAL POSE DELTA (R+t in the bone's own rest frame) + target height/placement.
 
-  learn <origDir> <posed.psk> <profile.json>   # extract the standard from the example
-  apply <origDir> <profile.json> <out.obj>     # auto-repose a NEW model's A-pose
-        [--validate <psk>]                      #   ...and check vs a ground-truth psk
-  apply <origDir> default <out.obj>            # ...with the DEFAULT library profile
+A profile transfers by bone NAME and is exact on the skeleton it was learned from; on
+a DIFFERENT skeleton it degrades two ways (both MEASURED on rvi_scientist 2026-07-02,
+the bad-pak postmortem): bones the profile never saw keep their rest orientation
+(103/764 verts stayed A-posed), and even covered bones drift because the deltas are
+rest-relative (error compounds down the arm chain: 2.6 -> 12 units by the fingers).
+So the library keeps ONE profile per learned example, and the fit is MEASURED, never
+assumed:
 
-Profiles live in the LIBRARY tools/client_model/profiles/ (one json per learned
-example, provenance in profiles/README.md); DEFAULT_PROFILE below names the default
-(user 2026-07-02: keep a base of profiles, new one as default).
+  learn  <origDir> <posed.psk> <profile.json>     # extract the standard from an example
+  apply  <origDir> <profile.json|auto> <out.obj>  [--validate <psk>]
+  select <origDir>                                # print the library scoring table only
+
+auto-select scores every library profile against the model: vertex-weighted bone-name
+COVERAGE first, then REST-POSE similarity (geodesic angle between the model's and the
+profile's recorded rest_local rotations -- "is this the skeleton I was learned on?").
+Profiles with status "rejected" (look vetoed in-game) are skipped. apply() always
+prints the uncovered-bones report; any uncovered share means: pose the model manually
+once (Blender -> PSK next to the .mdl) and the converter LEARNS its exact profile
+(portable/driver.py does that automatically).
+
+Profile format 3 (the ONLY supported format; the library was relearned 2026-07-02):
+pose_local (per-bone 4x4 R+t delta) + rest_local (the source skeleton's rest local
+transforms = the fit metric) + status + placement. Older format-1/2 files: relearn
+from their source PSK (RULE 2 -- no dual loaders).
 
 <origDir> = mdl_extract output (model.obj + model.bones.json with bone world matrices).
 Pipeline: mdl_extract -> repose.apply -> ue_cook. Dev/RE tool (RULE 3).
 """
+import datetime
 import json
 import os
 import struct
@@ -29,13 +43,7 @@ import sys
 
 import numpy as np
 
-# The library default (the "VOTV T-pose standard" every new model gets unless a
-# profile is named explicitly). Swap by editing this one line; the library keeps
-# every learned profile side by side (profiles/README.md). v1 narrow is the default
-# by IN-GAME VERDICT (2026-07-02 evening: the v2 wide look was rejected hands-on;
-# v2 stays in the library).
-DEFAULT_PROFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "profiles", "tpose_v1_narrow_2026-07-01.json")
+PROFILE_LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 
 
 # ---------- IO ----------
@@ -81,10 +89,6 @@ def orthonormal(R):
     return Rr
 
 
-def rot4(R3):
-    M = np.eye(4); M[:3, :3] = R3; return M
-
-
 def umeyama(X, Y):
     """least-squares similarity mapping X->Y (Nx3): returns s, R(3x3), t(3)."""
     mx, my = X.mean(0), Y.mean(0); Xc, Yc = X - mx, Y - my
@@ -96,13 +100,25 @@ def umeyama(X, Y):
     return s, R, t
 
 
+def rest_locals(WA, parent):
+    """Per-bone LOCAL rest transform (root = world). The profile records these so a
+    later apply can MEASURE how far a new model's skeleton is from the learned one."""
+    out = []
+    for b in range(len(parent)):
+        pa = parent[b]
+        out.append((WA[b] if pa < 0 else np.linalg.inv(WA[pa]) @ WA[b]).tolist())
+    return out
+
+
 # ---------- learn ----------
 def learn(orig_dir, posed_psk, prof_out):
     V, vbone, W3, parent, names = load_apose(orig_dir)
     P, pb = psk_points(posed_psk)
     nb = len(names)
-    assert len(V) == len(P) and (vbone == pb).all(), \
-        "point order/bone mismatch between mdl parse and PSK -- cannot learn"
+    if len(V) != len(P) or not (vbone == pb).all():
+        sys.exit(f"[learn] {os.path.basename(posed_psk)} does not correspond to the extracted "
+                 f"model ({len(P)} vs {len(V)} points) -- export the PSK from the SAME model, "
+                 f"pose/scale only (no added/deleted geometry, no reordering)")
     WA = np.array([to4(W3[i]) for i in range(nb)])
 
     # per-bone measured similarity A->T (only bones that carry vertices)
@@ -139,11 +155,10 @@ def learn(orig_dir, posed_psk, prof_out):
             WTu[b] = WTu[pa] @ RestL
 
     # transferable = per-bone LOCAL POSE DELTA: a FULL rigid (R + t) in the bone's own
-    # rest frame -- pose[b] = RestL_A[b]^-1 @ L_Tu[b]. Format 1 stored only the rotation
-    # part; that reproduced a pure RE-POSE (the v1 narrow example) to ~0 but silently
-    # dropped JOINT TRANSLATIONS -- the v2 wide example moves shoulder/arm joints
-    # outward, and rotation-only left a 16-unit residual (2026-07-02). The translation
-    # rides in the rest-local frame, so it transfers by bone NAME like the rotation.
+    # rest frame -- pose[b] = RestL_A[b]^-1 @ L_Tu[b]. The rotation is the re-pose; the
+    # translation carries JOINT MOVES (e.g. the v2 wide example pushed shoulder/arm
+    # joints outward -- rotation-only left a 16-unit residual, 2026-07-02). Both ride
+    # in the rest-local frame, so they transfer by bone NAME.
     pose_local = {}
     for b in range(nb):
         pa = parent[b]
@@ -164,9 +179,14 @@ def learn(orig_dir, posed_psk, prof_out):
     # (2026-07-02: the new-profile example read up=axis0, self-reproduce residual 17.58).
     up = 2
     prof = {
-        "format": 2, "skeleton": "HL_Bip01", "source": os.path.basename(posed_psk),
+        "format": 3,
+        "skeleton": f"{names[0]}/{nb}bones",
+        "source": os.path.basename(posed_psk),
+        "learned": datetime.date.today().isoformat(),
+        "status": "active",   # "rejected" = look vetoed in-game; auto-select skips it
         "bones": names, "parent": parent,
         "pose_local": [pose_local[b] for b in range(nb)],
+        "rest_local": rest_locals(WA, parent),
         "target_height": float(P[:, up].max() - P[:, up].min()),
         "up_axis": up,
         "foot": float(P[:, up].min()),
@@ -183,21 +203,101 @@ def learn(orig_dir, posed_psk, prof_out):
           f"(should be ~0; units ~{prof['target_height']:.0f})")
 
 
+# ---------- fit measurement ----------
+def coverage_report(vbone, names, prof, quiet=False):
+    """Vert-carrying bones the profile does NOT cover keep their A-pose orientation
+    (identity local pose). Print them; return (covered_verts, total_verts)."""
+    nb = len(names)
+    vc = np.bincount(vbone, minlength=nb)
+    have = set(prof["bones"])
+    unc = [(names[b], int(vc[b])) for b in range(nb) if vc[b] and names[b] not in have]
+    tot = int(vc.sum()); bad = sum(v for _, v in unc)
+    if unc and not quiet:
+        print(f"[repose] WARNING: profile covers {tot - bad}/{tot} verts "
+              f"({100 * (tot - bad) / tot:.1f}%) -- uncovered bones KEEP their A-pose:")
+        for n, v in unc:
+            print(f"[repose]   {n}: {v} verts")
+        print("[repose]   fix: pose this model manually once in Blender, export a PSK "
+              "next to the .mdl, and the converter learns its exact profile.")
+    elif not quiet:
+        print(f"[repose] profile covers all {tot} skinned verts.")
+    return tot - bad, tot
+
+
+def rest_fit_deg(WA, parent, names, vbone, prof):
+    """Vertex-weighted mean geodesic angle (degrees) between the model's rest_local
+    rotations and the profile's recorded ones, over shared vert-carrying bones.
+    ~0 = the very skeleton the profile was learned on; grows with A-pose difference."""
+    if "rest_local" not in prof:
+        return None
+    pr = {n: np.array(m, float) for n, m in zip(prof["bones"], prof["rest_local"])}
+    vc = np.bincount(vbone, minlength=len(names))
+    num = den = 0.0
+    for b in range(len(names)):
+        if not vc[b] or names[b] not in pr:
+            continue
+        pa = parent[b]
+        L = WA[b] if pa < 0 else np.linalg.inv(WA[pa]) @ WA[b]
+        Ra, Rb = orthonormal(L), orthonormal(pr[names[b]])
+        c = (np.trace(Ra.T @ Rb) - 1.0) / 2.0
+        num += vc[b] * float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+        den += vc[b]
+    return num / den if den else None
+
+
+def select_profile(orig_dir, lib_dir=None):
+    """Score every library profile against the model; return the best one's path.
+    Rank: status!=rejected, vertex COVERAGE desc, then rest-pose similarity asc."""
+    lib_dir = lib_dir or PROFILE_LIB
+    V, vbone, W3, parent, names = load_apose(orig_dir)
+    WA = np.array([to4(W3[i]) for i in range(len(names))])
+    vc = np.bincount(vbone, minlength=len(names)); tot = int(vc.sum())
+    rows = []
+    for f in sorted(os.listdir(lib_dir)):
+        if not f.endswith(".json"):
+            continue
+        p = os.path.join(lib_dir, f)
+        try:
+            prof = json.load(open(p))
+        except Exception as e:
+            print(f"[select] {f}: unreadable ({e}) -- skipped"); continue
+        if prof.get("format") != 3:
+            print(f"[select] {f}: format {prof.get('format', 1)} retired -- relearn from its "
+                  f"source PSK; skipped")
+            continue
+        status = prof.get("status", "active")
+        have = set(prof["bones"])
+        cov = sum(int(vc[b]) for b in range(len(names)) if names[b] in have) / tot
+        fit = rest_fit_deg(WA, parent, names, vbone, prof)
+        rows.append((f, p, status, cov, fit))
+    if not rows:
+        sys.exit(f"[select] no usable format-3 profiles in {lib_dir}")
+    rows.sort(key=lambda r: (r[2] == "rejected", -round(r[3], 4),
+                             r[4] if r[4] is not None else 1e9))
+    print(f"[select] profile library scoring ({tot} skinned verts):")
+    for f, p, status, cov, fit in rows:
+        fs = f"{fit:7.2f} deg" if fit is not None else "    no-rest"
+        print(f"[select]   {f:44} {status:8} cov={100 * cov:5.1f}%  restfit={fs}")
+    best = next((r for r in rows if r[2] != "rejected"), None)
+    if best is None:
+        sys.exit("[select] every profile is status=rejected -- learn a new one")
+    print(f"[select] -> {best[0]}")
+    return best[1]
+
+
 # ---------- apply ----------
 def _apply(V, vbone, WA, parent, prof, names):
     nb = len(parent)
     # Match pose deltas by bone NAME -- a new model's skeleton can differ from the
-    # profile's (e.g. this one adds fingers/toes). Bones absent from the profile get an
-    # identity local pose (keep their rest orientation); they still inherit their parent's
-    # repose through the hierarchy. Root ("Bip01") stores a WORLD rotation (see learn).
-    # Profile formats: 1 = rotation-only (pose_rot, 3x3; pre-2026-07-02 library entries),
-    # 2 = full rigid local delta (pose_local, 4x4; carries JOINT TRANSLATIONS -- the wide
-    # T-pose moves shoulder/arm joints, which rotation-only silently dropped). Both load;
-    # normalization to 4x4 happens here so ONE apply path serves the whole library.
-    if prof.get("format", 1) >= 2:
-        pmap = {n: np.array(m, float) for n, m in zip(prof["bones"], prof["pose_local"])}
-    else:
-        pmap = {n: rot4(np.array(r, float)) for n, r in zip(prof["bones"], prof["pose_rot"])}
+    # profile's. Bones absent from the profile get an identity local pose (keep their
+    # rest orientation); they still inherit their parent's repose through the
+    # hierarchy -- coverage_report() makes that share visible instead of silent.
+    # Root stores a WORLD rotation (see learn).
+    fmt = prof.get("format", 1)
+    if fmt != 3:
+        sys.exit(f"[repose] profile format {fmt} is retired -- relearn it from its source "
+                 f"PSK (repose.py learn) or take the format-3 copy from profiles/")
+    pmap = {n: np.array(m, float) for n, m in zip(prof["bones"], prof["pose_local"])}
     I4 = np.eye(4)
     pose = [pmap.get(names[b], I4) for b in range(nb)]
     order = sorted(range(nb), key=lambda b: (0 if parent[b] < 0 else 1, b))
@@ -234,9 +334,9 @@ def _apply(V, vbone, WA, parent, prof, names):
 def apply(orig_dir, prof_path, out_obj, validate=None):
     V, vbone, W3, parent, names = load_apose(orig_dir)
     prof = json.load(open(prof_path))
-    if names != prof["bones"]:
-        print("[apply] WARNING: bone list differs from profile -- generalizing by index/name; "
-              "verify the result.")
+    print(f"[apply] profile: {os.path.basename(prof_path)} "
+          f"(source {prof.get('source', '?')}, learned {prof.get('learned', '?')})")
+    coverage_report(vbone, names, prof)
     WA = np.array([to4(W3[i]) for i in range(len(names))])
     Vt = _apply(V, vbone, WA, parent, prof, names)
 
@@ -269,8 +369,10 @@ def main():
         learn(a[1], a[2], a[3])
     elif len(a) >= 4 and a[0] == "apply":
         val = a[a.index("--validate") + 1] if "--validate" in a else None
-        prof = DEFAULT_PROFILE if a[2] == "default" else a[2]
+        prof = select_profile(a[1]) if a[2] == "auto" else a[2]
         apply(a[1], prof, a[3], val)
+    elif len(a) >= 2 and a[0] == "select":
+        select_profile(a[1])
     else:
         print(__doc__)
 

@@ -6,7 +6,7 @@ keep living in tools/client_model/ (user 2026-07-02), nothing is forked or copie
 into version control. Rebuild after any pipeline-module change.
 
   dist/convert_model.pyz    zipapp: driver (__main__) + the seven pipeline modules
-                            + data/ (mesh template, tex template, default profile)
+                            + data/ (mesh template, tex template, profile LIBRARY)
   dist/repak.exe            the pak packer (a sibling file on purpose, per the user)
   dist/convert.bat          double-click launcher: exe if present, else py/python
   dist/README.txt           user instructions (RU)
@@ -35,8 +35,8 @@ DATA = {   # bundle name -> repo source
     "kerfurOmega_KelSkin.uexp":   "research/pak_re/extracted/VotV/Content/meshes/kerfurAnthro/sk/kerfurOmega_KelSkin.uexp",
     "tex_kel3_skin.uasset":       "research/pak_re/extracted/VotV/Content/meshes/kel/4/tex_kel3_skin.uasset",
     "tex_kel3_skin.uexp":         "research/pak_re/extracted/VotV/Content/meshes/kel/4/tex_kel3_skin.uexp",
-    "profile.json":               "tools/client_model/profiles/tpose_v1_narrow_2026-07-01.json",
 }
+PROFILES = os.path.join(PKG, "profiles")
 REPAK = os.path.join(ROOT, "research", "pak_re", "tools", "repak.exe")
 
 BAT = """@echo off
@@ -72,9 +72,18 @@ README = """VOTV coop — конвертер модели клиента (GoldSr
 В игре: F1 -> Cosmetics -> Skins -> выбрать модель (выбор сохраняется и
 восстанавливается при перезаходе). Пак должен лежать у ВСЕХ игроков.
 
+Поза (repose): конвертер сам выбирает лучший профиль из встроенной библиотеки
+(печатает таблицу: покрытие костей + похожесть скелета). Если у модели другой
+скелет и авто-результат кривой (куски в A-позе, конвертер про это ПРЕДУПРЕЖДАЕТ
+списком костей) — запозируйте модель один раз вручную в Blender и положите
+экспортированный .psk РЯДОМ с .mdl: конвертер сам его найдёт, ВЫУЧИТ точный
+профиль (воспроизводит вашу позу и масштаб до нуля) и сохранит его рядом с
+паком как <имя>.profile.json — пригодится для будущих моделей с тем же скелетом.
+
 Опции:
     --name <имя>         имя пакета/пака (по умолчанию = имя .mdl файла)
-    --profile <json>     свой repose-профиль (по умолчанию встроен v1 narrow)
+    --learn <psk>        выучить профиль из этой позы (если .psk рядом не один)
+    --profile <json>     форсировать конкретный repose-профиль
     --keep-work          оставить папку <имя>_work (atlas.png, tpose.obj — отладка)
 
 Требования: convert_model.exe — ничего; convert_model.pyz — Python 3.9+ с
@@ -93,6 +102,10 @@ def build_pyz(stage):
         shutil.copy2(os.path.join(PKG, m), stage)
     for name, src in DATA.items():
         shutil.copy2(os.path.join(ROOT, src), os.path.join(stage, "data", name))
+    os.makedirs(os.path.join(stage, "data", "profiles"))
+    for f in sorted(os.listdir(PROFILES)):
+        if f.endswith(".json"):
+            shutil.copy2(os.path.join(PROFILES, f), os.path.join(stage, "data", "profiles", f))
     out = os.path.join(DIST, "convert_model.pyz")
     zipapp.create_archive(stage, out, interpreter=None, compressed=True)
     print(f"  {out}  ({os.path.getsize(out)} B)")

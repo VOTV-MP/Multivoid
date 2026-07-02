@@ -24,27 +24,7 @@ import sys
 
 import numpy as np
 import skin_transfer as st
-
-
-def hl_to_anthro_name(hl):
-    """HL 'Bip01 ...' bone name -> anthro deform-bone name."""
-    s = hl.lower()
-    toks = s.split()
-    side = "L" if "l" in toks else ("R" if "r" in toks else None)
-    sd = lambda base: f"{base}_{side}" if side else base
-    c = s.replace(" ", "")
-    if "head" in s:              return "head"
-    if "neck" in s:              return "neck"
-    if "hand" in s:              return sd("hand")
-    if "arm2" in c:              return sd("forearm")
-    if "arm1" in c:              return sd("upperarm")
-    if "arm" in s:               return sd("upperarm")   # clavicle "L Arm" -> upperarm
-    if "foot" in s:              return sd("foot")
-    if "leg1" in c:              return sd("lowerLeg")    # HL calf
-    if "leg" in s:               return sd("thigh")
-    if "spine" in s:             return "chest" if any(d in c for d in ("1", "2", "3")) else "belly"
-    if "pelvis" in s or s.strip() == "bip01": return "pelvis"
-    return "pelvis"
+import ue_cook  # THE one bone resolver (keyword + ancestor walk) lives there
 
 
 def read_obj(path):
@@ -90,9 +70,11 @@ def main():
     tpos, _, _, _, _ = st.mesh_skin(tg, tb)
     tmin, tmax = tpos.min(0), tpos.max(0)
 
+    bparent = [bn["parent"] for bn in meta["bones"]]
+    targets = ue_cook.resolve_bone_targets(bnames, bparent, ji)
+
     def anthro_joint(hlbone_idx):
-        an = hl_to_anthro_name(bnames[hlbone_idx])
-        return ji.get(an, ji.get("pelvis", 0))
+        return ji.get(targets[hlbone_idx][0], ji.get("pelvis", 0))
 
     # --- align source (HL Z-up) -> target mesh space (glTF Y-up), scale to height ---
     hx, hy, hz = V[:, 0], V[:, 1], V[:, 2]

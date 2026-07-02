@@ -7,17 +7,30 @@ in the same folder (textures are read from inside the .mdl itself):
   convert.bat                       # or: convert_model.exe / python convert_model.pyz
   convert.bat barney.mdl            # pick the mdl explicitly when several are present
   ... --name hl_einstein_v1sc      # cook under a different package/pak name
-  ... --profile my_profile.json    # override the embedded repose profile
+  ... --learn my_pose.psk          # learn the repose profile from a manual pose PSK
+  ... --profile my_profile.json    # force an explicit repose profile
   ... --keep-work                  # keep <name>_work/ (atlas.png preview, tpose.obj)
 
+Repose profile resolution (rvi_scientist postmortem 2026-07-02 -- a profile learned
+on one skeleton silently mangles another, so the fit is measured, never assumed):
+  1. --profile <json>          explicit override.
+  2. a manual-pose PSK next to the .mdl (auto-detected by exact point/bone
+     correspondence, or --learn <psk>): the profile is LEARNED from it (exact for
+     THIS model, reproduces the manual pose to float-zero), saved as
+     <name>.profile.json next to the pak for reuse / the repo library.
+  3. auto-select from the bundled profile LIBRARY: every profile is scored against
+     the model (vertex bone-name coverage, then rest-pose similarity) and the table
+     is printed; uncovered bones are reported (they keep their A-pose -- if that
+     share is non-trivial, make a manual pose PSK once and rerun).
+
 Pipeline (the exact repo recipe, docs/COOP_CLIENT_MODEL.md section 4):
-  mdl_extract -> repose (default library profile) -> atlas -> ue_cook (skeletal mesh)
+  mdl_extract -> repose (see above) -> atlas -> ue_cook (skeletal mesh)
   -> ue_skelmesh round-trip validation -> ue_tex (atlas texture) -> repak pack.
 
 The pipeline stages are the SAME modules as the repo tools -- make_portable.py bundles
 them unmodified (single source of truth; this driver is the only portable-specific
 code). Embedded data: the cook templates (kerfurOmega_KelSkin mesh, tex_kel3_skin
-texture) + the default repose profile. repak.exe stays a sibling file on purpose.
+texture) + the repose profile LIBRARY. repak.exe stays a sibling file on purpose.
 Dev/RE tool (RULE 3) -- nothing here ships at mod runtime.
 """
 import argparse
@@ -53,14 +66,13 @@ import ue_skelmesh
 import ue_tex
 
 DATA_FILES = ("kerfurOmega_KelSkin.uasset", "kerfurOmega_KelSkin.uexp",
-              "tex_kel3_skin.uasset", "tex_kel3_skin.uexp", "profile.json")
+              "tex_kel3_skin.uasset", "tex_kel3_skin.uexp")
 _REPO_ROOT = os.path.dirname(os.path.dirname(_repo_pkg))
 _REPO_DATA = {                                            # in-repo run: no bundle, read live files
     "kerfurOmega_KelSkin.uasset": "research/pak_re/extracted/VotV/Content/meshes/kerfurAnthro/sk/kerfurOmega_KelSkin.uasset",
     "kerfurOmega_KelSkin.uexp":   "research/pak_re/extracted/VotV/Content/meshes/kerfurAnthro/sk/kerfurOmega_KelSkin.uexp",
     "tex_kel3_skin.uasset":       "research/pak_re/extracted/VotV/Content/meshes/kel/4/tex_kel3_skin.uasset",
     "tex_kel3_skin.uexp":         "research/pak_re/extracted/VotV/Content/meshes/kel/4/tex_kel3_skin.uexp",
-    "profile.json":               "tools/client_model/profiles/tpose_v1_narrow_2026-07-01.json",
 }
 # Since the v93 skins system the pak stem IS the in-game skin name -- any name
 # works; players pick it in F1 > Cosmetics > Skins (no fixed-name constraint).
@@ -86,6 +98,46 @@ def load_data(name):
         with zipfile.ZipFile(z) as zf:
             return zf.read("data/" + name)
     return open(os.path.join(_REPO_ROOT, _REPO_DATA[name]), "rb").read()
+
+
+def load_profiles():
+    """The whole repose profile LIBRARY -> {filename: bytes} (bundle or live repo)."""
+    if getattr(sys, "frozen", False):
+        d = os.path.join(sys._MEIPASS, "data", "profiles")
+        return {n: open(os.path.join(d, n), "rb").read()
+                for n in sorted(os.listdir(d)) if n.endswith(".json")}
+    z = _bundle_zip()
+    if z:
+        with zipfile.ZipFile(z) as zf:
+            return {os.path.basename(n): zf.read(n) for n in sorted(zf.namelist())
+                    if n.startswith("data/profiles/") and n.endswith(".json")}
+    d = os.path.join(_REPO_ROOT, "tools", "client_model", "profiles")
+    return {n: open(os.path.join(d, n), "rb").read()
+            for n in sorted(os.listdir(d)) if n.endswith(".json")}
+
+
+def find_pose_psk(folder, extract_dir):
+    """A manual-pose PSK lying next to the .mdl (the user's Blender pose of THIS
+    model: same points, pose/scale only) beats any library profile -- detect it by
+    exact point-count + per-point bone correspondence. One match -> learn from it;
+    several -> demand an explicit --learn."""
+    V, vbone, _, _, _ = repose.load_apose(extract_dir)
+    cands = []
+    for f in sorted(os.listdir(folder)):
+        if not f.lower().endswith(".psk"):
+            continue
+        p = os.path.join(folder, f)
+        try:
+            P, pb = repose.psk_points(p)
+        except Exception:
+            continue                                      # not a PSK we can read -- skip
+        if len(P) == len(V) and (pb == vbone).all():
+            cands.append(p)
+    if len(cands) > 1:
+        sys.exit("several pose PSKs match this model ("
+                 + ", ".join(os.path.basename(c) for c in cands)
+                 + ") -- pick one: convert.bat <model.mdl> --learn <pose.psk>")
+    return cands[0] if cands else None
 
 
 def find_repak():
@@ -125,7 +177,9 @@ def main(argv=None):
                                  description="GoldSrc .mdl -> VOTV coop client-model .pak")
     ap.add_argument("mdl", nargs="?", help="the model (default: the only .mdl here)")
     ap.add_argument("--name", help="package/pak name (default: mdl filename)")
-    ap.add_argument("--profile", help="repose profile json (default: embedded library default)")
+    ap.add_argument("--learn", metavar="PSK",
+                    help="learn the repose profile from this manual-pose PSK")
+    ap.add_argument("--profile", help="force an explicit repose profile json")
     ap.add_argument("--keep-work", action="store_true", help="keep the <name>_work folder")
     a = ap.parse_args(argv)
 
@@ -141,20 +195,38 @@ def main(argv=None):
             sys.exit(f"{work} exists and is not a converter work folder -- move it away")
         shutil.rmtree(work)
     dat = os.path.join(work, "_data")
-    os.makedirs(dat)
+    os.makedirs(os.path.join(dat, "profiles"))
     for n in DATA_FILES:
         open(os.path.join(dat, n), "wb").write(load_data(n))
-    profile = os.path.abspath(a.profile) if a.profile else os.path.join(dat, "profile.json")
+    for n, blob in load_profiles().items():
+        open(os.path.join(dat, "profiles", n), "wb").write(blob)
 
     print("[1/6] extract mdl")
-    mdl_extract.extract(mdl, os.path.join(work, "extract"))
-    print("[2/6] repose to the VOTV T-pose standard")
-    repose.apply(os.path.join(work, "extract"), profile, os.path.join(work, "tpose.obj"))
+    ex = os.path.join(work, "extract")
+    mdl_extract.extract(mdl, ex)
+
+    # Repose profile: explicit --profile > learn from a manual-pose PSK next to the
+    # mdl > auto-select from the library (see module doc; born of the rvi bad pak).
+    if a.profile:
+        profile = os.path.abspath(a.profile)
+        print(f"[2/6] repose (explicit profile: {os.path.basename(profile)})")
+    else:
+        psk = os.path.abspath(a.learn) if a.learn else find_pose_psk(folder, ex)
+        if psk:
+            profile = os.path.join(folder, name + ".profile.json")
+            print(f"[2/6] repose (LEARNING the profile from {os.path.basename(psk)})")
+            repose.learn(ex, psk, profile)
+            print(f"  learned profile saved next to the pak: {os.path.basename(profile)} "
+                  f"(reusable via --profile; repo-library candidate)")
+        else:
+            print("[2/6] repose (auto-selecting from the profile library)")
+            profile = repose.select_profile(ex, os.path.join(dat, "profiles"))
+    repose.apply(ex, profile, os.path.join(work, "tpose.obj"))
     print("[3/6] pack the texture atlas")
-    atlas.pack(os.path.join(work, "extract", "tex"), os.path.join(work, "atlas"))
+    atlas.pack(os.path.join(ex, "tex"), os.path.join(work, "atlas"))
     print("[4/6] cook the skeletal mesh")
     ue_cook.cook(os.path.join(dat, "kerfurOmega_KelSkin"), os.path.join(work, "tpose.obj"),
-                 os.path.join(work, "extract", "model.bones.json"), os.path.join(work, name),
+                 os.path.join(ex, "model.bones.json"), os.path.join(work, name),
                  atlas_json=os.path.join(work, "atlas.json"))
     if not ue_skelmesh.main(os.path.join(work, name)):
         sys.exit(f"cooked mesh failed the round-trip parse -- aborting (work kept: {work})")

@@ -38,15 +38,20 @@ for exact commands. Use `python` (has numpy), not `python3`.
 
 **PORTABLE ONE-SHOT (`portable/`, 2026-07-02):** `python portable/make_portable.py [--exe]`
 bundles the LIVE modules above (unmodified — single source of truth, the originals stay) +
-the embedded cook templates + the default profile into `portable/dist/`:
+the embedded cook templates + the profile LIBRARY into `portable/dist/`:
 `convert_model.pyz` (needs python+numpy+pillow) / `convert_model.exe` (needs nothing) +
 `repak.exe` + `convert.bat` + `README.txt` (RU). Drop the dist files into any folder with a
 `.mdl`, run `convert.bat` — the `.pak` appears right there, plus `<name>.png` (the F1
 skins-browser preview tile, converted from the model's own `.bmp` thumbnail when present;
 the browser also reads a raw `<name>.bmp` sitting next to the pak). Flags: `--name`,
-`--profile`, `--keep-work`. Since the v93 skins system the pak name IS the in-game skin
-name — drop pak+preview into `LogicMods/votv-coop/` on every peer and pick it in
-F1 > Cosmetics > Skins (no fixed-name constraint anymore).
+`--learn`, `--profile`, `--keep-work`. Since the v93 skins system the pak name IS the
+in-game skin name — drop pak+preview into `LogicMods/votv-coop/` on every peer and pick it
+in F1 > Cosmetics > Skins (no fixed-name constraint anymore).
+Repose profile resolution (rvi postmortem 2026-07-02): a manual-pose PSK next to the .mdl
+is auto-detected (exact point/bone correspondence) and its exact profile is LEARNED +
+saved `<name>.profile.json`; otherwise the best library profile is auto-selected by a
+printed scoring table (bone coverage + rest-pose similarity), with uncovered bones
+reported instead of silently left in A-pose.
 Verified 2026-07-02: pyz and exe runs both reproduce the deployed pak content 4/4
 byte-identical. `dist/`+`build/` are gitignored (game-derived template bytes); rebuild after
 any module change.
@@ -55,15 +60,18 @@ any module change.
 - **`mdl_extract.py`** — GoldSrc/HL1 `.mdl` → `model.obj` (A-pose) + `model.bones.json`
   (hierarchy + per-vertex bone + **HL bone WORLD matrices**) + `tex/*.png`. Pure Python.
 - **`repose.py`** — the repose automation. `learn` extracts a VOTV T-pose profile from a
-  manual example; `apply` auto-reposes any HL Bip01 model to T-pose + scale (`default` =
-  the library default). Validated: reproduces each manual example to residual ~0 (v2 =
-  0.00005 max). See `docs/COOP_CLIENT_MODEL.md §5`.
-- **`profiles/`** — the profile LIBRARY (one json per learned example; format 1 =
-  rotation-only, format 2 = full R+t local deltas). `profiles/README.md` = provenance
-  table; DEFAULT_PROFILE in repose.py names the default (v1 narrow).
+  manual example (format 3: pose_local R+t deltas + rest_local fit metric); `apply` reposes
+  with an explicit profile or `auto` (library scoring: coverage → rest-pose similarity),
+  always printing the uncovered-bones report; `select` prints the table only. Validated:
+  reproduces each manual example to residual ~0 (rvi = 0.00009 max). See
+  `docs/COOP_CLIENT_MODEL.md §5`.
+- **`profiles/`** — the profile LIBRARY (one format-3 json per learned example; grows from
+  the user's manual poses). `profiles/README.md` = provenance + status table (rejected =
+  auto-select skips).
 - **`portable/`** — the drop-in-folder converter: `driver.py` (orchestrates the six steps
-  in the model's own folder, embedded templates/profile) + `make_portable.py` (builds
-  dist/: pyz + optional PyInstaller exe + repak.exe + convert.bat + README.txt).
+  in the model's own folder, embedded templates + profile library, auto-learns from a
+  manual-pose PSK found next to the .mdl) + `make_portable.py` (builds dist/: pyz +
+  optional PyInstaller exe + repak.exe + convert.bat + README.txt).
 - **`atlas.py`** — shelf-packs `tex/*.png` into ONE atlas + `atlas.json` name→pixel-rect map
   (1px clamp-extend gutter; no mips cooked so 1px kills bilinear bleed).
 - **`ue_cook.py`** — THE COOK. Sources the reposed OBJ, applies the exact PSK→cooked Y-mirror,

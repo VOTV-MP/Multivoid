@@ -264,10 +264,14 @@ research/pak_re/tools/repak.exe pack --version V11 research/pak_re/modpak resear
 Tools (all in `tools/client_model/`, dev-only, RULE 3):
 - `mdl_extract.py` — GoldSrc/HL1 `.mdl` → OBJ + per-vertex bone + HL bone WORLD matrices
   (in `model.bones.json`) + textures. DONE.
-- `repose.py` — **THE REPOSE AUTOMATION (§5).** `learn` extracts the VOTV T-pose profile
-  from a manual example; `apply` auto-reposes any HL Bip01 model. DONE, validated (residual 0).
+- `repose.py` — **THE REPOSE AUTOMATION (§5).** `learn` extracts a VOTV T-pose profile
+  from a manual example; `apply` reposes with an explicit profile or `auto` (library
+  scoring). DONE, validated (residual 0 on each example).
 - `ue_cook.py` — **THE COOK.** Sources the reposed T-pose OBJ, applies the exact Y-mirror
-  (§2), auto-corrects winding, HL→anthro rigid bone remap, decomposes the template into
+  (§2), auto-corrects winding, HL→anthro bone resolution (`bone_keyword` +
+  `resolve_bone_targets`: keyword table, else the nearest keyword-mapped ANCESTOR, else a
+  COUNTED miss — the pre-2026-07-02 constant-pelvis fallback silently pinned rvi's
+  toes/fingers/head-prop = 106/764 verts to the hip), decomposes the template into
   keep/replace segments (identity round-trip proven), encodes the scientist buffers (uint16
   indices, FVector positions, FPackedNormal tangents, half-UVs, rigid skin weights, white
   colors), rebuilds 1 section (BoneMap = all 101 bones), fixes SerialSize/BulkDataStartOffset.
@@ -275,10 +279,13 @@ Tools (all in `tools/client_model/`, dev-only, RULE 3):
 - `ue_skelmesh.py` — general UE4.27 cooked-SkeletalMesh parser; round-trips kerfurOmega +
   kel_lmao byte-perfect. Validates the cook output.
 - `ue_pkg.py` — UE4.27 package (de)serializer; round-trips byte-identical.
-- `profiles/` — the repose profile LIBRARY (v1 narrow = default; provenance in
+- `profiles/` — the repose profile LIBRARY (format 3; auto-select scores coverage +
+  rest-pose similarity, `rejected` entries skipped; provenance + statuses in
   profiles/README.md). Replaced the old single root `votv_tpose_profile.json`.
-- `portable/` — `driver.py` (the drop-in-folder orchestrator) + `make_portable.py`
-  (bundles the live modules into dist/: pyz + optional exe + repak.exe + bat + README).
+- `portable/` — `driver.py` (the drop-in-folder orchestrator; auto-LEARNS the profile
+  from a manual-pose PSK found next to the .mdl, else auto-selects from the bundled
+  library) + `make_portable.py` (bundles the live modules into dist/: pyz + optional
+  exe + repak.exe + bat + README).
 - `skin_to_rig.py` — SUPERSEDED for the final asset (an early rigid-remap→glb Blender-view
   helper). Not in the cook path; kept as a viewing aid only.
 - `mesh_extract/` (C#/CUE4Parse) — game-mesh study. `cue4parse_ref/` — CUE4Parse reader
@@ -309,35 +316,44 @@ must be reposed to the T-pose bind (and scaled to dr_kel size) BEFORE cooking.
 export a posed PSK); `repose.py learn` extracts a transferable PROFILE from it. Key facts:
 - GoldSrc skinning is **rigid (1 bone/vertex)** → the manual repose is EXACTLY a per-bone
   rigid transform. **Uniform scale** (2.580 across all 22 bones on both examples).
-- **Profile format 2 (2026-07-02, `6f4d41d1`): per-bone LOCAL pose = a FULL rigid delta
-  (R + t) in the bone's rest frame** + target height. Format 1 stored rotation-only —
-  enough for a pure re-pose (the v1 narrow example, residual 0.00009) but it silently
-  DROPPED JOINT TRANSLATIONS: the v2 wide example moves shoulder/arm joints outward and
-  rotation-only left a 16-unit residual. Both formats load (normalized to 4x4 at read).
+- **Profile format 3 (2026-07-02 late, the rvi postmortem; library relearned): per-bone
+  LOCAL pose = a FULL rigid delta (R + t) in the bone's rest frame + `rest_local` (the
+  source skeleton's rest transforms = the auto-select fit metric) + `status` + placement.**
+  History: format 1 stored rotation-only — enough for a pure re-pose (v1 narrow, residual
+  0.00009) but it silently DROPPED JOINT TRANSLATIONS (the v2 wide example moves
+  shoulder/arm joints outward; rotation-only left a 16-unit residual). Formats 1/2 retired
+  (RULE 2); the relearn is drift-free vs the old outputs (einstein v1 max 5.4e-5, v2 0.0).
 - **The `up` axis is a CONSTANT of the target space (UE Z-up; the cook is a pure
   Y-negation)** — never inferred from the mesh bbox: the v2 wide arm span (X=209.5)
   exceeds the height (Z=190.2), so the old argmax-bbox heuristic measured "height" along
   the arms and grounded the model sideways (residual 17.58 until fixed).
 
 **The PROFILE LIBRARY (`tools/client_model/profiles/`, user 2026-07-02: keep a base of
-profiles):** `tpose_v1_narrow_2026-07-01.json` (format 1, **DEFAULT** via `repose.py`
-DEFAULT_PROFILE / CLI `default` -- the in-game verdict 2026-07-02 evening preferred its
-look) + `tpose_v2_wide_2026-07-02.json` (format 2, learned from
-`hl_einstein_v1sc_new_profile.psk`; look rejected in-game, kept in the library).
-provenance table: `profiles/README.md`.
+profiles):** `tpose_v1_narrow_2026-07-01.json` (active; in-game look preferred),
+`tpose_v2_wide_2026-07-02.json` (**rejected** in-game — auto-select skips it),
+`tpose_rvi38_2026-07-02.json` (active; the user's manual rvi pose, 38-bone Sven Co-op
+skeleton). Provenance + statuses: `profiles/README.md`.
 
-**Validation:** each profile reproduces ITS example to float-zero — v2: max 0.00005;
-v1: max 0.00009 (379 verts, ~190-unit model). Lossless representation.
+**Validation:** each profile reproduces ITS example to float-zero — v1: max 0.00006;
+v2: 0.00005; rvi38: 0.00009 (~190-unit models). Lossless representation.
 
-**Generalization:** the profile is model-INDEPENDENT (local deltas in each bone's own rest
-frame; bone lengths come from each model's skeleton; scale derives from target height).
-Any HL Bip01 model: `mdl_extract → repose.py apply <origDir> default <out.obj>` →
-T-posed geometry, no Blender. (Not yet tested on a 2nd model.)
+**Generalization is MEASURED, never assumed (the 2nd-model verdict, rvi_scientist
+2026-07-02):** transferring the einstein-learned profile to a DIFFERENT 38-bone skeleton
+degraded two ways — 16 bones the profile never saw kept their A-pose (103/764 verts:
+toes, fingers, a head-prop), and even covered bones drifted because deltas are
+rest-relative (error compounds down the arm chain 2.6 → 12 units at the fingers). Hence:
+- `repose.py apply <origDir> auto <out.obj>` — scores every library profile (vertex
+  bone-name coverage, then rest-pose geodesic similarity), prints the table, skips
+  `rejected`, and ALWAYS reports uncovered vert-carrying bones.
+- A manual-pose PSK next to the `.mdl` beats the library: the portable driver
+  auto-detects it (exact point/bone correspondence) and LEARNS the model's own exact
+  profile (float-zero), saving `<name>.profile.json` next to the pak — the library grows
+  from the user's manual poses (rename `tpose_<what>_<date>.json`, commit).
 
-**Re-learn (a new look/standard):**
+**Learn (a new skeleton family / look):**
 ```
 python tools/client_model/repose.py learn <mdl_extract_dir> <manually_posed.psk> tools/client_model/profiles/<name>.json
-# then point DEFAULT_PROFILE (repose.py) at it if it becomes the standard
+# or just drop the posed PSK next to the .mdl and run the portable converter
 ```
 
 ---
@@ -359,7 +375,12 @@ c. **REOPENED by rung 4, then ROOT-FIXED [V]:** the earlier "no inside-out look"
 d. **CLOSED [V]:** UE loads the package whose name-map still references the template's
    paths (mesh package loads + renders; imports resolve to the game's skeleton/materials
    as intended).
-e. **Pose generalization** unverified on a 2nd model (§5) — only the source model is proven.
+e. **CLOSED (measured) 2026-07-02:** pose generalization to a 2nd model — the einstein
+   profile on rvi_scientist's 38-bone skeleton produced the BAD pak (A-posed chunks +
+   pelvis-pinned toes/fingers). Root-fixed at the pipeline level: profile auto-select
+   with printed coverage/fit scoring, learn-from-manual-PSK in the driver, and the
+   ancestor-walking bone resolver (§4/§5). rvi re-cooked from the user's own pose:
+   positions == manual PSK (max 9e-5), 2020/2020 verts on the resolver's targets.
 
 ---
 
