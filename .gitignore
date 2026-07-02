@@ -163,3 +163,6 @@ tools/hl_einstein_v1sc/
 # portable client-model converter build output (game-derived template bytes + binaries)
 tools/client_model/portable/dist/
 tools/client_model/portable/build/
+
+# local model workfolders under tools/client_model (third-party assets, underscore convention)
+tools/client_model/_*/
