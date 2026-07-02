@@ -60,6 +60,17 @@ DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 
+# Windows consoles default to a legacy codepage (cp1251/cp866). Subprocess output
+# echoed through log() can carry characters that codepage cannot encode (e.g. the
+# U+FFFD replacements from decoding a localized PowerShell error as utf-8) -- an
+# unguarded write then raises UnicodeEncodeError and kills the launcher BEFORE the
+# game starts, with the .bat window closing unseen (2026-07-02, pak-locked deploy).
+# Logging must never kill the launch: replace unencodable characters instead.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+
+
 def log(msg: str) -> None:
     sys.stdout.write(f"[mp] {msg}\n")
     sys.stdout.flush()

@@ -71,8 +71,20 @@ foreach ($t in $targets) {
         if (Test-Path $pakDest) { Remove-Item $pakDest -Force; Write-Host "  removed client pak" -ForegroundColor DarkGray }
     } elseif (Test-Path $clientPak) {
         if (-not (Test-Path $pakDir)) { New-Item -ItemType Directory -Force -Path $pakDir | Out-Null }
-        Copy-Item $clientPak $pakDest -Force
-        Write-Host "  client pak -> $pakDest" -ForegroundColor DarkGray
+        # Idempotent (same pattern as deploy-loader's DLL copy): a RUNNING game
+        # holds its pak mapped, so Copy-Item throws IOException even when there is
+        # nothing to update -- which aborted the whole deploy + the client launch
+        # while the HOST was up (2026-07-02). Reads are share-allowed: hash-compare
+        # and skip when byte-identical. A genuinely STALE pak under a running game
+        # still fails loudly (correct -- a mapped pak cannot be hot-swapped).
+        $same = (Test-Path $pakDest) -and
+                ((Get-FileHash $pakDest -Algorithm SHA256).Hash -eq (Get-FileHash $clientPak -Algorithm SHA256).Hash)
+        if ($same) {
+            Write-Host "  client pak up-to-date (skip)" -ForegroundColor DarkGray
+        } else {
+            Copy-Item $clientPak $pakDest -Force
+            Write-Host "  client pak -> $pakDest" -ForegroundColor DarkGray
+        }
     } else {
         Write-Host "  SKIP client pak: source missing ($clientPak)" -ForegroundColor Yellow
     }
