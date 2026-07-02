@@ -16,7 +16,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 
-#include <unordered_set>
+#include <unordered_map>
 
 namespace coop::kerfur_reconcile {
 namespace {
@@ -26,7 +26,12 @@ namespace R = ue_wrap::reflection;
 // Off-prop host EIDs to retire (the kerfur turned ON in the join window; its save-loaded off-prop on the
 // joiner is the stale dup). Armed from the npc EntitySpawn's retireOffEid; retired at the quiescence sweep
 // once the off-prop has bound to its host eid. Game-thread only (no mutex).
-std::unordered_set<coop::element::ElementId> g_pendingRetire;
+// BOUNDED (2026-07-03, docs/piles/12): value = post-quiescence passes the eid stayed unbound. An off-prop
+// that never binds (host-only kerfur / bind stolen) must not retry forever -- HasPendingRetire feeds
+// quiescence_drain::HasPendingWork, and one unbindable entry pins the 4 Hz full-array drain in perpetuity
+// (the same uncapped-leg class as the pos-corrections). ~10 s at the 250 ms debounce, then a LOUD drop.
+std::unordered_map<coop::element::ElementId, int> g_pendingRetire;
+constexpr int kMaxRetirePasses = 40;
 
 bool IsClient() {
     auto* s = coop::npc_sync::GetSession();
@@ -44,7 +49,7 @@ bool HasPendingRetire() { return !g_pendingRetire.empty(); }
 void ArmPendingRetireByEid(coop::element::ElementId offEid) {
     UE_ASSERT_GAME_THREAD("kerfur_reconcile::ArmPendingRetireByEid");
     if (offEid == coop::element::kInvalidId) return;
-    if (g_pendingRetire.insert(offEid).second)  // log once per eid (not on every re-announce)
+    if (g_pendingRetire.emplace(offEid, 0).second)  // log once per eid (not on every re-announce)
         UE_LOGI("kerfur_reconcile: ARMED off->active retire of off-prop eid=%u (deterministic -- the host "
                 "turned this kerfur ON in the join window; its npc EntitySpawn carried the off-prop's host "
                 "eid; the quiescence sweep retires the mirror bound there once it binds)",
@@ -62,10 +67,23 @@ int SweepReconcileSaveTimeKerfurs() {
     // (an early drop could let a late async bind leave a surviving duplicate). Deterministic by eid -- no
     // GUObjectArray walk, no position match.
     for (auto it = g_pendingRetire.begin(); it != g_pendingRetire.end();) {
-        const coop::element::ElementId offEid = *it;
+        const coop::element::ElementId offEid = it->first;
         coop::element::Prop* el = mgr.Get(offEid);
         void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !R::IsLive(actor)) { ++it; continue; }  // not bound yet -> retry next sweep
+        // IsLiveByIndex, never raw IsLive: a purge frees the row-held actor while the row lingers; raw IsLive
+        // on the freed pointer misreads. Not bound yet -> retry next sweep, BOUNDED (see g_pendingRetire).
+        if (!actor || !el || !R::IsLiveByIndex(actor, el->GetInternalIdx())) {
+            if (++it->second >= kMaxRetirePasses) {
+                UE_LOGW("kerfur_reconcile: dropping pending off-prop retire eid=%u after %d post-quiescence "
+                        "passes -- the off-prop never bound here (host-only kerfur / no local twin); a retire "
+                        "with no target cannot pin the 4 Hz drain (FPS-pin guard)",
+                        static_cast<unsigned>(offEid), it->second);
+                it = g_pendingRetire.erase(it);
+                continue;
+            }
+            ++it;
+            continue;
+        }
 
         // Class sanity: the mirror at this eid MUST be a kerfur off-prop (defense against an eid mix-up).
         void* cls = R::ClassOf(actor);

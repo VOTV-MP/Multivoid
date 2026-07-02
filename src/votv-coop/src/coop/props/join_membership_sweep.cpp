@@ -14,6 +14,8 @@
 #include "coop/dev/force_overdestroy_test.h"
 #include "coop/dev/spawn_order_probe.h"
 #include "coop/element/element.h"
+#include "coop/element/mirror_managers.h"  // PropMirrors (keyed churn re-bind: dead-actor mirror-row census)
+#include "coop/element/prop.h"             // coop::element::Prop (the PropMirrors snapshot element type)
 #include "coop/element/quiescence_drain.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -188,6 +190,30 @@ static void RunDivergenceSweep_(void* localPlayer) {
     std::vector<coop::element::Registry::ActorIdPair> propPairs;
     coop::element::Registry::Get().SnapshotActorsByType(
         coop::element::ElementType::Prop, propPairs);
+    // KEYED CHURN RE-BIND (2026-07-03, docs/piles/12 -- the eid=2947 upstream). A keyed prop whose actor GC-
+    // churned mid-join leaves its MIRROR row holding a dead pointer while the game re-creates a same-key twin;
+    // the re-create gets a fresh LOCAL element and lands in the doom set below as "unclaimed" -- but its KEY
+    // matches an already-expressed identity, so dooming it destroys a host-known entity (13:33:43 "wire
+    // destroy ... unwatched"; the dead row then mis-resolves a recycled address = the wedge). Collect the
+    // dead-actor keyed mirror rows ONCE; the doom loop re-binds a candidate onto its orphaned row instead of
+    // dooming it (the chipPile analog is the position re-bind in save_identity_bind -- this is the keyed lane).
+    std::unordered_map<std::string, coop::element::ElementId> deadKeyedRows;
+    {
+        std::vector<coop::element::Prop*> rows;
+        coop::element::PropMirrors().Snapshot(rows);
+        for (coop::element::Prop* p : rows) {
+            if (!p || !p->IsMirror()) continue;
+            if (p->GetName().empty()) continue;  // keyless (chip) rows: the position lane owns them
+            void* ra = p->GetActor();
+            if (ra && R::IsLiveByIndex(ra, p->GetInternalIdx())) continue;  // live row -> not orphaned
+            deadKeyedRows.emplace(p->GetName(), p->GetId());
+        }
+    }
+    auto narrowAscii = [](const std::wstring& w) {
+        std::string s; s.reserve(w.size());
+        for (wchar_t c : w) s.push_back(static_cast<char>(c & 0xFF));
+        return s;
+    };
     int inClass = 0;        // live, non-mirror, LOCAL Prop Elements (the membership universe)
     int claimedCount = 0;
     std::vector<void*> doomed;
@@ -222,6 +248,26 @@ static void RunDivergenceSweep_(void* localPlayer) {
         if (key.empty() || key == L"None") {
             ++keylessSkippedByClass[acls];  // defensive tripwire: a tracked keyless non-pile should not exist post-quiescence
             continue;
+        }
+        // KEYED CHURN RE-BIND (see the deadKeyedRows build above): this unclaimed keyed local's KEY names an
+        // already-expressed identity whose mirror row lost its actor to churn -> it IS that identity's
+        // re-create. Re-bind the row onto it (the same drain-local-element + rebindInPlace path every save
+        // bind takes) and count it CLAIMED -- never doom a host-known entity for having churned.
+        if (!deadKeyedRows.empty()) {
+            auto dr = deadKeyedRows.find(narrowAscii(key));
+            if (dr != deadKeyedRows.end()) {
+                coop::prop_element_tracker::UnmarkKnownKeyedProp(a);  // drain the re-create's fresh LOCAL element
+                coop::remote_prop::RegisterPropMirror(dr->second, a, key, acls, /*senderSlot*/ 0,
+                                                      /*rebindInPlace*/ true);
+                UE_LOGW("join_membership_sweep: keyed churn RE-BIND -- unclaimed '%ls' key='%ls' is the "
+                        "re-create of already-expressed eid=%u (mirror row held a dead actor) -> row rebound, "
+                        "actor claimed, NOT doomed (docs/piles/12 eid=2947 upstream)",
+                        acls.c_str(), key.c_str(), static_cast<unsigned>(dr->second));
+                deadKeyedRows.erase(dr);
+                ++claimedCount;
+                ++claimedByClass[acls];
+                continue;
+            }
         }
         // v57 audit CRIT-2: a SWEPT trashBitsPile must be unwatched from the
         // counter channel BEFORE it dies -- the sweep runs AFTER join_progress

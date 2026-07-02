@@ -1,6 +1,6 @@
 # 12 — Join-window MASS-MOVE pile dup (2026-07-01)
 
-**Status (updated 2026-07-02 LATE EVENING, take-6 arc, deploy DLL `56B2F9CD`):**
+**Status (updated 2026-07-03, RE-BIND THREAD as-built, deploy DLL `77BB5D58`):**
 
 - **MASS-MOVE DUP class: VERIFIED FIXED stands** [V hands-on 19:06] — owner (take 3) + grabbed-clump gate
   (take 3.1), `d43956f6` + `0e7e5349`.
@@ -10,24 +10,49 @@
   kMaxTwinPasses×250 ms full-array sweeps per drop, all session. Maps now retire at the b3 late-flush
   expiry (~25 s post world-ready — their last consumer). [V 20:2x log: steady-state LANDs no longer
   carry keys; the PILE-1C twin line is GONE from the steady drain.]
-- **OPEN — THE NEXT THREAD (2026-07-02 20:24-20:27 evidence, user: "клиент взаимодействует с дюп пайлом
-  своим локальным, который видит только он"): the UNBOUND-NATIVE case = one root, three symptoms.**
-  eid=4435: host moved the pile in the join window; the client's native for E **never bound** (the
-  identity walk shows `1 unbound chip [by position]` every pass, `0 re-bound`). Consequences: (a) the
-  stale native@old (1672,-379,6124) LIVES = the client-local dup — a real actorChipPile with no eid, so
-  its grab goes through the NATIVE system, no GrabIntent, invisible to the host (the L1-orphan shape);
-  (b) the armed `[PILE-B3] pos-correction eid=4435 → (1424,-373,6098)` can never apply (no bound actor)
-  and **pos-corrections have NO pass cap** (twins cap at 40, deferred destroys at 8 — pos-corrections
-  retry `++it; continue;` forever) → HasPendingWork pinned → **the 4 Hz steady drain re-arm is STILL
-  live** (20:25-20:26 log: continuous 4 Hz `quiescence_drain` + `save_identity_bind` walks). Fix per
-  rule 1 next session: the position re-bind must resolve E to the HOST-authoritative position (the b3
-  pos-correction key!) or by key where one exists — the keyed/position re-bind thread; plus a pass cap
-  or bind-failure terminalization for pos-corrections so an unbindable eid cannot pin the drain.
-- **GHOST-WEDGE half 2 `8c13858f` (wrong-class deny → host re-asserts the row via incremental PropSpawn,
-  debounced): AS-BUILT but the CLIENT half is a NO-OP** — the correctness audit traced the receive path:
-  `RegisterPropMirror` defaults `rebindInPlace=false` → `Install` silently rejects the duplicate eid.
-  The re-assert reaches peers and changes nothing. The receive-side rebind belongs to the same next
-  thread (eid row exists + key-resolves a DIFFERENT live actor ⇒ host evidence ⇒ rebind).
+- **THE RE-BIND THREAD — AS-BUILT 2026-07-03 (the 20:24-27 unbound-native root, "клиент взаимодействует с
+  дюп пайлом своим локальным"): ONE root, five seams, one commit.** The 20:24 log forensics REFUTED the
+  "never bound" reading: eid=4435 DID bind at 20:24:36 (k=835 ordinal), then the 20:24:38 **mass-purge**
+  freed every row; the game re-created the natives at their **SAVE positions** (loadObjects replays the
+  save arrays — a re-create can never spawn at @new), but `UpdateChipSavePosAndGetOld` had RETRACKED the
+  one identity key to @new at the 20:24:30 PropSnapPos → the position re-bind searched @new forever → E
+  permanently unbindable → native@old = the eid-less client-local dup (native grab, no GrabIntent,
+  host-invisible) + the armed pos-correction could never apply and had NO pass cap → HasPendingWork
+  pinned → the 4 Hz drain (20:25-27). Two adjacent latent bugs surfaced by the same forensics: the
+  retrack also broke the (b) DUP-RETIRE arm (bound-vs-key read 0 cm for exactly the moved piles), and
+  raw `IsLive` on row-held FREED pointers misread liveness (the "N unbound kerfur [by key]" walked every
+  pass; [DUP-PROBE]'s 17 "wrong-eid 4294967295" labels were the probe reading a locals-only getter).
+  The fix (all AS-BUILT, protocol unchanged v94):
+  1. **savePos IMMUTABLE + hostPos OVERLAY** (`save_identity_map.h` trailing runtime fields, never
+     serialized; `UpdateChipHostPos` writes the overlay). Re-bind = two-phase: @host FIRST (churn
+     survivor — the take-3 resurrect protection), excluding natives within 1cm of any FREE entry's @save
+     (cross-entry steal guard); @save fallback (the purge re-create) + `CancelPendingSaveTimeTwin` +
+     `EnsurePosCorrection(@host)` → the same drain pass snaps it to the host pos (step 5).
+  2. **IsLiveByIndex everywhere an element-held actor pointer is tested** (eidFree, twin confirm,
+     pos-correction resolve, kerfur retire, OnSpawn eid-dedup, caseII detect) — raw IsLive on freed
+     memory can misread TRUE and permanently block a re-bind / phantom-detect a case(ii).
+  3. **Twin invariants**: a twin retires ONLY when E is bound to a live actor (hostVacate = the host's
+     word + bound; event = bound-FAR); the "unconfirmed retired (no cap-trip)" arm + the >50% cap are
+     GONE (RULE 2 — they retired on zero evidence; post-purge with 870 unbound natives the cap never
+     trips and that arm would have destroyed E's own re-create one step before the re-bind claimed it —
+     the same orphan through the other door; the 20:24 run survived it by timing luck, natives==1).
+     Event-arm can no longer overwrite a hostVacate twin (one-directional supersede); an event twin
+     whose E is bound AT the key drops immediately (dead premise — was 40 passes of walk+log noise).
+  4. **Terminalization**: pos-corrections + kerfur pending-retires now carry the twins' 40-pass bound
+     with a LOUD drop log — no residual shape can pin the 4 Hz drain again (the FPS leg-2 kill).
+  5. **Keyed churn re-bind** (the eid=2947 upstream + the eid=3129 receive half): (a) the divergence
+     sweep pre-collects DEAD-actor keyed mirror rows and RE-BINDS an unclaimed keyed candidate whose key
+     matches (claim transferred) instead of dooming the re-create; (b) `CreateOrAdoptPropMirror` HOST
+     RE-ASSERT arm — senderSlot==0 + existing MIRROR row + different actor ⇒ SetActor rebind (the
+     deny-heal `8c13858f` re-assert is no longer an Install-reject NO-OP), guarded 1:1 via
+     Registry::EidForActor (never steal a second row's actor; displaced actors never destroyed);
+     (c) kerfur WRONG-OCCUPANT heal — an entry whose eid is occupied by a live actor with a DIFFERENT
+     key rebinds to the key-matched native (`consumeDisplaced=false` — the foreign actor lives on).
+     KNOWN REMAINING VARIANT (audit F, by design): the HOST RE-ASSERT arm REFUSES when the incoming
+     actor still holds a client-LOCAL element (a mid-session re-create seeded as a local — the 1:1
+     guard reads its local eid as "another row") — that variant stays owned by the PropDestroy deny
+     lane (`d4833b9b`). The healed variants: dead-row + fresh spawn (the observed 3129 shape) and
+     join-window re-creates (the sweep lane unmarks the local first).
 - Older thread statuses: EHH `2b2e0531` verdict pending; [DUP-PROBE] armed (`f81256e4`); FPS `70e0d899`
   superseded by the map-lifecycle fix above.
 

@@ -76,11 +76,15 @@ int FindExactMatch(const std::vector<Cand>& cands,
     int matchCount = 0, matchIdx = -1;
     for (int i = 0; i < static_cast<int>(cands.size()); ++i) {
         if (consumed[i]) continue;
-        if (!secondaryOk(cands[i])) continue;
+        // Distance FIRST (3 flops rejects ~all candidates), secondaryOk only for the <=few within 1cm: the
+        // predicate may be O(k) (the 2026-07-03 hostPos-phase exclusion scans the free-savePos list), and
+        // running it per-candidate made the two-phase re-bind's worst case candidates x entries x list-size
+        // (perf audit WARN). Both call-site predicates are pure -> order-independent.
         const float dx = cands[i].x - key.X;
         const float dy = cands[i].y - key.Y;
         const float dz = cands[i].z - key.Z;
         if (dx * dx + dy * dy + dz * dz > kExactMatchR2Cm) continue;
+        if (!secondaryOk(cands[i])) continue;
         if (!ue_wrap::reflection::IsLiveByIndex(cands[i].actor, cands[i].idx)) continue;
         ++matchCount;
         matchIdx = i;

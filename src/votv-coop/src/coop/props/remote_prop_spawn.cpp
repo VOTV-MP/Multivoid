@@ -375,10 +375,12 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // the new one is spawned + rebound. (Pre-v81, fromConvert minted a FRESH newEid so this never
         // collided; the bind model reuses E, so the skip is now load-bearing.)
     } else if (eidOnly) {
-        // Non-keyable clump: dedup by EID (the Registry mirror binding), not key.
+        // Non-keyable clump: dedup by EID (the Registry mirror binding), not key. IsLiveByIndex, never raw
+        // IsLive: a purge frees the row-held actor while the row lingers; raw IsLive on the freed pointer can
+        // misread TRUE and "dedup" onto freed memory (docs/piles/12 IsLive sweep 2026-07-03).
         if (auto* e = coop::element::Registry::Get().Get(payload.elementId)) {
             void* a = e->GetActor();
-            if (a && R::IsLive(a)) existing = a;
+            if (a && R::IsLiveByIndex(a, e->GetInternalIdx())) existing = a;
         }
     } else {
         existing = coop::prop_element_tracker::ResolveLiveActorByKey(keyW, &dedupeFellBack);

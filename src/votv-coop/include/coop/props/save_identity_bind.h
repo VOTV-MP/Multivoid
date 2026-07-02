@@ -65,14 +65,18 @@ void EmitBindSummary();
 // ambiguous-skip. No-op when disabled / not armed / a v1/v2 peer (no keys). GT. Returns the count re-bound.
 int BindUnboundReCreates();
 
-// b3 OWNER (docs/piles/12): the host's PropSnapPos says keyless save-pile `eid` is now at `newPos`. Update our
-// save-time identity key for it (both peers loaded the identical save; this key is how RE-BIND-by-position
-// relocates a GC-churned re-create). Tracking the key to the host's authoritative CURRENT pos is what stops
-// RE-BIND from resurrecting the stale @old copy. Returns true + fills `oldOut` with the previous save-pos when
-// the pile genuinely MOVED (>50cm) -- the caller then arms a host-vacate twin to retire the @old. Returns false
-// for a small nudge (pos-correction alone handles it) or an eid not in the chip identity map. GT.
-bool UpdateChipSavePosAndGetOld(coop::element::ElementId eid, const ue_wrap::FVector& newPos,
-                                ue_wrap::FVector& oldOut);
+// b3 OWNER (docs/piles/12): the host's PropSnapPos says keyless save-pile `eid` is now at `newPos`. Record it
+// as the entry's HOST-POS OVERLAY -- the immutable savePos is where the GAME re-creates the native on any
+// purge/churn (loadObjects replays the save arrays), so it must keep naming that spot; the overlay is where
+// the host says E belongs. BindUnboundReCreates then searches @host FIRST (a churned mirror's surviving actor
+// -- the resurrect protection) and falls back to @save (a purge re-create), snapping a @save re-bind to @host
+// via the pos-correction. (The pre-2026-07-03 code RETRACKED savePos itself -- a purge re-create could then
+// never match and the eid went permanently unbindable: the eid=4435 client-local dup + the pinned 4 Hz drain.)
+// Returns true + fills `saveOut` with the immutable save-pos when the pile genuinely MOVED (>50cm from @save)
+// -- the caller then arms a host-vacate twin to retire the stale copy @save. Returns false for a small nudge
+// (pos-correction alone handles it) or an eid not in the chip identity map. GT.
+bool UpdateChipHostPos(coop::element::ElementId eid, const ue_wrap::FVector& newPos,
+                       ue_wrap::FVector& saveOut);
 
 // DEV PROBE (gated on [dev] ini `force_save_churn`, RULE-2-exempts-probes): deterministically reproduce the
 // variant-1 precondition for a hands-on verify. The real engine-GC churn is non-deterministic (a sparse ~2 of

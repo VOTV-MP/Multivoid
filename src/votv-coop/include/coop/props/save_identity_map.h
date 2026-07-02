@@ -51,12 +51,26 @@ struct IdEntry {
     // -churned save native (which re-creates at its save position, UNBOUND) by an authoritative position match at
     // quiescence -- the order/count/timing-independent fix for the purge-timing ghost (no client-side eid->pos
     // source exists; see coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md 2.7/2.8).
+    // IMMUTABLE after receive (2026-07-03, docs/piles/12 eid=4435): this is where the GAME re-creates the
+    // native on every purge/churn (loadObjects replays the save arrays) -- it must always name that spot. The
+    // earlier PropSnapPos handling RETRACKED it to the host's current pos, which (a) made the re-bind search a
+    // position no re-create can ever spawn at (the eid went permanently unbindable -> the client-local dup +
+    // the pinned 4 Hz drain) and (b) broke the DUP-RETIRE arm (bound-vs-savePos read as 0 cm). The host's
+    // current pos lives in the SEPARATE overlay below.
     float    savePosX, savePosY, savePosZ;
     // The portable save key (sidecar v3, 2026-06-29). EMPTY for a chipPile (genuinely keyless -> ordinal pair).
     // Non-empty for a kerfurOff: the host reads it from the save array (+0x40) -- the SAME blob both peers load,
     // so it is cross-peer-stable -- and the client pairs its loading off-kerfur to the entry whose key matches
     // `GetInteractableKeyString(native)`, making the bound eid cross-peer-stable (the retire-regression fix).
     std::wstring key;
+    // RUNTIME OVERLAY -- NOT part of the wire sidecar (SerializeSidecar/DeserializeSidecar never touch it;
+    // trailing members so the positional aggregate init sites stay valid, default-initialized). The host's
+    // authoritative CURRENT position for this entry, learned from PropSnapPos (b3). The re-bind searches it
+    // FIRST (a churned mirror's surviving actor lives here -- the take-3 resurrect protection), then falls
+    // back to the immutable savePos (a purge re-create spawns there); a savePos re-bind with a far hostPos
+    // then arms the position correction that snaps the actor to the host's truth.
+    float    hostPosX = 0.f, hostPosY = 0.f, hostPosZ = 0.f;
+    bool     hasHostPos = false;
 };
 
 using IdMap = std::vector<IdEntry>;

@@ -408,14 +408,16 @@ bool HandleEntityEvent(net::Session& session,
             p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ},
             ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
         // b3 OWNER (docs/piles/12): this PropSnapPos is the host's AUTHORITATIVE "E is at @new" -- use it for
-        // IDENTITY, not just to nudge the actor. (1) retrack our save-time key to @new so RE-BIND-by-position
-        // stops resurrecting the stale @old copy; (2) if E genuinely moved, arm a host-vacate twin so the sweep
-        // retires whatever save-loaded native@old lingers -- on the host's word, no fragile position-guess.
+        // IDENTITY, not just to nudge the actor. (1) record @new as the entry's HOST-POS OVERLAY (savePos
+        // stays immutable -- it is where a purge re-create spawns; the old retrack made the eid permanently
+        // unbindable, the eid=4435 dup + 4 Hz drain root); RE-BIND then prefers the surviving actor @new over
+        // the stale copy @save. (2) if E genuinely moved, arm a host-vacate twin at the IMMUTABLE @save so the
+        // sweep retires whatever save-loaded native lingers there -- on the host's word, no position-guess.
         {
-            ue_wrap::FVector oldPos{};
-            if (coop::save_identity_bind::UpdateChipSavePosAndGetOld(
-                    p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ}, oldPos))
-                coop::element::quiescence_drain::ArmHostVacateTwin(p.eid, oldPos);
+            ue_wrap::FVector savePos{};
+            if (coop::save_identity_bind::UpdateChipHostPos(
+                    p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ}, savePos))
+                coop::element::quiescence_drain::ArmHostVacateTwin(p.eid, savePos);
         }
         if (coop::join_membership_sweep::HasLoadTailQuiesced())
             coop::element::quiescence_drain::ApplyPendingPosCorrections();

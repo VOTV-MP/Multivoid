@@ -108,6 +108,36 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
             }
             return;
         }
+        // HOST RE-ASSERT REBIND (2026-07-03, docs/piles/12 -- the deny-heal receive half). A HOST-
+        // authoritative PropSpawn (senderSlot==0) naming an eid whose MIRROR row here resolves a DIFFERENT
+        // actor is the host re-asserting the row's truth: either the row's actor is DEAD (GC churn -- the
+        // eid=2947 shape: the row kept a freed pointer) or LIVE-but-foreign (address recycle smeared the row
+        // onto another entity -- the eid=3129 shape: 8 identical grab denies, pile wedged until host restart).
+        // The old flow fell through to Install, whose duplicate-eid reject made the host's re-assert a silent
+        // client-side NO-OP (the 8c13858f audit finding). The host is the identity authority (MTA shape:
+        // Packet_EntityAdd for an existing id re-links it, server word absolute) -> re-point the row.
+        // 1:1 guard: never steal an actor already bound to a DIFFERENT row -- draining that row on the host's
+        // word about THIS eid would smear the other identity; the PropDestroy deny lane owns stale-row drains.
+        // The displaced actor is NEVER destroyed (it may be another identity's rendering; the re-bind /
+        // FLOOR / twin mechanics own whatever it really is).
+        if (senderSlot == 0 && existing->IsMirror()) {
+            const coop::element::ElementId prior = Registry::Get().EidForActor(actor);
+            if (prior != coop::element::kInvalidId && prior != eid) {
+                UE_LOGW("sync::CreateOrAdoptPropMirror: eid=%u host re-assert names actor=%p already bound to "
+                        "eid=%u -- REFUSING the cross-row steal (PropDestroy lane owns stale-row drains)",
+                        eid, actor, static_cast<unsigned>(prior));
+                return;
+            }
+            void* old = existing->GetActor();
+            const bool oldLive = old && R::IsLiveByIndex(old, existing->GetInternalIdx());
+            existing->SetActor(actor, R::InternalIndexOf(actor));
+            coop::kerfur_entity::NotifyKerfurPropMirrorBound(actor, eid);
+            UE_LOGW("sync::CreateOrAdoptPropMirror: eid=%u HOST RE-ASSERT rebound row -> actor=%p key='%ls' "
+                    "cls='%ls' (prior actor=%p was %s -- churn/recycle smear healed; displaced actor not "
+                    "destroyed)", eid, actor, key.c_str(), cls.c_str(), old,
+                    oldLive ? "LIVE-but-foreign" : "dead/stale");
+            return;
+        }
         // else: fall through to Install, which rejects the duplicate eid (HEAD live-conflict guard).
     }
     // Tag with the originating peer slot for per-slot disconnect eviction (D1-7).

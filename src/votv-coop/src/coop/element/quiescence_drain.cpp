@@ -81,8 +81,14 @@ constexpr int kMaxTwinPasses = 40;
 // b3 (v90, PropSnapPos) -- a join-window position correction for a save-authoritative chipPile the host moved
 // while our reliable channel wasn't ready. Armed on receipt, applied at the quiescence sweep (the bind has
 // registered the native + the load tail is settled). Keyed by host eid; the latest correction wins.
-struct PendingPosCorrection { float x, y, z, pitch, yaw, roll; };
+// BOUNDED (2026-07-03, docs/piles/12 eid=4435): a correction whose eid never binds must not retry forever --
+// that pinned HasPendingWork() true and ran the full-array reconcile at 4 Hz in perpetuity (the 20:25-26 log:
+// twins cap at kMaxTwinPasses, deferred destroys at kMaxDeferApplies, pos-corrections had NO cap). The primary
+// fix is the identity re-bind (savePos-immutable two-phase match in save_identity_bind) that makes the eid
+// bindable; this cap is the terminalization so no residual shape can ever pin the drain again.
+struct PendingPosCorrection { float x, y, z, pitch, yaw, roll; int unresolvedPasses = 0; };
 std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
+constexpr int kMaxPosCorrectionPasses = 40;  // ~10 s at the 250 ms debounce -- spans any late re-create+re-bind
 
 // DESTROY-BEFORE-LOAD (2026-06-30): PropDestroys that arrived before this peer loaded the doomed prop. Armed
 // by remote_prop::OnDestroy (the event handler CAPTURES) ONLY during the load tail (pre-quiescence -- a true
@@ -143,8 +149,11 @@ int SweepReconcileSaveTimeTwins() {
         if (coop::prop_element_tracker::IsBoundMirrorNative(o)) {
             if (probe) {
                 const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(o);
+                // Registry::EidForActor is the UNIFIED reverse (mirrors + locals). The prior read here
+                // (GetPropElementIdForActor) returns kInvalidId for MIRRORS by its locals-only contract, so
+                // every bound mirror probed as "wrong-eid 4294967295" (the 20:24 run's 17 mislabels).
                 boundChip.push_back({o, bl.X, bl.Y, bl.Z,
-                    static_cast<uint32_t>(coop::prop_element_tracker::GetPropElementIdForActor(o))});
+                    static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(o))});
             }
             continue;  // bound native is the mirror, not a twin
         }
@@ -152,41 +161,76 @@ int SweepReconcileSaveTimeTwins() {
         natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o)});
     }
 
-    // Per-eid decision. A twin is CONFIRMED-moved iff E's currently-bound native lives FAR from the twin's
-    // save-pos -- positive evidence the host moved E @new, so the save-pos native@old is definitively stale
-    // and is retired PER-EID with NO aggregate cap. The >50% cap (a mass-move of a cluster looks like a
-    // racing/incomplete-bracket world-wipe) then applies ONLY to the UNCONFIRMED remainder -- the case it was
-    // born for. CRITICAL (17:10 mass-move dup): this sweep can run BEFORE a moved pile's @new native has even
-    // arrived (@new PropSpawn+materialize landed ~4 s AFTER the sweep), so at that pass ALL twins are
-    // unconfirmed. The OLD code then CLEARED the whole twin map -> no later pass could ever retire them ->
-    // the >50%-capped 5 stale @old natives survived = the dup cluster. Now unconfirmed/unmatched twins are
-    // KEPT pending (bounded by kMaxTwinPasses) so the NEXT pass -- once @new binds E -- confirms + retires.
+    // Per-eid decision (2026-07-03 rewrite, docs/piles/12 eid=4435):
+    //   matched + CONFIRMED   -> retire PER-EID, no cap (positive evidence: E is bound to a live actor --
+    //                            the host's word for a vacate twin, bound-FAR for an event twin).
+    //   matched + UNCONFIRMED -> HOLD, bounded by kMaxTwinPasses. E is unbound (the candidate may be E's OWN
+    //                            purge re-create -- its only expression; the identity re-bind in step 2 of
+    //                            this same pass claims it) or not yet far. NEVER retire without positive
+    //                            per-eid evidence ([[feedback-join-reconcile-sweep-safety]]).
+    //   miss                  -> premise-dead drop (event twin whose E is bound AT the key) or bounded hold.
+    // RULE 2: the pre-identity-map "small handful -> retire unconfirmed" arm and its >50% cap are GONE. They
+    // retired on ZERO evidence -- post-purge (870 unbound natives -> cap never trips) an unbound-E vacate
+    // twin's candidate was E's own re-create, and that arm destroyed it one step before the re-bind could
+    // claim it: the same orphan-forever hazard this fix closes, through the other door. (The 20:24 run only
+    // survived it because the sweep happened to run AFTER the mass re-bind, leaving natives.size()==1 so the
+    // cap tripped -- luck, not design.)
     std::vector<bool> consumedFlags(natives.size(), false);
-    struct Decision { uint32_t eid; void* candidate; bool confirmed; };
-    std::vector<Decision> decisions;
     std::vector<uint32_t> resolvedEids;  // erase from the pending map (retired OR dropped-after-N)
+    int confirmedRetired = 0, held = 0;
     for (auto& [eid, p] : g_pendingSaveTimeTwin) {
         const ue_wrap::FVector key{p.x, p.y, p.z};
         const int idx = coop::save_time_retire_util::FindExactMatch(
             natives, consumedFlags, key,
             [&p](const LiveNative& nv) { return p.chipType == kAnyChipType || nv.chipType == p.chipType; });
-        // b3 OWNER: a host-vacate twin is CONFIRMED by the host's authoritative PropSnapPos (E left this pos),
-        // not by re-guessing from E's bound-native position -- so any UNBOUND native still here is stale, retire
-        // it (no cap). Otherwise (event-armed twin) confirm the move the old way: E's bound native lives far.
-        bool confirmed = false;
-        if (p.hostVacate) {
-            confirmed = true;
-        } else if (coop::element::Element* el =
+        // E's current binding -- IsLiveByIndex, never raw IsLive: an element-held pointer may be freed memory
+        // after a purge, and IsLive on freed memory misreads (blocked re-binds/retires the whole 20:24 run;
+        // [[feedback-islive-unsafe-on-freed-cached-pointer]]).
+        void* bound   = nullptr;
+        float boundD2 = -1.f;
+        if (coop::element::Element* el =
                 coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid))) {
-            if (void* bound = el->GetActor(); bound && R::IsLive(bound)) {
-                const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(bound);
+            if (void* a = el->GetActor(); a && R::IsLiveByIndex(a, el->GetInternalIdx())) {
+                bound = a;
+                const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(a);
                 const float ddx = bl.X - p.x, ddy = bl.Y - p.y, ddz = bl.Z - p.z;
-                confirmed = (ddx * ddx + ddy * ddy + ddz * ddz) > kTwinMovedThresholdCm2;  // E moved @new
+                boundD2 = ddx * ddx + ddy * ddy + ddz * ddz;
             }
         }
+        // b3 OWNER, TIGHTENED (docs/piles/12 eid=4435): a host-vacate twin retires ONLY while E is bound to a
+        // live actor. When E is UNBOUND, the native@old may be E's own purge-re-create -- its ONLY expression
+        // (re-creates spawn at the GAME's save position, never at @new): retiring it would orphan the eid
+        // forever (pile missing client-side + its pos-correction pinned = the 4 Hz drain). Hold (bounded);
+        // the identity re-bind claims the native and the correction snaps it @new. An event-armed twin still
+        // needs the positive move evidence (E bound FAR from the twin key).
+        const bool confirmed = p.hostVacate ? (bound != nullptr)
+                                            : (bound && boundD2 > kTwinMovedThresholdCm2);
+        // Dead-premise terminalization: an EVENT twin whose eid is bound AT the twin key (<=50cm) can never
+        // confirm -- the host put the pile back (or the move never took). Burning kMaxTwinPasses on it is pure
+        // walk+log noise (the 20:24 run: 17 such twins x 40 passes of 4 Hz [PILE-1C] spam). Drop it now.
+        if (!p.hostVacate && bound && boundD2 >= 0.f && boundD2 <= kTwinMovedThresholdCm2) {
+            if (idx >= 0) {
+                // An unbound native ALSO sits at the key while E is bound there (two actors <1cm apart) --
+                // ambiguous co-located; leave it to the ambiguity-conservative paths. Never retire without
+                // positive per-eid move evidence.
+                UE_LOGI("[PILE-1C] twin eid=%u dropped -- E is bound AT the twin key (premise dead) but an "
+                        "unbound native also sits there (co-located ambiguity; not retiring)", eid);
+            }
+            resolvedEids.push_back(eid);
+            continue;
+        }
         if (idx >= 0) {
-            consumedFlags[idx] = true;
-            decisions.push_back({eid, natives[idx].actor, confirmed});
+            if (confirmed) {
+                consumedFlags[idx] = true;
+                coop::save_time_retire_util::UnmarkAndDestroy(natives[idx].actor);  // per-eid evidence -> no cap
+                resolvedEids.push_back(eid);
+                ++confirmedRetired;
+            } else {
+                // HOLD -- candidate NOT consumed (an unbound-E twin's candidate is likely E's own re-create;
+                // the identity re-bind in step 2 of this same pass claims it). Bounded.
+                if (++p.unresolvedPasses >= kMaxTwinPasses) resolvedEids.push_back(eid);
+                ++held;
+            }
         } else {
             // PROBE: why did FindExactMatch MISS? Distinguish clean(0) / ambiguous(>1) / bound-to-wrong-eid.
             if (probe) {
@@ -202,12 +246,8 @@ int SweepReconcileSaveTimeTwins() {
                     if (bn.eid == eid) ++bSame;
                     else { ++bWrong; if (wrongEid == 0) { wrongEid = bn.eid; wrongD = d; } }
                 }
-                float eDist = -1.f; void* eActor = nullptr;
-                if (coop::element::Element* el = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid)))
-                    if (void* b = el->GetActor(); b && R::IsLive(b)) {
-                        eActor = b; const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(b);
-                        const float dx = bl.X-p.x, dy = bl.Y-p.y, dz = bl.Z-p.z; eDist = std::sqrt(dx*dx+dy*dy+dz*dz);
-                    }
+                const float eDist = (bound && boundD2 >= 0.f) ? std::sqrt(boundD2) : -1.f;
+                void* const eActor = bound;  // IsLiveByIndex-validated above (raw IsLive misread freed memory)
                 UE_LOGI("[DUP-PROBE] eid=%u %s @old=(%.1f,%.1f,%.1f) FindExactMatch=MISS pass=%d | UNBOUND@old: "
                         "%d<1cm %d<30cm | BOUND@old<30cm: %d wrong-eid (first eid=%u d=%.1fcm) + %d same-eid | "
                         "E.bound=%p d_from_old=%.1fcm  --> %s",
@@ -222,36 +262,11 @@ int SweepReconcileSaveTimeTwins() {
         }
     }
 
-    // The >50% cap is computed over the UNCONFIRMED matches only.
-    int unconfirmedMatches = 0;
-    for (const Decision& d : decisions) if (!d.confirmed) ++unconfirmedMatches;
-    const bool capTrips = !natives.empty() && unconfirmedMatches * 2 > static_cast<int>(natives.size());
-
-    int confirmedRetired = 0, cappedRetired = 0, held = 0;
-    for (const Decision& d : decisions) {
-        if (d.confirmed) {
-            coop::save_time_retire_util::UnmarkAndDestroy(d.candidate);  // per-eid evidence -> no cap
-            resolvedEids.push_back(d.eid);
-            ++confirmedRetired;
-        } else if (!capTrips) {
-            coop::save_time_retire_util::UnmarkAndDestroy(d.candidate);  // small handful -> retire as before
-            resolvedEids.push_back(d.eid);
-            ++cappedRetired;
-        } else {
-            // Unconfirmed AND the cap trips (mass-move looks like a wipe): HOLD -- keep pending for a later
-            // confirmed-move pass. Bound it so a twin whose @new never arrives is eventually dropped.
-            auto it = g_pendingSaveTimeTwin.find(d.eid);
-            if (it != g_pendingSaveTimeTwin.end() && ++it->second.unresolvedPasses >= kMaxTwinPasses)
-                resolvedEids.push_back(d.eid);
-            ++held;
-        }
-    }
-
     for (uint32_t e : resolvedEids) g_pendingSaveTimeTwin.erase(e);
     UE_LOGI("[PILE-1C] sweep-reconcile -- %zu pending twin(s): %d confirmed-moved retired (per-eid, no cap), "
-            "%d unconfirmed retired, %d HELD (>50%% unconfirmed -> kept for a later confirmed pass), %zu still "
-            "pending", pendingN, confirmedRetired, cappedRetired, held, g_pendingSaveTimeTwin.size());
-    return confirmedRetired + cappedRetired;
+            "%d HELD (unconfirmed -- kept bounded for a later confirmed pass), %zu still pending",
+            pendingN, confirmedRetired, held, g_pendingSaveTimeTwin.size());
+    return confirmedRetired;
 }
 
 void ApplyPendingDestroys() {
@@ -282,6 +297,13 @@ void ApplyPendingDestroys() {
 
 void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
+    // The host's word supersedes the inference IN BOTH ARM ORDERS: ArmHostVacateTwin already overwrites an
+    // event twin, but the reverse arm (a [PILE-09] spawn-miss arriving AFTER the PropSnapPos, the 20:24:32
+    // eid=4435 sequence) silently DOWNGRADED the vacate twin back to a confirm-guess event twin. Keep the
+    // vacate; the event arm carries no information the host's authoritative arm didn't.
+    if (auto it = g_pendingSaveTimeTwin.find(static_cast<uint32_t>(eid));
+        it != g_pendingSaveTimeTwin.end() && it->second.hostVacate)
+        return;
     // docs/piles/09: record the save-time key for the post-quiescence sweep. No bracket index needed -- the
     // sweep does a FRESH GUObjectArray walk for the late-loaded native@old and matches this key via the shared
     // kernel. Idempotent per eid (the latest grab/land/spawn-miss wins).
@@ -316,10 +338,27 @@ void ApplyPendingPosCorrections() {
     if (g_pendingPosCorrection.empty()) return;  // game-thread only (the event_feed drain / the sweep), by contract
     for (auto it = g_pendingPosCorrection.begin(); it != g_pendingPosCorrection.end(); ) {
         const uint32_t eid = it->first;
-        const PendingPosCorrection& c = it->second;
+        PendingPosCorrection& c = it->second;
         coop::element::Element* el = coop::element::Registry::Get().Get(eid);
         void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !R::IsLive(actor)) { ++it; continue; }  // native not bound/loaded yet -- retry next drain
+        // IsLiveByIndex, never raw IsLive: a purge frees the bound actor's memory while the row lingers; raw
+        // IsLive on the freed pointer can misread TRUE and "apply" the snap onto freed memory.
+        if (!actor || !el || !R::IsLiveByIndex(actor, el->GetInternalIdx())) {
+            // Not bound/loaded yet -- retry next drain, BOUNDED. An eid that never becomes bindable (the
+            // 20:24 eid=4435 shape before the re-bind fix) must not pin HasPendingWork forever (twins cap,
+            // destroys cap; this was the uncapped leg of the 4 Hz drain). The identity re-bind is the primary
+            // fix; this is the terminal backstop, dropped LOUD so a recurrence is visible in the log.
+            if (++c.unresolvedPasses >= kMaxPosCorrectionPasses) {
+                UE_LOGW("[PILE-B3] CLIENT dropping pos-correction eid=%u host=(%.1f,%.1f,%.1f) after %d "
+                        "post-quiescence passes -- eid never bound a live native (re-bind found no candidate); "
+                        "accepting the divergence rather than pinning the 4 Hz drain (FPS-pin guard)",
+                        eid, c.x, c.y, c.z, c.unresolvedPasses);
+                it = g_pendingPosCorrection.erase(it);
+                continue;
+            }
+            ++it;
+            continue;
+        }
         const ue_wrap::FVector  loc{c.x, c.y, c.z};
         const ue_wrap::FRotator rot{c.pitch, c.yaw, c.roll};
         // A save-loaded chipPile native rests at STATIC mobility -> SetActorLocation silently no-ops (the K2
@@ -339,6 +378,28 @@ void ApplyPendingPosCorrections() {
                 std::sqrt(dx * dx + dy * dy + dz * dz));
         it = g_pendingPosCorrection.erase(it);
     }
+}
+
+void EnsurePosCorrection(coop::element::ElementId eid,
+                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+    // Arm-if-absent (2026-07-03, the savePos re-bind assist): when the identity re-bind claims a purge
+    // re-create at savePos for an eid whose host position is elsewhere, the actor must still be SNAPPED to the
+    // host pos. Usually the original PropSnapPos correction is still pending (it was what pinned the drain);
+    // when it already applied-and-erased before the churn, re-arm from the identity map's hostPos overlay. An
+    // armed correction keeps its (fresher, host-sent) rotation -- never overwrite it with this reconstruction.
+    const auto key = static_cast<uint32_t>(eid);
+    if (g_pendingPosCorrection.count(key) > 0) return;
+    ArmPendingPosCorrection(eid, loc, rot);
+}
+
+void CancelPendingSaveTimeTwin(coop::element::ElementId eid) {
+    // The savePos re-bind just bound the native AT the twin's key to E itself -- the "stale @old copy" premise
+    // is dead (there is exactly ONE native there, and it IS E; the >1 co-located case never re-binds, by the
+    // FindExactMatch ambiguity skip). Without the cancel the twin burns kMaxTwinPasses of 4 Hz walk+log noise
+    // before dropping (it can never match: the native it would retire is now BOUND, excluded from candidates).
+    if (g_pendingSaveTimeTwin.erase(static_cast<uint32_t>(eid)) > 0)
+        UE_LOGI("[PILE-1C] twin eid=%u CANCELLED -- the identity re-bind claimed the native at the twin key as "
+                "E's own re-create (no stale copy exists)", static_cast<unsigned>(eid));
 }
 
 void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload) {

@@ -80,7 +80,21 @@ void ArmPendingPosCorrection(coop::element::ElementId eid,
 // Drain the armed b3 corrections (applied ones erased). Called from the sequence AND, for a late arrival
 // after the sweep already fired + bound, immediately from the receive handler (event_dispatch_entity).
 // The immediate-apply is NOT an order violation: it only runs post-quiescence, when the order no longer gates.
+// BOUNDED (2026-07-03): a correction whose eid never binds is dropped LOUD after kMaxPosCorrectionPasses --
+// twins and deferred destroys were pass-capped, pos-corrections were not, and one unbindable eid pinned
+// HasPendingWork -> the 4 Hz full-array drain forever (docs/piles/12 eid=4435).
 void ApplyPendingPosCorrections();
+
+// Arm-if-absent variant (2026-07-03, the savePos re-bind assist): save_identity_bind re-bound a purge
+// re-create at its save position for an eid the host says is elsewhere -- ensure a correction exists so the
+// drain snaps it to the host pos. An already-armed correction (fresher host-sent rotation) is kept as-is.
+void EnsurePosCorrection(coop::element::ElementId eid,
+                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
+
+// The savePos re-bind claimed the native at the twin's key AS E's own re-create -- there is no stale copy, so
+// the pending twin's premise is dead. Cancel it (idempotent) instead of letting it burn kMaxTwinPasses of
+// 4 Hz walk+log noise against a now-bound (never-matchable) candidate.
+void CancelPendingSaveTimeTwin(coop::element::ElementId eid);
 
 // DESTROY-BEFORE-LOAD (2026-06-30): a PropDestroy can arrive BEFORE this peer has loaded its copy of the
 // doomed save-loaded prop. remote_prop::OnDestroy finds "no local actor" and ARMS it here instead of dropping
