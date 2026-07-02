@@ -52,6 +52,18 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (stays for process life)
 bool g_dropGrabThunkInstalled = false;  // read-only dropGrabObject Func-thunk latch (the PHC-grab release seam)
 
+// GESTURE-PAIRING latch (2026-07-02, the "EHHH on E-drop" root): when a CLIENT use-PRESS dispatch is
+// CANCELLED (any press seam), its paired IE_Released dispatch (_42) must be cancelled too -- the BP never
+// saw the press, so its release handler runs against a press-less state and hits useAction's use_deny.
+// Re-deriving the press conditions AT RELEASE TIME is provably wrong in both directions: (a) the throw
+// press optimistically clears g_clientCarry (trash_channel::SendThrowIntent), so "carrying?" reads false
+// ~1 frame later at the release -> the deny leaked through (the reported bug); (b) a release paired with
+// a NATIVE press (e.g. dropping a natively-held prop while HAPPENING to aim at a pile) matched the aim
+// conditions and was wrongly eaten. Pairing is deterministic: armed by every cancelled press seam,
+// consumed by the next _42 fire. UE guarantees the release arrives (FlushPressedKeys dispatches
+// IE_Released on focus loss/unpossess), so the latch cannot go stale. Game-thread only (input dispatch).
+bool g_cancelPairedUseRelease = false;
+
 // RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH (proximity FindNearestChipPile land-detect) is FULLY
 // RETIRED -- it mis-bound on a NEIGHBOUR pile in a dense cluster. The host-grab sync is now: the InpActEvt
 // PRE observer (OnPileGrabPre) records the aimed pile's eid (trash_channel::NotePendingGrab); the held-edge
@@ -377,29 +389,47 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
 // fully intercept below), _38 (a SECOND IE_Pressed), and _42 (IE_Released). All three reach useAction's use_deny
 // "EHHH". Hooking only _41 left _38 firing on every E-press -> the native deny played in PARALLEL with our
 // cancelled grab (the 19:06 regression -- RE 2026-07-01: the deny is on a SEPARATE seam than the one _41
-// cancels). This SIDE-EFFECT-FREE suppressor covers the other two seams: on a CLIENT pile interaction it only
-// CANCELS the dispatch (kills the parallel deny) -- it does NOT send a grab/throw intent or play a cue (_41 is
-// the sole author of those; and _42 on RELEASE must never throw). Same recognition as OnPileUseIntercept's
-// client branch: carrying, or aimed at a bound-native / proxy pile.
+// cancels). This SIDE-EFFECT-FREE suppressor covers the SECOND PRESS seam (_38): on a CLIENT pile interaction
+// it only CANCELS the dispatch (kills the parallel deny) -- it does NOT send a grab/throw intent or play a cue
+// (_41 is the sole author of those). Same recognition as OnPileUseIntercept's client branch: carrying, or aimed
+// at a bound-native / proxy pile. On cancel it ARMS the paired-release latch (a cancelled press's _42 must die
+// with it -- see g_cancelPairedUseRelease; the RELEASE seam is pairing-only, NOT condition-derived).
 static bool OnPileUseDenySuppress(void* self, void* /*params*/) {
     if (!self) return false;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() == coop::net::Role::Host) return false;  // client-only; host runs native
-    if (coop::trash_channel::ClientCarryEid() != coop::element::kInvalidId)
-        return true;  // carrying a clump -> a use press/release on it would deny natively -> cancel
-    void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
-    if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative) && PT::IsBoundMirrorNative(aimedNative))
-        return true;  // aimed at a bound native pile -> a grab press that would deny -> cancel
-    const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
-    const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
-    const float d2r = 3.14159265f / 180.f;
-    const float yaw = camRot.Yaw * d2r, pitch = camRot.Pitch * d2r;
-    const float cp = std::cos(pitch);
-    const ue_wrap::FVector camFwd{ cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch) };
-    if (coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f, /*minDot=*/0.94f) !=
-        coop::element::kInvalidId)
-        return true;  // aimed at a proxy pile -> cancel
-    return false;  // not a pile interaction -> let the native use run (devices, other interactions, SP deny)
+    bool cancel = false;
+    if (coop::trash_channel::ClientCarryEid() != coop::element::kInvalidId) {
+        cancel = true;  // carrying a clump -> this press is the throw toggle -> the native press would deny
+    } else {
+        void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+        if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative) && PT::IsBoundMirrorNative(aimedNative)) {
+            cancel = true;  // aimed at a bound native pile -> a grab press that would deny
+        } else {
+            const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
+            const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
+            const float d2r = 3.14159265f / 180.f;
+            const float yaw = camRot.Yaw * d2r, pitch = camRot.Pitch * d2r;
+            const float cp = std::cos(pitch);
+            const ue_wrap::FVector camFwd{ cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch) };
+            cancel = coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f,
+                                                             /*minDot=*/0.94f) != coop::element::kInvalidId;
+        }
+    }
+    if (cancel) g_cancelPairedUseRelease = true;
+    return cancel;  // false: not a pile interaction -> native use runs (devices, other interactions, SP deny)
+}
+
+// The IE_Released seam (_42) is PAIRING-ONLY: cancel iff this release's press was cancelled (by _41's
+// interceptor or _38's suppressor -- either arms the latch). NO condition re-derivation here: the press
+// conditions are stale by release time (the throw press already cleared the carry; the post-drop aim
+// wanders), and matching conditions against a NATIVE press's release would eat a legit drop (e.g.
+// releasing a natively-held prop while aiming at a pile). One latch consume per gesture; user-rate.
+static bool OnPileUseReleaseSuppress(void* /*self*/, void* /*params*/) {
+    if (!g_cancelPairedUseRelease) return false;  // paired with a NATIVE press -> the native release must run
+    g_cancelPairedUseRelease = false;
+    UE_LOGI("[USE-RELEASE] paired E-release CANCELLED (its press was intercepted -- no use_deny on release)");
+    return true;
 }
 
 static bool OnPileUseIntercept(void* self, void* /*params*/) {
@@ -432,6 +462,7 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                         "(native use CANCELLED -- no use_deny)", static_cast<unsigned>(carry));
                 coop::trash_channel::SendThrowIntent(*s, static_cast<uint32_t>(carry),
                                                      coop::net::throw_mode::kRelease, ue_wrap::FVector{});
+                g_cancelPairedUseRelease = true;  // this press's _42 release must die with it (deny lives there too)
                 return true;  // handled: cancel the native InpActEvt_use (the client holds no native clump -> would deny)
             }
         }
@@ -460,6 +491,7 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                             "-> native use CANCELLED (no grab, no use_deny) + requesting grab from host",
                             static_cast<unsigned>(beid));
                     coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(beid));
+                    g_cancelPairedUseRelease = true;  // pair: the _42 release of this cancelled press dies too
                     return true;  // handled: cancel the native InpActEvt_use dispatch entirely
                 }
             }
@@ -486,6 +518,7 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
         UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS aimed at pile proxy eid=%u (camera-ray cone) -> native use CANCELLED "
                 "(no use_deny) + requesting grab from host", static_cast<unsigned>(eid));
         coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(eid));
+        g_cancelPairedUseRelease = true;  // pair: the _42 release of this cancelled press dies too
         return true;  // handled: cancel the native InpActEvt_use dispatch (a bare proxy would deny)
     }
 
@@ -630,16 +663,19 @@ void Install(coop::net::Session* session) {
             "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host; docs/piles/08)");
 
     // The "use" action's OTHER two bindings (_38 = 2nd IE_Pressed, _42 = IE_Released) also reach useAction's
-    // use_deny -- hooking only _41 left the client hearing "EHHH" on every E-press (parallel deny). Install the
-    // side-effect-free deny-suppressor on both so a client pile grab/throw cancels ALL use-dispatch seams. Best-
-    // effort (a missing ordinal after a BP recook just means the deny returns on that seam -- sdk_check flags it).
+    // use_deny -- hooking only _41 left the client hearing "EHHH" on every E-press (parallel deny). _38 gets the
+    // press-condition suppressor; _42 gets the PAIRING-ONLY release suppressor (2026-07-02: deriving the press
+    // conditions at release time both leaked the deny on E-drop -- the throw press had already cleared the carry
+    // -- and could eat a legit native release). Best-effort (a missing ordinal after a BP recook just means the
+    // deny returns on that seam -- sdk_check flags it).
     int denySeams = 0;
-    for (const wchar_t* useFn : { P::name::MainPlayerUseInputEventFn38, P::name::MainPlayerUseInputEventFn42R }) {
-        if (void* uf = R::FindFunction(cls, useFn))
-            if (GT::RegisterInterceptor(uf, &OnPileUseDenySuppress)) ++denySeams;
-    }
-    UE_LOGI("trash_collect: use_deny suppressor installed on %d/2 extra 'use' seam(s) (_38 2nd-Pressed + _42 "
-            "Released) -- client pile grab/throw now cancels EVERY use dispatch -> no parallel 'EHHH' (RE 2026-07-01)",
+    if (void* uf38 = R::FindFunction(cls, P::name::MainPlayerUseInputEventFn38))
+        if (GT::RegisterInterceptor(uf38, &OnPileUseDenySuppress)) ++denySeams;
+    if (void* uf42 = R::FindFunction(cls, P::name::MainPlayerUseInputEventFn42R))
+        if (GT::RegisterInterceptor(uf42, &OnPileUseReleaseSuppress)) ++denySeams;
+    UE_LOGI("trash_collect: use_deny suppressors installed on %d/2 extra 'use' seam(s) (_38 2nd-Pressed = press "
+            "conditions; _42 Released = paired-with-cancelled-press only) -- a cancelled client E-press now dies "
+            "on ALL its seams incl. its OWN release -> no 'EHHH' on grab OR drop",
             denySeams);
 
     // LMB hard-throw bridge: PRE-observe BOTH fire handlers (_58/_59 = press/release). The OnFirePre gate on
