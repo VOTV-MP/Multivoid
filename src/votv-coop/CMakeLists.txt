@@ -203,6 +203,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/vitals.cpp
     src/ue_wrap/spawn_menu.cpp
     src/coop/player/remote_player.cpp
+    src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_destroy.cpp

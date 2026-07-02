@@ -23,6 +23,7 @@
 #include "coop/net/protocol.h"
 #include "coop/player/puppet_body_yaw.h"
 #include "coop/player/puppet_footsteps.h"
+#include "coop/player/remote_player_ragdoll.h"
 #include "ue_wrap/types.h"
 
 #include <cstdint>
@@ -139,11 +140,11 @@ public:
 
     // True while a ragdoll display body is spawned (test/diagnostic seam -- the
     // ragdoll e2e observer checks this instead of the old own-mesh flop).
-    bool IsRagdollDisplayed() const { return ragdollActive_; }
+    bool IsRagdollDisplayed() const { return ragdoll_.Active(); }
     // The spawned playerRagdoll_C body + its GUObjectArray index (for an
     // IsLiveByIndex-guarded deref). For test verification only.
-    void* RagdollBody() const { return ragdollBody_; }
-    int32_t RagdollBodyIdx() const { return ragdollBodyIdx_; }
+    void* RagdollBody() const { return ragdoll_.Body(); }
+    int32_t RagdollBodyIdx() const { return ragdoll_.BodyIdx(); }
 
     void* actor() const { return actor_; }
 
@@ -167,12 +168,6 @@ private:
     // (MTA: SetTargetPosition's first line is UpdateTargetPosition()). Root-caused
     // 2026-06-06, see [[project-puppet-lag-interp-starvation]].
     void AdvanceInterp();
-
-    // Ragdoll display lifecycle (xray-actor rework). StartRagdollDisplay: hide the
-    // puppet's two kel meshes + spawn a playerRagdoll_C body that flops locally.
-    // StopRagdollDisplay: destroy the body + restore the meshes. Both game-thread.
-    void StartRagdollDisplay();
-    void StopRagdollDisplay();
 
     // Linear LERP window + jitter buffer. At 60 Hz send (~16.7 ms interval) this is
     // ~4.5x the interval, tolerating ~4 consecutive late/dropped poses before the
@@ -310,30 +305,12 @@ private:
     // natively to gate the foot-IK alpha (useLegIK/rise).
     uint8_t          curStateBits_ = 0;
     // Ragdoll display (2026-06-01 xray-actor rework, [[project-ragdoll-sync]]):
-    // when a remote player ragdolls we spawn an INVISIBLE playerRagdoll_C physics body
-    // (VOTV's own ragdoll, its "plushy" mesh hidden) and PELVIS-ATTACH the visible Dr.
-    // Kel puppet to it, so the kel tumbles WITH the physics -- a funny visual that is
-    // DEATH-FREE (ragdollMode kills the host) and needs no shared skeleton. All reset in
-    // Destroy().
-    //   ragdollWireState_ -- last WIRE-bit value acted on (edge detector; fires the
-    //                        spawn/recover dispatch once per transition, no retry).
-    //   ragdollActive_    -- the puppet is currently pelvis-attached to a body ->
-    //                        ApplyToEngine lets the attachment drive the transform
-    //                        instead of pose-driving it.
-    bool             ragdollWireState_ = false;
-    bool             ragdollActive_ = false;
-    // The spawned (invisible) playerRagdoll_C body (+ its GUObjectArray index for
-    // IsLiveByIndex safety across ticks). null/-1 when not ragdolled. The puppet is
-    // pelvis-attached to it; both are torn down on recover / Destroy().
-    void*            ragdollBody_ = nullptr;
-    int32_t          ragdollBodyIdx_ = -1;
-    // v22 ragdoll physics: the latest streamed pelvis state for this peer (transform
-    // + velocity). hasRagdollPose_ gates the rotation drive: until the first packet
-    // arrives ApplyToEngine bootstraps the kel rotation from the mirror body's own
-    // pelvis; once streaming, it uses lastRagdollPose_'s EXACT pelvis rotation (no
-    // reliance on the local sim matching the sender). Both reset when ragdoll stops.
-    coop::net::RagdollPoseSnapshot lastRagdollPose_{};
-    bool             hasRagdollPose_ = false;
+    // the whole lifecycle (wire-bit edge -> spawn invisible playerRagdoll_C +
+    // pelvis-attach; v22 pelvis stream; attached-transform drive; teardown) lives
+    // in coop/player/remote_player_ragdoll.h. Glue side effects stay here, keyed
+    // off its return values: OnWireBit/DriveAttached stop -> bodyYaw_.Reset;
+    // SetPose applied -> dirty_. Torn down in Destroy() (body only).
+    RagdollDisplay   ragdoll_;
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;
     float            targetPitch_ = 0.f;
