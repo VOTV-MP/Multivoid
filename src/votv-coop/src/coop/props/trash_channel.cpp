@@ -8,6 +8,7 @@
 #include "coop/player/players_registry.h"    // Puppet(slot) -- the client-grab direction (Increment 2)
 #include "coop/player/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
 #include "coop/player/remote_player.h"       // RemotePlayer::GetActor / valid
+#include "coop/props/prop_snapshot.h"  // ExpressIncrementalSpawn (wrong-class deny -> re-assert the row)
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
 #include "coop/session/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
 #include "ue_wrap/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
@@ -17,6 +18,7 @@
 #include "ue_wrap/reflection.h"  // ClassNameOf / ClassOf / FindFunction
 #include "ue_wrap/types.h"       // FVector / FRotator / NormalizeAxis
 
+#include <chrono>     // wrong-class deny heal debounce (per-eid, 5 s)
 #include <cmath>      // std::sqrt -- clamp the inherited throw velocity (L4)
 #include <cstdint>
 #include <string>
@@ -365,10 +367,31 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     }
     if (!ue_wrap::prop::IsChipPile(pile)) {
         // A LIVE actor of the wrong class: the identity names a real entity, so NEVER destroy on a
-        // class mismatch -- deny only, and log the class (each named class = the next smear lead).
+        // class mismatch. But silence leaves the requester WEDGED: its row for this eid resolves a
+        // pile-shaped mirror (native hover GUI + aim hit), so it re-sends the same doomed grab
+        // forever (19:24 verdict: eid=3129 = trashBitsPile_C here vs a bound native chipPile on the
+        // client; 8 identical denies, user: "pile нельзя взять вообще"). Heal by RE-ASSERTING THE
+        // TRUTH: broadcast ONE incremental authoritative PropSpawn for the live actor (bracket-free
+        // additive; peers re-bind the eid to the real key/class via RegisterPropMirror -- the same
+        // morph re-skin path every rebind takes), so the requester's stale pile-row is replaced and
+        // its next aim re-resolves. Same deny-owner contract as the not-live branch above
+        // (d4833b9b): every terminal deny answers with positive host-authoritative evidence, never
+        // silence. Debounced per eid -- spam-pressed E must not spam the wire (the send is
+        // idempotent on peers). The smear's UPSTREAM (how one eid came to name different actors on
+        // two peers) is the keyed-prop GC-churn re-bind thread (docs/piles/12) -- that root is
+        // prevention; this is the deny edge's truth channel.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- live actor %p class '%ls' is not a chipPile "
-                "(cross-peer identity smear?)", eid, senderSlot, pile,
+                "(cross-peer identity smear?) -> re-asserting the authoritative row (incremental "
+                "PropSpawn) so the requester re-binds", eid, senderSlot, pile,
                 R::ClassNameOf(pile).c_str());
+        static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> s_lastSmearHeal;
+        const auto healNow = std::chrono::steady_clock::now();
+        auto healIt = s_lastSmearHeal.find(eid);
+        if (healIt == s_lastSmearHeal.end() ||
+            healNow - healIt->second > std::chrono::seconds(5)) {
+            s_lastSmearHeal[eid] = healNow;
+            coop::prop_snapshot::ExpressIncrementalSpawn(pile);
+        }
         return;
     }
 
