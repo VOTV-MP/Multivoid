@@ -21,6 +21,7 @@
 #include "coop/voice/voice_chat.h"
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/native_pile_inert_probe.h"
+#include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
 #include "coop/dev/pinecone_probe.h"
 #include "coop/session/ambient_spawner_suppress.h"  // Fork C: client ambient flora/forage spawner suppression
 #include "coop/props/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
@@ -390,6 +391,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::drone_probe::Tick(isConnected, isHost);  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
     coop::dev::native_pile_inert_probe::Install();  // GO/NO-GO gate for nativizing the trash mirror (ini native_pile_inert_probe=1)
     coop::dev::native_pile_inert_probe::Tick(isConnected, isHost);  // spawns 1 rooted runtime chipPile, logs [INERT-PROBE] IsLive/class 60s -> does a live-ubergraph native stay inert?
+    coop::dev::client_model_probe::Install();  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
+    coop::dev::client_model_probe::Tick(isConnected, isHost);  // spawns the comparison pair in front of the player -> one clean look settles the cook verdict
     coop::dev::pinecone_probe::Install();  // dev-only pinecone-scare sync verification (ini pinecone_probe=1)
     coop::dev::pinecone_probe::Tick(isConnected, isHost);  // host force-spawns one pinecone ~5s after a client connects -> confirm it mirrors
     coop::dev::sleep_probe::Install();     // dev-only v71 sleep-gate exerciser (ini sleep_probe=1)

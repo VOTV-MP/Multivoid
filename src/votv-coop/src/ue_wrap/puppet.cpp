@@ -522,9 +522,13 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     // SetSkeletalMesh also re-initializes the pose buffer. Without this
     // the puppet renders blank.
     if (skeletalMeshAsset) {
-        E::SetSkeletalMesh(meshComp, skeletalMeshAsset);
-        UE_LOGI("puppet[MainPlayer]: copied local skin asset %p onto mesh_playerVisible",
-                skeletalMeshAsset);
+        const bool setOk = E::SetSkeletalMesh(meshComp, skeletalMeshAsset);
+        // Read the field BACK to distinguish "setter rejected our mesh -> field kept the
+        // class-default kel" (H1) from "field holds our mesh but it renders kel" (H2, cook).
+        void* after = ReadPtr(meshComp, P::off::USkinnedMesh_SkeletalMesh);
+        UE_LOGI("puppet[MainPlayer]: copied skin asset %p onto mesh_playerVisible "
+                "(SetSkeletalMesh ret=%d, field-after=%p, matches=%d)",
+                skeletalMeshAsset, setOk ? 1 : 0, after, (after == skeletalMeshAsset) ? 1 : 0);
     } else {
         UE_LOGW("puppet[MainPlayer]: no skin asset provided -- puppet will render whatever the class default carried (often blank)");
     }
