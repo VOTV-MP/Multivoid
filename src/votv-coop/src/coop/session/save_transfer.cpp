@@ -123,7 +123,9 @@ std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
 // TryGetSaveTimeKerfurXformAnySlot at BindFormActor (the host stamps it onto the KerfurConvert when it
 // turns a kerfur ON in the join window) so the client retires its stale local off-prop at the exact key.
 // Same lifetime/threading as g_blobPileXforms -- it OUTLIVES the snapshot (window turn-ons fire during
-// the client load-tail) and is cleared only at CancelForSlot / OnDisconnect (bounded; no per-session leak).
+// the client load-tail) and is cleared at CancelForSlot / OnDisconnect AND at the b3 late-flush expiry
+// (TickPileFlushLateArm -- the join window's true close; a LATER turn-on needs no save-time key: the
+// joiner's off-prop is already eid-bound, and the membership check correctly reads "not in-window").
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobKerfurXforms[coop::net::kMaxPeers];
 
