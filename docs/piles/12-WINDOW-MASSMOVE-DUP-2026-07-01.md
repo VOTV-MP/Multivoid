@@ -1,10 +1,12 @@
 # 12 — Join-window MASS-MOVE pile dup (2026-07-01)
 
-**Status: the MASS-MOVE DUP is VERIFIED FIXED [V hands-on 19:06 "всё на своих местах"]** — owner (take 3) +
-grabbed-clump gate (take 3.1). Two follow-on issues that surfaced during the same test are AS-BUILT + deployed
-but NOT yet hands-on: the EHH-on-every-E deny (multi-seam fix) and client FPS (walk alloc-storm). Latest deploy
-`3A8BB6AD6D2FC9A3` (4/4 hash-verified; carries the dup fix + EHH + FPS). Owner commits: `d43956f6` (owner) +
-`0e7e5349` (grabbed-clump gate). See the "EHH" and "FPS" sections at the bottom for those two threads.
+**Status (updated 2026-07-02): the MASS-MOVE DUP class is VERIFIED FIXED [V hands-on 19:06 "всё на своих
+местах"]** — owner (take 3) + grabbed-clump gate (take 3.1); commits `d43956f6` + `0e7e5349`. **ONE residual
+local dup remains** (user, post-19:41) — the [DUP-PROBE] diagnostic (`26dea6e4`) is ARMED to pin its cause on
+the next mass-move run (see the RESIDUAL section below; it did not fire on 20:17 because an ini-reader bug
+silently disabled the flag — root-fixed `f81256e4`). Thread statuses at the bottom: EHH = AS-BUILT with log
+evidence (2/2 suppressors installed; no EHH report in 4+ subsequent hands-on runs — not explicitly confirmed);
+FPS `70e0d899` = **REFUTED-insufficient** by the 19:41 log (see FPS section). Latest deploy `a142e2bc`.
 
 ## 18:52 — the owner over-reached onto actively-grabbed piles (fixed 0e7e5349, then VERIFIED 19:06) [V]
 Take-3 owner FIRED and worked for the @old-resurrect class: the HOST late-arm delivered late moves (eid 4930 at
@@ -130,12 +132,24 @@ the world-wipe protection (verify-before-retire, [[feedback-join-reconcile-sweep
   + `ConsumeLocalActor` un-root) is CORRECT but was insufficient alone (fired only on the proxy sub-case). It
   stays (defense-in-depth); the twin-sweep rewrite is the actual mass-move fix.
 
-## Verify (hands-on) — DUP DONE
+## Verify (hands-on) — DUP class DONE; ONE residual + the ARMED probe (2026-07-02)
 Runbook `research/handson_runbook_2026-07-01_massmove_dup.md`. **19:06 hands-on: "всё на своих местах" = the
-corner clears, no dup, no mid-air clumps [V].** The GC-pointer-reuse residual + air-clumps notes above were the
-take-2 concern; the owner + grabbed-clump gate resolved them (the 19:06 run was clean).
+corner clears, no dup, no mid-air clumps [V].** The 19:41 run then showed **ONE residual local dup** (user
+report). Log forensics of 19:41: the owner FIRED correctly (8 `identity key UPDATED`, 11 HOST-VACATE arms, 1
+DUP-RETIRE arm) but the sweep retired **0 of 21** pending twins — every `FindExactMatch` MISSed, then all
+dropped at `kMaxTwinPasses`. A MISS is ambiguous between (0) clean / (>1) co-located-ambiguous /
+BOUND-to-the-WRONG-eid (excluded from the unbound-only candidate set = invisible to every retire path — the
+predicted GC-pointer-reuse tail). **[DUP-PROBE] (`26dea6e4`) instruments exactly that decision** — per-twin
+census (unbound@old at 1cm/30cm + bound-natives-near-@old WITH their bound eid + E's distance) + a decoded
+verdict line. It did NOT fire on the 20:17 run because `IsIniKeyTrue`'s exact-equality match silently read
+every inline-`;`-commented ini flag as absent — root-fixed `f81256e4` (strip comments before matching).
+**The probe is ARMED now** (flag set in all client inis): the next mass-move run yields `[DUP-PROBE]` verdicts.
+(20:17 sweep data point: 10 twins DID retire that run — 8+1+1 confirmed — so twin-retire works when
+FindExactMatch hits; the 21-pending cluster is the anomaly the probe will decode.)
 
-## EHH — deny on EVERY client E-press (AS-BUILT `d7620ed5`, deployed `3A8BB6AD6D2FC9A3`, NOT hands-on) [RD]
+## EHH — deny on EVERY client E-press (AS-BUILT `d7620ed5`; install log-verified 19:41 `use_deny suppressor
+## installed on 2/2 extra 'use' seam(s)`; no EHH report in 4+ subsequent hands-on runs — not explicitly
+## user-confirmed) [RD + install-log-V]
 Surfaced 19:06: `use_deny` "EHHH" plays on every client E-grab/release even for a recognized pile whose grab
 succeeds — and the log shows the `_41` interceptor DID cancel (`native use CANCELLED, no use_deny`). So the deny
 is on a SEPARATE seam than `_41`. RE (`mainPlayer.json` Export 483 `InputActionDelegateBinding_0`): the "use"
@@ -148,7 +162,17 @@ the `_41` dispatch "subsumes" the deny was WRONG (covers 1 of 3 seams). Fix: a s
 `_42`-on-release must never throw). `_41` stays the sole intent sender. RE finding:
 `research/findings/votv-use-action-three-bindings-RE-2026-07-01.md`. Lesson: [[lesson-input-action-multiple-delegate-bindings]].
 
-## FPS — client hitch during the mass-move (AS-BUILT `70e0d899`, deployed `3A8BB6AD6D2FC9A3`, NOT hands-on) [RD]
+## FPS — client hitch during the mass-move (`70e0d899` = REFUTED-INSUFFICIENT by the 19:41 log) [log-V]
+
+**2026-07-02 verdict:** the NameOf reorder did NOT land as a user-felt fix. The 19:41 client log (the run WITH
+`70e0d899` deployed) still shows `sync:npc_client` at 20-51ms (mean 23.5ms, 60/69 samples >20ms) across the whole
+17s drain window — even a pass re-binding only 1 chip candidate took 20ms. So the alloc storm was real but NOT
+dominant: the raw ~330k-object iteration × MULTIPLE walks per drain pass (BindUnbound + twin sweep + join
+reconcile) × 4Hz is the cost, kept hot the whole window because the 21 never-retiring twins pinned
+`HasPendingWork`. **The dup residual and the FPS hitch share a root**: twins that never resolve pin the
+reconcile hot. Fixing twin resolution (the [DUP-PROBE] target) shortens the pin; the deeper FPS fix is merging
+the per-pass walks into ONE shared scan — queued AFTER the dup probe pins the residual. Original (superseded)
+analysis below kept for the alloc-storm mechanism, which is still true, just not sufficient:
 Surfaced 19:06: `net_pump::Tick` hitching 48-57ms. `[HITCH-SRC]` attributed it to OUR code (not GC); `[WALK-TIME]`
 named `sync:npc_client` = `npc_mirror::TickClientNpcs` → `join_membership_sweep::TickClientReconcile` →
 `quiescence_drain` reconcile. Root: the reconcile's re-bind walk (`save_identity_bind::BindUnboundReCreates`) ran

@@ -1,5 +1,12 @@
 # Hands-on runbook — residual mass-move dup PROBE (2026-07-01, take 2)
 
+> **UPDATE (2026-07-02): the probe did NOT fire on the 20:17 run -- root-caused + fixed.** The ini
+> reader's exact-equality match silently read every inline-`;`-commented flag as ABSENT, so
+> `pile_dup_probe=1   ; comment` never enabled it. Root fix `f81256e4` (strip inline comments before
+> matching). **The probe is ARMED now** (flag in all client inis; current deploy `a142e2bc` carries
+> it) -- the next mass-move run yields the [DUP-PROBE] verdict lines described below. 20:17 aside:
+> 10 twins DID retire that run (8+1+1 confirmed), so twin-retire works when FindExactMatch hits.
+
 **Deployed DLL** `votv-coop.dll` sha256 `7856bac32378cf74` (all 4 folders hash-verified). Built Release.
 `[dev] pile_dup_probe=1` set in the client ini (Game_0.9.0n, _copy, _copy2). Read-only diagnostic — no
 behavior change with the flag off; the owner + grabbed-clump gate are UNTOUCHED.

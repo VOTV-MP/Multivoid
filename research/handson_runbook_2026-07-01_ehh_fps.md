@@ -1,5 +1,12 @@
 # Hands-on runbook — EHH deny + client FPS (2026-07-01)
 
+> **OUTCOME (2026-07-02, from the 19:41 run's log):** T1 EHH -- suppressors installed 2/2 (log line
+> present); no EHH reported in 4+ subsequent hands-on runs => AS-BUILT + install-log-verified, not
+> explicitly user-confirmed. T2 FPS -- **REFUTED-INSUFFICIENT**: `sync:npc_client` still 20-51ms
+> (mean 23.5ms) with `70e0d899` deployed; real root = ~330k iteration x multiple walks/pass x 4Hz,
+> pinned hot by never-retiring twins; walk-merge queued after the [DUP-PROBE] pins the dup residual
+> (shared root). T3 dup -- class stays fixed; ONE residual, probe armed. Canonical: docs/piles/12.
+
 **Deployed DLL** `votv-coop.dll` sha256 `3A8BB6AD6D2FC9A3` (all 4 folders hash-verified). Built Release.
 Carries: the VERIFIED mass-move dup fix (owner + grabbed-clump gate) + the two fixes below. HEAD `70e0d899`.
 Context: the mass-move DUP is already VERIFIED (19:06 "всё на своих местах"); these two surfaced in that test.

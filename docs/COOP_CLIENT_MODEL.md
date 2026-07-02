@@ -28,13 +28,18 @@ GoldSrc scientist. The pipeline generalizes to any HL1 humanoid `.mdl`.
     Probe: `coop/dev/client_model_probe` ([dev] client_model_probe=1) -- kept as the visual
     harness for the texture iterations.
 - **POSE (A-pose→T-pose) = SOLVED + AUTOMATED (§5).**
-- **TEXTURES = THE ACTIVE AXIS (§7).** Confirmed in-game: scientist shape with garbled kel
-  material over scientist UVs (expected-wrong). The pixels exist (19 extracted GoldSrc PNGs);
-  delivery is missing. Plan: cook ONLY a `UTexture2D` (atlas) offline -- a cooked UMaterial is
-  NOT python-cookable (shader maps) -- and bind it at runtime via CreateDynamicMaterialInstance +
-  SetTextureParameterValue on the existing slot material (the hurt-flash material-swap infra
-  proves runtime material ops). Probe-first ladder in §7.
-- Runtime + probe + two-slot invariant built/deployed/committed; the pak ships to all peers.
+- **TEXTURES = THE ACTIVE AXIS (§7) -- rungs 1-3 AS-BUILT (`72a21a42`), rung-3 LOOK PENDING.**
+  Rung 1 [V static RE]: slot-0 material `inst_kel4_body` = MIC of `mat_object_sk` with ONE
+  texture parameter **`tex`** (value tex_kel3_skin) -> MID binding viable, no cooked material.
+  Rung 2 [AS-BUILT + parse-verified]: `tools/client_model/ue_tex.py` cooks a PNG into a cooked
+  `UTexture2D` package (PF_B8G8R8A8, 1 mip, inline; full package rename incl. the REAL name-map
+  hash recipe, §8); first texture (Sci3_Chest_ 64x88) packed -- scientist.pak = 4 files.
+  Rung 3 [AS-BUILT]: runtime `CreateDynamicMaterialInstance` + `SetTextureParameterValue`
+  wrappers; client_model_probe binds the texture on the RIGHT puppet's slot-0 MID on BOTH body
+  slots. Expected look: torso-colored body (single texture, no atlas). AWAITING the user look.
+  Rung 4 [OPEN]: atlas-bake the 19 PNGs + per-face UV remap in ue_cook -> final look; then wire
+  the texture bind into the FEATURE apply path (client_model / puppet spawn), not just the probe.
+- Deployed state: DLL `a142e2bc` + pak `319f39d6` (4 files), all 4 install folders hash-verified.
 
 **Locked decisions (RULE 1 no-crutch, RULE 3 no-editor-at-runtime):**
 - A REAL cooked `USkeletalMesh` the engine skins natively (NOT a ProceduralMesh +
@@ -56,14 +61,18 @@ OFFLINE (dev machine, tools/client_model/):   [DONE, automated]
    → ue_cook.py       → scientist.uasset/.uexp      (Y-mirror to cooked space, HL→anthro
                                                      rigid bone remap, splice into template)
    → repak pack       → scientist.pak               (VotV/Content/Mods/VOTVCoop/scientist, V11)
-SHIP: scientist.pak deployed to EVERY peer (client-side visual asset).
-RUNTIME (mod):   [TODO — §3]
-  mount scientist.pak → LoadObject the mesh → on each puppet spawn, by REMOTE ROLE:
-    client → SetSkeletalMesh(scientist) + SetAnimClass(anthro AnimBP)
-    host   → keep current mesh (today's behaviour)
+SHIP: scientist.pak deployed to EVERY peer by tools/deploy-all.ps1 (Content/Paks/LogicMods/votv-coop/).
+RUNTIME (mod):   [DONE + PROVEN -- §3, commit 320c0ab4 + 8df26e05]
+  UE auto-mounts the pak → client_model::GetClientPuppetMesh() LoadObjects the mesh once →
+  net_pump role gate (slot 0 host = kel; slots >= 1 clients = custom) →
+  RemotePlayer::Spawn(useClientModel) → SpawnPuppet applies the skin to BOTH body slots
+  (mesh_playerVisible + native ACharacter::Mesh -- the two-body invariant) + local anthro AnimBP.
+TEXTURE (offline+runtime):  [rungs 1-3 AS-BUILT -- §7]
+  ue_tex.py cooks tex/*.png → cooked UTexture2D in the same pak → runtime binds it via
+  CreateDynamicMaterialInstance(slot0) + SetTextureParameterValue('tex', tex).
 ```
 
-Two halves: the offline cook (done, §4/§5) and the runtime load+apply+test (§3, the task).
+Two halves: the offline cook (§4/§5, geometry VERIFIED in-game) and the runtime (§3, DONE).
 
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
 adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repak` (no Blender).
@@ -93,7 +102,12 @@ adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repa
 
 ---
 
-## 3. RUNTIME: load the pak + apply to clients + TEST  ← THE OTHER AGENT'S TASK
+## 3. RUNTIME: load the pak + apply to clients + TEST  [DONE + PROVEN, 320c0ab4 + 8df26e05]
+
+> AS-BUILT differs from the original plan below in ONE load-bearing way: the skin is applied to
+> BOTH body slots (SpawnPuppetMainPlayer writes it to mesh_playerVisible AND the native
+> ACharacter::Mesh AttachParent) -- see the STATUS block's two-body invariant. The 3C coop test
+> recipe below is still the pending FINAL visual (host+client see each other as kel vs scientist).
 
 Prior RE: `research/findings/votv-mp-pak-mount-feasibility-2026-05-25.md`.
 
@@ -239,18 +253,18 @@ python tools/client_model/repose.py learn <mdl_extract_dir> <manually_posed.psk>
 
 ---
 
-## 6. Caveats — offline-valid, IN-GAME UNTESTED (verify on first load, §3C)
-a. **Object name** is still `kerfurOmega_KelSkin` (packed at a new PACKAGE path, not
-   renamed) → LoadObject path is `/Game/Mods/VOTVCoop/scientist.kerfurOmega_KelSkin`.
-   Cosmetic; a clean rename is §8 if the load refuses on the name.
-b. Tangents approximate (computed normal + a perpendicular); ImportedBounds = template's;
-   vertex colors = white. Fine for "does it render / animate"; refine later.
-c. **Winding 0.76 outward** — the Y-mirror winding was auto-kept (majority outward; the
-   rest are genuine humanoid concavities). If the mesh shows inside-out in-game, force the
-   opposite winding in `ue_cook` (the empirical flip test is one line).
-d. **Untested:** whether UE loads a package whose name-map still references the template's
-   paths. LoadObject resolves by file path + finds the export by name, so it likely works;
-   if it REFUSES on first test, do the rename (§8).
+## 6. Caveats — updated after the in-game runs (2026-07-02)
+a. **CLOSED [V]:** object name `kerfurOmega_KelSkin` at the new package path loads fine --
+   `LoadObject('/Game/Mods/VOTVCoop/scientist.kerfurOmega_KelSkin')` returns OUR object
+   (log: `outer='/Game/Mods/VOTVCoop/scientist'`). No rename needed for the mesh. (The
+   texture package IS cleanly renamed -- ue_tex.py does the full rename, §8 recipe.)
+b. **Still approximate (visually acceptable so far):** tangents (computed normal + a
+   perpendicular); ImportedBounds = template's; vertex colors = white.
+c. **CLOSED [V]:** winding is correct in-game -- the scientist shape reads as a solid
+   humanoid (hands-on 2026-07-02), no inside-out look.
+d. **CLOSED [V]:** UE loads the package whose name-map still references the template's
+   paths (mesh package loads + renders; imports resolve to the game's skeleton/materials
+   as intended).
 e. **Pose generalization** unverified on a 2nd model (§5) — only the source model is proven.
 
 ---

@@ -8,22 +8,25 @@
 > `init()` export 80): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
 > · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form.)
 >
-> **FOLLOW-ON (2026-07-01, LOCAL commits `de492af8`..`70e0d899` = 10 ahead, NOT pushed):**
+> **FOLLOW-ON (updated 2026-07-02, LOCAL commits `de492af8`..HEAD = 19+ ahead, NOT pushed):**
 > - **SOUND-events (pickup + land) = VERIFIED [V hands-on 16:23]** (`8f2b689c`). RE: the chipPile BP has NO
 >   dedicated pickup/land sound — pickup = `use`+`physSound.soft`, land = `physSound.impact`
 >   (`research/findings/votv-pile-pickup-land-sound-RE-2026-07-01.md`). See doc 11 § Sound-events.
-> - **JOIN-WINDOW MASS-MOVE DUP = VERIFIED FIXED [V hands-on 19:06 "всё на своих местах"].** Re-derived to the
->   OWNER level after 4 instance fixes: a host in-window move keeps the SAME eid but the client keys keyless
->   piles by their FROZEN save-pos (lies after a move) → RE-BIND resurrects @old. FIX: `PropSnapPos(E,@new)` is
->   the authoritative identity — HOST late-arms the flush + CLIENT retracks its save-pos key to @new + HOST-VACATE
->   twin retires @old (`d43956f6`); the flush skips a grabbed CLUMP so it doesn't chase throw arcs (`0e7e5349`).
->   Canonical: **[12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md)**. Prior takes
->   `76257bb0`/`46e35edd`/`110b1bde` KEPT as defense-in-depth.
-> - **EHH-on-every-E deny + client FPS = AS-BUILT, deployed `3A8BB6AD6D2FC9A3`, NOT hands-on.** EHH (`d7620ed5`):
->   the "use" action has THREE delegate bindings (`_41` hooked, `_38`+`_42` not) → `_38` played a parallel deny;
->   fix = deny-suppressor on `_38`+`_42` (`votv-use-action-three-bindings-RE-2026-07-01.md`). FPS (`70e0d899`):
->   the reconcile re-bind walk ran `NameOf` (alloc) on all ~330k objects/pass before the cheap class filter;
->   fix = reorder cheap-first. Runbook: `research/handson_runbook_2026-07-01_ehh_fps.md`.
+> - **JOIN-WINDOW MASS-MOVE DUP class = VERIFIED FIXED [V hands-on 19:06]; ONE residual + ARMED probe.**
+>   Re-derived to the OWNER level after 4 instance fixes: a host in-window move keeps the SAME eid but the
+>   client keys keyless piles by their FROZEN save-pos (lies after a move) → RE-BIND resurrects @old. FIX:
+>   `PropSnapPos(E,@new)` is the authoritative identity — HOST late-arms the flush + CLIENT retracks its
+>   save-pos key + HOST-VACATE twin (`d43956f6`); grabbed-clump gate (`0e7e5349`). ONE residual local dup
+>   remains (19:41); the per-twin `[DUP-PROBE]` (`26dea6e4`) is ARMED for the next mass-move run — it was
+>   flag-dead on 20:17 because inline `;`-comments silently disabled ini flags (root-fixed `f81256e4`).
+>   Canonical: **[12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md)**.
+> - **EHH deny = AS-BUILT + install-log-verified** (`d7620ed5`; 19:41 log `use_deny suppressor installed on
+>   2/2 extra 'use' seam(s)`; no EHH report in 4+ later runs — not explicitly user-confirmed). THREE "use"
+>   delegate bindings (`_41` hooked, `_38`+`_42` suppressors) — `votv-use-action-three-bindings-RE`.
+> - **Client FPS `70e0d899` = REFUTED-INSUFFICIENT [log-V 19:41]:** `sync:npc_client` still 20-51ms with the
+>   reorder deployed. Real root: ~330k iteration × multiple walks/pass × 4Hz, pinned hot by never-retiring
+>   twins (`HasPendingWork`) — the dup residual and the FPS hitch SHARE this root. Walk-merge (N scans→1)
+>   queued AFTER the [DUP-PROBE] pins the residual. Doc 12 § FPS.
 
 > **L1 JOIN-WINDOW DUP (host MOVES a SAVE-LOADED pile in-window) = VERIFIED + PUSHED (origin/main `960e4650`).**
 > A save-loaded chipPile the host moves during the join-load window duped (native@old + proxy@new, >1cm → the
