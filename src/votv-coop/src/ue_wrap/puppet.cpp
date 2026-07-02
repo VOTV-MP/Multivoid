@@ -7,6 +7,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/reflected_offset.h"
+#include "ue_wrap/ufunction_hook.h"
 
 #include <windows.h>
 
@@ -114,6 +115,76 @@ void WriteLookAtOnAnim(void* anim, const FVector& target) {
     if (!s_loggedDrive) { s_loggedDrive = true;
         UE_LOGI("puppet: kerfur head-look drive active -- wrote lookAt=(%.0f,%.0f,%.0f) + customLookAt=true (first; class-gate passed)",
                 target.X, target.Y, target.Z); }
+}
+
+// ---- head-look STATE-GATE defeat (2026-07-02, puppet-only) -----------------
+// TOPOLOGY (statically proven from the cooked BakedStateMachines + pose-link
+// trace; research/findings/votv-puppet-head-freeze-backturned-RE-2026-06-24.md
+// top update): the two FAnimNode_LookAt nodes do NOT sit on the anim-graph
+// trunk -- they are the whole sub-graph of state `lookAtPlayer` in the trunk
+// state machine "New State Machine_1" (states: zombieRise / lookAtPlayer /
+// lookStraight; the lookAtPlayer state root IS the LookAt chain's output node).
+// `lookingAtPlayer` (BUA @515: Dot(head-dir, to-LOCAL-camera) >= -0.6 -- the
+// OBSERVER's position, not the look target!) is FastPath-copied into
+// TransitionResult_7/_5 = the lookAtPlayer<->lookStraight transition rules. A
+// puppet turned back to the OBSERVING player therefore EXITS the look state and
+// the whole LookAt contribution crossfades to zero in 0.25 s -> the head snaps
+// to NEUTRAL = "head freezes when back-turned". This closes the 2026-06-25
+// probe riddle (TWIST 36.9 tracking at DESIRED 38 but 0.5 at DESIRED 43 with
+// node Alphas still 1.0/0.5): the STATE weight died, not the nodes -- the
+// 45deg-clamp theory stays refuted.
+//
+// A game-thread tick write cannot fix it: BUA RECOMPUTES lookingAtPlayer every
+// anim update, after any write of ours and before the FastPath copies sample
+// it. The only correct seam is POST-BUA: patch the AnimBP's own
+// BlueprintUpdateAnimation override (UFunction::Func, ufunction_hook) and
+// re-assert lookingAtPlayer=true AFTER the BP recompute, BEFORE the copies +
+// state-machine update read it (both run later inside the same UpdateAnimation).
+//
+// PUPPET-ONLY BY IDENTITY (user constraint: kerfur NPCs keep their native
+// freeze): the hook fires for EVERY instance of the shared kerfur AnimBP; it
+// writes ONLY when the instance's outer chain resolves to a mainPlayer_C actor
+// with a NULL Controller -- the codebase's definitive puppet discriminator
+// (CLAUDE.md). Kerfur NPCs (different actor class) and the LOCAL player
+// (controller != null) are byte-untouched.
+void HeadGateBUAPost(void* animInstance, void* /*result*/) {
+    if (!animInstance) return;
+    void* comp = R::OuterOf(animInstance);   // UAnimInstance's outer = its USkeletalMeshComponent
+    if (!comp) return;
+    void* actor = R::OuterOf(comp);          // component's outer = the owning actor
+    if (!actor) return;
+    static void* sMainPlayerClass = nullptr;
+    if (!sMainPlayerClass) sMainPlayerClass = R::FindClass(P::name::MainPlayerClass);
+    if (!sMainPlayerClass || R::ClassOf(actor) != sMainPlayerClass) return;  // kerfur NPCs exit here
+    if (ReadPtr(actor, P::off::APawn_Controller)) return;                    // the LOCAL player exits here
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer();
+    if (off < 0) return;
+    WriteAt<bool>(animInstance, static_cast<size_t>(off), true);
+}
+
+void InstallHeadGateHook(void* animClass) {
+    static bool s_tried = false;   // one-shot: same class every spawn; the facility is idempotent anyway
+    if (s_tried || !animClass) return;
+    s_tried = true;
+    void* fn = R::FindFunction(animClass, L"BlueprintUpdateAnimation");
+    if (!fn) {
+        UE_LOGW("puppet: BlueprintUpdateAnimation not found on the AnimBP class -- head-look "
+                "state gate stays native (head will freeze when back-turned)");
+        return;
+    }
+    // Must be the BP's OWN override (Exports[4] of the AnimBP asset), not the native
+    // UAnimInstance declaration -- patching a super's Func would hook EVERY AnimInstance
+    // in the game. Refuse rather than over-hook.
+    if (R::OuterOf(fn) != animClass) {
+        UE_LOGW("puppet: BlueprintUpdateAnimation resolved on a SUPER class (fn=%p) -- refusing "
+                "the head-gate hook (would fire for every AnimInstance)", fn);
+        return;
+    }
+    const bool ok = ue_wrap::ufunction_hook::InstallPostHook(fn, &HeadGateBUAPost);
+    UE_LOGI("puppet: head-look state-gate hook %s -- post-BUA lookingAtPlayer=true on PUPPET "
+            "instances only (the LookAt nodes live INSIDE state 'lookAtPlayer'; without this the "
+            "AnimBP exits that state when the puppet faces away from the observer)",
+            ok ? "installed" : "FAILED");
 }
 
 }  // namespace
@@ -582,12 +653,15 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     // path the LOCAL player uses). The puppet's MovementMode is mirrored
     // from the source's airborne state via RemotePlayer::ApplyToEngine's
     // direct write to puppet.CMC.MovementMode @+0x168 each tick.
-    // lookingAtPlayer: seeded false here (one-shot). The per-tick force-false was
-    // RETIRED with the old ModifyBone head drive (2026-06-11) -- the head is now
-    // driven by the native lookAt/customLookAt path (DriveHeadLookAtWorld), which
-    // makes lookingAtPlayer irrelevant to the head AIM. The BP graph re-toggles
-    // this flag each frame; it now only selects an idle/look STATE variant, not
-    // the head direction. Harmless (RE: votv-puppet-head-look-RE-2026-06-11.md).
+    // lookingAtPlayer: seeded TRUE (2026-07-02; flipped from the old false seed).
+    // NOT cosmetic: the two FAnimNode_LookAt nodes live INSIDE state machine
+    // state `lookAtPlayer`, and this flag's FastPath copies gate that state's
+    // transitions -- false means the look state EXITS and the head snaps to
+    // NEUTRAL (the "head freezes when back-turned" root; the 2026-06-11 "only a
+    // STATE variant, irrelevant to the head AIM" note was WRONG -- see the
+    // HeadGateBUAPost topology comment). BUA recomputes the flag every anim
+    // update from the OBSERVER camera angle, so the seed alone cannot hold; the
+    // post-BUA hook (InstallHeadGateHook below) re-asserts it each update.
     // Note: SetAnimClass above instantiated a fresh AnimInstance, so
     // LiveAnimInstance is the NEW one (any pointer captured before
     // SetAnimClass is stale).
@@ -663,9 +737,12 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
         // (removeArms=true, its SP role).
         WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_removeArms(),
                       seedComp == meshComp);
-        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), false);
+        WriteAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer(), true);
         WriteAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeedMultiplier(), 1.f);
     }
+    // Keep the puppet's head-look STATE alive across every future anim update
+    // (the seed above is recomputed away by the next BUA; the hook is the fix).
+    InstallHeadGateHook(animClass);
     UE_LOGI("puppet[MainPlayer]: spawned actor=%p mesh_playerVisible=%p at (%.0f,%.0f,%.0f)",
             actor, meshComp, loc.X, loc.Y, loc.Z);
     DumpAnimState(L"puppet", meshComp);
