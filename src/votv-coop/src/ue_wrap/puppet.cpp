@@ -181,10 +181,17 @@ void InstallHeadGateHook(void* animClass) {
         return;
     }
     const bool ok = ue_wrap::ufunction_hook::InstallPostHook(fn, &HeadGateBUAPost);
-    UE_LOGI("puppet: head-look state-gate hook %s -- post-BUA lookingAtPlayer=true on PUPPET "
-            "instances only (the LookAt nodes live INSIDE state 'lookAtPlayer'; without this the "
-            "AnimBP exits that state when the puppet faces away from the observer)",
-            ok ? "installed" : "FAILED");
+    if (ok) {
+        UE_LOGI("puppet: head-look state-gate hook installed -- post-BUA lookingAtPlayer=true on "
+                "PUPPET instances only (the LookAt nodes live INSIDE state 'lookAtPlayer'; without "
+                "this the AnimBP exits that state when the puppet faces away from the observer)");
+    } else {
+        // ERROR, not a "FAILED" word inside an INFO line: this exact miss (host's Func-hook
+        // table full, 2026-07-02) shipped a fix that worked on one peer only and the INFO
+        // line was overlooked. The puppet head WILL freeze back-turned on THIS peer.
+        UE_LOGE("puppet: head-look state-gate hook FAILED to install -- puppet heads will snap "
+                "to neutral when back-turned on THIS peer (see ufunction_hook error above)");
+    }
 }
 
 }  // namespace

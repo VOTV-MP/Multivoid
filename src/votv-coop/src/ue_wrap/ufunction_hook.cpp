@@ -7,7 +7,9 @@
 
 #include <windows.h>
 
+#include <array>
 #include <cstdint>
+#include <utility>
 
 namespace ue_wrap::ufunction_hook {
 namespace {
@@ -26,12 +28,22 @@ struct Slot {
     PostNativeCallback cb        = nullptr;
 };
 
-// A handful of patches is all this mechanism is for (the chipPile re-pile is the
-// first). Each slot owns a distinct STAMPED thunk (NativeThunk<N>) so it closes over
-// its slot index as a compile-time constant -- no per-call table lookup, no dependence
-// on FFrame::CurrentNativeFunction (@+0x88). Writes happen on the game thread (install)
-// and the thunks run on the game thread (native dispatch is GT) -> no cross-thread race.
-constexpr int kMaxNativeHooks = 4;
+// This facility is the STANDARD seam for every dispatch our ProcessEvent detour cannot
+// see (EX_* inner calls, post-BUA AnimBP overrides -- docs/COOP_DISPATCH_VISIBILITY.md),
+// so its user count GROWS with the mod. Each slot owns a distinct STAMPED thunk
+// (NativeThunk<N>) so it closes over its slot index as a compile-time constant -- no
+// per-call table lookup, no dependence on FFrame::CurrentNativeFunction (@+0x88).
+// Writes happen on the game thread (install) and the thunks run on the game thread
+// (native dispatch is GT) -> no cross-thread race.
+//
+// Capacity is a compile-time bound (stamped thunks require one); the thunk table below
+// is GENERATED from this constant, so growing capacity = editing this ONE line. Born
+// 2026-07-02: at 4 slots the puppet head-gate hook was the HOST's 5th install (save-
+// indicator x2 + host-only trash-collect x2 filled the table; the client had a free
+// slot) -> "table full" -> the head fix silently worked on one peer and not the other.
+// Asymmetric peers = asymmetric slot pressure: size for the whole roster, not "a
+// handful".
+constexpr int kMaxNativeHooks = 16;
 Slot g_slots[kMaxNativeHooks];
 int  g_slotCount = 0;
 
@@ -79,16 +91,19 @@ void __fastcall NativeThunk(void* context, void* stack, void* result) {
     }
 }
 
-NativeFuncPtr ThunkFor(int n) {
-    switch (n) {
-        case 0: return &NativeThunk<0>;
-        case 1: return &NativeThunk<1>;
-        case 2: return &NativeThunk<2>;
-        case 3: return &NativeThunk<3>;
-        default: return nullptr;
-    }
+// One distinct stamped thunk per slot, generated FROM kMaxNativeHooks -- the table can
+// never under-enumerate the capacity (the old hand-written switch could, and its
+// static_assert pinned the constant instead of following it).
+template <size_t... Is>
+constexpr std::array<NativeFuncPtr, sizeof...(Is)> MakeThunkTable(std::index_sequence<Is...>) {
+    return {{&NativeThunk<static_cast<int>(Is)>...}};
 }
-static_assert(kMaxNativeHooks == 4, "ThunkFor must enumerate every slot");
+constexpr std::array<NativeFuncPtr, kMaxNativeHooks> g_thunkTable =
+    MakeThunkTable(std::make_index_sequence<kMaxNativeHooks>{});
+
+NativeFuncPtr ThunkFor(int n) {
+    return (n >= 0 && n < kMaxNativeHooks) ? g_thunkTable[static_cast<size_t>(n)] : nullptr;
+}
 
 }  // namespace
 
@@ -100,7 +115,8 @@ bool InstallPostHook(void* ufunction, PostNativeCallback cb) {
         if (g_slots[i].ufunction == ufunction && g_slots[i].cb == cb) return true;
     }
     if (g_slotCount >= kMaxNativeHooks) {
-        UE_LOGE("ufunction_hook: table full (%d slots) -- cannot patch ufn=%p", kMaxNativeHooks, ufunction);
+        UE_LOGE("ufunction_hook: table full (%d slots) -- cannot patch ufn=%p (grow kMaxNativeHooks; "
+                "the thunk table is generated from it)", kMaxNativeHooks, ufunction);
         return false;
     }
     auto* funcSlot = reinterpret_cast<NativeFuncPtr*>(
