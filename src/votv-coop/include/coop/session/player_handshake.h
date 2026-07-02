@@ -64,6 +64,24 @@ const std::string& GuidForSlot(int slot);
 // PlayerFilePath (defense in depth). Pure; any thread.
 bool IsValidGuid(const std::string& guid);
 
+// v93 skins: the skin name peer `slot` announced (Join field / SkinChange).
+// Empty until known -> the puppet spawns native kel and is re-skinned when the
+// name lands. Game thread only.
+const std::string& SkinForSlot(int slot);
+
+// v93 skins: announce the LOCAL player's skin change mid-session. Client ->
+// host (slot 0); host -> every ready client (slot=0 payload). The at-join
+// announce needs no call -- MaybeSendJoinToSlot reads local_body::LocalSkinName
+// when building the Join payload. Game thread only.
+void AnnounceLocalSkin(coop::net::Session& session, const std::string& name);
+
+// v93 skins: handle a delivered SkinChange ([u8 slot][u8 len][name]). Host:
+// sender forgery-checked (slot == senderPeerSlot), stored, applied to the
+// slot's puppet, rebroadcast to the other clients. Client: host-only sender
+// accepted, stored, applied. Returns true when recognized.
+bool HandleSkinChange(coop::net::Session& session,
+                      const coop::net::Session::ReliableMessage& msg);
+
 // Reset per-slot caches. Called from event_feed::OnSessionStart so a
 // Session::Stop()/Start() in the same process sees clean state.
 void Reset();

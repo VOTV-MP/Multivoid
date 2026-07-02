@@ -6,6 +6,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/skin_registry.h"  // IsValidSkinName + kDefaultSkinName (v93 player_skin=)
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -327,6 +328,21 @@ std::wstring ReadNickname() {
     std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
     if (nick.empty()) nick = ReadIniValue("net.nick", "Player");
     return std::wstring(nick.begin(), nick.end());
+}
+
+std::string ReadPlayerSkin() {
+    // v93 skins: the persisted body-skin choice, stored NEXT TO the player identity
+    // (votv-coop.ini "player_skin=", same file as player_guid -- user 2026-07-02).
+    // A NEW identity (absent/malformed key) is assigned the CURRENT scientist,
+    // hl_einstein_v1sc, and the default is persisted immediately (like the guid).
+    std::string skin = ReadIniValue("player_skin", "");
+    if (!coop::skins::IsValidSkinName(skin)) {
+        skin = coop::skins::kDefaultSkinName;
+        WriteIniValue("player_skin", skin.c_str());
+        UE_LOGI("config: player_skin absent/invalid -> default '%s' (persisted to votv-coop.ini)",
+                skin.c_str());
+    }
+    return skin;
 }
 
 std::string ReadPlayerGuid() {

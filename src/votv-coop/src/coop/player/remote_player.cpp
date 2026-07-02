@@ -2,6 +2,7 @@
 
 #include "coop/dev/puppet_head_probe.h"
 #include "coop/player/client_model.h"
+#include "coop/player/local_body.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -49,7 +50,7 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 
 }  // namespace
 
-bool RemotePlayer::Spawn(bool useClientModel) {
+bool RemotePlayer::Spawn(const std::string& skinName) {
     // A-5 v2 (2026-05-29 post-ship audit): use players::Registry::Local()
     // first (controller-filtered: picks the genuine local in 3-peer
     // scenarios where puppets are also mainPlayer_C instances). Fall back
@@ -85,25 +86,29 @@ bool RemotePlayer::Spawn(bool useClientModel) {
     loc.X += fwd.X * 250.f;
     loc.Y += fwd.Y * 250.f;
 
-    void* skin = Pup::GetMeshPlayerVisibleAsset(local);
+    // The kel BASELINE comes from local_body's pristine capture, NOT the local
+    // pawn's live mesh -- the local body may itself be skin-swapped (v93), and
+    // reading it live would dress every "dr_kel" puppet in OUR custom skin.
+    // Fallback to the live read only while the capture hasn't happened yet
+    // (local_body ticks on the same pump; the window is a tick or two, during
+    // which the local pawn is still un-swapped, so the live read IS pristine).
+    void* skin = coop::local_body::NativeBodyMesh();
+    if (!skin) skin = Pup::GetMeshPlayerVisibleAsset(local);
     if (!skin) {
         UE_LOGE("RemotePlayer::Spawn: could not read local skin asset");
         return false;
     }
     void* animClass = Pup::GetMeshPlayerVisibleAnimClass(local);
 
-    // Custom client model (docs/COOP_CLIENT_MODEL.md): a puppet representing a
-    // remote CLIENT peer wears the custom body mesh from hl_einstein_v1sc.pak instead of
-    // the local kel skin. Same kerfurOmegaV1_Skeleton, so the local anthro
-    // AnimClass (kept as-is) drives it 1:1. Graceful-degrade: if the pak is
-    // absent GetClientPuppetMesh() returns null and we keep the kel skin.
-    bool usedClientModel = false;
-    if (useClientModel) {
-        if (void* customMesh = coop::client_model::GetClientPuppetMesh()) {
+    // v93 skins (docs/COOP_CLIENT_MODEL.md): the puppet wears the skin this peer
+    // announced. Same kerfurOmegaV1_Skeleton on every converter pak, so the local
+    // AnimClass (kept as-is) drives it 1:1. Graceful-degrade: unresolvable pak
+    // (missing on THIS machine) -> the kel baseline.
+    if (!coop::client_model::IsNativeSkin(skinName)) {
+        if (void* customMesh = coop::client_model::GetSkinMesh(skinName)) {
             skin = customMesh;
-            usedClientModel = true;
-            UE_LOGI("RemotePlayer::Spawn: CLIENT peer -> custom client mesh %p "
-                    "(anthro AnimClass %p kept, same skeleton)", customMesh, animClass);
+            UE_LOGI("RemotePlayer::Spawn: skin '%s' -> mesh %p (anthro AnimClass %p kept)",
+                    skinName.c_str(), customMesh, animClass);
         }
     }
 
@@ -181,10 +186,12 @@ bool RemotePlayer::Spawn(bool useClientModel) {
     // IsLive (which a GC-recycled address defeats). See internalIdx_ in the header.
     internalIdx_ = R::InternalIndexOf(actor_);
 
-    // Custom-mesh puppets also get the custom body texture (slot-0 MID on both
-    // body components). After SpawnPuppet: both SetSkeletalMesh writes are done,
-    // so the MID override cannot be reset by a later mesh swap.
-    if (usedClientModel) coop::client_model::ApplyClientPuppetTexture(actor_);
+    // Complete the skin: the atlas texture (slot-0 MID on both body components).
+    // After SpawnPuppet both SetSkeletalMesh writes are done, so the MID override
+    // cannot be reset by a later mesh swap. ApplySkinToBody's mesh writes are
+    // idempotent here (same-mesh SetSkeletalMesh = engine early-out no-op).
+    appliedSkin_.clear();
+    ApplySkin(skinName);
 
     // Eager-resolve the Inc3 hurt-flash material + UFunctions so the first damage
     // flash on this puppet does zero GUObjectArray name walks (cached forever).
@@ -573,7 +580,17 @@ void RemotePlayer::Destroy() {
     hurtFlashEndMs_ = 0;         // v20 Inc3: clear the hurt-flash (nameplate already unregistered)
     hurtFlashActive_ = false;
     hurtSavedMaterials_.clear(); // the mesh died with the actor -- no restore needed, drop stale ptrs
+    appliedSkin_.clear();        // v93: the next Spawn re-applies from SkinForSlot
     UE_LOGI("RemotePlayer::Destroy: puppet + nameplate gone");
+}
+
+void RemotePlayer::ApplySkin(const std::string& skinName) {
+    if (!valid()) return;  // per-slot skin state lives in player_handshake; next Spawn reads it
+    if (appliedSkin_ == skinName) return;
+    // dr_kel needs the pristine baseline; a custom skin resolves its own mesh.
+    void* nativeMesh = coop::local_body::NativeBodyMesh();
+    if (coop::client_model::ApplySkinToBody(actor_, skinName, nativeMesh))
+        appliedSkin_ = skinName;
 }
 
 void RemotePlayer::ApplyToEngine() {

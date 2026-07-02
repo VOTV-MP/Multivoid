@@ -12,6 +12,7 @@
 #include "coop/world/email_sync.h"
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/signal_sync.h"
+#include "coop/player/local_body.h"  // v93 skins: local first-person body owner
 #include "coop/player/sleep_sync.h"
 #include "coop/creatures/wisp_attack_sync.h"   // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_tear_mirror.h"   // Killer Wisp coop: victim kill + tear mirror
@@ -105,6 +106,8 @@ void Install(coop::net::Session& session) {
     coop::event_cue_sync::Install(&session); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
     coop::inventory_pickup_sync::Install(&session);  // v58 inventory-collect blip (PlaySound2D observer)
     coop::chat_sync::Install(&session);      // v60 T-chat (the ui/chat_input send path)
+    coop::local_body::Install(&session);     // v93 skins: local first-person body + SkinChange announce
+    coop::local_body::Tick();                // applies the persisted skin to the local pawn + 1 Hz convergence
     coop::turbine_sync::Install(&session);   // v61 wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::device_occupancy::Install(&session);  // v63 enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // v64 signal-catcher state mirror (sky signals + desk + dish aim)

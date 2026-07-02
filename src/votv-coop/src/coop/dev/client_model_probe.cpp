@@ -64,7 +64,8 @@ void Tick(bool connected, bool /*isHost*/) {
         void* kelSkin = Pup::GetMeshPlayerVisibleAsset(local);
         void* animCls = Pup::GetMeshPlayerVisibleAnimClass(local);
         if (!kelSkin) break;  // save-load hasn't dressed the player yet -- keep waiting
-        void* sciMesh = coop::client_model::GetClientPuppetMesh();  // may be null (pak absent)
+        // The probe's fixed subject: the shipped scientist skin (v93 name-keyed API).
+        void* sciMesh = coop::client_model::GetSkinMesh("hl_einstein_v1sc");  // may be null (pak absent)
 
         // Place the pair ~3 m in front of WHERE THE CAMERA LOOKS (inert-probe shape: camera yaw,
         // not actor-forward), side by side 1.6 m apart, both facing back at the player.
@@ -122,8 +123,7 @@ void Tick(bool connected, bool /*isHost*/) {
                 // inst_kel4_body (a MIC of mat_object_sk) whose diffuse is texture parameter
                 // 'tex' -- overriding it needs NO cooked material. Applied to BOTH body slots
                 // (the two-body invariant). Graceful: tex null -> stays garbled kel (rung-2 look).
-                void* sciTex = ue_wrap::asset_load::LoadObjectByPath(
-                    L"/Game/Mods/VOTVCoop/tex_hl_einstein_v1sc.tex_hl_einstein_v1sc");
+                void* sciTex = coop::client_model::GetSkinTexture("hl_einstein_v1sc");
                 if (sciTex) {
                     int bound = 0;
                     void* comps[2] = { Pup::GetMeshPlayerVisibleComponent(sciA),

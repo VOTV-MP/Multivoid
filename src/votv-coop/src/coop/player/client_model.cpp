@@ -1,70 +1,129 @@
 #include "coop/player/client_model.h"
 
+#include "coop/player/skin_registry.h"
 #include "ue_wrap/asset_load.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
+#include "ue_wrap/reflection.h"
+
+#include <cstdint>
+#include <map>
 
 namespace coop::client_model {
 
 namespace {
-// Package `hl_einstein_v1sc` (the model's ORIGINAL name, user 2026-07-02; was
-// "scientist") at mount root /Game/Mods/VOTVCoop/ (auto-mounted from
-// Content/Paks/LogicMods/votv-coop/hl_einstein_v1sc.pak). The OBJECT name is still
-// `kerfurOmega_KelSkin` -- the cook spliced the model into the kel-skin template
-// and did not rename the export (docs/COOP_CLIENT_MODEL.md 6a). The full
-// package.object path disambiguates from the game's OWN kerfurOmega_KelSkin
-// (a different package: /Game/meshes/kerfurAnthro/sk/...).
-constexpr const wchar_t* kClientMeshPath =
-    L"/Game/Mods/VOTVCoop/hl_einstein_v1sc.kerfurOmega_KelSkin";
-// The atlas texture cooked alongside the mesh (same pak, own package).
-constexpr const wchar_t* kClientTexPath =
-    L"/Game/Mods/VOTVCoop/tex_hl_einstein_v1sc.tex_hl_einstein_v1sc";
 
-void* g_mesh = nullptr;
-bool  g_tried = false;
-void* g_tex = nullptr;
-bool  g_texTried = false;
+// Per-name asset cache. `tried` remembers a load MISS so a missing pak is not
+// re-probed on every puppet spawn; a HIT is revalidated by GUObjectArray slot
+// (IsLiveByIndex) because a level-change GC can collect a pak asset and recycle
+// its address -- a stale hit re-loads instead of dereferencing an impostor.
+struct CachedAsset {
+    void*   ptr = nullptr;
+    int32_t idx = -1;
+    bool    tried = false;
+};
+
+std::map<std::string, CachedAsset> g_meshCache;
+std::map<std::string, CachedAsset> g_texCache;
+
+std::wstring Widen(const std::string& ascii) {
+    return std::wstring(ascii.begin(), ascii.end());  // names are validated ASCII
+}
+
+void* ResolveCached(std::map<std::string, CachedAsset>& cache, const std::string& name,
+                    const std::wstring& path, const char* what) {
+    namespace R = ue_wrap::reflection;
+    CachedAsset& c = cache[name];
+    if (c.ptr && R::IsLiveByIndex(c.ptr, c.idx)) return c.ptr;
+    if (c.ptr) {
+        UE_LOGI("client_model: cached %s for skin '%s' was GC'd -- re-loading", what, name.c_str());
+        c.ptr = nullptr;
+        c.tried = false;  // the asset existed before; re-probe
+    }
+    if (c.tried) return nullptr;  // known-missing pak: stay silent per spawn
+    c.tried = true;
+    c.ptr = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+    if (c.ptr) {
+        c.idx = R::InternalIndexOf(c.ptr);
+        UE_LOGI("client_model: skin '%s' %s ready (%p)", name.c_str(), what, c.ptr);
+    } else {
+        UE_LOGW("client_model: skin '%s' %s NOT loadable (pak absent on this machine?) -- "
+                "native kel fallback", name.c_str(), what);
+    }
+    return c.ptr;
+}
+
 }  // namespace
 
-void* GetClientPuppetMesh() {
-    if (g_tried) return g_mesh;  // cache incl. a null failure: don't re-probe a missing pak per spawn
-    g_tried = true;
-    g_mesh = ue_wrap::asset_load::LoadObjectByPath(kClientMeshPath);
-    if (g_mesh)
-        UE_LOGI("client_model: custom client puppet mesh ready (%p) -- client puppets wear it", g_mesh);
-    else
-        UE_LOGW("client_model: no custom client mesh (pak absent or load failed) -- client "
-                "puppets keep the default kel skin");
-    return g_mesh;
+bool IsNativeSkin(const std::string& name) {
+    return name.empty() || name == coop::skins::kNativeSkinName;
 }
 
-void* GetClientPuppetTexture() {
-    if (g_texTried) return g_tex;
-    g_texTried = true;
-    g_tex = ue_wrap::asset_load::LoadObjectByPath(kClientTexPath);
-    if (!g_tex)
-        UE_LOGW("client_model: no custom client texture (pak absent or load failed) -- custom "
-                "mesh renders with the stock kel material");
-    return g_tex;
+void* GetSkinMesh(const std::string& name) {
+    if (IsNativeSkin(name) || !coop::skins::IsValidSkinName(name)) return nullptr;
+    const std::wstring w = Widen(name);
+    // Package <name>, object kerfurOmega_KelSkin: the converter splices every
+    // model into the kel-skin template and does not rename the export
+    // (docs/COOP_CLIENT_MODEL.md 6a); the package path disambiguates from the
+    // game's own kerfurOmega_KelSkin.
+    return ResolveCached(g_meshCache, name,
+                         L"/Game/Mods/VOTVCoop/" + w + L".kerfurOmega_KelSkin", "mesh");
 }
 
-bool ApplyClientPuppetTexture(void* puppetActor) {
+void* GetSkinTexture(const std::string& name) {
+    if (IsNativeSkin(name) || !coop::skins::IsValidSkinName(name)) return nullptr;
+    const std::wstring w = Widen(name);
+    return ResolveCached(g_texCache, name,
+                         L"/Game/Mods/VOTVCoop/tex_" + w + L".tex_" + w, "texture");
+}
+
+bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativeMesh) {
     namespace E = ue_wrap::engine;
     namespace Pup = ue_wrap::puppet;
-    void* tex = GetClientPuppetTexture();
-    if (!tex || !puppetActor) return false;
-    void* comps[2] = { Pup::GetMeshPlayerVisibleComponent(puppetActor),
-                       Pup::GetNativeBodyMeshComponent(puppetActor) };
-    int bound = 0;
+    if (!mainPlayerActor) return false;
+
+    void* comps[2] = { Pup::GetMeshPlayerVisibleComponent(mainPlayerActor),
+                       Pup::GetNativeBodyMeshComponent(mainPlayerActor) };
+
+    if (IsNativeSkin(name)) {
+        if (!nativeMesh) {
+            UE_LOGW("client_model: dr_kel apply on %p but no native mesh captured yet -- skipped",
+                    mainPlayerActor);
+            return false;
+        }
+        int done = 0;
+        for (void* comp : comps) {
+            if (!comp) continue;
+            if (E::SetSkeletalMesh(comp, nativeMesh)) ++done;
+            // Clear a previous skin's MID override so kel renders its own material.
+            E::SetComponentMaterial(comp, 0, nullptr);
+        }
+        UE_LOGI("client_model: %p -> native dr_kel body (%d/2 slots, material override cleared)",
+                mainPlayerActor, done);
+        return done > 0;
+    }
+
+    void* mesh = GetSkinMesh(name);
+    if (!mesh) return false;  // pak missing here -- keep the current body (logged in resolver)
+    int done = 0;
     for (void* comp : comps) {
         if (!comp) continue;
-        void* mid = E::CreateDynamicMaterialInstance(comp, 0);
-        if (mid && E::SetTextureParameterValue(mid, L"tex", tex)) ++bound;
+        if (E::SetSkeletalMesh(comp, mesh)) ++done;
     }
-    UE_LOGI("client_model: custom texture %p bound on %d/2 puppet body slots (puppet=%p)",
-            tex, bound, puppetActor);
-    return bound == 2;
+    // Slot-0 MID 'tex' override on both slots (inst_kel4_body is a MIC of
+    // mat_object_sk whose diffuse is the 'tex' param -- no cooked material needed).
+    int bound = 0;
+    if (void* tex = GetSkinTexture(name)) {
+        for (void* comp : comps) {
+            if (!comp) continue;
+            void* mid = E::CreateDynamicMaterialInstance(comp, 0);
+            if (mid && E::SetTextureParameterValue(mid, L"tex", tex)) ++bound;
+        }
+    }
+    UE_LOGI("client_model: %p -> skin '%s' (mesh %d/2 slots, tex %d/2)",
+            mainPlayerActor, name.c_str(), done, bound);
+    return done > 0;
 }
 
 }  // namespace coop::client_model

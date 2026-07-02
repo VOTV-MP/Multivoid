@@ -694,7 +694,12 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 92;  // v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
+inline constexpr uint16_t kProtocolVersion = 93;  // v93: player SKINS -- SkinChange reliable (82) + the skin
+                                                  // name appended to Join (after guid) + PlayerJoined (after
+                                                  // nick). Every player carries a persisted body-skin choice
+                                                  // (votv-coop.ini player_skin=, default hl_einstein_v1sc);
+                                                  // the F1 Cosmetics>Skins browser picks from the converter
+                                                  // paks in LogicMods/votv-coop/. v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
                                                   // retireOffEid keyed off a save_identity_bind eid that was
                                                   // bound by a LOAD-ORDER CURSOR -- it floated under join-window
                                                   // churn (15:55 regression: retire killed the WRONG kerfur on
@@ -1813,6 +1818,22 @@ enum class ReliableKind : uint8_t {
                        //     position-only, idempotent). HOST->CLIENT only; NOT relayable; NOT pre-world-sendable
                        //     (sent AFTER the gate opens at ClientWorldReady). Payload: PropSnapPosPayload.
                        //     event_dispatch_entity dispatches it -> quiescence_drain::ArmPendingPosCorrection.
+    SkinChange = 82,   // 2026-07-02 (v93): a player picked a new body SKIN in the F1 browser (docs/
+                       //     COOP_CLIENT_MODEL.md; skins = converter paks in LogicMods/votv-coop/, name =
+                       //     pak stem; "dr_kel" = the native body). Field-by-field payload:
+                       //       [u8 slot][u8 namelen][name ASCII]
+                       //     CLIENT->HOST: slot MUST equal senderPeerSlot (forgery guard). The host stores
+                       //     it (player_handshake g_skinBySlot), re-skins that slot's puppet live, and
+                       //     REBROADCASTS to every other ready client (originator excluded). HOST->ALL:
+                       //     the host's own pick goes out with slot=0. Receivers validate the name
+                       //     (IsValidSkinName -- it becomes a LoadObject package path component), store,
+                       //     and re-skin the described slot's puppet if spawned. The at-join skin rides
+                       //     the Join payload (after the guid field) + PlayerJoined (after the nick), so
+                       //     late joiners get every peer's skin without extra wire. PRE-WORLD-SENDABLE
+                       //     (IsPreWorldSendableKind): the receiver is engine-free without a puppet, and
+                       //     gating it swallowed a change made during a joiner's load window (audit
+                       //     2026-07-02). A peer missing the skin's pak falls back to the native kel
+                       //     body (graceful; logged).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not

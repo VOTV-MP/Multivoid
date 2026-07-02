@@ -66,4 +66,9 @@ std::wstring ReadNickname();
 // on first launch / if absent/malformed. Per-install identity (design 2.3).
 std::string ReadPlayerGuid();
 
+// v93 skins: the persisted body-skin choice, stored next to the guid
+// (votv-coop.ini "player_skin="). Absent/invalid -> the default (the current
+// scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
+std::string ReadPlayerSkin();
+
 }  // namespace harness::config

@@ -205,6 +205,8 @@ add_library(votv-coop SHARED
     src/coop/player/remote_player.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
+    src/coop/player/skin_registry.cpp
+    src/coop/player/local_body.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_destroy.cpp
     src/coop/session/save_guard.cpp
@@ -364,6 +366,7 @@ add_library(votv-coop SHARED
     src/coop/dev/object_overlay.cpp
     src/ui/imgui_overlay.cpp
     src/ui/dev_menu.cpp
+    src/ui/skins_panel.cpp
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
     src/ui/host_save_picker.cpp

@@ -3,10 +3,13 @@
 **Living document.** Captures the user's vision + the approach decision for the
 in-game multiplayer UI.
 
-**Status (updated 2026-06-20): BUILT.** The menu shell + flows have shipped as
+**Status (updated 2026-07-02): BUILT.** The menu shell + flows have shipped as
 runtime-UMG built by our C++ mod (the "chosen" approach below) — see the `ui/`
 modules: `server_browser.cpp`, `host_save_picker.cpp`, `roster.cpp`,
-`scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`. This doc is kept
+`scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`,
+`skins_panel.cpp` (2026-07-02: the F1 > Cosmetics > Skins model browser —
+gmod-style preview tiles from the LogicMods pak catalog, AS-BUILT; see
+docs/COOP_CLIENT_MODEL.md §3 for the v93 skins runtime). This doc is kept
 for the **design rationale** (why runtime UMG, not BPModLoader/paks); the code is
 the truth for the as-built UI.
 

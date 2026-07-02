@@ -25,6 +25,7 @@
 #include "coop/session/moderation.h"
 #include "coop/session/ini_config.h"
 #include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
+#include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
 #include "coop/items/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
 #include "coop/session/session_manager.h"
 #include "coop/player/nameplate.h"
@@ -718,6 +719,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // v73 per-player inventory: seed the durable identity GUID (ini player_guid=, generated
     // + persisted on first launch). Rides our Join so the host keys our inventory file.
     coop::player_handshake::SetLocalGuid(cfg::ReadPlayerGuid());
+    // v93 skins: the persisted body-skin choice (same ini; a fresh identity is assigned
+    // the current scientist). local_body owns it; the Join payload reads it from there.
+    coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
 
     // The OMEGA WARNING is on screen during the FIRST few seconds (the intro/menu
     // world), BEFORE we `open` gameplay. Sample widgets across that window so the

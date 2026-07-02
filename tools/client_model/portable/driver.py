@@ -62,7 +62,8 @@ _REPO_DATA = {                                            # in-repo run: no bund
     "tex_kel3_skin.uexp":         "research/pak_re/extracted/VotV/Content/meshes/kel/4/tex_kel3_skin.uexp",
     "profile.json":               "tools/client_model/profiles/tpose_v1_narrow_2026-07-01.json",
 }
-DLL_MODEL_NAME = "hl_einstein_v1sc"          # the object path the coop DLL loads today
+# Since the v93 skins system the pak stem IS the in-game skin name -- any name
+# works; players pick it in F1 > Cosmetics > Skins (no fixed-name constraint).
 
 
 def _bundle_zip():
@@ -170,13 +171,31 @@ def main(argv=None):
     subprocess.run([find_repak(), "pack", "--version", "V11", os.path.join(work, "pak"), pak],
                    check=True)
 
+    # Preview tile for the in-game F1 skins browser: <name>.png NEXT to the pak
+    # (sidecar convention; the browser also accepts <name>.bmp directly). Source =
+    # the model's own thumbnail bmp/png if present.
+    preview = None
+    stem_noext = os.path.splitext(mdl)[0]
+    for cand in (stem_noext + ".bmp", stem_noext + ".png",
+                 os.path.join(folder, "preview.bmp"), os.path.join(folder, "preview.png")):
+        if os.path.isfile(cand):
+            preview = cand
+            break
+    prev_out = os.path.join(folder, name + ".png")
+    if preview and os.path.abspath(preview) != os.path.abspath(prev_out):
+        Image.open(preview).convert("RGBA").save(prev_out)
+        print(f"  preview:     {prev_out}  (copy it NEXT to the pak)")
+    elif preview:
+        print(f"  preview:     {prev_out} (already in place)")
+    else:
+        print("  preview:     no <model>.bmp/png found -- the browser shows a text tile")
+
     print(f"\nDONE -> {pak}")
     print(f"  mesh object: /Game/Mods/VOTVCoop/{name}.kerfurOmega_KelSkin")
     print(f"  texture:     /Game/Mods/VOTVCoop/tex_{name}.tex_{name}")
     print(f"  install:     <Game>\\VotV\\Content\\Paks\\LogicMods\\votv-coop\\{name}.pak")
-    if name != DLL_MODEL_NAME:
-        print(f"  NOTE: the coop DLL currently loads '{DLL_MODEL_NAME}' -- to make THIS "
-              f"model the one shown in game, rerun with --name {DLL_MODEL_NAME}")
+    print(f"               (+ the preview png/bmp next to it; EVERY peer needs the pak)")
+    print(f"  in game:     F1 > Cosmetics > Skins -> pick '{name}'")
     if a.keep_work:
         print(f"  work kept: {work}")
     else:

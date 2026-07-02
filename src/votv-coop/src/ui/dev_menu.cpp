@@ -15,6 +15,7 @@
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/session/ini_config.h"
+#include "ui/skins_panel.h"
 
 #include <cctype>
 #include <cstring>
@@ -231,11 +232,14 @@ void RenderEvents() {
     ImGui::EndChild();
 }
 
+// v93 skins: the model browser (its own panel file -- the tiles + preview cache
+// live in ui/skins_panel.cpp; this is just the tree hook).
+void RenderSkins() { ui::skins_panel::Render(); }
+
 // ---- the strict nested taxonomy (refined as features land) -------------------
 // Player > Movement/Vitals/HUD ; Game > Weather/Entities/Events ; Network >
-// Stats/Session ; Cosmetics > Skins. Network subs + Events + Cosmetics are still
-// placeholders (future panels). Cosmetics is the one non-dev category (shown to
-// all players).
+// Stats/Session ; Cosmetics > Skins (the v93 model browser -- the one non-dev
+// category, shown to all players). Network subs are still placeholders.
 const std::vector<Cat>& Tree() {
     static const std::vector<Cat> kTree = {
         { "Player", {
@@ -255,7 +259,7 @@ const std::vector<Cat>& Tree() {
             { "Session",  {}, true },
         }, true },
         { "Cosmetics", {
-            { "Skins",    {}, false },
+            { "Skins",    { { &RenderSkins, false } }, false },
         }, false },
     };
     return kTree;

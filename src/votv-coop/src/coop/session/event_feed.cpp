@@ -445,6 +445,12 @@ void Update(net::Session& session, void* localPlayer) {
             coop::player_handshake::HandlePlayerJoined(session, msg);
             break;
         }
+        case net::ReliableKind::SkinChange: {
+            // v93 skins: store + live re-skin the described slot's puppet; the
+            // handler also does the host's rebroadcast to the other clients.
+            coop::player_handshake::HandleSkinChange(session, msg);
+            break;
+        }
         default: {
             // ---- the family routers (event_dispatch_{entity,state,world}.cpp) ----
             // SyncRouter consolidation (2026-06-28): the explicit family case-label

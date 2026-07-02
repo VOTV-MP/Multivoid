@@ -170,6 +170,13 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     case ReliableKind::Join:
     case ReliableKind::AssignPeerSlot:
     case ReliableKind::PlayerJoined:        // roster identity -- engine-free on the receiver
+    // v93 skins: SkinChange is the same roster-identity family and its receiver is
+    // engine-free with no puppet spawned (StoreSkinForSlot just caches the name; the
+    // puppet spawns later reading SkinForSlot). WITHOUT this, a skin changed while a
+    // joiner is still in its 30-60 s load window is SILENTLY dropped by this gate and
+    // the joiner renders the OLD skin for the whole session (audit 2026-07-02 HIGH --
+    // the v90-b3 "mutation during the window" class, killed at the gate itself).
+    case ReliableKind::SkinChange:
     case ReliableKind::SaveTransferRequest:
     case ReliableKind::SaveTransferBegin:
     case ReliableKind::SaveTransferChunk:

@@ -16,13 +16,16 @@ pipeline root-fixes from the v2 work STAND regardless of the verdict: learn's up
 a CONSTANT of the target space (argmax-bbox broke when the wide arm span exceeded the
 height), and format-2 profiles carry JOINT TRANSLATIONS that rotation-only silently
 dropped. Probe client_model_probe retained per the probes-exempt rule, flag off.)**
-- **RUNTIME = DONE + PROVEN WORKING (§3), commit `320c0ab4`.** Autonomous 2-peer LAN test
+- **RUNTIME = DONE + PROVEN WORKING (§3), commit `320c0ab4`.** [historical record -- the
+  role-gate shape described here was PROVEN, then SUPERSEDED 2026-07-02 late evening by the
+  v93 per-player SKINS system (see the RUNTIME block below + §3): the gate + the one-mesh
+  API (`GetClientPuppetMesh`/`ApplyClientPuppetTexture`) were replaced by name-keyed
+  `GetSkinMesh`/`ApplySkinToBody` + `SkinForSlot`, RULE 2.] Autonomous 2-peer LAN test
   (host s_1234 + fresh client): pak auto-mounts, `URyRuntimeObjectHelpers::LoadObject` returns
-  OUR package's SkeletalMesh, `RemotePlayer::Spawn` applies it to the client puppet (role-gated:
-  slot 0 host = kel, slots >= 1 clients = custom), the puppet animates + pose-tracks (trail 0cm).
-  Files: `ue_wrap/asset_load.{h,cpp}`, `coop/player/client_model.{h,cpp}`, `RemotePlayer::Spawn`,
-  `net_pump` role gate, `deploy-all.ps1` pak ship. The doc's open question #2 (peer role at Spawn)
-  = the SLOT, resolved.
+  OUR package's SkeletalMesh, `RemotePlayer::Spawn` applies it to the client puppet (then
+  role-gated: slot 0 host = kel, slots >= 1 clients = custom), the puppet animates +
+  pose-tracks (trail 0cm). Files: `ue_wrap/asset_load.{h,cpp}`,
+  `coop/player/client_model.{h,cpp}`, `RemotePlayer::Spawn`, `deploy-all.ps1` pak ship.
 - **GEOMETRY COOK = VERIFIED IN-GAME [V hands-on 2026-07-02]:** the scientist SHAPE renders and
   animates on the anthro rig ("Работает" -- probe take 3, kel control vs scientist subject side by
   side). The earlier "renders as kel" was a probe-design CONFOUND, not a cook bug: mainPlayer_C
@@ -60,11 +63,11 @@ dropped. Probe client_model_probe retained per the probes-exempt rule, flag off.
   facing. Fix: ue_cook now MEASURES the template's signed-volume side (divergence theorem --
   exact, immune to the concavity noise that made a centroid-ray test read 0.469-vs-0.716) and
   matches it; SHADING normals are decoupled from index winding (always geometric-outward).
-- **FEATURE texture bind wired (not just the probe):** `client_model::GetClientPuppetTexture()`
-  (one-shot cache) + `ApplyClientPuppetTexture()` (slot-0 MID + 'tex' on BOTH body slots);
-  `RemotePlayer::Spawn` calls it right after SpawnPuppet on custom-mesh puppets. Client puppets
-  get mesh + texture; host puppet stays kel. COOP VISUAL VERIFIED [V hands-on 2026-07-02
-  "Работает amazing"]: host+client facing each other, both role-gated looks correct.
+- **FEATURE texture bind wired (not just the probe):** [the API names here are the pre-v93
+  ones, superseded same day -- now `GetSkinTexture(name)` inside `ApplySkinToBody`] slot-0
+  MID + 'tex' on BOTH body slots; `RemotePlayer::Spawn` binds it right after SpawnPuppet on
+  custom-mesh puppets. COOP VISUAL VERIFIED [V hands-on 2026-07-02 "Работает amazing"]:
+  host+client facing each other, both looks correct (pre-skins role-gate build).
 - Deployed state: DLL `fff53e04` + pak `5edabac7` (4 files: winding-fixed atlas-UV mesh +
   512x256 atlas texture), all 4 install folders hash-verified 8/8. Audit (2026-07-02): all
   functions COLD-path, zero findings >= 80 confidence; remote_player.cpp 913 LOC past the
@@ -96,20 +99,28 @@ OFFLINE (dev machine, tools/client_model/):   [DONE, automated]
    → repak pack       → hl_einstein_v1sc.pak        (VotV/Content/Mods/VOTVCoop/*, V11, 4 files)
 SHIP: hl_einstein_v1sc.pak deployed to EVERY peer by tools/deploy-all.ps1
       (Content/Paks/LogicMods/votv-coop/; the pre-rename scientist.pak is auto-removed).
-RUNTIME (mod):   [DONE + PROVEN -- §3, commits 320c0ab4 + 8df26e05 + rung-4; paths renamed 6f4d41d1]
-  UE auto-mounts the pak → client_model::GetClientPuppetMesh() LoadObjects the mesh once →
-  net_pump role gate (slot 0 host = kel; slots >= 1 clients = custom) →
-  RemotePlayer::Spawn(useClientModel) → SpawnPuppet applies the skin to BOTH body slots
-  (mesh_playerVisible + native ACharacter::Mesh -- the two-body invariant) + local anthro AnimBP
-  → ApplyClientPuppetTexture: slot-0 MID + SetTextureParameterValue('tex') on both slots.
+RUNTIME (mod):   [v93 SKINS, AS-BUILT 2026-07-02 late evening -- REPLACED the role gate (RULE 2)]
+  UE auto-mounts every pak in LogicMods/votv-coop → each PLAYER carries a skin NAME
+  (votv-coop.ini player_skin=, next to player_guid; default hl_einstein_v1sc; picked in
+  F1 > Cosmetics > Skins) → the name rides the Join payload (after the guid) + PlayerJoined
+  (after the nick) + live SkinChange (kind 82, host-relayed) →
+  RemotePlayer::Spawn(skinName)/ApplySkin + local_body::Tick (the LOCAL first-person body)
+  all route through client_model::ApplySkinToBody: SetSkeletalMesh on BOTH body slots
+  (two-body invariant) + slot-0 MID 'tex' on both; "dr_kel" = the pristine native mesh
+  (local_body's pre-swap capture) + SetMaterial(0,null) override clear.
+  skin_registry scans the pak folder for the F1 browser (name = pak stem; preview =
+  sibling <name>.png/.bmp -- WIC-decoded into ImGui tiles).
 ```
 
 Two halves: the offline cook (§4/§5, geometry+texture+winding VERIFIED in-game) and the
-runtime (§3 + the texture bind, DONE; coop visual VERIFIED 2026-07-02). The 2026-07-02
-evening re-cook (new profile + rename) is AS-BUILT; its in-game verdict is pending.
+runtime (pre-skins coop visual VERIFIED 2026-07-02 morning; the v93 skins generalization +
+the v1-profile re-cook are AS-BUILT, hands-on pending -- runbook
+`research/handson_runbook_2026-07-02_evening_fixes.md`).
 
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
-adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repak` (no Blender).
+adding a NEW model is `mdl_extract → repose.py apply → ue_cook → repak` (no Blender) --
+or ONE run of the portable converter (§4). Drop the pak (+ preview png/bmp) into
+LogicMods/votv-coop on EVERY peer and it appears in everyone's F1 browser.
 
 ---
 
@@ -136,9 +147,22 @@ adding a NEW model is just `mdl_extract → repose.py apply → ue_cook → repa
 
 ---
 
-## 3. RUNTIME: load the pak + apply to clients + TEST  [DONE + PROVEN, 320c0ab4 + 8df26e05]
+## 3. RUNTIME: load the pak + apply + TEST  [pak/load/apply mechanics PROVEN 320c0ab4 + 8df26e05; the delivery POLICY is now the v93 SKINS system, AS-BUILT 2026-07-02 late evening]
 
-> AS-BUILT differs from the original plan below in ONE load-bearing way: the skin is applied to
+> **v93 SKINS (the current policy layer, replaced the role gate -- RULE 2):** every player
+> carries a persisted skin NAME (`votv-coop.ini player_skin=`, next to `player_guid=`;
+> default `hl_einstein_v1sc`; F1 > Cosmetics > Skins to change, gmod-style tiles). Name =
+> pak stem in `LogicMods/votv-coop/` ("dr_kel" = native). Announce: Join field (after
+> guid) + PlayerJoined field (after nick) + live `SkinChange` (kind 82, host-relayed,
+> forgery-guarded). Apply: `client_model::ApplySkinToBody` (both body slots + slot-0 MID
+> 'tex'; dr_kel = pristine native mesh from `local_body::NativeBodyMesh()` + material-
+> override clear) -- used by `RemotePlayer::Spawn(skinName)/ApplySkin` (puppets) AND
+> `local_body::Tick` (the LOCAL first-person body -- the immersion fix). Catalog + F1
+> browser: `skin_registry` + `ui/skins_panel` (preview = sibling `<name>.png/.bmp`,
+> WIC-decoded). Peer without the pak: kel fallback, logged. AS-BUILT; hands-on pending
+> (runbook 2026-07-02 evening take 3).
+>
+> The pre-skins AS-BUILT below stays as the PROVEN mechanics record: the skin is applied to
 > BOTH body slots (SpawnPuppetMainPlayer writes it to mesh_playerVisible AND the native
 > ACharacter::Mesh AttachParent) -- see the STATUS block's two-body invariant. The 3C coop test
 > PASSED [V hands-on 2026-07-02 "Работает amazing"]: host+client facing each other, client
@@ -197,8 +221,10 @@ Preconditions: build+deploy the 3A/3B runtime change; deploy `hl_einstein_v1sc.p
 
 Former open questions — resolved: (1) **auto-mount wins** [V]: UE mounts
 `Content/Paks/LogicMods/…` at startup, no MountPakFile call needed (320c0ab4 runtime proof).
-(2) **role at Spawn = the peer SLOT** [V]: net_pump role gate (slot 0 = host).
-Still open (separate, later): (3) client seeing its OWN body as scientist (local pawn).
+(2) **role at Spawn = the peer SLOT** [V] -- superseded 2026-07-02 late evening by the v93
+per-player skin name (net_pump passes player_handshake::SkinForSlot(slot); the role gate
+is gone, RULE 2). (3) client seeing its OWN body in its skin: SHIPPED (coop/player/
+local_body.cpp -- the first-person immersion fix; AS-BUILT, hands-on pending).
 
 ---
 
@@ -367,8 +393,8 @@ The scientist's own textures ARE extracted: `research/pak_re/mesh_out/hl_einstei
 4. **[V hands-on "теперь нормально"] Atlas bake:** `atlas.py` (19 PNGs → 512x256, 1px
    duplicated-edge gutter) + per-face UV remap in ue_cook (usemtl → tile rect, v-flip fix)
    → real scientist look. Multi-section never needed. Exposed + root-fixed the WINDING
-   assumption on the way (STATUS). Feature bind wired into `RemotePlayer::Spawn` via
-   `client_model::ApplyClientPuppetTexture`.
+   assumption on the way (STATUS). Feature bind wired into `RemotePlayer::Spawn` (since
+   v93: inside `client_model::ApplySkinToBody`, the one apply path).
 
 ---
 

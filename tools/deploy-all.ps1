@@ -93,6 +93,13 @@ foreach ($t in $targets) {
             Copy-Item $clientPak $pakDest -Force
             Write-Host "  client pak -> $pakDest" -ForegroundColor DarkGray
         }
+        # v93 skins: ship the preview sidecar (<name>.png next to the pak -- the F1
+        # browser tile). Plain file, never mapped by the game -> simple copy.
+        $prevSrc = [IO.Path]::ChangeExtension($clientPak, "png")
+        if (Test-Path $prevSrc) {
+            Copy-Item $prevSrc (Join-Path $pakDir ([IO.Path]::GetFileName($prevSrc))) -Force
+            Write-Host "  client pak preview png -> $pakDir" -ForegroundColor DarkGray
+        }
     } else {
         Write-Host "  SKIP client pak: source missing ($clientPak)" -ForegroundColor Yellow
     }

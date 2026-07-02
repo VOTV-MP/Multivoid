@@ -76,6 +76,7 @@ The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<
 | `kerfur_convert.cpp`, `kerfur_entity.cpp`, `kerfur_reconcile.cpp`, `kerfur_prop_adoption.cpp`, `kerfur_command.cpp`, `kerfur_menu_input.cpp` | Kerfur (NPC⇄prop form convert) | KerfurConvert/Request/Command `[V]` |
 | `world_actor_sync.cpp`, `host_spawn_watcher.cpp` | Non-Character event actors (B3b) | WorldActorSpawn/Destroy `[V]` |
 | `remote_player.cpp`, `remote_player_ragdoll.cpp` (the ragdoll DISPLAY lifecycle, extracted 2026-07-02 `488b801b`), `nameplate.cpp`, `local_streams.cpp`, `puppet_carry_drive.cpp` | Remote-player puppets + the local pose/held streams | (pose lane) + PlayerJoined/Damage/RagdollPose/Wisp* `[V]` |
+| `client_model.cpp` (name→asset + THE ApplySkinToBody), `skin_registry.cpp` (pak-folder catalog), `local_body.cpp` (LOCAL first-person body + the ini-persisted choice), `player_handshake.cpp` (per-slot skin state + the wire fields), `ui/skins_panel.cpp` (the F1 browser) | v93 player SKINS (docs/COOP_CLIENT_MODEL.md §3) | SkinChange (82) + skin fields inside Join/PlayerJoined `[AS-BUILT 2026-07-02]` |
 | `save_identity_bind.cpp`, `save_identity_map.cpp` | The stable-ID sidecar: bind save-loaded natives to host eids in the join window | (rides PropSpawn match key) `[V]` |
 
 > The **authority contract** for this layer is written down in `coop/element/identity.h`

@@ -988,12 +988,11 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // after a failure (RULE 1: don't crutch the engine, just wait).
                 if (now < sNextSpawnAttempt[slot]) continue;
                 UE_LOGI("net: first remote pose on slot %d -> auto-spawning puppet", slot);
-                // Role gate for the custom client model (docs/COOP_CLIENT_MODEL.md):
-                // slot 0 is the host (kPeerIdHost) -> keep Dr. Kel; slots >= 1 are
-                // clients -> wear the custom body mesh (if the pak is present).
-                const bool asClientModel =
-                    (static_cast<uint8_t>(slot) != coop::players::kPeerIdHost);
-                if (!g_puppets[slot].Spawn(asClientModel)) {
+                // v93 skins (docs/COOP_CLIENT_MODEL.md): the puppet wears the skin
+                // this peer announced (Join field / SkinChange), any slot incl. the
+                // host. Empty (not yet announced) -> kel baseline; the skin re-applies
+                // live when it lands (player_handshake::StoreSkinForSlot).
+                if (!g_puppets[slot].Spawn(coop::player_handshake::SkinForSlot(slot))) {
                     UE_LOGW("net: slot %d puppet spawn failed; will retry in 1 s", slot);
                     sNextSpawnAttempt[slot] = now + seconds(1);
                     continue;

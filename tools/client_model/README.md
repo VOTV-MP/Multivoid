@@ -41,8 +41,12 @@ bundles the LIVE modules above (unmodified — single source of truth, the origi
 the embedded cook templates + the default profile into `portable/dist/`:
 `convert_model.pyz` (needs python+numpy+pillow) / `convert_model.exe` (needs nothing) +
 `repak.exe` + `convert.bat` + `README.txt` (RU). Drop the dist files into any folder with a
-`.mdl`, run `convert.bat` — the `.pak` appears right there. Flags: `--name` (cook under the
-DLL's fixed `hl_einstein_v1sc` name to swap the in-game model), `--profile`, `--keep-work`.
+`.mdl`, run `convert.bat` — the `.pak` appears right there, plus `<name>.png` (the F1
+skins-browser preview tile, converted from the model's own `.bmp` thumbnail when present;
+the browser also reads a raw `<name>.bmp` sitting next to the pak). Flags: `--name`,
+`--profile`, `--keep-work`. Since the v93 skins system the pak name IS the in-game skin
+name — drop pak+preview into `LogicMods/votv-coop/` on every peer and pick it in
+F1 > Cosmetics > Skins (no fixed-name constraint anymore).
 Verified 2026-07-02: pyz and exe runs both reproduce the deployed pak content 4/4
 byte-identical. `dist/`+`build/` are gitignored (game-derived template bytes); rebuild after
 any module change.

@@ -34,16 +34,23 @@ namespace coop {
 
 class RemotePlayer {
 public:
-    // Spawn the puppet in the live world, offset from the local player, wearing
-    // the local player's skin. Requires gameplay loaded (mainPlayer_C present)
-    // and the game thread. Returns true on success; sets actor().
+    // Spawn the puppet in the live world, offset from the local player. Requires
+    // gameplay loaded (mainPlayer_C present) and the game thread. Returns true
+    // on success; sets actor().
     //
-    // useClientModel: this puppet represents a remote CLIENT peer (spawn site
-    // passes slot != host). When true AND the custom-client-mesh pak is present,
-    // the puppet wears the custom body mesh (coop::client_model) instead of the
-    // local kel skin; the AnimClass stays the local anthro AnimBP (same skeleton,
-    // drives the custom mesh 1:1). False (host puppet / no pak) -> kel skin.
-    bool Spawn(bool useClientModel = false);
+    // skinName (v93 skins): the body skin this peer announced (net_pump passes
+    // player_handshake::SkinForSlot(slot)). Empty / "dr_kel" / unresolvable pak
+    // -> the pristine kel baseline (local_body::NativeBodyMesh -- NOT the local
+    // pawn's live mesh, which may itself be skin-swapped). A custom skin rides
+    // the same kerfurOmegaV1_Skeleton, so the local AnimClass drives it 1:1.
+    // A skin that lands AFTER spawn re-skins live via ApplySkin.
+    bool Spawn(const std::string& skinName = std::string());
+
+    // v93 skins: re-skin a LIVE puppet (mid-session SkinChange / a Join that
+    // raced the first pose). No-op when the puppet isn't spawned (the skin is
+    // per-slot state in player_handshake; the next Spawn reads it) or when the
+    // name is already applied. Game thread only.
+    void ApplySkin(const std::string& skinName);
 
     bool valid() const;
 
@@ -258,6 +265,9 @@ private:
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"
     // forever in early tests because no refresh path existed.
     std::wstring nickname_ = L"...";
+    // v93 skins: the skin name currently applied to actor_ (ApplySkin no-ops on
+    // a repeat; reset in Destroy with the actor). Empty = native kel.
+    std::string appliedSkin_;
     int pingMs_ = -1;  // per-peer RTT ms (event_feed sets it from Session::rttMsForSlot); -1 = not measured
     // v19 streamed vitals fractions (display-only; see SetVitals). Default full
     // so a freshly-spawned puppet shows a full bar until the first pose lands.

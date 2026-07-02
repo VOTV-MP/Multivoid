@@ -1,12 +1,44 @@
-# Hands-on runbook — 2026-07-02 evening batch (EHH + wedge + nameplate + model profile)
+# Hands-on runbook — 2026-07-02 evening batch (EHH + wedge + nameplate + model profile + SKINS)
 
-**Deployed (take 2):** DLL `BD70FB082E3B6726` + pak `hl_einstein_v1sc.pak`
-`AE49002C2A5DB1DB` (re-cooked on the **v1 narrow profile** — the v2 wide look was
-REJECTED in-game, user: "переделай обратно под v1"), hash-verified 8/8 across all 4
-installs; stale `scientist.pak` removed from all 4.
-Commits: `2b2e0531` (EHH pairing) + `d4833b9b` (wedge drain) + `9180a386` (nameplate) +
-`9eda3faf` (latch hygiene) + `6f4d41d1` (profile library + rename). Audit on the two fixes:
-all PASS, zero blocking findings.
+**Deployed (take 3b, SKINS + audit fix):** DLL `1B00C0DB22751C37` (protocol **v93** —
+both peers must update; v92 peers are version-gated out with an "update your mod"
+message) + pak `hl_einstein_v1sc.pak` `AE49002C2A5DB1DB` (v1 narrow profile) + preview
+PNGs, all 4 installs; `rvi_scientist_v1sc.pak`/.bmp (user-placed) intact.
+Take-2 was DLL `BD70FB08...` — superseded before its hands-on by the skins build; all
+take-2 changes (EHH pairing `2b2e0531`, wedge drain `d4833b9b`, nameplate `9180a386`,
+hygiene `9eda3faf`, v1-profile revert `e094093d`) are IN this DLL too, still verdict
+PENDING. NO autonomous smoke ran (user at the PC — this runbook IS the test).
+**Audits (2 agents on the diff):** perf/hot-path = all PASS (local_body::Tick alloc-free
+at pump rate, 1 Hz gate real, no per-frame FS scan, no SkinChange double-relay; WARN:
+remote_player.cpp 841>800 LOC — remote_player_spawn extraction QUEUED). Correctness =
+one HIGH confirmed + FIXED before this deploy: SkinChange was not pre-world-sendable, so
+a skin changed while a joiner sat in its 30-60 s load window was silently dropped
+forever (the v90-b3 "mutation during the window" class) — SkinChange added to
+IsPreWorldSendableKind (receiver is engine-free pre-puppet). Everything else clean:
+wire bounds, forgery guards, name validation at all 4 boundaries, revert symmetry,
+thread discipline, proto wiring.
+
+## NEW: the v93 SKINS system (what to test first)
+Every player now has a persistent body skin (`votv-coop.ini player_skin=`, written next
+to `player_guid=`; a fresh identity gets `hl_einstein_v1sc` — so BY DEFAULT the HOST is
+now ALSO a scientist; pick `dr_kel` in the browser if you want the host back to kel, it
+persists).
+1. **F1 → Cosmetics → Skins**: tile browser with previews (dr_kel + hl_einstein_v1sc +
+   rvi_scientist_v1sc — previews read `<name>.png/.bmp` next to the pak; your placed
+   .bmp files are exactly that). Current skin = green tile.
+2. **Local first-person body**: look down — your OWN torso/legs wear YOUR skin (the
+   immersion fix). Host default = scientist now (see above).
+3. **Live change**: pick another skin mid-game — your body changes instantly, the OTHER
+   peer sees your puppet change within a second, chat line "<nick> changed skin to ...".
+4. **Persistence**: quit the client, rejoin — the skin came back from the ini.
+5. **rvi_scientist_v1sc**: pick it — both your body and your puppet on the other screen
+   should wear it (the pak is on all installs).
+6. **dr_kel revert**: pick dr_kel — body back to kel WITHOUT the atlas texture stuck on
+   it (the material override clear).
+Log markers: `local_body: native kel mesh captured`, `client_model: ... -> skin '<name>'`,
+`player_handshake: announced local skin`, `skin_registry: N skin(s) catalogued`.
+If a skin shows KEL on the other peer: that peer's log will say
+`client_model: skin '...' mesh NOT loadable (pak absent...)` — pak missing there.
 
 ## What changed
 1. **EHH on E-drop (client)** — a cancelled use-PRESS now deterministically cancels its
@@ -44,8 +76,10 @@ all PASS, zero blocking findings.
   mount / LoadObject path) — the paths changed to hl_einstein_v1sc this build.
 
 ## Honest status
-All four changes AS-BUILT + deployed + audited (the two fixes) / cook-validated (the
-model: ue_skelmesh round-trip OK, winding matched, 19/19 tiles). Hands-on verdict
-PENDING for all four. The wedge's UPSTREAM root (keyed-prop GC-churn re-bind by KEY)
-is the next thread — today's fix makes the symptom self-heal, the re-bind will stop
-the ghosts from forming at all.
+Take-2 changes (EHH pairing, wedge drain, nameplate, v1-profile model) AS-BUILT +
+audited / cook-validated — verdict PENDING. Take-3b SKINS: AS-BUILT, compiled clean,
+deployed 4/4 (DLL `1B00C0DB`), NO smoke (user at PC), two audit agents: perf all-PASS,
+correctness 1 HIGH found + root-fixed pre-handoff (SkinChange pre-world gate). Protocol
+v92→v93: BOTH peers must run this DLL. QUEUED extractions: remote_player_spawn
+(841>800), puppet_diag (967>800). The wedge's UPSTREAM root (keyed-prop GC-churn
+re-bind by KEY) is still the next thread.
