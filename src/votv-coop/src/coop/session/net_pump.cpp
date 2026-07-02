@@ -33,6 +33,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreates (09:54 ghost fix)
+#include "coop/session/save_apply_gate.h"  // join-jump #2: pawn-placement latch (gm loadObjects POST)
 #include "coop/session/save_transfer.h"
 #include "coop/session/subsystems.h"
 
@@ -312,6 +313,12 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     // v56: pump pending save-transfer chunk sends (host). No-op without an
     // active stream (one bool per slot).
     if (session.role() == coop::net::Role::Host) coop::save_transfer::TickHost();
+
+    // Pawn-placement latch install (join-jump #2, 2026-07-02). UNGATED on purpose: the
+    // hook must be armed BEFORE this world's gm loadObjects fires, and the gm class
+    // loads with the map (well before the local pawn resolves) -- a world-up-gated
+    // install could lose the race on a fast load. One latched bool once installed.
+    coop::save_apply_gate::EnsureInstalled();
 
     // World-up gate (v56 menu-window balloon fix, 2026-06-10). A menu-mode
     // save-transfer joiner runs this Tick at 60 Hz while still at the MAIN
@@ -931,22 +938,26 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         //
         // v94 JOIN-JUMP root fix (user 2026-07-02: "хост видит как клиенты ПРЫГАЮТ
         // по позициям где проходил ХОСТ"): a joining client's pawn EXISTS through
-        // the whole 30-60 s load window -- first the menu/loading pawn, then the
-        // gameplay pawn being TELEPORTED through the HOST-SAVE positions as
-        // loadObjects applies the downloaded save -- and every one of those
-        // positions was streamed as OUR pose. The host spawns the puppet on the
-        // first pose, so it jumped through the host's own history. The data is
-        // garbage AT THE SOURCE, so the SENDER gates (one owner): stream only when
-        // our world is authoritative -- host: a gameplay world is up; client: the
-        // SAME coherence predicate that fired our ClientWorldReady (announced +
-        // no world-change re-seed pending). The last pre-gate pose never exists
-        // for a first join (nothing streamed yet), so the host-side puppet now
-        // spawns at the client's REAL first in-world position; a mid-session
-        // world change pauses the stream (peers see the puppet stand, not jump).
+        // the whole 30-60 s load window and every position it was parked/teleported
+        // through was streamed as OUR pose -- garbage AT THE SOURCE, so the SENDER
+        // gates (one owner).
+        //
+        // Take-5 (2026-07-02 verdict "клиент всё ещё прыгает"): the take-4 predicate
+        // (ClientWorldReady coherence) was NECESSARY but NOT SUFFICIENT -- the world
+        // + prop registry are coherent off the level-default props SECONDS before
+        // the game's load chain PLACES the local pawn (gm loadObjects ->
+        // transformToPlayer at the load tail; the 19:10 log: parked spot
+        // (-37695,69978) streamed for ~4 s after the announce). Pose authority
+        // therefore ALSO requires the pawn-placement latch (save_apply_gate:
+        // loadObjects POST seen for THIS pawn's world) -- for BOTH roles: a host
+        // mid-world-change is as unplaced as a joining client. The first streamed
+        // pose is now the pawn's REAL placed position; a world change closes the
+        // gate by pawn identity until the new world's loadObjects fires.
         const bool poseAuthoritative =
-            isHost ? worldUp
-                   : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
-                      !g_reAnnounceWorldReady.load(std::memory_order_relaxed));
+            (isHost ? worldUp
+                    : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
+                       !g_reAnnounceWorldReady.load(std::memory_order_relaxed))) &&
+            coop::save_apply_gate::IsSaveAppliedFor(g_netLocal);
         if (poseAuthoritative)
             coop::local_streams::Tick(session, g_netLocal, g_netLocalController);
     }
