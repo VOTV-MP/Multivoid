@@ -135,8 +135,15 @@ on the AnimBP's OWN `BlueprintUpdateAnimation` override** (it dispatches through
 whether called via PE or not) — the callback runs after the recompute, before the copies. Instance
 filtering happens IN the callback (e.g. puppet-only by identity: outer chain → `mainPlayer_C` with
 null `Controller`). Guard: verify `OuterOf(fn) == the BP class` — resolving a SUPER's declaration
-would over-hook every AnimInstance. **[V-static + AS-BUILT `5b2cb5ff` (HeadGateBUAPost); hands-on
-pending.]**
+would over-hook every AnimInstance. **[V-static + AS-BUILT `5b2cb5ff` (HeadGateBUAPost); take-1
+hands-on proved the mechanism on the CLIENT peer.]**
+
+**Install-capacity caveat (2026-07-02, `b77793d7`): the Func-patch table refusal is PER-PEER.**
+Peer roles are asymmetric — the HOST installs host-authoritative Func hooks a client never does —
+so a full table refuses an install on one peer while the other succeeds, and the feature
+half-works (exactly how take-1 shipped: 4 slots, head-gate was the host's 5th). The table is now
+GENERATED from `kMaxNativeHooks` (16; grow by editing the one constant), and any install-success
+marker must be verified in EVERY peer's log, not one. **[V — pinned from both peers' logs.]**
 
 **Corollary (the head-freeze lesson): a node's Alpha field ≠ its effective weight.** Anim nodes
 hosted INSIDE a state-machine state contribute NOTHING when the machine leaves that state — the
