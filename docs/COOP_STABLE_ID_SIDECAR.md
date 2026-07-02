@@ -32,7 +32,11 @@ pre-FinishSpawning = (0,0,0), and a churned eid has no survivor to capture from)
 escalation** (`bfe9182a`, drains a mass-purge backlog at frame cadence; 11:32 log: 37s->1s) is the independent
 timing companion. Full saga + the TRUE mechanism (the "purge re-creates all 870" model is FALSE -- the bulk
 survive) + the two refuted approaches: `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md`
-(read §2.7 then §2.8). NOTE: the §2/§4 sidecar layout below describes **v1** (9 B/entry); v2 adds the 3 savePos
+(read §2.7 then §2.8). **2026-07-03 (`2ab718d5`): the client-side entry gained a RUNTIME hostPos OVERLAY
+(never serialized) — savePos is now IMMUTABLE (it names where a purge re-create spawns; the earlier
+PropSnapPos retrack of savePos deadlocked re-binds = docs/piles/12 eid=4435), and `UpdateChipHostPos`
+(renamed from UpdateChipSavePosAndGetOld) writes the overlay; BindUnboundReCreates is two-phase (@host
+first, @save fallback).** NOTE: the §2/§4 sidecar layout below describes **v1** (9 B/entry); v2 adds the 3 savePos
 floats per the purge-race doc.
 Phase 0 PROVEN+PUSHED. Phase 2a sidecar transport VERIFIED (874 arrive intact). Phase 2b client bind +
 **Path A** (parse the live `saveSlot.objectsData`+`primitivesData` arrays) VERIFIED. **(X) NATIVE-AUTHORITATIVE

@@ -81,6 +81,21 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 > path, world ended clean) re-binds them at quiescence by an authoritative host-sent save-position (1cm,
 > ambiguous-skip) — the bind seam can't supply the position itself (BeginDeferred POST = `(0,0,0)`, below). See
 > `research/findings/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/COOP_STABLE_ID_SIDECAR.md`.
+>
+> **IDENTITY UPDATE 2026-07-03 [AS-BUILT `2ab718d5`, smoke-V] — identity survives actor churn (the re-bind
+> thread; docs/piles/12 status block is canonical).** (1) The chip entry's savePos is IMMUTABLE (a purge
+> re-create ALWAYS spawns there — loadObjects replays the save arrays); the host's PropSnapPos position is a
+> separate hostPos OVERLAY; the RE-BIND is two-phase (@host first — churn-survivor/resurrect protection,
+> excluding natives at any free entry's @save; @save fallback + same-pass pos-correction snap). The earlier
+> retrack-savePos-to-@new (take-3) made a purged eid permanently unbindable = the 20:24 client-local dup +
+> the pinned 4 Hz drain. (2) Raw IsLive on row-held pointers misreads freed memory — every element liveness
+> test is IsLiveByIndex now. (3) Twins retire ONLY on positive evidence (E bound live); the unconfirmed-
+> retire arm + >50% cap are GONE. (4) Every drain queue is pass-capped (twins 40 / destroys 8 /
+> pos-corrections 40 / kerfur retires 40). (5) KEYED props gained the churn re-bind the chipPile position
+> lane already had: the join sweep re-binds an unclaimed keyed re-create onto its dead-actor mirror row by
+> KEY (claim transferred), and a HOST-authoritative PropSpawn for an existing mirror row with a different
+> actor REBINDS in place (1:1-guarded via EidForActor; displaced actors never destroyed) — the deny-heal
+> re-assert is no longer an Install-reject NO-OP.
 
 > **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch, docs/piles/07) is RETIRED.** A
 > real hands-on (2026-06-21) refuted its smoke "VERIFIED": the proximity land-watch

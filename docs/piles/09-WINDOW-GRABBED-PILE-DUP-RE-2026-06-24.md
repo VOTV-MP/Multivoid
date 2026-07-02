@@ -2,9 +2,11 @@
 
 > **2026-07-01 UPDATE: this doc covers the SINGLE moved-pile dup. The MASS version (host clears a whole
 > cluster in-window → ~5 stale piles @old) is a distinct class — see [12-WINDOW-MASSMOVE-DUP-2026-07-01.md](12-WINDOW-MASSMOVE-DUP-2026-07-01.md).
-> Note: `SweepReconcileSaveTimeTwins` (referenced below) was REWRITTEN 2026-07-01 (`46e35edd`) to a per-eid
-> CONFIRMED-move retire with the `>50%` cap as a fallback + unconfirmed twins kept pending — the old aggregate
-> "matched-then-capped-then-cleared" description is superseded.**
+> Note: `SweepReconcileSaveTimeTwins` (referenced below) was REWRITTEN 2026-07-01 (`46e35edd`; per-eid
+> CONFIRMED-move retire) and AGAIN 2026-07-03 (`2ab718d5`): retire now requires positive evidence (E bound
+> to a live actor; host-vacate included), the unconfirmed-retire arm AND the `>50%` cap are DELETED, and
+> unmatched/unconfirmed twins hold bounded (40 passes) with dead-premise drops — every aggregate-cap
+> description below is historical.**
 
 **Status (2026-06-26): the window-moved-pile dup is FIXED + HANDS-ON VERIFIED, but by a DIFFERENT mechanism
 than this doc's original f837fbad approach.** The `matchPos`/`ArmPendingSaveTimeTwin` machinery this doc

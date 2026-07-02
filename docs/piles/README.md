@@ -23,14 +23,20 @@
 > - **EHH deny: `d7620ed5` proved INCOMPLETE (2026-07-02 hands-on: drop-EHH leaked on `_42` release) →
 >   re-root-fixed `2b2e0531` GESTURE PAIRING** (cancelled press → paired release dies; release-time
 >   condition re-derivation retired), verdict pending. THREE "use" bindings RE stands. Doc 12 § EHH.
-> - **NEW: GHOST-WEDGE (2026-07-02) — a silent dead-eid GrabIntent deny wedged a pile forever** (GC-churned
->   keyed trashBitsPile; keyed props have NO churn re-bind; address recycled → stale aim resolve). Delivery
->   half fixed `d4833b9b` (deny → PropDestroy(eid) broadcast, peers drain the ghost row); UPSTREAM = keyed
->   re-bind BY KEY, the next thread. Doc 12 § GHOST-WEDGE.
-> - **Client FPS `70e0d899` = REFUTED-INSUFFICIENT [log-V 19:41]:** `sync:npc_client` still 20-51ms with the
->   reorder deployed. Real root: ~330k iteration × multiple walks/pass × 4Hz, pinned hot by never-retiring
->   twins (`HasPendingWork`) — the dup residual and the FPS hitch SHARE this root. Walk-merge (N scans→1)
->   queued AFTER the [DUP-PROBE] pins the residual. Doc 12 § FPS.
+> - **RE-BIND THREAD SHIPPED `2ab718d5` (2026-07-03) — identity survives actor churn; doc 12 status block
+>   is canonical.** savePos IMMUTABLE + hostPos overlay two-phase re-bind (the take-3 retrack deadlocked a
+>   purged eid = the 20:24 client-local dup + pinned 4 Hz drain); IsLiveByIndex everywhere; twins retire
+>   only on positive evidence (unconfirmed-retire arm + >50% cap DELETED); all drain queues pass-capped;
+>   keyed churn re-bind BY KEY (sweep + HOST RE-ASSERT arm — the GHOST-WEDGE upstream root, was "the next
+>   thread") + kerfur wrong-occupant heal. Smoke PASS x2; hands-on runbook 2026-07-03 pending.
+> - **GHOST-WEDGE (2026-07-02) — a silent dead-eid GrabIntent deny wedged a pile forever** (GC-churned
+>   keyed trashBitsPile; keyed props HAD no churn re-bind then; address recycled → stale aim resolve).
+>   Delivery half `d4833b9b` (deny → PropDestroy(eid) broadcast); UPSTREAM root SHIPPED in `2ab718d5`
+>   (above). Doc 12 § GHOST-WEDGE.
+> - **Client FPS:** `70e0d899` REFUTED-INSUFFICIENT [log-V 19:41]; the real root (never-retiring work
+>   pinning `HasPendingWork` -> 4 Hz full-array walks forever) is CLOSED BY CONSTRUCTION in `2ab718d5`
+>   (every queue pass-capped + dead-premise drops: the 21:43 smoke converged 626 twins in 2 passes). The
+>   walk-merge (N scans->1 per pass) demotes to a pure-optimization backlog item. Doc 12 § FPS.
 
 > **L1 JOIN-WINDOW DUP (host MOVES a SAVE-LOADED pile in-window) = VERIFIED + PUSHED (origin/main `960e4650`).**
 > A save-loaded chipPile the host moves during the join-load window duped (native@old + proxy@new, >1cm → the

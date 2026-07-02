@@ -53,8 +53,11 @@
      guard reads its local eid as "another row") — that variant stays owned by the PropDestroy deny
      lane (`d4833b9b`). The healed variants: dead-row + fresh spawn (the observed 3129 shape) and
      join-window re-creates (the sweep lane unmarks the local first).
-- Older thread statuses: EHH `2b2e0531` verdict pending; [DUP-PROBE] armed (`f81256e4`); FPS `70e0d899`
-  superseded by the map-lifecycle fix above.
+- Older thread statuses: EHH `2b2e0531` verdict pending; [DUP-PROBE] FIRED on the 20:24 run (680 lines —
+  decoded the 17 "wrong-eid 4294967295" MISSes as probe mislabels: it read the LOCALS-ONLY
+  GetPropElementIdForActor, fixed to Registry::EidForActor in `2ab718d5`; stays armed); FPS `70e0d899`
+  superseded by the map-lifecycle fix above + the re-bind thread's caps/dead-premise drops (the pin is
+  now bounded by construction; the walk-merge N-scans->1 remains a pure-optimization backlog item).
 
 ## 18:52 — the owner over-reached onto actively-grabbed piles (fixed 0e7e5349, then VERIFIED 19:06) [V]
 Take-3 owner FIRED and worked for the @old-resurrect class: the HOST late-arm delivered late moves (eid 4930 at
@@ -222,7 +225,7 @@ the `_41` dispatch "subsumes" the deny was WRONG (covers 1 of 3 seams). Fix: a s
 `research/findings/votv-use-action-three-bindings-RE-2026-07-01.md`. Lesson: [[lesson-input-action-multiple-delegate-bindings]].
 
 ## GHOST-WEDGE — a pile permanently ungrabbable for the client (root pinned from logs 2026-07-02;
-## delivery-half fixed `d4833b9b`, audit all-PASS, verdict pending; UPSTREAM = the next thread)
+## delivery half `d4833b9b` + UPSTREAM root SHIPPED `2ab718d5` 2026-07-03; hands-on verdict pending)
 
 Hands-on: client grab/dropped piles, then ONE pile refused every grab until the HOST hand-cycled it. Host
 log: 12x `[GRAB-INTENT] DENIED eid=2947 -- pile actor not live / not a chipPile` (13:37:44-59) — a SILENT
@@ -243,11 +246,17 @@ rows no-op) and the requester's next aim re-resolves to the real entity. The wro
 deny-only + class name logged (never destroy a live entity on mismatch). Log marker:
 `broadcasting PropDestroy(eid) so every peer drains its stale ghost row`.
 
-**NEXT THREAD (the upstream root):** keyed-prop GC-churn RE-BIND by KEY — the chipPile position-re-bind
-analog, trivially exact for keyed props (on churn re-create, if a mirror row holds the KEY with a dead
-actor, rebind row→new actor; the claim transfers → the sweep stops dooming re-created claimed props).
-Kills the ghost-forming at the source. Own commit + smoke ([[feedback-snapshot-before-state-ready]]
-recurring class, keyed-family instance).
+**UPSTREAM ROOT — AS-BUILT `2ab718d5` (2026-07-03, the re-bind thread seam 5):** keyed-prop GC-churn
+RE-BIND by KEY shipped in TWO halves: (a) `join_membership_sweep::RunDivergenceSweep_` pre-collects
+DEAD-actor keyed mirror rows (key->eid) and RE-BINDS an unclaimed same-key doom candidate onto its
+orphaned row (claim transferred, counted claimed) instead of dooming the re-create — the exact 2947
+formation point; (b) `CreateOrAdoptPropMirror` HOST RE-ASSERT arm — a senderSlot==0 PropSpawn naming an
+existing MIRROR row bound to a DIFFERENT actor re-points the row (SetActor; 1:1-guarded via
+Registry::EidForActor — never steals a second row's actor; displaced actors never destroyed), so the
+`8c13858f` wrong-class deny heal is no longer an Install-reject NO-OP on the client. KNOWN REMAINING
+VARIANT (by design): the re-assert REFUSES when the incoming actor still holds a client-LOCAL element —
+that variant stays owned by the `d4833b9b` PropDestroy deny lane. Smoke PASS; hands-on = the runbook
+2026-07-03 wedged-pile test (E, wait 2 s, E -> client log `HOST RE-ASSERT rebound row`).
 
 ## FPS — client hitch during the mass-move (`70e0d899` = REFUTED-INSUFFICIENT by the 19:41 log) [log-V]
 

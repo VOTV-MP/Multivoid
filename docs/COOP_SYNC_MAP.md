@@ -139,6 +139,20 @@ Per-player or broadcast; not world entities.
 
 ---
 
+## DESIGNED, NOT BUILT (2026-07-03 — the two queued wire features; do not re-derive)
+
+- **EventFire replay channel** (scheduled-event sync; the campfire/`treehouse_0` test target): host
+  broadcasts `EventFire{rowName, special}`; client replays the same `eventer.runEvent` reflected;
+  `saveSlot.passEvents` (TArray<FName> @0xC8) = the dedupe set AND the host-side observation seam
+  (poll growth — the eventer dispatch is BP->BP INVISIBLE, see COOP_DISPATCH_VISIBILITY); dev-menu
+  fires broadcast at dispatch; client scheduled fires suppressed by pre-marking passEvents (verify
+  TArray-append mechanics first). Protocol v94->v95 + the 3-place ReliableKind checklist.
+  Design source: `research/findings/_events_catalog_B_scheduler.md` §5A + the 2026-07-03 verification.
+- **Screens/panels gap list** (the rest of "sync every screen and panel"): reactor rods ->
+  generator/transformer OUTCOME -> SAT console LogText release-snapshot -> TV keyed state -> laptop
+  tasks roll -> serverBox RE. Shapes + boundaries: `research/findings/votv-screens-panels-sync-DESIGN-2026-07-03.md`
+  (~70%% of the ask already shipped v63-71 — occupancy, desk, dish, signals, refiner, emails, orders).
+
 ## The boundary, restated
 `coop/element/` is the **L1 identity engine** — not "everything that sends a packet." L2/L3/L4
 replicators route through the **same SyncRouter dispatch** and the same session/transport, but

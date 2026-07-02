@@ -78,6 +78,8 @@ gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is al
 | `SpawnEmitterAtLocation` + cosmetic `EX_CallMath` spawns | `EX_CallMath` | **INVISIBLE** | **POLL** the result (`event_cue_sync` diffs the PSC set), or a `UFunction::Func` thunk patch if a deterministic `(source,product)` is needed (the chipPile/clump re-pile plan) | [V: event_cue_sync.cpp] |
 | `UGameplayStatics::SaveGameToSlot` | native C++ | **INVISIBLE to PE** | **native MinHook** (`save_block.cpp`) | [V] |
 | kerfur conversion verbs (`dropKerfurProp`/`spawnKerfuro`) | `EX_CallMath`/`EX_LocalVirtualFunction` | **INVISIBLE** | **POLL** (the kerfur conversion death-watch, `kerfur_convert.cpp:559`) | [RD] |
+| `trigger_eventer.runEvent/runSpecialEvent` — the game's OWN scheduled fire (`saveSlot::settime` -> `gamemode.eventer.runEvent`) | BP->BP cross-object (`EX_Context` + `EX_VirtualFunction`) | **INVISIBLE** (PE and Func both) | the EventFire channel design: POLL `saveSlot.passEvents` growth (the scheduler appends each fired row) for host-side observation; OUR dev-menu fires broadcast at their own dispatch site | [RD 2026-07-03, events research] |
+| every screen/panel device verb (`use`/`player_use`/`setActiveInterface`/`actionOptionIndex`/`saveSignal`/`makeAnOrder`...) | `EX_LocalVirtualFunction` (measured $type table) | **INVISIBLE** | **POLL the state field** (the whole shipped L2 device layer: `interactable_channel.h` Channel) — hooks only for the door request edge + the occupancy deny gate | [RD/IDA 2026-06-04; re-confirmed 2026-07-03 screens research] |
 
 ## HOW TO PICK A SEAM (decision guide)
 
