@@ -694,7 +694,11 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 95;  // v95: scheduled-event REPLAY channel -- ReliableKind::
+inline constexpr uint16_t kProtocolVersion = 96;  // v96: TimeSyncPayload carries the NAMED clock triple
+                                                  //      (timeZ hour/minute/day) -- the client's clock
+                                                  //      display + day number were frozen (TimeScale=0
+                                                  //      kept its minute pulse dead and the old 12 B
+                                                  //      payload only moved the sun). v95: scheduled-event REPLAY channel -- ReliableKind::
                                                   // EventFire=84 (32 B: [u8 dispatch][name[31]]). The story
                                                   // scheduler (saveSlot::settime -> eventer.runEvent) is
                                                   // BP->BP invisible to every hook; the HOST observes fires
@@ -3517,11 +3521,18 @@ static_assert(sizeof(PropSnapPosPayload) <= 256 - 20 - 8, "PropSnapPosPayload mu
 // Writing timeScale lets the client free-run smoothly between pushes. RE: research/findings/
 // votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
 struct TimeSyncPayload {
-    float totalTime;   // absolute elapsed game time (the authoritative continuous clock)
-    float day;         // the day number
+    float totalTime;   // within-day clock [0, MaxTime) -- the sun/moon derive from this every tick
+    float day;         // the within-day ACCUMULATOR (midnight cascade threshold), NOT the day number
     float timeScale;   // clock advance rate (so the client advances at the host's rate)
+    // v96: the NAMED clock triple (daynightCycle.timeZ) -- the day NUMBER lives in timeZ.Z and the
+    // HUD clock reads timeZ. A TimeScale=0 client never runs its own minute pulse, so without these
+    // its displayed clock/day stayed frozen at the transferred save's values (user 2026-07-03:
+    // set-time "не работает нормально").
+    int32_t hour;
+    int32_t minute;
+    int32_t dayZ;
 };
-static_assert(sizeof(TimeSyncPayload) == 12, "TimeSyncPayload must be 12 bytes");
+static_assert(sizeof(TimeSyncPayload) == 24, "TimeSyncPayload must be 24 bytes");
 
 // SkyStatePayload -- the host-authoritative NIGHT-SKY snapshot (SkyState=34, v44). The visible
 // star dome (Anewsky_C's `sky` mesh) is given a per-game UNSEEDED random yaw + a slow per-tick

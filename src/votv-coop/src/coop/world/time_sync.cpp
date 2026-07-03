@@ -38,6 +38,11 @@ bool MakePayload(coop::net::TimeSyncPayload& out) {
     float t = 0, d = 0, s = 0;
     if (!DNC::ReadClock(t, d, s)) return false;  // cycle not streamed in yet
     out.totalTime = t; out.day = d; out.timeScale = s;
+    // v96: the NAMED clock rides along -- a TimeScale=0 client never runs its own
+    // minute pulse, so its HUD clock + day number only move via these corrections.
+    int32_t h = 0, m = 0, dz = 0;
+    if (!DNC::ReadTimeZ(h, m, dz)) return false;
+    out.hour = h; out.minute = m; out.dayZ = dz;
     return true;
 }
 
@@ -61,6 +66,10 @@ void OnReliable(const coop::net::TimeSyncPayload& payload) {
     // but a fresh save-load mid-session could). Restore on disconnect writes
     // the game's own value (1.0) back.
     DNC::ApplyClock(payload.totalTime, payload.day, ClientTimeScale());
+    // v96: mirror the host's NAMED clock (HUD time + the day number in timeZ.Z). The
+    // suppressed client minute pulse never rebuilds it locally, and instant host
+    // set-clock jumps (dev menu) must land here on the same correction.
+    DNC::WriteTimeZ(payload.hour, payload.minute, payload.dayZ);
     DNC::LatchDailyDelivery();
     g_suppressedClient = true;
     static int s_n = 0;
