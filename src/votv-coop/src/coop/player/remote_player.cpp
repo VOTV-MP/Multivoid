@@ -550,9 +550,9 @@ void RemotePlayer::Tick() {
 }
 
 void RemotePlayer::SetRagdollPose(const coop::net::RagdollPoseSnapshot& snap) {
-    // v22 ragdoll physics stream -- mechanism in remote_player_ragdoll.h. When the
-    // pose applied to a live body, force ApplyToEngine to refresh the kel rotation
-    // from the streamed pelvis next Tick.
+    // v22 ragdoll physics stream -- mechanism in remote_player_ragdoll.h (velocity
+    // slaving onto the VISIBLE plushie body). Applied-to-live-body marks dirty so
+    // ApplyToEngine keeps running its ragdoll head (liveness self-heal) next Tick.
     if (ragdoll_.SetPose(snap)) dirty_ = true;
 }
 
@@ -594,12 +594,12 @@ void RemotePlayer::ApplySkin(const std::string& skinName) {
 }
 
 void RemotePlayer::ApplyToEngine() {
-    // While the puppet is RAGDOLLED it is PELVIS-ATTACHED to the invisible ragdoll body,
-    // so the engine syncs its transform per-frame -- do NOT pose-drive it here (a
-    // SetActorLocation would fight the attachment); RagdollDisplay drives the kel's
-    // rotation from the streamed pelvis instead. SetTargetPose keeps updating curPos_
-    // from the wire meanwhile, so the first post-recover ApplyToEngine resumes from the
-    // owner's current pose. StoppedNow = the body died under us (level-transition GC):
+    // While the puppet is RAGDOLLED it is PELVIS-ATTACHED to the VISIBLE plushie body
+    // (its own kel meshes are hidden -- the plushie is the display), so the engine
+    // syncs its transform per-frame -- do NOT pose-drive it here (a SetActorLocation
+    // would fight the attachment). SetTargetPose keeps updating curPos_ from the wire
+    // meanwhile, so the first post-recover ApplyToEngine resumes from the owner's
+    // current pose. StoppedNow = the body died under us (level-transition GC):
     // self-healed -- re-base the presentation yaw + fall through to pose-drive this tick.
     switch (ragdoll_.DriveAttached(actor_, internalIdx_)) {
     case RagdollDisplay::Drive::Attached:

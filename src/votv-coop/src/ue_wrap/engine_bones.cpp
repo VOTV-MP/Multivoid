@@ -202,37 +202,6 @@ int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
     return static_cast<int>(out.size());
 }
 
-int CollectSkeletonBoneFNames(void* skelMeshComp, std::vector<std::array<uint8_t, 8>>& outFNames) {
-    outFNames.clear();
-    if (!skelMeshComp || !ResolveBoneFns()) return 0;
-    int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
-    if (n <= 0) return 0;
-    outFNames.assign(static_cast<size_t>(n), {});
-    for (int32_t i = 0; i < n; ++i) {
-        ParamFrame nf(g_boneNameFn);
-        nf.Set<int32_t>(L"BoneIndex", i);
-        if (!Call(skelMeshComp, nf)) { outFNames.clear(); return 0; }  // all-or-nothing
-        nf.GetRaw(L"ReturnValue", outFNames[static_cast<size_t>(i)].data(), 8);
-    }
-    return static_cast<int>(n);
-}
-
-int32_t GetBoneIndexByFName(void* skelMeshComp, const uint8_t boneFName[8]) {
-    if (!skelMeshComp || !boneFName || !ResolveBoneFns()) return -1;
-    // USkinnedMeshComponent::GetBoneIndex(BoneName) -> int32 (INDEX_NONE = -1 on miss).
-    static void* sIdxFn = nullptr;
-    if (!sIdxFn) {
-        if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass))
-            sIdxFn = R::FindFunction(sk, L"GetBoneIndex");
-    }
-    if (!sIdxFn) return -1;
-    ParamFrame f(sIdxFn);
-    f.SetRaw(L"BoneName", boneFName, 8);
-    if (!Call(skelMeshComp, f)) return -1;
-    return f.Get<int32_t>(L"ReturnValue");
-}
-
 bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot) {
     if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
     // SceneComponent::GetSocketRotation (a bone name is a valid socket name) -- resolved

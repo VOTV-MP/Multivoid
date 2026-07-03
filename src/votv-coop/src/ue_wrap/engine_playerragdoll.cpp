@@ -2,10 +2,12 @@
 //
 // VOTV's `playerRagdoll_C` is the "plushie" ragdoll body that ragdollMode spawns
 // when a player faints/ragdolls -- the visible flopping kel body (its SkeletalMesh
-// @0x230 self-configures to `kel_lmao` / `inst_kel_body`). We spawn it OURSELVES on
-// a puppet (coop/remote_player) so a remote player's ragdoll is VISIBLE, WITHOUT
-// calling ragdollMode -- which is GLOBALLY scoped and KILLS the host (death event
-// regardless of params; 2026-06-01 RE, [[project-ragdoll-sync]]).
+// @0x230 self-configures to `kel_lmao` / `inst_kel_body`, natively rigged to the
+// full 6-bone chain lowlegs-thighs-pelvis-chest-head-head_end). We spawn it
+// OURSELVES on a puppet (coop/remote_player) as the VISIBLE flop display (the
+// 2026-07-03 visible-plushy rework -- the caller hides the puppet's kel meshes for
+// the flop), WITHOUT calling ragdollMode -- which is GLOBALLY scoped and KILLS the
+// host (death event regardless of params; 2026-06-01 RE, [[project-ragdoll-sync]]).
 //
 // Proven recipe (harness/autotest_ragdoll_spawn_probe.cpp SP-solo probe, commit
 // 01aad35):
@@ -51,9 +53,9 @@ void* g_ragdollClass     = nullptr;
 void* g_setAllBodiesSimFn = nullptr;
 void* g_setSimPhysFn      = nullptr;
 void* g_setCollisionFn    = nullptr;
-// Per-frame pelvis-rotation read (the attach keeps the character capsule upright, so
-// we drive the tumble ourselves). The "pelvis" FName is stable across all ragdoll
-// bodies (one GNames entry), so cache the 8 bytes once + the GetSocketRotation fn.
+// Pelvis reads: the SENDER samples its native ragdoll's pelvis loc/rot/velocity for
+// the v22 wire (ReadLocalRagdollPelvisPhysics). The "pelvis" FName is stable across
+// all ragdoll bodies (one GNames entry), so cache the 8 bytes once + the fns.
 void* g_getSocketRotFn   = nullptr;
 uint8_t g_pelvisFName[8] = {};
 bool g_havePelvisFName   = false;
@@ -185,18 +187,17 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
     FinishDeferredSpawn(body, location, rotation);
     if (!R::IsLive(body)) { UE_LOGW("ragdoll_body: body died during FinishDeferredSpawn"); return nullptr; }
     // BeginPlay built the rigid bodies but left them frozen -- start the sim so it
-    // actually flops (proven necessary by the probe). Then HIDE the body's own mesh
-    // (the "plushy on a stick" the user rejected): this body is now an INVISIBLE
-    // PHYSICS DRIVER; the visible Dr. Kel puppet is attached to its root and tumbles
-    // along (AttachActorToRagdollBody). propagate=FALSE so the hide doesn't cascade to
-    // the attached puppet via IsVisible's parent-walk (the 2026-05-25 regression).
-    // Hiding does NOT stop the simulation -- the rigid bodies keep flopping.
+    // actually flops (proven necessary by the probe). The body's own mesh stays
+    // VISIBLE: it IS the display (2026-07-03 visible-plushy rework) -- the game's own
+    // plushie ragdoll, its full 6-bone chain natively rigged to the physics, exactly
+    // what SP shows in mirrors. (History: v22 hid it and tumbled the pelvis-attached
+    // kel instead -- a rigid one-piece look; a master-pose probe then coupled the kel
+    // meshes but only 4/6 bones mapped (the skin skeleton lacks thighs/lowlegs) and
+    // the user refuted it by eye. The caller hides the puppet's kel meshes for the
+    // flop instead -- no double-image, no skeleton mapping at all.)
     void* comp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kAragdoll_SkeletalMesh);
-    if (comp && R::IsLive(comp)) {
-        StartBodySim(comp);
-        SetSceneComponentVisibility(comp, /*newVisibility=*/false, /*propagateToChildren=*/false);
-    }
-    UE_LOGI("ragdoll_body: spawned INVISIBLE playerRagdoll_C @%p (owner=%p) at (%.0f,%.0f,%.0f), sim started",
+    if (comp && R::IsLive(comp)) StartBodySim(comp);
+    UE_LOGI("ragdoll_body: spawned VISIBLE playerRagdoll_C flop body @%p (owner=%p) at (%.0f,%.0f,%.0f), sim started",
             body, ownerPlayer, location.X, location.Y, location.Z);
     return body;
 }
@@ -238,29 +239,6 @@ bool DetachActorFromRagdollBody(void* actor) {
     f.Set<uint8_t>(L"RotationRule", uint8_t{1});       // KeepWorld
     f.Set<uint8_t>(L"ScaleRule",    uint8_t{1});       // KeepWorld
     return Call(actor, f);
-}
-
-// Read ragdoll `body`'s PELVIS bone WORLD rotation. The pelvis attach follows the
-// body's POSITION but a character keeps its capsule UPRIGHT (so the kel only slides +
-// yaws, never tumbles) -- the caller drives this rotation onto the puppet each frame to
-// make the Dr. Kel skin tumble WITH the flop. Caches the pelvis FName (one GNames entry,
-// stable across bodies) + GetSocketRotation. Returns false if unresolved. Game thread.
-bool GetRagdollBodyPelvisRotation(void* body, FRotator& outRot) {
-    outRot = FRotator{};
-    if (!body || !R::IsLive(body)) return false;
-    void* mesh = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kAragdoll_SkeletalMesh);
-    if (!mesh || !R::IsLive(mesh)) return false;
-    if (!g_havePelvisFName) g_havePelvisFName = FindBoneFName(mesh, L"pelvis", g_pelvisFName);
-    if (!g_havePelvisFName) return false;
-    if (!g_getSocketRotFn) {
-        if (void* sc = R::FindClass(L"SceneComponent")) g_getSocketRotFn = R::FindFunction(sc, L"GetSocketRotation");
-    }
-    if (!g_getSocketRotFn) return false;
-    ParamFrame f(g_getSocketRotFn);
-    f.SetRaw(L"InSocketName", g_pelvisFName, sizeof(g_pelvisFName));
-    if (!Call(mesh, f)) return false;
-    outRot = f.Get<FRotator>(L"ReturnValue");
-    return true;
 }
 
 void* GetRagdollBodyMesh(void* ragdollActor) {

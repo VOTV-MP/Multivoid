@@ -11,7 +11,6 @@
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
-#include "coop/dev/ragdoll_master_pose.h"
 #include "coop/session/save_transfer.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_menu_unlock.h"
@@ -1091,7 +1090,6 @@ void Start() {
     // force-enables at boot so the autonomous smoke exercises the draw path.
     coop::dev::object_overlay::InitFromIni();
     coop::dev::ragdoll_bone_overlay::InitFromIni();
-    coop::dev::ragdoll_master_pose::InitFromIni();
     // v56 save-transfer: register the bulk sink with the session + sweep stale
     // crash-leftover zcoop_* slots (age-gated -- never a live sibling's).
     coop::save_transfer::Install(&g_session);

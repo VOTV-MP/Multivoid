@@ -1,68 +1,51 @@
-# Hands-on runbook 2026-07-03 (take 5) — ragdoll MASTER-POSE probe (all 6 bones, not just pelvis)
+# Hands-on runbook 2026-07-03 (take 5) — ragdoll display: VISIBLE PLUSHIE (take 2)
 
-**Deployed:** DLL `4CFA16CEA15F1A94` on all 4 installs (hash-verified). Protocol UNCHANGED (v95 —
-the probe is display-only, no wire change; peers on the previous `5A60579C` DLL stay compatible,
-but all 4 installs already carry the new one). Paks unchanged.
+**Deployed (take 2):** DLL `533320703118F756` on all 4 installs (hash-verified). Protocol
+UNCHANGED (v95). Paks unchanged.
 
-**Status: BUILT + audited, NOT smoke-launched** — you were on the PC, so no autonomous launches;
-the verdict is visual anyway (that is the point of the probe). Mechanism risk while OFF: zero
-(one atomic load + map lookup per ragdoll frame; nothing anywhere else).
+## Take 1 (master-pose probe) — REFUTED, deleted
 
-## What this answers (your ask)
+The morning's master-pose probe ran exactly once in your hands-on (11:28): it applied and
+restored cleanly, but the coverage line measured **4/6** — `lowlegs=MISS thighs=MISS pelvis=Y
+chest=Y head=Y head_end=Y`. The visible skin's skeleton (native kel and the converted client
+models alike) has NO bones named `thighs`/`lowlegs`, and master-pose maps strictly by name —
+so the legs stayed rigid and the visual gain was just a slight torso bend. Your verdict:
+"выглядит плохо". Probe + its ue_wrap helpers DELETED per RULE 2 (commit history keeps them).
 
-"pelvis attach достаточно, но может еще какие кости КРОМЕ pelvis удастся прикрепить?"
+## Take 2 (SHIPPED, default behavior — no checkbox, no ini): the plushie IS the display
 
-Per-bone attaches are impossible (a component has ONE attach parent; the game has no runtime
-per-bone write — bone writes are AnimGraph-only). But the engine has a one-call full-skeleton
-coupling: `SetMasterPoseComponent` — the puppet's two kel body meshes become pose SLAVES of the
-mirror ragdoll body's simulating mesh (full bone copy by NAME, engine-side, every frame).
+Your read of the bone visualizer was exactly right: the ragdoll rig is one 6-link chain
+(lowlegs-thighs-pelvis-chest-head-head_end) and the physics flops THAT. So now, when a remote
+peer ragdolls:
 
-**Static prognosis (new fact, 2026-07-03):** the kel player-body skeleton has exactly SIX bones —
-`lowlegs, thighs, pelvis, chest, head, head_end` (tools/client_model/SPEC.md ReferenceSkeleton,
-parsed from the cooked mesh) — and the ragdoll body rig is the same 6-bone family (bone overlay
-counted 6; `pelvis` name-matches already). So expected coverage is **6/6 = the kel copies the
-ENTIRE ragdoll pose**: legs, torso and head each follow their physics body instead of the whole
-kel tumbling as one rigid piece around the pelvis. Custom client models keep working (they are
-rigged onto the same 6-bone kel skeleton by our converter).
+- the spawned `playerRagdoll_C` body stays **VISIBLE** — the game's own plushie ragdoll, its
+  mesh natively rigged to the full chain (this is literally what SP shows in mirrors when YOU
+  ragdoll); its pelvis velocity is still slaved to the sender (v22), so the flop tracks them;
+- the puppet's two kel body meshes are **HIDDEN for the flop** (visibility only — the custom
+  skin asset keeps its reference, no GC risk) and restored on get-up;
+- the puppet actor still rides the pelvis attach as the position anchor (nameplate, recover
+  hand-off). The old per-frame kel rotation drive is gone with the kel hidden.
 
-The pelvis attach + streamed pelvis rotation stay EXACTLY as before (position/orientation anchor);
-master-pose lays the remaining 5 bones on top. While coupled, the probe also pins the kel mesh
-components onto the body mesh component each frame (master-pose copies bones in COMPONENT space —
-without the pin the pose would render rigidly offset).
+## Test (both peers on `533320703118F756`)
 
-## Test (host + client, both on `4CFA16CE`)
+1. Client ragdolls near the host (C / faint / trip), gets up after a few seconds. Repeat,
+   including one throw off a slope.
+2. **Host judges by eye**: the flopping body should now be the full floppy plushie — legs,
+   torso, head all bending — instead of a rigid standing kel glued at the pelvis. On get-up
+   the normal kel (custom skin included) must come back standing + animating.
+3. Host log per episode:
+   - `ragdoll_body: spawned VISIBLE playerRagdoll_C flop body ...`
+   - `RagdollDisplay::Start: VISIBLE plushie body=... puppet pelvis-attached + kel meshes hidden`
+   - `RagdollDisplay::Stop: kel meshes restored, puppet detached, plushie body destroyed`
+4. Bone visualizer (F1 > Player > HUD) still works — the cyan chain should now sit INSIDE the
+   visible plushie.
 
-1. Host: **F1 → Player → HUD** → tick **"Ragdoll master-pose (probe)"** (next to the bone
-   visualizer — tick that too if you want the skeleton lines over the flop).
-2. Client: ragdoll (press **C**; a faint/trip works too) near the host, wait ~5 s, get up. Repeat
-   a few times, including one flop thrown off a height/slope.
-3. **Judge by eye on the host**: with the probe ON the flopping kel should bend — legs/torso/head
-   following the physics bodies — vs the old rigid one-piece tumble. Toggle the checkbox mid-flop
-   to A/B live (it applies/restores on the fly).
-4. **Recover check**: after get-up the kel must stand + animate NORMALLY (walk anim, head look).
-   A kel stuck in a flop pose or floating at a weird offset after recover = restore bug — grab the
-   log.
-5. **Host log** (`Game_0.9.0n\...\Win64\votv-coop.log`) must show per flop:
-   - `[MASTER-POSE] applied puppet=... master=... (both kel slots slaved; world-pin active)`
-   - `[MASTER-POSE] coverage 6/6 master-rig bones exist on the kel slave: lowlegs=Y thighs=Y
-     pelvis=Y chest=Y head=Y head_end=Y` — **this line is the ground truth**. Anything under 6/6
-     names the bone that did NOT couple (it rides its ref pose instead) — report the exact line.
-   - `[MASTER-POSE] restored puppet=... (recover)` on get-up.
-6. Also worth one look: your OWN ragdoll on the client's screen (the client can't enable the probe
-   — dev-gated host-only — so the client still sees the old rigid tumble; that asymmetry is
-   expected for a probe).
+## Known boundaries (report if they bother you)
 
-## If the verdict is "лучше" (better)
-
-Say the word and I promote it: the master-pose coupling becomes the default ragdoll display (no
-checkbox, RULE 2 — the plain rigid-attach look goes), both peers get it, and the checkbox/ini flag
-retire.
-
-## Known boundaries
-
-- Client-side observers keep the rigid look (dev gate) until promotion.
-- The mirror body is invisible BY DESIGN; the kel is the visible thing. If with the probe ON the
-  kel visually LAGS the skeleton-overlay lines by a frame, that is the master-pose evaluation
-  order — report it, there is a follow-up lever (tick prerequisites), don't live with it silently.
-- The `[dev] ragdoll_master_pose=1` ini key force-enables at boot (for a future autonomous
-  verify); the checkbox is the intended path for this test.
+- A peer using a CUSTOM client model shows the DEFAULT kel plushie while flopped (the body
+  self-configures `kel_lmao`/`inst_kel_body`); the custom skin returns on get-up. Making the
+  plushie wear the custom skin is a follow-up if wanted.
+- The nameplate rides the puppet anchor (pelvis attach), not the plushie's head — may float
+  slightly off the body mid-flop. Cosmetic.
+- A skin change arriving MID-flop may pop a standing kel over the plushie until get-up (rare
+  edge; the log will show it).

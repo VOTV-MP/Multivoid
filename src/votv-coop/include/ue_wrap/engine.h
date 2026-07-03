@@ -12,7 +12,6 @@
 
 #include "ue_wrap/types.h"
 
-#include <array>
 #include <string>
 #include <vector>
 
@@ -181,32 +180,6 @@ FRotator GetComponentWorldRotation(void* component);
 // Call AFTER SetActorRotation -- moving the actor root re-bases the child mesh's world transform.
 // Game thread only.
 bool SetComponentWorldRotation(void* component, const FRotator& rotation);
-
-// USceneComponent::K2_SetWorldLocationAndRotation (bSweep=false, bTeleport=true; the
-// FHitResult& out-param frame space is allocated by ParamFrame). One-call world loc+rot
-// snap. The ragdoll master-pose probe pins the puppet's kel mesh components onto the
-// mirror body's mesh component transform each attached tick: master-pose copies bones in
-// COMPONENT space, so the slave component must sit exactly where the master component is
-// or the whole pose renders rigidly offset. Game thread only.
-bool SetComponentWorldLocationAndRotation(void* component, const FVector& location,
-                                          const FRotator& rotation);
-
-// USceneComponent::K2_SetRelativeLocationAndRotation (bSweep=false, bTeleport=true).
-// Restores a component's stored attach-relative transform after the master-pose probe
-// drove its world transform (the recover edge). Game thread only.
-bool SetComponentRelativeLocationAndRotation(void* component, const FVector& location,
-                                             const FRotator& rotation);
-
-// USkinnedMeshComponent::SetMasterPoseComponent(NewMasterBoneComponent, bForceUpdate=true).
-// Engine-driven FULL-pose copy: the slave stops rendering its own AnimBP pose and renders
-// the master's component-space bone transforms for every SAME-NAMED bone (an unmapped
-// slave bone rides its ref-pose local on the nearest mapped ancestor). masterComp=null
-// CLEARS the link -- the slave resumes its own AnimBP pose the next tick. The kel
-// player-body rig and the playerRagdoll_C body rig are the same 6-bone family (lowlegs/
-// thighs/pelvis/chest/head/head_end -- tools/client_model SPEC.md ReferenceSkeleton +
-// the bone overlay's live count), so the expected map is total. Engine.hpp:18350.
-// Game thread only.
-bool SetSkinnedMeshMasterPose(void* slaveComp, void* masterComp);
 
 // The WORLD rotation of `actor`'s visible StaticMesh component, or the actor
 // rotation if it owns none. A chipPile's per-instance visual variety lives on
@@ -470,12 +443,6 @@ FVector GetComponentForwardVector(void* component);
 // (0,0,0) RelLoc on a non-root component is unusual and worth logging.
 FVector GetComponentRelativeLocation(void* component);
 
-// USceneComponent::RelativeRotation -- raw sibling of GetComponentRelativeLocation
-// (same rationale: the stored attach-relative value, not the composed world result;
-// the master-pose probe saves it before pinning the mesh world transform and restores
-// it on recover). Zero rotator on null input. Game thread only (raw struct read).
-FRotator GetComponentRelativeRotation(void* component);
-
 // Read a UParticleSystemComponent's `Template` (the UParticleSystem* it renders) via a
 // reflection-resolved property offset (raw pointer read, cached). Used by event_cue_sync to
 // identify which cosmetic cue a live PSC belongs to (the EX_CallMath SpawnEmitterAtLocation that
@@ -597,18 +564,6 @@ struct BonePoint {
 // PER BONE per invocation -- a dev-diagnostic budget; never call from an always-on hot
 // path. Game thread only.
 int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out);
-
-// Fill `outFNames` (cleared first) with every bone's 8-byte FName on `skelMeshComp`, in
-// bone-index order (USkinnedMeshComponent::GetNumBones/GetBoneName). Returns the bone
-// count (0 on failure -- all-or-nothing). The master-pose probe enumerates the MASTER
-// rig's bones with this and probes each against the slave via GetBoneIndexByFName for
-// its coverage diagnostic. Dev-diagnostic budget. Game thread only.
-int CollectSkeletonBoneFNames(void* skelMeshComp, std::vector<std::array<uint8_t, 8>>& outFNames);
-
-// USkinnedMeshComponent::GetBoneIndex(BoneName) -- does this mesh's skeleton carry a
-// bone with this exact FName? Returns the bone index, or -1 (INDEX_NONE) on miss /
-// failure. Game thread only.
-int32_t GetBoneIndexByFName(void* skelMeshComp, const uint8_t boneFName[8]);
 
 // ACharacter capsule half-height read (UCapsuleComponent::CapsuleHalfHeight at the
 // fixed offset). 0.f if `mainPlayerPawn` is null or has no capsule. Used by
@@ -951,11 +906,6 @@ bool IsActorRootBodyAtRest(void* actor);
 // WOKEN and never re-slept -> permanent physics scene). Leaves the body a DYNAMIC,
 // grabbable physics body (NOT SetSimulatePhysics(false)). False on failure. Game thread.
 bool PutActorRootBodyToSleep(void* actor);
-
-// Read ragdoll `body`'s pelvis bone WORLD rotation so the caller can drive the kel
-// puppet's TUMBLE each frame -- the pelvis attach follows position but a character keeps
-// its capsule upright, so rotation must be applied explicitly. false on failure. GT only.
-bool GetRagdollBodyPelvisRotation(void* body, FRotator& outRot);
 
 // v22 ragdoll physics sync -- SENDER side. Read the LOCAL player's NATIVE ragdoll
 // (AmainPlayer_C::ragdollActor @0xC40, the AplayerRagdoll_C the C-key/faint spawned)
