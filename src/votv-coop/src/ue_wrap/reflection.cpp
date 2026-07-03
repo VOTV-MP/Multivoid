@@ -644,6 +644,74 @@ void* PropertyInnerStruct(void* owningClass, const wchar_t* propName) {
     return nullptr;
 }
 
+namespace {
+
+// FBoolProperty payload slot (= sizeof(FProperty), same boundary as
+// FStructProperty::Struct above). -1 until calibrated.
+int32_t g_boolPropSlot = -1;
+
+// Payload shape check on {FieldSize, ByteOffset, ByteMask, FieldMask}:
+// FieldSize must be 1 (uint8-backed UPROPERTY bool) and ByteMask a single set
+// bit. The wrong candidate slot reads bytes out of a pointer, which
+// practically never passes both.
+bool BoolPayloadShapeOk(const uint8_t* payload) {
+    return payload[0] == 1 && payload[1] <= 3 && payload[2] != 0 &&
+           (payload[2] & (payload[2] - 1)) == 0;
+}
+
+// Calibrate g_boolPropSlot against an engine invariant: USceneComponent's CDO
+// has bVisible SET (components are visible by default). A candidate slot must
+// both look like a payload AND read that bit as 1 off the CDO.
+void CalibrateBoolPropSlot() {
+    if (g_boolPropSlot >= 0) return;
+    void* cls = FindClass(L"SceneComponent");
+    void* cdo = FindClassDefaultObject(L"SceneComponent");
+    uint8_t* field = cls ? FindPropertyField(cls, L"bVisible") : nullptr;
+    if (field && cdo) {
+        const int32_t base = *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+        for (int32_t cand : { 0x70, 0x78 }) {
+            const uint8_t* payload = field + cand;
+            if (!BoolPayloadShapeOk(payload)) continue;
+            const uint8_t byte = *(reinterpret_cast<const uint8_t*>(cdo) + base + payload[1]);
+            if (byte & payload[2]) {
+                g_boolPropSlot = cand;
+                UE_LOGI("reflection: FBoolProperty payload slot calibrated to +0x%X "
+                        "(SceneComponent CDO bVisible mask %02X)", cand, payload[2]);
+                return;
+            }
+        }
+    }
+    UE_LOGW("reflection: FBoolProperty slot calibration failed (SceneComponent "
+            "bVisible anchor unavailable) -- bitfield reads fall back to shape-only");
+}
+
+}  // namespace
+
+bool FindBoolProperty(void* owningStruct, const wchar_t* propName,
+                      int32_t& outByteOffset, uint8_t& outMask) {
+    uint8_t* field = FindPropertyField(owningStruct, propName);
+    if (!field) return false;
+    const int32_t base = *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+    CalibrateBoolPropSlot();
+    if (g_boolPropSlot >= 0) {
+        const uint8_t* payload = field + g_boolPropSlot;
+        if (!BoolPayloadShapeOk(payload)) return false;  // not a bool property
+        outByteOffset = base + payload[1];
+        outMask = payload[2];
+        return true;
+    }
+    // Calibration anchor unavailable: accept the first shape-valid candidate.
+    for (int32_t cand : { 0x70, 0x78 }) {
+        const uint8_t* payload = field + cand;
+        if (BoolPayloadShapeOk(payload)) {
+            outByteOffset = base + payload[1];
+            outMask = payload[2];
+            return true;
+        }
+    }
+    return false;
+}
+
 int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix) {
     if (!owningStruct || !prefix) return -1;
     // BP UserDefinedStruct members carry GUID-mangled names

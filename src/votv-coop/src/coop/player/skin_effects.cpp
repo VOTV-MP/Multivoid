@@ -14,9 +14,17 @@
 //                          bVisible=false in the SCS), and force-enabling them
 //                          was the 2026-07-03 "pink blast" user regression --
 //                          scs_rig now honors the template flags.
-//   kerfurOmega_mynet.step (ubergraph @3-@6): lib step -> SpawnEmitterAtLocation(
-//                          eff_mynetEmitterStep, loc) + PlaySound(boltrix_mediumHit).
-//   stepped() plays the variant CDO's footstepSound (keljoy squeak path).
+//   kerfurOmega_mynet.step (ubergraph @3-@6): lib_C::step(self, ..., volume=0,
+//                          ...) -- the DEFAULT surface footstep is MUTED -- then
+//                          SpawnEmitterAtLocation(eff_mynetEmitterStep, loc) +
+//                          PlaySoundAtLocation(boltrix_mediumHit, ActorLocation,
+//                          vol 1, pitch 1, att_default). REPLACE mode.
+//   kerfurOmega.step: lib_C::step(self, ..., volume=1, ...) -- default step
+//                          audible; stepped(scaled) then layers footstepSound:
+//                          scaled = clamp(MaxWalkSpeed/400, 0.5, 2) * volume,
+//                          SpawnSoundAttached(footstepSound, capsule, vol
+//                          scaled/4, pitch scaled/2+1, att_default). ADDITIVE
+//                          mode (keljoy squeak).
 
 #include "coop/player/skin_effects.h"
 
@@ -58,33 +66,38 @@ struct Profile {
     const wchar_t* variantStem;  // /Game/objects/<stem>.<stem>_C
     bool allowFace;
     bool stepEmitter;  // mynet's eff_mynetEmitterStep burst
+    // REPLACE step mode: the variant's step() calls lib_C::step with volume 0
+    // (default surface footstep muted) and plays footstepSound itself at the
+    // actor location. false = ADDITIVE (footstepSound layered by stepped()
+    // over the audible default). Bytecode-derived per variant.
+    bool stepReplace;
 };
 constexpr Profile kProfiles[] = {
-    {"kerfur_omega",        L"kerfurOmega",              true,  false},
-    {"kerfur_omega_h",      L"kerfurOmega_2",            true,  false},
-    {"kerfur_omega_m",      L"kerfurOmega_1",            true,  false},
-    {"kerfur_omega_nc",     L"kerfurOmega_0",            true,  false},
-    {"kerfur_maid",         L"kerfurOmega",              false, false},
-    {"kerfur_ariral",       L"kerfurOmega_ariral",       false, false},
-    {"kerfur_ariral_suit",  L"kerfurOmega_ariral1",      false, false},
-    {"kerfur_keljoy",       L"kerfurOmega_keljoy",       false, false},
-    {"kerfur_mannequin",    L"kerfurOmega_mannequin",    false, false},
-    {"skerfuro",            L"kerfurOmega_skerfuro",     false, false},
-    {"scrappy_keith",       L"kerfurOmega_keith",        false, false},
-    {"kerfur_antibreather", L"kerfurOmega_antibreather", false, false},
-    {"kerfur_argplush",     L"kerfurOmega_argpl",        false, false},
-    {"kerfur_alien",        L"kerfurOmega_alien",        false, false},
-    {"kerfur_fleshly",      L"kerfurOmega_bonerman",     false, false},
-    {"kerfur_skeleton",     L"kerfurOmega_bonerman1",    false, false},
-    {"kerfur_vargskeleton", L"kerfurOmega_vargman",      false, false},
-    {"kerfur_maxwell",      L"kerfurOmega_maxwell",      false, false},
-    {"kerfur_erie",         L"kerfurOmega_erie",         false, false},
-    {"kerfur_erie_v4",      L"kerfurOmega_erieV4",       false, false},
-    {"kerfur_igetis",       L"kerfurOmega_igetis",       false, false},
-    {"kerfur_monique",      L"kerfurOmega_monique",      false, false},
-    {"kerfur_krampus",      L"kerfurOmega",              false, false},
-    {"kerfur_mynet",        L"kerfurOmega_mynet",        false, true},
-    {"kerfur_furfur",       L"kerfurOmega_furfur",       false, false},
+    {"kerfur_omega",        L"kerfurOmega",              true,  false, false},
+    {"kerfur_omega_h",      L"kerfurOmega_2",            true,  false, false},
+    {"kerfur_omega_m",      L"kerfurOmega_1",            true,  false, false},
+    {"kerfur_omega_nc",     L"kerfurOmega_0",            true,  false, false},
+    {"kerfur_maid",         L"kerfurOmega",              false, false, false},
+    {"kerfur_ariral",       L"kerfurOmega_ariral",       false, false, false},
+    {"kerfur_ariral_suit",  L"kerfurOmega_ariral1",      false, false, false},
+    {"kerfur_keljoy",       L"kerfurOmega_keljoy",       false, false, false},
+    {"kerfur_mannequin",    L"kerfurOmega_mannequin",    false, false, false},
+    {"skerfuro",            L"kerfurOmega_skerfuro",     false, false, false},
+    {"scrappy_keith",       L"kerfurOmega_keith",        false, false, false},
+    {"kerfur_antibreather", L"kerfurOmega_antibreather", false, false, false},
+    {"kerfur_argplush",     L"kerfurOmega_argpl",        false, false, false},
+    {"kerfur_alien",        L"kerfurOmega_alien",        false, false, false},
+    {"kerfur_fleshly",      L"kerfurOmega_bonerman",     false, false, false},
+    {"kerfur_skeleton",     L"kerfurOmega_bonerman1",    false, false, false},
+    {"kerfur_vargskeleton", L"kerfurOmega_vargman",      false, false, false},
+    {"kerfur_maxwell",      L"kerfurOmega_maxwell",      false, false, false},
+    {"kerfur_erie",         L"kerfurOmega_erie",         false, false, false},
+    {"kerfur_erie_v4",      L"kerfurOmega_erieV4",       false, false, false},
+    {"kerfur_igetis",       L"kerfurOmega_igetis",       false, false, false},
+    {"kerfur_monique",      L"kerfurOmega_monique",      false, false, false},
+    {"kerfur_krampus",      L"kerfurOmega",              false, false, false},
+    {"kerfur_mynet",        L"kerfurOmega_mynet",        false, true,  true},
+    {"kerfur_furfur",       L"kerfurOmega_furfur",       false, false, false},
 };
 
 const Profile* FindProfile(const std::string& skin) {
@@ -158,6 +171,7 @@ struct Rig {
     int32_t stepSoundIdx = -1;
     void* stepEmitter = nullptr;  // eff_mynetEmitterStep (mynet only)
     int32_t stepEmitterIdx = -1;
+    bool stepReplace = false;     // Profile::stepReplace (mynet mutes the default)
     int32_t fmi = -1;  // face slot this rig overrode (cleared on teardown)
     coop::puppet_footsteps::Stride stride{};
     bool visible = true;
@@ -245,19 +259,116 @@ void SpawnStepBurst(void* worldContext, void* emitter, const ue_wrap::FVector& l
     ue_wrap::ParamFrame f(g_spawnEmitterFn);
     f.Set<void*>(L"WorldContextObject", worldContext);
     f.Set<void*>(L"EmitterTemplate", emitter);
-    f.SetRaw(L"SpawnLocation", &loc, sizeof(loc));
+    f.SetRaw(L"Location", &loc, sizeof(loc));
     const ue_wrap::FRotator rot{};
-    f.SetRaw(L"SpawnRotation", &rot, sizeof(rot));
+    f.SetRaw(L"Rotation", &rot, sizeof(rot));
     const ue_wrap::FVector scale{1.f, 1.f, 1.f};
     f.SetRaw(L"Scale", &scale, sizeof(scale));
     f.Set<bool>(L"bAutoDestroy", true);
     f.Set<uint8_t>(L"PoolingMethod", 0);
-    f.Set<bool>(L"bAutoActivate", true);
+    f.Set<bool>(L"bAutoActivateSystem", true);
     ue_wrap::Call(g_gsCdo, f);
 }
 
 // Remote-step loudness parity with puppet_footsteps::Stride::kStepVolume.
 constexpr float kStepFxVolume = 0.6f;
+
+// GameplayStatics::SpawnSoundAttached -- the ADDITIVE footstep layer's spawn
+// (kerfurOmega stepped region [1266]).
+void* g_soundAttachedFn = nullptr;
+
+bool ResolveSoundAttached() {
+    if (g_soundAttachedFn) return true;
+    if (!g_gsCdo) g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_gsCdo)
+        if (void* cls = R::ClassOf(g_gsCdo))
+            g_soundAttachedFn = R::FindFunction(cls, L"SpawnSoundAttached");
+    return g_soundAttachedFn != nullptr;
+}
+
+// lib_C::step's speed-scaled loudness (bytecode [60]-[62]):
+// clamp(CharacterMovement.MaxWalkSpeed / 400, 0.5, 2) * volume.
+int32_t g_offCharMove = -2, g_offMaxWalk = -2;
+
+float StepScaledVolume(void* bodyActor, float volume) {
+    if (g_offCharMove == -2)
+        g_offCharMove = R::FindPropertyOffset(R::ClassOf(bodyActor), L"CharacterMovement");
+    float mws = 400.f;
+    if (g_offCharMove >= 0) {
+        if (void* move = ReadAt<void*>(bodyActor, g_offCharMove, nullptr)) {
+            if (g_offMaxWalk == -2)
+                g_offMaxWalk = R::FindPropertyOffset(R::ClassOf(move), L"MaxWalkSpeed");
+            mws = ReadAt<float>(move, g_offMaxWalk, 400.f);
+        }
+    }
+    float f = mws / 400.f;
+    if (f < 0.5f) f = 0.5f;
+    if (f > 2.f) f = 2.f;
+    return f * volume;
+}
+
+// stepped()'s SpawnSoundAttached mirror ([1266]): attached at the body (native
+// anchors the capsule; the mesh component is the same actor spot within
+// att_default's radius), bStop=false / autoDestroy=true exactly as authored.
+void SpawnStepSoundAttached(void* bodyActor, void* sound, void* att,
+                            float vol, float pitch) {
+    if (!ResolveSoundAttached()) return;
+    void* anchor = Pup::GetNativeBodyMeshComponent(bodyActor);
+    if (!anchor) return;
+    ue_wrap::ParamFrame f(g_soundAttachedFn);
+    f.Set<void*>(L"Sound", sound);
+    f.Set<void*>(L"AttachToComponent", anchor);
+    const ue_wrap::FVector loc{};
+    const ue_wrap::FRotator rot{};
+    f.SetRaw(L"Location", &loc, sizeof(loc));
+    f.SetRaw(L"Rotation", &rot, sizeof(rot));
+    f.Set<uint8_t>(L"LocationType", 0);  // KeepRelativeOffset
+    f.Set<bool>(L"bStopWhenAttachedToDestroyed", false);
+    f.Set<float>(L"VolumeMultiplier", vol);
+    f.Set<float>(L"PitchMultiplier", pitch);
+    f.Set<float>(L"StartTime", 0.f);
+    f.Set<void*>(L"AttenuationSettings", att);
+    f.Set<void*>(L"ConcurrencySettings", nullptr);
+    f.Set<bool>(L"bAutoDestroy", true);
+    ue_wrap::Call(g_gsCdo, f);
+}
+
+// The shared step-FX dispatch behind OnStep (remote) and TickStride (local).
+void StepFx(void* bodyActor, const ue_wrap::FVector& pos, bool localBody) {
+    auto it = g_rigs.find(bodyActor);
+    if (it == g_rigs.end()) return;
+    Rig& r = it->second;
+    const bool hasSound = r.stepSound && R::IsLiveByIndex(r.stepSound, r.stepSoundIdx);
+    const bool hasBurst = r.stepEmitter && R::IsLiveByIndex(r.stepEmitter, r.stepEmitterIdx);
+    if (!hasSound && !hasBurst) return;
+    if (hasBurst) {
+        // Burst at the skeleton root (rootKerfur sits between the feet -- the
+        // closest stand-in for the anim notify's foot contact point).
+        ue_wrap::FVector feet = pos;
+        if (void* mesh = Pup::GetNativeBodyMeshComponent(bodyActor))
+            E::GetBoneWorldLocationByName(mesh, L"rootKerfur", feet);
+        SpawnStepBurst(bodyActor, r.stepEmitter, feet);
+    }
+    if (!hasSound) return;
+    // Native parity: both modes route through att_default (mynet step @6 /
+    // stepped [1266]) -- without it a raw wave plays 2D on the whole map.
+    void* att = LoadCached(L"/Game/audio/misc/att_default.att_default");
+    if (r.stepReplace) {
+        // REPLACE (mynet step @4-@6): the default step ran muted (volume 0 via
+        // DefaultStepVolume); the variant plays its own sound at the ACTOR
+        // location, flat volume/pitch 1. On the LOCAL body the native default
+        // cannot be muted (EX-invisible) -- adding the replacement would stack
+        // the exact double this mode removes, so the sound layer is skipped.
+        if (!localBody)
+            E::PlaySoundAtLocation(bodyActor, r.stepSound, pos, att, 1.f, 1.f);
+        return;
+    }
+    // ADDITIVE (keljoy): layered over the audible default with the native
+    // stepped() math, fed the same volume our puppet feeds lib step so the
+    // native mix holds.
+    const float scaled = StepScaledVolume(bodyActor, kStepFxVolume);
+    SpawnStepSoundAttached(bodyActor, r.stepSound, att, scaled / 4.f, scaled / 2.f + 1.f);
+}
 
 }  // namespace
 
@@ -364,11 +475,12 @@ void Apply(void* bodyActor, const std::string& skinName) {
     }
 
     // 3) Step FX identity: the variant CDO's footstepSound (keljoy squeak,
-    //    mynet boltrix) + mynet's step burst emitter.
+    //    mynet boltrix) + the variant's step routing mode + mynet's burst.
     if (footstepSound) {
         rig.stepSound = footstepSound;
         rig.stepSoundIdx = R::InternalIndexOf(footstepSound);
     }
+    rig.stepReplace = prof->stepReplace;
     if (prof->stepEmitter) {
         if (void* em = LoadCached(L"/Game/particles/eff_mynetEmitterStep."
                                   L"eff_mynetEmitterStep")) {
@@ -402,26 +514,16 @@ void SetRigVisible(void* bodyActor, bool visible) {
             E::SetSceneComponentVisibility(comp, visible, /*propagate=*/true);
 }
 
-void OnStep(void* bodyActor, const ue_wrap::FVector& pos) {
+float DefaultStepVolume(void* bodyActor, float fallback) {
     auto it = g_rigs.find(bodyActor);
-    if (it == g_rigs.end()) return;
-    Rig& r = it->second;
-    const bool hasSound = r.stepSound && R::IsLiveByIndex(r.stepSound, r.stepSoundIdx);
-    const bool hasBurst = r.stepEmitter && R::IsLiveByIndex(r.stepEmitter, r.stepEmitterIdx);
-    if (!hasSound && !hasBurst) return;
-    // Step FX land at the skeleton root (rootKerfur sits between the feet);
-    // fall back to the caller's capsule position.
-    ue_wrap::FVector feet = pos;
-    if (void* mesh = Pup::GetNativeBodyMeshComponent(bodyActor))
-        E::GetBoneWorldLocationByName(mesh, L"rootKerfur", feet);
-    if (hasBurst) SpawnStepBurst(bodyActor, r.stepEmitter, feet);
-    if (hasSound) {
-        // Native parity: mynet's step PlaySoundAtLocation passes att_default
-        // (ubergraph @6) -- without it a raw wave plays 2D at full volume on
-        // the whole map.
-        void* att = LoadCached(L"/Game/audio/misc/att_default.att_default");
-        E::PlaySoundAtLocation(bodyActor, r.stepSound, feet, att, kStepFxVolume, 1.f);
-    }
+    if (it == g_rigs.end() || !it->second.stepReplace) return fallback;
+    // Native REPLACE parity (mynet step @3): lib_C::step still runs -- trace,
+    // water cues, friction -- but with volume 0 the surface footstep is muted.
+    return 0.f;
+}
+
+void OnStep(void* bodyActor, const ue_wrap::FVector& pos) {
+    StepFx(bodyActor, pos, /*localBody=*/false);
 }
 
 void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
@@ -432,7 +534,8 @@ void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
     // Cheap FX presence check BEFORE the gate so bodies without step FX cost
     // a map find only (the gate itself is float math, but why prime it).
     if (!r.stepSound && !r.stepEmitter) return;
-    if (r.stride.StepDue(pos, speedCmS, grounded)) OnStep(bodyActor, pos);
+    if (r.stride.StepDue(pos, speedCmS, grounded))
+        StepFx(bodyActor, pos, /*localBody=*/true);
 }
 
 }  // namespace coop::skin_effects

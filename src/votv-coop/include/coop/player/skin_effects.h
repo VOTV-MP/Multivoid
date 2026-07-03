@@ -22,9 +22,15 @@
 //     it into the mesh's faceMaterialIndex slot -- ONLY for the four omega
 //     bodies whose mesh really has the screen slot (census: fmi=1, Type
 //     0/1/2 = blue/pink/green);
-//   - step FX at the shared stride gate (puppet_footsteps::Stride::StepDue):
-//     the variant CDO's footstepSound (keljoy squeak, mynet boltrix) + the
-//     mynet step emitter (eff_mynetEmitterStep burst, ubergraph @3).
+//   - step FX at the shared stride gate (puppet_footsteps::Stride::StepDue),
+//     mirroring the variant's own step routing (bytecode, 2026-07-03):
+//     REPLACE variants (mynet) call lib_C::step with volume 0 -- the default
+//     surface footstep is MUTED -- and play their own sound (boltrix at the
+//     actor location, vol 1, att_default) + the eff_mynetEmitterStep burst;
+//     ADDITIVE variants (keljoy) keep the default step and layer footstepSound
+//     on top with the native stepped() math: scaled = clamp(MaxWalkSpeed/400,
+//     0.5, 2) * volume, sound attached to the body at scaled/4 volume,
+//     scaled/2+1 pitch (kerfurOmega ubergraph stepped region).
 //
 // Lifecycle: rigs are keyed by body actor (puppet or local pawn) and torn
 // down on skin change / body destroy; the kerfusFace actor is a separate
@@ -55,6 +61,13 @@ void OnBodyDestroyed(void* bodyActor);
 // body give the trick away. Audio keeps playing (the peer is still there).
 void SetRigVisible(void* bodyActor, bool visible);
 
+// The volume the DEFAULT step (lib_C::step via votv_lib::CharacterStep) should
+// run at for this body: `fallback` normally, 0 when a REPLACE-mode rig (mynet)
+// is active -- the native mynet passes volume 0 to lib step, muting the
+// surface footstep while keeping the trace/water/friction side effects. The
+// puppet's step dispatch feeds this straight into CharacterStep.
+float DefaultStepVolume(void* bodyActor, float fallback);
+
 // Fire the skin's step FX (footstep sound / mynet burst) for a step that
 // JUST landed -- the caller owns the stride gate. Puppets call this from the
 // SAME footsteps_.StepDue verdict that dispatches lib_C::step, so the skin
@@ -64,7 +77,11 @@ void OnStep(void* bodyActor, const ue_wrap::FVector& pos);
 
 // Own-body variant WITH the stride gate built in: the LOCAL player's native
 // stride lives in mainPlayer's BP tick (EX_CallMath, invisible to hooks), so
-// the coop layer runs its own gate over the wire-pose samples. Game thread.
+// the coop layer runs its own gate over the wire-pose samples. The REPLACE
+// sound layer is suppressed here: the game's own default step cannot be muted
+// on the local body (EX-invisible), so adding the replacement sound would
+// stack the exact double the mode exists to avoid; the visual burst still
+// fires. Game thread.
 void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
                 bool grounded);
 

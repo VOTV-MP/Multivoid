@@ -235,6 +235,22 @@ int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 // or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
 
+// A bool UPROPERTY's REAL storage: byte offset within the object plus the bit
+// mask inside that byte, straight from the FBoolProperty payload {FieldSize,
+// ByteOffset, ByteMask, FieldMask} that sits right after the FProperty base.
+// This is THE way to read `uint8 flag : 1` bitfields (bVisible, bAutoActivate,
+// bAbsoluteRotation, ...): several flags pack into one byte, so a raw byte
+// read cannot attribute a value to a specific flag (the 2026-07-03 lifeLight
+// XOR-heuristic failure). The payload slot is build-dependent like
+// FStructProperty::Struct; the first call calibrates it against the engine
+// invariant `SceneComponent CDO has bVisible set` and caches process-wide.
+// Works on UClass* and UScriptStruct* owners (same UStruct field walk; struct
+// members like FTickFunction::bStartWithTickEnabled resolve via
+// PropertyInnerStruct first). Returns false if the property or a valid payload
+// isn't found. Cache the result; the walk is linear.
+bool FindBoolProperty(void* owningStruct, const wchar_t* propName,
+                      int32_t& outByteOffset, uint8_t& outMask);
+
 // Convenience: the object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);
 

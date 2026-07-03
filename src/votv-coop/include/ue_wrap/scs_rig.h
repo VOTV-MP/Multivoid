@@ -22,11 +22,16 @@
 // nav invokers, camera child actors, the mat_invisRender render probe) is
 // actor BEHAVIOR, not skin cosmetics -- skipped.
 //
-// TEMPLATE-faithful dormancy: nodes the game authors OFF stay off -- a particle
+// TEMPLATE-faithful flags: nodes the game authors OFF stay off -- a particle
 // with bAutoActivate=false or a light with bVisible=false (kerfurOmega's
-// makeSentient-only joint-life sparks + lifeLight) is not instanced at all.
-// Bitfield flags are read via the template-vs-class-CDO byte XOR (cooked
-// templates serialize only overrides); see ReadTemplateFlag.
+// makeSentient-only joint-life sparks + lifeLight) is not instanced at all --
+// and authored behavior flags are copied onto the spawned instance
+// (bAbsoluteLocation/Rotation/Scale via SetAbsolute, PrimaryComponentTick.
+// bStartWithTickEnabled via SetComponentTickEnabled, AudioComponent
+// AttenuationSettings). Bitfield flags are read BIT-EXACTLY off the template
+// via reflection::FindBoolProperty (the take-2 byte-XOR heuristic died on a
+// template overriding two flags in one packed byte); see TemplateFlag /
+// ApplyTemplateFidelity.
 //
 // Engine-wrapper layer (principle 7): no coop/network state, no per-skin
 // policy -- the caller decides WHICH classes to instance and owns the

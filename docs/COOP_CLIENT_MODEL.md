@@ -170,13 +170,19 @@ LogicMods/votv-coop on EVERY peer and it appears in everyone's F1 browser.
 > WIC-decoded). Peer without the pak: kel fallback, logged. AS-BUILT; hands-on pending
 > (runbook 2026-07-02 evening take 3).
 >
-> **SKIN EFFECTS (2026-07-03 `23704962`+`8c813c44`):** builtin kerfur skins additionally
-> rebuild the variant ACTOR's cosmetic rig on the dressed body — `coop/player/skin_effects`
-> + `ue_wrap/scs_rig` (runtime SCS read, template-faithful dormancy — the sentient-only
-> light/sparks stay OFF per take-2). RT face (4 omega bodies, kerfusFace_C scene-capture),
-> mynet electricity + step bursts, keljoy squeak. Receiver-local, nothing on the wire. RE:
-> research/findings/votv-kerfur-variant-effects-RE-2026-07-03.md; hands-on pending (runbook
-> 2026-07-03 skin_effects take 2, DLL `41D23E3320F6E173`).
+> **SKIN EFFECTS (2026-07-03, take-3):** builtin kerfur skins additionally rebuild the
+> variant ACTOR's cosmetic rig on the dressed body — `coop/player/skin_effects` +
+> `ue_wrap/scs_rig` (runtime SCS read). Template flags are honored BIT-EXACTLY via
+> `reflection::FindBoolProperty` (take-3; the take-2 byte-XOR guess instanced the dormant
+> violet lifeLight on every skin): dormant nodes (sentient-only light/sparks) stay OFF,
+> mynet's absolute-rotation grid decals + never-ticking emitters + att_small zapp loops
+> reproduce the native look. RT face (4 omega bodies, kerfusFace_C scene-capture), step
+> modes per bytecode — REPLACE (mynet: default step muted at volume 0, boltrix@1 at actor
+> loc) / ADDITIVE (keljoy squeak, scaled/4 vol + scaled/2+1 pitch); own-body REPLACE sound
+> skipped (native local step unmutable — would double). Receiver-local, nothing on the
+> wire. RE: research/findings/votv-kerfur-variant-effects-RE-2026-07-03.md; smoke PASS
+> (omega rig 0 comps + face, mynet 31); hands-on pending (runbook 2026-07-03 take 3,
+> DLL `6646128B7172620C`).
 >
 > The pre-skins AS-BUILT below stays as the PROVEN mechanics record: the skin is applied to
 > BOTH body slots (SpawnPuppetMainPlayer writes it to mesh_playerVisible AND the native

@@ -57,7 +57,7 @@ screen slot; KerfurO_maid measured single-material `inst_kerfurMaid`):
 | kerfurOmega_0 | kerfurOmegaV1_nc | 0 blue | — |
 | kerfurOmega_1 | kerfurOmegaV1_m | 1 pink | — |
 | kerfurOmega_2 | kerfurOmegaV1_h | 2 green | — |
-| kerfurOmega_mynet | kerfurOmega_mynetSkin | -1 | SCS: 9x eff_mynetEmitterLimb on limb bones (autoActivate default TRUE), 8x eff_pofinStatic under foot billboards, 11x decal_digitalGrid (100^3, Pitch=90, scene root — a STATIC pool, zero runtime decal moves in bytecode), 3x eff_zapp AudioComponents (spark_pofinStatic_Cue, vol 0.4). step(loc) = lib_C::step + SpawnEmitterAtLocation(eff_mynetEmitterStep, loc) + PlaySoundAtLocation(boltrix_mediumHit, att_default). footstepSound=boltrix_mediumHit |
+| kerfurOmega_mynet | kerfurOmega_mynetSkin | -1 | SCS TREE (take-3 correction of the take-2 flat read): 9x eff_mynetEmitterLimb on limb bones (upperarm/forearm/thigh/lowerLeg L+R + pelvis), each carrying a decal_digitalGrid child + an eff_pofinStatic child (pelvis: decal only); 2 foot billboards (foot_R/L bones) each carrying a decal child; 3x eff_zapp AudioComponents at root (spark_pofinStatic_Cue, vol 0.4, **AttenuationSettings=att_small**). Decal templates: DecalSize 100^3, RelativeRotation Pitch=90, **bAbsoluteRotation=TRUE** (projection box always world-down -> floor grid patches under the limbs). ALL emitter templates: **PrimaryComponentTick.bStartWithTickEnabled=FALSE** (the sim never advances — authored-off decoration) + bAbsoluteScale=TRUE. step(loc) = lib_C::step(self, ..., **volume=0** — default surface footstep MUTED) + SpawnEmitterAtLocation(eff_mynetEmitterStep, loc) + PlaySoundAtLocation(boltrix_mediumHit, ActorLocation, vol 1, pitch 1, att_default); ReceiveDestroyed adds boltrix_heavyHit. createFeet override is EMPTY. footstepSound=boltrix_mediumHit (CDO; unused for sound — stepped gets volume 0) |
 | kerfurOmega_keljoy | keljoySkin | -1 | footstepSound=keljoyFoot_Cue (played by stepped()) |
 | kerfurOmega_mannequin | mannequinSkin | -1 | setStyle/makeFace overrides CLEAR slot 1 (doll face is painted on) |
 | kerfurOmega_asmodena | skin_asmodena | -1 | eff_burning hands + eat/ignite audio (NOT in the player skin list) |
@@ -65,10 +65,27 @@ screen slot; KerfurO_maid measured single-material `inst_kerfurMaid`):
 | ariral, ariral1, keith(6), antibreather, argpl, alien, bonerman(fleshly), bonerman1(skeleton1), vargman(vargskeleton1), maxwell, erie(4), erieV4, igetis, monique, skerfuro, furfur, kel, fleshman, zombiefur | per-name skins | -1 | CDO-only overrides, no extra SCS, no step FX |
 
 - No variant class wears KerfurO_maid or kerfurOmega_krampusSkin (mesh-only assets).
-- Step chain: kerfur footsteps are anim-notify -> `step(loc)` -> `lib_C::step(Character,...)`
-  which fires `stepped(Volume, Loc)` back on the kerfur; base `stepped` plays `footstepSound`
-  when set. mainPlayer_C does NOT implement these BP events — a puppet stride must dispatch
-  its own FX (skin_effects::OnStep at the puppet_footsteps::Stride::StepDue verdict).
+- Step chain (lib.json `step` fully decoded 2026-07-03): kerfur footsteps are anim-notify ->
+  `step(loc)` -> `lib_C::step(Character, Z_offset, callActor, Volume, Pitch, speedVolume=400,
+  AudioComponent, __WorldContext, OutHit)`:
+  - sphere-trace 19.9 down from actor loc to capsule bottom; no hit -> nothing;
+  - hit component collision type 20 (WATER) -> wade_Cue (submerged) or foot_water_Cue +
+    eff_waterEnter splash, all at HARDCODED vol 1.0 (the Volume param does not scale water),
+    and the stepped/physSound chain is SKIPPED entirely;
+  - else: physSound(PhysMat) row -> the surface cue; `scaled = clamp(CharacterMovement.
+    MaxWalkSpeed / speedVolume, 0.5, 2.0) * Volume`; if callActor implements int_objects ->
+    `stepped(scaled, Vec0)`; if char is mainPlayer_C -> save.steps++ + steppedOn(hitActor);
+    the surface cue plays through the passed AudioComponent (mainPlayer's own path:
+    SetSound+Play+SetVolumeMultiplier(scaled)) or SpawnSoundAttached(root, vol=scaled,
+    conc=conc_footsteps) when None (the kerfur path); GroundFriction = (Friction*4)^2.
+  - base kerfurOmega `stepped` (uber [1252-1267]): only for surface bytes {0,1,2,5}; if
+    footstepSound valid -> SpawnSoundAttached(footstepSound, CapsuleComponent, vol=volume/4,
+    pitch=volume/2+1, att_default, bStop=false, autoDestroy=true) — the ADDITIVE layer
+    (keljoy squeak). Base kerfurOmega.step passes Volume=1.0; mynet passes 0 (REPLACE mode:
+    default muted, its own boltrix played manually).
+  - mainPlayer_C does NOT implement stepped — a puppet stride must dispatch its own FX
+    (skin_effects at the puppet_footsteps::Stride::StepDue verdict), and the REPLACE mode maps
+    to calling lib step with volume 0, exactly like the native variant.
 
 ## 4. Engine facts proven along the way
 
@@ -86,3 +103,16 @@ screen slot; KerfurO_maid measured single-material `inst_kerfurMaid`):
   SuperStruct loop, audit fix ~09c003b 2026-05-25; the stale local-only header comment
   corrected same day] — AttenuationRadius/IntensityUnits resolve on a UPointLightComponent
   query despite being declared on ULocalLightComponent (0x328/0x330).
+- **Bitfield bools need the FBoolProperty payload, NOT byte heuristics** [V live take-3]:
+  {FieldSize, ByteOffset, ByteMask, FieldMask} sits right after the FProperty base (this build:
+  +0x78, calibrated via the `SceneComponent CDO has bVisible set` invariant; bVisible mask =
+  0x20). The take-2 template-XOR-CDO guess died on the lifeLight template, which overrides TWO
+  flags in its packed byte (t=10 cdo=20 — the 0x10 bit is a second authored flag) -> "multi-bit
+  delta, default kept" -> the dormant light instanced on every skin (the violet-everywhere bug).
+  reflection::FindBoolProperty is the durable reader; template bit = authored truth.
+- Cooked SCS templates author engine-behavior flags that a faithful re-instancer MUST copy:
+  bAbsoluteRotation/bAbsoluteScale (USceneComponent::SetAbsolute after attach reproduces the
+  semantic) and PrimaryComponentTick.bStartWithTickEnabled (SetComponentTickEnabled(false)
+  synchronously after a GameplayStatics spawn beats the first tick — spawn-time registration
+  enables it). Un-copied, mynet's decals tumble with the bones (screen-filling grid) and its
+  17 emitters simulate at full rate (particle flood) [V take-2 hands-on vs take-3 smoke].

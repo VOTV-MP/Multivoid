@@ -745,10 +745,14 @@ void RemotePlayer::ApplyToEngine() {
         // interp position is the actor's location this frame (cur_). ONE
         // StepDue verdict drives BOTH the native step and the skin step FX
         // (perf audit W2: two independent accumulators drift apart = doubled
-        // audible steps for keljoy/mynet skins).
+        // audible steps for keljoy/mynet skins). The default step's VOLUME is
+        // the skin layer's call: a REPLACE-mode variant (mynet) mutes it to 0
+        // exactly like the native variant's own lib step call -- lib step
+        // still runs its trace/water/friction side effects either way.
         if (footsteps_.StepDue(curPos_, curSpeed_, !inAir)) {
             ue_wrap::votv_lib::CharacterStep(
-                actor_, coop::puppet_footsteps::Stride::kStepVolume);
+                actor_, coop::skin_effects::DefaultStepVolume(
+                            actor_, coop::puppet_footsteps::Stride::kStepVolume));
             coop::skin_effects::OnStep(actor_, curPos_);
         }
     }

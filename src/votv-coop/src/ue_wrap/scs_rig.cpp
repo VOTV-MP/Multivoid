@@ -1,9 +1,14 @@
 // ue_wrap/scs_rig.cpp -- see scs_rig.h. RE ground truth for the node/property
-// shapes: research/pak_re/dump_scs.py over kerfurOmega.json (31 nodes: 14x
-// eff_kerfurJointLife on skeleton bones + lifeLight on 'belly') and
-// kerfurOmega_mynet.json (34 nodes: 9x eff_mynetEmitterLimb on limb bones,
-// 8x eff_pofinStatic under the foot billboards, 11x decal_digitalGrid at the
-// scene root, 3x eff_zapp spark_pofinStatic_Cue loops), 2026-07-03.
+// shapes: research/pak_re/dump_scs.py over kerfurOmega.json (14x
+// eff_kerfurJointLife on skeleton bones + lifeLight on 'belly', all dormant)
+// and kerfurOmega_mynet.json (SCS TREE: 9x eff_mynetEmitterLimb on limb bones,
+// each carrying a decal_digitalGrid + eff_pofinStatic CHILD; 2 foot billboards
+// each carrying a decal child; 3 root eff_zapp spark loops @ att_small). The
+// mynet templates author bAbsoluteRotation=TRUE on every grid decal (the
+// projection box stays world-vertical -- floor grid under the limbs) and
+// bStartWithTickEnabled=FALSE on every electricity emitter (the sim never
+// advances -- authored-off decoration). Take-3 2026-07-03: those template
+// flags are honored bit-exactly via reflection::FindBoolProperty.
 
 #include "ue_wrap/scs_rig.h"
 
@@ -72,30 +77,70 @@ bool ReadAt(void* obj, int32_t off, T& out) {
     return true;
 }
 
-// Read a BITFIELD bool (uint8 flag:1) off a component TEMPLATE without knowing
-// the FBoolProperty field mask: XOR the template's byte against the component
-// CLASS CDO's byte at the same offset. mask==0 -> the template keeps the class
-// default (`cdoDefault`); a single flipped bit -> the template serialized the
-// OPPOSITE of the default (cooked BP templates only serialize overrides).
-// Multiple flipped bits would mean several packed flags overridden at once --
-// unseen in the kerfur rigs; default + WARN once. This is what keeps the
-// player rig faithful to the game's own authoring: the joint-life sparks ship
-// bAutoActivate=FALSE and lifeLight ships bVisible=FALSE (the makeSentient-only
-// state) -- force-activating them was the 2026-07-03 pink-blast regression.
-bool ReadTemplateFlag(void* templateObj, const wchar_t* declClass, const wchar_t* prop,
-                      void* classCdo, bool cdoDefault) {
-    const int32_t off = PropOff(declClass, prop);
-    uint8_t tByte = 0, cByte = 0;
-    if (!ReadAt(templateObj, off, tByte) || !classCdo || !ReadAt(classCdo, off, cByte))
-        return cdoDefault;
-    const uint8_t mask = static_cast<uint8_t>(tByte ^ cByte);
-    if (mask == 0) return cdoDefault;
-    if ((mask & (mask - 1)) != 0) {
-        UE_LOGW("scs_rig: multi-bit flag delta on %ls.%ls (t=%02X cdo=%02X) -- default kept",
-                declClass, prop, tByte, cByte);
-        return cdoDefault;
+// Read a BITFIELD bool (uint8 flag:1) off a component TEMPLATE using the
+// FBoolProperty's REAL byte offset + bit mask (reflection::FindBoolProperty).
+// A template holds the EFFECTIVE value of every flag, so the masked bit IS the
+// authored truth -- no CDO baselines, no heuristics. (Take-2's XOR-vs-CDO
+// guess died on the first template that overrode TWO flags in one packed byte:
+// every lifeLight read hit "multi-bit delta t=10 cdo=20", fell back to
+// visible, and flooded every skin with the violet belly light.)
+struct BoolProp {
+    int32_t off = -1;
+    uint8_t mask = 0;
+};
+std::unordered_map<std::wstring, BoolProp> g_boolProps;
+
+const BoolProp& BoolPropOf(const wchar_t* declClass, const wchar_t* prop) {
+    std::wstring key(declClass);
+    key += L'.';
+    key += prop;
+    auto it = g_boolProps.find(key);
+    if (it != g_boolProps.end()) return it->second;
+    void* cls = ClassByName(declClass);
+    if (!cls) {
+        static const BoolProp kUnresolved{};
+        return kUnresolved;  // class not loaded yet: not cached, retried
     }
-    return !cdoDefault;
+    BoolProp bp;
+    if (!R::FindBoolProperty(cls, prop, bp.off, bp.mask))
+        UE_LOGW("scs_rig: bool property %ls.%ls not found (engine layout drift?)",
+                declClass, prop);
+    return g_boolProps.emplace(std::move(key), bp).first->second;
+}
+
+bool TemplateFlag(void* templateObj, const wchar_t* declClass, const wchar_t* prop,
+                  bool fallback) {
+    const BoolProp& bp = BoolPropOf(declClass, prop);
+    uint8_t b = 0;
+    if (bp.off < 0 || !ReadAt(templateObj, bp.off, b)) return fallback;
+    return (b & bp.mask) != 0;
+}
+
+// FTickFunction::bStartWithTickEnabled inside ActorComponent's
+// PrimaryComponentTick struct member (offsets composed once). off -2 =
+// unresolved, -1 = resolution failed.
+BoolProp g_startTick{-2, 0};
+
+bool TemplateStartsTickEnabled(void* templateObj) {
+    if (g_startTick.off == -2) {
+        g_startTick.off = -1;
+        void* cls = ClassByName(L"ActorComponent");
+        const int32_t tickOff = PropOff(L"ActorComponent", L"PrimaryComponentTick");
+        void* tickStruct =
+            (cls && tickOff >= 0) ? R::PropertyInnerStruct(cls, L"PrimaryComponentTick") : nullptr;
+        int32_t innerOff = -1;
+        uint8_t mask = 0;
+        if (tickStruct && R::FindBoolProperty(tickStruct, L"bStartWithTickEnabled", innerOff, mask)) {
+            g_startTick.off = tickOff + innerOff;
+            g_startTick.mask = mask;
+        } else {
+            UE_LOGW("scs_rig: PrimaryComponentTick.bStartWithTickEnabled unresolved -- "
+                    "template tick authoring not honored");
+        }
+    }
+    uint8_t b = 0;
+    if (g_startTick.off < 0 || !ReadAt(templateObj, g_startTick.off, b)) return true;
+    return (b & g_startTick.mask) != 0;
 }
 
 struct TArrayRaw {
@@ -117,6 +162,11 @@ void* g_finishCompFn = nullptr;
 void* g_attachFn = nullptr;
 void* g_pointLightClass = nullptr;
 void* g_setCastShadowsFn = nullptr;
+// Template-fidelity setters: USceneComponent::SetAbsolute (world-anchored
+// transform axes) + UActorComponent::SetComponentTickEnabled (authored-off
+// simulation).
+void* g_setAbsoluteFn = nullptr;
+void* g_setTickEnabledFn = nullptr;
 
 bool ResolveThunks() {
     if (!g_gsCdo) g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
@@ -134,9 +184,15 @@ bool ResolveThunks() {
             if (!g_finishCompFn) g_finishCompFn = R::FindFunction(actorCls, P::name::FinishAddComponentFn);
         }
     }
-    if (!g_attachFn) {
-        if (void* sceneCls = R::FindClass(L"SceneComponent"))
-            g_attachFn = R::FindFunction(sceneCls, L"K2_AttachToComponent");
+    if (!g_attachFn || !g_setAbsoluteFn) {
+        if (void* sceneCls = R::FindClass(L"SceneComponent")) {
+            if (!g_attachFn) g_attachFn = R::FindFunction(sceneCls, L"K2_AttachToComponent");
+            if (!g_setAbsoluteFn) g_setAbsoluteFn = R::FindFunction(sceneCls, L"SetAbsolute");
+        }
+    }
+    if (!g_setTickEnabledFn) {
+        if (void* acCls = R::FindClass(L"ActorComponent"))
+            g_setTickEnabledFn = R::FindFunction(acCls, L"SetComponentTickEnabled");
     }
     if (!g_pointLightClass) g_pointLightClass = R::FindClass(L"PointLightComponent");
     if (g_pointLightClass && !g_setCastShadowsFn) {
@@ -210,12 +266,10 @@ void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bo
     if (!ReadAt(n.templateObj, PropOff(L"ParticleSystemComponent", L"Template"), tmpl) || !tmpl)
         return nullptr;  // a PSC with no Template renders nothing -- skip
     // TEMPLATE-faithful activation: the kerfur joint-life sparks ship
-    // bAutoActivate=FALSE (makeSentient-only); mynet's emitters ship the class
-    // default TRUE. UActorComponent::bAutoActivate CDO default is true.
-    static void* sPscCdo = R::FindClassDefaultObject(L"ParticleSystemComponent");
-    const bool autoActivate =
-        ReadTemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", sPscCdo, true);
-    if (!autoActivate) return nullptr;  // dormant-by-authoring: nothing to show
+    // bAutoActivate=FALSE (makeSentient-only); mynet's emitters keep the PSC
+    // default TRUE. The template byte holds the effective value.
+    if (!TemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", true))
+        return nullptr;  // dormant-by-authoring: nothing to show
     ParamFrame f(g_emitterAttachedFn);
     f.Set<void*>(L"EmitterTemplate", tmpl);
     f.Set<void*>(L"AttachToComponent", meshComp);
@@ -236,12 +290,16 @@ void* SpawnSoundAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
     // "eff_*" (mynet's eff_zapp spark loops); behavioral audio (Audio = meow,
     // kerfurEXE) keeps its plain name and stays with the AI actor.
     if (!R::NameStartsWith(n.varName, L"eff_")) return nullptr;
+    if (!TemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", true))
+        return nullptr;  // dormant-by-authoring
     void* sound = nullptr;
     if (!ReadAt(n.templateObj, PropOff(L"AudioComponent", L"Sound"), sound) || !sound)
         return nullptr;
     float volume = 1.f, pitch = 1.f;
+    void* attenuation = nullptr;  // template-effective (mynet's zapp: att_small)
     ReadAt(n.templateObj, PropOff(L"AudioComponent", L"VolumeMultiplier"), volume);
     ReadAt(n.templateObj, PropOff(L"AudioComponent", L"PitchMultiplier"), pitch);
+    ReadAt(n.templateObj, PropOff(L"AudioComponent", L"AttenuationSettings"), attenuation);
     ParamFrame f(g_soundAttachedFn);
     f.Set<void*>(L"Sound", sound);
     f.Set<void*>(L"AttachToComponent", anchorComp);
@@ -253,7 +311,7 @@ void* SpawnSoundAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
     f.Set<float>(L"VolumeMultiplier", volume);
     f.Set<float>(L"PitchMultiplier", pitch);
     f.Set<float>(L"StartTime", 0.f);
-    f.Set<void*>(L"AttenuationSettings", nullptr);  // the cue carries its own attenuation
+    f.Set<void*>(L"AttenuationSettings", attenuation);
     f.Set<void*>(L"ConcurrencySettings", nullptr);
     f.Set<bool>(L"bAutoDestroy", false);
     if (!Call(g_gsCdo, f)) return nullptr;
@@ -288,8 +346,10 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
     // TEMPLATE-faithful visibility: kerfurOmega's lifeLight ships bVisible=FALSE
     // (only makeSentient turns it on) -- a light the game keeps dark is not
     // instanced at all. Force-lighting it was the 2026-07-03 pink-blast bug.
-    static void* sSceneCdo = R::FindClassDefaultObject(L"SceneComponent");
-    if (!ReadTemplateFlag(n.templateObj, L"SceneComponent", L"bVisible", sSceneCdo, true))
+    // Fallback FALSE: when the flag cannot be proven visible (layout drift), a
+    // missing glow is the cheap failure; a wrongly-lit per-player light is the
+    // screen-flooding one (take-2's exact regression).
+    if (!TemplateFlag(n.templateObj, L"SceneComponent", L"bVisible", false))
         return nullptr;
     // Pass the TEMPLATE's relative transform to both halves of the deferred
     // add: even if FinishAddComponent re-applies its transform param over our
@@ -362,6 +422,39 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
     return comp;
 }
 
+// Post-spawn template fidelity shared by every component kind.
+void ApplyTemplateFidelity(void* comp, const Node& n) {
+    // Absolute transform axes: mynet's grid decals author bAbsoluteRotation
+    // (the projection box stays world-vertical no matter which limb bone the
+    // decal rides -- KeepRelative attach alone tumbles the box with the bone
+    // until it swallows the camera: the take-2 grid-on-the-whole-screen bug);
+    // its electricity emitters author bAbsoluteScale. SetAbsolute reinterprets
+    // the already-applied relative values in world space, exactly how the
+    // engine's own SCS instancing treats an absolute-flagged template.
+    const bool absLoc = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteLocation", false);
+    const bool absRot = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteRotation", false);
+    const bool absScale = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteScale", false);
+    if ((absLoc || absRot || absScale) && g_setAbsoluteFn) {
+        ParamFrame f(g_setAbsoluteFn);
+        f.Set<bool>(L"bNewAbsoluteLocation", absLoc);
+        f.Set<bool>(L"bNewAbsoluteRotation", absRot);
+        f.Set<bool>(L"bNewAbsoluteScale", absScale);
+        Call(comp, f);
+    }
+    // Tick authoring: mynet's 17 electricity emitters ship
+    // bStartWithTickEnabled=FALSE -- the native sim never advances past its
+    // initial state (authored-off decoration). The GameplayStatics spawn
+    // registers the tick enabled; disabling it synchronously (before this
+    // frame's tick groups run) restores the never-ticked native state. Left
+    // running, 17 continuously-emitting systems are the rest of the take-2
+    // screen blast.
+    if (g_setTickEnabledFn && !TemplateStartsTickEnabled(n.templateObj)) {
+        ParamFrame f(g_setTickEnabledFn);
+        f.Set<bool>(L"bEnabled", false);
+        Call(comp, f);
+    }
+}
+
 }  // namespace
 
 int InstantiateCosmetics(void* actor, void* meshComp, void* rootComp,
@@ -399,6 +492,7 @@ int InstantiateCosmetics(void* actor, void* meshComp, void* rootComp,
         else if (n.className == L"PointLightComponent")
             comp = AddPointLightNode(actor, anchor, n, bone);
         if (comp) {
+            ApplyTemplateFidelity(comp, n);
             outComponents.push_back(comp);
             ++made;
         }
