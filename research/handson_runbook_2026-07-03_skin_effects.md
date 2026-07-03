@@ -1,6 +1,7 @@
-# Hands-on runbook 2026-07-03 — kerfur skin EFFECTS — take 3
+# Hands-on runbook 2026-07-03 — skin take-3 + join-line + TIME instant + inner-mesh
 
-**Deployed (take 3): DLL `229EF4F53F3A2219` on all 4 installs** (hash-verified; protocol v95).
+**Deployed: DLL `D9B66A83DCC20D7C` on all 4 installs** (hash-verified; protocol **v96** —
+both peers MUST be on this DLL to connect). Includes everything below (smoke x3 PASS).
 Autonomous 2-peer LAN smoke: PASS (both peers stable, puppets spawned, no RAM breach); rig log
 lines below are from that run. For the test, the inis are pre-set: HOST `player_skin=kerfur_omega`,
 CLIENT `player_skin=kerfur_mynet` (change freely in F1).
@@ -86,3 +87,39 @@ pops in, not before.
 - Face gated to the 4 omega bodies; maid/krampus are mesh-only skins (their base-class SCS is
   all dormant sentient nodes = nothing instanced, correct).
 - The col (paintable) kerfur NPC's picked color is still not on the wire (separate note).
+
+## TIME (your report: "не работает нормально и мгновенно")
+
+Root 1: set-clock wrote only the named clock; the sun re-derives from totalTime every tick and
+never moved until the minute pulse. Root 2: the CLIENT's HUD clock/day were structurally FROZEN
+(TimeScale=0 = no minute pulse; the wire only carried the sun accumulators). Now: dev-menu
+set-clock/sun-slider write the FULL state (sun jumps the same frame, HUD + scheduler + save
+consistent), and v96 TimeSync carries the named clock -- the client's clock/day converge <=2 s.
+Test: host F1 > set Day/Time -> lighting changes INSTANTLY on host; client sun follows <=2 s and
+its HUD clock/day now match the host. Forward day-jumps still fire skipped scheduled events
+natively (that part is the game's own settime walk).
+
+## EVENT TRIGGERING + MIRROR (your report) -- what changed + what I need from you
+
+- Trigger dispatch itself is instant (runEvent/runSpecialEvent on the eventer, same frame). BUT
+  many rows only ARM a controller that waits for its native day/time window (the menu shows each
+  row's native Day + HH:MM) -- with the time fix above, the workflow "trigger -> set clock to the
+  row's window" is now actually instant. If you want one-click "fire AT its native time" (auto
+  clock jump), say so -- easy to add now.
+- MIRROR coverage today: save/story/cosmetic flips + scare arms REPLAY on the client; the 16
+  world-actor classes (saucers/ships/UFOs/droppers) mirror live via the WA lane; **Character
+  creatures (wisps, boars, grays invasions, buster...) have NO lane yet** -- the client will not
+  see those spawns. That's the big known gap, and it's per-creature-type work (identity + pose
+  interp like the kerfur lane).
+- WHICH events did you trigger when the mirror looked broken? Name 2-3 -- I'll check each against
+  the lane matrix and either fix the verdict or build the missing lane next.
+
+## INNER-MESH (sci_v1sc / walter_v1sc / luther_v1sc "inner вылазит")
+
+The GoldSrc ports carry an LD dm_base torso+arms shell under the HD coat (+ sci had a second
+Gordon face INSIDE the head + all had an inner mouth plane). The converter now ray-scans every
+face group and auto-drops fully-enclosed interior shells (census: 16/16 models clean; shirt/
+belt/glasses survive); dm_base/Gordon_head force-stripped for these three. Rebuilt paks are on
+models/ + host+client+copy2 installs. Test: pick sci_v1sc / walter_v1sc / luther_v1sc -- no
+geometry poking through the coat/head at any animation. Your convert.bat got the fix too
+(portable dist rebuilt).

@@ -109,7 +109,7 @@ One value, host-authoritative, peers apply. Template sibling: `time_sync`.
 
 | File | What | ReliableKind |
 |---|---|---|
-| `time_sync.cpp` | Game clock | TimeSync `[V]` |
+| `time_sync.cpp` | Game clock (v96 2026-07-03: payload += the NAMED clock triple timeZ hour/min/dayZ -- a TimeScale=0 client never runs its minute pulse, so its HUD clock/day were frozen; dev set-clock is now instant full-state: totalTime+accumulator+timeZ in one write, sun re-derives same tick) | TimeSync `[AS-BUILT v96; pre-v96 [V]]` |
 | `sky_sync.cpp` | Sky rotation + moonPhase | SkyState `[V]` |
 | `weather_sync.cpp`, `weather_redsky.cpp`, `weather_lightning.cpp`, `weather_fog.cpp` | Weather scalar / red-sky / lightning / fog | WeatherState/RedSky/LightningStrike `[V]` |
 | `firefly_sync.cpp` | Ambient fireflies (peer-symmetric) | FireflySpawn `[V]` |
