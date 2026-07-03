@@ -68,16 +68,28 @@ dropped. Probe client_model_probe retained per the probes-exempt rule, flag off.
   could not catch it: a closed mesh's SILHOUETTE is winding-invariant and the garble hid the
   facing. Fix: ue_cook now MEASURES the template's signed-volume side (divergence theorem --
   exact, immune to the concavity noise that made a centroid-ray test read 0.469-vs-0.716) and
-  matches it; SHADING normals are decoupled from index winding (always geometric-outward).
+  matches it; shading normals are decoupled from index winding.
+- **SHADING NORMALS = the MDL's AUTHORED ones [root-fixed 2026-07-03 `d3f43626`, offline
+  render-proven]:** the original "recompute geometric-outward from windings" produced the
+  DARK-SUIT bug (user: "костюм слишком тёмный под углами, у всех v1sc") -- the GoldSrc
+  scientist coat is a DOUBLE-SIDED sheet (outer+inner copies), so per-position accumulation
+  self-cancelled into near-zero normals (probe: scientist_body 27% of instances >90deg off
+  authored; heads/hands ~10deg = why only suits looked broken). Now mdl_extract reads the
+  per-trivert normindex (previously discarded) + the norm bone table, writes `vn` +
+  `f p/t/n`; repose rotates normals with each bone's rigid part; ue_cook Y-mirrors and packs
+  them PER FACE-CORNER (vertex split key includes the normal index). The recompute is
+  deleted (RULE 2). In-game the backface cull (template-matched winding) hides the coat's
+  inner copy -- verified in the offline proof render with the same cull.
 - **FEATURE texture bind wired (not just the probe):** [the API names here are the pre-v93
   ones, superseded same day -- now `GetSkinTexture(name)` inside `ApplySkinToBody`] slot-0
   MID + 'tex' on BOTH body slots; `RemotePlayer::Spawn` binds it right after SpawnPuppet on
   custom-mesh puppets. COOP VISUAL VERIFIED [V hands-on 2026-07-02 "Работает amazing"]:
   host+client facing each other, both looks correct (pre-skins role-gate build).
-- Deployed state: DLL `fff53e04` + pak `5edabac7` (4 files: winding-fixed atlas-UV mesh +
-  512x256 atlas texture), all 4 install folders hash-verified 8/8. Audit (2026-07-02): all
-  functions COLD-path, zero findings >= 80 confidence; remote_player.cpp 913 LOC past the
-  800 soft cap -> queued extraction: ragdoll subsystem -> remote_player_ragdoll.{h,cpp}.
+- Deployed state (2026-07-03 evening): DLL `1CDD6079A5241162` 4/4; ALL 15 shipped model paks
+  rebuilt with authored normals on their same library profiles (einstein v1_narrow, rest
+  rvi38) and redeployed (user source folder + models/ + installs, hash-verified per pak).
+  Audit (2026-07-02): all functions COLD-path; remote_player.cpp past the 800 soft cap ->
+  queued extraction: ragdoll subsystem -> remote_player_ragdoll.{h,cpp}.
 
 **Locked decisions (RULE 1 no-crutch, RULE 3 no-editor-at-runtime):**
 - A REAL cooked `USkeletalMesh` the engine skins natively (NOT a ProceduralMesh +
@@ -94,13 +106,15 @@ dropped. Probe client_model_probe retained per the probes-exempt rule, flag off.
 ```
 OFFLINE (dev machine, tools/client_model/):   [DONE, automated]
   hl_einstein_v1sc.mdl
-   → mdl_extract.py   → model.obj + model.bones.json(+bone WORLD mats) + tex/*.png
+   → mdl_extract.py   → model.obj (v/vt/vn + f p/t/n -- AUTHORED normals) +
+                        model.bones.json(+bone WORLD mats, vert+norm bone tables) + tex/*.png
    → repose.py apply  → hl_einstein_v1sc_tpose.obj  (auto A-pose→VOTV T-pose + scale, §5;
-                                                     profiles/ LIBRARY, `default` = v2 wide)
+                                                     profiles/ LIBRARY; normals rotated per-bone)
    → atlas.py         → atlas.png + atlas.json      (19 tiles → 512x256, 1px gutter)
    → ue_cook.py       → hl_einstein_v1sc.uasset/.uexp (Y-mirror to cooked space, HL→anthro
                                                      rigid bone remap, per-face atlas UV remap,
-                                                     TEMPLATE-MATCHED winding, splice into template)
+                                                     TEMPLATE-MATCHED winding, AUTHORED normals
+                                                     per face-corner, splice into template)
    → ue_tex.py        → tex_hl_einstein_v1sc.uasset/.uexp (atlas.png → cooked UTexture2D, §8 rename)
    → repak pack       → hl_einstein_v1sc.pak        (VotV/Content/Mods/VOTVCoop/*, V11, 4 files)
 SHIP: hl_einstein_v1sc.pak deployed to EVERY peer by tools/deploy-all.ps1
@@ -388,8 +402,10 @@ a. **CLOSED [V]:** object name `kerfurOmega_KelSkin` at OUR package path loads f
    (log: `outer='/Game/Mods/VOTVCoop/scientist'`); the 2026-07-02 rename moved only the
    PACKAGE name (file placement in the pak) to `hl_einstein_v1sc` -- same mechanism, mesh
    object unrenamed. (The texture package IS cleanly renamed -- ue_tex.py full rename, §8.)
-b. **Still approximate (visually acceptable so far):** tangents (computed normal + a
-   perpendicular); ImportedBounds = template's; vertex colors = white.
+b. **Still approximate (visually acceptable so far):** tangent-X (a synthesized
+   perpendicular to the authored normal -- fine while the material has no normal map);
+   ImportedBounds = template's; vertex colors = white. (Shading normals themselves are no
+   longer approximate -- authored, see STATUS 2026-07-03.)
 c. **REOPENED by rung 4, then ROOT-FIXED [V]:** the earlier "no inside-out look" call was
    premature -- the garbled texture masked the facing and a closed mesh's silhouette is
    winding-invariant, so the geometry look could not falsify winding at all. Rung-4 real

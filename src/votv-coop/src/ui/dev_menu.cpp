@@ -3,6 +3,7 @@
 #include "ui/dev_menu.h"
 
 #include "coop/dev/dev_gate.h"
+#include "coop/dev/event_force.h"
 #include "coop/dev/event_trigger.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/freecam.h"
@@ -206,10 +207,14 @@ bool StrContainsI(const char* hay, const char* needle) {
 
 void RenderEvents() {
     namespace ET = coop::dev::event_trigger;
+    namespace EF = coop::dev::event_force;
+    EF::RequestRefresh();  // ~1 Hz internal limiter; keeps the ARMED badges live while the tab is open
     ImGui::TextDisabled("Trigger any game event (host only; runEvent + runSpecialEvent + ambient verbs).");
     ImGui::TextDisabled("Grouped by strict");
     ImGui::TextDisabled("category. 'day N' = unlock day. The cyan TIME column is the native trigger time-of-");
     ImGui::TextDisabled("day (HH:MM anchor) / 'trigger' (story/build) / 'rep' (ariral-reputation prank pool).");
+    ImGui::TextDisabled("Volume-gated events show a badge: fire only ARMS a level volume; NOW! completes it");
+    ImGui::TextDisabled("instantly (drives the volume's own overlap with your pawn -- the native walk-in).");
     static char filter[32] = {};
     ImGui::SetNextItemWidth(180.f);
     ImGui::InputTextWithHint("##evfilter", "filter (name / category / time / effect)...", filter, sizeof(filter));
@@ -245,21 +250,53 @@ void RenderEvents() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.95f, 1.0f));
         ImGui::Text("%-7s", ev.time);
         ImGui::PopStyleColor();
+        // Volume-gated events: the live gate badge + the force-NOW button.
+        const EF::BoxStatus box = EF::StatusFor(ev.name);
+        bool forceClicked = false, forceHovered = false;
+        if (box.hasBox) {
+            ImGui::SameLine();
+            if (!box.resolved)
+                ImGui::TextDisabled("[gate: volume ?]");
+            else if (box.shots == 0)
+                ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.5f, 1.0f), "[FIRED]");
+            else if (box.armed)
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "[ARMED - walk-in pending]");
+            else
+                ImGui::TextDisabled("[volume-gated]");
+            ImGui::SameLine();
+            ImGui::PushID(ev.name);
+            forceClicked = ImGui::SmallButton("NOW!");
+            forceHovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+        }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", ev.mechanism);
-        if (hoveredBtn) {
+        const char* note = box.hasBox ? nullptr : EF::GateNote(ev.name);
+        if (forceHovered) {
+            ImGui::SetTooltip("Arm + complete NOW: fires the event (clients get the arm as usual), then\n"
+                              "drives %s's own overlap handler with your pawn -- the same dispatch a real\n"
+                              "walk-in performs (native class filter + N bookkeeping).%s",
+                              box.boxName, danger ? "\n\nDangerous event: Ctrl+click." : "");
+        } else if (hoveredBtn) {
             if (danger) {
-                ImGui::SetTooltip("%s  |  native time: %s\n%s\n\nStory/save progression or player relocation"
-                                  " --\ncan desync the run. Ctrl+click to trigger.", catName, ev.time, ev.mechanism);
+                ImGui::SetTooltip("%s  |  native time: %s\n%s%s%s%s\n\nStory/save progression or player relocation"
+                                  " --\ncan desync the run. Ctrl+click to trigger.", catName, ev.time, ev.mechanism,
+                                  (box.hasBox || note) ? "\ngate: " : "",
+                                  box.hasBox ? "fire ARMS the level volume " : (note ? note : ""),
+                                  box.hasBox ? box.boxName : "");
             } else {
                 const char* path = (ev.dispatch == ET::Dispatch::SpecialEvent) ? "runSpecialEvent (specific prank)"
                                  : (ev.dispatch == ET::Dispatch::RandomPrank)  ? "runEvent (RANDOM rep-tier prank)"
                                  : (ev.dispatch == ET::Dispatch::Ambient)      ? "direct ambient UFunction (daynight/gamemode)"
                                  :                                               "runEvent";
-                ImGui::SetTooltip("%s  |  native time: %s  |  via %s\n%s", catName, ev.time, path, ev.mechanism);
+                ImGui::SetTooltip("%s  |  native time: %s  |  via %s\n%s%s%s%s", catName, ev.time, path, ev.mechanism,
+                                  (box.hasBox || note) ? "\ngate: " : "",
+                                  box.hasBox ? "fire ARMS the level volume; walk into it (or NOW!) to complete: " : (note ? note : ""),
+                                  box.hasBox ? box.boxName : "");
             }
         }
         if (clicked && (!danger || ImGui::GetIO().KeyCtrl)) ET::Trigger(ev);
+        if (forceClicked && (!danger || ImGui::GetIO().KeyCtrl)) EF::ForceNow(ev.name);
     }
     ImGui::EndChild();
 }
