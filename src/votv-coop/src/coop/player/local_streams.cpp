@@ -12,6 +12,7 @@
 #include "coop/creatures/kerfur_entity.h"  // K-5: GetKerfurMirrorEidForActor (held-kerfur-prop eid fallback)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // docs/piles/08: CtxForEid -- the trash sync-time-context (carry stamp + trash-eid gate)
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"
@@ -210,7 +211,17 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     namespace PP = coop::dev::perf_probe;
     coop::net::PoseSnapshot mine;
     { PP::Scope _s{PP::Bucket::LocalSend};
-      if (ReadLocalPose(local, controller, mine)) session.SetLocalPose(mine); }
+      if (ReadLocalPose(local, controller, mine)) {
+          session.SetLocalPose(mine);
+          // Skin step FX on the OWN body (mynet burst / keljoy squeak at your
+          // own feet): the native mainPlayer stride calls lib_C::step through
+          // an EX_CallMath (invisible to the ProcessEvent hook), so the coop
+          // layer re-strides the same pose sample it just read for the wire.
+          coop::skin_effects::TickStride(
+              local, ue_wrap::FVector{mine.x, mine.y, mine.z}, mine.speed,
+              (mine.stateBits & coop::net::kStateBitInAir) == 0);
+      }
+    }
 
     // Held-prop replication. Read mainPlayer.grabbing_actor; if non-null,
     // build a PropPoseSnapshot from the prop's current world transform and

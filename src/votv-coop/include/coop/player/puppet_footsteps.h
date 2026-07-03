@@ -51,30 +51,36 @@ struct Stride {
     // clamp(MaxWalkSpeed/400, 0.5, 2.0) -- sprint still scales louder.
     static constexpr float kStepVolume   = 0.6f;
 
-    void Tick(void* actor, const ue_wrap::FVector& pos, float speedCmS, bool grounded) {
-        if (!actor) return;
+    // Advance the stride accumulator one frame; true exactly when a step lands
+    // (every ~150 walked cm). The caller dispatches the consequences from the
+    // ONE verdict -- the puppet fires lib_C::step (CharacterStep) AND the skin
+    // step FX (skin_effects::OnStep) together, so they can never drift apart;
+    // the local body's skin_effects::TickStride runs its own instance over the
+    // wire-pose samples (RULE 2: one stride emitter).
+    bool StepDue(const ue_wrap::FVector& pos, float speedCmS, bool grounded) {
         if (!grounded || speedCmS <= kMinSpeedCmS) {
             // Idle/airborne: reset like the native chain re-primes lastStep
             // when stopped (@71043). lib_C::step's own ground trace is the
             // second airborne safety (silent on no hit).
             accum_ = 0.f;
             primed_ = false;
-            return;
+            return false;
         }
         if (!primed_) {
             last_ = pos;
             primed_ = true;
-            return;
+            return false;
         }
         const float dx = pos.X - last_.X, dy = pos.Y - last_.Y, dz = pos.Z - last_.Z;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
         last_ = pos;
-        if (d > kMaxSampleCm) return;  // warp -- not a stride
+        if (d > kMaxSampleCm) return false;  // warp -- not a stride
         accum_ += d * (speedCmS > kRunSpeedCmS ? kRunFactor : 1.0f);
         if (accum_ >= kStrideCm) {
             accum_ = 0.f;
-            ue_wrap::votv_lib::CharacterStep(actor, kStepVolume);
+            return true;
         }
+        return false;
     }
 
     void Reset() { accum_ = 0.f; primed_ = false; }

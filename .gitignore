@@ -167,9 +167,11 @@ models/
 
 # third-party tooling drops (not our source; same policy as VoiceChatMC):
 # SourceIO = GPLv3 Blender addon (Source-engine import), unrealpak = Epic's
-# UnrealPak tool + demo videos, psk-psa = Blender PSK/PSA addon (RE reference)
+# UnrealPak tool + demo videos, psk-psa = Blender PSK/PSA addon (RE reference),
+# kismet-analyzer = trumank's cooked-BP bytecode dumper release zip (dev RE only)
 tools/SourceIO/
 tools/unrealpak/
+tools/kismet-analyzer/
 reference/psk-psa-v9.1.2/
 
 # portable client-model converter build output (game-derived template bytes + binaries)

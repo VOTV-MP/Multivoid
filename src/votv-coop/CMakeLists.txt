@@ -159,6 +159,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/engine_bones.cpp
     src/ue_wrap/engine_component.cpp
     src/ue_wrap/engine_mainplayer.cpp
+    src/ue_wrap/scs_rig.cpp
     src/ue_wrap/engine_playerragdoll.cpp
     src/ue_wrap/engine_attach.cpp
     src/ue_wrap/door.cpp
@@ -205,6 +206,7 @@ add_library(votv-coop SHARED
     src/coop/player/remote_player.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
+    src/coop/player/skin_effects.cpp
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
     src/coop/props/remote_prop.cpp

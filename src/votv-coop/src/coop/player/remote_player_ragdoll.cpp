@@ -2,6 +2,7 @@
 
 #include "coop/player/remote_player_ragdoll.h"
 
+#include "coop/player/skin_effects.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
@@ -113,8 +114,10 @@ void RagdollDisplay::Start(void* puppetActor, int32_t puppetIdx) {
     }
     // Hide the standing kel for the flop -- otherwise it double-images over the
     // plushie (the June "plushy on a stick" rejection, inverted: now the plushie is
-    // the visible one).
+    // the visible one). The skin effect rig (belly light / joint sparks) hides
+    // with it -- floating sparks over an invisible body break the plushie trick.
     SetPuppetKelMeshesVisible(puppetActor, false);
+    coop::skin_effects::SetRigVisible(puppetActor, false);
     active_ = true;
     UE_LOGI("RagdollDisplay::Start: VISIBLE plushie body=%p spawned, puppet pelvis-attached + kel meshes hidden", body);
 }
@@ -126,6 +129,7 @@ void RagdollDisplay::Stop(void* puppetActor, int32_t puppetIdx) {
         // left it; the next pose drives it back to the streamed pose) BEFORE
         // destroying the body it's attached to.
         SetPuppetKelMeshesVisible(puppetActor, true);
+        coop::skin_effects::SetRigVisible(puppetActor, true);
         E::DetachActorFromRagdollBody(puppetActor);
     }
     // Destroy the physics body (IsLiveByIndex-guarded against a recycled addr).

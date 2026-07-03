@@ -3,6 +3,7 @@
 #include "coop/dev/puppet_head_probe.h"
 #include "coop/player/client_model.h"
 #include "coop/player/local_body.h"
+#include "coop/player/skin_effects.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -566,6 +567,9 @@ void RemotePlayer::Destroy() {
     // Tear down the ragdoll display body FIRST (a SEPARATE actor that would
     // otherwise outlive the puppet as an orphan) + reset its latches.
     ragdoll_.TeardownForDestroy();
+    // Same shape for the skin effect rig: its kerfusFace actor is a separate
+    // world actor that must not outlive the puppet.
+    coop::skin_effects::OnBodyDestroyed(actor_);
     // IsLiveByIndex (consistent with valid()): if the puppet was GC-freed and
     // its address recycled, plain IsLive would pass and DestroyActor would
     // destroy the FOREIGN impostor at that address. The slot-identity compare
@@ -587,6 +591,15 @@ void RemotePlayer::Destroy() {
 void RemotePlayer::ApplySkin(const std::string& skinName) {
     if (!valid()) return;  // per-slot skin state lives in player_handshake; next Spawn reads it
     if (appliedSkin_ == skinName) return;
+    // End an active hurt flash BEFORE the swap: its saved-material set belongs
+    // to the OLD mesh/rig -- restoring it after the swap would write stale slot
+    // pointers (incl. a torn-down skin-effects face MID whose outer died with
+    // the face actor) onto the NEW mesh.
+    if (hurtFlashActive_) {
+        E::RestoreHurtFlashMaterial(actor_, hurtSavedMaterials_);
+        hurtFlashActive_ = false;
+        hurtFlashEndMs_ = 0;
+    }
     // dr_kel needs the pristine baseline; a custom skin resolves its own mesh.
     void* nativeMesh = coop::local_body::NativeBodyMesh();
     if (coop::client_model::ApplySkinToBody(actor_, skinName, nativeMesh))
@@ -729,8 +742,15 @@ void RemotePlayer::ApplyToEngine() {
         // accumulator lives in the puppet's SUPPRESSED mainPlayer BP tick, so
         // the coop layer strides the interp displacement and dispatches the
         // game's own lib_C::step (see coop/puppet_footsteps.h). The current
-        // interp position is the actor's location this frame (cur_).
-        footsteps_.Tick(actor_, curPos_, curSpeed_, !inAir);
+        // interp position is the actor's location this frame (cur_). ONE
+        // StepDue verdict drives BOTH the native step and the skin step FX
+        // (perf audit W2: two independent accumulators drift apart = doubled
+        // audible steps for keljoy/mynet skins).
+        if (footsteps_.StepDue(curPos_, curSpeed_, !inAir)) {
+            ue_wrap::votv_lib::CharacterStep(
+                actor_, coop::puppet_footsteps::Stride::kStepVolume);
+            coop::skin_effects::OnStep(actor_, curPos_);
+        }
     }
 
     // Head-look: show WHERE THE REMOTE PLAYER IS LOOKING (not auto-follow the

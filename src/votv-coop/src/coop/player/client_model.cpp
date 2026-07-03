@@ -1,5 +1,6 @@
 #include "coop/player/client_model.h"
 
+#include "coop/player/skin_effects.h"
 #include "coop/player/skin_registry.h"
 #include "ue_wrap/asset_load.h"
 #include "ue_wrap/engine.h"
@@ -106,6 +107,9 @@ bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativ
         }
         UE_LOGI("client_model: %p -> native dr_kel body (%d/2 slots, material override cleared)",
                 mainPlayerActor, done);
+        // Tear down a previous builtin skin's effect rig (face actor / light /
+        // particles) -- dr_kel wears none.
+        if (done > 0) coop::skin_effects::Apply(mainPlayerActor, name);
         return done > 0;
     }
 
@@ -135,6 +139,11 @@ bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativ
     UE_LOGI("client_model: %p -> skin '%s' (mesh %d/2 slots, %s)",
             mainPlayerActor, name.c_str(), done,
             tex ? "atlas tex bound" : "own materials (override cleared)");
+    // The skin is more than the mesh for builtin kerfur skins: rebuild the
+    // variant's effect rig (RT face / alive glow / particles / step FX) --
+    // AFTER the material override pass above so the rig's slot writes land on
+    // the final material state. Non-builtins tear a previous rig down.
+    if (done > 0) coop::skin_effects::Apply(mainPlayerActor, name);
     return done > 0;
 }
 
