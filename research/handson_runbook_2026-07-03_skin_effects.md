@@ -1,10 +1,14 @@
 # Hands-on runbook 2026-07-03 — skin take-3 + join-line + TIME instant + NORMALS + EVENTS-NOW
 
-**Deployed: DLL `1CDD6079A5241162` on all 4 installs** (hash-verified; protocol **v96** —
-both peers MUST be on this DLL to connect). Supersedes `D9B66A83` (adds the events
-NOW!/badges feature; no wire change). Evening additions NOT yet smoke-tested (you were at
-the PC — no autonomous launches): the events feature is dev-menu-only (no hot path while
-the menu is closed) and the model paks were verified offline (renders + hash x5).
+**Deployed: DLL `121C31D2BEFE85B4` on all 4 installs** (hash-verified; protocol **v96** —
+both peers MUST be on this DLL to connect). Supersedes `1CDD6079A5241162` (adds only the
+env-gated eventforce autotest — zero behavior change in your hands; same wire). Evening
+additions NOW smoke-tested (2026-07-03 late eve, you left the PC): baseline 2-peer LAN
+smoke PASS (90 s steady, RSS flat, zero errors) AND the events feature verified end to end
+autonomously — `eventforce_test: VERDICT PASS`: obelisk PRE armed=0 shots=1 → NOW!-path
+force → POST shots=0 ([FIRED]), host arm broadcast + client `REPLAY runEvent 'obelisk'`
+in the same second. What autonomy CANNOT see: the visible obelisk chain on screen — your
+hands-on below still decides that.
 
 ## EVENING ADDITIONS (after your two reports)
 

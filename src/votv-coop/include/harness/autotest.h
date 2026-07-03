@@ -267,4 +267,12 @@ DWORD WINAPI MoveOscThread(LPVOID arg);
 void RunAutonomousEventFireTest();
 DWORD WINAPI EventFireTestThread(LPVOID arg);
 
+// Event force-NOW smoke (2026-07-03, harness/autotest_eventforce.cpp). HOST-ONLY: verifies the
+// volume-gate feature (coop/dev/event_force) end to end on obelisk -- badge snapshot resolves
+// (PRE armed=0 shots=1), ForceNow arms via HostFire + drives the box's own BeginOverlap with the
+// local pawn, POST snapshot reads shots=0 ([FIRED]). Greppable "eventforce_test: VERDICT".
+// Gated by env VOTVCOOP_RUN_EVENTFORCE_TEST=1 (host+client LAN pair; client observes the arm replay).
+void RunAutonomousEventForceTest();
+DWORD WINAPI EventForceTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

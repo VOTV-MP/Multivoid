@@ -123,6 +123,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // event_fire_sync::HostFire; the client log proves the replay policy + suppression.
     SpawnIf("VOTVCOOP_RUN_EVENTFIRE_TEST", "EventFire replay smoke", &EventFireTestThread, role);
 
+    // Event force-NOW smoke: host resolves the obelisk box badge, ForceNow()s it, and
+    // asserts shots 1 -> 0 through the native overlap dispatch (coop/dev/event_force).
+    SpawnIf("VOTVCOOP_RUN_EVENTFORCE_TEST", "event force-NOW smoke", &EventForceTestThread, role);
+
     // TEST-ONLY local-player movement oscillator: circles the local player so the OTHER
     // peer's interp has a MOVING source. Verification rig for the interp-starvation fix
     // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the
