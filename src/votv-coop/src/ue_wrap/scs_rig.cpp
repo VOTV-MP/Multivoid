@@ -72,6 +72,32 @@ bool ReadAt(void* obj, int32_t off, T& out) {
     return true;
 }
 
+// Read a BITFIELD bool (uint8 flag:1) off a component TEMPLATE without knowing
+// the FBoolProperty field mask: XOR the template's byte against the component
+// CLASS CDO's byte at the same offset. mask==0 -> the template keeps the class
+// default (`cdoDefault`); a single flipped bit -> the template serialized the
+// OPPOSITE of the default (cooked BP templates only serialize overrides).
+// Multiple flipped bits would mean several packed flags overridden at once --
+// unseen in the kerfur rigs; default + WARN once. This is what keeps the
+// player rig faithful to the game's own authoring: the joint-life sparks ship
+// bAutoActivate=FALSE and lifeLight ships bVisible=FALSE (the makeSentient-only
+// state) -- force-activating them was the 2026-07-03 pink-blast regression.
+bool ReadTemplateFlag(void* templateObj, const wchar_t* declClass, const wchar_t* prop,
+                      void* classCdo, bool cdoDefault) {
+    const int32_t off = PropOff(declClass, prop);
+    uint8_t tByte = 0, cByte = 0;
+    if (!ReadAt(templateObj, off, tByte) || !classCdo || !ReadAt(classCdo, off, cByte))
+        return cdoDefault;
+    const uint8_t mask = static_cast<uint8_t>(tByte ^ cByte);
+    if (mask == 0) return cdoDefault;
+    if ((mask & (mask - 1)) != 0) {
+        UE_LOGW("scs_rig: multi-bit flag delta on %ls.%ls (t=%02X cdo=%02X) -- default kept",
+                declClass, prop, tByte, cByte);
+        return cdoDefault;
+    }
+    return !cdoDefault;
+}
+
 struct TArrayRaw {
     void** Data;
     int32_t Num;
@@ -183,6 +209,13 @@ void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bo
     void* tmpl = nullptr;
     if (!ReadAt(n.templateObj, PropOff(L"ParticleSystemComponent", L"Template"), tmpl) || !tmpl)
         return nullptr;  // a PSC with no Template renders nothing -- skip
+    // TEMPLATE-faithful activation: the kerfur joint-life sparks ship
+    // bAutoActivate=FALSE (makeSentient-only); mynet's emitters ship the class
+    // default TRUE. UActorComponent::bAutoActivate CDO default is true.
+    static void* sPscCdo = R::FindClassDefaultObject(L"ParticleSystemComponent");
+    const bool autoActivate =
+        ReadTemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", sPscCdo, true);
+    if (!autoActivate) return nullptr;  // dormant-by-authoring: nothing to show
     ParamFrame f(g_emitterAttachedFn);
     f.Set<void*>(L"EmitterTemplate", tmpl);
     f.Set<void*>(L"AttachToComponent", meshComp);
@@ -193,7 +226,7 @@ void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bo
     f.Set<uint8_t>(L"LocationType", kKeepRelativeOffset);
     f.Set<bool>(L"bAutoDestroy", false);
     f.Set<uint8_t>(L"PoolingMethod", 0);  // EPSCPoolMethod::None
-    f.Set<bool>(L"bAutoActivate", true);  // player skin = the alive look; see skin_effects
+    f.Set<bool>(L"bAutoActivate", true);
     if (!Call(g_gsCdo, f)) return nullptr;
     return f.Get<void*>(L"ReturnValue");
 }
@@ -252,6 +285,12 @@ void* SpawnDecalAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
 // attach -> post-registration setters for the render-state-coupled bits.
 void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FName& bone) {
     if (!g_addCompFn || !g_finishCompFn || !g_attachFn || !g_pointLightClass) return nullptr;
+    // TEMPLATE-faithful visibility: kerfurOmega's lifeLight ships bVisible=FALSE
+    // (only makeSentient turns it on) -- a light the game keeps dark is not
+    // instanced at all. Force-lighting it was the 2026-07-03 pink-blast bug.
+    static void* sSceneCdo = R::FindClassDefaultObject(L"SceneComponent");
+    if (!ReadTemplateFlag(n.templateObj, L"SceneComponent", L"bVisible", sSceneCdo, true))
+        return nullptr;
     // Pass the TEMPLATE's relative transform to both halves of the deferred
     // add: even if FinishAddComponent re-applies its transform param over our
     // pre-finish field writes (unverified engine detail flagged in the
@@ -320,9 +359,6 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
         cs.Set<bool>(L"bNewValue", false);
         Call(comp, cs);
     }
-    // The template ships bVisible=false (makeSentient turns it on); the player
-    // skin wears the alive look, so the light goes visible right here.
-    ue_wrap::engine::SetSceneComponentVisibility(comp, true, false);
     return comp;
 }
 

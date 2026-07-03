@@ -8,8 +8,12 @@
 //   kerfusFace.ReceiveBeginPlay -> gen(): builds its own 256x256 RT +
 //                          scene-capture of its AnimBP'd face mesh; leaves the
 //                          screen MID in `dynmat` (we only read the result).
-//   kerfurOmega.makeSentient : body-MID(slot 0) 'ag' = tex_kerfurOmega256_glow1,
-//                          14x eff_life*.Activate, lifeLight visible.
+//   kerfurOmega.makeSentient : the SENTIENT-only add-ons ('ag' glow MID, 14x
+//                          eff_life*.Activate, lifeLight visible). NOT applied
+//                          here: crafted kerfurs keep them OFF (bAutoActivate/
+//                          bVisible=false in the SCS), and force-enabling them
+//                          was the 2026-07-03 "pink blast" user regression --
+//                          scs_rig now honors the template flags.
 //   kerfurOmega_mynet.step (ubergraph @3-@6): lib step -> SpawnEmitterAtLocation(
 //                          eff_mynetEmitterStep, loc) + PlaySound(boltrix_mediumHit).
 //   stepped() plays the variant CDO's footstepSound (keljoy squeak path).
@@ -220,12 +224,6 @@ void* SpawnFaceActor(int32_t faceType) {
     return face;
 }
 
-// The sentient 'ag' glow texture makeSentient stamps on the body MID.
-void* GlowTexture() {
-    return LoadCached(L"/Game/meshes/kerfurAnthro/tex_kerfurOmega256_glow1."
-                      L"tex_kerfurOmega256_glow1");
-}
-
 // ---- step FX (SpawnEmitterAtLocation, firefly_sync's resolve pattern) -------
 void* g_gsCdo = nullptr;
 void* g_spawnEmitterFn = nullptr;
@@ -283,8 +281,13 @@ void Apply(void* bodyActor, const std::string& skinName) {
 
     if (it != g_rigs.end()) {
         Rig& r = it->second;
+        // Same skin + the face actor (when one exists) still live => nothing to
+        // do. comps may legitimately be EMPTY (take-2: a plain omega's base SCS
+        // cosmetics are all dormant sentient nodes), so emptiness is not a
+        // rebuild signal; components die only with the actor, whose liveness
+        // the sweep above already proved.
         const bool faceOk = !r.faceActor || R::IsLiveByIndex(r.faceActor, r.faceIdx);
-        if (r.skin == skinName && faceOk && !r.comps.empty()) return;  // live rig, same skin
+        if (r.skin == skinName && faceOk) return;
         TeardownRig(bodyActor, r, /*actorDying=*/false);
         g_rigs.erase(it);
     }
@@ -342,19 +345,7 @@ void Apply(void* bodyActor, const std::string& skinName) {
     rig.comps.reserve(comps.size());
     for (void* c : comps) rig.comps.emplace_back(c, R::InternalIndexOf(c));
 
-    // 2) The alive glow (makeSentient bytecode): 'ag' = tex_kerfurOmega256_glow1
-    //    on a slot-0 body MID -- BOTH body slots render, so both get the MID
-    //    ([[lesson-attachparent-visibility-two-body]]). Meshes whose material
-    //    has no 'ag' parameter no-op the setter (variant plush skins).
-    if (void* glow = GlowTexture()) {
-        for (void* comp : {meshComp, visComp}) {
-            if (!comp) continue;
-            if (void* mid = E::CreateDynamicMaterialInstance(comp, 0))
-                E::SetTextureParameterValue(mid, L"ag", glow);
-        }
-    }
-
-    // 3) The RT face -- the game's own kerfusFace actor, dynmat into the
+    // 2) The RT face -- the game's own kerfusFace actor, dynmat into the
     //    mesh's screen slot (makeFace/setFace bytecode).
     if (prof->allowFace && fmi >= 0) {
         if (void* face = SpawnFaceActor(faceType)) {
@@ -372,7 +363,7 @@ void Apply(void* bodyActor, const std::string& skinName) {
         }
     }
 
-    // 4) Step FX identity: the variant CDO's footstepSound (keljoy squeak,
+    // 3) Step FX identity: the variant CDO's footstepSound (keljoy squeak,
     //    mynet boltrix) + mynet's step burst emitter.
     if (footstepSound) {
         rig.stepSound = footstepSound;

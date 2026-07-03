@@ -12,10 +12,10 @@
 // the variant's cosmetic identity on the player body, data-driven from the
 // game's own classes (RE: docs in research/pak_re, kerfurOmega*.json 2026-07-03):
 //   - base kerfurOmega_C SCS rig + the variant class's own SCS rig
-//     (ue_wrap/scs_rig: particles / point light / decals / eff_* audio);
-//   - the ALIVE look the game's makeSentient() applies (bytecode: 'ag' glow
-//     texture param on the slot-0 body MID, particles active, light visible)
-//     -- a player is a living kerfur, so the skin always wears it;
+//     (ue_wrap/scs_rig: particles / point light / decals / eff_* audio),
+//     TEMPLATE-faithful: nodes the game authors dormant (the makeSentient-only
+//     joint-life sparks + lifeLight, bAutoActivate/bVisible=false) stay OFF --
+//     force-enabling them was the 2026-07-03 "pink blast" regression;
 //   - the face: spawn the game's own kerfusFace_C (deferred, `type` stamped
 //     pre-BeginPlay exactly like kerfurOmega.makeFace), read its `dynmat`
 //     (the 256x256 scene-capture RT material its BeginPlay gen()erates), set

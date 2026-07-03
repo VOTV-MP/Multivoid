@@ -22,6 +22,12 @@
 // nav invokers, camera child actors, the mat_invisRender render probe) is
 // actor BEHAVIOR, not skin cosmetics -- skipped.
 //
+// TEMPLATE-faithful dormancy: nodes the game authors OFF stay off -- a particle
+// with bAutoActivate=false or a light with bVisible=false (kerfurOmega's
+// makeSentient-only joint-life sparks + lifeLight) is not instanced at all.
+// Bitfield flags are read via the template-vs-class-CDO byte XOR (cooked
+// templates serialize only overrides); see ReadTemplateFlag.
+//
 // Engine-wrapper layer (principle 7): no coop/network state, no per-skin
 // policy -- the caller decides WHICH classes to instance and owns the
 // returned component pointers' lifecycle. Game thread only.
