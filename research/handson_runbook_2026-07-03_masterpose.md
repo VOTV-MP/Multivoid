@@ -1,13 +1,13 @@
 # Hands-on runbook 2026-07-03 (take 5) — ragdoll display: VISIBLE PLUSHIE (take 2) + late fixes (take 3)
 
-**Deployed (take 3):** DLL `3FDEF8097B7D937E` on all 4 installs (hash-verified;
-supersedes `53332070` — same plushie display PLUS the nameplate head-bone anchor and the two
-pile-dup fixes below). Protocol UNCHANGED (v95). Paks unchanged.
-
-> **Take 4 PENDING DEPLOY:** the nameplate retest ("отстает") produced the Z-only smoothing
-> refinement (`458f88ca`): X/Y raw (super snappy), only the height low-passed. Built as DLL
-> `3DB6D4D554539866` but the running game instances locked the files — CLOSE BOTH GAMES and say
-> the word; deploy takes seconds. Until then the installs run take 3 (full-vector smoothing).
+**Deployed (take 5, LATEST): DLL `FCBC75823B023A22` on all 4 installs** (hash-verified) =
+plushie display + nameplate head-anchor with Z-ONLY smoothing (X/Y raw per your "super snappy")
++ the pile fix pair + all 3 audit hardenings (`8759c2f6`: NaN-routing snap; the `_38` second
+press seam now cancels unbound-pile presses too — no lone "EHHH"; churn-guard binding freshness).
+Protocol UNCHANGED (v95). Also on this take: `[dev] ragdoll_bone_overlay=1` REMOVED from the host
+ini (the always-on bone lines — next launch starts clean; F1 checkbox still available) and
+`[dev] freecam=1` ADDED (the HOME toggle's polling thread only starts with this key — that is why
+HOME "died": it only ever ran after a first F1 freecam toggle).
 
 **PLUSHIE VERDICT: VERIFIED hands-on 2026-07-03** — user: "your approach is amazing, so it
 shows the kel_lmao skin when the ragdoll mode is active which is pretty cool. Thats one of the
