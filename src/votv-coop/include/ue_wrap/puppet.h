@@ -217,6 +217,14 @@ void DriveKerfurBodyYaw(void* npcActor, float yaw);
 // Game thread only.
 void DisableCharacterTicks(void* actor);
 
+// CMC-only park: movement-component tick OFF, ACTOR tick left ON. For a mirror whose BP
+// ReceiveTick is per-viewer cosmetic design the mirror should keep running (wisp_C fade/bob/
+// shy-despawn), while the pose lane still owns position (no CMC integration fight). The
+// landing gate such BPs read (CMC CurrentFloor) is CMC-tick-computed and therefore stays
+// stale -- the pose lane drives that edge explicitly (ue_wrap::wisp::DriveWispLanding).
+// No-op on null/dead actor. Game thread only.
+void DisableMovementTick(void* actor);
+
 // Bug 2 root-cause fix (Plan B2, 2026-05-23):
 //
 // The AnimBP's BlueprintUpdateAnimation pulls velocity from

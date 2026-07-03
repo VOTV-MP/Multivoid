@@ -26,6 +26,7 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 | garbageClump (the carried "ball" — HOST authoring) | `chipPile.playerGrabbed` on grab (EX_LocalVirtualFunction); the clump-spawn + re-pile pile-spawn are `EX_CallMath` (INVISIBLE) | **host-auth trash channel (08):** grab = `InpActEvt_use` PRE + held-edge adopt [V]; re-pile = the **`UFunction::Func` thunk converter** (`ue_wrap/ufunction_hook`) — reads the source clump + spawned pile off the `EX_CallMath BeginDeferred`, converts E the same tick [AS-BUILT; detection [V] read-only `B7EEB1BF`]. *(The BeginDeferred-POST ProcessEvent link was DISPROVEN — EX_CallMath, 0 fires, `0e56ca39`; the proximity death-watch that briefly replaced it is RETIRED, RULE 2, `d19ae4d4`.)* | **host eid only** (re-skins the pile's E) | trash_channel, trash_collect_sync, local_streams, ue_wrap/ufunction_hook (08) — *pile_morph + death-watch RETIRED* |
 | Held items (Aprop_C in hand) | grabbed | `EnsureHeldItemBroadcast` new-held edge (self-heal for untracked) + the held-pose stream | the item's Key/eid | trash_collect_sync, local_streams |
 | NPCs / Characters | BeginDeferred (VISIBLE) | host `BeginDeferred` interceptor + POST; save-loaded via `RegisterExistingWorldNpcs` walk | host eid (no BP key) | npc_sync, npc_mirror, npc_world_enum, npc_adoption |
+| wisp_C (wispSwarm event) | BeginDeferred **as `EX_CallMath`** from trigger_wispSwarm's ubergraph (INVISIBLE to PE) | **`ufunction_hook` Func-thunk, SOURCE-GATED** (FFrame::Object class == trigger_wispSwarm_C) → queue → pose-tick drain enroll; **ambient ticker wisp_C stays per-peer** (skipped by gate + world-enum); PE-invisible self-despawn caught by the **pose-walk dead-retire** | host eid (no BP key) | npc_world_enum (EX-catch + enroll), npc_sync (SyncDestroyedNpcByEid), npc_pose_drive + ue_wrap/wisp (landing edge) |
 | WorldActors (event actors) | BeginDeferred (VISIBLE) | 2nd `BeginDeferred` interceptor (disjoint, NAME-matched allowlist) | host eid | world_actor_sync |
 | Kerfur (prop⇄NPC) | conversion verbs (EX_CallMath, INVISIBLE) | **conversion death-watch POLL** + KerfurConvert broadcast | host **KerfurId** (spans both forms) + the per-form eid | kerfur_entity, kerfur_convert, kerfur_command, kerfur_prop_adoption |
 
@@ -329,11 +330,34 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   **[V hands-on: dup-fix(derived) + visibility + carry-freeze + carry-JANK + throw-arc + rotation + sound; V harness: Z-fix + level-pile dup-DESTROY + FPS-fix; SCALE AS-BUILT; option 2 DISPROVEN.]**
 
 ### NPCs / Characters
-- Host `BeginDeferred` **interceptor** (allowlist of 14 ACharacter bases) allocs an `Npc` Element + POST
+- Host `BeginDeferred` **interceptor** (allowlist of 15 ACharacter bases) allocs an `Npc` Element + POST
   binds the actor; **client suppresses its own** local spawn (zero ReturnValue + return true) and
   materializes from the wire (`OnEntitySpawn`). Save-loaded twins (`savePersisted=1`) → **deferred adoption**
-  by class+nearest-pose (never by key — the key is random per peer). Pose via `EntityPose` batch. Destroy
-  via `K2_DestroyActor` PRE → `EntityDestroy`. **[V]**
+  by class+nearest-pose (never by key — the key is random per peer). Pose via `EntityPose` batch (>31
+  tracked → fair-share rotation at the publisher, the MTA far-sync shape). Destroy
+  via `K2_DestroyActor` PRE → `EntityDestroy`; a bound actor found dead in the pose walk (PE-invisible
+  self-destroy) → `SyncDestroyedNpcByEid` retire + `EntityDestroy` (2026-07-03). **[V]**
+
+### wisp_C (the wispSwarm-event swarm — the EX_CallMath NPC; 2026-07-03, smoke 32/32×4 legs)
+- **Spawn dispatch is `EX_CallMath` BeginDeferred** from `trigger_wispSwarm_2`'s ubergraph (up to 32, one
+  per 0.25–1.0 s, annulus 500–750 m out / 500 m up) — the PE interceptor+POST NEVER fire. Caught by the
+  **`ufunction_hook` Func-thunk** on the same UFunction (chains after trash_collect's), **SOURCE-GATED by
+  `FFrame::Object`'s class == `trigger_wispSwarm_C`**, queued (fires PRE-Finish, transform unset), enrolled
+  at the next pose tick (`npc_world_enum::DrainPendingExSpawns` → the shared `EnrollUntrackedNpcActor`). **[V smoke]**
+- **AMBIENT wisp_C stays per-peer local by design** (ticker_wispSpawner's table is wisp_C weight 100 of
+  ~108): the source-gate excludes it and the world-enum walk skips untracked wisp_C — same standing
+  decision as the colored `wisp_o/b/g` SIBLINGS (per-player-effect classes, never mirrored). **[V]**
+- **Mirror keeps its ACTOR tick** (`DisableMovementTick`, CMC-only park): the wisp's ReceiveTick is
+  per-viewer cosmetic design (fade gate, effect bob, shy-despawn on local approach/dawn, 1 Hz bad-camera
+  scan is a BeginPlay latent either way). It spawns INVISIBLE; fade-in fires at the landing edge gated on
+  **CMC `CurrentFloor.bBlockingHit`** — CMC-tick-computed, stale on a parked CMC — so the pose drive
+  replays the edge (`ue_wrap::wisp::DriveWispLanding`: write `landed` + call `dir(true)`) when the
+  streamed pose reads grounded. **[V smoke: resolve at +9 s = wisp #1's fall time]**
+- **Destroy is an `EX_VirtualFunction` SELF-call** (timeline-reverse-finished → `K2_DestroyActor`; despawn
+  check = local camera <100 m OR sun outside the night band, tick-driven, landed-gated) — the K2 PRE never
+  sees it. Host pose walk catches the bound-but-dead actor → `SyncDestroyedNpcByEid` → `EntityDestroy`;
+  the client mirror may also shy-despawn client-locally first (per-viewer SP design; the wire destroy then
+  no-ops on "already not-live"). **[V smoke: 32/32 dead-retired at +6 s after forced midday, 32/32 client teardowns]**
 
 ### WorldActors (event actors)
 - A **second** `BeginDeferred` interceptor with a **disjoint, NAME-matched** allowlist (16 leaf classes;

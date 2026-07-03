@@ -32,6 +32,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
 #include "ue_wrap/types.h"
 
 #include <cmath>
@@ -358,7 +359,27 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     }
     // Park the mirror so the streamed pose drive is authoritative: CMC tick OFF + actor tick OFF
     // (the AnimBP still ticks on the mesh and reads the CMC.Velocity our pose drive writes).
-    ue_wrap::puppet::DisableCharacterTicks(spawned);
+    // 2026-07-03 wisp exception: wisp_C keeps its ACTOR tick -- its ReceiveTick is per-viewer
+    // COSMETIC design (fade-in gate, effect bob, shy-despawn on local approach/dawn), not AI;
+    // only the CMC parks (pose lane owns position). The tick's landing gate reads a
+    // CMC-tick-computed CurrentFloor that stays stale on a parked CMC, so the pose drive
+    // replays that one edge explicitly (MarkWispMirror -> DriveWispLanding on inAir 1->0).
+    // A client-local shy-despawn later just makes the host's EntityDestroy a no-op (the
+    // OnEntityDestroy "already not-live" path).
+    const bool wispMirror = (classW == ue_wrap::profile::name::NpcClass_Wisp);
+    if (wispMirror) {
+        ue_wrap::puppet::DisableMovementTick(spawned);
+        if (coop::element::Npc* el = coop::element::NpcMirrors().Get(eid)) {
+            el->MarkWispMirror();
+        } else {
+            // Should be unreachable after a successful CreateOrAdoptNpcMirror -- but a silent
+            // miss here = a mirror that never fades in (audit note 4), so make it observable.
+            UE_LOGW("npc-sync[client OnSpawn]: wisp mirror eid=%u not retrievable post-install -- "
+                    "landing drive NOT armed (mirror would stay faded-out)", eid);
+        }
+    } else {
+        ue_wrap::puppet::DisableCharacterTicks(spawned);
+    }
     // THOROUGH PARK: DisableCharacterTicks does not stop FTimerManager timers. A kerfur arms three
     // looping timers (timer_face/timer_kerf/checkDoor) that keep running local AI on the parked
     // mirror (the 200s timer_kerf can flip it into a local spooky-kill state). No-op on non-kerfur.

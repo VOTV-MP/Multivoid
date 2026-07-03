@@ -127,6 +127,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // asserts shots 1 -> 0 through the native overlap dispatch (coop/dev/event_force).
     SpawnIf("VOTVCOOP_RUN_EVENTFORCE_TEST", "event force-NOW smoke", &EventForceTestThread, role);
 
+    // Wisp mirror-lane e2e: host ForceNow()s the wisps swarm (EX_CallMath spawns -> Func-thunk
+    // enroll -> client mirrors), then forces midday so the PE-invisible self-despawns exercise
+    // the pose-walk dead-retire broadcast. Assert via log diff.
+    SpawnIf("VOTVCOOP_RUN_WISPLANE_TEST", "wisp mirror-lane e2e", &WispLaneTestThread, role);
+
     // TEST-ONLY local-player movement oscillator: circles the local player so the OTHER
     // peer's interp has a MOVING source. Verification rig for the interp-starvation fix
     // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the

@@ -1,12 +1,13 @@
-// coop/npc_world_enum.cpp -- see header.
+// coop/npc_world_enum.cpp -- see header. HOST-side OFF-INTERCEPTOR NPC enrollment:
+// the level-load GUObjectArray walk + the EX_CallMath BeginDeferred spawn catch
+// (2026-07-03, the wisp mirror lane). Both funnel into ONE enroll body
+// (EnrollUntrackedNpcActor) that reaches the same end state as interceptor+POST.
 //
-// Extracted verbatim from npc_sync.cpp (K-0, 2026-06-16); behavior-preserving. The two
-// pieces of npc_sync host-side state this walk needs -- the host-sync-disabled gate and the
-// live-actor -> ElementId reverse-map insert -- now go through npc_sync's public accessors
-// (IsHostNpcSyncDisabled / MapActorToNpcId) instead of the file-static globals it used while
-// it lived inside npc_sync.cpp. The Npc Element store is the shared MirrorManager<Npc>
-// singleton (same one npc_sync.cpp / npc_mirror.cpp / npc_pose_host.cpp wrap). Log strings are
-// preserved unchanged so existing diagnostics/asserts keep matching.
+// The two pieces of npc_sync host-side state this needs -- the host-sync-disabled gate and the
+// live-actor -> ElementId reverse-map insert -- go through npc_sync's public accessors
+// (IsHostNpcSyncDisabled / MapActorToNpcId). The Npc Element store is the shared
+// MirrorManager<Npc> singleton (same one npc_sync.cpp / npc_mirror.cpp / npc_pose_host.cpp wrap).
+// Log strings of the walk are preserved unchanged so existing diagnostics/asserts keep matching.
 
 #include "coop/creatures/npc_world_enum.h"
 
@@ -22,21 +23,196 @@
 #include "ue_wrap/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/sdk_profile.h"      // NpcClass_Wisp (the ambient-wisp walk skip)
+#include "ue_wrap/ufunction_hook.h"   // the EX_CallMath spawn-catch thunk
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace coop::npc_world_enum {
 namespace {
 
 namespace R = ue_wrap::reflection;
+namespace P = ue_wrap::profile;
 
 // The single host/mirror Npc set (the same template singleton npc_sync.cpp +
 // npc_mirror.cpp + npc_pose_host.cpp wrap; MirrorManager<Npc>::Instance() owns it).
 using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_managers.h)
 
+// ---- the ONE enroll body ---------------------------------------------------------------
+// Alloc + bind + reverse-map [+ KerfurId] + EntitySpawn broadcast (when connected) for an
+// UNTRACKED live NPC actor -- the same end state the interceptor+POST reach for a fresh
+// spawn. Returns the eid, or kInvalidId on failure (logged). Caller has already verified:
+// live, allowlisted class, not tracked. Game thread.
+coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& clsName,
+                                                 bool savePersisted, const char* logTag) {
+    auto* s = coop::npc_sync::GetSession();
+    if (!s) return coop::element::kInvalidId;
+    auto npc = std::make_unique<coop::element::Npc>();
+    std::string typeName8;
+    for (size_t k = 0; k < clsName.size() && k < 63; ++k)
+        typeName8.push_back(static_cast<char>(clsName[k]));
+    npc->SetTypeName(std::move(typeName8));
+    // AllocAndInstall takes the Registry mutex then the type mutex (host-authoritative order);
+    // the reverse-map insert (MapActorToNpcId) is a LEAF taken separately AFTER, never nested.
+    const coop::element::ElementId eid =
+        NpcMirrors().AllocAndInstall(std::move(npc), /*isHost=*/true);
+    if (eid == coop::element::kInvalidId) {
+        UE_LOGW("npc-sync[%s]: AllocAndInstall kInvalidId for '%ls' (Registry full?) -- skipping",
+                logTag, clsName.c_str());
+        return coop::element::kInvalidId;
+    }
+    // CRIT-2: bind via a null-checked lookup (the POST observer's pattern). If the freshly-alloc'd
+    // Element isn't retrievable, DRAIN it back out + do NOT leave a reverse-map entry pointing at
+    // an unbound Element (which TickPoseStream/QueueConnectBroadcast would then iterate forever).
+    coop::element::Npc* el = NpcMirrors().Get(eid);
+    if (!el) {
+        UE_LOGW("npc-sync[%s]: eid=%u not retrievable after AllocAndInstall -- draining (no bind)",
+                logTag, eid);
+        coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
+        return coop::element::kInvalidId;
+    }
+    el->SetActor(obj, R::InternalIndexOf(obj));
+    coop::npc_sync::MapActorToNpcId(obj, eid);
+    // K-3 (kerfur redesign): a kerfur NPC also gets a stable host-range KerfurId reserved in the
+    // KerfurEntity table (host authority, idempotent per actor).
+    if (clsName.find(L"kerfurOmega") != std::wstring::npos) {
+        coop::kerfur_entity::AllocKerfurId(obj, eid, coop::kerfur_entity::Form::Npc, clsName);
+    }
+    // v67 (kerfur_convert): make the registration VISIBLE now -- broadcast EntitySpawn for the
+    // newly-registered NPC to connected peers. At the connect edge itself this duplicates
+    // QueueConnectBroadcastForSlot's send for freshly-found NPCs -- harmless: the receiver's
+    // OnEntitySpawn drops a duplicate eid early (a logged skip, not a re-install; audit I1).
+    if (s->connected()) {
+        coop::net::EntitySpawnPayload p{};
+        const std::string& tn = el->GetTypeName();
+        p.className.len = 0;
+        for (size_t k = 0; k < tn.size() && k < 63; ++k)
+            p.className.data[p.className.len++] = tn[k];
+        p.elementId = static_cast<uint32_t>(eid);
+        const auto loc = ue_wrap::engine::GetActorLocation(obj);
+        const auto rot = ue_wrap::engine::GetActorRotation(obj);
+        p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
+        p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        p.savePersisted = savePersisted ? 1 : 0;
+        // scope A (v91 deterministic): carry the off->active dup RETIRE key for a window-turned-ON
+        // kerfur (see npc_pose_host.cpp). Stamps for ANY origin -- harmless when there is no
+        // off-prop mirror bound at that eid (the eid-keyed sweep finds nothing).
+        const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
+        p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
+        // v91 deterministic turn-on ghost adopt: carry the eid this kerfur converted FROM (the
+        // initiator peer parked a ghost tagged with it). kInvalidId -> 0 -> no eid ghost adopt.
+        const coop::element::ElementId fromEid = coop::kerfur_entity::GetConvertFromEidForEid(eid);
+        p.convertFromEid = (fromEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(fromEid);
+        if (!s->SendEntitySpawn(p)) {
+            UE_LOGW("npc-sync[%s]: SendEntitySpawn failed for newly-registered eid=%u",
+                    logTag, p.elementId);
+        }
+    }
+    return eid;
+}
+
+// ---- the EX_CallMath spawn catch -------------------------------------------------------
+// Source spawner classes whose BeginDeferred output is HOST-AUTHORITATIVE (mirrored). An
+// EX_CallMath spawn from any OTHER source (the ambient ticker_wispSpawner, per-peer decor)
+// is deliberately NOT enrolled -- the same standing per-peer-ambience decision as the
+// colored wisp siblings. Future creature events (boars/grays/buster) add their trigger
+// class here once their target class joins kNpcAllowlist.
+constexpr const wchar_t* kExSpawnSourceClasses[] = {
+    L"trigger_wispSwarm_C",   // the `wisps` event swarm -> up to 32x wisp_C over ~8-32 s
+};
+
+// Queue entries carry the internal index CAPTURED AT CATCH TIME so the drain validates with
+// IsLiveByIndex -- a raw pointer cached across a tick boundary is the documented AV/recycle
+// hazard class (reflection.h; the 2026-05-30 connect-edge precedent). Cleared on disconnect.
+struct PendingExSpawn { void* actor; int32_t internalIdx; };
+std::mutex g_pendingMx;
+std::vector<PendingExSpawn> g_pendingExSpawns;        // queued actors awaiting the GT drain
+constexpr size_t kMaxPendingExSpawns = 256;           // sanity cap (a swarm is 32)
+
+// ufunction_hook post-native callback: fires for EVERY BeginDeferredActorSpawnFromClass
+// dispatch (PE-visible AND EX_CallMath), DEEP inside the engine spawn -- keep it cheap.
+// Cheapest-first gating (perf audit 2026-07-03): the ~ns atomic session/role/lifecycle gates
+// run BEFORE the source-class FName compare (~100-200 ns render) -- a client / unconnected
+// peer exits in nanoseconds for every ambient spawn in the game. Fires PRE-Finish, so it
+// only queues; the drain reads the real transform next pump tick.
+void OnBeginDeferredExSpawn(void* srcObj, void* spawned) {
+    if (!spawned || !srcObj) return;
+    auto* s = coop::npc_sync::GetSession();
+    if (!s || s->role() != coop::net::Role::Host || !s->connected()) return;
+    if (!coop::npc_sync::IsInstalled() || coop::npc_sync::IsHostNpcSyncDisabled()) return;
+    void* srcCls = R::ClassOf(srcObj);
+    if (!srcCls) return;
+    bool sourceMatch = false;
+    for (const wchar_t* name : kExSpawnSourceClasses) {
+        if (R::NameEquals(R::NameOf(srcCls), name)) { sourceMatch = true; break; }
+    }
+    if (!sourceMatch) return;
+    void* cls = R::ClassOf(spawned);
+    if (!cls || !coop::npc_sync::IsAllowlistedClass(cls)) return;
+    const int32_t idx = R::InternalIndexOf(spawned);
+    std::lock_guard<std::mutex> lk(g_pendingMx);
+    if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) return;  // drain stalled? never grow unbounded
+    g_pendingExSpawns.push_back({spawned, idx});
+}
+
 }  // namespace
+
+void InstallExSpawnCatch(void* beginDeferredFn) {
+    if (!beginDeferredFn) return;
+    // Idempotent per (ufunction, cb) inside InstallPostHook; chains after any other Func-thunk
+    // on the same UFunction (trash_collect's ambient-prop observer) -- both callbacks fire.
+    if (ue_wrap::ufunction_hook::InstallPostHook(beginDeferredFn, &OnBeginDeferredExSpawn)) {
+        UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
+                "trigger_wispSwarm_C -> wisp_C; EX_CallMath spawns now enroll)");
+    } else {
+        UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
+                "NOT mirror this session (event-swarm wisps host-only)");
+    }
+}
+
+void DrainPendingExSpawns() {
+    auto* s = coop::npc_sync::GetSession();
+    if (!s || s->role() != coop::net::Role::Host) return;
+    std::vector<PendingExSpawn> pending;
+    {
+        std::lock_guard<std::mutex> lk(g_pendingMx);
+        if (g_pendingExSpawns.empty()) return;
+        pending.swap(g_pendingExSpawns);
+    }
+    for (const PendingExSpawn& e : pending) {
+        void* obj = e.actor;
+        // Index-paired liveness: the catch-time internal index makes a recycled slot read DEAD
+        // instead of validating a different object at the same address (reflection.h pattern).
+        if (!obj || !R::IsLiveByIndex(obj, e.internalIdx)) continue;  // died before Finish / recycled
+        void* cls = R::ClassOf(obj);
+        if (!cls || !coop::npc_sync::IsAllowlistedClass(cls)) continue;
+        // Dedup vs the interceptor+POST path: a PE-dispatched spawn that ALSO matched a source
+        // class was already allocated by the PRE + bound by the POST (both ran before this drain).
+        if (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId) continue;
+        const std::wstring clsName = R::ToString(R::NameOf(cls));
+        // savePersisted=0: an event-swarm spawn happens after any join; no peer has a local twin.
+        const coop::element::ElementId eid =
+            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn");
+        if (eid != coop::element::kInvalidId) {
+            const auto loc = ue_wrap::engine::GetActorLocation(obj);
+            UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
+                    "(EX_CallMath BeginDeferred, source-gated catch)",
+                    clsName.c_str(), eid, loc.X, loc.Y, loc.Z);
+        }
+    }
+}
+
+void ClearPendingExSpawns() {
+    // Disconnect edge: entries queued in the disconnecting tick must never survive into the
+    // next session (a stale address could recycle into an unrelated live actor and pass the
+    // liveness gate). Called from npc_sync::OnDisconnect.
+    std::lock_guard<std::mutex> lk(g_pendingMx);
+    g_pendingExSpawns.clear();
+}
 
 int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {
     // HOST-only: register pre-existing/level-load NPC actors so the connect-snapshot mirrors them.
@@ -73,86 +249,20 @@ int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {
         // re-scan). The reverse map is the O(1) gate -- without it we'd double-register every NPC.
         if (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId) { ++alreadyTracked; continue; }
         const std::wstring clsName = R::ToString(R::NameOf(cls));
-        auto npc = std::make_unique<coop::element::Npc>();
-        std::string typeName8;
-        for (size_t k = 0; k < clsName.size() && k < 63; ++k)
-            typeName8.push_back(static_cast<char>(clsName[k]));
-        npc->SetTypeName(std::move(typeName8));
-        // AllocAndInstall takes the Registry mutex then the type mutex (host-authoritative order);
-        // the reverse-map insert (MapActorToNpcId) is a LEAF taken separately AFTER, never nested.
-        const coop::element::ElementId eid =
-            NpcMirrors().AllocAndInstall(std::move(npc), /*isHost=*/true);
-        if (eid == coop::element::kInvalidId) {
-            UE_LOGW("npc-sync[world-enum]: AllocAndInstall kInvalidId for '%ls' (Registry full?) -- skipping",
-                    clsName.c_str());
-            continue;
-        }
-        // CRIT-2: bind via a null-checked lookup (the POST observer's pattern). If the freshly-alloc'd
-        // Element isn't retrievable, DRAIN it back out + do NOT leave a reverse-map entry pointing at
-        // an unbound Element (which TickPoseStream/QueueConnectBroadcast would then iterate forever).
-        coop::element::Npc* el = NpcMirrors().Get(eid);
-        if (!el) {
-            UE_LOGW("npc-sync[world-enum]: eid=%u not retrievable after AllocAndInstall -- draining (no bind)", eid);
-            coop::element::ElementDeleter::Get().Enqueue(NpcMirrors().Take(eid));
-            continue;
-        }
-        el->SetActor(obj, R::InternalIndexOf(obj));
-        coop::npc_sync::MapActorToNpcId(obj, eid);
+        // 2026-07-03 wisp scope gate: an UNTRACKED wisp_C here is AMBIENT ticker output (the
+        // event-swarm wisps enroll at spawn via the EX-catch and are tracked already) -- ambient
+        // wisps are per-peer local by design (the colored-sibling decision; sdk_profile.h). A
+        // joiner reaches tracked swarm wisps via QueueConnectBroadcastForSlot, not this walk.
+        if (clsName == P::name::NpcClass_Wisp) continue;
+        const coop::element::ElementId eid = EnrollUntrackedNpcActor(
+            obj, clsName,
+            // v75 savePersisted policy by ORIGIN (see npc_world_enum.h): ConnectEdge -> a joiner
+            // may have loaded this keyed save object itself -> adopt (HasSaveKey);
+            // MidSessionConverge -> already-connected peers have no twin -> ALWAYS fresh-spawn.
+            origin == NpcEnumOrigin::ConnectEdge && ue_wrap::kerfur::HasSaveKey(obj),
+            "world-enum");
+        if (eid == coop::element::kInvalidId) continue;
         ++registered;
-        // K-3 (kerfur redesign): a kerfur NPC also gets a stable host-range KerfurId reserved in the
-        // KerfurEntity table (host authority, idempotent per actor). The table is BUILT here but does
-        // not yet DRIVE the conversion (K-4 wires BindFormActor) -- no behavior change in K-3.
-        if (clsName.find(L"kerfurOmega") != std::wstring::npos) {
-            coop::kerfur_entity::AllocKerfurId(obj, eid, coop::kerfur_entity::Form::Npc, clsName);
-        }
-        // v67 (kerfur_convert): make the registration VISIBLE now -- broadcast
-        // EntitySpawn for the newly-registered NPC to connected peers.
-        // BP-internal spawns (EX_CallMath BeginDeferred -- e.g. prop_kerfurOmega.
-        // spawnKerfuro's kerfur) never pass the interceptor, so without this a
-        // mid-session spawn existed host-only until the next connect edge. At
-        // the connect edge itself this duplicates QueueConnectBroadcastForSlot's
-        // send for freshly-found NPCs -- harmless: the receiver's OnEntitySpawn
-        // drops a duplicate eid early (NpcMirrors().Get(eid) != nullptr -- a
-        // logged skip, not a re-install; audit I1 2026-06-12).
-        if (s->connected()) {
-            coop::net::EntitySpawnPayload p{};
-            const std::string& tn = el->GetTypeName();
-            p.className.len = 0;
-            for (size_t k = 0; k < tn.size() && k < 63; ++k)
-                p.className.data[p.className.len++] = tn[k];
-            p.elementId = static_cast<uint32_t>(eid);
-            const auto loc = ue_wrap::engine::GetActorLocation(obj);
-            const auto rot = ue_wrap::engine::GetActorRotation(obj);
-            p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
-            p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
-            // v75: savePersisted flag for client-side class-match ADOPTION -- but gated on the
-            // caller's INTENT (origin), not just the actor's has-a-key property (RCA 2026-06-15).
-            // ConnectEdge: a JOINER may have loaded this keyed save object itself -> let it adopt its
-            // local twin (savePersisted = HasSaveKey). MidSessionConverge: a kerfur turned ON
-            // mid-session reaches ALREADY-CONNECTED peers who have NO twin (they cancelled their own
-            // local turn-on) -> ALWAYS 0 -> fresh-spawn now. (K-1: this MidSessionConverge=>0 rule is
-            // the immediate-relief fix; it stays under the redesign.) See the header.
-            p.savePersisted =
-                (origin == NpcEnumOrigin::ConnectEdge && ue_wrap::kerfur::HasSaveKey(obj)) ? 1 : 0;
-            // scope A (v91 deterministic): carry the off->active dup RETIRE key for a window-turned-ON kerfur
-            // (see npc_pose_host.cpp). Covers a kerfur first-registered DURING this enum; an already-tracked
-            // turn-on kerfur reaches the joiner via npc_pose_host's connect-snapshot instead (also stamped).
-            // Unlike savePersisted (ConnectEdge-only), this stamps for ANY origin -- harmless: a
-            // MidSessionConverge turn-on reaches already-connected peers who have no off-prop mirror bound at
-            // that eid, so their eid-keyed sweep finds nothing and retires nothing.
-            const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
-            p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
-            // v91 deterministic turn-on ghost adopt: carry the eid this kerfur converted FROM. A MidSessionConverge
-            // turn-on reaches the INITIATING peer (which parked a ghost tagged with that eid) -- it adopts by EXACT
-            // eid (npc_mirror -> TakeParkedGhostByEid), not the old FindParkedGhostNpcNear 500cm match. A non-
-            // initiator / save-active NPC -> kInvalidId -> 0 -> no eid ghost adopt (fresh-spawn / npc_adoption).
-            const coop::element::ElementId fromEid = coop::kerfur_entity::GetConvertFromEidForEid(eid);
-            p.convertFromEid = (fromEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(fromEid);
-            if (!s->SendEntitySpawn(p)) {
-                UE_LOGW("npc-sync[world-enum]: SendEntitySpawn failed for newly-registered eid=%u",
-                        p.elementId);
-            }
-        }
     }
     if (found > 0)
         UE_LOGI("npc-sync[world-enum]: registered %d pre-existing world NPC(s) "

@@ -117,9 +117,10 @@ const NoReplayRow kNoReplayRows[] = {
     // outputs already ride a lane (replay = double delivery):
     { "starRain", "event_cue lane (cue 0)" },
     { "arirFollower", "npc lane" },
-    // base wisp_C swarm has NO lane (killerwisp ATTACKS have one; sdk_profile deliberately
-    // excludes the swarm) -- no-replay because replay would spawn client-local creatures:
-    { "wisps", "creature spawn (no lane yet)" },
+    // 2026-07-03: the swarm's wisp_C rides the npc lane (EX_CallMath source-gated catch,
+    // npc_world_enum) -- STILL no-replay: the lane carries the spawns; a replay would arm the
+    // client's own trigger_wispSwarm and double-spawn client-local creatures on top of mirrors:
+    { "wisps", "npc lane (EX-catch; event-swarm wisp_C mirrored)" },
     // arirShip: the TBox arm's overlap spawns arirShip_C + alarmLamp_C (+ possible ariral NPC
     // leaves) -- replaying the arm would spawn them CLIENT-LOCAL (RE 2026-06-13 #65 GAP-spawn;
     // audit M3). Host-only until the ship gets a lane:

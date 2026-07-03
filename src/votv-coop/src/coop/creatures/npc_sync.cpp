@@ -24,6 +24,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
+#include "coop/creatures/npc_world_enum.h"  // InstallExSpawnCatch (the EX_CallMath spawn catch)
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -571,6 +572,9 @@ void OnDisconnect() {
     }
 
     g_incomingNpcSpawnClass.store(nullptr, std::memory_order_release);
+    // 2026-07-03: drop queued-but-undrained EX-spawn catches -- a stale address must never
+    // drain into the next session (perf audit W1).
+    coop::npc_world_enum::ClearPendingExSpawns();
 }
 
 // QueueConnectBroadcastForSlot + TickPoseStream (host-side NPC transform egress)
@@ -774,9 +778,14 @@ void Install(coop::net::Session* session) {
         return;
     }
     ue_wrap::game_thread::RegisterInterceptor(fn, &NpcSuppress_Interceptor);
-    UE_LOGI("npc-suppress: installed interceptor on %ls.%ls @ %p (ActorClass@%d, ReturnValue@%d, SpawnTransform@%d, 12/12 NPC classes resolved + lifecycle observers live)",
+    UE_LOGI("npc-suppress: installed interceptor on %ls.%ls @ %p (ActorClass@%d, ReturnValue@%d, SpawnTransform@%d, %zu/%zu NPC classes resolved + lifecycle observers live)",
             P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn,
-            fn, classOff, retOff, xformOff);
+            fn, classOff, retOff, xformOff,
+            P::name::kNpcAllowlistSize, P::name::kNpcAllowlistSize);
+    // 2026-07-03 wisp lane: the EX_CallMath spawn catch (Func-thunk, source-gated) -- installed
+    // under the SAME lifecycle gate as the interceptor (an Element it enrolls gets the identical
+    // K2_DestroyActor close). Idempotent across Install retries.
+    coop::npc_world_enum::InstallExSpawnCatch(fn);
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
         UE_LOGI("npc-suppress: allowlist[%zu] '%ls' = %p",
                 i, P::name::kNpcAllowlist[i], g_npcAllowlist[i]);
@@ -825,6 +834,29 @@ void SyncDestroyedNpcActor(void* actor) {
     // PendingKill or even GC-purged pointer, and a double call (or a call
     // racing the real PRE) no-ops on the map miss.
     NpcDestroy_PRE(actor, nullptr, nullptr);
+}
+
+void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
+    // The pose-walk dead-actor retire (2026-07-03, wisp self-despawn: the wisp's
+    // K2_DestroyActor is an EX_VirtualFunction SELF-call the PRE observer never sees).
+    // EID-keyed, unlike SyncDestroyedNpcActor: the by-actor variant resolves through the
+    // reverse map, which a same-address actor-slot REBIND may have overwritten -- keying by
+    // eid can never retire a different NPC. The map entry is erased only if it still maps
+    // to THIS eid. `actorKey` is a map key only, never dereferenced.
+    if (eid == coop::element::kInvalidId) return;
+    if (actorKey) {
+        std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+        auto it = g_actorToNpcId.find(actorKey);
+        if (it != g_actorToNpcId.end() && it->second == eid) g_actorToNpcId.erase(it);
+    }
+    coop::element::RetireMirror(eid);  // Take + deferred ~Npc/FreeId; no-op if already drained
+    UE_LOGI("npc-sync[pose dead-retire]: Npc eid=%u actor=%p released (PE-invisible destroy)",
+            static_cast<uint32_t>(eid), actorKey);
+    auto* s = LoadSession();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!s->SendEntityDestroy(static_cast<uint32_t>(eid))) {
+        UE_LOGW("npc-sync[pose dead-retire]: SendEntityDestroy failed for eid=%u", eid);
+    }
 }
 
 coop::element::ElementId RegisterHostNpcSilent(void* actor, const std::wstring& className) {

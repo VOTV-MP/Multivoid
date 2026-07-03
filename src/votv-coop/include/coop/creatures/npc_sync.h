@@ -112,6 +112,14 @@ void MapActorToNpcId(void* actor, coop::element::ElementId eid);
 // pointer; no-ops when the actor is untracked (double-call safe).
 void SyncDestroyedNpcActor(void* actor);
 
+// EID-keyed variant for the pose-walk dead-actor retire (2026-07-03: the wisp's
+// EX_VirtualFunction SELF-destroy the PRE never sees). Keying by eid -- not through the
+// actor reverse map -- means a same-address actor-slot rebind can never retire a DIFFERENT
+// NPC; the map entry is erased only if it still maps to this eid. Same teardown +
+// EntityDestroy broadcast as the PRE. `actorKey` is a map key only, never dereferenced.
+// Double-call safe (RetireMirror no-ops on a drained eid). Game thread.
+void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey);
+
 // HOST kerfur conversion (K-4b): register a BP-internally-spawned NPC (the turn-on output -- the verb
 // spawns via EX_CallMath, so no NpcSpawn_POST fires for it) as a host Npc Element WITHOUT broadcasting
 // EntitySpawn. The SOLE wire signal for a conversion is KerfurConvert (kerfur redesign 10.3 -- no

@@ -275,4 +275,12 @@ DWORD WINAPI EventFireTestThread(LPVOID arg);
 void RunAutonomousEventForceTest();
 DWORD WINAPI EventForceTestThread(LPVOID arg);
 
+// Wisp mirror-lane e2e smoke (2026-07-03, harness/autotest_wisplane.cpp). HOST-ONLY: ForceNow
+// the wisps event (swarm spawns ~32x wisp_C via EX_CallMath -> the Func-thunk catch must enroll +
+// mirror each), then forces midday sun so the landed wisps self-destroy PE-invisibly -> the
+// pose-walk dead-retire must broadcast every EntityDestroy. Assert = the log diff (enrolled ==
+// materialized > 0; dead-retire == client destroys). Gated by env VOTVCOOP_RUN_WISPLANE_TEST=1.
+void RunAutonomousWispLaneTest();
+DWORD WINAPI WispLaneTestThread(LPVOID arg);
+
 }  // namespace harness::autotest

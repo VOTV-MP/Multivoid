@@ -104,4 +104,17 @@ bool ForceMeshTick(void* wisp);
 // ForceMeshTick FIRST so the played montage advances. Game thread.
 bool PlayFatalityMontage(void* wisp);
 
+// ---- plain wisp_C landing drive (2026-07-03 wisp mirror lane) --------------------------
+// The plain wispSwarm-event wisp (Awisp_C -- a DIFFERENT class from killerwisp_C above,
+// and NOT the colored wisp_o/b/g siblings) spawns INVISIBLE and fades in only at its
+// landing edge: its ReceiveTick reads CMC CurrentFloor.bBlockingHit -> landed := true +
+// dir(true) (fade timeline forward + PointLight ramp). A network mirror parks the CMC
+// tick (the pose lane owns position), so CurrentFloor stays stale and the native edge can
+// NEVER fire -- the mirror would stay invisible forever. This drives that edge explicitly:
+// write `landed` (a plain BP bool the BP itself writes inline -- no setter exists) + call
+// the `dir` event through the normal dispatcher. Idempotent per landed wisp (re-driving a
+// landed wisp re-plays an already-finished forward timeline: no-op). Exact-class-gated
+// internally. False until wisp_C + its members resolve (caller retries). Game thread.
+bool DriveWispLanding(void* wispActor);
+
 }  // namespace ue_wrap::wisp

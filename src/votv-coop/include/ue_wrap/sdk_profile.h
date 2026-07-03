@@ -790,6 +790,18 @@ inline constexpr const wchar_t* NpcClass_AriralPigBeater = L"npc_ariral_pigBeate
 // upright -- a known pitch/roll gap to close after smoke).
 inline constexpr const wchar_t* NpcClass_KillerWisp   = L"killerwisp_C";
 inline constexpr const wchar_t* NpcClass_VentCrawler  = L"ventCrawler_C";
+//   * wisp_C (Awisp_C : ACharacter, wisp.hpp) -- the plain wispSwarm-event wisp (2026-07-03).
+//     SCOPE (the source-gate, coop/npc_world_enum): only EVENT-SWARM wisps (spawned by
+//     trigger_wispSwarm_C's EX_CallMath loop) are host-authoritative + mirrored; AMBIENT
+//     wisp_C from ticker_wispSpawner_C stays per-peer local (the same standing decision as
+//     the colored wisp_o/b/g siblings -- ticker table: wisp_C weight 100 of ~108, cooked CDO).
+//     Both spawn paths are EX_CallMath (PE-interceptor-blind): the catch is the
+//     ufunction_hook Func-thunk on BeginDeferred, source-gated by FFrame::Object's class.
+//     Mirror fidelity: spawns invisible; fade-in fires at the tick-driven LANDING edge
+//     (CMC CurrentFloor.bBlockingHit), so the mirror keeps ACTOR tick (CMC still parked)
+//     and the pose lane drives the landing edge (landed=true + dir(true)) on inAir 1->0
+//     (ue_wrap::wisp::DriveWispLanding). RE: votv-event-trigger-graph-RE-2026-07-03.md.
+inline constexpr const wchar_t* NpcClass_Wisp         = L"wisp_C";
 
 // Compact array for the allowlist resolver (Inc1 of Phase 5N1). Iterated
 // once at install time; each name resolved via R::FindClass + cached. The
@@ -813,6 +825,7 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_AriralPigBeater,
     NpcClass_KillerWisp,   // yellow Killer Wisp (late-game; AIPerception like the 12)
     NpcClass_VentCrawler,  // event `ventCrawler`  (smoke-pending: wall-crawl pose)
+    NpcClass_Wisp,         // wispSwarm-event wisp (source-gated: ambient ticker wisps stay per-peer)
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 

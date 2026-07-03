@@ -54,6 +54,12 @@ public:
     // is live. Game thread only.
     void Tick();
 
+    // Wisp mirror (2026-07-03): the wisp_C fade-in fires at a tick-driven landing edge a
+    // CMC-parked mirror can never compute (CurrentFloor stays stale) -- the pose drive replays
+    // it (ue_wrap::wisp::DriveWispLanding) once the streamed pose reads grounded. Armed by
+    // npc_mirror at materialization for exactly class wisp_C.
+    void MarkWispMirror() { isWispMirror_ = true; }
+
 private:
     void AdvanceInterp();   // advance the open window to now (mirrors RemotePlayer::AdvanceInterp)
     void ApplyToEngine();   // SetActorLocation + SetActorRotation + DriveCharacterMovement
@@ -79,6 +85,8 @@ private:
     bool             hasKerfState_   = false; //      valid iff the host sent it (kerfur-family only)
     bool             hasPose_        = false;  // first packet snaps
     bool             dirty_          = true;   // unapplied change to push to the engine
+    bool             isWispMirror_   = false;  // wisp_C mirror: replay the landing edge (fade-in)
+    bool             wispLanded_     = false;  //   ... one-shot latch (drive succeeded)
 };
 
 }  // namespace coop::element

@@ -201,6 +201,70 @@ bool ForceMeshTick(void* wisp) {
     return ue_wrap::engine::SetAnimTickAlways(mesh);
 }
 
+// ---- plain wisp_C landing drive (2026-07-03 wisp mirror lane) --------------------------
+
+namespace {
+// Resolved once from the live wisp_C class (loads with the map -- trigger_wispSwarm_2 imports
+// it). Separate from the killerwisp statics above: DIFFERENT class, different members.
+// Tri-state: 0 unresolved (retry), 1 resolved, -1 PERMANENTLY dead (class resolved but a member
+// didn't -- name drift on a future game build). The caller retries PER FRAME per unlanded wisp
+// mirror, so a member miss must latch dead rather than re-run the FindClass full walk each frame.
+std::atomic<int> g_plainState{0};
+void*   g_plainWispCls  = nullptr;  // wisp_C UClass (exact -- colored wisp_o/b/g are SIBLINGS)
+int32_t g_landedByte    = -1;       // `landed` FBoolProperty byte offset
+uint8_t g_landedMask    = 0;        //          ... and bit mask
+void*   g_dirFn         = nullptr;  // dir(bool Condition) -- Play/Reverse the fade timeline
+
+// `candidateCls` = the CALLER'S actor's class (ClassOf -- O(1)); resolution never walks
+// GUObjectArray (perf audit W2: the old FindClass here was 2 full walks on the first landing
+// frame). The candidate is name-verified before being trusted as wisp_C.
+bool EnsurePlainWispResolved(void* candidateCls) {
+    const int st = g_plainState.load(std::memory_order_acquire);
+    if (st == 1) return true;
+    if (st == -1) return false;  // permanently dead this process (logged once below)
+    if (!candidateCls || !R::NameEquals(R::NameOf(candidateCls), P::name::NpcClass_Wisp))
+        return false;  // not a wisp_C caller -- no resolution material (state stays 0)
+    int32_t landedByte = -1; uint8_t landedMask = 0;
+    void* dirFn = nullptr;
+    if (!R::FindBoolProperty(candidateCls, L"landed", landedByte, landedMask) ||
+        !(dirFn = R::FindFunction(candidateCls, L"dir"))) {
+        // The class exists but a member doesn't: name drift. Retrying cannot heal it at
+        // runtime -- latch DEAD so the per-frame caller stops paying for the attempt.
+        g_plainState.store(-1, std::memory_order_release);
+        UE_LOGW("wisp: wisp_C resolved but landed/dir member missing (name drift?) -- landing "
+                "drive PERMANENTLY unavailable this process (mirrors stay faded-out)");
+        return false;
+    }
+    g_plainWispCls = candidateCls;
+    g_landedByte   = landedByte;
+    g_landedMask   = landedMask;
+    g_dirFn        = dirFn;
+    g_plainState.store(1, std::memory_order_release);
+    UE_LOGI("wisp: resolved wisp_C landing drive (landed@0x%X mask=%02X dir=%p)",
+            static_cast<unsigned>(landedByte), landedMask, dirFn);
+    return true;
+}
+}  // namespace
+
+bool DriveWispLanding(void* wispActor) {
+    if (!wispActor || !R::IsLive(wispActor)) return false;
+    void* cls = R::ClassOf(wispActor);
+    if (!cls || !EnsurePlainWispResolved(cls)) return false;
+    // Exact-class gate (safety net; the caller arms per-mirror by class already). The colored
+    // wisp_o/b/g siblings are never mirrored -- and are DIFFERENT classes, not subclasses.
+    if (cls != g_plainWispCls) return false;
+    // Replay the native landing edge exactly as the BP's own tick would (ubergraph [96]-[98]):
+    // landed := true (a plain BP bool the BP writes inline via EX_LetBool -- no setter exists,
+    // so the masked byte write IS the game's own mechanism), then dir(true) -> fade-in timeline
+    // forward + PointLight ramp, dispatched through the normal UFunction path.
+    uint8_t* b = reinterpret_cast<uint8_t*>(wispActor) + g_landedByte;
+    *b |= g_landedMask;
+    ue_wrap::ParamFrame f(g_dirFn);
+    if (!f.valid()) return false;
+    f.Set<uint8_t>(L"Condition", 1);
+    return ue_wrap::Call(wispActor, f);
+}
+
 bool PlayFatalityMontage(void* wisp) {
     void* anim = BodyAnimInstance(wisp);
     if (!anim) { UE_LOGW("wisp: PlayFatalityMontage -- no live body AnimInstance"); return false; }

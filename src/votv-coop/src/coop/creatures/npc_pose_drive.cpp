@@ -16,6 +16,7 @@
 #include "ue_wrap/kerfur.h"   // v74: DriveKerfurState (host-authoritative command/spooky on the mirror)
 #include "ue_wrap/puppet.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/wisp.h"     // 2026-07-03: DriveWispLanding (fade-in edge on the wisp_C mirror)
 
 #include <algorithm>
 #include <chrono>
@@ -149,6 +150,12 @@ void Npc::ApplyToEngine() {
     const ue_wrap::FVector vel{ std::cos(yawRad) * curSpeed_, std::sin(yawRad) * curSpeed_, 0.f };
     const bool inAir = (curStateBits_ & coop::net::kStateBitInAir) != 0;
     Pup::DriveCharacterMovement(actor, vel, inAir);
+    // 2026-07-03 wisp mirror: replay the native landing edge (landed=true + dir(true) -> the
+    // fade-in the wisp gates behind a CMC-tick-computed CurrentFloor read its parked CMC can
+    // never produce). Grounded-per-host = drive; retried per frame until wisp_C resolves (also
+    // covers a joiner mirroring an already-landed wisp: its first pose reads grounded).
+    if (isWispMirror_ && !wispLanded_ && !inAir)
+        wispLanded_ = ue_wrap::wisp::DriveWispLanding(actor);
     // v39: aim the mirror's head/neck at the host's streamed look target. Writes the kerfur
     // AnimBP `lookAt` + sets customLookAt=true so the mirror's own BUA stops auto-aiming at the
     // LOCAL player camera (the desync this fixes). Class-gated inside -> safe no-op on non-kerfur

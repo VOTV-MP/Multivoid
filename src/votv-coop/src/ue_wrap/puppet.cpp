@@ -953,14 +953,19 @@ bool ReadCharacterIsFalling(void* actor) {
 
 void DisableCharacterTicks(void* actor) {
     if (!actor || !R::IsLive(actor)) return;
+    DisableMovementTick(actor);
+    // Actor tick OFF: suppress the BP ReceiveTick graph (for an NPC mirror that is its AI state
+    // machine). The AnimBP still ticks on the mesh, so it reads our per-tick CMC.Velocity write.
+    E::SetActorTickEnabled(actor, false);
+}
+
+void DisableMovementTick(void* actor) {
+    if (!actor || !R::IsLive(actor)) return;
     // CMC tick OFF: stop gravity + Velocity integration so the network SetActorLocation drive
     // is authoritative (we own CMC.Velocity/MovementMode -- DriveCharacterMovement writes them).
     if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
         if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
     }
-    // Actor tick OFF: suppress the BP ReceiveTick graph (for an NPC mirror that is its AI state
-    // machine). The AnimBP still ticks on the mesh, so it reads our per-tick CMC.Velocity write.
-    E::SetActorTickEnabled(actor, false);
 }
 
 }  // namespace ue_wrap::puppet

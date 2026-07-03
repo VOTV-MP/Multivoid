@@ -18,6 +18,7 @@
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
 #include "coop/element/npc.h"
 #include "coop/creatures/kerfur_entity.h"  // scope A: GetOriginOffEidForEid -- carry the off->active retire eid
+#include "coop/creatures/npc_world_enum.h" // 2026-07-03: DrainPendingExSpawns (EX_CallMath catch)
 #include "coop/dev/kerfur_census.h"        // [dev] kerfur_census=1: periodic HOST census (5-vs-6 measurement)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -102,6 +103,10 @@ void TickPoseStream() {
     auto* s = GetSession();
     if (!s || s->role() != coop::net::Role::Host || !s->connected()) return;
 
+    // 2026-07-03 wisp lane: enroll EX_CallMath-caught spawns queued since the last tick (the
+    // Func-thunk fires PRE-Finish; by this tick FinishSpawningActor ran -> real transform).
+    coop::npc_world_enum::DrainPendingExSpawns();
+
     // DIAGNOSTIC ([dev] kerfur_census=1): periodic HOST kerfur census so a hands-on can diff host vs client
     // counts after the world settles (the 5-vs-6 measurement -- the host had no self-census before 2026-06-30).
     // No-op unless the flag is set; throttled internally. Read-only.
@@ -115,11 +120,29 @@ void TickPoseStream() {
     static std::vector<coop::net::EntityPoseSnapshot> batch;
     batch.clear();
 
+    // 2026-07-03: fair-share rotation for >kMaxNpcBatchEntries tracked NPCs (the 32-wisp swarm
+    // overflows the 31-entry MTU cap). Without it Snapshot's stable order starves the SAME tail
+    // NPCs every tick (frozen mirrors); rotating the start index spreads the loss evenly
+    // (~31/N of ticks each -- the MTA far-sync rotation shape). No wire change.
+    static size_t s_rotateCursor = 0;
+    const size_t total = elems.size();
+    const size_t start = (total > static_cast<size_t>(coop::net::kMaxNpcBatchEntries))
+                             ? (s_rotateCursor++ % total) : 0;
+
     int truncated = 0;
-    for (coop::element::Npc* el : elems) {
+    for (size_t k = 0; k < total; ++k) {
+        coop::element::Npc* el = elems[(start + k) % total];
         if (!el) continue;
         void* actor = el->GetActor();
-        if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) continue;  // unbound / GC'd
+        if (!actor) continue;  // never-bound (POST pending) -- not a death
+        if (!R::IsLiveByIndex(actor, el->GetInternalIdx())) {
+            // 2026-07-03: a BOUND actor that is no longer live died through a path the
+            // K2_DestroyActor PRE cannot see (the wisp's EX_VirtualFunction self-destroy at
+            // dawn/proximity). Without this the Element leaks and the client mirror ghosts
+            // forever. Eid-keyed retire + EntityDestroy broadcast; deferred teardown.
+            coop::npc_sync::SyncDestroyedNpcByEid(el->GetId(), actor);
+            continue;
+        }
         if (static_cast<int>(batch.size()) >= coop::net::kMaxNpcBatchEntries) { ++truncated; continue; }
         coop::net::EntityPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
@@ -170,8 +193,10 @@ void TickPoseStream() {
     if (truncated > 0) {
         static bool s_warnedTrunc = false;
         if (!s_warnedTrunc) { s_warnedTrunc = true;
-            UE_LOGW("npc-pose: >%d NPCs this tick -- %d truncated from the batch (raise kMaxNpcBatchEntries / split datagrams)",
-                    coop::net::kMaxNpcBatchEntries, truncated); }
+            UE_LOGW("npc-pose: >%d NPCs this tick -- %d rotated out of this batch (fair-share "
+                    "rotation active: each NPC streams ~%d/N of ticks; a persistent count this "
+                    "high may warrant multi-datagram batches)",
+                    coop::net::kMaxNpcBatchEntries, truncated, coop::net::kMaxNpcBatchEntries); }
     }
     static bool s_loggedFirst = false;
     if (!batch.empty() && !s_loggedFirst) { s_loggedFirst = true;

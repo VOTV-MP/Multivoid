@@ -144,6 +144,26 @@ Test: host F1 > set Day/Time -> lighting changes INSTANTLY on host; client sun f
 its HUD clock/day now match the host. Forward day-jumps still fire skipped scheduled events
 natively (that part is the game's own settime walk).
 
+## WISP LANE (late eve, "Go next"): the wisps event now MIRRORS -- first creature-event lane
+
+The `wisps` swarm (the biggest creature-event gap) is now host-authoritative + mirrored:
+the swarm's 32 wisp_C spawn via EX_CallMath (interceptor-blind) -> caught by a source-gated
+Func-thunk on BeginDeferred -> enrolled + broadcast; clients materialize mirrors that fall,
+FADE IN AT LANDING (the lane drives the fade edge the parked mirror can't compute), wander
+(pose stream, >31-NPC fair rotation), and vanish on BOTH peers at dawn/approach (the
+PE-invisible self-despawn is caught by a new pose-walk dead-retire -> EntityDestroy).
+Ambient forest wisps (the ticker's) deliberately stay per-peer local -- same decision as the
+colored wisps. Autonomous e2e smoke: 32/32 enrolled -> 32/32 mirrored -> forced midday ->
+32/32 dead-retired -> 32/32 client teardowns, zero errors.
+TEST (needs NIGHT): host F1 > Events > wisps -> NOW! -> BOTH peers should see the same
+glowing swarm land in the forest ring (~0.5-0.75 km out) and wander; jump the clock to day
+-> they fade out on both. KNOWN fidelity edge: the mirror's fade-in fires when the streamed
+pose reads grounded -- if a wisp descends "not falling" (CMC mode) the fade could fire mid-air.
+KNOWN OPEN (your report, recorded): killerwisp IGNORES peers -- its special kill sequence
+(grab-arm/canReach/socket-lift/fatality) is hard-bound to player 0; the June relay is not
+enough. Next thread: probe target acquisition live, then build the full socket-hold sequence
+vs puppets.
+
 ## EVENT TRIGGERING + MIRROR (your report) -- what changed + what I need from you
 
 - Trigger dispatch itself is instant (runEvent/runSpecialEvent on the eventer, same frame). BUT
