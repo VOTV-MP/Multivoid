@@ -1,14 +1,15 @@
 # Hands-on runbook 2026-07-03 — skin take-3 + join-line + TIME instant + NORMALS + EVENTS-NOW
 
-**Deployed: DLL `121C31D2BEFE85B4` on all 4 installs** (hash-verified; protocol **v96** —
-both peers MUST be on this DLL to connect). Supersedes `1CDD6079A5241162` (adds only the
-env-gated eventforce autotest — zero behavior change in your hands; same wire). Evening
-additions NOW smoke-tested (2026-07-03 late eve, you left the PC): baseline 2-peer LAN
-smoke PASS (90 s steady, RSS flat, zero errors) AND the events feature verified end to end
-autonomously — `eventforce_test: VERDICT PASS`: obelisk PRE armed=0 shots=1 → NOW!-path
-force → POST shots=0 ([FIRED]), host arm broadcast + client `REPLAY runEvent 'obelisk'`
-in the same second. What autonomy CANNOT see: the visible obelisk chain on screen — your
-hands-on below still decides that.
+**Deployed: DLL `08B357DDE6F6ACE4` on all 4 installs** (hash-verified; protocol **v96** —
+both peers MUST be on this DLL to connect). Supersede chain tonight: `1CDD6079A5241162`
+(your hands-on build) → `121C31D2BEFE85B4` (+eventforce autotest) → `59D77AFC4329DB78`
+(**+ the WISP MIRROR LANE** — see its section below) → `08B357DDE6F6ACE4` (+the killerwisp
+probe; env-gated autotests only between the last two, wire unchanged). Late-eve autonomy
+("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
+PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
+'obelisk'` same second); wisp lane e2e x2 (32/32 all four legs); killerwisp probe (chain
+alive; the gap = missing peer kill choreography). What autonomy CANNOT see: everything
+visual — your hands-on below still decides those.
 
 ## EVENING ADDITIONS (after your two reports)
 
