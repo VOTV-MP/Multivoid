@@ -279,3 +279,36 @@ runs only for the ~870 real piles/kerfurs. Behavior-preserving. The twin sweep a
 only this walk was mis-ordered. Lesson: [[lesson-full-array-walk-cheap-filter-before-nameof]]. Follow-up if still
 hitchy: merge sweep+re-bind into one shared walk (2 scans→1); `sync:interactable` 33ms was likely a one-time
 re-index (chase only if it persists).
+
+## 2026-07-03 SEAM: pre-sweep TWIN GRAB -> client-local clump chain [log-V; fixes AS-BUILT `45bdb7ac`]
+
+**User repro 11:49 ("the last pile which client grabbed is his local only dupe"), forensics from both logs:**
+the client joined 11:48:20; HOST-VACATE twins armed 11:48:23 (eids 5222/5195/5205 — piles the host had moved
+pre-join; the save-loaded natives at @old await the sweep). The [PILE-1C] sweep pass ran 11:48:58 — but the
+user E-pressed a twin@old at **11:48:51, 7 s BEFORE the sweep**. An unbound pile takes the NATIVE use path
+(the GrabIntent intercept only fired for BOUND piles) -> native pile->clump conversion CLIENT-LOCALLY ->
+`net: NEW held actor prop_garbageClump_C key='None' eid=0` -> native land spawns ANOTHER unbound pile = a
+self-perpetuating client-only chain (native clump holds at 11:48:51, 11:48:55, 11:49:19 — the user saw the
+last one). A grabbed twin becomes a CLUMP, which the pile sweep can no longer retire — the chain escapes
+every identity reconcile by construction.
+
+**Fix 1 (the class-killer, interaction side): UNBOUND-pile grab gate** — `OnPileUseIntercept`
+(trash_collect_sync.cpp) now CANCELS the native use for ANY aimed `actorChipPile_C` that NO eid owns
+(twin-pending-sweep / mid-bind-window / chain descendant). On a connected client every pile interaction is
+host-authoritative; the pile binds or retires within seconds and a re-press routes through GrabIntent.
+Log marker: `[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile ... CANCELLED`. This kills the WHOLE
+dupe-interaction class regardless of which seam produced the unbound pile.
+
+**Fix 2 (wire hygiene, host side): re-seed CHURN GUARD** — the host log 11:48:59 showed
+`prop_element_tracker: re-seed ... added 4 NEW` + 4 `incremental PropSpawn (eid=..., key='')`: the host's
+OWN re-pile land actors, re-adopted because the tracker's `g_knownKeyedProps` newness signal is a raw
+pointer set, blind to actor churn (the re-bind thread's exact lesson — a 3rd identity map smearing). Every
+20 s re-seed re-broadcast every land result as a keyless PropSpawn. `SeedWalk_` newness now consults the
+element binding (`GetPropElementIdForActor != invalid` => churned actor of a tracked element, NOT new; set
+membership still refreshed for the O(1) snapshot de-dupe). Delivery-axis clean: an element-owned actor was
+already delivered by its own channel (Init-POST stamp / trash LAND / connect snapshot).
+
+**Status: AS-BUILT (`45bdb7ac`, DLL `3FDEF8097B7D937E`), NOT hands-on-verified.** Test: client joins while
+host moves piles, client immediately spams E on the trash cluster during the first ~10 s — every press on a
+not-yet-bound pile must log the CANCELLED marker and produce NO `prop_garbageClump_C key='None'` hold; the
+host log must show NO `re-seed ... added N NEW` for its own land actors while piles are being thrown.
