@@ -12,6 +12,7 @@
 #include "ue_wrap/engine.h"
 
 #include "ue_wrap/call.h"
+#include "ue_wrap/fname_utils.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
@@ -200,6 +201,34 @@ int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
         out.push_back(BonePoint{lf.Get<FVector>(L"ReturnValue"), cache.parent[static_cast<size_t>(i)]});
     }
     return static_cast<int>(out.size());
+}
+
+bool GetBoneWorldLocationByName(void* skelMeshComp, const wchar_t* boneName, FVector& outLoc) {
+    // The HOT-PATH-SAFE by-name variant: ONE GetSocketLocation dispatch per call. The
+    // bone FName comes from the global name table (Conv_StringToName, cached per
+    // distinct name below -- 'head' etc. are single GNames entries shared by every
+    // mesh), NOT from a skeleton enumeration (GetBoneWorldZByName above walks the
+    // whole skeleton per call and is only for one-shot diagnostics). NOTE:
+    // GetSocketLocation silently falls back to the COMPONENT transform when the mesh
+    // has no such bone -- for HUD/audio anchors that "still glued to the mesh"
+    // fallback is desirable. Returns false only when resolution fails outright.
+    // Game thread only (like all of this TU -- the name cache is unsynchronized).
+    if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
+    static std::unordered_map<std::wstring, R::FName> sNames;
+    R::FName fn{};
+    auto it = sNames.find(boneName);
+    if (it != sNames.end()) {
+        fn = it->second;
+    } else {
+        fn = ue_wrap::fname_utils::StringToFName(boneName);
+        if (fn.ComparisonIndex == 0 && fn.Number == 0) return false;  // GNames not ready -- retry next call
+        sNames.emplace(boneName, fn);
+    }
+    ParamFrame lf(g_socketLocFn);
+    lf.SetRaw(L"InSocketName", &fn, sizeof(fn));
+    if (!Call(skelMeshComp, lf)) return false;
+    outLoc = lf.Get<FVector>(L"ReturnValue");
+    return true;
 }
 
 bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot) {

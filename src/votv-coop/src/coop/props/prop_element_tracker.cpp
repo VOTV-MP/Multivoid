@@ -596,7 +596,18 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
         for (void* obj : live) {
             if (g_knownKeyedProps.size() >= kKnownKeyedPropsCap) break;
             if (g_knownKeyedProps.insert(obj).second) {
-                ++c.newlyTracked;  // .second = newly inserted
+                // CHURN GUARD (2026-07-03, the 11:48:59 keyless-PropSpawn re-broadcast):
+                // an actor ALREADY BOUND to a live owned element is NOT new -- it is the
+                // churned actor of a tracked element (a host RE-PILE land re-creates the
+                // pile actor in place and the pile layer rebinds the element same-tick).
+                // The private known-set is a pointer set, blind to actor churn (the
+                // re-bind thread's exact lesson: identity maps that don't track churn
+                // smear) -- without this test every land result re-entered outNewActors
+                // and net_pump re-broadcast it as an incremental keyless PropSpawn every
+                // 20 s re-seed. The set insert above still refreshes membership (the
+                // O(1) snapshot de-dupe), it just is not "newness" any more.
+                if (GetPropElementIdForActor(obj) != coop::element::kInvalidId) continue;
+                ++c.newlyTracked;
                 // R1: yield the newly-adopted actor so the steady-world re-seed
                 // can broadcast ONE incremental PropSpawn for it (the eid is
                 // minted in phase 2 below, before this function returns, so a

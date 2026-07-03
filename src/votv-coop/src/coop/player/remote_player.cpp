@@ -792,48 +792,63 @@ ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
 
 ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     if (!valid()) return {};
-    // 2026-05-25 NIGHT (user retest +2): pre-fix this read the puppet's 'head'
-    // BONE world location, which the AnimBP recomputes every animation tick.
-    // The nameplate quad was repositioned via SetActorLocation on a separate
-    // floating actor each tick; if nameplate::Update fired BEFORE the AnimBP
-    // advanced the bone for the frame, the nameplate sat at the previous
-    // frame's head position while the visible mesh had already moved -- the
-    // user reported it as "the nameplate is trying to catch up with the
-    // movement... jaggy laggy". The bone read also accumulated IK perturbation
-    // (Control Rig nudges head transform during walk).
-    //
-    // Fix: anchor to the ACTOR pivot + a small fixed Z offset. The pivot is
-    // moved by our pose drive (RemotePlayer::ApplyToEngine, same tick as the
-    // pose update) so it stays in lockstep with the visible mesh. The
-    // bone-anchor branch is removed per RULE 2 (no parallel old + new code
-    // paths).
-    //
-    // Anchor Z to the RENDERED 'head' bone so the label tracks the actual head --
-    // dynamic across crouch (ctrl) / jump / skin height -- not a fixed actor-pivot
-    // offset. The puppet renders on the kerfur skeleton (player skin retargeted), whose
-    // actor pivot sits ~30 cm ABOVE the 'head' bone, so the old `actor.Z + 30` floated
-    // the label ~60 cm too high (user: "way too high"). Measured 2026-06-07:
-    // actor.Z=6271, 'head' bone Z=6242, mesh root=6101.
-    //
-    // The 2026-05-25 version ALSO read the head bone but the nameplate was a SEPARATE
-    // floating actor repositioned a frame late -> "jaggy laggy". That skew is gone: the
-    // ImGui projection reads the bone + projects it in the SAME nameplate::Update tick.
-    // X/Y stay on the stable actor pivot (no horizontal bone jitter).
-    ue_wrap::FVector p = GetLocation();  // actor pivot X/Y (stable body centre)
-    // The 'head' bone read iterates the skeleton -- too costly EVERY frame * every
-    // puppet -- so refresh the head-Z OFFSET (relative to the actor pivot) only every
-    // few ticks + reuse it between. Jump/move track exactly (the offset is actor-
-    // relative, both move together); a crouch's lower head lands within ~80 ms.
-    if (--headZRefresh_ <= 0) {
-        headZRefresh_ = 5;  // ~12 Hz at the 60 Hz tick
-        void* mesh = Pup::GetSkeletalMeshComponent(actor_);
-        float headZ = 0.f;
-        if (mesh && R::IsLive(mesh) && E::GetBoneWorldZByName(mesh, L"head", headZ)) {
-            headZOffset_ = (headZ + 33.f) - p.Z;  // 'head' bone (+33 above) relative to actor.Z
+    // Anchor = the 'head' BONE of whatever mesh the peer is CURRENTLY rendered by
+    // (user 2026-07-03: "mount the nameplate to the head bone of the model which
+    // player is currently rocking; attach to head bone, just smooth out the movement"):
+    //   - ragdolled -> the VISIBLE plushie body's head (the kel meshes are hidden and
+    //     the actor rides the pelvis attach, so the old pivot anchor is exactly why
+    //     the plate "went nuts" during a flop),
+    //   - else -> the visible skin mesh's head (native kel, builtin skins and
+    //     converted client models all carry a 'head' bone -- coverage-measured
+    //     2026-07-03; a bone-less exotic mesh anchors at the component transform,
+    //     UE's own GetSocketLocation fallback).
+    // One GetSocketLocation dispatch per call (GetBoneWorldLocationByName resolves
+    // the FName from the global name table -- no skeleton enumeration; the May
+    // "jaggy" objection was a separate one-frame-late nameplate ACTOR plus the
+    // per-call skeleton walk, both long gone). The anim/IK per-frame jitter the
+    // pivot anchor used to hide is instead SMOOTHED below.
+    constexpr float kPlateLiftCm = 33.f;  // float the plate above the skull (2026-06-07 tuning)
+    ue_wrap::FVector raw{};
+    bool haveBone = false;
+    if (ragdoll_.Active()) {
+        void* body = ragdoll_.Body();
+        if (body && R::IsLiveByIndex(body, ragdoll_.BodyIdx())) {
+            if (void* mesh = E::GetRagdollBodyMesh(body))
+                haveBone = E::GetBoneWorldLocationByName(mesh, L"head", raw);
         }
+    } else {
+        void* mesh = Pup::GetSkeletalMeshComponent(actor_);
+        if (mesh && R::IsLive(mesh))
+            haveBone = E::GetBoneWorldLocationByName(mesh, L"head", raw);
     }
-    p.Z += headZOffset_;  // default +30 until the first bone read resolves
-    return p;
+    if (haveBone) {
+        raw.Z += kPlateLiftCm;
+    } else {
+        // Transient fallback (dying comp / pre-first-anim tick): the old pivot shape.
+        raw = GetLocation();
+        raw.Z += 30.f;
+    }
+    // Smooth the anchor (user: "just smooth out the movement"): time-based
+    // exponential approach with tau ~70 ms -- soaks up per-frame anim/IK head
+    // jitter and the ragdoll's violent shakes while tracking walking with an
+    // imperceptible lag. dt comes from real elapsed time, so the multiple
+    // same-tick callers (nameplate + voice) advance the filter only once; a
+    // TELEPORT-sized jump (>2 m) or the first call snaps instead of gliding.
+    const uint64_t now = NowMs();
+    const float dx = raw.X - headAnchor_.X, dy = raw.Y - headAnchor_.Y, dz = raw.Z - headAnchor_.Z;
+    const float dist2 = dx * dx + dy * dy + dz * dz;
+    constexpr float kSnapCm2 = 200.f * 200.f;
+    if (headAnchorAtMs_ == 0 || dist2 > kSnapCm2) {
+        headAnchor_ = raw;
+    } else if (now > headAnchorAtMs_) {
+        const float dtMs = static_cast<float>(now - headAnchorAtMs_);
+        const float alpha = 1.f - std::exp(-dtMs / 70.f);
+        headAnchor_.X += dx * alpha;
+        headAnchor_.Y += dy * alpha;
+        headAnchor_.Z += dz * alpha;
+    }
+    headAnchorAtMs_ = now;
+    return headAnchor_;
 }
 
 void RemotePlayer::SetNickname(std::wstring name) { nickname_ = std::move(name); }

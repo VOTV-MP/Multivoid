@@ -543,6 +543,13 @@ void DumpAllBonesWorldZ(void* skelMeshComp);
 // authored-but-invisible bones in a multi-variant skeleton). Game thread only.
 bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ);
 
+// World POSITION of the bone named `boneName` -- the hot-path-safe by-name variant:
+// ONE GetSocketLocation dispatch per call (the FName comes from the global name table,
+// cached per distinct name -- no skeleton enumeration). Silently anchors to the
+// COMPONENT transform when the mesh lacks the bone (UE's own fallback) -- desirable
+// for HUD/audio anchors. False only on outright resolution failure. Game thread only.
+bool GetBoneWorldLocationByName(void* skelMeshComp, const wchar_t* boneName, FVector& outLoc);
+
 // WORLD rotation of a named bone/socket (SceneComponent::GetSocketRotation -- a bone
 // name is a valid socket name). Returns false if the bone is not found or the function
 // is unresolved. Game thread only. Used by the puppet-head-freeze probe to measure the

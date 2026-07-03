@@ -97,9 +97,11 @@ public:
     // Current engine-reported location (for verification / interpolation base).
     ue_wrap::FVector GetLocation() const;
 
-    // World point to anchor the floating nameplate: puppet actor pivot
-    // (which the pose drive aligns with the RENDERED head crown via
-    // meshOffsetZ_) + a small Z offset to float just above the head.
+    // World point to anchor the floating nameplate / voice speaker: the SMOOTHED
+    // 'head' bone of the mesh the peer is currently rendered by (the visible
+    // plushie body while ragdolled, the skin mesh otherwise) + a lift above the
+    // skull. Low-pass filtered (tau ~70 ms, teleports snap) per the user's
+    // "attach to head bone, just smooth out the movement" (2026-07-03).
     ue_wrap::FVector GetHeadPosition() const;
 
     // Unit forward vector from the puppet's SYNCED aim (curYaw_+curHeadYawDelta_, curPitch_) --
@@ -255,11 +257,13 @@ private:
     // because the wire no longer carries them).
     float meshOffsetZ_ = 0.f;    // = local mesh_playerVisible.RelativeLocation.Z (raw, +0x11C)
     float meshOffsetYaw_ = 0.f;  // = atan2(mesh forward) - actor yaw (BP-authored mesh frame shim)
-    // Nameplate head anchor: cached 'head' bone Z relative to the actor pivot,
-    // refreshed every few ticks in GetHeadPosition (the bone read iterates the
-    // skeleton -- too costly per frame * per puppet). Default +30 until first resolve.
-    mutable float headZOffset_ = 30.f;
-    mutable int   headZRefresh_ = 0;
+    // Nameplate/voice head anchor: the SMOOTHED 'head'-bone world position of the
+    // currently-rendered mesh (plushie while ragdolled, skin mesh otherwise) --
+    // GetHeadPosition reads the bone live (one dispatch) and low-pass filters it
+    // (tau ~70 ms; teleports snap). mutable: the filter advances inside a const
+    // getter, keyed to real elapsed time so multi-caller ticks are idempotent.
+    mutable ue_wrap::FVector headAnchor_{};
+    mutable uint64_t         headAnchorAtMs_ = 0;
     // Placeholder until the peer's Join reliable message lands (typically within
     // a few RTT of connect). nameplate::Update repaints when SetNickname changes
     // this. The old "Player 2" default was misleading -- both ends saw "Player 2"
