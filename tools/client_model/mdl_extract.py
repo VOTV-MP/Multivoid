@@ -76,63 +76,7 @@ def write_png(path, w, h, rgb):
     open(path, "wb").write(png)
 
 
-def _interior_groups(allV, obj_faces):
-    """Auto-detect fully-ENCLOSED per-texture face groups: geometry the source
-    model keeps hidden inside its outer shell. GoldSrc ports are full of such
-    leftovers (the LD `dm_base` body under the HD scientist coat, the inner
-    mouth plane, sci_v1sc's Gordon head INSIDE the scientist head); GoldSrc's
-    own skeleton kept them covered, but the anthro-rig repose deforms
-    differently and they poke through the outer skin (user 2026-07-03: "inner
-    вылазит изнутри наружу"). A group is interior when nearly every sampled
-    face point is blocked by OTHER groups' triangles in nearly every direction
-    ("cannot see the sky"). Visible-but-layered parts survive: the shirt/belt
-    under the open coat and the chrome glasses see open sky through their
-    exposed side. Returns {safe_tex: enclosed_fraction}."""
-    groups = {}
-    for safe, tri in obj_faces:
-        groups.setdefault(safe, []).append([tri[0][0], tri[1][0], tri[2][0]])
-    tri_pts = {s: allV[np.array(idx)] for s, idx in groups.items()}  # (N,3,3)
-
-    # 26 directions: every nonzero {-1,0,1}^3 combination, normalized.
-    dirs = np.array([(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1)
-                     for z in (-1, 0, 1) if (x, y, z) != (0, 0, 0)], float)
-    dirs /= np.linalg.norm(dirs, axis=1)[:, None]
-
-    def blocked(origins, d, tris):
-        """Moller-Trumbore, vectorized over samples x triangles for one ray
-        direction: does ANY triangle block each origin along d? -> (S,) bool"""
-        v0, e1, e2 = tris[:, 0], tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]
-        p = np.cross(d, e2)                      # (M,3)
-        det = np.einsum("mk,mk->m", e1, p)       # (M,)
-        ok = np.abs(det) > 1e-9
-        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
-        t0 = origins[:, None, :] - v0[None, :, :]            # (S,M,3)
-        u = np.einsum("smk,mk->sm", t0, p) * inv[None, :]
-        q = np.cross(t0, e1[None, :, :])                     # (S,M,3)
-        v = np.einsum("smk,k->sm", q, d) * inv[None, :]
-        t = np.einsum("smk,mk->sm", q, e2) * inv[None, :]
-        hit = ok[None, :] & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-3)
-        return hit.any(axis=1)
-
-    frac = {}
-    for safe, tris in tri_pts.items():
-        others = [t for s, t in tri_pts.items() if s != safe]
-        if not others:
-            frac[safe] = 0.0
-            continue
-        occl = np.concatenate(others)
-        cent = tris.mean(axis=1)
-        if len(cent) > 96:                        # bounded sampling, even stride
-            cent = cent[:: max(1, len(cent) // 96)][:96]
-        blocked_dirs = np.zeros(len(cent))
-        for d in dirs:
-            blocked_dirs += blocked(cent, d, occl)
-        enclosed = blocked_dirs >= len(dirs) - 1  # allow one leak direction
-        frac[safe] = float(enclosed.mean())
-    return frac
-
-
-def extract(path, out, strip_materials=(), keep_materials=()):
+def extract(path, out):
     os.makedirs(os.path.join(out, "tex"), exist_ok=True)
     b = open(path, "rb").read()
     gi = lambda o: struct.unpack_from("<i", b, o)[0]
@@ -155,10 +99,9 @@ def extract(path, out, strip_materials=(), keep_materials=()):
     nsr, nsf, si = gi(H["numskinref"]), gi(H["numskinfamilies"]), gi(H["skinindex"])
     skin = [gh(si + k * 2) for k in range(max(nsr * nsf, 0))]
 
-    # ---- textures (decoded now, WRITTEN after the interior-group filter so a
-    # dropped group's texture never reaches the atlas) ----
+    # ---- textures ----
     nt, ti = gi(H["numtextures"]), gi(H["textureindex"])
-    tex_names, tex_rgb = [], {}
+    tex_names = []
     for i in range(nt):
         o = ti + i * 80
         tn, w, h, idx = _s(o if False else b, o, 64), gi(o + 68), gi(o + 72), gi(o + 76)
@@ -169,7 +112,7 @@ def extract(path, out, strip_materials=(), keep_materials=()):
             c = pix[p]
             rgb[p * 3:p * 3 + 3] = pal[c * 3:c * 3 + 3]
         safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in tn)
-        tex_rgb[safe] = (w, h, bytes(rgb))
+        write_png(os.path.join(out, "tex", safe + ".png"), w, h, bytes(rgb))
         tex_names.append((tn, safe, w, h))
 
     # ---- bodyparts -> model[0] -> verts + meshes(tricmds) ----
@@ -220,38 +163,6 @@ def extract(path, out, strip_materials=(), keep_materials=()):
         voff += numverts
 
     allV = np.concatenate(V)
-
-    # ---- interior-shell filter: drop face groups the model keeps fully hidden
-    # inside its outer skin (see _interior_groups). Manual overrides win:
-    # strip_materials forces a drop, keep_materials exempts from the auto-drop.
-    frac = _interior_groups(allV, obj_faces)
-    lower = lambda pats: tuple(p.lower() for p in pats if p)
-    strip_pats, keep_pats = lower(strip_materials), lower(keep_materials)
-    dropped = set()
-    for safe in sorted(frac):
-        s = safe.lower()
-        forced = any(p in s for p in strip_pats)
-        kept = any(p in s for p in keep_pats)
-        auto = frac[safe] >= 0.90
-        drop = forced or (auto and not kept)
-        ntri = sum(1 for g, _ in obj_faces if g == safe)
-        tag = ("DROPPED (forced)" if forced else
-               "DROPPED (interior shell)" if drop else
-               "kept (keep-material)" if auto and kept else "kept")
-        print(f"[mdl_extract] interior-scan: {safe:28s} tris={ntri:4d} "
-              f"enclosed={frac[safe]*100:3.0f}% -> {tag}")
-        if drop:
-            dropped.add(safe)
-    if dropped:
-        obj_faces = [(safe, tri) for safe, tri in obj_faces if safe not in dropped]
-
-    # write only the textures still referenced by faces (a dropped group's
-    # texture must not waste atlas space).
-    referenced = {safe for safe, _ in obj_faces}
-    for safe, (w, h, rgb) in tex_rgb.items():
-        if safe in referenced:
-            write_png(os.path.join(out, "tex", safe + ".png"), w, h, rgb)
-
     # write OBJ
     with open(os.path.join(out, "model.obj"), "w") as f:
         f.write(f"# mdl_extract from {os.path.basename(path)}\n")
@@ -275,20 +186,9 @@ def extract(path, out, strip_materials=(), keep_materials=()):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    opts = [a for a in sys.argv[1:] if a.startswith("--")]
-    strip, keep = [], []
-    for o in opts:
-        if o.startswith("--strip-material="):
-            strip += o.split("=", 1)[1].split(",")
-        elif o.startswith("--keep-material="):
-            keep += o.split("=", 1)[1].split(",")
-        else:
-            print(f"unknown option {o}"); return 2
-    if len(args) < 2:
-        print("usage: mdl_extract <model.mdl> <outDir> "
-              "[--strip-material=a,b] [--keep-material=c,d]"); return 2
-    extract(args[0], args[1], strip_materials=strip, keep_materials=keep)
+    if len(sys.argv) < 3:
+        print("usage: mdl_extract <model.mdl> <outDir>"); return 2
+    extract(sys.argv[1], sys.argv[2])
 
 
 if __name__ == "__main__":
