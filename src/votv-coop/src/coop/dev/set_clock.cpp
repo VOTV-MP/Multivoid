@@ -7,39 +7,51 @@
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 
+#include <cstdint>
+
 namespace coop::dev::set_clock {
 
 namespace DNC = ue_wrap::daynightcycle;
 namespace GT  = ue_wrap::game_thread;
 
-bool ReadCurrent(int& dayOut, float& fracOut) {
-    float total = 0.f, day = 0.f, scale = 0.f, maxT = 0.f;
-    if (!DNC::ReadClock(total, day, scale)) return false;
+bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut) {
+    int32_t h = 0, m = 0, d = 0;
+    if (!DNC::ReadTimeZ(h, m, d)) return false;
+    float total = 0.f, dayAcc = 0.f, scale = 0.f, maxT = 0.f;
+    if (!DNC::ReadClock(total, dayAcc, scale)) return false;
     if (!DNC::ReadMaxTime(maxT) || maxT <= 0.f) return false;
-    dayOut = static_cast<int>(day);
+    hourOut = h;
+    minuteOut = m;
+    dayOut = d + 1;  // the game's own display convention (savedtime.Z + 1; save_browser fix)
     float frac = total / maxT;
     if (frac < 0.f) frac = 0.f;
     if (frac > 1.f) frac = 1.f;
-    fracOut = frac;
+    sunFracOut = frac;
     return true;
 }
 
-void SetDay(int day) {
+void SetClock(int day, int hour, int minute) {
     if (!coop::dev_gate::Allowed()) {
-        UE_LOGW("set_clock: SetDay REFUSED -- dev features are disabled while connected as a client");
+        UE_LOGW("set_clock: SetClock REFUSED -- dev features are disabled while connected as a client");
         return;
     }
-    if (day < 0) day = 0;
-    GT::Post([day] {
-        float total = 0.f, curDay = 0.f, scale = 0.f;
-        if (!DNC::ReadClock(total, curDay, scale)) {
-            UE_LOGW("set_clock: SetDay -- world clock not resolved (world up?)");
+    if (day < 1) day = 1;  // displayed day is 1-based
+    if (hour < 0) hour = 0;
+    if (hour > 23) hour = 23;
+    if (minute < 0) minute = 0;
+    if (minute > 59) minute = 59;
+    GT::Post([day, hour, minute] {
+        int32_t curH = 0, curM = 0, curD = 0;
+        if (!DNC::ReadTimeZ(curH, curM, curD)) {
+            UE_LOGW("set_clock: SetClock -- world clock not resolved (world up?)");
             return;
         }
-        // Keep the current time-of-day (totalTime) + TimeScale; only advance the Day counter. time_sync
-        // (host) broadcasts the new clock to clients on its next poll.
-        DNC::ApplyClock(total, static_cast<float>(day), scale);
-        UE_LOGI("set_clock: Day set to %d (totalTime/timeScale preserved)", day);
+        const int rawZ = day - 1;  // displayed day -> the scheduler/save day-Z
+        DNC::WriteTimeZ(hour, minute, rawZ);
+        UE_LOGI("set_clock: clock set Day %d %02d:%02d -> Day %d %02d:%02d (timeZ.Z %d -> %d; the "
+                "next minute pulse feeds it through settime; a forward day jump fires skipped "
+                "scheduled events natively)",
+                curD + 1, curH, curM, day, hour, minute, curD, rawZ);
     });
 }
 
@@ -56,11 +68,11 @@ void SetTimeFraction(float frac) {
             UE_LOGW("set_clock: SetTimeFraction -- world clock not resolved (world up?)");
             return;
         }
-        // Map the fraction to a within-day totalTime; keep the current Day + TimeScale. The cycle's own
-        // ReceiveTick re-derives the sun from the new totalTime. time_sync broadcasts it to clients.
+        // Sun only: map the fraction to a within-day totalTime; keep the Day accumulator +
+        // TimeScale + the named clock (timeZ). The cycle's ReceiveTick re-derives the sun.
         DNC::ApplyClock(frac * maxT, day, scale);
-        UE_LOGI("set_clock: time-of-day set to %.3f of day (totalTime=%.1f / MaxTime=%.1f, day %.0f)",
-                frac, frac * maxT, maxT, day);
+        UE_LOGI("set_clock: sun set to %.3f of day (totalTime=%.1f / MaxTime=%.1f; named clock untouched)",
+                frac, frac * maxT, maxT);
     });
 }
 

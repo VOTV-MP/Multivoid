@@ -69,27 +69,45 @@ void RenderRestoreVitals() {
 
 void RenderSetClock() {
     namespace SC = coop::dev::set_clock;
-    int day = 0; float frac = 0.f;
-    if (!SC::ReadCurrent(day, frac)) {
+    int hour = 0, minute = 0, day = 0;
+    float frac = 0.f;
+    if (!SC::ReadCurrent(hour, minute, day, frac)) {
         ImGui::TextDisabled("World clock not resolved yet (enter a world).");
         return;
     }
-    ImGui::TextDisabled("Host-authoritative; the new day/time syncs to clients.");
-    ImGui::Text("Now: day %d   time %.3f of day", day, frac);
-    static int s_day = -1;
-    if (s_day < 0) s_day = day;  // seed once from the live day
-    ImGui::SetNextItemWidth(110.f);
-    ImGui::InputInt("##clkday", &s_day);
-    if (s_day < 0) s_day = 0;
+    ImGui::TextDisabled("Host-authoritative; the clock (timeZ -> settime) drives events + the save.");
+    ImGui::Text("Now: Day %d — %02d:%02d", day, hour, minute);
     ImGui::SameLine();
-    if (ImGui::Button("Set day")) SC::SetDay(s_day);
+    ImGui::TextDisabled("(sun %.3f)", frac);
+    static int s_day = -1, s_hour = -1, s_min = -1;
+    if (s_day < 0) { s_day = day; s_hour = hour; s_min = minute; }  // seed once from the live clock
+    ImGui::SetNextItemWidth(90.f);
+    ImGui::InputInt("day##clk", &s_day);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(74.f);
+    ImGui::InputInt("h##clk", &s_hour);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(74.f);
+    ImGui::InputInt("m##clk", &s_min);
+    if (s_day < 1) s_day = 1;
+    if (s_hour < 0) s_hour = 0;
+    if (s_hour > 23) s_hour = 23;
+    if (s_min < 0) s_min = 0;
+    if (s_min > 59) s_min = 59;
+    ImGui::SameLine();
+    if (ImGui::Button("Set clock")) SC::SetClock(s_day, s_hour, s_min);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Writes the game's own running clock (timeZ); the next minute pulse runs\n"
+                          "saveSlot.settime natively. Jumping the day FORWARD fires every skipped\n"
+                          "scheduled story event at once (native settime behavior; they mirror to\n"
+                          "clients via EventFire). Day is the DISPLAYED day (as on the save rows).");
     ImGui::SameLine();
     ImGui::TextDisabled("(host only)");
     float f = frac;
     ImGui::SetNextItemWidth(260.f);
-    if (ImGui::SliderFloat("Time of day", &f, 0.0f, 0.999f, "%.3f"))
+    if (ImGui::SliderFloat("Sun position", &f, 0.0f, 0.999f, "%.3f"))
         SC::SetTimeFraction(f);  // live: drag moves the sun (totalTime := frac * MaxTime)
-    ImGui::TextDisabled("0 = day start  ->  ~1 = day end. Drag to move the sun.");
+    ImGui::TextDisabled("Visual only (sun angle). The clock above is what events/save follow.");
 }
 
 void RenderPosHud() {

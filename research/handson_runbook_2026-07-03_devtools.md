@@ -1,6 +1,20 @@
 # Hands-on runbook 2026-07-03 (take 2) — ragdoll bone visualizer + events menu completion
 
-**Deployed (UPDATED take 3):** DLL `DF0C0295B6E7613F` on all 4 installs (hash-verified; contains
+> **UPDATE (take 4, same day): two menu fixes on the latest DLL.**
+> 1. **F1 clock panel fixed** (your "день 4029 и тикает" report): the old panel printed the
+>    cycle's raw `Day` float — a within-day ACCUMULATOR (the midnight-cascade counter), not the
+>    day number (same root as the save-browser "Day 3566" bug). Now it reads the game's own
+>    running clock `timeZ` and shows **"Day N — HH:MM"** (N = the displayed day, same convention
+>    as the game's save rows), with the sun fraction alongside. Setting: enter day + h + m →
+>    **Set clock** writes `timeZ`; the game's next minute pulse feeds it through its own
+>    `saveSlot.settime` (save time persists natively). CAUTION by design: jumping the day
+>    FORWARD fires every skipped scheduled story event at once (native settime behavior — and
+>    they now mirror to the client via EventFire). The slider is now labeled **Sun position** —
+>    visual only, as before.
+> 2. **Tilde scoreboard: "Teleport to me" is no longer dev-gated** — the host always sees it in
+>    a client row's popup, next to Kick/Ban (host-standard admin verb).
+
+**Deployed (UPDATED take 3):** DLL `5A60579C076A0B06` on all 4 installs (hash-verified; contains
 the re-bind thread `2ab718d5` — test its runbook `handson_runbook_2026-07-03_rebind_thread.md` in
 the same session — plus these two dev features PLUS the v95 EventFire channel,
 `handson_runbook_2026-07-03_eventfire.md`). Protocol now v95 (both peers need the new DLL). Host

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace ue_wrap::daynightcycle {
 
 // Resolve the daynightCycle_C UClass + the totalTime / Day / TimeScale field offsets.
@@ -41,6 +43,18 @@ bool ReadMaxTime(float& maxTime);
 // UFunction, unconditional). The client applies the host's authoritative clock here; the
 // cycle's own ReceiveTick then re-derives the sun. No-op if not resolved. Game thread.
 void ApplyClock(float totalTime, float day, float timeScale);
+
+// ---- the NAMED clock: `timeZ` (FIntVector @0x02D0: X=hour, Y=minute, Z=day) ----
+// This is the game's own running (hour, minute, day) triple -- the cycle's minute pulse
+// calls saveSlot.settime(timeZ) and rebuilds timeZ from settime's incremented outs
+// (bytecode: ExecuteUbergraph_daynightCycle settime call region; getNamedTime is a pure
+// unpacker of this triple). The DAY NUMBER lives here (timeZ.Z) -- NOT in the float `Day`
+// field, which is a within-day accumulator (the midnight cascade threshold `day > MaxTime`).
+// Reads/writes are plain FIntVector field access (BP writes it via Let, no setter); a
+// WRITE is picked up by the next minute pulse -> settime(newTriple) -> savedtime persists
+// + the scheduled-event walk runs natively. Game thread. False/no-op if unresolved.
+bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day);
+void WriteTimeZ(int32_t hour, int32_t minute, int32_t day);
 
 // ---- U6 day-roll suppression (v65; coop/time_sync drives these) ----
 // RE (2026-06-12 daynight agent pass): the midnight task/email/points cascade

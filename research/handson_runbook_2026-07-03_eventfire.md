@@ -1,6 +1,6 @@
 # Hands-on runbook 2026-07-03 (take 3) — the EventFire replay channel (v95)
 
-**Deployed:** DLL `DF0C0295B6E7613F` on all 4 installs (hash-verified; supersedes `8BAD59B4` —
+**Deployed:** DLL `5A60579C076A0B06` on all 4 installs (hash-verified; supersedes `8BAD59B4` —
 contains everything from the two earlier 2026-07-03 runbooks PLUS this channel). **Protocol
 v94 -> v95** — BOTH peers must run the new DLL (an old peer is refused at handshake with a
 version-mismatch reason, by design). Paks unchanged.
@@ -41,7 +41,7 @@ a client never saw them. Now:
   joiner is mid-download/load queues on the joiner and replays at world-ready (the save-carried
   dedupe makes any overlap idempotent) — no join-window loss.
 
-## Your tests (host + client, both on `DF0C0295`)
+## Your tests (host + client, both on `5A60579C`)
 
 1. **THE CAMPFIRE (your original target):** host F1 -> Game -> Events -> Story ->
    `treehouse_0` (red = Ctrl+click). EXPECTED NOW: the ariral camp + campfire + the map-wide

@@ -6,7 +6,6 @@
 #include "coop/session/session_manager.h"  // ListedState / SetListed (the host hide toggle)
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
-#include "ui/dev_menu.h"
 #include "ui/voice_icons.h"
 
 #include "imgui.h"
@@ -91,11 +90,10 @@ void Render() {
         // Role is conveyed by NICK COLOUR (host = gold, client = soft white) -- no
         // separate role text column. "(you)" marks the local player. On the HOST's
         // interactive board, every OTHER connected client's row is a clickable
-        // Selectable that opens an action popup (Kick / Ban always; Teleport-to-me
-        // under [dev] devkeys). A client's board (and the host's own row) is plain
-        // text -- the client peek is passive (no input capture).
+        // Selectable that opens an action popup (Teleport-to-me / Kick / Ban -- all
+        // host-standard admin verbs, no dev gate). A client's board (and the host's
+        // own row) is plain text -- the client peek is passive (no input capture).
         const bool host = LocalIsHost();
-        const bool dev  = ui::dev_menu::DevMode();
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
         const bool voiceOn = vs.enabled != 0 && vs.started != 0;
         if (ImGui::BeginTable("##roster", voiceOn ? 4 : 3, tflags)) {
@@ -138,7 +136,9 @@ void Render() {
                     if (ImGui::BeginPopup("##act")) {
                         ImGui::TextDisabled("%s", nick);
                         ImGui::Separator();
-                        if (dev && ImGui::MenuItem("Teleport to me"))
+                        // Host-standard action, NOT dev-gated (user 2026-07-03: the host
+                        // should always have it, like Kick/Ban -- it is an admin verb).
+                        if (ImGui::MenuItem("Teleport to me"))
                             coop::moderation::TeleportSlotToMe(r.slot);
                         if (ImGui::MenuItem("Kick"))
                             coop::moderation::KickSlot(r.slot);

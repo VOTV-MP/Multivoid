@@ -24,11 +24,13 @@ int32_t g_totalTimeOff = -1;      // AdaynightCycle_C::totalTime (Alpha 0.9.0-n:
 int32_t g_dayOff       = -1;      // AdaynightCycle_C::Day       (0x0298)
 int32_t g_timeScaleOff = -1;      // AdaynightCycle_C::TimeScale (0x02B4)
 int32_t g_maxTimeOff   = -1;      // AdaynightCycle_C::MaxTime   (0x02AC) -- one day's length in totalTime units
+int32_t g_timeZOff     = -1;      // AdaynightCycle_C::timeZ     (0x02D0) -- FIntVector (hour, minute, DAY)
 
 constexpr int32_t kTotalTimeOffFallback = 0x02B0;
 constexpr int32_t kDayOffFallback       = 0x0298;
 constexpr int32_t kTimeScaleOffFallback = 0x02B4;
 constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
+constexpr int32_t kTimeZOffFallback     = 0x02D0;
 
 void* g_cycleCache = nullptr;  // cached singleton (GT-only)
 
@@ -47,15 +49,18 @@ bool EnsureResolved() {
     if (scaleOff < 0) scaleOff = kTimeScaleOffFallback;
     int32_t maxOff = R::FindPropertyOffset(cls, L"MaxTime");
     if (maxOff < 0) maxOff = kMaxTimeOffFallback;
+    int32_t timeZOff = R::FindPropertyOffset(cls, L"timeZ");
+    if (timeZOff < 0) timeZOff = kTimeZOffFallback;
 
     g_cycleCls     = cls;
     g_totalTimeOff = totalOff;
     g_dayOff       = dayOff;
     g_timeScaleOff = scaleOff;
     g_maxTimeOff   = maxOff;
+    g_timeZOff     = timeZOff;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X",
-            cls, totalOff, dayOff, scaleOff, maxOff);
+    UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X timeZ@0x%04X",
+            cls, totalOff, dayOff, scaleOff, maxOff, timeZOff);
     return true;
 }
 
@@ -104,6 +109,25 @@ void WriteTimeScale(float scale) {
     void* cyc = Cycle();
     if (!cyc || g_timeScaleOff < 0) return;
     *reinterpret_cast<float*>(reinterpret_cast<char*>(cyc) + g_timeScaleOff) = scale;
+}
+
+bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day) {
+    void* cyc = Cycle();
+    if (!cyc || g_timeZOff < 0) return false;
+    const int32_t* v = reinterpret_cast<const int32_t*>(reinterpret_cast<const char*>(cyc) + g_timeZOff);
+    hour = v[0];
+    minute = v[1];
+    day = v[2];
+    return true;
+}
+
+void WriteTimeZ(int32_t hour, int32_t minute, int32_t day) {
+    void* cyc = Cycle();
+    if (!cyc || g_timeZOff < 0) return;
+    int32_t* v = reinterpret_cast<int32_t*>(reinterpret_cast<char*>(cyc) + g_timeZOff);
+    v[0] = hour;
+    v[1] = minute;
+    v[2] = day;
 }
 
 namespace {
