@@ -8,6 +8,7 @@
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
+#include "coop/dev/ragdoll_master_pose.h"
 #include "coop/dev/pos_hud.h"
 #include "coop/dev/add_points.h"
 #include "coop/dev/restore_vitals.h"
@@ -152,6 +153,12 @@ void RenderRagdollBones() {
     ImGui::TextDisabled("(lines between every bone of an ACTIVE ragdoll body)");
     ImGui::TextDisabled("The native ragdoll (C key / faint / trip) is an invisible separate actor;");
     ImGui::TextDisabled("orange = your own ragdoll, cyan = a remote peer's mirror body.");
+    namespace MP = coop::dev::ragdoll_master_pose;
+    bool mp = MP::IsEnabled();
+    if (ImGui::Checkbox("Ragdoll master-pose (probe)", &mp)) MP::SetEnabled(mp);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(a flopping peer's kel follows ALL 6 ragdoll bones, not just pelvis)");
+    ImGui::TextDisabled("Applies on the next flop (or mid-flop); recover restores the normal anim.");
 }
 
 void RenderSpawnNpc() {

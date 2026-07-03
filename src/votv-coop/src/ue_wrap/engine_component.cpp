@@ -164,6 +164,67 @@ FVector GetComponentRelativeLocation(void* component) {
         reinterpret_cast<uint8_t*>(component) + P::off::USceneComponent_RelativeLocation);
 }
 
+FRotator GetComponentRelativeRotation(void* component) {
+    if (!component) return {};
+    // Raw sibling of GetComponentRelativeLocation above -- USceneComponent::
+    // RelativeRotation @ +0x0128 (FRotator, 12 bytes): the stored attach-relative
+    // value the master-pose probe must restore on recover.
+    return *reinterpret_cast<FRotator*>(
+        reinterpret_cast<uint8_t*>(component) + P::off::USceneComponent_RelativeRotation);
+}
+
+bool SetComponentWorldLocationAndRotation(void* component, const FVector& location,
+                                          const FRotator& rotation) {
+    // See engine.h. The FHitResult& out-param's frame space is allocated by ParamFrame
+    // (the SetComponentWorldRotation precedent); we never read the sweep result back.
+    if (!component || !R::IsLive(component)) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        if (void* sc = SceneCompClass()) sFn = R::FindFunction(sc, L"K2_SetWorldLocationAndRotation");
+    }
+    if (!sFn) { UE_LOGW("engine: K2_SetWorldLocationAndRotation unresolved"); return false; }
+    ParamFrame f(sFn);
+    f.SetRaw(L"NewLocation", &location, sizeof(location));
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", true);
+    return Call(component, f);
+}
+
+bool SetComponentRelativeLocationAndRotation(void* component, const FVector& location,
+                                             const FRotator& rotation) {
+    // See engine.h. Same frame shape as the world variant above.
+    if (!component || !R::IsLive(component)) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        if (void* sc = SceneCompClass()) sFn = R::FindFunction(sc, L"K2_SetRelativeLocationAndRotation");
+    }
+    if (!sFn) { UE_LOGW("engine: K2_SetRelativeLocationAndRotation unresolved"); return false; }
+    ParamFrame f(sFn);
+    f.SetRaw(L"NewLocation", &location, sizeof(location));
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", true);
+    return Call(component, f);
+}
+
+bool SetSkinnedMeshMasterPose(void* slaveComp, void* masterComp) {
+    // See engine.h. masterComp may be NULL (clears the link) -- only the slave must be
+    // live; a non-null master is liveness-checked too.
+    if (!slaveComp || !R::IsLive(slaveComp)) return false;
+    if (masterComp && !R::IsLive(masterComp)) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        if (!g_skinnedMeshClass) g_skinnedMeshClass = R::FindClass(P::name::SkinnedMeshComponentClass);
+        if (g_skinnedMeshClass) sFn = R::FindFunction(g_skinnedMeshClass, L"SetMasterPoseComponent");
+    }
+    if (!sFn) { UE_LOGW("engine: SetMasterPoseComponent unresolved"); return false; }
+    ParamFrame f(sFn);
+    f.Set<void*>(L"NewMasterBoneComponent", masterComp);
+    f.Set<bool>(L"bForceUpdate", true);
+    return Call(slaveComp, f);
+}
+
 void* GetParticleSystemTemplate(void* particleSystemComponent) {
     if (!particleSystemComponent) return nullptr;
     // UParticleSystemComponent::Template is a UObjectProperty (UParticleSystem*). Resolve its

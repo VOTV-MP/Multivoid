@@ -2,6 +2,7 @@
 
 #include "coop/player/remote_player_ragdoll.h"
 
+#include "coop/dev/ragdoll_master_pose.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -56,6 +57,10 @@ RagdollDisplay::Drive RagdollDisplay::DriveAttached(void* puppetActor, int32_t p
         } else if (E::GetRagdollBodyPelvisRotation(body_, pr)) {
             E::SetActorRotation(puppetActor, pr);
         }
+        // Master-pose PROBE (dev, OFF by default -- coop/dev/ragdoll_master_pose.h):
+        // couple the remaining 5 bones too. Manages its own apply/pin/restore off its
+        // enable state; inert (atomic load + map lookup) while disabled.
+        dev::ragdoll_master_pose::Drive(puppetActor, puppetIdx, body_, bodyIdx_);
         return Drive::Attached;
     }
     // Self-heal (audit 2026-06-01): the body was GC-killed mid-ragdoll (e.g. a
@@ -112,6 +117,9 @@ void RagdollDisplay::Start(void* puppetActor, int32_t puppetIdx) {
 }
 
 void RagdollDisplay::Stop(void* puppetActor, int32_t puppetIdx) {
+    // Un-slave the kel meshes + restore their attach-relative transforms BEFORE the
+    // master body is detached/destroyed (no-op when the probe never applied).
+    dev::ragdoll_master_pose::Stop(puppetActor);
     // Detach the puppet (KeepWorld -- it stays where the flop left it; the next
     // pose drives it back to the streamed pose) BEFORE destroying the body it's
     // attached to.
