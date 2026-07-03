@@ -434,7 +434,7 @@ GAP-save/story | GAP-signal | GAP-umap (effect is a level-placed instance; needs
 | 9 | picSignal | level-placed | GAP-umap / GAP-signal | |
 | 10 | arirSpk | level-placed | GAP-umap | likely GAP-sound (VO) |
 | 11 | peace | level-placed | GAP-umap | ambient -> likely GAP-cosmetic/sound |
-| 12 | wisps | trigger_wispSwarm (dump) -> wisp_C : ACharacter | GAP-spawn(creature) | **1 allowlist line from MIRRORS** |
+| 12 | wisps | trigger_wispSwarm (dump) -> wisp_C : ACharacter | GAP-spawn(creature) | ~~1 allowlist line~~ **SHIPPED 2026-07-03 `17cde303` [V smoke 32/32]** -- the "1 line" plan was WRONG (spawn is EX_CallMath, interceptor-blind): source-gated Func-thunk catch + pose-walk dead-retire + landing fade drive; see COOP_ENTITY_EXPRESSION_MAP wisp_C section |
 | 13 | arirFollower | trigger_spawnFollowingArir (dump) -> npc_arirFollower_C | **MIRRORS(npc_sync)** | allowlisted sdk_profile.h:715. WORKS TODAY |
 | 14 | arirEgg | trigger_arirEgg (dump) -> prop_arirEgg_C : Aprop_C | MIRRORS(prop) if keyed | + SpawnSoundAttached (GAP-sound) |
 | 15 | vent | level-placed | GAP-umap | GROUP3 scare |
@@ -482,8 +482,7 @@ GAP-save/story | GAP-signal | GAP-umap (effect is a level-placed instance; needs
   #4 vehtp (atv_sync, sound aside). **Verify-prop:** #56 enasus, #57 enacros, #14 arirEgg,
   #66 ariralPrank — MIRROR via prop_lifecycle iff the spawned Aprop_C carries a Key (test: does
   the host-spawned prop appear on the client?).
-- **ONE allowlist line each** (`kNpcAllowlist` + pose entry): **#12 wisps** (`wisp_C`),
-  **#51 ventCrawler** (`ventCrawler_C`) — both `ACharacter`, npc_sync subclass-walk does the rest.
+- ~~ONE allowlist line each~~ **CORRECTED 2026-07-03**: #51 ventCrawler was one line (PE-visible spawner); **#12 wisps was NOT** -- trigger_wispSwarm spawns via EX_CallMath (PE-interceptor-blind), needed the Func-thunk EX-catch + dead-retire + landing drive. SHIPPED `17cde303` [V smoke]. The "just allowlist an ACharacter" heuristic only holds for PE-dispatched spawners -- check the caller's dispatch FIRST (COOP_DISPATCH_VISIBILITY).
 
 ### 10.2 Gap buckets -> the channel that closes each
 - **GAP-spawn (raw AActor / Aactor_save_C creatures):** #41,47,48,49,50,52,53-55,58-65 -> either

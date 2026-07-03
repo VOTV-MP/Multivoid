@@ -70,3 +70,8 @@ badge will never show through the native arm.
   decrement and collision-off all run in the game's own bytecode. No global state is faked.
 - Per-player scares: forcing completes the HOST's box; a connected client's replayed arm keeps
   its own box armed until that player walks in (native per-player behavior, by design).
+- **VERIFIED [V smoke 2026-07-03 late]**: autotest_eventforce (obelisk) -- PRE armed=0 shots=1 ->
+  ForceNow -> POST shots=0, host FORCED line + client `REPLAY runEvent 'obelisk'` same second,
+  0 errors x2 runs. Forcing **wisps** additionally yields a MIRRORED swarm since the same night's
+  wisp lane (`17cde303`, 32/32 x4 legs) -- the box overlap drives trigger_wispSwarm whose
+  EX_CallMath spawns are caught + enrolled (see COOP_ENTITY_EXPRESSION_MAP wisp_C section).

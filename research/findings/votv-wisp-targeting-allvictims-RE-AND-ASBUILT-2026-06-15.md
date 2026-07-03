@@ -93,7 +93,37 @@ Audited SAFE (recycling/idempotency/thread/perf/eid). wisp_attack_sync.cpp 289 L
 
 ## 4. HANDS-ON (user, next session)
 - Peer ALONE near a wisp (host far) -> the wisp grabs+kills the peer (peer ragdoll-dies). Host log:
-  `wisp_attack: RELAYED grab`.
+  `wisp_attack: RELAYED grab`. **[V matching real log 2026-07-03: autotest_kwisp_probe --
+  SpawnKillerWispOnClient with the host teleported 8000u away: Target=PUPPET acquired, RELAYED
+  grab fired, client `WispGrab accepted ... ragdoll DEATH fired ok=1`, 0 errors.]**
 - Wisp kills a kerfur -> the kerfur despawns on BOTH peers (no ghost). Host log:
-  `wisp_attack: NPC victim eid=N died (wisp kill...) -- mirrored EntityDestroy`.
+  `wisp_attack: NPC victim eid=N died (wisp kill...) -- mirrored EntityDestroy`. [still pending]
 - Dev button "Spawn killerWisp" (F1 > Game > Entities) drops one near you.
+
+## 5. 2026-07-03 LATE-EVE UPDATE -- user repro + probe + the movement fact + v2 plan
+
+**User repro (hands-on)**: dev-spawned a killerwisp on the client -> the wisp IGNORED the client
+and flew to kill the HOST (both players in radius). User: "u killer wisp osobyj kill sequence" --
+correct: sec 1b's player-0 hard-binding means a peer victim never gets the native grab/lift.
+
+**NEW [V bytecode fact]**: the chase MOVEMENT is `Target`-bound -- `moveToTarg` issues
+`CreateMoveToProxyObject(self, self, Vec(0,0,0), I:target, 5.0, false)` (ubergraph, two sites);
+`GetPlayerCharacter(0)` appears ONLY in grab-arm distance checks + the grab/kill/damage/ragdoll
+choreography. So "flew to the host" = the SELECTION picked the host (nearest-pick [RD] with both
+in radius, or an unconfirmed perception-path bias), NOT a movement hard-bind.
+
+**Probe verdict (autotest_kwisp_probe, `cd5947af`)**: with the host OUT of radius the whole June
+chain works -- acquisition -> relay -> client death ok=1. The REAL gaps, in order:
+1. **Peer kill CHOREOGRAPHY** (the user's report): a puppet victim gets a flat 3.5 s death --
+   no socket lift, no fatality experienced, the wisp mimes the tear alone. v2: victim client
+   attaches its OWN player to its LOCAL wisp mirror's `playerGrab` socket + fatality montage
+   (mirror exists -- killerwisp is npc-allowlisted); host + third peers socket-hold the victim
+   PUPPET via a carry-style pose override; release on the death/despawn edge.
+2. **AGGRO selection** (host-preference with both in radius): take aggro ownership into the coop
+   layer (one owner) -- a host-side selector in wisp_attack_sync::Tick, candidates = host + live
+   puppets in 5000u (+canReach LOS parity, closing sec 2 item 1), policy = UNIFORM RANDOM among
+   eligible + STICKINESS (hold victim while valid/in-range; re-roll on death/escape/out-of-range),
+   writes `Target` raw (no setter exists; the BP writes it inline -- same write class as wisp_C
+   `landed`), re-asserted per tick over the BP re-scan.
+Sec 2 item 2 (WispTearPayload 8->12 victimKind widen) remains OPEN (protocol.h:3204 still 8 B,
+checked 2026-07-03). Detail + status: memory [[project-killerwisp-vs-peers-open-2026-07-03]].
