@@ -156,10 +156,10 @@ void Update(net::Session& session, void* localPlayer) {
                     coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)");
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
-                // "<nick> joined the game" fires HERE -- the authoritative in-world moment -- NOT on the
-                // client's first pose (a menu-mode joiner streams a pre-world/menu pose while still
-                // loading, which fired the line too early; user 2026-06-17). This coincides with the
-                // joiner setting g_worldReadyAnnounced + posting its own "Joined <host>'s game".
+                // Join-line reverse-order cover (2026-07-03): the "<nick> joined the game" line now
+                // fires at the joiner's PUPPET APPEARANCE (net_pump's spawn seam, world-ready-gated
+                // on the host). This call only announces when the puppet spawned BEFORE world-ready
+                // (pre-world menu pose, user 2026-06-17) -- normal flow makes it a no-op.
                 coop::player_handshake::OnClientWorldReady(msg.senderPeerSlot);
             }
             break;

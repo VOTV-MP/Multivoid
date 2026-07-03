@@ -123,23 +123,24 @@ void OnSlotDisconnected(int slot);
 // hud message ("<X> left the game").
 const std::wstring& NicknameForSlot(int slot);
 
-// Two-phase join announcement (2026-06-15): the Join handshake announces "<nick> is connecting
-// to the game" (the peer has connected but not loaded/spawned yet); net_pump calls THIS the moment
-// the peer's puppet actually spawns to announce "joined". Role-aware: on a CLIENT, slot 0 is the
-// HOST whose game WE joined ("Joined <host>'s game"). net_pump now calls this ONLY for the CLIENT
-// role (its own "Joined <host>'s game" + cross-peer "<nick> joined", both already gated on the
-// client's own g_worldReadyAnnounced); the HOST announces a client's "joined" via OnClientWorldReady
-// instead (see below). Game thread (chat_feed push).
+// Two-phase join announcement (2026-06-15, seam moved 2026-07-03): the Join handshake announces
+// "<nick> is connecting to the game" (connected, not loaded/spawned yet); net_pump calls THIS the
+// moment the peer's puppet actually SPAWNS -- the visible appearance the "<nick> joined the game"
+// line must coincide with (user 2026-07-03; the old host announce on ClientWorldReady+5s ran ~6 s
+// before the puppet in the measured live flow). Role-aware: on a CLIENT, slot 0 is the HOST whose
+// game WE joined ("Joined <host>'s game", kept at +5 s -- own loading screen, user 2026-06-21).
+// net_pump calls it for the CLIENT role unconditionally (gated on the client's own
+// g_worldReadyAnnounced) and for the HOST role once IsSlotWorldReady(slot) holds (a pre-world
+// menu/loading pose can spawn the puppet early -- user 2026-06-17; that order is covered by
+// OnClientWorldReady below). Joiner lines are latched once per join (cleared on slot disconnect),
+// so the two seams never repeat. Game thread (chat_feed push).
 void AnnouncePeerSpawned(net::Role role, int slot);
 
-// HOST-side "<nick> joined the game" -- fired from event_feed when a client's ClientWorldReady
-// reliable lands (the authoritative "my gameplay world is up" signal). REPLACES the host's old
-// puppet-spawn-on-first-pose trigger: a menu-mode/save-transfer joiner streams a pose from its
-// MENU/loading pawn BEFORE its world loads, so the host's puppet spawned + "<nick> joined" fired
-// while the joiner was still on the loading screen -- before it even got its own "Joined <host>'s
-// game" (user 2026-06-17). ClientWorldReady is sent at the exact moment the client sets
-// g_worldReadyAnnounced + announces its own join, so the two now coincide. Latched once per join
-// (cleared on slot disconnect) because ClientWorldReady can be re-sent. Game thread.
+// HOST-side reverse-order cover for the join line: fired from event_feed when a client's
+// ClientWorldReady reliable lands. If the slot's puppet ALREADY spawned (pre-world menu pose --
+// the 2026-06-17 case), the body is standing here and world-ready is the moment it becomes the
+// real joiner -> announce now (same once-per-join latch). Normal flow (spawn after world-ready,
+// the measured live order) leaves this a no-op; the spawn seam announces. Game thread.
 void OnClientWorldReady(int slot);
 
 // Handle a delivered reliable Join message. Parses the v13 prefix

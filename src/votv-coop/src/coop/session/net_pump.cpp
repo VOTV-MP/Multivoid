@@ -1048,15 +1048,17 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // identity has landed yet; the handler re-applies on arrival.
                 g_puppets[slot].SetNickname(
                     coop::player_handshake::NicknameForSlot(slot));
-                // Two-phase join announcement: the puppet just spawned. The CLIENT announces here --
-                // "Joined <host>'s game" (slot 0) or cross-peer "<nick> joined the game" -- and this
-                // path is already gated on the client's own g_worldReadyAnnounced (the `continue` at the
-                // top of this block), so it fires at the client's world-ready. The HOST does NOT announce
-                // here anymore: a menu-mode joiner streams a pose from its menu/loading pawn BEFORE its
-                // world loads, so spawning the host's puppet on that first pose fired "<nick> joined"
-                // while the joiner was still on the loading screen (user 2026-06-17). The host now
-                // announces a joiner from event_feed on its ClientWorldReady (OnClientWorldReady).
-                if (session.role() == coop::net::Role::Client)
+                // Join announcement at the APPEARANCE seam: the puppet just spawned, which is
+                // the moment the user actually sees the peer (2026-07-03: the old host announce
+                // on ClientWorldReady+5s ran ~6 s before the puppet in the measured live flow).
+                // CLIENT: announce here -- "Joined <host>'s game" (slot 0, +5s: own loading
+                // screen) or cross-peer "<nick> joined the game" (immediate); the whole block is
+                // gated on the client's own g_worldReadyAnnounced (the `continue` above). HOST:
+                // announce here only once the slot is world-ready -- a pre-world menu/loading
+                // pose can spawn the puppet early (user 2026-06-17), and in that order
+                // OnClientWorldReady announces instead (both funnel through the same latch).
+                if (session.role() == coop::net::Role::Client ||
+                    session.IsSlotWorldReady(slot))
                     coop::player_handshake::AnnouncePeerSpawned(session.role(), slot);
             }
             // Only RE-BASE the interpolation on a NEW packet; re-pushing the

@@ -33,8 +33,9 @@ std::array<std::wstring, net::kMaxPeers> g_remoteNickBySlot{
     L"Remote player", L"Remote player", L"Remote player", L"Remote player"
 };
 std::array<bool, net::kMaxPeers> g_joinSentBySlot{};
-// HOST-side once-per-join latch for the "<nick> joined the game" line (fired on ClientWorldReady, not
-// on the first pose -- see OnClientWorldReady). Cleared on slot disconnect so a reconnect re-announces.
+// Once-per-join latch for the "<nick> joined the game" line (fired at the joiner's PUPPET
+// APPEARANCE -- see AnnounceJoinerOnce; the spawn seam and the world-ready seam both funnel
+// through it). Cleared on slot disconnect so a reconnect re-announces.
 std::array<bool, net::kMaxPeers> g_joinAnnouncedBySlot{};
 
 // v73 per-player inventory identity. g_localGuid rides our outbound Join; g_guidBySlot[s]
@@ -643,33 +644,50 @@ bool HandlePlayerJoined(net::Session& session,
     return true;
 }
 
+namespace {
+
+// The single door for "<nick> joined the game" (any viewer role). Latched once
+// per join (cleared on slot disconnect) so the two seams below -- puppet spawn
+// and world-ready -- can both call it in either order without a repeat, and a
+// mid-session puppet respawn stays silent. IMMEDIATE push: the line's whole
+// point (user 2026-07-03) is to coincide with the body actually appearing.
+void AnnounceJoinerOnce(int slot) {
+    UE_ASSERT_GAME_THREAD("g_joinAnnouncedBySlot (AnnounceJoinerOnce)");
+    if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
+    if (g_joinAnnouncedBySlot[slot]) return;
+    g_joinAnnouncedBySlot[slot] = true;
+    coop::chat_feed::Push(NicknameForSlot(static_cast<uint8_t>(slot)) + L" joined the game");
+    UE_LOGI("player_handshake: slot %d joined the game (announced at puppet appearance)", slot);
+}
+
+}  // namespace
+
 void AnnouncePeerSpawned(net::Role role, int slot) {
-    // Called from net_pump the moment a remote peer's PUPPET spawns. net_pump now calls this ONLY for
-    // the CLIENT role: slot 0 is the HOST whose game WE joined ("Joined <host>'s game"); a higher slot
-    // is a cross-peer client whose puppet just spawned here ("<nick> joined the game"). Both are gated
-    // on the client's own g_worldReadyAnnounced (net_pump's puppet-spawn block), so they fire at this
-    // peer's world-ready. The HOST announces a joiner via OnClientWorldReady (below), NOT here -- the
-    // first pose can be a pre-world pose (user 2026-06-17). The role arg is kept for the slot-0 phrasing.
-    const std::wstring nick = NicknameForSlot(static_cast<uint8_t>(slot));
-    // 5 s delay: the world-ready announce fires before the loading screen visually clears, so showing the
-    // join line immediately looks premature (user 2026-06-21). Let the join settle first.
+    // Called from net_pump the moment a remote peer's PUPPET spawns -- the visible
+    // "appearance" seam (user 2026-07-03: the join line must coincide with the body
+    // showing up; the old ClientWorldReady+5s announce ran ~6 s BEFORE the puppet in
+    // the measured live flow -- world-ready 15:27:23 vs spawn 15:27:34). On the HOST
+    // net_pump gates this call on IsSlotWorldReady, preserving the 2026-06-17
+    // protection against a pre-world menu pose spawning the puppet early; in that
+    // order OnClientWorldReady (below) announces instead.
     if (role == net::Role::Client && slot == 0) {
-        coop::chat_feed::PushDelayed(L"Joined " + nick + L"'s game", 5000);
-    } else {
-        coop::chat_feed::PushDelayed(nick + L" joined the game", 5000);
+        // Self-join line: own loading screen still covers the world at the spawn
+        // moment, so an immediate line looks premature (user 2026-06-21) -- keep +5 s.
+        coop::chat_feed::PushDelayed(L"Joined " + NicknameForSlot(0) + L"'s game", 5000);
+        return;
     }
+    AnnounceJoinerOnce(slot);
 }
 
 void OnClientWorldReady(int slot) {
-    // HOST-side "<nick> joined the game" -- the authoritative in-world announce (see the header). Fired
-    // from event_feed when a client's ClientWorldReady reliable lands; latched once per join so a
-    // re-sent ClientWorldReady doesn't repeat the line.
-    UE_ASSERT_GAME_THREAD("g_joinAnnouncedBySlot (OnClientWorldReady)");
-    if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
-    if (g_joinAnnouncedBySlot[slot]) return;          // already announced for this join
-    g_joinAnnouncedBySlot[slot] = true;
-    coop::chat_feed::PushDelayed(NicknameForSlot(slot) + L" joined the game", 5000);  // 5 s: let the joiner finish loading
-    UE_LOGI("player_handshake: slot %d joined the game (announced on ClientWorldReady, +5s)", slot);
+    // HOST-side reverse-order cover: if this slot's puppet spawned BEFORE its
+    // world-ready (a pre-world menu/loading pose -- the 2026-06-17 case), the
+    // spawn-seam announce was skipped; the body is standing here already, and
+    // world-ready is the moment it becomes the real joiner. Normal flow (spawn
+    // after world-ready) leaves this a no-op and the spawn seam announces.
+    if (slot < 1 || slot >= net::kMaxPeers) return;
+    if (coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot)) != nullptr)
+        AnnounceJoinerOnce(slot);
 }
 
 bool HandleAssignPeerSlot(net::Session& session,
