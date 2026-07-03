@@ -102,23 +102,28 @@ def seg_mode(base):
 
 # ---------- Phase B/C: splice the scientist into the template ----------
 def read_obj(path):
-    V, VT, F, FM = [], [], [], []
+    V, VT, VN, F, FM = [], [], [], [], []
     mat = None
     for line in open(path):
         if line.startswith("v "):
             V.append([float(x) for x in line.split()[1:4]])
         elif line.startswith("vt "):
             VT.append([float(x) for x in line.split()[1:3]])
+        elif line.startswith("vn "):
+            VN.append([float(x) for x in line.split()[1:4]])
         elif line.startswith("usemtl"):
             mat = line.split()[1]
         elif line.startswith("f "):
             c = []
             for tok in line.split()[1:]:
                 a = tok.split("/")
-                c.append((int(a[0]) - 1, int(a[1]) - 1 if len(a) > 1 and a[1] else -1))
+                c.append((int(a[0]) - 1,
+                          int(a[1]) - 1 if len(a) > 1 and a[1] else -1,
+                          int(a[2]) - 1 if len(a) > 2 and a[2] else -1))
             for i in range(1, len(c) - 1):
                 F.append((c[0], c[i], c[i + 1])); FM.append(mat)
-    return np.array(V, np.float64), (np.array(VT, np.float64) if VT else np.zeros((1, 2))), F, FM
+    return (np.array(V, np.float64), (np.array(VT, np.float64) if VT else np.zeros((1, 2))),
+            (np.array(VN, np.float64) if VN else np.zeros((0, 3))), F, FM)
 
 
 def bone_keyword(name):
@@ -205,7 +210,9 @@ def cook(template_base, geom_obj, bones_json, out_base, atlas_json=ATLAS):
     pnv = struct.unpack_from("<i", payload, ps + 4)[0]
     TP = np.frombuffer(payload, "<f4", pnv * 3, ps + 16).reshape(pnv, 3)
 
-    V, VT, F, FM = read_obj(geom_obj)                # reposed T-pose, PSK space
+    V, VT, VN, F, FM = read_obj(geom_obj)            # reposed T-pose, PSK space
+    assert len(VN) and all(t[2] >= 0 for tri in F for t in tri), \
+        "geom obj carries no authored normals (vn / f p/t/n) -- re-run mdl_extract+repose"
     meta = json.load(open(bones_json))
     vbone = meta["vert_bone"]; bnames = [b["name"] for b in meta["bones"]]
 
@@ -250,15 +257,13 @@ def cook(template_base, geom_obj, bones_json, out_base, atlas_json=ATLAS):
         print(f"  winding REVERSED to match template (tplVol={sv_t:+.0f}, ours now {sv_o:+.0f})")
     else:
         print(f"  winding matches template (tplVol={sv_t:+.0f}, ours {sv_o:+.0f})")
-    # SHADING normals are decoupled from the index winding: culling reads the
-    # index order (above); lighting reads these -- keep them geometrically
-    # OUTWARD (accumulate from the positive-volume orientation).
-    def normals(fp):
-        N = np.zeros_like(G)
-        for a, b, c in fp:
-            fn = np.cross(G[b] - G[a], G[c] - G[a]); N[a] += fn; N[b] += fn; N[c] += fn
-        ln = np.linalg.norm(N, axis=1, keepdims=True); return N / np.where(ln > 1e-8, ln, 1)
-    N = normals(fp if sv_o > 0 else [(a, c, b) for a, b, c in fp])
+    # SHADING normals are the MDL's AUTHORED ones (studiomdl smoothing groups),
+    # carried through repose (rotated per-bone) -- NEVER recomputed from faces:
+    # the scientist suit mesh has ~18% inconsistent-winding edges, so a winding-
+    # based accumulation flips ~27% of its vertex normals (dark-from-some-angles
+    # suit, user 2026-07-03). Positions were Y-mirrored into cooked space above;
+    # mirror the normals the same way (unit length survives a reflection).
+    NA = VN.astype(np.float64).copy(); NA[:, 1] = -NA[:, 1]
     # Bone targets via keyword + nearest-mapped-ancestor (resolve_bone_targets).
     # The accounting is per RESOLUTION KIND -- the old counter tested "target not in
     # refskel", which the constant-pelvis fallback made 0 by construction while 106
@@ -288,11 +293,11 @@ def cook(template_base, geom_obj, bones_json, out_base, atlas_json=ATLAS):
     vmap = {}; POS = []; UVs = []; NR = []; BN = []; IDX = []
     for tri, mat in zip(F, FM):
         tx, ty, tw2, th2 = TILES[mat]
-        for (p, uv) in tri:
-            k = (p, uv, mat); vid = vmap.get(k)
+        for (p, uv, ni) in tri:
+            k = (p, uv, mat, ni); vid = vmap.get(k)
             if vid is None:
                 vid = len(POS); vmap[k] = vid
-                POS.append(G[p]); NR.append(N[p]); BN.append(int(pbone[p]))
+                POS.append(G[p]); NR.append(NA[ni]); BN.append(int(pbone[p]))
                 u, v = VT[uv] if 0 <= uv < len(VT) else (0.0, 0.0)
                 uc = min(max(u, 0.0), 1.0); vd = 1.0 - min(max(v, 0.0), 1.0)
                 UVs.append(((tx + uc * tw2) / AW, (ty + vd * th2) / AH))

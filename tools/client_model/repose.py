@@ -286,7 +286,7 @@ def select_profile(orig_dir, lib_dir=None):
 
 
 # ---------- apply ----------
-def _apply(V, vbone, WA, parent, prof, names):
+def _apply(V, vbone, WA, parent, prof, names, N=None, nbone=None):
     nb = len(parent)
     # Match pose deltas by bone NAME -- a new model's skeleton can differ from the
     # profile's. Bones absent from the profile get an identity local pose (keep their
@@ -317,6 +317,16 @@ def _apply(V, vbone, WA, parent, prof, names):
         b = int(vbone[i])
         vh = np.array([V[i, 0], V[i, 1], V[i, 2], 1.0])
         Vu[i] = (WTu[b] @ (invWA[b] @ vh))[:3]
+    # authored shading normals ride the same rigid per-bone transform (rotation
+    # part only; the uniform scale/translation below don't change directions)
+    Nu = None
+    if N is not None and len(N):
+        Nu = np.empty_like(N)
+        for i in range(len(N)):
+            b = int(nbone[i])
+            n = (WTu[b][:3, :3] @ (invWA[b][:3, :3] @ N[i]))
+            l = np.linalg.norm(n)
+            Nu[i] = n / l if l > 1e-8 else n
     # scale to target height, then place (feet on ground, centered) per profile
     up = prof["up_axis"]
     h = Vu[:, up].max() - Vu[:, up].min()
@@ -328,30 +338,44 @@ def _apply(V, vbone, WA, parent, prof, names):
             out[:, i] = Vs[:, i] - Vs[:, i].min() + prof["foot"]
         else:
             out[:, i] = Vs[:, i] - (Vs[:, i].max() + Vs[:, i].min()) / 2 + prof["center"][i]
-    return out
+    return (out, Nu) if N is not None else out
 
 
 def apply(orig_dir, prof_path, out_obj, validate=None):
     V, vbone, W3, parent, names = load_apose(orig_dir)
+    m = json.load(open(os.path.join(orig_dir, "model.bones.json")))
+    nbone = np.array(m.get("norm_bone", []), int)
+    NRM = []
+    with open(os.path.join(orig_dir, "model.obj")) as f:
+        lines = f.readlines()
+    for ln in lines:
+        if ln.startswith("vn "):
+            NRM.append([float(x) for x in ln.split()[1:4]])
+    NRM = np.array(NRM, float)
+    if len(NRM) == 0 or len(NRM) != len(nbone):
+        sys.exit(f"[apply] model.obj has {len(NRM)} vn vs {len(nbone)} norm_bone entries -- "
+                 f"stale extract; re-run mdl_extract (authored normals are required)")
     prof = json.load(open(prof_path))
     print(f"[apply] profile: {os.path.basename(prof_path)} "
           f"(source {prof.get('source', '?')}, learned {prof.get('learned', '?')})")
     coverage_report(vbone, names, prof)
     WA = np.array([to4(W3[i]) for i in range(len(names))])
-    Vt = _apply(V, vbone, WA, parent, prof, names)
+    Vt, Nt = _apply(V, vbone, WA, parent, prof, names, NRM, nbone)
 
-    # write posed OBJ: reposed verts, original vt/f copied verbatim (topology unchanged)
-    with open(os.path.join(orig_dir, "model.obj")) as f:
-        lines = f.readlines()
-    vi = 0
+    # write posed OBJ: reposed verts + rotated authored normals, original vt/f
+    # copied verbatim (topology unchanged)
+    vi = ni = 0
     with open(out_obj, "w") as o:
         o.write("# repose.py -> VOTV T-pose\n")
         for ln in lines:
             if ln.startswith("v "):
                 o.write(f"v {Vt[vi,0]:.5f} {Vt[vi,1]:.5f} {Vt[vi,2]:.5f}\n"); vi += 1
+            elif ln.startswith("vn "):
+                o.write(f"vn {Nt[ni,0]:.5f} {Nt[ni,1]:.5f} {Nt[ni,2]:.5f}\n"); ni += 1
             elif ln.startswith(("vt ", "f ", "usemtl", "g ", "o ")):
                 o.write(ln)
-    print(f"[apply] reposed {vi} verts -> {out_obj}  bbox={ (Vt.max(0)-Vt.min(0)).round(1) }")
+    print(f"[apply] reposed {vi} verts + {ni} authored normals -> {out_obj}  "
+          f"bbox={ (Vt.max(0)-Vt.min(0)).round(1) }")
 
     if validate:
         P, pb = psk_points(validate)

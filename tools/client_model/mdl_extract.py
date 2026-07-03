@@ -115,17 +115,18 @@ def extract(path, out):
         write_png(os.path.join(out, "tex", safe + ".png"), w, h, bytes(rgb))
         tex_names.append((tn, safe, w, h))
 
-    # ---- bodyparts -> model[0] -> verts + meshes(tricmds) ----
+    # ---- bodyparts -> model[0] -> verts + norms + meshes(tricmds) ----
     nbp, bpi = gi(H["numbodyparts"]), gi(H["bodypartindex"])
-    V, VB, OBJv, OBJvt, groups = [], [], [], [], {}   # groups: safe_tex -> list of (a,b,c) pos idx, and parallel vt idx
-    voff = 0
-    obj_faces = []   # (safe_tex, (p0,uv0),(p1,uv1),(p2,uv2))
+    V, VB, N, NB, OBJv, OBJvt, groups = [], [], [], [], [], [], {}
+    voff, noff = 0, 0
+    obj_faces = []   # (safe_tex, (p0,uv0,n0),(p1,uv1,n1),(p2,uv2,n2))
     for ip in range(nbp):
         o = bpi + ip * 76
         modelidx = gi(o + 72)
         mo = modelidx                                   # model[0]
         nummesh, meshindex = gi(mo + 72), gi(mo + 76)
         numverts, vertinfoindex, vertindex = gi(mo + 80), gi(mo + 84), gi(mo + 88)
+        numnorms, norminfoindex, normindex = gi(mo + 92), gi(mo + 96), gi(mo + 100)
         # verts (bone-local) -> world (bind pose)
         vb = [b[vertinfoindex + k] for k in range(numverts)]
         vw = np.empty((numverts, 3))
@@ -134,6 +135,17 @@ def extract(path, out):
             M = world[vb[k]]
             vw[k] = M[:, :3] @ v + M[:, 3]
         V.append(vw); VB.extend(vb)
+        # AUTHORED shading normals (studiomdl computed them from the source's
+        # smoothing groups; the suit mesh has ~18% inconsistent winding, so
+        # recomputing from faces is NOT equivalent -- 2026-07-03 dark-suit root).
+        # Bone-local like verts; rotation-only to bind-pose world.
+        nb_ = [b[norminfoindex + k] for k in range(numnorms)]
+        for k in range(numnorms):
+            nv = np.array(struct.unpack_from("<3f", b, normindex + k * 12))
+            nw = world[nb_[k]][:, :3] @ nv
+            l = np.linalg.norm(nw)
+            N.append(nw / l if l > 1e-8 else np.array([0.0, 0.0, 1.0]))
+        NB.extend(nb_)
         # meshes
         for m in range(nummesh):
             meo = meshindex + m * 20
@@ -153,34 +165,38 @@ def extract(path, out):
                     vi, ni, s, t = gh(p), gh(p + 2), gh(p + 4), gh(p + 6); p += 8
                     uv = (s / tw, 1.0 - t / th)
                     OBJvt.append(uv)
-                    strip.append((vi + voff, len(OBJvt)))     # (global pos idx, vt idx(1-based later))
+                    strip.append((vi + voff, len(OBJvt), ni + noff))  # (global pos idx, vt idx(1-based later), global norm idx)
                 for j in range(2, len(strip)):
                     if fan:
                         tri = (strip[0], strip[j - 1], strip[j])
                     else:
                         tri = (strip[j - 2], strip[j - 1], strip[j]) if j % 2 == 0 else (strip[j - 1], strip[j - 2], strip[j])
                     obj_faces.append((safe, tri))
-        voff += numverts
+        voff += numverts; noff += numnorms
 
     allV = np.concatenate(V)
-    # write OBJ
+    allN = np.array(N)
+    # write OBJ (vn = authored normals, bind-pose world space; f = p/t/n)
     with open(os.path.join(out, "model.obj"), "w") as f:
         f.write(f"# mdl_extract from {os.path.basename(path)}\n")
         for v in allV:
             f.write(f"v {v[0]:.5f} {v[1]:.5f} {v[2]:.5f}\n")
         for uv in OBJvt:
             f.write(f"vt {uv[0]:.5f} {uv[1]:.5f}\n")
+        for n in allN:
+            f.write(f"vn {n[0]:.5f} {n[1]:.5f} {n[2]:.5f}\n")
         cur = None
         for safe, tri in obj_faces:
             if safe != cur:
                 f.write(f"usemtl {safe}\n"); cur = safe
-            f.write("f " + " ".join(f"{pi+1}/{vt}" for pi, vt in tri) + "\n")
+            f.write("f " + " ".join(f"{pi+1}/{vt}/{ni+1}" for pi, vt, ni in tri) + "\n")
     json.dump({"bones": bones, "vert_bone": VB, "num_verts": int(allV.shape[0]),
+               "norm_bone": NB, "num_norms": int(allN.shape[0]),
                "world": [world[i].flatten().tolist() for i in range(nb)]},
               open(os.path.join(out, "model.bones.json"), "w"), indent=0)
 
     bb = allV.max(0) - allV.min(0)
-    print(f"[mdl_extract] verts={allV.shape[0]} tris={len(obj_faces)} textures={nt}")
+    print(f"[mdl_extract] verts={allV.shape[0]} norms={allN.shape[0]} tris={len(obj_faces)} textures={nt}")
     print(f"[mdl_extract] bbox (HL units) = {bb.round(1)}  (humanoid ~one axis 60-75)")
     print(f"[mdl_extract] wrote model.obj + model.bones.json + tex/*.png -> {out}")
 
