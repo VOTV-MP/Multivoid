@@ -181,6 +181,12 @@ def main(argv=None):
                     help="learn the repose profile from this manual-pose PSK")
     ap.add_argument("--profile", help="force an explicit repose profile json")
     ap.add_argument("--keep-work", action="store_true", help="keep the <name>_work folder")
+    ap.add_argument("--strip-material", default="", metavar="A,B",
+                    help="force-drop face groups whose texture name contains any "
+                         "of these (comma list; the interior-shell scan already "
+                         "auto-drops fully enclosed groups)")
+    ap.add_argument("--keep-material", default="", metavar="C,D",
+                    help="exempt matching face groups from the interior auto-drop")
     a = ap.parse_args(argv)
 
     mdl = pick_mdl(a.mdl)
@@ -201,9 +207,11 @@ def main(argv=None):
     for n, blob in load_profiles().items():
         open(os.path.join(dat, "profiles", n), "wb").write(blob)
 
-    print("[1/6] extract mdl")
+    print("[1/6] extract mdl (+ interior-shell scan)")
     ex = os.path.join(work, "extract")
-    mdl_extract.extract(mdl, ex)
+    mdl_extract.extract(mdl, ex,
+                        strip_materials=[s for s in a.strip_material.split(",") if s],
+                        keep_materials=[s for s in a.keep_material.split(",") if s])
 
     # Repose profile: explicit --profile > learn from a manual-pose PSK next to the
     # mdl > auto-select from the library (see module doc; born of the rvi bad pak).
