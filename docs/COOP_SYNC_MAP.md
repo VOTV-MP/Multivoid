@@ -87,6 +87,11 @@ The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<
 ## L2 — Keyed object/device state (apply to a named native, no identity)
 Each keys off the actor's save Key. Pattern: an index + a poll + a connect-snapshot rebroadcast +
 an `OnReliable` apply. Template siblings: `keypad_sync` / `power_sync`.
+**Index-scan discipline (AS-BUILT 2026-07-04 `497b38e0`): every GUObjectArray index here (and
+grime/turbine/atv/trash_pile) rebuilds via `coop/scan/settled_object_scan.h` — full-walk while the
+live count changes, tail-scan once settled, 60s staggered backstop. A raw tail-scan goes permanently
+EMPTY at the host's session-start world reload (the 18:41 keypad-0-sync root; recycled slots below
+the cursor) — any new index MUST use the shared component, never raw `NextRange`.**
 
 | File | What | ReliableKind(s) |
 |---|---|---|
