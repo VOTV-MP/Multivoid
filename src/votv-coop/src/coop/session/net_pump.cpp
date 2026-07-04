@@ -163,7 +163,12 @@ bool g_fleeing = false;
 // not-yet-in-gameplay window at the start of a join (no flee). Reset by OnSessionStart.
 bool g_everInGameplayThisSession = false;
 
-void FleeToMainMenu(coop::net::Session& session, const char* why) {
+// `travel`: false when VOTV's OWN quit-to-menu transition is ALREADY in flight
+// (the RAM-balloon guard path) -- re-dispatching transition("/Game/menu") on top
+// of it made the menu load TWICE (user 2026-07-04: "выходит в меню два раза").
+// The rest of the tail (edge resets + Stop + bypass over the teardown) is
+// identical either way.
+void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = true) {
     if (g_fleeing) return;  // already travelling to the menu for this session
     g_fleeing = true;
     g_wasConnected = false;
@@ -175,6 +180,11 @@ void FleeToMainMenu(coop::net::Session& session, const char* why) {
     // ceiling (used as-is if MenuTickFn() is null -- menu class never resolved).
     ue_wrap::game_thread::SetTransparentBypassUntil(coop::multiplayer_menu::MenuTickFn(),
                                                     kDeathMenuBypassMs);
+    if (!travel) {
+        UE_LOGI("net: %s -- native menu travel already in flight; session stopped + "
+                "held dormant (no second transition)", why);
+        return;
+    }
     if (ue_wrap::engine::ReturnToMainMenu()) {
         UE_LOGI("net: %s -- transition(\"/Game/menu\") dispatched; held dormant", why);
     } else {
@@ -184,6 +194,25 @@ void FleeToMainMenu(coop::net::Session& session, const char* why) {
         UE_LOGE("net: %s -- ReturnToMainMenu FAILED to dispatch; still in the gameplay "
                 "world. Relaunch.", why);
     }
+}
+
+// Full coop-state teardown for a session ending while the process lives on (local
+// death OR a native quit-to-menu): destroy every puppet actor + per-slot subsystem
+// state, then the aggregate session-wide drains. Mirrors what the disconnect edges
+// do -- extracted 2026-07-04 because the RAM-balloon quit-to-menu flee SKIPPED it
+// entirely (FleeToMainMenu resets g_wasConnected, which also suppresses the
+// aggregate-disconnect edge!), leaving weather/time/sky caches + install latches +
+// pending applies armed across the world teardown. A queued weather apply then ran
+// against the old daynightCycle's RECYCLED GUObjectArray slot -> the cycle BP body
+// executed with a foreign `self` -> FindFunctionChecked("setRainProperties") on an
+// ArrowComponent -> LowLevelFatalError (user's client crash, ESC->menu 14:45).
+void TearDownCoopStateForSessionEnd(coop::net::Session& session) {
+    for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
+        coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
+        if (g_puppets[slot].valid()) g_puppets[slot].Destroy();
+        coop::subsystems::DisconnectSlot(session, slot);
+    }
+    coop::subsystems::DisconnectAll();
 }
 
 }  // namespace
@@ -462,9 +491,17 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
             } else if (g_everInGameplayThisSession && !g_fleeing && session.running() &&
                        reapWorld && R::NameContains(R::NameOf(reapWorld), L"menu")) {
                 UE_LOGW("net: gameplay->MENU while a session is live (VOTV quit-to-menu?) -- "
-                        "fleeing to end the session + stop the layer churn (RAM-balloon guard)");
+                        "ending the session + stopping the layer churn (RAM-balloon guard)");
                 coop::prop_element_tracker::SetInPurgeEpisode(false);  // left gameplay (matches the !inGameplayWorld reset below)
-                FleeToMainMenu(session, "left gameplay to the menu");
+                // FULL teardown first (2026-07-04 client ESC->menu crash): this path used
+                // to skip the disconnect fanout entirely (FleeToMainMenu's edge reset also
+                // suppresses the aggregate-disconnect edge), leaving stale weather/time/sky
+                // caches + pending applies armed over the teardown -- see
+                // TearDownCoopStateForSessionEnd. travel=false: the user's own menu
+                // transition is ALREADY in flight; a second dispatch loaded the menu twice.
+                TearDownCoopStateForSessionEnd(session);
+                FleeToMainMenu(session, "left gameplay to the menu (native quit)",
+                               /*travel=*/false);
                 return;
             }
             if (!inGameplayWorld) coop::prop_element_tracker::SetInPurgeEpisode(false);  // inert at menu; re-arm on gameplay re-entry
@@ -900,16 +937,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
                         "to the main menu (role=%s; permadeath-rejoinable)",
                         session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
-                // Per-slot teardown: drop + destroy each puppet ACTOR (Destroy() also tears
-                // down its ragdoll body) + per-slot subsystem state.
-                for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-                    coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
-                    if (g_puppets[slot].valid()) g_puppets[slot].Destroy();
-                    coop::subsystems::DisconnectSlot(session, slot);
-                }
-                // Aggregate teardown: session-wide Element/dedup state (mirrors the
-                // g_wasConnected disconnect edge).
-                coop::subsystems::DisconnectAll();
+                // Per-slot teardown (puppet actors + slot state) + the aggregate
+                // session-wide drains -- shared with the native quit-to-menu path.
+                TearDownCoopStateForSessionEnd(session);
                 // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
                 // host-close eject). The balloon is VOTV's own possessed-ragdoll leak in
                 // the GAMEPLAY world (only cure: leave it); FleeToMainMenu resets the edge
