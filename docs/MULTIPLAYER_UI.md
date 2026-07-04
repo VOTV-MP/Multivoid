@@ -29,10 +29,14 @@ overlay is resolution-PROPORTIONAL — `ui/scale.h` owns ONE factor
 through imgui_freetype (vendored FreeType 2.13.3; sharper hinting than
 stb_truetype), the style rescales (reset + ScaleAllSizes), and every pixel
 constant in `ui/` goes through `S()`; a live resize/res change re-bakes on
-the next frame. THREE embedded families — JetBrains Mono (default), Roboto,
-Cascadia Code (all Cyrillic-cmap-verified; OFL/Apache licenses in
-assets/fonts) — switchable live in F1 > Cosmetics > Interface, persisted as
-votv-coop.ini `ui.font`.
+the next frame. THREE embedded families — Roboto (default; user verdict
+2026-07-04 after comparing), JetBrains Mono, Cascadia Code (all
+Cyrillic-cmap-verified; OFL/Apache licenses in assets/fonts) — switchable
+live in F1 > Cosmetics > Interface, persisted as votv-coop.ini `ui.font`;
+plus a user size pref (`ui.scale`, default 1.25x, F1 slider 0.75–1.75x)
+multiplied into the resolution factor. The T-chat input bar matches the
+chat column width; T-chat is available for the whole HOST session (a
+zero-client lobby included), wire send best-effort.
 This doc is kept for the **design rationale** (why runtime UMG, not
 BPModLoader/paks); the code is the truth for the as-built UI.
 

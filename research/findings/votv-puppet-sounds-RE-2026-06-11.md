@@ -1,5 +1,16 @@
 # Puppet sounds RE -- footsteps / pick-up / throw (2026-06-11)
 
+> **SUPERSEDED DETAIL 2026-07-04 (`1572149d`): the "chain measure" the
+> receiver-geometry sections below reference NO LONGER EXISTS.** It raced
+> mesh_playerVisible's BP construction on world-fresh clients (measured chain
+> 0.00 -> latched meshOffsetZ_=-85 -> puppet sunk 85 + capsule-depenetration
+> twitch; user hands-on 2026-07-04 16:48). meshOffsetZ_/meshOffsetYaw_ are
+> retired (RULE 2): the puppet actor rides the wire pose VERBATIM (both ends
+> mainPlayer_C = class-identical settled chains). The Mesh-slot RelLoc.Z:=0
+> settle-write (par.1's footstep fix) REMAINS -- it is what makes the
+> zero-offset invariant true. Everything else here (sounds RE, dispatch
+> shapes) stands.
+
 > **STATUS 2026-06-11 NIGHT -- PICK-UP CLOSED, USER-CONFIRMED ("finally it
 > works"), after hands-on round 3 FALSIFIED this doc's grab-sound answer:**
 > the audible E-grab feedback is NOT the per-material soft cue. The user
