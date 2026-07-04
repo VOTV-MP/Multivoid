@@ -12,6 +12,7 @@
 #include <windows.h>  // SEH (__try/__except) -- the detour's crash firewall
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 namespace coop::save_block {
@@ -38,6 +39,17 @@ void* g_saveSlotClass = nullptr;
 // Install decision made (client: hooked / host: deliberately skipped). Stops the
 // per-tick install pump from re-evaluating once we've acted.
 std::atomic<bool> g_done{false};
+
+// --- Part 3 state: the native save-cycle gate (see the header) ---
+// The gamemode instance is world-lifetime: IsLiveByIndex-revalidated per tick,
+// re-walked (throttled) after a world change. disableSave is a BP BoolProperty --
+// resolved via FindBoolProperty (real byte+mask; never a raw whole-byte guess).
+void* g_gmCls = nullptr;              // mainGamemode_C UClass (never moves once loaded)
+void* g_gm = nullptr;                 // live gamemode instance (this world)
+int32_t g_gmIdx = -1;                 // its GUObjectArray index (liveness guard)
+int32_t g_disableSaveOff = -1;        // disableSave byte offset within the gamemode
+uint8_t g_disableSaveMask = 0;        // ...and its bit mask inside that byte
+std::chrono::steady_clock::time_point g_nextGmResolve{};  // re-walk throttle (2 s)
 
 // UE4 FString layout (TArray<TCHAR>): {TCHAR* Data; int32 Num; int32 Max}. Read
 // (not written) for the blocked-save log line. Data is null-terminated.
@@ -147,6 +159,50 @@ void Install(coop::net::Session* session) {
     UE_LOGI("save_block: client world-save block INSTALLED "
             "(SaveGameToSlot@%p, saveSlot_C UClass=%p; save_main_C meta saves pass through)",
             reinterpret_cast<void*>(addr), saveSlotCls);
+}
+
+void Tick(coop::net::Session* session) {
+    if (!session || session->role() != coop::net::Role::Client) return;
+
+    // Steady state: cached live gamemode -> one masked-bit read, write only on the
+    // false->true edge (the bit is ours to hold: no bytecode ever writes it).
+    if (g_gm && !R::IsLiveByIndex(g_gm, g_gmIdx)) { g_gm = nullptr; g_gmIdx = -1; }
+    if (!g_gm) {
+        // No gamemode (menu / join window / world change): the GUObjectArray walk is
+        // throttled -- never per tick (the perf rule's forbidden pattern).
+        const auto now = std::chrono::steady_clock::now();
+        if (now < g_nextGmResolve) return;
+        g_nextGmResolve = now + std::chrono::seconds(2);
+        if (!g_gmCls) g_gmCls = R::FindClass(prof::name::GamemodeClass);
+        if (!g_gmCls) return;
+        if (g_disableSaveOff < 0 &&
+            !R::FindBoolProperty(g_gmCls, L"disableSave", g_disableSaveOff, g_disableSaveMask)) {
+            static bool sWarned = false;
+            if (!sWarned) {
+                sWarned = true;
+                UE_LOGE("save_block: mainGamemode_C.disableSave did not resolve -- native "
+                        "save-cycle gate NOT held (disk write-block still active)");
+            }
+            return;
+        }
+        for (void* obj : R::FindObjectsByClass(prof::name::GamemodeClass)) {
+            if (obj && R::IsLive(obj)) {
+                g_gm = obj;
+                g_gmIdx = R::InternalIndexOf(obj);
+                break;
+            }
+        }
+        if (!g_gm) return;
+    }
+
+    auto* p = reinterpret_cast<uint8_t*>(g_gm) + g_disableSaveOff;
+    if ((*p & g_disableSaveMask) == 0) {
+        *p |= g_disableSaveMask;
+        UE_LOGI("save_block: client native save cycle OFF -- disableSave=true on gamemode %p "
+                "(+0x%X mask 0x%02X; saveSlot_C::save gates gather+write on it, disk hook "
+                "stays as the belt)",
+                g_gm, static_cast<unsigned>(g_disableSaveOff), g_disableSaveMask);
+    }
 }
 
 }  // namespace coop::save_block
