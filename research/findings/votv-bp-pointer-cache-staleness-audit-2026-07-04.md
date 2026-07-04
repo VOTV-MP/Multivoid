@@ -6,6 +6,22 @@ is FIXED (campaign-scoped cache, engine.cpp, DLL `D43455FC4787FFE4`). Everything
 LATENT remainder of the same class: fix queued as its own thread (design choice: world-boundary
 latch reset vs per-call re-resolution).
 
+> [SECOND LIVE KILL + 4 sites closed, 2026-07-04 ~15:00. The class killed a client session
+> live: quit-to-menu via the game's OWN menu ran a flee path with NO subsystem teardown
+> (fixed: TearDownCoopStateForSessionEnd, net_pump, `99253486`), and a queued weather apply
+> then hit the old daynightCycle's RECYCLED GUObjectArray slot -- the cycle BP body executed
+> with a foreign `self`, and its by-name EX_LocalVirtualFunction("setRainProperties") lookup
+> landed on an ArrowComponent -> LowLevelFatalError (FindFunctionChecked, ScriptCore:1334).
+> KEY AMENDMENT to "Verified-SAFE families": plain-IsLive instance caches are NOT safe in a
+> TEARDOWN WINDOW -- IsLive is recycled-slot-BLIND (a foreign live occupant at the same
+> address/index passes; reflection.cpp:166-170 documents the caveat). IsLiveByIndex
+> (serial slot-compare) is the required shape for any cached instance used across a session
+> end. Hardened by-index in `1e6c86ea`: ue_wrap/daynightcycle.cpp Cycle() (the seam all
+> time users share), npc_mirror.cpp DrainClientMirrors, remote_prop.cpp ForceRelease +
+> OnDisconnectForSlot (ActiveDrive now carries grab-time actorIdx). weather_sync's own
+> g_cycleCache remains plain-IsLive but is now protected by the teardown running
+> OnDisconnect (clears the cache) at every session-end path.]
+
 ## The class
 
 A BP-owned pointer (UFunction* / UClass* / BP CDO / asset) latched into a process-lifetime

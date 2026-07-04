@@ -3,18 +3,28 @@
 **Living document.** Captures the user's vision + the approach decision for the
 in-game multiplayer UI.
 
-**Status (updated 2026-07-02): BUILT.** The menu shell + flows have shipped as
+**Status (updated 2026-07-04): BUILT.** The menu shell + flows have shipped as
 runtime-UMG built by our C++ mod (the "chosen" approach below) — see the `ui/`
-modules: `server_browser.cpp`, `host_save_picker.cpp`, `roster.cpp`,
-`scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`,
+modules: `server_browser.cpp` (the "future" browser below SHIPPED long since:
+master-server lobby list + Direct Connect), `host_save_picker.cpp`,
+`roster.cpp`, `scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`,
 `skins_panel.cpp` (2026-07-02: the F1 > Cosmetics > Skins model browser —
 gmod-style preview tiles from the LogicMods pak catalog + the v94 builtin
 kerfur bodies, AS-BUILT; see docs/COOP_CLIENT_MODEL.md §3 for the skins
 runtime). F1 > Cosmetics > Nameplate (v94, AS-BUILT 2026-07-02): the "show my
 nameplate to other players" checkbox — a SYNCED per-peer pref (NameplateChange
-+ the Join prefs byte; persists in votv-coop.ini `nameplate=`). This doc is kept
-for the **design rationale** (why runtime UMG, not BPModLoader/paks); the code is
-the truth for the as-built UI.
++ the Join prefs byte; persists in votv-coop.ini `nameplate=`).
+**Overlay typography + chat (AS-BUILT 2026-07-04, `684f6670`+`1e6c86ea`;
+hands-on = runbook 0j):** Roboto Regular 16px (vendored Apache-2.0 TTFs,
+EMBEDDED in the DLL as RCDATA — `ui/fonts.cpp`) is the default font of the
+WHOLE overlay; Bold 18px is the chat face; Cyrillic glyph ranges on both, so
+chat is UTF-8 end-to-end (the deliberate ASCII '?'-squash is retired). Chat
+feed: 220ms fade-in + fade-out tail, per-slot colored nick, 4-way outline,
+word-wrap; chat input: Up/Down send-history; console: focus-on-open + command
+history; the save-name + direct-IP fields submit on Enter. MP-created saves
+stamp `Version` at create (`c81f1c2d` — the red "unk!" fix; runbook 0f).
+This doc is kept for the **design rationale** (why runtime UMG, not
+BPModLoader/paks); the code is the truth for the as-built UI.
 
 ## User vision (2026-05-22)
 
@@ -24,7 +34,7 @@ debug overlay), with:
 1. **Play as Host** → choose a save (new or existing) → load → start
    hosting (listen for one client; LAN-first).
 2. **Connect** → type an IP → join the host's session.
-3. **Server browser** (future) → list discoverable LAN/known hosts → join.
+3. **Server browser** (SHIPPED — master-server lobby list, see Status) → join.
 
 ## Flows
 
@@ -39,7 +49,7 @@ Main menu
     ├── Connect
     │   ├── enter host IP (+ port; default fixed)
     │   └── -> handshake -> client loads host's world state -> in game
-    └── Server browser  (future: LAN broadcast discovery; later a registry)
+    └── Server browser  (SHIPPED: master-server registry list + Direct Connect)
 ```
 
 Host = authoritative (owns save/world/progression). Client sends input +

@@ -35,6 +35,25 @@ minimal fix is to sync **`windTarget.RelativeLocation` (Vec3 @ component+0x011C)
 host→client and **suppress the client's `changeWindOrigin`** (the only writer of
 `windTarget`) so its local RNG roll stops fighting the synced target.
 
+> [SHIPPED as v50 (weather_sync windTarget stream + changeWindOrigin
+> PRE-interceptor) and RE-VERIFIED 2026-07-04 from a fresh directionalWind
+> bytecode dump after a live "client windy, host calm" report:
+> (1) the spring reads `windTarget.RelativeLocation` as a RAW PROPERTY
+> (ubergraph @6287), so the mod's raw write IS visible to the tick;
+> (2) `changeWindOrigin`'s body RE-ARMS its own non-looping 1-60 s timer
+> (@393), so ONE PRE-cancelled fire kills the client's roll chain;
+> (3) `mainGamemode::windParticles_check` is NOT a wind gate — its body is the
+> hidden 1-in-2^32 rare spawn roll (RandomIntegerInRange(INT_MIN,INT_MAX)==0
+> -> spawn NewBlueprint7_C near the camera); (4) `tickable` (the eff_wind/
+> audio/actor-tick master switch in updState) is written by NOBODY at runtime
+> — BeginPlay default only; the Sphere overlap handlers manage the objs/winds
+> character lists, not tickable; (5) no settings field drives the dust.
+> Since the mechanism is statically sound, the live desync is now instrumented
+> instead of guessed: weather_probe=1 logs `[probe wind]` (target, |target|,
+> 4 floats, changeWindOrigin fired/suppressed counters) ~1 Hz on both peers
+> (commit `6398ff53`; capture procedure = runbook 0g). Healthy client =
+> suppressed=1 total + target==host's.]
+
 ---
 
 ## Q1 — What energizes the wind? (caller chain to windTarget / spring / intensity)

@@ -111,7 +111,7 @@ One value, host-authoritative, peers apply. Template sibling: `time_sync`.
 |---|---|---|
 | `time_sync.cpp` | Game clock (v96 2026-07-03: payload += the NAMED clock triple timeZ hour/min/dayZ -- a TimeScale=0 client never runs its minute pulse, so its HUD clock/day were frozen; dev set-clock is now instant full-state: totalTime+accumulator+timeZ in one write, sun re-derives same tick) | TimeSync `[AS-BUILT v96; pre-v96 [V]]` |
 | `sky_sync.cpp` | Sky rotation + moonPhase | SkyState `[V]` |
-| `weather_sync.cpp`, `weather_redsky.cpp`, `weather_lightning.cpp`, `weather_fog.cpp` | Weather scalar / red-sky / lightning / fog | WeatherState/RedSky/LightningStrike `[V]` |
+| `weather_sync.cpp`, `weather_redsky.cpp`, `weather_lightning.cpp`, `weather_fog.cpp` | Weather scalar / red-sky / lightning / fog. Wind (v50: windTarget stream + client changeWindOrigin PRE-cancel) re-verified statically 2026-07-04 after a live desync report; the live gap is INSTRUMENTED, not diagnosed -- weather_probe=1 logs [probe wind] + roll counters on both peers (`6398ff53`; capture = runbook 0g) | WeatherState/RedSky/LightningStrike `[V; wind desync under live probe]` |
 | `firefly_sync.cpp` | Ambient fireflies (peer-symmetric) | FireflySpawn `[V]` |
 | `event_cue_sync.cpp` | Host-auth cosmetic cues (starfall etc.) | EventCue `[V]` |
 | `balance_sync.cpp` | Shared Points balance | BalanceSync/BalanceDelta `[V]` |
@@ -124,7 +124,7 @@ Per-player or broadcast; not world entities.
 | `player_inventory_sync.cpp`, `inventory_wire.cpp` | Per-player inventory blob | PlayerInventoryBlob `[V]` |
 | `inventory_pickup_sync.cpp` | World item pickup | InventoryPickup `[V]` |
 | `item_activate.cpp`, `flashlight_click_sound.cpp`, `prop_sound.cpp` | Held-item effects (flashlight etc.) | ItemActivate `[V]` |
-| `chat_sync.cpp`, `chat_feed.cpp` | Text chat + the on-screen feed | ChatMessage `[V]` |
+| `chat_sync.cpp`, `chat_feed.cpp` (+ `ui/fonts.cpp`, `ui/hud.cpp` DrawChat, `ui/chat_input.cpp`) | Text chat + the on-screen feed. 2026-07-04 `684f6670`: UTF-8 END-TO-END (the ASCII '?'-squash retired; Cyrillic renders -- embedded-Roboto overlay font w/ Cyrillic ranges), fade-in + per-slot colored nick + word-wrap + Up/Down send-history. Wire UNCHANGED (text[203] always carried raw bytes). `[wire V; UTF-8/UI layer AS-BUILT -- hands-on = runbook 0j]` | ChatMessage `[V]` |
 | `email_sync.cpp` | In-game email / saved signals | EmailAppend/Delete `[V]` |
 | `player_damage.cpp`, `wisp_tear_mirror.cpp`, `wisp_attack_sync.cpp`, `wisp_grab_hold.cpp` | Combat: relayed damage + killer-wisp fatality. v2 `769d02f7` (2026-07-04): host-authoritative AGGRO SELECTOR (uniform random + stickiness + canReach LOS over host+puppets in 5000u; raw Target re-assert per tick), two-stage close (arm 550u+LOS, relay at 200u contact / 2.5 s LOS-gated timeout), grab CHOREOGRAPHY on every peer (victim replays the native Capture template on its LOCAL mirror; host+third peers snap the victim puppet to the 'playerGrab' socket AFTER pose apply — net_pump ordering; host lifts the wisp 150 cm/s for the window), canRagdoll=false belt over the false-grab window. NO wire change. `[AS-BUILT; generic smoke PASS x2; e2e probe + hands-on pending]` | PlayerDamage/WispGrab/WispTear `[V v1; v2 pending]` |
 | (voice) `VoiceState` is dispatched in L2's state family; voice audio rides its own Opus path. `[?]` | Voice chat | VoiceState `[?]` |
