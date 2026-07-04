@@ -119,6 +119,7 @@ One value, host-authoritative, peers apply. Template sibling: `time_sync`.
 | `weather_sync.cpp`, `weather_redsky.cpp`, `weather_lightning.cpp`, `weather_fog.cpp` | Weather scalar / red-sky / lightning / fog. Wind (v50: windTarget stream + client changeWindOrigin PRE-cancel) re-verified statically 2026-07-04 after a live desync report; the live gap is INSTRUMENTED, not diagnosed -- weather_probe=1 logs [probe wind] + roll counters on both peers (`6398ff53`; capture = runbook 0g) | WeatherState/RedSky/LightningStrike `[V; wind desync under live probe]` |
 | `firefly_sync.cpp` | Ambient fireflies (peer-symmetric) | FireflySpawn `[V]` |
 | `event_cue_sync.cpp` | Host-auth cosmetic cues (starfall etc.) | EventCue `[V]` |
+| `event_active_sync.cpp` | Join-during-event Phase 0 (2026-07-04 `d2d7eedb`): read-only host 1 Hz mirror of the NATIVE activeEvents registry (gamemode.activeEvents_senders membership diff) -> BEGIN/END edge log + join-edge would-be-EventSnapshot log. Seam PROVEN live (obelisk/alarm BEGIN+END, eventforce run 21:38). Phase 1 adds the wire (COOP_EVENT_JOIN.md); per-event scenario docs = docs/events/ | none yet (Phase 0 log-only) `[V: matching real log]` |
 | `balance_sync.cpp` | Shared Points balance | BalanceSync/BalanceDelta `[V]` |
 
 ## L4 — Player-scoped / social

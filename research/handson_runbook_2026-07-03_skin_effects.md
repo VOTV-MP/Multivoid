@@ -78,7 +78,14 @@ edge log + join-edge would-be-EventSnapshot log in ConnectReplayForSlot; no
 wire, wire stays v96; perf audit 0 CRITICAL, correctness audit 0 findings;
 smoke PASS x2: resolved offsets 0xE68/0xE70, primed n=0, join-edge "0 in
 flight" for slot 1, 0 ERR/WARN both peers, spawn-nulls 0/0, one-time resolve
-tick 4.2 ms then silent, RSS flat ~3GB, s_asdasd restored)**.
+tick 4.2 ms then silent, RSS flat ~3GB, s_asdasd restored)** →
+**`38E3C707C1862931` (2026-07-04 ~21:50: pe_detour.cpp EXTRACTED from
+game_thread.cpp, 1065 -> 529+557+127, hot path inline in the private seam
+header -- pure move, `77f56f9e`; move-fidelity audit 0 findings; smoke PASS
+0 ERR/WARN, nulls 0/0, gate episodes 0-1 ms. SAME session, the event_active
+seam then PROVEN live on this code: eventforce run 21:38 -> BEGIN obelisk_C
+n=1 within 1 s, BEGIN trigger_alarm_C n=2, END elapsed=65s, eventforce
+VERDICT PASS + client REPLAY intact)**.
 Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
@@ -86,18 +93,21 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-04 ~21:20 (DLL `F9591CF919CDF0FD` deployed 4/4 hash-verified — ТЕКУЩИЙ)
+## 2026-07-04 ~21:50 (DLL `38E3C707C1862931` deployed 4/4 hash-verified — ТЕКУЩИЙ)
 
-### 0q. event_active Phase 0 — probe на живом событии (join-during-event, шаг 1)
+### 0q. event_active Phase 0 — SEAM УЖЕ ДОКАЗАН автономно; твой прогон опционален
 Хостовый read-only зонд родного реестра активных событий (activeEvents_senders).
-Твой тест — во время любой сессии запусти событие (F1 → EVENTS → NOW!, например
-obelisk или piramid): (1) хостовый лог должен показать `event_active: BEGIN
-class=<класс события> n=1` в момент старта активной фазы и `END ... elapsed=...s`
-по её концу; (2) если клиент ДЖОЙНИТСЯ, пока событие в полёте, — хостовый лог на
-джойне: `event_active: join-edge slot=N WOULD snapshot class=... elapsed=...s`.
-Это Phase 0 (только лог, провода нет): строки доказывают seam для Phase 1
-(EventSnapshot на джойнера). Ничего визуального у клиента НЕ изменится — это
-ожидаемо; сравнение картинки хост-vs-клиент здесь не критерий.
+**Автономный eventforce-прогон 21:38 уже доказал seam на живом событии**: forced
+obelisk → `BEGIN class=obelisk_C n=1` через 1 с; цепочка тревоги → `BEGIN
+class=trigger_alarm_C n=2` (refcount) + `END ... elapsed=65s`; eventforce VERDICT
+PASS + клиентский REPLAY нетронут. Опциональная ручная проверка (если хочешь
+увидеть сам): F1 → EVENTS → NOW! → хостовый лог BEGIN/END; джойн клиента во время
+события → `join-edge slot=N WOULD snapshot class=...`. Ничего визуального у
+клиента НЕ изменится — это Phase 0 (лог, провода нет); картинка хост-vs-клиент не
+критерий. NEXT-код: пирамидный mirror-lane (docs/events/piramid.md, DESIGN) +
+Phase 1 EventSnapshot.
+
+## 2026-07-04 ~21:20 (DLL `F9591CF919CDF0FD` — superseded by `38E3C707C1862931`; 0q см. выше)
 
 ## 2026-07-04 ~20:45 (DLL `A9109CB3AA370629` — superseded by `F9591CF919CDF0FD`; сценарий 0p актуален)
 

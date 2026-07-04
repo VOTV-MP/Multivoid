@@ -96,6 +96,10 @@ const char* const kReplayRows[] = {
     // story / save flips (level-placed triggerBase; no lane) -- the campfire target:
     "treehouse_0", "treehouse_1", "treehouse_2", "treehouse_3", "treehouse_4", "treehouse_5",
     "break_RomeoSierra", "break_Victor", "break_Victor2",
+    // 'piramid' verdict is KNOWN WRONG (2026-07-04 RE: host-random path -> replay arms the
+    // client's own TB box = divergent client-local pyramid). It moves to kNoReplayRows when
+    // the pyramid mirror lane ships -- flipping early would leave the joiner with NOTHING.
+    // Full design: docs/events/piramid.md.
     "obelisk", "piramid",
     // forceObjects appends (saveSlot array the client's own dish scan reads; no lane):
     "looker_0-1", "looker_1-1", "looker_2-1", "looker_3-1", "looker_4-1",
