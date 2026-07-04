@@ -39,16 +39,39 @@ A "sync-axis" is one externally-visible state stream (position, anim phase, soun
 sub-spawn, decal...). The table forces the design decision per axis instead of a vague
 "mirror the event".
 
-## Index (grow as docs land; the ~95-class census is the backlog pool)
+## THE METHOD (user rule 2026-07-04): granular, every single event
 
-| Event (row / class) | Doc | Status |
+**Going through every event the game has, one by one, is the only way events get synced.**
+No event is "covered" by a blanket mechanism claim; each one gets its own granular pass:
+
+1. **Doc** it here (all 5 skeleton sections; wiki + bytecode ground truth, tagged).
+2. **Verify** its dupe-matrix verdict against the RE (the piramid pass PROVED this step
+   earns its keep: `piramid` sat in kReplayRows, but replay = a divergent client-local
+   pyramid — the verdict was WRONG and only the granular dig caught it).
+3. **Design + build** the sync where a gap exists; extend the COOP_EVENT_JOIN.md 3.4
+   late-join row.
+4. **Verify** live (autonomy for flow, hands-on for visuals) and stamp the doc's status.
+
+An event counts as DONE only when its doc says VERIFIED with the evidence named.
+
+## Master tracker
+
+The inventory is enumerated in three places (do not re-derive): the 69 `list_events` rows
+(`votv-event-system-RE-2026-06-13.md` section 10 — every row's concrete output), the
+~95 `setEvent` registrant classes (`votv-active-events-registry-RE-2026-07-04.md` census),
+and the wiki taxonomy (Story Mode / Ariral-reputation / signal-triggered / random / dreams
+/ player-activated / time-related / endings — voicesofthevoid.wiki.gg/wiki/Events).
+
+| Event (row / class) | Doc | Granular pass |
 |---|---|---|
-| piramid (`piramid2_C`) — the walking pyramid; the devs'-gauntlet acceptance case | [piramid.md](piramid.md) | research in flight 2026-07-04 |
-| obelisk (`obelisk_C`) — the Phase 0 registry-probe exemplar (BEGIN/END proven) | (todo) | — |
-| wisps (`wisp_C` swarm + `killerwisp`) — first creature-event lane, shipped 07-03 | (todo — extract from memory/topic files) | AS-BUILT in code |
-| starRain (`skyFallingEvent`) — event_cue lane; the known late-join gap | (todo) | gap documented in COOP_EVENT_JOIN.md |
+| piramid (`piramid2_C`) — devs'-gauntlet acceptance case | [piramid.md](piramid.md) | DESIGN done 2026-07-04 (verdict flip + mirror lane); build next |
+| obelisk (`obelisk_C`) — Phase 0 registry-probe exemplar | (todo) | BEGIN/END proven live; doc pending |
+| wisps (`wisp_C` swarm) + killerwisp — creature lanes shipped 07-03 | (todo) | AS-BUILT in code; doc = record the verdicts |
+| starRain (`skyFallingEvent`) — event_cue lane | (todo) | known late-join gap (COOP_EVENT_JOIN.md) |
+| everything else (65 rows + non-row registrants) | — | queue below |
 
-Priority order = player impact x sync risk: story/scheduled spectacles first (piramid,
-obelisk, arirShip, badSun/superFog sky events), then creature controllers (already
-lane-covered — docs mostly record the verdicts), then pranks/ambience (mostly host-local
-by design).
+Queue order = the wiki Story Mode ladder first (the scheduled spectacles every save hits:
+warning obelisk D25, black-hole sun D27, piramid D31, rozital scouts D33, mothership D38,
+gray firetank D44, gray invasion D47), then signal-triggered + Ariral-reputation, then
+creature controllers (lane-covered — docs record verdicts), then pranks/ambience
+(mostly host-local by design). Each finished doc adds its row to this table.
