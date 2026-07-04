@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -272,6 +273,45 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
         save = f.Get<void*>(L"ReturnValue");
     }
     if (!save) { UE_LOGW("save_browser: CreateSaveGameObject returned null"); return false; }
+
+    // Stamp Version exactly as the native create does (ui_saveSlots button_create
+    // ubergraph @5177-5227: tempSave.version = Default__lib_C->gameVersion("","")).
+    // A blank CDO-default object serializes an EMPTY Version -> every save list paints
+    // the red "unk!" badge and the widget's launch-time version check reads a mismatch
+    // (user report 2026-07-04). gameVersion's body is pure ([RD] lib bytecode:
+    // Concat(prefix, GetProjectVersion(), suffix); __WorldContext unused), so the lib
+    // CDO is a valid call target at the menu. The out FString's buffer is minted
+    // ENGINE-side inside the call; we transfer its 16-byte header into the fresh
+    // object's Version field (the fstring_utils pin doctrine: the engine's later
+    // reassign/destroy frees it; ParamFrame is a raw byte arena that frees nothing,
+    // so ownership moves cleanly -- one allocation, zero copies, zero leaks).
+    // Best-effort: a resolve failure logs + still creates (the slot works; only the
+    // badge is wrong -- same as the pre-fix behavior).
+    ResolveSlotOffsets();
+    do {
+        void* libCdo = R::FindClassDefaultObject(L"lib_C");
+        void* libCls = libCdo ? R::ClassOf(libCdo) : nullptr;
+        // Live-FName case roulette: the CXX dump renders GameVersion, the asset dump
+        // gameVersion -- FindFunction compares case-sensitively, so try both.
+        void* verFn = libCls ? R::FindFunction(libCls, L"GameVersion") : nullptr;
+        if (!verFn && libCls) verFn = R::FindFunction(libCls, L"gameVersion");
+        if (!verFn || g_off.version < 0) {
+            UE_LOGW("save_browser: CreateNamedSave -- Version stamp unavailable "
+                    "(lib_C.gameVersion=%p VersionOff=%d); creating unversioned",
+                    verFn, g_off.version);
+            break;
+        }
+        ParamFrame f(verFn);  // Prefix/Suffix stay zeroed = valid empty FStrings
+        f.Set<void*>(L"__WorldContext", save);
+        if (!Call(libCdo, f)) {
+            UE_LOGW("save_browser: CreateNamedSave -- gameVersion call failed; creating unversioned");
+            break;
+        }
+        R::FString ver{};
+        f.GetRaw(L"Version", &ver, static_cast<int32_t>(sizeof(ver)));
+        std::memcpy(reinterpret_cast<uint8_t*>(save) + g_off.version, &ver, sizeof(ver));
+        UE_LOGI("save_browser: CreateNamedSave -- stamped Version '%ls'", FStrToW(ver).c_str());
+    } while (false);
 
     // SaveGameToSlot(save, "<prefix><name>", 0) -> writes <slot>.sav NOW (persist at create).
     std::wstring buf = slot;
