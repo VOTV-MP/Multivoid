@@ -694,7 +694,11 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 97;  // v97: PyramidGather=85 -- the piramid mirror lane
+inline constexpr uint16_t kProtocolVersion = 98;  // v98: EventSnapshot=86 -- join-during-event Phase 1
+                                                  //      (host->joiner in-flight event registry snapshot
+                                                  //      at the world-ready edge; replay-safe rows replay
+                                                  //      with the active-override; docs/COOP_EVENT_JOIN.md).
+                                                  // v97: PyramidGather=85 -- the piramid mirror lane
                                                   //      (host gather-commit relay + 'piramid' verdict
                                                   //      flip to no-replay + piramid2_C pose mirror;
                                                   //      docs/events/piramid.md).
@@ -1893,7 +1897,28 @@ enum class ReliableKind : uint8_t {
                        //     game's OWN bytecode plays the whole choreography (montage/beams/timelines/
                        //     wisp freeze). Payload: PyramidGatherPayload (8 B) = [u32 pyramidEid (WA
                        //     lane id)][u32 wispEid (npc lane id)]. Host-only origin; host receiving
-                       //     one drops (loopback). Not relayable, not pre-world-sendable.
+                       //     one drops (loopback). Not relayable, not pre-world-sendable. v98: ALSO
+                       //     re-sent ToSlot at a joiner's world-ready edge when a gather is in flight
+                       //     (piramid_sync::QueueConnectBroadcastForSlot -- the lane's late-join
+                       //     answer for the ~10 s gather choreography; COOP_EVENT_JOIN.md 3.4).
+    EventSnapshot = 86, // 2026-07-05 (v98): HOST->JOINER in-flight event snapshot -- join-during-event
+                       //     Phase 1 (docs/COOP_EVENT_JOIN.md 3.2). Sent per ACTIVE entry of the native
+                       //     activeEvents_senders registry at the joiner's world-ready edge (subsystems::
+                       //     ConnectReplayForSlot -> event_active_sync::SendJoinSnapshotForSlot), one
+                       //     message per entry (0-4 concurrent in practice; refcount registry).
+                       //     Payload: EventSnapshotPayload (98 B). rowName carries the mapped
+                       //     list_events row ('' = class not in the map yet -- receiver logs LOUD +
+                       //     skips; the map fills per-event, Phase 2 completes the ~95 census).
+                       //     Receiver replays ONLY replay-safe rows (event_fire_sync policy) with the
+                       //     ACTIVE-OVERRIDE: an in-flight row bypasses the InClientPassEvents dedupe
+                       //     (that dedupe is for COMPLETED history; the joiner's blob already carries
+                       //     the row's passEvents entry -- the "killing blow" of COOP_EVENT_JOIN 2).
+                       //     Host-only origin (senderPeerSlot must be 0); host receiving one drops.
+                       //     Not relayable. Not pre-world-sendable BY CONSTRUCTION (deliberate
+                       //     divergence from the 3.2 design sketch): it is only ever sent AT the
+                       //     world-ready edge, when the slot's send gate is already open; the
+                       //     receiver-side eventer race is absorbed by event_fire_sync's pending
+                       //     drain, same as EventFire.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2728,6 +2753,21 @@ struct EventFirePayload {
     char name[31];     // 31 -- the row/case FName, ASCII, NUL-bound (longest live row = 18 chars)
 };
 static_assert(sizeof(EventFirePayload) == 32, "EventFirePayload must be 32 bytes");
+
+// v98: HOST->JOINER one in-flight event registry entry (ReliableKind::EventSnapshot; join-during-
+// event Phase 1, COOP_EVENT_JOIN.md 3.2). Origin = the host's 1 Hz activeEvents_senders mirror
+// (event_active_sync) read at the joiner's world-ready edge. className is ClassOf(sender) (the
+// event's implementation class, e.g. "obelisk_C"); rowName is the mapped list_events row the
+// receiver's replay policy is keyed by ('' = unmapped class -- logged LOUD + skipped). elapsedSec
+// is the host-observed in-flight duration (diagnostics now; Phase 3 phase-hint fast-forward later).
+struct EventSnapshotPayload {
+    char className[48];   // 48 -- ASCII, NUL-bound (longest census class ~30 chars)
+    char rowName[48];     // 48 -- ASCII, NUL-bound; '' = class->row map has no entry yet
+    uint16_t elapsedSec;  // 2  -- clamped at 65535 (18 h; event phases run seconds-to-minutes)
+};
+static_assert(sizeof(EventSnapshotPayload) == 98, "EventSnapshotPayload must be 98 bytes");
+static_assert(sizeof(EventSnapshotPayload) <= 256 - 20 - 8,
+              "EventSnapshotPayload must fit in one reliable datagram");
 
 // v64/v65: one chunk of a variable-length serialized blob. Shared by every
 // chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);

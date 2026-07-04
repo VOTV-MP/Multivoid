@@ -11,7 +11,9 @@
 
 #include "coop/world/event_active_sync.h"
 
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/event_fire_sync.h"
 
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -20,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -113,6 +116,48 @@ long long NowMs() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
+// ---- the class->row map (Phase 1; Phase 2 completes the ~95 census) ---------------------------
+// ClassOf(sender) is the event's IMPLEMENTATION class, not the list_events row the replay policy
+// is keyed by (registry RE section 4). Every entry's class->row link is RE-verified from the
+// runEvent case table (votv-event-system-RE-2026-06-13.md section 10 "concrete class" column) or
+// proven live; a WRONG entry replays the wrong event, a MISSING one logs LOUD on the receiver and
+// feeds the Phase 2 fill -- so this map only carries verified links, never guesses. Classes that
+// register but map to no scheduled row (sub-chains like trigger_alarm_C, weather senders, creature
+// controllers spawned BY events) stay unmapped by design: their state rides lanes, not replay.
+struct ClassRow { const char* className; const char* rowName; };
+const ClassRow kClassRowMap[] = {
+    { "obelisk_C", "obelisk" },                          // [V 2026-07-04 21:38 forced-obelisk probe]
+    { "piramid2_C", "piramid" },                         // [V 2026-07-04 23:19 piramid lane e2e]
+    { "trigger_solarBoom_C", "solar" },                  // RE sec 10 #2
+    { "trigger_vehtp_C", "vehtp" },                      // #4
+    { "trigger_agrav_C", "agrav" },                      // #5
+    { "trigger_bigmRoar_C", "call0" },                   // #7
+    { "trigger_wispSwarm_C", "wisps" },                  // #12
+    { "trigger_spawnFollowingArir_C", "arirFollower" },  // #13
+    { "trigger_arirEgg_C", "arirEgg" },                  // #14
+    { "trigger_bedEvent_C", "bedEvent" },                // #35
+    { "tentacleBallsFollower_C", "tentacleBalls" },      // #41
+    { "soltomiaCleaning_C", "soltoClean" },              // #47
+    { "morningUfo_C", "morningGay" },                    // #48
+    { "rozitBorg_C", "borgRozital" },                    // #49
+    { "event_bottomHoleController_C", "rozitalHole" },   // #50
+    { "ventCrawler_C", "ventCrawler" },                  // #51
+    { "kocker_C", "ventKnocker" },                       // #52
+    { "grayEventController_C", "graysforest" },          // #58
+    { "arirBusterSpawner_C", "arirBuster" },             // #60
+    { "saltpile_C", "salt" },                            // #61
+    { "superEgger_C", "eggvasion" },                     // #62
+    { "boarInvasion_C", "boarwar" },                     // #63
+    { "dreamer_dreambase_C", "dreambase" },              // #64
+    { "arirShip_C", "arirShip" },                        // #65
+};
+
+const char* RowForClass(const std::string& className) {
+    for (const auto& e : kClassRowMap)
+        if (className == e.className) return e.rowName;
+    return nullptr;
+}
+
 std::string Narrow(const std::wstring& w) {
     std::string s;
     s.reserve(w.size());
@@ -192,20 +237,52 @@ void Tick() {
     HostPollTick();
 }
 
-void LogJoinSnapshotForSlot(int slot) {
+void SendJoinSnapshotForSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    // Phase 0: log only -- the exact entries Phase 1's EventSnapshot would carry to this joiner.
     if (g_active.empty()) {
         UE_LOGI("event_active: join-edge slot=%d -- 0 in flight (no EventSnapshot needed)", slot);
         return;
     }
     const long long now = NowMs();
     for (const auto& [obj, e] : g_active) {
-        UE_LOGI("event_active: join-edge slot=%d WOULD snapshot class=%s elapsed=%llds "
-                "(Phase 0 log only -- no wire)",
-                slot, e.className.c_str(), (now - e.firstSeenMs) / 1000);
+        const char* row = RowForClass(e.className);
+        const long long elapsed = (now - e.firstSeenMs) / 1000;
+        coop::net::EventSnapshotPayload p{};  // zero-init -> both name[]s pre-NUL-bound
+        std::strncpy(p.className, e.className.c_str(), sizeof(p.className) - 1);
+        if (row) std::strncpy(p.rowName, row, sizeof(p.rowName) - 1);
+        p.elapsedSec = static_cast<uint16_t>(elapsed < 0 ? 0 : (elapsed > 65535 ? 65535 : elapsed));
+        if (s->SendReliableToSlot(slot, coop::net::ReliableKind::EventSnapshot, &p, sizeof(p))) {
+            UE_LOGI("event_active: join-edge slot=%d SNAPSHOT class=%s row=%s elapsed=%llds",
+                    slot, e.className.c_str(), row ? row : "<unmapped>", elapsed);
+        } else {
+            UE_LOGW("event_active: join-edge slot=%d EventSnapshot send FAILED (class=%s)",
+                    slot, e.className.c_str());
+        }
     }
+}
+
+void OnReliable(const coop::net::EventSnapshotPayload& payload) {
+    if (!GT::IsGameThread()) { UE_LOGW("event_active: OnReliable off-game-thread -- dropping"); return; }
+    // NUL-bound both names (payload crosses the trust boundary; the dispatcher length-checked it).
+    char cls[sizeof(payload.className) + 1] = {};
+    std::memcpy(cls, payload.className, sizeof(payload.className));
+    char row[sizeof(payload.rowName) + 1] = {};
+    std::memcpy(row, payload.rowName, sizeof(payload.rowName));
+    if (cls[0] == '\0') {
+        UE_LOGW("event_active: EventSnapshot with empty className -- dropping");
+        return;
+    }
+    if (row[0] == '\0') {
+        // The Phase 2 fill signal: this exact line names the class the map is missing.
+        UE_LOGW("event_active: in-flight event class=%s elapsed=%us has NO class->row map entry "
+                "-- skipped (add it to kClassRowMap; lanes still deliver lane-owned state)",
+                cls, static_cast<unsigned>(payload.elapsedSec));
+        return;
+    }
+    UE_LOGI("event_active: join snapshot -- in-flight class=%s row=%s elapsed=%us",
+            cls, row, static_cast<unsigned>(payload.elapsedSec));
+    coop::event_fire_sync::ReplayInFlightRow(row);
 }
 
 void OnDisconnect() {

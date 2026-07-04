@@ -243,9 +243,13 @@ void ConnectReplayForSlot(int slot) {
     }
     // T2-4: catch the new client up to EXISTING peers' current item state.
     coop::item_activate::ReplayPeerStatesToSlot(slot);
-    // join-during-event Phase 0 (probe): log the would-be EventSnapshot for this joiner
-    // (in-flight event classes + elapsed). Log only -- Phase 1 puts it on the wire.
-    coop::event_active_sync::LogJoinSnapshotForSlot(slot);
+    // join-during-event Phase 1 (v98): one EventSnapshot per in-flight registry entry -- the
+    // joiner replays replay-safe rows with the active-override (COOP_EVENT_JOIN.md 3.2).
+    coop::event_active_sync::SendJoinSnapshotForSlot(slot);
+    // piramid lane late-join answer (COOP_EVENT_JOIN.md 3.4): re-send an in-flight gather
+    // commit ToSlot. AFTER world_actor_sync/npc_sync queued their snapshots above (the joiner's
+    // mirrors must exist for the replay's eid lookups; its 5 s retry window absorbs drain skew).
+    coop::piramid_sync::QueueConnectBroadcastForSlot(slot);
 }
 
 void ClientConnectEdge(coop::net::Session& session) {

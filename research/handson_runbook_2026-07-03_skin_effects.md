@@ -95,7 +95,18 @@ allowlist + 'piramid' verdict FLIP to no-replay + piramidSpawner_C EX-catch
 ex-enroll -> registry BEGIN -> ~2 km march pose-streamed -> gather relay ->
 client replay OK dist=9495 attempts=1 -> wisp consumed via npc lane -> END
 self-destroy dead-retired -> client mirror K2'd -> registry END elapsed=211s;
-0 ERROR both peers, spawn-nulls 0/0, s_asdasd restored byte-identical)**.
+0 ERROR both peers, spawn-nulls 0/0, s_asdasd restored byte-identical)** →
+**`E09121F58CE2A5C6` (2026-07-05 ~00:30: JOIN-DURING-EVENT PHASE 1, wire v97 -> v98
+-- ReliableKind::EventSnapshot=86 (one 98 B msg per in-flight activeEvents entry at
+the joiner's world-ready edge) + event_active kClassRowMap (24 RE-verified
+class->row links; unmapped = LOUD WARN) + event_fire ACTIVE-OVERRIDE replay
+(ReplayInFlightRow; the passEvents history-skip no longer marks the session
+replayed-set) + piramid_sync join-edge gather re-send + probe-counter reset nit.
+Autonomous MID-JOIN e2e PASS 00:06: obelisk FORCED with NO client -> client
+launched 27 s later -> host `join-edge slot=1 SNAPSHOT class=obelisk_C
+row=obelisk` -> client `REPLAY runEvent 'obelisk' (in-flight active-override)`
+dispatched + trigger_alarm_C unmapped-skip; 0 ERROR both peers, RSS ~3 GB flat,
+s_asdasd restored byte-identical; perf audit PASS all functions)**.
 Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
@@ -103,7 +114,24 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-04 ~23:15 (DLL `829A3681BA8ACDA0` deployed 4/4 hash-verified, wire v97 — ТЕКУЩИЙ)
+## 2026-07-05 ~00:30 (DLL `E09121F58CE2A5C6` deployed 4/4 hash-verified, wire v98 — ТЕКУЩИЙ)
+
+### 0s. ВХОД ВО ВРЕМЯ СОБЫТИЯ (join-during-event) — приёмочный тест Phase 1
+Автономика уже доказала провод (см. цепочку DLL выше: обелиск, форс ДО подключения
+клиента → снапшот → override-replay). Твой проход решает ВИЗУАЛ + пирамиду:
+1. Хост: запусти мир, F1 → EVENTS → piramid → NOW! (клиент ещё НЕ подключён).
+2. Когда пирамида зашагала — клиент подключается (обычный вход в сессию).
+3. Ожидание: клиент, загрузившись, видит ТУ ЖЕ пирамиду в ТОМ ЖЕ месте пути (WA-снапшот),
+   виспы на местах (npc-снапшот). Если вход попал НА gather (~10 с лучей) — лучи/монтаж
+   должны идти и у клиента (лог: `piramid-gather[host]: join-edge slot=1 re-sent
+   in-flight gather` + клиентский `piramid-gather[client]: replay OK`).
+4. То же с обелиском (replay-строка): хост F1 → EVENTS → obelisk → NOW!, клиент входит
+   после — у клиента обелиск должен ПОЯВИТЬСЯ при подходе (его коробка армится реплеем;
+   лог: `event_fire: client REPLAY runEvent 'obelisk' (in-flight active-override)`).
+5. Смотри WARN-строки `NO class->row map entry` в клиентском логе — это НЕ ошибки, это
+   список классов для Phase 2 карты; назови их мне, если увидишь.
+
+## 2026-07-04 ~23:15 (DLL `829A3681BA8ACDA0` — superseded by `E09121F58CE2A5C6`)
 
 ### 0r. ПИРАМИДА — визуальный проход (devs'-gauntlet acceptance; автономика уже доказала поток)
 Автономный e2e УЖЕ прошёл (см. цепочку DLL выше): mirror + подавление мозга + gather-replay

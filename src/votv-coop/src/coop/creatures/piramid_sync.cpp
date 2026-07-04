@@ -376,10 +376,50 @@ void Tick() {
     TryReplayPendingGather();
 }
 
+void QueueConnectBroadcastForSlot(int slot) {
+    auto* s = LoadSession();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!g_armed) return;  // no pyramid ever seen this process -> nothing can be mid-gather
+    // Read CURRENT truth off the live actors (not the edge map -- it can lag the 1 Hz sweep):
+    // a pyramid whose `gathering` is latched right now is mid-choreography; re-send the commit
+    // to this joiner so its mirror replays it (the original relay fired before this peer
+    // connected). The wisp may already be consumed (npc lane retired it) -- then the joiner
+    // only misses the beam tail, and there is nothing valid to stage; skip.
+    std::vector<coop::element::WorldActor*> snap;
+    coop::element::WaMirrors().Snapshot(snap);
+    for (auto* el : snap) {
+        if (!el || el->GetTypeName() != kPyramidTypeName) continue;
+        void* pyr = el->GetActor();
+        if (!pyr || !R::IsLiveByIndex(pyr, el->GetInternalIdx())) continue;
+        if (!ReadBoolAt(pyr, g_gatheringOff, g_gatheringMask)) continue;
+        void* wisp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(pyr) + g_offWispTarget);
+        const uint32_t wispEid = wisp ? FindNpcEidForActor(wisp) : 0;  // ptr compare only -- no deref
+        if (wispEid == 0) {
+            UE_LOGI("piramid-gather[host]: join-edge slot=%d -- gather in flight but the wisp is "
+                    "already retired; not re-sending (joiner misses only the beam tail)", slot);
+            continue;
+        }
+        coop::net::PyramidGatherPayload p{};
+        p.pyramidEid = static_cast<uint32_t>(el->GetId());
+        p.wispEid = wispEid;
+        if (s->SendReliableToSlot(slot, coop::net::ReliableKind::PyramidGather, &p, sizeof(p))) {
+            UE_LOGI("piramid-gather[host]: join-edge slot=%d re-sent in-flight gather "
+                    "pyramidEid=%u wispEid=%u", slot, p.pyramidEid, p.wispEid);
+        } else {
+            UE_LOGW("piramid-gather[host]: join-edge slot=%d PyramidGather re-send FAILED "
+                    "(pyramidEid=%u wispEid=%u)", slot, p.pyramidEid, p.wispEid);
+        }
+    }
+}
+
 void OnDisconnect() {
     g_pending = PendingGather{};
     g_lastGathering.clear();
     g_tickRestored.clear();
+    // Probe counters are per-session: a piramidforce re-run in the SAME process after a
+    // reconnect must not see the previous session's relays (correctness-audit nit 2026-07-04).
+    g_relayCount.store(0, std::memory_order_relaxed);
+    g_replayCount.store(0, std::memory_order_relaxed);
     // Hooks stay latched (role/session-gated inside) -- the npc/world_actor observer shape.
 }
 

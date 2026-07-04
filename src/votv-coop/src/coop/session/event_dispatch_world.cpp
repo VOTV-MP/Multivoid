@@ -9,6 +9,7 @@
 #include "coop/element/registry.h"
 
 #include "coop/comms/chat_sync.h"
+#include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
@@ -122,6 +123,29 @@ bool HandleWorldEvent(net::Session& session,
         net::EventFirePayload fp{};
         std::memcpy(&fp, msg.payload, sizeof(fp));
         coop::event_fire_sync::OnReliable(fp);
+        break;
+    }
+    case net::ReliableKind::EventSnapshot: {
+        // v98: HOST->JOINER in-flight event registry entry at the world-ready edge (join-during-
+        // event Phase 1, COOP_EVENT_JOIN.md 3.2). Same trust shape as EventFire: world-mutating,
+        // host-only origin, never relayed.
+        if (msg.payloadLen < sizeof(net::EventSnapshotPayload)) {
+            UE_LOGW("event_feed: EventSnapshot payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::EventSnapshotPayload));
+            break;
+        }
+        if (session.role() == net::Role::Host) {
+            UE_LOGI("event_feed: EventSnapshot received on host -- dropping (host is the authority)");
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EventSnapshot from non-host senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::EventSnapshotPayload sp{};
+        std::memcpy(&sp, msg.payload, sizeof(sp));
+        coop::event_active_sync::OnReliable(sp);
         break;
     }
     case net::ReliableKind::InventoryPickup: {

@@ -1,8 +1,9 @@
-# COOP_EVENT_JOIN — the join-during-event contract (Phase 0 AS-BUILT 2026-07-04)
+# COOP_EVENT_JOIN — the join-during-event contract (Phase 1 AS-BUILT 2026-07-05)
 
-**Status: Phase 0 AS-BUILT** (`coop/world/event_active_sync.{h,cpp}` — the read-only registry
-probe of section 3.5; Phases 1-3 remain DESIGN). Bytecode ground truth —
-`research/findings/votv-active-events-registry-RE-2026-07-04.md`.
+**Status: Phase 1 AS-BUILT, autonomous e2e PASS 2026-07-05 00:06** (wire v98,
+`ReliableKind::EventSnapshot` + the active-override replay + the piramid lane's gather
+re-send; Phase 0's probe seam now feeds the wire). Phases 2-3 remain DESIGN. Bytecode
+ground truth — `research/findings/votv-active-events-registry-RE-2026-07-04.md`.
 This is the answer to the devs' gauntlet hard case (`docs/DEVS_GAUNTLET.md`): a player
 joins while the host is mid-event (pyramid et al.) and must converge to the same world.
 
@@ -46,7 +47,9 @@ A client joining while the host is mid-pyramid today gets:
 
 Net: **the joiner stands in a calm base world while the host watches the pyramid land.**
 "People saw completely different events or nothing at all" — the devs' exact words; this
-is the mechanism.
+is the mechanism. (v98 closed the first two gap rows AND the killing blow: EventSnapshot
+delivers the in-flight set at world-ready, and its active-override bypasses the
+passEvents dedupe. The event_cue row stays open until Phase 2.)
 
 ## 3. The design
 
@@ -62,27 +65,34 @@ New module `coop/world/event_active_sync.cpp` (gameplay/network layer; principle
   write it on the host. (On the client, replayed event actors call setEvent locally and
   maintain the client's own counter for free.)
 
-### 3.2 Join snapshot: `EventSnapshot` (host -> joining slot, reliable)
+### 3.2 Join snapshot: `EventSnapshot` (host -> joining slot, reliable) — AS-BUILT v98
 
-At the join edge (same place the other ToSlot replays fire, AFTER the blob announce),
-host sends, for each CURRENT `activeEvents_senders` entry: the sender's class name +
-the mapped list_events row (where one exists) + `elapsedSec` (host poll first-seen
-timestamp delta; phase hints are Phase 3).
+At the join edge (`subsystems::ConnectReplayForSlot`, after the lane snapshots), the host
+sends ONE EventSnapshot message per CURRENT `activeEvents_senders` entry (as-built
+refinement over the count+entries sketch: 0-4 concurrent in practice, and a fixed 98 B
+payload fits one datagram): the sender's class name + the mapped list_events row (the
+class->row map lives HOST-side in `event_active_sync::kClassRowMap`; '' = unmapped) +
+`elapsedSec` (host poll first-seen delta — for an event already running when the peer's
+transport connected, this is prime-relative, not true event age; diagnostics-only until
+Phase 3 phase hints).
 
 Joiner handling per the EXTENDED dupe matrix (one new column on the existing policy in
 `event_fire_sync.cpp` — "late-join answer"):
 
 | Policy class | Late-join answer |
 |---|---|
-| replay-safe rows (obelisk, treehouse_*, ...; `piramid` FLIPPED to lane-owned 2026-07-04 — host-random path, see docs/events/piramid.md) | REPLAY locally at join — with an **active-override**: the snapshot marks the row in-flight, which bypasses the `InClientPassEvents` dedupe (that dedupe exists for COMPLETED history, not in-flight events). Joiner sees the event from t=0; endpoint converges (story flags already in blob; replay re-runs the visuals/sequence). |
+| replay-safe rows (obelisk, treehouse_*, ...; `piramid` FLIPPED to lane-owned 2026-07-04 — host-random path, see docs/events/piramid.md) | REPLAY locally at join — with an **active-override**: the snapshot marks the row in-flight, which bypasses the `InClientPassEvents` dedupe (that dedupe exists for COMPLETED history, not in-flight events). Joiner sees the event from t=0; endpoint converges (story flags already in blob; replay re-runs the visuals/sequence). AS-BUILT: `event_fire_sync::ReplayInFlightRow` (queue-upgrade if an EventFire copy is already pending; the passEvents-skip no longer marks the session replayed-set, so a history-skip can never block a later in-flight override) [V e2e 2026-07-05 00:06: `client REPLAY runEvent 'obelisk' (in-flight active-override)`]. |
 | lane-owned rows (wisps, ventCrawler, props, weather...) | NOTHING at event level — the owning lane's join snapshot delivers current state. Each lane's join answer is audited in the contract table (3.4). |
 | host-local rows (agrav, pranks RNG...) | skip, as today. |
 | unknown class (not in the map) | log LOUD + skip (same default-no-replay discipline). |
 
-Wire: new `ReliableKind::EventSnapshot` — wired in the THREE places per
-[[feedback-reliablekind-router-checklist]]; payload = count + per-entry
-{classNameFixed[48], rowNameFixed[48], elapsedSec u16}. Pre-world-sendable like
-EventFire; entries queue in the existing `g_pending` drain until the eventer is up.
+Wire (AS-BUILT): `ReliableKind::EventSnapshot = 86` (v98), payload = ONE entry
+{classNameFixed[48], rowNameFixed[48], elapsedSec u16} (98 B), one message per in-flight
+event; wired in TWO places (enum/payload + the world-family switch in
+event_dispatch_world — the SyncRouter consolidation retired the third). NOT
+pre-world-sendable (deliberate divergence from this sketch): it is only ever sent AT the
+world-ready edge, when the slot's gate is already open; the receiver-side eventer race is
+absorbed by event_fire_sync's `g_pending` drain, same as EventFire.
 
 ### 3.3 Counter parity on the client (accepted asymmetry)
 
@@ -104,9 +114,12 @@ EventCue ToSlot)**; keypad/doors/lights=trigger states ride saveTriggers in the 
 kerfur=reconcile lane [V]; atv=lane [V];
 piramid=WA connect snapshot delivers the in-flight pyramid at its current transform +
 npc snapshot the remaining wisps; the joiner's mirror BeginPlay restores registry parity
-(setEvent). A join DURING a gather misses only that gather's choreography (PyramidGather
-is edge-relayed, not snapshotted) until Phase 1 EventSnapshot carries gathering/wispTarget
-— bounded to ~10 s of beams [AS-BUILT 2026-07-04, docs/events/piramid.md].
+(setEvent). v98 closed the gather sub-gap: `piramid_sync::QueueConnectBroadcastForSlot`
+re-sends an in-flight gather commit ToSlot at the join edge (reads CURRENT `gathering` +
+`wispTarget` off the live pyramid — the lane-local answer, not an EventSnapshot field as
+this doc first sketched; a wisp already consumed = skip, the joiner misses only the beam
+tail; a wire wisp-destroy landing mid-replay-montage resolves to a pending-kill ref the
+native beam code None-checks) [AS-BUILT 2026-07-05, join-during-gather untested by hands-on].
 
 ### 3.5 Phases
 
@@ -119,10 +132,22 @@ is edge-relayed, not snapshotted) until Phase 1 EventSnapshot carries gathering/
   alarm chain -> `BEGIN class=trigger_alarm_C n=2` (refcount exercised) and
   `END class=trigger_alarm_C n=1 elapsed=65s`; `eventforce_test: VERDICT PASS` + client REPLAY
   line unaffected.
-- **Phase 1:** EventSnapshot wire + joiner replay with active-override for replay-safe
-  rows. Pyramid mid-join = the acceptance test.
+- **Phase 1: AS-BUILT 2026-07-05 (wire v98), autonomous e2e PASS** — EventSnapshot wire +
+  joiner replay with the active-override + the piramid gather re-send. Evidence (00:04-00:08
+  run, DLL E09121F58CE2A5C6): host forced obelisk BEFORE the client existed; at the client's
+  transport connect the host poll primed n=2 and BEGIN'd obelisk_C + trigger_alarm_C; at
+  world-ready `join-edge slot=1 SNAPSHOT class=obelisk_C row=obelisk` + `class=trigger_alarm_C
+  row=<unmapped>`; client: `join snapshot -- in-flight class=obelisk_C row=obelisk` -> queued
+  (eventer racing) -> `client REPLAY runEvent 'obelisk' (in-flight active-override)` ->
+  `runEvent('obelisk', special='None') dispatched`; unmapped alarm logged LOUD + skipped
+  (the Phase 2 fill signal working); 0 ERROR both peers. NOTE: the dev force does not append
+  passEvents, so this run exercised the override MARKER but not the passEvents-carried
+  bypass branch (that needs a scheduler fire mid-join or a hands-on; the branch is a
+  two-boolean short-circuit, code-verified). Pyramid mid-join stays the HANDS-ON acceptance
+  test (section 4).
 - **Phase 2:** event_cue join snapshot (closes the starRain gap); class->row map filled
-  for the full census (the ~95, most map to existing dupe-matrix rows).
+  for the full census (the ~95, most map to existing dupe-matrix rows — the receiver's
+  `NO class->row map entry` WARN lines name exactly the classes still missing).
 - **Phase 3 (only if hands-on shows it matters):** phase hints — elapsedSec-driven
   fast-forward for timeline-driven senders; per-event, evidence-first.
 

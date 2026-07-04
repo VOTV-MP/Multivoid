@@ -53,8 +53,17 @@ void Install(coop::net::Session* session);
 //              pending-gather replay attempts while one is queued.
 void Tick();
 
-// Clear per-session state (pending gather, edge map, restored-tick set). Registered hooks
-// stay latched for the process (role/session-gated inside, the npc/world_actor shape).
+// HOST, game thread, at a joiner's world-ready edge (subsystems::ConnectReplayForSlot, AFTER
+// world_actor_sync/npc_sync queued their snapshots so the mirrors will exist): if a gather is
+// in flight RIGHT NOW (edge map holds gathering=true and the actor still points at a live
+// wispTarget), re-send PyramidGather ToSlot -- the lane's late-join answer (COOP_EVENT_JOIN
+// 3.4; without it a join DURING the ~10 s gather missed the whole choreography, because the
+// commit relay is edge-triggered and fired before this peer connected).
+void QueueConnectBroadcastForSlot(int slot);
+
+// Clear per-session state (pending gather, edge map, restored-tick set, probe counters).
+// Registered hooks stay latched for the process (role/session-gated inside, the
+// npc/world_actor shape).
 void OnDisconnect();
 
 // Wire receiver (client): queue the gather for replay-when-converged. Called on the game

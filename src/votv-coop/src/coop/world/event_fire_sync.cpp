@@ -64,7 +64,14 @@ constexpr long long kPollIntervalMs = 1000;  // scheduler fires are minutes apar
 int g_zeroedAllEventsNum = 0;         // what we zeroed (restore on disconnect); 0 = nothing zeroed
 void* g_zeroedSaveSlot = nullptr;
 int32_t g_zeroedSaveSlotIdx = -1;
-struct PendingFire { FireKind kind; std::string name; };
+struct PendingFire {
+    FireKind kind;
+    std::string name;
+    // v98 active-override (ReplayInFlightRow): the host registry says this row is IN FLIGHT --
+    // bypass the InClientPassEvents dedupe (a mid-event joiner's blob carries the row as
+    // "completed history" while the event is still running; COOP_EVENT_JOIN.md section 2).
+    bool activeOverride = false;
+};
 std::deque<PendingFire> g_pending;    // replays waiting for the eventer (join window)
 // EventFire is pre-world-sendable (session_lanes.h) -- a joiner can queue fires for its whole
 // 30-60 s load window. 128 = the 69-row table + specials + margin; duplicates are skipped at
@@ -345,16 +352,21 @@ bool TryReplay(const PendingFire& pf) {
             UE_LOGI("event_fire: '%s' already replayed this session -- skipping", pf.name.c_str());
             return true;
         }
-        if (InClientPassEvents(pf.name)) {
+        // A passEvents hit marks nothing (v98): the skip must stay re-decidable. Inserting into
+        // g_replayed here would let a history-skipped EventFire permanently block a LATER
+        // EventSnapshot active-override for the same in-flight row (fire lands between the
+        // joiner's connect and its blob capture -> both the wire copy AND the blob carry it).
+        // A future duplicate just rescans the array -- passEvents never shrinks mid-session.
+        if (!pf.activeOverride && InClientPassEvents(pf.name)) {
             UE_LOGI("event_fire: '%s' already in local passEvents (save carried it) -- skipping",
                     pf.name.c_str());
-            g_replayed.insert(pf.name);
             return true;
         }
     }
     const std::wstring w(pf.name.begin(), pf.name.end());
-    UE_LOGI("event_fire: client REPLAY %s '%s'",
-            pf.kind == FireKind::SpecialEvent ? "runSpecialEvent" : "runEvent", pf.name.c_str());
+    UE_LOGI("event_fire: client REPLAY %s '%s'%s",
+            pf.kind == FireKind::SpecialEvent ? "runSpecialEvent" : "runEvent", pf.name.c_str(),
+            pf.activeOverride ? " (in-flight active-override)" : "");
     // special = None ALWAYS: the only native special is ariralPrank (host-local RNG roll --
     // replaying it would roll a DIFFERENT prank on this peer). Mark consumed only on a
     // SUCCESSFUL dispatch (a ParamFrame/Call failure is loud + must not eat the row).
@@ -503,6 +515,45 @@ void OnReliable(const coop::net::EventFirePayload& payload) {
     }
     UE_LOGI("event_fire: eventer not up yet -- queued '%s' (%zu pending)",
             name.c_str(), g_pending.size() + 1);
+    g_pending.push_back(std::move(pf));
+}
+
+void ReplayInFlightRow(const std::string& rowName) {
+    if (!GT::IsGameThread()) { UE_LOGW("event_fire: ReplayInFlightRow off-game-thread -- dropping"); return; }
+    if (rowName.empty()) return;
+    ResolvePass();
+    const char* lane = nullptr;
+    const int verdict = ReplayVerdict(rowName, &lane);
+    if (verdict == 0) {
+        UE_LOGI("event_fire: in-flight '%s' NOT replayed -- %s owns the outputs (its join "
+                "snapshot delivers current state)", rowName.c_str(), lane);
+        return;
+    }
+    if (verdict < 0) {
+        UE_LOGW("event_fire: in-flight '%s' not in the replay policy -- default NO-replay "
+                "(add the row's verdict)", rowName.c_str());
+        return;
+    }
+    PendingFire pf{ FireKind::RunEvent, rowName, /*activeOverride=*/true };
+    if (TryReplay(pf)) return;
+    // Eventer not up yet (world-ready races the actor resolve). If the row is already queued
+    // (an EventFire copy landed in the pre-world window), UPGRADE it in place -- two entries
+    // would double-dispatch, and the plain copy alone could history-skip the in-flight replay.
+    for (auto& q : g_pending) {
+        if (q.kind == FireKind::RunEvent && q.name == rowName) {
+            q.activeOverride = true;
+            UE_LOGI("event_fire: in-flight '%s' already queued -- upgraded to active-override",
+                    rowName.c_str());
+            return;
+        }
+    }
+    if (g_pending.size() >= kMaxPending) {
+        UE_LOGW("event_fire: pending replay queue full (%zu) -- dropping in-flight '%s'",
+                g_pending.size(), rowName.c_str());
+        return;
+    }
+    UE_LOGI("event_fire: eventer not up yet -- queued in-flight '%s' (%zu pending)",
+            rowName.c_str(), g_pending.size() + 1);
     g_pending.push_back(std::move(pf));
 }
 

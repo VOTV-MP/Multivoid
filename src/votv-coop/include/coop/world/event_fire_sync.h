@@ -29,7 +29,10 @@
 //     the level-flip / save-story / cosmetic-sound ones no lane carries. ariralPrank special is
 //     NEVER forwarded (the client would re-roll a DIFFERENT random prank).
 //   - DEDUPE: a replayed row is skipped if the client's own passEvents already contains it (the
-//     v56 save transfer carried the fire) or it was already replayed this session.
+//     v56 save transfer carried the fire) or it was already replayed this session. Exception:
+//     the v98 ACTIVE-OVERRIDE (ReplayInFlightRow below) -- an event the host registry says is IN
+//     FLIGHT replays even when passEvents carries it, because a mid-event joiner's blob records
+//     the fire as history while the event is still running (COOP_EVENT_JOIN.md section 2).
 //
 // One owner (anti-smear): this module owns the whole scheduled-event authority axis --
 // suppression + observation + the native-fire primitive + replay. The F1 dev menu
@@ -83,6 +86,15 @@ bool HostFire(FireKind kind, const std::wstring& eventName, const std::wstring& 
 // CLIENT receiver (event_dispatch_world, reliable drain, game thread): replay per policy, or
 // queue until the eventer resolves (join window). Host receiving its own kind = dropped upstream.
 void OnReliable(const coop::net::EventFirePayload& payload);
+
+// CLIENT, game thread (event_active_sync's EventSnapshot receiver, v98): the host says this
+// list_events row is IN FLIGHT right now. Same per-row policy as OnReliable (lane-owned /
+// host-local / unknown rows skip), but a replay-safe row replays with the ACTIVE-OVERRIDE:
+// the InClientPassEvents dedupe is bypassed (it exists for COMPLETED history; the joiner's
+// blob already carries this row). The session replayed-set still applies (a world-change
+// re-sync resends the snapshot; the row must not replay twice). Always FireKind::RunEvent
+// (registry senders are scheduled/story rows; runSpecialEvent never registers).
+void ReplayInFlightRow(const std::string& rowName);
 
 // Teardown: restore the client's allEvents.Num (SP scheduler resumes), clear poll baseline +
 // pending queue + replayed-set, drop the session pointer. Game thread.

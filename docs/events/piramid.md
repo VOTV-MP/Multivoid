@@ -120,10 +120,16 @@ Original design points (all shipped as described unless noted above):
    `PyramidGather{pyramidEid, wispEid}` -> client plays the montage on the mirror; beams +
    footwork follow from notifies.
 5. **Late-join answer** (extends COOP_EVENT_JOIN.md 3.4): lane-owned — the WorldActor
-   join snapshot delivers the in-flight pyramid at its current transform; the EventSnapshot
-   (Phase 1) marks the event active for the joiner's registry parity; killerwisps arrive
-   via the npc join snapshot. No replay-from-t0 (host-random path makes replay divergent
-   by construction).
+   join snapshot delivers the in-flight pyramid at its current transform; killerwisps
+   arrive via the npc join snapshot; registry parity comes from the mirror's own
+   BeginPlay setEvent. The v98 EventSnapshot carries 'piramid' to the joiner but the
+   verdict table skips it as lane-owned — the correct answer, not a gap. No
+   replay-from-t0 (host-random path makes replay divergent by construction). v98 also
+   closed the gather sub-gap: `piramid_sync::QueueConnectBroadcastForSlot` re-sends an
+   in-flight gather commit ToSlot at the join edge (reads live `gathering`/`wispTarget`
+   off the host pyramid; wisp already consumed = skip, the joiner misses only the beam
+   tail). AS-BUILT 2026-07-05, code-verified only — the ~10 s join-during-gather window
+   has no autonomous repro.
 
 ## 4. Caveats / known quirks
 
@@ -150,7 +156,7 @@ Original design points (all shipped as described unless noted above):
 - Registry probe on the pyramid: PROVEN (BEGIN/END both live runs).
 - **Still pending (hands-on)**: the devs'-gauntlet VISUAL pass — same pyramid, same walk,
   same gather beams/montage on both screens; the mid-join variant (client joins while it
-  walks — WA connect snapshot delivers the transform; a join DURING a gather misses only
-  that gather's beams until Phase 1 EventSnapshot carries gathering/wispTarget). And the
+  walks — WA connect snapshot delivers the transform; a join DURING a gather now gets the
+  v98 join-edge PyramidGather re-send, code-verified only). And the
   native (non-forced) trigger: a client puppet standing in the host's armed Signal Lab box
   — verify the TB overlap filter accepts the puppet (section 3 point 1 fallback if not).
