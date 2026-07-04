@@ -88,6 +88,8 @@ Two real LAN scenarios PASS against the assembled module -- the two MOST-refacto
   (The scenario's own verdict FALSE-FAILed on the RETIRED `Gap-I-1 FUZZY MATCH` marker -- the D2 fix adopts by-eid;
   harness assertion fixed `62780b92`.) The 970 `BeginDeferred null` = fresh-boot world-load-window spawn-nulls
   (orthogonal to the refactor; the spawn factory is upstream of the bind; world recovered + piles bound).
+  [SUPERSEDED 2026-07-04: root found + fixed -- the pump drained inside construction-script windows where
+  UWorld::SpawnActor silently nulls; see votv-spawn-refusal-window-RE-2026-07-04.md + commit f23ecfdf.]
 - **`mp.py joinchurn` PASS** (join/reconcile path, real s_1234 save-world join): `divergence-sweep=1` (fired once,
   no churn re-arm), `incremental-PropSpawn=3`, `unclaimed-destroyed=0` (NO world-wipe -- the >50% valve held),
   `no-local-match-flood=0`, `kerfur materialized=1` with `0 spurious converts`, `malformed_drops=0`, RSS stable

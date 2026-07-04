@@ -78,7 +78,22 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-04 ~19:35 (DLL `6EE1A44107003C9F` deployed 4/4 hash-verified)
+## 2026-07-04 ~20:45 (DLL `A9109CB3AA370629` deployed 4/4 hash-verified — ТЕКУЩИЙ)
+
+### 0p. Join-window SPAWN-NULL burst — ROOT-FIXED (pump drain-defer)
+Корень (IDA): наш pump исполнял отложенные задачи на ЛЮБОМ ProcessEvent — в т.ч.
+вложенном в чужой ConstructionScript, где UWorld::SpawnActor молча возвращает null
+(Shipping без LogSpawn). На джойне (массовая конструкция акторов сейва ~5 с)
+это убивало ВСЕ наши спавны окна: 871 прокси + 92 keyed-зеркала (не ретраились =
+пропс-призраки на всю сессию) + puppet. Фикс: детур откладывает дренаж, пока мир
+отказывает в спавнах (`ue_wrap/spawn_gate`). Смок: нулей 0/0, ERROR 0/0 (было 967),
+73 зеркала заспавнились. Твой тест — обычный джойн клиентом: (1) в клиентском логе
+НЕ должно быть `BeginDeferred returned null`-пачек; (2) предметы, которые хост
+двигал/держал ДО твоего захода, должны корректно жить у клиента (раньше до ~92
+пропсов могли молча не зеркалиться до конца сессии). Отдельного сценария не нужно —
+0o-a/0o-b на этом же DLL закрывают и это.
+
+## 2026-07-04 ~19:35 (DLL `6EE1A44107003C9F` — superseded by `A9109CB3AA370629`; сценарии 0o-a/0o-b актуальны)
 
 ### 0o-a. Твой 18:41 «keypad вообще без синка» — ROOT-FIXED (settled-scan)
 Корень: на старте сессии хост ПЕРЕЗАГРУЖАЕТ мир; периодический tail-scan вычистил
