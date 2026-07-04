@@ -23,8 +23,14 @@ Triggers (all real ProcessEvent UFunctions unless noted):
 - `saveSlot_C:savePlayerOnly` (L296428) → `saveToSlot`.
 - A few world triggers (e.g. `trigger_lockerLooker_C`, L397300) call `SaveGameToSlot`
   directly, bypassing the gamemode `save` wrapper but still hitting `saveToSlot`.
-- `disableSave`@0xE40 (L231222) — global gate, checked inside the ubergraph; gate
-  COMPLETENESS unverified (a `forcedSave` path likely bypasses it).
+- `disableSave`@0xE40 (L231222) — global gate. [ANSWERED 2026-07-04, bytecode
+  research/pak_re/saveSlot.json + mainGamemode.json: the ONLY reader lives at the HEAD
+  of `saveSlot_C:save` (NOT the gamemode ubergraph) — it gates gather+write for EVERY
+  gamemode trigger (autosave/sleep/menu/quicksave all funnel through `saveSlot:save`;
+  mainGamemode never calls `saveToSlot` directly). NOT gated: `savePlayerOnly` + the
+  direct `SaveGameToSlot` trigger callers (the disk hook covers those). NOTHING in the
+  bytecode ever WRITES disableSave. Exploited by save_block part 3 — a coop CLIENT
+  holds it true = the native cycle off at the game's own gate (commit `99eb4566`).]
 
 Populate → serialize sequence:
 - Populate: `mainGamemode_C:saveObjects(quicksave)` (L275634), `Save Primitives`
@@ -111,7 +117,9 @@ used by the disconnect drains). Puppets are the one category NOT covered by IsMi
   PostSaveRestore signal; post-write ordering UNVERIFIED (tier-3 probe).
 
 ## 7. Tier-3 (UE4SS live probe) open items
-1. Does `disableSave=true` skip ALL triggers or only autosave/save (not forced saveToSlot)?
+1. [ANSWERED 2026-07-04, static bytecode — no live probe needed; see the disableSave
+   note in §1: all gamemode-funnel triggers YES; savePlayerOnly + direct SaveGameToSlot
+   callers NO (disk-hook belt covers them).]
 2. Is `gameSaved` strictly AFTER the last `SaveGameToSlot` returns?
 3. Do mirror/puppet classes inherit `Aactor_save_C` (auto-serialized base)? Does
    setIgnoreSave's bool back ignoreSave's read?
