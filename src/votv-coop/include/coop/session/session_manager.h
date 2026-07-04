@@ -39,7 +39,7 @@ void SetHostStatus(const std::string& status);
 
 // Our OWN announced lobbyId (empty if we are not hosting an announced lobby). The
 // browser filters this row out + JoinLobby refuses it, so a host can never connect
-// to its own server. Set on announce, cleared on AbortHost. Thread-safe.
+// to its own server. Set on announce, cleared on EndHostedLobby. Thread-safe.
 std::string OwnLobbyId();
 
 // The local player's display nickname. Seeded from config (env VOTVCOOP_NET_NICK /
@@ -145,11 +145,17 @@ uint16_t HostListenPort();
 // addition for later.
 void AnnounceEnvHostHidden(const std::string& name, const std::string& world);
 
-// Cancel an announced-but-never-started host: /leave the master + stop the heartbeat
-// thread, so no phantom lobby lingers when the harness fails to load/create the chosen
-// world (HostWithSave announces BEFORE the world load). Clears any pending host-with-save.
-// Safe no-op if nothing was announced. (audit HIGH-1.)
-void AbortHost();
+// Retire the announced lobby: POST /v1/leave + stop the heartbeat thread, and clear the
+// host-side lobby state (pending host-with-save, own-lobby guard, listed mirror). The
+// lobby's lifetime IS the host session's lifetime -- callers are its two end-of-life
+// edges: (a) an announced-but-never-started host whose world load/create failed
+// (HostWithSave announces BEFORE the load -- audit HIGH-1: no phantom lobby), and
+// (b) the harness's host-session running->stopped edge (death / quit-to-menu). Without
+// (b) the heartbeat thread keeps a DEAD lobby listed on the master forever (2026-07-04
+// user repro: host died to the killerwisp, everyone fled to the menu, the server stayed
+// in the browser). Safe no-op if nothing was announced. Blocking (/leave HTTP + thread
+// join) -- call from a worker/timeline thread, never the game thread.
+void EndHostedLobby();
 
 // --- the harness seam (Tier 2 consumes this) ---
 // If a session start was queued by a browser action, move the Config into `out` and

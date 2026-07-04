@@ -396,7 +396,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             // Reset() re-shows the menu; the harness re-surfaces the browser on
             // the next idle tick (it owns ui::server_browser).
             if (!coop::shutdown::IsShuttingDown()) {
-                AbortHost();                 // /leave + stop heartbeat (worker-safe)
+                EndHostedLobby();            // /leave + stop heartbeat (worker-safe)
                 coop::join_progress::Reset();
             }
         }
@@ -543,14 +543,15 @@ uint16_t HostListenPort() {
     return g_fallbackHostCfg.port ? g_fallbackHostCfg.port : net::kDefaultPort;
 }
 
-void AbortHost() {
+void EndHostedLobby() {
     Announcer().Stop();  // POST /v1/leave + stop the heartbeat thread (kills the listing)
     {
         std::lock_guard<std::mutex> lk(g_pendHostMu);
         g_hasPendingHost = false;
     }
     SetOwnLobbyId(std::string());  // no longer hosting -> clear the own-lobby self-join guard
-    UE_LOGI("session_manager: AbortHost -- announced lobby cancelled (/leave + heartbeat stopped)");
+    g_listedState.store(true, std::memory_order_relaxed);  // back to the no-lobby default
+    UE_LOGI("session_manager: EndHostedLobby -- lobby retired (/leave + heartbeat stopped)");
 }
 
 bool TakePendingStart(net::Config& out) {

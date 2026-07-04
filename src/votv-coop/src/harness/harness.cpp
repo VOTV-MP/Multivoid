@@ -513,7 +513,7 @@ void DriveHostBootIfPending() {
             // The lobby was already announced (HostWithSave announces before the load) --
             // cancel it so no phantom lobby lingers on the master (audit HIGH-1). Skip the
             // /leave HTTP during teardown.
-            if (!coop::shutdown::IsShuttingDown()) coop::session_manager::AbortHost();
+            if (!coop::shutdown::IsShuttingDown()) coop::session_manager::EndHostedLobby();
             // Don't strand the user on a blank menu (the picker closed on click): drop the
             // host cover, surface the failure + reopen the browser so they can retry.
             coop::join_progress::Reset();
@@ -527,7 +527,7 @@ void DriveHostBootIfPending() {
     }
     if (!coop::shutdown::IsShuttingDown()) {
         UE_LOGW("harness: host-with-save did not reach gameplay in time -- aborting host");
-        coop::session_manager::AbortHost();  // HIGH-1: don't leave a phantom lobby on timeout
+        coop::session_manager::EndHostedLobby();  // HIGH-1: don't leave a phantom lobby on timeout
         coop::join_progress::Reset();        // drop the host cover
         coop::session_manager::SetHostStatus("Host failed: the world did not load in time");
         ui::server_browser::Open();
@@ -643,6 +643,12 @@ void RunPlayLoop(bool idleInGameplay) {
         if (wasRunning && wasHostSession && !running && !coop::shutdown::IsShuttingDown()) {
             UE_LOGI("harness: host session ended -- returning to the main menu");
             Post([] { coop::net_pump::FleeToMainMenuOnDeath(g_session, "host session ended -> main menu"); });
+            // The lobby's lifetime IS the host session's lifetime: delist NOW (/leave +
+            // stop the heartbeat) or the heartbeat keeps the DEAD lobby listed on the
+            // master forever (2026-07-04: host died to the killerwisp -> everyone fled
+            // to the menu -> the server was still in the browser). Blocking HTTP is fine
+            // here: this is the TimelineThread, same as the boot-failure delist above.
+            coop::session_manager::EndHostedLobby();
         }
         wasRunning = running;
         if (running) wasHostSession = (g_session.role() == coop::net::Role::Host);
