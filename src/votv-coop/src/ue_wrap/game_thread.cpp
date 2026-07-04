@@ -202,45 +202,6 @@ void ClearAllInterceptors() {
     BloomClear(g_intcBloom);
 }
 
-// SEH-wrapped single-callback dispatch. MSVC disallows mixing C++ unwind
-// (std::wstring destructor) with __try/__except in the same function, so
-// the __try wrapper does ONLY the raw call + an int-returning "did it
-// crash?" sentinel; the C++ logging path lives in a separate function.
-//
-// 2026-05-27 (post-anim-ship crash diagnostic): introduced because the user
-// reported "client crashed picking up a pile of garbage" with the AV deep in
-// our DLL but no symbol-mapped frames. Routing each observer dispatch through
-// here surfaces the function name in the log next time, so we know exactly
-// which callback to inspect. KEEP this wrapper -- it doubles as a crash
-// firewall against future observer regressions.
-void LogObserverAv(void* function, void* self, const char* phase) {
-    const auto fname = reflection::NameOf(function);
-    const std::wstring nameStr = reflection::ToString(fname);
-    UE_LOGE("game_thread: PE %s-callback AV caught -- function='%ls' (%p) self=%p; absorbing, process continues",
-            phase, nameStr.c_str(), function, self);
-}
-
-// Returns 0 on clean completion, 1 if SEH caught an exception. cb returns
-// its own bool via *outIntercept (only meaningful if return value is 0).
-// __try / __except is the ONLY thing in this function -- no C++ destructors.
-int RunInterceptorSEH(UFunctionInterceptor cb, void* self, void* params, bool* outIntercept) {
-    __try {
-        *outIntercept = cb(self, params);
-        return 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 1;
-    }
-}
-
-int RunObserverSEH(ProcessEventObserverFn cb, void* self, void* function, void* params) {
-    __try {
-        cb(self, function, params);
-        return 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 1;
-    }
-}
-
 // ---- Absorbed-fault localization (firewall diagnosability) -----------------
 // The Pump() crash firewall absorbs a faulting task so the host survives, but
 // historically it logged only a GENERIC "absorbed exception" line -- it did not
@@ -315,6 +276,55 @@ const char* FormatModuleRva(void* ip) {
     return buf;
 }
 // ---- end absorbed-fault localization ---------------------------------------
+
+// SEH-wrapped single-callback dispatch. MSVC disallows mixing C++ unwind
+// (std::wstring destructor) with __try/__except in the same function, so
+// the __try wrapper does ONLY the raw call + an int-returning "did it
+// crash?" sentinel; the C++ logging path lives in a separate function.
+//
+// 2026-05-27 (post-anim-ship crash diagnostic): introduced because the user
+// reported "client crashed picking up a pile of garbage" with the AV deep in
+// our DLL but no symbol-mapped frames. Routing each observer dispatch through
+// here surfaces the function name in the log next time, so we know exactly
+// which callback to inspect. KEEP this wrapper -- it doubles as a crash
+// firewall against future observer regressions.
+//
+// 2026-07-04 (re-host dangling-save diagnosis): the absorbed-AV line now also
+// names the fault SITE (module+RVA via TaskFaultFilter, same mechanism as the
+// Pump firewall) -- "VotV-Win64-Shipping.exe+..." means the fault is inside
+// the engine's own dispatch (e.g. BP-VM deref of a stale UObject*), not in our
+// callback. Diagnosing the re-host crash needed a minidump to learn that; now
+// the log says it directly.
+void LogObserverAv(void* function, void* self, const char* phase) {
+    const auto fname = reflection::NameOf(function);
+    const std::wstring nameStr = reflection::ToString(fname);
+    UE_LOGE("game_thread: PE %s-callback AV caught -- function='%ls' (%p) self=%p; "
+            "fault code=0x%08lX ip=%s access=%p; absorbing, process continues",
+            phase, nameStr.c_str(), function, self,
+            t_lastTaskFault.code, FormatModuleRva(t_lastTaskFault.faultingIP),
+            t_lastTaskFault.accessAddr);
+}
+
+// Returns 0 on clean completion, 1 if SEH caught an exception. cb returns
+// its own bool via *outIntercept (only meaningful if return value is 0).
+// __try / __except is the ONLY thing in this function -- no C++ destructors.
+int RunInterceptorSEH(UFunctionInterceptor cb, void* self, void* params, bool* outIntercept) {
+    __try {
+        *outIntercept = cb(self, params);
+        return 0;
+    } __except (TaskFaultFilter(GetExceptionInformation())) {
+        return 1;
+    }
+}
+
+int RunObserverSEH(ProcessEventObserverFn cb, void* self, void* function, void* params) {
+    __try {
+        cb(self, function, params);
+        return 0;
+    } __except (TaskFaultFilter(GetExceptionInformation())) {
+        return 1;
+    }
+}
 
 bool SafeCallInterceptor(UFunctionInterceptor cb, void* self, void* params, void* function) {
     bool intercept = false;
@@ -719,7 +729,7 @@ int RunDetourSEH(void* self, void* function, void* params) {
     __try {
         ProcessEventDetourImpl(self, function, params);
         return 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (TaskFaultFilter(GetExceptionInformation())) {
         return 1;
     }
 }

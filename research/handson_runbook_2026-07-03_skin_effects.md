@@ -1,18 +1,40 @@
 # Hands-on runbook 2026-07-03 — skin take-3 + join-line + TIME instant + NORMALS + EVENTS-NOW
 
-**Deployed: DLL `7BCE41C4B6DC9C99` on all 4 installs** (hash-verified; protocol **v96** —
+**Deployed: DLL `D43455FC4787FFE4` on all 4 installs** (hash-verified; protocol **v96** —
 both peers MUST be on this DLL to connect). Supersede chain: `1CDD6079A5241162`
 (your hands-on build) → `121C31D2BEFE85B4` (+eventforce autotest) → `59D77AFC4329DB78`
 (**+ the WISP MIRROR LANE** — see its section below) → `08B357DDE6F6ACE4` (+the killerwisp
-probe) → **`7BCE41C4B6DC9C99` (2026-07-04 night: + KILLERWISP v2 choreography/aggro + the
-coop NO-PAUSE fix — sections 0a/0b below; wire unchanged v96)**. Late-eve autonomy
+probe) → `7BCE41C4B6DC9C99` (2026-07-04 night: + KILLERWISP v2 choreography/aggro + the
+coop NO-PAUSE fix — sections 0a/0b below; wire unchanged v96) →
+**`D43455FC4787FFE4` (2026-07-04 day: + the RE-HOST CRASH root fix — section 0c below;
+wire unchanged v96)**. Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
 'obelisk'` same second); wisp lane e2e x2 (32/32 all four legs); killerwisp probe (chain
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-04 NIGHT ADDITIONS (commit `769d02f7`, DLL `7BCE41C4B6DC9C99`)
+## 2026-07-04 DAY ADDITION (DLL `D43455FC4787FFE4`)
+
+### 0c. RE-HOST CRASH root-fixed (your 11:11 crash report) — 2-minute test
+Your crash (host new game 'abobka' after quitting the first session to the menu) was
+root-caused from the two minidumps + the host log: our LoadStorySave cached the FIRST
+session's save object at process scope; the re-host skipped the disk load and re-registered
+the GC-freed pointer into the GameInstance — the world built from freed memory and the GC
+crashed on a worker thread (both days' crashes = byte-identical stack). Fixed at the root:
+the save cache is now campaign-scoped (a NEW host boot always reloads the slot from disk —
+also fixes stale save CONTENT after autosaves) + liveness-guarded; the GameMode derive
+latch rides the same scope (a sandbox-after-story re-host would have carried the wrong
+mode).
+TEST (exactly your crash sequence): mp_host_game.bat → reach gameplay → выйти в главное
+меню → MULTIPLAYER → HOST NEW game (новое имя) → мир должен загрузиться БЕЗ краша.
+Повтори 2-3 раза подряд (можно и загрузку СУЩЕСТВУЮЩЕГО сейва вторым заходом). Host log
+proof: `engine: save cache -- NEW load campaign (target 's_<имя>', cached 's_1234',
+polling world changed) -> full reset, (re)load from disk` + a fresh
+`LoadStorySave -- loaded save 's_<имя>' = <ptr> (idx N)` line per re-host. Status:
+build+deploy 4/4 hash-verified; 2 audit agents run on the diff; your re-host IS the verdict.
+
+## 2026-07-04 NIGHT ADDITIONS (commit `769d02f7`, DLL `7BCE41C4B6DC9C99` → superseded by `D43455FC4787FFE4`, same features)
 
 ### 0a. COOP NO-PAUSE (your report: клиенты замирают на ESC) — 5-second test
 Root fix (state-level, one owner): while connected, a paused world is un-paused every
