@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace coop::chat_feed {
@@ -19,11 +20,17 @@ namespace coop::chat_feed {
 // Max simultaneously-shown lines (oldest drops when a new line overflows).
 inline constexpr int kMaxLines = 6;
 
-// One feed line, ready to draw. text is ASCII (peer nicks are sanitized upstream;
-// the event phrasing is English). alpha is the age-derived fade (1 fresh -> 0 at TTL).
+// One feed line, ready to draw. text is UTF-8 (2026-07-04: the ASCII squash is
+// gone -- ui::fonts loads a Cyrillic-capable font, so Russian passes end-to-end).
+// alpha is the age-derived fade: a short fade-IN on arrival (the chat-imgui-samp
+// feel), full while held, fading out over the TTL tail. nickLen > 0 marks the
+// first nickLen BYTES as a player-nick prefix the HUD colors per slot; 0 = an
+// event line (single color). Sized for the 203-byte wire text + a nick + ": ".
 struct Line {
-    char  text[100] = {};
-    float alpha = 1.f;
+    char    text[256] = {};
+    float   alpha = 1.f;
+    uint8_t nickLen = 0;   // byte length of the nick prefix inside text (0 = event line)
+    uint8_t slot = 0;      // sender peer slot (nick color); meaningful when nickLen > 0
 };
 
 struct Snapshot {
@@ -33,7 +40,12 @@ struct Snapshot {
 
 // Append an event line. Auto-expires after the TTL (see Tick) like real chat -- a
 // "X joined the game" line is interesting for a moment, then clutters forever.
+// The wstring is UTF-8-encoded on the way in (Cyrillic nicks survive).
 void Push(const std::wstring& line);
+
+// Append a CHAT line: utf8Line starts with the sender's nick; nickByteLen is that
+// prefix's byte length (the HUD colors it per `slot`). Game thread.
+void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot);
 
 // Append an event line AFTER `delayMs` (promoted to the live feed by Tick once due). Used for the join
 // announces: the client reports world-ready before its loading screen visually clears, so showing

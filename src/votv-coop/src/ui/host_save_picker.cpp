@@ -171,11 +171,15 @@ void Render() {
         ImGui::TextUnformatted("New Game (Story):");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::InputTextWithHint("##newname", "save name", g_newName, sizeof(g_newName));
+        // Enter in the name field = the primary action (the chat-input lesson
+        // 2026-07-04: a text field with one obvious action submits on Enter).
+        const bool nameEnter = ImGui::InputTextWithHint(
+            "##newname", "save name", g_newName, sizeof(g_newName),
+            ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         const bool canNew = g_newName[0] != '\0';
         if (!canNew) ImGui::BeginDisabled();
-        if (ImGui::Button("New Game & Host")) DoHostNew();
+        if (ImGui::Button("New Game & Host") || (nameEnter && canNew)) DoHostNew();
         if (!canNew) ImGui::EndDisabled();
 
         // Connection type + visibility (user 2026-06-11; WP10 plain labels,

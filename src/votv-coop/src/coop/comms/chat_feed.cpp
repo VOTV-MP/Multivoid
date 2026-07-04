@@ -13,13 +13,18 @@ namespace coop::chat_feed {
 namespace {
 
 // A line lives kTtlMs, fading over the last kFadeMs. Matches the old hud_feed 10 s
-// feel with a soft fade-out tail so a line doesn't pop off abruptly.
-constexpr uint64_t kTtlMs  = 11000;
-constexpr uint64_t kFadeMs = 1500;
+// feel with a soft fade-out tail so a line doesn't pop off abruptly. kFadeInMs is
+// the arrival ramp (2026-07-04, the chat-imgui-samp fade-in): a new line eases in
+// instead of popping -- short enough to feel instant, long enough to read as motion.
+constexpr uint64_t kTtlMs    = 11000;
+constexpr uint64_t kFadeMs   = 1500;
+constexpr uint64_t kFadeInMs = 220;
 
 struct Entry {
     std::string text;
     uint64_t    bornMs = 0;
+    uint8_t     nickLen = 0;
+    uint8_t     slot = 0;
 };
 
 // Lines queued by PushDelayed, promoted to g_lines by Tick once dueMs is reached. Game-thread only.
@@ -43,17 +48,47 @@ uint64_t NowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-std::string ToAscii(const std::wstring& w) {
+// UTF-8-encode a wide string (UTF-16 on Windows, surrogate pairs included).
+// Replaced ToAscii 2026-07-04: the feed carries UTF-8 now that the overlay font
+// has Cyrillic glyphs -- a Russian nick in "X joined the game" renders as-is.
+std::string ToUtf8(const std::wstring& w) {
     std::string s;
-    s.reserve(w.size());
-    for (const wchar_t c : w) s.push_back((c >= 32 && c < 127) ? static_cast<char>(c) : '?');
+    s.reserve(w.size() * 2);
+    for (size_t i = 0; i < w.size(); ++i) {
+        uint32_t cp = w[i];
+        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
+            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (w[i + 1] - 0xDC00);
+            ++i;
+        }
+        if (cp < 0x20 && cp != 0x09) continue;  // strip control chars
+        if (cp < 0x80) {
+            s.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
     return s;
 }
 
 float FadeAlpha(uint64_t ageMs) {
     if (ageMs >= kTtlMs) return 0.f;
-    if (ageMs <= kTtlMs - kFadeMs) return 1.f;
-    return static_cast<float>(kTtlMs - ageMs) / static_cast<float>(kFadeMs);
+    float a = 1.f;
+    if (ageMs < kFadeInMs)  // arrival ramp (ease-out: fast start, soft settle)
+        a = static_cast<float>(ageMs) / static_cast<float>(kFadeInMs);
+    if (ageMs > kTtlMs - kFadeMs)
+        a = static_cast<float>(kTtlMs - ageMs) / static_cast<float>(kFadeMs);
+    return a;
 }
 
 // Rebuild the published snapshot from g_lines (recomputing each line's fade), then
@@ -65,7 +100,9 @@ void Republish() {
         if (s.count >= kMaxLines) break;
         Line& l = s.lines[s.count];
         std::snprintf(l.text, sizeof(l.text), "%s", e.text.c_str());
-        l.alpha = FadeAlpha(now - e.bornMs);
+        l.alpha   = FadeAlpha(now - e.bornMs);
+        l.nickLen = e.nickLen;
+        l.slot    = e.slot;
         ++s.count;
     }
     {
@@ -79,8 +116,20 @@ void Republish() {
 
 void Push(const std::wstring& line) {
     Entry e;
-    e.text = ToAscii(line);
+    e.text = ToUtf8(line);
     e.bornMs = NowMs();
+    g_lines.push_back(std::move(e));
+    while (g_lines.size() > static_cast<size_t>(kMaxLines)) g_lines.pop_front();
+    Republish();
+}
+
+void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot) {
+    Entry e;
+    e.text = utf8Line;
+    if (e.text.size() >= sizeof(Line{}.text)) e.text.resize(sizeof(Line{}.text) - 1);
+    e.bornMs  = NowMs();
+    e.nickLen = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
+    e.slot    = slot;
     g_lines.push_back(std::move(e));
     while (g_lines.size() > static_cast<size_t>(kMaxLines)) g_lines.pop_front();
     Republish();
@@ -88,7 +137,7 @@ void Push(const std::wstring& line) {
 
 void PushDelayed(const std::wstring& line, uint64_t delayMs) {
     Pending p;
-    p.text  = ToAscii(line);
+    p.text  = ToUtf8(line);
     p.dueMs = NowMs() + delayMs;
     g_pending.push_back(std::move(p));
 }

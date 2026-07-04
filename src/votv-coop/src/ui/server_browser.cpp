@@ -120,14 +120,16 @@ void Render() {
         ImGui::TextDisabled("Direct connect:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::InputText("##directip", g_directIp, sizeof(g_directIp));
+        // Enter in the address field = Connect (the chat-input lesson 2026-07-04).
+        const bool ipEnter = ImGui::InputText("##directip", g_directIp, sizeof(g_directIp),
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
         // Remember the typed address across relaunches (votv-coop.ini browser.lastdirect).
         if (ImGui::IsItemDeactivatedAfterEdit()) harness::config::WriteIniValue("browser.lastdirect", g_directIp);
         ImGui::SameLine();
         // Close the browser only if the action was ACCEPTED (good address, not busy) so a
         // rejected click leaves the browser open instead of stranding the user on a clean
         // menu. The loading screen (raised inside ConnectDirect) takes over. (regression B.)
-        if (ImGui::Button("Connect##direct")) { if (sm::ConnectDirect(g_directIp)) Close(); }
+        if (ImGui::Button("Connect##direct") || ipEnter) { if (sm::ConnectDirect(g_directIp)) Close(); }
 
         ImGui::Spacing();
         ImGui::Separator();

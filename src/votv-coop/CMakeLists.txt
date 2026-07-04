@@ -382,6 +382,8 @@ add_library(votv-coop SHARED
     src/ui/hud.cpp
     src/ui/toast.cpp
     src/ui/chat_input.cpp
+    src/ui/fonts.cpp
+    resources/fonts.rc
     src/coop/player/roster.cpp
     src/coop/session/ban_list.cpp
     src/coop/session/moderation.cpp

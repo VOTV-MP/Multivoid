@@ -7,6 +7,7 @@
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/player/nameplate.h"
 #include "coop/voice/voice_chat.h"
+#include "ui/fonts.h"
 #include "ui/voice_icons.h"
 
 #include "imgui.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdio>
+#include <cstring>
 
 namespace ui::hud {
 namespace {
@@ -195,19 +197,68 @@ void DrawChat() {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav |
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoBackground;
+    // 2026-07-04 chat-imgui-samp adoption: bold chat font (Cyrillic-capable), per-slot
+    // colored nick prefix, 4-way outline (replaces the 1px shadow -- reads over any
+    // scene), word-wrap at a fixed column width, and the feed's new fade-IN ramp.
+    ImFont* font = ui::fonts::Chat();
+    if (!font) font = ImGui::GetFont();
+    const float px = ui::fonts::Chat() ? ui::fonts::kChatPx : ImGui::GetFontSize();
+    const float wrapW = std::min(io.DisplaySize.x * 0.42f, 640.f);
+
+    // Per-slot nick palette (8 entries, wraps). Matches the scoreboard's hue family:
+    // distinct, readable on dark AND bright scenes at full alpha.
+    static constexpr ImU32 kSlotCols[] = {
+        IM_COL32(255, 179,  64, 255),  // 0 host: amber
+        IM_COL32(110, 205, 255, 255),  // 1 sky
+        IM_COL32(150, 255, 150, 255),  // 2 mint
+        IM_COL32(255, 130, 160, 255),  // 3 rose
+        IM_COL32(200, 150, 255, 255),  // 4 lilac
+        IM_COL32(255, 240, 120, 255),  // 5 lemon
+        IM_COL32(120, 235, 220, 255),  // 6 teal
+        IM_COL32(255, 160, 110, 255),  // 7 coral
+    };
+
     if (ImGui::Begin("##coop_chat", nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         for (int i = 0; i < cs.count; ++i) {
             const auto& l = cs.lines[i];
             const float a = std::clamp(l.alpha, 0.f, 1.f);
-            // Per-line drop shadow so text reads over a bright scene (the window has
-            // no background of its own).
-            const ImVec2 pos = ImGui::GetCursorScreenPos();
-            dl->AddText(ImVec2(pos.x + 1.f, pos.y + 1.f),
-                        IM_COL32(0, 0, 0, static_cast<int>(a * 190.f)), l.text);
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(236, 236, 236, static_cast<int>(a * 235.f)));
-            ImGui::TextUnformatted(l.text);
-            ImGui::PopStyleColor();
+            const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 200.f));
+            const ImU32 body    = IM_COL32(236, 236, 236, static_cast<int>(a * 245.f));
+            ImU32 nickCol = body;
+            if (l.nickLen > 0) {
+                const ImU32 c = kSlotCols[l.slot % (sizeof(kSlotCols) / sizeof(kSlotCols[0]))];
+                nickCol = (c & 0x00FFFFFFu) | (static_cast<ImU32>(a * 255.f) << 24);
+            }
+
+            // Manual wrap + colored-segment draw. Each visual row advances the
+            // ImGui cursor (Dummy) so the auto-resize window grows to fit.
+            const char* s   = l.text;
+            const char* end = l.text + std::strlen(l.text);
+            const char* nickEnd = l.text + ((l.nickLen && l.nickLen < std::strlen(l.text))
+                                            ? l.nickLen : 0);
+            while (s < end) {
+                const char* rowEnd = font->CalcWordWrapPositionA(px / font->FontSize, s, end, wrapW);
+                if (rowEnd == s) rowEnd = s + 1;  // never stall on a single overlong glyph
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                float x = pos.x;
+                const char* seg = s;
+                // Split the row at the nick boundary when it falls inside this row.
+                while (seg < rowEnd) {
+                    const char* segEnd = (seg < nickEnd && nickEnd < rowEnd) ? nickEnd : rowEnd;
+                    const ImU32 col = (seg < nickEnd) ? nickCol : body;
+                    dl->AddText(font, px, ImVec2(x - 1.f, pos.y), outline, seg, segEnd);
+                    dl->AddText(font, px, ImVec2(x + 1.f, pos.y), outline, seg, segEnd);
+                    dl->AddText(font, px, ImVec2(x, pos.y - 1.f), outline, seg, segEnd);
+                    dl->AddText(font, px, ImVec2(x, pos.y + 1.f), outline, seg, segEnd);
+                    dl->AddText(font, px, ImVec2(x, pos.y), col, seg, segEnd);
+                    x += font->CalcTextSizeA(px, FLT_MAX, 0.f, seg, segEnd).x;
+                    seg = segEnd;
+                }
+                ImGui::Dummy(ImVec2(x - pos.x, px + 2.f));
+                s = rowEnd;
+                while (s < end && *s == ' ') ++s;  // swallow the wrap-point space
+            }
         }
     }
     ImGui::End();

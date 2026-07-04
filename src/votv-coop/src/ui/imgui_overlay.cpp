@@ -37,6 +37,7 @@
 #include "ui/hud.h"
 #include "ui/toast.h"
 #include "ui/chat_input.h"
+#include "ui/fonts.h"
 #include "ui/voice_panel.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/session/multiplayer_menu.h"
@@ -291,6 +292,9 @@ bool BringUpDX11(IDXGISwapChain* sc) {
                                   // hide + SetCursorPos no-op keep it the only one + tracking
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // arrow-key move + Enter/Space activate
     ImGui::StyleColorsDark();
+    // Overlay fonts (embedded Roboto w/ Cyrillic; ui::fonts). Must precede the first
+    // NewFrame -- the DX11 backend bakes the atlas lazily on frame 1.
+    ui::fonts::Load();
 
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");

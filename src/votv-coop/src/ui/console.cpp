@@ -9,7 +9,9 @@
 
 #include <atomic>
 #include <cstring>
+#include <deque>
 #include <mutex>
+#include <string>
 
 namespace ui::console {
 namespace {
@@ -80,10 +82,18 @@ void RunCommand(const char* cmd) {
 void Init() { ue_wrap::log::SetSink(&OnLog); }
 void Shutdown() { ue_wrap::log::SetSink(nullptr); }
 
+// Focus the command field on the first frame after the console opens (the
+// chat-input deferred-focus lesson 2026-07-04). Render thread reads it.
+std::atomic<bool> g_focusPending{false};
+
 bool IsOpen() { return g_userOpen.load(std::memory_order_relaxed) || jp::Active(); }
-void Open()  { g_userOpen.store(true, std::memory_order_relaxed); }
+void Open()  { g_userOpen.store(true, std::memory_order_relaxed); g_focusPending.store(true, std::memory_order_relaxed); }
 void Close() { g_userOpen.store(false, std::memory_order_relaxed); }
-void Toggle(){ g_userOpen.store(!g_userOpen.load(std::memory_order_relaxed), std::memory_order_relaxed); }
+void Toggle(){
+    const bool was = g_userOpen.load(std::memory_order_relaxed);
+    g_userOpen.store(!was, std::memory_order_relaxed);
+    if (!was) g_focusPending.store(true, std::memory_order_relaxed);
+}
 
 void Render() {
     if (!IsOpen()) return;
@@ -131,10 +141,44 @@ void Render() {
         }
         ImGui::EndChild();
 
-        // Command input.
+        // Command input (chat-input lessons 2026-07-04: deferred focus-on-open +
+        // Up/Down history recall).
         ImGui::SetNextItemWidth(-1.0f);
+        if (g_focusPending.exchange(false, std::memory_order_relaxed))
+            ImGui::SetKeyboardFocusHere();
+        static std::deque<std::string> sHistory;   // render thread only
+        static int sHistPos = -1;                  // -1 = live (not browsing)
+        static std::string sLiveStash;
+        struct Hist {
+            static int Cb(ImGuiInputTextCallbackData* d) {
+                if (d->EventFlag != ImGuiInputTextFlags_CallbackHistory || sHistory.empty()) return 0;
+                const int last = static_cast<int>(sHistory.size()) - 1;
+                if (d->EventKey == ImGuiKey_UpArrow) {
+                    if (sHistPos < 0) { sLiveStash = d->Buf; sHistPos = last; }
+                    else if (sHistPos > 0) --sHistPos;
+                } else if (d->EventKey == ImGuiKey_DownArrow) {
+                    if (sHistPos < 0) return 0;
+                    if (sHistPos < last) ++sHistPos;
+                    else {
+                        d->DeleteChars(0, d->BufTextLen);
+                        d->InsertChars(0, sLiveStash.c_str());
+                        sHistPos = -1;
+                        return 0;
+                    }
+                } else return 0;
+                d->DeleteChars(0, d->BufTextLen);
+                d->InsertChars(0, sHistory[static_cast<size_t>(sHistPos)].c_str());
+                return 0;
+            }
+        };
         if (ImGui::InputTextWithHint("##cmd", "type a command -- 'help'", g_input, sizeof(g_input),
-                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                     ImGuiInputTextFlags_EnterReturnsTrue |
+                                     ImGuiInputTextFlags_CallbackHistory, &Hist::Cb)) {
+            if (g_input[0] != '\0' && (sHistory.empty() || sHistory.back() != g_input)) {
+                sHistory.emplace_back(g_input);
+                while (sHistory.size() > 16) sHistory.pop_front();
+            }
+            sHistPos = -1;
             RunCommand(g_input);
             g_input[0] = '\0';
             ImGui::SetKeyboardFocusHere(-1);  // keep focus for the next command
