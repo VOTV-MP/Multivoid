@@ -492,7 +492,11 @@ void DrainClientMirrors() {
         if (!mirror->IsMirror()) { ++nHostElems; continue; }
         ++nMirrorElems;
         void* actor = mirror->GetActor();
-        if (actor && g_k2DestroyFn && R::IsLive(actor)) {
+        // IsLiveByIndex (serial slot-compare), not plain IsLive: this drain now also
+        // runs on the native quit-to-menu teardown where the gameplay world is ALREADY
+        // dying -- a recycled GUObjectArray slot passes plain IsLive and K2'ing the
+        // foreign occupant is the setRainProperties-fatal class (audit 2026-07-04 (b)).
+        if (actor && g_k2DestroyFn && R::IsLiveByIndex(actor, mirror->GetInternalIdx())) {
             R::CallFunction(actor, g_k2DestroyFn, nullptr);
             ++nMirrorsDestroyed;
         }

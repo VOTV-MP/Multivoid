@@ -32,7 +32,12 @@ constexpr int32_t kTimeScaleOffFallback = 0x02B4;
 constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
 constexpr int32_t kTimeZOffFallback     = 0x02D0;
 
-void* g_cycleCache = nullptr;  // cached singleton (GT-only)
+void* g_cycleCache = nullptr;    // cached singleton (GT-only)
+int32_t g_cycleCacheIdx = -1;    // its GUObjectArray index -- IsLiveByIndex (serial
+                                 // slot-compare) rejects a RECYCLED slot that plain
+                                 // IsLive accepts; raw float writes through a recycled
+                                 // pointer corrupt the foreign occupant (audit
+                                 // 2026-07-04 (c), the quit-to-menu teardown context)
 
 }  // namespace
 
@@ -65,7 +70,8 @@ bool EnsureResolved() {
 }
 
 void* Cycle() {
-    if (g_cycleCache && R::IsLive(g_cycleCache)) return g_cycleCache;  // steady-state: a pointer check
+    if (g_cycleCache && R::IsLiveByIndex(g_cycleCache, g_cycleCacheIdx))
+        return g_cycleCache;  // steady-state: a serial-checked slot compare
     // The cycle is a singleton that, once found, stays live -- so a re-scan only happens at startup
     // (before it streams in) or if its UObject is briefly marked unreachable mid-session. THROTTLE
     // the GUObjectArray scan to once/sec so a transient miss can never become a per-call walk (the
@@ -76,6 +82,7 @@ void* Cycle() {
     s_lastScan = now;
     if (!EnsureResolved()) return nullptr;
     g_cycleCache = R::FindObjectByClass(L"daynightCycle_C");
+    g_cycleCacheIdx = g_cycleCache ? R::InternalIndexOf(g_cycleCache) : -1;
     return (g_cycleCache && R::IsLive(g_cycleCache)) ? g_cycleCache : nullptr;
 }
 

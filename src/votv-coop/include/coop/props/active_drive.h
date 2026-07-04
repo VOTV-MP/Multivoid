@@ -37,6 +37,11 @@ namespace E = ue_wrap::engine;
 // PropPose skips the GUObjectArray walk); the per-eid carry stream uses lastEid only.
 struct ActiveDrive {
     void*        actor = nullptr;
+    int32_t      actorIdx = -1;  // GUObjectArray index at grab time. IsLiveByIndex guard for
+                                 // the teardown release paths: a recycled slot passes plain
+                                 // IsLive and the release UFunction call then lands on the
+                                 // foreign occupant (the setRainProperties-fatal class;
+                                 // audit 2026-07-04 item (a)).
     void*        mesh = nullptr;
     std::string  lastKey;        // ASCII (the Aprop_C save UUID format); empty for a clump
     uint32_t     lastEid = 0;    // Prop Element id identity for the non-keyable clump
@@ -97,6 +102,7 @@ inline float LerpAngle(float a, float b, float t) {
 // whether to re-enable simulation (a release) or leave it off (a stick / a freeze).
 inline void ResetDriveState(ActiveDrive& d) {
     d.actor      = nullptr;
+    d.actorIdx   = -1;
     d.mesh       = nullptr;
     d.lastKey.clear();
     d.lastEid    = 0;

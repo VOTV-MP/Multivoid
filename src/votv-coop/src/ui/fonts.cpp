@@ -111,4 +111,6 @@ void Load() {
 
 ImFont* Chat() { return g_chat; }
 
+void OnContextDestroyed() { g_chat = nullptr; }
+
 }  // namespace ui::fonts

@@ -404,6 +404,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // crutch). The clump floats in front of the puppet exactly like the mannequin.
     DriveTogglePhysics(prop, mesh, false);
     g_drives[slot].actor = prop;
+    g_drives[slot].actorIdx = R::InternalIndexOf(prop);
     g_drives[slot].mesh  = mesh;
     g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
     g_drives[slot].lastEid = pose.elementId;
@@ -1088,9 +1089,15 @@ void ForceRelease() {
         }
         // Normal prop -> release to physics (persists). Null-mesh clump mirror -> destroy
         // it (transient; the holder's death-watcher is gone on teardown -> would leak).
+        // IsLiveByIndex, not plain IsLive: this teardown also runs on the native
+        // quit-to-menu path where the world is already dying -- a recycled slot passes
+        // plain IsLive and the SetSimulatePhysics call lands on the foreign occupant
+        // (audit 2026-07-04 (a)). A dead actor needs no release; just clear the drive.
         // [[project-bug-trash-chippile-uaf-crash]]
-        if (d.mesh) DriveSimulate(d.mesh, true);
-        else        ConsumeLocalActor(d.actor);
+        if (R::IsLiveByIndex(d.actor, d.actorIdx)) {
+            if (d.mesh) DriveSimulate(d.mesh, true);
+            else        ConsumeLocalActor(d.actor);
+        }
         ResetDriveState(d);
         ++released;
     }
@@ -1143,11 +1150,15 @@ void OnDisconnectForSlot(int peerSlot) {
         UE_LOGI("remote_prop: peer slot %d disconnected -- retired held trash proxy eid=%u", peerSlot, d.lastEid);
         return;
     }
-    if (d.mesh) {
+    if (d.mesh && R::IsLiveByIndex(d.actor, d.actorIdx)) {
         // Normal world prop: release to physics -- it persists (convergent world object).
+        // By-index guard: same recycled-slot hazard as ForceRelease (audit 2026-07-04 (a)).
         DriveSimulate(d.mesh, true);
         UE_LOGI("remote_prop: peer slot %d disconnected -- releasing held prop (key='%s')",
                 peerSlot, d.lastKey.c_str());
+    } else if (d.mesh) {
+        UE_LOGI("remote_prop: peer slot %d disconnected -- held prop already dead (skip release)",
+                peerSlot);
     } else {
         // Null-mesh = the transient CLUMP mirror. The holder vanished mid-carry, so the
         // death-watcher that would despawn it (it lives on the HOLDER) is gone -- destroy

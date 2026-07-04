@@ -28,4 +28,9 @@ void Load();
 // The chat font (bold, kChatPx) or nullptr if no TTF loaded (use ImGui::GetFont()).
 ImFont* Chat();
 
+// The ImGui context that owned the atlas is being destroyed (failed bring-up
+// retry path): drop the latch so the NEXT context re-loads instead of handing
+// out a dangling ImFont* (audit 2026-07-04 item 1c).
+void OnContextDestroyed();
+
 }  // namespace ui::fonts

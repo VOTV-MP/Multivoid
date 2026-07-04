@@ -298,7 +298,7 @@ bool BringUpDX11(IDXGISwapChain* sc) {
 
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
-        if (ctxCreated) ImGui::DestroyContext();
+        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
         if (ctx) ctx->Release();
         dev->Release();
         return false;
@@ -306,7 +306,7 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     if (!ImGui_ImplDX11_Init(dev, ctx)) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
         ImGui_ImplWin32_Shutdown();
-        if (ctxCreated) ImGui::DestroyContext();
+        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
         if (ctx) ctx->Release();
         dev->Release();
         return false;
