@@ -19,6 +19,7 @@
 #include "ue_wrap/types.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -321,8 +322,20 @@ bool OnSchedulerPreSuppress(void* /*self*/, void* /*params*/) {
 // on the CLIENT so the host-synced gust holds. Runtime-gated (registered on both roles;
 // host = pass-through). One wind actor per session -> no `self` filter; changeWindOrigin
 // fires on a 1-60 s timer so silent suppression is correct (no log spam).
+// [probe] fire/suppress counters (2026-07-04 wind-desync probe): the interceptor is
+// otherwise silent, so a live "client windy, host calm" report cannot distinguish
+// "suppression never fired" (dispatch bypassed ProcessEvent) from "state synced but
+// visuals diverged elsewhere". Read by the weather_probe line below. NOTE: the BP body
+// re-arms its own 1-60 s timer, so ONE suppressed fire kills the client's roll chain
+// [V bytecode @393] -- suppressed=1 total is the EXPECTED healthy count, and fired
+// counts on the host are its organic gust rolls.
+std::atomic<uint32_t> g_windRollFired{0};       // dispatches seen (both roles)
+std::atomic<uint32_t> g_windRollSuppressed{0};  // dispatches cancelled (client)
 bool OnWindOriginPreSuppress(void* /*self*/, void* /*params*/) {
-    return g_windIsClient.load(std::memory_order_acquire);
+    g_windRollFired.fetch_add(1, std::memory_order_relaxed);
+    const bool suppress = g_windIsClient.load(std::memory_order_acquire);
+    if (suppress) g_windRollSuppressed.fetch_add(1, std::memory_order_relaxed);
+    return suppress;
 }
 
 // Phase 5W Inc-fix-2: echo-suppress interceptor for causeRain. Cancels
@@ -775,6 +788,28 @@ void TickConnect() {
                             "enable_fog=%d enable_superfog=%d | isRaining=%d rainStrength=%.2f eff_rain=%p IsActive=%d(ok=%d)",
                             role, rollFog, finalFog, permFog ? 1 : 0, enFog ? 1 : 0, enSuper ? 1 : 0,
                             isRaining ? 1 : 0, rainStr, effRain, active ? 1 : 0, ok ? 1 : 0);
+                    // [probe wind] 2026-07-04 desync report (client wind+dust, host calm) with a
+                    // statically-sound v50 sync -- log the whole visible-wind input chain on both
+                    // peers: windTarget (the synced gust input), the 4 persistent floats, and the
+                    // roll interceptor counters. intensity/windOffset are derived per tick from
+                    // windTarget by ReceiveTick [V bytecode @6287], so target parity = state parity;
+                    // a target mismatch here = the sync write is not landing, fired==suppressed==0
+                    // on the client = the roll dispatch bypasses ProcessEvent. eff_wind dust rate/
+                    // speed/lifetime are all x intensity [V @5247-5726] -- no separate dust state.
+                    {
+                        ue_wrap::directionalwind::WindState w{};
+                        ue_wrap::FVector tgt{};
+                        const bool wOk = ue_wrap::directionalwind::Read(w);
+                        const bool tOk = ue_wrap::directionalwind::ReadTarget(tgt);
+                        UE_LOGI("[probe wind] role=%s ok=%d/%d target=(%.1f,%.1f,%.1f) |target|=%.1f "
+                                "speedBg=%.2f strBg=%.2f speedRain=%.2f strRain=%.2f "
+                                "roll fired=%u suppressed=%u",
+                                role, wOk ? 1 : 0, tOk ? 1 : 0, tgt.X, tgt.Y, tgt.Z,
+                                std::sqrt(tgt.X * tgt.X + tgt.Y * tgt.Y + tgt.Z * tgt.Z),
+                                w.speedBg, w.strengthBg, w.speedRain, w.strengthRain,
+                                g_windRollFired.load(std::memory_order_relaxed),
+                                g_windRollSuppressed.load(std::memory_order_relaxed));
+                    }
                 }
             }
         }
