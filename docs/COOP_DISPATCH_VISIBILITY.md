@@ -61,6 +61,17 @@ or calls an engine UFunction, it MUST self-defer (`if (!GT::IsGameThread()) { GT
 re-validate with `R::IsLive` inside) OR be pure-param-read. `host_spawn_watcher::OnSpawnPost` instead
 gates the worker out (`if (!GT::IsGameThread()) return;`) because spawning is always game-thread.
 
+**Pump-context rule [V: 2026-07-04, `ue_wrap/spawn_gate`]:** a `GT::Post`ed task runs at **top-level
+game-thread context** — the pump drain is DEFERRED while the world refuses `SpawnActor` (the detour also
+fires on dispatches nested inside another actor's construction script, where `UWorld::SpawnActor`
+silently returns null in Shipping: IDA `0x142C12D20` tests `[World+0x10C]&2` = `bIsRunningConstructionScript`
+— sole writer `AActor::ExecuteConstruction` `0x1428c5fe4`, scope-guarded around every BP actor's SCS+UCS —
+and `[World+0x10D]&0x20` = `bIsTearingDown`). Before the gate, a save-load's mass actor construction made
+nearly every dispatch a nested one → every spawn a task issued in that window fire-and-failed (the
+2026-07-04 join-window burst: 871 trash-proxy + 92 keyed-prop nulls on the joining client). Consequence
+for new code: a posted task may legally spawn; it may run milliseconds later than posted (episode length
+= the construction/teardown window). Never call `SpawnActor` from an observer cb directly — post it.
+
 ## The function table (the specific calls this codebase cares about)
 
 | Edge | Dispatch | Visible? | Catch it with | Conf |

@@ -187,6 +187,27 @@ inline constexpr size_t UFunction_Func = 0xD8;
 inline constexpr size_t FFrame_Object = 0x18;             // UObject* (the executing/source object)
 inline constexpr size_t FFrame_Code   = 0x20;             // uint8* (instruction ptr; null on the ProcessInternal path)
 
+// UWorld spawn-refusal window (the join-window BeginDeferred-null root, 2026-07-04).
+// IDA-pinned against exe ad478218 from UWorld::SpawnActor (0x142C12D20), the two
+// silent early-outs that return null in a Shipping build (LogSpawn is compiled out):
+//   0x142c12df7  test byte ptr [world+10Ch], 2    -> bIsRunningConstructionScript
+//                (refuses unless SpawnParams.bAllowDuringConstructionScript, +0x29 bit 8
+//                -- the K2 BeginDeferredActorSpawnFromClass path never sets it)
+//   0x142c12e07  test byte ptr [world+10Dh], 20h  -> bIsTearingDown
+// The ONE writer of the 10C bit is AActor::ExecuteConstruction (0x1428c5fe4,
+// `or byte [world+10Ch], 2` + a scope-guard restore) -- it brackets the WHOLE
+// SCS+UCS construction of every BP actor, so during a save-load's mass actor
+// construction the bit is set for most of the frame. UObject_GetWorld_VtblOff is
+// the virtual UEngine::GetWorldFromContextObject dispatches through
+// (0x142f316e0: `call [vtbl+160h]`) -- the same world-resolution path every
+// GameplayStatics spawn takes, so reading these bits through it sees EXACTLY the
+// world state the engine's own spawn check reads. Consumed by ue_wrap/spawn_gate.
+inline constexpr size_t UWorld_FlagsA = 0x10C;                 // byte holding bIsRunningConstructionScript
+inline constexpr uint8_t UWorld_bIsRunningConstructionScript = 0x02;  // bit within FlagsA
+inline constexpr size_t UWorld_FlagsB = 0x10D;                 // byte holding bIsTearingDown
+inline constexpr uint8_t UWorld_bIsTearingDown = 0x20;         // bit within FlagsB
+inline constexpr size_t UObject_GetWorld_VtblOff = 0x160;      // UObject::GetWorld vtable byte offset
+
 inline constexpr size_t FField_Next = 0x20;               // FField*
 inline constexpr size_t FField_NamePrivate = 0x28;        // FName
 inline constexpr size_t FProperty_ElementSize = 0x38;     // int32

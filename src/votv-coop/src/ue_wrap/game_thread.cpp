@@ -3,6 +3,7 @@
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
+#include "ue_wrap/spawn_gate.h"
 
 #include <windows.h>
 
@@ -561,6 +562,53 @@ std::atomic<int> g_queueDepth{0};
 // keeps it correct even if ProcessEvent were ever called cross-thread.
 thread_local bool t_inPump = false;
 
+// Spawn-refusal deferral episode (2026-07-04 join-window BeginDeferred-null
+// root fix). Tasks assume TOP-LEVEL game-thread context, but the detour fires
+// on EVERY ProcessEvent -- including dispatches nested inside another actor's
+// construction script, where UWorld::SpawnActor silently returns null (see
+// spawn_gate.h). During a save-load's mass actor construction nearly every
+// dispatch is such a nested one, so draining there made every spawn a task
+// issued fail for the whole load tail (871 trash-proxy + 92 keyed-prop nulls
+// on the 2026-07-04 joining client). The detour now DEFERS the drain while
+// spawn_gate::WorldRefusesSpawns() holds; the queue keeps order and drains on
+// the first dispatch outside the window (sub-ms in steady state, end-of-load
+// during a mass construction -- exactly when spawns start succeeding).
+// GT-only (the drain block is game-thread gated), so plain ints are fine.
+int g_gateDeferrals = 0;
+std::chrono::steady_clock::time_point g_gateEpisodeStart{};
+std::chrono::steady_clock::time_point g_gateNextHoldWarn{};
+
+void NoteGateDeferral() {
+    using namespace std::chrono;
+    const auto now = steady_clock::now();
+    if (g_gateDeferrals++ == 0) {
+        g_gateEpisodeStart = now;
+        g_gateNextHoldWarn = now + seconds(5);
+        return;
+    }
+    // A construction/teardown window outlasting 5 s means the world state is
+    // wedged (or a teardown is stalled) -- keep deferring (draining INTO the
+    // window is the bug this gate closes) but say so, loudly and throttled.
+    if (now >= g_gateNextHoldWarn) {
+        g_gateNextHoldWarn = now + seconds(5);
+        UE_LOGW("game_thread: pump deferred for %lld ms and counting (%d dispatches) -- "
+                "world still refuses spawns (construction-script/teardown window held open)",
+                static_cast<long long>(duration_cast<milliseconds>(now - g_gateEpisodeStart).count()),
+                g_gateDeferrals);
+    }
+}
+
+void NoteGateEpisodeEnd() {
+    using namespace std::chrono;
+    if (g_gateDeferrals == 0) return;
+    UE_LOGI("game_thread: pump drain deferred %d dispatch(es) over %lld ms "
+            "(world spawn-refusal window) -- draining now at top-level context",
+            g_gateDeferrals,
+            static_cast<long long>(duration_cast<milliseconds>(
+                steady_clock::now() - g_gateEpisodeStart).count()));
+    g_gateDeferrals = 0;
+}
+
 void Pump() {
     for (;;) {
         Task task;
@@ -695,17 +743,25 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     // Only when there is queued work do we confirm the game thread and drain.
     if (!t_inPump && g_queueDepth.load(std::memory_order_acquire) != 0 &&
         ::GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed)) {
-        // RAII so t_inPump is cleared on EVERY exit from Pump(), incl. an
-        // exception path. Under /EHa the dtor runs during a structured-
-        // exception unwind too -- so even if an AV ever escaped Pump's
-        // own catch (e.g. faulting in the queue lock itself), t_inPump
-        // cannot get stuck `true` and silently kill all future draining.
-        // The raw `t_inPump = false` it replaces was skipped on exactly
-        // that path -> the 2026-05-30 permanent host freeze.
-        struct InPumpGuard { ~InPumpGuard() { t_inPump = false; } } pumpGuard;
-        t_inPump = true;
-        Pump();
-        sampleSelf = false;  // pump drain time is not per-dispatch detour overhead
+        if (ue_wrap::spawn_gate::WorldRefusesSpawns()) {
+            // Nested inside a construction script (or the world is tearing
+            // down): a task run HERE gets null from every SpawnActor. Defer;
+            // the queue drains on the first dispatch outside the window.
+            NoteGateDeferral();
+        } else {
+            NoteGateEpisodeEnd();  // no-op unless a deferral episode just ended
+            // RAII so t_inPump is cleared on EVERY exit from Pump(), incl. an
+            // exception path. Under /EHa the dtor runs during a structured-
+            // exception unwind too -- so even if an AV ever escaped Pump's
+            // own catch (e.g. faulting in the queue lock itself), t_inPump
+            // cannot get stuck `true` and silently kill all future draining.
+            // The raw `t_inPump = false` it replaces was skipped on exactly
+            // that path -> the 2026-05-30 permanent host freeze.
+            struct InPumpGuard { ~InPumpGuard() { t_inPump = false; } } pumpGuard;
+            t_inPump = true;
+            Pump();
+            sampleSelf = false;  // pump drain time is not per-dispatch detour overhead
+        }
     }
 
     // UFunction interceptors: pre-dispatch hooks on a multi-slot table. If

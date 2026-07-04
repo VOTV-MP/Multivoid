@@ -50,7 +50,27 @@ piles self-heal via the native bind, but up to ~92 keyed-prop mirrors are LOST f
 the session -- ghost-sync props; June archives + 07-03 real-save client show 0 =
 newly visible). Root class = [[feedback-snapshot-before-state-ready]]: wire spawns
 must DEFER to world-ready, not fire-and-fail; owner remote_prop/mirror_defer; NEXT
-session thread)**.
+session thread)** →
+**`A9109CB3AA370629` (2026-07-04 ~20:45: the join-window SPAWN-NULL burst ROOT-FIXED
+at the PUMP -- deeper than the predicted per-owner defer: IDA proved
+UWorld::SpawnActor (0x142C12D20) silently returns null while
+[World+0x10C]&2 = bIsRunningConstructionScript (sole writer AActor::
+ExecuteConstruction 0x1428c5fe4, scope-guarded around every BP actor's SCS+UCS)
+or [World+0x10D]&0x20 = bIsTearingDown; our posted-task pump drained on ANY
+game-thread ProcessEvent, including dispatches NESTED inside another actor's
+construction script -- during a save-load's mass construction nearly every
+dispatch is such, so every spawn a task issued fire-and-failed for the whole
+load tail. Fix: ue_wrap/spawn_gate reads those two bits via the engine's own
+world-resolution path (cached GameInstance -> virtual UObject::GetWorld,
+vtbl+0x160) and the detour DEFERS the drain while the window holds -- one owner,
+every posted task now runs at top-level GT context, FIFO preserved; +
+sdk_profile.h split at the 1500 hard cap (content names -> sdk_profile_names.h,
+commit 6e7ec390). Perf audit 0 CRITICAL (empty-queue fast path unchanged;
+worst-burst ~6 ms/s core; flag = game_thread.cpp 1065/800, standing pe_detour
+extraction restated); autonomous smoke PASS: spawn-nulls 0/0 vs 871+92+puppet,
+[ERROR] 0/0 vs 967, 73 keyed mirrors spawned, keypad 14/14 no regression,
+gate episodes 0-1 ms (57 client / 16 host), no 5s hold-warns, RSS flat ~3GB,
+s_asdasd restored byte-identical; wire unchanged v96)**.
 Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
