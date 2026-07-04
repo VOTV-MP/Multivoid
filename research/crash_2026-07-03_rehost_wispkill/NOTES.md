@@ -74,21 +74,15 @@ the firewall masked the game-thread symptom, the unguarded worker thread died on
 corruption. Instance 1 crashed earlier in the load (log ended AT LoadStorySave) — same root,
 earlier trip point.
 
-**Working hypothesis (UNPROBED — probe-don't-guess applies):** something of OURS survives the
-gameplay->menu->gameplay double transition holding/planting a stale UObject reference that GC
-then walks: candidates = menu-world widget injections (InjectCanvasButton ran TWICE 11:09:57 +
-11:10:00 on two different menu objects), save registration/CreateNamedSave writes, world-lifetime
-pointers in a subsystem that re-Installs on second StartCoopSession, ElementDeleter/reap during
-the second mass-purge. Vanilla load->menu->load works (players do it constantly), so the finger
-points at us. NOT kwisp v2 (instance 1 predates it, v95).
+**[ANSWERED same day — see ROOT CAUSE at the top.]** The original hypothesis list (widget
+injections / CreateNamedSave / re-Install pointers / ElementDeleter) was superseded by the
+register-level proof: the culprit was the save registration path (g_storySave), pinpointed
+WITHOUT a repro probe because the dump's RDI landed exactly on gameInstance+0x1A8. The related
+LATENT class (every other process-latched BP pointer) is cataloged in
+`research/findings/votv-bp-pointer-cache-staleness-audit-2026-07-04.md` (probe-gated next thread).
 
 **Instance-2 artifacts:** `UE4CC-Windows-D06163EF49E939FBC2DF83A565BC5F76_0000/` (dump + context),
 `host_votv-coop_2026-07-04_rehost_plain.log` (full host log; AV spam at the tail).
-
-**Next when picked up:** WinDbg the instance-2 dump (thread 20800) to read which object/token
-stream the worker was walking; on repro, arm a probe that logs every UObject* we retain across
-`harness: host session ended` and diff vs the new world; check InjectCanvasButton double-inject
-lifecycle + what references our injected button after menu teardown.
 
 ---
 
@@ -117,6 +111,6 @@ Wisp-killer death path additionally ran right before teardown (wisp_attack_sync 
 - `UE4CC-Windows-9EB66147407AF73408943DBF3001A28C_0000/` — 12:51 dump (earlier; possibly the client or the death itself)
 - `host_votv-coop.log` (+ `.prev` = the session BEFORE, with the wisp death), `client_votv-coop.log`
 
-**Next when picked up:** open UE4Minidump.dmp (WinDbg/`!analyze`), map the faulting RVA in IDA,
-diff against our hook sites; grep host_votv-coop.log.prev for the death/teardown sequence
-(wisp kill ~12:5x) + check which subsystems re-Install on second StartCoopSession.
+**[ANSWERED 2026-07-04 — see ROOT CAUSE at the top.]** The RVA mapping was done (identical to
+instance 2: RVA 0x132D02D, GC mark on a dangling saveSlotObject reference); the wisp-death path
+was exonerated (instance 2 reproduced without it).
