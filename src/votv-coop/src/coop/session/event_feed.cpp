@@ -219,7 +219,7 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::WispGrabPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t sender = msg.senderPeerSlot;
+            const uint8_t sender = static_cast<uint8_t>(msg.senderPeerSlot);
             ue_wrap::game_thread::Post([p, sender] { coop::wisp_tear_mirror::OnWispGrab(p, sender); });
             break;
         }
@@ -239,7 +239,7 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::WispTearPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t sender = msg.senderPeerSlot;
+            const uint8_t sender = static_cast<uint8_t>(msg.senderPeerSlot);
             ue_wrap::game_thread::Post([p, sender] { coop::wisp_tear_mirror::OnWispTear(p, sender); });
             break;
         }

@@ -26,8 +26,16 @@ namespace ui::scale {
 // rebuild when the quantized factor changes.
 void NoteViewport(float width, float height);
 
-// Current scale factor (1.0 at 1080p). Stable within a frame.
+// Current combined scale factor (resolution factor x the user's size pref,
+// capped at 4.0). Stable within a frame.
 float Ui();
+
+// The user's "UI size" pref (votv-coop.ini ui.scale, default 1.25 -- user
+// 2026-07-04: "все менюшки и тексты ПОБОЛЬШЕ"). Multiplies the resolution
+// factor; the F1 > Cosmetics > Interface slider drives it live.
+float UserScale();
+void  SetUserScale(float s);   // clamps to [0.75, 1.75]; requests the rebuild
+void  LoadUserPrefOnce();      // read ui.scale from the ini (bring-up, latched)
 
 // Scale a 1080p-authored pixel constant to the live resolution.
 inline float S(float px) { return px * Ui(); }

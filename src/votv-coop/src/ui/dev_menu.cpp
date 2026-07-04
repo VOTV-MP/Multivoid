@@ -18,11 +18,13 @@
 #include "coop/dev/teleport_client.h"
 #include "coop/player/nameplate.h"
 #include "coop/session/ini_config.h"
+#include "harness/config.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
 #include "ui/skins_panel.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -334,6 +336,30 @@ void RenderFontPref() {
     ImGui::TextDisabled("Applies instantly to the whole overlay (chat, menus, nameplates).");
     ImGui::TextDisabled("Saved to votv-coop.ini (ui.font). JetBrains Mono / Cascadia Code");
     ImGui::TextDisabled("are monospace; Roboto is proportional.");
+
+    // UI size (2026-07-04, user: "все менюшки и тексты ПОБОЛЬШЕ"): a multiplier
+    // on top of the resolution factor. Applied on slider RELEASE, not per drag
+    // frame -- each apply re-bakes the font atlas (a one-frame ~100 ms hitch).
+    ImGui::Spacing();
+    ImGui::SeparatorText("UI size");
+    static float sPending = -1.f;   // -1 = mirror the live value
+    if (sPending < 0.f) sPending = ui::scale::UserScale();
+    ImGui::SetNextItemWidth(S(260.f));
+    ImGui::SliderFloat("##uiscale", &sPending, 0.75f, 1.75f, "%.2fx");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        ui::scale::SetUserScale(sPending);
+        char v[16];
+        std::snprintf(v, sizeof(v), "%.2f", ui::scale::UserScale());
+        harness::config::WriteIniValue("ui.scale", v);
+        sPending = ui::scale::UserScale();  // reflect the clamp
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
+                          "automatic resolution scale. Applies when you release the slider\n"
+                          "(the fonts re-bake). Saved to votv-coop.ini (ui.scale).");
+    ImGui::TextDisabled("Everything scales with the screen automatically; this is your extra zoom.");
 }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------

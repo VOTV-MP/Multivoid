@@ -1,9 +1,12 @@
 #include "coop/comms/chat_feed.h"
 
+#include "ue_wrap/log.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -81,6 +84,59 @@ std::string ToUtf8(const std::wstring& w) {
     return s;
 }
 
+// ---- resurrection probe (user 2026-07-04: a long-gone line sometimes REAPPEARS
+// for ~0.5 s and fades out again). Static analysis proves the store can't do it
+// (per-entry alpha rises only during the 220 ms arrival ramp and is monotone-
+// decreasing after; bornMs monotone; expiry pops the oldest; the host relay
+// excludes the origin) -- so the mechanism is either a duplicate re-push of the
+// same TEXT or something outside this file. PERMANENT cheap logging (a few
+// lines/min at most) so the NEXT sighting's log names the path: every push,
+// every expiry AND every overflow drop is logged; a push whose text matches a
+// line that expired/dropped <60 s ago is flagged [feed RESURRECT]; and Republish
+// cross-checks the published snapshot against the previous one for an impossible
+// alpha RISE on the SAME entry (bornMs identity) in its fade-out tail
+// ([feed ALPHA-JUMP] = the "can't happen" detector -- entry-keyed + tail-gated
+// so the arrival ramp and a coexisting same-text line can never false-fire it).
+struct Expired {
+    char     text[64] = {};
+    uint64_t atMs = 0;
+};
+Expired g_expired[8];   // small ring of recently expired lines (game thread)
+int     g_expiredNext = 0;
+
+void NoteExpired(const std::string& text, uint64_t now) {
+    Expired& x = g_expired[g_expiredNext];
+    g_expiredNext = (g_expiredNext + 1) % 8;
+    std::snprintf(x.text, sizeof(x.text), "%s", text.c_str());
+    x.atMs = now;
+}
+
+// Cap g_lines at kMaxLines, logging + expiry-ring-noting every overflow drop so
+// the probe is not blind to the 7th-line path (audit note 2026-07-04).
+void TrimOverflow(const char* via) {
+    while (g_lines.size() > static_cast<size_t>(kMaxLines)) {
+        const Entry& f = g_lines.front();
+        UE_LOGI("feed: drop-overflow via=%s text=\"%.40s\"", via, f.text.c_str());
+        NoteExpired(f.text, NowMs());
+        g_lines.pop_front();
+    }
+}
+
+void ProbeOnPush(const char* via, const Entry& e, size_t linesNow) {
+    UE_LOGI("feed: push via=%s slot=%u nickLen=%u lines=%zu text=\"%.40s\"",
+            via, static_cast<unsigned>(e.slot), static_cast<unsigned>(e.nickLen),
+            linesNow, e.text.c_str());
+    for (const Expired& x : g_expired) {
+        if (!x.text[0] || x.atMs == 0) continue;
+        if (e.bornMs - x.atMs > 60000) continue;
+        if (std::strncmp(x.text, e.text.c_str(), sizeof(x.text) - 1) == 0) {
+            UE_LOGW("feed: RESURRECT -- same text re-pushed %.1f s after it expired "
+                    "(via=%s) text=\"%.40s\"",
+                    static_cast<double>(e.bornMs - x.atMs) / 1000.0, via, e.text.c_str());
+        }
+    }
+}
+
 float FadeAlpha(uint64_t ageMs) {
     if (ageMs >= kTtlMs) return 0.f;
     float a = 1.f;
@@ -101,12 +157,32 @@ void Republish() {
         Line& l = s.lines[s.count];
         std::snprintf(l.text, sizeof(l.text), "%s", e.text.c_str());
         l.alpha   = FadeAlpha(now - e.bornMs);
+        l.bornMs  = e.bornMs;
         l.nickLen = e.nickLen;
         l.slot    = e.slot;
         ++s.count;
     }
     {
         std::lock_guard<std::mutex> lk(g_mu);
+        // Resurrection probe: the SAME entry (bornMs identity) rising in alpha
+        // while it sits in its fade-out TAIL is impossible by this store's math
+        // (the only legitimate rise is the 220 ms arrival ramp, excluded by the
+        // tail gate; a coexisting same-text line has a different bornMs). If it
+        // ever logs, the mechanism is inside this file after all -- and the log
+        // carries the numbers to prove where.
+        for (int n = 0; n < s.count; ++n) {
+            if (now - s.lines[n].bornMs <= kTtlMs - kFadeMs) continue;  // not in the tail
+            for (int o = 0; o < g_pub.count; ++o) {
+                if (s.lines[n].bornMs == g_pub.lines[o].bornMs &&
+                    g_pub.lines[o].alpha < 0.5f &&
+                    s.lines[n].alpha > g_pub.lines[o].alpha + 0.25f) {
+                    UE_LOGW("feed: ALPHA-JUMP -- \"%.40s\" (born=%llu) published alpha %.2f -> %.2f",
+                            s.lines[n].text,
+                            static_cast<unsigned long long>(s.lines[n].bornMs),
+                            g_pub.lines[o].alpha, s.lines[n].alpha);
+                }
+            }
+        }
         g_pub = s;
     }
     g_count.store(s.count, std::memory_order_relaxed);
@@ -118,8 +194,9 @@ void Push(const std::wstring& line) {
     Entry e;
     e.text = ToUtf8(line);
     e.bornMs = NowMs();
+    ProbeOnPush("event", e, g_lines.size() + 1);
     g_lines.push_back(std::move(e));
-    while (g_lines.size() > static_cast<size_t>(kMaxLines)) g_lines.pop_front();
+    TrimOverflow("event");
     Republish();
 }
 
@@ -130,8 +207,9 @@ void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot) {
     e.bornMs  = NowMs();
     e.nickLen = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
     e.slot    = slot;
+    ProbeOnPush("chat", e, g_lines.size() + 1);
     g_lines.push_back(std::move(e));
-    while (g_lines.size() > static_cast<size_t>(kMaxLines)) g_lines.pop_front();
+    TrimOverflow("chat");
     Republish();
 }
 
@@ -149,6 +227,7 @@ void Tick() {
     for (auto it = g_pending.begin(); it != g_pending.end();) {
         if (now >= it->dueMs) {
             Entry e; e.text = std::move(it->text); e.bornMs = now;
+            ProbeOnPush("delayed", e, g_lines.size() + 1);
             g_lines.push_back(std::move(e));
             it = g_pending.erase(it);
             promoted = true;
@@ -156,10 +235,15 @@ void Tick() {
             ++it;
         }
     }
-    if (promoted)
-        while (g_lines.size() > static_cast<size_t>(kMaxLines)) g_lines.pop_front();
+    if (promoted) TrimOverflow("delayed");
     if (g_lines.empty()) return;  // cheap idle path (nothing live; future-dated pending re-checked next Tick)
-    while (!g_lines.empty() && now - g_lines.front().bornMs >= kTtlMs) g_lines.pop_front();
+    while (!g_lines.empty() && now - g_lines.front().bornMs >= kTtlMs) {
+        const Entry& f = g_lines.front();
+        UE_LOGI("feed: expire age=%.1fs text=\"%.40s\"",
+                static_cast<double>(now - f.bornMs) / 1000.0, f.text.c_str());
+        NoteExpired(f.text, now);
+        g_lines.pop_front();
+    }
     Republish();  // promote-fresh + expire-old + refresh the fade alphas on the survivors
 }
 

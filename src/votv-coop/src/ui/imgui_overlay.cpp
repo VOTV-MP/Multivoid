@@ -295,6 +295,7 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     // Resolution scale: seed from the game window's client size BEFORE the first
     // bake so fonts + style are born at the right size for this resolution
     // (ui/scale.h -- the overlay is proportional, not fixed-1080p-px).
+    ui::scale::LoadUserPrefOnce();  // ini ui.scale (the F1 "UI size" pref)
     RECT rc{};
     if (::GetClientRect(desc.OutputWindow, &rc))
         ui::scale::NoteViewport(static_cast<float>(rc.right - rc.left),

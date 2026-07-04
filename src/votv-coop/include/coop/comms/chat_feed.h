@@ -27,10 +27,11 @@ inline constexpr int kMaxLines = 6;
 // first nickLen BYTES as a player-nick prefix the HUD colors per slot; 0 = an
 // event line (single color). Sized for the 203-byte wire text + a nick + ": ".
 struct Line {
-    char    text[256] = {};
-    float   alpha = 1.f;
-    uint8_t nickLen = 0;   // byte length of the nick prefix inside text (0 = event line)
-    uint8_t slot = 0;      // sender peer slot (nick color); meaningful when nickLen > 0
+    char     text[256] = {};
+    float    alpha = 1.f;
+    uint64_t bornMs = 0;   // entry identity (the resurrection probe keys on it)
+    uint8_t  nickLen = 0;  // byte length of the nick prefix inside text (0 = event line)
+    uint8_t  slot = 0;     // sender peer slot (nick color); meaningful when nickLen > 0
 };
 
 struct Snapshot {
