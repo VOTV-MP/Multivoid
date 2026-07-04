@@ -19,7 +19,7 @@ namespace {
 
 ImFont* g_chat = nullptr;
 float   g_chatPx = kChatPx;      // px the chat font was last baked at
-Family  g_family = Family::JetBrainsMono;
+Family  g_family = Family::Roboto;  // default (user 2026-07-04, after comparing: "Roboto самый лучший")
 bool    g_familyRead = false;    // ini read once; SetFamily overrides after
 
 struct FamilyDesc {
@@ -35,10 +35,10 @@ constexpr FamilyDesc kFamilies[kFamilyCount] = {
 };
 
 Family FamilyFromIni() {
-    const std::string v = harness::config::ReadIniValue("ui.font", "jetbrains");
+    const std::string v = harness::config::ReadIniValue("ui.font", "roboto");
     for (int i = 0; i < kFamilyCount; ++i)
         if (v == kFamilies[i].iniValue) return static_cast<Family>(i);
-    return Family::JetBrainsMono;
+    return Family::Roboto;
 }
 
 // Locate an RCDATA TTF embedded in OUR module (not the game exe).

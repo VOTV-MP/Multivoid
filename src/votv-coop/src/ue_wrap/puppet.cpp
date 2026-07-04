@@ -695,18 +695,19 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     // the Mesh slot's RelativeLocation.Z rests at the class default (-85,
     // capsule half-height) because the puppet's suppressed BP tick never runs
     // the settle write the LOCAL player gets every frame (mainPlayer uber
-    // @60155-60536: VInterpTo(Mesh.RelLoc -> (lean,0,0))). The chain measure
-    // in RemotePlayer::Spawn then compensates by LIFTING THE ACTOR +85
-    // (meshOffsetZ_=85), which (a) floats the collision capsule 85 cm above
-    // the floor and (b) starves lib_C::step's ground trace (ActorLoc down to
-    // ActorLoc-(halfH-1) bottoms ~66 cm short of the floor) -> footsteps
-    // SILENT even though our stride dispatch fires. Replicate the settled
-    // write ONCE here: Z := 0 (X=lean is 0 at spawn; Y untouched). The chain
-    // measure then yields meshOffsetZ_=0 -> actor at true capsule height,
-    // identical visuals BY CONSTRUCTION, step's trace reaches the floor.
+    // @60155-60536: VInterpTo(Mesh.RelLoc -> (lean,0,0))). Left at -85 the
+    // whole chain hangs an extra 85 low, which (a) misplaces the visible body
+    // vs the wire-driven actor and (b) starves lib_C::step's ground trace
+    // (ActorLoc down to ActorLoc-(halfH-1) bottoms ~66 cm short of the floor)
+    // -> footsteps SILENT even though our stride dispatch fires. Replicate
+    // the settled write ONCE here: Z := 0 (X=lean is 0 at spawn; Y untouched).
+    // With this settle the puppet's whole chain equals the local player's BY
+    // CONSTRUCTION -- which is exactly why RemotePlayer drives the actor at
+    // the wire pose verbatim with NO offset (anchored-zero, 2026-07-04; the
+    // old post-spawn chain measure raced mesh_playerVisible's BP composition
+    // on world-fresh clients and sank the puppet by halfH when it lost).
     // K2_SetRelativeLocation = the canonical path (synchronous
-    // UpdateComponentToWorld, so the chain measure right after reads the
-    // settled mesh world-Z).
+    // UpdateComponentToWorld).
     if (meshSlotComp && R::IsLive(meshSlotComp)) {
         const FVector relLoc = ReadAt<FVector>(
             meshSlotComp, P::off::USceneComponent_RelativeLocation);

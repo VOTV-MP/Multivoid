@@ -245,18 +245,20 @@ private:
     // post-teleport). The RAW field carries the settled value the BP
     // construction script writes.
     //
-    // Z fix history (Option G shipped 2026-05-23 evening per code-architect
-    // RULE 1 verdict + MTA fidelity): the prior chain 4407fa7 -> 9765ad2 ->
-    // bfa91d2 -> c8e192b -> 195dd72 -> 'stream mesh.world.Z' all failed for
-    // ONE reason: they used either (a) a guessed offset (-halfH) or (b) a
-    // computed world transform delta that varies with transient init state.
-    // Option G streams source.actor.Z (stable capsule centre, MTA's wire
-    // shape) and applies meshOffsetZ_ from a stable raw-field read of the
-    // LOCAL's BP-authored RelativeLocation.Z. Identical on every instance,
-    // robust to source-side init transients (puppet doesn't see them
-    // because the wire no longer carries them).
-    float meshOffsetZ_ = 0.f;    // = local mesh_playerVisible.RelativeLocation.Z (raw, +0x11C)
-    float meshOffsetYaw_ = 0.f;  // = atan2(mesh forward) - actor yaw (BP-authored mesh frame shim)
+    // Z fix history (Option G 2026-05-23 -> anchored-zero 2026-07-04): the
+    // early chain 4407fa7 -> ... -> 'stream mesh.world.Z' all failed because
+    // they used a guessed offset or a transient computed world-transform
+    // delta. Option G streamed source.actor.Z (stable capsule centre, MTA's
+    // wire shape) + an EMPIRICAL spawn-time chain measure -- which was itself
+    // a race: on a world-fresh client, mesh_playerVisible's BP-authored -85
+    // had not composed yet at measure time (client log 2026-07-04 16:43:06:
+    // puppetChain=0.00 -> offset -85 -> the actor held 85 cm low forever ->
+    // capsule in the floor, engine depenetration vs our per-tick write =
+    // twitching + "1/4 под землей"). Since audit H9 BOTH ends are
+    // mainPlayer_C: their settled chains are identical BY CLASS, so the
+    // offset is 0 by invariant -- the members (meshOffsetZ_/meshOffsetYaw_)
+    // were retired with the measure (RULE 2). puppet.actor = wire pose,
+    // verbatim; Spawn() logs the live chain as a drift DIAGNOSTIC only.
     // Nameplate/voice head anchor: the 'head'-bone world position of the currently-
     // rendered mesh (plushie while ragdolled, skin mesh otherwise). X/Y are RAW
     // (super snappy -- user 2026-07-03); only the HEIGHT runs through a tau ~70 ms

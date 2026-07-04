@@ -89,8 +89,15 @@ void Install(coop::net::Session* session) {
 }
 
 bool SessionActive() {
+    // Chat exists for the whole COOP SESSION, not just while a peer link is up
+    // (user 2026-07-04: the HOST could not open T-chat until the first client
+    // joined -- a hosting session with zero clients is Handshaking, connected()
+    // false). A RUNNING host session IS a live lobby: typing while alone is
+    // legitimate (the line shows locally; joiners simply weren't there for it).
+    // A client, by contrast, is only in a session while its link is connected.
     auto* s = g_session.load(std::memory_order_acquire);
-    return s && s->connected();
+    if (!s || !s->running()) return false;
+    return s->role() == coop::net::Role::Host || s->connected();
 }
 
 void QueueSend(const std::string& utf8Text) {
@@ -100,11 +107,16 @@ void QueueSend(const std::string& utf8Text) {
     // are game-thread paths; the ImGui input bar submits on the render thread.
     GT::Post([text] {
         auto* s = g_session.load(std::memory_order_acquire);
-        if (!s || !s->connected()) return;  // session died between type + send
-        coop::net::ChatMessagePayload p{};
-        p.len = static_cast<uint8_t>(text.size());
-        std::memcpy(p.text, text.data(), text.size());
-        s->SendReliable(coop::net::ReliableKind::ChatMessage, &p, sizeof(p));
+        if (!s || !s->running()) return;  // session died between type + send
+        // Wire send is best-effort: a host alone in its lobby has nobody to send
+        // to yet (connected() false) but the LINE still belongs in its own feed.
+        const bool wired = s->connected();
+        if (wired) {
+            coop::net::ChatMessagePayload p{};
+            p.len = static_cast<uint8_t>(text.size());
+            std::memcpy(p.text, text.data(), text.size());
+            s->SendReliable(coop::net::ReliableKind::ChatMessage, &p, sizeof(p));
+        }
         // Local echo (the origin never receives its own send). PushChat carries the
         // nick byte-length so the HUD colors the prefix by slot; our own line uses
         // the local slot (host = 0; client = registry peer id) so the color matches
@@ -116,7 +128,8 @@ void QueueSend(const std::string& utf8Text) {
         const std::string line = nick + ": " + SanitizeUtf8(text.data(), text.size());
         coop::chat_feed::PushChat(line, static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
                                   localSlot);
-        UE_LOGI("chat: sent %u byte(s)", static_cast<unsigned>(text.size()));
+        UE_LOGI("chat: sent %u byte(s)%s", static_cast<unsigned>(text.size()),
+                wired ? "" : " (no peers connected -- local echo only)");
     });
 }
 

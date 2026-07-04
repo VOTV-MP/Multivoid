@@ -13,8 +13,9 @@
 // re-runs it (it clears the atlas first) when the scale or family changes,
 // then invalidates the DX11 device objects so the backend re-bakes.
 //
-// Family is a user pref: votv-coop.ini ui.font = jetbrains | roboto |
-// cascadia (default jetbrains); switch live in F1 > Cosmetics > Interface.
+// Family is a user pref: votv-coop.ini ui.font = roboto | jetbrains |
+// cascadia (default roboto -- user 2026-07-04 after comparing all three);
+// switch live in F1 > Cosmetics > Interface.
 //
 // Load() must run between ImGui::CreateContext() and the first NewFrame (the
 // DX11 backend bakes the atlas lazily on frame 1).

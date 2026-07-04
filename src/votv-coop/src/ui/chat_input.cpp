@@ -8,6 +8,7 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <deque>
@@ -94,10 +95,20 @@ void Render() {
     if (ImGui::Begin("##coop_chat_input", nullptr, flags)) {
         ImGui::TextDisabled("say:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(S(560.f));
+        // The chat COLUMN owns one width: the input bar matches the feed's
+        // word-wrap width (ui/hud.cpp DrawChat wrapW) so the bar sits exactly
+        // under the messages instead of striping most of the screen (user
+        // 2026-07-04: "полоска инпута почти на всю ширину экрана"). The field
+        // takes what's left of the column after the "say:" prefix.
+        const float colW = std::min(io.DisplaySize.x * 0.42f, S(640.f));
+        const float fieldW = colW - ImGui::GetCursorPosX();
+        ImGui::SetNextItemWidth(fieldW > S(160.f) ? fieldW : S(160.f));
         if (g_focusPending) { ImGui::SetKeyboardFocusHere(); g_focusPending = false; }
-        const bool submitted = ImGui::InputText(
-            "##chatline", g_buf, sizeof(g_buf),
+        // The key hints live in the field's PLACEHOLDER (visible while empty)
+        // instead of a trailing label -- zero width cost, same discoverability.
+        const bool submitted = ImGui::InputTextWithHint(
+            "##chatline", "Enter = send, Esc = close, Up/Down = history",
+            g_buf, sizeof(g_buf),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory,
             &HistoryCallback);
         if (submitted) {
@@ -110,8 +121,6 @@ void Render() {
             }
             Close();
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Enter = send, Esc = close, Up/Down = history)");
     }
     ImGui::End();
 
