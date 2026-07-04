@@ -10,8 +10,11 @@ coop NO-PAUSE fix — sections 0a/0b below; wire unchanged v96) →
 wire unchanged v96) → `AE547EFE0ED156E7` (2026-07-04 eve: + GHOST-LOBBY delist 0d +
 CLIENT NATIVE SAVE CYCLE OFF 0e; wire unchanged v96) → `08CC1DFAA4B0DF2E`
 (2026-07-04 late eve: + SAVE-VERSION stamp 0f + WIND PROBE 0g; wire unchanged v96) →
-**`8A771BBCD61A073A` (2026-07-04 ~15:30: + QUIT-TO-MENU CRASH+DOUBLE-MENU root fix 0h/0i
-+ CHAT/ROBOTO upgrade 0j; wire unchanged v96)**. Late-eve autonomy
+`8A771BBCD61A073A` (2026-07-04 ~15:30: + QUIT-TO-MENU CRASH+DOUBLE-MENU root fix 0h/0i
++ CHAT/ROBOTO upgrade 0j; wire unchanged v96) → **`BBFDC5DB5B725545` (2026-07-04 ~16:00:
++ audit-hardening — by-index guards on the 3 remaining recycled-slot sites (npc-mirror
+drain / held-prop release / daynightcycle cache) + font-latch reset; both audits 0
+CRITICAL; wire unchanged v96)**. Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
 'obelisk'` same second); wisp lane e2e x2 (32/32 all four legs); killerwisp probe (chain
