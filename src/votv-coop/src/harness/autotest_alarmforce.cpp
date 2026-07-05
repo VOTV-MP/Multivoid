@@ -32,15 +32,17 @@ void RunAutonomousAlarmForceTest() {
         UE_LOGI("alarmforce_test: not host -- this routine is host-only (client observes via wire)");
         return;
     }
-    // Settle: host world up + the client connected and world-ready (the standard smoke
-    // orchestration launches the client ~10 s after the host).
-    UE_LOGI("alarmforce_test: starting on host (55 s settle, then ON -> 15 s -> OFF)");
+    // Settle: host world up (the client may still be mid save-transfer -- deliberate: an ON
+    // landing pre-world-ready exercises the JOIN answer, the connect snapshot delivers it).
+    // The 45 s hold then guarantees the client is world-ready for the LIVE OFF transition.
+    UE_LOGI("alarmforce_test: starting on host (55 s settle, then ON -> 45 s hold -> OFF)");
     ::Sleep(55000);
 
     coop::alarm_sync::DevForce(true);
     UE_LOGI("alarmforce_test: posted runTrigger(1) -- expect host 'applied active=1' + "
-            "'host broadcast active=1', then the client 'applied active=1'");
-    ::Sleep(15000);
+            "'host broadcast active=1', then the client 'applied active=1' (live or via "
+            "the connect snapshot if it was still loading)");
+    ::Sleep(45000);
 
     coop::alarm_sync::DevForce(false);
     UE_LOGI("alarmforce_test: posted runTrigger(0) -- expect the same pair with active=0");

@@ -146,7 +146,7 @@ reflected runTrigger — full native fanout (klaxon+lamps+grate+setEvent), idemp
 a transferred save already carrying the state. trigger_alarm_C is also the first
 kLaneOwnedClasses entry: EventSnapshot SKIPS it with an INFO (the 07-05 "unmapped alarm
 logged LOUD" joiner hole closes at the lane, and the WARN stays meaningful for genuinely
-uncovered classes) [AS-BUILT 2026-07-05, e2e pending]**.
+uncovered classes) [autonomous e2e PASS 2026-07-05 13:50: the ON landed while the joiner was loading -> the gated live broadcast was correctly skipped and the connect snapshot delivered active=1 at world-ready, client native-replay applied same second; live OFF transition also proven]**.
 
 ### 3.5 Phases
 
