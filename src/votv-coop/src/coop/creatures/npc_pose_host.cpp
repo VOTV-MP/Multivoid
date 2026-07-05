@@ -70,8 +70,10 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.elementId = static_cast<uint32_t>(el->GetId());
         const auto loc = ue_wrap::engine::GetActorLocation(actor);
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
+        const auto scl = ue_wrap::engine::GetActorScale3D(actor);  // v99: mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         // v75: mark save-persisted NPCs so the joiner ADOPTS its own local twin (class-match in
         // coop/npc_adoption) instead of spawning a duplicate. A non-None int_save Key == this NPC
         // is a save object both peers booted (the kerfur); a host-spawned transient enemy has no

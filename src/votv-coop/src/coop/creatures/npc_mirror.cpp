@@ -210,7 +210,10 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     }
     SpawnFreshNpcMirror(classW, actorClass, payload.elementId,
                         payload.locX, payload.locY, payload.locZ,
-                        payload.rotPitch, payload.rotYaw, payload.rotRoll);
+                        payload.rotPitch, payload.rotYaw, payload.rotRoll,
+                        coop::net::SanitizeWireScaleAxis(payload.scaleX),
+                        coop::net::SanitizeWireScaleAxis(payload.scaleY),
+                        coop::net::SanitizeWireScaleAxis(payload.scaleZ));
 }
 
 bool AdoptExistingNpcAsMirror(void* actor, uint32_t elementId, const std::wstring& classW) {
@@ -239,7 +242,8 @@ void DestroyLocalNpcActor(void* actor) {
 
 bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
                          float locX, float locY, float locZ,
-                         float rotPitch, float rotYaw, float rotRoll) {
+                         float rotPitch, float rotYaw, float rotRoll,
+                         float scaleX, float scaleY, float scaleZ) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     // UFunction + CDO must be resolved (npc_sync::Install pushes them via SetClientRefs; a
@@ -260,14 +264,17 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
                 elementId);
         return false;
     }
-    // Build FTransform from wire pose. NPCs have no scale in EntitySpawn (defaults to unit).
+    // Build FTransform from wire pose (v99: incl. Scale3D -- caller passes wire-sanitized values;
+    // the adoption/convert paths bind existing actors and default to unit).
     ue_wrap::FTransform xform{};
     E::RotatorToQuat(rotPitch, rotYaw, rotRoll,
                      xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = locX;
     xform.TY = locY;
     xform.TZ = locZ;
-    // xform scale stays at unit (constructor default).
+    xform.SX = scaleX;
+    xform.SY = scaleY;
+    xform.SZ = scaleZ;
 
     // Mark the bypass slot BEFORE BeginDeferredActorSpawnFromClass so our own interceptor (client
     // role) allows the spawn through instead of suppressing it. Single-shot: consumed by the next

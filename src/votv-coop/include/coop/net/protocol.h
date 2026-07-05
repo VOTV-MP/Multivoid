@@ -694,7 +694,12 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 98;  // v98: EventSnapshot=86 -- join-during-event Phase 1
+inline constexpr uint16_t kProtocolVersion = 99;  // v99: EntitySpawnPayload +Scale3D (104->116) -- the
+                                                  // game spawns piramid2_C at scale 2 via the deferred
+                                                  // spawn transform; a scale-less mirror spawned at 1
+                                                  // renders half-size + floats at the scale-2 hover Z
+                                                  // (user-verified 2026-07-05: "далеко и маленькая").
+                                                  // (v98: EventSnapshot=86 -- join-during-event Phase 1)
                                                   //      (host->joiner in-flight event registry snapshot
                                                   //      at the world-ready edge; replay-safe rows replay
                                                   //      with the active-override; docs/COOP_EVENT_JOIN.md).
@@ -3079,6 +3084,15 @@ struct EntitySpawnPayload {
     uint8_t       _pad[3];         // 3 -- align loc to 4
     float         locX, locY, locZ;            // 12 -- world cm at spawn time
     float         rotPitch, rotYaw, rotRoll;   // 12 -- FRotator
+    float         scaleX, scaleY, scaleZ;      // 12 -- v99: actor Scale3D at spawn/snapshot time. The
+                                               //      spawn TRANSFORM carries scale in-engine (the
+                                               //      piramid spawner passes 2.0) and a mirror spawned
+                                               //      without it renders wrong-size + hovers at the
+                                               //      wrong altitude (Z streams from the host, whose
+                                               //      hover = 10000*scaleX above ground). Receivers
+                                               //      sanitize via SanitizeWireScaleAxis (a zeroed
+                                               //      legacy/degraded payload must not spawn an
+                                               //      invisible scale-0 actor).
     uint32_t      retireOffEid;    // 4 -- v91 (kerfur off->active dup retire, DETERMINISTIC): non-zero => this
                                    //      NPC is a kerfur the host turned ON in the join window, and
                                    //      retireOffEid is the HOST EID of the off-prop it replaced
@@ -3104,9 +3118,17 @@ struct EntitySpawnPayload {
                                    //      A non-initiator peer has no ghost at that eid -> null -> fresh-spawns. 0 =
                                    //      not a conversion (a save/connect-snapshot NPC; WorldActorSpawn leaves it 0).
 };
-static_assert(sizeof(EntitySpawnPayload) == 104, "EntitySpawnPayload must be 104 bytes (v91: deterministic retireOffEid + convertFromEid, no position-fuzzy fields)");
+static_assert(sizeof(EntitySpawnPayload) == 116, "EntitySpawnPayload must be 116 bytes (v99: +Scale3D; v91: deterministic retireOffEid + convertFromEid, no position-fuzzy fields)");
 static_assert(sizeof(EntitySpawnPayload) <= 256 - 20 - 8,
               "EntitySpawnPayload must fit in one reliable datagram");
+
+// v99 receiver-side scale sanitizer (trust boundary, same rank as the NaN/kMaxCoord checks): a
+// non-finite / zero / absurd wire scale must not reach FinishSpawning (scale-0 spawns an invisible
+// actor; the degraded-sender case is a zeroed payload field). Unit scale is the only safe fallback.
+inline float SanitizeWireScaleAxis(float s) {
+    if (!(s > 0.01f && s < 100.f)) return 1.f;  // NaN fails both comparisons -> 1
+    return s;
+}
 
 // Phase 5N1 Inc2: NPC destroy reliable payload. Host detects an NPC
 // destruction via the existing AActor::K2_DestroyActor PRE observer

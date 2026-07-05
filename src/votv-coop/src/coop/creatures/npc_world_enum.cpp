@@ -96,8 +96,10 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         p.elementId = static_cast<uint32_t>(eid);
         const auto loc = ue_wrap::engine::GetActorLocation(obj);
         const auto rot = ue_wrap::engine::GetActorRotation(obj);
+        const auto scl = ue_wrap::engine::GetActorScale3D(obj);  // v99: mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         p.savePersisted = savePersisted ? 1 : 0;
         // scope A (v91 deterministic): carry the off->active dup RETIRE key for a window-turned-ON
         // kerfur (see npc_pose_host.cpp). Stamps for ANY origin -- harmless when there is no

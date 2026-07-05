@@ -98,7 +98,10 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
 // SetClientRefs to have run.
 bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
                          float locX, float locY, float locZ,
-                         float rotPitch, float rotYaw, float rotRoll);
+                         float rotPitch, float rotYaw, float rotRoll,
+                         float scaleX = 1.f, float scaleY = 1.f, float scaleZ = 1.f);  // v99: spawn-
+                         // transform Scale3D (wire-sanitized by the caller); the adoption/convert
+                         // callers bind EXISTING actors elsewhere and default to unit here.
 
 // Bind an ALREADY-SPAWNED local actor as the host mirror for `elementId` (vs SpawnFreshNpcMirror
 // which spawns a new one). Used to ADOPT the client's own conversion result on a kerfur turn-on:

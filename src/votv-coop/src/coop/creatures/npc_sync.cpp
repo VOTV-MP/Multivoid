@@ -390,6 +390,11 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
             p.locX = *reinterpret_cast<const float*>(xform + 0x10);
             p.locY = *reinterpret_cast<const float*>(xform + 0x14);
             p.locZ = *reinterpret_cast<const float*>(xform + 0x18);
+            // v99: FVector Scale3D @ +0x20 -- carried so a scaled spawn mirrors at true size (the
+            // piramid WA case proved the class; NPC spawners pass 1.0 today but the wire is honest).
+            p.scaleX = *reinterpret_cast<const float*>(xform + 0x20);
+            p.scaleY = *reinterpret_cast<const float*>(xform + 0x24);
+            p.scaleZ = *reinterpret_cast<const float*>(xform + 0x28);
             // Convert FQuat -> FRotator (in degrees) for wire compatibility
             // with our existing FRotator-based pose pipeline. Standard UE4
             // conversion: pitch = asin(2(wy - zx)); yaw = atan2(2(wz + xy),

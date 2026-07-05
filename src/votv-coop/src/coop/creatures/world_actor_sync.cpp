@@ -114,8 +114,9 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
     return false;
 }
 
-// Read the FTransform spawn param into the payload (translation + FQuat->FRotator). Identical math to
-// npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10).
+// Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
+// Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
+// @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
 void ReadSpawnXform(const void* params, coop::net::EntitySpawnPayload& p) {
     if (g_spawnXformParamOff < 0) return;
     const uint8_t* xf = reinterpret_cast<const uint8_t*>(params) + g_spawnXformParamOff;
@@ -126,6 +127,9 @@ void ReadSpawnXform(const void* params, coop::net::EntitySpawnPayload& p) {
     p.locX = *reinterpret_cast<const float*>(xf + 0x10);
     p.locY = *reinterpret_cast<const float*>(xf + 0x14);
     p.locZ = *reinterpret_cast<const float*>(xf + 0x18);
+    p.scaleX = *reinterpret_cast<const float*>(xf + 0x20);
+    p.scaleY = *reinterpret_cast<const float*>(xf + 0x24);
+    p.scaleZ = *reinterpret_cast<const float*>(xf + 0x28);
     const float sinp = 2.f * (qw * qy - qz * qx);
     const float sinp_c = sinp > 1.f ? 1.f : (sinp < -1.f ? -1.f : sinp);
     constexpr float kRadToDeg = 57.29577951308232f;
@@ -501,8 +505,10 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.savePersisted = 0;
         const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
+        const auto scl = E::GetActorScale3D(actor);  // v99: the piramid is scale 2 -- the mirror must match
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
             ++sent;
     }
@@ -582,6 +588,11 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
                      xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = payload.locX; xform.TY = payload.locY; xform.TZ = payload.locZ;
+    // v99: spawn-transform scale from the wire (sanitized -- scale-0 = invisible actor). The piramid
+    // spawner passes 2.0; a unit-scale mirror renders half-size + floats at the host's scale-2 hover Z.
+    xform.SX = coop::net::SanitizeWireScaleAxis(payload.scaleX);
+    xform.SY = coop::net::SanitizeWireScaleAxis(payload.scaleY);
+    xform.SZ = coop::net::SanitizeWireScaleAxis(payload.scaleZ);
 
     // Bypass our own client interceptor for THIS spawn, then BeginDeferred + FinishSpawning the mirror.
     g_incomingWorldActorClass.store(actorClass, std::memory_order_release);
@@ -643,8 +654,9 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     // a WorldActor is a plain AActor). Any residual component tick is overwritten each frame by the
     // pose drive's SetActorLocation/SetActorRotation (the MTA dead-reckoning model).
     E::SetActorTickEnabled(spawned, false);
-    UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f)",
-            payload.elementId, classW.c_str(), spawned, payload.locX, payload.locY, payload.locZ);
+    UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f) "
+            "scale=(%.2f,%.2f,%.2f)", payload.elementId, classW.c_str(), spawned,
+            payload.locX, payload.locY, payload.locZ, xform.SX, xform.SY, xform.SZ);
 }
 
 unsigned int HostEnrollExSpawn(void* actor) {
@@ -694,10 +706,13 @@ unsigned int HostEnrollExSpawn(void* actor) {
         p.className.data[p.className.len++] = static_cast<char>(clsW[i]);
     const auto loc = E::GetActorLocation(actor);   // post-Finish (the drain runs next pump tick)
     const auto rot = E::GetActorRotation(actor);
+    const auto scl = E::GetActorScale3D(actor);    // v99: the deferred actor carries the spawner's scale
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
-    UE_LOGI("world-actor[host ex-enroll]: '%ls' eid=%u at (%.0f,%.0f,%.0f) (EX_CallMath "
-            "BeginDeferred, source-gated catch)", clsW.c_str(), eid, loc.X, loc.Y, loc.Z);
+    p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
+    UE_LOGI("world-actor[host ex-enroll]: '%ls' eid=%u at (%.0f,%.0f,%.0f) scale=(%.2f,%.2f,%.2f) "
+            "(EX_CallMath BeginDeferred, source-gated catch)", clsW.c_str(), eid, loc.X, loc.Y, loc.Z,
+            scl.X, scl.Y, scl.Z);
     // Broadcast only with peers present -- an alone-host enroll is delivered by the join
     // connect-snapshot instead (a peer-less SendReliable would just WARN-spam).
     if (s->connected() &&
