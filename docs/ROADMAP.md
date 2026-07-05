@@ -264,7 +264,10 @@ Each item below is a feature increment series. Cross-referenced in
 
 ### Dev convenience features ◑ (one-off shipping)
 - ☑ HOME freecam — flying debug camera with WASD/Space/Ctrl + wheel
-       speed + MMB teleport. Ini-gated `[dev] freecam=1`.
+       speed + MMB teleport. Ini-gated `[dev] freecam=1`. 2026-07-05
+       `ee828ff7`: entering freecam FREEZES the pawn (CMC MOVE_None,
+       captured mode restored verbatim on exit) so the fly keys stop
+       driving the character; look stays live (the freecam aims with it).
 - ☑ F2 pos+cam HUD — on-screen player position + camera rotation
        overlay. Ini-gated `[dev] posinfo=1`.
 - ☑ F3 RestoreVitals — refills food/sleep/health on both peers via the
