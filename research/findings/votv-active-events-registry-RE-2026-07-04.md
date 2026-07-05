@@ -103,7 +103,9 @@ Notables (full list reproducible by the grep):
   from BP internals (EX-dispatch visibility NOT needed — the poll reads the result).
 - **Sender identity**: `ClassOf(activeEvents_senders[i])` is the event's implementation
   class (e.g. `piramid2_C`), NOT the list_events row name — a class->row mapping table is
-  part of the design (docs/COOP_EVENT_JOIN.md).
+  part of the design (docs/COOP_EVENT_JOIN.md). [AS-BUILT 2026-07-05 v98 `e865b7f2`:
+  `event_active_sync.cpp` kClassRowMap, 24 RE-verified entries; unmapped classes WARN
+  LOUD on the joiner — the Phase 2 census-fill signal.]
 - Tooling note: `research/bp_reflection/_fixjson.py` repairs kismet-analyzer JSON that
   UAssetAPI emits with unescaped quotes in localized strings (the saveSlot.json breakage
   class); `ui_menu_fixed.json` produced this run.

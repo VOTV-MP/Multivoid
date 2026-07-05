@@ -5,8 +5,10 @@ coop sync design, and its caveats live in that event's own file here. This folde
 "what exactly happens during event X and how does coop deliver it to every peer" — the
 cross-cutting CONTRACTS stay where they are:
 
-- `docs/COOP_EVENT_JOIN.md` — the join-during-event contract (EventSnapshot design, the
-  per-lane late-join table, phases). Per-event docs LINK to it; they do not restate it.
+- `docs/COOP_EVENT_JOIN.md` — the join-during-event contract (EventSnapshot AS-BUILT v98,
+  the per-lane late-join table, phases). Per-event docs LINK to it; they do not restate
+  it. A new event's registrant class also gets an `event_active_sync::kClassRowMap` entry
+  (unmapped classes WARN LOUD on a joiner — that log line is the fill signal).
 - `src/votv-coop/src/coop/world/event_fire_sync.cpp` — the replay/no-replay dupe matrix
   is AUTHORITY in code (kReplayRows/kNoReplayRows). A per-event doc cites its row's
   verdict; changing a verdict changes the CODE first, the doc second.

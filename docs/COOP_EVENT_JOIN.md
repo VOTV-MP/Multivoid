@@ -59,8 +59,11 @@ New module `coop/world/event_active_sync.cpp` (gameplay/network layer; principle
 
 - Host: 1 Hz poll of `gamemode.activeEvents_senders` (the proven passEvents-poll shape —
   prime baseline, diff membership by object identity + ClassOf name). Produces two edge
-  streams: `EventActiveBegin(className)` / `EventActiveEnd(className)` — LOGGED first
-  (Phase 0 probe), wired to the join snapshot (Phase 1+).
+  streams: `EventActiveBegin(className)` / `EventActiveEnd(className)` — logged (the
+  Phase 0 probe shape) AND feeding the join snapshot (Phase 1, AS-BUILT v98). NOTE: the
+  poll is CONNECTION-gated — an event that starts while the host idles alone shows its
+  BEGIN only when a transport connects (prime BEGINs the already-active set; firstSeen =
+  prime time, so elapsedSec is prime-relative for those).
 - The registry is authoritative and self-maintained by the game's own actors; we never
   write it on the host. (On the client, replayed event actors call setEvent locally and
   maintain the client's own counter for free.)

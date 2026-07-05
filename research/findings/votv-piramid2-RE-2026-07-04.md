@@ -349,6 +349,12 @@ rows `piramid`/`piramid_sig` are in `kReplayRows` (client replays the ARM)
 4. Late-join (DEVS_GAUNTLET): the EventSnapshot lane for `piramid` needs: pyramid
    transform + isWalking/multiplyWalk + remaining killerwisps (already covered by
    the NPC lane's join answer) + `gathering/wispTarget` if mid-gather.
+   [RESOLVED 2026-07-05 v98 `e865b7f2`, differently than sketched: transform rides
+   the WA connect snapshot (isWalking stays false on mirrors BY DESIGN — brain
+   suppressed); mid-gather is a lane-local join-edge PyramidGather re-send
+   (`piramid_sync::QueueConnectBroadcastForSlot`), not EventSnapshot fields; the
+   generic EventSnapshot carries 'piramid' but the verdict table skips it as
+   lane-owned. COOP_EVENT_JOIN.md 3.4.]
 
 ## Decode provenance
 
