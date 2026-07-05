@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
 
@@ -279,9 +280,11 @@ public:
     bool SendEntitySpawn(const EntitySpawnPayload& payload);
     bool SendEntityDestroy(uint32_t elementId);
 
-    // Diagnostics.
-    uint64_t packetsSent() const { return sent_.load(); }
-    uint64_t packetsRecv() const { return recv_.load(); }
+    // Diagnostics. The counters themselves live in coop::net::net_stats (the one
+    // owner -- bytes + packets, counted at the GNS choke points; the ui net-stats
+    // panel reads the same source). These delegates keep the existing callers.
+    uint64_t packetsSent() const { return net_stats::PacketsSent(); }
+    uint64_t packetsRecv() const { return net_stats::PacketsRecv(); }
     // Per-slot RTT in ms (the GNS link ping to peer `slot`), or -1 if that slot has
     // no live connection / not yet sampled. Sampled ~1 Hz on the net thread. The
     // nameplate + scoreboard show this PER PEER (event_feed fans it to each puppet;
@@ -551,8 +554,6 @@ private:
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
 
     std::atomic<uint32_t> sendSeq_{0};
-    std::atomic<uint64_t> sent_{0};
-    std::atomic<uint64_t> recv_{0};
     // Per-slot RTT (ms), sampled ~1 Hz on the net thread from GNS m_nPing. 0-init;
     // the sampler sets -1 for a slot with no live connection and the real ping for a
     // connected one. Replaces the old aggregate lastRttMs_ (RULE 2: event_feed now

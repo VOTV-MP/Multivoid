@@ -49,7 +49,7 @@ bool Session::SendVoiceFrame(const VoiceFramePayload& frame) {
         int64 outMsgNum = 0;
         sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
         if (outMsgNum >= 0) {
-            sent_.fetch_add(1);
+            net_stats::AddSent(static_cast<uint32_t>(total));
             anySuccess = true;
         }
     }

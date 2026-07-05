@@ -42,6 +42,16 @@ a peer behind world geometry (walls/closed doors/props — pawns never block)
 keeps a readable plate but the nick renders GRAY + the whole plate dims 25%
 (minecraft nametag shape; hurt-flash red keeps priority). Line trace via
 `ue_wrap/trace.cpp` per visible plate on the game thread.
+**Network stats overlay (AS-BUILT 2026-07-05, user ask; verdict = runbook 0t):**
+`ui/net_stats_panel.cpp` — a passive top-right panel for host AND clients, OFF
+by default (F1 > Network > Stats, persisted `ui.netstats`): live receive/send
+rate (GNS wire-level, ~1 s window), session totals down/up, packets/s, peers +
+worst ping, 60 s rate sparkline (rx sky filled area / tx amber line — the slot
+palette). Data = `coop/net/net_stats` (the ONE owner of the wire counters —
+Session's packet counters moved there; bytes counted at every GNS accept;
+rates published by Session's existing 1 Hz net-thread telemetry sample). MTA
+precedent: CNetworkStats. The F1 page doubles as a live readout while the
+overlay is off.
 This doc is kept for the **design rationale** (why runtime UMG, not
 BPModLoader/paks); the code is the truth for the as-built UI.
 

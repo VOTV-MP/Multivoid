@@ -20,6 +20,7 @@
 #include "coop/session/ini_config.h"
 #include "harness/config.h"
 #include "ui/fonts.h"
+#include "ui/net_stats_panel.h"
 #include "ui/scale.h"
 #include "ui/skins_panel.h"
 
@@ -311,6 +312,10 @@ void RenderEvents() {
 // live in ui/skins_panel.cpp; this is just the tree hook).
 void RenderSkins() { ui::skins_panel::Render(); }
 
+// Network stats overlay pref + live readout (its own panel file -- ui/net_stats_panel.cpp;
+// this is just the tree hook). Non-dev: every player gets the toggle, like Cosmetics.
+void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
+
 // v94: the local player's plate-visibility pref. SYNCED (live NameplateChange +
 // the Join prefs byte for late joiners) and persisted (votv-coop.ini nameplate=).
 void RenderNameplatePref() {
@@ -381,9 +386,11 @@ const std::vector<Cat>& Tree() {
             { "Events",   { { &RenderEvents, true } }, true },
         }, true },
         { "Network", {
-            { "Stats",    {}, true },
+            // Stats is for EVERYONE (the overlay toggle + live session readout);
+            // Session stays a dev placeholder, hidden for regular players.
+            { "Stats",    { { &RenderNetStats, false } }, false },
             { "Session",  {}, true },
-        }, true },
+        }, false },
         { "Cosmetics", {
             { "Skins",     { { &RenderSkins, false } }, false },
             { "Nameplate", { { &RenderNameplatePref, false } }, false },

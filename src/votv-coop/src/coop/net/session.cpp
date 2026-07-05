@@ -228,7 +228,7 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
         }
         return false;
     }
-    sent_.fetch_add(1);
+    net_stats::AddSent(static_cast<uint32_t>(total));
     return true;
 }
 
@@ -284,7 +284,7 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
                     i, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
             continue;
         }
-        sent_.fetch_add(1);
+        net_stats::AddSent(static_cast<uint32_t>(total));
         anySuccess = true;
     }
     return anySuccess;
@@ -354,7 +354,7 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         return;
     }
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
-    recv_.fetch_add(1);
+    net_stats::AddRecv(static_cast<uint32_t>(len));
 
     // PR-FOUNDATION-1b v16: per-peer stale-generation defense. The first
     // packet from this slot establishes the expected epoch; subsequent
@@ -749,7 +749,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                     }
                     if (haveProp) {
                         PropPosePacket pkt{};
@@ -759,7 +759,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                     }
                     if (haveRagdoll) {
                         RagdollPosePacket pkt{};
@@ -769,7 +769,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                     }
                     if (npcMsgLen > 0) {  // v37: NPC pose batch -- body built once above; stamp the header per-peer
                         PacketHeader npcHdr{};  // build + memcpy (npcBuf is uint8_t[]; no misaligned PacketHeader lvalue)
@@ -778,7 +778,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, npcBuf, static_cast<uint32_t>(npcMsgLen),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(npcMsgLen)); else ++sendFails;
                     }
                     if (waMsgLen > 0) {  // v80 (B3b): WorldActor pose batch -- body built once above; stamp the header per-peer
                         PacketHeader waHdr{};
@@ -787,7 +787,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, waBuf, static_cast<uint32_t>(waMsgLen),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(waMsgLen)); else ++sendFails;
                     }
                     if (tcMsgLen > 0) {  // v85 (Increment 2): trash-clump carry batch -- body built once above; stamp per-peer
                         PacketHeader tcHdr{};
@@ -796,7 +796,7 @@ void Session::NetThread() {
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, tcBuf, static_cast<uint32_t>(tcMsgLen),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-                        if (rc == k_EResultOK) sent_.fetch_add(1); else ++sendFails;
+                        if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(tcMsgLen)); else ++sendFails;
                     }
                 }
             }
@@ -813,12 +813,28 @@ void Session::NetThread() {
         // late -- which is invisible without this telemetry. Logged as an INFO summary; WARNs
         // fire on high ping / send-queue latency / pending backlog so the events stand out (and
         // flush to disk). rttMsBySlot_[i] gets each peer's ping for the nameplate + scoreboard.
+        if (state_.load() != ConnState::Connected && now >= nextRttSample) {
+            // Not connected: publish zeroed rates so the ui net-stats panel reads
+            // "offline" instead of the last live sample frozen forever (totals stay).
+            net_stats::PublishRates(0.f, 0.f, 0.f, 0.f, 0, -1, false);
+            nextRttSample = now + std::chrono::milliseconds(1000);
+        }
         if (state_.load() == ConnState::Connected && now >= nextRttSample) {
+            // ui net-stats: sum the GNS real-time view across live conns (wire-level
+            // bytes/pkts per sec incl. acks/retransmits) + the worst ping among them.
+            float sumInBps = 0.f, sumOutBps = 0.f, sumInPktps = 0.f, sumOutPktps = 0.f;
+            int livePeers = 0, pingMax = -1;
             for (int i = 0; i < kMaxPeers; ++i) {
                 const uint32_t hConn = peerConns_[i].load();
                 if (hConn == 0) { rttMsBySlot_[i].store(-1, std::memory_order_relaxed); continue; }
                 SteamNetConnectionRealTimeStatus_t st{};
                 if (sockets->GetConnectionRealTimeStatus(hConn, &st, 0, nullptr) != k_EResultOK) continue;
+                sumInBps    += st.m_flInBytesPerSec;
+                sumOutBps   += st.m_flOutBytesPerSec;
+                sumInPktps  += st.m_flInPacketsPerSec;
+                sumOutPktps += st.m_flOutPacketsPerSec;
+                ++livePeers;
+                if (st.m_nPing >= 0 && st.m_nPing < 60000 && st.m_nPing > pingMax) pingMax = st.m_nPing;
                 // m_usecQueueTime ("usec until the next send") returns a huge sentinel (~INT64_MAX)
                 // whenever the estimate is undefined -- which is MOST of the time, even WITH a little
                 // pending data -- so clamp anything absurd to 0. The reliable send-backlog signal is
@@ -849,6 +865,8 @@ void Session::NetThread() {
                             i, st.m_cbPendingReliable, st.m_cbPendingUnreliable, kHighPendingBytes,
                             st.m_nSendRateBytesPerSecond, queueMs);
             }
+            net_stats::PublishRates(sumInBps, sumOutBps, sumInPktps, sumOutPktps,
+                                    livePeers, pingMax, true);
             if (sendFails > 0)
                 UE_LOGW("net-diag: %llu outbound send(s) REJECTED by GNS since last sample "
                         "(send buffer full / rate-limited)", static_cast<unsigned long long>(sendFails));

@@ -35,6 +35,7 @@
 #include "ui/loading_screen.h"
 #include "ui/console.h"
 #include "ui/hud.h"
+#include "ui/net_stats_panel.h"
 #include "ui/toast.h"
 #include "ui/chat_input.h"
 #include "ui/fonts.h"
@@ -401,6 +402,10 @@ void RenderFrameGuarded() {
         // our ImGui renders after the game in Present, so the passive HUD would otherwise
         // draw on TOP of the modal pause menu (user 2026-06-13: chat over the ESC menu).
         if (ui::hud::IsActive() && !PauseMenuOpen()) ui::hud::Render();
+        // The network-stats overlay (F1 > Network > Stats; off by default). Passive
+        // like the HUD (NoInputs) and suppressed under the native pause menu the same
+        // way; independent of hud::IsActive() (it must show for a solo host too).
+        if (ui::net_stats_panel::Enabled() && !PauseMenuOpen()) ui::net_stats_panel::Render();
 
         if (MenuOpen())    ui::dev_menu::Render();
         if (ScoreOpen())   ui::scoreboard::Render();

@@ -117,13 +117,36 @@ broadcast (send-gate dropped it for the loading slot) -> 09:36:45 host
 `connect-snapshot -- re-sent live 'starRain' (cue 0) to slot 1` -> client EXACTLY
 ONE `event_cue: replayed 'starRain'`; 0 ERROR both, RSS ~2.9 GB, s_asdasd restored
 byte-identical; perf+correctness audits run, dev-driver honesty fix folded in —
-shipping paths identical to the e2e build FA6A7531DFAB27E6)**.
+shipping paths identical to the e2e build FA6A7531DFAB27E6)** →
+**`BD2951BA2B83E68E` (2026-07-05 ~10:10, wire v98 unchanged — ТЕКУЩИЙ: NET-STATS
+overlay (user ask): coop/net/net_stats one-owner traffic counters (Session's
+sent_/recv_ MOVED there, bytes counted at every GNS choke point; rates = GNS
+real-time telemetry summed in the existing 1 Hz net-thread sample) + ui/
+net_stats_panel top-right passive panel (rates now / session totals / pkt/s /
+peers+ping / 60 s sparkline) + F1 > Network > Stats toggle, OFF by default,
+persisted ui.netstats. Autonomous LAN smoke PASS 10:05 (host+client, 0 ERROR
+both, no RAM breach) with the panel force-enabled on both local rigs — visual
+verdict = runbook 0t)**.
 Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
 'obelisk'` same second); wisp lane e2e x2 (32/32 all four legs); killerwisp probe (chain
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
+
+## 2026-07-05 ~10:10 (DLL `BD2951BA2B83E68E` — ТЕКУЩИЙ, wire v98)
+
+### 0t. NET-СТАТИСТИКА (новая фича по твоему запросу) — визуальный вердикт
+Оверлей сетевой статистики (host + клиенты, ВЫКЛ по умолчанию; на твоих локальных
+копиях я оставил ВКЛ через ui.netstats=1, чтобы ты сразу увидел). F1 > Network > Stats —
+галка + живая сводка. Панель справа-сверху: точка-статус, пиры + пинг, приём/отдача
+СЕЙЧАС (стрелки: голубая вниз = приём, оранжевая вверх = отдача), тоталы за сессию
+справа, граф 60 с (голубая заливка = rx, оранжевая линия = tx), pkt/s снизу.
+1. Проверь визуал: читаемость, не мешает ли, «slick или нет» — любые пожелания.
+2. Тотал «скачано» на клиенте должен заметно прыгнуть при джойне (сейв-трансфер + снапшот).
+3. При отключении сессии панель должна показать offline + нули в rate, тоталы остаться.
+4. Скрой панель галкой в F1 — она должна исчезнуть мгновенно и остаться выключенной
+   после перезапуска (votv-coop.ini ui.netstats).
 
 ## 2026-07-05 ~00:30 (DLL `E09121F58CE2A5C6` — superseded by `D593B401A1665F34`, wire v98; разделы ниже действительны)
 

@@ -55,7 +55,7 @@ void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, in
         if (!IsSlotWorldReady(i)) continue;
         const EResult rc = sockets->SendMessageToConnection(
             hConn, buf, len, k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
-        if (rc == k_EResultOK) sent_.fetch_add(1);
+        if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(len));
     }
 }
 
@@ -102,7 +102,7 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         msg->m_idxLane = static_cast<uint16>(laneIdx);
         int64 outMsgNum = 0;
         sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
-        if (outMsgNum >= 0) sent_.fetch_add(1);
+        if (outMsgNum >= 0) net_stats::AddSent(static_cast<uint32_t>(len));
     }
 }
 

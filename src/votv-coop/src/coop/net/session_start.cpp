@@ -96,6 +96,7 @@ bool Session::Start(const Config& cfg) {
         return false;
     }
     cfg_ = cfg;
+    net_stats::ResetSession();  // a new session's traffic totals start at zero
 
     // PR-FOUNDATION-1b v16: mint this peer's per-process session epoch.
     // Non-zero is required (0 is the receiver-side "not yet latched"
@@ -375,9 +376,12 @@ void Session::Stop() {
 
     state_.store(ConnState::Disconnected);
     g_session.store(nullptr, std::memory_order_release);
+    // Rates -> zero for the ui net-stats panel (its "offline" state); totals stay
+    // visible until the next Session::Start resets them.
+    net_stats::PublishRates(0.f, 0.f, 0.f, 0.f, 0, -1, false);
     UE_LOGI("net: session stopped (sent=%llu recv=%llu)",
-            static_cast<unsigned long long>(sent_.load()),
-            static_cast<unsigned long long>(recv_.load()));
+            static_cast<unsigned long long>(net_stats::PacketsSent()),
+            static_cast<unsigned long long>(net_stats::PacketsRecv()));
 }
 
 }  // namespace coop::net

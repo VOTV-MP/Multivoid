@@ -326,6 +326,7 @@ add_library(votv-coop SHARED
     src/coop/element/identity_create.cpp
     src/coop/element/identity_destroy.cpp
     src/coop/net/session.cpp
+    src/coop/net/net_stats.cpp
     src/coop/net/session_npc.cpp
     src/coop/net/session_worldactor.cpp
     src/coop/net/session_trashcarry.cpp
@@ -409,6 +410,7 @@ add_library(votv-coop SHARED
     src/ui/loading_screen.cpp
     src/ui/console.cpp
     src/ui/hud.cpp
+    src/ui/net_stats_panel.cpp
     src/ui/toast.cpp
     src/ui/chat_input.cpp
     src/ui/fonts.cpp
