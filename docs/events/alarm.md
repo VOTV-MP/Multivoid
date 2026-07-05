@@ -5,10 +5,10 @@
    siren + every red `alarmLamp_C` beacon + ceiling-lamp flicker + basement grate + the
    activeEvents registry. Real-world fire-alarm feel. This is the shared-world state the
    lane syncs.
-2. **The radar TERMINAL alert** = the computer's own per-terminal notification when the
-   scan count grows (`arirCrateAlarm_s` one-shot 3D beep at the computer, gated by the
-   `radar_soundActiveAlarm` setting) — a LOCAL per-viewer cue on the terminal, NOT this
-   lane, NOT synced (each peer's own scan produces its own beep; axis table row below).
+2. **The radar TERMINAL alert** (per-terminal beep/ping/blip at the computer) is a
+   DIFFERENT concept with its own doc:
+   [radar-terminal-alert.md](radar-terminal-alert.md) — per-viewer local by design,
+   no lane, no wire.
 
 The base alarm's player-facing stop is the radar panel's "b/Stop alarm" press.
 
@@ -37,12 +37,11 @@ User rule anchor (2026-07-05): «alarm это по сути тоже своег�
      the base alarm [bytecode].
 - **OFF path (the only one)**: `panel_radar` interaction option "b/Stop alarm" →
   `runTrigger(self, 0)` [panel_radar uber @150-268].
-- **The radar TERMINAL alert (axis 2 in the header — NOT this lane)**:
-  `radar_scanned.Num > radar_prevEnt && radar_hasAlarm && radar_soundActiveAlarm` →
-  one-shot 3D `arirCrateAlarm_s` at the computer [@1194-1198]. Per-viewer local. The
-  radar ALARM module upgrade (`panel_radar.updModules` → `screens.radar_hasAlarm =
-  Array_Contains(upgrades, ...)`) gates this branch [bytecode @1194]; whether it also
-  gates the important→runTrigger branch upstream: [?] not fully traced.
+- The computer's OWN per-terminal sounds in the same scan loop (alert beep / sweep ping /
+  entity blip) are the OTHER "alarm" — RE'd in
+  [radar-terminal-alert.md](radar-terminal-alert.md). One open [?] recorded there that
+  touches THIS doc: whether `radar_hasAlarm` (the alarm module upgrade) also gates the
+  important→runTrigger branch upstream, or only the beep branch.
 - **`runTrigger(owner, index)`** [uber @939→]: IDEMPOTENT — `IntToBool(index) == active`
   → return, no side effects. On a real toggle: `active = index`; basementGrate prop →
   `setPropProps(false, false, !active, false)`; `lib_C::setEvent(active, false, self)`
@@ -60,7 +59,7 @@ User rule anchor (2026-07-05): «alarm это по сути тоже своег�
 | axis | class | carried by |
 |---|---|---|
 | alarm ACTIVE state (klaxon + all lamps + grate + ceiling flicker + activeEvents count) | shared world state; either peer's radar/press toggles it | **`alarm_sync` lane** (1 Hz state poll + `ReliableKind::AlarmState`); each peer replays `runTrigger` natively — ONE reflected call reproduces the whole fanout |
-| radar new-entity beep (`arirCrateAlarm_s`) | per-viewer (each peer's own scan cadence) | none — local by design |
+| radar terminal alert (beep/ping/blip) | per-viewer — own doc: [radar-terminal-alert.md](radar-terminal-alert.md) | none — local by design |
 | lamp beacon rotation phase | per-viewer cosmetic (random phase natively) | none — native randomness |
 | `radarObjects` contents (what the radar can see at all) | derived world entities | already owned by the entity mirror lanes; not this doc |
 

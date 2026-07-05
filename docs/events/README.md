@@ -73,6 +73,11 @@ and the wiki taxonomy (Story Mode / Ariral-reputation / signal-triggered / rando
 | starRain (`skyFallingEvent`) — event_cue lane | (todo) | late-join gap CLOSED 2026-07-05 (event_cue join re-send, e2e PASS -- COOP_EVENT_JOIN.md 3.4); doc pending |
 | everything else (65 rows + non-row registrants) | — | queue below |
 
+Non-event sibling doc: [radar-terminal-alert.md](radar-terminal-alert.md) — the computer's
+per-terminal beep/ping/blip (the OTHER thing "alarm" gets called; user rule 2026-07-05:
+never conflate with the base alarm). Per-viewer local by design, no lane; lives here so
+the alarm reader finds the distinction next door.
+
 Queue order = the wiki Story Mode ladder first (the scheduled spectacles every save hits:
 warning obelisk D25, black-hole sun D27, piramid D31, rozital scouts D33, mothership D38,
 gray firetank D44, gray invasion D47), then signal-triggered + Ariral-reputation, then
