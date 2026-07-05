@@ -28,7 +28,17 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 | NPCs / Characters | BeginDeferred (VISIBLE) | host `BeginDeferred` interceptor + POST; save-loaded via `RegisterExistingWorldNpcs` walk | host eid (no BP key) | npc_sync, npc_mirror, npc_world_enum, npc_adoption |
 | wisp_C (wispSwarm event) | BeginDeferred **as `EX_CallMath`** from trigger_wispSwarm's ubergraph (INVISIBLE to PE) | **`ufunction_hook` Func-thunk, SOURCE-GATED** (FFrame::Object class == trigger_wispSwarm_C) → queue → pose-tick drain enroll; **ambient ticker wisp_C stays per-peer** (skipped by gate + world-enum); PE-invisible self-despawn caught by the **pose-walk dead-retire** | host eid (no BP key) | npc_world_enum (EX-catch + enroll), npc_sync (SyncDestroyedNpcByEid), npc_pose_drive + ue_wrap/wisp (landing edge) |
 | WorldActors (event actors) | BeginDeferred (VISIBLE for most; `piramidSpawner_C` = EX_CallMath INVISIBLE) | 2nd `BeginDeferred` interceptor (disjoint, NAME-matched allowlist) + EX Func-thunk drain -> `HostEnrollExSpawn`; destroy = PRE observer + pose-walk dead-retire (SELF-destroys invisible) | host eid | world_actor_sync, npc_world_enum (EX catch), piramid_sync (choreography) |
-| Kerfur (prop⇄NPC) | conversion verbs (EX_CallMath, INVISIBLE) | **conversion death-watch POLL** + KerfurConvert broadcast | host **KerfurId** (spans both forms) + the per-form eid | kerfur_entity, kerfur_convert, kerfur_command, kerfur_prop_adoption |
+| Kerfur (prop⇄NPC) | conversion verbs (EX_CallMath, INVISIBLE) | **conversion death-watch POLL** (the EXCLUSIVE kerfur death-edge owner — the generic npc pose-walk dead-retire SKIPS kerfur-family since 2026-07-05, see the gating note below) + KerfurConvert broadcast | host **KerfurId** (spans both forms) + the per-form eid | kerfur_entity, kerfur_convert, kerfur_command, kerfur_prop_adoption |
+
+> **GATING UPDATE 2026-07-05 [V live-failure root-fix, `ff338d87`] — every catch/enroll above is
+> HOSTING-gated, NEVER connected()-gated.** Identity/tracking seams (spawn interceptors, the EX-catch +
+> its drain, the pose-walk dead-retires, the kerfur conversion poll's host branch) run whenever the
+> session exists with role Host — an event actor spawned while the host is ALONE must still enroll, or
+> the join connect-snapshot has nothing to re-send (the 0s pyramid failure: joiner saw an empty world
+> mid-event). Only wire SENDS are peer-gated. Sibling fix in the same commit: the per-tick npc dead-retire
+> had raced the 5 Hz kerfur conversion poll since 2026-07-03 and erased the ALIVE->DEAD evidence before
+> the poll could read it as a conversion (even connected) — kerfur-family deaths returned to the poll
+> (one owner per death edge). [[lesson-tracking-gates-on-hosting-not-connected]]
 
 ## Per-family detail
 

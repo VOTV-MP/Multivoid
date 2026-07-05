@@ -122,7 +122,11 @@ Original design points (all shipped as described unless noted above):
 5. **Late-join answer** (extends COOP_EVENT_JOIN.md 3.4): lane-owned — the WorldActor
    join snapshot delivers the in-flight pyramid at its current transform; killerwisps
    arrive via the npc join snapshot; registry parity comes from the mirror's own
-   BeginPlay setEvent. The v98 EventSnapshot carries 'piramid' to the joiner but the
+   BeginPlay setEvent. **This answer was FALSE until 2026-07-05 `ff338d87` for the
+   canonical case (pyramid spawned while the host was ALONE): the enroll seams were
+   connected()-gated, so nothing was tracked and the join snapshots were empty — the
+   user's live 0s repro ("joiner sees nothing"). Fixed as a class (hosting-gated
+   tracking, COOP_EVENT_JOIN 3.4 rule); re-test pending (runbook 0s-FIX).** The v98 EventSnapshot carries 'piramid' to the joiner but the
    verdict table skips it as lane-owned — the correct answer, not a gap. No
    replay-from-t0 (host-random path makes replay divergent by construction). v98 also
    closed the gather sub-gap: `piramid_sync::QueueConnectBroadcastForSlot` re-sends an
@@ -154,9 +158,13 @@ Original design points (all shipped as described unless noted above):
   via npc lane -> host END self-destroy caught by dead-retire -> client mirror K2'd ->
   registry `END elapsed=211s`. 0 ERROR both peers; save restored byte-identical.
 - Registry probe on the pyramid: PROVEN (BEGIN/END both live runs).
+- **Mid-join hands-on attempt 1 FAILED (2026-07-05 ~11:00, user)**: client joined during
+  the walk and saw NOTHING — root cause was the connection-gated host tracking (not this
+  lane, not the v98 wire); root-fixed as a class same hour (`ff338d87`, see point 5).
 - **Still pending (hands-on)**: the devs'-gauntlet VISUAL pass — same pyramid, same walk,
-  same gather beams/montage on both screens; the mid-join variant (client joins while it
-  walks — WA connect snapshot delivers the transform; a join DURING a gather now gets the
-  v98 join-edge PyramidGather re-send, code-verified only). And the
+  same gather beams/montage on both screens; the mid-join RE-TEST after `ff338d87`
+  (runbook 0s-FIX — expected: host `ex-enroll 'piramid2_C'` at spawn while alone, then
+  `connect-snapshot -- sent N existing WA(s)` at the join, client materialized mirror);
+  a join DURING a gather (v98 join-edge PyramidGather re-send, code-verified only). And the
   native (non-forced) trigger: a client puppet standing in the host's armed Signal Lab box
   — verify the TB overlap filter accepts the puppet (section 3 point 1 fallback if not).

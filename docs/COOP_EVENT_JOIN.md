@@ -179,3 +179,9 @@ Phase 1 is VERIFIED only by a hands-on: host starts pyramid (dev event_force), c
 joins mid-flight, both players see the pyramid; client log shows the snapshot arrival +
 active-override replay; host log shows registry BEGIN/END edges. Autonomous smoke can
 only prove packet flow (snapshot sent/received/queued) — not the visuals.
+
+**Attempt 1 FAILED (2026-07-05 ~11:00, user live): the joiner saw NOTHING.** Root cause
+was NOT this contract's wire — the host-side enroll/tracking seams were connected()-gated,
+so a pyramid spawned while the host was alone never entered the mirrors and the 3.4 lane
+snapshots had nothing to send. Root-fixed as a class same hour (`ff338d87`; the 3.4
+tracking rule above was written from it). Re-test pending (runbook 0s-FIX).
