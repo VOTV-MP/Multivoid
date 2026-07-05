@@ -321,6 +321,24 @@ Each item below is a feature increment series. Cross-referenced in
        `ENABLE_ICE=OFF` today.
 - ☐ Ragdoll sync (non-trivial — VOTV ragdoll renders on a SEPARATE
        invisible body; we'd be inventing visible ragdoll on the puppet).
+- ☐ LuaJIT resource system, MTA-shape (designed-not-scheduled; user ask
+       2026-07-05: "MTA/SAMP have scripts support... custom gamemodes,
+       filterscripts, their own admin systems"). Post-sync-parity (R5+).
+       Shape: LuaJIT vendored INTO votv-coop.dll (RULE №3 — like MinHook/
+       ImGui; UE4SS-Lua stays dev-only), `resources/<name>/` folders with
+       a meta-manifest (MTA meta.xml analog), one sandboxed lua_State per
+       resource (no io/os by default), start/stop at runtime. API spine =
+       what already exists as C++ subsystems: coop/element registry
+       (element-tree functions), ProcessEvent-visible seams
+       (addEventHandler analog), one new ReliableKind ScriptEvent
+       namespaced per resource (triggerServerEvent/triggerClientEvent
+       analog), chat/nameplate/moderation/ImGui as stdlib. Client-script
+       distribution at join = the one MTA piece currently in the
+       explicitly-skipped column (asset-replication lite, hash-verified)
+       — revisit then. Phasing: embed + read-only API -> mutations via
+       existing lanes -> client-side scripts + ACL-like permission model.
+       Nothing built now is throwaway: every principle-2 subsystem API
+       becomes a binding.
 
 ### PR-FOUNDATION queue (foundation audit v2, 2026-05-29)
 Strategic priorities derived from the 14-dimension audit. Read
