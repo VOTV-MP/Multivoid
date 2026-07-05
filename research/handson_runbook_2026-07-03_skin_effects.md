@@ -230,7 +230,28 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-05 ~15:45 (DLL `99620C1E7EA475B0` — ТЕКУЩИЙ; **wire v101 -> v102** — обе копии обновлены)
+## 2026-07-05 вечер (DLL `48F549F1067CD11E` — СОБРАН, НЕ РАЗВЁРНУТ (ты за ПК — деплой по твоей отмашке); **wire v102 -> v103**; коммиты `76ce8c58`+`67527072`)
+
+### 0z-NICKCOLOR. F1 > Cosmetics > Nameplate: свой цвет ника (12f)
+Синкается живьём (NickColorChange=88) и late-джойнерам (поле в Join/PlayerJoined),
+персистится (votv-coop.ini `nick_color=RRGGBB`). ВЕЗДЕ, где рисуется ник: nameplate
+(дефолт белый), чат-префикс (дефолт слот-палитра), плеер-лист (дефолт золото-хоста/белый;
+роль остаётся видна в колонке Link «LAN/P2P HOST»). Сигнальные цвета сильнее: hurt-flash
+красный и окклюзионный серый перебивают кастом на nameplate.
+ПРОГОН (~2 мин): F1 > Cosmetics > Nameplate -> «Custom nickname color» -> крути колесо,
+отпусти (коммит на отпускании) -> на ВТОРОМ пире ник в nameplate/чате/плеер-листе в твоём
+цвете; смени цвет живьём -> обновился; перезапусти игру -> цвет из ini; реджойн другим
+пиром -> late-join согласован. Снятие галки = дефолты везде.
+Лог-ассерты: `nick_color: local nick color -> CUSTOM (persisted; announcing)`,
+`player_handshake: announced local nick color CUSTOM (slot N)`, на приёме
+`nick_color: slot N nick color -> CUSTOM`.
+
+### 0w-a-АПДЕЙТ (той же DLL): окклюзионная HP-полоска — тёмно-красная, не серая
+Твой аск 2026-07-05 вечер: за объектом hp-полоска остаётся КРАСНОЙ — темнее и
+полупрозрачнее обычной (ник по-прежнему серый; hurt-flash перебивает). Проверяется тем же
+прогоном 0w-a ниже.
+
+## 2026-07-05 ~15:45 (DLL `99620C1E7EA475B0` — superseded by `48F549F1067CD11E` (не развёрнут); СТОИТ В ИГРЕ СЕЙЧАС; **wire v101 -> v102** — обе копии обновлены)
 
 ### 0y-PIRAMID-HEAD. Голова+фонарь теперь стримятся (вместо своего рандома)
 Твой вердикт 15:40: «фонарь и голова не до конца на 100% синхронно» (засасывание — 100%

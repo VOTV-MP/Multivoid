@@ -38,12 +38,22 @@ multiplied into the resolution factor. The T-chat input bar matches the
 chat column width; T-chat is available for the whole HOST session (a
 zero-client lobby included), wire send best-effort.
 **Nameplate occlusion (AS-BUILT 2026-07-04 `f8185847`; refined 2026-07-05
-`4011fc73`, verdict = runbook 0w-a):** a peer behind world geometry
-(walls/closed doors/props — pawns never block) keeps a readable plate but the
-WHOLE unit — nick AND health bar — renders GRAY + half-transparent (x0.5;
-user refinement: nothing vanishes, both elements react; hurt-flash red keeps
-priority on both). Line trace via `ue_wrap/trace.cpp` per visible plate on
-the game thread.
+`4011fc73` + `76ce8c58`, verdict = runbook 0w-a):** a peer behind world
+geometry (walls/closed doors/props — pawns never block) keeps a readable
+plate, half-transparent as a unit (x0.5): the NICK renders GRAY; the HEALTH
+BAR stays RED but darker + more translucent than the normal fill (user
+2026-07-05: not gray — «hp красный, но потемнее и полупрозрачный»).
+Hurt-flash red keeps priority on both. Line trace via `ue_wrap/trace.cpp`
+per visible plate on the game thread.
+**F1 > Cosmetics > Nameplate — nickname color (v103, 12f, AS-BUILT 2026-07-05
+`76ce8c58`; hands-on = runbook 0z):** a per-player custom nick color — SYNCED
+(live NickColorChange=88 + a `[has][r][g][b]` field in Join/PlayerJoined for
+late joiners) and persisted (votv-coop.ini `nick_color=RRGGBB`). ONE owner:
+`coop/player/nick_color` (atomic per-slot store; 0 = surface default).
+Consumers: nameplate nick (default white), chat nick prefix (default per-slot
+palette), scoreboard row (default role gold/white — role stays readable via
+the Link column). flash/occluded signal colors keep priority on the
+nameplate. UI = inline hue-wheel picker, commit-on-release.
 **F1 > Administration > Players (AS-BUILT 2026-07-05 `f66d2c7f`, verdict =
 runbook 0w-b):** HOST-role-gated F1 category (dev_menu Cat/Sub `host` flag on
 `roster::LocalIsHost` — clients/solo never see it): Online (roster rows +
