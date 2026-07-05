@@ -694,7 +694,11 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 99;  // v99: EntitySpawnPayload +Scale3D (104->116) -- the
+inline constexpr uint16_t kProtocolVersion = 100; // v100: WorldActorPoseSnapshot +auxYaw (28->32) --
+                                                  // the piramid's visible heading streams as part of
+                                                  // its pose (delta-derivation live-refuted: native
+                                                  // heading turns for up to 10 s after motion stops).
+                                                  // v99: EntitySpawnPayload +Scale3D (104->116) -- the
                                                   // game spawns piramid2_C at scale 2 via the deferred
                                                   // spawn transform; a scale-less mirror spawned at 1
                                                   // renders half-size + floats at the scale-2 hover Z
@@ -2196,12 +2200,21 @@ struct WorldActorPoseSnapshot {
     uint32_t elementId;        // 4  -- WorldActor Element id (host range)
     float    x, y, z;          // 12 -- world cm (actor location = pivot)
     float    pitch, yaw, roll; // 12 -- actor world rotation deg (NormalizeAxis'd, FULL rotation)
+    float    auxYaw;           // 4  -- v100: class-specific VISIBLE-heading yaw when it lives outside
+                               //      the actor rotation. piramid2_C: the movementVector/Arrow
+                               //      ArrowComponents' world yaw (the actor root NEVER yaws -- the
+                               //      AnimBP orients the body off the component; deriving this from
+                               //      position deltas was live-refuted 2026-07-05: the native
+                               //      heading keeps easing toward the walk target for up to 10 s
+                               //      AFTER motion stops, which no delta can see). Classes whose
+                               //      facing IS the actor rotation stream auxYaw == yaw (client
+                               //      consumers are class-specific; the generic drive ignores it).
 };
-static_assert(sizeof(WorldActorPoseSnapshot) == 28, "WorldActorPoseSnapshot must be 28 bytes");
+static_assert(sizeof(WorldActorPoseSnapshot) == 32, "WorldActorPoseSnapshot must be 32 bytes (v100: +auxYaw)");
 
 // Max WorldActors per WorldActorPose datagram, MTU-capped: (1400 - PacketHeader(20) -
-// EntityPoseBatchHeader(4)) / 28 = 49. The realistic event WA count is a handful (a few UFOs at once),
-// so 31 (the NPC cap) is ample headroom while keeping the datagram (20 + 4 + 31*28 = 892) well under MTU.
+// EntityPoseBatchHeader(4)) / 32 = 43. The realistic event WA count is a handful (a few UFOs at once),
+// so 31 (the NPC cap) is ample headroom while keeping the datagram (20 + 4 + 31*32 = 1016) well under MTU.
 // The batch reuses EntityPoseBatchHeader (a generic count+pad), NOT a byte-identical twin (RULE 2).
 inline constexpr int kMaxWorldActorBatchEntries = 31;
 inline constexpr int kWorldActorPoseDatagramMax =

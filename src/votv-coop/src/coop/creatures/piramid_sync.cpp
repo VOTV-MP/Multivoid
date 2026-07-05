@@ -110,20 +110,10 @@ PendingGather g_pending;
 // mirrors tick-off; the pyramid's tick carries the beam params / look-at / hover smoothing).
 std::unordered_set<uint32_t> g_tickRestored;
 
-// CLIENT: per-mirror derived heading state (the facing axis). yaw eases toward the wire-motion
-// direction at the native full-walk turn rate (Turning step: RInterpTo speed = Lerp(0,1,
-// multiplyWalk) -> 1.0 at full walk); standing still holds the last heading, which is exactly
-// the native behavior (turning is gated on multiplyWalk > 0, i.e. only while walking).
-struct MirrorHeading {
-    float lastX = 0.f, lastY = 0.f;
-    long long lastMs = 0;
-    float yaw = 0.f;
-    bool hasLast = false;
-    bool hasYaw = false;
-};
-std::unordered_map<uint32_t, MirrorHeading> g_heading;
-constexpr float kHeadingTurnSpeed = 1.0f;    // native RInterpTo speed at multiplyWalk=1
-constexpr float kHeadingMoveEpsSq = 1.0f;    // <1 unit/tick XY motion = standing (hover doesn't drift XY)
+// (v100) The facing axis streams as WorldActorPoseSnapshot.auxYaw -- the HOST's true component
+// heading at pose cadence. The earlier position-delta derivation was live-refuted 2026-07-05
+// («сбивается иногда»): the native heading keeps RInterpTo-easing toward the walk target for up
+// to 10 s AFTER motion stops (the mov timeline ramp), which no motion delta can observe.
 
 std::atomic<int> g_relayCount{0};
 std::atomic<int> g_replayCount{0};
@@ -134,14 +124,6 @@ long long g_lastSweepMs = 0;   // 1 s host edge-map sweep throttle
 long long NowMs() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-// Shortest-arc yaw delta in degrees, (-180, 180] (the npc_pose_drive/world_actor helper shape).
-float OffsetDegrees(float fromDeg, float toDeg) {
-    float d = std::fmod(toDeg - fromDeg, 360.f);
-    if (d > 180.f)  d -= 360.f;
-    if (d < -180.f) d += 360.f;
-    return d;
 }
 
 bool ReadBoolAt(void* obj, int32_t off, uint8_t mask) {
@@ -307,51 +289,6 @@ void RestoreNewClientMirrors() {
     }
 }
 
-// CLIENT facing drive, every tick (cheap: pyramids only, ~1 live during the event). Derive the
-// heading from the streamed-position XY delta (velocity direction == movementVector heading by
-// construction of the native march), ease at the native full-walk turn rate, and write BOTH
-// heading ArrowComponents' world rotation -- the exact state the host's Turning step maintains,
-// read by the AnimBP through its piramid2 back-ref. Standing (no delta) holds the last heading,
-// matching the native multiplyWalk>0 turning gate.
-void DriveMirrorHeadings() {
-    if (g_offMovementVector < 0 || g_tickRestored.empty()) return;
-    std::vector<coop::element::WorldActor*> snap;
-    coop::element::WaMirrors().Snapshot(snap);
-    const long long nowMs = NowMs();
-    for (auto* el : snap) {
-        if (!el || !el->IsMirror() || el->GetTypeName() != kPyramidTypeName) continue;
-        void* actor = el->GetActor();
-        if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) continue;
-        const auto loc = E::GetActorLocation(actor);
-        MirrorHeading& hs = g_heading[static_cast<uint32_t>(el->GetId())];
-        if (!hs.hasLast) {
-            hs.lastX = loc.X; hs.lastY = loc.Y; hs.lastMs = nowMs; hs.hasLast = true;
-            continue;
-        }
-        const float dx = loc.X - hs.lastX, dy = loc.Y - hs.lastY;
-        const float dt = static_cast<float>(nowMs - hs.lastMs) * 0.001f;
-        hs.lastX = loc.X; hs.lastY = loc.Y; hs.lastMs = nowMs;
-        if (dx * dx + dy * dy > kHeadingMoveEpsSq) {
-            constexpr float kRadToDeg = 57.29577951308232f;
-            const float targetYaw = std::atan2(dy, dx) * kRadToDeg;
-            if (!hs.hasYaw) { hs.yaw = targetYaw; hs.hasYaw = true; }
-            else {
-                float a = dt * kHeadingTurnSpeed;
-                if (a > 1.f) a = 1.f;
-                hs.yaw += OffsetDegrees(hs.yaw, targetYaw) * a;
-            }
-        }
-        if (!hs.hasYaw) continue;  // hasn't moved yet -- leave the native spawn heading
-        const ue_wrap::FRotator rot{0.f, hs.yaw, 0.f};
-        void* mv = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offMovementVector);
-        if (mv) E::SetComponentWorldRotation(mv, rot);
-        if (g_offArrow >= 0) {
-            void* ar = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offArrow);
-            if (ar) E::SetComponentWorldRotation(ar, rot);
-        }
-    }
-}
-
 // Attempt the queued gather replay; retried every tick until converged or deadline.
 void TryReplayPendingGather() {
     if (!g_pending.active) return;
@@ -453,13 +390,35 @@ void Tick() {
         return;
     }
 
-    // Client: restore-scan at 250 ms; heading drive + pending replay every tick (cheap, rare).
+    // Client: restore-scan at 250 ms; pending replay every tick (cheap Get()s, rare).
     if (now - g_lastProbeMs >= 250) {
         g_lastProbeMs = now;
         RestoreNewClientMirrors();
     }
-    DriveMirrorHeadings();
     TryReplayPendingGather();
+}
+
+bool ReadHostHeadingYaw(void* actor, float& outYaw) {
+    // Pre-arm (the first ~250 ms after enroll) or an offset miss: caller falls back to the actor
+    // yaw. No live-check here -- the caller (TickPoseStream) just IsLiveByIndex'd the actor.
+    if (!actor || !g_armedAtomic.load(std::memory_order_acquire) || g_offMovementVector < 0)
+        return false;
+    void* mv = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offMovementVector);
+    if (!mv) return false;
+    outYaw = E::GetComponentWorldRotation(mv).Yaw;
+    return true;
+}
+
+void ApplyMirrorHeadingYaw(void* actor, float yaw) {
+    if (!actor || !g_armedAtomic.load(std::memory_order_acquire) || g_offMovementVector < 0)
+        return;
+    const ue_wrap::FRotator rot{0.f, yaw, 0.f};
+    void* mv = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offMovementVector);
+    if (mv) E::SetComponentWorldRotation(mv, rot);
+    if (g_offArrow >= 0) {
+        void* ar = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offArrow);
+        if (ar) E::SetComponentWorldRotation(ar, rot);
+    }
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
@@ -502,7 +461,6 @@ void OnDisconnect() {
     g_pending = PendingGather{};
     g_lastGathering.clear();
     g_tickRestored.clear();
-    g_heading.clear();
     // Probe counters are per-session: a piramidforce re-run in the SAME process after a
     // reconnect must not see the previous session's relays (correctness-audit nit 2026-07-04).
     g_relayCount.store(0, std::memory_order_relaxed);

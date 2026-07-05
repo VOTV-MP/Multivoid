@@ -56,10 +56,12 @@ void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
     if (!hasPose_ || distErr > kSnapBaseCm) {
         curPos_ = tgtPos;
         curPitch_ = snap.pitch; curYaw_ = snap.yaw; curRoll_ = snap.roll;
+        curAuxYaw_ = snap.auxYaw;
         targetPos_ = tgtPos;
         targetPitch_ = snap.pitch; targetYaw_ = snap.yaw; targetRoll_ = snap.roll;
+        targetAuxYaw_ = snap.auxYaw;
         errorPos_ = ue_wrap::FVector{};
-        errorPitch_ = errorYaw_ = errorRoll_ = 0.f;
+        errorPitch_ = errorYaw_ = errorRoll_ = errorAuxYaw_ = 0.f;
         window_.Close();  // frozen at target (snapped)
         hasPose_ = true;
         dirty_ = true;
@@ -72,12 +74,14 @@ void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
 
     targetPos_ = tgtPos;
     targetPitch_ = snap.pitch; targetYaw_ = snap.yaw; targetRoll_ = snap.roll;
+    targetAuxYaw_ = snap.auxYaw;
     errorPos_.X = tgtPos.X - curPos_.X;
     errorPos_.Y = tgtPos.Y - curPos_.Y;
     errorPos_.Z = tgtPos.Z - curPos_.Z;
     errorPitch_ = OffsetDegrees(curPitch_, snap.pitch);
     errorYaw_   = OffsetDegrees(curYaw_,   snap.yaw);
     errorRoll_  = OffsetDegrees(curRoll_,  snap.roll);
+    errorAuxYaw_ = OffsetDegrees(curAuxYaw_, snap.auxYaw);
     window_.Open(NowMs(), kInterpWindowMs);
     dirty_ = true;
 }
@@ -92,12 +96,14 @@ void WorldActor::AdvanceInterp() {
     curPitch_ += errorPitch_ * dAlpha;
     curYaw_   += errorYaw_   * dAlpha;
     curRoll_  += errorRoll_  * dAlpha;
+    curAuxYaw_ += errorAuxYaw_ * dAlpha;
     dirty_ = true;
     if (arrived) {
         curPos_ = targetPos_;  // exact arrival (kills float drift over the window)
         curPitch_ = targetPitch_;
         curYaw_   = targetYaw_;
         curRoll_  = targetRoll_;
+        curAuxYaw_ = targetAuxYaw_;
     }
 }
 

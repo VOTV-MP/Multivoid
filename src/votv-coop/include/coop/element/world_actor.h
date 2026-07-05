@@ -52,6 +52,12 @@ public:
     // is live. Game thread only.
     void Tick();
 
+    // v100: the interp'd class-specific visible-heading yaw (WorldActorPoseSnapshot.auxYaw).
+    // Consumed by class lanes (piramid_sync writes it to the heading ArrowComponents); the
+    // generic ApplyToEngine ignores it. Valid once a pose arrived (hasPose()).
+    float CurrentAuxYaw() const { return curAuxYaw_; }
+    bool  HasPose() const { return hasPose_; }
+
 private:
     void AdvanceInterp();   // advance the open window to now (mirrors Npc::AdvanceInterp)
     void ApplyToEngine();   // SetActorLocation + SetActorRotation (FULL rotation; no CMC, no kerfur)
@@ -69,6 +75,9 @@ private:
     float            errorPitch_ = 0.f;  // shortest-arc deltas, applied dAlpha/frame
     float            errorYaw_   = 0.f;
     float            errorRoll_  = 0.f;
+    float            curAuxYaw_    = 0.f;  // v100 class-specific heading (see CurrentAuxYaw)
+    float            targetAuxYaw_ = 0.f;
+    float            errorAuxYaw_  = 0.f;
     coop::LerpWindow window_;          // shared interp timing (same one RemotePlayer / Npc own)
     bool             hasPose_ = false; // first packet snaps
     bool             dirty_   = true;  // unapplied change to push to the engine

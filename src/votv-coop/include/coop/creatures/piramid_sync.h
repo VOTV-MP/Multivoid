@@ -70,6 +70,17 @@ void OnDisconnect();
 // thread (event_dispatch_entity posts it).
 void OnPyramidGather(const coop::net::PyramidGatherPayload& payload);
 
+// HOST pose augmentation (v100 auxYaw, called by world_actor_sync::TickPoseStream per pyramid
+// entry, game thread): read the actor's VISIBLE heading -- the movementVector ArrowComponent's
+// world yaw (the actor root never yaws; the AnimBP orients the body off the component). Returns
+// false pre-arm / on an offset miss (caller falls back to the actor yaw).
+bool ReadHostHeadingYaw(void* actor, float& outYaw);
+
+// CLIENT facing drive (the auxYaw consumer): write `yaw` to the pyramid mirror's BOTH heading
+// ArrowComponents -- the exact state the host's Turning step maintains. Called by
+// world_actor_sync's client drive after each pose apply for a piramid2_C mirror.
+void ApplyMirrorHeadingYaw(void* actor, float yaw);
+
 // Probe/diagnostic accessors (autotest_piramidforce; thread-safe atomics).
 bool DebugHooksArmed();
 int  DebugHostRelayCount();

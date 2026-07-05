@@ -17,6 +17,8 @@
 
 #include "coop/creatures/world_actor_sync.h"
 
+#include "coop/creatures/piramid_sync.h"  // v100 auxYaw: the piramid heading producer/consumer
+
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -435,6 +437,16 @@ void TickPoseStream() {
         snap.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         snap.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         snap.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+        // v100 auxYaw: the class-specific VISIBLE heading. piramid2_C keeps its root at yaw 0 and
+        // turns its movementVector ArrowComponent instead (the AnimBP orients the body off it) --
+        // stream THAT so the client mirror faces where the host does, including the up-to-10 s
+        // post-stop easing no position delta can see. Other classes: facing == actor yaw.
+        snap.auxYaw = snap.yaw;
+        if (el->GetTypeName() == "piramid2_C") {
+            float hy = 0.f;
+            if (coop::piramid_sync::ReadHostHeadingYaw(actor, hy))
+                snap.auxYaw = ue_wrap::NormalizeAxis(hy);
+        }
         batch.push_back(snap);
     }
     for (const DeadWa& d : dead) {
@@ -464,8 +476,8 @@ void TickPoseStream() {
         if (nowMs - s_lastReadTraceMs >= 1000) {
             s_lastReadTraceMs = nowMs;
             for (const auto& snap : batch)
-                UE_LOGI("[WA-TRACE host-read] eid=%u loc=(%.0f,%.0f,%.0f) yaw=%.1f (n=%zu connected=%d)",
-                        snap.elementId, snap.x, snap.y, snap.z, snap.yaw, batch.size(), connected ? 1 : 0);
+                UE_LOGI("[WA-TRACE host-read] eid=%u loc=(%.0f,%.0f,%.0f) yaw=%.1f aux=%.1f (n=%zu connected=%d)",
+                        snap.elementId, snap.x, snap.y, snap.z, snap.yaw, snap.auxYaw, batch.size(), connected ? 1 : 0);
         }
     }
     if (!connected) return;  // publish is peer-dependent
@@ -786,8 +798,8 @@ void TickClientWorldActors() {
                 continue;
             }
             el->SetTargetPose(snap);
-            if (trace) UE_LOGI("[WA-TRACE client-apply] eid=%u wire=(%.0f,%.0f,%.0f) yaw=%.1f -> SetTargetPose",
-                               snap.elementId, snap.x, snap.y, snap.z, snap.yaw);
+            if (trace) UE_LOGI("[WA-TRACE client-apply] eid=%u wire=(%.0f,%.0f,%.0f) yaw=%.1f aux=%.1f -> SetTargetPose",
+                               snap.elementId, snap.x, snap.y, snap.z, snap.yaw, snap.auxYaw);
         }
         static bool s_loggedFirst = false;
         if (!batch.empty() && !s_loggedFirst) { s_loggedFirst = true;
@@ -798,8 +810,17 @@ void TickClientWorldActors() {
     //    scratch (no per-tick heap alloc); client game thread only.
     static std::vector<coop::element::WorldActor*> elems;
     WaMirrors().Snapshot(elems);
-    for (coop::element::WorldActor* el : elems)
-        if (el && el->IsMirror()) el->Tick();
+    for (coop::element::WorldActor* el : elems) {
+        if (!el || !el->IsMirror()) continue;
+        el->Tick();
+        // v100 auxYaw consumer: the piramid's visible heading lives in its ArrowComponents, not
+        // the actor rotation the generic drive writes -- hand the interp'd value to the class lane.
+        if (el->HasPose() && el->GetTypeName() == "piramid2_C") {
+            void* actor = el->GetActor();
+            if (actor && R::IsLiveByIndex(actor, el->GetInternalIdx()))
+                coop::piramid_sync::ApplyMirrorHeadingYaw(actor, el->CurrentAuxYaw());
+        }
+    }
 }
 
 }  // namespace coop::world_actor_sync

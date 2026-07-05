@@ -182,7 +182,20 @@ piramid_sync (no wire change): client derives heading from streamed-position XY
 deltas — velocity direction == heading by construction of the native march —
 eases it at the native full-walk turn rate (1.0), holds it while standing (the
 native multiplyWalk>0 gate), and writes BOTH ArrowComponents' world rotation
-every tick. Aux-latched: an offset miss disables only the heading drive)**.
+every tick. Aux-latched: an offset miss disables only the heading drive)** →
+**`B079A094E0D6B865` (2026-07-05 ~15:20, wire v99→v100 — ТЕКУЩИЙ: heading
+derivation LIVE-REFUTED by the user («сбивается иногда, смотрит немного не
+туда») — the native heading keeps RInterpTo-easing toward the walk target for
+up to 10 s AFTER motion stops (the mov-timeline ramp-down), which no position
+delta can observe; plus the delta signal itself rides the already-interp'd
+position (double smoothing). RULE-1 fix: stream the TRUE host heading —
+WorldActorPoseSnapshot +auxYaw 28→32 (v100), host TickPoseStream fills it per
+class (piramid2_C: movementVector world yaw via piramid_sync::ReadHostHeadingYaw;
+every other class: == actor yaw), the WorldActor element interps auxYaw through
+the same LerpWindow as the other angles, and the client drive hands the interp'd
+value to piramid_sync::ApplyMirrorHeadingYaw (both ArrowComponents) right after
+each pose apply. The delta-derivation (DriveMirrorHeadings + MirrorHeading map)
+is GONE per RULE 2. WA-TRACE host-read/client-apply lines now print aux=)**.
 Late-eve autonomy
 ("Go next"): baseline smoke PASS; events feature verified e2e (`eventforce_test: VERDICT
 PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY runEvent
@@ -190,9 +203,22 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-05 ~14:40 (DLL `75BD579DC792E7F7` — ТЕКУЩИЙ, wire v99)
+## 2026-07-05 ~15:20 (DLL `B079A094E0D6B865` — ТЕКУЩИЙ, wire v100)
 
-### 0s-FACING. ПИРАМИДА СМОТРИТ НЕ ТУДА — heading-драйв зашит
+### 0s-FACING2. HEADING ТЕПЕРЬ СТРИМИТСЯ С ХОСТА (истина вместо деривации)
+Твой вердикт 0s-FACING: работает, но «сбивается иногда» и лёгкий рассинхрон направления.
+Причина принципиальная: натив доворачивает heading до 10 секунд ПОСЛЕ остановки (плавное
+гашение mov-таймлайна + RInterpTo к цели) — из дельт позиции это невидимо, плюс дельты сами
+идут по уже сглаженной интерп-позиции (двойное сглаживание = лаг на поворотах). FIX v100:
+heading хоста (world yaw компонента movementVector) теперь едет В САМОМ pose-потоке
+(auxYaw, +4 байта на запись), интерполируется у клиента тем же окном, что и позиция, и
+пишется в оба ArrowComponent'а после каждого pose-apply. Деривация удалена полностью.
+
+ПРОГОН (те же 2 минуты): piramid → NOW!, 60-90 с, посмотри именно РАЗВОРОТЫ:
+- смена направления марша: клиент доворачивает СИНХРОННО с хостом (лаг = интерп ~75 мс);
+- остановка у виспа (gather): пирамида ДОВОРАЧИВАЕТСЯ на виспа стоя — теперь и у клиента;
+- лог-ассерт: хост `[WA-TRACE host-read] ... aux=<меняется>` при повороте, клиент
+  `[WA-TRACE client-apply] ... aux=<та же величина>`.
 Твой вердикт 0s-SCALE: пирамида у клиента ИДЁТ (scale-фикс подтверждён), но смотрит не в
 сторону движения. Корень (RE + трасса yaw=0.0): root пирамиды никогда не вращается — видимый
 разворот тела = world-rotation компонентов movementVector/Arrow, которые у клиента никто не
