@@ -2,6 +2,7 @@
 
 #include "coop/comms/chat_sync.h"
 
+#include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -125,9 +126,13 @@ void QueueSend(const std::string& utf8Text) {
         if (s->role() == coop::net::Role::Host || localSlot == coop::players::kPeerIdUnknown)
             localSlot = 0;
         const std::string nick = NickUtf8(coop::player_handshake::LocalNickname());
-        const std::string line = nick + ": " + SanitizeUtf8(text.data(), text.size());
+        const std::string msg = SanitizeUtf8(text.data(), text.size());
+        const std::string line = nick + ": " + msg;
         coop::chat_feed::PushChat(line, static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
                                   localSlot);
+        // 12g overhead bubble (message only -- the plate names the speaker). Our own
+        // slot never renders locally (no self puppet); stored anyway for symmetry.
+        coop::chat_bubbles::OnChatLine(localSlot, msg.c_str());
         UE_LOGI("chat: sent %u byte(s)%s", static_cast<unsigned>(text.size()),
                 wired ? "" : " (no peers connected -- local echo only)");
     });
@@ -138,9 +143,11 @@ void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeer
     if (n == 0) return;
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
     const std::string nick = NickUtf8(coop::player_handshake::NicknameForSlot(senderPeerSlot));
-    const std::string line = nick + ": " + SanitizeUtf8(payload.text, n);
+    const std::string msg = SanitizeUtf8(payload.text, n);
+    const std::string line = nick + ": " + msg;
     coop::chat_feed::PushChat(line, static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
                               senderPeerSlot);
+    coop::chat_bubbles::OnChatLine(senderPeerSlot, msg.c_str());  // 12g overhead bubble
 }
 
 void OnDisconnect() {

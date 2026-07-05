@@ -81,13 +81,37 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
 
     ImFont* font = ImGui::GetFont();
     const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.f, line);
+
+    // 12g overhead chat bubble rows -- split BEFORE the on-screen clamp so the
+    // clamp can reserve the bubble's height (audit 2026-07-05: an unclamped
+    // bubble stack rendered off-screen-top when looking up at a nearby peer).
+    const float bpx = px * 0.88f;
+    const float rowH = bpx + S(1.f) * s;
+    constexpr int kMaxRows = 5;
+    struct BubbleRow { const char* b; const char* e; };
+    BubbleRow rows[kMaxRows];
+    int nRows = 0;
+    if (p.bubbleAlpha > 0.f && p.bubble[0]) {
+        const float wrapW = S(240.f) * s;
+        const char* sPtr = p.bubble;
+        const char* bEnd = p.bubble + std::strlen(p.bubble);
+        while (sPtr < bEnd && nRows < kMaxRows) {
+            const char* rowEnd = font->CalcWordWrapPositionA(bpx / font->FontSize, sPtr, bEnd, wrapW);
+            if (rowEnd == sPtr) rowEnd = sPtr + 1;  // never stall on a single overlong glyph
+            rows[nRows++] = {sPtr, rowEnd};
+            sPtr = rowEnd;
+            while (sPtr < bEnd && *sPtr == ' ') ++sPtr;  // swallow the wrap-point space
+        }
+    }
+    const float bubbleH = nRows > 0 ? rowH * static_cast<float>(nRows) + S(4.f) * s : 0.f;
+
     // Keep the whole nameplate on-screen: a peer in FRONT of you but whose head sits
     // past a screen edge still shows the label at the edge instead of vanishing.
     const ImGuiIO& io = ImGui::GetIO();
     const float m = S(6.f);
     const float halfW = std::max(sz.x, barW) * 0.5f;
     const float ax = std::clamp(p.x, m + halfW, io.DisplaySize.x - m - halfW);
-    const float ay = std::clamp(p.y, m + sz.y + gap, io.DisplaySize.y - m - barH - barGap);
+    const float ay = std::clamp(p.y, m + sz.y + gap + bubbleH, io.DisplaySize.y - m - barH - barGap);
     const ImVec2 textPos(ax - sz.x * 0.5f, ay - sz.y - gap);
     const ImVec2 bp(ax - barW * 0.5f, ay - barGap);
 
@@ -101,6 +125,29 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const ImVec2 boxMax(std::max(textPos.x + sz.x, bp.x + barW) + padX, bp.y + barH + padY);
 
     TextOutlined(dl, font, px, textPos, textCol, outline, line);
+
+    // 12g overhead chat bubble (MTA/SAMP shape): the peer's last chat message,
+    // word-wrapped + centered ABOVE the nick, its own hold/fade (chat_bubbles)
+    // multiplied into the plate's distance/occlusion alpha. Outlined text only --
+    // no backing box, consistent with the plate (user 2026-07-02: no black
+    // rectangles). Rows were split above (before the clamp, which reserved
+    // bubbleH); capped so a max-length line can't tower over the scene.
+    if (nRows > 0) {
+        const float ba = a * std::clamp(p.bubbleAlpha, 0.f, 1.f);
+        const ImU32 bCol = IM_COL32(255, 255, 255, static_cast<int>(ba * 235.f));
+        const ImU32 bOut = IM_COL32(0, 0, 0, static_cast<int>(ba * 205.f));
+        float y = textPos.y - S(4.f) * s - rowH * static_cast<float>(nRows);
+        for (int r = 0; r < nRows; ++r) {
+            char buf[224];
+            const size_t len = std::min(static_cast<size_t>(rows[r].e - rows[r].b),
+                                        sizeof(buf) - 1);
+            std::memcpy(buf, rows[r].b, len);
+            buf[len] = '\0';
+            const ImVec2 rsz = font->CalcTextSizeA(bpx, FLT_MAX, 0.f, buf);
+            TextOutlined(dl, font, bpx, ImVec2(ax - rsz.x * 0.5f, y), bCol, bOut, buf);
+            y += rowH;
+        }
+    }
 
     // Health bar (dark red). While occluded the fill stays RED -- a darker,
     // more transparent red than the normal fill (user 2026-07-05: not gray;

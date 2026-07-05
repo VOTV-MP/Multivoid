@@ -752,12 +752,16 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
     // v94: the persisted nameplate pref (absent = visible). The Join prefs byte reads it.
     coop::nameplate::SetInitialLocalVisible(cfg::ReadIniValue("nameplate", "1") != "0");
-    // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex; absent/empty =
-    // surface defaults). The Join color field reads it.
+    // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex). The Join
+    // color field reads it. Key ABSENT (a new identity) = custom WHITE by default
+    // (user 2026-07-05); an explicitly EMPTY value (the user unchecked "Custom
+    // nickname color") = the per-surface defaults (chat palette / role colors).
     {
-        const std::string hex = cfg::ReadIniValue("nick_color", "");
+        const std::string hex = cfg::ReadIniValue("nick_color", "unset");
         uint32_t packed = 0;
-        if (hex.size() == 6) {
+        if (hex == "unset") {
+            packed = coop::nick_color::Pack(255, 255, 255);
+        } else if (hex.size() == 6) {
             unsigned rgb = 0;
             bool ok = true;
             for (char c : hex) {

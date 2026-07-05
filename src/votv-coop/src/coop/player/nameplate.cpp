@@ -1,5 +1,6 @@
 #include "coop/player/nameplate.h"
 
+#include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
@@ -159,6 +160,7 @@ void Update() {
         pl.ping = p->GetPing();
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
+        pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble
         CopyNickAscii(pl.nick, p->GetNickname());
 
         ++snap.count;

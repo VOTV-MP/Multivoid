@@ -37,6 +37,8 @@ struct Plate {
     int   ping = -1;         // RTT ms (-1 = unmeasured -> no suffix; 0 = sub-ms LAN -> "<1ms")
     uint8_t voiceIcon = 0;   // v66: coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
     uint32_t colorRGB = 0;   // v103 (12f): packed custom nick color (coop::nick_color; 0 = white)
+    float bubbleAlpha = 0.f; // 12g: overhead chat bubble fade (0 = none; rides the plate anchor)
+    char  bubble[208] = {};  // 12g: the peer's last chat message, UTF-8 (chat_bubbles)
     char  nick[24] = {};
 };
 

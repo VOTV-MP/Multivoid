@@ -11,6 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/world/balance_sync.h"
+#include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/session/ini_config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactables/interactable_sync.h"
@@ -67,6 +68,7 @@ void OnSessionStart() {
     coop::player_handshake::Reset();
     coop::seen_players::OnSessionStart();  // clear stale online marks (same discipline)
     coop::chat_feed::Reset();  // drop any prior session's lingering event lines
+    coop::chat_bubbles::ResetSlots();  // 12g: no prior session's overhead bubbles either
 }
 
 void Update(net::Session& session, void* localPlayer) {

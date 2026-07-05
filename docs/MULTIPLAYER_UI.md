@@ -53,7 +53,18 @@ late joiners) and persisted (votv-coop.ini `nick_color=RRGGBB`). ONE owner:
 Consumers: nameplate nick (default white), chat nick prefix (default per-slot
 palette), scoreboard row (default role gold/white — role stays readable via
 the Link column). flash/occluded signal colors keep priority on the
-nameplate. UI = inline hue-wheel picker, commit-on-release.
+nameplate. UI = inline hue-wheel picker, commit DEBOUNCED ~0.35 s after the
+last edit (user bug 2026-07-05: deactivate-after-edit on the composite picker
+never fired — the color only applied on a checkbox re-toggle). A NEW identity
+(no `nick_color=` key) defaults to custom WHITE (user 2026-07-05); an
+explicitly empty value (unchecked box) = the per-surface defaults.
+**Overhead chat bubbles (12g, AS-BUILT 2026-07-05; hands-on = runbook 0aa):**
+MTA/SAMP-style — a player's last chat message renders word-wrapped (max 5
+rows) above their nameplate, 8 s hold + 0.7 s fade, outlined text without a
+backing box. Display-only (`coop/comms/chat_bubbles`, fed by chat_sync next
+to its PushChat calls — nothing new on the wire); rides the nameplate anchor,
+so distance/occlusion fade applies and a v94-hidden plate hides the bubble
+too. The on-screen clamp reserves the bubble height (no off-screen-top).
 **F1 > Administration > Players (AS-BUILT 2026-07-05 `f66d2c7f`, verdict =
 runbook 0w-b):** HOST-role-gated F1 category (dev_menu Cat/Sub `host` flag on
 `roster::LocalIsHost` — clients/solo never see it): Online (roster rows +

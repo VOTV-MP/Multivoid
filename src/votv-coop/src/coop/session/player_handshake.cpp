@@ -16,6 +16,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/player/skin_registry.h"
 #include "ue_wrap/hot_path_guard.h"
+#include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
 #include "ue_wrap/log.h"
 
@@ -335,6 +336,7 @@ void OnSlotDisconnected(int slot) {
     g_skinBySlot[slot].clear();  // v93: a reconnect (or a different peer on this slot) re-announces its skin
     coop::nameplate::OnSlotDisconnected(slot);  // v94: plate pref back to visible for a slot reuse
     coop::nick_color::OnSlotDisconnected(slot);  // v103: nick color back to default for a slot reuse
+    coop::chat_bubbles::OnSlotDisconnected(slot);  // 12g: a reused slot must not inherit a bubble
 }
 
 const std::wstring& NicknameForSlot(int slot) {

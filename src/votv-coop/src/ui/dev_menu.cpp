@@ -340,11 +340,12 @@ void RenderNameplatePref() {
     bool custom = coop::nick_color::IsCustom(cur);
     // The picker's WORKING color: re-seeded only when the live pref changes
     // underneath us (boot/ini or a commit), never per frame -- a per-frame
-    // reseed would snap the swatch back mid-drag (the pref only commits on
-    // release).
+    // reseed would snap the swatch back mid-drag (the pref commits debounced).
     static float    sCol[3] = { 1.f, 1.f, 1.f };
     static uint32_t sSeen = 0xFFFFFFFFu;  // never a valid packed value -> first frame seeds
-    if (cur != sSeen) {
+    static bool     sDirty = false;       // an uncommitted picker edit is pending
+    static double   sLastEditAt = 0.0;
+    if (!sDirty && cur != sSeen) {
         sSeen = cur;
         if (coop::nick_color::IsCustom(cur)) {
             sCol[0] = coop::nick_color::R(cur) / 255.f;
@@ -357,20 +358,28 @@ void RenderNameplatePref() {
                                       static_cast<uint8_t>(sCol[1] * 255.f + 0.5f),
                                       static_cast<uint8_t>(sCol[2] * 255.f + 0.5f));
     };
-    if (ImGui::Checkbox("Custom nickname color", &custom))
+    if (ImGui::Checkbox("Custom nickname color", &custom)) {
+        sDirty = false;  // the toggle IS the commit
         coop::nick_color::RequestLocal(custom ? packWorking() : 0u);
+    }
     if (coop::nick_color::IsCustom(coop::nick_color::LocalPacked())) {
-        // Inline picker (not the ColorEdit popup): commit-on-release needs the
-        // edited item ITSELF to report deactivation, which a popup's swatch
-        // button never does.
         ImGui::SetNextItemWidth(S(220.f));
-        ImGui::ColorPicker3("##nickcolor", sCol,
-                            ImGuiColorEditFlags_PickerHueWheel |
-                                ImGuiColorEditFlags_NoSidePreview |
-                                ImGuiColorEditFlags_NoAlpha);
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
+        // Commit DEBOUNCED on the picker's own value-changed signal (user bug
+        // 2026-07-05: IsItemDeactivatedAfterEdit on the composite picker never
+        // fired reliably -- the color only applied after re-toggling the
+        // checkbox). Every edit re-arms a short timer; ~0.35 s after the last
+        // change the pref persists + announces ONCE (no per-drag-frame wire spam).
+        if (ImGui::ColorPicker3("##nickcolor", sCol,
+                                ImGuiColorEditFlags_PickerHueWheel |
+                                    ImGuiColorEditFlags_NoSidePreview |
+                                    ImGuiColorEditFlags_NoAlpha)) {
+            sDirty = true;
+            sLastEditAt = ImGui::GetTime();
+        }
+        if (sDirty && ImGui::GetTime() - sLastEditAt > 0.35) {
+            sDirty = false;
             const uint32_t packed = packWorking();
-            sSeen = packed;  // the commit lands async (GT hop); don't re-seed from the stale pref meanwhile
+            sSeen = packed;  // the commit lands async (GT hop); don't re-seed meanwhile
             coop::nick_color::RequestLocal(packed);
         }
     }
