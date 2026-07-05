@@ -381,8 +381,24 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   in `TickPoseStream` (bound-but-dead ⇒ retire + WorldActorDestroy broadcast) — this closed a latent
   mirror LEAK for every WA class, not just the pyramid. **[V: piramid e2e 2026-07-04 23:19]**
 - `piramid2_C` additionally gets a choreography lane (`coop/creatures/piramid_sync`: client brain
-  suppression + PyramidGather replay) — docs/events/piramid.md. **[AS-BUILT, e2e proven; visual hands-on
-  pending (runbook 0r)]**
+  suppression + PyramidGather replay) — docs/events/piramid.md. **[AS-BUILT; walk at true scale V live
+  2026-07-05; facing v100 pending 0s-FACING2]**
+- **2026-07-05 (the frozen/small/wrong-facing pyramid arc — three wire truths, all classes):**
+  (1) **v99 Scale3D in EntitySpawnPayload** (`419e3894`): the deferred-spawn FTransform CARRIES scale
+  (piramid = 2.0) and a mirror spawned without it renders wrong-size + hovers at the wrong altitude
+  (the host streams Z from ITS 10000*scaleX hover). All 6 EntitySpawn senders fill it (WA + NPC:
+  interceptor / ex-enroll / connect-snapshot each); both receivers apply it into the spawn transform
+  through `SanitizeWireScaleAxis` (scale-0 wire = invisible actor). **[V live: «пирамида идёт»]**
+  (2) **v100 auxYaw in WorldActorPoseSnapshot** (`75e5ab10`): a class whose VISIBLE heading lives
+  OUTSIDE the actor rotation (piramid: root yaw stays 0 forever — [WA-TRACE] live evidence; the
+  AnimBP orients the body off the movementVector ArrowComponent) streams that heading as pose-batch
+  auxYaw; the class lane consumes it post-apply (`piramid_sync::ApplyMirrorHeadingYaw` → BOTH heading
+  components). Deriving it from position deltas was LIVE-REFUTED (native heading keeps easing toward
+  the walk target up to 10 s after motion stops). **[AS-BUILT; 0s-FACING2 pending]**
+  (3) **[WA-TRACE] permanent 1 Hz telemetry** (`c98c6543`) at all 5 pose hops incl. the
+  K2_SetActorLocation/Rotation RETURN values — born because the "first batch" client log proved
+  ARRIVAL only and the 07-04 e2e was geometry-blind (the wisp repin ring sat within the arrive radius
+  of a FROZEN mirror too). The pose chain itself was then proven alive live (delta ~100 units).
 
 ### Kerfur (the hardest — prop form ⇄ NPC form)
 - The game gives a kerfur NO stable id (random key per peer per load). We keep ONE host-only **KerfurId (K)**

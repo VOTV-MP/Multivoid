@@ -66,7 +66,8 @@ and the wiki taxonomy (Story Mode / Ariral-reputation / signal-triggered / rando
 
 | Event (row / class) | Doc | Granular pass |
 |---|---|---|
-| piramid (`piramid2_C`) — devs'-gauntlet acceptance case | [piramid.md](piramid.md) | AS-BUILT (v97 lane; autonomous e2e PASS 07-04). Mid-join hands-on attempt 1 FAILED 07-05 (connection-gated host tracking, NOT the lane) -> root-fixed `ff338d87`; RE-TEST + visual pass pending (runbook 0s-FIX) |
+| piramid (`piramid2_C`) — devs'-gauntlet acceptance case | [piramid.md](piramid.md) | AS-BUILT v100 (07-05 arc: tracking `ff338d87` [V live] -> [WA-TRACE] telemetry -> v99 SCALE [V live «идёт»] -> v100 auxYaw FACING). Pending: 0s-FACING2 + TRUE mid-join (11:25 was join-before-event) + gather visual |
+| **alarm (`trigger_alarm_C`) — NEXT granular pass (user 2026-07-05: «alarm это тоже ивент, нужна обработка при new peer join»)** | (todo) | ASSESSED 07-05: NO lane exists — no sync, no suppression; live convergence today is INCIDENTAL (replay-driven for replayed events; piramid-step trips unverified). KNOWN JOIN HOLE: no kClassRowMap row -> joiner during an active alarm gets silence (the "unmapped alarm logged LOUD + skipped" WARN). SDK: Audio1 + Active + TArray<alarmLamp_C*>, runTrigger/processKeys. Pass = static RE -> axes -> doc -> join answer |
 | obelisk (`obelisk_C`) — Phase 0 registry-probe exemplar | (todo) | BEGIN/END proven live; doc pending |
 | wisps (`wisp_C` swarm) + killerwisp — creature lanes shipped 07-03 | (todo) | AS-BUILT in code; doc = record the verdicts |
 | starRain (`skyFallingEvent`) — event_cue lane | (todo) | late-join gap CLOSED 2026-07-05 (event_cue join re-send, e2e PASS -- COOP_EVENT_JOIN.md 3.4); doc pending |

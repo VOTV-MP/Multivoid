@@ -1,4 +1,4 @@
-# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT 2026-07-04 late, autonomous e2e PASS; hands-on visual pass pending)
+# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v100 2026-07-05; walk-at-true-scale V live; facing 0s-FACING2 + true mid-join pending)
 
 The devs'-gauntlet acceptance case (docs/DEVS_GAUNTLET.md; docs/COOP_EVENT_JOIN.md Phase 1
 names "pyramid mid-join" as the acceptance test). Ground truth:
@@ -44,6 +44,8 @@ wiki sweep (voicesofthevoid.wiki.gg /Events/Story_Mode + eternitydev.wiki.gg /Py
 | axis | class | carried by |
 |---|---|---|
 | actor transform (walk path) | (b) host-random | WorldActor pose stream (allowlist piramid2_C) |
+| spawn SCALE (the event spawns at 2,2,2) | (b) host spawn transform | **v99 (2026-07-05 `419e3894`)**: EntitySpawnPayload +Scale3D, applied into the mirror's spawn transform. MISSING until then — the unit-scale mirror rendered half-size + floated at the host's scale-2 hover Z («далеко и маленькая», user live). [V live: «пирамида идёт»] |
+| body FACING (visible heading) | (b) host state — the actor root NEVER yaws ([WA-TRACE] yaw=0.0 all walk); heading = movementVector/Arrow components' world rotation, body oriented by the AnimBP | **v100 (2026-07-05 `75e5ab10`)**: WorldActorPoseSnapshot.auxYaw streams the host component yaw; client writes both components post-apply. This axis was MISSING from this table until the user saw it live; the interim delta-derived heading was LIVE-REFUTED (native heading keeps easing toward the target up to 10 s AFTER motion stops). [AS-BUILT; 0s-FACING2 pending] |
 | isWalking / gait speed | (b) host state | pose stream delivers position; walking-anim state derives from motion (procedural legs) — nothing extra |
 | legs / footstep sounds / stomp particles / step shakes | (a) derived from motion | AnimBP notifies fire on the mirror from the pose-driven motion — free |
 | terrain-hover Z | (a) derived | mirror runs the same trace... NO — mirror AI is suppressed (below); Z rides the pose stream verbatim |
@@ -151,20 +153,26 @@ Original design points (all shipped as described unless noted above):
 - **Autonomous e2e PASS [V: 2026-07-04 23:19 run, host+client logs]** via
   `autotest_piramidforce` (env `VOTVCOOP_RUN_PIRAMIDFORCE_TEST=1`, mp.py smoke --duration
   330; night sun forced so the bait wisps survive; wisps re-pinned onto a 150 m ring around
-  the walking pyramid every 5 s): host ex-enroll eid=3223 -> registry `BEGIN piramid2_C n=1`
-  -> client mirror materialized at the exact host transform -> `piramid-brain[client]`
-  armed + tick restored -> pyramid marched ~2 km (pose stream live, repin trail) -> host
-  `piramid-gather` relay -> client `replay OK (dist=9495 attempts=1)` -> consumed wisp died
-  via npc lane -> host END self-destroy caught by dead-retire -> client mirror K2'd ->
-  registry `END elapsed=211s`. 0 ERROR both peers; save restored byte-identical.
+  the walking pyramid every 5 s): host ex-enroll -> registry `BEGIN piramid2_C n=1`
+  -> client mirror materialized -> brain armed + tick restored -> gather relay -> client
+  `replay OK (dist=9495 attempts=1)` -> wisp death via npc lane -> END dead-retire ->
+  registry `END elapsed=211s`. **CAVEAT (learned 2026-07-05): this e2e was GEOMETRY-BLIND
+  to the pose stream** — the wisps were re-pinned around the HOST pyramid, which marches
+  only ~50 m to arrive, so `dist=9495 attempts=1` was equally consistent with a FROZEN
+  client mirror. The e2e proves spawn/gather/death lanes, NOT client-side motion.
 - Registry probe on the pyramid: PROVEN (BEGIN/END both live runs).
-- **Mid-join hands-on attempt 1 FAILED (2026-07-05 ~11:00, user)**: client joined during
-  the walk and saw NOTHING — root cause was the connection-gated host tracking (not this
-  lane, not the v98 wire); root-fixed as a class same hour (`ff338d87`, see point 5).
-- **Still pending (hands-on)**: the devs'-gauntlet VISUAL pass — same pyramid, same walk,
-  same gather beams/montage on both screens; the mid-join RE-TEST after `ff338d87`
-  (runbook 0s-FIX — expected: host `ex-enroll 'piramid2_C'` at spawn while alone, then
-  `connect-snapshot -- sent N existing WA(s)` at the join, client materialized mirror);
-  a join DURING a gather (v98 join-edge PyramidGather re-send, code-verified only). And the
-  native (non-forced) trigger: a client puppet standing in the host's armed Signal Lab box
-  — verify the TB overlap filter accepts the puppet (section 3 point 1 fallback if not).
+- **Mid-join hands-on attempt 1 FAILED (2026-07-05 ~11:00, user)**: joiner saw NOTHING —
+  connection-gated host tracking, root-fixed as a class same hour (`ff338d87`).
+- **Spawn delivery + pose chain [V live 2026-07-05 11:25 run]**: joiner (join-before-event)
+  materialized the pyramid; `[WA-TRACE]` (permanent 5-hop 1 Hz telemetry, `c98c6543`)
+  showed host-read/serialize/store/apply/drive all moving, host-vs-client delta ~100 units.
+  The visible failure was NOT the pose: **missing spawn SCALE** (v99 `419e3894`) — walk
+  then confirmed live by the user («пирамида идёт»).
+- **Facing arc (2026-07-05)**: delta-derived heading (`eb8a1a40`) worked roughly but was
+  LIVE-REFUTED («сбивается, смотрит немного не туда») → v100 auxYaw streams the true host
+  component heading (`75e5ab10`). **Pending: 0s-FACING2** (turns synchronous incl. the
+  standing ease toward the wisp; log assert `[WA-TRACE ... aux=]` equal both ends).
+- **Still pending (hands-on)**: the TRUE mid-join case (join while the pyramid is already
+  walking — the devs'-gauntlet acceptance; 11:25 was join-before-event); gather
+  beams/montage visual on both screens; a join DURING a gather (v98 re-send, code-verified
+  only); the native (non-forced) trigger via a client puppet in the armed TB box.

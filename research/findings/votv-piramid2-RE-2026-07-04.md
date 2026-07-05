@@ -274,7 +274,7 @@ per-viewer cosmetic.
 | spawn moment + identity | **(b)** | spawner runTrigger fires on host walk-in; deferred spawn via `BeginDeferredActorSpawnFromClass` ⇒ the existing B3b spawn-catch seam applies. Scale (2,2,2) is constant |
 | position (X,Y) | **(b)** | random targets (`randLoc`), wisp-chase, player-chase fallback — host must stream |
 | position (Z) | **(a)** given X,Y | pure function of the ground trace + 10000*scale hover; client re-derives (or just take the wire Z — both fine) |
-| rotation (yaw) | **(b)** (or (a) from streamed pos deltas) | RInterpTo toward walk target; cheapest correct: stream full rotation with the transform |
+| rotation (yaw) | **(b)** (or (a) from streamed pos deltas) | RInterpTo toward walk target; cheapest correct: stream full rotation with the transform. **SUPERSEDED 2026-07-05 (as-built truth):** the "(a) from pos deltas" option was BUILT and LIVE-REFUTED — the heading keeps RInterpTo-easing toward walkSpotFunc for up to 10 s AFTER motion stops (the mov ramp-down), invisible to deltas; and "stream full rotation" is subtler than written: the ACTOR rotation never changes (root yaw stays 0 — live [WA-TRACE] evidence), the visible heading is the movementVector/Arrow COMPONENTS' world rotation. As-built = v100 `WorldActorPoseSnapshot.auxYaw` streams the component yaw (`75e5ab10`) |
 | leg animation | **(a)** | 100% procedural in the AnimBP from world motion — free on a pose-mirrored copy |
 | foot-plant sounds/stomp particles/step shakes | **(a)/(c)** | anim-notify-driven from the (procedural) walk anim; attenuation per-viewer |
 | 30 s ping (sound+particle+shake) | **(a)-ish** | pure timer from BeginPlay; drifts vs host only in phase, no gameplay meaning. Acceptable per-peer; wire only if phase-lock is wanted |

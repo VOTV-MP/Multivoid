@@ -1,10 +1,12 @@
 # COOP_EVENT_JOIN — the join-during-event contract (Phase 1 AS-BUILT 2026-07-05)
 
-**Status: Phase 1 AS-BUILT, autonomous e2e PASS 2026-07-05 00:06** (wire v98,
-`ReliableKind::EventSnapshot` + the active-override replay + the piramid lane's gather
-re-send; Phase 0's probe seam now feeds the wire). Phase 2a (cue join re-send) AS-BUILT
-2026-07-05, e2e PASS; Phase 2b (census fill) open-incremental; Phase 3 DESIGN. Bytecode
-ground truth — `research/findings/votv-active-events-registry-RE-2026-07-04.md`.
+**Status: Phase 1 AS-BUILT, autonomous e2e PASS 2026-07-05 00:06** (EventSnapshot shipped
+at wire v98; the session wire is v100 as of 2026-07-05 — v99 +Scale3D and v100 +auxYaw
+changed OTHER payloads, this contract's are unchanged). Phase 2a (cue join re-send)
+AS-BUILT 2026-07-05, e2e PASS; Phase 2b (census fill) open-incremental — NEXT ROW =
+`trigger_alarm_C` (user 2026-07-05: alarm is an event needing the join answer; today an
+active alarm is INVISIBLE to a joiner — the known unmapped-WARN hole); Phase 3 DESIGN.
+Bytecode ground truth — `research/findings/votv-active-events-registry-RE-2026-07-04.md`.
 This is the answer to the devs' gauntlet hard case (`docs/DEVS_GAUNTLET.md`): a player
 joins while the host is mid-event (pyramid et al.) and must converge to the same world.
 
@@ -184,4 +186,14 @@ only prove packet flow (snapshot sent/received/queued) — not the visuals.
 was NOT this contract's wire — the host-side enroll/tracking seams were connected()-gated,
 so a pyramid spawned while the host was alone never entered the mirrors and the 3.4 lane
 snapshots had nothing to send. Root-fixed as a class same hour (`ff338d87`; the 3.4
-tracking rule above was written from it). Re-test pending (runbook 0s-FIX).
+tracking rule above was written from it).
+
+**Progress after the fix (2026-07-05, all user-live):** the 11:25 run (join-BEFORE-event,
+not the mid-join case) delivered the pyramid to the joiner [V] and then peeled two more
+wire gaps OFF this bar one by one: missing spawn SCALE (v99 `419e3894` — mirror was
+half-size + floating; walk then confirmed live) and missing FACING (v100 auxYaw
+`75e5ab10` after the delta-derivation was live-refuted). Wire is now **v100**.
+**The bar itself is still OPEN**: the TRUE mid-join run (client joins while the pyramid
+is already walking) has not happened since — that run, with correct size/motion/facing,
+is what closes Phase 1 verification (runbook 0s-FACING2 covers facing; the mid-join
+scenario stays the acceptance case).
