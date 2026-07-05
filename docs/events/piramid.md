@@ -1,4 +1,4 @@
-# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v102 2026-07-05; walk/scale/suck [V live by user]; head-stream + true mid-join pending)
+# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v104 2026-07-05 late; walk/scale/suck [V live by user]; head v102+v104 re-verdict + true mid-join pending)
 
 The devs'-gauntlet acceptance case (docs/DEVS_GAUNTLET.md; docs/COOP_EVENT_JOIN.md Phase 1
 names "pyramid mid-join" as the acceptance test). Ground truth:
@@ -176,7 +176,21 @@ Original design points (all shipped as described unless noted above):
   LIVE-REFUTED («сбивается, смотрит немного не туда») → v100 auxYaw streams the true host
   component heading (`75e5ab10`). **Pending: 0s-FACING2** (turns synchronous incl. the
   standing ease toward the wisp; log assert `[WA-TRACE ... aux=]` equal both ends).
-- **Still pending (hands-on)**: the TRUE mid-join case (join while the pyramid is already
+- **Head/searchlight arc round 2 (2026-07-05 late)**: after the v102 relLook stream the
+  user's full-event verdict was «в какой-то момент голова и свет фиолетовый рассинхронится
+  маленько». Root (RE @3937-4103 + piramid_sync code): the tick's look-at has TWO branches —
+  chase (`wispTarget` valid → ease toward its WORLD location) and idle (relLook). During the
+  WALK-to-wisp phase the host is on the CHASE branch (seeWisps set wispTarget at acquisition)
+  while the mirror — whose wispTarget is nulled by design until the gather relay — stayed on
+  the idle branch, following relLook wander the host itself was IGNORING (changeLook keeps
+  re-rolling during a chase). **v104 fix**: `WorldActorPoseSnapshot.auxTargetEid` streams the
+  wispTarget IDENTITY (npc-lane eid, host-side memoized per target change) every tick; the
+  client resolves it via the npc mirror table and sets/clears the mirror's wispTarget
+  (`ApplyMirrorWispTarget`) so the SAME native branch runs both ends. The field is never
+  touched while the mirror is `gathering` (the gather choreography owns it); host `del`
+  nulls → eid 0 → mirror clears. AS-BUILT; re-verdict = runbook 0y.
+- **Still pending (hands-on)**: 0y re-verdict on v104 (head/фонарь through the whole
+  walk-chase-gather cycle); the TRUE mid-join case (join while the pyramid is already
   walking — the devs'-gauntlet acceptance; 11:25 was join-before-event); gather
   beams/montage visual on both screens; a join DURING a gather (v98 re-send, code-verified
   only); the native (non-forced) trigger via a client puppet in the armed TB box.

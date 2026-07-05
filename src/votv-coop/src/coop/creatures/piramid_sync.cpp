@@ -468,6 +468,62 @@ void ApplyMirrorRelLook(void* actor, float x, float y, float z) {
     v[0] = x; v[1] = y; v[2] = z;
 }
 
+namespace {
+// ReadHostWispTargetEid cache: the resolve walks the npc element table (heap snapshot), which
+// is fine on the RARE gather edge but not at the 60 Hz pose stream. wispTarget changes on the
+// 1 Hz seeWisps / gather / del cadence, so a single (ptr -> eid) memo collapses the per-tick
+// cost to one pointer compare. Game thread only (TickPoseStream). A single entry suffices:
+// the event spawns ONE pyramid (two alternating pyramids would degrade to a per-tick resolve,
+// not break).
+void*    g_lastHostWisp = nullptr;
+uint32_t g_lastHostWispEid = 0;
+}  // namespace
+
+uint32_t ReadHostWispTargetEid(void* actor) {
+    // v104 (the 0y "head/searchlight slightly desync" residue, user 2026-07-05 late): during
+    // the WALK-to-wisp phase the host head eases toward wispTarget's WORLD location (tick
+    // chase branch) while the mirror -- wispTarget nulled by design until the gather relay --
+    // idled on relLook wander the host itself was ignoring. Stream the target IDENTITY so the
+    // mirror runs the same native branch. 0 = no target (pre-arm / miss / genuinely idle).
+    if (!actor || !g_armedAtomic.load(std::memory_order_acquire) || g_offWispTarget < 0)
+        return 0;
+    void* wisp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offWispTarget);
+    if (!wisp) { g_lastHostWisp = nullptr; g_lastHostWispEid = 0; return 0; }
+    if (wisp == g_lastHostWisp && g_lastHostWispEid != 0) return g_lastHostWispEid;
+    const uint32_t eid = FindNpcEidForActor(wisp);  // once per target CHANGE (1 Hz seeWisps cadence)
+    g_lastHostWisp = wisp;
+    g_lastHostWispEid = eid;
+    return eid;
+}
+
+void ApplyMirrorWispTarget(void* actor, uint32_t wispEid) {
+    if (!actor || !g_armedAtomic.load(std::memory_order_acquire) ||
+        g_offWispTarget < 0 || g_gatheringOff < 0)
+        return;
+    // While the mirror is mid-GATHER the field belongs to the gather choreography (the replay
+    // staged it; the montage's del notify consumes + clears it natively). The host clears ITS
+    // wispTarget on its OWN montage clock -- pushing that clear here mid-suck would strand the
+    // mirror's del path. Hands off until the mirror's gathering falls.
+    if (ReadBoolAt(actor, g_gatheringOff, g_gatheringMask)) return;
+    void** slot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + g_offWispTarget);
+    if (wispEid == 0) {
+        if (*slot) {
+            *slot = nullptr;
+            UE_LOGI("piramid-brain[client]: mirror wispTarget CLEARED (host idle)");
+        }
+        return;
+    }
+    coop::element::Npc* wel = coop::element::NpcMirrors().Get(wispEid);
+    if (!wel) return;  // wisp mirror not materialized yet -- the next batch retries naturally
+    void* wisp = wel->GetActor();
+    if (!wisp || !R::IsLiveByIndex(wisp, wel->GetInternalIdx())) return;
+    if (*slot != wisp) {
+        *slot = wisp;
+        UE_LOGI("piramid-brain[client]: mirror wispTarget -> npc eid=%u (native chase branch "
+                "steers head/searchlight during the walk)", wispEid);
+    }
+}
+
 void QueueConnectBroadcastForSlot(int slot) {
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
@@ -508,6 +564,10 @@ void OnDisconnect() {
     g_pending = PendingGather{};
     g_lastGathering.clear();
     g_tickRestored.clear();
+    // v104 host wispTarget memo: a recycled actor address in a NEW session must not alias
+    // the old session's eid.
+    g_lastHostWisp = nullptr;
+    g_lastHostWispEid = 0;
     // Probe counters are per-session: a piramidforce re-run in the SAME process after a
     // reconnect must not see the previous session's relays (correctness-audit nit 2026-07-04).
     g_relayCount.store(0, std::memory_order_relaxed);

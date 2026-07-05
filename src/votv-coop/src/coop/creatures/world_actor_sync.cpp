@@ -449,6 +449,9 @@ void TickPoseStream() {
             // v102 head axis: the head/searchlight idle look target (relLook). Zeros when
             // unresolved -- the client apply treats all-zero as "no value, keep current".
             coop::piramid_sync::ReadHostRelLook(actor, snap.auxX, snap.auxY, snap.auxZ);
+            // v104 chase axis: the live wispTarget IDENTITY (0 = idle) -- the mirror selects
+            // the native chase look-at branch with it (the 0y walk-phase head residue).
+            snap.auxTargetEid = coop::piramid_sync::ReadHostWispTargetEid(actor);
         }
         batch.push_back(snap);
     }

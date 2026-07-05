@@ -47,8 +47,10 @@ constexpr float kSnapBaseCm     = 2000.f; // > one window's legal motion for a f
 }  // namespace
 
 void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
-    // v102 aux target vec: latest-wins, no interp (a target the mirror's native easing consumes).
+    // v102 aux target vec + v104 target identity: latest-wins, no interp (targets the mirror's
+    // native easing / branch selection consume).
     auxX_ = snap.auxX; auxY_ = snap.auxY; auxZ_ = snap.auxZ;
+    auxTargetEid_ = snap.auxTargetEid;
     const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
 
     // First packet OR a teleport (error beyond the snap threshold) -> SNAP, no LERP across. WorldActors

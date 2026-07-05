@@ -694,7 +694,16 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 103; // v103: per-player NICK COLOR (12f) -- a self-
+inline constexpr uint16_t kProtocolVersion = 104; // v104: WorldActorPoseSnapshot +auxTargetEid
+                                                  // (44->48; batch cap 31->28) -- the piramid
+                                                  // wispTarget IDENTITY streams with the pose, so
+                                                  // the mirror's head/searchlight run the native
+                                                  // CHASE branch during the walk-to-wisp phase
+                                                  // (the 0y residue: the mirror idled on relLook
+                                                  // wander the host was ignoring). See the field
+                                                  // doc at WorldActorPoseSnapshot.
+                                                  // Prior:
+                                                  // v103: per-player NICK COLOR (12f) -- a self-
                                                   // describing [u8 has][u8 r][u8 g][u8 b] field
                                                   // appended to Join + PlayerJoined (after the v94
                                                   // prefs flags byte) + NickColorChange=88 for live
@@ -2263,17 +2272,33 @@ struct WorldActorPoseSnapshot {
                                //      (user live 2026-07-05: "фонарь и голова не на 100%"). The
                                //      mirror's changeLook is suppressed and its native lookat
                                //      VInterpTo eases toward THIS streamed value instead (target
-                               //      mirrored, easing native -- the wisp-CHASE branch already
-                               //      converges on its own: same mirrored wisp both ends). Other
-                               //      classes: zeros; the generic drive ignores it.
+                               //      mirrored, easing native). The relLook branch only STEERS
+                               //      the mirror head while the host itself is on it -- during a
+                               //      chase auxTargetEid (below) selects the native chase branch.
+                               //      Other classes: zeros; the generic drive ignores it.
+    uint32_t auxTargetEid;     // 4  -- v104: class-specific TARGET-IDENTITY eid (0 = none). piramid2_C:
+                               //      the host's live `wispTarget` as its npc-lane eid, streamed EVERY
+                               //      tick. Root of the 0y "голова и свет маленько рассинхронятся"
+                               //      residue (user 2026-07-05 late): during the WALK-to-wisp phase the
+                               //      host head/searchlight ease toward wispTarget's WORLD location
+                               //      (tick chase branch, RE @3660-3937) while the mirror -- whose
+                               //      wispTarget is nulled by design until the gather relay -- kept
+                               //      following the relLook idle branch, i.e. RANDOM wander the host
+                               //      itself was ignoring (changeLook keeps re-rolling during a chase).
+                               //      The client resolves the eid via the npc mirror table and writes
+                               //      the mirror's wispTarget (piramid_sync::ApplyMirrorWispTarget) so
+                               //      the SAME native branch runs both ends; while the mirror is
+                               //      `gathering` the field is owned by the gather choreography and
+                               //      never touched. 0 clears (host's del nulls wispTarget -> mirrors
+                               //      follow). Other classes: 0.
 };
-static_assert(sizeof(WorldActorPoseSnapshot) == 44, "WorldActorPoseSnapshot must be 44 bytes (v102: +auxVec)");
+static_assert(sizeof(WorldActorPoseSnapshot) == 48, "WorldActorPoseSnapshot must be 48 bytes (v104: +auxTargetEid)");
 
 // Max WorldActors per WorldActorPose datagram, MTU-capped: (1400 - PacketHeader(20) -
-// EntityPoseBatchHeader(4)) / 44 = 31. The realistic event WA count is a handful (a few UFOs at once),
-// so 31 (the NPC cap) keeps the datagram (20 + 4 + 31*44 = 1388) at the 1400 MTU budget exactly.
+// EntityPoseBatchHeader(4)) / 48 = 28 (v104). The realistic event WA count is a handful (a few UFOs
+// at once), so 28 keeps the datagram (20 + 4 + 28*48 = 1368) under the 1400 MTU budget.
 // The batch reuses EntityPoseBatchHeader (a generic count+pad), NOT a byte-identical twin (RULE 2).
-inline constexpr int kMaxWorldActorBatchEntries = 31;
+inline constexpr int kMaxWorldActorBatchEntries = 28;
 inline constexpr int kWorldActorPoseDatagramMax =
     static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
     kMaxWorldActorBatchEntries * static_cast<int>(sizeof(WorldActorPoseSnapshot));

@@ -96,6 +96,19 @@ bool ReadHostRelLook(void* actor, float& outX, float& outY, float& outZ);
 // simple assignment -- no setter side effects), so a raw write is the faithful mirror.
 void ApplyMirrorRelLook(void* actor, float x, float y, float z);
 
+// HOST pose augmentation (v104 auxTargetEid): the live wispTarget's npc-lane eid (0 = none /
+// pre-arm). Cached per target change -- callable at the 60 Hz pose stream. The 0y-residue
+// root: during the walk-to-wisp phase the host head runs the tick's CHASE branch (world
+// location of wispTarget) while relLook keeps re-rolling ignored; the mirror needs the
+// IDENTITY, not the idle vector, to run the same branch.
+uint32_t ReadHostWispTargetEid(void* actor);
+
+// CLIENT target drive (the auxTargetEid consumer): resolve the eid via the npc mirror table
+// and set/clear the mirror's wispTarget so its ALIVE native tick picks the same look-at
+// branch as the host (chase converges on the mirrored wisp; 0 falls back to relLook idle).
+// Never touches the field while the mirror is `gathering` (the gather choreography owns it).
+void ApplyMirrorWispTarget(void* actor, uint32_t wispEid);
+
 // Probe/diagnostic accessors (autotest_piramidforce; thread-safe atomics).
 bool DebugHooksArmed();
 int  DebugHostRelayCount();

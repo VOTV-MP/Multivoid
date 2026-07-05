@@ -230,7 +230,23 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-05 поздний вечер (DLL `5DCF478183A0DD0D` — ТЕКУЩИЙ 4/4, wire v103; смоук x4 PASS за вечер; supersedes 48F549F1 -> 72899FAE -> 65FE675E)
+## 2026-07-05 ночь (DLL `DF9A2711BCAF1382` — ТЕКУЩИЙ 4/4, **wire v103 -> v104**; supersedes 5DCF478183A0DD0D)
+
+### 0y-v104. Голова+фиолетовый свет: остаток «маленько рассинхронится» закрыт стримом ЦЕЛИ
+Твой вердикт (v102-прогон): «в какой-то момент голова и свет фиолетовый рассинхроится
+маленько». Корень: у look-at ДВЕ ветки — погоня (wispTarget стоит → голова ведётся к
+МИРОВОЙ позиции виспа) и idle (relLook). Во время ХОДЬБЫ к виспу хост уже в погоне
+(seeWisps ставит цель при захвате), а зеркалу wispTarget зануляли до самого gather —
+оно шло по relLook-рандому, который хост в этот момент сам игнорировал. FIX v104:
+идентичность wispTarget (eid виспа) едет в pose-снапшоте каждый тик; зеркало ставит/
+чистит свой wispTarget по npc-таблице → та же нативная ветка на обоих концах
+(в gathering-окне поле не трогаем — им владеет хореография).
+ПРОГОН: полный цикл ходьба -> погоня -> засасывание; голова/фонарь совпадают ВО ВСЕХ
+фазах (допуск — доли секунды ease). Лог-ассерт на клиенте:
+`piramid-brain[client]: mirror wispTarget -> npc eid=...` при захвате цели хостом и
+`... wispTarget CLEARED (host idle)` после дела.
+
+## 2026-07-05 поздний вечер (DLL `5DCF478183A0DD0D` — superseded by `DF9A2711BCAF1382`; wire v103; смоук x4 PASS за вечер; supersedes 48F549F1 -> 72899FAE -> 65FE675E)
 
 ### 0aa-BUBBLES. Чат-баблы над головой (12g, MTA/SAMP-style)
 Текст из чата появляется над nameplate отправителя: перенос по словам (до 5 строк),

@@ -60,6 +60,10 @@ public:
     // piramid2_C = relLook, the head's look target). NOT interpolated -- it is a target the
     // mirror's own native easing consumes, so the latest wire value IS the truth.
     void CurrentAuxVec(float& x, float& y, float& z) const { x = auxX_; y = auxY_; z = auxZ_; }
+    // v104: the latest class-specific TARGET-IDENTITY eid (WorldActorPoseSnapshot.auxTargetEid;
+    // piramid2_C = the host's wispTarget as its npc-lane eid; 0 = none). Latest-wins like the
+    // aux vec -- an identity, nothing to interpolate.
+    uint32_t CurrentAuxTargetEid() const { return auxTargetEid_; }
     bool  HasPose() const { return hasPose_; }
 
 private:
@@ -83,6 +87,7 @@ private:
     float            targetAuxYaw_ = 0.f;
     float            errorAuxYaw_  = 0.f;
     float            auxX_ = 0.f, auxY_ = 0.f, auxZ_ = 0.f;  // v102 aux target vec (latest wire value)
+    uint32_t         auxTargetEid_ = 0;  // v104 aux target identity (latest wire value; 0 = none)
     coop::LerpWindow window_;          // shared interp timing (same one RemotePlayer / Npc own)
     bool             hasPose_ = false; // first packet snaps
     bool             dirty_   = true;  // unapplied change to push to the engine

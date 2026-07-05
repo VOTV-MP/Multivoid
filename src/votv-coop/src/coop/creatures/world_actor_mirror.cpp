@@ -275,6 +275,10 @@ void TickClientWorldActors() {
                 float ax = 0.f, ay = 0.f, az = 0.f;
                 el->CurrentAuxVec(ax, ay, az);
                 coop::piramid_sync::ApplyMirrorRelLook(actor, ax, ay, az);
+                // v104: mirror the wispTarget identity -> the native tick's CHASE look-at
+                // branch runs both ends during the walk (gathering-owned windows skipped
+                // inside).
+                coop::piramid_sync::ApplyMirrorWispTarget(actor, el->CurrentAuxTargetEid());
             }
         }
     }
