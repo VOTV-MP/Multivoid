@@ -1,4 +1,4 @@
-# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v100 2026-07-05; walk-at-true-scale V live; facing 0s-FACING2 + true mid-join pending)
+# piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v102 2026-07-05; walk/scale/suck [V live by user]; head-stream + true mid-join pending)
 
 The devs'-gauntlet acceptance case (docs/DEVS_GAUNTLET.md; docs/COOP_EVENT_JOIN.md Phase 1
 names "pyramid mid-join" as the acceptance test). Ground truth:
@@ -50,7 +50,8 @@ wiki sweep (voicesofthevoid.wiki.gg /Events/Story_Mode + eternitydev.wiki.gg /Py
 | legs / footstep sounds / stomp particles / step shakes | (a) derived from motion | AnimBP notifies fire on the mirror from the pose-driven motion — free |
 | terrain-hover Z | (a) derived | mirror runs the same trace... NO — mirror AI is suppressed (below); Z rides the pose stream verbatim |
 | gather (arm-extend + beams + wisp consume) | (b) host event | new relay: `PyramidGather{pyramidEid, wispEid}` -> mirror plays the `gather` montage; beams follow via notifies |
-| gathered wisp's RISE toward the arms (the "suck") + center shrink | (a) derived — the WISP's own tick under `gathered`: `Mesh->K2_SetWorldLocation(VLerp(start, (p_L+p_R)/2, piram2->suc))` — a MESH move, invisible to the root pose stream BY DESIGN | **`7ec1f666` (2026-07-05)**: the client gather replay re-enables the mirror wisp's actor tick (npc_mirror parks NPC mirrors tick-off — the rise code never ran; user live: beams stayed long, wisp grounded). Native rise replays from mirrored state; hunt AI unreachable under `gathered` [bytecode gate]. Hands-on pending |
+| gathered wisp's RISE toward the arms (the "suck") + center shrink | (a) derived — the WISP's own tick under `gathered`: `Mesh->K2_SetWorldLocation(VLerp(start, (p_L+p_R)/2, piram2->suc))` — a MESH move, invisible to the root pose stream BY DESIGN | **`7ec1f666` (2026-07-05)**: the client gather replay re-enables the mirror wisp's actor tick (npc_mirror parks NPC mirrors tick-off — the rise code never ran; user live: beams stayed long, wisp grounded). Native rise replays from mirrored state; hunt AI unreachable under `gathered` [bytecode gate]. **[V live by user same day: «засасывание зеркально 100%»]** |
+| HEAD + searchlight direction | (b) host state when idle — the `lookat` component eases (VInterpTo 1.0) toward wispTarget (chase: converges by itself, same mirrored wisp) OR toward `relLook`, which the `changeLook` timer re-rolls 1 Hz with `RandomFloatInRange(-45,225)` — per-instance RANDOM | **v102 (2026-07-05 `a255b70f`)**: WorldActorPoseSnapshot.auxX/Y/Z streams the host's relLook; the mirror's changeLook is PRE-cancelled (4th brain interceptor — RULE 2: the old "per-viewer cosmetic" verdict retired); the mirror's alive native tick eases its lookat toward the streamed target. User live pre-fix: «фонарь и голова не на 100%, но уже хороший результат». Hands-on re-verdict pending |
 | consumed wisp's death | (b) host event | npc/kwisp lane destroy (authoritative) — the mirror's `del`-notify destroy is SUPPRESSED (would double-kill) |
 | the 4 spawned killerwisps | (b) host spawns | npc lane (killerwisp_C allowlisted — kwisp choreography lane) |
 | 30 s ping (sound+particle+shake) | (a) timer-driven cosmetic | mirror's own ping timer stays LIVE (pure cosmetic, no state writes) — per-viewer timing skew accepted |
@@ -79,15 +80,17 @@ live-run loop — each proven by a failing autonomous run, then fixed and re-pro
   reads dead retires + broadcasts WorldActorDestroy. This closed a LATENT lifecycle leak for
   ALL 17 allowlisted WA classes, not just the pyramid. [V: host dead-retire line + client
   mirror K2 + registry END elapsed=211s, run 23:19]
-- **Mirror brain suppression, as built**: PRE-cancel exactly the three STATE-WRITING timer
-  handlers (`seeWisps`/`checkIfReached`/`randLoc` — every `walkTo` caller). `ReceiveTick`
-  stays ALIVE (deliberate divergence from the earlier tick-off sketch: the gather-beam
-  per-tick params, head look-at and hover-Z live there and are pure derivations of mirrored
-  state; march/turn are structurally zero — isWalking/multiplyWalk can never latch with the
-  walkTo callers cancelled). `changeLook` + the 30 s ping stay alive (per-viewer cosmetics
-  per section 5). The lane re-enables the mirror's actor tick (world_actor parks generic
-  mirrors tick-off) and unstages any pre-arm brain writes. Hook table: kMaxInterceptors
-  24 -> 40 (census stood 23/24; the 3 brain slots hit table-FULL on a live run).
+- **Mirror brain suppression, as built**: PRE-cancel the FOUR STATE-WRITING timer
+  handlers (`seeWisps`/`checkIfReached`/`randLoc` — every `walkTo` caller — plus
+  `changeLook`, the 1 Hz random head-wander re-roll, added v102 when the user saw the
+  heads diverge live). `ReceiveTick` stays ALIVE (deliberate divergence from the earlier
+  tick-off sketch: the gather-beam per-tick params, head look-at and hover-Z live there
+  and are pure derivations of mirrored state; march/turn are structurally zero —
+  isWalking/multiplyWalk can never latch with the walkTo callers cancelled). The 30 s
+  ping stays alive (per-viewer cosmetic per section 5). The lane re-enables the mirror's
+  actor tick (world_actor parks generic mirrors tick-off) and unstages any pre-arm brain
+  writes. Hook table: kMaxInterceptors 24 -> 40 (census stood 23/24; the 3 brain slots
+  hit table-FULL on a live run).
 - **Gather replay pre-gate must sit ABOVE the native arrive radius**: both actors FREEZE at
   the host commit, so the mirrors converge to the host's frozen distance — <= 10000 by
   construction but often only just (proven: replay OK at dist=9495 attempts=1 after a 9000
