@@ -14,6 +14,7 @@
 #include "coop/interactables/signal_sync.h"
 #include "coop/player/local_body.h"  // v93 skins: local first-person body owner
 #include "coop/player/nameplate.h"   // v94: plate-pref session wiring (Install)
+#include "coop/player/nick_color.h"  // v103 (12f): nick-color session wiring (Install)
 #include "coop/player/sleep_sync.h"
 #include "coop/creatures/wisp_attack_sync.h"   // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_grab_hold.h"     // Killer Wisp v2: grab-window body placement (per-slot/full teardown)
@@ -120,6 +121,7 @@ void Install(coop::net::Session& session) {
     coop::local_body::Install(&session);     // v93 skins: local first-person body + SkinChange announce
     coop::local_body::Tick();                // applies the persisted skin to the local pawn + 1 Hz convergence
     coop::nameplate::Install(&session);      // v94: plate-pref announce path (F1 checkbox -> NameplateChange)
+    coop::nick_color::Install(&session);     // v103 (12f): nick-color announce path + local-slot mirror refresh
     coop::turbine_sync::Install(&session);   // v61 wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::device_occupancy::Install(&session);  // v63 enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // v64 signal-catcher state mirror (sky signals + desk + dish aim)

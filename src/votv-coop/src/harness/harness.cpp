@@ -31,6 +31,7 @@
 #include "coop/items/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
 #include "coop/session/session_manager.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/nick_color.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/player/roster.h"
 #include "coop/net/session.h"
@@ -751,6 +752,28 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
     // v94: the persisted nameplate pref (absent = visible). The Join prefs byte reads it.
     coop::nameplate::SetInitialLocalVisible(cfg::ReadIniValue("nameplate", "1") != "0");
+    // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex; absent/empty =
+    // surface defaults). The Join color field reads it.
+    {
+        const std::string hex = cfg::ReadIniValue("nick_color", "");
+        uint32_t packed = 0;
+        if (hex.size() == 6) {
+            unsigned rgb = 0;
+            bool ok = true;
+            for (char c : hex) {
+                rgb <<= 4;
+                if (c >= '0' && c <= '9')      rgb |= static_cast<unsigned>(c - '0');
+                else if (c >= 'a' && c <= 'f') rgb |= static_cast<unsigned>(c - 'a' + 10);
+                else if (c >= 'A' && c <= 'F') rgb |= static_cast<unsigned>(c - 'A' + 10);
+                else { ok = false; break; }
+            }
+            if (ok)
+                packed = coop::nick_color::Pack(static_cast<uint8_t>(rgb >> 16),
+                                                static_cast<uint8_t>(rgb >> 8),
+                                                static_cast<uint8_t>(rgb));
+        }
+        coop::nick_color::SetInitialLocal(packed);
+    }
 
     // The OMEGA WARNING is on screen during the FIRST few seconds (the intro/menu
     // world), BEFORE we `open` gameplay. Sample widgets across that window so the

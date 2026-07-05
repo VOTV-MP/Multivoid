@@ -36,6 +36,7 @@ struct Plate {
     int   healthPct = 100;   // 0..100 streamed-vitals health (display-only)
     int   ping = -1;         // RTT ms (-1 = unmeasured -> no suffix; 0 = sub-ms LAN -> "<1ms")
     uint8_t voiceIcon = 0;   // v66: coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
+    uint32_t colorRGB = 0;   // v103 (12f): packed custom nick color (coop::nick_color; 0 = white)
     char  nick[24] = {};
 };
 

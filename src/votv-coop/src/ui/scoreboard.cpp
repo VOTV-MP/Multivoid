@@ -4,6 +4,7 @@
 
 #include "coop/session/moderation.h"
 #include "coop/session/session_manager.h"  // ListedState / SetListed (the host hide toggle)
+#include "coop/player/nick_color.h"
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/scale.h"
@@ -112,8 +113,19 @@ void Render() {
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
-                const ImVec4 nickCol = r.isHost ? ImVec4(1.00f, 0.82f, 0.35f, 1.0f)   // host  = gold
-                                                : ImVec4(0.86f, 0.89f, 0.94f, 1.0f);  // client = soft white
+                // v103 (12f): a custom nick color (synced pref) overrides the role
+                // color -- role stays readable via the Link column's "LAN/P2P HOST".
+                // The local row resolves through the local pref directly (our own
+                // slot never receives its color over the wire).
+                const uint32_t custom = r.isLocal ? coop::nick_color::LocalPacked()
+                                                  : coop::nick_color::PackedForSlot(r.slot);
+                const ImVec4 nickCol =
+                    coop::nick_color::IsCustom(custom)
+                        ? ImVec4(coop::nick_color::R(custom) / 255.f,
+                                 coop::nick_color::G(custom) / 255.f,
+                                 coop::nick_color::B(custom) / 255.f, 1.0f)
+                        : r.isHost ? ImVec4(1.00f, 0.82f, 0.35f, 1.0f)   // host  = gold
+                                   : ImVec4(0.86f, 0.89f, 0.94f, 1.0f);  // client = soft white
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(r.slot);

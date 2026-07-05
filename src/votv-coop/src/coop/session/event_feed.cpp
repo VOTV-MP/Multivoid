@@ -460,6 +460,12 @@ void Update(net::Session& session, void* localPlayer) {
             coop::player_handshake::HandleNameplateChange(session, msg);
             break;
         }
+        case net::ReliableKind::NickColorChange: {
+            // v103 (12f): per-peer nick color pref -> coop::nick_color store (the
+            // handler also does the host's rebroadcast).
+            coop::player_handshake::HandleNickColorChange(session, msg);
+            break;
+        }
         default: {
             // ---- the family routers (event_dispatch_{entity,state,world}.cpp) ----
             // SyncRouter consolidation (2026-06-28): the explicit family case-label

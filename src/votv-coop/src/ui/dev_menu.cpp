@@ -17,6 +17,7 @@
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/nick_color.h"
 #include "coop/session/ini_config.h"
 #include "harness/config.h"
 #include "ui/fonts.h"
@@ -328,6 +329,53 @@ void RenderNameplatePref() {
         coop::nameplate::RequestLocalVisible(on);
     ImGui::TextDisabled("Off = your floating name/health bar disappears on every peer's");
     ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
+
+    // v103 (12f): the local player's nick COLOR pref. SYNCED (live NickColorChange
+    // + the Join color field for late joiners) and persisted (votv-coop.ini
+    // nick_color=). Applied on picker RELEASE, not per drag frame -- each apply
+    // persists + announces over the wire.
+    ImGui::Spacing();
+    ImGui::SeparatorText("Nickname color");
+    const uint32_t cur = coop::nick_color::LocalPacked();
+    bool custom = coop::nick_color::IsCustom(cur);
+    // The picker's WORKING color: re-seeded only when the live pref changes
+    // underneath us (boot/ini or a commit), never per frame -- a per-frame
+    // reseed would snap the swatch back mid-drag (the pref only commits on
+    // release).
+    static float    sCol[3] = { 1.f, 1.f, 1.f };
+    static uint32_t sSeen = 0xFFFFFFFFu;  // never a valid packed value -> first frame seeds
+    if (cur != sSeen) {
+        sSeen = cur;
+        if (coop::nick_color::IsCustom(cur)) {
+            sCol[0] = coop::nick_color::R(cur) / 255.f;
+            sCol[1] = coop::nick_color::G(cur) / 255.f;
+            sCol[2] = coop::nick_color::B(cur) / 255.f;
+        }
+    }
+    const auto packWorking = [&] {
+        return coop::nick_color::Pack(static_cast<uint8_t>(sCol[0] * 255.f + 0.5f),
+                                      static_cast<uint8_t>(sCol[1] * 255.f + 0.5f),
+                                      static_cast<uint8_t>(sCol[2] * 255.f + 0.5f));
+    };
+    if (ImGui::Checkbox("Custom nickname color", &custom))
+        coop::nick_color::RequestLocal(custom ? packWorking() : 0u);
+    if (coop::nick_color::IsCustom(coop::nick_color::LocalPacked())) {
+        // Inline picker (not the ColorEdit popup): commit-on-release needs the
+        // edited item ITSELF to report deactivation, which a popup's swatch
+        // button never does.
+        ImGui::SetNextItemWidth(S(220.f));
+        ImGui::ColorPicker3("##nickcolor", sCol,
+                            ImGuiColorEditFlags_PickerHueWheel |
+                                ImGuiColorEditFlags_NoSidePreview |
+                                ImGuiColorEditFlags_NoAlpha);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            const uint32_t packed = packWorking();
+            sSeen = packed;  // the commit lands async (GT hop); don't re-seed from the stale pref meanwhile
+            coop::nick_color::RequestLocal(packed);
+        }
+    }
+    ImGui::TextDisabled("Colors your nick everywhere it shows -- nameplate, chat, player list --");
+    ImGui::TextDisabled("on every peer's screen. Synced live and to late joiners; persists.");
 }
 
 // Overlay font family (2026-07-04, user compare ask): live switch between the

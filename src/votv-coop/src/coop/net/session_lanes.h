@@ -181,6 +181,9 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     // per-slot flag store (coop::nameplate), engine-free pre-puppet. Gating it would
     // re-create the exact load-window swallow SkinChange had.
     case ReliableKind::NameplateChange:
+    // v103 nick color: same family, same reasoning -- the receiver is a plain
+    // per-slot atomic store (coop::nick_color), engine-free pre-puppet.
+    case ReliableKind::NickColorChange:
     case ReliableKind::SaveTransferRequest:
     case ReliableKind::SaveTransferBegin:
     case ReliableKind::SaveTransferChunk:

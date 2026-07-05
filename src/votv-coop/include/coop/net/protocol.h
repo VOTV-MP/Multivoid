@@ -694,7 +694,16 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // host's own roll is restored to the -1 sentinel only DURING the accelerate phase --
 // a host nightmare wakes the house structurally: createDream wakeup()s before the
 // dream, the falling edge IS the early End). Module: coop/sleep_sync + ue_wrap/sleep.
-inline constexpr uint16_t kProtocolVersion = 102; // v102: WorldActorPoseSnapshot +auxVec (32->44) --
+inline constexpr uint16_t kProtocolVersion = 103; // v103: per-player NICK COLOR (12f) -- a self-
+                                                  // describing [u8 has][u8 r][u8 g][u8 b] field
+                                                  // appended to Join + PlayerJoined (after the v94
+                                                  // prefs flags byte) + NickColorChange=88 for live
+                                                  // changes (the NameplateChange trust shape). The
+                                                  // color axis has ONE owner (coop/player/nick_color);
+                                                  // nameplate/chat/scoreboard read it and fall back
+                                                  // to their own defaults when unset (packed 0).
+                                                  // Prior:
+                                                  // v102: WorldActorPoseSnapshot +auxVec (32->44) --
                                                   // the piramid HEAD/searchlight look target (relLook)
                                                   // streams with the pose; the mirror's 1 Hz RANDOM
                                                   // changeLook wander is suppressed and the native
@@ -1950,6 +1959,22 @@ enum class ReliableKind : uint8_t {
                        //     runTrigger(nullptr, active) -- the bytecode's own idempotency check
                        //     (IntToBool(index)==active -> no-op) makes redundant applies free and
                        //     breaks every echo loop. Payload: AlarmStatePayload (4 B).
+    NickColorChange = 88,  // 2026-07-05 (v103, 12f): a player picked a nickname COLOR in F1 >
+                       //     Cosmetics. Payload: [u8 slot][u8 has(0/1)][u8 r][u8 g][u8 b] (5 B;
+                       //     has=0 -> reset to the surface defaults). Same trust shape as
+                       //     NameplateChange: CLIENT->HOST slot MUST equal senderPeerSlot
+                       //     (forgery guard; a peer only colors ITS OWN nick), host stores
+                       //     (coop/player/nick_color -- the color axis' ONE owner) and
+                       //     REBROADCASTS (originator excluded); HOST->ALL with slot=0 for the
+                       //     host's own pick. The at-join state rides a [u8 has][r][g][b] field
+                       //     appended to Join/PlayerJoined after the v94 prefs flags byte, so
+                       //     late joiners agree without extra wire. Consumers: nameplate nick
+                       //     (default white), chat nick prefix (default per-slot palette),
+                       //     scoreboard row (default role gold/white -- role stays readable via
+                       //     the Link column's "LAN/P2P HOST"). PRE-WORLD-SENDABLE: receiver is
+                       //     a plain per-slot atomic store, engine-free pre-puppet (the
+                       //     SkinChange load-window lesson). Slot resets to default on
+                       //     disconnect (a slot reuse must not inherit the color).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not

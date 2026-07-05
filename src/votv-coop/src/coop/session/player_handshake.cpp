@@ -9,6 +9,7 @@
 #include "coop/net/session.h"
 #include "coop/player/local_body.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/skin_registry.h"
@@ -78,6 +79,26 @@ uint8_t PrefsFlagsForSlot(int slot) {
 
 void StorePrefsFlagsForSlot(int slot, uint8_t flags) {
     coop::nameplate::StoreVisibleForSlot(slot, (flags & kPrefNameplateVisible) != 0);
+}
+
+// v103 nick color (12f): a self-describing [u8 has][u8 r][u8 g][u8 b] field
+// appended to Join + PlayerJoined after the prefs flags byte. has=0 -> the 3
+// color bytes are present but ignored (fixed 4-byte field, field-by-field
+// parse discipline).
+void AppendNickColorField(std::vector<uint8_t>& out, uint32_t packed) {
+    out.push_back(coop::nick_color::IsCustom(packed) ? 1 : 0);
+    out.push_back(coop::nick_color::R(packed));
+    out.push_back(coop::nick_color::G(packed));
+    out.push_back(coop::nick_color::B(packed));
+}
+
+// Parse the 4-byte color field at `p` and store for `slot`. Returns bytes
+// consumed (0 = absent/truncated -> slot color untouched).
+size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot) {
+    if (remaining < 4) return 0;
+    coop::nick_color::StoreForSlot(
+        slot, p[0] != 0 ? coop::nick_color::Pack(p[1], p[2], p[3]) : 0u);
+    return 4;
 }
 
 // Parse one [u8 len][ASCII] field. Returns bytes consumed (0 = malformed/absent);
@@ -216,6 +237,7 @@ void Reset() {
     for (auto& g : g_guidBySlot) g.clear();
     for (auto& s : g_skinBySlot) s.clear();
     coop::nameplate::ResetSlots();  // v94: per-slot plate prefs back to visible
+    coop::nick_color::ResetSlots();  // v103: per-slot nick colors back to default
     g_joinSentBySlot.fill(false);
     g_joinAnnouncedBySlot.fill(false);
 }
@@ -275,6 +297,9 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         // the at-join announce that keeps LATE JOINERS in agreement with a peer that
         // hid its plate before they arrived (the user's "no ghost plate" ask).
         joinPayload.push_back(BuildLocalPrefsFlags());
+        // v103 nick color (12f): [u8 has][u8 r][u8 g][u8 b] after the flags byte --
+        // the at-join color announce (nick_color owns the local choice).
+        AppendNickColorField(joinPayload, coop::nick_color::LocalPacked());
         joinPayloadBuilt = true;
     }
     if (session.SendReliableToSlot(slot, net::ReliableKind::Join,
@@ -300,6 +325,7 @@ void OnSlotDisconnected(int slot) {
     g_guidBySlot[slot].clear();  // v73: drop the departed peer's inventory GUID for this slot
     g_skinBySlot[slot].clear();  // v93: a reconnect (or a different peer on this slot) re-announces its skin
     coop::nameplate::OnSlotDisconnected(slot);  // v94: plate pref back to visible for a slot reuse
+    coop::nick_color::OnSlotDisconnected(slot);  // v103: nick color back to default for a slot reuse
 }
 
 const std::wstring& NicknameForSlot(int slot) {
@@ -403,6 +429,11 @@ bool HandleJoinMessage(net::Session& session,
         nickFieldLen + guidFieldLen + skinFieldLen < nickRemaining) {
         StorePrefsFlagsForSlot(senderSlot,
                                nickStart[nickFieldLen + guidFieldLen + skinFieldLen]);
+        // v103 nick color (12f): [u8 has][r][g][b] follows the flags byte.
+        const size_t colorOff = nickFieldLen + guidFieldLen + skinFieldLen + 1;
+        if (colorOff < nickRemaining)
+            ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
+                                senderSlot);
     }
     // Install mirror Player Element for this sender so future
     // ItemActivate/Weather/etc. packets bearing senderElementId
@@ -482,9 +513,10 @@ bool HandleJoinMessage(net::Session& session,
 namespace {
 
 // Build a PlayerJoined reliable payload describing peer `slot` (its eid +
-// nick + v93 skin + v94 prefs flags). Wire layout (parsed field-by-field, same
-// as Join):
-//   [uint8 slot][uint32 eid][uint8 nicklen][nick UTF-8][uint8 skinlen][skin ASCII][uint8 flags]
+// nick + v93 skin + v94 prefs flags + v103 nick color). Wire layout (parsed
+// field-by-field, same as Join):
+//   [uint8 slot][uint32 eid][uint8 nicklen][nick UTF-8][uint8 skinlen][skin ASCII]
+//   [uint8 flags][u8 hasColor][u8 r][u8 g][u8 b]
 std::vector<uint8_t> BuildPlayerJoinedPayload(uint8_t slot, uint32_t eid,
                                               const std::wstring& nick,
                                               const std::string& skin,
@@ -501,6 +533,7 @@ std::vector<uint8_t> BuildPlayerJoinedPayload(uint8_t slot, uint32_t eid,
     out.push_back(skinLen);
     out.insert(out.end(), skin.begin(), skin.begin() + skinLen);
     out.push_back(prefsFlags);
+    AppendNickColorField(out, coop::nick_color::PackedForSlot(slot));
     return out;
 }
 
@@ -636,6 +669,11 @@ bool HandlePlayerJoined(net::Session& session,
     // v94 display prefs: [u8 flags] follows the skin field.
     if (skinFieldLen > 0 && nickFieldLen + skinFieldLen < nickRemaining) {
         StorePrefsFlagsForSlot(describedSlot, nickStart[nickFieldLen + skinFieldLen]);
+        // v103 nick color (12f): [u8 has][r][g][b] follows the flags byte.
+        const size_t colorOff = nickFieldLen + skinFieldLen + 1;
+        if (colorOff < nickRemaining)
+            ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
+                                describedSlot);
     }
     nick = SanitizeNickname(nick);
     g_remoteNickBySlot[describedSlot] = nick;
@@ -923,6 +961,82 @@ bool HandleNameplateChange(net::Session& session,
     }
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // our own echo
     coop::nameplate::StoreVisibleForSlot(describedSlot, visible);
+    return true;
+}
+
+namespace {
+
+// [u8 slot][u8 has][u8 r][u8 g][u8 b] -- the NickColorChange wire form (host
+// rebroadcasts verbatim).
+std::vector<uint8_t> BuildNickColorChangePayload(uint8_t slot, uint32_t packed) {
+    return { slot, static_cast<uint8_t>(coop::nick_color::IsCustom(packed) ? 1 : 0),
+             coop::nick_color::R(packed), coop::nick_color::G(packed),
+             coop::nick_color::B(packed) };
+}
+
+}  // namespace
+
+void AnnounceLocalNickColor(net::Session& session, uint32_t packed) {
+    UE_ASSERT_GAME_THREAD("AnnounceLocalNickColor");
+    const uint8_t selfSlot = coop::players::Registry::Get().LocalPeerId();
+    if (selfSlot >= net::kMaxPeers) return;  // not in a session yet -- the Join will carry it
+    const std::vector<uint8_t> p = BuildNickColorChangePayload(selfSlot, packed);
+    if (session.role() == net::Role::Host) {
+        for (int x = 1; x < net::kMaxPeers; ++x) {
+            if (!session.IsSlotReady(x)) continue;
+            session.SendReliableToSlot(x, net::ReliableKind::NickColorChange,
+                                       p.data(), static_cast<int>(p.size()));
+        }
+    } else {
+        session.SendReliableToSlot(0, net::ReliableKind::NickColorChange,
+                                   p.data(), static_cast<int>(p.size()));
+    }
+    UE_LOGI("player_handshake: announced local nick color %s (slot %u)",
+            coop::nick_color::IsCustom(packed) ? "CUSTOM" : "DEFAULT",
+            static_cast<unsigned>(selfSlot));
+}
+
+bool HandleNickColorChange(net::Session& session,
+                           const net::Session::ReliableMessage& msg) {
+    UE_ASSERT_GAME_THREAD("HandleNickColorChange");
+    if (msg.payloadLen < 5) {
+        UE_LOGW("player_handshake: NickColorChange payload %zu B too short -- dropping",
+                static_cast<size_t>(msg.payloadLen));
+        return true;
+    }
+    const uint8_t describedSlot = msg.payload[0];
+    const uint32_t packed = msg.payload[1] != 0
+        ? coop::nick_color::Pack(msg.payload[2], msg.payload[3], msg.payload[4])
+        : 0u;
+    if (describedSlot >= net::kMaxPeers) return true;
+
+    if (session.role() == net::Role::Host) {
+        // Forgery guard: a client may only color ITS OWN nick.
+        if (msg.senderPeerSlot != describedSlot || describedSlot == 0) {
+            UE_LOGW("player_handshake: NickColorChange slot=%u from senderSlot=%d -- forged, dropping",
+                    static_cast<unsigned>(describedSlot), msg.senderPeerSlot);
+            return true;
+        }
+        coop::nick_color::StoreForSlot(describedSlot, packed);
+        // Rebroadcast to every other ready client (originator excluded).
+        const std::vector<uint8_t> p = BuildNickColorChangePayload(describedSlot, packed);
+        for (int x = 1; x < net::kMaxPeers; ++x) {
+            if (x == describedSlot) continue;
+            if (!session.IsSlotReady(x)) continue;
+            session.SendReliableToSlot(x, net::ReliableKind::NickColorChange,
+                                       p.data(), static_cast<int>(p.size()));
+        }
+        return true;
+    }
+
+    // Client: only the host relays color prefs.
+    if (msg.senderPeerSlot != 0) {
+        UE_LOGW("player_handshake: NickColorChange from non-host senderPeerSlot=%d -- dropping",
+                msg.senderPeerSlot);
+        return true;
+    }
+    if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // our own echo
+    coop::nick_color::StoreForSlot(describedSlot, packed);
     return true;
 }
 

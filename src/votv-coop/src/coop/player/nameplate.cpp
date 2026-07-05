@@ -1,6 +1,7 @@
 #include "coop/player/nameplate.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/player_handshake.h"
@@ -157,6 +158,7 @@ void Update() {
         pl.healthPct = static_cast<int>(std::lround(h * 100.f));
         pl.ping = p->GetPing();
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
+        pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
         CopyNickAscii(pl.nick, p->GetNickname());
 
         ++snap.count;

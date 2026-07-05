@@ -93,6 +93,18 @@ void AnnounceLocalNameplate(coop::net::Session& session, bool visible);
 bool HandleNameplateChange(coop::net::Session& session,
                            const coop::net::Session::ReliableMessage& msg);
 
+// v103 nick color (12f): announce the LOCAL player's nick color mid-session
+// (same trust/relay shape as AnnounceLocalNameplate; packed 0 = reset to
+// default). The at-join state rides the [has][r][g][b] field in the Join
+// payload. Game thread only.
+void AnnounceLocalNickColor(coop::net::Session& session, uint32_t packed);
+
+// v103: handle a delivered NickColorChange ([u8 slot][u8 has][r][g][b]). Host:
+// forgery-checked + stored (coop::nick_color) + rebroadcast; client: host-only
+// sender, stored. Returns true when recognized.
+bool HandleNickColorChange(coop::net::Session& session,
+                           const coop::net::Session::ReliableMessage& msg);
+
 // Reset per-slot caches. Called from event_feed::OnSessionStart so a
 // Session::Stop()/Start() in the same process sees clean state.
 void Reset();

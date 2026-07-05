@@ -6,6 +6,7 @@
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/nick_color.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
@@ -60,7 +61,14 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const ImU32 gray    = IM_COL32(158, 158, 164, static_cast<int>(a * 245.f));
     const ImU32 red     = IM_COL32(255, 48, 48, static_cast<int>(a * 255.f));
     const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 215.f));
-    const ImU32 textCol = p.flash ? red : (p.occluded ? gray : white);
+    // v103 (12f): the peer's custom nick color replaces the white base; the
+    // flash/occluded signal colors keep priority (a hurt or hidden peer must
+    // read as such regardless of the cosmetic pick).
+    const ImU32 base = coop::nick_color::IsCustom(p.colorRGB)
+        ? IM_COL32(coop::nick_color::R(p.colorRGB), coop::nick_color::G(p.colorRGB),
+                   coop::nick_color::B(p.colorRGB), static_cast<int>(a * 245.f))
+        : white;
+    const ImU32 textCol = p.flash ? red : (p.occluded ? gray : base);
 
     // Distance SIZE scale: the whole plate (text + bar + box + gaps) scales as ONE unit
     // so a far peer's label stays proportional to their shrunken on-screen body. p.scale
@@ -94,11 +102,15 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
 
     TextOutlined(dl, font, px, textPos, textCol, outline, line);
 
-    // Health bar (dark red; GRAY while occluded -- same treatment as the nick).
+    // Health bar (dark red). While occluded the fill stays RED -- a darker,
+    // more transparent red than the normal fill (user 2026-07-05: not gray;
+    // "hp остаётся красным, но потемнее и полупрозрачным" behind objects).
+    // Note `a` already carries the occlusion x0.5, so the lower constant here
+    // stacks on that. The nick keeps the gray treatment; hurt-flash wins.
     const float frac = std::clamp(p.healthPct / 100.f, 0.f, 1.f);
     dl->AddRectFilled(bp, ImVec2(bp.x + barW, bp.y + barH), IM_COL32(0, 0, 0, static_cast<int>(a * 160.f)));
     const ImU32 fillCol = p.flash    ? red
-                        : p.occluded ? gray
+                        : p.occluded ? IM_COL32(120, 18, 18, static_cast<int>(a * 220.f))
                                      : IM_COL32(190, 30, 30, static_cast<int>(a * 235.f));
     dl->AddRectFilled(bp, ImVec2(bp.x + barW * frac, bp.y + barH), fillCol);
     dl->AddRect(bp, ImVec2(bp.x + barW, bp.y + barH), IM_COL32(0, 0, 0, static_cast<int>(a * 200.f)));
@@ -242,7 +254,13 @@ void DrawChat() {
             const ImU32 body    = IM_COL32(236, 236, 236, static_cast<int>(a * 245.f));
             ImU32 nickCol = body;
             if (l.nickLen > 0) {
-                const ImU32 c = kSlotCols[l.slot % (sizeof(kSlotCols) / sizeof(kSlotCols[0]))];
+                // v103 (12f): a peer's custom nick color overrides the per-slot
+                // palette; unset -> the palette as before.
+                const uint32_t custom = coop::nick_color::PackedForSlot(l.slot);
+                const ImU32 c = coop::nick_color::IsCustom(custom)
+                    ? IM_COL32(coop::nick_color::R(custom), coop::nick_color::G(custom),
+                               coop::nick_color::B(custom), 255)
+                    : kSlotCols[l.slot % (sizeof(kSlotCols) / sizeof(kSlotCols[0]))];
                 nickCol = (c & 0x00FFFFFFu) | (static_cast<ImU32>(a * 255.f) << 24);
             }
 
