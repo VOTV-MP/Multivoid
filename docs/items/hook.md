@@ -119,10 +119,28 @@ RE pass 2026-07-06, fully static (kismet-analyzer bytecode; no live probe yet). 
 | persistence (save) | host save (`actor_save_C` native getData) | joiner gets anchored hooks from save | native for HOST-owned hooks only |
 | hovertext dist readout | per-viewer | optional (native shows to whoever looks) | local; fine either way |
 
-## 3. Coop design (DESIGN — not built)
+## 3. Coop design (DESIGN — ratified with user 2026-07-06, not built)
 
-Ownership follows the lifecycle phase (MTA shape: projectiles are client-simulated,
-persistent world state is server-owned):
+Architecture decisions (the smart-item pattern, hook = case #1):
+
+- **Home**: `coop/items/` — the folder already exists (inventory/order sync); a deployed
+  item actor is the world-side continuation of the ITEM concept, same domain. New files
+  `hook_sync.cpp` (+ `hook_mirror.cpp` at >800), npc_sync/npc_mirror shape. No separate
+  "deployables/" folder (one concept = one folder).
+- **Authority is phase-split, not uniformly host** (MTA precedent: client-simulated
+  `CClientProjectile` + server-owned pickups —
+  `reference/mtasa-blue/Client/mods/deathmatch/logic/CClientProjectile.h`): authority
+  follows whoever the game physically welds the simulation to.
+- **Transitions are POLLED, not hooked**: throw/attach_a/attach_b are BP→BP direct calls
+  (prop_hook uber → `activeHook.attach_a`) — per COOP_DISPATCH_VISIBILITY presumed
+  PE-INVISIBLE. The whole state machine is plain properties (`isThrown`, `attached_a/b`,
+  `playerHooked`, `dist`, A pose) → owner polls at snapshot cadence, diffs become
+  reliable transition events (alarm-lane precedent). No Func-thunk patches needed.
+- **No framework at N=1** ([[feedback-fix-then-generalize-mirror-identity]]): hook ships
+  working first, rope second on the same pattern; shared smart-item primitives
+  (phase enum, owner slot, anchor-handoff handshake) get extracted at case #3.
+
+Ownership per lifecycle phase:
 
 1. **Fired/flying/player-hooked** (phases 1-4): the hook is an EXTENSION OF THE OWNING
    PLAYER, exactly like their pose. Owner simulates natively (their own machine already

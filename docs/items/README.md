@@ -39,6 +39,6 @@ Cross-cutting contracts stay where they are (link, don't restate):
 
 | Item (classes) | Doc | Pass |
 |---|---|---|
-| hook (`prop_hook_C` : prop_C → spawns `hook_C` : actor_save_C) | [hook.md](hook.md) | RE DONE 2026-07-06 (full static bytecode pass: prop_hook uber + hook uber + all named fns). Sync: DESIGN drafted in doc, NOT BUILT |
+| hook (`prop_hook_C` : prop_C → spawns `hook_C` : actor_save_C) | [hook.md](hook.md) | RE DONE 2026-07-06 (full static bytecode pass: prop_hook uber + hook uber + all named fns). Sync: DESIGN RATIFIED (phase-split authority, poll-diff transitions, `coop/items/` home — hook.md §3), NOT BUILT — build starts after 2-3 smart-item cases are doc'd (user 2026-07-06: collect cases first, then implement the pattern) |
 | rope (`rope_C`) — two-end sibling of the hook (PhysicsConstraint + ConstraintBroken handler, 4 fns) | (todo) | next candidate after hook ships |
 | variants census: `hook_Child`, `hook_flesh`, `prop_hook_erie` (assets exist in pak next to hook) | — | fold into hook.md when RE'd (likely `single=true` / cosmetic children) |
