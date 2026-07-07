@@ -2,7 +2,7 @@
 
 #include "coop/items/player_inventory_sync.h"
 
-#include "coop/session/blob_chunks.h"
+#include "coop/net/blob_chunks.h"
 #include "coop/session/ini_config.h"
 #include "coop/items/inventory_wire.h"
 #include "coop/net/protocol.h"

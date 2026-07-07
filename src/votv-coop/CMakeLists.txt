@@ -365,7 +365,7 @@ add_library(votv-coop SHARED
     src/coop/items/inventory_wire.cpp
     src/ue_wrap/inventory.cpp
     src/coop/world/email_sync.cpp
-    src/coop/session/blob_chunks.cpp
+    src/coop/net/blob_chunks.cpp
     src/coop/interactables/signal_wire.cpp
     src/coop/interactables/signal_sync.cpp
     src/coop/interactables/comp_sync.cpp

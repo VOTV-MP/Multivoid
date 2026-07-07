@@ -159,7 +159,9 @@ no direct analog, so cite the reasoning inline.
   moderation, event dispatch). Concept: **session lifecycle**.
 Two files sit in the wrong folder by concept:
   - `coop/session/blob_chunks.cpp` — self-described "chunked blob TRANSPORT over the reliable
-    lane" -> belongs in `coop/net/`.
+    lane" -> belongs in `coop/net/`. **DONE 2026-07-07** (`git mv` .cpp+.h into `coop/net/`;
+    6 include paths + 1 CMake path updated; namespace was already `coop::blob_chunks`, no rename;
+    diff is ONLY the path relocation; built Release clean, links). Behavior-identical.
   - `coop/session/net_pump.cpp` — the per-tick net ORCHESTRATOR; it's the seam between transport
     and gameplay. Judgment call: it drives puppets (gameplay) from net state, so it may
     legitimately live in session/ as the lifecycle-driven pump — but its NAME says "net". Decide

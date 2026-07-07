@@ -2,7 +2,7 @@
 
 #include "coop/interactables/signal_wire.h"
 
-#include "coop/session/blob_chunks.h"
+#include "coop/net/blob_chunks.h"
 
 #include "ue_wrap/log.h"
 

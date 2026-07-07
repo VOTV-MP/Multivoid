@@ -1,6 +1,6 @@
 // coop/blob_chunks.cpp -- see coop/blob_chunks.h.
 
-#include "coop/session/blob_chunks.h"
+#include "coop/net/blob_chunks.h"
 
 #include "coop/net/session.h"
 

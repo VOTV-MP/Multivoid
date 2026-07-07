@@ -2,7 +2,7 @@
 
 #include "coop/world/email_sync.h"
 
-#include "coop/session/blob_chunks.h"
+#include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/email.h"
