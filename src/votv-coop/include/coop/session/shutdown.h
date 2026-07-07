@@ -40,16 +40,11 @@ namespace coop::net { class Session; }
 
 namespace coop::shutdown {
 
-// Global atomic shutdown flag. Tripped by:
-//   1. The wndproc subclass on WM_CLOSE (user X-close, Alt+F4, console quit)
-//   2. DLL_PROCESS_DETACH last-resort path (if WM_CLOSE didn't fire)
-//   3. Manual DoShutdown() call from anywhere (e.g. a future console cmd)
-// Once tripped, the flag NEVER clears (process is going down).
-extern std::atomic<bool> g_shuttingDown;
-
-inline bool IsShuttingDown() {
-    return g_shuttingDown.load(std::memory_order_acquire);
-}
+// Read the global shutdown flag. Tripped once (by the wndproc WM_CLOSE subclass, the
+// DLL_PROCESS_DETACH last-resort path, or a manual DoShutdown()) and NEVER cleared
+// after -- the process is going down. The flag itself is file-private to shutdown.cpp
+// (internal linkage; the sole writer is DoShutdown()); this is its only public accessor.
+bool IsShuttingDown();
 
 // Install the WM_CLOSE subclass on the game window. Idempotent. Called
 // once at boot AFTER the game window exists (harness boot path locates

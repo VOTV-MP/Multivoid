@@ -15,7 +15,11 @@
 
 namespace coop::shutdown {
 
-std::atomic<bool> g_shuttingDown{false};
+// Global atomic shutdown flag -- file-private (internal linkage). Read via the public
+// IsShuttingDown(); the SOLE writer is DoShutdown()'s compare_exchange. Once tripped it
+// NEVER clears (process is going down). Was an extern in shutdown.h until the 2026-07-07
+// boundary pass; no external writer ever existed, so it needs no public setter.
+static std::atomic<bool> g_shuttingDown{false};
 
 namespace {
 
@@ -178,6 +182,10 @@ void UpdateWindowTitle() {
     ::SetWindowTextW(h, title);
     g_titled = true;
     UE_LOGI("shutdown: window title set to '%ls' on HWND=%p", title, h);
+}
+
+bool IsShuttingDown() {
+    return g_shuttingDown.load(std::memory_order_acquire);
 }
 
 void DoShutdown() {

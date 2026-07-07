@@ -27,7 +27,12 @@ back-compat alias, no "kept for now". A move is a move.
 >   longer includes any `coop/` header — verified coop-free. Behavior-preserving.
 > - **A2 — DONE** (commit pending). `git rm`'d the two empty `.gitkeep` placeholders; the dead
 >   `include/votv-coop/` tree is gone. Zero includers, not a CMake include root — no compile impact.
-> - A3 — reclassified (see below, NOT a delete) · A4 — pending
+> - A3 — reclassified (see below, NOT a delete)
+> - **A4 — DONE** (commit pending, built Release clean). `g_shuttingDown` is now file-static
+>   (internal linkage) in `shutdown.cpp`; `IsShuttingDown()` moved out-of-line into the .cpp;
+>   `shutdown.h` keeps only the `bool IsShuttingDown();` declaration. NO public setter added —
+>   the survey/plan assumed an external writer, but grep proved the sole writer is
+>   `DoShutdown()`'s own compare_exchange (same TU), so a setter would be speculative (YAGNI).
 
 ### A1. `ue_wrap/spawn_menu.cpp` reaches UP into `coop` [the one real layer breach] — DONE
 `src/votv-coop/src/ue_wrap/spawn_menu.cpp:5` includes `coop/player/players_registry.h`;
@@ -57,12 +62,14 @@ pre-refactor artifact (the `coop/sync`->`coop/element` dissolve left it orphaned
 from its content vs what `identity_create.cpp`/`identity_destroy.cpp` actually expose; if
 stale, delete it (RULE 2).
 
-### A4. Tighten `g_shuttingDown` global
-`include/coop/session/shutdown.h:48` exposes `extern std::atomic<bool> g_shuttingDown;` as a
-mutable global across the module boundary — yet line 51 already provides an `IsShuttingDown()`
-accessor. Make the atomic file-static in `shutdown.cpp`, add a `SetShuttingDown(bool)` setter,
-keep only the two accessor/mutator functions in the header. Low urgency, do it when you touch
-shutdown anyway.
+### A4. Tighten `g_shuttingDown` global — DONE
+`include/coop/session/shutdown.h:48` exposed `extern std::atomic<bool> g_shuttingDown;` as a
+mutable global across the module boundary. **As built (2026-07-07):** the atomic is now
+file-static (internal linkage) in `shutdown.cpp`; `IsShuttingDown()` is a real out-of-line
+function there; the header exposes only `bool IsShuttingDown();`. NO setter was added — the
+original plan text assumed an external writer, but a grep proved the ONLY writer is
+`DoShutdown()`'s compare_exchange (same TU), so a public `SetShuttingDown` would be
+speculative (fix-then-generalize / YAGNI). All 36 `IsShuttingDown()` callers rebuilt clean.
 
 ---
 
