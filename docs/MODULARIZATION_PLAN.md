@@ -177,14 +177,30 @@ each (`wc -l`) — some may already be handled by Tier B.
 
 ## Tier D — duplicated helpers (collapse to one owner)
 
-The survey found genuine copy-paste with no shared home. Each is a small, safe dedup.
+The survey found genuine copy-paste with no shared home. Each is a small, safe dedup —
+**EXCEPT the string one, which a 2026-07-07 measurement (below) proved is NOT mechanical.**
 
-- **String narrow/widen: ~10 independent copies.** `NarrowAscii` in identity_create.cpp:50,
-  order_sync.cpp:84, kerfur_entity.cpp:71, trash_channel.cpp:113; `ToUtf8` in
-  player_handshake.cpp:132 + chat_feed.cpp:57; `Widen` in http_client.cpp:29 + client_model.cpp:31;
-  plus `Narrow`/`NarrowName`/`WidenAscii` variants. **Fix:** one `coop/util/string_conv.{h,cpp}`
-  (or an `ue_wrap` string util — it's engine-agnostic, pick one home) with `NarrowAscii`/`Widen`/
-  `ToUtf8`/`FromUtf8`; delete all copies (RULE 2). This is the highest-count duplication.
+- **String narrow/widen — MEASURED 2026-07-07: NOT a mechanical dedup. The copies DIVERGE by
+  design; do NOT naive-merge (it would change non-ASCII behavior — RULE 1 trap).** The actual
+  implementations fall into three semantic classes:
+  1. **ASCII class-name narrowing** — `NarrowAscii` in identity_create.cpp:50 (`c & 0xFF`),
+     kerfur_entity.cpp:71 + trash_channel.cpp:113 (raw `(char)c`), order_sync.cpp:84 (ASCII-guard
+     with `'?'` fallback). All inputs are ASCII BP class/order names, so they AGREE in practice but
+     differ on non-ASCII. These four CAN share one canonical (pick the defensive `'?'`-guard —
+     strictly safer, identical for ASCII). Safe subset.
+  2. **Full UTF-8 Win32 codecs** — `Widen` in http_client.cpp:29 (`MultiByteToWideChar(CP_UTF8)`),
+     `ToUtf8` in player_handshake.cpp:132 (`WideCharToMultiByte(CP_UTF8)`, returns `vector<uint8_t>`).
+     Real converters; could share a Win32-based canonical, but note the DIFFERENT return types.
+  3. **Specialized — do NOT merge.** chat_feed.cpp:57 `ToUtf8` is a hand-rolled UTF-8 encoder that
+     DELIBERATELY strips control chars (`cp < 0x20`); client_model.cpp:31 `Widen` is a naive ASCII
+     byte-widen (`wstring(s.begin(),s.end())`, "names are validated ASCII"). These are intentional
+     specializations; merging them loses behavior.
+  **Home constraint:** the folder rule forbids `coop/util/` (catch-all name). The two existing
+  string headers (`ue_wrap/fstring_utils.h`, `ue_wrap/ftext_utils.h`) are FString/FText engine
+  MINTERS, not generic `wstring<->string` codecs — so there is no ready home. A crisp home must be
+  chosen (candidate: fold class-1 into `ue_wrap/reflection` since every call site narrows a
+  `ClassNameOf()` output; or a new crisply-named header). **Scope: do class-1 only (safe), leave
+  class-3 alone, class-2 optional. This is NOT the "highest-count easy win" the first draft claimed.**
 - **Local-player-pawn lookup: ~9 inline sites** of `R::FindObjectByClass(P::name::MainPlayerClass)`
   (engine.cpp:379,508; autotest.cpp:97,620; autotest_saveui.cpp:143; join_membership_sweep.cpp:624;
   remote_player.cpp:67) plus two differently-named local wrappers (`LocalPlayerPawn`,`LocalPawn`).
