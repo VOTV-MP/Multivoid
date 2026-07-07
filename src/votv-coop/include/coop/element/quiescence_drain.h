@@ -107,6 +107,14 @@ void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
 // is something to reconcile. Game-thread only.
 bool HasPendingWork();
 
+// v106b GHOST-SWEEP arm (2026-07-07): an event stranded (or may have stranded) an identity-less native
+// chipPile on this client -- a rebind displaced a live native (identity_create HOST RE-ASSERT), or an
+// E-press landed on an unbound native post-quiescence. Arming makes the next reconcile pass run, whose
+// step 2 (BindUnboundReCreates GHOST-RETIRE tail) adjudicates EVERY such ghost at once: re-bind what a
+// map key claims, retire the provably identity-less rest. Event handlers CAPTURE here; the sequence
+// applies -- the same contract as every other queue in this module. Game-thread only.
+void ArmGhostSweep();
+
 // Drop the deferred queues (save-time twins + pos-corrections + destroys). Called ONLY at session teardown
 // (join_membership_sweep::ResetClaimTracking, the disconnect/world-drop edge). The queues deliberately SURVIVE
 // bracket close -- they drain at

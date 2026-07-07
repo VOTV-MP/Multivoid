@@ -10,6 +10,7 @@
 #include "coop/element/registry.h"         // Registry::Get().Get(eid)
 #include "coop/session/ini_config.h"               // IsIniKeyTrue
 #include "coop/creatures/kerfur_entity.h"            // IsKerfurPropClass (variant-1 position re-bind: kerfur family)
+#include "coop/props/join_membership_sweep.h"    // HasLoadTailQuiesced (the GHOST-RETIRE tail's client+quiescence gate)
 #include "coop/props/prop_element_tracker.h"     // UnmarkKnownKeyedProp, GetPropElementIdForActor, MarkBoundMirrorNative
 #include "coop/props/remote_prop.h"              // RegisterPropMirror, ConsumeLocalActor
 #include "coop/props/save_time_retire_util.h"    // FindExactMatch (variant-1 position re-bind, shared 1cm kernel)
@@ -350,6 +351,7 @@ int BindUnboundReCreates() {
     // compare class filter before any read; capture InternalIndex for FindExactMatch's GC-robust liveness check.
     struct LiveNative { void* actor; int32_t idx; float x, y, z; };
     std::vector<LiveNative> chipN, kerfurN;
+    size_t chipBound = 0;  // live BOUND chip natives (the GHOST-RETIRE >50% valve's denominator)
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
@@ -364,7 +366,7 @@ int BindUnboundReCreates() {
         if (!isChip) { void* c = R::ClassOf(o); isKerfur = c && coop::kerfur_entity::IsKerfurPropClass(c); }
         if (!isChip && !isKerfur) continue;                                // cheap class filter -> 99.7% out, no alloc
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;       // CDO (NameOf alloc: only the ~870 matches)
-        if (PT::IsBoundMirrorNative(o)) continue;                          // already bound (survivor) -> skip
+        if (PT::IsBoundMirrorNative(o)) { if (isChip) ++chipBound; continue; }  // already bound (survivor) -> skip (counted: the ghost valve's denominator)
         const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
         (isChip ? chipN : kerfurN).push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z});
     }
@@ -487,6 +489,69 @@ int BindUnboundReCreates() {
             UE_LOGI("save_identity_bind: DUP-RETIRE -- armed %d save-time twin(s) from the identity map (eid bound "
                     "@new but a stale UNBOUND native lingers @save-pos = FLOOR-kept mass-move dup, docs/piles/12) "
                     "-> the sweep retires each per-eid (confirmed -> no cap)", dupArmed);
+
+        // ---- v106b GHOST-RETIRE tail (2026-07-07, user: "bring the client world to the host's AT
+        // ONCE, don't wait for an E-press per ghost"). POST-quiescence only (which is client-only by
+        // construction: the host never fires the join sweep, so HasLoadTailQuiesced never flips there
+        // -- this also keeps the host-side self-tests out). A live UNBOUND native chipPile that
+        //   (a) this pass could not claim (not used[] and still eid-less),
+        //   (b) sits at NO map entry's @save (not a purge re-create awaiting phase-2, not a mass-move
+        //       @old twin -- the armed twin sweep owns those), and
+        //   (c) sits at no FREE entry's @host (not a phase-1 churn survivor awaiting its claim)
+        // is PROVABLY identity-less: nothing on the wire can ever address it and no binder will ever
+        // claim it (the 10:19:27 wedge class: a bind-displaced leftover / a native-chain product).
+        // Retire them ALL in one pass. RULE 2: the v106 one-pile-per-E-press retire in
+        // trash_collect_sync is retired with this as the single wholesale owner.
+        if (coop::join_membership_sweep::HasLoadTailQuiesced() && !chipN.empty()) {
+            std::vector<size_t> ghostIdx;
+            for (size_t i = 0; i < chipN.size(); ++i) {
+                if (used[i]) continue;
+                const LiveNative& nv = chipN[i];
+                if (!R::IsLiveByIndex(nv.actor, nv.idx)) continue;
+                if (coop::element::Registry::Get().EidForActor(nv.actor) != coop::element::kInvalidId)
+                    continue;  // a bind above claimed it after all -> not a ghost
+                bool nearKey = false;
+                for (const MAP::IdEntry& e : g_chipEntries) {
+                    if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
+                    const float sdx = nv.x - e.savePosX, sdy = nv.y - e.savePosY, sdz = nv.z - e.savePosZ;
+                    if (sdx * sdx + sdy * sdy + sdz * sdz <= coop::save_time_retire_util::kExactMatchR2Cm) {
+                        nearKey = true;
+                        break;
+                    }
+                    if (e.hasHostPos && eidFree(e.eid)) {
+                        const float hdx = nv.x - e.hostPosX, hdy = nv.y - e.hostPosY, hdz = nv.z - e.hostPosZ;
+                        if (hdx * hdx + hdy * hdy + hdz * hdz <=
+                            coop::save_time_retire_util::kExactMatchR2Cm) {
+                            nearKey = true;
+                            break;
+                        }
+                    }
+                }
+                if (!nearKey) ghostIdx.push_back(i);
+            }
+            // >50% valve (the pile sweep's documented shape; denominator = ALL live chip natives): a
+            // mass ghost verdict is a racing bracket or a bug, never reality -> abort loudly, retire
+            // nothing this pass.
+            const size_t totalChips = chipBound + chipN.size();
+            if (!ghostIdx.empty() && ghostIdx.size() * 2 > totalChips) {
+                UE_LOGE("save_identity_bind: GHOST-RETIRE VALVE -- %zu ghost verdict(s) out of %zu live "
+                        "chip native(s) (>50%%): refusing the mass retire (racing bracket / bug); "
+                        "nothing destroyed this pass", ghostIdx.size(), totalChips);
+            } else {
+                for (size_t gi : ghostIdx) {
+                    used[gi] = true;
+                    UE_LOGW("save_identity_bind: GHOST-RETIRE unbound native chipPile %p @(%.1f,%.1f,%.1f) "
+                            "-- no eid, no @save/@host key match post-quiescence (bind-displaced leftover "
+                            "/ native-chain product) -> destroyed (wholesale reconcile)",
+                            chipN[gi].actor, chipN[gi].x, chipN[gi].y, chipN[gi].z);
+                    coop::save_time_retire_util::UnmarkAndDestroy(chipN[gi].actor);
+                }
+                if (!ghostIdx.empty())
+                    UE_LOGI("save_identity_bind: GHOST-RETIRE pass -- %zu identity-less native pile(s) "
+                            "retired at once (%zu bound + %zu unbound walked)",
+                            ghostIdx.size(), chipBound, chipN.size());
+            }
+        }
     }
 
     // kerfurOff arm -- KEY match (sidecar v3): the GUARANTEED kerfur bind. Each unbound kerfur native's portable

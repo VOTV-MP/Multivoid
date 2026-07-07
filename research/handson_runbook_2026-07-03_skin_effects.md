@@ -230,7 +230,43 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-07 ~11:30 (DLL `6A98740DCF703723` — ТЕКУЩИЙ 4/4, wire v105 без изменений формата; СМОУК НЕ ГОНЯЛСЯ — ты за ПК, тест за тобой; аудит-агент в фоне; supersedes F33C5F08)
+## 2026-07-07 ~13:00 (DLL `340E5573E87DF5AB` — ТЕКУЩИЙ 4/4, wire v105 без изменений; СМОУК НЕ ГОНЯЛСЯ — ты за ПК; аудит 0 CRIT/HIGH; supersedes 6A98740DCF703723)
+
+### 0ae-SEAM-v106b. Разбор твоего 11:40–11:43-теста: «клиент берёт pile → clump удаляется, у хоста clump виснет» + «почему не разом»
+
+**Корень (лог-доказан, хост 11:43:04 eid=4815):** v106-шов смерти (Func-патч K2_DestroyActor)
+впервые УВИДЕЛ morph-husk смерть пайла — пайл самоуничтожается ВНУТРИ playerGrabbed сразу после
+спавна клump'а, ещё владея eid. Шов принял морф за смерть сущности: (а) разослал `DESTROY(eid)`
+клиенту РАНЬШЕ ToClump; (б) `UnmarkKnownKeyedProp` изъял element-строку в ElementDeleter — flush
+в конце тика убил ряд УЖЕ ПОСЛЕ ребинда на клump. Через 30 тиков TickCarry увидел «мёртвый» ряд →
+dead-close + второй PropDestroy → у клиента клump-прокси удалён, у хоста кинематик-клump замер в
+воздухе (drive off, физика off). Каждый grab (хоста и клиента) убивал СВОЙ eid.
+
+**Фикс 1 — MIGRATION-FIRST (симметрия с re-pile):** `NoteClumpBorn` теперь мигрирует identity на
+клump ПРИ РОЖДЕНИИ (RebindE в thunk'е) — husk умирает уже без eid, шов смерти сам по себе no-op
+(ни броадкаста, ни изъятия строки). Плюс: OnGrabIntent потребляет сертификат (рука пуппета = его
+hand-edge); истёкший сертификат с живым нетронутым клump'ом теперь ВЫРАЖАЕТ конверт (BIRTH-ORPHAN
+EXPRESS — отказанный grab всё равно конвертировал мир, пиры перескиниваются).
+
+**Фикс 2 — «привести мир клиента к хосту РАЗОМ» (твой вопрос):** E-press-ретайр одного
+привидения ОТСТАВЛЕН (RULE 2). Новый владелец — **GHOST-RETIRE tail** в
+`BindUnboundReCreates` (квиесценс-реконсайл): каждый живой unbound натив-пайл, который ни один
+ключ карты (@save любой / @host свободных eid, 1см) не клеймит — доказуемо безыдентичный →
+ретайрится ВЕСЬ НАБОР за один проход (валв >50%). Триггеры: displacement живого натива при
+HOST RE-ASSERT ребинде (identity_create) и E-press по unbound-пайлу — оба лишь АРМЯТ проход
+(`quiescence_drain::ArmGhostSweep`), он бежит в 250мс-дебаунсе. На хосте tail структурно
+недостижим (HasLoadTailQuiesced не флипается).
+
+**Твой ре-тест (то же, что 0ad, теперь должно жить):**
+1. Клиент: E-grab любого замапленного пайла → в руках клump, LMB-throw летит, лендится в пайл
+   у ОБОИХ. В хост-логе на grab: `clump BORN ... identity MIGRATED`, БЕЗ строки
+   `destroy-seam: HOST broadcasting DESTROY` между EXEC и ToClump, БЕЗ `carry ... actor DIED`
+   через секунду.
+2. Хост: свой быстрый перенос (E→LMB серией) — у клиента пайлы двигаются, не исчезают.
+3. Привидения: если где-то остался unbound-натив — он должен УЙТИ САМ в ~250мс после любого
+   арма (в клиент-логе `GHOST-RETIRE unbound native chipPile ... destroyed (wholesale
+   reconcile)`), Е жать не обязательно.
+4. Регрессия 0ad-осей: hold/положить мгновенно у наблюдателя; hand-mirror жив.
 
 ### 0ad-SEAM-v106. Разбор твоего 10:14–10:19-теста: ghost piles + «полсекунды» — оба per rule 1, no patches
 

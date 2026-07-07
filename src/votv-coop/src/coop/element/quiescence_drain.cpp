@@ -415,9 +415,24 @@ void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload) {
 
 // ---- HasPendingWork / the sequence / the triggers / Reset ----
 
+// v106b GHOST-SWEEP arm (2026-07-07, the wholesale "bring the client world to the host's at
+// once" adjudication). Set by the events that can strand an identity-less native chipPile on
+// the client (a rebind displacing a live native; an E-press landing on an unbound native);
+// consumed by RunReconcile -- step 2's BindUnboundReCreates GHOST-RETIRE tail retires EVERY
+// such ghost in one pass. A bool, not a queue: the pass re-derives the full ghost set itself.
+static bool g_ghostSweepArmed = false;
+
+void ArmGhostSweep() {
+    if (!g_ghostSweepArmed)
+        UE_LOGI("quiescence_drain: GHOST-SWEEP armed -- a native chipPile may have been stranded "
+                "identity-less (displaced by a rebind / hit by an E-press unbound); the next "
+                "reconcile pass adjudicates ALL of them at once");
+    g_ghostSweepArmed = true;
+}
+
 bool HasPendingWork() {
     return !g_pendingSaveTimeTwin.empty() || !g_pendingPosCorrection.empty() || !g_pendingDestroy.empty() ||
-           coop::kerfur_reconcile::HasPendingRetire();
+           coop::kerfur_reconcile::HasPendingRetire() || g_ghostSweepArmed;
 }
 
 void RunReconcile(bool joinSweep) {
@@ -427,6 +442,9 @@ void RunReconcile(bool joinSweep) {
     // internally bounded to armed/pending work, so a steady-state pass with nothing pending is cheap.
     SweepReconcileSaveTimeTwins();                               // 1: retire stale native chipPile@old (pile twin)
     coop::save_identity_bind::BindUnboundReCreates();            // 2: re-bind unbound natives (identity layer; chip=pos, kerfur=key)
+                                                                 //    + the v106b GHOST-RETIRE tail (post-quiescence: retire every
+                                                                 //    identity-less native pile the binds could not claim)
+    g_ghostSweepArmed = false;                                   //    step 2 adjudicated the full ghost set -> the arm is consumed
     coop::kerfur_reconcile::SweepReconcileSaveTimeKerfurs();     // 3: retire stale kerfur off-prop (eid-keyed; the folded-in 3rd owner)
     ApplyPendingDestroys();                                      // 4: destroy-before-load -- apply destroys that raced the bind, post-bind
     ApplyPendingPosCorrections();                               // 5: b3 -- snap window-moved piles
@@ -463,6 +481,7 @@ void Reset() {
     // / steady-state); the per-bracket index lives in pile_spawn_bind and is Reset separately. A queue item
     // unresolved by session teardown = a target that never loaded this session -> safe to drop.
     g_pendingSaveTimeTwin.clear();
+    g_ghostSweepArmed = false;  // v106b: session teardown drops the pending ghost adjudication too
     if (!g_pendingPosCorrection.empty())
         UE_LOGI("[PILE-B3] session teardown dropping %zu undrained pos-correction(s) -- target never bound this "
                 "session (benign at teardown)", g_pendingPosCorrection.size());

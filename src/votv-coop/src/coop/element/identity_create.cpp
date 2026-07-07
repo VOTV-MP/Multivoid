@@ -18,8 +18,10 @@
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
+#include "coop/element/quiescence_drain.h"      // ArmGhostSweep (v106b: displaced live native -> wholesale adjudication)
 #include "coop/props/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
 #include "ue_wrap/log.h"
+#include "ue_wrap/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
 #include "ue_wrap/reflection.h"
 
 namespace coop::element {
@@ -136,6 +138,12 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                     "cls='%ls' (prior actor=%p was %s -- churn/recycle smear healed; displaced actor not "
                     "destroyed)", eid, actor, key.c_str(), cls.c_str(), old,
                     oldLive ? "LIVE-but-foreign" : "dead/stale");
+            // v106b: a LIVE displaced native chipPile is now identity-less -- the exact ghost the
+            // 10:19:27 wedge left for an E-press to find. Arm the wholesale adjudication (the
+            // quiescence_drain reconcile's GHOST-RETIRE tail): its OWN identity gets a re-bind
+            // chance in that same pass (binds run before the retire), else it is retired at once.
+            if (oldLive && ue_wrap::prop::IsChipPile(old))
+                coop::element::quiescence_drain::ArmGhostSweep();
             return;
         }
         // else: fall through to Install, which rejects the duplicate eid (HEAD live-conflict guard).

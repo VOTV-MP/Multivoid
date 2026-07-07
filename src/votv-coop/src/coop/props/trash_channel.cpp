@@ -58,9 +58,12 @@ void RebindE(coop::element::ElementId E, void* actor) {
 }
 
 // v106 clump birth certificates (see trash_channel.h): clump actor -> {source pile eid, chipType},
-// recorded by the BeginDeferred Func thunk at the clump's spawn, consumed by the held-edge. TTL-pruned
-// in TickCarry (a grab that never reached the hand: hands full / denied / dropped mid-morph).
-struct ClumpBirth { uint32_t eid = 0; uint8_t chipType = 0; uint32_t bornTick = 0; };
+// recorded by the BeginDeferred Func thunk at the clump's spawn, consumed by the held-edge (or by
+// OnGrabIntent for a puppet grab). TTL-pruned in TickCarry; an expiring certificate whose clump is
+// still live+tracked gets its conversion EXPRESSED there (a denied grab still converted the world).
+// idx = the clump's GUObjectArray InternalIndex at birth (IsLiveByIndex across the multi-tick TTL --
+// never raw IsLive on a possibly-freed pointer).
+struct ClumpBirth { uint32_t eid = 0; uint8_t chipType = 0; uint32_t bornTick = 0; int32_t idx = -1; };
 std::unordered_map<void*, ClumpBirth> g_clumpBirths;
 constexpr uint32_t kClumpBirthTtlTicks = 60;  // ~1s; the grab's clump enters the hand within a few frames
 
@@ -247,10 +250,21 @@ coop::element::ElementId AnyCarryingEid() {
 
 void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
     if (!clump || E == 0u || E == coop::element::kInvalidId) return;
-    g_clumpBirths[clump] = ClumpBirth{static_cast<uint32_t>(E), chipType, g_tick};
+    g_clumpBirths[clump] = ClumpBirth{static_cast<uint32_t>(E), chipType, g_tick,
+                                      R::InternalIndexOf(clump)};
+    // v106b MIGRATION-FIRST (2026-07-07, the 11:43 regression root): identity moves to the
+    // successor AT BIRTH, before the pile husk's K2_DestroyActor fires microseconds later in
+    // the SAME playerGrabbed call. Without this the husk died still owning E, and the v106
+    // destroy seam (correctly firing on every dispatch route now) treated the morph-husk
+    // death as ELEMENT death: UnmarkKnownKeyedProp Took the row into the ElementDeleter
+    // (flushed AFTER the held-edge rebind -> row gone), and a DESTROY(eid) broadcast raced
+    // ahead of the ToClump -> the client's mirror died, the carry lane dead-closed ~1s in,
+    // the host's kinematic clump froze mid-air. The RE-PILE direction already migrates at
+    // its thunk (OnHostConvert rebinds immediately); this makes GRAB symmetric.
+    RebindE(E, clump);
     UE_LOGI("[PILE] HOST clump BORN %p from pile eid=%u variant=%u (BeginDeferred thunk -- the "
-            "deterministic grab certificate; held-edge consumes it)",
-            clump, static_cast<unsigned>(E), static_cast<unsigned>(chipType));
+            "deterministic grab certificate; identity MIGRATED to the clump at birth; held-edge "
+            "consumes it)", clump, static_cast<unsigned>(E), static_cast<unsigned>(chipType));
 }
 
 bool TakeClumpBorn(void* clump, coop::element::ElementId* outE, uint8_t* outChipType) {
@@ -446,6 +460,15 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
                 eid, senderSlot);
         return;
     }
+    // v106b: consume the birth certificate -- the puppet's hand IS this clump's hand-edge (the
+    // owner-side held-edge in local_streams never fires for a puppet grab). Without the consume
+    // the certificate expires 60 ticks in and the expiry-express would broadcast a spurious
+    // second ToClump at the carried (mid-air) transform.
+    {
+        coop::element::ElementId bornE = coop::element::kInvalidId;
+        uint8_t bornChip = 0;
+        TakeClumpBorn(clump, &bornE, &bornChip);
+    }
 
     // L3 (carry-jitter root fix): take the clump OUT of the physics solver for the duration of the carry.
     // playerGrabbed engaged the puppet's PhysicsHandleComponent on a still-SIMULATING body, but the puppet
@@ -581,11 +604,34 @@ void ClearClientCarry(uint32_t eid) {
 void TickCarry(coop::net::Session& s, void* localHeldActor) {
     ++g_tick;
     // 1. prune expired clump birth certificates (a grab whose clump never reached
-    //    the hand: hands full / denied / consumed mid-morph).
+    //    the hand: hands full / denied / consumed mid-morph). v106b: birth already
+    //    MIGRATED identity to the clump (the pile husk is gone), so an expiring
+    //    certificate with a live, still-tracked, un-carried clump = the world DID
+    //    convert but no hand-edge ever expressed it -- broadcast the ToClump here
+    //    (at the clump's REST transform) so peers re-skin their stale pile form.
     for (auto it = g_clumpBirths.begin(); it != g_clumpBirths.end(); ) {
         if (g_tick - it->second.bornTick > kClumpBirthTtlTicks) {
-            UE_LOGI("[PILE] HOST clump-birth certificate expired (clump %p, pile eid=%u -- never reached "
-                    "the hand)", it->first, it->second.eid);
+            const uint32_t beid = it->second.eid;
+            void* clump = it->first;
+            const bool live = R::IsLiveByIndex(clump, it->second.idx);
+            const bool stillOwns =
+                live && coop::element::Registry::Get().EidForActor(clump) ==
+                            static_cast<coop::element::ElementId>(beid);
+            const bool unowned = g_carry.find(beid) == g_carry.end() &&
+                                 g_heldBy.find(beid) == g_heldBy.end();
+            if (stillOwns && unowned) {
+                BroadcastConvert(s, static_cast<coop::element::ElementId>(beid),
+                                 coop::net::propconvert_kind::kToClump,
+                                 ue_wrap::engine::GetActorLocation(clump),
+                                 ue_wrap::engine::GetActorRotation(clump),
+                                 ue_wrap::engine::GetActorScale3D(clump),
+                                 it->second.chipType, NarrowAscii(R::ClassNameOf(clump)),
+                                 "BIRTH-ORPHAN EXPRESS (grab denied; world converted)");
+            } else {
+                UE_LOGI("[PILE] HOST clump-birth certificate expired (clump %p, pile eid=%u -- "
+                        "never reached the hand; live=%d stillOwns=%d unowned=%d)",
+                        clump, beid, live ? 1 : 0, stillOwns ? 1 : 0, unowned ? 1 : 0);
+            }
             it = g_clumpBirths.erase(it);
         } else {
             ++it;

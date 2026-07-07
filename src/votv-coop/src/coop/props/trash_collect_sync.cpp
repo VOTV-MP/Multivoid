@@ -15,8 +15,8 @@
 #include "coop/creatures/kerfur_entity.h"  // K-5: IsKerfurActor (the held-kerfur class-gate); IsKerfurPropClass (off-prop)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/element/quiescence_drain.h"   // ArmGhostSweep (v106b: E-press on an unbound native arms the wholesale ghost reconcile)
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/prop_lifecycle.h"       // DestroyLocalProp (v106: post-quiescence unbound ghost retire)
 #include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
@@ -584,16 +584,17 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                 // pile sweep can no longer retire). On a connected client EVERY pile interaction
                 // is host-authoritative -- a pile no eid owns must not be interactable at all.
                 if (coop::join_membership_sweep::HasLoadTailQuiesced()) {
-                    // v106 (2026-07-07 ghost-pile fix): POST-quiescence, an unbound pile is
-                    // PROVABLY identity-less -- every host identity was bound/expressed by the
-                    // sweep, and nothing on the wire can ever address a native with no eid.
-                    // "It binds or retires shortly" never happens here (the 10:19:27 wedge:
-                    // the same pile pressed twice, 8s+ after the sweep, forever inert) --
-                    // a bind-displaced leftover. Retire it: echo-suppressed deferred destroy.
+                    // v106b (RULE 2 -- user 2026-07-07: "why wait for an E-press per ghost"): the
+                    // v106 inline one-pile retire is RETIRED. The wholesale owner is the reconcile
+                    // pass's GHOST-RETIRE tail (save_identity_bind::BindUnboundReCreates), which
+                    // re-binds what a map key still claims and retires EVERY provably identity-less
+                    // native at once. This press is positive evidence a ghost slipped the event
+                    // triggers -> ARM the pass (it runs within the 250ms reconcile debounce) and
+                    // cancel the press (a native no eid owns must not be interactable).
                     UE_LOGW("[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile %p POST-quiescence "
-                            "-- identity-less ghost (no eid can ever address it) -> retiring it "
-                            "locally (echo-suppressed destroy)", aimedNative);
-                    coop::prop_lifecycle::DestroyLocalProp(aimedNative, /*deferred=*/true);
+                            "-- identity-less ghost -> arming the wholesale GHOST-RETIRE reconcile "
+                            "(all ghosts adjudicated at once)", aimedNative);
+                    coop::element::quiescence_drain::ArmGhostSweep();
                     g_cancelPairedUseRelease = true;
                     return true;
                 }
