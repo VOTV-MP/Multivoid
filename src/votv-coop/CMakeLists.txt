@@ -430,23 +430,23 @@ add_library(votv-coop SHARED
     src/coop/session/seen_players.cpp
     src/harness/harness.cpp
     src/harness/harness_diag.cpp
-    src/harness/autotest.cpp
-    src/harness/autotest_chippile.cpp
-    src/harness/autotest_dispatch.cpp
-    src/harness/autotest_vitals.cpp
-    src/harness/autotest_ragdoll_spawn_probe.cpp
-    src/harness/autotest_menutravel_probe.cpp
-    src/harness/autotest_fog_probe.cpp
-    src/harness/autotest_eventfire.cpp
-    src/harness/autotest_eventforce.cpp
-    src/harness/autotest_cueforce.cpp
-    src/harness/autotest_alarmforce.cpp
-    src/harness/autotest_piramidforce.cpp
-    src/harness/autotest_wisplane.cpp
-    src/harness/autotest_kwisp_probe.cpp
-    src/harness/autotest_pauseguard.cpp
-    src/harness/autotest_move_osc.cpp
-    src/harness/autotest_saveui.cpp
+    src/harness/autotest/autotest.cpp
+    src/harness/autotest/autotest_chippile.cpp
+    src/harness/autotest/autotest_dispatch.cpp
+    src/harness/autotest/autotest_vitals.cpp
+    src/harness/autotest/autotest_ragdoll_spawn_probe.cpp
+    src/harness/autotest/autotest_menutravel_probe.cpp
+    src/harness/autotest/autotest_fog_probe.cpp
+    src/harness/autotest/autotest_eventfire.cpp
+    src/harness/autotest/autotest_eventforce.cpp
+    src/harness/autotest/autotest_cueforce.cpp
+    src/harness/autotest/autotest_alarmforce.cpp
+    src/harness/autotest/autotest_piramidforce.cpp
+    src/harness/autotest/autotest_wisplane.cpp
+    src/harness/autotest/autotest_kwisp_probe.cpp
+    src/harness/autotest/autotest_pauseguard.cpp
+    src/harness/autotest/autotest_move_osc.cpp
+    src/harness/autotest/autotest_saveui.cpp
     src/harness/config.cpp
     src/harness/screenshot.cpp
     src/harness/sdk_check.cpp

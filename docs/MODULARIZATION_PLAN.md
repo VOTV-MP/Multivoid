@@ -135,7 +135,19 @@ Two files sit in the wrong folder by concept:
 Do NOT rename the folders themselves (`net` = transport and `session` = lifecycle are both
 crisp concepts). Just relocate `blob_chunks` and settle net_pump's identity. Low risk.
 
-### B5. Harness mixes production boot-glue with ~2800 LOC of dev autotests
+### B5. Harness mixes production boot-glue with ~2800 LOC of dev autotests — DONE (.cpp island)
+**As built (2026-07-07):** all 17 `autotest_*.cpp` (~4900 LOC total incl. autotest.cpp 953,
+autotest_vitals.cpp 1013, autotest_chippile.cpp 877, ...) moved via `git mv` into
+`src/harness/autotest/`; the 17 CMake source paths updated. Recorded as pure renames (zero
+content change); no cross-`.cpp` includes existed and all headers resolve via the `include/`
+root, so nothing else changed. Built Release clean, dll links. `src/harness/*.cpp` now holds
+only boot-glue + support (harness.cpp, harness_diag.cpp, config.cpp, screenshot.cpp,
+sdk_check.cpp) — the "trivially separable dev tooling" claim in harness.h:9 is now structurally
+true for the compilation units. NOT moved (deliberate, low-value churn): the `include/harness/
+autotest*.h` headers stay flat under `include/harness/` (already clearly named; moving them
+would touch every includer for no real gain).
+
+### B5-ORIG. Harness mixes production boot-glue with ~2800 LOC of dev autotests
 `include/harness/harness.h:9` claims the subtree is "dev tooling, trivially separable" — but
 `harness.cpp` owns `g_session` (the production session) + wires every sync module
 (`StartCoopSession`, lines 392-459). Meanwhile `src/harness/autotest_*.cpp` (~16 files,
