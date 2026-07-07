@@ -120,9 +120,15 @@ the existing homes, MTA-check the shape, audit after.
 > retained observers arm, grab test drives held-state pipeline, 0 err/warn from the area, clean
 > exit. Full client-grab BEHAVIOR still wants a user hands-on E-press (autonomous smoke can't
 > press E), but registration + pipeline + no-regression are proven.
-> **B1b (remaining, NOT started):** the actual smear consolidation — fold `prop_lifecycle`'s
-> take-obj observers + the held-item broadcast into ONE grab owner. Bigger/riskier; assess
-> whether it's worth it now that the interceptor is cleanly separated.
+> **B1b (remaining, NOT started).** MEASURED 2026-07-07 (Opus): MORE tractable than B2 —
+> `GrabObserver_PropInventory_TakeObj_PRE/_POST` (prop_lifecycle:379-510) are self-contained
+> observer fns (file-local `g_takeObjInFlight` + `LoadSession()`; broadcast a PropSpawnPayload),
+> so they CAN move into a `grab_observer` owner. But the consolidation still spans prop_lifecycle
+> + trash_collect_sync (`EnsureHeldItemBroadcast` + 2 retained observers) + a new grab_observer,
+> and it touches the LIVE grab/held-item broadcast path — a real hands-on grab (container-extract
+> + held-item) is required to prove no regression; the autonomous forced-grab smoke does not
+> exercise the full path. This is a real feature-grade arc, not a mechanical move: fold the
+> interceptor is cleanly separated (B1a), so B1b is the one-owner CAPTURE consolidation.
 
 - `prop_lifecycle.cpp:379-510` — take-obj grab observers (`TakeObj_PRE/_POST`) + `InstallInventory`
 - `trash_collect_sync.cpp:94-437` — BeginDeferredSpawn observer + `EnsureHeldItemBroadcast`
@@ -133,6 +139,22 @@ as the single owner (CAPTURE the grab edge in one place; other modules subscribe
 already carved out the interceptor half.
 
 ### B2. "Prop-position reconcile" (pile/kerfur divergence) squats in two files
+> **MEASURED 2026-07-07 (Opus): NOT a byte-faithful move — this is a REDESIGN, not an extraction.**
+> The two blocks delegate to prop_element_tracker at the LEAF (`Registry::Get().Get(eid)`), but
+> their ORCHESTRATION is inseparable from their host files' file-local state + lifecycle timing:
+> - net_pump reaper (402-738) reads/writes net_pump statics `g_everInGameplayThisSession`,
+>   `g_fleeing`, `sNextReap`, `g_reapWorld/Idx`, and CALLS the file-local `TearDownCoopStateForSessionEnd(session)`
+>   + `session.running()` — the RAM-balloon/flee guard is woven THROUGH the reap scan (piggybacks its 4s world walk).
+> - save_transfer flush (541-730) reads save_transfer's OWN join-window maps `g_blobPileXforms`,
+>   `g_lastFlushedPilePos`, `g_pileFlushArmUntil` (populated BY the join blob transfer — this is
+>   save_transfer's data by construction) + the per-slot arm window.
+> Moving either "into prop_element_tracker" requires inventing a NEW API to thread session +
+> flee/teardown + join-slot state across the boundary — a multi-subsystem redesign (>3 subsystems,
+> OPUS §1 STOP) for MODULARITY-ONLY gain (the smear is not a bug). DEFER pending explicit
+> per-rule-1 green light that accepts a gameplay-lifecycle redesign + a real hands-on (join +
+> pile-move) to verify — the autonomous smoke cannot exercise the join-window flush or the
+> quit-to-menu balloon guard.
+
 - `save_transfer.cpp:541-730` (~190 LOC) — pile/kerfur divergence flush riding save-transfer timing
 - `net_pump.cpp:402-738` (~330 LOC) — prop-reaper + world-change re-seed episode machine
 Both DELEGATE into `prop_element_tracker` (the real owner of eid<->actor transforms).
