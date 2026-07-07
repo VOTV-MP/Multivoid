@@ -1,5 +1,23 @@
 # Modularization / boundary-cleanup plan (per RULE 1 + folder-per-domain-concept)
 
+> ## Execution ledger (2026-07-07, Opus 4.8 window) — all pushed, all behavior-preserving
+> | Item | State | Commit |
+> |---|---|---|
+> | A1 spawn_menu DI (real layer breach) | DONE, audited | `96c50dfd` |
+> | A2 delete dead `include/votv-coop/` | DONE | `91f31c6e` |
+> | A4 `g_shuttingDown` file-private | DONE, audited | `2b0f9849` |
+> | A3 `identity.h` reclassified (living doc, kept) | RESOLVED (no code) | `b961c6d9` |
+> | D string-dedup MEASURED divergent → rescoped | corrected (no bad merge) | `96ec2068` |
+> | C `engine_save.cpp` extracted (engine.cpp 1112→657, under cap) | DONE, byte-faithful | `245ae2a5` |
+> | B5 autotest island → `src/harness/autotest/` (17 files) | DONE, renames | `9c93b0f3` |
+> | C engine_world/engine_spawn | DEFERRED — shared world-context, not a clean move; under cap |
+> | **Tier B smears (B1/B2/B3)** | **NOT STARTED — need a hands-on smoke window (touch live gameplay)** |
+> | reflection.cpp extraction | NOT DONE — off-limits without explicit user direction (§11 substrate guard) |
+>
+> **Safe autonomous lane (behavior-preserving, no smoke) is now EXHAUSTED.** What remains is
+> the high-value Tier B (one-owner-per-smear) work, which is smoke-gated, plus the substrate
+> items the scope guard reserves for explicit direction.
+
 Written 2026-07-07 by the Fable-5 session at the user's request, right before the switch
 to Opus 4.8, from a three-agent read-only survey of `src/votv-coop` (LOC census + internal
 concern maps + boundary audit). This is a PLAN of PROPOSALS — every claim below was spot-
@@ -180,8 +198,7 @@ each (`wc -l`) — some may already be handled by Tier B.
 | File | LOC | Extract | Into | Notes |
 |---|---|---|---|---|
 | `ue_wrap/engine.cpp` | 1112->657 | save/GameMode/menu block L168-621 (454) | `engine_save.cpp` (484) | **DONE** — engine.cpp now under the 800 cap |
-| `ue_wrap/engine.cpp` | " | world-context resolve/ensure/recovery L40-92,743,1087 | `engine_world.cpp` | + fold console+pause L94-166 if small |
-| `ue_wrap/engine.cpp` | " | SpawnActor + deferred-spawn + MakeTransform L623-834 | `engine_spawn.cpp` | leaves actor transform getters/setters as engine.cpp core |
+| `ue_wrap/engine.cpp` | 657 | world-context + spawn | ~~engine_world/spawn~~ | **DEFERRED — measured NOT a clean move.** `EnsureWorldContext`/`g_worldContext` are cross-cutting file-privates shared by console + pause + spawn + world-recovery; splitting spawn out needs a NEW shared internal world-context API + edits to console/pause (a real refactor, not a byte-faithful move). engine.cpp is already under the 800 cap, so this is unjustified now (§11 bias-smaller). Revisit only if engine.cpp grows back over cap. |
 | `ue_wrap/engine.h` | 1032 | split into per-domain headers mirroring the .cpp set | (several) | every consumer currently drags the whole 1032-line header; do LAST, after the .cpp splits settle |
 | `props/remote_prop.cpp` | 1174 | `OnConvert` L814-1071 (~258) | `remote_prop_convert.cpp` | or fold into B3 |
 | `props/remote_prop_spawn.cpp` | 972 | `OnSpawn` is a 740-line monolith — split by PHASE | (in-file or siblings) | phases: unkeyed-drop / trash-proxy / exact-key converge / kerfur fuzzy-rekey / deferred finish. Kerfur rekey -> B3 |
