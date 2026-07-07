@@ -198,6 +198,13 @@ coop::element::ElementId ResolveHeldPropEid(void* heldActor) {
 
 }  // namespace
 
+void* LastHeldActor() {
+    // The rest-exclusion read for trash_channel::TickCarry (v106): the local
+    // player's currently-held actor, or null. IsLive-guarded so a stale pointer
+    // never aliases a recycled address into a wrong exclusion.
+    return (g_lastHeldProp && ue_wrap::reflection::IsLive(g_lastHeldProp)) ? g_lastHeldProp : nullptr;
+}
+
 void OnSessionStart() {
     g_lastHeldProp = nullptr;
     g_lastHeldKey = {};
@@ -264,7 +271,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     }
     // v105 hand-item axis: announce the hotbar hand on change + maintain the
     // peers' display mirrors (both are cheap idle no-ops).
-    coop::hand_item::TickOwner(session, hotbarProp);
+    coop::hand_item::TickOwner(session, local, hotbarProp);
     coop::hand_item::TickMirrors();
     // v76: the ATV is owned by coop::atv_sync (occupant-OR-grabber pose stream + AtvRelease), NOT the
     // held-prop pipeline -- exclude it so a grabbed ATV doesn't emit zero-key PropPose packets here
@@ -338,40 +345,47 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // and gets physics on release. [[project-bug-trash-chippile-uaf-crash]]
         if (heldActor != g_lastHeldProp) {
             // New-held edge. A held trash CLUMP (the chipPile's grab product) is ADOPTED HERE onto the
-            // grabbed pile's eid E (AdoptPendingGrabClump, below): the clump's BeginDeferred spawn is
-            // EX_CallMath -> invisible to our ProcessEvent hook, so the grab is caught at the InpActEvt_use
-            // PRE (NotePendingGrab) and the clump is bound + the PropConvert{ToClump} broadcast at THIS
-            // held-edge -- NOT at any spawn POST (docs/piles/08; the host_spawn_watcher convert-POST was
-            // disproven 2026-06-21). EnsureHeldItemBroadcast returns false for a clump (class gate at
+            // grabbed pile's eid E: the v106 birth certificate (recorded at the clump's BeginDeferred by
+            // the UFunction::Func thunk -- EVERY dispatch route) carries {pile eid, chipType}; this edge
+            // consumes it + broadcasts PropConvert{ToClump}. EnsureHeldItemBroadcast returns false for a clump (class gate at
             // trash_collect_sync.cpp); a normal Aprop_C item is broadcast as a fresh keyed prop. Resolve the
             // wire eid ONCE here (the only place the O(n) ResolveMirrorEidByActor
             // fallback for the eid-only clump may run) and CACHE it (g_lastHeldEid) so the carry stream is O(1).
             const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
-            // HOST grab adoption (docs/piles/08): a freshly-grabbed trash CLUMP is eid-less here -- bind it
-            // to the pile's eid recorded at the InpActEvt PRE seam (the clump's BeginDeferred spawn is
-            // EX_CallMath -> invisible, so we can't catch it at spawn). AdoptPendingGrabClump rebinds E onto
-            // the clump + broadcasts PropConvert{ToClump} + returns E; we cache E as the carry eid.
+            // HOST grab adoption (v106, docs/piles/08): the clump's IDENTITY comes from its
+            // BIRTH CERTIFICATE -- the BeginDeferred Func thunk records {source pile eid,
+            // chipType} at the exact spawn (every clump is born from a chipPile; bytecode
+            // toClump @141 / uber @3493), covering E-press AND use-HOLD grabs alike. The
+            // held-edge CONSUMES it here. Fallback: an EXISTING tracked clump re-entering
+            // the hand (a gate-aborted rest clump picked back up) resolves by the tracker.
+            // (RULE 2: the InpActEvt-PRE pending-grab slot and the "no pending + mid-carry
+            // => churn re-grab of MY last carry" heuristic are RETIRED -- with 2+ clumps in
+            // flight the heuristic bound a foreign clump to the wrong lane; 2026-07-07
+            // eid-4809 permanent HELD deny-lock, the client ghost-pile root.)
             coop::element::ElementId adoptedEid = coop::element::kInvalidId;
             bool churnRegrab = false;
             if (session.role() == coop::net::Role::Host && ue_wrap::prop::IsGarbageClump(heldActor)) {
                 const auto cloc = ue_wrap::engine::GetActorLocation(heldActor);
                 const auto crot = ue_wrap::engine::GetActorRotation(heldActor);
-                adoptedEid = coop::trash_channel::AdoptPendingGrabClump(session, heldActor, cloc, crot);
-                // CLOSE-B (2026-06-22): no pending grab (NOT a player E-press) but we are mid-carry of
-                // g_lastHeldEid -> this new held clump is the host's CHURN re-grab (the game auto-re-grabbed
-                // the just-re-piled pile). Keep the carry alive: rebind the carried eid onto this clump +
-                // cancel its land-settle. WITHOUT this the eid binding is LOST here (the fresh clump is
-                // eid-less -> ResolveHeldPropEid fails -> g_lastHeldEid goes invalid -> the carry stream
-                // freezes) -- the pre-fix "stuck near the cluster" half of the bug.
-                if (adoptedEid == coop::element::kInvalidId &&
-                    g_lastHeldEid != coop::element::kInvalidId &&
-                    coop::trash_channel::IsCarrying(g_lastHeldEid)) {
-                    coop::trash_channel::OnHostRegrab(g_lastHeldEid, heldActor);
-                    churnRegrab = true;   // keep g_lastHeldEid (it is still the carried E)
+                coop::element::ElementId bornE = coop::element::kInvalidId;
+                uint8_t bornChip = 0;
+                if (!coop::trash_channel::TakeClumpBorn(heldActor, &bornE, &bornChip)) {
+                    // No certificate: an existing tracked clump re-grabbed off the ground.
+                    bornE    = coop::prop_element_tracker::GetPropElementIdForActor(heldActor);
+                    bornChip = ue_wrap::prop::GetChipType(heldActor);
                 }
-                // (The re-pile death-watch enroll is GONE 2026-06-21, RULE 2: the clump's re-pile is now
-                // caught deterministically at its EX_CallMath BeginDeferred via the UFunction::Func thunk
-                // -- trash_collect_sync::OnBeginDeferredSpawnObserve -- so no proximity watch is needed.)
+                if (bornE != coop::element::kInvalidId) {
+                    if (coop::trash_channel::IsCarrying(bornE)) {
+                        // The game auto-re-grabbed MY carried entity (churn: the just-re-piled
+                        // pile morphs straight back). Rebind + cancel the settle.
+                        coop::trash_channel::OnHostRegrab(bornE, heldActor);
+                        churnRegrab   = true;
+                        g_lastHeldEid = bornE;  // deterministic (was: assumed unchanged)
+                    } else {
+                        adoptedEid = coop::trash_channel::AdoptBornClump(
+                            session, bornE, heldActor, cloc, crot, bornChip);
+                    }
+                }
             }
             if (!churnRegrab)
                 g_lastHeldEid = (adoptedEid != coop::element::kInvalidId) ? adoptedEid
@@ -383,7 +397,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                     eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
             // [PILE] carry phase: a trash clump (carry-only, eid-identified) is now in hand. The convert
-            // (pile->clump) was broadcast by AdoptPendingGrabClump on the new-held edge above; this stream
+            // (pile->clump) was broadcast by AdoptBornClump on the new-held edge above; this stream
             // just carries E's pose.
             if (!mirrored && eidLog != 0 && ue_wrap::prop::IsGarbageClump(heldActor)) {
                 UE_LOGI("[PILE] %s CARRY eid=%u clump in hand -> streaming carry pose (ctx-stamped); "

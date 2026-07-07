@@ -25,6 +25,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"
+#include "ue_wrap/ufunction_hook.h"  // v106 destroy seam: Func-patch on K2_DestroyActor
 
 #include <atomic>
 #include <cstdint>
@@ -92,7 +93,7 @@ std::atomic<bool> g_takeObjInFlight{false};
 
 // Forward declarations for observer callbacks.
 void GrabObserver_Aprop_Init_POST(void* self, void* function, void* params);
-void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* function, void* params);
+void DestroySeamBody(void* self);
 void GrabObserver_PropInventory_TakeObj_PRE(void* self, void* function, void* params);
 void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* params);
 
@@ -289,12 +290,17 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     coop::join_membership_sweep::RecordClaimIfTracking(self);
 }
 
-// K2_DestroyActor PRE -- bidirectional destroy broadcast (host + client),
-// echo-suppressed via the remote_prop incoming-destroy set.
-void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void* /*params*/) {
+// The DESTROY SEAM -- bidirectional destroy broadcast (host + client), echo-suppressed
+// via the remote_prop incoming-destroy set. v106 (2026-07-07): fed by a UFunction::Func
+// patch on Actor.K2_DestroyActor (context = the dying actor), which fires for EVERY
+// dispatch route incl. the EX_CallMath destroys the old ProcessEvent PRE observer could
+// never see (the R-pickup putObjectInventory2 destroy, the pile/clump morph destroys).
+// Runs POST-native: K2_DestroyActor only marks PendingKill, so class/property reads on
+// `self` are still valid here (the element's cached key never needs the actor anyway).
+void DestroySeamBody(void* self) {
     auto* s = LoadSession();
     if (!self || !s) return;
-    // K2_DestroyActor PRE fires for EVERY actor destroy in the world.
+    // The destroy seam fires for EVERY actor destroy in the world.
     // We CANNOT promote IsKeyedInteractable to a fast-path gate here:
     // ue_wrap::prop::IsKeyedInteractable internally calls ResolveExtraBases
     // which does R::FindClass walks for trashBitsPile_C / prop_garbageClump_C /
@@ -314,7 +320,7 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     PT::UnmarkKnownKeyedProp(self);
     if (!s->connected()) return;
     if (coop::prop_echo_suppress::ConsumeIncomingDestroy(self)) {
-        UE_LOGI("grab_hook[K2_DestroyActor PRE]: actor %p was wire-received destroy -- skip rebroadcast",
+        UE_LOGI("grab_hook[destroy-seam]: actor %p was wire-received destroy -- skip rebroadcast",
                 self);
         return;
     }
@@ -354,10 +360,17 @@ void GrabObserver_Actor_K2DestroyActor_PRE(void* self, void* /*function*/, void*
     dp.elementId = (destroyEid == coop::element::kInvalidId) ? 0u : destroyEid;
     // (v15 stamped a senderContext byte here; v16 PR-FOUNDATION-1b
     // moved stale-gen defense to the header senderEpoch.)
-    UE_LOGI("grab_hook[K2_DestroyActor PRE]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
+    UE_LOGI("grab_hook[destroy-seam]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
             roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
             keyless ? " (eid-only: trash clump)" : "");
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
+}
+
+// Func-patch callback for Actor.K2_DestroyActor: the dying actor is the dispatch CONTEXT
+// (a member call runs ON the actor); FFrame::Object is merely the caller. K2_DestroyActor
+// is game-thread-only in UE4 (actor destruction), same thread contract the PE observer had.
+void OnK2DestroyFunc(void* context, void* /*srcObj*/, void* /*result*/) {
+    DestroySeamBody(context);
 }
 
 // PRE observer for propInventory_C::takeObj -- sets g_takeObjInFlight so
@@ -615,7 +628,7 @@ void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
                 key8.c_str(), static_cast<uint32_t>(eid));
         s->SendPropDestroy(dp);
     }
-    // Same teardown the organic K2_DestroyActor PRE runs: processed-Init latch
+    // Same teardown the organic destroy seam runs: processed-Init latch
     // out, then UnmarkKnownKeyedProp (key index + reverse map + Element drain
     // via ElementDeleter). Both are pointer-as-map-key only.
     PT::UnmarkProcessedInit(actorKey);
@@ -704,7 +717,7 @@ bool IsPerPlayerPropClass(const std::wstring& cls) {
 }
 
 // Destroy a local prop via K2_DestroyActor, echo-suppressed (MarkIncomingDestroy
-// BEFORE the call so OUR K2_DestroyActor PRE observer skips the re-broadcast).
+// BEFORE the call so OUR destroy seam skips the re-broadcast).
 // See prop_lifecycle.h for the deferred-vs-immediate contract.
 void DestroyLocalProp(void* actor, bool deferred) {
     if (!actor) return;
@@ -822,10 +835,18 @@ void Install(coop::net::Session* session) {
         if ((sExtraThrottle++ % 125) == 0) RegisterExtraKeyedInitObservers();
     }
     if (!g_propDestroyObserverInstalled) {
+        // v106 (2026-07-07): the destroy seam is a UFunction::Func patch, NOT a ProcessEvent
+        // observer. The R-pickup destroy (putObjectInventory2 @719 InputPin.K2_DestroyActor())
+        // and the pile/clump morph destroys are EX_CallMath-dispatched -- INVISIBLE to a PE
+        // observer (log-proven 2026-07-07 10:15: pickup vanish waited the 4s reap while this
+        // "continuous" observer never fired). Func funnels EVERY dispatch route (PE + EX_*),
+        // so the Func patch strictly supersedes the PE PRE registration (RULE 2: replaced).
+        // The callback receives the dying actor as the dispatch CONTEXT.
         if (void* actorCls = R::FindClass(P::name::ActorClassName)) {
             if (void* fn = R::FindFunction(actorCls, P::name::DestroyActorFn)) {
-                if (GT::RegisterPreObserver(fn, GrabObserver_Actor_K2DestroyActor_PRE)) {
-                    UE_LOGI("grab_hook: registered PRE observer for %ls.%ls @ %p (continuous destroy broadcast)",
+                if (ue_wrap::ufunction_hook::InstallPostHook(fn, &OnK2DestroyFunc)) {
+                    UE_LOGI("grab_hook: Func-patched %ls.%ls @ %p (destroy seam -- catches "
+                            "EX_CallMath destroys the old PE observer missed)",
                             P::name::ActorClassName, P::name::DestroyActorFn, fn);
                     g_propDestroyObserverInstalled = true;
                 }

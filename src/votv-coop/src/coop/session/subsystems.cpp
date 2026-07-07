@@ -61,6 +61,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/interactables/garbage_sync.h"
 #include "coop/props/trash_channel.h"
+#include "coop/player/local_streams.h"  // LastHeldActor (v106: TickCarry rest-exclusion)
 #include "coop/player/puppet_carry_drive.h"
 #include "coop/props/trash_clump_pose_stream.h"
 #include "coop/props/trash_collect_sync.h"
@@ -409,6 +410,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:piramid"}; coop::piramid_sync::Tick(); }             // v97: pre-arm probe (250 ms gate) / host gather-edge sweep (1 s) / client mirror restore + pending gather replay
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:trash_clump_pose"}; coop::trash_clump_pose_stream::TickApplyAndDrive(session); } // v85 CLIENT: apply host-auth carry/flight pose batch + per-eid interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // M2: ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
+    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // v106: adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_convert::Tick(); }  // v67: drain deferred kerfur conversion requests/converges (cheap no-op when empty)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // v74: drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // v68: broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
@@ -427,7 +429,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       const bool inTransition = fleeing || coop::join_progress::Active();
       coop::trash_pile_sync::Tick(inTransition); }  // counter poll + depletion death-watch (transition-gated)
     if (isHost) { PP::Scope _s{PP::Bucket::TrashWatch};
-      coop::trash_channel::TickCarry(session);          // docs/piles/08 + CLOSE-B: pending-grab TTL + land-settle commit (closes the carry latch on the real land)
+      coop::trash_channel::TickCarry(session, coop::local_streams::LastHeldActor());  // docs/piles/08 + v106: birth-cert prune + land-settle commit + guaranteed carry termination (dead/rest lanes close)
       coop::puppet_carry_drive::Tick(session); }        // v84/v85 Increment 2: drive each puppet-held clump to its hand + publish the host-auth carry/flight pose batch (AFTER TickCarry so the latch is current)
       // (trash_collect_sync::Tick -- the proximity re-pile death-watch -- is RETIRED 2026-06-21, RULE 2:
       //  the re-pile is caught deterministically at its BeginDeferred via the UFunction::Func thunk.)

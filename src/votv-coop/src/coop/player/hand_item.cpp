@@ -6,7 +6,9 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_echo_suppress.h"
+#include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
 #include "ue_wrap/engine.h"
+#include "ue_wrap/prop.h"
 #include "ue_wrap/fname_utils.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
@@ -14,6 +16,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/types.h"
 
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -28,18 +31,31 @@ namespace E = ue_wrap::engine;
 // are short ASCII; 63 is generous headroom, one byte each on the wire.
 constexpr size_t kMaxStr = 63;
 
-// updateHold destroys + respawns the hand actor on every quick-slot switch, so
-// holding_actor is null for a frame or two mid-switch. Only a null that
-// PERSISTS this many owner ticks is a real stow. (60 Hz -> ~250 ms; a switch
-// lands in 1-3 frames, far inside the window.)
-constexpr int kEmptyDebounceTicks = 15;
+// Stow announce is EDGE-INSTANT (user 2026-07-06 per rule 1: "it's supposed
+// to be instant"). The bytecode proves a quick-slot switch is ONE synchronous
+// updateHold call (destroy @935 -> spawn @1023 -> holding_name @3183 all in
+// the same invocation), so a poll never observes a mid-switch null -- the
+// original 15-tick (~250 ms) debounce guarded a flicker that does not exist
+// and made the stowed item linger in the peer's hand a quarter second after
+// it was already on the ground. Value 1 = announce on the first null tick.
+// (If some exotic flow ever DOES split a switch across two updateHold calls,
+// the worst case is a single-frame mirror destroy+respawn on the peer.)
+constexpr int kEmptyDebounceTicks = 1;
 
-// The native hold floats the item in front of the player at grabLen (the BP
-// Timeline tops out at 150 -- the same constant puppet_carry_drive uses).
-// Attached to the puppet ROOT (capsule), so it follows body yaw; slightly
-// below eye line reads as "in hands".
-constexpr float kHoldForwardCm = 150.f;
-constexpr float kHoldUpCm      = -20.f;
+// Display placement (hands-on iterations 2026-07-06, user: "mirror what the
+// local player sees"). The owner sees the item at the bottom-right of the
+// CAMERA -- so the mirror reproduces the owner's VIEW-space placement on the
+// puppet: eye anchor + synced-look basis x {forward, right, down}, re-driven
+// every tick (the exact puppet_carry_drive shape: head + syncedAim * len).
+// No attach at all -- the native FP-arms chain never ticks on a puppet (its
+// ref-pose socket put the mirror on the BACK, hands-on 14:2x), and a capsule
+// attach can't follow look pitch.
+// Tuned to the user's NATIVE observation (2026-07-06: "предмет в руке held --
+// в районе правого плеча прикреплён"): hugging the right shoulder, barely
+// forward. Anchor = GetHeadPosition() (head bone + its +33 nameplate lift).
+constexpr float kViewForwardCm = 18.f;   // out along the look direction
+constexpr float kViewRightCm   = 30.f;   // to the look-right (the shoulder)
+constexpr float kViewUpCm      = -58.f;  // shoulder height below the lifted head anchor
 
 // ---- per-slot wire state (what each peer's hand holds) -------------------
 struct SlotHand {
@@ -75,6 +91,28 @@ int          g_ownEmptyStreak = 0;
 // the exact per-tick pattern local_streams already latches for the held eid).
 void*        g_ownHeldPtr = nullptr;
 int32_t      g_ownHeldIdx = -1;
+
+// The local mainPlayer, cached by TickOwner (pointer + captured index) for
+// LocalHandActor's fresh holding_actor read. GT-only.
+void*        g_localPlayer    = nullptr;
+int32_t      g_localPlayerIdx = -1;
+
+// THE HAND-EDGE WORLD RELEASE (v106, 2026-07-07). An R-drop / quick-slot place
+// is NOT a spawn: the game RELEASES the ex-hand view actor into the world (same
+// actor, physics/collision re-enabled) -- no spawn seam fires and the census
+// high-water guard is blind (NumObjects flat; the v105b root). But WE hold the
+// previous hand actor's identity (g_ownHeldPtr + captured index): at the hand
+// edge, an ex-hand actor that SURVIVED the edge (updateHold DESTROYS it on a
+// stow/switch, so survival == world release) is expressed immediately through
+// the canonical untracked-prop broadcast. Works on both roles (a client's own
+// drop is client-authored, the same path local_streams uses for held props).
+void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t prevIdx) {
+    if (!prev || !R::IsLiveByIndex(prev, prevIdx)) return;  // stow/switch: destroyed in-hand
+    if (coop::trash_collect_sync::EnsureHeldItemBroadcast(prev, &session)) {
+        UE_LOGI("hand_item: released ex-hand actor %p expressed as a world prop "
+                "(R-drop/place -- peers see it this tick)", prev);
+    }
+}
 
 // Aprop_C 'name' FName property offset, resolved once (the field lives on the
 // prop base class; every hotbar item is a descendant).
@@ -176,28 +214,54 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     }
     E::SetActorSimulatePhysics(actor, false);
     E::SetActorEnableCollision(actor, false);
-    void* rootComp = E::GetActorRootComponent(puppetActor);
-    if (rootComp && E::AttachActorToComponentSocket(actor, rootComp, nullptr)) {
-        E::SetActorRelativeLocation(actor,
-                                    ue_wrap::FVector{kHoldForwardCm, 0.f, kHoldUpCm});
-    } else {
-        UE_LOGW("hand_item: attach to puppet root failed (slot %u) -- mirror follows at spawn pos",
-                static_cast<unsigned>(slot));
-    }
     Mirror& m = g_mirrors[slot];
     m.actor = actor;
     m.idx = R::InternalIndexOf(actor);
     m.cls = want.cls;
     m.name = want.name;
     m.puppetIdx = R::InternalIndexOf(puppetActor);
-    UE_LOGI("hand_item: slot %u mirror SPAWNED cls='%ls' name='%ls' (display-only, attached)",
+    UE_LOGI("hand_item: slot %u mirror SPAWNED cls='%ls' name='%ls' (display-only, view-anchored)",
             static_cast<unsigned>(slot), want.cls.c_str(), want.name.c_str());
+}
+
+// Re-command the mirror to the puppet's VIEW-space hold point every tick (the
+// puppet_carry_drive shape). Eye anchor + synced-look basis; the item rotates
+// with the look so it reads exactly like the owner's bottom-right hold.
+void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup) {
+    const ue_wrap::FVector eye = pup->GetHeadPosition();
+    const ue_wrap::FVector fwd = pup->GetSyncedAimDirection();
+    // right = up x fwd (UE left-handed basis: fwd (1,0,0) -> right (0,1,0));
+    // degenerate near-vertical aim keeps the last-tick placement.
+    ue_wrap::FVector right{-fwd.Y, fwd.X, 0.f};
+    const float rl = std::sqrt(right.X * right.X + right.Y * right.Y);
+    if (rl < 1e-3f) return;
+    right.X /= rl; right.Y /= rl;
+    // View-up, closed form for a yaw/pitch basis:
+    // fwd = (cosP*cosY, cosP*sinY, sinP)  ->  up = (-sinP*cosY, -sinP*sinY, cosP).
+    const float sinP = fwd.Z;
+    const float cosP = rl;  // |xy| of a unit fwd == cos(pitch)
+    const float cosY = fwd.X / cosP, sinY = fwd.Y / cosP;
+    const ue_wrap::FVector up{-sinP * cosY, -sinP * sinY, cosP};
+    const ue_wrap::FVector pos{
+        eye.X + fwd.X * kViewForwardCm + right.X * kViewRightCm + up.X * kViewUpCm,
+        eye.Y + fwd.Y * kViewForwardCm + right.Y * kViewRightCm + up.Y * kViewUpCm,
+        eye.Z + fwd.Z * kViewForwardCm + right.Z * kViewRightCm + up.Z * kViewUpCm,
+    };
+    constexpr float kRadToDeg = 57.2957795f;
+    const float yawDeg   = std::atan2(fwd.Y, fwd.X) * kRadToDeg;
+    const float pitchDeg = std::atan2(sinP, cosP) * kRadToDeg;
+    E::SetActorLocation(mirrorActor, pos);
+    E::SetActorRotation(mirrorActor, ue_wrap::FRotator{pitchDeg, yawDeg, 0.f});
 }
 
 }  // namespace
 
-void TickOwner(coop::net::Session& session, void* holdingProp) {
+void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
     g_session = &session;
+    if (local && local != g_localPlayer) {
+        g_localPlayer    = local;
+        g_localPlayerIdx = R::InternalIndexOf(local);
+    }
     if (!session.connected()) return;
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     if (self >= coop::players::kMaxPeers) return;
@@ -214,6 +278,11 @@ void TickOwner(coop::net::Session& session, void* holdingProp) {
             (++sSameStreak % 30) != 0) {
             return;
         }
+        if (holdingProp != g_ownHeldPtr && g_ownHeldPtr) {
+            // Identity CHANGED with a previous actor latched: if the previous hand
+            // actor survived, it was released to the world (place-then-next-slot).
+            ExpressReleasedHandActor(session, g_ownHeldPtr, g_ownHeldIdx);
+        }
         g_ownHeldPtr = holdingProp;
         g_ownHeldIdx = idx;
         const std::wstring cls = R::ClassNameOf(holdingProp);
@@ -227,10 +296,14 @@ void TickOwner(coop::net::Session& session, void* holdingProp) {
             SendState(session, self, h);
             UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' (announced)",
                     cls.c_str(), name.c_str());
+            // (v106: no reconcile request here -- the R-pickup's ground-actor death
+            // is caught at the K2_DestroyActor Func seam the moment it happens.)
         }
     } else if (g_ownHas) {
-        // The hand is empty this tick: drop the identity latch so a re-appear
-        // (same OR different actor) re-renders + re-compares.
+        // The hand is empty this tick: if the ex-hand actor survived the edge it
+        // was RELEASED into the world (R-drop / place) -- express it now; then
+        // drop the identity latch so a re-appear re-renders + re-compares.
+        ExpressReleasedHandActor(session, g_ownHeldPtr, g_ownHeldIdx);
         g_ownHeldPtr = nullptr;
         g_ownHeldIdx = -1;
         // Debounce the updateHold switch flicker: only a PERSISTENT null is a stow.
@@ -242,8 +315,25 @@ void TickOwner(coop::net::Session& session, void* holdingProp) {
             h = SlotHand{};
             SendState(session, self, h);
             UE_LOGI("hand_item: local hand -> EMPTY (announced)");
+            // (v106: no reconcile request here -- the released world actor was
+            // expressed at the hand edge above, and inventory-path spawns ride
+            // the FinishSpawningActor Func seam.)
         }
     }
+}
+
+void* LocalHandActor() {
+    if (!g_localPlayer || !R::IsLiveByIndex(g_localPlayer, g_localPlayerIdx))
+        return nullptr;
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    if (!ue_wrap::engine::ReadMainPlayerGrabState(g_localPlayer, gs)) return nullptr;
+    void* ha = gs.holdingActor;
+    if (!ha || !R::IsLive(ha)) return nullptr;
+    // Same routing predicate as local_streams: only an Aprop_C descendant in
+    // holding_actor is the hotbar hand (the clump/pile morph carry is a world
+    // entity and MUST stay adoptable).
+    if (!ue_wrap::prop::IsDescendantOfProp(ha)) return nullptr;
+    return ha;
 }
 
 void TickMirrors() {
@@ -270,10 +360,13 @@ void TickMirrors() {
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
         if (mirrorLive && m.cls == want.cls && m.name == want.name &&
             m.puppetIdx == pupIdx) {
-            continue;  // steady state
+            DriveMirror(m.actor, pup);  // steady state: re-command the view hold
+            continue;
         }
         if (mirrorLive || m.actor) DestroyMirror(slot, "state/puppet changed");
         SpawnMirror(slot, puppetActor);
+        Mirror& nm = g_mirrors[slot];
+        if (nm.actor) DriveMirror(nm.actor, pup);  // no first-frame pop at spawn pos
     }
 }
 

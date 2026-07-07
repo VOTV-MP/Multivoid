@@ -34,6 +34,7 @@ bool TakeOne(Set& s, void* actor) {
 
 void MarkIncomingSpawn(void* actor)     { if (actor) InsertCapped(g_incomingSpawns, actor); }
 bool ConsumeIncomingSpawn(void* actor)  { return actor ? TakeOne(g_incomingSpawns, actor) : false; }
+bool PeekIncomingSpawn(void* actor)     { return actor && g_incomingSpawns.count(actor) != 0; }
 void MarkIncomingDestroy(void* actor)   { if (actor) InsertCapped(g_incomingDestroys, actor); }
 bool ConsumeIncomingDestroy(void* actor){ return actor ? TakeOne(g_incomingDestroys, actor) : false; }
 

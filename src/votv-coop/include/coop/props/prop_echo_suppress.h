@@ -23,6 +23,10 @@ namespace coop::prop_echo_suppress {
 
 void MarkIncomingSpawn(void* actor);
 bool ConsumeIncomingSpawn(void* actor);
+// Non-destructive membership check (v106 spawn-seam): the FinishSpawningActor
+// Func callback must EXCLUDE wire/display mirror spawns (marked before Finish)
+// WITHOUT eating the mark the Init-POST observer consumes on its normal path.
+bool PeekIncomingSpawn(void* actor);
 void MarkIncomingDestroy(void* actor);
 bool ConsumeIncomingDestroy(void* actor);
 

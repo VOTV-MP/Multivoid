@@ -44,16 +44,28 @@ namespace coop::host_spawn_watcher {
 void SetSession(coop::net::Session* session);
 
 // Idempotent: resolve the GameplayStatics spawn UFunctions + offsets + the
-// ambient-prop class set, then register TWO POST observers:
-//   - BeginDeferredActorSpawnFromClass -> the KEYLESS ambient set (pinecone/
-//     stick/crystal): broadcast keyless PropSpawn + death-watch (this module).
-//   - FinishSpawningActor             -> the KEYED sandbox Q-menu / toolgun
-//     spawns whose BP-internal init() prop_lifecycle's Init-POST observer misses:
-//     delegate to prop_lifecycle::ExpressSpawnedProp (the canonical keyed path).
-// The FinishSpawningActor observer is non-fatal (a resolve/register failure
-// leaves the keyless detector working). Called every net-pump tick until
-// resolved (the classes load on gameplay-level entry, not at menu). Caches `session`.
+// ambient-prop class set, then arm TWO seams:
+//   - BeginDeferredActorSpawnFromClass POST observer -> the KEYLESS ambient set
+//     (pinecone/stick/crystal): broadcast keyless PropSpawn + death-watch
+//     (spawner dispatch is PE-visible -- proven; the transform must be read off
+//     the PARAMS, which only the PE observer provides).
+//   - FinishSpawningActor UFunction::Func patch (v106, 2026-07-07) -> the KEYED
+//     spawn seam for EVERY dispatch route, incl. the EX_CallMath spawns a PE
+//     observer can never see (propInventory::takeObj's R-drop/quick-slot place --
+//     log-proven 2026-07-07: those waited the 20s safety census). The callback
+//     only ENQUEUES; DrainPendingSpawns() adopts ~1 tick later, once the whole
+//     BP call (loadData key restore) has completed. Replaces the old PE
+//     FinishSpawningActor observer (RULE 2: the Func route is a strict superset).
+// Non-fatal per seam. Called every net-pump tick until resolved. Caches `session`.
 void Install(coop::net::Session* session);
+
+// Drain the FinishSpawningActor pending queue: express (prop_lifecycle::
+// ExpressSpawnedProp) every finished keyed Aprop_C spawn that is live, still
+// untracked, and NOT the local hotbar hand actor (the hand-edge in
+// coop/player/hand_item owns that actor's eventual world release). Entries
+// retry a bounded number of ticks (key may mint late), then drop to the
+// periodic safety census. Host-side express; game thread (net-pump tick).
+void DrainPendingSpawns(coop::net::Session* session);
 
 // Per-tick death-watch: any mirrored ambient prop whose actor the engine has
 // destroyed (SetLifeSpan expiry / consumption -- the spawner-spawned actor has

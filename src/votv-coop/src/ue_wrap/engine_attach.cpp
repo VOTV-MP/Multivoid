@@ -278,25 +278,4 @@ bool DetachActorFromParent(void* actor) {
     return Call(actor, f);
 }
 
-void* GetActorRootComponent(void* actor) {
-    // Public root-component resolve (the hand-item display attach target).
-    // Live-checked; null on failure. Game thread.
-    if (!actor || !R::IsLive(actor)) return nullptr;
-    return RootComponentOf(actor);
-}
-
-bool SetActorRelativeLocation(void* actor, const FVector& rel) {
-    // AActor::K2_SetActorRelativeLocation -- position an ATTACHED actor relative
-    // to its parent (the hand-item hold offset). Game thread.
-    static void* s_fn = nullptr;
-    if (!actor || !R::IsLive(actor)) return false;
-    void* fn = ActorFn(&s_fn, L"K2_SetActorRelativeLocation");
-    if (!fn) { UE_LOGW("engine: K2_SetActorRelativeLocation unresolved"); return false; }
-    ParamFrame f(fn);
-    f.Set<FVector>(L"NewRelativeLocation", rel);
-    f.Set<bool>(L"bSweep", false);
-    f.Set<bool>(L"bTeleport", false);
-    return Call(actor, f);
-}
-
 }  // namespace ue_wrap::engine

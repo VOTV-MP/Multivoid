@@ -22,6 +22,11 @@ namespace coop::local_streams {
 // found by the audit when this state lived as static-locals).
 void OnSessionStart();
 
+// The local player's currently-held actor (grab/hold slot), IsLive-guarded; null
+// when nothing is held. v106: trash_channel::TickCarry's rest-exclusion (a still
+// player holding a clump must not read as "clump at rest un-held"). Game thread.
+void* LastHeldActor();
+
 // Per-tick outbound publish. `local` is the live local mainPlayer_C,
 // `controller` its cached controller (may be null -- pose pitch falls back to
 // actor rotation). Publishes the pose snapshot, streams the held prop's world

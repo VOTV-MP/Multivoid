@@ -3,8 +3,11 @@
 #include "coop/props/host_spawn_watcher.h"
 
 #include "coop/element/element.h"
+#include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"          // LocalHandActor (drain: hotbar view-actor exclusion)
+#include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (mirror-spawn exclusion)
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/remote_prop_spawn.h"
@@ -16,6 +19,7 @@
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
 #include "ue_wrap/types.h"       // FTransform (the reflected SpawnTransform param layout)
+#include "ue_wrap/ufunction_hook.h"  // FinishSpawningActor Func patch (v106 keyed spawn seam)
 
 #include <atomic>
 #include <cmath>          // asin/atan2 for the FQuat -> FRotator conversion
@@ -202,32 +206,47 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     WatchSpawnedProp(actor, p.elementId);
 }
 
-// HOST POST observer on FinishSpawningActor -- the KEYED sandbox-spawn seam.
-// The sandbox Q-menu / toolgun spawn a KEYED Aprop_C via BeginDeferred +
-// FinishSpawningActor, but the prop's own init() (which MINTS the Key) is
-// dispatched EX_LocalVirtualFunction from its UCS -> BP-internal -> never fires
-// prop_lifecycle's Aprop_C::Init POST observer (the gap, RE 2026-06-11). The Key
-// is set by the time FinishSpawningActor returns, so we observe HERE (not at
-// BeginDeferred, where the Key is still None) and run prop_lifecycle's canonical
-// KEYED broadcast. The ambient pinecone/stick/crystal set is handled KEYLESS by
-// OnSpawnPost above, which MarkProcessedInit's them first -> ExpressSpawnedProp's
-// shared HasProcessedInit latch dedupes those here (so they stay keyless). Fires
-// per FinishSpawningActor post-connect; the IsDescendantOfProp gate (a cheap
-// SuperStruct walk) rejects NPCs/effects before the heavier ExpressSpawnedProp.
-void OnFinishSpawnPost(void* /*self*/, void* /*function*/, void* params) {
+// THE KEYED SPAWN SEAM (v106, 2026-07-07) -- a UFunction::Func patch on
+// FinishSpawningActor. The old ProcessEvent POST observer here caught only the
+// PE-dispatched route (sandbox Q-menu / toolgun); the R-drop / quick-slot place
+// spawn runs propInventory::takeObj's EX_CallMath FinishSpawningActor -- INVISIBLE
+// to a PE observer (log-proven 2026-07-07 10:15: drops waited the 20s safety
+// census). Func funnels EVERY dispatch route (the pile-thunk precedent), so the
+// Func patch strictly supersedes the PE observer (RULE 2: replaced).
+//
+// The callback only ENQUEUES: at Finish-return inside takeObj the Key is still
+// the placeholder NewGuid (loadData restores the saved Key AFTER Finish -- the
+// takeObj PRE/POST bracket exists for exactly this), and updateHold's HELD view
+// actor has not yet been written to holding_actor (the hand exclusion below
+// needs it). DrainPendingSpawns (next net-pump tick) adopts once the whole BP
+// call has completed. One express attempt per entry (ExpressSpawnedProp latches
+// ProcessedInit on first touch); a still-unkeyed actor falls to the safety census.
+struct PendingFinishedSpawn {
+    void*   actor = nullptr;
+    int32_t idx   = -1;
+};
+std::vector<PendingFinishedSpawn> g_pendingFinished;  // GT-only
+constexpr size_t kMaxPendingFinished = 128;           // runaway backstop (level-load bursts)
+
+void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!GT::IsGameThread()) return;
-    if (!params || g_finishReturnOff < 0) return;
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
     if (s->role() != coop::net::Role::Host) return;        // host-only broadcaster
-    void* actor = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(params) + g_finishReturnOff);
+    void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
+    // Wire/display mirror spawns are marked (MarkIncomingSpawn) BEFORE Finish --
+    // PEEK (non-destructive: the Init-POST observer owns consuming the mark) and
+    // never enqueue them: expressing a mirror as a fresh world prop is the dupe.
+    if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
-    // Reuse prop_lifecycle's canonical keyed broadcast (filters + HasProcessedInit
-    // dedupe + keyed payload + send + self-claim). It self-gates on the Key (a
-    // still-None Aprop_C falls through harmlessly), so no extra checks here.
-    coop::prop_lifecycle::ExpressSpawnedProp(actor);
+    if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked
+    if (g_pendingFinished.size() >= kMaxPendingFinished) {
+        UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (safety census catches it)",
+                kMaxPendingFinished, actor);
+        return;
+    }
+    g_pendingFinished.push_back(PendingFinishedSpawn{actor, R::InternalIndexOf(actor)});
 }
 
 }  // namespace
@@ -300,17 +319,18 @@ void Install(coop::net::Session* session) {
         g_observerRegistered = true;  // give up (don't retry a full table forever)
         return;
     }
-    // KEYED sandbox-spawn observer (FinishSpawningActor POST) -- NON-FATAL: the
+    // KEYED spawn seam (FinishSpawningActor Func patch, v106) -- NON-FATAL: the
     // keyless pinecone detector above is independent, so a failure here leaves it
-    // working. Catches the Q-menu/toolgun keyed spawns prop_lifecycle's Init-POST
-    // observer misses (their init() is BP-internal).
-    if (g_finishSpawnFn && g_finishReturnOff >= 0) {
-        if (GT::RegisterPostObserver(g_finishSpawnFn, &OnFinishSpawnPost)) {
-            UE_LOGI("host_spawn_watcher: FinishSpawningActor POST observer registered "
-                    "(sandbox Q-menu/toolgun KEYED prop mirror, ReturnValue@%d)", g_finishReturnOff);
+    // working. Catches EVERY dispatch route: the Q-menu/toolgun PE route the old
+    // observer covered AND the EX_CallMath takeObj route (R-drop / quick-slot
+    // place / UI inventory drop) it could never see.
+    if (g_finishSpawnFn) {
+        if (ue_wrap::ufunction_hook::InstallPostHook(g_finishSpawnFn, &OnFinishSpawnFunc)) {
+            UE_LOGI("host_spawn_watcher: FinishSpawningActor Func-patched "
+                    "(keyed spawn seam, all dispatch routes -- drop/place spawns adopt next tick)");
         } else {
-            UE_LOGW("host_spawn_watcher: FinishSpawningActor POST register FAILED (table full?) "
-                    "-- Q-menu keyed sync off (pinecone keyless detector still active)");
+            UE_LOGW("host_spawn_watcher: FinishSpawningActor Func patch FAILED (table full?) "
+                    "-- keyed spawn seam off (pinecone keyless detector still active)");
         }
     }
     g_observerRegistered = true;
@@ -342,8 +362,43 @@ void TickWatchedProps(coop::net::Session* s) {
     }
 }
 
+void DrainPendingSpawns(coop::net::Session* s) {
+    UE_ASSERT_GAME_THREAD("host_spawn_watcher::DrainPendingSpawns");
+    if (g_pendingFinished.empty()) return;
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) {
+        g_pendingFinished.clear();
+        return;
+    }
+    for (const PendingFinishedSpawn& e : g_pendingFinished) {
+        if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;   // died before adopt
+        // Tracked OR mirror-bound since enqueue (the unified Registry reverse
+        // covers both local elements and wire mirrors) -> someone owns it.
+        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId)
+            continue;
+        // A late echo mark (a mirror finished after our enqueue check) -> not ours.
+        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) continue;
+        // The local hotbar HAND actor (updateHold's view spawn): display-only while
+        // held -- the hand-edge in coop/player/hand_item expresses it if/when it is
+        // RELEASED into the world. Never adopt it here (the v105 dupe class).
+        if (e.actor == coop::hand_item::LocalHandActor()) continue;
+        // One-shot canonical express (filters + key gate + payload + self-claim).
+        // ExpressSpawnedProp latches ProcessedInit on first touch, so this entry
+        // is spent regardless of outcome; a still-unkeyed straggler falls to the
+        // periodic safety census.
+        coop::prop_lifecycle::ExpressSpawnedProp(e.actor);
+        if (PT::GetPropElementIdForActor(e.actor) != coop::element::kInvalidId) {
+            UE_LOGI("host_spawn_watcher: spawn-seam adopted %p eid=%u (FinishSpawningActor "
+                    "Func seam -- drop/place visible to peers this tick)",
+                    e.actor,
+                    static_cast<unsigned>(PT::GetPropElementIdForActor(e.actor)));
+        }
+    }
+    g_pendingFinished.clear();
+}
+
 void OnDisconnect() {
     g_watched.clear();
+    g_pendingFinished.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 

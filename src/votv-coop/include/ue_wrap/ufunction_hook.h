@@ -29,11 +29,14 @@
 
 namespace ue_wrap::ufunction_hook {
 
-// Post-native observer. `sourceObject` = FFrame::Object (the executing/source actor);
-// `spawnedResult` = *Result (the native fn's RESULT_PARAM -- for BeginDeferred the new
-// actor; MAY BE NULL on a failed spawn). Fires AFTER the original Func returns (so
-// `spawnedResult` is populated). Both are raw UObject*.
-using PostNativeCallback = void(*)(void* sourceObject, void* spawnedResult);
+// Post-native observer. `context` = the dispatch Context (RCX of the exec-thunk ABI --
+// for a member call the object the function runs ON, e.g. the DYING actor for
+// K2_DestroyActor; for a static GameplayStatics call the world-context-ish caller);
+// `sourceObject` = FFrame::Object (the actor whose BYTECODE is executing = the caller,
+// e.g. the re-piling clump that issued a spawn); `spawnedResult` = *Result (the native
+// fn's RESULT_PARAM -- for BeginDeferred the new actor; MAY BE NULL on a failed spawn).
+// Fires AFTER the original Func returns (so `spawnedResult` is populated). Raw UObject*s.
+using PostNativeCallback = void(*)(void* context, void* sourceObject, void* spawnedResult);
 
 // Patch `ufunction`'s native Func (UFunction + off::UFunction_Func) with a transparent
 // forwarder that invokes `cb(FFrame::Object, *Result)` after forwarding to the original.

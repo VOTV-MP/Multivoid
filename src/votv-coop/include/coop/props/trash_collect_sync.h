@@ -39,7 +39,7 @@ namespace coop::trash_collect_sync {
 // (re-cached every call for reconnect) and registers the observer once mainPlayer_C is loaded
 // (idempotent; retries on later calls until the class resolves). Call from the world-gated subsystem
 // install. docs/piles/08: this PRE observer is the HOST-GRAB seam -- it records the aimed pile's eid as
-// a pending grab (trash_channel::NotePendingGrab); the held-object edge then adopts the spawned clump
+// diagnostics (v106: the binding itself rides the thunk's birth certificate); the held-object edge adopts the spawned clump
 // onto that eid. (The clump's BeginDeferred spawn is EX_CallMath -> invisible to a spawn-POST hook.)
 // Game thread.
 void Install(coop::net::Session* session);

@@ -857,12 +857,6 @@ bool DetachActorFromRagdollBody(void* actor);
 bool AttachActorToComponentSocket(void* actor, void* component, const wchar_t* socket);
 bool DetachActorFromParent(void* actor);
 
-// Root-component resolve (K2_GetRootComponent) + attached-actor relative placement
-// (K2_SetActorRelativeLocation) -- the hand-item display mirror's attach target +
-// hold offset (coop/player/hand_item). Game thread only.
-void* GetActorRootComponent(void* actor);
-bool SetActorRelativeLocation(void* actor, const FVector& rel);
-
 // ---- Generic actor root-physics substrate (ue_wrap/engine_attach.cpp) ----
 // Root-component physics primitives used by the held-clump mirror (coop/remote_prop):
 // they operate via K2_GetRootComponent, NEVER the Aprop_C StaticMesh offset, so they

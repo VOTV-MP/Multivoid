@@ -45,7 +45,7 @@ const char* WindowPhase(long long& outDeferredMs) {
 // Post-hooks fire AFTER the original saveAnim/addHint runs (so SAVED still shows -- this
 // phase is read-only). They log a fire only IN the join-save window or within 3 s after
 // it (deferred catch); a normal-gameplay save/hint outside that is a bool check + return.
-void OnSaveAnim(void* /*src*/, void* /*res*/) {
+void OnSaveAnim(void* /*context*/, void* /*src*/, void* /*res*/) {
     long long deferred = 0;
     const char* phase = WindowPhase(deferred);
     if (!phase) return;
@@ -55,7 +55,7 @@ void OnSaveAnim(void* /*src*/, void* /*res*/) {
             phase, g_saveAnimHits);
     if (deferred) UE_LOGW("[SAVED-DETECT]   ^ saveAnim was DEFERRED ~%lldms after the capture window closed", deferred);
 }
-void OnAddHint(void* /*src*/, void* /*res*/) {
+void OnAddHint(void* /*context*/, void* /*src*/, void* /*res*/) {
     long long deferred = 0;
     const char* phase = WindowPhase(deferred);
     if (!phase) return;

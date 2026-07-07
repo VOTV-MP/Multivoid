@@ -147,7 +147,7 @@ void WriteLookAtOnAnim(void* anim, const FVector& target) {
 // with a NULL Controller -- the codebase's definitive puppet discriminator
 // (CLAUDE.md). Kerfur NPCs (different actor class) and the LOCAL player
 // (controller != null) are byte-untouched.
-void HeadGateBUAPost(void* animInstance, void* /*result*/) {
+void HeadGateBUAPost(void* /*context*/, void* animInstance, void* /*result*/) {
     if (!animInstance) return;
     void* comp = R::OuterOf(animInstance);   // UAnimInstance's outer = its USkeletalMeshComponent
     if (!comp) return;

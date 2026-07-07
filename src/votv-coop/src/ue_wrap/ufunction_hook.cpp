@@ -51,9 +51,9 @@ int  g_slotCount = 0;
 // __try/__except with C++ unwind; same contract as game_thread::RunObserverSEH). We are
 // DEEP inside the engine's spawn call, so a fault in the gameplay cb must be absorbed,
 // not crash the engine. Returns 0 clean, 1 if a fault was caught.
-int RunCbSEH(PostNativeCallback cb, void* src, void* result) {
+int RunCbSEH(PostNativeCallback cb, void* context, void* src, void* result) {
     __try {
-        cb(src, result);
+        cb(context, src, result);
         return 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 1;
@@ -65,6 +65,11 @@ int RunCbSEH(PostNativeCallback cb, void* src, void* result) {
 // BeginDeferred would re-enter THIS thunk. Skip the cb on re-entry so a nested spawn can never double-fire
 // the convert. Thread-local (native dispatch is game-thread, but the guard stays correct regardless). The
 // forward ALWAYS runs (a re-entrant spawn must still proceed).
+// NOTE (audit 2026-07-07): this guard is GLOBAL across ALL slots, not per-slot -- a hooked native
+// dispatched from INSIDE another slot's cb would have its cb silently skipped too. Safe today because
+// no cb dispatches a hooked native synchronously (sequential BP bytecode steps -- e.g. a pile's toClump
+// BeginDeferred cb returns, t_inCb resets, THEN the pile's K2_DestroyActor fires -- are NOT nested);
+// preserve that property when adding cbs, or make the guard per-slot.
 thread_local bool t_inCb = false;
 
 template <int N>
@@ -83,7 +88,7 @@ void __fastcall NativeThunk(void* context, void* stack, void* result) {
     // a failed spawn leaves it null -> the cb gets null + logs it (never derefs blind).
     void* spawned = result ? *reinterpret_cast<void**>(result) : nullptr;
     t_inCb = true;
-    const int rc = RunCbSEH(s.cb, srcObj, spawned);
+    const int rc = RunCbSEH(s.cb, context, srcObj, spawned);
     t_inCb = false;
     if (rc != 0) {
         UE_LOGE("ufunction_hook: post-native cb AV absorbed (slot %d, ufn=%p src=%p result=%p) -- "

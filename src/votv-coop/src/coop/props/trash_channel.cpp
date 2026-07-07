@@ -57,13 +57,21 @@ void RebindE(coop::element::ElementId E, void* actor) {
                                           /*rebindInPlace=*/true);
 }
 
-// The pending grab recorded at the InpActEvt_use PRE seam, consumed by the next held-clump edge.
-struct PendingGrab { bool active = false; uint32_t eid = 0; uint8_t chipType = 0; int ttl = 0; };
-PendingGrab g_pendingGrab;
-constexpr int kPendingGrabTtlTicks = 30;  // ~0.3-0.5s; the grab's clump enters the hand within a few frames
+// v106 clump birth certificates (see trash_channel.h): clump actor -> {source pile eid, chipType},
+// recorded by the BeginDeferred Func thunk at the clump's spawn, consumed by the held-edge. TTL-pruned
+// in TickCarry (a grab that never reached the hand: hands full / denied / dropped mid-morph).
+struct ClumpBirth { uint32_t eid = 0; uint8_t chipType = 0; uint32_t bornTick = 0; };
+std::unordered_map<void*, ClumpBirth> g_clumpBirths;
+constexpr uint32_t kClumpBirthTtlTicks = 60;  // ~1s; the grab's clump enters the hand within a few frames
 
 // ---- CLOSE-B carry latch + land-settle (host-side) -- see trash_channel.h for the full model ----------
-std::unordered_map<uint32_t, uint32_t> g_carry;   // eid -> last-activity tick; PRESENCE in the map = carrying
+// v106: PRESENCE in the map = carrying. deadTicks/restTicks drive the guaranteed-termination pass.
+struct CarryLane {
+    uint32_t lastTick  = 0;  // last activity (diagnostic)
+    int      deadTicks = 0;  // consecutive ticks the Registry actor for this eid read dead
+    int      restTicks = 0;  // consecutive ticks the clump lay free (un-held) below the rest speed
+};
+std::unordered_map<uint32_t, CarryLane> g_carry;
 struct LandSettle {
     int               countdown;  // ticks until COMMIT (a re-grab CANCELS first)
     int               sincePile;  // ticks since the held ToPile (the ToPile->ToClump gap, logged on CANCEL)
@@ -173,16 +181,16 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
 
     if (toClump) {
         if (!carrying) {
-            // OPEN: the REAL grab (pile->clump, via AdoptPendingGrabClump). Broadcast the one ToClump + start
+            // OPEN: the REAL grab (pile->clump, via AdoptBornClump). Broadcast the one ToClump + start
             // the carry session; the host's churn (re-pile + auto-re-grab) is SUPPRESSED until the real land.
-            g_carry[eid] = g_tick;
+            g_carry[eid].lastTick = g_tick;
             BroadcastConvert(s, E, kind, loc, rot, scale, chipType, cls, "GRAB OPEN");
             UE_LOGI("[TRASH-CH] HOST carry OPEN eid=%u -- churn re-pile/re-grab suppressed until the land", eid);
         } else {
             // Defensive: a ToClump reaching OnHostConvert while carrying (the held-edge OnHostRegrab is the
             // normal re-grab path; the thunk skips pile-source so it should not). Fold as churn -- rebind
             // (done), cancel any pending settle, suppress the broadcast + ctx bump.
-            g_carry[eid] = g_tick;
+            g_carry[eid].lastTick = g_tick;
             CancelSettle(eid, "re-grab(convert)");
             UE_LOGI("[TRASH-CH] HOST SUPPRESS ToClump eid=%u (carry re-grab) -- rebound, no broadcast/ctx", eid);
         }
@@ -195,7 +203,7 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
             // CARRYING: this re-pile is EITHER a churn re-pile (a re-grab follows within K -> CancelSettle) OR
             // the real land (no re-grab -> TickCarry COMMITs it). Hold the broadcast + ctx bump; capture the
             // payload. A later ToPile before commit just refreshes the settle (latest wins).
-            g_carry[eid] = g_tick;
+            g_carry[eid].lastTick = g_tick;
             LandSettle ls{};
             ls.countdown = kLandSettleTicks; ls.sincePile = 0;
             ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls; ls.scale = scale;
@@ -213,7 +221,7 @@ void OnHostRegrab(coop::element::ElementId E, void* newClump) {
     if (E == 0u || E == coop::element::kInvalidId || !newClump) return;
     const uint32_t eid = static_cast<uint32_t>(E);
     if (g_carry.find(eid) == g_carry.end()) return;       // not carrying -> not a churn re-grab of E
-    g_carry[eid] = g_tick;
+    g_carry[eid].lastTick = g_tick;
     RebindE(E, newClump);                                 // keep E on the live held clump (the carry stream continues)
     CancelSettle(eid, "re-grab");                         // a re-grab proves the preceding re-pile was churn
     UE_LOGI("[TRASH-CH] HOST carry re-grab eid=%u -- rebound onto the new held clump, settle cancelled "
@@ -237,21 +245,27 @@ coop::element::ElementId AnyCarryingEid() {
 // sends a PropRelease (host-auth flight-stream + ToPile own the throw end); the LAND COMMIT's BroadcastConvert
 // already bumps the ctx, so a separate throw bump is obsolete. Removed with its caller in local_streams.)
 
-void NotePendingGrab(coop::element::ElementId pileEid, uint8_t chipType) {
-    if (pileEid == 0u || pileEid == coop::element::kInvalidId) return;
-    g_pendingGrab = PendingGrab{true, static_cast<uint32_t>(pileEid), chipType, kPendingGrabTtlTicks};
-    UE_LOGI("[PILE] HOST grab PENDING eid=%u variant=%u -- the clump the BP spawns next adopts this eid "
-            "(InpActEvt PRE seam; the BeginDeferred spawn is EX_CallMath -> invisible)",
-            static_cast<unsigned>(pileEid), static_cast<unsigned>(chipType));
+void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
+    if (!clump || E == 0u || E == coop::element::kInvalidId) return;
+    g_clumpBirths[clump] = ClumpBirth{static_cast<uint32_t>(E), chipType, g_tick};
+    UE_LOGI("[PILE] HOST clump BORN %p from pile eid=%u variant=%u (BeginDeferred thunk -- the "
+            "deterministic grab certificate; held-edge consumes it)",
+            clump, static_cast<unsigned>(E), static_cast<unsigned>(chipType));
 }
 
-coop::element::ElementId AdoptPendingGrabClump(coop::net::Session& s, void* heldClump,
-                                               const ue_wrap::FVector& clumpLoc,
-                                               const ue_wrap::FRotator& clumpRot) {
-    if (!g_pendingGrab.active || !heldClump) return coop::element::kInvalidId;
-    const coop::element::ElementId E = static_cast<coop::element::ElementId>(g_pendingGrab.eid);
-    const uint8_t chipType = g_pendingGrab.chipType;
-    g_pendingGrab.active = false;                          // consume (one clump per grab)
+bool TakeClumpBorn(void* clump, coop::element::ElementId* outE, uint8_t* outChipType) {
+    auto it = g_clumpBirths.find(clump);
+    if (it == g_clumpBirths.end()) return false;
+    if (outE)        *outE        = static_cast<coop::element::ElementId>(it->second.eid);
+    if (outChipType) *outChipType = it->second.chipType;
+    g_clumpBirths.erase(it);
+    return true;
+}
+
+coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::ElementId E,
+                                        void* heldClump, const ue_wrap::FVector& clumpLoc,
+                                        const ue_wrap::FRotator& clumpRot, uint8_t chipType) {
+    if (!heldClump || E == 0u || E == coop::element::kInvalidId) return coop::element::kInvalidId;
     UE_LOGI("[PILE] HOST GRAB ADOPT eid=%u -- clump %p entered the hand -> binding it to the grabbed pile's "
             "eid + broadcasting convert", static_cast<unsigned>(E), heldClump);
     OnHostConvert(s, E, coop::net::propconvert_kind::kToClump, heldClump, clumpLoc, clumpRot, chipType);
@@ -564,13 +578,18 @@ void ClearClientCarry(uint32_t eid) {
     if (eid != 0 && eid == g_clientPendingGrab) g_clientPendingGrab = 0;  // also drop a pending request for a vanished eid
 }
 
-void TickCarry(coop::net::Session& s) {
+void TickCarry(coop::net::Session& s, void* localHeldActor) {
     ++g_tick;
-    // 1. pending-grab TTL (folded from the retired TickPendingGrab).
-    if (g_pendingGrab.active && --g_pendingGrab.ttl <= 0) {
-        UE_LOGI("[PILE] HOST grab PENDING eid=%u expired (no clump appeared -- grab produced none / hands full)",
-                static_cast<unsigned>(g_pendingGrab.eid));
-        g_pendingGrab.active = false;
+    // 1. prune expired clump birth certificates (a grab whose clump never reached
+    //    the hand: hands full / denied / consumed mid-morph).
+    for (auto it = g_clumpBirths.begin(); it != g_clumpBirths.end(); ) {
+        if (g_tick - it->second.bornTick > kClumpBirthTtlTicks) {
+            UE_LOGI("[PILE] HOST clump-birth certificate expired (clump %p, pile eid=%u -- never reached "
+                    "the hand)", it->first, it->second.eid);
+            it = g_clumpBirths.erase(it);
+        } else {
+            ++it;
+        }
     }
     // 2. land-settles: count down; COMMIT (broadcast the held ToPile + CLOSE the latch) on timeout. A re-grab
     //    (OnHostRegrab) cancels a settle before it can commit -> only a re-pile with NO following re-grab
@@ -607,6 +626,66 @@ void TickCarry(coop::net::Session& s) {
         } else {
             ++it;
         }
+    }
+    // 3. GUARANTEED CARRY TERMINATION (v106, 2026-07-07 -- the eid-4809 permanent
+    //    "already HELD" deny-lock root). Every open lane must eventually close:
+    //    the native re-pile gate (IsValid(holdPlayer.grabbing_actor)) ABORTS a
+    //    thrown clump's re-pile when the thrower's hand is busy at land -- the
+    //    clump then lies as a clump forever and NO ToPile ever closes the lane.
+    //    A settle in flight owns its own closure (the COMMIT above), so skip those.
+    constexpr int   kDeadCloseTicks = 30;   // ~0.5s grace: a morph rebinds the row the SAME tick
+    constexpr int   kRestCloseTicks = 45;   // ~0.75s of stillness = the clump has landed for good
+    constexpr float kRestSpeedSq    = 25.f; // (5 cm/s)^2
+    for (auto it = g_carry.begin(); it != g_carry.end(); ) {
+        const uint32_t eid = it->first;
+        CarryLane& lane = it->second;
+        if (g_settle.find(eid) != g_settle.end()) { lane.deadTicks = lane.restTicks = 0; ++it; continue; }
+        coop::element::Element* e = coop::element::Registry::Get().Get(
+            static_cast<coop::element::ElementId>(eid));
+        void* a = e ? e->GetActor() : nullptr;
+        const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
+        if (!live) {
+            lane.restTicks = 0;
+            if (++lane.deadTicks >= kDeadCloseTicks) {
+                // The clump was CONSUMED (destroyed with no re-pile rebind). Close the
+                // lane + broadcast PropDestroy(eid) so every peer drains its row (the
+                // ReleaseClientHold shape -- positive evidence, never a silent wedge).
+                UE_LOGW("[TRASH-CH] HOST carry eid=%u actor DIED with no re-pile -- lane CLOSED + "
+                        "PropDestroy(eid) broadcast (consumed clump; peers drain the row)", eid);
+                coop::net::PropDestroyPayload dp{};
+                dp.key.len   = 0;
+                dp.elementId = eid;
+                s.SendPropDestroy(dp);
+                g_heldBy.erase(eid);
+                it = g_carry.erase(it);
+                continue;
+            }
+            ++it;
+            continue;
+        }
+        lane.deadTicks = 0;
+        // Rest detection: only a CLUMP lying FREE counts (not the local player's
+        // held clump -- a still hold has ~0 velocity -- and not a puppet-held one).
+        if (ue_wrap::prop::IsGarbageClump(a) && a != localHeldActor &&
+            g_heldBy.find(eid) == g_heldBy.end()) {
+            const ue_wrap::FVector v = ue_wrap::engine::GetActorVelocity(a);
+            const float sp2 = v.X * v.X + v.Y * v.Y + v.Z * v.Z;
+            if (sp2 < kRestSpeedSq) {
+                if (++lane.restTicks >= kRestCloseTicks) {
+                    UE_LOGI("[TRASH-CH] HOST carry eid=%u clump AT REST un-held, no re-pile (native "
+                            "gate aborted -- hand busy at land) -- lane CLOSED; the clump stays "
+                            "world-tracked + re-grabbable (the SP end state)", eid);
+                    g_heldBy.erase(eid);
+                    it = g_carry.erase(it);
+                    continue;
+                }
+            } else {
+                lane.restTicks = 0;
+            }
+        } else {
+            lane.restTicks = 0;
+        }
+        ++it;
     }
 }
 
@@ -660,7 +739,7 @@ bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx, bool requi
 
 void OnDisconnect() {
     g_ctx.clear();
-    g_pendingGrab = PendingGrab{};
+    g_clumpBirths.clear();  // v106: drop unconsumed birth certificates
     g_carry.clear();    // CLOSE-B: drop all carry latches + settles (gross reset)
     g_settle.clear();
     g_heldBy.clear();   // v84: drop all client-grab HELD_BY records

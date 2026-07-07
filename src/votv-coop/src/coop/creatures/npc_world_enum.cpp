@@ -165,7 +165,7 @@ constexpr size_t kMaxPendingExSpawns = 256;           // sanity cap (a swarm is 
 // the SEND is peer-dependent, and the join connect-snapshot replays tracked state. The old
 // `!connected()` gate here silently dropped the piramid2_C + killerwisp catches, so the
 // joiner's WA/npc snapshots had NOTHING and the client saw an empty world mid-event.
-void OnBeginDeferredExSpawn(void* srcObj, void* spawned) {
+void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!spawned || !srcObj) return;
     auto* s = coop::npc_sync::GetSession();
     if (!s || s->role() != coop::net::Role::Host) return;

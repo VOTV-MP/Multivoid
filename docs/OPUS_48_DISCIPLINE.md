@@ -106,8 +106,11 @@ Forbidden phrases: "should work", "ready for test" without the checklist table.
   POLL state + diff (the alarm/hand-item shape) instead of hooking verbs.
 - `getMainPlayer` / `GetPlayerCharacter(0)` inside game BPs = the LOCAL player on
   whatever machine runs the code. Any mirrored BP logic touching it is a landmine.
-- updateHold DESTROYS+RESPAWNS the hand actor per hotbar switch; holding_actor
-  flickers null for a frame. Debounce edges that read it.
+- updateHold DESTROYS+RESPAWNS the hand actor per hotbar switch -- but the whole
+  switch is ONE synchronous updateHold call (bytecode: destroy @935 + spawn @1023 +
+  holding_name @3183 in the same invocation), so a per-tick poll never sees a
+  mid-switch null: a polled null IS the stow. (The v105 first-cut 250ms debounce
+  guarded a flicker that does not exist and read as pure lag -- removed 2026-07-06.)
 - UE TArray<struct> stride = 16-aligned, not the raw Size.
 - deploy-all ships Release — always build Release and hash-verify all 4 game folders
   before trusting a smoke.

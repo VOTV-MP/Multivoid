@@ -489,7 +489,6 @@ inline constexpr const wchar_t* MainPlayerUseInputEventFn42R = L"InpActEvt_use_K
 // only the press edge that finds a live carry acts (SendThrowIntent clears the carry -> the other no-ops).
 inline constexpr const wchar_t* MainPlayerFireInputEventFn58 = L"InpActEvt_fire_K2Node_InputActionEvent_58";
 inline constexpr const wchar_t* MainPlayerFireInputEventFn59 = L"InpActEvt_fire_K2Node_InputActionEvent_59";
-
 // Phase 5F flashlight (item activation sync). Two UFunctions in the chain;
 // hands-on testing 2026-05-25 NIGHT-3 showed `updateFlashlight` is BP-INLINED
 // into `Flashlight Update` and never dispatches via ProcessEvent (the inner

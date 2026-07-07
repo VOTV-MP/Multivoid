@@ -443,6 +443,13 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         // registry is majority-dead; smoke-falsified). net_pump still owns
         // every detection edge below (RULE 2: one flag, one owner of writes).
         const auto reapNow = ReapClock::now();
+        // (v106: the v105b forced-reconcile request path is RETIRED -- pickup
+        // destroys broadcast at the K2_DestroyActor Func seam, drop/place actors
+        // express at the hand edge / FinishSpawningActor Func seam, all
+        // event-driven at the moment they happen. This reap + the periodic
+        // census below remain the SAFETY NET for mass GC purges and any
+        // non-BeginDeferred spawn path -- background cadence, no user-visible
+        // latency rides on them anymore.)
         if (reapNow >= sNextReap) {
             sNextReap = reapNow + std::chrono::seconds(4);
             // Gameplay-world gate (2026-06-01, post-flee menu-leak fix). The reaper +
@@ -701,6 +708,10 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 const int32_t  curNum   = R::NumObjects();
                 const bool     grew     = (curNum != sLastSteadyNum);
                 const bool     periodic = (++sSinceFullWalk >= 5);   // ~20s safety walk (this branch runs ~0.25 Hz)
+                // (v106: recycled-slot drop/place actors -- NumObjects flat,
+                // `grew` blind -- are expressed event-driven at the hand edge /
+                // FinishSpawningActor Func seam; the ~20s periodic walk here is
+                // the safety net only.)
                 if (grew || periodic) {
                     if (periodic && !grew)
                         UE_LOGI("net_pump: steady-world re-seed -- periodic SAFETY census (NumObjects flat at %d; "

@@ -16,13 +16,14 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_lifecycle.h"       // DestroyLocalProp (v106: post-quiescence unbound ghost retire)
 #include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
-#include "coop/props/trash_channel.h"      // NotePendingGrab (the VISIBLE-seam grab->clump link; docs/piles/08)
+#include "coop/props/trash_channel.h"      // NoteClumpBorn (v106: the clump birth certificate; docs/piles/08)
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
@@ -66,8 +67,8 @@ bool g_cancelPairedUseRelease = false;
 
 // RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH (proximity FindNearestChipPile land-detect) is FULLY
 // RETIRED -- it mis-bound on a NEIGHBOUR pile in a dense cluster. The host-grab sync is now: the InpActEvt
-// PRE observer (OnPileGrabPre) records the aimed pile's eid (trash_channel::NotePendingGrab); the held-edge
-// adopts the spawned clump onto that eid; identity is the host eid end-to-end (POSITION IS NEVER IDENTITY).
+// clump's identity travels via the v106 BIRTH CERTIFICATE (trash_channel::NoteClumpBorn at the BeginDeferred
+// thunk); the held-edge adopts the clump onto that eid; identity is the host eid end-to-end (POSITION IS NEVER IDENTITY).
 // (An earlier design caught the spawn at a host_spawn_watcher BeginDeferred POST -- RETIRED 2026-06-21: the
 // chipPile/clump spawn is dispatched EX_CallMath, INVISIBLE to our ProcessEvent hook; it never fired.)
 
@@ -90,7 +91,7 @@ bool g_repileThunkInstalled = false;          // process-lifetime Func-patch lat
 // source -> ignored here; the host grab stays on the InpActEvt PRE + held-edge adopt path. A wild srcObj (a
 // wrong offset -- ruled out, IDA-pinned + validated) would fault in IsGarbageClump and the facility's
 // RunCbSEH absorbs it -> no convert. Game thread (BeginDeferred is GT-only); host-only.
-void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
+void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor) {
     auto* s = g_session.load(std::memory_order_acquire);
     // Phase 1 step 1A PROBE (read-only, CLIENT-side, before the host gate): record every keyless-family
     // load-spawn this thunk sees, so EmitVerdictAtQuiescence can test whether spawn-order catches every
@@ -145,7 +146,40 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
     }
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;  // host authors converts
     if (!srcObj || !newActor) return;
-    if (!ue_wrap::prop::IsGarbageClump(srcObj)) return;   // re-pile source must be a clump (grab case is a pile -> skip)
+    // GRAB direction (v106, 2026-07-07): EVERY clump is born from a chipPile's own
+    // BeginDeferred (bytecode: actorChipPile toClump @141 + ubergraph @3493; srcObj =
+    // the source pile, ALIVE at this POST -- it self-destructs after). Record the
+    // birth certificate here: this is the DETERMINISTIC grab seam that fires for
+    // E-press AND use-HOLD grabs (canBeUsedHold repeats with no new InpActEvt
+    // dispatch -- the 10:19:03 mis-bind root: the InpActEvt PRE seam missed the
+    // grab and the held-edge heuristic bound the clump to the WRONG open carry).
+    // The held-edge (local_streams) consumes the certificate; the InpActEvt PRE
+    // seam keeps only diagnostics + the client-side routing.
+    if (ue_wrap::prop::IsChipPile(srcObj) && ue_wrap::prop::IsGarbageClump(newActor)) {
+        coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
+        if (E == coop::element::kInvalidId)
+            E = coop::remote_prop::ResolveMirrorEidByActor(srcObj);
+        if (E == coop::element::kInvalidId) {
+            // docs/piles/09 SELF-SEED (moved here from the E-press PRE, ONE owner):
+            // an UNTRACKED pile grabbed in the post-blob purge gap mints its eid at
+            // the very seam its clump is born (register-only, no broadcast).
+            PT::MarkPropElement(srcObj, L"", R::ClassNameOf(srcObj));
+            E = PT::GetPropElementIdForActor(srcObj);
+            if (E != coop::element::kInvalidId)
+                UE_LOGI("[PILE-09] HOST self-seeded UNTRACKED grabbed pile %p -> eid=%u "
+                        "(thunk seam; eid-0-at-grab gap closed)",
+                        srcObj, static_cast<unsigned>(E));
+        }
+        if (E != coop::element::kInvalidId) {
+            // docs/piles/09: freeze the pile's PRE-GRAB position as the save-time key
+            // (the pile has not moved yet -- it dies in place after this spawn).
+            coop::save_transfer::RecordGrabTimePileXform(
+                E, ue_wrap::engine::GetActorLocation(srcObj));
+            coop::trash_channel::NoteClumpBorn(newActor, E, ue_wrap::prop::GetChipType(srcObj));
+        }
+        return;  // grab direction fully handled (the held-edge adopts)
+    }
+    if (!ue_wrap::prop::IsGarbageClump(srcObj)) return;   // re-pile source must be a clump
     if (!ue_wrap::prop::IsChipPile(newActor)) return;     // ... spawning a chipPile
     const coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
     if (E == coop::element::kInvalidId) return;           // an UNTRACKED clump (grab-adopt miss; the eid=0 gap) -> skip
@@ -183,7 +217,7 @@ void OnBeginDeferredSpawnObserve(void* srcObj, void* newActor) {
 // CONFIRM before the flip: (a) [DROP-GRAB] fires on the real drop AND throw with carrying=<the carry-eid>;
 // (b) it does NOT fire DURING the carry (at a churn re-grab -- the held clump ptr changes ~every 3 s). If it
 // fires on churn, the flip would close the latch mid-carry (regress the smooth carry) -> the close needs a gate.
-void OnDropGrabObserve(void* player, void* /*result*/) {
+void OnDropGrabObserve(void* /*context*/, void* player, void* /*result*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     const coop::element::ElementId carryEid = coop::trash_channel::AnyCarryingEid();
@@ -548,11 +582,25 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                 // chain seeds: native grab -> local prop_garbageClump_C -> native land -> another
                 // unbound pile, all invisible to the host (and a grabbed twin becomes a CLUMP the
                 // pile sweep can no longer retire). On a connected client EVERY pile interaction
-                // is host-authoritative -- a pile no eid owns must not be interactable at all:
-                // CANCEL the press (the pile binds or retires within seconds; a re-press then
-                // routes through GrabIntent normally).
+                // is host-authoritative -- a pile no eid owns must not be interactable at all.
+                if (coop::join_membership_sweep::HasLoadTailQuiesced()) {
+                    // v106 (2026-07-07 ghost-pile fix): POST-quiescence, an unbound pile is
+                    // PROVABLY identity-less -- every host identity was bound/expressed by the
+                    // sweep, and nothing on the wire can ever address a native with no eid.
+                    // "It binds or retires shortly" never happens here (the 10:19:27 wedge:
+                    // the same pile pressed twice, 8s+ after the sweep, forever inert) --
+                    // a bind-displaced leftover. Retire it: echo-suppressed deferred destroy.
+                    UE_LOGW("[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile %p POST-quiescence "
+                            "-- identity-less ghost (no eid can ever address it) -> retiring it "
+                            "locally (echo-suppressed destroy)", aimedNative);
+                    coop::prop_lifecycle::DestroyLocalProp(aimedNative, /*deferred=*/true);
+                    g_cancelPairedUseRelease = true;
+                    return true;
+                }
+                // Pre-quiescence: the bind window is still open -- CANCEL the press (the
+                // pile binds or retires within seconds; a re-press then routes normally).
                 UE_LOGW("[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile %p -- native use CANCELLED "
-                        "(no eid owns it: twin/bind-window; it binds or retires shortly, re-press then)",
+                        "(no eid owns it: bind-window; it binds or retires shortly, re-press then)",
                         aimedNative);
                 g_cancelPairedUseRelease = true;
                 return true;
@@ -588,10 +636,9 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
     // native use (it grabs natively) -- this branch only records the pending grab; every host path returns false.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the pile (PRE-conversion, alive)
     if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return false;   // E-press not aimed at a pile -> native use runs
-    // The HOST grab syncs WITHOUT arming anything here -- the BP's own BeginDeferred(clump) is caught at the
-    // re-pile/convert thunk; the held-edge adopts the spawned clump onto THIS pile's eid (local_streams ->
-    // AdoptPendingGrabClump) + broadcasts PropConvert{ToClump}. Log the aimed pile's eid (fwd + mirror) + the
-    // carry slots for diagnostics, then NotePendingGrab.
+    // The HOST grab syncs WITHOUT arming anything here -- the BP's own BeginDeferred(clump) is caught at
+    // the thunk's GRAB direction (the v106 birth certificate); the held-edge adopts the spawned clump onto
+    // the pile's eid + broadcasts PropConvert{ToClump}. This branch logs diagnostics only.
     coop::element::ElementId fwdEid = PT::GetPropElementIdForActor(aimed);
     coop::element::ElementId mirEid = coop::remote_prop::ResolveMirrorEidByActor(aimed);
     ue_wrap::engine::MainPlayerGrabState gs{};
@@ -604,31 +651,10 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
             (fwd != 0 || mir != 0) ? "[TRACKED -> grab will sync]"
                                    : "[UNTRACKED -> grab will NOT sync; tracking gap]",
             gs.grabbingActor, gs.holdingActor);
-    coop::element::ElementId grabEid =
-        (fwdEid != coop::element::kInvalidId) ? fwdEid : mirEid;
-    // docs/piles/09 SELF-SEED (the 4th mirror-identity instance): if the aimed pile is UNTRACKED
-    // (no eid -- the post-blob/menu->game mass-purge gap the connect window straddles), MINT its eid
-    // RIGHT NOW (register-only/idempotent, no broadcast -- the take-4 pattern CollectTrackedPileTransforms
-    // uses). This closes the eid-0-at-grab gap: NotePendingGrab below then arms with a real eid, the
-    // clump rides it through the morph, and the re-pile broadcasts a PropConvert (not a keyless re-seed
-    // PropSpawn) carrying the eid -- so the save-time key can ride to the joining client.
-    if (grabEid == coop::element::kInvalidId) {
-        PT::MarkPropElement(aimed, L"", R::ClassNameOf(aimed));
-        grabEid = PT::GetPropElementIdForActor(aimed);
-        if (grabEid != coop::element::kInvalidId)
-            UE_LOGI("[PILE-09] HOST self-seeded UNTRACKED grabbed pile %p -> eid=%u (eid-0-at-grab gap closed)",
-                    aimed, static_cast<unsigned>(grabEid));
-    }
-    if (grabEid != coop::element::kInvalidId) {
-        // docs/piles/09: freeze the pile's PRE-GRAB position as the save-time key. It has NOT moved yet
-        // (this is the InpActEvt PRE edge), so GetActorLocation == its save/native position -- the exact
-        // place the joining client loaded its native@old. RecordGrabTimePileXform stamps it into the active
-        // join slot(s)' blob map so the kToPile LAND convert carries it; the client then arms a pending
-        // save-time twin and the quiescence sweep retires native@old (the L1 cure, keyed at the grab edge).
-        const ue_wrap::FVector preGrabLoc = ue_wrap::engine::GetActorLocation(aimed);
-        coop::save_transfer::RecordGrabTimePileXform(grabEid, preGrabLoc);
-        coop::trash_channel::NotePendingGrab(grabEid, ue_wrap::prop::GetChipType(aimed));
-    }
+    // (v106: the self-seed + pre-grab-xform record + pending-grab arm MOVED to the
+    // BeginDeferred thunk's GRAB direction -- ONE owner at the seam the clump is
+    // actually born, covering use-HOLD grabs this press seam never sees. This host
+    // branch is diagnostics-only now.)
     return false;  // HOST: never cancel -- the native grab must run
 }
 

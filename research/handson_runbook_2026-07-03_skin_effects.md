@@ -230,7 +230,90 @@ PASS` — obelisk armed=0 shots=1 → NOW! → shots=0 [FIRED], client `REPLAY r
 alive; the gap = missing peer kill choreography → CLOSED by v2). What autonomy CANNOT see:
 everything visual — your hands-on below still decides those.
 
-## 2026-07-06 день (DLL `599F5B2DF304F8E4` — ТЕКУЩИЙ 4/4, **wire v104 -> v105**; смоук x3 PASS; supersedes E1C1815800761017 (аудит-фикс: owner-рендер латч, 2/с вместо 120/с) -> DF9A2711BCAF1382)
+## 2026-07-07 ~11:30 (DLL `6A98740DCF703723` — ТЕКУЩИЙ 4/4, wire v105 без изменений формата; СМОУК НЕ ГОНЯЛСЯ — ты за ПК, тест за тобой; аудит-агент в фоне; supersedes F33C5F08)
+
+### 0ad-SEAM-v106. Разбор твоего 10:14–10:19-теста: ghost piles + «полсекунды» — оба per rule 1, no patches
+
+Твои два репорта разобраны по логам этого прогона (хост+клиент), корни в
+`memory/project_seam_driven_props_2026-07-07.md`. Что построено:
+
+1. **«Полсекунды» у наблюдателя** (взять hold / положить с quick slot): корень —
+   v105b-механизм «форс-цензus по инпуту» бежал ДО того, как мир менялся (лог 10:15:35-36:
+   census "added 0 NEW" дважды), а полезный проход с announce-эджа платил 750мс-кулдаун.
+   v106 = **сим-движимая когерентность, форс-цензус ПОЛНОСТЬЮ отставлен (RULE 2)**:
+   - смерть пропа (R-pickup, включая стак-пикап) ловится **Func-patch на K2_DestroyActor**
+     (видит EX_CallMath-смерти, которые PE-observer не видел) → PropDestroy в ТОТ ЖЕ тик;
+   - R-drop/положить = НЕ спавн: игра ВЫПУСКАЕТ экс-hand актор в мир → **hand-эдж экспресс**
+     (мы знаем указатель) → PropSpawn в тот же тик;
+   - инвентарные дропы/Q-menu/стак-дроп = спавны через **Func-patch на FinishSpawningActor**
+     → адопция на следующем тике (ключ уже восстановлен loadData).
+   ЛОГ-АССЕРТЫ: `grab_hook: Func-patched Actor.K2_DestroyActor` + `host_spawn_watcher:
+   FinishSpawningActor Func-patched` при старте; на R-pickup — `grab_hook[destroy-seam]:
+   HOST broadcasting DESTROY` мгновенно; на положить — `hand_item: released ex-hand actor
+   ... expressed` или `host_spawn_watcher: spawn-seam adopted`.
+
+2. **Ghost piles после быстрых E-grab→LMB-throw в окно джойна**: два корня.
+   (a) eid=4809: хост схватил следующий пайл, пока кламп 4809 летел → нативный ре-пайл
+   гейтится на занятую руку → отменён НАВСЕГДА → carry-латч завис → клиентские грабы
+   «DENIED already HELD» вечно. v106 = **гарантированное закрытие carry-лейнов** в TickCarry:
+   кламп-в-покое (не в руке, не у пуппета, скорость~0, 45 тиков) → латч закрыт, кламп
+   остаётся в мире и грабится; мёртвый актор без ре-пайла (30 тиков) → латч закрыт +
+   PropDestroy. ЛОГ: `[TRASH-CH] HOST carry eid=N clump AT REST ... lane CLOSED`.
+   (b) 10:19:03: use-HOLD граб (у пайла canBeUsedHold — БЕЗ нового InpActEvt) миновал
+   E-PRESS seam → хёристика «новый кламп = мой churn re-grab» привязала кламп к ЧУЖОМУ
+   лейну (5388). v106 = **birth certificate**: каждый кламп рождается из пайла через
+   BeginDeferred (байткод toClump@141), thunk пишет {eid пайла, chipType} на споне —
+   held-эдж потребляет сертификат, хёристика отставлена (RULE 2). Self-seed + pre-grab
+   xform-record тоже переехали в thunk (один владелец, кроет use-HOLD).
+   ЛОГ: `[PILE] HOST clump BORN <ptr> from pile eid=N`.
+   (c) Клиентский UNBOUND-гоуст (10:19:27, «binds or retires shortly» не наступал никогда):
+   POST-quiescence unbound пайл = доказуемо без identity → ретир по E-прессу.
+   ЛОГ: `CLIENT E-PRESS on UNBOUND native pile ... POST-quiescence ... retiring`.
+
+**Твой тест (0ad):**
+- (i) Hold-ось: взять камень в hold → у клиента камень с земли исчезает МГНОВЕННО;
+  положить с quick slot → появляется у клиента МГНОВЕННО (<0.2с). Стак: подобрать 2-й
+  камень (рука не меняется) → исчезновение тоже мгновенно.
+- (ii) Пайлы: во время джойна клиента быстро потаскай 4-6 пайлов (E→LMB, не дожидаясь
+  приземления — грабь следующий пока летит). После джойна клиент: все пайлы на местах
+  хоста, ВСЕ грабятся (не «немые»), гоустов нет; один E-пресс на гоусте (если будет) его
+  убирает.
+- (iii) Регрессия: обычный grab/carry/throw пайла соло — конверты как раньше
+  (ToClump/ToPile, no dupe), hand-зеркало у пуппета как в v105b (вид одобрен).
+
+### Известные хвосты v106 (документировано, не построено)
+- Клиентский граб ЛЕЖАЩЕГО клампа (gate-aborted rest clump): хост его отдаст только как
+  re-assert («not a chipPile» heal) — полный grab-лейн клампа для клиентов отложен.
+- Смоук не гонялся (ты за ПК) — первый лайв-прогон = твой.
+
+### 0ac-HANDITEM-v105b. Разбор твоего 13:43-теста: 4 дефекта, 4 корня (+instant-stow)
+Твой вердикт по 0ab («carry-вид, дюп, R-pickup/R-drop не сразу, потом — задержка стоу»)
+разобран по логам того же прогона; всё per rule 1:
+1. **Дюп**: safety-census (~20с) усыновлял АКТОР В РУКЕ хоста (recycled slot слеп для
+   high-water guard) -> PropSpawn eid=5377 -> замороженный камень у пуппета (13:44:00,
+   умирал через 4с от death-watch). FIX: census исключает `LocalHandActor()` — граница
+   оси v105 теперь и у мирового трекера.
+2. **Вид**: 3 итерации: root+150 (carry-вид) -> нативный weapon-компонент (НА СПИНЕ:
+   FP-риг на пуппете не анимируется, ref-pose сокет) -> **view-anchored drive** (глаз +
+   синхронный взгляд x {18 вперёд, 30 вправо, 58 вниз}, поворот = look yaw+pitch,
+   каждый тик, без аттача — форма puppet_carry_drive). ТЫ ПРИНЯЛ ("it's good").
+3. **R-pickup исчезает у пиров не сразу / R-drop появляется не сразу**: вербы
+   PE-невидимы (мерено ранее), дроп-респавн в recycled slot слеп для спавн-гарда ->
+   ждали троттлы 4с/20с. FIX: `RequestImmediateWorldReconcile` (750мс коалесс) от
+   R-инпута (`InpActEvt_drop_0/1` — R = action "Drop", подбор И дроп), двух UI-кнопок
+   дропа и hand-транзишенов -> тот же reap+census немедленно; по проводу по-прежнему
+   ТОЛЬКО дельта (1 PropDestroy / 1 PropSpawn), никаких ре-снапшотов.
+4. **Стоу-задержка 250мс**: дебаунс глушил несуществующий фликер (байткод: свитч =
+   ОДИН синхронный вызов updateHold) -> дебаунс 15 тиков -> 1 (эдж-мгновенно).
+- Проверка: скролл/взял/положил/R-подбор — у визави ВСЁ в пределах ~2 тиков + пинг;
+  дюпа нет; камень с земли исчезает мгновенно при подборе; положенный появляется сразу.
+- Лог-ассерты: `net_pump: immediate world reconcile (R/drop input)` на каждое R;
+  `hand_item: ... mirror SPAWNED ... (view-anchored)`; НОЛЬ `re-seed adopted` для
+  предмета в руке.
+- OPEN (не строил — сначала мерить): подбор КЛИЕНТОМ хостового пропа может вообще не
+  иметь destroy-лейна (death-watch broadcast host-only) — отдельная проба.
+
+## 2026-07-06 день (DLL `599F5B2DF304F8E4` — superseded by `F33C5F08E67E57E2` ↑, **wire v104 -> v105**; смоук x3 PASS; supersedes E1C1815800761017 (аудит-фикс: owner-рендер латч, 2/с вместо 120/с) -> DF9A2711BCAF1382)
 
 ### 0ab-HANDITEM. Предмет в руке (quick slots) виден пирам мгновенно (v105 root-fix)
 Твой репорт «не обновляется сразу» оказался «с хоста не обновлялся НИКОГДА»: хост-лог

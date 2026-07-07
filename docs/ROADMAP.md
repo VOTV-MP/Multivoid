@@ -176,7 +176,10 @@ LAN (two-machine + same-box-two-instance both confirmed).
        `research/findings/physics-object-pickup-coop-plan-2026-05-23.md`
        and the Aprop lifecycle RE doc. **HOTBAR hand item SHIPPED
        2026-07-06 (v105 hand_item display axis** — player expression, out
-       of the prop pipeline; see COOP_SYNC_MAP; hands-on 0ab pending).
+       of the prop pipeline; **+ v105b same day**: view-anchored mirror
+       (USER-APPROVED live), census hand-exclusion (dupe root), event-driven
+       immediate reconcile (R-pickup/drop instant), edge-instant stow;
+       see COOP_SYNC_MAP; hands-on 0ac re-run pending).
        Smart-ITEM behavior sync (hook/nailgun/wallbuilder/...) = RE done,
        docs/items/ pattern ratified, implementation queued.
 - ◐ 4.3 Entity manifest + per-entity state — IN PROGRESS, see live
