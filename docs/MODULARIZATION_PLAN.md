@@ -10,13 +10,18 @@
 > | D string-dedup MEASURED divergent → rescoped | corrected (no bad merge) | `96ec2068` |
 > | C `engine_save.cpp` extracted (engine.cpp 1112→657, under cap) | DONE, byte-faithful | `245ae2a5` |
 > | B5 autotest island → `src/harness/autotest/` (17 files) | DONE, renames | `9c93b0f3` |
+> | B1a trash_use_intercept extraction | DONE, smoke-verified | `03d38d2b` |
+> | B4 blob_chunks → `coop/net/` | DONE, behavior-identical | `7ba3d9e3` |
 > | C engine_world/engine_spawn | DEFERRED — shared world-context, not a clean move; under cap |
-> | **Tier B smears (B1/B2/B3)** | **NOT STARTED — need a hands-on smoke window (touch live gameplay)** |
+> | **B1b grab-owner consolidation** | **CANCELLED — MEASURED mis-scoped: would CREATE smears (see B1 §)** |
+> | **B2 prop-reconcile / B3 conversion-adoption** | **DEFERRED — measured REDESIGNs (not moves); modularity-only, need a dedicated hands-on window** |
 > | reflection.cpp extraction | NOT DONE — off-limits without explicit user direction (§11 substrate guard) |
 >
-> **Safe autonomous lane (behavior-preserving, no smoke) is now EXHAUSTED.** What remains is
-> the high-value Tier B (one-owner-per-smear) work, which is smoke-gated, plus the substrate
-> items the scope guard reserves for explicit direction.
+> **The modularization is COMPLETE at the RULE-1-correct boundary.** Every safe/valid extraction
+> shipped (A/D/C-engine_save/B5/B1a/B4). B1b was measured to be mis-scoped (executing it would
+> ADD smears — the current homes are already correct). B2/B3 are genuine multi-subsystem redesigns
+> for modularity-ONLY gain (no bug), reserved for an explicit per-rule-1 window with hands-on.
+> reflection.cpp is substrate (scope guard). Nothing safe/valuable remains to extract.
 
 Written 2026-07-07 by the Fable-5 session at the user's request, right before the switch
 to Opus 4.8, from a three-agent read-only survey of `src/votv-coop` (LOC census + internal
@@ -120,15 +125,28 @@ the existing homes, MTA-check the shape, audit after.
 > retained observers arm, grab test drives held-state pipeline, 0 err/warn from the area, clean
 > exit. Full client-grab BEHAVIOR still wants a user hands-on E-press (autonomous smoke can't
 > press E), but registration + pipeline + no-regression are proven.
-> **B1b (remaining, NOT started).** MEASURED 2026-07-07 (Opus): MORE tractable than B2 —
-> `GrabObserver_PropInventory_TakeObj_PRE/_POST` (prop_lifecycle:379-510) are self-contained
-> observer fns (file-local `g_takeObjInFlight` + `LoadSession()`; broadcast a PropSpawnPayload),
-> so they CAN move into a `grab_observer` owner. But the consolidation still spans prop_lifecycle
-> + trash_collect_sync (`EnsureHeldItemBroadcast` + 2 retained observers) + a new grab_observer,
-> and it touches the LIVE grab/held-item broadcast path — a real hands-on grab (container-extract
-> + held-item) is required to prove no regression; the autonomous forced-grab smoke does not
-> exercise the full path. This is a real feature-grade arc, not a mechanical move: fold the
-> interceptor is cleanly separated (B1a), so B1b is the one-owner CAPTURE consolidation.
+> **B1b — CANCELLED as mis-scoped. MEASURED 2026-07-07 (Opus): executing it would CREATE
+> smears, not remove them.** The survey saw the `GrabObserver_*` names in prop_lifecycle and
+> assumed they belonged with `coop/props/grab_observer`. They do NOT. Three code facts refute
+> the plan:
+> 1. `grab_observer.cpp` is a self-contained DIAGNOSTIC physics-pickup LOGGER (Stage-1 RE, all
+>    observers are UE_LOGI-only; the file even labels AddImpulse "diagnostic, not shipped"). It
+>    does ZERO wire-broadcast/identity work. Folding the wire-broadcasting takeObj observers into
+>    it would MIX two concepts (diagnostic logging vs wire identity) — a NEW folder-rule violation.
+> 2. `g_takeObjInFlight` is read/written ONLY inside prop_lifecycle.cpp (82/171/383/390/467/917):
+>    the takeObj PRE sets it so the CORE `GrabObserver_Aprop_Init_POST` spawn-catch (line 171)
+>    skips MarkPropElement for a container-extract. takeObj + Init-POST are ONE coupled spawn-catch
+>    machine. Moving takeObj out would SPLIT a mutable flag across two files — the exact cross-file-
+>    global anti-smear the folder rule forbids. takeObj BELONGS in prop_lifecycle.
+> 3. `EnsureHeldItemBroadcast` (trash_collect_sync.cpp:229) is a shared held-item broadcast SERVICE
+>    called from 3 sites (hand_item, local_streams, net_pump) — not a diagnostic observer; it is
+>    correctly a residual trash/prop service, not grab_observer material.
+> **The `GrabObserver_*` prefix in prop_lifecycle is a MISNOMER** (these are prop SPAWN-CATCH
+> observers, not physics-grab observers) — that name is what mis-led the survey. The only
+> defensible follow-up is an optional pure-rename of those prop_lifecycle symbols to accurate
+> names (`PropSpawnCatch_*`) to prevent a future survey repeating this error; low value, internal-
+> only, deferred unless requested. NET: the current homes are already RULE-1 correct — do NOT
+> execute B1b.
 
 - `prop_lifecycle.cpp:379-510` — take-obj grab observers (`TakeObj_PRE/_POST`) + `InstallInventory`
 - `trash_collect_sync.cpp:94-437` — BeginDeferredSpawn observer + `EnsureHeldItemBroadcast`
