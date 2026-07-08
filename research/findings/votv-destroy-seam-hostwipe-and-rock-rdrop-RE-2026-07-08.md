@@ -23,8 +23,9 @@ on a deliberate bare-join test 11:54: client connected, user did NOTHING, host w
 - **Bare, verified**: `grab_hook[grab]`/`grab_hook[throw]` = **0 on BOTH host and client**; `[ROCK-DROP]` = **0**.
   Zero player action — the "did NOTHING" claim is log-verified, not asserted.
 - **Timeline**: join `BeginConnect` 11:54:24 -> peer slot 11:54:26 -> `BeginSnapshot` (3183 objects) 11:54:33 ->
-  CLIENT broadcasts **3,140 DESTROY in 11:54:35-39** = **2,269 keyed props** (`eid=0`, `key='FXMI...'`) + 871
-  eid-only trash clumps -> HOST executes **3,140 `OnDestroy`** in the same window.
+  CLIENT broadcasts **3,140 DESTROY** = **2,269 keyed props @11:54:38** (`eid=0`, `key='FXMI...'`, the wipe) +
+  871 eid-only trash clumps @11:54:35 (pile-dedup) -> HOST receives 3,140 `OnDestroy`: **RESOLVES 2,066 by key
+  -> "destroying local actor"** (the wipe), DEFERS 1,074 eid-only (no matching actor = harmless).
 - **Host wiped, verified**: host re-seed went **3,345 -> 1,255 live keyed props** (2,099 dying) at 11:54:42, and
   **1,255 is the LAST re-seed before shutdown (11:54:52)** — the host never recovered. ~2,090 keyed props gone.
 - This ISOLATES the leak: it is inherent to the join reconcile/purge, fires on a bare join, and is NOT the
@@ -43,25 +44,45 @@ on a deliberate bare-join test 11:54: client connected, user did NOTHING, host w
 - **NOT piles**: victims are KEYED props (`eid=0`, key-authored — `drone_InventoryContainer` etc.), NOT
   chipPiles (eid-only, key=`None`, floor-protected).
 
-### Mechanism (log-derived, high confidence)
-The CLIENT's join-window world-reload/reconcile purges its LOCAL keyed props. Each local death dispatches
-`K2_DestroyActor`, which the **v106 bidirectional destroy seam** (`prop_lifecycle::DestroySeamBody`) catches
-and **broadcasts to the host** (key-only, `eid=0` because the element was already drained). The host's
-`remote_prop::OnDestroy` resolves the key to its OWN prop and destroys it -> host world wiped. The client's
-local GC/reload churn should NEVER tell the host to delete its authoritative world; the seam has no gate that
-distinguishes a client's local purge-churn from a real destroy.
+### Mechanism — REFINED by reading the 11:54 origin (two DISTINCT destroy populations)
+Reading the destroy burst in the 11:54 log (not inferring from the count) splits it into two populations
+with DIFFERENT origins, timings, and host impact:
+- **871 eid-only trash-clump destroys @11:54:35** = the CLIENT's pile-twin DEDUP (`[PILE] DESTROY native
+  level-pile twin ... proxy is the sole mirror now`). These carry the client's LOCAL eids (e.g. 42821) which
+  the host does not have -> host `OnDestroy` **DEFERS (1,074 "no local actor")** = HARMLESS. Piles stay out of
+  the wipe (consistent with piles-already-fixed; do not touch).
+- **2,269 keyed-prop destroys @11:54:38 (single frame), 2,268 in ONE frame** = the actual WIPE. They carry
+  real save Keys (`key='FXMI...'`, `drone_InventoryContainer`) -> host `OnDestroy` **RESOLVES 2,066 by key ->
+  "destroying local actor"** -> host world emptied. The burst fires immediately after an ENGINE-side GC hitch
+  (`[HITCH] frame=69ms ... GC/render/physics -- permanent-both-peers GC signature`) during the save-load
+  world-swap (host save `zcoop_6800.sav` written 11:54:30, client loading it).
+- **What the log does NOT record: the CALLER of those 2,269 `K2_DestroyActor` calls.** The destroy-seam log
+  line prints the broadcast, not the callstack. So WHICH exact code path issues the keyed-destroy burst (our
+  reconcile/dedup of local keyed twins vs a BP vs GC-coincident world teardown) is STILL RE-pending — needs a
+  callstack in the diagnostic or the dispatch-route RE. "reconcile/purge" was an inference; the measured facts
+  are the timing, the count, the key-resolution, and the GC-hitch coincidence.
 
-### Root FRAMING (corrected by the adversarial agent — this is the important part)
-- It is a **§8 classification gap**, NOT an authority hole: the v106 `K2_DestroyActor` **Func patch**
-  (`29dfd079`) fires on a WIDER dispatch set than the pre-v106 ProcessEvent observer — including the
-  join-window purge/reconcile churn the PE observer was blind to. The seam **cannot tell a player-INTENT
-  destroy from purge/GC/reconcile CHURN**.
-- **The fix is to CLASSIFY the dispatch context, not to blanket-suppress.** A blanket "client doesn't author
-  keyed destroys" reads as suppress-X (RULE 1) and throws out legitimate client destroys (clump/pile morphs,
-  intent relays). Candidate invariant already exists and the seam never consults it: **`InPurgeEpisode()`**
-  (`net_pump` sets it on a mass-purge detection, clears at drain-complete). §8 also says prefer an INVARIANT
-  over a skip-flag/site-list.
-- **If v106 introduced it, the cleanest fix is at the seam change**, not a new gate bolted on top.
+### Root FRAMING — the AUTHORITY reframe now outweighs the classify-the-churn candidate
+- **The candidate `InPurgeEpisode()` gate is TIMING-INVALIDATED by the log.** net_pump raises the mass-purge
+  flag at **11:54:40** ("reaped 256 >= 64"), but the keyed-destroy wipe fires at **11:54:38** — the flag is
+  NOT set during the burst. Whether gated on the client SEND or the host EXECUTE, `InPurgeEpisode()` as wired
+  would be inactive at the moment of the wipe. It also only removes "destroys during a detected mass-purge
+  episode" (a timing-classified subset), not the general defect. => it is a skip-flag/timing-heuristic in a
+  nicer hat (RULE 1), and it does not even cover this window.
+- **The deeper root is an AUTHORITY asymmetry (§141 / `prop_lifecycle:195`):** the client already SKIPS keyed
+  SPAWNS (host-authoritative), but the v106 bidirectional seam lets it freely AUTHOR keyed DESTROYS. Keyed-prop
+  lifecycle is host-owned; a client's local teardown/GC/dedup destroys of keyed props should be **LOCAL-ONLY,
+  never broadcast** — symmetric with the spawn skip. That DELETES the class (removes client authority over host
+  keyed-prop destroys) instead of filtering a symptom.
+- **Completeness caveat (why this is NOT the earlier-rejected blanket suppress):** the authority fix is only
+  correct if genuine player-INTENT keyed destroys (the rock's R-pickup) have a proper home — an INTENT channel
+  to the host (client says "I picked up rock X" -> host destroys its authoritative copy), i.e. the same
+  "route through the existing held-prop author seam" one-owner shape Bug B needs. Authority-fix alone (drop
+  client keyed destroys) fixes the host-wipe but would strand the rock -> the two must be paired. This
+  PARTIALLY re-opens the unify question in a PRINCIPLED way: shared architecture (host-authoritative keyed
+  lifecycle + client intent channel), distinct call sites. Still a DESIGN HYPOTHESIS -> written root analysis
+  + per-rule-1 green-light before any code; and confirm no legit client-authored KEYED destroy exists that
+  isn't reroutable to intent (v106 bidirectional was added for eid-only clump/pile morphs, not keyed props).
 
 ### v106-regression evidence (now STRONGLY supported)
 | | client `broadcasting DESTROY` | host `OnDestroy` executed |
