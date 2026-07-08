@@ -70,6 +70,20 @@ a local accumulator or a synced-clock read.**
 - Fix the **confirmed instance** (concreteBucket) by extending the pile pattern; **document the class**
   (this file); generalize into a primitive only once 2-3 measured same-mechanism instances exist.
 
+## Not in the class: STATIC world-state (e.g. world rules) rides the save cleanly
+
+The class is specifically about a per-peer copy that **mutates on its own** and drifts. **Static**
+world-state — set once and never mutated — does NOT diverge even though it's also a per-peer copy:
+loading the host save populates it and nothing changes it thereafter. The confirmed example is
+**`Fstruct_gameRules`** (fall damage / difficulty / funny / custom content / seasons / the minigame
+toggles): the runtime authority is the per-peer `mainGameInstance.gameRules`, but a joining client
+boots from the host's live-captured save so the host's rules populate the client's copy, and there's
+no mid-session rule editor to mutate it. So world-rules sync needed **no build** — it's host-authoritative
+for free via the same save-load spine. **CONFIRMED** on a 2-peer smoke (client == host, 36 rules;
+`research/findings/votv-gamerules-settings-RE-2026-07-09.md` §4). The knob is: *static per-peer copy
+seeded from the host save = fine; **mutating** autonomous per-peer copy (a local accumulator) = the
+divergence class.*
+
 ## First application
 
 `docs/items/concrete.md` §3 — concreteBucket: park its brain + host-authoritative scoop (wallfixer

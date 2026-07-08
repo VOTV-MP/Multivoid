@@ -128,6 +128,19 @@ batch, the `StoreRemoteWorldActorBatch` pattern). The interp was extracted to `c
 component on the proxy (occlusion-correct aim + movement-block — the cone ignores walls, the proxy is
 walk-through). HEAD `29353191`, deployed `BB94A120A969A51E`, proto v85, committed, push held.
 
+## 2026-07-09 — world-rules / game-settings RE + coop verdict + F1 panel AS-BUILT
+
+**`votv-gamerules-settings-RE-2026-07-09.md`** — world rules = `Fstruct_gameRules` (~36 fields: fall
+damage, difficulty, funny, custom content, seasons, minigames, decay...); the runtime authority is the
+per-peer `mainGameInstance.gameRules`, and a joining client boots from the host's live-captured save so
+the host's rules populate the client's copy → **host-authoritative for free, NO gameplay build** (same
+root as `docs/COOP_WORLD_PROP_DIVERGENCE.md`; a broadcast was rejected as a divergence-mask). **G1
+CONFIRMED** on a 2-peer smoke (client == host, 36 rules, matching log) — caveat: both story-default, so
+a non-default rule is the fuller human discriminator. **AS-BUILT**: F1 > World > Rules read-only panel
+for everyone (`ue_wrap/game_rules` + `ui/world_rules_panel` + `EnumerateStructFields` + dev_menu tab),
+commit `27994f09`, DLL `bee181a6`, pushed. Category B (graphics/audio/sensitivity) = separate object,
+never synced. customContent asset-availability = open product question.
+
 ## Note on duplication
 The pile/trash/clump/snapshot/save-transfer RE docs are ALSO copied verbatim under
 `docs/piles/findings/` (the consolidated pile knowledge base). The originals here are the canonical

@@ -14,6 +14,14 @@ principle is **what each thing replicates**, NOT the word "sync":
 - **Player-scoped / social** — per-player or broadcast (inventory, chat, voice, damage).
 - **Transport / dispatch / session** — the substrate everything rides; not a feature.
 
+**NOT wire-synced (ride the save, not a packet):** the **world rules** (`Fstruct_gameRules` — fall
+damage / difficulty / funny / custom content / seasons / minigames / decay...) are host-authoritative
+**for free** — a joining client boots from the host's live-captured save, so the host's rules populate
+the client's per-peer `mainGameInstance.gameRules`. No lane, no ReliableKind. Read-only display is
+`ui/world_rules_panel` (F1 > World > Rules, everyone) via `ue_wrap/game_rules`. RE + G1-confirmed:
+`research/findings/votv-gamerules-settings-RE-2026-07-09.md`; class: `COOP_WORLD_PROP_DIVERGENCE.md`.
+General **user settings** (graphics/audio/sensitivity) are a separate object, per-client, never synced.
+
 Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from name/kind.
 
 > **PHYSICAL LAYOUT (STRICT reorg REDONE by behaviour 2026-06-29, commit `33945284`;
