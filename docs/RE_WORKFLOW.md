@@ -6,15 +6,15 @@ The standalone constraint is preserved by having **three game copies** (2026-05-
 
 | Path | Role | UE4SS? | Used by | Use for |
 |------|------|--------|---------|---------|
-| `Game_0.9.0n/` | HOST | yes (legacy; coexists with our DLL via the dwmapi.dll.off rename) | user's hands-on host play | user-side hands-on testing as host; running `mp_host_game.bat` |
-| `Game_0.9.0n_copy/` | CLIENT | no | user's hands-on client play | user-side hands-on testing as client; running `mp_client_connect.bat` |
-| `Game_0.9.0n_dev/` | DEV | yes (UE4SS + dwmapi.dll active) | Claude (autonomous) | `lan-test.ps1` autonomous LAN tests, Live View RE work, Lua probes, BP graph dumping, hypothesis-testing via GUIUFunctionCaller |
+| `Game_0.9.0n_HOST/` | HOST | yes (legacy; coexists with our DLL via the dwmapi.dll.off rename) | user's hands-on host play | user-side hands-on testing as host; running `mp_host_game.bat` |
+| `Game_0.9.0n_CLIENT_1/` | CLIENT | no | user's hands-on client play | user-side hands-on testing as client; running `mp_client_connect.bat` |
+| `Game_0.9.0n_CLIENT_3/` | DEV | yes (UE4SS + dwmapi.dll active) | Claude (autonomous) | `lan-test.ps1` autonomous LAN tests, Live View RE work, Lua probes, BP graph dumping, hypothesis-testing via GUIUFunctionCaller |
 
 Each copy keeps its OWN Saved/ directory (logs, screenshots, save games) so the autonomous LAN test in `_dev/` cannot collide with the user's host or client play state.
 
 The HOST + CLIENT copies have only `xinput1_3.dll` + `votv-coop.dll` (HOST also has UE4SS files left over from earlier setup but UE4SS is currently inactive there — `dwmapi.dll.off` is the disabled proxy). The DEV copy adds the active `dwmapi.dll` UE4SS proxy + `UE4SS.dll` + the Mods/ tree with default UE4SS Lua mods (ActorDumperMod, BPModLoaderMod, CheatManagerEnablerMod, ConsoleEnablerMod, etc.) + our own `coopTestHarness/` probe + `UE4SS.log`.
 
-**Why two UE4SS-equipped copies (HOST + DEV)?** HOST has UE4SS legacy from earlier setup; it's not actively used during host play (dwmapi.dll.off = disabled). DEV's UE4SS IS active (dwmapi.dll present + active). If we ever want to clean HOST to a pure-standalone state, run `tools/deploy-loader.ps1 -GameWin64 .../Game_0.9.0n/Win64 -Standalone` which renames dwmapi.dll → dwmapi.dll.off.
+**Why two UE4SS-equipped copies (HOST + DEV)?** HOST has UE4SS legacy from earlier setup; it's not actively used during host play (dwmapi.dll.off = disabled). DEV's UE4SS IS active (dwmapi.dll present + active). If we ever want to clean HOST to a pure-standalone state, run `tools/deploy-loader.ps1 -GameWin64 .../Game_0.9.0n_HOST/Win64 -Standalone` which renames dwmapi.dll → dwmapi.dll.off.
 
 **Deploying the DLL across all 3:** `tools/deploy-all.ps1` is the canonical multi-target script. Builds-then-deploys when run after `cmake --build`. The `lan-test.ps1` script auto-deploys to `_dev/` only.
 
@@ -50,7 +50,7 @@ Dumps every UObject in `GUObjectArray` (~250k entries) to a text file at `UE4SS_
 
 ### 4. CXX Header Generator (`F7` shortcut → dump all class layouts to cooked C++ headers)
 
-The output is at `Game_0.9.0n/WindowsNoEditor/VotV/Binaries/Win64/CXXHeaderDump/*.hpp`. We already use this for offset derivation throughout `sdk_profile.h`. Re-dump after a VOTV update to re-derive offsets.
+The output is at `Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/CXXHeaderDump/*.hpp`. We already use this for offset derivation throughout `sdk_profile.h`. Re-dump after a VOTV update to re-derive offsets.
 
 ### 5. Lua probe scripting — `tools/probes/`
 
@@ -100,7 +100,7 @@ The porting workflow:
 
 **Never** assume what works in the DEV copy will also work in the user-play copies. UE4SS's presence in DEV changes the load order (UE4SS hooks `ProcessEvent` before we do; the global `GUObjectArray` cache is populated by UE4SS at startup; some classes are loaded earlier because UE4SS forces them). The CLIENT copy is the source of truth for "does our shipping DLL work standalone?".
 
-The `lan-test.ps1` autonomous test runs against `Game_0.9.0n_dev/` ONLY for both host and client instances — they share that one Win64 directory and discriminate by env vars. This is intentional: the LAN test is for VERIFYING the coop pipeline works, not for proving the standalone-no-UE4SS path (the user's hands-on play on `Game_0.9.0n_copy/` does that).
+The `lan-test.ps1` autonomous test runs against `Game_0.9.0n_CLIENT_3/` ONLY for both host and client instances — they share that one Win64 directory and discriminate by env vars. This is intentional: the LAN test is for VERIFYING the coop pipeline works, not for proving the standalone-no-UE4SS path (the user's hands-on play on `Game_0.9.0n_CLIENT_1/` does that).
 
 ## Future RE sessions: open Live View first
 

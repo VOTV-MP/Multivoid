@@ -25,7 +25,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$dev = "$PSScriptRoot\..\Game_0.9.0n_dev\WindowsNoEditor\VotV\Binaries\Win64"
+$dev = "$PSScriptRoot\..\Game_0.9.0n_CLIENT_3\WindowsNoEditor\VotV\Binaries\Win64"
 if (-not (Test-Path $dev)) { throw "Dev copy not found at $dev" }
 $dev = (Resolve-Path $dev).Path
 

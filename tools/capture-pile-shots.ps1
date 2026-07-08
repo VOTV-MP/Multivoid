@@ -11,7 +11,7 @@
 param([int]$TimeoutS = 280)
 $ErrorActionPreference = 'Continue'
 $root    = Split-Path $PSScriptRoot -Parent
-$hostLog = Join-Path $root 'Game_0.9.0n/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log'
+$hostLog = Join-Path $root 'Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log'
 $shotDir = Join-Path $root 'tools/shots'
 New-Item -ItemType Directory -Force $shotDir | Out-Null
 

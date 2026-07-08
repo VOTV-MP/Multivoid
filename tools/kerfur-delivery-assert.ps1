@@ -39,8 +39,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
-    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_copy/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
+    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
+    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
     [string]$Scenario  = "",
     [switch]$Quiet,
     # Assert that BOTH boundary sides were ACTUALLY exercised this run (refuses a vacuous green): side A

@@ -10,7 +10,7 @@ Lua (not C++) on purpose: probes need fast iteration with no build
 step. The shipping mod is C++ (`ue_wrap/` + `coop/` etc.) and never
 loads UE4SS at runtime (RULE №3).
 
-**Probes run in the DEV copy only** (`Game_0.9.0n_dev/`). The HOST
+**Probes run in the DEV copy only** (`Game_0.9.0n_CLIENT_3/`). The HOST
 and CLIENT copies have UE4SS disabled — see `docs/RE_WORKFLOW.md` for
 the three-copies convention.
 

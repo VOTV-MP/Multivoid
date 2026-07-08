@@ -12,7 +12,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$GameWin64 = "D:\Projects\Programming\VOTV_MP\Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64",
+    [string]$GameWin64 = "D:\Projects\Programming\VOTV_MP\Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64",
     [string]$BuildDir  = "D:\Projects\Programming\VOTV_MP\build\votv-coop\Release",
     [switch]$Standalone,  # also disable UE4SS (rename dwmapi.dll) for a clean proof
     [switch]$Remove       # uninstall the loader (and restore UE4SS)

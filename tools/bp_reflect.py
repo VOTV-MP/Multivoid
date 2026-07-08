@@ -33,7 +33,7 @@ import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAK = os.path.join(ROOT, "Game_0.9.0n", "WindowsNoEditor", "VotV", "Content", "Paks", "VotV-WindowsNoEditor.pak")
+PAK = os.path.join(ROOT, "Game_0.9.0n_HOST", "WindowsNoEditor", "VotV", "Content", "Paks", "VotV-WindowsNoEditor.pak")
 REDIR = os.path.join(ROOT, "research", "pak_re")
 TOOLS = os.path.join(REDIR, "tools")
 EXTRACT = os.path.join(REDIR, "extracted")

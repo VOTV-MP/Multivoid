@@ -73,11 +73,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
-# 2026-05-25: the LAN test runs against Game_0.9.0n/ (the user's host
+# 2026-05-25: the LAN test runs against Game_0.9.0n_HOST/ (the user's host
 # play copy). Both host + client instances launch from the SAME exe
 # with role/peer/port env vars distinguishing them.
 #
-# We TRIED retargeting to Game_0.9.0n_dev/ (the new Claude-owned dev
+# We TRIED retargeting to Game_0.9.0n_CLIENT_3/ (the new Claude-owned dev
 # copy with UE4SS) but hit a regression: both instances reach
 # "harness: target STORY save 's_may2026'" and then silently die before
 # the save-load completes. Cause is unknown -- possibly a first-launch
@@ -86,13 +86,13 @@ $root  = Split-Path -Parent $PSScriptRoot
 # launches a SINGLE instance fine; the failure is specific to two
 # concurrent fresh boots.
 #
-# Workaround: keep lan-test pointed at the well-warmed Game_0.9.0n/
+# Workaround: keep lan-test pointed at the well-warmed Game_0.9.0n_HOST/
 # folder (which has run lan-tests many times this session without
 # issue). The dev copy is still valuable for solo RE work (Live View,
 # Lua probes, GUIUFunctionCaller hypothesis testing). When the two-
 # concurrent-boot issue is solved, switch back. See
 # docs/RE_WORKFLOW.md for the 3-copy convention.
-$win64 = Join-Path $root "Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64"
+$win64 = Join-Path $root "Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64"
 $exe   = Join-Path $win64 "VotV-Win64-Shipping.exe"
 $hostLogName   = "votv-coop-host.log"
 $clientLogName = "votv-coop-client.log"

@@ -74,7 +74,7 @@ The codebase splits cleanly along Principle 7:
 - Windows 10+
 - Visual Studio 2019 (or 2022) **Build Tools** with the C++ workload
 - CMake 3.20+
-- A legitimate copy of Voices of the Void at `Game_0.9.0n/` next to the repo
+- A legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/` next to the repo
 
 ### Build
 
@@ -97,7 +97,7 @@ cmake --build build/votv-coop --config Release
 ./mp_client_connect.bat <host-LAN-IP>
 ```
 
-Same-PC testing? Use the sibling `Game_0.9.0n_copy/` install — the launchers
+Same-PC testing? Use the sibling `Game_0.9.0n_CLIENT_1/` install — the launchers
 detect it automatically.
 
 ---
@@ -133,7 +133,7 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, VoidTogether) |
 | [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader`) |
 | [`tools/`](tools/) | PowerShell helpers — build / deploy / launch / autonomous test |
-| `Game_0.9.0n*/` | Local game install(s). **Gitignored** — never committed |
+| `Game_0.9.0n_HOST*/` | Local game install(s). **Gitignored** — never committed |
 
 ---
 

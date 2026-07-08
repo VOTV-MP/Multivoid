@@ -26,7 +26,7 @@ param(
     [int]$ResX = 1280,
     [int]$ResY = 720,
     [switch]$Fullscreen,
-    [string]$Win64Dir = "$PSScriptRoot\..\Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64",
+    [string]$Win64Dir = "$PSScriptRoot\..\Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64",
     [string[]]$ExtraArgs = @()
 )
 $ErrorActionPreference = 'Stop'

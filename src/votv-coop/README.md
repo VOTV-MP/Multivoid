@@ -62,7 +62,7 @@ launching.
 ## What's NOT in this tree
 
 - **UE4SS** — not a runtime dependency (RULE №3). Used only by the dev
-  copy (`Game_0.9.0n_dev/`) for Live View, Lua probe scripting, and
+  copy (`Game_0.9.0n_CLIENT_3/`) for Live View, Lua probe scripting, and
   header dumping. See `docs/RE_WORKFLOW.md`.
 - **Game assets** — not touched (principle 1). All sync rides through
   reflected UFunction calls + direct memory writes via cached offsets.

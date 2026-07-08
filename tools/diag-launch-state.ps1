@@ -1,8 +1,8 @@
 $root = "d:\Projects\Programming\VOTV_MP"
 $folders = @(
-    "$root\Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64",
-    "$root\Game_0.9.0n_copy\WindowsNoEditor\VotV\Binaries\Win64",
-    "$root\Game_0.9.0n_dev\WindowsNoEditor\VotV\Binaries\Win64"
+    "$root\Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64",
+    "$root\Game_0.9.0n_CLIENT_1\WindowsNoEditor\VotV\Binaries\Win64",
+    "$root\Game_0.9.0n_CLIENT_3\WindowsNoEditor\VotV\Binaries\Win64"
 )
 foreach ($f in $folders) {
     if (-not (Test-Path $f)) { Write-Output "MISSING: $f"; continue }

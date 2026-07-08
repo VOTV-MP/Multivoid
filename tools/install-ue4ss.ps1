@@ -20,7 +20,7 @@
 [CmdletBinding()]
 param(
     # Path to the folder containing VotV-Win64-Shipping.exe.
-    [string]$Win64Dir = "$PSScriptRoot\..\Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64",
+    [string]$Win64Dir = "$PSScriptRoot\..\Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64",
     [string]$Version  = "v3.0.1",
     [switch]$Force     # re-extract even if UE4SS.dll already present
 )

@@ -118,7 +118,7 @@ the auto-memory `[[reference-pile-test-harness]]`.
   ```
 
 - **`tools/lan-test.ps1`** — two-process LAN test (host + client) in
-  `Game_0.9.0n_dev/`. Per-PID log capture in `tools/test-runs/`. The
+  `Game_0.9.0n_CLIENT_3/`. Per-PID log capture in `tools/test-runs/`. The
   canonical autonomous test harness — found and fixed multiple real
   handshake bugs that single-process loopback hid.
   ```powershell

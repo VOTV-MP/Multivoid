@@ -137,7 +137,7 @@ only our sources change.
 ```
 
 This copies the new DLLs into the host / client / dev copies of
-`Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64\`. The deploy is
+`Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64\`. The deploy is
 idempotent.
 
 For the autonomous LAN smoke (per the pre-deploy checklist in CLAUDE.md):

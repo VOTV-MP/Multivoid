@@ -25,14 +25,14 @@ dotnet run --project tools/mesh_extract -- scan <PaksDir> <substr>
 dotnet run --project tools/mesh_extract -- imports <PaksDir> <pkgSubstr> [classFilter]
 ```
 
-`<PaksDir>` = `Game_0.9.0n\WindowsNoEditor\VotV\Content\Paks`.
+`<PaksDir>` = `Game_0.9.0n_HOST\WindowsNoEditor\VotV\Content\Paks`.
 `assetSubstr` matches against the `.uasset` path (default: the Kel body
 `meshes/kel/kel_lmao.uasset`).
 
 ## Example (what produced the current extraction)
 
 ```
-$P = 'D:\Projects\Programming\VOTV_MP\Game_0.9.0n\WindowsNoEditor\VotV\Content\Paks'
+$P = 'D:\Projects\Programming\VOTV_MP\Game_0.9.0n_HOST\WindowsNoEditor\VotV\Content\Paks'
 $O = 'D:\Projects\Programming\VOTV_MP\research\pak_re\mesh_out'
 dotnet run --project tools/mesh_extract -- export $P $O `
   'meshes/kel/kel_lmao.uasset' `

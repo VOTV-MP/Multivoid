@@ -5,7 +5,7 @@
 #   pwsh -File tools/capture-kerfur-repro.ps1
 #   pwsh -File tools/capture-kerfur-repro.ps1 -Tag reverse_turnoff   # optional label
 #
-# Copies host (Game_0.9.0n) + client (Game_0.9.0n_copy) logs into
+# Copies host (Game_0.9.0n_HOST) + client (Game_0.9.0n_CLIENT_1) logs into
 #   research/kerfur_repro_<yyyymmdd_HHmmss><_tag>/{host,client}.log
 # and prints the turn_off / KerfurConvert lines it found so you see immediately whether
 # the conversion was logged (the diagnosis hinges on that).
@@ -13,8 +13,8 @@
 param([string]$Tag = "")
 
 $root = Split-Path -Parent $PSScriptRoot
-$hostLog   = Join-Path $root "Game_0.9.0n\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
-$clientLog = Join-Path $root "Game_0.9.0n_copy\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
+$hostLog   = Join-Path $root "Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
+$clientLog = Join-Path $root "Game_0.9.0n_CLIENT_1\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $name  = if ($Tag) { "kerfur_repro_${stamp}_$Tag" } else { "kerfur_repro_$stamp" }

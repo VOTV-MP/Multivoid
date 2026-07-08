@@ -11,9 +11,9 @@ runs them frequently:
 - **`mp_host_game.bat [port] [nick]`** — deploy + launch as coop HOST
   (port default 47621, nick "Host"). Calls `tools/deploy-loader.ps1`,
   writes `scenario.txt = "play"`, sets `VOTVCOOP_NET_ROLE=host` env
-  var, launches the shipping exe windowed (`Game_0.9.0n/`).
+  var, launches the shipping exe windowed (`Game_0.9.0n_HOST/`).
 - **`mp_client_connect.bat [peer-ip] [port] [nick]`** — same shape for
-  CLIENT, launching out of `Game_0.9.0n_copy/` (the sibling game folder
+  CLIENT, launching out of `Game_0.9.0n_CLIENT_1/` (the sibling game folder
   for same-box testing — see `docs/RE_WORKFLOW.md`).
 - **`stop-coop.bat`** — restores UE4SS in the host folder if it was
   disabled by a prior `deploy-loader.ps1 -Standalone` run.
