@@ -40,6 +40,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/world_load_episode.h"  // v107 host-wipe fix: arm the world-load episode before the join boot
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/session/save_guard.h"
@@ -357,6 +358,16 @@ void DriveMenuModeJoinWorldBoot() {
         }
         UE_LOGI("harness: inventory apply blob ready -- proceeding to load the world");
     };
+
+    // v107 (2026-07-08) HOST-WIPE ROOT FIX: arm the world-load episode BEFORE the boot that triggers the
+    // game's mainGamemode.loadObjects pre-delete. During that load the destroy seam suppresses the
+    // KEYED-prop destroy broadcasts this client's world-rebuild churns -- otherwise the v106 seam carries
+    // the destroy half to the host, which destroys its AUTHORITATIVE copies by key and empties its world
+    // (measured bare join: host 3345->1255 keyed props). join_membership_sweep ends the episode at
+    // load-tail quiescence, after which the legit post-load intent destroys broadcast normally. This is
+    // the sole, client-only arm site, CAUSALLY before the burst on every path (the boot below triggers
+    // loadObjects, whose pre-delete IS the burst). See coop/props/world_load_episode.h + /qf rounds 0-13.
+    coop::world_load_episode::Arm();
 
     if (ST::GetClientState() == ST::ClientState::ReadySlotWritten) {
         // Load the host's world from the downloaded slot. ResetCachedSave first

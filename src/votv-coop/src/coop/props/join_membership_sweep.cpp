@@ -7,6 +7,7 @@
 // RecordClaimIfTracking / IsClaimTrackingActive entry points. [[feedback-folder-per-domain-concept-rule]]
 
 #include "coop/props/join_membership_sweep.h"
+#include "coop/props/world_load_episode.h"  // v107 host-wipe fix: end the world-load episode at load-tail quiescence
 
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/creatures/kerfur_reconcile.h"
@@ -631,6 +632,12 @@ void TickClientReconcile() {
             static_cast<long long>(msSince(g_sweepLastProgressAt)));
     g_sweepPending = false;
     g_sweepFired = true;  // load tail drained -> npc_adoption may now fresh-spawn no-twin save NPCs
+    // v107 host-wipe fix: the client world-load episode ENDS at this load-tail quiescence edge -- the
+    // destroy seam resumes broadcasting KEYED-prop destroys, so the legit post-load intent destroys (food
+    // morph, trash-container E-press, rock R-pickup -- all measured AFTER this edge) cross the wire
+    // normally. This edge is deadline-capped (fires on quiescence OR the 45 s hard deadline), so the
+    // episode can never outlive the load. See coop/props/world_load_episode.h.
+    coop::world_load_episode::NotifyQuiesced();
     coop::save_identity_bind::ForceSaveChurnForTest();  // [dev] force_save_churn: synthetic unbind so variant-1 runs N>0 (verify probe)
     RunDivergenceSweep_(localPlayer);
     // Phase 1 step 1A probe: load tail has quiesced -> emit the keyless-spawn coverage verdict (read-only).
@@ -703,6 +710,7 @@ void ResetClaimTracking() {
     coop::element::quiescence_drain::Reset();  // session teardown: drop the deferred reconcile queues (the ONLY site that clears them)
     coop::kerfur_reconcile::Reset();  // scope A: drop any unconsumed save-time kerfur retire across sessions
     coop::mirror_defer::Reset();  // instant-world: reveal any still-hidden mirror + disarm the deferred-hide window
+    coop::world_load_episode::Reset();  // v107 host-wipe fix: clear the world-load episode across sessions (rejoin hygiene)
 }
 
 // OnSpawn gates a level-pile twin-destroy on an open bracket; expose the file-local flag for that one seam.

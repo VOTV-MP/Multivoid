@@ -310,6 +310,7 @@ add_library(votv-coop SHARED
     src/coop/props/prop_synth_key.cpp
     src/coop/props/remote_prop_spawn.cpp
     src/coop/props/join_membership_sweep.cpp
+    src/coop/props/world_load_episode.cpp
     src/coop/interactables/garbage_sync.cpp
     src/coop/session/ambient_spawner_suppress.cpp
     src/coop/props/host_spawn_watcher.cpp

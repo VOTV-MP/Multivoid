@@ -11,9 +11,14 @@ Deployed at investigation time: DLL `753bb549` (rock `[ROCK-DROP]` diagnostics, 
 
 ## BUG A — HOST-WIPE: client join-window purge churn wipes the host's keyed props
 
-**Status: CONFIRMED on a CLEAN BARE-JOIN log [V log 2026-07-08 11:54] — zero player action, no rock, no manual
-pile-throw. v106-regression = STRONGLY supported (clean bare-join wipe + pre-v106 counterfactual). Fix = DESIGN
-only (not started). TOP PRIORITY: a bare join empties the host world -> coop is unusable. Rock (Bug B) is PAUSED.**
+**Status: FIXED + USER-VERIFIED (hands-on, 2026-07-08). Root CONFIRMED on a CLEAN BARE-JOIN log [V log 11:54 +
+probe 15:43] — zero player action. Fix = SOURCE-ANCHORED CLIENT-SCOPED WORLD-LOAD EPISODE LATCH (v107, DLL
+`04ebfdb0`), shipped after /qf rounds 0-13. `coop::world_load_episode`: arm at the client join boot
+(harness `DriveMenuModeJoinWorldBoot`, before `BootStorySaveBlocking` -- causal), clear at load-tail quiescence
+(`join_membership_sweep.cpp:633` g_sweepFired), suppress the OUTBOUND broadcast of KEYED destroys in
+`DestroySeamBody` while in-episode (eid-only pile destroys untouched). User confirmed the host world survives a
+bare join. Punch-list open (non-blocking): host-symmetric arm + within-session world-change = unmeasured
+extensions; the [HOSTWIPE-CALLER] probe was RETIRED. Rock (Bug B) is SEPARATE + still OPEN.**
 
 ### Symptom (user, hands-on)
 "Last time host world had no PROPS at all, they got removed." The host's keyed props vanished en masse. Reproduced
@@ -308,9 +313,11 @@ also silence the rock). Both need one instrumented rebuild + re-run. No fix is c
 
 ## ROOT ANALYSIS + FIX DESIGN (2026-07-08, `[HOSTWIPE-CALLER]` probe run 15:43-15:45 + gamemode disasm)
 
-**Status: root MEASURED end-to-end; fix SHAPE settled (world-load EPISODE gate); exact gate form + window
-still DESIGN, pending one `/qf` vetting round + per-rule-1 green-light. Nothing built.** Probe DLL
-`f2fda78cafe167c7` (`[HOSTWIPE-CALLER]` srcObj-class logging, UNCOMMITTED, log-only, RULE-2-exempt).
+**Status: FIXED + USER-VERIFIED (2026-07-08, DLL `04ebfdb0`).** The fix REVERSED from the Node-gate to a
+SOURCE-ANCHORED CLIENT-SCOPED EPISODE LATCH across /qf rounds 0-13 (the Node-set was a §9 site-list; the
+latch is the invariant, armed at the causal loadObjects trigger, cleared at the deadline-capped quiescence,
+covers every in-window churn issuer with no leak). See the FIX AS-BUILT section below. The `[HOSTWIPE-CALLER]`
+probe (DLL `f2fda78`) was retired once the caller was measured.
 
 ### The measured causal chain (host-wipe)
 1. Client join → the mod triggers the game's world-load (`engine_save.cpp:309/433` set `mainGameInstance_loadObjects=1`).

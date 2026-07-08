@@ -16,6 +16,7 @@
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
+#include "coop/props/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -193,6 +194,19 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         // what the player just made. Fall through to broadcast in that
         // case; otherwise return.
         if (ue_wrap::prop::IsDescendantOfProp(self)) {
+            // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] A CLIENT-originated Aprop_C world
+            // spawn (R-drop/place = simulateDrop -> FinishSpawningActor -> a FRESH actor,
+            // save Key restored by loadData) is skipped here by the host-authoritative
+            // assumption -> the host never learns of a client-PLACED prop -> it is invisible
+            // until an E-grab expresses it. This return was SILENT; log the skip so a repro
+            // shows the smoking gun (key+eid to correlate with the host log's PropDestroy).
+            const coop::element::ElementId dropEid = PT::GetPropElementIdForActor(self);
+            const ue_wrap::FVector dloc = ue_wrap::engine::GetActorLocation(self);
+            UE_LOGI("[ROCK-DROP] CLIENT Aprop spawn NOT authored (host-auth skip): cls='%ls' key='%ls' "
+                    "eid=%u loc=(%.1f,%.1f,%.1f) -- host will NOT see this client-placed prop",
+                    cls.c_str(), ue_wrap::prop::GetInteractableKeyString(self).c_str(),
+                    (dropEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(dropEid),
+                    dloc.X, dloc.Y, dloc.Z);
             return;  // Aprop_C: host-authoritative world spawn, skip client broadcast
         }
         // Non-Aprop_C interactable: fall through to broadcast.
@@ -338,6 +352,27 @@ void DestroySeamBody(void* self) {
     const bool keyless = (keyStr.empty() || keyStr == L"None");
     const bool hasEid  = (destroyEid != coop::element::kInvalidId);
     if (keyless && !hasEid) return;
+    // v107 (2026-07-08) HOST-WIPE ROOT FIX -- world-load episode gate. While a joining CLIENT is
+    // inside its own world-load (the game's mainGamemode.loadObjects pre-delete + respawn), the
+    // game destroys+recreates every keyed prop as LOCAL, net-zero world-rebuild churn (the client
+    // re-binds each key via join_membership_sweep). Pre-v106 those destroys dispatched via EX_*
+    // (ProcessEvent-invisible) and never crossed the wire; the v106 K2_DestroyActor Func-patch
+    // catches them and would broadcast the destroy half -> the HOST destroys its AUTHORITATIVE
+    // copies by key (measured 2026-07-08 bare join: host 3345->1255 keyed props, never recovered).
+    // Suppress the OUTBOUND broadcast of KEYED destroys for the duration of the episode; the local
+    // K2_DestroyActor already ran, so this peer's world is unaffected. Scoped to KEYED (the wipe is
+    // 100%% keyed props) so eid-only (pile) destroys pass through untouched -- piles are already
+    // fixed and the host DEFERS them anyway. Client-scoped (the host never arms the episode); the
+    // role guard is defense-in-depth on the shared bidirectional seam. Vetted /qf rounds 0-13.
+    // See coop/props/world_load_episode.h + research/findings/votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md
+    if (!keyless && s->role() == coop::net::Role::Client &&
+        coop::world_load_episode::InEpisode()) {
+        UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed KEYED DESTROY actor=%p key='%ls' eid=%u "
+                "-- inside world-load episode (loadObjects churn; host-wipe fix, not broadcast)",
+                self, keyStr.c_str(),
+                (destroyEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(destroyEid));
+        return;
+    }
     coop::net::WireKey wk{};
     wk.len = 0;
     if (!keyless) {
