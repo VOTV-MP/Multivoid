@@ -23,6 +23,7 @@
 #include "ui/fonts.h"
 #include "coop/player/roster.h"  // LocalIsHost -- the Administration role gate
 #include "ui/admin_panel.h"
+#include "ui/world_rules_panel.h"  // F1 > World > Rules (shown to everyone)
 #include "ui/net_stats_panel.h"
 #include "ui/scale.h"
 #include "ui/skins_panel.h"
@@ -431,6 +432,10 @@ void RenderFontPref() {
 // F1 > Administration > Players (host-role-gated; ui/admin_panel owns the pane).
 void RenderAdminPlayers() { ui::admin_panel::Render(); }
 
+// F1 > World > Rules (non-dev, non-host -- shown to EVERYONE; ui/world_rules_panel
+// owns the pane; reads the local mainGameInstance.gameRules read-only).
+void RenderWorldRules() { ui::world_rules_panel::Render(); }
+
 // ---- the strict nested taxonomy (refined as features land) -------------------
 // Player > Movement/Vitals/HUD ; Game > Weather/Entities/Events ; Network >
 // Stats/Session ; Cosmetics > Skins (the v93 model browser -- the one non-dev
@@ -449,6 +454,12 @@ const std::vector<Cat>& Tree() {
             { "Clock",    { { &RenderSetClock, true } }, true },
             { "Events",   { { &RenderEvents, true } }, true },
         }, true },
+        { "World", {
+            // Rules is for EVERYONE (host+clients+solo): a read-only view of the
+            // world rules this peer runs under (mainGameInstance.gameRules) +
+            // gamemode. Non-dev, non-host. User ask 2026-07-08.
+            { "Rules",    { { &RenderWorldRules, false } }, false },
+        }, false },
         { "Network", {
             // Stats is for EVERYONE (the overlay toggle + live session readout);
             // Session stays a dev placeholder, hidden for regular players.

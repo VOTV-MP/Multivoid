@@ -230,6 +230,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/order_economy.cpp
     src/ue_wrap/prop.cpp
     src/ue_wrap/vitals.cpp
+    src/ue_wrap/game_rules.cpp
     src/ue_wrap/spawn_menu.cpp
     src/coop/player/remote_player.cpp
     src/coop/player/remote_player_ragdoll.cpp
@@ -414,6 +415,7 @@ add_library(votv-coop SHARED
     src/ui/dev_menu.cpp
     src/ui/skins_panel.cpp
     src/ui/admin_panel.cpp
+    src/ui/world_rules_panel.cpp
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
     src/ui/host_save_picker.cpp

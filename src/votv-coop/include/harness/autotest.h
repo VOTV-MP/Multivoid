@@ -79,6 +79,13 @@ DWORD WINAPI PileDriftScenarioThread(LPVOID arg);
 void RunClumpVisProbe();
 DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
 
+// World-rules probe (env VOTVCOOP_RUN_WORLDRULES_PROBE=1). BOTH peers. Runs the
+// F1>World>Rules read path (ue_wrap::game_rules::ReadLocal) + logs every rule --
+// exercises the (UI-only) panel code AND measures G1 (diff host vs client
+// `worldrules:` lines: equal set == host's rules reached the client's GI for free).
+void RunWorldRulesProbe();
+DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
+
 // Phase 5F: autonomous flashlight-toggle test. Calls
 // AmainPlayer_C::`Flashlight Update` via reflection 4 times with 2 s
 // spacing. The POST observer detour catches each call + sends the

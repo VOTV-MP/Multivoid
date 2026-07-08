@@ -543,6 +543,27 @@ int32_t FunctionFrameSize(void* function) {
                                        O::UStruct_PropertiesSize);
 }
 
+std::vector<StructFieldInfo> EnumerateStructFields(void* structOrClass) {
+    std::vector<StructFieldInfo> fields;
+    if (!structOrClass) return fields;
+    // Same FField chain FunctionParams walks, but every member (no CPF_Parm
+    // filter) and no SuperStruct climb -- a UScriptStruct holds all its members
+    // in its own ChildProperties.
+    auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(structOrClass) +
+                                               O::UStruct_ChildProperties);
+    while (field) {
+        StructFieldInfo f;
+        f.name = ToString(FieldName(field));
+        f.offset = *reinterpret_cast<int32_t*>(field + O::FProperty_Offset_Internal);
+        f.size = *reinterpret_cast<int32_t*>(field + O::FProperty_ElementSize) *
+                 *reinterpret_cast<int32_t*>(field + O::FProperty_ArrayDim);
+        f.flags = *reinterpret_cast<uint64_t*>(field + O::FProperty_PropertyFlags);
+        fields.push_back(std::move(f));
+        field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
+    }
+    return fields;
+}
+
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
     if (!owningClass || !propName) return -1;
     // Walk OWN ChildProperties, then climb SuperStruct on miss. UE4 BP-

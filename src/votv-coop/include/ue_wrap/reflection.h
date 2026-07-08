@@ -235,6 +235,22 @@ int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 // or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
 
+// One instance member of a UStruct/UClass, in declaration order.
+struct StructFieldInfo {
+    std::wstring name;   // the FField name (BP members carry a "_NN_GUID" tail)
+    int32_t offset;      // byte offset within an instance (Offset_Internal)
+    int32_t size;        // ElementSize * ArrayDim
+    uint64_t flags;      // EPropertyFlags
+};
+
+// Enumerate the OWN instance members of `structOrClass` (a UScriptStruct* -- e.g.
+// via PropertyInnerStruct -- or a UClass*), in declaration order. Walks only the
+// object's OWN ChildProperties chain (no SuperStruct climb: a BP UserDefinedStruct
+// inlines all its members, and callers that want inherited fields ask by name).
+// Empty if `structOrClass` is null or has no members. The linear walk is one-shot
+// friendly; cache the result rather than calling per frame. Game-thread only.
+std::vector<StructFieldInfo> EnumerateStructFields(void* structOrClass);
+
 // A bool UPROPERTY's REAL storage: byte offset within the object plus the bit
 // mask inside that byte, straight from the FBoolProperty payload {FieldSize,
 // ByteOffset, ByteMask, FieldMask} that sits right after the FProperty base.
