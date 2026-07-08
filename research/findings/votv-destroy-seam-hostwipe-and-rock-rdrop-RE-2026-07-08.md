@@ -72,10 +72,17 @@ Tracing one wiped key end-to-end in the 11:54 client log (`FXMIrEnEjutSmIrUQwLOv
    of already-expressed eid=2297 (mirror row held a dead actor) -> row rebound, actor claimed, NOT doomed`.
 So the world-swap (client loading the host save) DESTROYS **and RE-CREATES** the client's keyed props same-key.
 Locally that is net-zero (sweep rebinds). But on the wire it is ASYMMETRIC: the **destroy half fires the seam ->
-host destroys its authoritative copy**, while the **recreate half is a client keyed SPAWN -> skipped at
-`prop_lifecycle:195` (host-authoritative) -> host is NEVER told to re-create**. Net: host loses the prop
-permanently; client keeps it. This is the WIPE, and it is a firing-set problem (H1): the game's world-swap
-destroy+recreate churn should be net-zero on the wire, but the seam carries only the destroy half.
+host destroys its authoritative copy**, while the **recreate is NEVER broadcast to the host**. Net: host loses
+the prop permanently; client keeps it. This is the WIPE, and it is a firing-set problem (H1): the game's
+world-swap destroy+recreate churn should be net-zero on the wire, but the seam carries only the destroy half.
+
+> **CORRECTION (QF-workflow measured 2026-07-08, run `wf_8e0bab5d`):** the claim that the recreate is "a client
+> keyed SPAWN skipped at `prop_lifecycle:195`" is **REFUTED for this run** — `:195` PROVABLY did not fire
+> (`[ROCK-DROP]`=0 both logs; only 2 `Aprop.Init POST` lines all run, both `actorChipPile_C`, neither FXMI). The
+> recreate reaches the client via the **`join_membership_sweep` scan-rebind** (a client-LOCAL reconcile that
+> rebinds eid=2297 to a DIFFERENT actor `723C782000`), which has **no host broadcast at all** — that, not a
+> `:195` authority skip, is why the host is never re-told. Both H1's "recreate gated at :195" and H2's
+> authority-asymmetry justification rest on a gate that did not execute. See the MEASURED FACT BASE below.
 
 ### The eid=0 discriminator — MEASURED here, but a CONFLATED wire sentinel (not type-safe)
 - **This instance is reading (a):** the element WAS assigned (eid=2297 @11:54:33) and was drained/in-flux by the
@@ -231,6 +238,71 @@ Earlier claim "the authority-fix STRANDS the rock -> they must pair" was an OVER
 -> E-grab -> reload. Read HOST+CLIENT `votv-coop.log` for the `[ROCK-DROP]` lines + the destroy/spawn pair.
 
 ---
+
+## MEASURED FACT BASE — QF-workflow run `wf_8e0bab5d` (2026-07-08, capped 4 rounds, NOT converged)
+Adversarial SEARCH+AUDIT loop over the 11:54 host+client logs + current code + BP bytecode. It REFUTED two of
+my inferences and upgraded others to measured. Each fact below is `[V-log]`/`[V-code]`/`[V-bytecode]` measured
+unless tagged. Full per-question evidence + citations: workflow journal (this run).
+
+**MEASURED (settled):**
+1. **Host world INTACT at join-window close** `[V-log]`: host `save_transfer: slot 1 -- blob-vs-live diff sent 0
+   explicit PropDestroy (blob 2232 keyed == host live 2232)` @11:54:33. The host's OWN join handshake wiped
+   nothing -> the wipe is 100% the client's post-join destroy flood, not a host-side diff.
+2. **v106 is a MEASURED regression** (upgraded from "suggestive") `[V-log+git]`: THREE pre-v106 client-join runs
+   (v88 failrun-s31, v80 baseline, v88 prestrip-s32) each ran the IDENTICAL local world-purge (`reaped 256 dead
+   ... 256 keyed ... structural world event`) yet broadcast **ZERO** destroys. Commit `29dfd079` changed ONLY
+   the dispatch mechanism (PE PRE observer -> `K2_DestroyActor` UFunction Func patch); the pre-v106 body was
+   ALREADY bidirectional/client-capable (gated only on `connected()`). Route = BP-VM EX_* dispatch: PE-invisible,
+   Func-visible. So v106 is what first put the client's join-purge destroys on the wire.
+3. **The seam is the SOLE broadcast source** `[V-log+code]`: exactly 3,140 `broadcasting DESTROY` lines, ALL in
+   11:54:35-39; ZERO after 11:54:40. GHOST-RETIRE + the mass-purge reap route through the same native
+   `K2_DestroyActor` but BOTH pre-suppress (`MarkIncomingDestroy` echo-mark / `UnmarkKnownKeyedProp` eid-drop ->
+   `keyless && !hasEid` return). => a firing-set fix covering the burst leaves NO residual wipe.
+4. **Caller STATICALLY NAMED** `[V-bytecode]` (per-call runtime attribution still UNMEASURED — see U1): the
+   load-tail caller is the game's `mainGamemode.loadObjects` (+ `Load Primitives`), which the MOD itself triggers
+   (`engine_save.cpp:433` sets `mainGameInstance_loadObjects=1`). kismet-analyzer disasm: `loadObjects` issues
+   `K2_DestroyActor` at 3 sites; victim mix maps cleanly (2269 keyed = `loadObjects`/objectsData; 871 chipPile =
+   `Load Primitives`/primitivesData).
+5. **All 3 loadObjects destroy sites are CHURN, none a player death** `[V-bytecode]`: `[249]`/`[277]` = fresh
+   same-call dedup twins; `[315]` = world-restore pre-delete over `GetAllActorsWithInterface(int_save_C)` (ALL
+   live pre-existing save-actors, superseded by the incoming save). A player-REMOVED prop CANNOT be a `[315]`
+   victim (it is already gone -> not returned by GetAllActors). => an "inside a load episode" classifier's blast
+   radius is STRUCTURALLY bounded to churn; it cannot drop a legit single-entity removal.
+6. **eid=0 is a DEAD classifier** `[V-log]` (and my count was off): the keyed burst is **2,110 eid=0 + 159
+   live-eid** (not "2269 eid=0"). Of the 2,110 eid=0, **2,066 (97.9%) held a REAL adopted eid seconds earlier**;
+   2,065/2,066 destroyed the SAME actor address that held the eid = the `:373/:333` drain race. An eid=0 gate
+   would suppress genuine drain-race destroys -> provably UNSAFE.
+7. **H2 (client keyed destroys LOCAL-ONLY) drops no WIRED legit event** `[V-code]`: `ReliableKind` has NO
+   pickup/take/remove intent for a keyed prop; `InventoryPickup=47` is cosmetic-only; `GrabIntent=78`/`ThrowIntent=79`
+   are pile-only; `Aprop_C` is declared host-authoritative. BUT see U2 — this is not the same as proven-safe.
+
+**REFUTED (my prior claims, now measured-false):**
+- **":195 gates the recreate -> host never re-told"** — REFUTED (fact above + the CORRECTION banner in the
+  Mechanism section). `:195` never fired this run; the recreate route is the `join_membership_sweep` scan-rebind,
+  which simply has no host broadcast. H2's authority-asymmetry *justification* leaned on this and is thus unproven.
+- **"eid=0 could be a teardown discriminator"** — REFUTED (fact 6): eid=0 is 97.9% drain-race over live eids.
+
+**RESIDUAL UNKNOWNS — all require a REBUILD (outside this read-only run):**
+- **U1 — per-call caller attribution.** loadObjects is NAMED but the seam DISCARDS `srcObj` (`OnK2DestroyFunc(...,
+  void* /*srcObj*/, ...)` @`:385`), so what FRACTION of the 2,268 resolves to `loadObjects[315]` vs GC-finalize
+  vs an our-code reconcile-adopt path is UNMEASURED. An "inside a load episode" gate is unbounded until this is
+  pinned. FIX: log `R::ClassNameOf(srcObj)` + `RtlCaptureStackBackTrace` in `OnK2DestroyFunc`, rebuild, re-run
+  the bare-join, histogram the callers. (Static disasm can only bound the site-set, not attribute a runtime call.)
+- **U2 — de-braid control repro (NOT passed).** Both logs are churn-ONLY (0 GrabIntent/ThrowIntent sends,
+  ROCK-DROP=0). `COOP_DISPATCH_VISIBILITY.md:86`: the rock R-pickup (`putObjectInventory2@719`) fires
+  `K2_DestroyActor` through the SAME seam -> any seam-side classifier could silence it identically. No
+  intent-bearing destroy exists here to diff against, so no invariant can be shown safe. FIX: a bare-SESSION run
+  (no join) where the client fires exactly ONE real R-pickup keyed destroy, with the same srcObj+backtrace
+  instrumentation; diff its seam-instant fields vs the burst.
+- **U3 — positive recreate route / would :195 EVER gate a same-key recreate.** Only the NEGATIVE ("not via :195/
+  Init-POST this run") is measured. FIX: srcObj+backtrace at Init-POST `:127` and `:195`, or IDA-callstack the
+  `FinishSpawningActor` site for a same-key `prop_C` during `loadObjects`.
+
+**Where this leaves the root analysis (for the visible main session, NOT decided here):** H1 (firing-set: the
+seam carries the destroy half of a game load-episode churn that is net-zero locally) is the strongly-supported
+frame — caller named, sites classified churn-only, seam is sole source, v106 measured. The gating open item is
+U1 (prove ~100% of the burst is the load episode, not GC/reconcile) + U2 (prove any chosen classifier does not
+also silence the rock). Both need one instrumented rebuild + re-run. No fix is chosen or designed here.
 
 ## Source map
 `prop_lifecycle.cpp` (DestroySeamBody:313 / OnK2DestroyFunc:385 = the v106 Func seam `29dfd079`; :195 client
