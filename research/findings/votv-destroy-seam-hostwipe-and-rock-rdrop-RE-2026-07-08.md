@@ -304,6 +304,71 @@ frame — caller named, sites classified churn-only, seam is sole source, v106 m
 U1 (prove ~100% of the burst is the load episode, not GC/reconcile) + U2 (prove any chosen classifier does not
 also silence the rock). Both need one instrumented rebuild + re-run. No fix is chosen or designed here.
 
+---
+
+## ROOT ANALYSIS + FIX DESIGN (2026-07-08, `[HOSTWIPE-CALLER]` probe run 15:43-15:45 + gamemode disasm)
+
+**Status: root MEASURED end-to-end; fix SHAPE settled (world-load EPISODE gate); exact gate form + window
+still DESIGN, pending one `/qf` vetting round + per-rule-1 green-light. Nothing built.** Probe DLL
+`f2fda78cafe167c7` (`[HOSTWIPE-CALLER]` srcObj-class logging, UNCOMMITTED, log-only, RULE-2-exempt).
+
+### The measured causal chain (host-wipe)
+1. Client join → the mod triggers the game's world-load (`engine_save.cpp:309/433` set `mainGameInstance_loadObjects=1`).
+2. `mainGamemode.loadObjects` (+`Load Primitives`/`loadTriggers`) runs its world-restore **pre-delete**: it
+   destroys the client's live keyed props via `K2_DestroyActor` and respawns them from the transferred save.
+   This is a **local, net-zero** rebuild — the client re-binds via `join_membership_sweep` (always-run path).
+3. **v106 regression** (`29dfd079`): the `K2_DestroyActor` **UFunction Func-patch** catches these EX_*-dispatched
+   destroys the pre-v106 ProcessEvent observer never saw, and **broadcasts each to the host**. [MEASURED: 3
+   pre-v106 runs ran the identical purge, broadcast ZERO.]
+4. Host `remote_prop::OnDestroy` resolves each by Key and destroys its authoritative copy → **3345→1255, never
+   recovers.** The identity damage ripples: later legit interactions land on wiped actors (the 15:44 food-box
+   morph hit "no local actor → DEFERRING" because the wipe had already deleted key `NLj6` at 15:43:54; the box
+   recovered only via a new-key `7MUo` respawn). [MEASURED, 15:43-15:45 run.]
+
+### Why the discriminator is the EPISODE, not the caller class (the decisive measurement)
+The `[HOSTWIPE-CALLER]` probe measured **2270/2270 wipe destroys = caller class `mainGamemode_C`**, and the two
+legit post-join destroys = **self-caller** (`prop_foodBox_C` food morph @15:44:30; `trashBitsPile_C` trash-container
+E-press @15:44:51). That looked like "deny caller==gamemode." **But disasm of `mainGamemode` refutes a class
+gate:** the gamemode issues `K2_DestroyActor` from **9 functions** — world-load churn (`loadObjects`×3,
+`Load Primitives`×1, `loadTriggers`×2) AND **player intent** (`putObjectInventory`×1 = the **R-pickup/rock**,
+`RemoveEquipment`×1, `undo`×1) plus events (`processDream`×2, `spawnRedSky`×1, `ExecuteUbergraph`×3). ALL carry
+caller class `mainGamemode_C`. So **"deny caller==`mainGamemode_C`" is TOO BROAD — it would suppress the rock
+R-pickup (`putObjectInventory`), `RemoveEquipment`, `undo`.** The class separates gamemode-issued from
+prop-self-issued, but NOT load-churn from gamemode-issued INTENT.
+
+### The fix: peer-symmetric WORLD-LOAD EPISODE gate (invariant, not a site-list)
+**While a peer is inside its own `loadObjects` world-load episode, that peer does NOT broadcast keyed-prop
+destroys** — they are local world-rebuild churn, never a cross-peer event. Concretely:
+- **Set** a `g_inWorldLoad` latch where the mod triggers the load (`engine_save.cpp:309/433`, right at
+  `loadObjects=1`); **clear** it at load-complete / first post-load quiescence (reuse the existing
+  purge/drain-edge machinery — `net_pump` mass-purge/drain already brackets this window).
+- At `DestroySeamBody`, when `g_inWorldLoad` is set, **skip the broadcast** (the local `K2_DestroyActor` still
+  runs; only the wire send is suppressed). **Peer-symmetric**: the seam already carries role; the gate keys on
+  "am I running MY world-load," not on role — so a HOST mid-session reload also stops wiping its CLIENTS.
+- This restores the exact pre-v106 property (world-load churn stays local) as an **episode invariant**, not a
+  caller allowlist: any churn source inside the load window is covered; anything OUTSIDE it (player verbs) is not.
+
+### What it provably preserves (measured, all fire OUTSIDE the load episode or self-caller)
+- **Food/container morphs** (`prop_foodBox_C`, `trashBitsPile_C`) — self-caller, post-load → broadcast normally.
+- **Rock R-pickup** (`putObjectInventory`, gamemode-caller) — fires post-load, outside the episode → NOT
+  suppressed. (Resolves the earlier fear that the rock shares the gate; it does not.) Rock stays independent (Bug B).
+- **Pile morphs** — post-load, self-caller → untouched (piles already fixed; the eid-only clump path v106 was
+  added for keeps working).
+- `RemoveEquipment` / `undo` / event destroys — post-load → unaffected.
+
+### Residuals / DESIGN choices for the `/qf` vetting round (NOT decided here)
+1. **Window bounding (the one real risk):** `loadObjects` is ASYNC (materializes over ~2-4 s; the 15:43 burst
+   spanned :51-:55). The `g_inWorldLoad` latch must stay set across the whole load burst but clear before any
+   player verb — mis-timing either leaks (clears early → residual wipe) or over-suppresses (clears late →
+   drops an early post-load intent). The existing drain-edge/quiescence signal is the candidate clear-point;
+   must confirm it brackets the FULL destroy burst. (Echoes the InPurgeEpisode timing failure — verify the
+   window, don't assume it.)
+2. **Latch vs FFrame::Node:** alternative to the episode latch = gate on the executing UFunction
+   (`FFrame::Node == loadObjects/Load Primitives/loadTriggers`) directly at the seam — more precise (no window
+   to bound) but reads more engine internals per destroy. Weigh precision vs per-call cost.
+3. **Re-entry / nested loads:** confirm the latch is set/cleared correctly if a load re-triggers (rejoin,
+   cave/level travel) — a bare bool must be a depth counter or idempotent set+quiescence-clear, not toggle.
+
 ## Source map
 `prop_lifecycle.cpp` (DestroySeamBody:313 / OnK2DestroyFunc:385 = the v106 Func seam `29dfd079`; :195 client
 Aprop spawn skip; :376 destroy broadcast) · `remote_prop_destroy.cpp:84` (host OnDestroy) · `net_pump.cpp`
