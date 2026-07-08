@@ -49,18 +49,26 @@ eid=X` (pickup) → `OnDestroy ... eid=X -> destroying local actor` (host loses 
 the drop.
 
 ## After the repros
-- **HOST-WIPE: root MEASURED, fix DESIGNED (world-load episode gate), NOT built.** Repro 1 + the 15:43-15:45
-  probe closed it. NEXT = one /qf vetting round of the design (esp. window-bounding) -> per-rule-1 green-light
-  -> implement `g_inWorldLoad` latch -> smoke + hands-on. The gate does NOT touch the rock (R-pickup fires
-  outside the load episode) — they stay SEPARATE.
-- **ROCK (Bug B): design SETTLED + per-rule-1 green-lit 2026-07-08; F2 build in progress.** The `/qf` thread
-  (11 rounds) + two headless RE gates converged: **[H3] FFrame::Node CLEAN** (rock pickup = `mainPlayer::"Hold
-  Object"`, disjoint from foodBox/loadObjects/piles) and **[H1] Key PRESERVED** (getData writes / loadData
-  restores the same save-Key). Design = HOST-AUTHORITATIVE + CLIENT INTENT with a client eid-PARK at the pickup
-  seam (see the finding's "Fix shape — SETTLED"). **Repro 2 below is now the PREMISE-CONFIRMATION for the build**
-  (it is [RD], never log-witnessed — the same inference class that burned on ":195 gates the recreate"):
-  runnable READ-ONLY on the deployed `04ebfdb0` (no rebuild). It must confirm (a) the host loses its copy at
-  pickup: HOST `remote_prop::OnDestroy: ... eid=X -> destroying local actor` fires on the client's hold-R pickup,
-  and NOTHING re-spawns on the drop; and (b) **grab-vs-push for F1**: whether a host-moved rock was GRABBED
-  (E-carry/throw) or PHYSICS-pushed — this decides F1's easy (reliable-ize the release express) vs hard (no seam)
-  fork. Report both back before the F1 half is designed.
+- **HOST-WIPE: FIXED + USER-VERIFIED** (v107 world-load episode latch, `3180c4ab`, DLL `04ebfdb0`). Separate
+  from the rock (a hold-R pickup fires OUTSIDE the load episode). See the finding's FIX AS-BUILT section.
+- **ROCK (Bug B): design = MINIMAL-A, per-rule-1 green-lit 2026-07-08, NOT built (deferred to tomorrow).** The
+  `/qf` thread ran to **24 rounds** (full transcript `<scratchpad>/qf_thread.md`). It first converged on a
+  HOST-AUTHORITATIVE "B-lite" (client eid-park + host HIDES its copy during the hold), then the user asked
+  **"is hiding a crutch?"** → **YES** → reversed to **MINIMAL-A**: the pickup is already correct (destroys the
+  rock into inventory on all peers, faithful to SP), **fix ONLY the drop** = author the fresh drop `Aprop_C` via
+  a **plain `SendPropSpawn`** (piggyback `host_spawn_watcher`'s FinishSpawn seam + defer ≥1 tick so `loadData`
+  restored the Key; author iff the Key is in a client PARK SET recorded at the pickup destroy seam). eid churns
+  (faithful; identity = the Key). No host changes, no new ReliableKind. See the finding's "Fix shape — SETTLED =
+  MINIMAL-A". Measured gates GREEN: **[H3]** FFrame::Node CLEAN (pickup = `mainPlayer::"Hold Object"`), **[H1]**
+  Key PRESERVED, **[H4]** drop detection = FinishSpawn Func-patch (loadData/simulateDrop EX_Local* invisible).
+- **#1 GATE before wiring — BRANCH A (Repro 2 confirms it, no rebuild on `04ebfdb0`):** a SETTLED-session client
+  hold-R pickup must show HOST `remote_prop::OnDestroy: ... eid=X -> destroying local actor` (the host removed
+  its copy). Act AFTER the `world_load_episode: CLOSED at load-tail quiescence` log line (settled → outside the
+  episode → predicted to cross). If the host KEEPS a stale copy (branch B), the pickup also needs handling.
+- **Autonomous test = NONE feasible** (/qf 20-24): input-driver = over-build + UE4SS-dispatch-risk (RULE 3);
+  synthetic self-test infeasible (detector reads a real UObject). The fix is **human-e2e-only**; autonomise the
+  `pile-test-assert.ps1` log-assert (primary = host gains a prop_C with the recorded Key at the drop pos;
+  secondary = branch A; positive control = an out-of-episode grab/throw crossing) + a regression-only smoke.
+- **F1 (host moves a rock during the client join) — SEPARATE host→client, deferred.** Needs an ON-SETTLE rest
+  trigger (send the host rock's rest when its body sleeps), NOT a single quiescence-edge transform diff (which
+  can sample mid-motion). Not designed.

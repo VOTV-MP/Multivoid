@@ -211,32 +211,62 @@ E-grab (and "sometimes even E can't recover it").
    fresh rock became tracker-known, that path DECLINES at `trash_collect_sync:339` ("pose stream suffices" — a
    false promise for a no-longer-streamed prop).
 
-### Fix shape — SETTLED (per-rule-1 green-lit 2026-07-08 after /qf rounds 1-11 + [H3]/[H1] GREEN)
-The design converged over an 11-round `/qf` thread (full transcript: `<scratchpad>/qf_thread.md`, this session)
-plus two headless RE gates that both came back GREEN. Superseded candidates (kept as the audit trail): "owns an
-eid at pickup" (doesn't separate suspend-into-hand from a delete); a LIVE two-hop-§9 carrier on the display hand
-actor (MEASURED to die on stow/switch — `hand_item.cpp:105-120` — so it is not a stable carrier); a client-side
-"suppression owner" at the destroy seam (a §8.3 skip-flag); a client-authored suspend/reclaim of a
-host-authoritative prop (REINTRODUCES the client-authors-keyed-lifecycle asymmetry that caused the host-wipe).
+### Fix shape — SETTLED = MINIMAL-A (per-rule-1 green-lit 2026-07-08 after /qf rounds 1-24; NOT built)
+> **REVERSAL NOTE (do not skim past):** an EARLIER form of this section (committed `b6b41022`) described a
+> HOST-AUTHORITATIVE "B-lite" design (client eid-PARK + suppress the pickup destroy + a `PropPickupNotify`
+> → the HOST **HIDES** its authoritative copy during the hold, unhide+move on drop). The user asked **"is
+> hiding a crutch?"** and the answer is **YES** — it kept a ghost world actor to prevent the host losing
+> its copy at pickup, but that loss is **CORRECT** (hold-R destroys the rock into the inventory, faithful
+> to single-player); the hide papered over the SEPARATE missing feature "cross-session persistence of a
+> client's held items." So B-lite / host-authoritative / eid-migration are all **SUPERSEDED** (audit trail
+> below). The current design is **MINIMAL-A**.
 
-**THE DESIGN — HOST-AUTHORITATIVE + CLIENT INTENT, with a client eid-PARK (natural husk) at the pickup seam:**
-- **PICKUP** at `ac.K2_DestroyActor()` inside `mainPlayer::"Hold Object"` (the v106 Func seam), gated on
-  `FFrame::Node == "Hold Object"` ([H3] GREEN — a DEDICATED function graph, disjoint from foodBox/loadObjects/
-  pile destroy issuers): **PARK** the client's own eid=X into a bounded map → the local `K2_DestroyActor`
-  resolves an eid-less actor → the EXISTING husk rule (`keyless && !hasEid`) broadcasts NOTHING by construction
-  (no new suppression owner). **ALSO send `PropPickupIntent`** → the HOST suspends its own authoritative copy
-  (holds the pre-pickup transform; expresses a held-item so it is visible, not limbo).
-- **DROP** at the fresh `Aprop_C` Init-POST (`prop_lifecycle.cpp:196`), gated on **parked-Key membership**
-  (the real discriminator; a `loadObjects` recreate has no locally-parked entry → stays `:196`-skipped):
-  **REBIND** the parked eid=X onto the drop `Aprop` + **send `PropDropIntent`(eid=X, settled-rest transform)**.
-  The HOST re-places its authoritative eid=X + broadcasts; the client reconciles via the EXISTING
-  `remote_prop` OnSpawn epsilon-converge (2 cm/1°).
-- **TEARDOWN (two-sided, bounded):** client park-map = rebind-consumed / session-end / inventory-exit /
-  deadline; HOST suspend = peer-disconnect-without-drop → restore that peer's suspended rocks at their
-  pre-pickup transform (tied to the PEER CONNECTION, not a timer — a client may hold a rock arbitrarily long).
-- **New keyed-prop pickup/drop `ReliableKind`** (3 wiring sites per `[[feedback-reliablekind-router-checklist]]`).
-  Precedent: pile `GrabIntent=78`/`ThrowIntent=79` (client-intent→host-commit) + MTA `CClientObject::AttachTo`
-  (validates the GOAL of one identity across pickup/drop; VOTV destroys+respawns so we span it with park+rebind).
+Superseded candidates (audit trail): "owns an eid at pickup"; a LIVE two-hop-§9 carrier on the display hand
+actor (MEASURED to die on stow — `hand_item.cpp:105-120`); a client-side seam "suppression owner" (§8.3
+skip-flag); a client-authored suspend/reclaim of a host-authoritative prop (the host-wipe asymmetry); and —
+newest — **B-lite host-HIDE** (a crutch for missing inventory persistence) and **eid-migration/rebind** (would
+keep eid=X alive across the hold = the same ghost; the hold is an arbitrary GAP → **remove-then-readd**, NOT a
+§9 atomic morph, so churn is faithful).
+
+**THE DESIGN — MINIMAL-A (faithful; fix ONLY the drop; all CLIENT-side):**
+- **PICKUP — UNCHANGED (correct, not a bug):** hold-R destroys the world rock into the inventory; the destroy
+  seam broadcasts `DESTROY(eid=X)` → the host + peers remove their copies (the rock left the world). v105
+  hand-item shows it in the holder's hand. Faithful to SP. We only **RECORD the rock's save-Key in a PARK SET**
+  at the destroy seam, gated `FFrame::Node == mainPlayer."Hold Object"` ([H3]-GREEN dedicated fn) — a pure
+  **discriminator, NO suppression, NO host message, NO eid migration.**
+- **DROP — the ONLY fix:** the fresh `Aprop_C` is host-authoritative-skipped at `prop_lifecycle.cpp:210` → the
+  host is never told. Detect it by **piggybacking the existing `FinishSpawningActor` Func-patch**
+  (`host_spawn_watcher.cpp`, the v106 keyed-spawn seam) + **defer ≥1 tick** (so `loadData` restored the Key —
+  [H4]: `loadData`/`simulateDrop`/`addEquip` are all EX_Local* invisible, `FinishSpawningActor` = EX_CallMath is
+  the ONLY Func-visible native seam); then if the **client-local** (not echo-suppressed) fresh actor's Key is in
+  the PARK SET → **author it as a PLAIN world-prop `SendPropSpawn`** (what a non-skipped `:210` would broadcast —
+  NOT the held-item `EnsureHeldItemBroadcast` seam, which mis-tags a placed rock as held). **eid churns** to a
+  fresh id (faithful; the persistent identity is the **Key**, [H1]-stable). Consume the park entry.
+- **PARK eviction (bounded):** consume-at-drop (primary) + session-end `Reset` + a hard cap; ideally hand-edge
+  eviction (v105 `holdingProp` change on stow/destroy-in-hand) — VERIFY a hold-R rock routes through
+  `holdingProp` first (unconfirmed); TTL/cap is the fallback.
+- **SAFETY — the `:210` save-lineage-dupe is NOT reopened:** `:210` skips client Aprop spawns because both
+  peers independently save-load the prop; for the DROP that is avoided **iff branch A** (the pickup destroy
+  crossed → the host removed its OWN copy → the wire drop is the sole copy). The dropper's own echoed spawn is
+  deduped by `remote_prop` OnSpawn adopt-by-key (d~0).
+- **NOT built. NO new ReliableKind, NO host-side changes, NO protocol bump.** Client-direction only (the HOST
+  pickup/drop already works — user-confirmed "с хостом проблем нету").
+
+**#1 GATE (unmeasured — clear BEFORE wiring, §2): BRANCH A.** The whole design (and the `:210` safety) assumes
+a settled-session client hold-R pickup's `DESTROY(eid=X)` CROSSES and the host removes its copy. This is `[RD]`,
+never log-witnessed (the user's "placed rock absent" is consistent; the host-wipe logs were confounded). The
+v107 latch clears at load-tail quiescence → a steady-state pickup is OUTSIDE the episode → PREDICTED to cross
+(branch A). If instead the host KEEPS a stale copy (branch B — e.g. a mid-join pickup, episode-suppressed), the
+pickup ALSO needs handling. CONFIRM via a settled-session repro reading the host `remote_prop::OnDestroy eid=X`
+line (runbook; no rebuild — the line exists on `04ebfdb0`).
+
+**Autonomous-test conclusion (/qf rounds 20-24): there is NO faithful autonomous test of the fix path.** A
+client-input driver = over-build (nonexistent + UE4SS-in-loop changes dispatch/timing vs ship, RULE 3); a
+synthetic self-test is INFEASIBLE (the drop-detector reads Key/class off a REAL UObject — no no-deref sentinel
+like `DebugCheckPropElementReap`'s `internalIdx=-1`). The fix is **human-e2e-validated only**; autonomous work
+= a regression-only stability smoke + the `pile-test-assert.ps1` log-assert invariants (primary = host gains a
+prop_C with the recorded Key at the drop pos; secondary = branch A; positive control = an out-of-episode
+grab/throw crossing).
 
 **Measured gates (both GREEN, 2026-07-08 headless RE — do NOT re-derive, verify against these):**
 - **[H3] FFrame::Node separability = CLEAN** `[V-bytecode]`: rock pickup issues `K2_DestroyActor` from
