@@ -388,22 +388,28 @@ void RenderNameplatePref() {
     ImGui::TextDisabled("on every peer's screen. Synced live and to late joiners; persists.");
 }
 
-// Overlay font family (2026-07-04, user compare ask): live switch between the
-// embedded families. SetFamily persists votv-coop.ini ui.font and requests the
-// atlas rebuild (applies on the next frame -- the whole overlay re-bakes).
+// Overlay fonts -- GRANULAR per surface (2026-07-09, user ask): chat, the net-stats
+// widget, the nameplates and the menu/panels each pick their OWN family. SetRoleFamily
+// persists votv-coop.ini ui.font.<role> + requests the atlas rebuild (next frame).
 void RenderFontPref() {
     namespace F = ui::fonts;
-    const F::Family cur = F::CurrentFamily();
-    ImGui::TextUnformatted("Overlay font:");
-    for (int i = 0; i < F::kFamilyCount; ++i) {
-        const auto f = static_cast<F::Family>(i);
-        if (i > 0) ImGui::SameLine();
-        if (ImGui::RadioButton(F::FamilyLabel(f), cur == f)) F::SetFamily(f);
+    const char* famItems[F::kFamilyCount];
+    for (int i = 0; i < F::kFamilyCount; ++i)
+        famItems[i] = F::FamilyLabel(static_cast<F::Family>(i));
+    ImGui::TextUnformatted("Overlay fonts (per surface):");
+    for (int r = 0; r < F::kRoleCount; ++r) {
+        const auto role = static_cast<F::Role>(r);
+        int cur = static_cast<int>(F::RoleFamily(role));
+        ImGui::PushID(r);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
+        if (ImGui::Combo(F::RoleLabel(role), &cur, famItems, F::kFamilyCount))
+            F::SetRoleFamily(role, static_cast<F::Family>(cur));
+        ImGui::PopID();
     }
-    ImGui::TextDisabled("Applies instantly to the whole overlay (chat, menus, nameplates).");
-    ImGui::TextDisabled("Saved to votv-coop.ini (ui.font). Fixedsys (VOTV) is the game's own");
-    ImGui::TextDisabled("terminal pixel font (default). JetBrains Mono / Cascadia Code are");
-    ImGui::TextDisabled("monospace; Roboto is proportional.");
+    ImGui::TextDisabled("Each surface picks its own family; applies instantly.");
+    ImGui::TextDisabled("Saved to votv-coop.ini (ui.font.menu/chat/net/nameplate; each");
+    ImGui::TextDisabled("defaults to ui.font). Fixedsys (VOTV) = game terminal pixel font");
+    ImGui::TextDisabled("(default); JetBrains/Cascadia monospace; Roboto proportional.");
 
     // UI size (2026-07-04, user: "все менюшки и тексты ПОБОЛЬШЕ"): a multiplier
     // on top of the resolution factor. Applied on slider RELEASE, not per drag

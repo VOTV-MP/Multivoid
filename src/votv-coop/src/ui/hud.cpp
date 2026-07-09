@@ -79,7 +79,8 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const float gap = S(10.f) * s;    // nick sits sz.y + gap above the head anchor
     const float barGap = S(4.f) * s;  // bar sits barGap below the anchor
 
-    ImFont* font = ImGui::GetFont();
+    ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Nameplate);  // per-role font (F1 > Interface)
+    if (!font) font = ImGui::GetFont();
     const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.f, line);
 
     // 12g overhead chat bubble rows -- split BEFORE the on-screen clamp so the

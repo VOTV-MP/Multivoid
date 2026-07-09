@@ -4,6 +4,7 @@
 
 #include "coop/net/net_stats.h"
 #include "harness/config.h"
+#include "ui/fonts.h"
 #include "ui/scale.h"
 
 #include "imgui.h"
@@ -173,6 +174,8 @@ void Render() {
         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize;
     if (ImGui::Begin("##coop_netstats", nullptr, flags)) {
+        ImFont* nf = ui::fonts::FontFor(ui::fonts::Role::Net);  // per-role font (F1 > Interface)
+        if (nf) ImGui::PushFont(nf);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float rowW = S(196.f);
 
@@ -211,6 +214,7 @@ void Render() {
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextUnformatted(pk);
         ImGui::PopStyleColor();
+        if (nf) ImGui::PopFont();
     }
     ImGui::End();
     ImGui::PopStyleColor();

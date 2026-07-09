@@ -35,24 +35,43 @@ inline constexpr float kChatPx = 18.f;
 enum class Family : int { JetBrainsMono = 0, Roboto = 1, CascadiaCode = 2, Fixedsys = 3 };
 inline constexpr int kFamilyCount = 4;
 
-// (Re)bake the overlay fonts into the shared atlas at the current scale +
-// family. Clears the atlas first. Call only BETWEEN frames (bring-up, or the
-// MaybeRescale window before NewFrame).
+// Nameplate base text size (px at 1080p) -- the up-close size; the plate scales
+// DOWN with distance from here (hud::kNickPx mirrors this).
+inline constexpr float kNameplatePx = 16.f;
+
+// GRANULAR font roles (2026-07-09): each on-screen surface picks its OWN family,
+// so chat, the net-stats widget, the nameplates and the menu/panels are
+// independent. Menu is baked FIRST -> it is ImGui's default font, so every panel
+// (F1, scoreboard, admin, server browser, loading) follows it with no per-window
+// push; Chat/Net/Nameplate are pushed by their consumers. Persisted per role as
+// votv-coop.ini ui.font.<menu|chat|net|nameplate>, each defaulting to the legacy
+// global ui.font (so an existing single-font config is preserved).
+enum class Role : int { Menu = 0, Chat = 1, Net = 2, Nameplate = 3 };
+inline constexpr int kRoleCount = 4;
+
+// (Re)bake the overlay fonts into the shared atlas at the current scale + the
+// per-role families. Clears the atlas first. Call only BETWEEN frames (bring-up,
+// or the MaybeRescale window before NewFrame).
 void Load();
 
-// The chat font (bold, chat size) or nullptr if no TTF loaded (use ImGui::GetFont()).
+// The baked ImFont* for a role (nullptr only if the whole atlas failed -> the
+// caller uses ImGui::GetFont()). PxFor = the px it was baked at (draw AddText at
+// this size for the crisp 1:1 rasterization).
+ImFont* FontFor(Role r);
+float   PxFor(Role r);
+
+// The chat font/size (== FontFor(Role::Chat) / PxFor(Role::Chat)). Kept as the
+// legacy accessor the chat feed + input already call.
 ImFont* Chat();
+float   ChatPx();
 
-// The px the chat font was actually baked at (kChatPx * scale at bake time).
-// Drawing AddText at this size renders the crisp 1:1 rasterization.
-float ChatPx();
+const char* FamilyLabel(Family f);   // "JetBrains Mono", ...
+const char* RoleLabel(Role r);       // "Menu / panels", "Chat", "Net stats", "Nameplates"
 
-Family      CurrentFamily();
-const char* FamilyLabel(Family f);   // UI label ("JetBrains Mono", ...)
-
-// Switch the overlay family: persists votv-coop.ini ui.font and requests the
+// Per-role family get/set. SetRoleFamily persists ui.font.<role> and requests the
 // atlas rebuild (applies next frame). Render thread (F1 menu).
-void SetFamily(Family f);
+Family RoleFamily(Role r);
+void   SetRoleFamily(Role r, Family f);
 
 // The ImGui context that owned the atlas is being destroyed (failed bring-up
 // retry path): drop the cached ImFont* so the NEXT context re-loads instead
