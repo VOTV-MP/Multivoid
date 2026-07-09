@@ -386,10 +386,21 @@ void Tick() {
         else ++it;
     }
 
-    // Broadcast pending appends in array order. Rows stay pending while
-    // disconnected (audit I-1: dropping them here would silently skip rows
-    // produced before a transient drop / before the first connect).
-    if (s->connected()) {
+    // Broadcast pending appends in array order. HOST-ONLY (2026-07-09 authority
+    // audit): email is host-owned world state -- every addEmail site is
+    // world/story/system-authored (census), so the client is NOT an email-
+    // distribution authority. Gating the send on role()==Host closes the shared-
+    // inbox pollution vector (a client's diverged world-sim self-authoring a false
+    // email -> broadcast -> permanent host row) AND the startup transient before a
+    // client-side source-kill (e.g. serverbox's ticker_serverBreaker) latches.
+    // Authority-direction parity with weather/time/serverbox. The client keeps ALL
+    // apply + echo-proof bookkeeping (g_applied/prime/shadow/diff are load-bearing
+    // for the mirror); only this send is gated -- its locally-authored sent=false
+    // rows simply stay pending (never broadcast). Delete stays symmetric (a client
+    // USER-delete must propagate; echo-proofed by the synchronous g_shadow erase).
+    // Host rows stay pending while disconnected (audit I-1: dropping them would
+    // silently skip rows produced before the first connect).
+    if (s->connected() && s->role() == coop::net::Role::Host) {
         for (size_t i = 0; i < g_shadow.size(); ++i) {
             ShadowRow& srow = g_shadow[i];
             if (srow.sent) continue;
