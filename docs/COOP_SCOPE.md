@@ -592,3 +592,26 @@ Design implications (do NOT build yet; record so the architecture serves it):
   widened the adoption sweep to the full expressible universe + keyless chipPile
   eid expression (protocol v55); RE + verdicts:
   `research/findings/votv-snapshot-adoption-root-causes-2026-06-10.md`.
+- 2026-07-09 — **Signal-SERVER simulation state + its notifications** added to In
+  scope; user ("Build A. Per rule 1."). DISTINCT from and DEEPER than the
+  2026-05-25 "terminals interactable + analog controls synced" entry (that was the
+  console WIDGET visual+analog; this is the underlying server SIM). Root problem
+  (RE, `docs/notifications/` + `research/findings/votv-notifications-suppress-mirror-DESIGN-2026-07-09.md`):
+  VOTV's signal-server state — `mainGamemode.{servers, brokenServers,
+  serverEfficiency_calc/downl}` + per-`serverBox_C.{isBroken,damaged,upgrades,health}`,
+  broken/fixed by the host-only `ticker_serverBreaker` — is NOT UE-replicated, so a
+  coop CLIENT self-computes DIVERGED server state and self-authors FALSE notices
+  (the `SERVER "X" is down` EMAIL + console `writeToLog` line + `serverDown` alarm;
+  it is NOT a HUD toast). FIX SHAPE (`/qf`-converged ROOT, RULE-1): the HOST owns
+  server state; clients MIRROR + render and do NOT run the server sim (neutralize
+  the client `ticker_serverBreaker`) — so the client never self-authors and no
+  per-channel notice suppressor is needed (that was the NARROW crutch). Likely two
+  wire lanes (server-STATE poll = alarm_sync shape; break/damage EDGE = event_fire
+  shape). Gated behind an authoring census (measure-don't-infer) before build.
+  In-scope notices to mirror: the server down/damaged EMAIL + console line + alarm,
+  the SAT-console `sv.*/tw.*/cr.*/tr.*` query answers, and the `addGloss`
+  signal-glossary hints. OUT of this lane (stay LOCAL per-player): the ~280 generic
+  `addHint` interaction/inventory/sanity toasts + first-load tutorial tips.
+  NOTE: this necessarily begins mirroring the host EMAIL inbox (`addEmail` →
+  `laptop`) for server alerts — a first toe into email sync (broader email sync
+  stays out of scope until separately amended).
