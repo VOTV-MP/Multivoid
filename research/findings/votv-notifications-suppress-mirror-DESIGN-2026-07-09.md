@@ -33,7 +33,39 @@ proven `alarm_sync` poll-broadcast lane. Proto 106->107, DLL `3B2762CA`.
   M2 doc fix above.
 - **NOT verified:** the actual break->client-re-skin (no broken server in the smoke). Hands-on: host breaks
   a server (or a server is saved-broken) -> client shows it broken + `sv.check` reads broken, and NO false
-  autonomous "server down" on the client. Inc-2 = forward the host break EDGE for the true notice.
+  autonomous "server down" on the client.
+
+## INC-2 -- IMPL /qf CONVERGED (2 rounds), BUILD DELIBERATELY DEFERRED (measure-don't-infer)
+The Inc-2 implementation /qf (2026-07-09) converged the DESIGN but its verdict was **do not build yet**:
+- **FORWARD the host's real "server down" notice = REUSE the EXISTING `email_sync` lane** (measured:
+  `coop/world/email_sync.cpp` polls the inbox 1 Hz + forwards new rows via `EmailAppend`/blob_chunks =
+  byte-identical `struct_email`). A new reflected-`addEmail` forward would DUPLICATE + drift it (refuse-
+  unification). The console `writeToLog` line + the `serverDown` alarm would be additive forwards if needed.
+- **`email_sync` is PEER-SYMMETRIC** (measured: no host-gate; "local appends mass-broadcast to the joiner").
+  CONSEQUENCE: a client's FALSE self-authored "server down" email is forwarded to the HOST + all peers =
+  **permanent shared-inbox pollution**, not a cosmetic flash. So the SUPPRESS half is load-bearing + higher
+  severity than assumed.
+- **SUPPRESS the client's false authoring = the load-bearing invariant** (an email is a permanent inbox row
+  Inc-1's state-mirror can NEVER un-send). Host-authoritative: on a client, server-notice authoring is NEVER
+  local. The 2 notice SINKS (`ui_console.serverBroken` delegate handler + `panel_SATconsole."Server Alert"`
+  from `break_type`) funnel all 15 breakServer callers -> neutralize the 2 SINKS, not a 15-caller site-list.
+- **STEADY STATE is already clean** (Inc-1 killed the client `ticker_serverBreaker`; `event_fire` zeroes the
+  client scheduler). The only residual false-notice sources: (a) JOIN world-load (`dish.loadData` restores
+  saved-broken servers -> local breakServer -> serverBroke -> the email), (b) player-actions in-box E /
+  repair-minigame (= Inc-3, client->host intent).
+- **TWO GATES the /qf refused to build past (both UNMEASURED):**
+  1. **The SUPPRESS mechanism is UNPROVEN.** The channels (addEmail/writeToLog) are EX_LocalVirtualFunction ->
+     invisible to both our seams; the ONLY suppress is CALLER/SINK neutralization -- unbinding the live BP
+     dynamic-multicast delegate `servers[].serverBroke -> ui_console.serverBroken` (or gating the client's
+     dish break). Measured: **this codebase has NEVER unbound a BP delegate from C++** (zero RemoveDynamic/
+     Unbind/ClearDelegate) -> it is a first-of-its-kind, unbuilt capability. Proving it (a read-only RE +
+     probe) is the gate.
+  2. **The join-flash is INFERRED, not measured** -- no log line witnesses `dish.loadData -> ui_console
+     email` on a client join. Suppressing an unobserved failure is the measure-don't-infer trap.
+- **HONEST NEXT MOVE (before any Inc-2 build):** (1) hands-on-verify Inc-1 -- does a REAL host-broken server
+  mirror to the client + does a false "server down" actually flash at join? (2) prove the delegate-unbind /
+  caller-gate suppress mechanism (RE + probe). Only then design + build Inc-2's suppress. `/qf` thread in
+  scratchpad.
 
 ---
 ## (design / census / gates below -- the road to Inc-1)
