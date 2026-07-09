@@ -705,7 +705,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 106; // v106: F2 Inc-1 client-place drop intent (PropDropIntent=90)
+inline constexpr uint16_t kProtocolVersion = 107; // v107: signal-server sim state sync (ServerState=91)
 // v104: WorldActorPoseSnapshot +auxTargetEid
                                                   // (44->48; batch cap 31->28) -- the piramid
                                                   // wispTarget IDENTITY streams with the pose, so
@@ -2025,6 +2025,19 @@ enum class ReliableKind : uint8_t {
                        //     morph) so it needs the durable Key + class, not just an eid. See
                        //     research/findings/votv-keyed-prop-grabdrop-intent-lane-DESIGN-2026-07-09.md
                        //     + coop/props/prop_drop_intent.h.
+    ServerState = 91,  // 2026-07-09 (v107): HOST->clients signal-SERVER simulation state (Inc-1). The
+                       //     server break/fix sim (mainGamemode.{servers,brokenServers,serverEfficiency}
+                       //     + per-serverBox.IsBroken) is NOT UE-replicated, so a client self-computes
+                       //     diverged state + self-authors a FALSE "SERVER X is down" (email/console/
+                       //     alarm). HOST-AUTHORITATIVE, ONE-directional: host polls its server state
+                       //     (1 Hz, alarm_sync shape) -> broadcasts ServerStatePayload; the client
+                       //     DRIVE-REALs it (raw-write serverBox.IsBroken + reflected check() to re-skin
+                       //     -- verbs breakServer/fix are EX_LocalVirtualFunction-invisible, so we mirror
+                       //     STATE not the verb) + neutralizes its own ticker_serverBreaker (disable
+                       //     tick). Client never sends. Connect replay: current state to a world-ready
+                       //     joiner. Inc-2 will forward the break EDGE for the true notice. See
+                       //     research/findings/votv-notifications-suppress-mirror-DESIGN-2026-07-09.md
+                       //     + docs/notifications/ + coop/interactables/serverbox_sync.h.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2940,6 +2953,23 @@ struct AlarmStatePayload {
     uint8_t pad[3];   // 3 -- zeroed
 };
 static_assert(sizeof(AlarmStatePayload) == 4, "AlarmStatePayload must be 4 bytes");
+
+// v107: signal-SERVER simulation state (ReliableKind::ServerState). HOST->clients, one-directional
+// (host-authoritative; the client never sends). The host polls mainGamemode.servers[] each ~1 Hz and
+// on any change broadcasts the whole small snapshot; the client DRIVE-REALs it (raw-write each
+// serverBox.IsBroken then reflected check() to re-skin) + mirrors the gamemode aggregates. Servers are
+// identified by their save-stable servers[] ARRAY INDEX (both peers load the same host save in order),
+// so isBrokenMask bit i == servers[i].IsBroken. Up to 64 servers (a base's server farm ran 54 -- smoke
+// 2026-07-09); a larger world logs + caps to the first 64. See coop/interactables/serverbox_sync.h.
+struct ServerStatePayload {
+    int32_t  brokenServers;   // 4  -- mainGamemode.brokenServers (aggregate mirror)
+    float    effCalc;         // 4  -- serverEfficiency_calc
+    float    effDownl;        // 4  -- serverEfficiency_downl
+    uint8_t  serverCount;     // 1  -- servers[].Num at send (bounds; <=64 carried in the mask)
+    uint8_t  _pad[3];         // 3  -- zeroed (isBrokenMask is 8-aligned at offset 16)
+    uint64_t isBrokenMask;    // 8  -- bit i = servers[i].IsBroken (up to 64 servers)
+};
+static_assert(sizeof(ServerStatePayload) == 24, "ServerStatePayload must be 24 bytes");
 
 // v64/v65: one chunk of a variable-length serialized blob. Shared by every
 // chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);

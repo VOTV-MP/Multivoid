@@ -10,6 +10,7 @@
 
 #include "coop/comms/chat_sync.h"
 #include "coop/world/alarm_sync.h"
+#include "coop/interactables/serverbox_sync.h"  // v107: host-authoritative signal-server state (Inc-1)
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -164,6 +165,20 @@ bool HandleWorldEvent(net::Session& session,
         net::AlarmStatePayload ap{};
         std::memcpy(&ap, msg.payload, sizeof(ap));
         coop::alarm_sync::OnReliable(ap, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::ServerState: {
+        // v107: host-authoritative signal-server sim state (Inc-1). HOST->clients only; the client
+        // drive-reals it (raw-write serverBox.IsBroken + reflected check()). serverbox_sync::OnReliable
+        // drops a non-host sender (host-authoritative one-directional). coop/interactables/serverbox_sync.
+        if (msg.payloadLen < sizeof(net::ServerStatePayload)) {
+            UE_LOGW("event_feed: ServerState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ServerStatePayload));
+            break;
+        }
+        net::ServerStatePayload sp{};
+        std::memcpy(&sp, msg.payload, sizeof(sp));
+        coop::serverbox_sync::OnReliable(sp, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::InventoryPickup: {

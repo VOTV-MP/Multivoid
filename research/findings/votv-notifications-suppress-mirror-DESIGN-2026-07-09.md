@@ -1,9 +1,45 @@
 # Notifications (toast/email/console) suppress+mirror — DESIGN /qf convergence 2026-07-09
 
-STATUS: **GATE-1 (authoring census) DONE + GATE-2 (scope) RATIFIED. Design REFINED to a mirror-state +
-suppress-edge + forward-host-edge HYBRID (pure ROOT falsified by the census). MECHANISM /qf in progress;
-4 residual runtime probes gate parts of the build.** RE docs: `docs/notifications/`. Not built. `/qf`
-design pass 2 rounds + census (below); thread in scratchpad.
+STATUS: **INCREMENT 1 (server-STATE mirror + client breaker-kill) BUILT + AGENT-AUDITED (0 CRITICAL/HIGH)
++ LAN-SMOKE-CLEAN + DEPLOYED 2026-07-09. NOT hands-on-verified** (the break->mirror->re-skin path needs a
+broken server; the smoke world was all-healthy). Gates cleared: GATE-1 census DONE, GATE-2 scope RATIFIED,
+M1+M2 build gates RESOLVED, design + mechanism + naming /qf DONE. RE docs: `docs/notifications/`.
+
+## INCREMENT 1 — AS-BUILT (2026-07-09)
+`coop/interactables/serverbox_sync.{h,cpp}` (317 LOC), the host-authoritative STATE mirror, modelled on the
+proven `alarm_sync` poll-broadcast lane. Proto 106->107, DLL `3B2762CA`.
+- **Wire:** `ReliableKind::ServerState=91` + `ServerStatePayload` (24B: brokenServers + effCalc/effDownl +
+  serverCount + `uint64 isBrokenMask` -- a base's server farm ran **54** servers, smoke-caught, so the mask
+  is 64-wide not 32). Router in `event_dispatch_world.cpp`; wired in `subsystems.cpp`.
+- **HOST** (`Tick`, 1 Hz): read `mainGamemode.servers[]` (TArray @0x3F0) -> per-serverBox `IsBroken` bitmask
+  + brokenServers/efficiency -> broadcast **on change** (edge-only; prime never sends). Late-join: current
+  state to a world-ready joiner.
+- **CLIENT** (`OnReliable`): DRIVE-REAL -- raw-write each `serverBox.IsBroken` (@0x378) then dispatch the
+  box's own `check()` via reflected `CallFunction` (M2: check() re-skins PURELY from IsBroken) + mirror the
+  gamemode aggregates. And **neutralize the local `ticker_serverBreaker`** (disable its actor tick -- the
+  primary autonomous false-break source; smoke: "neutralized 1"). Client never sends (host-auth one-way).
+- **Offsets resolved BY NAME + smoke-verified vs the CXXHeaderDump** (`servers=0x3F0 broken=0x8A0
+  IsBroken=0x378 eff=0x400/0x404 check=yes`).
+- **M2 clarification (resolves the audit MEDIUM-1 doc contradiction):** the census's "raw-write isBroken/
+  damaged/health/upgrades" was the PRE-M2 inference; M2 MEASURED that `check()` keys on **IsBroken only**
+  (it never reads `damaged`), so the isBroken mirror re-skins correctly. `damaged` feeds efficiency/health
+  readouts, NOT the check() skin -- mirroring it (if a client-visible health readout diverges) is an Inc-2
+  refinement, not needed for the visible break state.
+- **Naming /qf (2 rounds):** renamed from `coop/world/server_sync` -> `coop/interactables/serverbox_sync`
+  (engine-faithful `serverBox_C`; unambiguous vs the network server; co-located with its signal-device
+  siblings signal_sync/console_state_sync -- world/ is a 14-file catch-all + would split the concept).
+- **Audit: 0 CRITICAL/0 HIGH.** Fixed MEDIUM-2 (efficiency now in change-detection with an epsilon so it
+  stays fresh if a download ramps it) + LOW-2 (write-side offset guards) + LOW-1 (comment). MEDIUM-1 = the
+  M2 doc fix above.
+- **NOT verified:** the actual break->client-re-skin (no broken server in the smoke). Hands-on: host breaks
+  a server (or a server is saved-broken) -> client shows it broken + `sv.check` reads broken, and NO false
+  autonomous "server down" on the client. Inc-2 = forward the host break EDGE for the true notice.
+
+---
+## (design / census / gates below -- the road to Inc-1)
+
+Original design-pass status (superseded by AS-BUILT above): GATE-1 census DONE + GATE-2 scope RATIFIED,
+design REFINED to a mirror-state + suppress-edge + forward-host-edge HYBRID. `/qf` design 2 rounds + census.
 
 ## The premise CORRECTION (why this is bigger than "suppress a toast")
 The user asked to "suppress the client's false `SERVER "X" is down` toast + mirror the host's." The RE
