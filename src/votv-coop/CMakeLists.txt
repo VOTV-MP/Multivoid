@@ -306,6 +306,7 @@ add_library(votv-coop SHARED
     src/coop/dev/force_overdestroy_test.cpp
     src/coop/props/prop_element_tracker.cpp
     src/coop/props/prop_lifecycle.cpp
+    src/coop/props/prop_drop_intent.cpp
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp

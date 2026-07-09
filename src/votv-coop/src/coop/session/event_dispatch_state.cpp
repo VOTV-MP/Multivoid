@@ -22,6 +22,7 @@
 #include "coop/creatures/kerfur_convert.h"
 #include "coop/creatures/kerfur_command.h"
 #include "coop/props/trash_channel.h"
+#include "coop/props/prop_drop_intent.h"  // v106 F2 Inc-1: CLIENT->HOST client-placed keyed prop
 #include "coop/interactables/keypad_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/interactables/power_sync.h"
@@ -750,6 +751,28 @@ bool HandleStateEvent(net::Session& session,
         UE_LOGI("event_feed: STAGED ReliableKind=%u from slot=%d -- no handler yet",
                 static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
         break;
+    case net::ReliableKind::PropDropIntent: {   // v106 (F2 Inc-1): CLIENT->HOST -- client placed a keyed
+                                                // world prop it had picked up; the HOST re-spawns it
+                                                // authoritatively by Key + broadcasts. Host-authoritative
+                                                // (the GrabIntent shape). coop::prop_drop_intent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: PropDropIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: PropDropIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropDropIntentPayload)) {
+            UE_LOGW("event_feed: PropDropIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropDropIntentPayload));
+            break;
+        }
+        net::PropDropIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_drop_intent::OnPropDropIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::KerfurConvert: {
         // v78: HOST->ALL kerfur form-transition broadcast -- the SOLE conversion-transition signal
         // (kerfur redesign 10.3). CLIENT-only apply: the host converged its OWN conversion inline via

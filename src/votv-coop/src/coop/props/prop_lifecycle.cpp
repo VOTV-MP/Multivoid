@@ -17,6 +17,7 @@
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
+#include "coop/props/prop_drop_intent.h"       // F2 Inc-1: park a client keyed-destroy key for a later host-auth re-place
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/fname_utils.h"
@@ -399,6 +400,15 @@ void DestroySeamBody(void* self) {
             roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
             keyless ? " (eid-only: trash clump)" : "");
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
+    // F2 Inc-1 (2026-07-09): a CLIENT that just broadcast a KEYED destroy may be about to RE-PLACE the
+    // same prop (hold-R pickup -> hold-R place). Park the key so the place authors a host-authoritative
+    // PropDropIntent -- and ONLY for a key whose destroy we just propagated (the host destroyed its
+    // copy via THIS broadcast) -> the host re-spawn makes exactly one prop, no dup. Never reached inside
+    // the world-load episode (that path returns above), so join churn never parks. See
+    // coop/props/prop_drop_intent.h + [[lesson-client-keyed-prop-move-two-wire-halves]].
+    if (!keyless && s->role() == coop::net::Role::Client) {
+        coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr);
+    }
 }
 
 // Func-patch callback for Actor.K2_DestroyActor: the dying actor is the dispatch CONTEXT

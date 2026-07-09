@@ -705,7 +705,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 105; // v105: hand-item display axis (HandItem=89)
+inline constexpr uint16_t kProtocolVersion = 106; // v106: F2 Inc-1 client-place drop intent (PropDropIntent=90)
 // v104: WorldActorPoseSnapshot +auxTargetEid
                                                   // (44->48; batch cap 31->28) -- the piramid
                                                   // wispTarget IDENTITY streams with the pose, so
@@ -2009,6 +2009,22 @@ enum class ReliableKind : uint8_t {
                        //     shape), never a world entity. Connect replay: host re-sends all
                        //     non-empty slots to a world-ready joiner. Empty-hand announces are
                        //     debounced ~250 ms (updateHold's destroy+respawn null flicker).
+    PropDropIntent = 90, // 2026-07-09 (v106, F2 Inc-1): CLIENT->HOST -- a client PLACED a keyed
+                       //     world prop it had picked up (hold-R place = simulateDrop -> a fresh
+                       //     Aprop_C, host-authoritative-skipped at prop_lifecycle:210 -> the host
+                       //     never learns of it). The client authors NO keyed spawn; it sends this
+                       //     INTENT and the HOST spawns the authoritative Aprop by Key at the
+                       //     transform + broadcasts via the existing FinishSpawn author lane (so
+                       //     every peer, incl. the placer, adopts by Key -> no dup). Host-gated +
+                       //     senderPeerSlot. Payload: PropDropIntentPayload. SAFETY: the client only
+                       //     sends this for a key whose pickup-DESTROY it already propagated (so the
+                       //     host destroyed its copy first) -> no host dup; the +1-tick send after
+                       //     the place makes the in-hand husk-destroy reach the host FIRST (a no-op
+                       //     against the already-gone rock) before the intent spawn. The GrabIntent
+                       //     eid-lane (78) is the chipPile analog; a keyed prop stays ONE Aprop (no
+                       //     morph) so it needs the durable Key + class, not just an eid. See
+                       //     research/findings/votv-keyed-prop-grabdrop-intent-lane-DESIGN-2026-07-09.md
+                       //     + coop/props/prop_drop_intent.h.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2663,6 +2679,26 @@ struct PropDestroyPayload {
     uint32_t _pad;            // 4 -- 8-byte alignment (v16: senderContext + pad coalesced)
 };
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
+
+// v106 (2026-07-09, F2 Inc-1): CLIENT->HOST intent -- "I placed this keyed world prop I had
+// picked up". Carries the SP-parity identity the host needs to re-spawn the authoritative Aprop
+// (className + Key + list_props `propName` -> avoids the v54 white-cube) + the placement transform
+// + scale + the physFlags parity bits (WriteSpParityIdentity). NO elementId (the host allocates its
+// own host-range eid when its FinishSpawn watcher expresses the spawn) and NO velocity (a placed
+// prop is at rest). Field layout mirrors PropSpawnPayload's identity core so the host feeds the same
+// spawn-by-key path. Fits one datagram (168 << 256-20-8). See coop/props/prop_drop_intent.h.
+struct PropDropIntentPayload {
+    WireClassName className;                    // 64 -- "prop_rock_C" etc. (R::ClassNameOf of the placed actor)
+    WireKey       key;                          // 32 -- the persistent cross-peer save Key (loadData-restored)
+    WireKey       propName;                     // 32 -- Aprop_C list_props row FName (white-cube parity)
+    float         locX, locY, locZ;             // 12 -- placement world cm
+    float         rotPitch, rotYaw, rotRoll;    // 12 -- placement FRotator
+    float         scaleX, scaleY, scaleZ;       // 12 -- placed actor's GetActorScale3D
+    uint8_t       physFlags;                    // 1  -- propspawn_flags (kStatic/kFrozen/kSleep/kRemoveWOrespawn parity)
+    uint8_t       _pad[3];                      // 3  -- 4-byte alignment; zero on the wire
+};
+static_assert(sizeof(PropDropIntentPayload) == 168, "PropDropIntentPayload must be 168 bytes");
+static_assert(sizeof(PropDropIntentPayload) <= 256 - 20 - 8, "PropDropIntentPayload must fit one datagram");
 
 // --- v56 save-transfer join bootstrap ------------------------------------------
 // Chunk DATA bytes per SaveTransferChunk message (+4 B index prefix). Far above

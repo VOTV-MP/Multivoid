@@ -1,7 +1,49 @@
 # Keyed-prop grab/drop = a HOST-AUTHORITATIVE INTENT LANE (extend GrabIntent) — DESIGN 2026-07-09
 
-STATUS: DESIGN (post `/qf 15` convergence 2026-07-09). NOT built. Supersedes the seam-catching F2
-attempts v2/v3/v4 (all reverted to clean baseline DLL `13A372A36084BF05`). Green-lit by the user.
+STATUS: **INCREMENT 1 BUILT + AGENT-AUDITED (0 CRITICAL) + LAN-SMOKE-CLEAN + DEPLOYED 2026-07-09; NOT
+hands-on-verified** (the place path needs a real hold-R pickup+place — tomorrow's user test). Supersedes
+the seam-catching F2 attempts v2/v3/v4 (all reverted to clean baseline DLL `13A372A36084BF05`). Green-lit
+by the user. proto 105→106, DLL `1A4C5BEF3107E50E`, all 4 folders.
+
+## INCREMENT 1 — AS-BUILT (2026-07-09)
+The client-place → host-authoritative DROP INTENT is built exactly as the SCOPE DECISION below:
+- **New wire**: `ReliableKind::PropDropIntent = 90` + `PropDropIntentPayload` (168 B: className+key+propName
+  +loc+rot+scale+physFlags), `protocol.h`. Router case in `event_dispatch_state.cpp` (host-only +
+  senderPeerSlot + payloadLen gated). NOT relayed / NOT pre-world (client→host, host-consumed).
+- **New module** `coop/props/prop_drop_intent.{h,cpp}` (288 LOC):
+  - CLIENT detect: `OnClientFinishSpawn` — a FinishSpawn post-hook **chained after host_spawn_watcher's**
+    on the same `FinishSpawningActor` UFunction (role-disjoint: host_spawn_watcher's is host-only, this is
+    client-only; chaining VERIFIED live — the smoke's 5787 join adopts prove the host broadcast survives).
+    Gated `!InEpisode` (quiet through the join loadObjects churn — smoke: 2273 episode-suppressed destroys,
+    0 `[PROP-DROP]`), `!PeekIncomingSpawn`, `IsDescendantOfProp`, untracked, `!= LocalHandActor`. Enqueues;
+    `Tick` reads the loadData-restored Key +1 tick (retry cap 8).
+  - PARK SET (the SAFETY INVARIANT): `NoteClientKeyedDestroy(key)` is called from `prop_lifecycle::
+    DestroySeamBody` right AFTER a CLIENT broadcasts a keyed destroy (so the host destroyed its copy) →
+    a place of a PARKED key is the ONLY thing that authors an intent → the host re-spawn makes exactly one
+    prop (no host dup). Never reached InEpisode (that path returns before the broadcast) → no join parking.
+  - HOST: `OnPropDropIntent` → `HostSpawnPlacedProp` (BeginDeferred → setKey → WriteSpParityIdentity →
+    FinishDeferredSpawn, **NOT** MarkIncomingSpawn → the host's own FinishSpawn watcher expresses+broadcasts
+    it). Dup-guard: skip if `ResolveLiveActorByKey(key)` already live.
+- **The v2-killer is beaten by the +1-tick send**: the place's in-hand husk-destroy (if it crosses as a
+  same-key DESTROY) is delivered on the in-order reliable channel BEFORE the +1-tick PropDropIntent → the
+  host processes the destroy against an already-gone rock (no-op) THEN spawns from the intent → survives.
+- **Placer no-dup**: the host broadcast echoes back; the placer adopts its own untracked local rock via
+  `remote_prop_spawn`'s `ResolveLiveActorByKey` FindByKeyString scan-fallback.
+- **Audit (agent, 0 CRITICAL)** fixed one MEDIUM (park FIFO/set consume desync → both containers now share a
+  1:1 mirror invariant via `UnparkKey`) + a LOW (Reset GT-assert). Known follow-ups (NON-blocking):
+  `event_dispatch_state.cpp` crossed 800→805 (extract the intent-family handlers → `event_dispatch_intent.cpp`);
+  host re-spawn is a bare Aprop (identity + transform faithful; full save `data`/physics fidelity = Inc-2);
+  the +1-tick husk-order relies on the reliable channel being in-order (it is ARQ) — CONFIRM on the hands-on.
+- **NOT verified**: the actual place → host-visible-rock path (the smoke can't drive hold-R input). Tomorrow's
+  hands-on: 2-peer, client hold-R picks a rock, hold-R places it → it must appear on the host at the placed
+  spot, no dup; watch the client log for `[PROP-DROP] CLIENT authored drop intent` + the host log for
+  `[PROP-DROP] HOST spawned client-placed prop`.
+
+---
+## (original DESIGN below — retained for the rationale)
+
+STATUS: DESIGN (post `/qf 15` convergence 2026-07-09). Superseded by the AS-BUILT above.
+Supersedes the seam-catching F2 attempts v2/v3/v4 (all reverted to clean baseline DLL `13A372A36084BF05`).
 
 ## Why (the `/qf 15` convergence)
 A client moving a HOST-OWNED keyed world prop (rock) via seam-catching is the wrong layer. v2 (FinishSpawn

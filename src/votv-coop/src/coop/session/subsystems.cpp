@@ -31,6 +31,7 @@
 #include "coop/dev/pinecone_probe.h"
 #include "coop/session/ambient_spawner_suppress.h"  // Fork C: client ambient flora/forage spawner suppression
 #include "coop/props/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
+#include "coop/props/prop_drop_intent.h"    // v106 F2 Inc-1: client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/creatures/kerfur_convert.h"  // v67: host-authoritative kerfur on/off conversion (the dupe fix)
 #include "coop/creatures/kerfur_command.h"  // v74: host-authoritative kerfur menu command relay + ownership follow
 #include "coop/creatures/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
@@ -140,6 +141,7 @@ void Install(coop::net::Session& session) {
     coop::garbage_sync::Install();           // Phase 5G garbage
     coop::ambient_spawner_suppress::Install(&session);  // Fork C: client ambient flora/forage spawner suppression (host results stream)
     coop::host_spawn_watcher::Install(&session);  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
+    coop::prop_drop_intent::Install(&session);    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
     coop::kerfur_entity::SetSession(&session);  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
     coop::kerfur_convert::Install(&session);  // v67: host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
     coop::kerfur_command::Install(&session);  // v74: host-authoritative kerfur menu command relay + ownership-aware Follow
@@ -321,6 +323,7 @@ DisconnectStats DisconnectAll() {
     coop::piramid_sync::OnDisconnect();        // v97: drop pending gather + gather-edge map + restored-tick set (hooks stay latched)
     coop::npc_adoption::OnSessionEnd();        // v75: drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd(); // K-6: drop pending prop-form kerfur adoptions
+    coop::prop_drop_intent::Reset();            // v106 F2 Inc-1: clear the client park set + pending places
     coop::host_spawn_watcher::OnDisconnect();  // M2: drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();      // v67: drop pending host-menu converges
     coop::kerfur_entity::OnDisconnect();       // K-3: clear the KerfurId table + free its reserved host ids
@@ -411,6 +414,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:trash_clump_pose"}; coop::trash_clump_pose_stream::TickApplyAndDrive(session); } // v85 CLIENT: apply host-auth carry/flight pose batch + per-eid interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // M2: ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // v106: adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
+    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // v106 F2 Inc-1 CLIENT: author a PropDropIntent for a detected place whose Key is parked (cheap no-op when empty / on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_convert::Tick(); }  // v67: drain deferred kerfur conversion requests/converges (cheap no-op when empty)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // v74: drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // v68: broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
