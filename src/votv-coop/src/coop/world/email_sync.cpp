@@ -5,6 +5,9 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
+#include "coop/comms/peer_action_feed.h"
+#include "coop/player/players_registry.h"
+
 #include "ue_wrap/email.h"
 #include "ue_wrap/log.h"
 
@@ -41,9 +44,11 @@ constexpr size_t kBulkAppendThreshold = 32;
 // mutation flows through the poll diff or ApplyDeleteByHash, both of which
 // keep alignment). Single steady-state cost: n raw RowKey reads per second.
 struct ShadowRow {
-    UE::RowKey key;       // per-process instance identity (raw bytes)
-    uint64_t   hash = 0;  // cross-peer identity (serialized-blob FNV-1a 64)
-    bool       sent = true;
+    UE::RowKey   key;       // per-process instance identity (raw bytes)
+    uint64_t     hash = 0;  // cross-peer identity (serialized-blob FNV-1a 64)
+    bool         sent = true;
+    std::wstring topic;     // truncated subject -- so a delete can name the email in
+                            // the peer-action feed ("<nick> deleted an email: X")
 };
 std::vector<ShadowRow> g_shadow;
 bool g_primed = false;
@@ -163,7 +168,7 @@ bool SendRow(coop::net::Session* s, const UE::Row& r) {
 // still aligns with the array (a player delete in the same poll window
 // shifts indexes; on mismatch we defer -- the next poll's diff resyncs and
 // the tombstone retry lands it). True = applied (shadow updated inline).
-bool ApplyDeleteByHash(uint64_t hash) {
+bool ApplyDeleteByHash(uint64_t hash, std::wstring* outTopic = nullptr) {
     if (!g_primed) return false;
     if (hash == 0) return false;  // 0 marks hash-unknown shadow rows (unreadable at scan)
     for (size_t i = 0; i < g_shadow.size(); ++i) {
@@ -171,6 +176,7 @@ bool ApplyDeleteByHash(uint64_t hash) {
         UE::RowKey live;
         if (!UE::ReadRowKey(static_cast<int32_t>(i), live) || !(live == g_shadow[i].key))
             return false;  // misaligned this instant; retry after the next diff
+        if (outTopic) *outTopic = g_shadow[i].topic;  // subject for the feed (before delete)
         if (!UE::DelEmail(static_cast<int32_t>(i))) return false;
         g_shadow.erase(g_shadow.begin() + static_cast<ptrdiff_t>(i));
         UE_LOGI("email_sync: applied remote delete (row %zu, hash %016llx)",
@@ -287,6 +293,7 @@ void Tick() {
             if (UE::ReadRow(i, r)) {
                 const std::vector<uint8_t> blob = SerializeRow(r);
                 srow.hash = Fnv64(blob.data(), blob.size());
+                srow.topic = r.topic.substr(0, 80);
             }
             g_shadow.push_back(srow);
         }
@@ -310,6 +317,14 @@ void Tick() {
         std::vector<ShadowRow> next;
         next.reserve(static_cast<size_t>(n));
         std::vector<uint64_t> removed;
+        // Local peer's display slot (chat_sync parity: host = 0; client = registry id).
+        // Used to color the "You deleted an email" peer-action line the same as our
+        // chat lines. Computed once; the removed loop below is the local-delete branch
+        // (a remote delete erased the shadow synchronously in ApplyDeleteByHash, so it
+        // never appears here).
+        uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
+        if (s->role() == coop::net::Role::Host || localSlot == coop::players::kPeerIdUnknown)
+            localSlot = 0;
         size_t j = 0;
         for (const ShadowRow& srow : g_shadow) {
             if (j < cur.size() && srow.key == cur[j]) {
@@ -319,6 +334,12 @@ void Tick() {
                 // hash 0 = was unreadable at shadow time (v65 audit I-2 parity:
                 // the hash-unknown sentinel is not a wire key).
                 removed.push_back(srow.hash);
+                // This peer removed the row locally (a user delete) -- announce it to
+                // the shared feed so the other peers learn who deleted what. Only in an
+                // actual session (no point telling yourself when solo).
+                if (s->connected())
+                    coop::peer_action_feed::Announce(localSlot, true,
+                                                     L"deleted an email: " + srow.topic);
             }
         }
         // A bulk batch of new rows in ONE poll is a save load (history materializing),
@@ -341,6 +362,7 @@ void Tick() {
             if (rowReadable) {
                 const std::vector<uint8_t> blob = SerializeRow(r);
                 rowHash = Fnv64(blob.data(), blob.size());
+                srow.topic = r.topic.substr(0, 80);
             }
             srow.hash = rowHash;
             bool wireApplied = false;
@@ -426,8 +448,16 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
-    if (!ApplyDeleteByHash(p.contentHash))
+    std::wstring topic;
+    if (ApplyDeleteByHash(p.contentHash, &topic)) {
+        // A remote peer deleted this shared email -- surface who, to the local feed.
+        coop::peer_action_feed::Announce(senderSlot, false, L"deleted an email: " + topic);
+    } else {
+        // Deferred (row not present yet / transient misalignment): the tombstone retry
+        // in Tick applies it later WITHOUT an announce (senderSlot isn't carried on the
+        // retry path -- a rare edge; the delete still converges).
         g_tombstones[p.contentHash] = Clock::now();
+    }
 }
 
 void OnDisconnect() {

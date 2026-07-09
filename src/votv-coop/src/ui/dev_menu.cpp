@@ -16,6 +16,7 @@
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/teleport_client.h"
+#include "coop/comms/peer_action_feed.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/nick_color.h"
 #include "coop/session/ini_config.h"
@@ -322,6 +323,20 @@ void RenderSkins() { ui::skins_panel::Render(); }
 // this is just the tree hook). Non-dev: every player gets the toggle, like Cosmetics.
 void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
 
+// Peer action notifications: show a chat/feed line when another player does a shared
+// action everyone should see (first: deleting an email). A LOCAL view preference
+// (each peer decides whether IT sees these lines), persisted (votv-coop.ini
+// ui.chat.peer_actions). Rendered locally from the existing wire event -- no extra
+// traffic; see coop::peer_action_feed.
+void RenderChatPref() {
+    bool on = coop::peer_action_feed::Enabled();
+    if (ImGui::Checkbox("Peer action notifications", &on))
+        coop::peer_action_feed::SetEnabled(on);
+    ImGui::TextDisabled("Show a chat line when another player does a shared action");
+    ImGui::TextDisabled("(e.g. deletes an email). Local preference; persists across");
+    ImGui::TextDisabled("sessions (ui.chat.peer_actions).");
+}
+
 // v94: the local player's plate-visibility pref. SYNCED (live NameplateChange +
 // the Join prefs byte for late joiners) and persisted (votv-coop.ini nameplate=).
 void RenderNameplatePref() {
@@ -480,6 +495,7 @@ const std::vector<Cat>& Tree() {
         { "Cosmetics", {
             { "Skins",     { { &RenderSkins, false } }, false },
             { "Nameplate", { { &RenderNameplatePref, false } }, false },
+            { "Chat",      { { &RenderChatPref, false } }, false },
             { "Interface", { { &RenderFontPref, false } }, false },
         }, false },
     };

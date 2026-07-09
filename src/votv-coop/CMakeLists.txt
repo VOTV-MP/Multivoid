@@ -250,6 +250,7 @@ add_library(votv-coop SHARED
     src/coop/player/hand_item.cpp
     src/coop/comms/chat_feed.cpp
     src/coop/comms/chat_bubbles.cpp
+    src/coop/comms/peer_action_feed.cpp
     src/coop/session/event_feed.cpp
     src/coop/session/event_dispatch_entity.cpp
     src/coop/session/event_dispatch_state.cpp
