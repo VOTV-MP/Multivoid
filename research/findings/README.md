@@ -128,6 +128,26 @@ batch, the `StoreRemoteWorldActorBatch` pattern). The interp was extracted to `c
 component on the proxy (occlusion-correct aim + movement-block — the cone ignores walls, the proxy is
 walk-through). HEAD `29353191`, deployed `BB94A120A969A51E`, proto v85, committed, push held.
 
+## 2026-07-09 (late) — client prop grab/drop RE-ROOTED to a host-auth INTENT lane + F1 join-window reconcile
+
+**`votv-keyed-prop-grabdrop-intent-lane-DESIGN-2026-07-09.md`** — the client-places-a-prop-invisible-on-host
+bug (F2) after a full `/qf 15`: the seam-catching fixes (v2 FinishSpawn author, v3 destroy-suppress, v4
+exclude-hand) are ALL crutches on a wrong layer (a MISSING SINGLE OWNER) and were REVERTED to a clean
+baseline (they duped on grab). Proper fix = extend the EXISTING host-authoritative `GrabIntent=78` lane
+(chipPiles use it) to keyed world props: client sends grab/drop INTENT, host runs the native op on its own
+prop. Full RE of the GrabIntent template + native grab/drop verbs (all `mainPlayer_C`, puppet-callable).
+Button map: `[[reference-votv-prop-interaction-buttons]]` (E=physics-grab; hold-R=pick into hand/place; R
+tap=hotbar). SCOPE: Inc-1 = a clean host-auth DROP intent (the grab-destroy already crosses). Clean baseline
+deployed `13a372a3`, NOT built. Supersedes `votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md` Bug B.
+
+**`votv-F1-host-moved-prop-join-window-DESIGN-2026-07-09.md`** — a keyed prop the host MOVED during a
+client's join window shows at the SAVE pos on the joiner (loadObjects clobbers the snapshot pos; the keyed
+RE-BIND migrates identity WITHOUT position). `/qf` R1-R5 CONVERGED on the direction (generalize the b3 pile
+reconcile into ONE host-authoritative live-pos reconcile for keyed props + piles) but GATED it behind a
+read-only probe (MEASURE the root first). The user's grab-during-window edge case exposed a LATENT bug in
+the SHIPPED pile lane: `ApplyPendingPosCorrections` re-validates only liveness at apply-time, so a grab
+between arm and apply snaps a carried clump to a ghost pos. DESIGN PROVISIONAL, probe not yet built.
+
 ## 2026-07-09 — world-rules / game-settings RE + coop verdict + F1 panel AS-BUILT
 
 **`votv-gamerules-settings-RE-2026-07-09.md`** — world rules = `Fstruct_gameRules` (~36 fields: fall

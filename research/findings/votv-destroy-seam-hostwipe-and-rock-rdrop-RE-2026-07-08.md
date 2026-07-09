@@ -177,18 +177,47 @@ or the "is it real" question; the clean 11:54 bare-join log settles both.
 
 ## BUG B — ROCK R-drop invisibility (client places a pre-existing rock -> host can't see it)
 
-**Status: v2 BUILT (DLL `7DC715F92974`, UNCOMMITTED) — hands-on FAILED under drop-pickup CHURN
-2026-07-09; a CLEAN single-drop is UNTESTED. NOT VERIFIED. The v2 mechanism (route the fresh dropped
-Aprop to `trash_collect_sync::EnsureHeldItemBroadcast` in a settled session) DOES reach the host: log
-12:06 shows client `EXPRESSED` + host `OnSpawn ... spawned` at the drop pos. BUT the host `OnSpawn` is
-followed SAME-TICK by `OnDestroy key='uwmsjz' -> destroying local actor <the just-spawned one>` — the
-pickup's destroy resolves BY KEY and kills the freshly-dropped actor (eid mismatch: spawn eid=47211,
-destroy eid=47210 — destroy-by-key ignores the eid and hits the newest same-key actor). During the
-user's rapid drop->pickup cycling EVERY spawn died → the rock FLICKERED, never stayed → "host never saw
-the rock" [user hands-on 2026-07-09]. UNKNOWN whether a CLEAN drop (drop once, leave it, no re-pickup)
-survives — the churn log has no clean drop. OPEN CHURN ROOT: same-key drop/pickup interleave + a lagging
-destroy-by-key kills the successor. The `## F2 AS-BUILT (v2)` section documents the as-built + the churn
-failure; MINIMAL-A/PARK/`prop_pickup_park.h` below it is SUPERSEDED history — do NOT implement.**
+**Status (2026-07-09 CLOSEOUT): the ENTIRE seam-catching approach (v2 author + v3 destroy-suppress + a
+proposed v4 exclude-hand) is ABANDONED and REVERTED to a CLEAN BASELINE (deployed DLL `13a372a36084bf05`;
+`host_spawn_watcher.cpp` + `prop_lifecycle.cpp` back at HEAD; no dupe — client-placed props are invisible
+again = feature ABSENT, not broken). SUPERSEDED BY the host-authoritative intent lane:
+`research/findings/votv-keyed-prop-grabdrop-intent-lane-DESIGN-2026-07-09.md`. Do NOT re-implement v2/v3/v4.**
+
+**Why (a full `/qf 15`, R1-R10, 2026-07-09):** v3 was BUILT (DLL `d638ccbb`) and hands-on FAILED — it
+DUPED on grab. v3 suppressed a client keyed destroy whenever a live same-key carrier existed, which
+correctly suppressed the DROP's hand-husk destroy BUT ALSO wrongly suppressed the GRAB's world-rock
+destroy → the ground rock stayed while the hand mirror also showed it (two rocks). A v4 "exclude the local
+hand actor from the carrier scan" was designed then REFUTED (the hand-actor pointer `g_ownHeldPtr` is
+poll-set vs the event-driven destroy → stale-tick → dupe; R-hold-only). ROOT (converged): a MISSING
+SINGLE OWNER — three client seams (`EnsureHeldItemBroadcast` ×3 + the K2 destroy-seam) author one
+host-owned keyed identity with no owner/order; every seam discriminator is a fragile crutch. The RE also
+CORRECTED the interaction model: native grab DESTROYS the world rock, native drop SPAWNS a fresh one; the
+held visual is already the puppet-anchored `hand_item` mirror. FIX = extend the EXISTING host-authoritative
+`GrabIntent=78` lane (chipPiles use it) to keyed world props — the client sends grab/drop INTENT, the host
+runs the native op on its OWN rock (like its own r-hold). Durable: `[[lesson-client-keyed-prop-move-two-wire-halves]]`,
+`[[feedback-map-all-wire-events-before-fixing-missing-sync]]`, `[[reference-votv-prop-interaction-buttons]]`.
+
+## F2 AS-BUILT (v3, 2026-07-09) — REVERTED (duped on grab; the seam approach is abandoned — see the status above)
+
+Two files (both UNCOMMITTED, DLL `d638ccbb`):
+- `host_spawn_watcher.cpp` — the SPAWN half from v2, UNCHANGED (the client FinishSpawn -> +1-tick
+  key-settle -> `EnsureHeldItemBroadcast` express). Proven to reach the host as a CONVERGE.
+- `prop_lifecycle.cpp` `DestroySeamBody` — NEW. After the v107 world-load-episode gate, a second
+  CLIENT-scoped guard: `if (!keyless && role==Client && HasOtherLiveKeyCarrier(self, keyStr)) return;`
+  `HasOtherLiveKeyCarrier` walks GUObjectArray for any LIVE actor of `self`'s exact UClass carrying
+  interactable key == K and != self (cheap ClassOf ptr compare before the key read). Found -> the
+  identity still lives on a successor -> SUPPRESS the spurious husk destroy. Log line:
+  `grab_hook[destroy-seam]: CLIENT suppressed KEYED DESTROY ... key still has a live carrier`.
+
+**Verification (per `[[lesson-onspawn-log-not-proof-check-immediate-destroy]]`):** the user drops a rock
+as CLIENT; the host should now SEE + KEEP it. Confirm in logs: CLIENT `suppressed KEYED DESTROY` fires;
+HOST `OnSpawn ... converging transform` with NO following same-key `OnDestroy`. Then commit if verified.
+
+**Honest residual:** inherits the existing K-uniqueness-outside-episode invariant (stable-ID; window-dup
+CLOSED). A mirror-dup regression OUTSIDE the world-load episode would present a stale K-carrier and
+mis-suppress a genuine destroy — but that invariant is already load-bearing system-wide, so v3 adds no
+new fragility. Food morph is unaffected (spawns a DIFFERENT key `g_foodbox` -> old key has no successor
+-> its destroy passes through).
 
 ### The root, stated plainly (why host works, client didn't)
 The prop-sync model is **host-authoritative**: the host owns every world prop; clients are mirrors. So a
@@ -201,7 +230,7 @@ therefore NOT a new mechanism but a **carve-out**: a client keyed spawn in a SET
 world-load episode) is a real placement and must cross — the exact mirror of the v107 host-wipe fix
 (which carves the same `!InEpisode` line for DESTROYS). See `## F2 AS-BUILT (v2)`.
 
-## F2 AS-BUILT (v2, 2026-07-09) — the SHIPPED fix (LOG-VERIFIED; supersedes MINIMAL-A/PARK below)
+## F2 AS-BUILT (v2, 2026-07-09) — SUPERSEDED by v3 above (churn-FAILED; the "churn root" was a symptom)
 
 **One file changed: `coop/props/host_spawn_watcher.cpp` (a CLIENT branch on `OnFinishSpawnFunc`). No
 `prop_lifecycle` change, no PARK, no new module.** Deployed `7DC715F92974` (UNCOMMITTED).
