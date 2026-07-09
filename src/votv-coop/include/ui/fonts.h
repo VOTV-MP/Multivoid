@@ -39,15 +39,15 @@ inline constexpr int kFamilyCount = 4;
 // DOWN with distance from here (hud::kNickPx mirrors this).
 inline constexpr float kNameplatePx = 16.f;
 
-// GRANULAR font roles (2026-07-09): each on-screen surface picks its OWN family,
-// so chat, the net-stats widget, the nameplates and the menu/panels are
-// independent. Menu is baked FIRST -> it is ImGui's default font, so every panel
-// (F1, scoreboard, admin, server browser, loading) follows it with no per-window
-// push; Chat/Net/Nameplate are pushed by their consumers. Persisted per role as
-// votv-coop.ini ui.font.<menu|chat|net|nameplate>, each defaulting to the legacy
-// global ui.font (so an existing single-font config is preserved).
-enum class Role : int { Menu = 0, Chat = 1, Net = 2, Nameplate = 3 };
-inline constexpr int kRoleCount = 4;
+// GRANULAR font roles (2026-07-09): each on-screen surface picks its OWN family, so
+// chat, the net-stats widget, the nameplates, the menu/panels and our release/update
+// toast are independent. Menu is baked FIRST -> it is ImGui's default font, so every
+// panel (F1, scoreboard, admin, server browser, loading) follows it with no per-window
+// push; Chat/Net/Nameplate/Toast are pushed by their consumers. Persisted per role as
+// votv-coop.ini ui.font.<menu|chat|net|nameplate|toast>. Per-role DEFAULTS (user
+// 2026-07-09): menu/chat/toast = Fixedsys (VOTV); nameplate/net = Roboto.
+enum class Role : int { Menu = 0, Chat = 1, Net = 2, Nameplate = 3, Toast = 4 };
+inline constexpr int kRoleCount = 5;
 
 // (Re)bake the overlay fonts into the shared atlas at the current scale + the
 // per-role families. Clears the atlas first. Call only BETWEEN frames (bring-up,

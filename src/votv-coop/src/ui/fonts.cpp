@@ -21,8 +21,8 @@ namespace {
 // FIRST so its font is ImGui's default (every un-pushed panel follows it).
 ImFont* g_roleFont[kRoleCount]   = {};
 float   g_rolePx[kRoleCount]     = {};
-Family  g_roleFamily[kRoleCount] = { Family::Fixedsys, Family::Fixedsys,
-                                     Family::Fixedsys, Family::Fixedsys };
+Family  g_roleFamily[kRoleCount] = { Family::Fixedsys, Family::Fixedsys, Family::Roboto,
+                                     Family::Roboto,   Family::Fixedsys };
 bool    g_rolesRead = false;     // ini read once; SetRoleFamily overrides after
 
 struct FamilyDesc {
@@ -41,16 +41,18 @@ constexpr FamilyDesc kFamilies[kFamilyCount] = {
 };
 
 struct RoleDesc {
-    const char* iniKey;  // ui.font.<iniKey>
-    const char* label;   // UI label
-    float basePx;        // 1080p base size (baked at basePx * ui::scale)
-    bool  bold;          // use the family's Bold face
+    const char* iniKey;      // ui.font.<iniKey>
+    const char* label;       // UI label
+    float  basePx;           // 1080p base size (baked at basePx * ui::scale)
+    bool   bold;             // use the family's Bold face
+    Family defaultFam;       // per-role default when ui.font.<role> is unset (user 2026-07-09)
 };
 constexpr RoleDesc kRoles[kRoleCount] = {
-    { "menu",      "Menu / panels", kUiPx,        false },  // Role::Menu (== ImGui default)
-    { "chat",      "Chat",          kChatPx,      true  },  // Role::Chat
-    { "net",       "Net stats",     kUiPx,        false },  // Role::Net
-    { "nameplate", "Nameplates",    kNameplatePx, false },  // Role::Nameplate
+    { "menu",      "Menu / panels", kUiPx,        false, Family::Fixedsys },  // Role::Menu (== ImGui default)
+    { "chat",      "Chat",          kChatPx,      true,  Family::Fixedsys },  // Role::Chat
+    { "net",       "Net stats",     kUiPx,        false, Family::Roboto   },  // Role::Net
+    { "nameplate", "Nameplates",    kNameplatePx, false, Family::Roboto   },  // Role::Nameplate
+    { "toast",     "Release toast", kUiPx,        false, Family::Fixedsys },  // Role::Toast (our update/version toast)
 };
 
 Family FamilyFromToken(const std::string& v, Family fallback) {
@@ -59,17 +61,16 @@ Family FamilyFromToken(const std::string& v, Family fallback) {
     return fallback;
 }
 
-// Read the per-role families once. Each ui.font.<role> defaults to the legacy
-// global ui.font (default fixedsys) -- so an existing single-font config, or a
-// user who only ever set ui.font, keeps that family on every role.
+// Read the per-role families once. Each ui.font.<role> defaults to that ROLE's own
+// designated default family (user 2026-07-09: menu/chat/toast = Fixedsys, nameplate/
+// net = Roboto) -- NOT a single global, so the surfaces differ out of the box.
 void ReadRoleFamiliesOnce() {
     if (g_rolesRead) return;
-    const std::string global = harness::config::ReadIniValue("ui.font", "fixedsys");
-    const Family gfam = FamilyFromToken(global, Family::Fixedsys);
     for (int r = 0; r < kRoleCount; ++r) {
-        const std::string key = std::string("ui.font.") + kRoles[r].iniKey;
-        const std::string v = harness::config::ReadIniValue(key.c_str(), global.c_str());
-        g_roleFamily[r] = FamilyFromToken(v, gfam);
+        const std::string key   = std::string("ui.font.") + kRoles[r].iniKey;
+        const char* dfltToken   = kFamilies[static_cast<int>(kRoles[r].defaultFam)].iniValue;
+        const std::string v     = harness::config::ReadIniValue(key.c_str(), dfltToken);
+        g_roleFamily[r] = FamilyFromToken(v, kRoles[r].defaultFam);
     }
     g_rolesRead = true;
 }
@@ -170,12 +171,13 @@ void Load() {
         ImFont* def = g_roleFont[static_cast<int>(Role::Menu)];
         if (!def) for (int r = 0; r < kRoleCount; ++r) if (g_roleFont[r]) { def = g_roleFont[r]; break; }
         for (int r = 0; r < kRoleCount; ++r) if (!g_roleFont[r]) g_roleFont[r] = def;
-        UE_LOGI("fonts: roles menu=%s chat=%s net=%s nameplate=%s (embedded; ui %.0f px, "
+        UE_LOGI("fonts: roles menu=%s chat=%s net=%s nameplate=%s toast=%s (embedded; ui %.0f px, "
                 "chat %.0f px, scale %.2f, Cyrillic, freetype)",
                 kFamilies[static_cast<int>(g_roleFamily[0])].label,
                 kFamilies[static_cast<int>(g_roleFamily[1])].label,
                 kFamilies[static_cast<int>(g_roleFamily[2])].label,
                 kFamilies[static_cast<int>(g_roleFamily[3])].label,
+                kFamilies[static_cast<int>(g_roleFamily[4])].label,
                 g_rolePx[0], g_rolePx[1], s);
         return;
     }
@@ -198,6 +200,7 @@ void Load() {
         g_roleFont[static_cast<int>(Role::Chat)]      = chat ? chat : menu; g_rolePx[1] = (chat ? kChatPx : kUiPx) * s;
         g_roleFont[static_cast<int>(Role::Net)]       = menu; g_rolePx[2] = kUiPx * s;
         g_roleFont[static_cast<int>(Role::Nameplate)] = menu; g_rolePx[3] = kNameplatePx * s;
+        g_roleFont[static_cast<int>(Role::Toast)]     = menu; g_rolePx[4] = kUiPx * s;
         UE_LOGW("fonts: embedded families unavailable -- overlay font = %s (all roles; scale %.2f)",
                 c.tag, s);
         return;

@@ -6,6 +6,8 @@
 
 #include "imgui.h"
 
+#include "ui/fonts.h"
+
 #include <chrono>
 #include <mutex>
 #include <vector>
@@ -58,11 +60,14 @@ void Render() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImFont* tf = ui::fonts::FontFor(ui::fonts::Role::Toast);  // per-role font (F1 > Interface)
+    if (tf) ImGui::PushFont(tf);
     for (const auto& e : live) {
         ImGui::TextColored(e.warn ? ImVec4(1.00f, 0.78f, 0.35f, 1.0f)
                                   : ImVec4(0.92f, 0.95f, 1.00f, 1.0f),
                            "%s", e.text.c_str());
     }
+    if (tf) ImGui::PopFont();
     ImGui::End();
 }
 
