@@ -245,14 +245,22 @@ void Capture::ProcessFrame(const int16_t* samples) {
     // OURS" (cheap user32 calls, safe on this mic thread). Tone mode is exempt: the
     // headless autonomous smoke has no focused window at all.
     const bool foreground = toneMode_ || coop::ini_config::IsOurWindowForeground();
+    // Text-capture gate (2026-07-09): while OUR overlay is capturing typed text (chat
+    // input, a rebind box), a physical KEY must not drive the mic -- ImGui already ate
+    // the char for the field, so a PTT/whisper poll here would double-fire (user: T to
+    // chat, then G activated voice). KEY reads only; the activation-mode MIC path below
+    // is unaffected (typing does not change the mic level). Tone mode (headless smoke,
+    // no overlay) stays exempt.
+    const bool keysLive = foreground &&
+        (toneMode_ || !coop::ini_config::IsOverlayCapturingText());
     const bool whisperHeld =
-        foreground && cfg_.whisperVk != 0 && (GetAsyncKeyState(cfg_.whisperVk) & 0x8000) != 0;
+        keysLive && cfg_.whisperVk != 0 && (GetAsyncKeyState(cfg_.whisperVk) & 0x8000) != 0;
     bool wantActive = false;
     if (!muted_.load(std::memory_order_relaxed) && foreground) {
         if (cfg_.activationMode) {
             wantActive = db >= thresholdDb_.load(std::memory_order_relaxed) || whisperHeld;
         } else {
-            wantActive = (GetAsyncKeyState(cfg_.pttVk) & 0x8000) != 0 || whisperHeld;
+            wantActive = (keysLive && (GetAsyncKeyState(cfg_.pttVk) & 0x8000) != 0) || whisperHeld;
         }
     }
     if (wantActive) {

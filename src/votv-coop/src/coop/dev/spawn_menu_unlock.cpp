@@ -52,7 +52,10 @@ DWORD WINAPI KeyWatcherThread(LPVOID) {
             }
             const bool rawQ = KeyDown('Q');
             if (rawQ && !prevRawQ) {  // one event per physical Q press
-                const bool focused = ::coop::ini_config::IsOurWindowForeground();
+                // Foreground AND not typing: 'Q' typed into the chat/rebind field must
+                // not ALSO toggle the spawn menu (2026-07-09 text-capture gate).
+                const bool focused = ::coop::ini_config::IsOurWindowForeground() &&
+                                     !::coop::ini_config::IsOverlayCapturingText();
                 if (focused) {
                     UE_LOGI("spawn_menu_unlock: Q pressed (foreground) -- posting Toggle() to the game thread");
                     // Toggle, not Open: Q both opens AND dismisses the menu. Open() leaves the player

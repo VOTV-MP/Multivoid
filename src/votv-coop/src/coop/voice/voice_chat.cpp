@@ -193,9 +193,11 @@ void Tick() {
     }
 
     // Mute-key toggle edge (GT poll, GetAsyncKeyState -- foreground-gated: the key is
-    // global across processes, same hazard as the capture-thread PTT gate).
+    // global across processes, same hazard as the capture-thread PTT gate). Also
+    // text-capture-gated (2026-07-09): no mute toggle while typing the key into chat.
     if (g_muteVk != 0) {
         const bool down = coop::ini_config::IsOurWindowForeground() &&
+                          !coop::ini_config::IsOverlayCapturingText() &&
                           (GetAsyncKeyState(g_muteVk) & 0x8000) != 0;
         if (down && !g_muteKeyWasDown) g_capture.SetMuted(!g_capture.Muted());
         g_muteKeyWasDown = down;

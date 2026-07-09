@@ -42,6 +42,7 @@
 #include "ui/scale.h"
 #include "ui/voice_panel.h"
 #include "coop/comms/chat_sync.h"
+#include "coop/session/ini_config.h"  // SetOverlayCapturingText -- the hotkey-poller text-capture gate
 #include "coop/session/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/session/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
@@ -423,6 +424,15 @@ void RenderFrameGuarded() {
         coop::join_curtain::Render();
         if (LoadingOpen()) ui::loading_screen::Render();
         DrawToasts();  // top-center notices (the v59 version toast) above everything
+
+        // Publish "our overlay is capturing typed text" for the global-key hotkey
+        // pollers (voice PTT/whisper/mute, freecam, spawn-menu Q): while a text
+        // field is focused, their GetAsyncKeyState reads must NOT fire, so a
+        // keystroke meant for the field doesn't ALSO trigger a bind (2026-07-09:
+        // T-to-chat then G activated voice). WantTextInput covers every text
+        // widget; OR the chat-open latch for the one focus-handoff frame.
+        coop::ini_config::SetOverlayCapturingText(
+            ImGui::GetIO().WantTextInput || ui::chat_input::IsOpen());
 
         ImGui::Render();
         if (g_rtv) {

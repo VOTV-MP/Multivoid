@@ -208,8 +208,11 @@ void MovementTick() {
     // Foreground-window gate (same reason as the hotkey thread): the WASD /
     // Space / Ctrl / Shift KeyDown reads are GLOBAL, so without this the
     // freecam would still move when the user types in the OTHER instance's
-    // window. Stop moving immediately when our window loses focus.
-    if (!::coop::ini_config::IsOurWindowForeground()) return;
+    // window. Stop moving immediately when our window loses focus. Also stop
+    // while OUR overlay is capturing typed text (2026-07-09): WASD typed into the
+    // chat/rebind field must not ALSO fly the camera.
+    if (!::coop::ini_config::IsOurWindowForeground() ||
+        ::coop::ini_config::IsOverlayCapturingText()) return;
     // The level may have reloaded under us (the cached actors are then freed).
     // Bail without touching dead objects -- never SetActorLocation a freed actor.
     if (!R::IsLive(g_camActor) || !R::IsLive(g_pc)) {

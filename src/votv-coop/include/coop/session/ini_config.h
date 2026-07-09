@@ -31,4 +31,17 @@ bool IsIniKeyTrue(const char* key);
 // true if no foreground window query is possible (defensive default).
 bool IsOurWindowForeground();
 
+// Companion to IsOurWindowForeground for the SAME hotkey pollers: true while OUR
+// overlay is capturing typed text (a text field is focused -- the chat input, a
+// rebind box...). Every global-key poller (voice PTT/whisper/mute, freecam WASD,
+// the spawn-menu Q) must ALSO gate on !IsOverlayCapturingText() so a keystroke
+// meant for the text field never ALSO fires a game/voice bind. Born 2026-07-09:
+// pressing T to chat then G activated voice, because the mic thread's global
+// GetAsyncKeyState(G) poll is independent of ImGui eating the 'g' as text.
+// Published once per frame by the overlay (io.WantTextInput || chat open); the
+// backing flag is atomic, so any thread may read it. Defaults false (keys live)
+// until the overlay first publishes.
+void SetOverlayCapturingText(bool capturing);
+bool IsOverlayCapturingText();
+
 }  // namespace coop::ini_config
