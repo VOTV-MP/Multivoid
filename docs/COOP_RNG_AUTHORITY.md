@@ -434,7 +434,11 @@ lane (owner broadcasts its effect spawns; peers render them) — the pose-stream
 ambient effects. Applies to color wisps, fireflies, autumn leaves, and every player-proximity
 ambient effect; an RE/classify step in the Inc plan decides each ambient spawner's class
 (world-anchored → cancel table; player-proximity effect → OWNER-EFFECT + mirror lane). The
-owner-effect mirror is its own increment family (does not block Inc-1).
+owner-effect mirror is its own increment family (does not block Inc-1). **Shipped precedent:
+`coop/world/firefly_sync` (v51, 2026-06-09, [V]) already IS this rule end-to-end** — each peer's
+ticker_fireflySpawner keeps rolling natively (camera-relative), PRE+POST-diffs its OWN spawn,
+broadcasts FireflySpawn (peer-symmetric, host-relayed), peers render the union. Wisps/leaves
+generalize the firefly_sync shape, not a new invention.
 (2) dreams/wakeup: default PLAYER-LOCAL (personal experience, no world actors for peers) —
 stands unless the user objects.
 (3) Inc-2 family order: measured-liveness default (hexahive → bp7 → eyers → roach → mannequin)
