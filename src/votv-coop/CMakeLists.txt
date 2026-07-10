@@ -171,6 +171,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/log.cpp
     src/ue_wrap/sig_scan.cpp
     src/ue_wrap/reflection.cpp
+    src/ue_wrap/reflection_props.cpp
     src/ue_wrap/asset_load.cpp
     src/ue_wrap/engine_heap.cpp
     src/ue_wrap/hook.cpp
