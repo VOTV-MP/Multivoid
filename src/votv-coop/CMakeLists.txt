@@ -309,6 +309,7 @@ add_library(votv-coop SHARED
     src/coop/dev/force_overdestroy_test.cpp
     src/coop/props/prop_census.cpp
     src/coop/props/prop_element_tracker.cpp
+    src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_drop_intent.cpp
     src/coop/props/prop_snapshot.cpp
