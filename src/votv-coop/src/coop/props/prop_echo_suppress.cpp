@@ -16,6 +16,11 @@ std::unordered_set<void*> g_incomingSpawns;
 std::unordered_set<void*> g_incomingDestroys;
 constexpr size_t kIncomingCap = 256;
 
+// Mirror-spawn re-entrancy depth (see header). Game-thread-only; a plain int
+// because the wrapped BeginDeferred call dispatches synchronously on the same
+// thread (nested scopes are fine -- depth counts).
+int g_mirrorSpawnDepth = 0;
+
 template <class Set>
 void InsertCapped(Set& s, void* actor) {
     if (s.size() >= kIncomingCap) s.clear();
@@ -37,5 +42,9 @@ bool ConsumeIncomingSpawn(void* actor)  { return actor ? TakeOne(g_incomingSpawn
 bool PeekIncomingSpawn(void* actor)     { return actor && g_incomingSpawns.count(actor) != 0; }
 void MarkIncomingDestroy(void* actor)   { if (actor) InsertCapped(g_incomingDestroys, actor); }
 bool ConsumeIncomingDestroy(void* actor){ return actor ? TakeOne(g_incomingDestroys, actor) : false; }
+
+ScopedMirrorSpawn::ScopedMirrorSpawn()  { ++g_mirrorSpawnDepth; }
+ScopedMirrorSpawn::~ScopedMirrorSpawn() { --g_mirrorSpawnDepth; }
+bool InMirrorSpawnScope()               { return g_mirrorSpawnDepth > 0; }
 
 }  // namespace coop::prop_echo_suppress

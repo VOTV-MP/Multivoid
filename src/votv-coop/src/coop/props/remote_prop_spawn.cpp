@@ -762,9 +762,14 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     xform.SY = payload.scaleY;
     xform.SZ = payload.scaleZ;
     // Phase 1: BeginDeferredActorSpawnFromClass -> uninitialized AActor*.
+    // ScopedMirrorSpawn: this UFunction call dispatches through ProcessEvent,
+    // so the peer-symmetric ambient broadcaster's BeginDeferred POST fires
+    // INSIDE it (before the actor exists to MarkIncomingSpawn) -- the scope is
+    // its re-entrancy guard (owner-mirror 2026-07-10, see prop_echo_suppress.h).
     constexpr uint8_t kAlwaysSpawn = 1;
     void* spawned = nullptr;
     {
+        coop::prop_echo_suppress::ScopedMirrorSpawn mirrorScope;
         ParamFrame begin(g_beginSpawnFn);
         begin.Set<void*>(L"WorldContextObject", worldCtx);
         begin.Set<void*>(L"ActorClass", actorClass);
@@ -877,6 +882,36 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     }
     UE_LOGI("remote_prop::OnSpawn: spawned %p of '%ls' at (%.1f, %.1f, %.1f)",
             spawned, classW.c_str(), payload.locX, payload.locY, payload.locZ);
+    // Ambient owner-effect mirrors (pinecone/stick/crystal, 2026-07-10): the
+    // NATIVE prop self-expires via the spawner's SetLifeSpan(600); the mirror's
+    // despawn normally arrives via the owner's death-watch PropDestroy, but an
+    // owner that DISCONNECTS leaves the mirror orphaned forever. SP-parity
+    // backstop: give the mirror its own lifespan (900 s > the native 600 s, so
+    // the wire destroy always wins in the normal case and an orphan self-reaps).
+    if (payload.key.len == 0) {
+        for (size_t i = 0; i < P::name::kAmbientPropSpawnMirrorClassesSize; ++i) {
+            if (classW != P::name::kAmbientPropSpawnMirrorClasses[i]) continue;
+            // SetLifeSpan lives on AActor -- FindFunction is exact-owner (no
+            // SuperStruct climb; audit 2026-07-10 CRITICAL: the leaf-class
+            // lookup returned null every call AND paid a futile full-array
+            // walk per mirror). Resolve ONCE on the Actor class, latch.
+            static void* s_lifeFn = nullptr;
+            static bool  s_lifeTried = false;
+            if (!s_lifeTried) {   // GT-only path (event drain) -- plain statics
+                s_lifeTried = true;
+                if (void* actorCls = R::FindClass(P::name::ActorClassName))
+                    s_lifeFn = R::FindFunction(actorCls, L"SetLifeSpan");
+                if (!s_lifeFn)
+                    UE_LOGW("remote_prop::OnSpawn: Actor.SetLifeSpan not resolved -- "
+                            "ambient-mirror orphan backstop disabled");
+            }
+            if (s_lifeFn) {
+                ParamFrame life(s_lifeFn);
+                if (life.Set<float>(L"InLifespan", 900.f)) Call(spawned, life);
+            }
+            break;
+        }
+    }
     // Stamp the trash VARIANT + keep the mirror clump from self-converting.
     //
     // The former position-based "consume the co-located source pile" here was REMOVED

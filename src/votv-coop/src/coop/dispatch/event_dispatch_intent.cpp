@@ -14,6 +14,7 @@
 
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert.h"
+#include "coop/creatures/roach_sync.h"    // v108: CLIENT->HOST local roach consumption intent
 #include "coop/interactables/interactable_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/props/prop_drop_intent.h"  // v106 F2 Inc-1: CLIENT->HOST client-placed keyed prop
@@ -211,6 +212,20 @@ bool HandleIntentEvent(net::Session& session,
         net::PropDropIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::prop_drop_intent::OnPropDropIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::RoachConsumed: {  // v108: CLIENT->HOST -- a native eat/stomp destroyed a
+                                              // roach component locally; the host deletes its nearest
+                                              // roach and the next RoachState converges every peer.
+                                              // Role/sender validation in roach_sync::OnConsumedIntent.
+        if (msg.payloadLen < sizeof(net::RoachConsumedPayload)) {
+            UE_LOGW("event_feed: RoachConsumed payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::RoachConsumedPayload));
+            break;
+        }
+        net::RoachConsumedPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::roach_sync::OnConsumedIntent(p, msg.senderPeerSlot);
         break;
     }
     default:

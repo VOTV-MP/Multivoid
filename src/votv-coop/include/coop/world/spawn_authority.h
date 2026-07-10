@@ -21,25 +21,44 @@
 //    ships with the first Delay-latent Inc-2 family (beehive/mannequin); no
 //    Inc-1 class needs it, so it does not exist yet by design.)
 //
-// Inc-1 ACTIVE ROWS (dump-verified at the gate, research/bp_reflection):
+// ACTIVE ROWS (dump-verified; REVISED 2026-07-10 eve -- the anchor audit):
 //   t1 ticker_insomniacSpawner_C   -> insomniac_C(+_Child_C)  [product in kNpcAllowlist]
 //   t1 ticker_fossilhoundSpawner_C -> fossilhound_C           [product in kNpcAllowlist]
-//   t3 mushroomMaster_C::Spawn / mushroomSpawner_C::Spawn / pineconeSpawner_C::
-//      ReceiveTick / ticker_yellowWispSpawner_C::ReceiveTick  [migrated verbatim
-//      from coop/session/ambient_spawner_suppress -- RULE-2 dissolve 2026-07-10;
-//      cancelled children reaped by engine SetLifeSpan, not the cancelled event]
+//   t1 cockroachMaster_C + ticker_roachSummoner_C  [roach lane v108: the master's
+//      tick runs calc() = movement + SHARED-prop mutation (food drain/destroy);
+//      coop/creatures/roach_sync drives the client population from host state]
+//   t3 mushroomMaster_C::Spawn / mushroomSpawner_C::Spawn /
+//      ticker_yellowWispSpawner_C::ReceiveTick  [mushrooms spawn at their own
+//      world transform; yellow wisp anchors on a navmesh RANDOM-WALK point --
+//      both world-anchored, killerwisp_C host-mirrored]
+//   t3 ticker_wispSpawner_C::ReceiveTick  [sky wisps at ABSOLUTE map coords
+//      (+-60-70k X/Y, Z=80k) -- REVERSED from OWNER-EFFECT 2026-07-10; products
+//      wisp_C + 8 color variants host-mirrored via the EX-catch source row]
+//   t3 cockroachMaster_C::{summonRoach,addRoachTimer,spawnNestTimer,CustomEvent}
+//      [the 3 looping timer delegates fire independently of the t1 park]
+//
+// REMOVED ROW (2026-07-10 eve): pineconeSpawner_C::ReceiveTick -- measured
+//   anchor is GetPlayerCameraManager->GetActorLocation (drops land around the
+//   LOCAL player) -> OWNER-EFFECT: each peer rolls its own; the peer-symmetric
+//   ambient broadcaster in coop/props/host_spawn_watcher cross-mirrors them.
 //
 // CLASSIFIED, NOT ROWS (the full 28-ticker gate read, 2026-07-10):
 //   OWNER-EFFECT (user rule [[feedback-owner-effect-rule]] -- per-peer AUTHORITY
-//     + cross-peer mirror; NEVER parked): ticker_wispSpawner_C (color wisps),
-//     ticker_fireflySpawner_C (already mirrored end-to-end by firefly_sync v51).
+//     + cross-peer mirror; NEVER parked): ticker_fireflySpawner_C (measured:
+//     player-camera anchor + grass trace -> emitter; mirrored by firefly_sync
+//     v51), pineconeSpawner_C (measured: player-camera anchor; owner-mirrored
+//     via host_spawn_watcher 2026-07-10). ticker_wispSpawner_C was MISCLASSIFIED
+//     here (assumed player-anchored; the dump shows absolute map coords) -- now
+//     a t3 row above. "Autumn leaves" remain UNVERIFIED (no leaf ticker in the
+//     28 dumps; RE before classifying).
 //   Inc-2 FAMILIES (product NOT mirrored yet -- mirror FIRST, then park):
 //     deerSpawner->deer_C, bp7Spawner->NewBlueprint7_C, hexahiveSpawner,
 //     eyers->eyer_C, treeSpawner->walkingTree_C, susHoleSpawner->susDirtHole_C,
 //     beehiveSpawner->beehiveBranch_C (Delay-latent -> needs t2),
-//     bushSpawning (data-table flora), roachSummoner (spawn inside summonRoach),
-//     ticker_tick->NewBlueprint17_C, mannequinSpawner (MIXED: K2_DestroyActor
-//     reap duty -> needs (class,latent-UUID) grain per the design).
+//     bushSpawning (data-table flora), ticker_tick->NewBlueprint17_C,
+//     mannequinSpawner (MIXED: K2_DestroyActor reap duty -> needs
+//     (class,latent-UUID) grain per the design). roachSummoner GRADUATED to
+//     active rows (roach lane v108).
 //   NON-SPAWNERS (never rows): serverBreaker (serverbox_sync owns it),
 //     dishUncalib/disher (T2 lanes), flickerer (T3 cosmetic), foodHall/
 //     foodSleeper/foodTolerance (player-local vitals; foodSleeper is the idle

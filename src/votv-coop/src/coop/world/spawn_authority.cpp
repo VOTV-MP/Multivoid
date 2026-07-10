@@ -11,12 +11,27 @@
 // - mushroomSpawner_C: ONE looping K2_SetTimerDelegate('spawn', timer=2s CDO);
 //   spawn() materializes the prop_food_C cap when not recently rendered and
 //   self-destroys; with spawn cancelled, the lifespan-1800 fallback reaps it.
-// - pineconeSpawner_C: ReceiveTick only (SetActorTickInterval(random) INSIDE
-//   the body + 5 spawn branches, each SetLifeSpan(600)); cancelling freezes
-//   the tick interval at its last roll -- it re-rolls on the first
-//   un-cancelled run after disconnect.
-// - ticker_yellowWispSpawner_C: ReceiveTick; killerwisp_C is host-mirrored
+// - pineconeSpawner_C: NOT a row (2026-07-10 reversal). Measured anchor =
+//   GetPlayerCameraManager->GetActorLocation (research/bp_reflection dump):
+//   forest drops land around the LOCAL player -> OWNER-EFFECT tier
+//   ([[feedback-owner-effect-rule]]). Each peer rolls its own; the ambient
+//   owner-mirror in coop/props/host_spawn_watcher makes them cross-visible.
+// - ticker_yellowWispSpawner_C: ReceiveTick; anchor is a navmesh RANDOM-WALK
+//   point (p = ProjectPointToNavigation(p + rotated random offset), measured
+//   2026-07-10 -- NOT player-anchored); killerwisp_C is host-mirrored
 //   (kNpcAllowlist), so the client must not run its own spawner.
+// - ticker_wispSpawner_C: ReceiveTick (1200-3600 s interval); spawns the sky
+//   wisps (wisp_C + 8 color variants) at ABSOLUTE map coords (+-60-70k X/Y,
+//   Z=80k -- measured 2026-07-10, REVERSING the earlier OWNER-EFFECT call).
+//   World-anchored -> host rolls, clients mirror via the EX-catch source row
+//   (npc_world_enum) + the variant allowlist rows.
+// - cockroachMaster_C (the roach infestation sim): summonRoach (called by
+//   ticker_roachSummoner via the gamemode ref) + the three timer entries
+//   (addRoachTimer / spawnNestTimer / CustomEvent re-armed by looping
+//   K2_SetTimerDelegate -- timers fire independently of actor tick, so the
+//   t1 park alone cannot silence them). Roaches are components on the ONE
+//   world-anchored master (nests near food, growth by eating) = shared world
+//   state; coop/creatures/roach_sync mirrors the host population.
 //
 // t1 park facts (gate read 2026-07-10, research/bp_reflection):
 // - ticker_insomniacSpawner_C / ticker_fossilhoundSpawner_C: rolls live INSIDE
@@ -25,6 +40,14 @@
 //   parking the tick stops roll AND product). Products insomniac_C /
 //   fossilhound_C are host-mirrored (kNpcAllowlist), so the park is a pure
 //   improvement: no content change, the divergent client roll stops.
+// - cockroachMaster_C / ticker_roachSummoner_C (roach lane, 2026-07-10): the
+//   master's ReceiveTick drives calc() = per-roach movement + the food-eat
+//   mutation (drains prop_food_C foodData, destroys depleted food) + crush
+//   traces -- a client running it DIVERGES the shared food/roach state.
+//   Parked; roach_sync drives the client population from host RoachState.
+//   Interaction EVENTS (steppedOn/actionOptionIndex/impactSquishCPP) are NOT
+//   tick-driven and stay live on the parked master -- the local eat/stomp
+//   runs natively and roach_sync forwards the consumption intent.
 
 #include "coop/world/spawn_authority.h"
 
@@ -38,6 +61,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cwchar>    // wcscmp (resolve-pass FindClass dedupe)
 #include <iterator>
 #include <string>
 #include <vector>
@@ -77,8 +101,12 @@ bool fn_name(void* self, void* /*params*/) {                                    
 
 MAKE_SPAWN_CANCEL(OnMushroomMasterSpawnPre,  "mushroomMaster.Spawn")
 MAKE_SPAWN_CANCEL(OnMushroomSpawnerSpawnPre, "mushroomSpawner.Spawn")
-MAKE_SPAWN_CANCEL(OnPineconeTickPre,         "pineconeSpawner.ReceiveTick")
 MAKE_SPAWN_CANCEL(OnYellowWispTickPre,       "yellowWispSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnSkyWispTickPre,          "wispSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnRoachSummonPre,          "cockroachMaster.summonRoach")
+MAKE_SPAWN_CANCEL(OnRoachAddTimerPre,        "cockroachMaster.addRoachTimer")
+MAKE_SPAWN_CANCEL(OnRoachNestTimerPre,       "cockroachMaster.spawnNestTimer")
+MAKE_SPAWN_CANCEL(OnRoachCustomEventPre,     "cockroachMaster.CustomEvent")
 
 #undef MAKE_SPAWN_CANCEL
 
@@ -89,18 +117,32 @@ struct CancelTarget {
     bool registered;
 };
 CancelTarget g_cancelTargets[] = {
-    {L"mushroomMaster_C",            L"Spawn",       &OnMushroomMasterSpawnPre,  false},
-    {L"mushroomSpawner_C",           L"Spawn",       &OnMushroomSpawnerSpawnPre, false},
-    {L"pineconeSpawner_C",           L"ReceiveTick", &OnPineconeTickPre,         false},
+    {L"mushroomMaster_C",            L"Spawn",           &OnMushroomMasterSpawnPre,  false},
+    {L"mushroomSpawner_C",           L"Spawn",           &OnMushroomSpawnerSpawnPre, false},
     // Late-game class: resolves only once the yellow-wisp spawner loads; the
     // all-done latch stays open until then (idempotent per-target retry).
-    {L"ticker_yellowWispSpawner_C",  L"ReceiveTick", &OnYellowWispTickPre,       false},
+    {L"ticker_yellowWispSpawner_C",  L"ReceiveTick",     &OnYellowWispTickPre,       false},
+    // Sky wisps: world-anchored (absolute map coords) -- host rolls, EX-catch
+    // source row + variant allowlist mirror the products (2026-07-10).
+    {L"ticker_wispSpawner_C",        L"ReceiveTick",     &OnSkyWispTickPre,          false},
+    // Roach sim entries: the ticker's cross-object call + the three looping
+    // timer delegates (timers bypass the t1 actor-tick park). The client
+    // population is driven by coop/creatures/roach_sync instead.
+    {L"cockroachMaster_C",           L"summonRoach",     &OnRoachSummonPre,          false},
+    {L"cockroachMaster_C",           L"addRoachTimer",   &OnRoachAddTimerPre,        false},
+    {L"cockroachMaster_C",           L"spawnNestTimer",  &OnRoachNestTimerPre,       false},
+    {L"cockroachMaster_C",           L"CustomEvent",     &OnRoachCustomEventPre,     false},
 };
 
 // ---- t1 PARK rows ----
 constexpr const wchar_t* kParkClassNames[] = {
     L"ticker_insomniacSpawner_C",
     L"ticker_fossilhoundSpawner_C",
+    // Roach lane (2026-07-10): the master's tick runs calc() = movement +
+    // food-eat mutation + crush traces; the ticker's tick calls summonRoach.
+    // Both parked on an active client session (roach_sync drives the mirror).
+    L"cockroachMaster_C",
+    L"ticker_roachSummoner_C",
 };
 constexpr size_t kParkClassCount = std::size(kParkClassNames);
 
@@ -207,9 +249,17 @@ void Install(coop::net::Session* session) {
 
     if (!cancelsDone) {
         int done = 0;
+        // Per-pass FindClass dedupe (audit 2026-07-10): the roach rows share one
+        // class 4x; each FindClass is a full GUObjectArray walk, so adjacent
+        // same-class rows reuse the previous resolve while the latch is open.
+        const wchar_t* lastClsName = nullptr;
+        void* lastCls = nullptr;
         for (auto& t : g_cancelTargets) {
             if (t.registered) { ++done; continue; }
-            void* cls = R::FindClass(t.cls);
+            void* cls = (lastClsName && wcscmp(lastClsName, t.cls) == 0)
+                            ? lastCls : R::FindClass(t.cls);
+            lastClsName = t.cls;
+            lastCls = cls;
             if (!cls) continue;  // BP class not loaded yet; retry next ensure
             void* fn = R::FindFunction(cls, t.fn);
             if (!fn) {
@@ -227,9 +277,9 @@ void Install(coop::net::Session* session) {
         }
         if (done == static_cast<int>(std::size(g_cancelTargets))) {
             g_cancelInstalled.store(true, std::memory_order_release);
-            UE_LOGI("spawn_authority: %zu/%zu t3 cancels registered (mushroomMaster.Spawn, "
-                    "mushroomSpawner.Spawn, pineconeSpawner.ReceiveTick, "
-                    "yellowWispSpawner.ReceiveTick); active only on a running client session",
+            UE_LOGI("spawn_authority: %zu/%zu t3 cancels registered (mushroom x2, "
+                    "yellowWisp+skyWisp ReceiveTick, cockroachMaster summonRoach+3 timer "
+                    "entries); active only on a running client session",
                     std::size(g_cancelTargets), std::size(g_cancelTargets));
         }
     }

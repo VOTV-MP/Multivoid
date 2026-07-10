@@ -126,17 +126,29 @@ inline constexpr const wchar_t* NpcClass_AriralPigBeater = L"npc_ariral_pigBeate
 inline constexpr const wchar_t* NpcClass_KillerWisp   = L"killerwisp_C";
 inline constexpr const wchar_t* NpcClass_VentCrawler  = L"ventCrawler_C";
 //   * wisp_C (Awisp_C : ACharacter, wisp.hpp) -- the plain wispSwarm-event wisp (2026-07-03).
-//     SCOPE (the source-gate, coop/npc_world_enum): only EVENT-SWARM wisps (spawned by
-//     trigger_wispSwarm_C's EX_CallMath loop) are host-authoritative + mirrored; AMBIENT
-//     wisp_C from ticker_wispSpawner_C stays per-peer local (the same standing decision as
-//     the colored wisp_o/b/g siblings -- ticker table: wisp_C weight 100 of ~108, cooked CDO).
+//     SCOPE (the source-gate, coop/npc_world_enum): EVENT-SWARM wisps (trigger_wispSwarm_C's
+//     EX_CallMath loop) AND the ambient sky wisps (ticker_wispSpawner_C -- REVERSED 2026-07-10:
+//     the ticker spawns at ABSOLUTE map coords +-60-70k X/Y Z=80k, measured in the bytecode
+//     dump; world-anchored, NOT player-proximity, so host-authoritative like everything else.
+//     The earlier "stays per-peer" call assumed player-anchoring that is not there).
 //     Both spawn paths are EX_CallMath (PE-interceptor-blind): the catch is the
 //     ufunction_hook Func-thunk on BeginDeferred, source-gated by FFrame::Object's class.
 //     Mirror fidelity: spawns invisible; fade-in fires at the tick-driven LANDING edge
 //     (CMC CurrentFloor.bBlockingHit), so the mirror keeps ACTOR tick (CMC still parked)
 //     and the pose lane drives the landing edge (landed=true + dir(true)) on inAir 1->0
 //     (ue_wrap::wisp::DriveWispLanding). RE: votv-event-trigger-graph-RE-2026-07-03.md.
+//   * the 8 COLOR variants (ticker map, weights 0.1-5 vs wisp_C's 100): direct ACharacter
+//     subclasses (SDK-verified 2026-07-10, wisp_b.hpp -- NOT wisp_C children, so
+//     IsDescendantOfAny needs each listed).
 inline constexpr const wchar_t* NpcClass_Wisp         = L"wisp_C";
+inline constexpr const wchar_t* NpcClass_WispB        = L"wisp_b_C";
+inline constexpr const wchar_t* NpcClass_WispRed      = L"wisp_red_C";
+inline constexpr const wchar_t* NpcClass_WispBl       = L"wisp_bl_C";
+inline constexpr const wchar_t* NpcClass_WispW        = L"wisp_w_C";
+inline constexpr const wchar_t* NpcClass_WispG        = L"wisp_g_C";
+inline constexpr const wchar_t* NpcClass_WispO        = L"wisp_o_C";
+inline constexpr const wchar_t* NpcClass_WispP        = L"wisp_p_C";
+inline constexpr const wchar_t* NpcClass_WispBlu      = L"wisp_blu_C";
 
 // Compact array for the allowlist resolver (Inc1 of Phase 5N1). Iterated
 // once at install time; each name resolved via R::FindClass + cached. The
@@ -160,7 +172,15 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_AriralPigBeater,
     NpcClass_KillerWisp,   // yellow Killer Wisp (late-game; AIPerception like the 12)
     NpcClass_VentCrawler,  // event `ventCrawler`  (smoke-pending: wall-crawl pose)
-    NpcClass_Wisp,         // wispSwarm-event wisp (source-gated: ambient ticker wisps stay per-peer)
+    NpcClass_Wisp,         // wispSwarm-event + ambient sky wisp (both sources host-auth since 2026-07-10)
+    NpcClass_WispB,        // sky-wisp color variants (ticker_wispSpawner map; direct ACharacter
+    NpcClass_WispRed,      //   subclasses, NOT wisp_C children -- each needs its own row)
+    NpcClass_WispBl,
+    NpcClass_WispW,
+    NpcClass_WispG,
+    NpcClass_WispO,
+    NpcClass_WispP,
+    NpcClass_WispBlu,
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 

@@ -99,9 +99,13 @@ void WatchSpawnedProp(void* actor, uint32_t eid) {
     g_watched.push_back(WatchedProp{actor, idx, eid});
 }
 
-// HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY
-// deferred spawn (NPCs, lightning, every prop) -- filtered FAST by exact
-// class-pointer match against the small ambient-prop set before any actor deref.
+// OWNER POST observer on BeginDeferredActorSpawnFromClass (peer-SYMMETRIC
+// since 2026-07-10: the ambient set is OWNER-EFFECT -- pineconeSpawner anchors
+// at the LOCAL player's camera, so each peer rolls its own forest drops and
+// broadcasts them; [[feedback-owner-effect-rule]], the firefly_sync authority
+// shape on the PropSpawn pipeline). Fires for EVERY deferred spawn (NPCs,
+// lightning, every prop) -- filtered FAST by exact class-pointer match against
+// the small ambient-prop set before any actor deref.
 //
 // GAME-THREAD GATE: actor spawning (UWorld::SpawnActor) is game-thread-only in
 // UE4, so a BeginDeferred POST is always on the game thread -- the guard never
@@ -112,11 +116,13 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread()) return;
     if (!params || g_classParamOff < 0 || g_returnParamOff < 0 || g_xformParamOff < 0) return;
 
-    // Host-only broadcaster: a client or an idle/disconnected host bails BEFORE any class-hierarchy walk
-    // (just a cheap atomic-acquire load + an enum compare). This keeps the per-spawn cost (the trash-class
-    // WalksToBase pair below) entirely off non-host peers -- they spawn just as many actors (audit 2026-06-21).
+    // Any connected peer broadcasts its OWN ambient spawns (owner-effect). The
+    // mirror-scope check kills the echo: a wire mirror is spawned through this
+    // same UFunction by remote_prop_spawn, and this POST fires INSIDE that call
+    // -- before the actor exists to carry a MarkIncomingSpawn mark.
     auto* s = LoadSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!s || !s->connected()) return;
+    if (coop::prop_echo_suppress::InMirrorSpawnScope()) return;
 
     void* actorClass = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_classParamOff);
@@ -345,9 +351,10 @@ void TickWatchedProps(coop::net::Session* s) {
     // Mutates the game-thread-only g_watched + calls SendPropDestroy. Caller
     // (net_pump::Tick) is GT, but assert locally so a future off-GT call site
     // is caught at the boundary (mirrors remote_prop::OnDestroy).
+    // Peer-symmetric (owner-effect 2026-07-10): each peer death-watches the
+    // ambient props IT broadcast (g_watched only ever holds own spawns).
     UE_ASSERT_GAME_THREAD("host_spawn_watcher::TickWatchedProps");
     if (!s || !s->connected() || g_watched.empty()) return;
-    if (s->role() != coop::net::Role::Host) return;
     for (size_t i = 0; i < g_watched.size();) {
         WatchedProp& w = g_watched[i];
         if (R::IsLiveByIndex(w.actor, w.internalIdx)) { ++i; continue; }

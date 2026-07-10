@@ -11,6 +11,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/world/alarm_sync.h"
 #include "coop/interactables/serverbox_sync.h"  // v107: host-authoritative signal-server state (Inc-1)
+#include "coop/creatures/roach_sync.h"           // v108: host-authoritative roach-infestation snapshot
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -179,6 +180,21 @@ bool HandleWorldEvent(net::Session& session,
         net::ServerStatePayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
         coop::serverbox_sync::OnReliable(sp, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::RoachState: {
+        // v108: host-authoritative roach-infestation snapshot (paged). The client
+        // assembles pages and applies by ordinal (drive loc/scale, or rebuild via
+        // the game's own addRoach/deleteRoach). roach_sync::OnState drops a
+        // non-host sender. coop/creatures/roach_sync.
+        if (msg.payloadLen < sizeof(net::RoachStatePayload)) {
+            UE_LOGW("event_feed: RoachState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::RoachStatePayload));
+            break;
+        }
+        net::RoachStatePayload rp{};
+        std::memcpy(&rp, msg.payload, sizeof(rp));
+        coop::roach_sync::OnState(rp, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::InventoryPickup: {

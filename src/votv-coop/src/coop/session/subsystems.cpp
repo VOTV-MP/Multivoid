@@ -91,6 +91,7 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/world/alarm_sync.h"         // v101 base radar alarm shared-world toggle (docs/events/alarm.md)
 #include "coop/interactables/serverbox_sync.h"        // v107 host-authoritative signal-server sim state (Inc-1)
+#include "coop/creatures/roach_sync.h"     // v108 host-authoritative roach-infestation mirror
 #include "coop/world/event_active_sync.h"  // join-during-event Phase 0: native activeEvents registry probe (docs/COOP_EVENT_JOIN.md)
 #include "coop/world/weather_sync.h"
 
@@ -123,6 +124,7 @@ void Install(coop::net::Session& session) {
     coop::event_active_sync::Install(&session); // join-during-event Phase 0 (probe): host 1 Hz activeEvents_senders membership diff -> BEGIN/END edge log
     coop::alarm_sync::Install(&session);     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
     coop::serverbox_sync::Install(&session);    // v107 signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
+    coop::roach_sync::Install(&session);        // v108 roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::inventory_pickup_sync::Install(&session);  // v58 inventory-collect blip (PlaySound2D observer)
     coop::chat_sync::Install(&session);      // v60 T-chat (the ui/chat_input send path)
     coop::local_body::Install(&session);     // v93 skins: local first-person body + SkinChange announce
@@ -265,6 +267,7 @@ void ConnectReplayForSlot(int slot) {
     // unconditionally -- a mid-alarm joiner starts its klaxon on arrival (v101).
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
     coop::serverbox_sync::QueueConnectBroadcastForSlot(slot);  // v107: current server state to the joiner
+    coop::roach_sync::QueueConnectBroadcastForSlot(slot);      // v108: current roach population to the joiner
     // piramid lane late-join answer (COOP_EVENT_JOIN.md 3.4): re-send an in-flight gather
     // commit ToSlot. AFTER world_actor_sync/npc_sync queued their snapshots above (the joiner's
     // mirrors must exist for the replay's eid lookups; its 5 s retry window absorbs drain skew).
@@ -352,6 +355,7 @@ DisconnectStats DisconnectAll() {
     coop::event_active_sync::OnDisconnect(); // join-during-event Phase 0: drop tracked membership + cached gamemode
     coop::alarm_sync::OnDisconnect();        // v101 drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();       // v107 drop cached gamemode/offsets + baseline + breaker-kill latch
+    coop::roach_sync::OnDisconnect();           // v108 drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::spawn_authority::OnDisconnect();      // T1 Inc-1: restore parked spawner ticks (loan repayment belt)
     coop::inventory_pickup_sync::OnDisconnect();
     coop::chat_sync::OnDisconnect();
@@ -405,6 +409,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // join-during-event Phase 0: host 1 Hz activeEvents_senders diff -> BEGIN/END edge log (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }               // v101 base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }             // v107 signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }               // v108 roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     coop::dev::rng_roll_census::Tick();      // [dev] T1 probe v9 censuses (single bool read when off/idle)
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)

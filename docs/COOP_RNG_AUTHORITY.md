@@ -67,7 +67,7 @@ ventCrawler, wisp) + piramid2 + arirShip. UNCOVERED spawners (each ticker rolls 
 | ticker_hexahiveSpawner | hexahive | gate[0.02] + pos | NEEDS-PROBE |
 | ticker_eyers | eyer_C | gate[0.05] + pos (night) | NEEDS-PROBE |
 | ticker_bp7Spawner | bp7 | branch coin + pos | NEEDS-PROBE |
-| ticker_roachSummoner | roach | timing + pos | NEEDS-PROBE |
+| ticker_roachSummoner | roach | timing + pos | **DONE-MIRROR** (2026-07-10 eve, v108 roach lane: roaches = COMPONENTS on the one cockroachMaster (not actors); client sim parked (t1+t3 rows) + host paged RoachState snapshot + RoachConsumed eat/stomp intents — `coop/creatures/roach_sync`) |
 | grayBoarSpawner / boarInvasion | grayboar_C, ariral_shooter, firetank | count+pos+variant | NEEDS-PROBE |
 | ghostcarSpawner | ghostcar_C | pos + yaw jitter | NEEDS-PROBE |
 | bunnySpawner | ominousBunny/superAngryBunny | which variant + pos | NEEDS-PROBE |
@@ -87,8 +87,13 @@ the ambient module (dissolved 2026-07-10 into `src/coop/world/spawn_authority.cp
 PE-visible fn PRE-interceptors (mushroomMaster.Spawn, mushroomSpawner.Spawn,
 pineconeSpawner.ReceiveTick, ticker_yellowWispSpawner.ReceiveTick), and `host_spawn_watcher.cpp`
 MIRRORS the pinecone-family outputs (keyless PropSpawn + death-watch) — the full suppress+mirror
-shape is SHIPPED for ambient flora. Color wisps (ticker_wispSpawner) are deliberately per-peer
-(product decision, comment in that file). Consequences: (i) mechanism precedent =
+shape is SHIPPED for ambient flora. ~~Color wisps (ticker_wispSpawner) are deliberately per-peer
+(product decision, comment in that file).~~ **SUPERSEDED 2026-07-10 eve (anchor audit): BOTH calls
+flipped.** pineconeSpawner is PLAYER-CAMERA-anchored (dump-measured) → OWNER-EFFECT: the cancel row
+was REMOVED and the ambient broadcaster went peer-symmetric (each peer rolls + mirrors its own
+drops). ticker_wispSpawner is ABSOLUTE-map-coords-anchored (dump-measured, ±60-70k X/Y Z=80k) →
+world-anchored: now a t3 cancel row + host mirror (wisp_C + 8 color variants allowlisted,
+ticker_wispSpawner EX-catch source row). Consequences: (i) mechanism precedent =
 fn-cancel-at-the-class, the structural option generalizes it at the driver layer; (ii) the module
 sits in the WRONG folder (coop/session/ is not spawn-authority) — the move is owed to the T1 design;
 (iii) the probe analysis must JOIN against this module's targets + the npc allowlist (from live
@@ -123,13 +128,17 @@ Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signa
 `dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic `Array_Shuffle`
 scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar order diverge.
 
-### T2-6 · Ambient wildlife / flora spawners — STATUS: PARTIAL (2026-07-10 correction)
-**DONE-MIRROR already** (the t3 cancels now in coop/world/spawn_authority + host_spawn_watcher pinecone mirror, shipped
-pre-audit; the 07-10 audit missed the module): mushroomMaster, mushroomSpawner, pineconeSpawner
-(outputs mirrored as keyless PropSpawn). **Deliberately per-peer** (product decision): color wisps
-(ticker_wispSpawner). **Still OPEN / NEEDS-PROBE:** ticker_beehiveSpawner, ticker_treeSpawner
-(walkingTree), ticker_bushSpawning (growingPlant), ticker_susHoleSpawner,
-birchSpawner/autumnLeafSpawner. Real shared actors, low gameplay stakes.
+### T2-6 · Ambient wildlife / flora spawners — STATUS: PARTIAL (2026-07-10 eve anchor audit)
+**DONE-MIRROR (host-auth):** mushroomMaster, mushroomSpawner (own-transform world spawns; t3
+cancels + host mirror), **ticker_wispSpawner sky wisps** (2026-07-10 eve REVERSAL: dump-measured
+ABSOLUTE map coords, not player-anchored — t3 cancel row + wisp_C+8 variants allowlisted + EX-catch
+source row). **DONE-OWNER-EFFECT (peer-symmetric):** pineconeSpawner forest drops (2026-07-10 eve
+REVERSAL: dump-measured PLAYER-CAMERA anchor — cancel row removed; each peer rolls its own,
+host_spawn_watcher broadcasts peer-symmetrically with ScopedMirrorSpawn echo guard + mirror
+SetLifeSpan(900) orphan backstop). **Still OPEN / NEEDS-PROBE:** ticker_beehiveSpawner,
+ticker_treeSpawner (walkingTree), ticker_bushSpawning (growingPlant), ticker_susHoleSpawner,
+birchSpawner/autumnLeafSpawner (leaves = the OWNER-EFFECT candidate still lacking an anchor read).
+Real shared actors, low gameplay stakes.
 
 ### T2-7 · Seed-replication opportunity — STATUS: SEED-OPP
 `garbagePileSpawner` (garbage layout+types), `radiotower.generateGizmos` (décor), `xmaslight`
@@ -227,10 +236,12 @@ never silently file a KNOWN row under the blind spot.
 cancels dissolve into the structural suppress set in the SAME change (no parallel suppress paths);
 the mirror halves (host_spawn_watcher pinecone lane) stay. The module's folder move (out of
 coop/session/ into the spawn-authority home) is owed REGARDLESS of the fork.
-**PRODUCT-EXEMPTION list (STRUCTURAL must not silently overrule it):** ticker_wispSpawner color
-wisps stay PER-PEER (recorded user/product decision in ambient_spawner_suppress.cpp). The
-structural design carries an explicit exemption set; extending it is a DESIGN-pass decision with
-the user, never an implementation-time default.
+**PRODUCT-EXEMPTION list (STRUCTURAL must not silently overrule it):** ~~ticker_wispSpawner color
+wisps stay PER-PEER~~ **RETIRED 2026-07-10 eve** — the exemption assumed player-anchoring the
+bytecode refutes (absolute map coords); color/sky wisps moved to the cancel+mirror set with the
+user's green light. The exemption CONCEPT stays: the current exemption set is the OWNER-EFFECT
+tier (fireflies, pinecone drops — dump-measured player anchors), and extending/shrinking it is a
+DESIGN-pass decision with the user, never an implementation-time default.
 
 **Instrument scope (pinned):** channels (a)-(e) adjudicate **T1-1 and T1-2** (spawns, drivers,
 quits, histograms). **T1-3** (server minigame type) is ALREADY adjudicated statically: the roll is
@@ -442,14 +453,17 @@ see each other's effects. This rule applies to all effects of this kind. Own the
 layers on such effects." → the table tier EXEMPT-PER-PEER is RENAMED **OWNER-EFFECT**: the
 rolling peer keeps AUTHORITY (never parked, never host-rolled) and gains a cross-peer MIRROR
 lane (owner broadcasts its effect spawns; peers render them) — the pose-stream shape applied to
-ambient effects. Applies to color wisps, fireflies, autumn leaves, and every player-proximity
-ambient effect; an RE/classify step in the Inc plan decides each ambient spawner's class
+ambient effects. An RE/classify step in the Inc plan decides each ambient spawner's class
 (world-anchored → cancel table; player-proximity effect → OWNER-EFFECT + mirror lane). The
 owner-effect mirror is its own increment family (does not block Inc-1). **Shipped precedent:
 `coop/world/firefly_sync` (v51, 2026-06-09, [V]) already IS this rule end-to-end** — each peer's
 ticker_fireflySpawner keeps rolling natively (camera-relative), PRE+POST-diffs its OWN spawn,
-broadcasts FireflySpawn (peer-symmetric, host-relayed), peers render the union. Wisps/leaves
-generalize the firefly_sync shape, not a new invention.
+broadcasts FireflySpawn (peer-symmetric, host-relayed), peers render the union.
+**MEMBERSHIP (2026-07-10 eve anchor audit — measured, superseding the assumed list):** fireflies
+[V-dump] + pinecone forest drops [V-dump, built peer-symmetric same day]. Color/sky wisps were
+REVERSED OUT (dump: absolute map coords → world-anchored cancel+mirror). Autumn leaves
+UNVERIFIED (autumnLeafSpawner not yet dumped — anchor read before classifying). Roaches assessed
+NOT a member (world-anchored infestation on one master; own host-auth lane v108).
 (2) **dreams/wakeup (user, 2026-07-10 night): "The dreams need to be a shared experience,
 not per peer. Host owns the dreams."** → dream/wakeup rolls are HOST-AUTHORITATIVE shared
 state: the host rolls dream selection, clients mirror the outcome (a dream-sync lane; its RE —
@@ -459,6 +473,18 @@ player-local; the earlier default is superseded.
 stands unless reordered.
 
 ## CHANGELOG
+- **2026-07-10 (eve, post-documentize)** — **ANCHOR AUDIT + three lanes BUILT (v108)** on the
+  user's "Lets go, also fix roaches": per-class bytecode ANCHOR reads reclassified the ambient
+  set both ways — (a) pineconeSpawner = PLAYER-CAMERA-anchored → OWNER-EFFECT: t3 cancel row
+  REMOVED, host_spawn_watcher ambient broadcaster went PEER-SYMMETRIC (ScopedMirrorSpawn echo
+  guard + mirror SetLifeSpan(900) orphan backstop); (b) ticker_wispSpawner = ABSOLUTE-map-coords
+  (±60-70k, Z=80k) → the OWNER-EFFECT call REVERSED: t3 cancel row + wisp_C + 8 color variants
+  allowlisted (15→23) + EX-catch source row; (c) ROACHES = components on the ONE world-anchored
+  cockroachMaster (food-seeking infestation, shared-prop mutation in calc()) → NOT owner-effect:
+  new `coop/creatures/roach_sync` (RoachState paged snapshot 92 + RoachConsumed intent 93,
+  proto v108) + t1 park (master+ticker) + 4 t3 timer-entry cancels. yellowWisp anchor measured
+  = navmesh random-walk (suppression stays correct). Fireflies re-confirmed player-anchored
+  (the only measured owner-effect members: fireflies + pinecone drops; leaves RE-pending).
 - **2026-07-10 (night, later)** — **Inc-1 BUILT + VERIFIED-by-census `e6c1371b`** (see the
   as-built note in the design section). DLL `92C7FC96` deployed all 4; smoke x2 PASS. Audit
   0 findings (npc_sync 978-LOC pre-existing cap flag carried -> extraction on next touch).

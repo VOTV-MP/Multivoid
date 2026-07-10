@@ -30,4 +30,21 @@ bool PeekIncomingSpawn(void* actor);
 void MarkIncomingDestroy(void* actor);
 bool ConsumeIncomingDestroy(void* actor);
 
+// Mirror-spawn re-entrancy scope (owner-mirror 2026-07-10). The receiver's
+// BeginDeferred UFunction call dispatches through ProcessEvent, so the
+// BeginDeferred POST observers (host_spawn_watcher's ambient broadcaster)
+// fire INSIDE it -- BEFORE MarkIncomingSpawn can run (the actor only exists
+// at Begin-return). Since the ambient broadcaster is peer-symmetric now, a
+// mirror spawn of an ambient class would re-broadcast = ping-pong. The
+// receiver wraps its spawn call in this scope; the broadcaster checks it.
+// Game-thread-only (the POST fires synchronously inside the wrapped call).
+class ScopedMirrorSpawn {
+ public:
+    ScopedMirrorSpawn();
+    ~ScopedMirrorSpawn();
+    ScopedMirrorSpawn(const ScopedMirrorSpawn&) = delete;
+    ScopedMirrorSpawn& operator=(const ScopedMirrorSpawn&) = delete;
+};
+bool InMirrorSpawnScope();
+
 }  // namespace coop::prop_echo_suppress

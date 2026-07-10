@@ -705,7 +705,10 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 107; // v107: signal-server sim state sync (ServerState=91)
+inline constexpr uint16_t kProtocolVersion = 108; // v108: roach infestation sync (RoachState=92,
+                                                  // RoachConsumed=93) + the ambient owner-mirror flip
+                                                  // (pinecone set peer-symmetric; wire kinds unchanged)
+                                                  // v107: signal-server sim state sync (ServerState=91)
 // v104: WorldActorPoseSnapshot +auxTargetEid
                                                   // (44->48; batch cap 31->28) -- the piramid
                                                   // wispTarget IDENTITY streams with the pose, so
@@ -2038,6 +2041,20 @@ enum class ReliableKind : uint8_t {
                        //     joiner. Inc-2 will forward the break EDGE for the true notice. See
                        //     research/findings/votv-notifications-suppress-mirror-DESIGN-2026-07-09.md
                        //     + docs/notifications/ + coop/interactables/serverbox_sync.h.
+    RoachState = 92,   // 2026-07-10 (v108): HOST->clients roach-infestation snapshot, PAGED (12
+                       //     roaches per datagram; maxAmount=128 CDO). Roaches are COMPONENTS on
+                       //     the one AcockroachMaster_C (not actors -- no npc/prop lane fits), and
+                       //     the sim mutates SHARED props (food drain/destroy), so the host owns
+                       //     it (client sim parked in spawn_authority). Client applies by ORDINAL:
+                       //     count equal -> drive component loc/scale; count differs -> rebuild
+                       //     via the game's own addRoach(bypassCheck)/deleteRoach. Host-sender-
+                       //     checked; never client-sent. coop/creatures/roach_sync.
+    RoachConsumed = 93, // 2026-07-10 (v108): CLIENT->HOST -- a roach was consumed LOCALLY on the
+                       //     client (native eat/stomp event destroyed the component; those events
+                       //     are not tick-driven, so they stay live on the parked master). Carries
+                       //     the last known component location; the host deletes its nearest live
+                       //     roach within the adjudication radius and the next RoachState converges
+                       //     every peer. Not relayed.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2970,6 +2987,36 @@ struct ServerStatePayload {
     uint64_t isBrokenMask;    // 8  -- bit i = servers[i].IsBroken (up to 64 servers)
 };
 static_assert(sizeof(ServerStatePayload) == 24, "ServerStatePayload must be 24 bytes");
+
+// v108: one page of the host's roach-infestation snapshot (ReliableKind::RoachState).
+// A snapshot is the FULL live-roach set (valid slots of cockroachMaster.roaches in
+// array order); pages of one snapshot share `seq` and arrive in-order on the
+// reliable lane. The client assembles all `pageCount` pages, then applies by
+// ordinal. Positions are absolute world floats (roaches roam the whole base --
+// no quantization); scale is uniform (VSize-driven growth, applied via
+// SetWorldScale3D / addRoach's Size param).
+struct RoachStatePayload {
+    uint32_t seq;         // 4 -- snapshot sequence (per-host monotonic)
+    uint8_t  page;        // 1 -- 0-based page index
+    uint8_t  pageCount;   // 1 -- total pages in this snapshot (>=1)
+    uint8_t  entryCount;  // 1 -- entries used in THIS page (<= kRoachEntriesPerPage)
+    uint8_t  totalCount;  // 1 -- total live roaches in the snapshot (<= 128 = maxAmount CDO)
+    struct Entry {
+        float x, y, z;    // component world location
+        float scale;      // uniform world scale
+    } entries[12];        // 192
+};
+inline constexpr int kRoachEntriesPerPage = 12;
+inline constexpr int kRoachSnapshotCap    = 128;  // cockroachMaster.maxAmount CDO
+static_assert(sizeof(RoachStatePayload) == 200, "RoachStatePayload must be 200 bytes");
+static_assert(sizeof(RoachStatePayload) <= 256 - 20 - 8,
+              "RoachStatePayload must fit in one reliable datagram");
+
+// v108: a client's local roach consumption (ReliableKind::RoachConsumed).
+struct RoachConsumedPayload {
+    float x, y, z;        // last known world location of the consumed roach's component
+};
+static_assert(sizeof(RoachConsumedPayload) == 12, "RoachConsumedPayload must be 12 bytes");
 
 // v64/v65: one chunk of a variable-length serialized blob. Shared by every
 // chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);

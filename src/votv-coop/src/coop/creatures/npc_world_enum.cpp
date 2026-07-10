@@ -119,17 +119,21 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 }
 
 // ---- the EX_CallMath spawn catch -------------------------------------------------------
-// Source spawner classes whose BeginDeferred output is HOST-AUTHORITATIVE (mirrored). An
-// EX_CallMath spawn from any OTHER source (the ambient ticker_wispSpawner, per-peer decor)
-// is deliberately NOT enrolled -- the same standing per-peer-ambience decision as the
-// colored wisp siblings. Future creature events (boars/grays/buster) add their trigger
-// class here once their target class joins kNpcAllowlist.
+// Source spawner classes whose BeginDeferred output is HOST-AUTHORITATIVE (mirrored).
+// Future creature events (boars/grays/buster) add their trigger class here once their
+// target class joins kNpcAllowlist.
 constexpr const wchar_t* kExSpawnSourceClasses[] = {
     L"trigger_wispSwarm_C",   // the `wisps` event swarm -> up to 32x wisp_C over ~8-32 s
     L"piramidSpawner_C",      // the `piramid` event chain -> 4x killerwisp_C (npc lane) +
                               // 1x piramid2_C (WorldActor lane) -- runTrigger's BeginDeferred
                               // is EX_CallMath (proven 2026-07-04: zero interceptor catches on
                               // a live force run while the registry probe saw the BeginPlay)
+    L"ticker_wispSpawner_C",  // ambient SKY wisps (wisp_C + 8 color variants) -- REVERSED
+                              // 2026-07-10: the ticker anchors at ABSOLUTE map coords (bytecode
+                              // dump: MakeVector(+-60-70k, +-60-70k, 80k)), NOT around a player,
+                              // so the old "per-peer decor" call was wrong. Host rolls (the
+                              // client's ticker tick is cancelled in spawn_authority); same
+                              // EX_CallMath catch, variants allowlisted individually.
 };
 
 // A source's output may be a WorldActor-lane class (piramid2_C): same catch seam, drained to

@@ -22,12 +22,19 @@
 // events-catalog's eventual "unified HostSpawnWatcher" would merge the routing;
 // the two-observer split is the lowest-risk delivery now.)
 //
-// HOST-ONLY broadcaster. The client never runs these spawners (its copies are
-// cancelled by the t3 rows in coop/world/spawn_authority), so it never locally spawns a
-// divergent pinecone; it receives the host's via PropSpawn ->
-// remote_prop_spawn::OnSpawn (UNCHANGED). The mirror spawns SIMULATING and
-// drops under its OWN physics: local fall physics is intentionally NOT synced
-// (user 2026-06-11: "local physics of falling objects doesn't need syncing").
+// OWNER-SYMMETRIC broadcaster (2026-07-10; was HOST-only). pineconeSpawner
+// measurably anchors at the LOCAL player's camera (bytecode dump:
+// GetPlayerCameraManager -> GetActorLocation + 3-10k offset), so it is
+// OWNER-EFFECT tier ([[feedback-owner-effect-rule]]): every peer runs its OWN
+// spawner (the old client-side t3 cancel is REMOVED from spawn_authority) and
+// broadcasts its spawns via the same keyless PropSpawn (client -> host relay
+// fan-out, the takeObj-drop wire path). Echo protection: the receiver's mirror
+// spawn dispatches BeginDeferred through ProcessEvent, so this POST fires
+// INSIDE it -- prop_echo_suppress::ScopedMirrorSpawn is the re-entrancy guard
+// (a MarkIncomingSpawn cannot exist before the actor does). The mirror spawns
+// SIMULATING and drops under its OWN physics: local fall physics is
+// intentionally NOT synced (user 2026-06-11: "local physics of falling
+// objects doesn't need syncing").
 //
 // LIFECYCLE: PropSpawn on detection; a per-tick death-watch (IsLiveByIndex --
 // the trash-clump precedent) broadcasts PropDestroy when the prop's
