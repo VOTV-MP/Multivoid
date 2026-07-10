@@ -2,10 +2,13 @@
 
 **Supersedes take 1 (same day, morning).** Take 1's DLL predates the afternoon series.
 
-**Deployed:** DLL `3F02AA29` (hash-verified all 4 installs) = the full 2026-07-10 day:
+**Deployed:** DLL `EDFED54A` (hash-verified all 4 installs) = the full 2026-07-10 day:
 fix pass `db6ecd0b` + probe `7109efd1` + hand-item camera-front `be98beb6` + placement series
-#5-#13 + 4 soft-cap extractions + residue fixes `9becc5e3`/`89bb24e0` + email census gate
-`606fda3b`. Proto unchanged (107). Post-deploy smoke PASS (LAN, 0 ERROR both peers).
+#5-#13 + 7 soft-cap extractions + residue fixes `9becc5e3`/`89bb24e0` + email census gate
+`606fda3b` + the evening block `dab12a2e..fb490e36` (3 more extractions + dead-residue
+retirement -- behavior-preserving; adds NOTHING new to test). Proto unchanged (107).
+Post-deploy smoke PASS (LAN, 0 ERROR both peers, client slot 1 + puppet, RAM stable; the only
+WARNs are the known transient connect-burst TimeSync/SkyState send fails).
 **Probe note:** `[dev] rng_roll_census=1` stays ON in HOST + CLIENT_1 — every session you play
 accumulates the T1 census (the fork call is formally DEFERRED at 7/16 until more client-side
 exposure lands; your organic sessions are the accumulation path).
