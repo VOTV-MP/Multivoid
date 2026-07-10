@@ -335,6 +335,7 @@ void Tick() {
         if (s->role() == coop::net::Role::Host || localSlot == coop::players::kPeerIdUnknown)
             localSlot = 0;
         size_t j = 0;
+        std::vector<std::wstring> removedTopics;  // announces deferred past the bulk gate below
         for (ShadowRow& srow : g_shadow) {
             if (j < cur.size() && srow.key == cur[j]) {
                 // move, not copy: the topic wstring copied per surviving row per poll
@@ -346,14 +347,27 @@ void Tick() {
                 // hash 0 = was unreadable at shadow time (v65 audit I-2 parity:
                 // the hash-unknown sentinel is not a wire key).
                 removed.push_back(srow.hash);
-                // This peer removed the row locally (a user delete) -- announce it to
-                // the shared feed so the other peers learn who deleted what. Only in an
-                // actual session (no point telling yourself when solo).
-                if (s->connected())
-                    coop::peer_action_feed::Announce(localSlot, true,
-                                                     L"deleted an email: " + srow.topic);
+                removedTopics.push_back(std::move(srow.topic));
             }
         }
+        // Bulk-removed gate (2026-07-10, the append side's kBulkAppendThreshold made
+        // symmetric): the delete-verb census proved the ONLY game code removing from
+        // saveSlot.emails is ui_laptop.delEmail -- a PLAYER action -- so a bulk batch
+        // of removals in ONE poll cannot be gameplay; it is a shadow desync (world
+        // swap / array reset). Re-baseline silently: no announce, no EmailDelete
+        // broadcast (each would misattribute + mass-delete the peers' inboxes).
+        if (removed.size() > kBulkAppendThreshold) {
+            UE_LOGW("email_sync: %zu rows removed in one poll -- shadow desync "
+                    "re-baseline (adopted, NOT announced/broadcast)", removed.size());
+            removed.clear();
+            removedTopics.clear();
+        }
+        // Announce each user delete to the shared feed so the other peers learn who
+        // deleted what. Only in an actual session (no point telling yourself solo).
+        if (s->connected())
+            for (const std::wstring& topic : removedTopics)
+                coop::peer_action_feed::Announce(localSlot, true,
+                                                 L"deleted an email: " + topic);
         // A bulk batch of new rows in ONE poll is a save load (history materializing),
         // not gameplay -- adopt it as baseline and never broadcast it (the joiner gets
         // history via the save transfer). Catches the case where the prime ran before
