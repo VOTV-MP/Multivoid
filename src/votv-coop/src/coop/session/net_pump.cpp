@@ -16,7 +16,7 @@
 #include "coop/dev/heap_probe.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element_deleter.h"
-#include "coop/session/event_feed.h"
+#include "coop/dispatch/event_feed.h"
 #include "coop/session/join_progress.h"
 #include "coop/player/local_streams.h"
 #include "ui/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition

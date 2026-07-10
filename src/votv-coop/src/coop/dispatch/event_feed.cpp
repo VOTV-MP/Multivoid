@@ -6,7 +6,7 @@
 // this file had reached 1388 LOC, 112 from the 1500 hard cap). Core session /
 // handshake / snapshot / dev-key cases stay inline below.
 
-#include "coop/session/event_feed.h"
+#include "coop/dispatch/event_feed.h"
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 

@@ -251,10 +251,10 @@ add_library(votv-coop SHARED
     src/coop/comms/chat_feed.cpp
     src/coop/comms/chat_bubbles.cpp
     src/coop/comms/peer_action_feed.cpp
-    src/coop/session/event_feed.cpp
-    src/coop/session/event_dispatch_entity.cpp
-    src/coop/session/event_dispatch_state.cpp
-    src/coop/session/event_dispatch_world.cpp
+    src/coop/dispatch/event_feed.cpp
+    src/coop/dispatch/event_dispatch_entity.cpp
+    src/coop/dispatch/event_dispatch_state.cpp
+    src/coop/dispatch/event_dispatch_world.cpp
     src/coop/comms/chat_sync.cpp
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/interactable_sync.cpp

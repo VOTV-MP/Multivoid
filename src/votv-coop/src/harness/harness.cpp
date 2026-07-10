@@ -17,7 +17,7 @@
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/kerfur_toggle.h"
 #include "coop/session/teleport_client.h"
-#include "coop/session/event_feed.h"
+#include "coop/dispatch/event_feed.h"
 #include "coop/interactables/garbage_sync.h"
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
