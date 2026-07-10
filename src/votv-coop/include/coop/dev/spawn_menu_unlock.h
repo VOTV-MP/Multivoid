@@ -22,7 +22,7 @@ namespace coop::dev::spawn_menu_unlock {
 
 // Boot hook (called from harness Start). No-op unless [dev] enabled!=0 AND
 // [dev] spawn_menu_unlock=1, in which case it force-enables at boot. The F1 menu
-// (Game > Entities) toggles it interactively under [dev] devkeys regardless.
+// (Content > Props) toggles it interactively under [dev] devkeys regardless.
 void Init();
 
 // Enable/disable the Q-key watcher. Enabling is REFUSED (logged, no-op) on a

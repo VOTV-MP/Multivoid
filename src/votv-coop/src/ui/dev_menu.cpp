@@ -492,8 +492,11 @@ const std::vector<Cat>& Tree() {
         { "Content", {
             // The game's spawnable/triggerable content (user ask 2026-07-10):
             // Entities = creature/entity test spawns (incl. the v108 owner-entity
-            // eyer) + the Q spawn-menu unlock; Events = the full event board.
-            { "Entities", { { &RenderSpawnNpc, true }, { &RenderSpawnMenuUnlock, true } }, true },
+            // eyer); Props = prop-content tools (the Q spawn-menu unlock -- its
+            // own subsection per the user 2026-07-10: it spawns PROPS, not
+            // entities); Events = the full event board.
+            { "Entities", { { &RenderSpawnNpc, true } }, true },
+            { "Props",    { { &RenderSpawnMenuUnlock, true } }, true },
             { "Events",   { { &RenderEvents, true } }, true },
         }, true },
         { "Network", {
