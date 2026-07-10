@@ -65,7 +65,7 @@ ventCrawler, wisp) + piramid2 + arirShip. UNCOVERED spawners (each ticker rolls 
 | ticker_deerSpawner | deer_C | gate[0.02] + pos + variant | NEEDS-PROBE |
 | ticker_mannequinSpawner | wMannequinSpawn_C/prop | Array_Shuffle+Random which+where | NEEDS-PROBE |
 | ticker_hexahiveSpawner | hexahive | gate[0.02] + pos | NEEDS-PROBE |
-| ticker_eyers | eyer_C | gate[0.05] + pos (night) | NEEDS-PROBE |
+| ticker_eyers | eyer_C | gate[0.05] + pos (night) | **DONE-OWNER-ENTITY** (2026-07-10 eve, USER RULE: each peer keeps its OWN native eyer -- the stalker loop (isLooking/angrify/dash) reads the LOCAL player -- but every peer SEES it: `coop/creatures/owner_entity_sync` (OwnerEntitySpawn/Pose/Destroy 94-96, (slot,seq) identity, brain-parked collision-off mirrors, 10 s keepalive = late-join delivery). The TICKER is never parked. F1 Content > Entities "Spawn Eyer" = the lane test. **AS-BUILT caveat (audit F-2): the NATIVE ticker roll's PE-visibility is UNPROVEN** -- the F1 button re-enters ProcessEvent by construction, so it cannot discriminate the axis ([[lesson-e2e-assert-must-discriminate-the-axis]]); the row goes VERIFIED only on a live `owner_entity: OWN 'eyer_C' spawned locally` from a NATURAL/night roll. Fallback if the ticker is EX_CallMath: +1 npc_world_enum Func-thunk source row) |
 | ticker_bp7Spawner | bp7 | branch coin + pos | NEEDS-PROBE |
 | ticker_roachSummoner | roach | timing + pos | **DONE-MIRROR** (2026-07-10 eve, v108 roach lane: roaches = COMPONENTS on the one cockroachMaster (not actors); client sim parked (t1+t3 rows) + host paged RoachState snapshot + RoachConsumed eat/stomp intents — `coop/creatures/roach_sync`) |
 | grayBoarSpawner / boarInvasion | grayboar_C, ariral_shooter, firetank | count+pos+variant | NEEDS-PROBE |
@@ -471,8 +471,20 @@ wakeup/createDream trampoline segments, gate-4 notes — feeds a dedicated incre
 player-local; the earlier default is superseded.
 (3) Inc-2 family order: measured-liveness default (hexahive → bp7 → eyers → roach → mannequin)
 stands unless reordered.
+(4) **OWNER-ENTITY tier (user, 2026-07-10 eve): "Each peer must have it's own but visible for other
+peers. Host auth and sync layer for this is needed, and a test in f1 dev to spawn it."** -> the
+owner-effect rule extended to full CREATURES whose behavior loop reads the LOCAL player (stalkers).
+Each peer keeps its native roll + owns its entity; peers render brain-parked display mirrors via
+`coop/creatures/owner_entity_sync` ((slot,seq) identity -- deliberately NOT the host-eid element
+registry). First member: eyer_C. eyers therefore LEAVES the Inc-2 mirror-then-park order (it is
+never parked). F1 reorg shipped with it: Content section (Entities + Events), Game dissolved.
 
 ## CHANGELOG
+- **2026-07-10 (eve, later)** — **OWNER-ENTITY lane BUILT (eyer)** per the user rule (decision (4)):
+  new `coop/creatures/owner_entity_sync` (kinds 94-96, relayed; owner BeginDeferred POST detect +
+  4 Hz pose/keepalive/death-watch; receivers park ticks + disable collision so the mirror's
+  killsphere can never hurt a viewer). eyers row -> DONE-OWNER-ENTITY. F1 menu reorganized by game
+  domains: Content (Entities incl. "Spawn Eyer" test + Events), Game dissolved into World/Content.
 - **2026-07-10 (eve, post-documentize)** — **ANCHOR AUDIT + three lanes BUILT (v108)** on the
   user's "Lets go, also fix roaches": per-class bytecode ANCHOR reads reclassified the ambient
   set both ways — (a) pineconeSpawner = PLAYER-CAMERA-anchored → OWNER-EFFECT: t3 cancel row

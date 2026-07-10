@@ -707,7 +707,8 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
 inline constexpr uint16_t kProtocolVersion = 108; // v108: roach infestation sync (RoachState=92,
                                                   // RoachConsumed=93) + the ambient owner-mirror flip
-                                                  // (pinecone set peer-symmetric; wire kinds unchanged)
+                                                  // (pinecone set peer-symmetric) + the OWNER-ENTITY
+                                                  // lane (OwnerEntitySpawn/Pose/Destroy=94-96: eyer)
                                                   // v107: signal-server sim state sync (ServerState=91)
 // v104: WorldActorPoseSnapshot +auxTargetEid
                                                   // (44->48; batch cap 31->28) -- the piramid
@@ -2055,6 +2056,18 @@ enum class ReliableKind : uint8_t {
                        //     the last known component location; the host deletes its nearest live
                        //     roach within the adjudication radius and the next RoachState converges
                        //     every peer. Not relayed.
+    OwnerEntitySpawn = 94,   // 2026-07-10 (v108, OWNER-ENTITY tier -- user rule): a peer's OWN
+                       //     stalker-entity spawned locally (eyer_C: each peer keeps its native
+                       //     roll -- the entity targets ITS player -- but every peer must SEE it).
+                       //     Key = (transport senderPeerSlot, seq); classId indexes the module's
+                       //     class table. Relayed client->host->others; receivers materialize a
+                       //     brain-parked, collision-off display mirror. Re-sent as a ~10 s
+                       //     keepalive (receivers treat a known key as a pose refresh) -- that is
+                       //     also the late-joiner delivery. coop/creatures/owner_entity_sync.
+    OwnerEntityPose = 95,    // owner -> peers position/yaw drive for a live owner entity (sent on
+                       //     movement at the module cadence; relayed like Spawn).
+    OwnerEntityDestroy = 96, // owner's entity died locally (native despawn/self-destroy caught by
+                       //     the owner death-watch) -- receivers destroy the mirror. Relayed.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -3017,6 +3030,37 @@ struct RoachConsumedPayload {
     float x, y, z;        // last known world location of the consumed roach's component
 };
 static_assert(sizeof(RoachConsumedPayload) == 12, "RoachConsumedPayload must be 12 bytes");
+
+// v108 OWNER-ENTITY lane (OwnerEntitySpawn/Pose/Destroy). Identity is
+// (transport senderPeerSlot, seq) -- no element eid: the lane is a
+// self-contained per-owner display mirror, not part of the host-auth
+// element registry (a peer-owned axis; anti-smear: its own owner module).
+struct OwnerEntitySpawnPayload {
+    uint16_t seq;         // 2 -- owner-local monotonic entity id
+    uint8_t  classId;     // 1 -- index into the module's class table (0 = eyer_C)
+    uint8_t  _pad;        // 1 -- zeroed
+    float    x, y, z;     // 12 -- world location
+    float    yaw;         // 4 -- degrees
+};
+static_assert(sizeof(OwnerEntitySpawnPayload) == 20, "OwnerEntitySpawnPayload must be 20 bytes");
+
+struct OwnerEntityPosePayload {
+    uint16_t seq;         // 2
+    uint8_t  _pad[2];     // 2 -- zeroed
+    float    x, y, z;     // 12
+    float    yaw;         // 4
+};
+static_assert(sizeof(OwnerEntityPosePayload) == 20, "OwnerEntityPosePayload must be 20 bytes");
+
+struct OwnerEntityDestroyPayload {
+    uint16_t seq;         // 2 -- 0 = WILDCARD: destroy ALL entities of originSlot (host teardown)
+    uint8_t  originSlot;  // 1 -- 0 = "the transport sender" (owner-sent); non-zero only on the
+                          //      HOST-sent leaver teardown (audit F-1: a client transport edge for
+                          //      another client's slot does not exist, so the host fans the
+                          //      leaver's teardown out on its behalf)
+    uint8_t  _pad;        // 1 -- zeroed
+};
+static_assert(sizeof(OwnerEntityDestroyPayload) == 4, "OwnerEntityDestroyPayload must be 4 bytes");
 
 // v64/v65: one chunk of a variable-length serialized blob. Shared by every
 // chunked-row kind (EmailAppend v64, SavedSignalAppend + CompData v65);

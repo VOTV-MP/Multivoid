@@ -4,7 +4,7 @@
 // VOTV NPCs spawn only from in-game purchase / scripted events, so without this
 // the NPC-sync paths (host AllocAndInstall + broadcast, client mirror Install)
 // have no autonomous-test coverage. Two triggers:
-//   * the ImGui dev menu (Game > Entities > "Spawn kerfurOmega") -- hands-on.
+//   * the ImGui dev menu (Content > Entities > "Spawn kerfurOmega") -- hands-on.
 //     The legacy F7 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-
 //     in-imgui-menu]]).
 //   * a trigger FILE named by env VOTVCOOP_SPAWN_TRIGGER -- when the file
@@ -22,7 +22,7 @@ namespace coop::dev::spawn_npc {
 // Gated by [dev] enabled (master). Call once from harness boot.
 void Init();
 
-// Menu action (Game > Entities): spawn a kerfurOmega_C in front of the local
+// Menu action (Content > Entities): spawn a kerfurOmega_C in front of the local
 // player (host-side sync path). Safe to call off the game thread (the spawn is
 // posted to it).
 void SpawnKerfurOmega();
@@ -34,6 +34,14 @@ void SpawnKerfurOmega();
 // spawn_npc.cpp PostSpawnClass. Host-only (dev_gate); safe off the game thread.
 void SpawnKillerWisp();
 void SpawnVentCrawler();
+
+// v108 OWNER-ENTITY lane test (F1 > Content > Entities): spawn an eyer_C in
+// front of the local player. eyer is NOT npc-allowlisted by design -- the
+// owner_entity_sync BeginDeferred observer catches it as a LOCALLY-OWNED
+// entity and announces it, so every peer materializes a brain-parked,
+// collision-off display mirror. Host-only trigger (dev_gate); the client-owned
+// direction is exercised by the native ticker roll.
+void SpawnEyer();
 
 // v72 Killer Wisp cross-peer-kill TEST: spawn a killerwisp ON the first connected client
 // puppet, so it acquires that PUPPET as its Target and exercises the host-detect ->

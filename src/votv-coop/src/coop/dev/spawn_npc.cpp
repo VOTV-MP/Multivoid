@@ -207,6 +207,12 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
 void SpawnKerfurOmega() { PostSpawnKerfur(); }
 void SpawnKillerWisp()  { PostSpawnClass(P::name::NpcClass_KillerWisp); }
 void SpawnVentCrawler() { PostSpawnClass(P::name::NpcClass_VentCrawler); }
+// v108 OWNER-ENTITY test: eyer_C is NOT in the npc allowlist by design -- the
+// interceptor passes the spawn through and owner_entity_sync's own BeginDeferred
+// POST observer catches it as a LOCALLY-OWNED entity + announces it to peers
+// (the per-peer-owned + cross-peer-visible lane). Spawning it here is the F1
+// end-to-end test of that lane.
+void SpawnEyer()        { PostSpawnClass(L"eyer_C"); }
 
 void SpawnKillerWispOnClient() {
     // v72 Killer Wisp cross-peer-kill test: spawn the wisp ON the first client puppet so it
@@ -224,7 +230,7 @@ void Init() {
         (::GetEnvironmentVariableW(L"VOTVCOOP_SPAWN_TRIGGER", probe, 8) > 0);
     if (!wantWatch) {
         UE_LOGI("spawn_npc: file watcher off (no VOTVCOOP_SPAWN_TRIGGER) -- "
-                "spawn via the F1 menu (Game > Entities)");
+                "spawn via the F1 menu (Content > Entities)");
         return;
     }
     if (!::coop::config::MasterEnabled()) {

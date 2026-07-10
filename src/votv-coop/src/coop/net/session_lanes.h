@@ -149,6 +149,9 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::GrimeState:        // v42: surface grime is SYMMETRIC -- relay a client's wipe
     case ReliableKind::TrashPileState:    // v57: trash-pile collect counters are SYMMETRIC -- relay a client's collect to the others
     case ReliableKind::FireflySpawn:      // v51: fireflies are PEER-SYMMETRIC -- each peer spawns near its OWN camera + shares; relay a client's spawn to the others so all peers see everyone's
+    case ReliableKind::OwnerEntitySpawn:  // v108 OWNER-ENTITY (eyer): each peer OWNS its stalker + every peer must see it -- relay a client's announce/pose/destroy to the others
+    case ReliableKind::OwnerEntityPose:
+    case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::InventoryPickup:   // v58: the inventory-collect blip is PEER-SYMMETRIC -- relay a client's collect so every peer hears it
     case ReliableKind::ChatMessage:       // v60: T-chat is PEER-SYMMETRIC -- relay a client's line so every peer reads it
     // EmailAppend is NOT relayable (2026-07-10, audit MEDIUM): emails are HOST-AUTHORED

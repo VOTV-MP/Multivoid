@@ -27,6 +27,7 @@
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_world_enum.h"  // InstallExSpawnCatch (the EX_CallMath spawn catch)
+#include "coop/props/prop_echo_suppress.h"  // InMirrorSpawnScope (census mirror exclusion, F-6)
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
@@ -529,8 +530,13 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
     // rng_roll_census channel (a), CLIENT half: the silent pass-through -- a connected client is
     // about to run a BP deferred spawn our suppression does not cover (the exact set the T1
     // structural-vs-allowlist fork adjudicates on). Name-agnostic; no-op unless the [dev] ini
-    // flag is on.
-    coop::dev::rng_roll_census::NotePassThrough(actorClass, /*isHostRole=*/false);
+    // flag is on. MIRROR-SPAWN EXCLUSION (audit 2026-07-10 F-6): our own wire-mirror spawns
+    // (owner-entity / ambient) re-enter this interceptor on the game thread -- censusing them
+    // as client ROLLS would inflate exactly the data the T1 fork adjudicates on. The scope is
+    // GT-only state, so consult it only from the GT (worker dispatches are never our mirrors).
+    if (!(ue_wrap::game_thread::IsGameThread() &&
+          coop::prop_echo_suppress::InMirrorSpawnScope()))
+        coop::dev::rng_roll_census::NotePassThrough(actorClass, /*isHostRole=*/false);
     return false;  // not an NPC; let it run
 }
 

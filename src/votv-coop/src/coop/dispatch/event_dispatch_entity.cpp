@@ -11,6 +11,7 @@
 #include "coop/player/item_activate.h"
 #include "coop/session/join_progress.h"
 #include "coop/creatures/npc_mirror.h"
+#include "coop/creatures/owner_entity_sync.h"  // v108 OWNER-ENTITY lane (eyer)
 #include "coop/element/quiescence_drain.h"  // b3: ArmPendingPosCorrection / ApplyPendingPosCorrections (PropSnapPos)
 #include "coop/props/save_identity_bind.h"  // b3 OWNER: UpdateChipSavePosAndGetOld (retrack identity key on PropSnapPos)
 #include "coop/player/players_registry.h"
@@ -422,6 +423,43 @@ bool HandleEntityEvent(net::Session& session,
         }
         if (coop::join_membership_sweep::HasLoadTailQuiesced())
             coop::element::quiescence_drain::ApplyPendingPosCorrections();
+        break;
+    }
+    case net::ReliableKind::OwnerEntitySpawn: {
+        // v108 OWNER-ENTITY lane (peer-owned, relayed): any peer may announce
+        // its OWN stalker entity (eyer). Identity = (senderPeerSlot, seq);
+        // class validation (classId bound) lives in owner_entity_sync.
+        if (msg.payloadLen < sizeof(net::OwnerEntitySpawnPayload)) {
+            UE_LOGW("event_feed: OwnerEntitySpawn payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::OwnerEntitySpawnPayload));
+            break;
+        }
+        net::OwnerEntitySpawnPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::owner_entity_sync::OnSpawnMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::OwnerEntityPose: {
+        if (msg.payloadLen < sizeof(net::OwnerEntityPosePayload)) break;
+        net::OwnerEntityPosePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::owner_entity_sync::OnPoseMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::OwnerEntityDestroy: {
+        if (msg.payloadLen < sizeof(net::OwnerEntityDestroyPayload)) break;
+        net::OwnerEntityDestroyPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::owner_entity_sync::OnDestroyMsg(p, slot);
+        });
         break;
     }
     case net::ReliableKind::EntitySpawn: {

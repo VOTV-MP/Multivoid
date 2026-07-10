@@ -183,6 +183,16 @@ void RenderSpawnNpc() {
     // grabs the CLIENT (routes the kill there) instead of the nearest = the host.
     if (ImGui::Button("Spawn killerWisp ON client (coop kill test)"))
         coop::dev::spawn_npc::SpawnKillerWispOnClient();
+    ImGui::Separator();
+    // v108 OWNER-ENTITY lane test: eyer is per-peer OWNED (native AI stalks the
+    // spawning peer) + cross-peer VISIBLE (peers get a brain-parked display mirror).
+    if (ImGui::Button("Spawn Eyer (in front)")) coop::dev::spawn_npc::SpawnEyer();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(owner-entity test: it stalks YOU; peers see a harmless mirror)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The night 'Eyes' stalker. Each peer keeps its OWN native eyer\n"
+                          "(it targets the peer that rolled it); every other peer renders a\n"
+                          "display mirror -- AI and killsphere disabled on the mirror.");
 }
 
 void RenderGivePoints() {
@@ -458,9 +468,11 @@ void RenderAdminPlayers() { ui::admin_panel::Render(); }
 void RenderWorldRules() { ui::world_rules_panel::Render(); }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------
-// Player > Movement/Vitals/HUD ; Game > Weather/Entities/Events ; Network >
-// Stats/Session ; Cosmetics > Skins (the v93 model browser -- the one non-dev
-// category, shown to all players). Network subs are still placeholders.
+// Reorganized by the GAME'S OWN DOMAINS (user ask 2026-07-10): Player (the
+// person) ; World (the simulation state: rules/weather/clock/economy) ;
+// Content (the game's spawnable/triggerable content: entities + events --
+// the old "Game" catch-all dissolved per the folder-concept rule) ; Network ;
+// Administration ; Cosmetics. Network subs are still placeholders.
 const std::vector<Cat>& Tree() {
     static const std::vector<Cat> kTree = {
         { "Player", {
@@ -468,19 +480,22 @@ const std::vector<Cat>& Tree() {
             { "Vitals",   { { &RenderRestoreVitals, true } }, true },
             { "HUD",      { { &RenderPosHud, true }, { &RenderObjectOverlay, true }, { &RenderRagdollBones, true } }, true },
         }, true },
-        { "Game", {
-            { "Weather",  { { &RenderSnow, true } }, true },
-            { "Entities", { { &RenderSpawnNpc, true }, { &RenderSpawnMenuUnlock, true } }, true },
-            { "Economy",  { { &RenderGivePoints, true } }, true },
-            { "Clock",    { { &RenderSetClock, true } }, true },
-            { "Events",   { { &RenderEvents, true } }, true },
-        }, true },
         { "World", {
             // Rules is for EVERYONE (host+clients+solo): a read-only view of the
             // world rules this peer runs under (mainGameInstance.gameRules) +
             // gamemode. Non-dev, non-host. User ask 2026-07-08.
             { "Rules",    { { &RenderWorldRules, false } }, false },
+            { "Weather",  { { &RenderSnow, true } }, true },
+            { "Clock",    { { &RenderSetClock, true } }, true },
+            { "Economy",  { { &RenderGivePoints, true } }, true },
         }, false },
+        { "Content", {
+            // The game's spawnable/triggerable content (user ask 2026-07-10):
+            // Entities = creature/entity test spawns (incl. the v108 owner-entity
+            // eyer) + the Q spawn-menu unlock; Events = the full event board.
+            { "Entities", { { &RenderSpawnNpc, true }, { &RenderSpawnMenuUnlock, true } }, true },
+            { "Events",   { { &RenderEvents, true } }, true },
+        }, true },
         { "Network", {
             // Stats is for EVERYONE (the overlay toggle + live session readout);
             // Session stays a dev placeholder, hidden for regular players.
