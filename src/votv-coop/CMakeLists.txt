@@ -415,6 +415,7 @@ add_library(votv-coop SHARED
     src/coop/dev/flashlight_setup.cpp
     src/coop/dev/pos_hud.cpp
     src/coop/dev/restore_vitals.cpp
+    src/coop/dev/vitals_keepalive.cpp
     src/coop/dev/set_clock.cpp
     src/coop/dev/spawn_menu_unlock.cpp
     src/coop/dev/spawn_npc.cpp
