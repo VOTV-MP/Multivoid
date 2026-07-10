@@ -244,7 +244,7 @@ add_library(votv-coop SHARED
     src/coop/world/balance_sync.cpp
     src/coop/save/save_block.cpp
     src/coop/save/save_button_disable.cpp
-    src/coop/session/multiplayer_menu.cpp
+    src/ui/multiplayer_menu.cpp
     src/coop/player/nameplate.cpp
     src/coop/player/nick_color.cpp
     src/coop/player/hand_item.cpp
@@ -286,10 +286,10 @@ add_library(votv-coop SHARED
     src/coop/player/player_damage.cpp
     src/coop/player/flashlight_click_sound.cpp
     src/coop/props/prop_sound.cpp
-    src/coop/player/inventory_pickup_sync.cpp
+    src/coop/items/inventory_pickup_sync.cpp
     src/coop/session/shutdown.cpp
     src/coop/player/players_registry.cpp
-    src/coop/session/mirror_defer.cpp
+    src/coop/element/mirror_defer.cpp
     src/ui/join_curtain.cpp
     src/coop/creatures/npc_adoption.cpp
     src/coop/creatures/npc_mirror.cpp

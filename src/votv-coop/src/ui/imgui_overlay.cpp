@@ -43,7 +43,7 @@
 #include "ui/voice_panel.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/session/ini_config.h"  // SetOverlayCapturingText -- the hotkey-poller text-capture gate
-#include "coop/session/multiplayer_menu.h"
+#include "ui/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
 #include "coop/session/join_progress.h"

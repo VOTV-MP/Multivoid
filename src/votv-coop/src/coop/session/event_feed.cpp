@@ -17,7 +17,7 @@
 #include "coop/interactables/interactable_sync.h"
 #include "ui/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
 #include "coop/session/join_progress.h"
-#include "coop/session/mirror_defer.h"  // instant-world SEAM 2+3: arm deferred-hide / reveal-confirmed at the lift
+#include "coop/element/mirror_defer.h"  // instant-world SEAM 2+3: arm deferred-hide / reveal-confirmed at the lift
 #include "coop/net/session.h"
 #include "coop/session/subsystems.h"
 #include "coop/creatures/npc_adoption.h"

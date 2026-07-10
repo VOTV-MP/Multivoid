@@ -19,7 +19,7 @@
 
 #include "coop/dev/menu_proceed.h"
 
-#include "coop/session/multiplayer_menu.h"
+#include "ui/multiplayer_menu.h"
 #include "coop/session/shutdown.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/fname_utils.h"

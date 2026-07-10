@@ -28,7 +28,7 @@
 #include "coop/props/save_identity_bind.h"
 #include "coop/props/snapshot_census.h"
 #include "coop/props/trash_pile_sync.h"
-#include "coop/session/mirror_defer.h"
+#include "coop/element/mirror_defer.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/hot_path_guard.h"
 #include "ue_wrap/log.h"

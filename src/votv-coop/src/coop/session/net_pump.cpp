@@ -19,7 +19,7 @@
 #include "coop/session/event_feed.h"
 #include "coop/session/join_progress.h"
 #include "coop/player/local_streams.h"
-#include "coop/session/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition
+#include "ui/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"

@@ -17,7 +17,7 @@
 #include "coop/element/registry.h"
 #include "coop/element/identity_create.h"   // the single NPC mirror create funnel (Inc A)
 #include "coop/creatures/kerfur_convert.h"  // TakeParkedGhostByEid -- adopt the client's own turn-on ghost by eid
-#include "coop/session/mirror_defer.h"  // instant-world: hide a freshly-spawned NPC mirror until lift/quiescence reveal
+#include "coop/element/mirror_defer.h"  // instant-world: hide a freshly-spawned NPC mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"

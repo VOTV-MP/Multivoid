@@ -52,7 +52,7 @@
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
-#include "coop/player/inventory_pickup_sync.h"
+#include "coop/items/inventory_pickup_sync.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/keypad_sync.h"

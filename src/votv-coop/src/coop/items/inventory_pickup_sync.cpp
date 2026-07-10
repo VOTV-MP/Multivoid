@@ -1,6 +1,6 @@
 // coop/inventory_pickup_sync.cpp -- see coop/inventory_pickup_sync.h.
 
-#include "coop/player/inventory_pickup_sync.h"
+#include "coop/items/inventory_pickup_sync.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"

@@ -15,7 +15,7 @@
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
-#include "coop/player/inventory_pickup_sync.h"
+#include "coop/items/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
 #include "coop/world/weather_sync.h"

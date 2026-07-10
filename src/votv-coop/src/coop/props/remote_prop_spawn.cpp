@@ -20,7 +20,7 @@
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor -- exempt host-driven kerfur mirrors in the grab-guard predicate (the SWEEP excludes mirrors structurally via pr.mirror since R3)
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // scope A: post-quiescence retry of the kerfur off->active dup retire
-#include "coop/session/mirror_defer.h"  // instant-world: hide a freshly-spawned host mirror until lift/quiescence reveal
+#include "coop/element/mirror_defer.h"  // instant-world: hide a freshly-spawned host mirror until lift/quiescence reveal
 #include "coop/net/protocol.h"
 #include "coop/creatures/npc_sync.h"  // IsAllowlistedClass -- the NPC half of the load-tail quiescence probe
 #include "coop/props/pile_spawn_bind.h"  // anti-smear 2026-06-30: pile spawn-time twin-destroy / adopt / census

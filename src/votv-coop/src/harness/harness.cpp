@@ -51,7 +51,7 @@
 #include "ui/console.h"
 #include "ui/server_browser.h"
 #include "coop/session/join_progress.h"
-#include "coop/session/multiplayer_menu.h"
+#include "ui/multiplayer_menu.h"
 #include "coop/dev/menu_proceed.h"
 #include "coop/dev/save_probe.h"
 #include "ue_wrap/call.h"

@@ -1,6 +1,6 @@
 // coop/mirror_defer.cpp -- see coop/mirror_defer.h. Instant-world deferred-spawn visibility.
 
-#include "coop/session/mirror_defer.h"
+#include "coop/element/mirror_defer.h"
 
 #include "ue_wrap/engine.h"          // SetActorHiddenInGame + SetActorEnableCollision
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
