@@ -273,11 +273,11 @@ void DrawChat() {
 
     // 2026-07-04 chat-imgui-samp: bold chat font (Cyrillic-capable), per-slot colored
     // nick prefix, 4-way outline (reads over any scene), word-wrap at a fixed width.
-    ImFont* font = ui::fonts::Chat();
+    ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Chat);
     if (!font) font = ImGui::GetFont();
-    // ChatPx() = the px the chat font was BAKED at (scaled): drawing at exactly that
+    // PxFor(Chat) = the px the chat font was BAKED at (scaled): drawing at exactly that
     // size renders the crisp 1:1 rasterization, no bitmap resample.
-    const float px = ui::fonts::Chat() ? ui::fonts::ChatPx() : ImGui::GetFontSize();
+    const float px = font ? ui::fonts::PxFor(ui::fonts::Role::Chat) : ImGui::GetFontSize();
     const float wrapW = std::min(io.DisplaySize.x * 0.42f, S(640.f));
     const float rowH = px + S(2.f);
     const float o = std::max(1.f, S(1.f));  // outline offset (see TextOutlined)

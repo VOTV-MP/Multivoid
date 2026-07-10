@@ -20,7 +20,6 @@
 #include "coop/player/nameplate.h"
 #include "coop/player/nick_color.h"
 #include "coop/config/config.h"
-#include "coop/config/config.h"
 #include "ui/fonts.h"
 #include "coop/player/roster.h"  // LocalIsHost -- the Administration role gate
 #include "ui/admin_panel.h"

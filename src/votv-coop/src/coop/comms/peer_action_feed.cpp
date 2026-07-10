@@ -25,37 +25,7 @@ void EnsureLoaded() {
     });
 }
 
-// UTF-8 encode (mirrors chat_feed's ToUtf8 -- the feed carries UTF-8 so a Cyrillic
-// nick passes through; no shared util header exists yet).
-std::string ToUtf8(const std::wstring& w) {
-    std::string s;
-    s.reserve(w.size() * 2);
-    for (size_t i = 0; i < w.size(); ++i) {
-        uint32_t cp = w[i];
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
-            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (w[i + 1] - 0xDC00);
-            ++i;
-        }
-        if (cp < 0x20 && cp != 0x09) continue;  // strip control chars
-        if (cp < 0x80) {
-            s.push_back(static_cast<char>(cp));
-        } else if (cp < 0x800) {
-            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else {
-            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-    }
-    return s;
-}
+// (ToUtf8 shared from chat_feed.h -- the local copy retired 2026-07-10, RULE 2.)
 
 }  // namespace
 
@@ -76,8 +46,8 @@ void Announce(uint8_t slot, bool isLocalActor, const std::wstring& action) {
     const std::wstring nickW =
         isLocalActor ? std::wstring(L"You")
                      : coop::player_handshake::NicknameForSlot(static_cast<int>(slot));
-    const std::string nick = ToUtf8(nickW.empty() ? std::wstring(L"Player") : nickW);
-    const std::string line = nick + " " + ToUtf8(action);
+    const std::string nick = coop::chat_feed::ToUtf8(nickW.empty() ? std::wstring(L"Player") : nickW);
+    const std::string line = nick + " " + coop::chat_feed::ToUtf8(action);
 
     // PushChat colors the first nickLen BYTES per `slot` (chat parity); the rest is
     // the action predicate in the default event color.

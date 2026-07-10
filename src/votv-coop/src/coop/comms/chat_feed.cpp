@@ -51,38 +51,7 @@ uint64_t NowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-// UTF-8-encode a wide string (UTF-16 on Windows, surrogate pairs included).
-// Replaced ToAscii 2026-07-04: the feed carries UTF-8 now that the overlay font
-// has Cyrillic glyphs -- a Russian nick in "X joined the game" renders as-is.
-std::string ToUtf8(const std::wstring& w) {
-    std::string s;
-    s.reserve(w.size() * 2);
-    for (size_t i = 0; i < w.size(); ++i) {
-        uint32_t cp = w[i];
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
-            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (w[i + 1] - 0xDC00);
-            ++i;
-        }
-        if (cp < 0x20 && cp != 0x09) continue;  // strip control chars
-        if (cp < 0x80) {
-            s.push_back(static_cast<char>(cp));
-        } else if (cp < 0x800) {
-            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else {
-            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-    }
-    return s;
-}
+// (ToUtf8 moved to namespace scope below -- exported via chat_feed.h, 2026-07-10 dedupe.)
 
 // ---- resurrection probe (user 2026-07-04: a long-gone line sometimes REAPPEARS
 // for ~0.5 s and fades out again). Static analysis proves the store can't do it
@@ -189,6 +158,39 @@ void Republish() {
 }
 
 }  // namespace
+
+// UTF-8-encode a wide string (UTF-16 on Windows, surrogate pairs included).
+// Replaced ToAscii 2026-07-04: the feed carries UTF-8 now that the overlay font
+// has Cyrillic glyphs -- a Russian nick in "X joined the game" renders as-is.
+std::string ToUtf8(const std::wstring& w) {
+    std::string s;
+    s.reserve(w.size() * 2);
+    for (size_t i = 0; i < w.size(); ++i) {
+        uint32_t cp = w[i];
+        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
+            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (w[i + 1] - 0xDC00);
+            ++i;
+        }
+        if (cp < 0x20 && cp != 0x09) continue;  // strip control chars
+        if (cp < 0x80) {
+            s.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+    return s;
+}
 
 void Push(const std::wstring& line) {
     Entry e;

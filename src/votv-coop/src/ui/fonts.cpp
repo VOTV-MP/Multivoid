@@ -223,8 +223,6 @@ float PxFor(Role r) {
     return (i >= 0 && i < kRoleCount) ? g_rolePx[i] : (kUiPx * ui::scale::Ui());
 }
 
-ImFont* Chat()   { return g_roleFont[static_cast<int>(Role::Chat)]; }
-float   ChatPx() { return g_rolePx[static_cast<int>(Role::Chat)]; }
 
 const char* FamilyLabel(Family f) {
     const int i = static_cast<int>(f);

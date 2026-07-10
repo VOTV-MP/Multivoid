@@ -51,6 +51,15 @@ struct ShadowRow {
                             // the peer-action feed ("<nick> deleted an email: X")
 };
 std::vector<ShadowRow> g_shadow;
+
+// Truncate a topic for the shadow/announce (80 UTF-16 units) WITHOUT splitting a
+// surrogate pair -- a dangling high surrogate would encode as invalid UTF-8 in the
+// peer-action line (audit 2026-07-10 LOW).
+std::wstring TruncTopic(const std::wstring& topic) {
+    std::wstring t = topic.substr(0, 80);
+    if (!t.empty() && t.back() >= 0xD800 && t.back() <= 0xDBFF) t.pop_back();
+    return t;
+}
 bool g_primed = false;
 // Stabilize-before-prime (2026-06-19 flood RCA): the save's emails load
 // ASYNchronously, so the array climbs 2 -> ... -> N over the first seconds. Priming
@@ -293,7 +302,7 @@ void Tick() {
             if (UE::ReadRow(i, r)) {
                 const std::vector<uint8_t> blob = SerializeRow(r);
                 srow.hash = Fnv64(blob.data(), blob.size());
-                srow.topic = r.topic.substr(0, 80);
+                srow.topic = TruncTopic(r.topic);
             }
             g_shadow.push_back(srow);
         }
@@ -326,9 +335,12 @@ void Tick() {
         if (s->role() == coop::net::Role::Host || localSlot == coop::players::kPeerIdUnknown)
             localSlot = 0;
         size_t j = 0;
-        for (const ShadowRow& srow : g_shadow) {
+        for (ShadowRow& srow : g_shadow) {
             if (j < cur.size() && srow.key == cur[j]) {
-                next.push_back(srow);
+                // move, not copy: the topic wstring copied per surviving row per poll
+                // was ~2k allocs/s on a big save (audit 2026-07-10 LOW); g_shadow is
+                // replaced by `next` wholesale below, so moving out of it is safe.
+                next.push_back(std::move(srow));
                 ++j;
             } else if (srow.hash != 0) {
                 // hash 0 = was unreadable at shadow time (v65 audit I-2 parity:
@@ -362,7 +374,7 @@ void Tick() {
             if (rowReadable) {
                 const std::vector<uint8_t> blob = SerializeRow(r);
                 rowHash = Fnv64(blob.data(), blob.size());
-                srow.topic = r.topic.substr(0, 80);
+                srow.topic = TruncTopic(r.topic);
             }
             srow.hash = rowHash;
             bool wireApplied = false;

@@ -77,7 +77,7 @@ void Render() {
     // check is the belt-and-braces for paths where the keydown reached ImGui.
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { Close(); return; }
 
-    ImFont* chatFont = ui::fonts::Chat();
+    ImFont* chatFont = ui::fonts::FontFor(ui::fonts::Role::Chat);
     if (chatFont) ImGui::PushFont(chatFont);
 
     const ImGuiIO& io = ImGui::GetIO();

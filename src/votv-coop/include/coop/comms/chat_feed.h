@@ -69,4 +69,9 @@ bool HasAny();
 // linger). Game thread.
 void Reset();
 
+// UTF-8-encode a wide string (UTF-16 surrogate pairs included; control chars
+// stripped except TAB). The feeds carry UTF-8 (Cyrillic nicks render as-is).
+// Shared here so peer_action_feed doesn't keep a copy (2026-07-10 dedupe).
+std::string ToUtf8(const std::wstring& w);
+
 }  // namespace coop::chat_feed

@@ -60,11 +60,6 @@ void Load();
 ImFont* FontFor(Role r);
 float   PxFor(Role r);
 
-// The chat font/size (== FontFor(Role::Chat) / PxFor(Role::Chat)). Kept as the
-// legacy accessor the chat feed + input already call.
-ImFont* Chat();
-float   ChatPx();
-
 const char* FamilyLabel(Family f);   // "JetBrains Mono", ...
 const char* RoleLabel(Role r);       // "Menu / panels", "Chat", "Net stats", "Nameplates"
 
