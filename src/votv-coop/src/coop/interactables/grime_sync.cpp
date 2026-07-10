@@ -17,7 +17,7 @@
 
 #include "coop/interactables/grime_sync.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
@@ -85,7 +85,7 @@ constexpr float kWipeProximityCm  = 800.0f;
 constexpr float kWipeProximityCm2 = kWipeProximityCm * kWipeProximityCm;
 
 bool ProbeLog() {
-    static const bool s_enabled = ::coop::ini_config::IsIniKeyTrue("grime_log");
+    static const bool s_enabled = ::coop::config::IsIniKeyTrue("grime_log");
     return s_enabled;
 }
 

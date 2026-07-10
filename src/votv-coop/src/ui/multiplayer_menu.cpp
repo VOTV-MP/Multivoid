@@ -9,7 +9,8 @@
 
 #include "ui/multiplayer_menu.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
+#include "ui/input_focus.h"
 #include "coop/session/join_progress.h"
 #include "ui/server_browser.h"
 #include "ue_wrap/engine.h"
@@ -136,7 +137,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     g_prevLmb = down;
     if (pressEdge && g_button && R::IsLive(g_button) && !ui::server_browser::IsOpen() &&
         !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
-        coop::ini_config::IsOurWindowForeground() && E::WidgetIsHovered(g_button)) {
+        ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(g_button)) {
         UE_LOGI("multiplayer_menu: MULTIPLAYER clicked -> opening server browser");
         ui::server_browser::Open();
     }
@@ -191,7 +192,7 @@ void Init() {
     // Opt-out kill switch (default ON -- this is a shipping feature, not a dev one,
     // so it is NOT gated by the [dev] master switch). `[coop] multiplayer_menu_off=1`
     // disables it.
-    if (coop::ini_config::IsIniKeyTrue("multiplayer_menu_off")) {
+    if (coop::config::IsIniKeyTrue("multiplayer_menu_off")) {
         UE_LOGI("multiplayer_menu: disabled via [coop] multiplayer_menu_off=1");
         return;
     }

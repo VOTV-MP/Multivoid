@@ -2,7 +2,7 @@
 
 #include "coop/dev/drone_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -21,7 +21,7 @@ namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::ini_config::IsIniKeyTrue("drone_probe");
+    static const bool s_enabled = coop::config::IsIniKeyTrue("drone_probe");
     return s_enabled;
 }
 
@@ -106,7 +106,7 @@ uint64_t g_tickCounter = 0;
 // One-shot, fired after a settle delay so the world + link are stable. RE: the "autonomous trigger"
 // agent pass in votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
 bool DriveEnabled() {
-    static const bool s_on = coop::ini_config::IsIniKeyTrue("drone_probe_drive");
+    static const bool s_on = coop::config::IsIniKeyTrue("drone_probe_drive");
     return s_on;
 }
 bool g_driveFired  = false;

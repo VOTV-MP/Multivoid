@@ -10,7 +10,7 @@
 
 #include "coop/dev/door_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/door.h"
 #include "ue_wrap/log.h"
@@ -27,7 +27,7 @@ namespace R = ue_wrap::reflection;
 namespace D = ue_wrap::door;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::ini_config::IsIniKeyTrue("door_probe");
+    static const bool s_enabled = coop::config::IsIniKeyTrue("door_probe");
     return s_enabled;
 }
 

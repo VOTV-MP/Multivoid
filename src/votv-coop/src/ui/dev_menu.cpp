@@ -19,8 +19,8 @@
 #include "coop/comms/peer_action_feed.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/nick_color.h"
-#include "coop/session/ini_config.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
+#include "coop/config/config.h"
 #include "ui/fonts.h"
 #include "coop/player/roster.h"  // LocalIsHost -- the Administration role gate
 #include "ui/admin_panel.h"
@@ -439,7 +439,7 @@ void RenderFontPref() {
         ui::scale::SetUserScale(sPending);
         char v[16];
         std::snprintf(v, sizeof(v), "%.2f", ui::scale::UserScale());
-        harness::config::WriteIniValue("ui.scale", v);
+        coop::config::WriteIniValue("ui.scale", v);
         sPending = ui::scale::UserScale();  // reflect the clamp
     }
     ImGui::SameLine();
@@ -515,8 +515,8 @@ void Init() {
     // Dev items show only when the dev switch is on AND the master isn't killed --
     // [dev] enabled=0 forces every dev feature off (this replaces the per-module
     // MasterEnabled() checks the migrated dev modules used to do in their Init).
-    g_devMode = ::coop::ini_config::MasterEnabled() &&
-                ::coop::ini_config::IsIniKeyTrue("devkeys");
+    g_devMode = ::coop::config::MasterEnabled() &&
+                ::coop::config::IsIniKeyTrue("devkeys");
 }
 
 bool DevMode() {

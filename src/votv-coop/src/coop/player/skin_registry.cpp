@@ -2,7 +2,7 @@
 
 #include "coop/player/skin_registry.h"
 
-#include "harness/config.h"  // ModuleDir -- the pak folder is derived from the DLL location
+#include "coop/config/config.h"  // ModuleDir -- the pak folder is derived from the DLL location
 #include "ue_wrap/log.h"
 
 #include <cwctype>
@@ -114,7 +114,7 @@ std::string PickRandomStarterSkin() {
 std::wstring PakDir() {
     // ModuleDir = <game>/VotV/Binaries/Win64 (the proxy DLL's folder). The model
     // paks auto-mount from <game>/VotV/Content/Paks/LogicMods/votv-coop.
-    const std::wstring base = harness::config::ModuleDir();
+    const std::wstring base = coop::config::ModuleDir();
     if (base.empty()) return {};
     std::error_code ec;
     fs::path p = fs::path(base).parent_path().parent_path()

@@ -17,7 +17,7 @@
 #include "harness/autotest.h"
 
 #include "coop/world/alarm_sync.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -27,7 +27,7 @@
 namespace harness::autotest {
 
 void RunAutonomousAlarmForceTest() {
-    const std::string roleEnv = harness::config::ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
     if (roleEnv == "client") {
         UE_LOGI("alarmforce_test: not host -- this routine is host-only (client observes via wire)");
         return;

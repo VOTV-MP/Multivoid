@@ -4,7 +4,7 @@
 
 #include "coop/dev/dev_gate.h"
 #include "coop/element/registry.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
@@ -290,8 +290,8 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
 }  // namespace
 
 void InitFromIni() {
-    if (::coop::ini_config::MasterEnabled() &&
-        ::coop::ini_config::IsIniKeyTrue("object_overlay")) {
+    if (::coop::config::MasterEnabled() &&
+        ::coop::config::IsIniKeyTrue("object_overlay")) {
         g_enabled.store(true, std::memory_order_release);
         UE_LOGI("object_overlay: force-enabled via ini (names=%d net=%d phys=%d r=%.0fm)",
                 g_layerNames.load() ? 1 : 0, g_layerNet.load() ? 1 : 0,

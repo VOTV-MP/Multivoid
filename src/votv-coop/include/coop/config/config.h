@@ -1,4 +1,4 @@
-// harness/config.h -- env + ini configuration readers.
+// coop/config/config.h -- env + ini configuration readers.
 //
 // Both the scenario file (scenario.txt) and the user-facing ini
 // (votv-coop.ini) live next to the mod DLL. The LAN test framework
@@ -16,7 +16,7 @@
 
 #include <string>
 
-namespace harness::config {
+namespace coop::config {
 
 // Directory of this mod DLL (its containing folder; no trailing slash).
 std::wstring ModuleDir();
@@ -71,4 +71,15 @@ std::string ReadPlayerGuid();
 // scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
 std::string ReadPlayerSkin();
 
-}  // namespace harness::config
+// ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
+
+// Returns false ONLY if votv-coop.ini contains `enabled=0` (or `enabled=false`)
+// -- the [dev] master kill-switch. Missing key or =1 returns true.
+bool MasterEnabled();
+
+// Read a `key=1` / `key=true` style flag line. Case/space/inline-comment
+// tolerant. Returns false if the file is missing, the key is absent, or the
+// key is set to 0/false.
+bool IsIniKeyTrue(const char* key);
+
+}  // namespace coop::config

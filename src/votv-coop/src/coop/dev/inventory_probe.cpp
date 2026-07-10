@@ -2,7 +2,7 @@
 
 #include "coop/dev/inventory_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/items/inventory_wire.h"
 #include "ue_wrap/inventory.h"
 #include "ue_wrap/log.h"
@@ -13,7 +13,7 @@
 namespace coop::dev::inventory_probe {
 
 void Tick() {
-    static const bool s_on = ::coop::ini_config::IsIniKeyTrue("inventory_probe");
+    static const bool s_on = ::coop::config::IsIniKeyTrue("inventory_probe");
     if (!s_on) return;
     static bool s_done = false;
     if (s_done) return;

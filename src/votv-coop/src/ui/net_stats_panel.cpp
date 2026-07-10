@@ -3,7 +3,7 @@
 #include "ui/net_stats_panel.h"
 
 #include "coop/net/net_stats.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
 
@@ -26,7 +26,7 @@ std::once_flag g_prefOnce;
 
 void LoadPrefOnce() {
     std::call_once(g_prefOnce, [] {
-        g_enabled.store(harness::config::ReadIniValue("ui.netstats", "0") == "1",
+        g_enabled.store(coop::config::ReadIniValue("ui.netstats", "0") == "1",
                         std::memory_order_relaxed);
     });
 }
@@ -152,7 +152,7 @@ bool Enabled() {
 void SetEnabled(bool on) {
     LoadPrefOnce();
     g_enabled.store(on, std::memory_order_relaxed);
-    harness::config::WriteIniValue("ui.netstats", on ? "1" : "0");
+    coop::config::WriteIniValue("ui.netstats", on ? "1" : "0");
 }
 
 void Render() {

@@ -29,7 +29,7 @@
 #include "coop/element/mirror_managers.h"
 #include "coop/element/npc.h"
 #include "coop/element/world_actor.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -90,7 +90,7 @@ void RepinWispsAroundPyramid() {
 }  // namespace
 
 void RunAutonomousPiramidForceTest() {
-    const std::string roleEnv = harness::config::ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
     if (roleEnv == "client") {
         UE_LOGI("piramidforce_test: not host -- host-only (client asserts via its own log lines)");
         return;

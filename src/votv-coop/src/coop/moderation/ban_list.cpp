@@ -31,7 +31,7 @@ std::unordered_map<std::string, Record> g_bans;  // keyed by IP; guarded by g_mu
 
 // Banlist lives next to the deployed mod binary -- the same Binaries\Win64
 // directory as votv-coop.dll / votv-coop.ini / votv-coop.log (resolved via our
-// own module handle, exactly like ini_config::ModuleDir). Each game copy keeps
+// own module handle, exactly like coop::config::ModuleDir). Each game copy keeps
 // its OWN banlist; the host copy's file is the canonical one (clients never
 // load it). File name follows the votv-coop-* convention.
 fs::path BanlistPath() {

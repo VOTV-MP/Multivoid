@@ -330,7 +330,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp
     src/coop/world/weather_redsky.cpp
-    src/coop/session/ini_config.cpp
+    src/coop/config/config.cpp
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
@@ -456,7 +456,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_pauseguard.cpp
     src/harness/autotest/autotest_move_osc.cpp
     src/harness/autotest/autotest_saveui.cpp
-    src/harness/config.cpp
+    src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/sdk_check.cpp
 )

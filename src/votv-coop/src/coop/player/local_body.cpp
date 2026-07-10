@@ -7,7 +7,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/skin_registry.h"
 #include "coop/session/player_handshake.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"
 #include "ue_wrap/log.h"
@@ -73,7 +73,7 @@ void RequestSkin(const std::string& name) {
         return;
     }
     // Persist NOW (file IO is fine off the game thread; same ini as player_guid).
-    harness::config::WriteIniValue("player_skin", name.c_str());
+    coop::config::WriteIniValue("player_skin", name.c_str());
     ue_wrap::game_thread::Post([name] {
         SetSkinInternal(name);
         g_applied = false;  // Tick re-applies to the local pawn (also un-latches a pak-missing skip)

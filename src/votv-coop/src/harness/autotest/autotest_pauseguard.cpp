@@ -17,7 +17,7 @@
 
 #include "harness/autotest.h"
 
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -45,7 +45,7 @@ int RunGT(Fn&& body) {
 }  // namespace
 
 void RunAutonomousPauseGuardTest() {
-    if (harness::config::ReadEnv("VOTVCOOP_NET_ROLE") != "client") {
+    if (coop::config::ReadEnv("VOTVCOOP_NET_ROLE") != "client") {
         UE_LOGI("pause_test: not client -- this routine is client-only (the reported freeze "
                 "is the CLIENT pausing). Returning.");
         return;

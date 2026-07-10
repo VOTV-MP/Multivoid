@@ -22,7 +22,7 @@
 #include "coop/dev/spawn_npc.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -77,7 +77,7 @@ float Dist(void* a, void* b) {
 }  // namespace
 
 void RunAutonomousKwispProbe() {
-    const std::string roleEnv = harness::config::ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
     if (roleEnv == "client") {
         UE_LOGI("kwisp_probe: not host -- client just stands (its puppet is the bait); verify in "
                 "THIS log: wisp_tear/WispGrab lines IF the relay fires");

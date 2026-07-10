@@ -6,7 +6,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // IsHandAxisActor (channel e exclusion; GT-only)
 #include "coop/props/world_load_episode.h"  // InEpisode (JOIN-EPISODE tag; atomic-read safe)
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/ufunction_hook.h"
 #include "ue_wrap/log.h"
@@ -275,7 +275,7 @@ void RunCensuses() {
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::ini_config::IsIniKeyTrue("rng_roll_census");
+    static const bool s = coop::config::IsIniKeyTrue("rng_roll_census");
     return s;
 }
 

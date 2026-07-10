@@ -2,7 +2,7 @@
 
 #include "coop/dev/spawn_order_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (off-prop kerfur family)
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"         // IsChipPile
@@ -38,7 +38,7 @@ const char* FamilyName(Family f) { return f == Family::ChipPile ? "chipPile" : "
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::ini_config::IsIniKeyTrue("spawn_order_probe");
+    static const bool s = coop::config::IsIniKeyTrue("spawn_order_probe");
     return s;
 }
 

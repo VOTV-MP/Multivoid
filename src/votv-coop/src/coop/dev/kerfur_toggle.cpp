@@ -2,7 +2,7 @@
 
 #include "coop/dev/kerfur_toggle.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/shutdown.h"
 #include "ue_wrap/engine.h"
@@ -106,7 +106,7 @@ void Init() {
     if (::GetEnvironmentVariableW(L"VOTVCOOP_KERFUR_TOGGLE_TRIGGER", probe, 8) == 0) {
         return;  // dead unless the test env var is set
     }
-    if (!::coop::ini_config::MasterEnabled()) {
+    if (!::coop::config::MasterEnabled()) {
         UE_LOGI("kerfur_toggle: disabled by master switch ([dev] enabled=0)");
         return;
     }

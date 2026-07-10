@@ -13,7 +13,7 @@
 
 #include "coop/interactables/window_sync.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
@@ -54,7 +54,7 @@ constexpr auto kPendingTTL = std::chrono::seconds(25);
 constexpr float kCleanEps = 0.0005f;
 
 bool ProbeLog() {
-    static const bool s_enabled = ::coop::ini_config::IsIniKeyTrue("window_log");
+    static const bool s_enabled = ::coop::config::IsIniKeyTrue("window_log");
     return s_enabled;
 }
 
@@ -223,7 +223,7 @@ void PollAndBroadcast() {
 // end-to-end autonomously, isolating any real-gesture bug to the clean@0x0260
 // detection. NOT shipped behavior -- gated off by default; remove the ini key for play.
 void MaybeSyntheticWipe() {
-    static const bool s_on = ::coop::ini_config::IsIniKeyTrue("window_synth");
+    static const bool s_on = ::coop::config::IsIniKeyTrue("window_synth");
     if (!s_on) return;
     static bool s_done = false;
     static int  s_ticks = 0;

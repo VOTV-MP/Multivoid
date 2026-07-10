@@ -2,14 +2,15 @@
 
 #include "coop/voice/voice_chat.h"
 
-#include "coop/session/ini_config.h"  // IsOurWindowForeground -- the cross-process key gate
+#include "ui/input_focus.h"  // IsOurWindowForeground -- the cross-process key gate
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/voice/voice_capture.h"
 #include "coop/voice/voice_playback.h"
 
-#include "harness/config.h"
+#include "coop/config/config.h"
+
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 
@@ -26,7 +27,7 @@
 namespace coop::voice_chat {
 namespace {
 
-namespace CFG = harness::config;
+namespace CFG = coop::config;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -196,8 +197,8 @@ void Tick() {
     // global across processes, same hazard as the capture-thread PTT gate). Also
     // text-capture-gated (2026-07-09): no mute toggle while typing the key into chat.
     if (g_muteVk != 0) {
-        const bool down = coop::ini_config::IsOurWindowForeground() &&
-                          !coop::ini_config::IsOverlayCapturingText() &&
+        const bool down = ui::input_focus::IsOurWindowForeground() &&
+                          !ui::input_focus::IsOverlayCapturingText() &&
                           (GetAsyncKeyState(g_muteVk) & 0x8000) != 0;
         if (down && !g_muteKeyWasDown) g_capture.SetMuted(!g_capture.Muted());
         g_muteKeyWasDown = down;

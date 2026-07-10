@@ -11,7 +11,7 @@
 #include "coop/props/pile_spawn_bind.h"
 
 #include "coop/element/quiescence_drain.h"  // ArmPendingSaveTimeTwin (the spawn mechanism CAPTURES into the order owner)
-#include "coop/session/ini_config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (votv-coop.ini [dev], not bats/env)
+#include "coop/config/config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (votv-coop.ini [dev], not bats/env)
 #include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
 #include "coop/props/save_time_retire_util.h"  // UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
 #include "coop/props/trash_proxy.h"  // NearestPileProxy (the L1 orphan census)
@@ -66,7 +66,7 @@ int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orp
 // mp.py-harness override only. [[feedback-test-flags-in-ini-not-bats-or-env]] Used by TryDestroyTwin's
 // delta-log AND LogCensus's verbose mode -- ONE concept, ONE gate, file-local to this module.
 bool DeltaProbeOn() {
-    static const bool on = coop::ini_config::IsIniKeyTrue("pile_delta_probe") || [] {
+    static const bool on = coop::config::IsIniKeyTrue("pile_delta_probe") || [] {
         const char* v = std::getenv("VOTVCOOP_PILE_DELTA_PROBE");
         return v && v[0] && v[0] != '0';
     }();

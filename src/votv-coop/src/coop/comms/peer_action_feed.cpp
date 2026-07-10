@@ -5,7 +5,7 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/session/player_handshake.h"
 
-#include "harness/config.h"
+#include "coop/config/config.h"
 
 #include <atomic>
 #include <mutex>
@@ -20,7 +20,7 @@ std::once_flag    g_loadOnce;
 
 void EnsureLoaded() {
     std::call_once(g_loadOnce, [] {
-        const std::string v = harness::config::ReadIniValue("ui.chat.peer_actions", "1");
+        const std::string v = coop::config::ReadIniValue("ui.chat.peer_actions", "1");
         g_enabled.store(v != "0", std::memory_order_relaxed);
     });
 }
@@ -62,7 +62,7 @@ std::string ToUtf8(const std::wstring& w) {
 void SetEnabled(bool on) {
     EnsureLoaded();
     g_enabled.store(on, std::memory_order_relaxed);
-    harness::config::WriteIniValue("ui.chat.peer_actions", on ? "1" : "0");
+    coop::config::WriteIniValue("ui.chat.peer_actions", on ? "1" : "0");
 }
 
 bool Enabled() {

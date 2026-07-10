@@ -2,7 +2,7 @@
 
 #include "coop/dev/keypad_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/door.h"
 #include "ue_wrap/game_thread.h"
@@ -23,7 +23,7 @@ namespace GT = ue_wrap::game_thread;
 namespace PL = ue_wrap::passwordlock;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::ini_config::IsIniKeyTrue("keypad_probe");
+    static const bool s_enabled = coop::config::IsIniKeyTrue("keypad_probe");
     return s_enabled;
 }
 
@@ -134,7 +134,7 @@ void Tick() {
     // Gated behind a SEPARATE flag so a hands-on `keypad_probe=1` is PURELY PASSIVE and
     // never types into the keypad the user is using (the synthetic typing would corrupt a
     // real entry / trip falseEnterEvent). Set `keypad_synth=1` only for an autonomous run.
-    static const bool sSynth = coop::ini_config::IsIniKeyTrue("keypad_synth");
+    static const bool sSynth = coop::config::IsIniKeyTrue("keypad_synth");
     if (!sSynth) { g_tick++; return; }
     if (g_testDone) { g_tick++; return; }
     if (g_tick++ < 360) return;  // let the world stream in

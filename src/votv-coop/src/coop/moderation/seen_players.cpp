@@ -5,7 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 #include "coop/session/player_handshake.h"
-#include "harness/config.h"                // ModuleDir -- the file lives next to the DLL
+#include "coop/config/config.h"                // ModuleDir -- the file lives next to the DLL
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -39,7 +39,7 @@ std::unordered_map<std::string, Record> g_records;  // keyed by GUID; guarded by
 std::array<std::string, coop::players::kMaxPeers> g_onlineGuidBySlot{};
 
 fs::path RegistryPath() {
-    const std::wstring dir = harness::config::ModuleDir();
+    const std::wstring dir = coop::config::ModuleDir();
     if (dir.empty()) return {};
     return fs::path(dir) / L"votv-coop-players.txt";
 }

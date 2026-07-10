@@ -3,7 +3,7 @@
 #include "coop/dev/spawn_npc.h"
 
 #include "coop/dev/dev_gate.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"   // RemotePlayer::GetActor (the on-client wisp test spawn)
@@ -227,7 +227,7 @@ void Init() {
                 "spawn via the F1 menu (Game > Entities)");
         return;
     }
-    if (!::coop::ini_config::MasterEnabled()) {
+    if (!::coop::config::MasterEnabled()) {
         UE_LOGI("spawn_npc: disabled by master switch ([dev] enabled=0)");
         return;
     }

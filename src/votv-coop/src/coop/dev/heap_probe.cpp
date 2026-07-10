@@ -2,7 +2,7 @@
 
 #include "coop/dev/heap_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"
 
@@ -91,7 +91,7 @@ Clock::time_point g_next{};
 constexpr auto kInterval = std::chrono::seconds(4);
 
 bool Armed() {
-    if (g_armed < 0) g_armed = coop::ini_config::IsIniKeyTrue("heap_probe") ? 1 : 0;
+    if (g_armed < 0) g_armed = coop::config::IsIniKeyTrue("heap_probe") ? 1 : 0;
     return g_armed == 1;
 }
 

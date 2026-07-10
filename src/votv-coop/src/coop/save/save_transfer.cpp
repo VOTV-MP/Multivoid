@@ -5,7 +5,7 @@
 #include "coop/comms/chat_feed.h"  // v86 Path 1c hands-on: in-game JOIN-WINDOW OPEN cue (gated on pile_delta_probe)
 #include "coop/element/element.h"   // b3: Element::GetActor() (resolve the host pile actor by eid)
 #include "coop/element/registry.h"  // b3: Registry::Get().Get(eid) (the host eid->actor lookup)
-#include "coop/session/ini_config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
+#include "coop/config/config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/props/save_identity_bind.h"  // Phase 2b: client eid-range bind (SetReceivedMap / OnDisconnect)
@@ -408,7 +408,7 @@ void OnRequest(int peerSlot) {
     // just requested the save -- the JOIN-WINDOW is now OPEN. A host pile MOVED from here until the
     // joiner hits world-ready ([PILE-1C] / "JOIN-WINDOW CLOSED") is in-window and its save-time key
     // reconciles the client native. Drop the test piles AFTER this line appears, BEFORE the CLOSED cue.
-    if (coop::ini_config::IsIniKeyTrue("pile_delta_probe"))
+    if (coop::config::IsIniKeyTrue("pile_delta_probe"))
         coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')");
 
     // ROOT-CAUSE FIX (2026-06-15): serialize the host's world LIVE, right now, into
@@ -446,7 +446,7 @@ void OnRequest(int peerSlot) {
             // absent (the shipping default + the user's normal play) -> sidecarBytes=0 -> byte-identical to
             // the pre-sidecar stream. Built BEFORE BeginStreamFromBlob_ so the framing is part of the CRC.
             std::vector<uint8_t> sidecar;  // empty unless the dev flag is on (then 12B header + 9B/entry)
-            if (coop::ini_config::IsIniKeyTrue("save_identity_map_log")) {
+            if (coop::config::IsIniKeyTrue("save_identity_map_log")) {
                 coop::save_identity_map::IdMap idMap;
                 coop::save_identity_map::BuildHostMap(idMap);              // logs its own per-family summary
                 coop::save_identity_map::SerializeSidecar(idMap, sidecar);

@@ -7,7 +7,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/session/player_handshake.h"
 #include "coop/voice/voice_chat.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
@@ -193,7 +193,7 @@ void RequestLocalVisible(bool visible) {
     // Render thread (the F1 checkbox). Persist NOW (WriteIniValue is
     // thread-safe/atomic-swap); state + announce hop to the game thread --
     // the RequestSkin discipline.
-    harness::config::WriteIniValue("nameplate", visible ? "1" : "0");
+    coop::config::WriteIniValue("nameplate", visible ? "1" : "0");
     ue_wrap::game_thread::Post([visible] {
         g_localVisible.store(visible, std::memory_order_relaxed);
         UE_LOGI("nameplate: local plate -> %s (persisted; announcing)",

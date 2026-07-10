@@ -42,7 +42,7 @@
 #include "ui/scale.h"
 #include "ui/voice_panel.h"
 #include "coop/comms/chat_sync.h"
-#include "coop/session/ini_config.h"  // SetOverlayCapturingText -- the hotkey-poller text-capture gate
+#include "ui/input_focus.h"  // SetOverlayCapturingText -- the hotkey-poller text-capture gate
 #include "ui/multiplayer_menu.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
@@ -431,7 +431,7 @@ void RenderFrameGuarded() {
         // keystroke meant for the field doesn't ALSO trigger a bind (2026-07-09:
         // T-to-chat then G activated voice). WantTextInput covers every text
         // widget; OR the chat-open latch for the one focus-handoff frame.
-        coop::ini_config::SetOverlayCapturingText(
+        ui::input_focus::SetOverlayCapturingText(
             ImGui::GetIO().WantTextInput || ui::chat_input::IsOpen());
 
         ImGui::Render();

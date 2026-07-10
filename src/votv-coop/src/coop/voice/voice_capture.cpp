@@ -2,7 +2,7 @@
 
 #include "coop/voice/voice_capture.h"
 
-#include "coop/session/ini_config.h"  // IsOurWindowForeground -- the cross-process PTT gate
+#include "ui/input_focus.h"  // IsOurWindowForeground -- the cross-process PTT gate
 #include "ue_wrap/log.h"
 
 #include <Windows.h>
@@ -244,7 +244,7 @@ void Capture::ProcessFrame(const int16_t* samples) {
     // mode capture too (no hot mic while alt-tabbed) -- on "the foreground window is
     // OURS" (cheap user32 calls, safe on this mic thread). Tone mode is exempt: the
     // headless autonomous smoke has no focused window at all.
-    const bool foreground = toneMode_ || coop::ini_config::IsOurWindowForeground();
+    const bool foreground = toneMode_ || ui::input_focus::IsOurWindowForeground();
     // Text-capture gate (2026-07-09): while OUR overlay is capturing typed text (chat
     // input, a rebind box), a physical KEY must not drive the mic -- ImGui already ate
     // the char for the field, so a PTT/whisper poll here would double-fire (user: T to
@@ -252,7 +252,7 @@ void Capture::ProcessFrame(const int16_t* samples) {
     // is unaffected (typing does not change the mic level). Tone mode (headless smoke,
     // no overlay) stays exempt.
     const bool keysLive = foreground &&
-        (toneMode_ || !coop::ini_config::IsOverlayCapturingText());
+        (toneMode_ || !ui::input_focus::IsOverlayCapturingText());
     const bool whisperHeld =
         keysLive && cfg_.whisperVk != 0 && (GetAsyncKeyState(cfg_.whisperVk) & 0x8000) != 0;
     bool wantActive = false;

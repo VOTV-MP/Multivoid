@@ -3,7 +3,7 @@
 #include "harness/autotest_dispatch.h"
 
 #include "harness/autotest.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -11,7 +11,7 @@
 namespace harness::autotest {
 namespace {
 
-namespace cfg = harness::config;
+namespace cfg = coop::config;
 
 const char* RoleStr(coop::net::Role role) {
     return role == coop::net::Role::Host ? "host" : "client";

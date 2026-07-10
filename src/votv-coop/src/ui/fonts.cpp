@@ -2,7 +2,7 @@
 
 #include "ui/fonts.h"
 
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ui/scale.h"
 #include "ue_wrap/log.h"
 
@@ -69,7 +69,7 @@ void ReadRoleFamiliesOnce() {
     for (int r = 0; r < kRoleCount; ++r) {
         const std::string key   = std::string("ui.font.") + kRoles[r].iniKey;
         const char* dfltToken   = kFamilies[static_cast<int>(kRoles[r].defaultFam)].iniValue;
-        const std::string v     = harness::config::ReadIniValue(key.c_str(), dfltToken);
+        const std::string v     = coop::config::ReadIniValue(key.c_str(), dfltToken);
         g_roleFamily[r] = FamilyFromToken(v, kRoles[r].defaultFam);
     }
     g_rolesRead = true;
@@ -251,7 +251,7 @@ void SetRoleFamily(Role r, Family f) {
     g_roleFamily[ri] = f;
     g_rolesRead = true;  // the user's live choice wins over the ini read
     const std::string key = std::string("ui.font.") + kRoles[ri].iniKey;
-    harness::config::WriteIniValue(key.c_str(), kFamilies[fi].iniValue);
+    coop::config::WriteIniValue(key.c_str(), kFamilies[fi].iniValue);
     ui::scale::RequestRebuild();  // atlas re-bakes before the next frame
 }
 

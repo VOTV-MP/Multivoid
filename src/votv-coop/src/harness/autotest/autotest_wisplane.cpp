@@ -23,7 +23,7 @@
 
 #include "coop/dev/event_force.h"
 #include "coop/dev/set_clock.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -33,7 +33,7 @@
 namespace harness::autotest {
 
 void RunAutonomousWispLaneTest() {
-    const std::string roleEnv = harness::config::ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
     if (roleEnv == "client") {
         UE_LOGI("wisplane_test: not host -- this routine is host-only (client observes via wire)");
         return;

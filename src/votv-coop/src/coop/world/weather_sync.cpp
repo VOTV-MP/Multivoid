@@ -6,7 +6,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/world/weather_fog.h"
 #include "coop/world/weather_lightning.h"
 #include "coop/world/weather_redsky.h"
@@ -253,7 +253,7 @@ uint64_t SignaturePayload(const coop::net::WeatherStatePayload& p) {
 void OnSchedulerPost(void* self, void* function, void* /*params*/) {
     // Diag flag -- read once per process. Used to trace observer firing
     // when broadcasts go missing. Off by default (ini-only gate).
-    static const bool sLog = ::coop::ini_config::IsIniKeyTrue("weather_observer_log");
+    static const bool sLog = ::coop::config::IsIniKeyTrue("weather_observer_log");
     if (sLog) {
         UE_LOGI("weather: OnSchedulerPost ENTRY (self=%p function=%p)", self, function);
     }
@@ -762,7 +762,7 @@ void TickConnect() {
     // (b) which fog the thick fog is (enable_fog vs enable_superfog). Gated off by
     // default; cheap when off (one bool load).
     {
-        static const bool sProbe = ::coop::ini_config::IsIniKeyTrue("weather_probe");
+        static const bool sProbe = ::coop::config::IsIniKeyTrue("weather_probe");
         if (sProbe) {
             static uint32_t sN = 0;
             if ((sN++ % 125) == 0) {

@@ -5,7 +5,7 @@
 #include <cmath>
 #include <unordered_map>
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"           // PuppetHeadLookProbe + ReadPuppetHeadLookProbe
@@ -45,7 +45,7 @@ void Tick(void* puppetActor, float bodyYawDeg, float desiredLookYawDeg, float de
     const auto now = SteadyClock::now();
     ActorState& st = g_state[puppetActor];
     if (st.nextLog != SteadyClock::time_point{} && now < st.nextLog) return;
-    if (!coop::ini_config::IsIniKeyTrue("puppet_head_probe")) {
+    if (!coop::config::IsIniKeyTrue("puppet_head_probe")) {
         st.nextLog = now + std::chrono::seconds(2);  // back off while disabled
         return;
     }

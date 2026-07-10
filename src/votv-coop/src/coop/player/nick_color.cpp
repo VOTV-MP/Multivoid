@@ -3,7 +3,7 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/player_handshake.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 
@@ -32,12 +32,12 @@ void PersistLocal(uint32_t packed) {
     // WriteIniValue is thread-safe (atomic swap) -- callable from the render
     // thread, same as the nameplate pref. Empty value = "no custom color".
     if (!IsCustom(packed)) {
-        harness::config::WriteIniValue("nick_color", "");
+        coop::config::WriteIniValue("nick_color", "");
         return;
     }
     char v[8];
     std::snprintf(v, sizeof(v), "%02X%02X%02X", R(packed), G(packed), B(packed));
-    harness::config::WriteIniValue("nick_color", v);
+    coop::config::WriteIniValue("nick_color", v);
 }
 
 }  // namespace

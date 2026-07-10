@@ -4,7 +4,7 @@
 
 #include "coop/player/client_model.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 
 #include "ue_wrap/asset_load.h"
 #include "ue_wrap/engine.h"
@@ -43,7 +43,7 @@ float YawToward(const ue_wrap::FVector& spot, const ue_wrap::FVector& pl) {
 void Install() { /* no boot work -- drives from Tick's state machine */ }
 
 void Tick(bool connected, bool /*isHost*/) {
-    static const bool enabled = coop::ini_config::IsIniKeyTrue("client_model_probe");
+    static const bool enabled = coop::config::IsIniKeyTrue("client_model_probe");
     if (!enabled) return;
     UE_ASSERT_GAME_THREAD("client_model_probe::Tick");
 

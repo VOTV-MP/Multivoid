@@ -48,7 +48,7 @@ void SetLocalNickname(const std::wstring& nick);
 const std::wstring& LocalNickname();
 
 // v73 (per-player inventory): set the local player's durable identity GUID (32 hex chars
-// from harness::config::ReadPlayerGuid). Seeded once at boot, appended to our Join so the
+// from coop::config::ReadPlayerGuid). Seeded once at boot, appended to our Join so the
 // HOST can key this peer's inventory file (coop_players/<guid>.json). ASCII; not displayed.
 void SetLocalGuid(const std::string& guid);
 

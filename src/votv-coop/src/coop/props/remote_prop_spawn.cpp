@@ -16,7 +16,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
-#include "coop/session/ini_config.h"  // IsIniKeyTrue -- hands-on probe flags live in votv-coop.ini [dev], not bats/env
+#include "coop/config/config.h"  // IsIniKeyTrue -- hands-on probe flags live in votv-coop.ini [dev], not bats/env
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor -- exempt host-driven kerfur mirrors in the grab-guard predicate (the SWEEP excludes mirrors structurally via pr.mirror since R3)
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // scope A: post-quiescence retry of the kerfur off->active dup retire

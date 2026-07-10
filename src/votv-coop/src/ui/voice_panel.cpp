@@ -5,7 +5,7 @@
 #include "coop/voice/voice_capture.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/voice/voice_playback.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ui/scale.h"
 #include "ui/voice_icons.h"
 
@@ -41,11 +41,11 @@ void RefreshDevices() {
     g_micDevices = coop::voice::Capture::EnumerateDevices();
     g_outDevices = coop::voice::Playback::EnumerateDevices();
     std::snprintf(g_micCurrent, sizeof(g_micCurrent), "%s",
-                  harness::config::ReadIniValue("voice.mic_device", "").c_str());
+                  coop::config::ReadIniValue("voice.mic_device", "").c_str());
     std::snprintf(g_outCurrent, sizeof(g_outCurrent), "%s",
-                  harness::config::ReadIniValue("voice.output_device", "").c_str());
+                  coop::config::ReadIniValue("voice.output_device", "").c_str());
     std::snprintf(g_pttKey, sizeof(g_pttKey), "%s",
-                  harness::config::ReadIniValue("voice.ptt_key", "G").c_str());
+                  coop::config::ReadIniValue("voice.ptt_key", "G").c_str());
     g_devicesFresh = true;
 }
 
@@ -57,14 +57,14 @@ void DeviceCombo(const char* label, const char* iniKey, char* current, size_t cu
     if (ImGui::BeginCombo(label, shown)) {
         if (ImGui::Selectable("(system default)", !current[0])) {
             current[0] = 0;
-            harness::config::WriteIniValue(iniKey, "");
+            coop::config::WriteIniValue(iniKey, "");
             VC::RequestDevicesRestart();
         }
         for (const std::string& n : names) {
             const bool sel = n == current;
             if (ImGui::Selectable(n.c_str(), sel)) {
                 std::snprintf(current, currentCap, "%s", n.c_str());
-                harness::config::WriteIniValue(iniKey, n.c_str());
+                coop::config::WriteIniValue(iniKey, n.c_str());
                 VC::RequestDevicesRestart();
             }
         }
@@ -145,7 +145,7 @@ void Render() {
         char pttLabel[64];
         std::snprintf(pttLabel, sizeof(pttLabel), "Push-to-talk (key: %s)", g_pttKey);
         if (ImGui::RadioButton(pttLabel, &mode, 0)) {
-            harness::config::WriteIniValue("voice.mode", "ptt");
+            coop::config::WriteIniValue("voice.mode", "ptt");
             VC::RequestDevicesRestart();
         }
         ImGui::SameLine();
@@ -154,7 +154,7 @@ void Render() {
             ImGui::SetTooltip("Hold the key to talk. Change the key via voice.ptt_key\n"
                               "in votv-coop.ini (single letter or a virtual-key number).");
         if (ImGui::RadioButton("Voice activation", &mode, 1)) {
-            harness::config::WriteIniValue("voice.mode", "activation");
+            coop::config::WriteIniValue("voice.mode", "activation");
             VC::RequestDevicesRestart();
         }
         if (mode == 1) {
@@ -164,7 +164,7 @@ void Render() {
             if (ImGui::IsItemDeactivatedAfterEdit()) {
                 char v[16];
                 std::snprintf(v, sizeof(v), "%.0f", thr);
-                harness::config::WriteIniValue("voice.threshold_db", v);
+                coop::config::WriteIniValue("voice.threshold_db", v);
             }
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
@@ -187,7 +187,7 @@ void Render() {
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             char v[16];
             std::snprintf(v, sizeof(v), "%.0f", gain);
-            harness::config::WriteIniValue("voice.mic_gain_db", v);
+            coop::config::WriteIniValue("voice.mic_gain_db", v);
         }
         float vol = s.masterVolume;
         if (ImGui::SliderFloat("Voice volume", &vol, 0.0f, 3.0f, "%.2fx"))
@@ -195,7 +195,7 @@ void Render() {
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             char v[16];
             std::snprintf(v, sizeof(v), "%.2f", vol);
-            harness::config::WriteIniValue("voice.volume", v);
+            coop::config::WriteIniValue("voice.volume", v);
         }
 
         ImGui::Spacing();

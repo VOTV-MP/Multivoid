@@ -13,7 +13,7 @@
 #include "coop/world/balance_sync.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
-#include "coop/session/ini_config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
+#include "coop/config/config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactables/interactable_sync.h"
 #include "ui/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
 #include "coop/session/join_progress.h"
@@ -158,7 +158,7 @@ void Update(net::Session& session, void* localPlayer) {
                 // The test drops piles BEFORE this marker appears in the host log.
                 UE_LOGI("[PILE-1C] slot %d world-ready -- JOIN-WINDOW CLOSED (in-window host pile moves are "
                         "now save-time-key reconciled by the connect replay)", msg.senderPeerSlot);
-                if (coop::ini_config::IsIniKeyTrue("pile_delta_probe"))
+                if (coop::config::IsIniKeyTrue("pile_delta_probe"))
                     coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)");
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);

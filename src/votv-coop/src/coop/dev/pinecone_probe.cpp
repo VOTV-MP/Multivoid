@@ -2,7 +2,7 @@
 
 #include "coop/dev/pinecone_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/creatures/npc_sync.h"            // GetDevSpawnRefs (generic GameplayStatics spawn fns)
 #include "coop/player/players_registry.h"
 #include "ue_wrap/call.h"
@@ -113,8 +113,8 @@ void ForceSpawnProbeProps() {
 void Install() {
     if (g_checked) return;
     g_checked = true;
-    g_enabled = ::coop::ini_config::MasterEnabled() &&
-                ::coop::ini_config::IsIniKeyTrue("pinecone_probe");
+    g_enabled = ::coop::config::MasterEnabled() &&
+                ::coop::config::IsIniKeyTrue("pinecone_probe");
     if (g_enabled) UE_LOGI("pinecone_probe: ARMED (ini pinecone_probe=1) -- host force-spawns a KEYLESS pinecone + a KEYED prop_C ~45s after a client connects (tests both host_spawn_watcher seams)");
 }
 

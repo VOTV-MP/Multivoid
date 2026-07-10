@@ -13,7 +13,7 @@
 #include "coop/creatures/npc_sync.h"             // GetSession
 #include "coop/props/remote_prop_spawn.h"    // HasLoadTailQuiesced
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/session/ini_config.h"             // IsIniKeyTrue
+#include "coop/config/config.h"             // IsIniKeyTrue
 #include "ue_wrap/engine.h"            // GetActorLocation
 #include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/log.h"
@@ -31,7 +31,7 @@ uint32_t g_periodicCtr = 0;        // [dev] kerfur_census=1 periodic throttle (p
 constexpr uint32_t kPeriodicEveryCalls = 600;  // ~10s at 60 fps (the tick fires per frame)
 
 bool PeriodicEnabled() {
-    static const bool s = coop::ini_config::IsIniKeyTrue("kerfur_census");
+    static const bool s = coop::config::IsIniKeyTrue("kerfur_census");
     return s;
 }
 

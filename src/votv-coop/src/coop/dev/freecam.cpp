@@ -3,7 +3,8 @@
 #include "coop/dev/dev_gate.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/shutdown.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
+#include "ui/input_focus.h"
 
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"
@@ -211,8 +212,8 @@ void MovementTick() {
     // window. Stop moving immediately when our window loses focus. Also stop
     // while OUR overlay is capturing typed text (2026-07-09): WASD typed into the
     // chat/rebind field must not ALSO fly the camera.
-    if (!::coop::ini_config::IsOurWindowForeground() ||
-        ::coop::ini_config::IsOverlayCapturingText()) return;
+    if (!::ui::input_focus::IsOurWindowForeground() ||
+        ::ui::input_focus::IsOverlayCapturingText()) return;
     // The level may have reloaded under us (the cached actors are then freed).
     // Bail without touching dead objects -- never SetActorLocation a freed actor.
     if (!R::IsLive(g_camActor) || !R::IsLive(g_pc)) {
@@ -273,7 +274,7 @@ LRESULT CALLBACK MouseProc(int code, WPARAM wParam, LPARAM lParam) {
     // -- else the wheel in another window (e.g. the other VOTV instance) would
     // change THIS instance's freecam speed. Foreground check is cheap.
     if (code == HC_ACTION && wParam == WM_MOUSEWHEEL && g_active.load() &&
-        ::coop::ini_config::IsOurWindowForeground()) {
+        ::ui::input_focus::IsOurWindowForeground()) {
         const auto* ms = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         const int delta = GET_WHEEL_DELTA_WPARAM(ms->mouseData);  // multiples of 120
         if (delta) g_wheelNotches.fetch_add(delta / WHEEL_DELTA);
@@ -316,7 +317,7 @@ DWORD WINAPI InputDriverThread(LPVOID) {
         // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes, so
         // HOME/WASD/MMB in the client's window would otherwise drive THIS instance's
         // freecam. Only react to keys when OUR window is focused.
-        const bool focused = ::coop::ini_config::IsOurWindowForeground();
+        const bool focused = ::ui::input_focus::IsOurWindowForeground();
 
         const bool home = focused && KeyDown(VK_HOME);
         if (home && !prevHome) {
@@ -368,11 +369,11 @@ void EnsureThreads() {
 
 void Init() {
     // Master kill-switch first: [dev] enabled=0 forces every dev feature off.
-    if (!::coop::ini_config::MasterEnabled()) {
+    if (!::coop::config::MasterEnabled()) {
         UE_LOGI("freecam: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    if (!::coop::ini_config::IsIniKeyTrue("freecam")) {
+    if (!::coop::config::IsIniKeyTrue("freecam")) {
         UE_LOGI("freecam: HOME toggle off at boot (set [dev] freecam=1 to enable it; the "
                 "F1 menu still toggles freecam under [dev] devkeys)");
         return;

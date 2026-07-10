@@ -2,7 +2,7 @@
 
 #include "ui/scale.h"
 
-#include "harness/config.h"
+#include "coop/config/config.h"
 
 #include <cmath>
 #include <cstdio>
@@ -70,7 +70,7 @@ void SetUserScale(float s) {
 void LoadUserPrefOnce() {
     if (g_prefLoaded) return;
     g_prefLoaded = true;
-    const std::string v = harness::config::ReadIniValue("ui.scale", "1.25");
+    const std::string v = coop::config::ReadIniValue("ui.scale", "1.25");
     const float s = static_cast<float>(std::atof(v.c_str()));
     if (s > 0.f) SetUserScale(s);
     else Recombine();  // malformed ini value: publish the default combination

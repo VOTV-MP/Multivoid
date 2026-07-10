@@ -15,7 +15,7 @@
 #include "harness/autotest.h"
 
 #include "coop/world/event_fire_sync.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/log.h"
 
 #include <windows.h>
@@ -25,7 +25,7 @@
 namespace harness::autotest {
 
 void RunAutonomousCueForceTest() {
-    const std::string roleEnv = harness::config::ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
     if (roleEnv == "client") {
         UE_LOGI("cueforce_test: not host -- this routine is host-only (client observes via wire)");
         return;

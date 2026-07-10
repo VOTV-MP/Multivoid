@@ -2,7 +2,7 @@
 
 #include "coop/dev/lightswitch_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/call.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/lightswitch.h"
@@ -21,7 +21,7 @@ namespace GT = ue_wrap::game_thread;
 namespace LS = ue_wrap::lightswitch;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::ini_config::IsIniKeyTrue("lightswitch_probe");
+    static const bool s_enabled = coop::config::IsIniKeyTrue("lightswitch_probe");
     return s_enabled;
 }
 

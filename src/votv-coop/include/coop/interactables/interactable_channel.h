@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
@@ -62,7 +62,7 @@ inline constexpr auto kPendingTTL = std::chrono::seconds(25);
 inline constexpr auto kDoorSettleBridge = std::chrono::milliseconds(1500);
 
 inline bool ProbeLog() {
-    static const bool s_enabled = ::coop::ini_config::IsIniKeyTrue("interactable_log");
+    static const bool s_enabled = ::coop::config::IsIniKeyTrue("interactable_log");
     return s_enabled;
 }
 

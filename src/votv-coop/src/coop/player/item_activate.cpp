@@ -20,7 +20,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
@@ -145,7 +145,7 @@ bool ProbeLogEnabled() {
     // Read once; ini parsing is cheap but the observer is hot. Static
     // initialization means we resolve this ONCE per process lifetime,
     // which is acceptable for a dev-only flag (restart to flip it).
-    static const bool s_enabled = ::coop::ini_config::IsIniKeyTrue("flashlight_log");
+    static const bool s_enabled = ::coop::config::IsIniKeyTrue("flashlight_log");
     return s_enabled;
 }
 

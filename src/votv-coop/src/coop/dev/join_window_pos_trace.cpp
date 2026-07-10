@@ -4,7 +4,7 @@
 
 #include "coop/element/registry.h"     // Registry::Get (resolve the final bound actor by eid)
 #include "coop/element/element.h"      // Element::GetActor / GetInternalIdx
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/engine.h"            // GetActorLocation, FVector
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"        // IsLiveByIndex
@@ -45,7 +45,7 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::ini_config::IsIniKeyTrue("join_window_pos_trace");
+    static const bool s = coop::config::IsIniKeyTrue("join_window_pos_trace");
     return s;
 }
 

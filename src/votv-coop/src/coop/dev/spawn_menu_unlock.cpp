@@ -4,7 +4,8 @@
 
 #include "coop/dev/dev_gate.h"
 #include "coop/player/players_registry.h"   // resolve the local pawn to inject into the engine-layer spawn menu
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
+#include "ui/input_focus.h"
 #include "coop/session/shutdown.h"
 
 #include "ue_wrap/game_thread.h"
@@ -54,8 +55,8 @@ DWORD WINAPI KeyWatcherThread(LPVOID) {
             if (rawQ && !prevRawQ) {  // one event per physical Q press
                 // Foreground AND not typing: 'Q' typed into the chat/rebind field must
                 // not ALSO toggle the spawn menu (2026-07-09 text-capture gate).
-                const bool focused = ::coop::ini_config::IsOurWindowForeground() &&
-                                     !::coop::ini_config::IsOverlayCapturingText();
+                const bool focused = ::ui::input_focus::IsOurWindowForeground() &&
+                                     !::ui::input_focus::IsOverlayCapturingText();
                 if (focused) {
                     UE_LOGI("spawn_menu_unlock: Q pressed (foreground) -- posting Toggle() to the game thread");
                     // Toggle, not Open: Q both opens AND dismisses the menu. Open() leaves the player
@@ -115,7 +116,7 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
 }  // namespace
 
 void Init() {
-    if (!::coop::ini_config::MasterEnabled()) {
+    if (!::coop::config::MasterEnabled()) {
         UE_LOGI("spawn_menu_unlock: disabled by master switch ([dev] enabled=0)");
         return;
     }
@@ -130,7 +131,7 @@ void Init() {
             UE_LOGI("spawn_menu_unlock: file-trigger ENABLED (VOTVCOOP_SPAWNMENU_TRIGGER) -- OpenNow on file");
         }
     }
-    if (!::coop::ini_config::IsIniKeyTrue("spawn_menu_unlock")) {
+    if (!::coop::config::IsIniKeyTrue("spawn_menu_unlock")) {
         UE_LOGI("spawn_menu_unlock: off at boot (set [dev] spawn_menu_unlock=1 to "
                 "force-enable; the F1 menu toggles it under [dev] devkeys)");
         return;

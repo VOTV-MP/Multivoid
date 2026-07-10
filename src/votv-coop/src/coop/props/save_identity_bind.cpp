@@ -8,7 +8,7 @@
 #include "coop/element/prop.h"             // coop::element::Prop (MirrorManager<Prop>)
 #include "coop/element/quiescence_drain.h" // ArmPendingSaveTimeTwin (DUP-RETIRE: FLOOR-kept mass-move twin, docs/piles/12)
 #include "coop/element/registry.h"         // Registry::Get().Get(eid)
-#include "coop/session/ini_config.h"               // IsIniKeyTrue
+#include "coop/config/config.h"               // IsIniKeyTrue
 #include "coop/creatures/kerfur_entity.h"            // IsKerfurPropClass (variant-1 position re-bind: kerfur family)
 #include "coop/props/join_membership_sweep.h"    // HasLoadTailQuiesced (the GHOST-RETIRE tail's client+quiescence gate)
 #include "coop/props/prop_element_tracker.h"     // UnmarkKnownKeyedProp, GetPropElementIdForActor, MarkBoundMirrorNative
@@ -205,7 +205,7 @@ void BindLocalNativeToHostEid_(void* native, coop::element::ElementId E, MAP::Fa
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::ini_config::IsIniKeyTrue("save_identity_bind");
+    static const bool s = coop::config::IsIniKeyTrue("save_identity_bind");
     return s;
 }
 
@@ -232,7 +232,7 @@ void SetReceivedMap(const MAP::IdMap& map) {
     // native finds no key-match (== untracked-on-host). Hole-tolerance verify: that kerfur stays unbound, every
     // OTHER kerfur binds correctly, no other native steals its eid (checked in EmitBindSummary).
     g_holeInjected = false; g_holeKey.clear(); g_holeEid = 0;
-    if (coop::ini_config::IsIniKeyTrue("force_kerfur_unmap") && !g_kerfurEntries.empty()) {
+    if (coop::config::IsIniKeyTrue("force_kerfur_unmap") && !g_kerfurEntries.empty()) {
         const MAP::IdEntry dropped = g_kerfurEntries.back();
         g_kerfurEntries.pop_back();
         g_holeInjected = true; g_holeKey = dropped.key; g_holeEid = dropped.eid;
@@ -625,7 +625,7 @@ bool UpdateChipHostPos(coop::element::ElementId eid, const ue_wrap::FVector& new
 }
 
 void ForceSaveChurnForTest() {
-    static const bool s_on = coop::ini_config::IsIniKeyTrue("force_save_churn");
+    static const bool s_on = coop::config::IsIniKeyTrue("force_save_churn");
     static bool s_done = false;
     if (s_done) return;  // one-shot: churn once, just before the quiescence sweep
     s_done = true;
@@ -667,7 +667,7 @@ void ForceSaveChurnForTest() {
 }
 
 bool RunReseedOrphanSelfTest() {
-    static const bool s_on = coop::ini_config::IsIniKeyTrue("reseed_orphan_selftest");
+    static const bool s_on = coop::config::IsIniKeyTrue("reseed_orphan_selftest");
     static bool s_done = false;
     if (!s_on || s_done) return false;
     if (!IsEnabled()) {

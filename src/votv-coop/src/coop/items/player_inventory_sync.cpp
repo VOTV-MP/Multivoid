@@ -3,13 +3,13 @@
 #include "coop/items/player_inventory_sync.h"
 
 #include "coop/net/blob_chunks.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/items/inventory_wire.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/session/player_handshake.h"
 #include "coop/save/save_transfer.h"
-#include "harness/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
+#include "coop/config/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
 #include "ue_wrap/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
 #include "ue_wrap/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point
 #include "ue_wrap/inventory.h"
@@ -93,7 +93,7 @@ fs::path PlayerFilePath(const std::string& guid) {
     // chars must NEVER become a path component -- return empty so every write path no-ops cleanly,
     // foreclosing path traversal even if a non-hex guid ever reaches here. (Adversarial-verify HIGH.)
     if (!coop::player_handshake::IsValidGuid(guid)) return {};
-    const std::wstring base = harness::config::ModuleDir();
+    const std::wstring base = coop::config::ModuleDir();
     if (base.empty()) return {};
     const std::wstring slot = coop::save_transfer::HostSlot();
     if (slot.empty()) return {};
@@ -343,7 +343,7 @@ void Tick() {
     }
 
     // INCREMENT 2 read-verify self-test (ini inventory_selftest=1). One-shot; dev diagnostic.
-    static const bool s_selftest = ::coop::ini_config::IsIniKeyTrue("inventory_selftest");
+    static const bool s_selftest = ::coop::config::IsIniKeyTrue("inventory_selftest");
     if (!s_selftest) return;
     static bool s_done = false;
     if (s_done) return;
@@ -381,7 +381,7 @@ void Tick() {
     // game's OWN AddEquipment (begin_equipment::GiveFromClass) + re-read, confirming the canonical
     // equip path adds the items BEFORE it's wired to the first-join edge. One-shot (rides this
     // one-shot selftest). Removed once first-join uses it.
-    if (::coop::ini_config::IsIniKeyTrue("starterkit_test")) {
+    if (::coop::config::IsIniKeyTrue("starterkit_test")) {
         for (const wchar_t* c : {L"prop_equipment_flashlight_C", L"prop_equipment_glasses_C",
                                  L"prop_equipment_compass_C"})
             ue_wrap::begin_equipment::GiveFromClass(c);

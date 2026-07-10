@@ -22,7 +22,7 @@
 #include "coop/props/save_identity_bind.h"     // BindUnboundReCreates (identity layer the sequence calls)
 #include "coop/player/players_registry.h"      // F1 piece 2: Local() -> settled-skip a held actor at apply
 #include "coop/props/save_time_retire_util.h"  // FindExactMatch + UnmarkAndDestroy (shared kernel)
-#include "coop/session/ini_config.h"           // IsIniKeyTrue (pile_dup_probe gate)
+#include "coop/config/config.h"           // IsIniKeyTrue (pile_dup_probe gate)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -68,7 +68,7 @@ constexpr uint8_t kAnyChipType = 0xFF;
 // predicted GC-pointer-reuse tail). Read-only per-twin diagnostic that distinguishes the three -- so we PROBE
 // the residual before touching the VERIFIED owner. [[feedback-probe-dont-guess-rule]]
 bool DupProbeOn() {
-    static const bool s_on = coop::ini_config::IsIniKeyTrue("pile_dup_probe");
+    static const bool s_on = coop::config::IsIniKeyTrue("pile_dup_probe");
     return s_on;
 }
 // A twin retires when its eid is CONFIRMED moved @new: E's currently-bound native lives farther than this

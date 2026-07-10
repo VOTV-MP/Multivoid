@@ -2,7 +2,7 @@
 
 #include "coop/dev/sleep_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/sleep.h"
 
@@ -40,8 +40,8 @@ void TrySleep(const char* role) {
 void Install() {
     if (g_checked) return;
     g_checked = true;
-    g_enabled = ::coop::ini_config::MasterEnabled() &&
-                ::coop::ini_config::IsIniKeyTrue("sleep_probe");
+    g_enabled = ::coop::config::MasterEnabled() &&
+                ::coop::config::IsIniKeyTrue("sleep_probe");
     if (g_enabled)
         UE_LOGI("sleep_probe: ARMED (ini sleep_probe=1) -- client sleeps T+15s, host sleeps "
                 "T+25s (expect ACCELERATE), host wakeup T+40s (expect END natural=0)");

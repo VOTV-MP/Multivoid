@@ -2,7 +2,7 @@
 
 #include "harness/autotest.h"
 #include "harness/autotest_dispatch.h"
-#include "harness/config.h"
+#include "coop/config/config.h"
 #include "harness/harness_diag.h"
 #include "harness/screenshot.h"
 #include "harness/sdk_check.h"
@@ -25,7 +25,7 @@
 #include "coop/moderation/ban_list.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/moderation/moderation.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
 #include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
 #include "coop/items/player_inventory_sync.h"  // v73 Inc4: wait for the apply blob before world load
@@ -90,7 +90,7 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-namespace cfg = harness::config;
+namespace cfg = coop::config;
 
 // Diagnostic dumps (Report / DumpComponents / DumpLiveWidgets / DumpParams) live in
 // harness/harness_diag.cpp; bring them into scope so the scenario call sites stay unqualified.
@@ -1004,7 +1004,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // Autonomous autotest dispatch: spawn each VOTVCOOP_RUN_*_TEST worker
             // thread whose env flag is set (each self-gates on role internally).
             harness::autotest::SpawnEnvGatedTests(netCfg.role);
-        } else if (coop::ini_config::IsIniKeyTrue("static_2nd_player")) {
+        } else if (coop::config::IsIniKeyTrue("static_2nd_player")) {
             // Opt-in dev aid ([dev] static_2nd_player=1): a static slot-1 puppet for solo
             // visual tests. OFF by default (audit P1) -- it would collide with a browser-
             // booted HOST session's slot-1 NETWORK puppet (net_pump's auto-spawn is gated

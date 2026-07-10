@@ -5,7 +5,7 @@
 #include "coop/dev/dev_gate.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/log.h"
@@ -82,8 +82,8 @@ void AppendMeshSkeleton_(void* pc, void* mesh, uint8_t kind, Snapshot& snap,
 }  // namespace
 
 void InitFromIni() {
-    if (::coop::ini_config::MasterEnabled() &&
-        ::coop::ini_config::IsIniKeyTrue("ragdoll_bone_overlay")) {
+    if (::coop::config::MasterEnabled() &&
+        ::coop::config::IsIniKeyTrue("ragdoll_bone_overlay")) {
         g_enabled.store(true, std::memory_order_release);
         UE_LOGI("ragdoll_bone_overlay: force-enabled via ini");
     }

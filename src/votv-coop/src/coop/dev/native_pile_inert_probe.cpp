@@ -2,7 +2,7 @@
 
 #include "coop/dev/native_pile_inert_probe.h"
 
-#include "coop/session/ini_config.h"
+#include "coop/config/config.h"
 
 #include "ue_wrap/engine.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
@@ -54,7 +54,7 @@ void Cleanup() {
 void Install() { /* no boot work -- the probe drives entirely from Tick's state machine */ }
 
 void Tick(bool connected, bool isHost) {
-    static const bool enabled = coop::ini_config::IsIniKeyTrue("native_pile_inert_probe");
+    static const bool enabled = coop::config::IsIniKeyTrue("native_pile_inert_probe");
     if (!enabled) return;
     UE_ASSERT_GAME_THREAD("native_pile_inert_probe::Tick");
 
