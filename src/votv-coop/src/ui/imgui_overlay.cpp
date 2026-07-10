@@ -452,6 +452,13 @@ void RenderFrameGuarded() {
         // faulted join can't leave the connecting state stuck) and the console.
         ui::loading_screen::Close();
         ui::console::Close();
+        // UNLATCH the text-capture publish (audit 2026-07-10): a fault above skips
+        // the per-frame SetOverlayCapturingText publish -- with chat open at the
+        // fault, the flag stays TRUE forever and every gated hotkey (voice PTT,
+        // freecam, spawn-menu Q) goes permanently dead. Close the field and
+        // publish keys-live, mirroring the frame's normal end-state.
+        ui::chat_input::Close();
+        ui::input_focus::SetOverlayCapturingText(false);
     }
 }
 

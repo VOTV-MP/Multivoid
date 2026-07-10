@@ -341,7 +341,8 @@ void EmitBindSummary() {
 //   - kerfurOff -> KEY (sidecar v3): the portable save key, GUARANTEED readable post-FinishSpawning. This is the
 //     keyed family's PRIMARY+GUARANTEED bind -- no fuzzy radius, no cursor float, hole-tolerant. NEVER position.
 // Game thread (the sweep).
-int BindUnboundReCreates() {
+int BindUnboundReCreates(bool* ghostRetireDrained) {
+    if (ghostRetireDrained) *ghostRetireDrained = true;  // default: the tail left nothing standing
     if (!IsEnabled()) return 0;
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_armed) return 0;  // not a coop join with a received map -> nothing to re-bind
@@ -531,14 +532,25 @@ int BindUnboundReCreates() {
             }
             // >50% valve (the pile sweep's documented shape; denominator = ALL live chip natives): a
             // mass ghost verdict is a racing bracket or a bug, never reality -> abort loudly, retire
-            // nothing this pass.
+            // nothing this pass. The sweep stays ARMED (drained=false) so a racing bracket gets a
+            // clean re-adjudication next pass.
             const size_t totalChips = chipBound + chipN.size();
             if (!ghostIdx.empty() && ghostIdx.size() * 2 > totalChips) {
                 UE_LOGE("save_identity_bind: GHOST-RETIRE VALVE -- %zu ghost verdict(s) out of %zu live "
                         "chip native(s) (>50%%): refusing the mass retire (racing bracket / bug); "
                         "nothing destroyed this pass", ghostIdx.size(), totalChips);
+                if (ghostRetireDrained) *ghostRetireDrained = false;
             } else {
-                for (size_t gi : ghostIdx) {
+                // Per-pass destroy cap (2026-07-10 audit; the project's pass-cap rule): the valve
+                // still admits up to ~49% of live natives -- ~400 single-tick destroys on a big
+                // save (a GT hitch + one bug away from a mass wipe). Bound each pass; the sweep
+                // stays armed (drained=false) until the set is empty, so the drain completes over
+                // the reconcile cadence instead of one giant tick.
+                constexpr size_t kGhostRetirePassCap = 40;
+                const size_t retireN = ghostIdx.size() < kGhostRetirePassCap
+                                           ? ghostIdx.size() : kGhostRetirePassCap;
+                for (size_t k = 0; k < retireN; ++k) {
+                    const size_t gi = ghostIdx[k];
                     used[gi] = true;
                     UE_LOGW("save_identity_bind: GHOST-RETIRE unbound native chipPile %p @(%.1f,%.1f,%.1f) "
                             "-- no eid, no @save/@host key match post-quiescence (bind-displaced leftover "
@@ -546,10 +558,11 @@ int BindUnboundReCreates() {
                             chipN[gi].actor, chipN[gi].x, chipN[gi].y, chipN[gi].z);
                     coop::save_time_retire_util::UnmarkAndDestroy(chipN[gi].actor);
                 }
-                if (!ghostIdx.empty())
+                if (retireN)
                     UE_LOGI("save_identity_bind: GHOST-RETIRE pass -- %zu identity-less native pile(s) "
-                            "retired at once (%zu bound + %zu unbound walked)",
-                            ghostIdx.size(), chipBound, chipN.size());
+                            "retired (%zu found, cap %zu/pass; %zu bound + %zu unbound walked)",
+                            retireN, ghostIdx.size(), kGhostRetirePassCap, chipBound, chipN.size());
+                if (retireN < ghostIdx.size() && ghostRetireDrained) *ghostRetireDrained = false;
             }
         }
     }

@@ -169,6 +169,16 @@ void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
 
 void DestroyMirror(uint8_t slot, const char* why) {
     Mirror& m = g_mirrors[slot];
+    if (m.actor) {
+        // Consume the SpawnMirror-time MarkIncomingSpawn (2026-07-10 audit): the
+        // mirror's Init runs BP-internally, so the Init-POST observer that would
+        // normally consume the mark never fires -- unconsumed marks accumulate to
+        // the 256 cap (clear-on-cap wipes in-flight marks) and a stale mark at a
+        // RECYCLED address makes the non-destructive Peek misclassify a real world
+        // prop as an incoming echo. The mark is a loan; the mirror's only exit
+        // repays it.
+        coop::prop_echo_suppress::ConsumeIncomingSpawn(m.actor);
+    }
     if (m.actor && R::IsLiveByIndex(m.actor, m.idx)) {
         // Suppress the K2_DestroyActor PRE observer's echo (host would
         // otherwise broadcast a PropDestroy for a display-only actor).
@@ -482,6 +492,12 @@ void Reset() {
     g_ownEmptyStreak = 0;
     g_ownHeldPtr = nullptr;
     g_ownHeldIdx = -1;
+    // Cached engine pointers die with the session too (2026-07-10 audit LOW):
+    // a stale g_localPlayer would satisfy IsLiveByIndex checks across a
+    // world reload only by luck; TickOwner re-caches on the next session.
+    g_localPlayer    = nullptr;
+    g_localPlayerIdx = -1;
+    g_session        = nullptr;
 }
 
 void OnSlotDisconnected(uint8_t slot) {

@@ -481,11 +481,22 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EmailAppend: {
-        // v64 increment 2: chunked email rows (producer-symmetric, host-relayed).
-        // Assembly + echo-proof shadow registration live in email_sync::OnReliable.
+        // HOST-AUTHORED since e5718fc6 (email_sync gates the append send on
+        // role()==Host; clients author zero). Assembly + echo-proof shadow
+        // registration live in email_sync::OnReliable.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: EmailAppend payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        // Authority-boundary drop (2026-07-10 audit MEDIUM, the serverbox parity
+        // shape): a client EmailAppend reaching the HOST is a protocol violation
+        // post-e5718fc6 -- drop it so one client-side regression can't re-pollute
+        // the shared inbox (also removed from the relay whitelist,
+        // session_lanes.h).
+        if (session.role() == net::Role::Host && msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EmailAppend from client slot=%d on the HOST "
+                    "(emails are host-authored) -- dropping", msg.senderPeerSlot);
             break;
         }
         net::BlobChunkPayload ep{};

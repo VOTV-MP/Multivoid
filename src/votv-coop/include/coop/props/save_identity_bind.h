@@ -63,7 +63,11 @@ void EmitBindSummary();
 // PRE-FinishSpawning seam -> KEY match against its portable save key (sidecar v3): the keyed family's GUARANTEED
 // bind, never position, never cursor. Bound eids are skipped (no double-bind); co-located chips (>1 within 1cm)
 // ambiguous-skip. No-op when disabled / not armed / a v1/v2 peer (no keys). GT. Returns the count re-bound.
-int BindUnboundReCreates();
+// `ghostRetireDrained` (optional out): FALSE when the v106b GHOST-RETIRE tail left ghosts standing --
+// the per-pass destroy cap (40) truncated the set, or the >50% mass-verdict valve aborted. The caller
+// (quiescence_drain) must then KEEP the ghost sweep armed so the next pass finishes the drain
+// (2026-07-10 audit: the uncapped tail could destroy ~49% of live natives in one tick).
+int BindUnboundReCreates(bool* ghostRetireDrained = nullptr);
 
 // b3 OWNER (docs/piles/12): the host's PropSnapPos says keyless save-pile `eid` is now at `newPos`. Record it
 // as the entry's HOST-POS OVERLAY -- the immutable savePos is where the GAME re-creates the native on any

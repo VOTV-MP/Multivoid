@@ -316,8 +316,12 @@ DWORD WINAPI InputDriverThread(LPVOID) {
     while (!coop::shutdown::IsShuttingDown()) {
         // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes, so
         // HOME/WASD/MMB in the client's window would otherwise drive THIS instance's
-        // freecam. Only react to keys when OUR window is focused.
-        const bool focused = ::ui::input_focus::IsOurWindowForeground();
+        // freecam. Only react to keys when OUR window is focused AND no overlay
+        // text field owns the keyboard -- HOME is a caret-editing key, so typing
+        // in chat/rebind must never toggle the freecam (the hotkey-poller lesson;
+        // MovementTick :216 already gated, this poller had only the focus half).
+        const bool focused = ::ui::input_focus::IsOurWindowForeground() &&
+                             !::ui::input_focus::IsOverlayCapturingText();
 
         const bool home = focused && KeyDown(VK_HOME);
         if (home && !prevHome) {

@@ -270,6 +270,17 @@ void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
 bool TakeClumpBorn(void* clump, coop::element::ElementId* outE, uint8_t* outChipType) {
     auto it = g_clumpBirths.find(clump);
     if (it == g_clumpBirths.end()) return false;
+    // Recycled-slot guard (2026-07-10 audit; the IsLiveByIndex lesson): the map key
+    // is a bare pointer, so a certificate whose clump DIED can match a DIFFERENT
+    // actor recycled into the same address. The reaper (:616) already validates by
+    // the stored birth idx -- the consume path must too, else a recycled stranger
+    // walks off with a dead clump's identity.
+    if (!R::IsLiveByIndex(clump, it->second.idx)) {
+        UE_LOGW("[PILE] TakeClumpBorn: certificate for %p is STALE (actor recycled; "
+                "birth idx=%d dead) -- dropping it unconsumed", clump, it->second.idx);
+        g_clumpBirths.erase(it);
+        return false;
+    }
     if (outE)        *outE        = static_cast<coop::element::ElementId>(it->second.eid);
     if (outChipType) *outChipType = it->second.chipType;
     g_clumpBirths.erase(it);

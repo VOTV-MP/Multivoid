@@ -465,10 +465,15 @@ void RunReconcile(bool joinSweep) {
     // (so its target resolves), and b3 pos-correction LAST (it resolves the now-bound eid). Each step is
     // internally bounded to armed/pending work, so a steady-state pass with nothing pending is cheap.
     SweepReconcileSaveTimeTwins();                               // 1: retire stale native chipPile@old (pile twin)
-    coop::save_identity_bind::BindUnboundReCreates();            // 2: re-bind unbound natives (identity layer; chip=pos, kerfur=key)
+    bool ghostDrained = true;
+    coop::save_identity_bind::BindUnboundReCreates(&ghostDrained);  // 2: re-bind unbound natives (identity layer; chip=pos, kerfur=key)
                                                                  //    + the v106b GHOST-RETIRE tail (post-quiescence: retire every
                                                                  //    identity-less native pile the binds could not claim)
-    g_ghostSweepArmed = false;                                   //    step 2 adjudicated the full ghost set -> the arm is consumed
+    // The arm is consumed only when the tail DRAINED (2026-07-10 audit pass-cap): a
+    // capped pass or a >50% valve abort keeps the sweep armed so the next reconcile
+    // pass finishes the ghost set instead of stranding it mid-drain.
+    if (ghostDrained) g_ghostSweepArmed = false;
+    else UE_LOGI("quiescence_drain: GHOST-SWEEP kept armed (retire tail capped/valved this pass)");
     coop::kerfur_reconcile::SweepReconcileSaveTimeKerfurs();     // 3: retire stale kerfur off-prop (eid-keyed; the folded-in 3rd owner)
     ApplyPendingDestroys();                                      // 4: destroy-before-load -- apply destroys that raced the bind, post-bind
     ApplyPendingPosCorrections();                               // 5: b3 -- snap window-moved piles

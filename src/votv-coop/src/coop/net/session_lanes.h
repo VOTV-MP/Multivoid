@@ -151,7 +151,11 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::FireflySpawn:      // v51: fireflies are PEER-SYMMETRIC -- each peer spawns near its OWN camera + shares; relay a client's spawn to the others so all peers see everyone's
     case ReliableKind::InventoryPickup:   // v58: the inventory-collect blip is PEER-SYMMETRIC -- relay a client's collect so every peer hears it
     case ReliableKind::ChatMessage:       // v60: T-chat is PEER-SYMMETRIC -- relay a client's line so every peer reads it
-    case ReliableKind::EmailAppend:       // v64: emails are PRODUCER-SYMMETRIC (any peer's local pipeline can append) -- relay a client's rows to the others
+    // EmailAppend is NOT relayable (2026-07-10, audit MEDIUM): emails are HOST-AUTHORED
+    // since e5718fc6 (email_sync gates the append send on role()==Host; clients author
+    // ZERO). A client EmailAppend reaching the host is a protocol violation --
+    // event_dispatch_state drops it at the handler; relaying it would re-open the
+    // shared-inbox pollution vector one client-side regression wide.
     case ReliableKind::EmailDelete:       // v65: email deletes are PLAYER-SYMMETRIC (any peer's del button) -- relay a client's delete to the others
     case ReliableKind::SavedSignalAppend: // v65: saved-signal saves are PRODUCER-SYMMETRIC (download-save/import/copy at the claimed desk) -- relay
     case ReliableKind::SavedSignalDelete: // v65: saved-signal deletes/export-moves are PLAYER-SYMMETRIC -- relay
