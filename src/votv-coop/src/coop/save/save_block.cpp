@@ -1,6 +1,6 @@
 // coop/save_block.cpp -- see coop/save_block.h.
 
-#include "coop/session/save_block.h"
+#include "coop/save/save_block.h"
 
 #include "coop/net/session.h"
 #include "ue_wrap/hook.h"

@@ -34,7 +34,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreates (09:54 ghost fix)
-#include "coop/session/save_transfer.h"
+#include "coop/save/save_transfer.h"
 #include "coop/session/subsystems.h"
 
 #include "ue_wrap/engine.h"

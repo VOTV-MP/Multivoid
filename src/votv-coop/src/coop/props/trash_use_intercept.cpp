@@ -32,7 +32,7 @@
 #include "coop/props/save_identity_map.h"
 #include "coop/props/trash_channel.h"      // ClientCarryEid / SendGrabIntent / SendThrowIntent / ClearClientCarry
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy / ProxyActorForEid (client-grab camera-ray cone)
-#include "coop/session/save_transfer.h"      // RecordGrabTimePileXform
+#include "coop/save/save_transfer.h"      // RecordGrabTimePileXform
 #include "ue_wrap/engine.h"                // ReadMainPlayerLookAtActor / GetCamera{Location,Rotation}
 #include "ue_wrap/game_thread.h"           // RegisterInterceptor / RegisterPreObserver
 #include "ue_wrap/log.h"

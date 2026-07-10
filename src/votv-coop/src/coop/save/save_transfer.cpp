@@ -1,6 +1,6 @@
 // coop/save_transfer.cpp -- see coop/save_transfer.h.
 
-#include "coop/session/save_transfer.h"
+#include "coop/save/save_transfer.h"
 
 #include "coop/comms/chat_feed.h"  // v86 Path 1c hands-on: in-game JOIN-WINDOW OPEN cue (gated on pile_delta_probe)
 #include "coop/element/element.h"   // b3: Element::GetActor() (resolve the host pile actor by eid)
@@ -10,8 +10,8 @@
 #include "coop/props/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/props/save_identity_bind.h"  // Phase 2b: client eid-range bind (SetReceivedMap / OnDisconnect)
 #include "coop/props/save_identity_map.h"  // Phase 1B: host-side keyless index->eid map build + log (gated, no wire)
-#include "coop/session/save_guard.h"
-#include "coop/session/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
+#include "coop/save/save_guard.h"
+#include "coop/save/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
 #include "ue_wrap/engine.h"      // b3: GetActorLocation/GetActorRotation (host current pile pos)
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"        // b3: IsChipPile (skip a grabbed clump -- the convert stream owns it)

@@ -22,7 +22,7 @@
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/session/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
+#include "coop/save/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
 #include "coop/props/trash_channel.h"      // NoteClumpBorn (v106: the clump birth certificate; docs/piles/08)
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
 #include "coop/props/trash_use_intercept.h"  // B1a: the InpActEvt_use client-grab interceptor (Install/OnDisconnect delegate here)

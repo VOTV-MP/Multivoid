@@ -8,7 +8,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/session/player_handshake.h"
-#include "coop/session/save_transfer.h"
+#include "coop/save/save_transfer.h"
 #include "harness/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
 #include "ue_wrap/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
 #include "ue_wrap/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point

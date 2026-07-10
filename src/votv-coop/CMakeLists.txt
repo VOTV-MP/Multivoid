@@ -240,10 +240,10 @@ add_library(votv-coop SHARED
     src/coop/player/local_body.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_destroy.cpp
-    src/coop/session/save_guard.cpp
+    src/coop/save/save_guard.cpp
     src/coop/world/balance_sync.cpp
-    src/coop/session/save_block.cpp
-    src/coop/session/save_button_disable.cpp
+    src/coop/save/save_block.cpp
+    src/coop/save/save_button_disable.cpp
     src/coop/session/multiplayer_menu.cpp
     src/coop/player/nameplate.cpp
     src/coop/player/nick_color.cpp
@@ -351,8 +351,8 @@ add_library(votv-coop SHARED
     src/coop/net/http_client.cpp
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
-    src/coop/session/save_transfer.cpp
-    src/coop/session/save_indicator_suppress.cpp
+    src/coop/save/save_transfer.cpp
+    src/coop/save/save_indicator_suppress.cpp
     src/coop/session/session_manager.cpp
     src/coop/session/join_progress.cpp
     src/coop/session/net_pump.cpp

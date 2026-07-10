@@ -1,6 +1,6 @@
 // coop/save_guard.cpp -- see coop/save_guard.h.
 
-#include "coop/session/save_guard.h"
+#include "coop/save/save_guard.h"
 
 #include "ue_wrap/log.h"
 

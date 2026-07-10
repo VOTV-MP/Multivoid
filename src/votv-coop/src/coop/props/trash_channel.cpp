@@ -10,7 +10,7 @@
 #include "coop/player/remote_player.h"       // RemotePlayer::GetActor / valid
 #include "coop/props/prop_snapshot.h"  // ExpressIncrementalSpawn (wrong-class deny -> re-assert the row)
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
-#include "coop/session/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
+#include "coop/save/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
 #include "ue_wrap/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
 #include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + ReadMainPlayerGrabState
 #include "ue_wrap/log.h"

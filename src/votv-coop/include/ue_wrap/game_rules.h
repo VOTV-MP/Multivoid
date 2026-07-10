@@ -9,7 +9,7 @@
 // process and is never replicated, so this reads THIS peer's effective rules.
 //
 // A joining client boots from the host's LIVE-captured save
-// (coop/session/save_transfer.cpp), so the host's localGameRules travel inside
+// (coop/save/save_transfer.cpp), so the host's localGameRules travel inside
 // the save blob; IF VOTV's load copies localGameRules -> GI.gameRules on the
 // client (the same path single-player uses to restore rules), every peer's
 // effective rules equal the host's. This accessor deliberately reads the LOCAL

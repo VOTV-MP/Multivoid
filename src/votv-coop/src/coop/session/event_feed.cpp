@@ -31,7 +31,7 @@
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/snapshot_census.h"  // Phase 0: parse the completeness census tail on SnapshotComplete
-#include "coop/session/save_transfer.h"
+#include "coop/save/save_transfer.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/session/teleport_client.h"

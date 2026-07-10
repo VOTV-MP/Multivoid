@@ -18,7 +18,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
-#include "coop/session/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
+#include "coop/save/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
 #include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness census appended to SnapshotComplete
 #include "coop/dev/eid_lifetime_trace.h"  // Phase 1 S8.2: read-only capture-eid vs wire-eid trace
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: inject the over-destroy to PROVE the floor

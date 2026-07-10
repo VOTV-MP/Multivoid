@@ -11,7 +11,7 @@
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
-#include "coop/session/save_transfer.h"
+#include "coop/save/save_transfer.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
@@ -43,7 +43,7 @@
 #include "coop/props/world_load_episode.h"  // v107 host-wipe fix: arm the world-load episode before the join boot
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
-#include "coop/session/save_guard.h"
+#include "coop/save/save_guard.h"
 #include "coop/session/shutdown.h"
 #include "coop/world/weather_sync.h"
 #include "ui/dev_menu.h"
