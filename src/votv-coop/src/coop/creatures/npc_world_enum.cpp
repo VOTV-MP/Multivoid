@@ -19,7 +19,7 @@
 #include "coop/net/session.h"
 #include "coop/creatures/kerfur_entity.h"  // K-3: reserve the stable KerfurId when a kerfur NPC is registered
 #include "coop/creatures/npc_sync.h"
-#include "coop/creatures/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
+#include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
 #include "ue_wrap/engine.h"   // GetActorLocation / GetActorRotation
 #include "ue_wrap/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
 #include "ue_wrap/log.h"

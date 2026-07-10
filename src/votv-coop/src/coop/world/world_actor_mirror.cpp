@@ -1,13 +1,13 @@
-// coop/creatures/world_actor_mirror.cpp -- the CLIENT half of the world_actor
+// coop/world/world_actor_mirror.cpp -- the CLIENT half of the world_actor
 // lane (the npc_mirror shape): wire materialize (OnWorldActorSpawn), wire
 // destroy (OnWorldActorDestroy) and the per-frame pose apply + drive
 // (TickClientWorldActors). The HOST half + Install/lifecycle owner is
 // world_actor_sync.cpp; shared internals come through world_actor_detail.h.
 // Extracted 2026-07-05 (modular file-size rule; audit-endorsed split at 834
-// LOC). Public API unchanged (include/coop/creatures/world_actor_sync.h; same
+// LOC). Public API unchanged (include/coop/world/world_actor_sync.h; same
 // namespace, two TUs).
 
-#include "coop/creatures/world_actor_sync.h"
+#include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
 

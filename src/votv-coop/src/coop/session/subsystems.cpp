@@ -80,7 +80,7 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/creatures/npc_world_enum.h"  // K-0: RegisterExistingWorldNpcs (moved out of npc_sync)
-#include "coop/creatures/world_actor_sync.h"  // v80 (B3b): non-Character event-actor transform mirror (sibling of npc_sync)
+#include "coop/world/world_actor_sync.h"  // v80 (B3b): non-Character event-actor transform mirror (sibling of npc_sync)
 #include "coop/creatures/piramid_sync.h"      // v97: piramid event choreography lane (mirror brain suppression + PyramidGather)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"

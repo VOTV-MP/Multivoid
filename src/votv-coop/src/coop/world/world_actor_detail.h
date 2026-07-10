@@ -1,4 +1,4 @@
-// coop/creatures/world_actor_detail.h -- INTERNAL (src-tree) shared header for
+// coop/world/world_actor_detail.h -- INTERNAL (src-tree) shared header for
 // the world_actor_sync module's two translation units:
 //   world_actor_sync.cpp   -- HOST half + Install/lifecycle owner (interceptor,
 //                             POST/destroy observers, pose stream, ex-enroll,
@@ -8,7 +8,7 @@
 //                             pose apply + drive) -- the npc_mirror shape.
 // Split 2026-07-05 (modular file-size rule; the audit-endorsed extraction after
 // world_actor_sync.cpp reached 834 LOC at v102). NOT part of the public module
-// API (that is include/coop/creatures/world_actor_sync.h); nothing outside
+// API (that is include/coop/world/world_actor_sync.h); nothing outside
 // these two TUs may include this.
 
 #pragma once

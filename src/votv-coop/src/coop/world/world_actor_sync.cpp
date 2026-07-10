@@ -15,7 +15,7 @@
 // the leaf event-actor names exactly (no super-walk -- the design lists leaf classes; a subclass that
 // surfaces in smoke gets curated into kWorldActorAllowlist).
 
-#include "coop/creatures/world_actor_sync.h"
+#include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
 

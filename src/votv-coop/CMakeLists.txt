@@ -298,8 +298,8 @@ add_library(votv-coop SHARED
     src/coop/creatures/npc_sync.cpp
     src/coop/creatures/npc_world_enum.cpp
     src/coop/creatures/piramid_sync.cpp
-    src/coop/creatures/world_actor_sync.cpp
-    src/coop/creatures/world_actor_mirror.cpp
+    src/coop/world/world_actor_sync.cpp
+    src/coop/world/world_actor_mirror.cpp
     src/coop/props/prop_echo_suppress.cpp
     src/coop/props/pile_spawn_bind.cpp
     src/coop/props/snapshot_census.cpp

@@ -14,7 +14,7 @@
 #include "coop/element/quiescence_drain.h"  // b3: ArmPendingPosCorrection / ApplyPendingPosCorrections (PropSnapPos)
 #include "coop/props/save_identity_bind.h"  // b3 OWNER: UpdateChipSavePosAndGetOld (retrack identity key on PropSnapPos)
 #include "coop/player/players_registry.h"
-#include "coop/creatures/world_actor_sync.h"  // v80 (B3b): non-Character event-actor mirror receivers
+#include "coop/world/world_actor_sync.h"  // v80 (B3b): non-Character event-actor mirror receivers
 #include "coop/creatures/piramid_sync.h"      // v97: piramid mirror lane (PyramidGather receiver)
 #include "coop/props/prop_stick_sync.h"
 #include "coop/player/remote_player.h"
