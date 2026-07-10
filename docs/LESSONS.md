@@ -93,6 +93,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `coop/interactables/` (signal_sync/console_state_sync), named after the engine class (`serverBox_C` →
   `serverbox_sync`) — NOT `coop/world/` (a 14-file catch-all), and NOT "server_sync" (ambiguous with the
   NETWORK server that saturates this mod). Instance of `memory/feedback_folder_per_domain_concept_rule.md`.
+- **VOTV shared-world RNG concentrates in 2 directors (`daynightCycle`/`mainGamemode`) + ~30 `ticker_*`/
+  event spawners + signal/server/loot rollers — host-ownable via mirror-step-3, but our `npc_sync`
+  suppress is an ALLOWLIST (15 of ~40 spawn classes) so it inherently lags** → the rule-1 root is
+  STRUCTURAL (client runs NO world-spawn ticker; allowlist = MIRROR set only). Only 3 systems seed a
+  `RandomStream` (garbagePileSpawner/radiotower/xmaslight) → seed-replicate; all else unseeded → suppress
+  or intent. Every gap row is STATIC-INFERRED → run a LIVE client-roll probe before any fix. *Look FIRST:*
+  `docs/COOP_RNG_AUTHORITY.md` (living tracker) + `memory/lesson_votv_rng_host_ownable_at_ticker_director_layer.md`.
 
 ## 4. Dispatch, hooks & input seams
 
