@@ -1,11 +1,12 @@
 // coop/props/prop_lifecycle_detail.h -- INTERNAL shared state + seam entry
-// points between prop_lifecycle.cpp (spawn-catch observers, Install) and
+// points between prop_lifecycle.cpp (spawn-catch observers, Install),
 // prop_destroy_seam.cpp (the K2_DestroyActor Func-patch seam + explicit
-// destroy API), extracted 2026-07-10 when prop_lifecycle passed the 800-LOC
-// soft cap.
+// destroy API), and prop_container_extract.cpp (the propInventory takeObj
+// PRE/POST seam + InstallInventory), extracted 2026-07-10 when
+// prop_lifecycle passed the 800-LOC soft cap (two slices).
 //
 // Sibling-internal header (the session_lanes.h / event_dispatch.h precedent)
-// -- NOT part of the public coop/ include surface; only the two TUs above
+// -- NOT part of the public coop/ include surface; only the three TUs above
 // include it.
 
 #pragma once
@@ -24,6 +25,13 @@ extern std::atomic<coop::net::Session*> g_session_ptr;
 inline coop::net::Session* LoadSession() {
     return g_session_ptr.load(std::memory_order_acquire);
 }
+
+// takeObj-in-flight bracket (defined in prop_container_extract.cpp, set by
+// the takeObj PRE/POST pair): the nested Aprop_C::Init POST observer in
+// prop_lifecycle.cpp defers its broadcast while true (Key is NewGuid
+// pre-loadData; the takeObj POST is the canonical broadcaster). Relaxed
+// order suffices -- see the definition's audit-H12 comment.
+extern std::atomic<bool> g_takeObjInFlight;
 
 // The destroy seam (prop_destroy_seam.cpp). OnK2DestroyFunc is the
 // ufunction_hook Func-patch callback prop_lifecycle::Install registers on
