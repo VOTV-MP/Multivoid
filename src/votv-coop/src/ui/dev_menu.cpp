@@ -421,9 +421,9 @@ void RenderFontPref() {
         ImGui::PopID();
     }
     ImGui::TextDisabled("Each surface picks its own family; applies instantly.");
-    ImGui::TextDisabled("Saved to votv-coop.ini (ui.font.menu/chat/net/nameplate; each");
-    ImGui::TextDisabled("defaults to ui.font). Fixedsys (VOTV) = game terminal pixel font");
-    ImGui::TextDisabled("(default); JetBrains/Cascadia monospace; Roboto proportional.");
+    ImGui::TextDisabled("Saved to votv-coop.ini (ui.font.menu/chat/net/nameplate/toast,");
+    ImGui::TextDisabled("each with its own default). Fixedsys (VOTV) = game terminal pixel");
+    ImGui::TextDisabled("font; JetBrains/Cascadia monospace; Roboto proportional.");
 
     // UI size (2026-07-04, user: "все менюшки и тексты ПОБОЛЬШЕ"): a multiplier
     // on top of the resolution factor. Applied on slider RELEASE, not per drag
