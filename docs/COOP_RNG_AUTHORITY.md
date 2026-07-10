@@ -370,9 +370,9 @@ RNG; shared-world content arrives ONLY via the host wire; per-peer exemptions ar
 table row, never an omission.
 
 **Mechanism — ONE cancel TABLE (data), THREE tiers (fixed seams):**
-- **Table row:** spawner class + tier tag (t1/t2/t3/EXEMPT-PER-PEER) + optional
-  (class, latent-UUID) rows for mixed classes. `ticker_wispSpawner_C` = explicit EXEMPT row
-  (recorded user decision: color wisps stay per-peer).
+- **Table row:** spawner class + tier tag (t1/t2/t3/OWNER-EFFECT) + optional
+  (class, latent-UUID) rows for mixed classes. `ticker_wispSpawner_C` = explicit OWNER-EFFECT
+  row (user decision 2026-07-10: per-peer AUTHORITY + cross-peer mirror — see USER DECISIONS).
 - **t1 tick-park:** engine's own `SetActorTickEnabled` wrapper (ue_wrap/engine.cpp:539 — the
   mirror brain-park path; no raw field writes). Park during the JOIN EPISODE (before client
   gameplay ticks → zero window); 1 Hz drift-only re-assert over a CACHED instance set (one
@@ -423,11 +423,28 @@ grime_sync/T3, dirthole_item_C (~330/pass, first-sighted in the join window with
 count) = census-ARTIFACT candidate (level-streaming re-instantiation) → targeted classify probe
 before any lane assignment, NewBlueprint3/41 → RE.
 
-**USER DECISIONS surfaced (none block Inc-1):** (1) autumn leaves — shared-world or per-peer
-cosmetic (T3)? (2) dreams/wakeup — reclassify PLAYER-LOCAL (personal experience, not shared
-world)? (3) Inc-2 family order — accept the measured-liveness default above?
+**USER DECISIONS (answered 2026-07-10 night, verbatim rule recorded):**
+(1) **OWNER-EFFECT RULE (user, general):** "If some effect spawns only around the local player
+and suppressing that on clients would degrade native experience — then yes, client rolls their
+own effect (like fireflies), but those effects shouldn't be local-only per peer: let all peers
+see each other's effects. This rule applies to all effects of this kind. Own the auth and sync
+layers on such effects." → the table tier EXEMPT-PER-PEER is RENAMED **OWNER-EFFECT**: the
+rolling peer keeps AUTHORITY (never parked, never host-rolled) and gains a cross-peer MIRROR
+lane (owner broadcasts its effect spawns; peers render them) — the pose-stream shape applied to
+ambient effects. Applies to color wisps, fireflies, autumn leaves, and every player-proximity
+ambient effect; an RE/classify step in the Inc plan decides each ambient spawner's class
+(world-anchored → cancel table; player-proximity effect → OWNER-EFFECT + mirror lane). The
+owner-effect mirror is its own increment family (does not block Inc-1).
+(2) dreams/wakeup: default PLAYER-LOCAL (personal experience, no world actors for peers) —
+stands unless the user objects.
+(3) Inc-2 family order: measured-liveness default (hexahive → bp7 → eyers → roach → mannequin)
+stands unless reordered.
 
 ## CHANGELOG
+- **2026-07-10 (night)** — USER DECISIONS answered: OWNER-EFFECT rule (per-peer authority +
+  cross-peer mirror for all player-proximity ambient effects — wisps/fireflies/leaves; own
+  both layers), dreams default PLAYER-LOCAL, Inc-2 order default accepted. EXEMPT-PER-PEER
+  tier renamed OWNER-EFFECT throughout the design.
 - **2026-07-10 (late evening)** — T1 `/qf` DESIGN pass CONVERGED (6 rounds, critic hold at R6;
   transcript scratchpad qf_thread.md): ratified STRUCTURAL DESIGN section added (cancel table +
   3 tiers + product seam retained + Inc phasing + verify gates + RULE-2 dissolve). NOT built.
