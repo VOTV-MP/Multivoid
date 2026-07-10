@@ -439,8 +439,11 @@ owner-effect mirror is its own increment family (does not block Inc-1). **Shippe
 ticker_fireflySpawner keeps rolling natively (camera-relative), PRE+POST-diffs its OWN spawn,
 broadcasts FireflySpawn (peer-symmetric, host-relayed), peers render the union. Wisps/leaves
 generalize the firefly_sync shape, not a new invention.
-(2) dreams/wakeup: default PLAYER-LOCAL (personal experience, no world actors for peers) —
-stands unless the user objects.
+(2) **dreams/wakeup (user, 2026-07-10 night): "The dreams need to be a shared experience,
+not per peer. Host owns the dreams."** → dream/wakeup rolls are HOST-AUTHORITATIVE shared
+state: the host rolls dream selection, clients mirror the outcome (a dream-sync lane; its RE —
+wakeup/createDream trampoline segments, gate-4 notes — feeds a dedicated increment). NOT
+player-local; the earlier default is superseded.
 (3) Inc-2 family order: measured-liveness default (hexahive → bp7 → eyers → roach → mannequin)
 stands unless reordered.
 
