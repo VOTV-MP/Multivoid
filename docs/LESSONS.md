@@ -66,9 +66,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **chipPiles persist in `primitivesData`; off-kerfurs in `objectsData`** (different save lanes). `memory/lesson_chippile_saved_in_primitivesData_not_objectsData.md`
 - **DELIVERY-axis: join DELIVERY vs IDENTITY are separate; ONE owner = `prop_snapshot`.** `memory/feedback_deliver_missing_owner_delivery_axis.md`
 - **EVERY in-episode wire expression is PROVISIONAL** — loadObjects churn recreates only save-WORLD
-  records (a hotbar'd-at-capture prop has none -> dead mirror row forever). *Look FIRST:* client-log
-  dead-row TRIPWIRE + [SPAWN-DEFER] arm/apply + per-doom key/loc lines; mechanism =
-  quiescence_drain spawn revalidation. `memory/lesson_join_window_wire_expression_provisional.md`
+  records (a hotbar'd-at-capture prop has none -> dead mirror row forever). ORDER: the revalidation
+  drain runs at the quiescence fire edge BEFORE the doom sweep — doom judges LAST (the tail placement
+  doomed-then-resurrected 230 props = the take-3 2.5 fps storm). *Look FIRST:* client-log dead-row
+  TRIPWIRE + [SPAWN-DEFER] arm/apply + per-doom key/loc lines; on an fps/placement anomaly diff the
+  doomed-vs-re-expressed KEY SETS. `memory/lesson_join_window_wire_expression_provisional.md`
+- **VOTV's OWN save ships DUPLICATE interactable Keys** (85 trashBitsPile_C across 4 keys — save-born
+  clone families; the 06-24 sweep silently doomed "80 trashBitsPile" for weeks). Key uniqueness is OUR
+  invariant: the HOST re-keys duplicates at enroll (MarkPropElement, the one owner; GT-gated setKey;
+  dead incumbent = churn recreate inheriting identity). *Look FIRST:* host-log "KEY-UNIQUENESS ...
+  re-keyed" burst; same-key multiplicity histogram in the adopt burst.
+  `memory/lesson_votv_save_ships_duplicate_interactable_keys.md`
 - **MirrorManager\<Prop\> MIXES census LOCAL rows with wire rows (one actor can carry BOTH)** — an
   actor->eid reverse meaning "established cross-peer identity" must filter `IsMirror()`
   (`ResolveMirrorEidByActor(wireMirrorOnly)`), else it kills the Gap-I-1 divergent-key dedup.

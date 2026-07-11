@@ -63,20 +63,42 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   PropSpawn stream → SnapshotComplete → quiescence-gated **divergence sweep** (membership = the client's
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
   for keyless piles (retires the client-local identity). **[V]**
-- **Join-window PROVISIONALITY — spawn revalidation (2026-07-11 `6d9c6518`/`8a2b04d0`/`8b1b340a`
-  [AS-BUILT, both roots log-RCA'd from live joins; hands-on take-3 pending]):** every wire expression a
+- **Join-window PROVISIONALITY — spawn revalidation (2026-07-11 `6d9c6518`/`8a2b04d0`/`8b1b340a`/`2fefd161`
+  [AS-BUILT; roots log-RCA'd from live joins takes 1-3; hands-on take-4 pending]):** every wire expression a
   client processes INSIDE its world-load episode is provisional. loadObjects churn-destroys every keyed
   prop and recreates ONLY those with a save WORLD record — a prop the host hotbar'd before save-capture
   and placed after has NO record → its converge-bound mirror row holds a dead actor forever (= the
   invisible prop; the sweep's keyed-churn RE-BIND has no candidate). `remote_prop_spawn::OnSpawn`
   CAPTURES every in-episode payload (`quiescence_drain::ArmPendingSpawn`, eid-dedup, cap 4096); the
   FRESH tail never spawns mid-episode (a fresh mirror is churn-killed outright — take 1); the quiescence
-  drain (step 4, before deferred destroys so a spawn+destroy pair nets zero) re-expresses ONLY rows
-  still dead/absent. The sweep names the residual per-key (dead-row TRIPWIRE) + logs each doom with
-  cls/key/loc. Fuzzy 30 cm rekey-steal is DENIED for a match already wire-mirror-bound to another eid
-  (`ResolveMirrorEidByActor(wireMirrorOnly)`) — N same-class same-spot placements no longer chain-steal
-  one mirror; the local-row Gap-I-1 mushroom dedup is untouched. Watchdog episode force-close now
-  declares quiescence-by-ceiling so the queues can never strand on the SnapshotBegin-lost flake.
+  drain re-expresses ONLY rows still dead/absent (step 4, after the binds, before deferred destroys so a
+  spawn+destroy pair nets zero). **ORDER (take-3 fix `2fefd161`): the whole RunReconcile sequence runs at
+  the quiescence FIRE EDGE, BEFORE the membership doom sweep, while claim tracking is still armed — the
+  re-runs converge-bind their loadObjects recreates and CLAIM them, so the sweep spares them. Doom judges
+  LAST. The shipped take-2 order (drain at the sweep tail) doomed the racers then fresh-spawned awake
+  replacements — 232 doomed + 230 re-expressed in one join = the take-3 2.5 fps physics storm.** The
+  sweep names the true residual per-key (dead-row TRIPWIRE "SURVIVED the re-bind pass AND the pre-sweep
+  spawn-revalidation drain") + logs each doom with cls/key/loc. Fuzzy 30 cm rekey-steal is DENIED for a
+  match already wire-mirror-bound to another eid (`ResolveMirrorEidByActor(wireMirrorOnly)`) — N
+  same-class same-spot placements no longer chain-steal one mirror; the local-row Gap-I-1 mushroom dedup
+  is untouched. Watchdog episode force-close declares quiescence-by-ceiling so the queues can never
+  strand on the SnapshotBegin-lost flake.
+- **KEY-UNIQUENESS AUTHORITY (2026-07-11 `2fefd161` [AS-BUILT, root log-RCA'd take-3; hands-on take-4
+  pending]):** VOTV's own save data ships DUPLICATE interactable Keys — the live host save carried 85
+  `trashBitsPile_C` across FOUR keys (65+12+5+3 save-born clone families; the 2026-06-24 sweep was
+  already silently dooming "80 trashBitsPile" — same phenomenon, unnoticed). Every identity layer (key
+  index, exact-key converge, keyed churn RE-BIND, R2 key-diff) assumes Key uniqueness; a clone family
+  funnels all its wire rows onto ONE actor, the leftovers die at churn, and the revalidation drain then
+  re-expresses them INTO already-occupied positions (→ interpenetrating awake physics = the take-3 fps
+  storm). Fix: the HOST is the key authority (MTA shape — the server owns element-ID uniqueness). At
+  enroll, inside `MarkPropElement` (the ONE enrollment owner — covers the census walk AND the Init-POST
+  late-load catch; a census-only detector was an audit HIGH), a keyed actor whose Key is already carried
+  by a DIFFERENT live actor is re-keyed with a fresh `rk_<64-bit-random-hex>` key
+  (`prop_synth_key::MintFreshKeyForDuplicate`; GT-gated — setKey is a PE dispatch). A DEAD incumbent =
+  churn recreate INHERITING its identity (spared by `FindLiveActorByKey` liveness). The game re-saves
+  live keys per actor → the fix bakes into the host save + every transferred client world.
+  `MarkPropElement` returns the enrolled key; broadcast callers build their payload key from the return.
+  CLIENT/SP never re-key. First-enrollment-only (one-way door — documented at the idempotency early-out).
 
 ### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
 
