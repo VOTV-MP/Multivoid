@@ -63,6 +63,20 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   PropSpawn stream → SnapshotComplete → quiescence-gated **divergence sweep** (membership = the client's
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
   for keyless piles (retires the client-local identity). **[V]**
+- **Join-window PROVISIONALITY — spawn revalidation (2026-07-11 `6d9c6518`/`8a2b04d0`/`8b1b340a`
+  [AS-BUILT, both roots log-RCA'd from live joins; hands-on take-3 pending]):** every wire expression a
+  client processes INSIDE its world-load episode is provisional. loadObjects churn-destroys every keyed
+  prop and recreates ONLY those with a save WORLD record — a prop the host hotbar'd before save-capture
+  and placed after has NO record → its converge-bound mirror row holds a dead actor forever (= the
+  invisible prop; the sweep's keyed-churn RE-BIND has no candidate). `remote_prop_spawn::OnSpawn`
+  CAPTURES every in-episode payload (`quiescence_drain::ArmPendingSpawn`, eid-dedup, cap 4096); the
+  FRESH tail never spawns mid-episode (a fresh mirror is churn-killed outright — take 1); the quiescence
+  drain (step 4, before deferred destroys so a spawn+destroy pair nets zero) re-expresses ONLY rows
+  still dead/absent. The sweep names the residual per-key (dead-row TRIPWIRE) + logs each doom with
+  cls/key/loc. Fuzzy 30 cm rekey-steal is DENIED for a match already wire-mirror-bound to another eid
+  (`ResolveMirrorEidByActor(wireMirrorOnly)`) — N same-class same-spot placements no longer chain-steal
+  one mirror; the local-row Gap-I-1 mushroom dedup is untouched. Watchdog episode force-close now
+  declares quiescence-by-ceiling so the queues can never strand on the SnapshotBegin-lost flake.
 
 ### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
 

@@ -1,4 +1,7 @@
-# Hands-on runbook — 2026-07-11 (take 3) — DLL `BB1897D7` (all 4 installs, hash-verified)
+# Hands-on runbook — 2026-07-11 (take 3) — DLL `B00459CC` (all 4 installs, hash-verified)
+
+(BB1897D7 superseded minutes later by B00459CC: + the watchdog quiescence-by-ceiling fix, audit
+MEDIUM — behavior identical on a healthy join; only the SnapshotBegin-lost flake path changed.)
 
 HEAD = local main, NOT pushed. Build clean; deploy hash-verified. **NOT LAN-smoked** (user at PC).
 

@@ -65,6 +65,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **An op applied BEFORE the state it reads is ready recurs** — gate/defer (snapshot-before-state-ready). `memory/feedback_snapshot_before_state_ready.md`
 - **chipPiles persist in `primitivesData`; off-kerfurs in `objectsData`** (different save lanes). `memory/lesson_chippile_saved_in_primitivesData_not_objectsData.md`
 - **DELIVERY-axis: join DELIVERY vs IDENTITY are separate; ONE owner = `prop_snapshot`.** `memory/feedback_deliver_missing_owner_delivery_axis.md`
+- **EVERY in-episode wire expression is PROVISIONAL** — loadObjects churn recreates only save-WORLD
+  records (a hotbar'd-at-capture prop has none -> dead mirror row forever). *Look FIRST:* client-log
+  dead-row TRIPWIRE + [SPAWN-DEFER] arm/apply + per-doom key/loc lines; mechanism =
+  quiescence_drain spawn revalidation. `memory/lesson_join_window_wire_expression_provisional.md`
+- **MirrorManager\<Prop\> MIXES census LOCAL rows with wire rows (one actor can carry BOTH)** — an
+  actor->eid reverse meaning "established cross-peer identity" must filter `IsMirror()`
+  (`ResolveMirrorEidByActor(wireMirrorOnly)`), else it kills the Gap-I-1 divergent-key dedup.
+  *Look FIRST:* mirror_manager.h "MIXES" block. `memory/lesson_prop_mirror_manager_mixes_local_and_wire_rows.md`
+- **Identity-critical log lines carry cls+key+loc (USER RULE)** — a class histogram alone makes
+  per-entity RCA impossible; cold paths only, never at the POST-native destroy seam (PendingKill),
+  throttle mass arms. `memory/feedback_identity_logs_carry_key_and_loc.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
