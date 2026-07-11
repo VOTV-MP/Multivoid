@@ -9,6 +9,7 @@
 #include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
 #include "ue_wrap/engine.h"
 #include "ue_wrap/prop.h"
+#include "ue_wrap/puppet.h"  // GetSkeletalMeshComponent (owner head-bone anchor for the hold measure)
 #include "ue_wrap/fname_utils.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
@@ -40,20 +41,34 @@ constexpr size_t kMaxStr = 63;
 // (ref-pose socket put the mirror on the BACK, hands-on 2026-07-06 14:2x),
 // and the puppet's Camera component never pitches (pitch is controller-fed).
 // So the SP look is reproduced by the per-tick drive: eye anchor +
-// synced-look basis x {forward, right, down}, following yaw AND pitch --
-// functionally "attached to the camera root". Offsets = camera-front, the
-// SP viewmodel's bottom-center-right feel (was: right-shoulder placement,
-// superseded by the 2026-07-10 ask). Anchor = GetHeadPosition() (head bone
-// + its +33 nameplate lift).
-constexpr float kViewForwardCm = 45.f;   // out along the look direction (in front of the face)
-constexpr float kViewRightCm   = 10.f;   // slight right bias, like the SP viewmodel
-constexpr float kViewUpCm      = -40.f;  // chin height below the lifted head anchor
+// synced-look basis, following yaw AND pitch -- functionally "attached to
+// the camera root".
+//
+// MEASURED, NOT TUNED (user 2026-07-11: keljoy face pointed away on the
+// puppet -- hand-tuned constants can never carry the per-item weld pose):
+// the item's pose relative to the camera is ITEM-SPECIFIC (the 'weapon'
+// socket basis + per-item in-hand offsets), so the OWNER MEASURES its held
+// actor's transform in its own view space and ships it with the HandItem
+// announce; DriveMirror re-composes it onto the puppet's synced view basis.
+// The two view-space definitions match by construction: origin = 'head' bone
+// + kHeadAnchorLiftCm on BOTH sides, basis = control yaw/pitch with roll 0
+// (the pose stream's curYaw+headYawDelta == control yaw, curPitch == control
+// pitch -- local_streams.cpp). Every item then reads exactly like the
+// owner's first-person hold, face direction included.
+constexpr float kHeadAnchorLiftCm = 33.f;  // == remote_player.cpp kPlateLiftCm (GetHeadPosition's lift)
+// Fallback placement until the owner's first measure lands (mesh not ticked
+// yet / measure declined): the pre-2026-07-11 camera-front constants.
+constexpr float kFallbackRelPos[3] = {45.f, 10.f, -40.f};  // fwd/right/up cm
 
 // ---- per-slot wire state (what each peer's hand holds) -------------------
 struct SlotHand {
     bool has = false;
     std::wstring cls;   // BP class name, e.g. L"prop_physgun_C"
     std::wstring name;  // Aprop_C 'name' FName (drives the generic prop mesh), may be empty
+    // Measured view-relative hold transform (owner-authored, wire-carried).
+    float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
+    float relRot[3] = {0.f, 0.f, 0.f};  // item rotator {pitch,yaw,roll} in the view frame
+    bool  haveRel = false;              // owner measured (vs the fallback defaults)
 };
 SlotHand g_hands[coop::players::kMaxPeers];  // GT-only
 
@@ -98,11 +113,101 @@ int32_t      g_localPlayerIdx = -1;
 // the canonical untracked-prop broadcast. Works on both roles (a client's own
 // drop is client-authored, the same path local_streams uses for held props).
 void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t prevIdx) {
-    if (!prev || !R::IsLiveByIndex(prev, prevIdx)) return;  // stow/switch: destroyed in-hand
+    if (!prev || !R::IsLiveByIndex(prev, prevIdx)) {
+        // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] prev DEAD at the hand edge => the
+        // ex-hand actor was DESTROYED in-hand (updateHold stow/switch OR the R-drop's
+        // simulateDrop which destroys the hand display actor + spawns a SEPARATE fresh
+        // world actor). Either way this "release the SAME surviving actor" path does NOT
+        // fire -- confirming the v106 "R-drop is not a spawn" model is false for this item.
+        // Do NOT deref prev here (UAF on a dead actor); log the pointer only.
+        if (prev) {
+            UE_LOGI("[ROCK-DROP] hand-edge: ex-hand actor %p DEAD (destroyed in-hand) -- the "
+                    "'release surviving actor' express does NOT run; a fresh world spawn (if any) "
+                    "is authored elsewhere (client Aprop spawns are host-auth-skipped)", prev);
+        }
+        return;
+    }
+    // prev SURVIVED the hand edge => a genuine same-actor release into the world.
     if (coop::trash_collect_sync::EnsureHeldItemBroadcast(prev, &session)) {
         UE_LOGI("hand_item: released ex-hand actor %p expressed as a world prop "
                 "(R-drop/place -- peers see it this tick)", prev);
+    } else {
+        UE_LOGI("[ROCK-DROP] hand-edge: ex-hand actor %p SURVIVED but EnsureHeldItemBroadcast "
+                "DECLINED it (see the decline reason above) -- not expressed", prev);
     }
+}
+
+// ---- view-space rotation math (UE FRotationMatrix conventions) -------------
+constexpr float kDeg2Rad  = 0.01745329252f;
+constexpr float kRadToDeg = 57.2957795f;
+
+// UE FRotationMatrix: rows = the rotation's world-space X (forward), Y (right),
+// Z (up) axes. A roll-0 call yields the view basis {fwd, right, up} directly.
+void RotMatrixRows(float pitchDeg, float yawDeg, float rollDeg, float M[3][3]) {
+    const float SP = std::sin(pitchDeg * kDeg2Rad), CP = std::cos(pitchDeg * kDeg2Rad);
+    const float SY = std::sin(yawDeg * kDeg2Rad),   CY = std::cos(yawDeg * kDeg2Rad);
+    const float SR = std::sin(rollDeg * kDeg2Rad),  CR = std::cos(rollDeg * kDeg2Rad);
+    M[0][0] = CP * CY;                   M[0][1] = CP * SY;                   M[0][2] = SP;
+    M[1][0] = SR * SP * CY - CR * SY;    M[1][1] = SR * SP * SY + CR * CY;    M[1][2] = -SR * CP;
+    M[2][0] = -(CR * SP * CY + SR * SY); M[2][1] = CY * SR - CR * SP * SY;    M[2][2] = CR * CP;
+}
+
+// Inverse of RotMatrixRows (UE FMatrix::Rotator()): axis rows -> {Pitch,Yaw,Roll}.
+ue_wrap::FRotator RotatorFromRows(const float M[3][3]) {
+    ue_wrap::FRotator r{};
+    r.Pitch = std::atan2(M[0][2], std::sqrt(M[0][0] * M[0][0] + M[0][1] * M[0][1])) * kRadToDeg;
+    r.Yaw   = std::atan2(M[0][1], M[0][0]) * kRadToDeg;
+    float S[3][3];
+    RotMatrixRows(r.Pitch, r.Yaw, 0.f, S);  // roll-0 frame; roll = Z/Y vs its right axis
+    const float zy = M[2][0] * S[1][0] + M[2][1] * S[1][1] + M[2][2] * S[1][2];
+    const float yy = M[1][0] * S[1][0] + M[1][1] * S[1][1] + M[1][2] * S[1][2];
+    r.Roll = std::atan2(zy, yy) * kRadToDeg;
+    return r;
+}
+
+// Measure the OWNER's natively-welded held actor in its own view space (see the
+// placement block comment). False = don't ship (mesh/bone not readable yet, or
+// a wild pre-weld transform) -- the 0.5 s re-check retries.
+bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float outRot[3]) {
+    void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(local);
+    ue_wrap::FVector head{};
+    if (!mesh || !R::IsLive(mesh) ||
+        !E::GetBoneWorldLocationByName(mesh, L"head", head))
+        return false;
+    head.Z += kHeadAnchorLiftCm;
+    void* ctl = E::GetController(local);
+    const ue_wrap::FRotator view =
+        ctl ? E::GetControlRotation(ctl) : E::GetActorRotation(local);
+    float V[3][3];
+    RotMatrixRows(ue_wrap::NormalizeAxis(view.Pitch), ue_wrap::NormalizeAxis(view.Yaw), 0.f, V);
+    const ue_wrap::FVector iloc = E::GetActorLocation(held);
+    const float d[3] = {iloc.X - head.X, iloc.Y - head.Y, iloc.Z - head.Z};
+    for (int i = 0; i < 3; ++i) {
+        outPos[i] = d[0] * V[i][0] + d[1] * V[i][1] + d[2] * V[i][2];
+        // A held item sits within arm's reach of the head; a wild read (the
+        // pre-weld spawn frame, a dying component) must never ship.
+        if (!(outPos[i] > -300.f && outPos[i] < 300.f)) return false;
+    }
+    float I[3][3], Q[3][3];
+    const ue_wrap::FRotator irot = E::GetActorRotation(held);
+    RotMatrixRows(irot.Pitch, irot.Yaw, irot.Roll, I);
+    for (int r = 0; r < 3; ++r)      // item axis r expressed in the view frame
+        for (int c = 0; c < 3; ++c)
+            Q[r][c] = I[r][0] * V[c][0] + I[r][1] * V[c][1] + I[r][2] * V[c][2];
+    const ue_wrap::FRotator rel = RotatorFromRows(Q);
+    outRot[0] = rel.Pitch; outRot[1] = rel.Yaw; outRot[2] = rel.Roll;
+    return true;
+}
+
+// Resend gate for the 0.5 s hold-transform refresh: only real drift (the weld
+// settling after spawn, an in-hand item flip) goes back on the wire.
+bool RelDrifted(const SlotHand& h, const float p[3], const float rr[3]) {
+    if (!h.haveRel) return true;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(p[i] - h.relPos[i]) > 3.f) return true;
+        if (std::fabs(ue_wrap::NormalizeAxis(rr[i] - h.relRot[i])) > 4.f) return true;
+    }
+    return false;
 }
 
 // Aprop_C 'name' FName property offset, resolved once (the field lives on the
@@ -126,17 +231,25 @@ std::wstring ReadItemName(void* actor) {
 }
 
 // [u8 slot][u8 has][u8 clsLen][cls ascii][u8 nameLen][name ascii]
+// + when has: [f32 relPos x3][f32 relRot x3] (the measured view-relative hold).
 std::vector<uint8_t> BuildPayload(uint8_t slot, const SlotHand& h) {
     std::vector<uint8_t> out;
     const size_t cl = h.has ? (h.cls.size() > kMaxStr ? kMaxStr : h.cls.size()) : 0;
     const size_t nl = h.has ? (h.name.size() > kMaxStr ? kMaxStr : h.name.size()) : 0;
-    out.reserve(4 + cl + nl);
+    out.reserve(4 + cl + nl + (h.has ? 24 : 0));
     out.push_back(slot);
     out.push_back(h.has ? 1 : 0);
     out.push_back(static_cast<uint8_t>(cl));
     for (size_t i = 0; i < cl; ++i) out.push_back(static_cast<uint8_t>(h.cls[i]));
     out.push_back(static_cast<uint8_t>(nl));
     for (size_t i = 0; i < nl; ++i) out.push_back(static_cast<uint8_t>(h.name[i]));
+    if (h.has) {
+        const float rel[6] = {h.relPos[0], h.relPos[1], h.relPos[2],
+                              h.relRot[0], h.relRot[1], h.relRot[2]};
+        const size_t base = out.size();
+        out.resize(base + sizeof(rel));
+        std::memcpy(out.data() + base, rel, sizeof(rel));
+    }
     return out;
 }
 
@@ -226,33 +339,34 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
 }
 
 // Re-command the mirror to the puppet's VIEW-space hold point every tick (the
-// puppet_carry_drive shape). Eye anchor + synced-look basis; the item rotates
-// with the look so it reads exactly like the owner's bottom-right hold.
-void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup) {
+// puppet_carry_drive shape): rebuild the roll-0 view basis from the synced aim
+// and re-compose the owner-measured relative transform onto it. With the
+// fallback rel (haveRel=false) this degrades to the legacy camera-front
+// placement with the item facing along the look.
+void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup, const SlotHand& hand) {
     const ue_wrap::FVector eye = pup->GetHeadPosition();
     const ue_wrap::FVector fwd = pup->GetSyncedAimDirection();
-    // right = up x fwd (UE left-handed basis: fwd (1,0,0) -> right (0,1,0));
-    // degenerate near-vertical aim keeps the last-tick placement.
-    ue_wrap::FVector right{-fwd.Y, fwd.X, 0.f};
-    const float rl = std::sqrt(right.X * right.X + right.Y * right.Y);
+    // Degenerate near-vertical aim keeps the last-tick placement.
+    const float rl = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
     if (rl < 1e-3f) return;
-    right.X /= rl; right.Y /= rl;
-    // View-up, closed form for a yaw/pitch basis:
-    // fwd = (cosP*cosY, cosP*sinY, sinP)  ->  up = (-sinP*cosY, -sinP*sinY, cosP).
-    const float sinP = fwd.Z;
-    const float cosP = rl;  // |xy| of a unit fwd == cos(pitch)
-    const float cosY = fwd.X / cosP, sinY = fwd.Y / cosP;
-    const ue_wrap::FVector up{-sinP * cosY, -sinP * sinY, cosP};
-    const ue_wrap::FVector pos{
-        eye.X + fwd.X * kViewForwardCm + right.X * kViewRightCm + up.X * kViewUpCm,
-        eye.Y + fwd.Y * kViewForwardCm + right.Y * kViewRightCm + up.Y * kViewUpCm,
-        eye.Z + fwd.Z * kViewForwardCm + right.Z * kViewRightCm + up.Z * kViewUpCm,
-    };
-    constexpr float kRadToDeg = 57.2957795f;
     const float yawDeg   = std::atan2(fwd.Y, fwd.X) * kRadToDeg;
-    const float pitchDeg = std::atan2(sinP, cosP) * kRadToDeg;
+    const float pitchDeg = std::atan2(fwd.Z, rl) * kRadToDeg;
+    float V[3][3];
+    RotMatrixRows(pitchDeg, yawDeg, 0.f, V);  // rows: fwd / right / up
+    const float* rp = hand.relPos;
+    const ue_wrap::FVector pos{
+        eye.X + V[0][0] * rp[0] + V[1][0] * rp[1] + V[2][0] * rp[2],
+        eye.Y + V[0][1] * rp[0] + V[1][1] * rp[1] + V[2][1] * rp[2],
+        eye.Z + V[0][2] * rp[0] + V[1][2] * rp[1] + V[2][2] * rp[2],
+    };
+    // World item axes: row i of the composed matrix = sum_c Q[i][c] * V[c].
+    float Q[3][3], W[3][3];
+    RotMatrixRows(hand.relRot[0], hand.relRot[1], hand.relRot[2], Q);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            W[i][j] = Q[i][0] * V[0][j] + Q[i][1] * V[1][j] + Q[i][2] * V[2][j];
     E::SetActorLocation(mirrorActor, pos);
-    E::SetActorRotation(mirrorActor, ue_wrap::FRotator{pitchDeg, yawDeg, 0.f});
+    E::SetActorRotation(mirrorActor, RotatorFromRows(W));
 }
 
 }  // namespace
@@ -293,11 +407,40 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
             g_ownName = name;
             SlotHand& h = g_hands[self];
             h.has = true; h.cls = cls; h.name = name;
+            // First measure of the native weld's view-relative transform (may land
+            // a tick early -- the 0.5 s re-check below self-corrects once settled).
+            // Measure into scratch and RESET on failure (audit 2026-07-11 M/H): on a
+            // quick-slot switch a failed measure would otherwise ship the PREVIOUS
+            // item's transform under the new item's name -- plausible values the
+            // receiver's sanity check cannot reject.
+            float p[3], rr[3];
+            if (MeasureLocalHoldRelative(local, holdingProp, p, rr)) {
+                std::memcpy(h.relPos, p, sizeof(p));
+                std::memcpy(h.relRot, rr, sizeof(rr));
+                h.haveRel = true;
+            } else {
+                h.relPos[0] = kFallbackRelPos[0];
+                h.relPos[1] = kFallbackRelPos[1];
+                h.relPos[2] = kFallbackRelPos[2];
+                h.relRot[0] = h.relRot[1] = h.relRot[2] = 0.f;
+                h.haveRel = false;
+            }
             SendState(session, self, h);
-            UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' (announced)",
-                    cls.c_str(), name.c_str());
+            UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' (announced, rel %s)",
+                    cls.c_str(), name.c_str(), h.haveRel ? "measured" : "fallback");
             // (v106: no reconcile request here -- the R-pickup's ground-actor death
             // is caught at the K2_DestroyActor Func seam the moment it happens.)
+        } else {
+            // Same item on the 0.5 s re-check: refresh the measured hold transform;
+            // resend only on real drift (RelDrifted) so steady holds stay silent.
+            SlotHand& h = g_hands[self];
+            float p[3], rr[3];
+            if (MeasureLocalHoldRelative(local, holdingProp, p, rr) && RelDrifted(h, p, rr)) {
+                std::memcpy(h.relPos, p, sizeof(p));
+                std::memcpy(h.relRot, rr, sizeof(rr));
+                h.haveRel = true;
+                SendState(session, self, h);
+            }
         }
     } else if (g_ownHas) {
         // The hand is empty this tick: if the ex-hand actor survived the edge it
@@ -384,13 +527,13 @@ void TickMirrors() {
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
         if (mirrorLive && m.cls == want.cls && m.name == want.name &&
             m.puppetIdx == pupIdx) {
-            DriveMirror(m.actor, pup);  // steady state: re-command the view hold
+            DriveMirror(m.actor, pup, want);  // steady state: re-command the view hold
             continue;
         }
         if (mirrorLive || m.actor) DestroyMirror(slot, "state/puppet changed");
         SpawnMirror(slot, puppetActor);
         Mirror& nm = g_mirrors[slot];
-        if (nm.actor) DriveMirror(nm.actor, pup);  // no first-frame pop at spawn pos
+        if (nm.actor) DriveMirror(nm.actor, pup, want);  // no first-frame pop at spawn pos
     }
 }
 
@@ -421,6 +564,27 @@ bool HandleHandItem(coop::net::Session& session,
     std::wstring name;
     for (uint8_t i = 0; i < nameLen; ++i) name.push_back(static_cast<wchar_t>(p[off++]));
 
+    // Measured view-relative hold transform (present whenever has). Insane values
+    // (non-finite / out of arm's reach) keep the fallback placement.
+    float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
+    float relRot[3] = {0.f, 0.f, 0.f};
+    if (has) {
+        if (off + 24 > static_cast<size_t>(msg.payloadLen)) {
+            UE_LOGW("hand_item: missing hold-transform field -- dropping");
+            return true;
+        }
+        float rel[6];
+        std::memcpy(rel, p + off, sizeof(rel));
+        off += sizeof(rel);
+        bool sane = true;
+        for (int i = 0; i < 6; ++i) if (!std::isfinite(rel[i])) sane = false;
+        for (int i = 0; i < 3; ++i) if (!(rel[i] > -300.f && rel[i] < 300.f)) sane = false;
+        if (sane) {
+            relPos[0] = rel[0]; relPos[1] = rel[1]; relPos[2] = rel[2];
+            relRot[0] = rel[3]; relRot[1] = rel[4]; relRot[2] = rel[5];
+        }
+    }
+
     if (describedSlot >= coop::net::kMaxPeers) return true;
     if (has && cls.empty()) return true;  // malformed: "has item" with no class
 
@@ -433,6 +597,9 @@ bool HandleHandItem(coop::net::Session& session,
         }
         SlotHand& h = g_hands[describedSlot];
         h.has = has; h.cls = cls; h.name = name;
+        std::memcpy(h.relPos, relPos, sizeof(relPos));
+        std::memcpy(h.relRot, relRot, sizeof(relRot));
+        h.haveRel = has;
         // Rebroadcast to every other ready client (originator excluded).
         const std::vector<uint8_t> out = BuildPayload(describedSlot, h);
         for (int x = 1; x < coop::net::kMaxPeers; ++x) {
@@ -453,6 +620,9 @@ bool HandleHandItem(coop::net::Session& session,
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // own echo
     SlotHand& h = g_hands[describedSlot];
     h.has = has; h.cls = cls; h.name = name;
+    std::memcpy(h.relPos, relPos, sizeof(relPos));
+    std::memcpy(h.relRot, relRot, sizeof(relRot));
+    h.haveRel = has;
     return true;
 }
 
