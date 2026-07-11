@@ -117,6 +117,11 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     lastRemoteRagdollSeq_[peerSlot] = 0;
     remoteRagdollStamp_[peerSlot] = 0;
     lastReadRagdollStamp_[peerSlot] = 0;
+    // v109: clear the hand-item transform slot -- same stale-generation reasoning.
+    hasRemoteHand_[peerSlot] = false;
+    lastRemoteHandSeq_[peerSlot] = 0;
+    remoteHandStamp_[peerSlot] = 0;
+    lastReadHandStamp_[peerSlot] = 0;
     // PR-FOUNDATION-1b v16: clear the latched senderEpoch so the next
     // connection on this slot re-latches via HandleMessage's first-packet
     // path. Without this, a reconnecting peer's fresh epoch would fail

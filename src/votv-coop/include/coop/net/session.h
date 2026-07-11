@@ -149,6 +149,11 @@ public:
     // ragdolled, false on the recover edge (mirrors SetLocalPropPose's held/release
     // gate). Net thread fan-outs to all peers only while set.
     void SetLocalRagdollPose(bool set, const RagdollPoseSnapshot& pose);
+    // v109: publish the local R-HOLD hand item's live view-relative transform.
+    // `set` true each game tick WHILE holding (measured fresh), false on the
+    // hand-empty edge -- the SetLocalPropPose held/release gate shape. Net
+    // thread fan-outs a HandPose datagram at sendHz only while set.
+    void SetLocalHandPose(bool set, const HandPoseSnapshot& pose);
 
     // v37: HOST publishes the current NPC pose batch (one EntityPoseSnapshot per live NPC);
     // the net thread fan-outs ONE EntityPose datagram to all peers each sendHz tick. Called
@@ -180,6 +185,9 @@ public:
     // fresh ragdoll pose AND aggregate state is Connected. outIsNew distinguishes a
     // newly-arrived packet (apply the velocity) from a re-read of the last one.
     bool TryGetRemoteRagdollPose(int peerSlot, RagdollPoseSnapshot& out, bool* outIsNew = nullptr);
+    // v109: per-peer hand-item view-relative transform (hand_item::TickMirrors
+    // consumes; newest-wins). Same contract shape as TryGetRemoteRagdollPose.
+    bool TryGetRemoteHandPose(int peerSlot, HandPoseSnapshot& out, bool* outIsNew = nullptr);
 
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
@@ -474,6 +482,10 @@ private:
     // thread reads + fan-outs). Same held/release shape as localPropPose_.
     RagdollPoseSnapshot localRagdollPose_{};
     bool hasLocalRagdoll_ = false;
+    // v109: local hand-item view-relative transform (game thread writes while
+    // holding, net thread reads + fan-outs). Same held/release shape as prop/ragdoll.
+    HandPoseSnapshot localHandPose_{};
+    bool hasLocalHand_ = false;
     // v37: host NPC pose batch (game thread writes via SetLocalNpcPoseBatch, net thread reads
     // + fan-outs ONE EntityPose datagram). Empty vector = nothing to send (NPCs gone).
     std::vector<EntityPoseSnapshot> localNpcBatch_;
@@ -506,6 +518,12 @@ private:
     std::array<uint32_t, kMaxPeers> lastRemoteRagdollSeq_{};
     std::array<uint64_t, kMaxPeers> remoteRagdollStamp_{};
     std::array<uint64_t, kMaxPeers> lastReadRagdollStamp_{};
+    // v109: per-peer hand-item view-relative transform (same per-slot shape).
+    std::array<HandPoseSnapshot, kMaxPeers> remoteHandPoses_{};
+    std::array<bool, kMaxPeers> hasRemoteHand_{};
+    std::array<uint32_t, kMaxPeers> lastRemoteHandSeq_{};
+    std::array<uint64_t, kMaxPeers> remoteHandStamp_{};
+    std::array<uint64_t, kMaxPeers> lastReadHandStamp_{};
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

@@ -995,6 +995,15 @@ enum class MsgType : uint8_t {
                        //      (physics after throw); the client feeds it into a per-eid ActiveDrive
                        //      (trash_clump_pose_stream::TickApplyAndDrive). Ends at the ToPile convert
                        //      (PropConvert{ToPile} -> ClearDriveForEid). Drains in TickClientCarryPoses.
+    HandPose = 35,     // v109 (2026-07-11): live view-relative transform of the R-HOLD hand
+                       //      item (unreliable, ~sendHz WHILE holding). The reliable HandItem
+                       //      announce carries the item's IDENTITY (+ initial transform); THIS
+                       //      stream carries the MOTION -- the owner re-measures its natively
+                       //      welded held actor per pump tick, so a melee swing reads as
+                       //      continuous motion on the puppet mirror instead of stepping at the
+                       //      old 0.5 s reliable drift refresh (user: "attack animation is 1
+                       //      frame per second"). Sender identity rides the PacketHeader
+                       //      senderSlot (host relay rewrites -- pose precedent); newest-wins.
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -2449,6 +2458,26 @@ struct RagdollPosePacket {
     RagdollPoseSnapshot pose;    // 48
 };
 static_assert(sizeof(RagdollPosePacket) == 68, "RagdollPosePacket must be 68 bytes");
+
+// v109 (2026-07-11): the R-HOLD hand item's live view-relative transform
+// (MsgType::HandPose). Same units/definitions as the reliable HandItem
+// announce's trailing floats: relPos = cm along the owner's roll-0 view basis
+// {fwd,right,up} from the head anchor (head bone + 33 cm); relRot = the item's
+// rotator in that view frame (deg, canonical (-180,180]). Streamed at sendHz
+// only WHILE holding; the receiver overwrites its SlotHand rel fields
+// (hand_item.cpp) and DriveMirror re-composes per tick. Sender identity rides
+// the PacketHeader senderSlot; host relays to the other clients (pose shape).
+struct HandPoseSnapshot {
+    float relPos[3];  // cm in the owner's view basis (fwd/right/up)
+    float relRot[3];  // item rotator {pitch,yaw,roll} in the view frame (deg)
+};
+static_assert(sizeof(HandPoseSnapshot) == 24, "HandPoseSnapshot must be 24 bytes");
+
+struct HandPosePacket {
+    PacketHeader     header;  // 20
+    HandPoseSnapshot pose;    // 24
+};
+static_assert(sizeof(HandPosePacket) == 44, "HandPosePacket must be 44 bytes");
 
 // v66 voice chat: one 20 ms opus frame (MsgType::VoiceFrame). The DATAGRAM
 // carries only 8 + opusLen bytes of this struct (the array is max-sized for

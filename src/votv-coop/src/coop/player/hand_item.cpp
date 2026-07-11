@@ -199,16 +199,10 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
     return true;
 }
 
-// Resend gate for the 0.5 s hold-transform refresh: only real drift (the weld
-// settling after spawn, an in-hand item flip) goes back on the wire.
-bool RelDrifted(const SlotHand& h, const float p[3], const float rr[3]) {
-    if (!h.haveRel) return true;
-    for (int i = 0; i < 3; ++i) {
-        if (std::fabs(p[i] - h.relPos[i]) > 3.f) return true;
-        if (std::fabs(ue_wrap::NormalizeAxis(rr[i] - h.relRot[i])) > 4.f) return true;
-    }
-    return false;
-}
+// (The 0.5 s reliable drift refresh was retired 2026-07-11 same-day, RULE 2:
+// the v109 MsgType::HandPose unreliable stream carries the live transform per
+// tick -- the swing motion the drift refresh rendered at "1 frame per second",
+// user report. The reliable announce keeps the identity + initial transform.)
 
 // Aprop_C 'name' FName property offset, resolved once (the field lives on the
 // prop base class; every hotbar item is a descendant).
@@ -382,6 +376,21 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
     if (self >= coop::players::kMaxPeers) return;
 
     if (holdingProp) {
+        // v109: measure + latch the live view-relative hold transform EVERY tick
+        // while holding -- the net thread streams it at sendHz (MsgType::HandPose),
+        // so a melee swing reads as continuous motion on the puppet mirror. Same
+        // per-tick engine-read cost class as the local pose capture. Runs BEFORE
+        // the identity-latch early-return below: motion must flow even when the
+        // held identity is unchanged.
+        {
+            float sp[3], sr[3];
+            if (MeasureLocalHoldRelative(local, holdingProp, sp, sr)) {
+                coop::net::HandPoseSnapshot hp{};
+                std::memcpy(hp.relPos, sp, sizeof(sp));
+                std::memcpy(hp.relRot, sr, sizeof(sr));
+                session.SetLocalHandPose(true, hp);
+            }
+        }
         // O(1) steady-state: same live actor as last tick -> skip the renders,
         // EXCEPT a slow re-check every 30 ticks (~0.5 s) — the game renames a
         // held prop IN PLACE (grenade arm: 'name' -> grenade_1), which a pure
@@ -430,19 +439,11 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
                     cls.c_str(), name.c_str(), h.haveRel ? "measured" : "fallback");
             // (v106: no reconcile request here -- the R-pickup's ground-actor death
             // is caught at the K2_DestroyActor Func seam the moment it happens.)
-        } else {
-            // Same item on the 0.5 s re-check: refresh the measured hold transform;
-            // resend only on real drift (RelDrifted) so steady holds stay silent.
-            SlotHand& h = g_hands[self];
-            float p[3], rr[3];
-            if (MeasureLocalHoldRelative(local, holdingProp, p, rr) && RelDrifted(h, p, rr)) {
-                std::memcpy(h.relPos, p, sizeof(p));
-                std::memcpy(h.relRot, rr, sizeof(rr));
-                h.haveRel = true;
-                SendState(session, self, h);
-            }
+            // (v109: no reliable drift refresh -- the HandPose stream above carries
+            // the live transform; the announce rel is only the pre-stream frame.)
         }
     } else if (g_ownHas) {
+        session.SetLocalHandPose(false, {});  // v109: stop the stream on the empty edge
         // The hand is empty this tick: if the ex-hand actor survived the edge it
         // was RELEASED into the world (R-drop / place) -- express it now; then
         // drop the identity latch so a re-appear re-renders + re-compares.
@@ -523,6 +524,18 @@ void TickMirrors() {
             // drop any orphaned mirror, retry next tick.
             if (mirrorLive || m.actor) DestroyMirror(slot, "puppet gone");
             continue;
+        }
+        // v109: the freshest STREAMED hold transform overrides the announce-time
+        // one (newest-wins; the announce rel only covers the pre-stream frame).
+        if (g_session) {
+            coop::net::HandPoseSnapshot hp;
+            bool isNew = false;
+            if (g_session->TryGetRemoteHandPose(slot, hp, &isNew) && isNew) {
+                SlotHand& wh = g_hands[slot];
+                std::memcpy(wh.relPos, hp.relPos, sizeof(hp.relPos));
+                std::memcpy(wh.relRot, hp.relRot, sizeof(hp.relRot));
+                wh.haveRel = true;
+            }
         }
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
         if (mirrorLive && m.cls == want.cls && m.name == want.name &&
@@ -642,6 +655,10 @@ void ReplayPeerStatesToSlot(int slot) {
 }
 
 void Reset() {
+    // v109: stop the hand-pose stream before the session cache drops -- a stale
+    // hasLocalHand_ latch would otherwise stream the dead session's transform
+    // into the next one until the first hold updates it.
+    if (g_session) g_session->SetLocalHandPose(false, {});
     for (uint8_t s = 0; s < coop::players::kMaxPeers; ++s) {
         DestroyMirror(s, "session reset");
         g_hands[s] = SlotHand{};
