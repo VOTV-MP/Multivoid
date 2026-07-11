@@ -28,6 +28,7 @@ struct Entry {
     uint64_t    bornMs = 0;
     uint8_t     nickLen = 0;
     uint8_t     slot = 0;
+    uint8_t     action = 0;  // 1 = peer-action line (HUD draws the predicate yellow)
 };
 
 // Lines queued by PushDelayed, promoted to g_lines by Tick once dueMs is reached. Game-thread only.
@@ -129,6 +130,7 @@ void Republish() {
         l.bornMs  = e.bornMs;
         l.nickLen = e.nickLen;
         l.slot    = e.slot;
+        l.action  = e.action;
         ++s.count;
     }
     {
@@ -212,6 +214,20 @@ void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot) {
     ProbeOnPush("chat", e, g_lines.size() + 1);
     g_lines.push_back(std::move(e));
     TrimOverflow("chat");
+    Republish();
+}
+
+void PushAction(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot) {
+    Entry e;
+    e.text = utf8Line;
+    if (e.text.size() >= sizeof(Line{}.text)) e.text.resize(sizeof(Line{}.text) - 1);
+    e.bornMs  = NowMs();
+    e.nickLen = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
+    e.slot    = slot;
+    e.action  = 1;
+    ProbeOnPush("action", e, g_lines.size() + 1);
+    g_lines.push_back(std::move(e));
+    TrimOverflow("action");
     Republish();
 }
 

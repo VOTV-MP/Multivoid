@@ -49,11 +49,12 @@ void Announce(uint8_t slot, bool isLocalActor, const std::wstring& action) {
     const std::string nick = coop::chat_feed::ToUtf8(nickW.empty() ? std::wstring(L"Player") : nickW);
     const std::string line = nick + " " + coop::chat_feed::ToUtf8(action);
 
-    // PushChat colors the first nickLen BYTES per `slot` (chat parity); the rest is
-    // the action predicate in the default event color.
-    coop::chat_feed::PushChat(line,
-                              static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
-                              slot);
+    // PushAction colors the first nickLen BYTES per `slot` (chat parity); the rest is
+    // the action predicate in the ACTION color (yellow -- user 2026-07-11), so a
+    // world-state action reads apart from typed chat.
+    coop::chat_feed::PushAction(line,
+                                static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
+                                slot);
 }
 
 }  // namespace coop::peer_action_feed

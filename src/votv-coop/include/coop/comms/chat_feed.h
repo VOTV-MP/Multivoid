@@ -32,6 +32,9 @@ struct Line {
     uint64_t bornMs = 0;   // entry identity (the resurrection probe keys on it)
     uint8_t  nickLen = 0;  // byte length of the nick prefix inside text (0 = event line)
     uint8_t  slot = 0;     // sender peer slot (nick color); meaningful when nickLen > 0
+    uint8_t  action = 0;   // 1 = peer-action line ("<nick> deleted an email: X") -- the
+                           // HUD draws the predicate in the action color (yellow), so a
+                           // world-state action reads apart from typed chat (user 2026-07-11)
 };
 
 struct Snapshot {
@@ -47,6 +50,11 @@ void Push(const std::wstring& line);
 // Append a CHAT line: utf8Line starts with the sender's nick; nickByteLen is that
 // prefix's byte length (the HUD colors it per `slot`). Game thread.
 void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot);
+
+// Append a peer-ACTION line (same shape as PushChat, action flag set): the HUD
+// draws the post-nick predicate in the action color instead of the chat body
+// color. Game thread.
+void PushAction(const std::string& utf8Line, uint8_t nickByteLen, uint8_t slot);
 
 // Append an event line AFTER `delayMs` (promoted to the live feed by Tick once due). Used for the join
 // announces: the client reports world-ready before its loading screen visually clears, so showing

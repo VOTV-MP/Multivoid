@@ -12,6 +12,7 @@
 
 #include "coop/session/net_pump.h"
 
+#include "coop/comms/chat_feed.h"  // Reset() on the leave-world flee (session UI dies with the session)
 #include "coop/dev/leak_probe.h"
 #include "coop/dev/heap_probe.h"
 #include "coop/dev/perf_probe.h"
@@ -174,6 +175,12 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     session.Stop();
+    // The chat/event feed is SESSION UI: every leave-world path funnels through this
+    // flee (death, host-close eject, native quit-to-menu), and without a reset the
+    // last lines ride their 11 s TTL into the MAIN MENU overlay (user 2026-07-11,
+    // eyer death -> menu). The host-stays-in-world case (its last client leaving)
+    // never flees, so its feed keeps the "X left the game" line as before.
+    coop::chat_feed::Reset();
     // Hold the detour dormant over the world teardown, but RESUME the instant the
     // menu's ui_menu_C::Tick first dispatches (menu world up) so MULTIPLAYER is
     // injected on the first menu frame. kDeathMenuBypassMs is only the safety

@@ -7,6 +7,7 @@
 
 #include "coop/comms/peer_action_feed.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/world_load_episode.h"
 
 #include "ue_wrap/email.h"
 #include "ue_wrap/log.h"
@@ -245,6 +246,29 @@ void Tick() {
     const auto now = Clock::now();
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollInterval;
+
+    // JOIN-EPISODE BOUNDARY (2026-07-11, user-observed live). While THIS client is
+    // inside its own join world-load (world_load_episode: Arm at BootStorySaveBlocking
+    // -> quiescence), saveSlot.emails is being torn down / re-materialized by the LOAD,
+    // not by any player verb -- so the shadow must never prime against, nor diff
+    // across, that window. Without this gate the mid-load prime latches onto rows the
+    // load then replaces (fresh instance keys): a small save's default rows ("hi",
+    // "welcome") read as removed.size()==2, slip UNDER the >32 bulk-desync gate, and
+    // broadcast EmailDelete -- the HOST then deletes its content-identical rows and
+    // announces "<client> deleted an email: hi". Same root class as the v106 destroy-
+    // seam host-wipe; the same source-anchored invariant closes it. Placed BEFORE the
+    // TTL sweeps so a host delete arriving mid-load parks in g_tombstones un-swept and
+    // lands after the post-load re-prime. Host never arms the episode (client-only).
+    if (coop::world_load_episode::InEpisode()) {
+        if (g_primed) {
+            g_primed = false;
+            g_shadow.clear();
+            g_applied.clear();
+        }
+        g_primeLastCount = -1;  // re-stabilize on the settled post-load array
+        g_primeStable = 0;
+        return;
+    }
 
     // Stale-state sweeps (audit N-1 precedent: sweeping only on arrival left
     // a quiet session holding dead entries indefinitely). 1 Hz over handfuls.
