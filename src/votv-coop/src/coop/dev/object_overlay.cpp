@@ -409,9 +409,11 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
                 if (max > 0.f) {
                     L.healthFrac = std::clamp(cur / max, 0.f, 1.f);
                     std::snprintf(L.line4, sizeof(L.line4), "%s %.1f/%.1f", tag, cur, max);
-                } else {
+                } else if (cur > 0.f) {
                     std::snprintf(L.line4, sizeof(L.line4), "%s %.1f", tag, cur);
                 }
+                // cur<=0 with no max = an uninitialized/absent pool ("hp 0.0" on
+                // every plain prop) -- meaningless, stay silent (user 2026-07-11).
             }
         }
         ++snap.count;
