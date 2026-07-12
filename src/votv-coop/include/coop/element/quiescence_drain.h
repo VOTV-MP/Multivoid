@@ -11,24 +11,21 @@
 //                                                       distinct module the sequence CALLS, not absorbed)
 //   3. kerfur_reconcile::SweepReconcileSaveTimeKerfurs() -- retire a stale kerfur off-prop (kerfur retire
 //                                                       MECHANISM; another distinct module the sequence CALLS)
-//   4. ApplyPendingSpawns()                          -- spawn revalidation: re-run every episode-deferred /
-//                                                       dead-row wire expression, AFTER the rebind (a late save
-//                                                       twin resolves by exact key). Phase order vs step 5 is
-//                                                       safe ONLY because the queues are pre-netted per identity
-//                                                       at capture (take-4 wire-order fix -- see
-//                                                       CancelPendingSpawnsForWireDestroy below)
-//   5. ApplyPendingDestroys()                        -- apply a destroy that raced ahead of the bind
+//   4. ApplyPendingDestroys()                        -- apply a destroy that raced ahead of the bind
 //                                                       (destroy-before-load), AFTER the rebind so it resolves
-//   6. ApplyPendingPosCorrections()                  -- snap a window-moved save-pile to the host pos (b3)
-//   (The one-shot L1 orphan census -- the retired step 7 / joinSweep param, RULE 2 -- lives at the doom-sweep
+//   5. ApplyPendingPosCorrections()                  -- snap a window-moved save-pile to the host pos (b3)
+//   (The one-shot L1 orphan census -- the retired step / joinSweep param, RULE 2 -- lives at the doom-sweep
 //   tail in join_membership_sweep.cpp: it must reflect the doom removals, which happen AFTER this sequence.)
+//   (The SPAWN REVALIDATION step + queue -- the takes-1/2 in-episode capture and the take-4 wire-order
+//   netting -- were RETIRED 2026-07-12 by the join barrier: ClientWorldReady now announces at load-tail
+//   quiescence (world_load_episode probe latch), so no wire prop expression can arrive mid-churn and
+//   nothing is ever provisional. votv-join-barrier-DESIGN-2026-07-12.md.)
 //
 // TWO TRIGGERS, both at/after quiescence:
 //   - the join-window quiescence FIRE EDGE (join_membership_sweep::TickClientReconcile), which since the
-//     take-3 order fix (2026-07-11) runs this sequence BEFORE RunDivergenceSweep_'s membership doom -- the
-//     revalidated spawns converge-CLAIM their loadObjects re-creates while claim tracking is still armed,
-//     so the sweep spares them (the take-2 order ran it a tick after the doom: 232 doomed + 230 re-expressed
-//     into occupied positions = the 2.5 fps physics storm). Doom judges LAST.
+//     take-3 order fix (2026-07-11) runs this sequence BEFORE RunDivergenceSweep_'s membership doom, while
+//     claim tracking is still armed -- a reconcile that converge-binds a re-create CLAIMS it and the sweep
+//     spares it. Doom judges LAST.
 //   - a steady-state throttled tick (OnTick) -- fires whenever there is armed-but-unconsumed work past
 //     load-tail quiescence (the D1 structural fix: a save-pile grabbed/moved AFTER the join one-shot, or a
 //     kerfur turned on when no pile bracket armed, would otherwise leave a pending queue nothing drains).
@@ -110,36 +107,14 @@ void CancelPendingSaveTimeTwin(coop::element::ElementId eid);
 // DESTROY-BEFORE-LOAD (2026-06-30): a PropDestroy can arrive BEFORE this peer has loaded its copy of the
 // doomed save-loaded prop. remote_prop::OnDestroy finds "no local actor" and ARMS it here instead of dropping
 // it (-> the prop later loads unopposed = a dup, the 5-vs-7 race). The sequence re-applies it AFTER the bind
-// via remote_prop::TryApplyDestroy, so destroy delivery becomes order-independent.
+// via remote_prop::TryApplyDestroy, so destroy delivery becomes order-independent. Since the 2026-07-12 join
+// barrier this is unreachable in the JOIN window (no destroy arrives pre-quiescence); it remains live for the
+// TRAVEL window (host sends flow while a cave/level reload churns -- no travel-start gate exists yet) and the
+// probe-deadline DEGRADED mode.
 void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
 
-// WIRE-ORDER PRESERVATION, destroy side (take 4, 2026-07-12). The deferred queues drain in PHASES
-// (all spawns, then all destroys) -- correct only because each queue is pre-netted per identity at
-// CAPTURE time so no identity ever has both a pending spawn and a pending destroy (phase order would
-// otherwise invert a destroy->spawn wire pair: the take-4 rock -- host hotbar-pickup broadcast DESTROY,
-// then placement broadcast SPAWN; the phase drain re-expressed the spawn then applied the deferred
-// destroy = the placed rock killed at quiescence). remote_prop::OnDestroy calls this for EVERY wire
-// destroy (applied or deferred): a captured pending spawn for the same identity (eid match; key-bytes
-// match when the destroy carries a key) is CANCELLED -- the wire says that incarnation is dead (this
-// also stops the drain resurrecting a row a mid-episode wire destroy legitimately killed, the take-4
-// eid=2586 resurrect). The spawn-side twin lives in ArmPendingSpawn: a later same-identity wire spawn
-// cancels a pending deferred destroy (destroy->spawn nets to the spawn). The destroy is NOT consumed
-// here -- it must still defer to kill a late loadObjects recreate (destroy-before-load, the 5-vs-7 dup).
-void CancelPendingSpawnsForWireDestroy(const coop::net::PropDestroyPayload& payload);
-
-// SPAWN REVALIDATION (take 2, 2026-07-11): EVERY wire prop expression processed while THIS client is
-// inside its own world-load episode is provisional -- a converge target is a save/level local that
-// loadObjects' churn destroys, and its same-key recreate exists only if the prop was still a WORLD prop
-// in the transferred save (a prop the host hotbar'd before save-capture and placed after has NO recreate
-// -> dead mirror row forever = a permanently invisible host prop; a FRESH mid-episode mirror is churn-
-// killed outright -- take 1). remote_prop_spawn::OnSpawn CAPTURES every in-episode payload here (the
-// fresh tail also returns without spawning); the drain re-runs the full OnSpawn ONLY for entries whose
-// Registry row is still dead/absent -- churn survivors and sweep-RE-BOUND recreates skip O(1). Dedup by
-// eid (key bytes when eid==0), latest payload wins. `deferKerfur` is the caller's OnSpawn flag, replayed
-// VERBATIM at the drain (a kerfur adoption/convert one-shot passes false; replaying the default true
-// would re-route it into the K-6 adopter -- the OBS-2/ROOT-1 arg-slot mis-adopt class). The destroy
-// sibling is ArmPendingDestroy. [[feedback-snapshot-before-state-ready]]
-void ArmPendingSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot, bool deferKerfur);
+// (ArmPendingSpawn + CancelPendingSpawnsForWireDestroy -- the takes-1/2 spawn-revalidation capture and
+// the take-4 wire-order netting -- RETIRED 2026-07-12 by the join barrier; see the header note above.)
 
 // True iff there is armed-but-unconsumed reconcile work (a pending save-time twin OR a pending b3 position
 // correction OR a pending destroy OR a pending kerfur retire). OnTick polls this so it only walks when there

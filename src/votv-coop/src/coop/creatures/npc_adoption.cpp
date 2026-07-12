@@ -48,8 +48,8 @@ bool g_ghostSwept        = false;
 
 constexpr int kPollIntervalMs = 200;    // 5 Hz scan WHILE pending; zero cost otherwise
 // LAST-RESORT backstop only. The primary gate is HasLoadTailQuiesced() (the prop+NPC
-// load-tail quiescence signal, itself deadline-capped at kSweepDeadlineMs in
-// remote_prop_spawn) -- it fires first on every real join. The old 8 s here fired
+// load-tail quiescence signal, itself deadline-capped inside world_load_episode's
+// probe) -- it fires first on every real join. The old 8 s here fired
 // BEFORE the async 19 MB live-save load materialized the kerfur twins, so the adoption
 // fresh-spawned a mirror that then duplicated the late-loading twin (the 2026-06-15
 // kerfur-dupe). 60 s > the sweep deadline -> quiescence always wins; this only guards
@@ -145,7 +145,7 @@ void ResolvePending() {
             // No local twin -- and the save load tail has DRAINED (the divergence sweep fired,
             // HasLoadTailQuiesced), or the last-resort timeout elapsed. CRITICAL: quiescence now
             // waits for the async ALLOWLISTED-NPC population to settle, not just the keyed props
-            // (join_membership_sweep::CountLoadTailUnsettled_). The kerfur twins respawn SECONDS after
+            // (world_load_episode::CountLoadTailUnsettled_). The kerfur twins respawn SECONDS after
             // the props' keys mint (2026-06-15 hands-on: prop-only quiescence fired while the kerfur
             // NPCs were still loading -> this branch fresh-spawned a mirror that then duplicated the
             // late-arriving twin). With the NPC-aware gate, every blob twin is present by quiescence

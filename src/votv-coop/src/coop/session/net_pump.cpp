@@ -37,6 +37,7 @@
 #include "coop/props/save_identity_bind.h"  // (b) re-bind-on-re-seed: BindUnboundReCreates (09:54 ghost fix)
 #include "coop/save/save_transfer.h"
 #include "coop/session/subsystems.h"
+#include "coop/session/world_load_episode.h"  // JOIN BARRIER 2026-07-12: the announce waits on the load-tail quiescence latch
 
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -602,6 +603,9 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 if (session.role() == coop::net::Role::Host) return;
                 if (reapWorld != g_announcedWorld) {
                     g_reAnnounceWorldReady.store(true, std::memory_order_relaxed);
+                    // JOIN BARRIER: the re-announce waits for the NEW world's load tail exactly
+                    // like the first announce did -- open a fresh probe session for it.
+                    coop::world_load_episode::ArmQuiesceProbe("world-change re-announce");
                 } else {
                     UE_LOGI("net_pump: world-change re-seed on the SAME world already announced (%p) -- "
                             "NOT re-announcing (suppresses the join menu-shadow-drain double-snapshot + "
@@ -796,23 +800,27 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
         g_wasConnectedBySlot[slot] = slotConnected;
     }
 
-    // v56: a CLIENT announces world-ready ONCE per connection, when a gameplay
-    // world is up AND the prop registry expresses IT (the same coherence signals
-    // the host's bracket gate trusts -- design-workflow B3: a menu/stale-world
-    // announce would arm the host bracket against an unseeded client and re-open
-    // the fuzzy-fallback balloon). The menu world can never pass: the seed stamp
-    // only ever points at a live gameplay ('ntitled') world.
-    // Fire on the FIRST announce of a connection OR on a re-announce request
-    // (a world-change re-seed completed -> the host must re-replay into the new
-    // world). The coherence gate is identical either way: a menu/stale-world
-    // announce would arm the host bracket against an unseeded client.
+    // v56 + JOIN BARRIER 2026-07-12: a CLIENT announces world-ready ONCE per connection, when a
+    // gameplay world is up, the prop registry expresses IT, AND the load tail has QUIESCED
+    // (world_load_episode probe latch). The announce is the MTA INITIAL_DATA_STREAM barrier
+    // (reference/mtasa-blue Server/.../CGame.cpp:1393): the host opens the send gate + streams the
+    // whole world state on it, so announcing before loadObjects' async tail settles put the entire
+    // authoritative stream into a churning world -- the two-authority join seam behind RCA roots
+    // 1/2/4/5 (research/findings/join-identity/votv-join-barrier-DESIGN-2026-07-12.md). The probe
+    // is deadline-capped (45 s no-progress / 120 s absolute) so a pathological load still
+    // announces (DEGRADED, logged LOUD by the probe) -- the barrier can never wedge the join.
+    // Fire on the FIRST announce of a connection OR on a re-announce request (a world-change
+    // re-seed completed -> the host must re-replay into the new world; maybeReAnnounce armed a
+    // fresh probe session for the NEW world's tail). The coherence gate is identical either way:
+    // a menu/stale-world announce would arm the host bracket against an unseeded client.
     const bool reAnnounce = g_reAnnounceWorldReady.load(std::memory_order_relaxed);
     if (!isHost && isConnected &&
         (!g_worldReadyAnnounced.load(std::memory_order_relaxed) || reAnnounce)) {
         if (worldUp &&
             coop::prop_element_tracker::HasSeededOnce() &&
             coop::prop_element_tracker::IsRegistrySeededForCurrentWorld() &&
-            !coop::prop_element_tracker::InPurgeEpisode()) {
+            !coop::prop_element_tracker::InPurgeEpisode() &&
+            coop::world_load_episode::TickQuiesceProbe()) {
             if (session.SendReliableToSlot(0, coop::net::ReliableKind::ClientWorldReady,
                                            nullptr, 0)) {
                 g_worldReadyAnnounced.store(true, std::memory_order_relaxed);
@@ -830,7 +838,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // Same per-world reset for the deferred PROP divergence sweep -- a sweep armed for
                 // the prior world must not fire against this fresh one (save-transfer = two loads).
                 coop::join_membership_sweep::OnClientWorldReadyResetSweep();
-                UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent%s)",
+                UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent + load "
+                        "tail quiesced%s)",
                         reAnnounce ? " -- re-announce after world-change" : "");
             }
         }

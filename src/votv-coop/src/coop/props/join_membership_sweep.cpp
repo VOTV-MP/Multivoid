@@ -7,7 +7,7 @@
 // RecordClaimIfTracking / IsClaimTrackingActive entry points. [[feedback-folder-per-domain-concept-rule]]
 
 #include "coop/props/join_membership_sweep.h"
-#include "coop/props/world_load_episode.h"  // v107 host-wipe fix: end the world-load episode at load-tail quiescence
+#include "coop/session/world_load_episode.h"  // v107 host-wipe fix: end the world-load episode at load-tail quiescence
 
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/creatures/kerfur_reconcile.h"
@@ -68,31 +68,17 @@ bool g_sweepFired   = false;                          // sticky: set when the sw
 // 2026-06-18: R1 stopped the steady re-seed re-bracketing -- the dominant re-arm --
 // and R3's membership + the >50% valve make any remaining re-fire bounded + safe. See
 // the note in ArmDivergenceSweep. RULE 2: no latch, no parallel band-aid.)
-std::chrono::steady_clock::time_point g_sweepArmedAt{};
-std::chrono::steady_clock::time_point g_sweepLastProgressAt{};  // reset on any progress (active purge OR moving
-                                                                // population) -> base of the NO-PROGRESS deadline
-std::chrono::steady_clock::time_point g_sweepLastScan{};  // {} (epoch 0) => not yet scanned this arm
-int  g_sweepLastUnsettledCount = -1;
-int  g_sweepStableScans        = 0;
-constexpr int kSweepScanIntervalMs = 200;    // 5 Hz quiescence probe while pending (matches npc_adoption)
-constexpr int kSweepQuiesceScans   = 10;     // load-tail population (keyless props, chipPiles, AND allowlisted
-                                             // NPCs) stable across 10 scans (~2 s) = the async loadObjects pass
-                                             // has drained. Longer than the old 600 ms: the kerfur NPCs load with
-                                             // multi-hundred-ms gaps after the props, so a short window false-
-                                             // signals mid-load -> the adoption fresh-spawns a duplicate of a twin
-                                             // still to come (the 2026-06-15 kerfur-dupe).
-// Two-tier deadline (2026-06-25, the docs/piles/10 purge-aware gate). The sweep must adjudicate the FULLY
-// reloaded world, but a join-time world-reload mass-purge drains async over ~50 s (14:11 hands-on: arm ->
-// re-seed-done ~50 s) -- a fixed SINCE-ARM deadline would fire INSIDE the purge trough before the re-seed,
-// never exercising the floor (the exact self-sabotage this gate avoids). So:
-//   - kSweepDeadlineMs: a NO-PROGRESS timer (base = g_sweepLastProgressAt, reset whenever a purge is draining
-//     OR the load-tail population is still moving). It fires only after this long with NOTHING happening --
-//     a genuine stall, never a legitimate long drain. Same 45 s value, new semantics.
-//   - kSweepHardCapMs: an ABSOLUTE ceiling from arm. Bounds a pathological stuck-purge-flag (no-progress
-//     keeps resetting) so the reconcile can never defer forever. Curtain is already down at Complete, so this
-//     only delays the INVISIBLE reconcile, not player control -> a generous 120 s is safe.
-constexpr int kSweepDeadlineMs     = 45000;   // NO-PROGRESS deadline (since last progress, not since arm)
-constexpr int kSweepHardCapMs      = 120000;  // absolute ceiling since arm (stuck-purge backstop)
+std::chrono::steady_clock::time_point g_sweepArmedAt{};  // fire-log timing only
+// (The 5 Hz load-tail quiescence probe + stability counters + two-tier deadline MOVED to
+// world_load_episode 2026-07-12 -- the join-barrier redesign made "is my world settled" a
+// ONE-owner axis (it now also gates the ClientWorldReady announce). This sweep CONSUMES a
+// probe session: ArmDivergenceSweep opens one, the fire path below waits on its latch.)
+// LOST-BRACKET FLAKE BACKSTOP (replaces the retired 150 s episode-watchdog quiescence-by-ceiling
+// chain): after the announce (probe latched) the host's SnapshotBegin/Complete bracket normally
+// arrives within ~1 s. If NO bracket produced a sweep within this window (SnapshotBegin lost /
+// host wedged), declare load-tail quiescence WITHOUT a doom sweep (no claims exist) so every
+// HasLoadTailQuiesced consumer (steady drain, NPC adoption, grab guards) un-sticks for the session.
+constexpr int kBracketFlakeMs = 30000;
 
 // Record that the host snapshot bound `actor` (exact-key, fuzzy, or fresh
 // spawn) -- the actor is accounted-for by the host's world and must survive
@@ -124,8 +110,6 @@ void BeginClaimTracking() {
     // (the new world's load tail has not quiesced yet).
     g_sweepPending = false;
     g_sweepFired = false;
-    g_sweepStableScans = 0;
-    g_sweepLastUnsettledCount = -1;
     // A fresh bracket re-enumerates pile-bind candidates (a re-bracket runs
     // against the post-sweep world; stale entries would be dead pointers).
     coop::pile_spawn_bind::Reset();  // index only -- the deferred reconcile queues (quiescence_drain) survive the bracket
@@ -506,60 +490,9 @@ static void RunDivergenceSweep_(void* localPlayer) {
     }
 }
 
-// Load-tail quiescence probe for the deferred sweep + the NPC adoption (both gate on
-// HasLoadTailQuiesced). Counts two populations whose sum settles exactly when the
-// async loadObjects pass finishes materializing the world:
-//   (a) ALLOWLISTED NPCs (the kerfur load tail). Counted live, non-CDO, tracked OR
-//       untracked -- adoption/binding does NOT change the count (the actor stays live +
-//       allowlisted), so only loadObjects spawning a new twin perturbs it. This is the
-//       half the old prop-only probe MISSED: the kerfur NPCs respawn SECONDS after the
-//       props' keys mint (2026-06-15 hands-on), so a prop-only quiescence fired before
-//       the twins existed and the adoption fresh-spawned a duplicate next to the still-
-//       loading twin. Genuinely-absent twins (a host kerfur turned on after capture)
-//       have no local actor, so they do not perturb the count -> never block quiescence.
-//   (b) Keyless, UNCLAIMED, in-universe, non-per-player, non-chipPile props that read
-//       Key=None -- the prop load tail (a straggler that has not minted its key yet,
-//       exactly the set the sweep's keyless-skip would spare).
-// While either tail is still loading the sum CHANGES; when it stops changing for
-// kSweepQuiesceScans the load has drained. ONE GUObjectArray walk (pure pointer-compare
-// class filters before any key/name read), throttled to 5 Hz, only while a sweep pends.
-static int CountLoadTailUnsettled_() {
-    const int32_t n = R::NumObjects();
-    int unsettled = 0;
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        void* cls = R::ClassOf(obj);
-        // (a) allowlisted-NPC load tail (lineage test first; the NameOf/IsLive only run
-        // for the handful that pass it). A false return (allowlist not yet resolved)
-        // just degrades to prop-only quiescence -- never worse than the old behavior.
-        if (coop::npc_sync::IsAllowlistedClass(cls)) {
-            if (!R::IsLive(obj)) continue;
-            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
-            ++unsettled;
-            continue;
-        }
-        // (b) keyless-prop load tail (the original probe population).
-        if (!ue_wrap::prop::IsClassKeyedInteractable(cls)) continue;
-        if (!R::IsLive(obj)) continue;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO (alloc-free)
-        // (b') chipPile field (docs/piles/10 purge-aware gate, 2026-06-25). COUNT live chipPiles into the
-        // population (was a `continue` skip): a join-time world-reload purge DROPS the field (871 -> ...) and
-        // the async reload CLIMBS it back (... -> 870), so counting it makes the gate refuse to quiesce
-        // through EITHER half of the reload -- including the <=4 s window where the purge has physically
-        // started but InPurgeEpisode is not yet flagged (the reaper is on a 4 s throttle). This is the
-        // PHYSICAL-population half of the fix; it does not depend on the flag's detection latency. Counted
-        // EVEN IF claimed (a claimed-then-purged pile still perturbs the field), so it sits ABOVE the
-        // g_claimedActors skip below. Shared with NPC adoption (HasLoadTailQuiesced): making adoption also
-        // wait for pile stability is conservative + correct (piles + kerfur NPCs load in the same async pass).
-        if (ue_wrap::prop::IsChipPile(obj)) { ++unsettled; continue; }
-        if (g_claimedActors.count(obj)) continue;                       // claimed: never a sweep candidate
-        if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) continue;
-        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
-        if (key.empty() || key == L"None") ++unsettled;
-    }
-    return unsettled;
-}
+// (CountLoadTailUnsettled_ -- the load-tail population census -- MOVED to world_load_episode
+// 2026-07-12, join-barrier redesign: one owner of the "is my world settled" axis. This sweep
+// opens a probe session at arm and waits on its latch in the fire path.)
 
 void ArmDivergenceSweep() {
     if (!g_claimTrackingActive) {
@@ -583,15 +516,14 @@ void ArmDivergenceSweep() {
     g_sweepPending = true;
     g_sweepFired = false;
     g_sweepArmedAt = std::chrono::steady_clock::now();
-    g_sweepLastProgressAt = g_sweepArmedAt;  // no-progress deadline base; no generation capture -- a clean
-                                             // no-purge join (boot seed holds, population already stable) must
-                                             // be allowed to quiesce immediately.
-    g_sweepLastScan = {};            // force a quiescence scan on the next tick
-    g_sweepLastUnsettledCount = -1;
-    g_sweepStableScans = 0;
-    UE_LOGI("join_membership_sweep: divergence sweep ARMED -- deferring to load-tail quiescence "
-            "(keyless-prop + allowlisted-NPC population stable x%d scans @%dms, or %dms hard deadline)",
-            kSweepQuiesceScans, kSweepScanIntervalMs, kSweepDeadlineMs);
+    // Open a fresh probe session: with the join barrier the world was already settled at the
+    // announce, so this session normally latches after the minimum stability window (~2 s) --
+    // it exists to catch a load-tail RESUMING between the announce and SnapshotComplete (late
+    // straggler wave / a purge starting under the bracket), which the old in-sweep probe also
+    // guarded. The probe owns the stability + purge + deadline semantics.
+    coop::world_load_episode::ArmQuiesceProbe("post-snapshot sweep gate");
+    UE_LOGI("join_membership_sweep: divergence sweep ARMED -- deferring to the load-tail "
+            "quiescence latch (world_load_episode probe session)");
 }
 
 void TickClientReconcile() {
@@ -600,89 +532,51 @@ void TickClientReconcile() {
     // a 250 ms debounce) and only walks the array when a save-pile grabbed/moved after the join sweep armed a
     // twin. Below this line is the join-window one-shot trigger (disarmed = zero cost). See coop/sync.
     coop::element::quiescence_drain::OnTick();
-    // Episode self-deadline (audit 2026-07-10 HIGH): must run ABOVE the g_sweepPending gate -- on the
-    // SnapshotBegin-lost flake the sweep never arms, NotifyQuiesced below is unreachable, and the
-    // world-load episode would otherwise eat every client keyed destroy broadcast for the session.
-    // On the force-close EDGE, declare load-tail quiescence BY CEILING (audit MEDIUM 2026-07-11): the
-    // world finished loading long before the 150 s ceiling, and without g_sweepFired the quiescence_drain
-    // queues (spawn revalidation + destroys + twins + pos corrections) armed during the broken episode
-    // would strand for the session -- the exact invisible-prop class they exist to fix. g_sweepPending
-    // stays false: NO claims exist on this path, so the membership DOOM sweep must never run off it.
-    if (coop::world_load_episode::TickWatchdog()) {
-        g_sweepFired = true;
-        UE_LOGW("join_membership_sweep: load-tail quiescence declared BY WATCHDOG CEILING -- the deferred "
-                "reconcile queues drain via the steady tick (no doom sweep: no claim bracket ever armed)");
+    // Drive the one quiescence-probe owner (world_load_episode). Cheap when latched/idle. This is
+    // the joint driver for the sweep session below AND (via the latch) the announce gate in
+    // net_pump; double-driving is free (internal throttle).
+    const bool quiesced = coop::world_load_episode::TickQuiesceProbe();
+    if (!g_sweepPending) {
+        // LOST-BRACKET FLAKE BACKSTOP (replaces the retired SnapshotBegin-dependent watchdog
+        // chain): the announce went out (probe latched) but no snapshot bracket ever produced a
+        // sweep. Declare load-tail quiescence WITHOUT a doom sweep (no claims exist on this path)
+        // so the HasLoadTailQuiesced consumers (steady drain, NPC adoption, grab guards) un-stick.
+        // Client-only by construction: the probe only ever arms on the client paths.
+        if (!g_sweepFired && !g_claimTrackingActive && quiesced &&
+            coop::world_load_episode::MsSinceQuiesced() > kBracketFlakeMs) {
+            g_sweepFired = true;
+            UE_LOGW("join_membership_sweep: no snapshot bracket within %d s of the world-ready "
+                    "announce (SnapshotBegin lost / host wedged?) -- declaring load-tail quiescence "
+                    "WITHOUT a doom sweep so the deferred reconcile queues drain via the steady tick",
+                    kBracketFlakeMs / 1000);
+        }
+        return;  // zero cost when disarmed (the steady state)
     }
-    if (!g_sweepPending) return;  // zero cost when disarmed (the steady state)
     UE_ASSERT_GAME_THREAD("join_membership_sweep::TickClientReconcile");  // no-mutex: all sweep state is GT-only
-    const auto now = std::chrono::steady_clock::now();
-    const auto msSince = [now](std::chrono::steady_clock::time_point t) {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(now - t).count();
-    };
-    // Throttle to ~5 Hz (skip the throttle on the very first scan after arming,
-    // when g_sweepLastScan is the default-constructed epoch).
-    if (g_sweepLastScan.time_since_epoch().count() != 0 &&
-        msSince(g_sweepLastScan) < kSweepScanIntervalMs) return;
-    g_sweepLastScan = now;
+    // Wait on the probe latch (the session ArmDivergenceSweep opened). The probe owns stability,
+    // purge-awareness and the two-tier deadline; a deadline latch arrives here exactly like a
+    // stable one (DEGRADED, logged LOUD by the probe).
+    if (!quiesced) return;
 
-    // Two-tier deadline (docs/piles/10 purge-aware gate): the NO-PROGRESS timer (since the last progress edge)
-    // OR the ABSOLUTE ceiling (since arm). The absolute ceiling fires even through a stuck purge so the
-    // reconcile can never defer forever; the no-progress timer never pre-empts a legitimately-draining purge
-    // (which keeps resetting g_sweepLastProgressAt below).
-    const bool deadlineHit = msSince(g_sweepArmedAt) >= kSweepHardCapMs ||
-                             msSince(g_sweepLastProgressAt) >= kSweepDeadlineMs;
-    if (!deadlineHit) {
-        // REGISTRY MID-PURGE (or never seeded) -> the loaded world is INCOMPLETE; never adjudicate against it.
-        // A draining purge IS progress (reset the no-progress base) so a ~50 s legitimate reload does not trip
-        // the deadline; the population-stability run restarts once the world re-seeds (!InPurgeEpisode is the
-        // clean "registry re-seeded" edge -- the episode-end re-seed is synchronous, net_pump.cpp:538-539).
-        if (!coop::prop_element_tracker::HasSeededOnce() ||
-            coop::prop_element_tracker::InPurgeEpisode()) {
-            g_sweepLastProgressAt = now;
-            g_sweepLastUnsettledCount = -1;
-            g_sweepStableScans = 0;
-            return;  // keep waiting (the absolute ceiling above still bounds a permanently-stuck purge)
-        }
-        const int unsettled = CountLoadTailUnsettled_();
-        if (unsettled != g_sweepLastUnsettledCount) {
-            g_sweepLastUnsettledCount = unsettled;
-            g_sweepLastProgressAt = now;  // population still moving = progress -> hold off the no-progress deadline
-            g_sweepStableScans = 0;
-            return;  // population still changing -> load tail (props, piles, or NPCs) not drained, keep waiting
-        }
-        if (++g_sweepStableScans < kSweepQuiesceScans) return;  // stable, but not for long enough yet
-    }
-
-    // Gate satisfied (quiesced or deadline) -- run the one real sweep. Re-resolve
-    // the live local player here (a pointer stashed at arm time could go stale; the
-    // sweep needs it to release the grav-hand if a doomed actor is being held --
-    // exactly the kerfur-ghost-grab case). Cold path, one FindObjectByClass.
+    // Gate satisfied -- run the one real sweep. Re-resolve the live local player here (a pointer
+    // stashed at arm time could go stale; the sweep needs it to release the grav-hand if a doomed
+    // actor is being held -- exactly the kerfur-ghost-grab case). Cold path, one FindObjectByClass.
     void* localPlayer = R::FindObjectByClass(P::name::MainPlayerClass);
-    const char* fireReason =
-        !deadlineHit                                       ? "load tail quiesced"
-        : (msSince(g_sweepArmedAt) >= kSweepHardCapMs)     ? "ABSOLUTE ceiling (stuck purge backstop)"
-                                                           : "no-progress deadline";
-    UE_LOGI("join_membership_sweep: divergence sweep FIRING (%s; %lldms after arm, %lldms since last progress)",
-            fireReason, static_cast<long long>(msSince(g_sweepArmedAt)),
-            static_cast<long long>(msSince(g_sweepLastProgressAt)));
+    const auto msSinceArm = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - g_sweepArmedAt).count();
+    UE_LOGI("join_membership_sweep: divergence sweep FIRING (probe latched; %lldms after arm)",
+            static_cast<long long>(msSinceArm));
     g_sweepPending = false;
     g_sweepFired = true;  // load tail drained -> npc_adoption may now fresh-spawn no-twin save NPCs
-    // v107 host-wipe fix: the client world-load episode ENDS at this load-tail quiescence edge -- the
-    // destroy seam resumes broadcasting KEYED-prop destroys, so the legit post-load intent destroys (food
-    // morph, trash-container E-press, rock R-pickup -- all measured AFTER this edge) cross the wire
-    // normally. This edge is deadline-capped (fires on quiescence OR the 45 s hard deadline), so the
-    // episode can never outlive the load. See coop/props/world_load_episode.h.
-    coop::world_load_episode::NotifyQuiesced();
+    // (The episode close moved to the probe latch itself (world_load_episode) -- with the join
+    // barrier the episode ends BEFORE the announce, long before this sweep. NotifyQuiesced is
+    // retired.)
     coop::save_identity_bind::ForceSaveChurnForTest();  // [dev] force_save_churn: synthetic unbind so variant-1 runs N>0 (verify probe)
-    // ORDER FIX (take-3, 2026-07-11): the deferred reconcile -- above all its spawn-revalidation
-    // step (ApplyPendingSpawns) -- runs BEFORE the membership doom adjudication. The episode just
-    // closed (NotifyQuiesced above), so the re-run OnSpawns execute fully; claim tracking is still
-    // ARMED, so a re-run that converge-binds a loadObjects re-create (the wire expression that
-    // raced the recreate now finds it by exact key) CLAIMS it and the sweep spares it. The shipped
-    // take-2 order ran this a tick AFTER the doom: the sweep destroyed the unclaimed racers, the
-    // drain then fresh-spawned awake replacements INTO the settled world (232 doomed + 230
-    // re-expressed, ~75 interpenetrating pairs at the clone-key sites = the 2.5 fps physics storm
-    // + scattered props). One order owner, doom judges LAST. [[feedback-one-owner-order-axis]]
+    // ORDER FIX (take-3, 2026-07-11): the deferred reconcile runs BEFORE the membership doom
+    // adjudication, claim tracking still ARMED, so a reconcile that converge-binds a re-create
+    // CLAIMS it and the sweep spares it. Doom judges LAST. [[feedback-one-owner-order-axis]]
+    // (The spawn-revalidation step it once sequenced is retired with the join barrier -- no wire
+    // expression is provisional anymore; the remaining steps reconcile save-vs-wire STATE.)
     coop::element::quiescence_drain::RunReconcile();
     RunDivergenceSweep_(localPlayer);
     // Phase 1 step 1A probe: load tail has quiesced -> emit the keyless-spawn coverage verdict (read-only).
@@ -736,8 +630,6 @@ void OnClientWorldReadyResetSweep() {
                 "from the prior world (the new snapshot bracket will re-arm it)");
     g_sweepPending = false;
     g_sweepFired = false;
-    g_sweepStableScans = 0;
-    g_sweepLastUnsettledCount = -1;
 }
 
 void ResetClaimTracking() {
@@ -751,8 +643,6 @@ void ResetClaimTracking() {
     // (the tick driver would otherwise fire it against a torn-down world).
     g_sweepPending = false;
     g_sweepFired = false;
-    g_sweepStableScans = 0;
-    g_sweepLastUnsettledCount = -1;
     coop::pile_spawn_bind::Reset();  // session teardown: drop the spawn-time index (dangling-pointer hygiene)
     coop::element::quiescence_drain::Reset();  // session teardown: drop the deferred reconcile queues (the ONLY site that clears them)
     coop::kerfur_reconcile::Reset();  // scope A: drop any unconsumed save-time kerfur retire across sessions

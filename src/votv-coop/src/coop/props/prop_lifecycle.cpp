@@ -18,7 +18,7 @@
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/props/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
+#include "coop/session/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
 #include "coop/props/prop_drop_intent.h"       // F2 Inc-1: park a client keyed-destroy key for a later host-auth re-place
 #include "ue_wrap/call.h"
 #include "ue_wrap/engine.h"

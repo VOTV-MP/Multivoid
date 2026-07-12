@@ -8,7 +8,7 @@
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey
-#include "coop/props/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
+#include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
 #include "ue_wrap/fname_utils.h"            // StringToFName

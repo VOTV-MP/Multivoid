@@ -5,7 +5,7 @@
 #include "coop/element/registry.h"          // EidForActor (wire-explained check, channel e)
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // IsHandAxisActor (channel e exclusion; GT-only)
-#include "coop/props/world_load_episode.h"  // InEpisode (JOIN-EPISODE tag; atomic-read safe)
+#include "coop/session/world_load_episode.h"  // InEpisode (JOIN-EPISODE tag; atomic-read safe)
 #include "coop/config/config.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/ufunction_hook.h"

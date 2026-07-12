@@ -7,7 +7,7 @@
 
 #include "coop/comms/peer_action_feed.h"
 #include "coop/player/players_registry.h"
-#include "coop/props/world_load_episode.h"
+#include "coop/session/world_load_episode.h"
 
 #include "ue_wrap/email.h"
 #include "ue_wrap/log.h"

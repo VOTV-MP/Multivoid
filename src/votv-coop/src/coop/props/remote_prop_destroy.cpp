@@ -183,12 +183,9 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
 }  // namespace
 
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) {
-    // WIRE-ORDER PRESERVATION (take 4, 2026-07-12): this wire destroy says the identity's current
-    // incarnation is dead -- a captured in-episode spawn for it must never be re-expressed at the
-    // drain (the phase drain would resurrect a legitimately-destroyed row, then a deferred destroy
-    // could kill a LATER placement re-expression: the take-4 rock). Wire-event path ONLY -- the
-    // drain's own re-apply (TryApplyDestroy) is not a new wire event and must not cancel anything.
-    coop::element::quiescence_drain::CancelPendingSpawnsForWireDestroy(payload);
+    // (The take-4 wire-order netting call that lived here is RETIRED by the 2026-07-12 join
+    // barrier: no spawn is ever captured in-episode anymore, so there is nothing to cancel --
+    // wire events apply strictly in arrival order on a settled world.)
     OnDestroyImpl_(payload, localPlayer, /*allowDefer=*/true);
 }
 

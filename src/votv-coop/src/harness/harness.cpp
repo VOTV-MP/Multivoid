@@ -40,7 +40,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
-#include "coop/props/world_load_episode.h"  // v107 host-wipe fix: arm the world-load episode before the join boot
+#include "coop/session/world_load_episode.h"  // v107 host-wipe fix: arm the world-load episode before the join boot
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/save/save_guard.h"
@@ -366,7 +366,7 @@ void DriveMenuModeJoinWorldBoot() {
     // (measured bare join: host 3345->1255 keyed props). join_membership_sweep ends the episode at
     // load-tail quiescence, after which the legit post-load intent destroys broadcast normally. This is
     // the sole, client-only arm site, CAUSALLY before the burst on every path (the boot below triggers
-    // loadObjects, whose pre-delete IS the burst). See coop/props/world_load_episode.h + /qf rounds 0-13.
+    // loadObjects, whose pre-delete IS the burst). See coop/session/world_load_episode.h + /qf rounds 0-13.
     coop::world_load_episode::Arm();
 
     if (ST::GetClientState() == ST::ClientState::ReadySlotWritten) {

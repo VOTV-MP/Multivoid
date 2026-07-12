@@ -19,7 +19,7 @@
 #include "coop/props/prop_drop_intent.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/world_load_episode.h"
+#include "coop/session/world_load_episode.h"
 #include "ue_wrap/game_thread.h"
 #include "ue_wrap/log.h"
 #include "ue_wrap/prop.h"
@@ -90,7 +90,7 @@ void DestroySeamBody(void* self) {
     // 100%% keyed props) so eid-only (pile) destroys pass through untouched -- piles are already
     // fixed and the host DEFERS them anyway. Client-scoped (the host never arms the episode); the
     // role guard is defense-in-depth on the shared bidirectional seam. Vetted /qf rounds 0-13.
-    // See coop/props/world_load_episode.h + research/findings/props-lifecycle/votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md
+    // See coop/session/world_load_episode.h + research/findings/props-lifecycle/votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md
     if (!keyless && s->role() == coop::net::Role::Client &&
         coop::world_load_episode::InEpisode()) {
         UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed KEYED DESTROY actor=%p key='%ls' eid=%u "

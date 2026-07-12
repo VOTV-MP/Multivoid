@@ -28,13 +28,12 @@
 #include "coop/dev/spawn_order_probe.h"  // Phase 1 step 1A: keyless load-spawn coverage probe (read-only)
 #include "coop/dev/join_window_pos_trace.h"  // F1: keyed-prop join-window position root discrimination (read-only, point A)
 #include "coop/props/save_identity_bind.h"     // Phase 1 step 2b: eid-range bind summary at quiescence
-#include "coop/element/quiescence_drain.h"    // anti-smear 2026-06-30: the join-window order owner (sequence + steady triggers + deferred queues)
-#include "coop/props/world_load_episode.h"    // spawn-before-quiescence 2026-07-11: defer a fresh mirror out of the loadObjects churn window
 #include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
-#include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_fresh_spawn.h"   // extraction 2026-07-12: the deferred-spawn materializer
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/prop_wire_parity.h"   // extraction 2026-07-12: shared SP-parity physics/collision helpers
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_proxy.h"   // phase 1: the host-authoritative AStaticMeshActor trash mirror (dup fix)
 #include "coop/props/native_pile_mirror.h"  // nativization 2026-06-30: a rooted real chipPile native is the PILE mirror
@@ -66,146 +65,13 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// PropSpawn UFunction resolution (cached one-shot). Spawn path uses the
-// deferred-spawn pair on UGameplayStatics CDO; setKey is on Aprop_C base;
-// Conv_StringToName is on UKismetStringLibrary CDO (used to convert wire
-// Key string -> live FName for setKey).
-void* g_gsCdo            = nullptr;
-void* g_beginSpawnFn     = nullptr;
-void* g_finishSpawnFn    = nullptr;
-void* g_propSetKeyFn     = nullptr;
-bool  g_spawnResolved    = false;
-
-bool ResolveSpawnFns() {
-    if (g_spawnResolved && R::IsLive(g_gsCdo)) return true;
-    g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    if (!g_gsCdo) return false;
-    void* cls = R::ClassOf(g_gsCdo);
-    if (!cls) return false;
-    g_beginSpawnFn  = R::FindFunction(cls, P::name::BeginDeferredSpawnFn);
-    g_finishSpawnFn = R::FindFunction(cls, P::name::FinishSpawningActorFn);
-    if (!g_beginSpawnFn || !g_finishSpawnFn) {
-        UE_LOGW("remote_prop::OnSpawn: GameplayStatics spawn fns missing (begin=%p finish=%p)",
-                g_beginSpawnFn, g_finishSpawnFn);
-        return false;
-    }
-    // setKey on Aprop_C base. The PropClass UClass may not be loaded at the
-    // first call (the engine loads BP classes on-demand); on first miss we
-    // retry next call.
-    if (void* propCls = R::FindClass(P::name::PropClass)) {
-        g_propSetKeyFn = R::FindFunction(propCls, P::name::PropSetKeyFn);
-    }
-    g_spawnResolved = true;
-    return true;
-}
-
-// ClassNameToWString is now a shared public helper (definition after the anon
-// namespace; declared in remote_prop_spawn.h). Internal anon-namespace callers
-// resolve it via enclosing-namespace lookup.
-
-// True for prop classes whose locally-spawned instance lands with collision
-// disabled (NoCollision) via a natural-spawn pipeline that calls
-// spawnedNaturally(), and whose wire-converged copy therefore needs an
-// explicit SetCollisionEnabled(QueryAndPhysics) restore. Per the mushroom
-// fall-through RE 2026-05-25:
-//   AmushroomSpawner_C::Spawn -> spawnedNaturally() -> NoCollision.
-// Currently only the cap mushroom is confirmed; extend if other natural-
-// spawn paths exhibit the same pattern. The check is cheap (single string
-// compare) so calling it in OnSpawn's hot path is fine.
-//
-// ==== RULE 1 RETIREMENT PLAN (audit fix 2026-05-25, issue #4) ====
-// This restore is an INTERIM fix at the SYMPTOM (collision write at
-// OnSpawn-time). The architecturally correct ROOT-CAUSE fix is to suppress
-// AmushroomSpawner_C::Spawn on the client entirely, so the local actor
-// never goes through spawnedNaturally() in the first place (Option B from
-// the RE doc). Gating criteria for retirement:
-//   (1) Phase 5N1 Stream B-Spawners ships -- single BeginDeferredActor
-//       SpawnFromClass observer with a class allowlist that includes
-//       AmushroomSpawner_C (covers all natural spawners simultaneously).
-//   (2) Hands-on test confirms mushrooms sync correctly with this restore
-//       call commented out (the test the user is running now is the
-//       inverse -- with restore IN, verifying no fall-through).
-//   (3) Then remove this helper + the IsCollisionRestoreClass check +
-//       PropFoodMushroomClass constant. Per RULE 2 the kerfur-of-the-day
-//       fix goes when the proper fix lands; no parallel paths.
-// Tracked in [[project-coop-mushroom-state-re]] memory entry under
-// "Stream B-Spawners" follow-up scope.
-inline bool IsCollisionRestoreClass(const std::wstring& cls) {
-    return cls == ue_wrap::profile::name::PropFoodMushroomClass;
-}
-
-// Helper for OnSpawn's three convergence/spawn paths: if the class needs
-// collision restore, call ue_wrap::prop::ForceRestoreDefaultCollision and
-// log the outcome with the path label so a fall-through regression is
-// diagnosable from the log. No-op for classes that don't need restore.
-void RestoreCollisionIfNeeded(const wchar_t* pathLabel,
-                              const std::wstring& classW,
-                              void* actor) {
-    if (!IsCollisionRestoreClass(classW)) return;
-    const bool ok = ue_wrap::prop::ForceRestoreDefaultCollision(actor);
-    if (ok) {
-        UE_LOGI("remote_prop::OnSpawn[%ls]: collision restored (QueryAndPhysics) on '%ls' actor=%p",
-                pathLabel, classW.c_str(), actor);
-    } else {
-        UE_LOGW("remote_prop::OnSpawn[%ls]: collision restore FAILED on '%ls' actor=%p -- prop may fall through ground",
-                pathLabel, classW.c_str(), actor);
-    }
-}
-
-// SP-parity kinematic reconcile (perf root-cause fix, 2026-06-09 -- the real fix
-// the reverted kAtRest experiment was reaching for). When the host prop is NOT
-// simulating (settled/static/frozen -> the SP-parity snapshot stamp carries no
-// kSimulatePhysics; SP's Aprop_C::init() = SetSimulatePhysics(NOT(static||frozen||
-// sleep))), force the client's pre-existing Aprop_C copy KINEMATIC *before* any
-// teleport-converge. A kinematic body does not wake and is NOT ejected when the
-// teleport lands it in the client's RNG-divergent layout -- this kills the
-// ~320-prop_C penetration storm that locked the client at ~5-20 FPS / crashed PhysX
-// (the host, loading the identical props asleep from disk, holds 110+ FPS on the
-// same DLL). SAFE where kAtRest's PutRigidBodyToSleep crashed: SetSimulatePhysics
-// (false) removes the body from the solver island entirely (no de-penetration), it
-// does not poke a body still resolving contacts in-solver.
-//   Scoped to Aprop_C (GetStaticMesh != null): non-Aprop_C keyed interactables
-// (chipPile/trashBitsPile/clump) are kinematic BY DESIGN -- GetStaticMesh returns
-// null on them (the 2a-safety gate, prop.cpp) precisely because driving their
-// physics frees-then-derefs; the diagnosis confirmed their teleports are
-// physics-harmless (no wake), so they need NO kinematic touch and we must NOT poke
-// their root (UAF). No-op when the host prop IS simulating (held/falling): the
-// mirror keeps simulating / is PropPose-driven.
-void ReconcileToHostPhysics(void* actor, uint8_t physFlags) {
-    const bool hostSimulating =
-        (physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0;
-    if (hostSimulating) return;
-    if (!actor || !R::IsLive(actor)) return;
-    void* mesh = ue_wrap::prop::GetStaticMesh(actor);  // Aprop_C only; null for non-Aprop_C
-    if (!mesh) return;
-    coop::remote_prop::DriveSimulate(mesh, /*simulate=*/false);
-}
-
-// SP-parity simulate state from the wire identity flags: SP's Aprop_C::init()
-// computes SetSimulatePhysics(NOT(static || frozen || sleep)) -- a normal
-// settled prop is simulate-ENABLED but ASLEEP (that is how the save loads it,
-// and what VOTV's PhysicsHandle grab requires). 2026-06-10 hands-on root
-// cause: leaving bound/converged/fresh-mirror props force-kinematic made them
-// UNGRABBABLE on the client until a host grab+release re-enabled physics
-// ("client can't interact with the wall office objects").
-bool SpParitySimulate(uint8_t physFlags) {
-    namespace pf = coop::net::propspawn_flags;
-    return (physFlags & (pf::kStatic | pf::kFrozen | pf::kSleep)) == 0;
-}
-
-// Restore SP-parity physics AFTER a teleport-converge. Safe from the P1 wake
-// storm NOW: with the v56 save-transfer join the converge target is the HOST's
-// rest pose in an IDENTICAL world -- the body wakes at a valid pose and
-// re-settles (vs the pre-save-transfer case of waking inside divergent
-// geometry, the ~320-prop penetration storm ReconcileToHostPhysics exists
-// for). Aprop_C only (same scoping rationale as ReconcileToHostPhysics).
-void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags) {
-    if (!actor || !R::IsLive(actor)) return;
-    void* mesh = ue_wrap::prop::GetStaticMesh(actor);
-    if (!mesh) return;
-    coop::remote_prop::DriveSimulate(mesh, SpParitySimulate(physFlags));
-}
-
+// (The spawn-UFunction resolution + the fresh-spawn materializer moved to
+// coop/props/prop_fresh_spawn 2026-07-12; the shared SP-parity physics/collision helpers moved to
+// coop/props/prop_wire_parity -- the audit-owed modularity extraction. Local aliases keep the
+// converge/fuzzy call sites verbatim.)
+using coop::prop_wire_parity::ReconcileToHostPhysics;
+using coop::prop_wire_parity::RestoreCollisionIfNeeded;
+using coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge;
 
 }  // namespace
 
@@ -358,22 +224,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         }
         return;
     }
-    // SPAWN REVALIDATION CAPTURE (take 2, 2026-07-11 -- the invisible hotbar-moved rock). While THIS
-    // client is inside its world-load episode, EVERY wire prop expression below is PROVISIONAL: the
-    // exact-key/fuzzy target it converges onto is a save/level LOCAL that loadObjects' churn will
-    // destroy, and the same-key recreate the sweep's RE-BIND pass expects exists ONLY IF the prop was
-    // still a WORLD prop in the transferred save. Measured (take-2 13:20): the host hotbar'd a rock
-    // BEFORE save-capture and placed it after -> no world record -> no recreate -> the converge-bound
-    // mirror row (eid=5384) held a dead actor forever = a permanently invisible host prop. CAPTURE the
-    // payload here (dedup by eid, latest wins); the quiescence drain re-runs the full OnSpawn ONLY for
-    // rows still dead/absent (survivors and RE-BOUND recreates are skipped O(1)). The FRESH-spawn tail
-    // below returns early on this same latch (a mid-episode fresh mirror feeds the churn -- take 1).
-    // A convert stays synchronous (OnConvert owns an atomic old->new swap); trash/pile classes never
-    // reach here (their join reconcile is the proven pile machinery above).
-    // [[feedback-snapshot-before-state-ready]]
-    if (!fromConvert && coop::world_load_episode::InEpisode()) {
-        coop::element::quiescence_drain::ArmPendingSpawn(payload, senderSlot, deferKerfur);
-    }
+    // (The take-1/take-2 in-episode SPAWN REVALIDATION CAPTURE that lived here is RETIRED by the
+    // 2026-07-12 join barrier: ClientWorldReady is now announced at load-tail quiescence, so no
+    // wire prop expression can arrive while loadObjects' churn is running -- every converge target
+    // below is a SETTLED actor. See votv-join-barrier-DESIGN-2026-07-12.md.)
     // Phase 5S0 de-dupe: if a local Aprop_C derivative with the same Key
     // already exists (e.g. both peers loaded the same save and both already
     // have this prop, OR a prior PropSpawn already created it), don't
@@ -720,10 +574,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // duplicate it prevented. Aprop_C.setKey updates
         // mainGamemode.keyObj_key/obj cross-peer; the old K_c orphan
         // entry is harmless (no host packet references it).
-        if (ResolveSpawnFns() && g_propSetKeyFn) {
+        if (void* propSetKeyFn = coop::prop_fresh_spawn::PropSetKeyFn()) {
             const R::FName keyFName = ue_wrap::fname_utils::StringToFName(keyW);
             if (keyFName.ComparisonIndex != 0) {
-                ParamFrame sk(g_propSetKeyFn);
+                ParamFrame sk(propSetKeyFn);
                 if (sk.SetRaw(L"Key", &keyFName, sizeof(keyFName))) {
                     if (Call(fuzzy, sk)) {
                         UE_LOGI("remote_prop::OnSpawn: Gap-I-1 rekey ok -- actor %p now has wire key '%ls' (FName idx=%u); subsequent PropPose resolves correctly",
@@ -776,307 +630,14 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         coop::kerfur_prop_adoption::Arm(payload);
         return;
     }
-    // SPAWN-BEFORE-QUIESCENCE (take 1, 2026-07-11): a FRESH mirror spawned mid-episode is handed straight
-    // to loadObjects' keyed churn (measured: spawned 12:20:37, churn-destroyed 12:20:39, eid unbound for
-    // the session). The payload was already CAPTURED by the revalidation arm above -- just don't spawn
-    // now; the quiescence drain re-runs this full OnSpawn into the settled world.
-    if (!fromConvert && coop::world_load_episode::InEpisode()) {
-        return;
-    }
-    if (!ResolveSpawnFns()) {
-        UE_LOGW("remote_prop::OnSpawn: spawn UFunctions unresolved -- dropping");
-        return;
-    }
-    void* actorClass = R::FindClass(classW.c_str());
-    if (!actorClass) {
-        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found in GUObjectArray -- dropping (likely cooked-content class not loaded)",
-                classW.c_str());
-        return;
-    }
-    void* worldCtx = E::GetWorldContext();
-    if (!worldCtx) {
-        UE_LOGW("remote_prop::OnSpawn: no world context -- dropping");
-        return;
-    }
-    // Build FTransform from wire rotation/scale/location. ue_wrap::FTransform
-    // (types.h) is the canonical 48-byte layout matching engine FTransform;
-    // RULE 2: no parallel local FTransform48 type.
-    ue_wrap::FTransform xform{};  // ctor defaults: identity rot, zero loc, unit scale
-    E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
-                     xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
-    xform.TX = payload.locX;
-    xform.TY = payload.locY;
-    xform.TZ = payload.locZ;
-    xform.SX = payload.scaleX;
-    xform.SY = payload.scaleY;
-    xform.SZ = payload.scaleZ;
-    // Phase 1: BeginDeferredActorSpawnFromClass -> uninitialized AActor*.
-    // ScopedMirrorSpawn: this UFunction call dispatches through ProcessEvent,
-    // so the peer-symmetric ambient broadcaster's BeginDeferred POST fires
-    // INSIDE it (before the actor exists to MarkIncomingSpawn) -- the scope is
-    // its re-entrancy guard (owner-mirror 2026-07-10, see prop_echo_suppress.h).
-    constexpr uint8_t kAlwaysSpawn = 1;
-    void* spawned = nullptr;
-    {
-        coop::prop_echo_suppress::ScopedMirrorSpawn mirrorScope;
-        ParamFrame begin(g_beginSpawnFn);
-        begin.Set<void*>(L"WorldContextObject", worldCtx);
-        begin.Set<void*>(L"ActorClass", actorClass);
-        begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-        begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
-        begin.Set<void*>(L"Owner", nullptr);
-        if (!Call(g_gsCdo, begin)) {
-            UE_LOGE("remote_prop::OnSpawn: BeginDeferredActorSpawnFromClass call failed");
-            return;
-        }
-        spawned = begin.Get<void*>(L"ReturnValue");
-    }
-    if (!spawned) {
-        UE_LOGE("remote_prop::OnSpawn: BeginDeferred returned null");
-        return;
-    }
-    // P2 claim -- BEFORE any later failure return (audit CRITICAL 2026-06-10):
-    // a fresh wire spawn of an RNG-divergent class is itself a live actor of a
-    // sweep-target class. Claiming here (not after FinishSpawningActor) means
-    // a FinishSpawningActor failure leaks one claimed half-spawned actor --
-    // the exact pre-P2 behavior of that failure path -- instead of leaving an
-    // unclaimed half-CONSTRUCTED actor for the sweep to K2_DestroyActor
-    // mid-construction (no BeginPlay, unregistered PhysX body -> crash risk).
-    coop::join_membership_sweep::RecordClaimIfTracking(spawned);
-    // Phase 2 (CRITICAL): set the Key on the spawned actor BEFORE
-    // FinishSpawningActor. Aprop_C.Init() runs inside FinishSpawningActor's
-    // UserConstructionScript and, when ResetKey=true or no Key is set, calls
-    // KismetGuidLibrary::NewGuid -> FName -> self->Key. Writing Key FIRST
-    // (via the BP-callable setKey UFunction) skips that overwrite branch and
-    // the prop ends up with our wire Key + registered in
-    // mainGamemode.keyObj_key/obj cross-peer.
-    // Audit Fix 4 (2026-05-27): resolve setKey ON THE ACTUAL SPAWNED CLASS
-    // first -- ChipPile/clump/trashBits have their OWN setKey UFunctions on
-    // different UClasses with possibly different parameter layouts (per UE4
-    // ProcessEvent, dispatching a foreign-class UFunction* on an actor of a
-    // different class can silently corrupt memory or crash).
-    // 2026-07-11 crowbar-dupe RCA: FindFunction is EXACT-OWNER (no SuperStruct
-    // climb, [[lesson-findfunction-exact-owner-no-superstruct-climb]]), so the
-    // leaf-only resolve MISSED every Aprop_C subclass that does not redeclare
-    // setKey (prop_crowbar_C): the mirror spawned keyless -> Init minted a
-    // NewGuid -> the actor's FIELD key diverged from its wire binding -> the
-    // client's later pickup-destroy broadcast carried the minted key -> the
-    // host found no match -> its authoritative copy survived = the host-side
-    // dupe. Fall back to the base-resolved g_propSetKeyFn for Aprop_C
-    // descendants (its declaring class; the fuzzy-rekey path already calls it
-    // on leaf instances -- proven safe live at 11:54:45 in the RCA logs). See
-    // research/findings/props-lifecycle/votv-crowbar-mirror-key-divergence-RCA-2026-07-11.md.
-    void* setKeyFn = R::FindFunction(actorClass, P::name::PropSetKeyFn);
-    if (!setKeyFn && ue_wrap::prop::IsClassDescendantOfProp(actorClass)) {
-        setKeyFn = g_propSetKeyFn;
-        if (setKeyFn)
-            UE_LOGI("remote_prop::OnSpawn: setKey resolved on the Aprop_C base for leaf '%ls'",
-                    classW.c_str());
-    }
-    if (!setKeyFn) {
-        UE_LOGW("remote_prop::OnSpawn: setKey UFunction not found on class '%ls' -- spawn will use auto-generated Key",
-                classW.c_str());
-    } else {
-        // Convert wire Key string -> live FName via Conv_StringToName, then
-        // call <class>.setKey(FName) so the receiver's prop carries the
-        // SAME Key string as the sender's. Subsequent PropPose updates with
-        // this key resolve via prop_wrap::FindByKeyString (which compares by
-        // ToString, NOT by ComparisonIndex -- the cross-peer-stable path).
-        const R::FName keyFName = ue_wrap::fname_utils::StringToFName(keyW);
-        if (keyFName.ComparisonIndex == 0) {
-            UE_LOGW("remote_prop::OnSpawn: StringToFName('%ls') -> NAME_None; setKey skipped",
-                    keyW.c_str());
-        } else {
-            ParamFrame sk(setKeyFn);
-            if (!sk.SetRaw(L"Key", &keyFName, sizeof(keyFName))) {
-                UE_LOGW("remote_prop::OnSpawn: setKey 'Key' param not found on '%ls'",
-                        classW.c_str());
-            } else if (!Call(spawned, sk)) {
-                UE_LOGW("remote_prop::OnSpawn: setKey ProcessEvent call failed on '%ls'",
-                        classW.c_str());
-            } else {
-                UE_LOGI("remote_prop::OnSpawn: setKey('%ls') ok on '%ls' (FName idx=%u)",
-                        keyW.c_str(), classW.c_str(), keyFName.ComparisonIndex);
-            }
-        }
-    }
-    // v54 SP-parity identity (white-cube root cause, RE 2026-06-10): write the
-    // list_props row `Name` + the Static/removeWOrespawn/frozen/sleep bools on
-    // the DEFERRED actor BEFORE FinishSpawningActor -- Finish runs the UCS ->
-    // Aprop_C::init() pass which resolves list_props[Name] into the true mesh/
-    // mass/collision/SetSimulatePhysics(!(Static||frozen||sleep)). Without the
-    // Name, a generic prop_C mirror constructs as the CDO 'cube' row (the
-    // host's broken-cubicle wall panels mirrored as white cubes). Same field
-    // set + ordering SP's own loadObjects->loadData->init() achieves, minus
-    // the cube flash (SP writes AFTER Finish and re-runs init()).
-    if (ue_wrap::prop::IsDescendantOfProp(spawned)) {
-        R::FName nameRow{0, 0};
-        if (!propNameW.empty() && propNameW != L"None") {
-            nameRow = ue_wrap::fname_utils::StringToFName(propNameW);
-            if (nameRow.ComparisonIndex == 0) {
-                UE_LOGW("remote_prop::OnSpawn: StringToFName(propName '%ls') -> NAME_None; "
-                        "mirror keeps its class-default Name (may render as the CDO mesh)",
-                        propNameW.c_str());
-            }
-        }
-        namespace pf = coop::net::propspawn_flags;
-        ue_wrap::prop::WriteSpParityIdentity(
-            spawned, nameRow,
-            (payload.physFlags & pf::kStatic) != 0,
-            (payload.physFlags & pf::kRemoveWOrespawn) != 0,
-            (payload.physFlags & pf::kFrozen) != 0,
-            (payload.physFlags & pf::kSleep) != 0);
-    }
-    // v5 Inc2 echo suppression: mark this actor as wire-induced BEFORE
-    // FinishSpawningActor (which runs Aprop_C::Init via UserConstructionScript,
-    // tripping our Init POST observer in harness.cpp). The observer's call
-    // to ConsumeIncomingSpawn will then return true and skip the broadcast
-    // back to the sender -> no echo loop.
-    coop::prop_echo_suppress::MarkIncomingSpawn(spawned);
-    // Phase 3: FinishSpawningActor -> runs UserConstructionScript + BeginPlay.
-    {
-        ParamFrame finish(g_finishSpawnFn);
-        finish.Set<void*>(L"Actor", spawned);
-        finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-        if (!Call(g_gsCdo, finish)) {
-            UE_LOGE("remote_prop::OnSpawn: FinishSpawningActor call failed");
-            return;
-        }
-    }
-    UE_LOGI("remote_prop::OnSpawn: spawned %p of '%ls' at (%.1f, %.1f, %.1f)",
-            spawned, classW.c_str(), payload.locX, payload.locY, payload.locZ);
-    // Ambient owner-effect mirrors (pinecone/stick/crystal, 2026-07-10): the
-    // NATIVE prop self-expires via the spawner's SetLifeSpan(600); the mirror's
-    // despawn normally arrives via the owner's death-watch PropDestroy, but an
-    // owner that DISCONNECTS leaves the mirror orphaned forever. SP-parity
-    // backstop: give the mirror its own lifespan (900 s > the native 600 s, so
-    // the wire destroy always wins in the normal case and an orphan self-reaps).
-    if (payload.key.len == 0) {
-        for (size_t i = 0; i < P::name::kAmbientPropSpawnMirrorClassesSize; ++i) {
-            if (classW != P::name::kAmbientPropSpawnMirrorClasses[i]) continue;
-            // SetLifeSpan lives on AActor -- FindFunction is exact-owner (no
-            // SuperStruct climb; audit 2026-07-10 CRITICAL: the leaf-class
-            // lookup returned null every call AND paid a futile full-array
-            // walk per mirror). Resolve ONCE on the Actor class, latch.
-            static void* s_lifeFn = nullptr;
-            static bool  s_lifeTried = false;
-            if (!s_lifeTried) {   // GT-only path (event drain) -- plain statics
-                s_lifeTried = true;
-                if (void* actorCls = R::FindClass(P::name::ActorClassName))
-                    s_lifeFn = R::FindFunction(actorCls, L"SetLifeSpan");
-                if (!s_lifeFn)
-                    UE_LOGW("remote_prop::OnSpawn: Actor.SetLifeSpan not resolved -- "
-                            "ambient-mirror orphan backstop disabled");
-            }
-            if (s_lifeFn) {
-                ParamFrame life(s_lifeFn);
-                if (life.Set<float>(L"InLifespan", 900.f)) Call(spawned, life);
-            }
-            break;
-        }
-    }
-    // Stamp the trash VARIANT + keep the mirror clump from self-converting.
-    //
-    // The former position-based "consume the co-located source pile" here was REMOVED
-    // 2026-06-08 (RULE 2): chipPiles are NOT co-located cross-peer -- AundergroundGarbage
-    // Spawner places them with the global UNSEEDED RNG, and the client boots a blank save
-    // -- so FindNearestChipPile here matched the WRONG pile (or none), which was the
-    // dominant clump-DUPE source (it destroyed an unrelated pile while the landed pile
-    // spawned anyway -> net multiplication). v52: the ball->pile convert is now ONE atomic
-    // PropConvert (destroy ball by oldEid + spawn pile by newEid), and a re-grabbed pile
-    // drops its cross-peer mirror by IDENTITY via the trash_collect_sync mirror-pile
-    // death-watch -> PropDestroy(eid). The wire chipType (read off the held clump at grab
-    // time) is authoritative for the variant.
-    // research/findings/piles-trash/votv-clump-lifecycle-observability-and-robust-design-2026-06-08-pass2.md.
-    const uint8_t variant = payload.chipType;
-    if (classW.find(L"garbageClump") != std::wstring::npos) {
-        // Silence THIS mirror clump's own ground-hit -> turn-to-pile handler.
-        // FinishSpawningActor (above) auto-binds the StaticMesh OnComponentHit delegate
-        // (prop_garbageClump ubergraph 2702 -> BeginDeferredActorSpawnFromClass(pile)). On
-        // release we re-enable collision+physics+throw velocity so the mirror flies + lands
-        // HERE; without this guard that handler fires -> a SECOND pile atop the owner's
-        // authoritative one. Disabling hit-notify lets the mirror land visually but never
-        // self-convert; the owner's death-watch (trash_collect_sync) stays the sole pile
-        // source. (canConvert=false@0x024C does NOT work -- the hit handler re-sets it true.)
-        ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(spawned, false);
-    }
-    // Stamp the variant after FinishSpawningActor (actor fully constructed). No-op for
-    // non-trash classes (SetChipType reflection-gates on a chipType property, so it never
-    // touches an Aprop_C's StaticMesh ptr at the same 0x0238 offset). Repaints via setTex().
-    if (variant != 0) {
-        ue_wrap::prop::SetChipType(spawned, variant);
-        UE_LOGI("remote_prop::OnSpawn: applied chipType=%u variant to '%ls'",
-                static_cast<unsigned>(variant), classW.c_str());
-    }
-    // (v52 RULE 1+2: the former kFreshLanded -> turnToPile(landingVel) call here was a
-    // CATASTROPHIC BUG, removed. The comment claimed turnToPile "operates on `this`, spawns
-    // nothing" -- the disassembly proves the OPPOSITE: actorChipPile_C::turnToPile is the
-    // pile->clump GRAB morph -- it BeginDeferred-spawns a clump (Max:=2.0), throws it with the
-    // velocity, and K2_DestroyActor's SELF. So calling it on a freshly-spawned landed pile
-    // DESTROYED that pile (-> ResolveLiveActorByEid failed -> the mirror was unwatched + an
-    // incoming PropDestroy found "no local actor") AND spawned a stray, untracked, self-
-    // converting clump -> the persistent clump DUPE. A landed pile needs no morph: it just
-    // spawns and sits. The impact dust+sound is a deferred polish (needs the correct verb, NOT
-    // the grab morph). kFreshLanded + TurnChipPileToPile retired with it.)
-    // Phase 4: physics state. The mesh is Aprop_C.StaticMesh.
-    void* mesh = ue_wrap::prop::GetStaticMesh(spawned);
-    if (mesh) {
-        // SP-parity (2026-06-10 grabbability fix): a settled normal prop is
-        // simulate-ENABLED + asleep in SP -- forcing the mirror kinematic made
-        // it ungrabbable on this peer. kSimulatePhysics (host body live-awake)
-        // implies the formula's true case; static/frozen/sleep stay disabled.
-        const bool sim = SpParitySimulate(payload.physFlags);
-        coop::remote_prop::DriveSimulate(mesh, sim);
-        const bool hasLinVel =
-            payload.initLinVelX != 0.f || payload.initLinVelY != 0.f || payload.initLinVelZ != 0.f;
-        const bool hasAngVel =
-            payload.initAngVelX != 0.f || payload.initAngVelY != 0.f || payload.initAngVelZ != 0.f;
-        if (hasLinVel) coop::remote_prop::DriveSetLinearVelocity(mesh, payload.initLinVelX, payload.initLinVelY, payload.initLinVelZ);
-        if (hasAngVel) coop::remote_prop::DriveSetAngularVelocity(mesh, payload.initAngVelX, payload.initAngVelY, payload.initAngVelZ);
-        UE_LOGI("remote_prop::OnSpawn: physics applied (sim=%d hasLinVel=%d hasAngVel=%d)",
-                sim ? 1 : 0, hasLinVel ? 1 : 0, hasAngVel ? 1 : 0);
-    }
-    // 2026-05-25 mushroom fall-through fix (fresh-spawn path): defensive --
-    // Aprop_food_mushroom_C::Init runs as part of FinishSpawningActor and
-    // CONDITIONALLY writes collision (per Init body: reads, compares to a
-    // default, conditionally writes; exact condition not yet RE'd). On a
-    // pure wire-spawn (no save reference, no spawnedNaturally trigger) it
-    // likely lands correct, but a write here is cheap and idempotent. Keep
-    // the restore call symmetric across all 3 OnSpawn convergence paths so
-    // a future Init-body change can't silently regress only one path.
-    RestoreCollisionIfNeeded(L"fresh-spawn", classW, spawned);
-    // (kAtRest sleep REVERTED 2026-06-09 -- see exact-key branch.)
-    // v81 MORPH V2: a convert re-skins eid E in place and the rebind path is local-vs-mirror
-    // specific (RebindLocalElementActor vs RegisterPropMirror rebindInPlace), so OnConvert binds
-    // explicitly -- hand it the spawned actor and skip the default mirror bind here.
-    if (outSpawned) *outSpawned = spawned;
-    if (skipBind) return;
-    // A2 (2026-05-29) mirror binding: bind sender's wire eid to the freshly
-    // spawned local actor. Subsequent Registry::Get(eid) on this peer
-    // resolves to this actor; PropDestroy with the same eid drains the
-    // mirror + destroys the actor.
-    coop::remote_prop::RegisterPropMirror(payload.elementId, spawned, keyW, classW, senderSlot);
-    // Index the mirror's key so a PropPose drive can resolve it O(1). Essential
-    // for NON-Aprop_C mirrors (garbageClump/chipPile): the cold FindByKeyString
-    // fallback in ResolveLiveActorByKey walks IsDescendantOfProp (Aprop_C only),
-    // so a clump mirror that isn't indexed here would never resolve -> the
-    // kinematic drive could never start and the clump would appear but not
-    // follow the collector's hand. Harmless + faster for Aprop_C mirrors too.
-    coop::prop_element_tracker::IndexActorKey(spawned, keyW);
-    // instant-world: hide the freshly-spawned + registered prop mirror until reveal (AFTER the bind so it is
-    // always enumerable). Real prop -> collisionOff=true (hide alone leaves collision on; a hidden mirror
-    // must not be grab-trace-hittable / physics-active). hasMatchPos => a save-time-keyed form whose local
-    // twin is still visible -> HOLD to quiescence; else (host-only/derived form, no twin) reveal at the lift.
-    coop::mirror_defer::OnMirrorSpawned(payload.elementId, spawned, /*collisionOff=*/true,
-                                        /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
-    // (The chipPile MIRROR used to be enrolled in the mirror-pile death-watch here. RETIRED
-    // 2026-06-17, RULE 1+2: the death-watch's near-camera "grabbed" inference was unsound -- a peer
-    // bumping a pile until it died near the camera read as a grab and wiped the pile on both peers
-    // ("piles destroyed when touched a lot"). A peer's later grab of THIS mirror is now caught by the
-    // InpActEvt_use PRE observer (trash_collect_sync) reading lookAtActor=pile -> ResolveMirrorEidByActor
-    // (RegisterPropMirror above bound it to payload.elementId) -> PropDestroy(eid). Covers the
-    // pre-existing / snapshot pile case too, since the resolve works for any registered mirror. Fires
-    // only on a real E-press, never a bump/stream-out/physics-death.)
+    // (The take-1 SPAWN-BEFORE-QUIESCENCE early-return that lived here is RETIRED by the 2026-07-12
+    // join barrier: a fresh mirror can no longer be handed to loadObjects' churn because no wire
+    // spawn arrives before load-tail quiescence.)
+    // No local match anywhere -- materialize a fresh mirror (the deferred-spawn pipeline,
+    // extracted to coop/props/prop_fresh_spawn 2026-07-12). skipBind: OnConvert binds E itself.
+    void* spawned = coop::prop_fresh_spawn::Materialize(payload, senderSlot, classW, keyW,
+                                                        propNameW, skipBind);
+    if (spawned && outSpawned) *outSpawned = spawned;
 }
 
 

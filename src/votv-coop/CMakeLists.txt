@@ -322,9 +322,11 @@ add_library(votv-coop SHARED
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
+    src/coop/props/prop_fresh_spawn.cpp
+    src/coop/props/prop_wire_parity.cpp
     src/coop/props/remote_prop_spawn.cpp
     src/coop/props/join_membership_sweep.cpp
-    src/coop/props/world_load_episode.cpp
+    src/coop/session/world_load_episode.cpp
     src/coop/interactables/garbage_sync.cpp
     src/coop/props/host_spawn_watcher.cpp
     src/coop/props/trash_channel.cpp
