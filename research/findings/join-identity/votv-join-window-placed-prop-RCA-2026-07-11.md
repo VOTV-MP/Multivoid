@@ -1,8 +1,11 @@
 # RCA: join-window placed props invisible on the client (SIX roots, one saga) — 2026-07-11/12
 
-Status: all six roots AS-BUILT + log-RCA'd from live joins (takes 1-4); hands-on take-5 pending.
-ARCHITECTURAL VERDICT (2026-07-12, user decision): the next session redesigns the two-authority
-join seam per RULE 1 — see the closing section of this doc.
+Status: CLOSED BY ARCHITECTURE 2026-07-12 — the JOIN BARRIER (`bbf91f39`+`7847021e`, take-6
+hands-on pending) removed the two-authority overlap at the source; the takes-1/2/4 compensation
+machinery this doc's fixes built (spawn capture/revalidation, wire-order netting) was RULE-2
+deleted the same day. Roots 3+6 (duplicate save keys) stay fixed by the take-4 re-key authority.
+This doc is the measured record of the six roots + the saga that proved the seam architectural.
+The redesign: research/findings/join-identity/votv-join-barrier-DESIGN-2026-07-12.md.
 Commits: `6d9c6518` (take 1: fresh-defer + fuzzy identity-steal gate), `8a2b04d0` (take 2: SPAWN
 REVALIDATION generalization), `8b1b340a` (watchdog quiescence-by-ceiling, audit MEDIUM),
 `2fefd161` (take 3: host KEY-UNIQUENESS authority + reconcile-before-doom order — see §take-3 below),

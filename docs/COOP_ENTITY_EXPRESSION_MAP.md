@@ -63,37 +63,28 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   PropSpawn stream → SnapshotComplete → quiescence-gated **divergence sweep** (membership = the client's
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
   for keyless piles (retires the client-local identity). **[V]**
-- **Join-window PROVISIONALITY — spawn revalidation (2026-07-11/12 `6d9c6518`/`8a2b04d0`/`8b1b340a`/
-  `2fefd161`/`460da7e4` [AS-BUILT; roots log-RCA'd from live joins takes 1-4; hands-on take-5 pending]):**
-  every wire expression a client processes INSIDE its world-load episode is provisional. loadObjects
-  churn-destroys every keyed prop and recreates ONLY those with a save WORLD record — a prop the host
-  hotbar'd before save-capture and placed after has NO record → its converge-bound mirror row holds a
-  dead actor forever (= the invisible prop; the sweep's keyed-churn RE-BIND has no candidate).
-  `remote_prop_spawn::OnSpawn` CAPTURES every in-episode payload (`quiescence_drain::ArmPendingSpawn`,
-  eid-dedup, cap 4096); the FRESH tail never spawns mid-episode (a fresh mirror is churn-killed outright
-  — take 1); the quiescence drain re-expresses ONLY rows still dead/absent (step 4, after the binds).
-  **ORDER (take-3 fix `2fefd161`): the whole RunReconcile sequence runs at
-  the quiescence FIRE EDGE, BEFORE the membership doom sweep, while claim tracking is still armed — the
-  re-runs converge-bind their loadObjects recreates and CLAIM them, so the sweep spares them. Doom judges
-  LAST. The shipped take-2 order (drain at the sweep tail) doomed the racers then fresh-spawned awake
-  replacements — 232 doomed + 230 re-expressed in one join = the take-3 2.5 fps physics storm.**
-  **WIRE-ORDER netting (take-4 fix `460da7e4`): the spawn/destroy queues are PRE-NETTED per identity at
-  CAPTURE — the drain's phase replay (all spawns, then all destroys) otherwise INVERTS a destroy→spawn
-  wire pair (host pickup→place for one key: the stale deferred destroy killed the re-expressed placement
-  = the take-4 rock), and an APPLIED mid-episode wire destroy must cancel its captured spawn or the drain
-  resurrects the dead row. `remote_prop::OnDestroy` (wire path only) →
-  `CancelPendingSpawnsForWireDestroy`; `ArmPendingSpawn` supersedes pending deferred destroys of the same
-  identity (destroy→spawn nets to the SPAWN, as the ordered wire delivered). The destroy is NOT consumed
-  on the cancel side — it still defers to kill a late loadObjects recreate (destroy-before-load). eid-OR-
-  key matching is load-bearing: placement mints a NEW eid, only the Key links the pair.** The
-  sweep names the true residual per-key (dead-row TRIPWIRE "SURVIVED the re-bind pass AND the pre-sweep
-  spawn-revalidation drain") + logs each doom with cls/key/loc. Fuzzy 30 cm rekey-steal is DENIED for a
-  match already wire-mirror-bound to another eid (`ResolveMirrorEidByActor(wireMirrorOnly)`) — N
-  same-class same-spot placements no longer chain-steal one mirror; the local-row Gap-I-1 mushroom dedup
-  is untouched. Watchdog episode force-close declares quiescence-by-ceiling so the queues can never
-  strand on the SnapshotBegin-lost flake.
+- **JOIN BARRIER (2026-07-12 `bbf91f39` [AS-BUILT, audit pending take-6 hands-on] — SUPERSEDES the
+  takes-1-4 join-window PROVISIONALITY machinery, RULE 2):** `ClientWorldReady` is announced at
+  **load-tail QUIESCENCE** (the `coop/session/world_load_episode` probe latch — the same
+  population-stability gate the doom sweep always trusted, now the ONE owner of the "is my world
+  settled" axis), not at "world up + registry coherent". The host streams the entire connect replay
+  (R2 deletes → snapshot → state lanes → teleport) only after the announce, so **no wire prop
+  expression can arrive while loadObjects' churn runs** — nothing is ever provisional, and the
+  reliable channel's in-lane FIFO is the only ordering authority (the MTA INITIAL_DATA_STREAM
+  shape, CGame.cpp:1393). Retired with it: the in-episode spawn capture + revalidation drain
+  (takes 1-2), the wire-order queue netting (take 4), the SnapshotBegin-lost watchdog
+  quiescence-by-ceiling (the probe is wire-independent; the lost-bracket flake is a 30 s
+  post-announce timeout in the sweep). KEPT: the outbound destroy-broadcast suppression episode
+  (host-wipe fix; now self-closing at the probe latch), deferred destroys (travel window +
+  probe-deadline DEGRADED mode), b3 pos-corrections, twins/ghost/kerfur retires (save-vs-wire
+  STATE reconcile), the doom sweep (claims → doom judges last, take-3 order preserved), the fuzzy
+  rekey-steal denial (`ResolveMirrorEidByActor(wireMirrorOnly)`), the dead-row TRIPWIRE + per-doom
+  cls/key/loc logs. Design doc:
+  `research/findings/join-identity/votv-join-barrier-DESIGN-2026-07-12.md`; the six-root saga RCA:
+  `research/findings/join-identity/votv-join-window-placed-prop-RCA-2026-07-11.md`.
 - **KEY-UNIQUENESS AUTHORITY (2026-07-11 `2fefd161`, repaired 2026-07-12 `460da7e4` [AS-BUILT, roots
-  log-RCA'd takes 3-4; hands-on take-5 pending — the `2fefd161` form was INERT: 162x "setKey not found
+  log-RCA'd takes 3-4; hands-on take-6 pending; UNCHANGED by the join barrier — the key-dedup axis is
+  orthogonal to ordering — the `2fefd161` form was INERT: 162x "setKey not found
   on trashBitsPile_C", the family is actor_save_C lineage with setKey declared on the ANCESTOR and
   FindFunction is exact-owner; `460da7e4` = `R::SuperStructOf` + a SuperStruct-CLIMBING
   `ResolveSetKeyFn`, the Aprop_C hardcoded fallback removed]):** VOTV's own save data ships DUPLICATE

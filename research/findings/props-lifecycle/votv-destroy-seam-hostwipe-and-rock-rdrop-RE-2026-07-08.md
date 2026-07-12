@@ -542,7 +542,7 @@ destroys** — they are local world-rebuild churn, never a cross-peer event. Con
 ## FIX AS-BUILT (v107, 2026-07-08 — SHIPPED `3180c4ab`, DLL `04ebfdb0`, USER-VERIFIED)
 
 The fix is a **source-anchored, client-scoped WORLD-LOAD EPISODE LATCH** — `coop::world_load_episode`
-(`src/votv-coop/{include,src}/coop/props/world_load_episode.{h,cpp}`). The DESIGN above evolved across /qf
+(`src/votv-coop/{include,src}/coop/props/world_load_episode.{h,cpp}`; MOVED 2026-07-12 to `coop/session/` and grew the load-tail quiescence probe -- the JOIN BARRIER, `bbf91f39`). The DESIGN above evolved across /qf
 rounds 0-13; the SHIPPED mechanism (below) is the resting point. Both the FFrame::Node caller gate AND the
 `g_inWorldLoad` timing-latch variants named in the earlier DESIGN were REFUTED along the way — the final
 form arms at a coop-side causal trigger and reuses the existing quiescence edge (no new latch to time, no

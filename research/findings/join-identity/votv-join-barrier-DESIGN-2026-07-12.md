@@ -113,6 +113,23 @@ KEPT — not join-window ordering crutches:
 - The doom sweep + >50% valve + claims; the fuzzy-steal wireMirrorOnly gate (steady-state Gap-I-1).
 - KEY-UNIQUENESS host re-key authority (roots 3+6): game-data defect, orthogonal to ordering.
 
+## Follow-up consolidation candidates (verify-before-retiring — NOT in this commit)
+
+**USER MANDATE 2026-07-12: the session AFTER the next /documentize tackles the KERFUR join-layer
+anti-smear** — the layers below plus a general smear audit across the kerfur files
+(adoption / convert / reconcile / entity / prop_adoption / menu_input), gated on take-6 LIVE LOG
+evidence (never on theory):
+- `kerfur_prop_adoption` (K-6): the "snapshot PropSpawn beats the async save twin" premise is
+  structurally gone for the JOIN (snapshot is post-quiescence, twins materialized) — if the live
+  log shows every join-path adoption resolving on its FIRST poll, the join-wait branch collapses;
+  the convert-timing (steady-state) use stays.
+- `npc_adoption`'s quiescence wait: EntitySpawns now arrive post-settle by construction — the
+  HasLoadTailQuiesced gate becomes a second guard behind a structural one; keep the gate (cheap),
+  but the 60 s last-resort timeout path should never fire again (tripwire if it does).
+- The sweep's keyed-churn RE-BIND pass: no churn can follow a wire binding at JOIN anymore; it
+  remains live only for sporadic mid-session GC re-instantiation — measure its hit count across
+  a few sessions before any retirement.
+
 ## Degraded mode (probe deadline fires)
 
 If the tail never stabilizes (45 s deadline, today's sweep envelope), we announce ANYWAY with a LOUD

@@ -1,7 +1,8 @@
 > **SUPERSEDED 2026-07-12.** The take-4 test on `3D250B83` FAILED the hotbar'd-in-window rock repro
 > (the rock stayed gone) -> two more roots (5: phase drain inverted destroy->spawn wire order; 6: the
 > take-3 re-key was INERT -- setKey resolution failed on the actor_save_C lineage). Current runbook:
-> **`research/handson_runbook_2026-07-12.md` (TAKE 5, DLL `0DA4FAE0`)**. RCA:
+> **`research/handson_runbook_2026-07-12.md` (TAKE 6, DLL `7030160D` — the JOIN BARRIER
+> `bbf91f39`+`7847021e` superseded take-5's netting/revalidation machinery before it ran)**. RCA:
 > `research/findings/join-identity/votv-join-window-placed-prop-RCA-2026-07-11.md` (SIX roots).
 
 # Hands-on runbook — 2026-07-11 (take 4) — DLL `3D250B83` (all 4 installs, hash-verified)

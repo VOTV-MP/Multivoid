@@ -65,16 +65,31 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **An op applied BEFORE the state it reads is ready recurs** — gate/defer (snapshot-before-state-ready). `memory/feedback_snapshot_before_state_ready.md`
 - **chipPiles persist in `primitivesData`; off-kerfurs in `objectsData`** (different save lanes). `memory/lesson_chippile_saved_in_primitivesData_not_objectsData.md`
 - **DELIVERY-axis: join DELIVERY vs IDENTITY are separate; ONE owner = `prop_snapshot`.** `memory/feedback_deliver_missing_owner_delivery_axis.md`
-- **EVERY in-episode wire expression is PROVISIONAL** — loadObjects churn recreates only save-WORLD
-  records (a hotbar'd-at-capture prop has none -> dead mirror row forever). ORDER x2: (take-3) the
-  revalidation drain runs at the quiescence fire edge BEFORE the doom sweep — doom judges LAST (232
-  doomed + 230 re-expressed = the 2.5 fps storm); (take-4) the spawn/destroy queues are PRE-NETTED per
-  identity at CAPTURE — phase replay inverts a destroy->spawn wire pair (host pickup->place) and kills
-  the placed prop, and an APPLIED wire destroy must cancel its captured spawn or the drain resurrects
-  it (`460da7e4`). *Look FIRST:* client-log dead-row TRIPWIRE + [SPAWN-DEFER] arm/apply/CANCELLED +
-  [DESTROY-DEFER] SUPERSEDED lines; on a single missing prop lay out ITS KEY's wire timeline across
-  both logs in arrival order; on an fps/placement anomaly diff the doomed-vs-re-expressed KEY SETS.
-  `memory/lesson_join_window_wire_expression_provisional.md`
+- **Check the EXISTING barrier's ANCHOR before building compensation layers** — the two-authority
+  join seam (4 roots, 4 layers, 3 days) was ONE mis-anchored edge: the v56 gate/replay WAS the MTA
+  join barrier, but ClientWorldReady fired at "world up" (seconds before the loadObjects tail
+  settled). *Look FIRST* on a window/race class's SECOND compensation layer: does a READY edge
+  exist, what PREDICATE fires it ("world up" != "world settled"), is a stronger client-local
+  signal already trusted elsewhere (the doom sweep's probe was). Moving an edge beats compensating
+  for it. `memory/lesson_check_existing_barrier_anchor_before_compensating.md`
+- **Harness TimelineThread call sites: an Arm() stays ATOMICS-ONLY (or Post to the GT)** —
+  DriveMenuModeJoinWorldBoot runs OFF the game thread (harness.cpp:285-288); extending a directly-
+  called Arm to touch plain GT-owned state is a silent data race (2026-07-12 audit CRITICAL: 8
+  fields + a std::string; fixed `7847021e` via an atomic request flag consumed by the GT ticker +
+  UE_ASSERT_GAME_THREAD on GT-only entries). *Look FIRST:* the caller's thread — grep the enclosing
+  harness function for TimelineThread comments / Post-and-wait siblings.
+  `memory/lesson_harness_timeline_thread_arm_sites_atomics_only.md`
+- **In-episode wire expressions WERE provisional — the JOIN BARRIER removed the window (2026-07-12
+  `bbf91f39`, SUPERSEDED AT SOURCE):** ClientWorldReady now announces at load-tail quiescence
+  (`coop/session/world_load_episode` probe latch — the MTA INITIAL_DATA_STREAM shape), so no wire
+  prop expression can arrive mid-churn; the capture/revalidation/netting machinery (takes 1-4) was
+  RULE-2 deleted. The measured record (fresh mirrors churn-killed ~2 s; converge targets recreated
+  only from save-WORLD records; phase replay inverting a destroy->spawn pair; doom judges LAST)
+  stays the FIRST read for a prop bug in the DEGRADED mode ("latching DEGRADED" in the client log)
+  or the TRAVEL window (no travel-start gate yet). *Look FIRST:* client log — "load-tail QUIESCED"
+  must precede "ClientWorldReady announced"; NO [SPAWN-DEFER] lines exist anymore (one appearing =
+  someone resurrected the dead machinery); per-doom cls/key/loc lines + the dead-row tripwire still
+  live in the sweep. `memory/lesson_join_window_wire_expression_provisional.md`
 - **VOTV's OWN save ships DUPLICATE interactable Keys** (85 trashBitsPile_C across 4 keys — save-born
   clone families; the 06-24 sweep silently doomed "80 trashBitsPile" for weeks). Key uniqueness is OUR
   invariant: the HOST re-keys duplicates at enroll (MarkPropElement, the one owner; GT-gated setKey;
@@ -152,7 +167,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   suppression AND the email shadow diff (2026-07-11 `848a1fc0`: priming/diffing saveSlot.emails across
   the client's own load mis-read 2 swapped default rows as player deletes → EmailDelete broadcast →
   host rows deleted). Any poll-diff over save-backed state must gate on `world_load_episode::InEpisode()`.
-  `src/coop/world/email_sync.cpp` + `coop/props/world_load_episode.h`.
+  `src/coop/world/email_sync.cpp` + `coop/session/world_load_episode.h`.
 
 ## 4. Dispatch, hooks & input seams
 
