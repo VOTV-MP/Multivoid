@@ -467,6 +467,12 @@ std::vector<ObjectRef> ChildObjectsOf(void* outer) {
     return out;
 }
 
+void* SuperStructOf(void* cls) {
+    if (!cls) return nullptr;
+    return *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(cls) + O::UStruct_SuperStruct);
+}
+
 bool IsDescendantOfAny(void* cls, void* const* bases, size_t nBases, int maxHops) {
     if (!cls || !bases || nBases == 0) return false;
     for (int hops = 0; hops < maxHops && cls; ++hops) {

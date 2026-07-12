@@ -13,8 +13,10 @@
 //                                                       MECHANISM; another distinct module the sequence CALLS)
 //   4. ApplyPendingSpawns()                          -- spawn revalidation: re-run every episode-deferred /
 //                                                       dead-row wire expression, AFTER the rebind (a late save
-//                                                       twin resolves by exact key) and BEFORE the destroys
-//                                                       (a spawn+destroy pair nets to zero)
+//                                                       twin resolves by exact key). Phase order vs step 5 is
+//                                                       safe ONLY because the queues are pre-netted per identity
+//                                                       at capture (take-4 wire-order fix -- see
+//                                                       CancelPendingSpawnsForWireDestroy below)
 //   5. ApplyPendingDestroys()                        -- apply a destroy that raced ahead of the bind
 //                                                       (destroy-before-load), AFTER the rebind so it resolves
 //   6. ApplyPendingPosCorrections()                  -- snap a window-moved save-pile to the host pos (b3)
@@ -110,6 +112,20 @@ void CancelPendingSaveTimeTwin(coop::element::ElementId eid);
 // it (-> the prop later loads unopposed = a dup, the 5-vs-7 race). The sequence re-applies it AFTER the bind
 // via remote_prop::TryApplyDestroy, so destroy delivery becomes order-independent.
 void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
+
+// WIRE-ORDER PRESERVATION, destroy side (take 4, 2026-07-12). The deferred queues drain in PHASES
+// (all spawns, then all destroys) -- correct only because each queue is pre-netted per identity at
+// CAPTURE time so no identity ever has both a pending spawn and a pending destroy (phase order would
+// otherwise invert a destroy->spawn wire pair: the take-4 rock -- host hotbar-pickup broadcast DESTROY,
+// then placement broadcast SPAWN; the phase drain re-expressed the spawn then applied the deferred
+// destroy = the placed rock killed at quiescence). remote_prop::OnDestroy calls this for EVERY wire
+// destroy (applied or deferred): a captured pending spawn for the same identity (eid match; key-bytes
+// match when the destroy carries a key) is CANCELLED -- the wire says that incarnation is dead (this
+// also stops the drain resurrecting a row a mid-episode wire destroy legitimately killed, the take-4
+// eid=2586 resurrect). The spawn-side twin lives in ArmPendingSpawn: a later same-identity wire spawn
+// cancels a pending deferred destroy (destroy->spawn nets to the spawn). The destroy is NOT consumed
+// here -- it must still defer to kill a late loadObjects recreate (destroy-before-load, the 5-vs-7 dup).
+void CancelPendingSpawnsForWireDestroy(const coop::net::PropDestroyPayload& payload);
 
 // SPAWN REVALIDATION (take 2, 2026-07-11): EVERY wire prop expression processed while THIS client is
 // inside its own world-load episode is provisional -- a converge target is a save/level local that

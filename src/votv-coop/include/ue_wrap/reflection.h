@@ -176,6 +176,13 @@ std::vector<ObjectRef> ChildObjectsOf(void* outer);
 // match. Pointer compares only -- safe even if our guess is wrong.
 void DebugProbeSuperStructOffset();
 
+// One SuperStruct hop: the immediate parent UStruct of `cls` (nullptr at the
+// chain root / null input). THE primitive for a caller that must climb the
+// chain itself (e.g. resolving a UFunction on the DECLARING ancestor --
+// FindFunction is exact-owner). Keeps the UStruct_SuperStruct offset in the
+// wrapper layer (Principle 7).
+void* SuperStructOf(void* cls);
+
 // Walk `cls`'s SuperStruct chain checking each hop against the array
 // `bases[0..nBases)`. Returns true iff `cls` or any ancestor up to
 // `maxHops` levels matches any base. Cache-friendly inner loop (all

@@ -498,7 +498,60 @@ void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload) {
             coop::remote_prop::KeyToWString(payload.key).c_str(), payload.elementId);
 }
 
+void CancelPendingSpawnsForWireDestroy(const coop::net::PropDestroyPayload& payload) {
+    if (g_pendingSpawn.empty()) return;  // steady state: queue only populated inside the episode
+    const bool haveKey = payload.key.len > 0;
+    bool erased = false;
+    for (auto it = g_pendingSpawn.begin(); it != g_pendingSpawn.end(); ) {
+        const bool eidMatch = payload.elementId != 0 &&
+                              it->payload.elementId == payload.elementId;
+        const bool keyMatch = haveKey && it->payload.key.len > 0 &&
+                              std::memcmp(&it->payload.key, &payload.key, sizeof(payload.key)) == 0;
+        if (eidMatch || keyMatch) {
+            UE_LOGI("[SPAWN-DEFER] CLIENT CANCELLED captured in-episode spawn eid=%u key='%ls' "
+                    "loc=(%.1f,%.1f,%.1f) -- a later wire DESTROY (eid=%u) killed this incarnation; "
+                    "the drain must not resurrect it (wire arrival order preserved)",
+                    it->payload.elementId, coop::remote_prop::KeyToWString(it->payload.key).c_str(),
+                    it->payload.locX, it->payload.locY, it->payload.locZ, payload.elementId);
+            it = g_pendingSpawn.erase(it);
+            erased = true;
+        } else {
+            ++it;
+        }
+    }
+    if (erased) {
+        // Indices shifted -- rebuild (cancellations are a handful per join, not a hot path).
+        g_pendingSpawnIdx.clear();
+        for (size_t i = 0; i < g_pendingSpawn.size(); ++i)
+            if (g_pendingSpawn[i].payload.elementId != 0)
+                g_pendingSpawnIdx[g_pendingSpawn[i].payload.elementId] = i;
+    }
+}
+
 void ArmPendingSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot, bool deferKerfur) {
+    // WIRE-ORDER PRESERVATION, spawn side (take 4, 2026-07-12): a later same-identity wire SPAWN
+    // supersedes a pending deferred destroy -- the host destroyed an old incarnation of this key
+    // (hotbar pickup: the world/hand actor's DESTROY raced ahead of this peer's load and deferred)
+    // and then spawned a NEW one (placement). Phase order (spawns then destroys) would apply that
+    // stale destroy AFTER this spawn's re-expression and kill the placed prop at quiescence -- the
+    // take-4 rock. Net destroy->spawn to the SPAWN, exactly as the ordered wire delivered it.
+    // (The destroy-side twin is CancelPendingSpawnsForWireDestroy.)
+    for (auto it = g_pendingDestroy.begin(); it != g_pendingDestroy.end(); ) {
+        const bool eidMatch = payload.elementId != 0 &&
+                              it->payload.elementId == payload.elementId;
+        const bool keyMatch = payload.key.len > 0 && it->payload.key.len > 0 &&
+                              std::memcmp(&it->payload.key, &payload.key, sizeof(payload.key)) == 0;
+        if (eidMatch || keyMatch) {
+            UE_LOGI("[DESTROY-DEFER] CLIENT SUPERSEDED deferred destroy key='%ls' eid=%u by a later "
+                    "same-identity wire spawn (eid=%u) -- the destroy targeted a prior incarnation; "
+                    "destroy->spawn nets to the spawn (wire arrival order preserved)",
+                    coop::remote_prop::KeyToWString(it->payload.key).c_str(),
+                    it->payload.elementId, payload.elementId);
+            it = g_pendingDestroy.erase(it);
+        } else {
+            ++it;
+        }
+    }
     // Dedup: a re-express of the same prop (host re-bracket / re-send) supersedes the queued payload --
     // latest transform wins. O(1) by eid via the index; a keyed legacy payload with eid==0 (rare) falls
     // back to a linear key-bytes scan.
@@ -593,7 +646,8 @@ void RunReconcile() {
     else UE_LOGI("quiescence_drain: GHOST-SWEEP kept armed (retire tail capped/valved this pass)");
     coop::kerfur_reconcile::SweepReconcileSaveTimeKerfurs();     // 3: retire stale kerfur off-prop (eid-keyed; the folded-in 3rd owner)
     ApplyPendingSpawns();                                        // 4: spawn revalidation -- re-run episode-deferred/dead-row expressions,
-                                                                 //    post-bind (exact key wins) + BEFORE the destroys (spawn+destroy nets 0)
+                                                                 //    post-bind (exact key wins). Phase order vs step 5 is safe because the
+                                                                 //    queues are pre-netted per identity at capture (take-4 wire-order fix)
     ApplyPendingDestroys();                                      // 5: destroy-before-load -- apply destroys that raced the bind, post-bind
     ApplyPendingPosCorrections();                               // 6: b3 -- snap window-moved piles
 }

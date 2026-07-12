@@ -30,9 +30,13 @@ namespace R = ue_wrap::reflection;
 
 std::atomic<uint64_t> g_synthKeyCounter{0};
 
-// Per-class setKey UFunction cache. setKey is a BP UFunction on each
-// keyed-interactable class; FindFunction is O(GUObjectArray) so cache
-// after first resolve.
+// Per-class setKey UFunction cache. setKey is a BP UFunction declared on the
+// LINEAGE ROOT, not on every subclass: Aprop_C declares its own (Key @0x02E0),
+// actor_save_C declares its own (key @0x0230, the trashBitsPile family), and
+// FindFunction is exact-owner ([[lesson-findfunction-exact-owner-no-superstruct-climb]],
+// 3rd strike: the take-4 "setKey not found on trashBitsPile_C" x162 re-key
+// failure). Resolve by CLIMBING the SuperStruct chain to the declaring
+// ancestor; cache per STARTING class (null cached too -- don't re-walk).
 std::mutex g_setKeyFnMutex;
 std::unordered_map<void*, void*> g_setKeyFnByClass;
 
@@ -41,8 +45,13 @@ void* ResolveSetKeyFn(void* cls) {
     std::lock_guard<std::mutex> lk(g_setKeyFnMutex);
     auto it = g_setKeyFnByClass.find(cls);
     if (it != g_setKeyFnByClass.end()) return it->second;
-    void* fn = R::FindFunction(cls, P::name::PropSetKeyFn);  // "setKey"
-    g_setKeyFnByClass[cls] = fn;  // cache null too (don't re-walk)
+    void* fn = nullptr;
+    void* hop = cls;
+    for (int i = 0; i < 16 && hop && !fn; ++i) {
+        fn = R::FindFunction(hop, P::name::PropSetKeyFn);  // "setKey"
+        hop = R::SuperStructOf(hop);
+    }
+    g_setKeyFnByClass[cls] = fn;
     return fn;
 }
 
@@ -93,16 +102,11 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 std::wstring MintFreshKeyForDuplicate(void* self) {
     if (!self) return L"";
     void* cls = R::ClassOf(self);
+    // ResolveSetKeyFn climbs to the declaring ancestor itself (Aprop_C for the
+    // prop lineage, actor_save_C for trashBitsPile -- the take-4 x162 failure).
     void* setKeyFn = ResolveSetKeyFn(cls);
-    // FindFunction is exact-owner (no SuperStruct climb): an Aprop_C descendant
-    // (prop_C rocks etc.) declares setKey on the BASE -- resolve there when the
-    // subclass misses. The per-class cache absorbs both resolutions.
-    if (!setKeyFn && ue_wrap::prop::IsDescendantOfProp(self)) {
-        if (void* base = R::FindClass(P::name::PropClass))
-            setKeyFn = ResolveSetKeyFn(base);
-    }
     if (!setKeyFn) {
-        UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor Aprop_C base) -- cannot re-key duplicate",
+        UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor any SuperStruct ancestor) -- cannot re-key duplicate",
                 R::ClassNameOf(self).c_str());
         return L"";
     }

@@ -1,9 +1,10 @@
-# RCA: join-window placed props invisible on the client (FOUR roots, one saga) — 2026-07-11
+# RCA: join-window placed props invisible on the client (SIX roots, one saga) — 2026-07-11/12
 
-Status: all four roots AS-BUILT + log-RCA'd from live joins (takes 1-3); hands-on take-4 pending.
+Status: all six roots AS-BUILT + log-RCA'd from live joins (takes 1-4); hands-on take-5 pending.
 Commits: `6d9c6518` (take 1: fresh-defer + fuzzy identity-steal gate), `8a2b04d0` (take 2: SPAWN
 REVALIDATION generalization), `8b1b340a` (watchdog quiescence-by-ceiling, audit MEDIUM),
-`2fefd161` (take 3: host KEY-UNIQUENESS authority + reconcile-before-doom order — see §take-3 below).
+`2fefd161` (take 3: host KEY-UNIQUENESS authority + reconcile-before-doom order — see §take-3 below),
+take 4 (2026-07-12: wire-order queue netting + setKey SuperStruct climb — see §take-4 below).
 Durable lessons: [[lesson-join-window-wire-expression-provisional]],
 [[lesson-prop-mirror-manager-mixes-local-and-wire-rows]], [[feedback-identity-logs-carry-key-and-loc]],
 [[lesson-votv-save-ships-duplicate-interactable-keys]].
@@ -112,6 +113,53 @@ the re-runs converge-bind + CLAIM their recreates, the sweep spares them; doom j
 one-shot L1 orphan census moved to the sweep tail (must reflect doom removals); the valve-abort
 duplicate call removed.
 
+## Take 4 (2026-07-12 10:50 session, on `3D250B83`): the same rock gone again — TWO more roots
+
+User verdict: the rock the host hotbar'd and re-placed during the client join window is STILL gone
+(take-2 repro on the take-3 build). Logs (scratchpad take4_host/client.log) traced key `uwmsjz…`
+end-to-end.
+
+### Root 5 (our order, deeper than root 4): the PHASE drain inverts per-key wire order
+
+The wire (reliable, ordered) delivered for key `uwmsjz`: snapshot SPAWN eid=2586 (10:51:06, captured
+in-episode) -> DESTROY eid=2586 (10:51:09, host pickup — APPLIED, actor was bound) -> DESTROY eid=0
+x2 (10:51:10, the hand actor: #1 applied to the churn recreate, #2 found nothing -> DEFERRED) ->
+SPAWN eid=5383 (10:51:10, the placement — captured). At the drain (10:51:17) the PHASE order (all
+spawns, then all destroys) inverted it: eid=2586 re-expressed (resurrecting a row a wire destroy
+legitimately killed — its capture was never invalidated), eid=5383 re-expressed converging onto THE
+SAME actor (one key), then the stale deferred destroy applied LAST and killed it. Tripwire fired for
+5383; the rock invisible for the session — the exact user report.
+
+Fix (take 4): pre-net the queues per identity at CAPTURE time so no identity ever holds both a
+pending spawn and a pending destroy (phase order then can't invert anything):
+- destroy side — `remote_prop::OnDestroy` (wire-event path only, never the TryApplyDestroy re-apply)
+  calls `quiescence_drain::CancelPendingSpawnsForWireDestroy`: a captured in-episode spawn matching
+  by eid (or key bytes when the destroy carries a key) is cancelled — the wire says that incarnation
+  is dead. Kills the eid=2586 resurrect. The destroy itself is NOT consumed: it must still defer to
+  kill a late loadObjects recreate (the destroy-before-load 5-vs-7 dup class).
+- spawn side — `ArmPendingSpawn` erases any pending deferred destroy matching the same identity: a
+  later same-key wire spawn supersedes it (destroy->spawn nets to the SPAWN, as delivered). This is
+  what saves the placed rock.
+Observed wart (same log): the host broadcast the eid=0 hand-actor DESTROY twice (17028/17029, same
+actor same second) — client-side the dedup + the supersede absorb it; host-side seam double-fire not
+yet dug.
+
+### Root 6 (root-3 fix was INERT): setKey resolution failed on the actor_save lineage
+
+Host log: 162x `synth-key: rekey -- setKey UFunction not found on 'trashBitsPile_C' (nor Aprop_C
+base)` — every duplicate enrolled under its duplicate key ("pre-fix behavior"). `AtrashBitsPile_C`
+is **Aactor_save_C lineage, not Aprop_C** (ue_wrap/prop.cpp:199: key @0x0230 direct): the
+`IsDescendantOfProp` gate skipped the hardcoded Aprop_C fallback, and `trashBitsPile_C` itself
+declares no setKey — it lives on `actor_save_C` (bp_reflect actor_save.functions.txt line 2; the
+ubergraph writes event param -> the class `key` property, verified in actor_save.json bytecode; the
+param is NameProperty "key", matched case-insensitively by ParamFrame). Third strike of
+[[lesson-findfunction-exact-owner-no-superstruct-climb]].
+
+Fix (take 4): `reflection::SuperStructOf(cls)` (the wrapper-layer primitive) + `ResolveSetKeyFn` now
+CLIMBS the SuperStruct chain (<=16 hops) to the declaring ancestor, cached per starting class; the
+Aprop_C special-case in `MintFreshKeyForDuplicate` removed (RULE 2 — the climb subsumes it).
+`EnsureKeyForBroadcast` (cs_ mints) inherits the same repair through the shared resolver.
+
 ## Audit verdicts (feature-dev:code-reviewer, 4 passes)
 
 Pass 1 (pre-ship of `6d9c6518`): CRITICAL mixed-rows gate (fixed via wireMirrorOnly) + HIGH
@@ -129,7 +177,12 @@ one-way-door note documented at the idempotency early-out.
 ## Where to look FIRST next time
 
 An invisible-on-client prop after a join: client log — the dead-row TRIPWIRE + `[SPAWN-DEFER]`
-arm/apply pairs + the per-doom `dooming 'cls' key=… loc=…` lines localize it in seconds. A post-join
+arm/apply pairs + the per-doom `dooming 'cls' key=… loc=…` lines localize it in seconds. Then grep
+the PROP'S KEY across BOTH logs and lay out the full wire event sequence in arrival order (spawns,
+destroys, applied-vs-deferred) — take 4's root was the DRAIN re-ordering a destroy->spawn pair, and
+only the per-key arrival-order timeline exposed it ([[feedback-map-all-wire-events-before-fixing-missing-sync]]).
+The netting markers: `[SPAWN-DEFER] CLIENT CANCELLED captured … a later wire DESTROY` and
+`[DESTROY-DEFER] CLIENT SUPERSEDED deferred destroy … by a later same-identity wire spawn`. A post-join
 fps collapse or scattered props: compare the doomed vs re-expressed KEY SETS (an overlap = the
 sweep and the drain fighting) and histogram same-key multiplicity in the host adopt burst (a clone
 family = root 3; host log `KEY-UNIQUENESS ... re-keyed` lines show the authority working). The
