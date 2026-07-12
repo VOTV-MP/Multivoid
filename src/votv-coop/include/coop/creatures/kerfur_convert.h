@@ -44,9 +44,11 @@
 //                              prop_floppyDisc_C-descendants)
 //       new NPC             -> npc_sync::RegisterExistingWorldNpcs (broadcasts
 //                              EntitySpawn for newly-registered while connected)
-//   - HOST's OWN menu use: the same interceptors pass the dispatch through
-//     (the BP converts natively) and queue the converge for the next Tick()
-//     (interceptor context may not Post / re-enter ProcessEvent).
+//   - HOST's OWN menu use: the dispatch passes through (the BP converts
+//     natively); the conversion is then detected EVENT-DRIVEN at the fresh
+//     prop's expression edge (TryAdoptFreshKerfurProp -- the generic prop
+//     pipeline gives the kerfur layer first refusal), with the ALIVE->DEAD
+//     death-watch poll as the 5 Hz backstop (solo-host / seam-missed spawns).
 //
 // Principle 7: gameplay/network module; engine access via ue_wrap reflection /
 // game_thread only. One feature, own file pair.
@@ -105,6 +107,21 @@ void Tick();
 // match (FindParkedGhostNpcNear, removed v91). nullptr for a peer that did not initiate -> it fresh-spawns.
 // Game thread.
 void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc);
+
+// HOST: FIRST REFUSAL on the generic expression of a kerfur PROP-form actor (take-8
+// 2026-07-12 host-own toggle dupe RCA). The turn_off verb's fresh prop spawns EX-internally;
+// since spawn_authority Inc-1 (2026-07-10) the generic pipeline (FinishSpawningActor seam
+// drain + census incremental express) claims and PropSpawn-broadcasts it within one tick --
+// the death-watch poll's converge then finds it TRACKED, gives up, and never broadcasts
+// KerfurConvert: the client keeps its NPC mirror AND gains a generic prop mirror = the dupe.
+// EVERY generic express lane must therefore offer a kerfur prop HERE before broadcasting:
+// if the actor is UNTRACKED and a dead, un-handled kerfur NPC watch sits within 5 m, this IS
+// the conversion product -- converge it now (mint the eid silently, release the dead NPC
+// element, BindFormActor -> KerfurConvert broadcast, floppies) and return true (caller must
+// NOT express). Otherwise (tracked = established identity; hand-place; purchase) return false
+// -- the generic keyed-prop path is correct for it. The kerfur is ONE entity: KerfurConvert
+// is its sole conversion wire signal (redesign 10.3). Host + game thread only (no-op else).
+bool TryAdoptFreshKerfurProp(void* actor);
 
 // Clear per-session state (the pending queue). Net disconnect.
 void OnDisconnect();

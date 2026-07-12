@@ -151,3 +151,53 @@ Test steps (kerfur save, both peers):
    syncs both ways (place, move, stick) — standalone cameras are NOT child actors and keep their
    wire identity (take-7 log showed cursed+s cameras syncing; that must not regress).
 5. fps sanity + the take-6 rock repro still green (barrier untouched).
+
+## RESULT — TAKE 8 (2026-07-12 14:43): cameras FIXED, new TOGGLE-DUPE found + root-caused
+
+USER: «камер нету» — the child-actor exclusion is hands-on VERIFIED. New bug: kerfur toggles
+dupe (old kerfur stays + off-prop appears). Log forensics (scratchpad take8_{host,client}.log):
+five toggles 14:43:07-14 — per the pos-diag trail the presses were made BY THE HOST PLAYER
+walking the kerfur line (the client puppet stood parked at (1228,-457) throughout; user's
+"клиент выключает" read differently — report if I misread which window you drove). Host log,
+five for five: fresh off-prop expressed GENERICALLY by the spawn-seam drain
+(`Init POST: HOST broadcasting SPAWN prop_kerfurOmega_C` + `spawn-seam adopted eid=N`) →
+kerfur poll: `POLL turn_off (died invisibly)` → `turn_off converge -- no new kerfur prop near
+... releasing dead NPC (no broadcast)`. NO KerfurConvert, NO EntityDestroy → the CLIENT kept
+all five NPC mirrors AND materialized five generic prop mirrors = the dupe (client census
+14:43:09+ shows both forms).
+
+ROOT (architectural, per rule 1 + user green light): the poll converge's premise "the verb's
+fresh prop is UNTRACKED" died with spawn_authority Inc-1 (2026-07-10) — the per-tick
+FinishSpawningActor seam drain always out-races the 5 Hz poll. The census/incremental lane
+already had the kerfur OWNER BOUNDARY (IsKerfurActor skip + ExpressIncrementalKerfurOffProp);
+the drain lane was added WITHOUT it — the missed-lane smear class again.
+
+## TAKE 9 — KERFUR FIRST-REFUSAL (event-driven converge)
+
+Deployed DLL: **`BC244011`** (md5 first 8), all 4 installs hash-verified. Audit: 1 CRITICAL
+found + fixed same session (the first cut lacked the untracked-only guard — via the payload
+builder site, which is Registry-fed = every candidate tracked, it could only ever STEAL a
+standing off-prop's identity during a join-that-races-a-toggle; now it mirrors
+FindNewFormKerfurActor's tracked-skip and the builder site is structurally inert until a future
+lane feeds an untracked kerfur prop). All other audit dimensions CONFIRMED (no double-converge,
+turn-on untouched, solo-host poll path preserved, re-entrancy clean, gate ordering cheap-first).
+
+THE FIX: `kerfur_convert::TryAdoptFreshKerfurProp` — every generic express lane offers a fresh
+kerfur PROP-form actor to the kerfur layer FIRST (consults: the shared express body in
+prop_lifecycle [Init-POST + the seam drain] + BuildPropSpawnPayload_ [the one payload builder]).
+A dead un-handled kerfur NPC watch within 5 m ⇒ this IS the conversion product: converge NOW
+(reuse-or-mint eid silently, release the dead NPC, BindFormActor → KerfurConvert, floppies) —
+event-driven at the spawn edge instead of the losing 5 Hz poll (which stays as the solo-host /
+seam-missed backstop). No dead kerfur nearby ⇒ ordinary kerfur prop (hand-place, purchase) keeps
+the generic same-tick path.
+
+Test steps (kerfur save, both peers watching):
+1. HOST toggles a kerfur OFF → on BOTH peers: the NPC disappears, exactly one off-prop appears
+   (no dupe). Host log: `FIRST-REFUSAL turn_off converge ... KerfurConvert broadcast, NO generic
+   PropSpawn`; NO `no new kerfur prop near` lines; client log: `applied KerfurConvert`.
+2. HOST toggles it back ON → single NPC both peers (turn-on path unchanged — verify no regress).
+3. CLIENT toggles a kerfur OFF and ON (the request path, take-7-proven) → still clean both peers.
+4. Hand-place regression: host hold-R picks a kerfur off-prop into the hand and places it
+   elsewhere → the placed prop appears on the client at the new spot (ordinary-spawn first-refusal
+   returns false → generic express — must still work same-tick).
+5. Camera regression stays green (no CCTVs — take-8 verified, must not regress).

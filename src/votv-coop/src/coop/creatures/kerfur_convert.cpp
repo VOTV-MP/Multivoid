@@ -47,6 +47,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>     // sqrt (first-refusal converge distance log)
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -967,6 +968,94 @@ void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc) {
         return (actor && R::IsLiveByIndex(actor, idx)) ? actor : nullptr;
     }
     return nullptr;
+}
+
+// FIRST REFUSAL on the generic expression of a kerfur PROP-form actor (see the header + the
+// take-8 2026-07-12 RCA). PUBLIC (header-declared); anon-ns file statics (g_kerfurWatch,
+// g_kerfurNpcClass, ExpressConversionFloppies, ...) are visible within this TU.
+//
+// WHY spawn-edge, not the poll: the poll's converge premise ("the verb's fresh prop is
+// UNTRACKED") died with spawn_authority Inc-1 (2026-07-10) -- the FinishSpawningActor seam
+// drain expresses every fresh host prop on the NEXT TICK, the 5 Hz poll can never win that
+// race, and the failed converge silently released the dead NPC with NO KerfurConvert (take-8
+// 14:43: five host toggles, five "no new kerfur prop near", client kept five NPC mirrors AND
+// gained five generic prop mirrors). The express chokepoints now offer the actor HERE first;
+// the conversion-product question is answered by UNTRACKED + the DEAD-NPC WATCH match (both
+// required: tracking state alone was the poll's dead premise, proximity alone steals neighbors).
+bool TryAdoptFreshKerfurProp(void* actor) {
+    namespace KE = coop::kerfur_entity;
+    if (!actor) return false;
+    auto* s = LoadSession();
+    if (!s || s->role() != coop::net::Role::Host) return false;  // host-only authority
+    if (!g_kerfurNpcClass || !g_kerfurPropClass) return false;
+    if (!ue_wrap::game_thread::IsGameThread()) return false;     // express lanes are GT; defensive
+    void* cls = R::ClassOf(actor);
+    if (!cls || !R::IsDescendantOfAny(cls, &g_kerfurPropClass, 1)) return false;
+    // UNTRACKED-ONLY (audit CRITICAL 2026-07-12, confidence 88): an already-tracked kerfur prop
+    // is an ESTABLISHED identity -- a standing off-prop 80 cm from a dying neighbor, or any row
+    // the connect-snapshot drain enumerates (that lane is fed from the Registry, so EVERY actor
+    // it offers is tracked by construction). Matching one would steal its eid into the dying
+    // kerfur's K (BindFormActor overwrites the victim's reverse maps -> zombie KerfurRecord,
+    // client-side mirror corruption at newEid) while the REAL conversion product later
+    // generic-expresses = the dupe again. Mirrors FindNewFormKerfurActor's `if (tracked)
+    // continue;`. A genuine conversion product is ALWAYS untracked at both consult sites
+    // (the prop_lifecycle express body consults BEFORE its MarkPropElement).
+    if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return false;
+
+    // Match the fresh prop against a DEAD, un-handled, generation-valid kerfur NPC mirror
+    // within the verb's spawn radius (the new form spawns at the kerfur's own transform;
+    // 500 cm mirrors FindNewFormKerfurActor / ClaimConversionGhosts).
+    const ue_wrap::FVector ploc = ue_wrap::engine::GetActorLocation(actor);
+    constexpr float kR2 = 500.f * 500.f;
+    coop::element::ElementId oldEid = coop::element::kInvalidId;
+    void*   deadActor = nullptr;
+    int32_t deadIdx   = -1;
+    float   bestD2    = kR2;
+    float   wx = 0, wy = 0, wz = 0;
+    std::vector<coop::element::Npc*> npcs;
+    coop::element::MirrorManager<coop::element::Npc>::Instance().Snapshot(npcs);
+    for (auto* el : npcs) {
+        if (!el) continue;
+        void* a = el->GetActor();
+        if (!a || el->GetTypeName().find("kerfurOmega") == std::string::npos) continue;
+        if (R::IsLiveByIndex(a, el->GetInternalIdx())) continue;  // alive -> not a conversion source
+        const uint32_t eid = static_cast<uint32_t>(el->GetId());
+        auto it = g_kerfurWatch.find(eid);
+        if (it == g_kerfurWatch.end() || it->second.handled) continue;      // never-live / handled
+        if (it->second.actor && it->second.actor != a) continue;            // stale generation (R4)
+        const float dx = it->second.x - ploc.X, dy = it->second.y - ploc.Y, dz = it->second.z - ploc.Z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) {
+            bestD2 = d2;
+            oldEid = el->GetId();
+            deadActor = a;
+            deadIdx = el->GetInternalIdx();
+            wx = it->second.x; wy = it->second.y; wz = it->second.z;
+        }
+    }
+    if (oldEid == coop::element::kInvalidId) return false;  // no dead kerfur nearby -> ordinary spawn
+
+    // Converge WITH THE GIVEN actor (guaranteed untracked by the entry gate -> mint silently).
+    const coop::element::ElementId newEid = coop::prop_lifecycle::RegisterHostPropSilent(actor);
+    if (newEid == coop::element::kInvalidId) {
+        UE_LOGW("kerfur_convert: first-refusal converge -- silent register failed for fresh prop %p; "
+                "leaving it to the generic path (poll may still converge)", actor);
+        return false;
+    }
+    coop::npc_sync::ReleaseNpcElementSilent(oldEid);
+    const auto rot = ue_wrap::engine::GetActorRotation(actor);
+    KE::BindFormActor(oldEid, actor, R::InternalIndexOf(actor), newEid, KE::Form::Prop,
+                      R::ClassNameOf(actor),
+                      ploc.X, ploc.Y, ploc.Z, rot.Pitch, rot.Yaw, rot.Roll);
+    ExpressConversionFloppies(wx, wy, wz);
+    g_kerfurWatch[static_cast<uint32_t>(oldEid)].handled = true;  // the poll skips this death
+    UE_LOGI("kerfur_convert: FIRST-REFUSAL turn_off converge -- fresh prop %p eid=%u adopted as the "
+            "conversion product of dead kerfur NPC eid=%u (%.0f cm from its last-live pose; "
+            "KerfurConvert broadcast, NO generic PropSpawn)",
+            actor, static_cast<unsigned>(newEid), static_cast<unsigned>(oldEid),
+            std::sqrt(bestD2));
+    (void)deadActor; (void)deadIdx;
+    return true;
 }
 
 void OnDisconnect() {

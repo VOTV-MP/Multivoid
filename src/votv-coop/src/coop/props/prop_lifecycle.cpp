@@ -12,6 +12,8 @@
 #include "coop/element/prop.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp (kerfur-conversion first refusal, take-8)
+#include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (the first-refusal class gate)
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
@@ -221,6 +223,18 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         UE_LOGI("grab_hook[Aprop.Init POST]: skipping broadcast for per-player '%ls' actor=%p (each peer owns its own)",
                 cls.c_str(), self);
         return;
+    }
+    // KERFUR-CONVERSION FIRST REFUSAL (2026-07-12, take-8 host-own toggle dupe RCA). A fresh
+    // prop_kerfurOmega_C may be the turn_off verb's output: the kerfur layer owns kerfur-form
+    // expression (redesign 10.3 -- ONE entity, KerfurConvert is the sole conversion wire signal,
+    // never a generic PropSpawn). This body is the express funnel for the Init-POST observer AND
+    // ExpressSpawnedProp (the FinishSpawningActor seam drain) -- the exact lane that out-raced the
+    // 5 Hz death-watch poll and left the joiner with an NPC mirror + a generic prop mirror = the
+    // dupe. An ordinary kerfur prop spawn (hand-place / purchase) returns false and keeps the
+    // generic same-tick expression.
+    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(self)) &&
+        coop::kerfur_convert::TryAdoptFreshKerfurProp(self)) {
+        return;  // converged: silent register + KerfurConvert broadcast (no PropSpawn)
     }
 
     coop::net::PropSpawnPayload p{};

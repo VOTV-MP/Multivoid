@@ -11,6 +11,7 @@
 
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
+#include "coop/creatures/kerfur_convert.h" // TryAdoptFreshKerfurProp (kerfur-conversion first refusal at the one builder, take-8)
 #include "coop/creatures/kerfur_entity.h"  // IsKerfurActor -- exclude kerfurs from the incremental express (KerfurConvert is their only signal)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -280,6 +281,19 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // cross the wire (host-authoritative / each peer owns its own).
     if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return false;
     if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return false;
+    // KERFUR-CONVERSION FIRST REFUSAL (2026-07-12, take-8; twin gate of the prop_lifecycle
+    // express-body one -- see kerfur_convert::TryAdoptFreshKerfurProp). The incremental/census
+    // lane already routes kerfur actors away (ExpressIncrementalSpawn's IsKerfurActor skip +
+    // ExpressIncrementalKerfurOffProp -- the pre-existing OWNER BOUNDARY the drain lane was
+    // added WITHOUT, which is exactly how take-8 happened); this gate enforces the same
+    // invariant at THE one payload builder for any FUTURE lane that feeds it an untracked
+    // kerfur prop. Every actor the connect-snapshot drain offers here is Registry-fed =
+    // TRACKED, so it exits at TryAdopt's untracked-only guard (audit CRITICAL: without that
+    // guard this site could only ever steal a standing off-prop's identity).
+    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(obj)) &&
+        coop::kerfur_convert::TryAdoptFreshKerfurProp(obj)) {
+        return false;  // converged: KerfurConvert broadcast, no generic payload
+    }
     p.className.len = 0;
     for (size_t j = 0; j < cls.size() && j < 63; ++j) {
         p.className.data[p.className.len++] = static_cast<char>(cls[j]);
