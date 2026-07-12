@@ -274,15 +274,15 @@ static void RunDivergenceSweep_(void* localPlayer) {
         doomedClass.push_back(acls);
         ++doomedByClass[acls];
     }
-    // TRIPWIRE (take 2, 2026-07-11; tense updated take 3): rows still in deadKeyedRows = wire identities
-    // whose actor churn-died, NO same-key recreate materialized, AND the pre-sweep spawn-revalidation
-    // drain (which since the take-3 order fix runs BEFORE this sweep) could not re-express them either
-    // (no captured in-episode payload, or the re-express failed). Named per-key so a log read localizes
-    // the residual instantly (the take-2 invisible rock left ZERO trace before this line existed).
+    // TRIPWIRE (take 2, 2026-07-11): rows still in deadKeyedRows = wire identities whose actor churn-died
+    // and NO same-key recreate materialized. Under the JOIN BARRIER (bbf91f39) wire expressions land only
+    // in a settled world, so mid-join churn death should not occur at all -- any hit here is a genuine
+    // anomaly (sporadic mid-session GC re-instantiation with no recreate). Named per-key so a log read
+    // localizes the residual instantly (the take-2 invisible rock left ZERO trace before this line existed).
     for (const auto& [dkey, deid] : deadKeyedRows) {
-        UE_LOGW("join_membership_sweep: dead keyed mirror row SURVIVED the re-bind pass AND the pre-sweep "
-                "spawn-revalidation drain -- eid=%u key='%s' has no churn re-create and no re-expressed "
-                "payload; this identity stays invisible here until the host re-expresses it",
+        UE_LOGW("join_membership_sweep: dead keyed mirror row SURVIVED the re-bind pass -- eid=%u key='%s' "
+                "has no churn re-create; this identity stays invisible here until the host re-expresses it "
+                "(unexpected under the join barrier -- report)",
                 static_cast<unsigned>(deid), dkey.c_str());
     }
     if (!keylessSkippedByClass.empty()) {
@@ -461,12 +461,13 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // seeded 8 orphans. So re-enumerate live native chipPiles with FRESH indices: the burst's 1cm twin-
     // destroy already removed every MATCHED native, so the live survivors ARE the orphan set directly.
     // One GUObjectArray walk, once per join (cold path), pointer-compare class filter before any read.
-    // The join-window reconcile (twin-retire -> re-bind -> kerfur-retire -> spawn-revalidation ->
+    // The join-window reconcile (twin-retire -> unbound-re-create bind -> kerfur-retire ->
     // deferred-destroy -> b3 pos-correction) is the ONE order owner coop::element::quiescence_drain::
     // RunReconcile -- since the take-3 order fix (2026-07-11) it runs at the quiescence FIRE EDGE in
-    // TickClientReconcile, BEFORE this sweep, so the revalidated spawns converge-CLAIM their loadObjects
-    // re-creates before membership is adjudicated (the shipped take-2 order ran it after the doom: 232
-    // doomed + 230 re-expressed into occupied positions = the 2.5 fps physics storm). Only the one-shot
+    // TickClientReconcile, BEFORE this sweep, so reconcile claims land before membership is adjudicated
+    // (the shipped take-2 order ran it after the doom: 232 doomed + 230 re-expressed into occupied
+    // positions = the 2.5 fps physics storm; the spawn-revalidation step itself was RULE-2 retired by
+    // the JOIN BARRIER bbf91f39). Only the one-shot
     // L1 orphan census stays HERE, at the sweep tail -- it must reflect the doom removals above.
     coop::pile_spawn_bind::LogCensus();
     // NOTE: the kerfur off->active retire sweep (scope A) is step 3 of RunReconcile (anti-smear

@@ -37,6 +37,11 @@ struct Pending {
     void*        actorClass;              // client-resolved UClass (stable; classes are not GC'd)
     float        x, y, z;                 // host pose at announce (multi-twin disambiguation)
     std::chrono::steady_clock::time_point armedAt;
+    // ANTI-SMEAR EVIDENCE (2026-07-12, join-barrier follow-up): scans this entry survived. Under the
+    // barrier a join-path twin is materialized BEFORE the PropSpawn arrives, so every adoption should
+    // bind on poll #1 -- the bind/fresh-spawn logs carry this count so a kerfur-present live log can
+    // prove (or refute) the K-6 join-wait branch collapse before any retirement.
+    int polls = 0;
 };
 
 std::vector<Pending> g_pending;
@@ -114,6 +119,7 @@ void ResolvePending() {
     std::unordered_set<void*> claimed;
     for (size_t p = 0; p < g_pending.size();) {
         Pending& e = g_pending[p];
+        ++e.polls;
         // Already bound (a racing OnSpawn / a prior scan adopted it)? Resolve.
         if (PropMirrors().Get(static_cast<coop::element::ElementId>(e.payload.elementId)) != nullptr) {
             g_pending[p] = std::move(g_pending.back());
@@ -153,8 +159,9 @@ void ResolvePending() {
             if (BindAsMirror(e, obj)) {
                 claimed.insert(obj);
                 UE_LOGI("kerfur-prop-adopt: bound LOCAL save kerfur prop actor=%p class='%ls' as host "
-                        "mirror eid=%u (class+pose match, NO duplicate spawn)",
-                        obj, e.classW.c_str(), e.payload.elementId);
+                        "mirror eid=%u (class+pose match, NO duplicate spawn; poll #%d, %lld ms after arm"
+                        " -- barrier expectation: poll #1)",
+                        obj, e.classW.c_str(), e.payload.elementId, e.polls, MsSince(e.armedAt));
                 resolved = true;
             }
             // bind failed -> leave pending; retry next scan.
@@ -165,9 +172,20 @@ void ResolvePending() {
             // after the client's world snapshot). Fresh-spawn a mirror via the normal receiver, with
             // deferKerfur=false so it does NOT re-arm here (one-shot fresh spawn, no defer loop).
             const bool quiesced = coop::join_membership_sweep::HasLoadTailQuiesced();
-            UE_LOGW("kerfur-prop-adopt: eid=%u class='%ls' -- no local twin (%s); fresh-spawning a mirror",
+            if (!quiesced) {
+                // TRIPWIRE (2026-07-12, join-barrier follow-up): under the barrier every join-path
+                // PropSpawn arrives post-settle and the sweep latch fires seconds later -- reaching the
+                // 60 s timeout BEFORE quiescence means the probe/sweep chain wedged. Report, never trim.
+                UE_LOGW("kerfur-prop-adopt: TRIPWIRE -- last-resort timeout fired BEFORE load-tail "
+                        "quiescence (eid=%u, %d polls) -- structurally unexpected under the join "
+                        "barrier; report this log",
+                        e.payload.elementId, e.polls);
+            }
+            UE_LOGW("kerfur-prop-adopt: eid=%u class='%ls' -- no local twin (%s; poll #%d, %lld ms after "
+                    "arm); fresh-spawning a mirror",
                     e.payload.elementId, e.classW.c_str(),
-                    quiesced ? "load tail quiesced" : "last-resort timeout");
+                    quiesced ? "load tail quiesced" : "last-resort timeout",
+                    e.polls, MsSince(e.armedAt));
             // OBS-2 ROOT FIX (2026-06-24): pass deferKerfur in the CORRECT slot. The prior call
             // `OnSpawn(e.payload, 0, localPlayer, /*deferKerfur=*/false)` bound `false` to param #4
             // (fromConvert), leaving deferKerfur at its DEFAULT true -> the "fresh-spawn" re-entered the

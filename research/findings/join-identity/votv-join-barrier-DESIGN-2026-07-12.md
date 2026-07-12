@@ -115,10 +115,32 @@ KEPT — not join-window ordering crutches:
 
 ## Follow-up consolidation candidates (verify-before-retiring — NOT in this commit)
 
-**USER MANDATE 2026-07-12: the session AFTER the next /documentize tackles the KERFUR join-layer
-anti-smear** — the layers below plus a general smear audit across the kerfur files
-(adoption / convert / reconcile / entity / prop_adoption / menu_input), gated on take-6 LIVE LOG
-evidence (never on theory):
+**STATUS UPDATE 2026-07-12 pm (post-take-6): the smear audit RAN; retirement is BLOCKED on
+evidence — the take-6 save had ZERO kerfurs (census 0 NPC + 0 PROP both peers), so the take-6
+live logs prove nothing about any kerfur layer.** The full 13-mechanism map was enumerated (agent
+sweep across kerfur_convert / kerfur_entity / kerfur_reconcile / kerfur_prop_adoption /
+npc_adoption / quiescence_drain / join_membership_sweep). Verdicts:
+- KEEP (not overlap-born; save-vs-wire STATE reconcile or steady-state): the PollKerfurConversions
+  client quiescence gate (guards against OUR OWN reconcile deaths being read as conversions — that
+  premise survives the barrier: the sweep still destroys actors post-announce), the ghost claim +
+  4 s reaper, the kerfur_reconcile retire chain (arm-from-EntitySpawn + bounded sweep), RunReconcile
+  step 3, the convertFromEid exact ghost adopt, the kerfur census (diagnostic), the sweep kerfur
+  exemption (grab-guard predicate).
+- MEASUREMENT-GATED (the two real candidates, below): the K-6 join-wait branch + the keyed-churn
+  RE-BIND pass.
+- INSTRUMENTED for the decision (built + deployed DLL `4B2E4024` x4): both adoptions now log
+  `poll #N, M ms after arm` at bind AND fresh-spawn (barrier expectation: poll #1), plus a
+  TRIPWIRE WARN if the 60 s last-resort timeout fires BEFORE quiescence (structurally unreachable
+  under the barrier — a hit means the probe/sweep chain wedged). RE-BIND hit-count ledger:
+  take-6 = 0 hits, 0 SURVIVED-tripwires (session 1 of the "few sessions" measurement).
+- Stale spawn-revalidation references in join_membership_sweep (a present-tense tripwire log line +
+  the RunReconcile order comment) rewritten to the post-barrier truth (RULE 2).
+
+**USER MANDATE 2026-07-12 (original): the KERFUR join-layer anti-smear** — the layers below plus a
+general smear audit across the kerfur files (adoption / convert / reconcile / entity /
+prop_adoption / menu_input), gated on LIVE LOG evidence (never on theory). The decisive evidence
+now requires a KERFUR-PRESENT join (host save with >=1 kerfur, off or active) read against the new
+poll-count logs:
 - `kerfur_prop_adoption` (K-6): the "snapshot PropSpawn beats the async save twin" premise is
   structurally gone for the JOIN (snapshot is post-quiescence, twins materialized) — if the live
   log shows every join-path adoption resolving on its FIRST poll, the join-wait branch collapses;

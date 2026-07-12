@@ -1,6 +1,9 @@
 # Hands-on runbook — 2026-07-12, TAKE 6 (the JOIN BARRIER — architecture, per rule 1)
 
-Deployed DLL: **`7030160D`** (md5 first 8), all 4 installs hash-verified. Commits `bbf91f39` (the barrier) + `7847021e` (audit-CRITICAL fix: the off-GT Arm race -- probe session now opens on the GT via an atomic request).
+Take-6 ran on DLL **`7030160D`** (md5 first 8; PASSED — see RESULT below). Currently deployed:
+**`4B2E4024`** = the same barrier + the take-7 anti-smear instrumentation (see TAKE 7 at the
+bottom). Commits `bbf91f39` (the barrier) + `7847021e` (audit-CRITICAL fix: the off-GT Arm race --
+probe session now opens on the GT via an atomic request).
 SUPERSEDES take 5 (`0DA4FAE0`) BEFORE it ran: the user mandated the architectural fix of the
 two-authority join seam with fresh context; take-5's mechanisms (wire-order netting, spawn
 revalidation) are now RETIRED — the barrier makes their bug class structurally unreachable.
@@ -74,3 +77,29 @@ client. Logs pulled to scratchpad (`take6_host.log` / `take6_client.log`) before
 - NOTE for the kerfur anti-smear follow-up: the save had **ZERO kerfurs** (census: 0 NPC + 0 PROP
   both peers) — take-6 exercises NO kerfur layer; live-evidence retirements there need a
   kerfur-present run.
+
+## TAKE 7 — the KERFUR-PRESENT join (anti-smear evidence run)
+
+Deployed DLL: **`4B2E4024`** (md5 first 8), all 4 installs hash-verified. Same barrier build +
+anti-smear INSTRUMENTATION ONLY (no behavior change): both adoptions log `poll #N, M ms after arm`
+at bind/fresh-spawn; TRIPWIRE WARN if the 60 s adoption timeout fires before quiescence; two stale
+spawn-revalidation comment/log references in join_membership_sweep rewritten (RULE 2). NOT smoked
+(instrumentation-only build; user at PC).
+
+Steps (any order, one session is enough):
+1. Host: load a save (or play until) at least ONE kerfur exists — ideally one OFF (prop form)
+   AND one ACTIVE (NPC form). The vending-machine kerfur purchase works too.
+2. Client: join. Optionally: while the client loads, host turn a kerfur ON (the in-window
+   turn-on exercises the retireOffEid chain).
+3. In-game sanity: exactly one of each kerfur on both peers (no doubles, none missing);
+   client sees the active kerfur move.
+
+What the logs must show (client, the anti-smear evidence):
+- `kerfur-prop-adopt: bound ... poll #N, M ms after arm` — the K-6 collapse case needs **poll #1**
+  on every join-path adoption (or no arm at all: exact-key bind won). Any poll #>1 = the wait
+  branch is still load-bearing, keep it.
+- `npc-adopt: bound ... poll #N ...` — same reading.
+- ZERO `TRIPWIRE -- last-resort timeout fired BEFORE load-tail quiescence` lines (a hit = the
+  probe/sweep chain wedged — report immediately).
+- `[KERFUR CENSUS][CLIENT] TOTAL ...` — 0 UNTRACKED + 0 UNCLAIMED, and TOTAL equal to the host's.
+- RE-BIND ledger continues: count `keyed churn RE-BIND` hits (take-6: 0).
