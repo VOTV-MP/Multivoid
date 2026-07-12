@@ -174,7 +174,8 @@ the drain lane was added WITHOUT it — the missed-lane smear class again.
 
 ## TAKE 9 — KERFUR FIRST-REFUSAL (event-driven converge)
 
-Deployed DLL: **`BC244011`** (md5 first 8), all 4 installs hash-verified. Audit: 1 CRITICAL
+Deployed DLL: **`3E023931`** (md5 first 8; == `BC244011` + a comment-only doc pass), all 4
+installs hash-verified. Audit: 1 CRITICAL
 found + fixed same session (the first cut lacked the untracked-only guard — via the payload
 builder site, which is Registry-fed = every candidate tracked, it could only ever STEAL a
 standing off-prop's identity during a join-that-races-a-toggle; now it mirrors

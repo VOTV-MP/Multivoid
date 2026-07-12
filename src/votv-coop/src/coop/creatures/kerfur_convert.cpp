@@ -947,9 +947,13 @@ void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& p, void* lo
 }
 
 void Tick() {
-    // THE conversion sync: poll for kerfur mirrors that converted invisibly (the menu's PE-invisible
-    // EX_CallMath/EX_Local* flow). The poll is the SOLE driver (the deferred-action queue was retired
-    // in K-4b -- the interceptors never fired for the conversion). Cheap 5 Hz-gated. Game thread.
+    // Conversion sync, BACKSTOP half: poll for kerfur mirrors that converted invisibly (the menu's
+    // PE-invisible EX_CallMath/EX_Local* flow). Since 2026-07-12 (take-8) the PRIMARY host turn_off
+    // detector is TryAdoptFreshKerfurProp at the express chokepoints (event-driven at the fresh
+    // prop's expression edge -- the poll's untracked-search converge always lost the race to the
+    // per-tick spawn-seam drain); this poll remains the owner of turn-ON (no generic NPC lane
+    // exists), the CLIENT request branch, and the solo-host / seam-missed turn_off. Cheap 5
+    // Hz-gated. Game thread.
     PollKerfurConversions();
 }
 
