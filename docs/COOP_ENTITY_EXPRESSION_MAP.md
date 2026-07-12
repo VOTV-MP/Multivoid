@@ -63,7 +63,10 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   PropSpawn stream → SnapshotComplete → quiescence-gated **divergence sweep** (membership = the client's
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
   for keyless piles (retires the client-local identity). **[V]**
-- **JOIN BARRIER (2026-07-12 `bbf91f39` [AS-BUILT, audit pending take-6 hands-on] — SUPERSEDES the
+- **JOIN BARRIER (2026-07-12 `bbf91f39` [V — take-6 hands-on 2026-07-12 13:21: user-verified the
+  in-window placed rock present on the client; log-verified: client QUIESCED 13:20:38 STRICTLY before
+  `ClientWorldReady announced`, 0 wire prop receives pre-announce, no DEGRADED, sweep fired 2.3 s
+  post-arm, bind 872/872, 0 errors both peers] — SUPERSEDES the
   takes-1-4 join-window PROVISIONALITY machinery, RULE 2):** `ClientWorldReady` is announced at
   **load-tail QUIESCENCE** (the `coop/session/world_load_episode` probe latch — the same
   population-stability gate the doom sweep always trusted, now the ONE owner of the "is my world
@@ -82,8 +85,9 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   cls/key/loc logs. Design doc:
   `research/findings/join-identity/votv-join-barrier-DESIGN-2026-07-12.md`; the six-root saga RCA:
   `research/findings/join-identity/votv-join-window-placed-prop-RCA-2026-07-11.md`.
-- **KEY-UNIQUENESS AUTHORITY (2026-07-11 `2fefd161`, repaired 2026-07-12 `460da7e4` [AS-BUILT, roots
-  log-RCA'd takes 3-4; hands-on take-6 pending; UNCHANGED by the join barrier — the key-dedup axis is
+- **KEY-UNIQUENESS AUTHORITY (2026-07-11 `2fefd161`, repaired 2026-07-12 `460da7e4` [V — take-6
+  2026-07-12: 162 re-keys, 0 `re-key FAILED` (the `460da7e4` SuperStruct-climb WORKS — the `2fefd161`
+  form was 162x inert on the same save); UNCHANGED by the join barrier — the key-dedup axis is
   orthogonal to ordering — the `2fefd161` form was INERT: 162x "setKey not found
   on trashBitsPile_C", the family is actor_save_C lineage with setKey declared on the ANCESTOR and
   FindFunction is exact-owner; `460da7e4` = `R::SuperStructOf` + a SuperStruct-CLIMBING

@@ -1,7 +1,9 @@
 # RCA: join-window placed props invisible on the client (SIX roots, one saga) — 2026-07-11/12
 
-Status: CLOSED BY ARCHITECTURE 2026-07-12 — the JOIN BARRIER (`bbf91f39`+`7847021e`, take-6
-hands-on pending) removed the two-authority overlap at the source; the takes-1/2/4 compensation
+Status: CLOSED BY ARCHITECTURE 2026-07-12, **VERIFIED take-6 hands-on 13:21** (rock present on the
+client; QUIESCED strictly before ClientWorldReady; 0 pre-announce wire receives; 162 re-keys 0
+FAILED — see research/handson_runbook_2026-07-12.md RESULT) — the JOIN BARRIER
+(`bbf91f39`+`7847021e`) removed the two-authority overlap at the source; the takes-1/2/4 compensation
 machinery this doc's fixes built (spawn capture/revalidation, wire-order netting) was RULE-2
 deleted the same day. Roots 3+6 (duplicate save keys) stay fixed by the take-4 re-key authority.
 This doc is the measured record of the six roots + the saga that proved the seam architectural.

@@ -54,9 +54,23 @@ HOST:
 - First load of a poisoned save: the `KEY-UNIQUENESS ... re-keyed -> 'rk_...'` burst (root-6 fix
   working; `re-key FAILED` lines = regression, stop and report). ~0 after the game re-saves.
 
-## Honest status
+## RESULT — TAKE 6 PASSED (2026-07-12 13:21, user hands-on + log-verified)
 
-- Built + linked clean; deployed `07C189C4` x4 hash-verified; audit agent verdict: see the session
-  report (launched on `bbf91f39`).
-- NOT yet smoked (user was at the PC; autonomous LAN smoke needs the green light) and NOT
-  hands-on verified. The take-6 hands-on above is the acceptance test.
+User verdict: "rock are present" — the in-window placed rock (the take-2/4 repro) exists on the
+client. Logs pulled to scratchpad (`take6_host.log` / `take6_client.log`) before any relaunch:
+
+- CLIENT sequence exactly per spec: `world_load_episode: ARMED` 13:20:27 → probe ARMED 13:20:29 →
+  `load-tail QUIESCED ... episode CLOSED` 13:20:38 → `ClientWorldReady announced (world up +
+  registry coherent + load tail quiesced)` STRICTLY after. **0 PropSpawn/PropDestroy receives
+  before the announce line** — the entire connect replay (incl. all rock spawns) landed in a
+  settled world. No DEGRADED, no `[SPAWN-DEFER]`, no tripwire.
+- Sweep: post-snapshot probe session QUIESCED 13:20:42, `divergence sweep FIRING (probe latched;
+  2340ms after arm)`; `BIND SUMMARY -- bound 872/872`.
+- HOST: `[PILE-1C] slot 1 world-ready -- JOIN-WINDOW CLOSED` 13:20:38 (at the client's settle, as
+  designed). KEY-UNIQUENESS: **162 re-keys, 0 `re-key FAILED`** — the `460da7e4` SuperStruct-climb
+  works on the live save.
+- Health: 0 `[ERROR]` both peers; WARN census = perf telemetry + kerfur census only; client
+  workingset ~3.0 GB stable.
+- NOTE for the kerfur anti-smear follow-up: the save had **ZERO kerfurs** (census: 0 NPC + 0 PROP
+  both peers) — take-6 exercises NO kerfur layer; live-evidence retirements there need a
+  kerfur-present run.
