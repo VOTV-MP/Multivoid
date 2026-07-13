@@ -15,10 +15,23 @@
 > table-indirect ⇒ **A has full coverage (chosen)**; **option E ELIMINATED BY MEASUREMENT** (§1a
 > verdict). Fail-ladder now A → A-asm → C-spike.
 >
-> **PERF GATE 2.2 DONE 2026-07-13 — PASSES** (autonomous probe run, `gnatives_probe`): in-world
-> steady 0.013 ms/frame@120 (7.5× under), worst-observed second 0.038 (2.6× under). **Both HALT
-> gates cleared — option A is cleared to BUILD.** NEXT: the real GNatives wrapper + kerfur
-> form-flip assembler (§1, §3), census (§4), verifying take (§5), one-commit crutch retirement.
+> **PERF GATE 2.2 — LOWER-BOUND PASS 2026-07-13** (autonomous probe run, `gnatives_probe`): in-world
+> steady 0.013 ms/frame@120, worst-observed second 0.038. **CAVEAT (implementation /qf pass R9-R10):
+> the probe used a SIMPLER filter (16-slot pointer scan), NOT the real class-first `IsDescendantOfAny`
+> walk, and did NOT measure the ENABLED=false disabled path (the eternal solo-SP tax the process pays
+> forever, since the swap is never un-swapped) NOR a worst-case kerfur-populated + join frame. So
+> 0.013/0.038 is a LOWER BOUND, not the real-filter gate.** Option A is cleared to STEP 1.0 (below),
+> NOT yet to the permanent-swap build.
+>
+> **IMPLEMENTATION /qf PASS 2026-07-13 — 10 grounded rounds** (design phase-3; transcript in the
+> session scratchpad `qf_thread.md`; NOT yet a formal critic "that holds" but the last 3 rounds were
+> refinements, not reframes). It materially reshaped §3 (see below) and added measurement STEP 1.0.
+> Design is build-ready behind STEP 1.0. **NEXT = STEP 1.0** (§2, item 0): extend the throwaway
+> `gnatives_probe` with the REAL filter (IsGameThread-first → IsDescendantOfAny → 8-byte name compare),
+> re-measure enabled+disabled paths in a worst-case (kerfur-populated + join) loaded scene, gate
+> ≤0.1 ms/frame BEFORE the permanent never-un-swap substrate lands (probe-first: the probe is
+> removable, the swap is not). Then incr 1 (observe-only substrate = the LIVE-CATCH gate for the whole
+> design) → 1b/2a/2b/2c → verifying take → one-commit retirement.
 
 ## 0. The problem (why this exists)
 
@@ -153,8 +166,20 @@ removed).
    (world-load spike, incl. ~156 k/s AnimBP worker load) = 177,946 GT/s → **0.038 ms/frame@120**.
    Windows captured: boot, world-load, steady/solo-SP. Coop join-load + pile-burst not yet
    captured (transient, bounded by the measured world-load peak — optional LAN confirmation).
-3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** — ✅ **PASSES with margin**
-   (steady 7.5× under, worst-observed second 2.6× under). Option A cleared to build.
+3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** — ⚠️ **LOWER-BOUND PASS
+   only** (steady 0.013, worst-observed 0.038). The probe used a 16-slot pointer scan, NOT the real
+   `IsDescendantOfAny` class-first walk; did not measure the ENABLED=false disabled path nor a
+   worst-case kerfur-populated+join frame (impl /qf R9-R10). The REAL-filter gate is **owed at STEP
+   1.0 (§2.0)** before the permanent swap.
+
+**STEP 1.0 (added by impl /qf R9-R10 — probe-first, do BEFORE any permanent-swap code):** extend the
+throwaway `coop::dev::gnatives_probe` with the REAL filter shape (IsGameThread() first → class-first
+`IsDescendantOfAny(ClassOf(Context), {kerfurOmega_C, prop_kerfurOmega_C})` → 8-byte FScriptName-vs-
+`StringToFName(verb)` uint64 compare). Re-measure BOTH paths in a WORST-CASE loaded scene (several
+kerfurs ticking + a join + a multi-kerfur flip, not idle): (a) ENABLED=true = the in-session filter
+cost; (b) ENABLED=false = the eternal solo-SP tax (1 atomic load + branch + tail-call — the process
+pays it forever since the swap is never removed). Gate ≤0.1 ms/frame on BOTH. Fail → the ladder
+(A-asm → C) BEFORE the un-removable seam lands (nothing to roll back — the probe is removable).
    **Fail-ladder (amended: spike 07-13 removed the E rung — E eliminated by measurement, §1a):
    A → ONE asm-thunk iteration → option-C feasibility spike** (C is UNPROVEN e2e here — never
    sold as a solid rung until its own spike passes).
@@ -166,26 +191,77 @@ engine upgrade = the existing whole-mod AOB-rebase class. Spike re-run = one lin
 existing rebase checklist. Content updates changing the verbs are caught loudly by the
 FunctionParams guard + per-consumer cross-check.
 
-## 3. The first consumer: kerfur FORM-FLIP ASSEMBLER (the ONE conversion author)
+## 3. The first consumer: kerfur FORM-FLIP ASSEMBLER (REWRITTEN by impl /qf pass 2026-07-13)
 
-- Brackets on the two verbs (param-less — kismet RE + FunctionParams install guard; no nested
-  watched calls — bytecode-measured; `Stack.Object` = the converting actor).
-- **Successor resolution = ZERO probabilistic matchers**: the successor is the kerfur-class
-  `FinishSpawningActor` (existing Func seam) caught INSIDE the bracket window — deterministic,
-  same-callstack. No scans, no proximity, no stamps, no watch-generation guards.
-- **Authority ROUTING in the one consumer** (substrate stays coop-ignorant, principle 7):
-  authoritative actor → silent register + BindFormActor → ONE `KerfurConvert` at verb exit
-  (covers host-own toggles, request-path — which dispatches via PE and is self-bracketed — and
-  solo-host); mirror actor → request AT the bracket + prediction (local execution proceeds,
-  ghost parked; parked-ghost teardown measured: 4 s orphan deadline + OnDisconnect fanout).
-- Inherits the **load-tail quiescence gate** (SYMPTOM-1 carried over).
-- **Every request answered**: OnConvertRequest drop branches (stale eid / no live prop) extended
-  to loud `BroadcastConvertRejected` → the existing client restore runs (state-shape verified;
-  live-fire forced in the take, see §5).
-- The death-watch poll **loses ALL authoring** → permanent **alarm-only tripwire** (element
-  present + actor dead + unclaimed ⇒ ERROR + overlay). Written response protocol: session =
-  log-and-continue; after = pull logs → census the missed entry → EXTEND THE WATCH TABLE (never
-  re-enable poll authoring); revert = escalation only.
+**The substrate is a deterministic CAPTURE + destroy-SUPPRESS mechanism that FEEDS THE EXISTING
+deferred converge — NOT a converge rewrite** (impl /qf R4, the key reframe; grounded in measured
+code). It replaces THREE probabilistic crutches (`TryAdoptFreshKerfurProp` / `TryCaptureKerfurPropDestroy`
+/ death-watch poll) with ONE deterministic bracket signal, and REUSES the proven machinery
+(`ConvergeAfterConversion`, `BindFormActor`, the two-phase-armed deferred queue, `OnKerfurConvert`,
+park-by-eid). Reuse-the-proven-author, don't raw-reimplement.
+
+**TWO bracket OPENERS, ONE capture** (impl /qf R6, measured):
+- (a) the GNatives[0x45] wrapper opens the bracket for verb dispatches we DON'T initiate — the host's
+  OWN menu toggle AND the client's OWN toggle (both are ubergraph `EX_LocalVirtualFunction` self-calls;
+  covers col-variants — measured: `kerfurOmega_col`/`_col_gamer` have no own call site, they inherit
+  the base ubergraph's by-name 0x45 dispatch, virtual-resolved to the override).
+- (b) a self-bracket (TLS own-invocation at the ONE `R::CallFunction` chokepoint — ALREADY EXISTS as
+  `g_requestVerbEid`) opens it for the host EXECUTING a client's request (measured kerfur_convert.cpp:
+  82/350/437 — that path dispatches the verb via ProcessEvent/CallFunction, NOT EX_LocalVirtual, so
+  the GNatives wrapper does NOT double-fire; capture is idempotent — no recursion, measured).
+- Both set `TLS.converting = {A = Context actor, A-eid, verbId, depth}`. `Context = A` is measured
+  (FFrame+0x18; the toggled kerfur is ALIVE at verb entry — the eid resolves on a LIVE actor, which is
+  exactly why this AVOIDS take-10's post-destroy zero-read).
+
+**CAPTURE (mid-verb = ZERO engine calls — the re-entrancy discipline, impl /qf R4):**
+- B's `FinishSpawningActor` (measured SYNCHRONOUS inside the verb, before A's destroy — bytecode
+  `EX_CallMath→BeginDeferred→EX_CallMath→FinishSpawningActor`) is caught at the EXISTING
+  `host_spawn_watcher` Func seam; if `TLS.converting` is set + the spawned actor is-a successor-form
+  class (`prop_kerfurOmega_C` desc for turn-off, `kerfurOmega_C` for turn-on — the floppy
+  `prop_floppyDisc_C` distinguished by class), record B into the bracket. Pointer store + reflection
+  reads only.
+- A's destroy seam fires mid-verb and (measured kerfur_convert.cpp:185 `UnmarkKnownKeyedProp`) would
+  DRAIN A's eid + broadcast `PropDestroy`(A) → take-9 bug1 (client kills the mirror before
+  KerfurConvert). It is **SUPPRESSED** — a branch (skip drain + skip PropDestroy on the host; suppress
+  the keyed-destroy RELAY on the client — measured take-9 bug1) gated by the deterministic bracket
+  signal (replaces `TryCaptureKerfurPropDestroy`'s proximity guess). No engine calls.
+
+**BRACKET-EXIT (deterministic decision) + DEFERRED action (impl /qf R7, R9):**
+- At bracket EXIT the outcome is deterministically known (everything synchronous): record
+  `{A-eid, B-or-null, was-suppressed}`. The ACTION runs DEFERRED via the EXISTING two-phase-armed
+  net-pump barrier (MEASURED deliberate re-entrancy barrier, kerfur_convert.cpp:11-20 — a nested
+  ProcessEvent pump mid-verb corrupts; converge stays deferred, only capture is mid-verb).
+- B captured → converge: `BindFormActor` migrates A's eid onto B at B's birth (§9 identity-at-birth) →
+  A's destroy resolved no eid = husk by construction → ONE `KerfurConvert` broadcast.
+- Suppressed-destroy + NO successor (e.g. spawn failed after destroy) → **RESTORE** the suppressed
+  destroy by invoking the EXISTING destroy handler (NOT a new second emitter — suppression=loan paired
+  restore). Turn-on failure (prop survives, no destroy) → clean no-op.
+- Park (`NeutralizeAiTimers` = MEASURED ProcessEvent dispatch, kerfur.cpp:132 — CANNOT run mid-verb) is
+  DEFERRED. The client's predicted B has a bounded brain-on window, no worse than today's 5 Hz poll.
+- ALARM = pure tripwire for IMPOSSIBLE states only (wrong class, double-capture) — NOT a hedge for a
+  non-synchronous case (there is none).
+
+**Authority ROUTING inside the callback** (substrate stays coop-ignorant, principle 7): authoritative
+actor → converge (BindFormActor + broadcast); mirror actor → the FORCED client prediction (the client's
+local verb RUNS — measured: EX_LocalVirtual is un-cancellable + the menu interceptor was removed —
+so B is parked-by-eid and adopted on the authoritative `KerfurConvert`; `TakeParkedGhostByEid`).
+Enable gates on **SESSION-ACTIVE (host OR client)**, re-armed at StartCoopSession/join (NOT hosting-only
+— the client needs the bracket to capture its own conversion; impl /qf R9 correction to R6).
+- **Every request answered**: `OnConvertRequest` drop branches → loud `BroadcastConvertRejected` →
+  existing client restore (live-fire forced in the take, §5).
+- The death-watch poll **loses ALL authoring** → permanent **alarm-only tripwire**. Response protocol:
+  session = log-and-continue; after = census the missed entry → EXTEND the watch table (never re-enable
+  poll authoring); revert = escalation only.
+
+**INCREMENTS (each build+deploy+hash+smoke+code-reviewer-audit):** 1.0 probe real-filter gate (§2.0).
+1 = substrate + observe-only logging consumer = **the LIVE-CATCH gate for the whole design** (trigger
+kerfur_toggle, confirm wrapper[0x45] fires with Context=kerfur + name=dropKerfurProp — until then
+"0x45 is the flip opener" is a STATIC bytecode inference, not a live catch; corpus rule: only live
+catches classify EX_*). 1b = harden (validation-mode first-N, 1/s integrity, loud latches) + the
+self-bracket TLS opener (b). 2a = capture+LOG both peers (confirm A/B/eid + the sync ordering live).
+2b = enable SUPPRESS + reconcile (smoke: no premature kill). 2c = enable deferred park+converge + gate
+the 3 crutches behind `kerfur_legacy_converge=0` INERT (RULE-2 same commit). 3 = verifying take. 4 =
+delete inert legacy + `gnatives_probe`.
 
 ## 4. Census (pre-take)
 
@@ -266,11 +342,13 @@ NOT retired (correct shape, per doctrine): all state-mirror lanes (devices L2 in
 channel, eventer v95 passEvents poll, pause-guard, updateHold poll, dead-retire pose-walks) —
 scalar state, mirror-STATE-not-verb stays law.
 
-## 8. Sequence
+## 8. Sequence (updated by impl /qf pass 2026-07-13)
 
-IDA spike → counter (5 windows) → gate verdict → wrapper + validation + kerfur assembler →
-static census → verifying take (legacy off) → retirement commit (same session) → melee RE (its
-own /qf) → melee onboarding or Func-choke resolution → smart-items per-item.
+✅ IDA spike → ✅ counter (lower-bound, simpler filter) → **NEXT: STEP 1.0 (probe REAL filter,
+enabled+disabled, worst-case frame; §2.0)** → incr 1 substrate observe-only (LIVE-CATCH gate) →
+1b harden + self-bracket → 2a capture+log → 2b suppress+reconcile → 2c park+converge + crutches
+inert → verifying take (JOIN + contested toggle + re-host, legacy off) → retirement commit (same
+session) → melee RE (its own /qf) → smart-items per-item.
 
-Parked user decision: the **1h bridge fix** (temporal-pairing v2 of the broken take-10 capture,
-own commit, dies in retirement) so kerfur coop works during the substrate build — recommended.
+Design detail lives in §3 (rewritten). The **1h bridge fix** is NO LONGER on the table — the user
+decided (07-13) NO bridge, straight per plan; kerfur coop stays broken until the substrate lands.

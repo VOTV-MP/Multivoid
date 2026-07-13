@@ -221,8 +221,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A SCRIPT-fn called via `EX_Local*` is invisible to BOTH the PE hook AND the Func-patch** — patch the
   NATIVE calls inside it. **Boundary sharpened 2026-07-13: this is THE ONLY remaining invisible class,
   and it's SOLVABLE (GNatives swap = a third hook primitive); EX_CallMath was NEVER part of the wall
-  (native targets = Func-patchable). Check the CALLEE's nativeness before declaring a wall.** *Look
-  FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md`. `memory/lesson_script_fn_invisible_to_func_patch.md`
+  (native targets = Func-patchable). Check the CALLEE's nativeness before declaring a wall.**
+  **Spike-measured 2026-07-13:** `GNatives_table`@`0x144D8ECD0`; LocalVirtual=op 0x45@`0x1414751A0`
+  (12-byte FScriptName operand), LocalFinal=op 0x46@`0x141474FB0` (8-byte UFunction*); filter a
+  LocalVirtual by name = compare operand bytes 0-7 as uint64 == `StringToFName(verb)` (lookup
+  `sub_1412FDF90` compares the full 8 bytes; 3rd int32 ignored). *Look FIRST:*
+  `docs/COOP_VM_DISPATCH_PLAN.md` + `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`.
+  `memory/lesson_script_fn_invisible_to_func_patch.md`
+- **A VM-dispatch bracket (GNatives-swap wrapper / self-bracket) runs MID-BYTECODE — do ZERO engine
+  calls in that window** — capture data only (pointers, eids off a LIVE actor, class checks, a suppress
+  branch); DEFER every engine call (BindFormActor, register, park=ProcessEvent, broadcast, restore) to
+  the EXISTING two-phase-armed net-pump barrier. A nested ProcessEvent pump mid-verb corrupts (measured
+  `kerfur_convert.cpp:11-20`; park=PE `kerfur.cpp:132`). The substrate is a deterministic CAPTURE +
+  destroy-SUPPRESS feeding the existing deferred converge — NOT a converge rewrite. Reusable for the whole
+  VM-consumer class (kerfur/melee/smart-items). *Look FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md` §3.
+  `memory/lesson_vm_bracket_zero_engine_mid_verb.md`
+- **Before installing a PERMANENT / un-removable seam (process-lifetime GNatives swap, never un-swapped),
+  measure its real cost in a THROWAWAY removable probe FIRST** — including the ENABLED=false disabled path
+  (the eternal tax the process pays forever) and a WORST-CASE frame, not idle. You can't roll back a
+  permanent seam; the probe you can delete. (impl /qf: the gate-2.2 probe used a simpler filter → 0.013/
+  0.038 was a LOWER bound, not the real-filter gate.) *Look FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md` §2.0
+  (STEP 1.0). `memory/feedback_probe_first_for_unremovable_seams.md`
 - **A destroy-seam consult runs POST-destruction: engine reads on the dying actor return ZEROS** —
   `GetActorLocation` on it reads (0,0,0) (RootComponent gone) while class/name/key MEMORY reads still
   work, so a proximity matcher silently mis-filters (take-10: the capture never fired all session).
