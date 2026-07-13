@@ -48,12 +48,22 @@ else
 
 **execLocalVirtualFunction (0x45):**
 ```c
-FScriptName nameKey = *(12 bytes @ Stack->Code);  // {NameIndex:int32, ?:int32, Number:int32}
+FScriptName nameKey = *(12 bytes @ Stack->Code);  // {ComparisonIndex@0, DisplayIndex@4, Number@8}
 Stack->Code += 0xC;                                // advance 12 bytes
 UFunction* fn = FindFunctionChecked(Context, nameKey);  // resolves subclass override
 if (fn->FunctionFlags & 0x400) return UFunction_Invoke(...);    // same branch
 else return ProcessScriptFunction(Context, fn, Stack, Result, ProcessInternal);
 ```
+**OPERAND LAYOUT — CORRECTED BY STEP 1.0 LIVE MEASUREMENT (2026-07-13, hands-on `gnatives_probe` v2/v3):**
+the middle int32 (the spike's `?`) is **DisplayIndex**, and **Number is the THIRD int32 (@byte 8)** — the
+layout is `{ComparisonIndex@0, DisplayIndex@4, Number@8}`. In the shipping non-case-preserving build
+`ComparisonIndex == DisplayIndex`, so bytes 0-7 read as the DUPLICATED index (every live catch showed
+`low32 == high32`, e.g. `Init_904` = `0x0000038900000389`). **To match a verb by FName, compare
+`op[0]==StringToFName(verb).ComparisonIndex` AND `op[8]==StringToFName(verb).Number` (=0 for the clean
+verb names, measured).** Comparing raw bytes 0-7 against an 8-byte `{ComparisonIndex, Number}` FName is
+WRONG (it compares `{CmpIdx, DispIdx}` vs `{CmpIdx, 0}` → never matches) — that was the v1 probe's
+silent-miss bug, caught before any permanent swap. Live evidence: scratchpad `step1v3_{host,client}.log`
+(`*** VERB-HIT ... op[0]=CmpIdx op[1]=DispIdx op[2]=Number=0x0 (dropKerfurProp/spawnKerfuro) ***`).
 
 Both share: the operand peek, the **identical `FUNC_Native (0x400)` branch**, and the two
 downstream targets (Invoke/native vs ProcessScriptFunction/script).

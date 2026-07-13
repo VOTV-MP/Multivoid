@@ -36,10 +36,25 @@
 > 0x45 swapped (0x46 install gated on a measured customer); (7) un-swap downgraded to a simplicity
 > choice (process-static wrapper → un-swap is safe); (8) STEP 1.0 fully specified (SHARED filter fn the
 > probe + incr-1 both call; POSITIVE CONTROL to disambiguate zero-catches; HARD HALT). Design is
-> build-ready behind STEP 1.0. **NEXT = STEP 1.0** (§2, item 0): write the shared filter fn + extend
-> the throwaway `gnatives_probe` (real prologue + live-catch + positive control), re-measure
-> enabled+disabled in a worst-case (kerfur-populated + join + multi-flip) scene, gate ≤0.1 ms/frame
-> BEFORE the permanent swap lands (probe-first). Then incr 1 (permanent substrate, observe-only) →
+> build-ready behind STEP 1.0.
+>
+> **STEP 1.0 — PASSED (LIVE-CATCH CONFIRMED, hands-on) 2026-07-13.** The throwaway `gnatives_probe`
+> was extended with the real prologue and iterated v1→v3 over three hands-on host+client toggle runs
+> (logs: scratchpad `step1v3_{host,client}.log`). **RESULT [V]:** on a REAL radial-menu toggle,
+> `GNatives[0x45]` fires with `dropKerfurProp` (Context = `kerfurOmega_C`, turn-off) and `spawnKerfuro`
+> (Context = `prop_kerfurOmega_C`, turn-on), on BOTH host and client. The whole EX_LocalVirtual-opener
+> premise is now **live-confirmed, not inferred**. PERF: ~0.006–0.015 ms/frame@120 even with the
+> diagnostic running a class-walk on EVERY dispatch — the real name-first filter (class-walk only on a
+> match) is strictly cheaper, so the ≤0.1 gate holds with margin. **THE ONE CORRECTION STEP 1.0
+> CAUGHT:** the operand layout is `{ComparisonIndex@0, DisplayIndex@4, Number@8}` (CmpIdx==DispIdx in
+> shipping; Number@8=0 for the verbs), NOT the spike's `{CmpIdx, Number@4, Display@8}`. v1 compared bytes
+> 0-7 → `{CmpIdx, DispIdx}` vs `{CmpIdx, 0}` → silent-miss (nameMatch=0 despite the flip). This is the
+> probe-first discipline working exactly as designed: the un-removable swap would have shipped with a
+> filter that never matched. §1 filter now carries the corrected decode. See
+> `[[lesson-fscriptname-operand-layout-cmpidx-dispidx-number]]`.
+>
+> **NEXT = increment 1** (§3): the permanent GNatives[0x45] swap + registration API + observe-only
+> logging consumer (the real substrate, using the corrected `{CmpIdx@0, Number@8}` match), then
 > 1b/2a/2b/2c → verifying take → one-commit retirement.
 
 ## 0. The problem (why this exists)
@@ -81,9 +96,14 @@ Wrapper mechanics (all /qf-hardened; filter order INVERTED to name-first by impl
   LocalFinal = serialized `UFunction*`). No stream advance — a wrong decode mis-FILTERS, never
   corrupts (the original handler re-reads its own operands).
 - **NAME-FIRST two-stage filter** (impl /qf R12 — inverted from class-first): `IsGameThread()` →
-  **8-byte NAME compare** (peek operand bytes 0-7 = `ComparisonIndex`+`Number` as uint64, IGNORE
-  `Display@8`; compare == `StringToFName(verb)` in the same global pool — this is the engine's OWN
-  lookup mechanism, measured `sub_1412FDF90`) → **CLASS as a downstream CONFIRM only**
+  **FName compare on the CORRECT operand layout** (STEP 1.0 LIVE-MEASURED 2026-07-13: the
+  `EX_LocalVirtualFunction` operand is a 12-byte FScriptName **`{ComparisonIndex@0, DisplayIndex@4,
+  Number@8}`** — in the shipping non-case-preserving build `ComparisonIndex == DisplayIndex`, so bytes
+  0-7 are the DUPLICATED index and the real `Number` is at byte 8. Match `op[0]==StringToFName(verb).ComparisonIndex
+  && op[8]==StringToFName(verb).Number`; for the clean verb names `Number==0`, MEASURED. **NOT the raw
+  bytes 0-7 == the 8-byte FName** — that compares `{CmpIdx, DispIdx}` against `{CmpIdx, 0}` and NEVER
+  matches; it was the v1 probe's silent-miss bug, caught by STEP 1.0 before the swap landed. The IDA
+  spike's `{CmpIdx, Number@4, Display@8}` was wrong on which int32 is Number.) → **CLASS as a downstream CONFIRM only**
   (`IsDescendantOfAny(ClassOf(Stack.Object), family)`, runs only on the rare name-match). **Name is
   the CORRECTNESS GATE** — a real kerfur variant matches by name regardless of its class descent, so
   the class check CANNOT cause a silent miss (it only guards a theoretical foreign same-named fn).
@@ -193,19 +213,20 @@ removed).
    (world-load spike, incl. ~156 k/s AnimBP worker load) = 177,946 GT/s → **0.038 ms/frame@120**.
    Windows captured: boot, world-load, steady/solo-SP. Coop join-load + pile-burst not yet
    captured (transient, bounded by the measured world-load peak — optional LAN confirmation).
-3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** — ⚠️ **LOWER-BOUND PASS
-   only** (steady 0.013, worst-observed 0.038). The probe used a 16-slot pointer scan, NOT the real
-   `IsDescendantOfAny` class-first walk; did not measure the ENABLED=false disabled path nor a
-   worst-case kerfur-populated+join frame (impl /qf R9-R10). The REAL-filter gate is **owed at STEP
-   1.0 (§2.0)** before the permanent swap.
+3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** — ✅ **PASSED (real filter,
+   hands-on, STEP 1.0 v3 2026-07-13):** ~0.006–0.015 ms/frame@120 measured on both peers WITH the
+   diagnostic running a per-dispatch class walk (an upper bound — the real name-first filter class-walks
+   only on a match). The old 0.013/0.038 lower-bound (16-slot scan) is superseded.
 
-**STEP 1.0 (added by impl /qf R9-R10, fully specified R11-R15 — probe-first, do BEFORE any
-permanent-swap code):** extend the throwaway `coop::dev::gnatives_probe` with the REAL production
+**STEP 1.0 — ✅ PASSED 2026-07-13 (LIVE-CATCH CONFIRMED, hands-on host+client; see the header block +
+`[[lesson-fscriptname-operand-layout-cmpidx-dispidx-number]]`). What follows is the AS-RUN record.**
+The throwaway `coop::dev::gnatives_probe` was extended with the REAL production
 prologue. **The filter is factored into ONE SHARED function that BOTH the probe AND the eventual
 incr-1 wrapper call** (impl /qf R15 — NOT a probe reimplementation, or the gate would measure the
 wrong code); writing the filter fn is not installing the swap; the probe installs the swap
 TEMPORARILY (removable) and calls the shared filter. Filter shape (name-first, R12): `IsGameThread()`
-→ 8-byte NAME compare (operand bytes 0-7 == `StringToFName(verb)`) → `IsDescendantOfAny` class confirm.
+→ FName compare on the CORRECTED decode (`op[0]==CmpIdx && op[8]==Number`; STEP 1.0 found bytes-0-7 was
+wrong — see the header) → `IsDescendantOfAny` class confirm.
 STEP 1.0 does TWO things in ONE game run (impl /qf R11 folded the live-catch in):
 - **(i) LIVE-CATCH (the premise gate)** — trigger a REAL `kerfur_toggle` in the worst-case scene and
   assert `wrapper[0x45]` fires with `Context`=kerfur + name=`dropKerfurProp`; **LOG the actual peeked
@@ -435,11 +456,12 @@ scalar state, mirror-STATE-not-verb stays law.
 
 ## 8. Sequence (updated by impl /qf pass 2026-07-13)
 
-✅ IDA spike → ✅ counter (lower-bound, simpler filter) → **NEXT: STEP 1.0 (probe REAL filter,
-enabled+disabled, worst-case frame; §2.0)** → incr 1 substrate observe-only (LIVE-CATCH gate) →
-1b harden + self-bracket → 2a capture+log → 2b suppress+reconcile → 2c park+converge + crutches
-inert → verifying take (JOIN + contested toggle + re-host, legacy off) → retirement commit (same
-session) → melee RE (its own /qf) → smart-items per-item.
+✅ IDA spike → ✅ counter (lower-bound, simpler filter) → ✅ **STEP 1.0 PASSED (real filter + LIVE-CATCH,
+hands-on v3; 0x45 opener CONFIRMED, operand decode corrected)** → **NEXT: incr 1 substrate observe-only
+(permanent GNatives[0x45] swap + registration API, corrected `{CmpIdx@0,Number@8}` match)** → 1b harden
++ self-bracket → 2a capture+log → 2b suppress+reconcile → 2c park+converge + crutches inert → verifying
+take (JOIN + contested toggle + re-host, legacy off) → retirement commit (same session) → melee RE (its
+own /qf) → smart-items per-item.
 
 Design detail lives in §3 (rewritten). The **1h bridge fix** is NO LONGER on the table — the user
 decided (07-13) NO bridge, straight per plan; kerfur coop stays broken until the substrate lands.

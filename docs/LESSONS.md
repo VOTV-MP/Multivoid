@@ -223,11 +223,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   and it's SOLVABLE (GNatives swap = a third hook primitive); EX_CallMath was NEVER part of the wall
   (native targets = Func-patchable). Check the CALLEE's nativeness before declaring a wall.**
   **Spike-measured 2026-07-13:** `GNatives_table`@`0x144D8ECD0`; LocalVirtual=op 0x45@`0x1414751A0`
-  (12-byte FScriptName operand), LocalFinal=op 0x46@`0x141474FB0` (8-byte UFunction*); filter a
-  LocalVirtual by name = compare operand bytes 0-7 as uint64 == `StringToFName(verb)` (lookup
-  `sub_1412FDF90` compares the full 8 bytes; 3rd int32 ignored). *Look FIRST:*
-  `docs/COOP_VM_DISPATCH_PLAN.md` + `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`.
+  (12-byte FScriptName operand), LocalFinal=op 0x46@`0x141474FB0` (8-byte UFunction*). **0x45 IS the
+  kerfur flip opener — LIVE-CONFIRMED [V] hands-on (STEP 1.0 v3, 2026-07-13): `dropKerfurProp`
+  (Context=`kerfurOmega_C`) / `spawnKerfuro` (Context=`prop_kerfurOmega_C`) both fire via 0x45 on both
+  peers.** *Look FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md` +
+  `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`.
   `memory/lesson_script_fn_invisible_to_func_patch.md`
+- **The `EX_LocalVirtualFunction` (0x45) operand is a 12-byte FScriptName `{ComparisonIndex@0,
+  DisplayIndex@4, Number@8}`** — NOT `{CmpIdx, Number@4, Display@8}`. Shipping build: `CmpIdx==DispIdx`
+  so bytes 0-7 read as the DUPLICATED index (`Init_904`=`0x0000038900000389`); real `Number` is `op[2]`
+  (@byte 8), =0 for a clean verb name. Match `op[0]==StringToFName.ComparisonIndex && op[8]==Number` —
+  raw bytes-0-7 vs an 8-byte FName NEVER matches (v1 probe's silent-miss). LIVE-measured; the probe-first
+  STEP 1.0 caught it BEFORE the un-removable swap. *Look FIRST:* dump the live operand as THREE int32s,
+  expect `op[0]==op[1]`. `memory/lesson_fscriptname_operand_layout_cmpidx_dispidx_number.md`
 - **A VM-dispatch bracket (GNatives-swap wrapper / self-bracket) runs MID-BYTECODE — do ZERO engine
   calls in that window** — capture data only (pointers, eids off a LIVE actor, class checks, a suppress
   branch); DEFER every engine call (BindFormActor, register, park=ProcessEvent, broadcast, restore) to
