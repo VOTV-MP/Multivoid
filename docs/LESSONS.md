@@ -250,12 +250,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   STEP 1.0 caught it BEFORE the un-removable swap. *Look FIRST:* dump the live operand as THREE int32s,
   expect `op[0]==op[1]`. `memory/lesson_fscriptname_operand_layout_cmpidx_dispidx_number.md`
 - **A VM-dispatch bracket (GNatives-swap wrapper / self-bracket) runs MID-BYTECODE — do ZERO engine
-  calls in that window** — capture data only (pointers, eids off a LIVE actor, class checks, a suppress
-  branch); DEFER every engine call (BindFormActor, register, park=ProcessEvent, broadcast, restore) to
-  the EXISTING two-phase-armed net-pump barrier. A nested ProcessEvent pump mid-verb corrupts (measured
-  `kerfur_convert.cpp:11-20`; park=PE `kerfur.cpp:132`). The substrate is a deterministic CAPTURE +
-  destroy-SUPPRESS feeding the existing deferred converge — NOT a converge rewrite. Reusable for the whole
-  VM-consumer class (kerfur/melee/smart-items). *Look FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md` §3.
+  calls in that window** — capture data only (pointers, eids off a LIVE actor, class checks) + the
+  identity-REPOINT (a pure DATA STORE: `SetActor` reverse-map re-key, NO engine dispatch); DEFER every
+  engine call (BindFormActor FORM-half, register, park=ProcessEvent, broadcast) to the EXISTING
+  two-phase-armed net-pump barrier. A nested ProcessEvent pump mid-verb corrupts (measured
+  `kerfur_convert.cpp:11-20`; park=PE `kerfur.cpp:132`). The substrate = deterministic CAPTURE +
+  identity-REPOINT-at-birth feeding the existing deferred converge — NOT a converge rewrite, NOT a
+  suppression (that framing was caught+removed 2026-07-13 nite, see
+  [[lesson-identity-migrate-at-birth-covers-every-map]]). Reusable for the whole VM-consumer class
+  (kerfur/melee/smart-items). *Look FIRST:* `docs/COOP_VM_DISPATCH_PLAN.md` §3.
   `memory/lesson_vm_bracket_zero_engine_mid_verb.md`
 - **The kerfur conversion verbs are SYNCHRONOUS bodies (no latent node) — so the form spawn
   (`FinishSpawningActor`) AND the `K2_DestroyActor(self)` both fire INSIDE the 0x45 bracket, every

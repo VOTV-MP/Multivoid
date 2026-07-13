@@ -227,8 +227,34 @@ The observe-only substrate + containment counter (commit `722fbe18`) measured it
 (world-load + host-authored mirror on the client). Static + runtime agree. See
 `docs/COOP_VM_DISPATCH_PLAN.md` §3/§3a + `[[lesson-kerfur-verbs-synchronous-capture-in-window]]`.
 
+## Variant-descent census (measured 2026-07-13 nite — the successor-filter completeness fact)
+
+The 2a repoint design's within-bracket ROLE filter (is this `FinishSpawning` the kerfur successor B, vs
+floppy / loot / `explosion_C`) keys on `IsDescendantOfAny(prop_kerfurOmega_C)` (turn-OFF) /
+`IsDescendantOfAny(kerfurOmega_C)` (turn-ON). Census over ALL variant class declarations in the
+CXXHeaderDump (the exact hierarchy `IsDescendantOfAny` walks via SuperStruct):
+
+- **PROP family (turn-OFF successors, 24):** every `prop_kerfurOmega_*` → `Aprop_kerfurOmega_C` directly,
+  EXCEPT `prop_kerfurOmega_col_gamer` → `Aprop_kerfurOmega_col_C` → `Aprop_kerfurOmega_C` (one level). Base
+  `Aprop_kerfurOmega_C : Aprop_C`.
+- **NPC family (turn-ON successors, 21):** every `kerfurOmega_*` → `AkerfurOmega_C` directly, EXCEPT
+  `kerfurOmega_col_gamer` → `AkerfurOmega_col_C` → `AkerfurOmega_C` (one level). Base `AkerfurOmega_C : ACharacter`.
+
+**Verdict: all 45 actor variants descend from the base** (directly or 1 level via the `col` intermediate),
+so `IsDescendantOfAny` (which climbs SuperStruct) resolves every one → the descendant-specific successor
+filter is CORRECT + COMPLETE. No orphan-from-a-missed-variant risk. (This retired the R5 "does col_gamer
+descend?" open item as GREEN, statically, before any 2a code.)
+
 ## Next
 
-2a (capture + suppress + converge) — OPENS with a `/qf 15` pass before any code
-(`[[feedback-qf-before-implementation]]`). Then the static conversion-entry census (§4), the verifying
-take (§5), and the one-commit crutch retirement. Retire the throwaway `gnatives_probe` with that work.
+**2a DESIGN /qf pass CONVERGED 2026-07-13 nite** (11 rounds + user injection, commit `5b58c86b`): the
+"suppress OUR eid-drain" mechanism was caught as the §9 crutch + REPLACED by REPOINT ==
+identity-migrate-at-birth (`SetActor` reverse-map re-key at B's birth → A husks eid-less via
+`UnmarkKnownKeyedProp`'s `EidForActor==kInvalidId` early-return, ZERO suppression). U1 (user-found): a 2nd
+host-only KerfurId identity map must migrate at birth too → split `BindFormActor`. Full design:
+`docs/COOP_VM_DISPATCH_PLAN.md` §3.
+**NEXT = 2a-observe** (4 gates on ONE hands-on run: two-openers dedup / floppy-loot separation /
+seam-order-3b / B-index-3c + client local-verb-death husk trace + pending-eid pose-tick — logging only, no
+capture code) THEN 2a-capture. Then the static conversion-entry census (§4), the verifying take (§5), the
+one-commit crutch retirement (retires the 3 legacy crutches AND take-9-bug1 client suppression). Retire the
+throwaway `gnatives_probe` with that work.
