@@ -12,6 +12,7 @@
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
+#include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy (destroy-edge first refusal, take-9)
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
@@ -106,6 +107,15 @@ void DestroySeamBody(void* self) {
                 (destroyEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(destroyEid));
         return;
     }
+    // KERFUR FIRST-REFUSAL at the DESTROY chokepoint (take-9 2026-07-13, the destroy-edge twin of
+    // prop_lifecycle's express-side TryAdoptFreshKerfurProp). The turn-on verb spawnKerfuro destroys
+    // its prop AFTER spawning the NPC, so this seam fires mid-conversion: the kerfur layer must get
+    // first refusal before the generic relay (CLIENT: the relay killed the host's authoritative prop
+    // before the turn-on request landed -> the kerfur deleted on every peer; HOST: the generic
+    // broadcast + the element drain above left the host's own turn-on with NO converge at all).
+    // Consults AFTER the echo/episode gates (wire teardowns + load churn are not conversions); the
+    // capture converges/owns the wire itself when it returns true. Cheap class-pointer gate inside.
+    if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
     coop::net::WireKey wk{};
     wk.len = 0;
     if (!keyless) {

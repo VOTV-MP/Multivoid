@@ -55,6 +55,8 @@
 
 #pragma once
 
+#include "coop/element/element.h"  // ElementId (TryCaptureKerfurPropDestroy dyingEid)
+
 #include <cstdint>
 
 namespace coop::net {
@@ -122,6 +124,37 @@ void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc);
 // -- the generic keyed-prop path is correct for it. The kerfur is ONE entity: KerfurConvert
 // is its sole conversion wire signal (redesign 10.3). Host + game thread only (no-op else).
 bool TryAdoptFreshKerfurProp(void* actor);
+
+// BOTH ROLES: FIRST REFUSAL on the generic DESTROY of a kerfur PROP-form actor (take-9
+// 2026-07-13 turn-on pair RCA) -- the destroy-edge twin of TryAdoptFreshKerfurProp. The
+// turn-on verb spawnKerfuro is SPAWN-then-DESTROY (kismet: BeginDeferred+FinishSpawning the
+// NPC -> IsValid -> K2_DestroyActor self), so when the prop's destroy seam fires INSIDE the
+// verb the conversion-product NPC already exists ZERO ticks old -- a SYNCHRONOUS premise no
+// periodic enroll lane can beat. If a fresh unowned kerfur NPC sits within the spawn radius,
+// this death IS conversion churn the kerfur layer owns; the caller (destroy seam) must NOT
+// broadcast PropDestroy:
+//   CLIENT: suppress the keyed-destroy relay (take-9 bug 1: the relay killed the host's
+//     authoritative prop BEFORE the turn-on request landed -> "no live prop" -> the kerfur
+//     deleted on every peer). The poll's request+ghost machinery stays the client driver.
+//   HOST: converge INLINE at the destroy edge -- RegisterHostNpcSilent + BindFormActor ->
+//     ONE KerfurConvert broadcast, no generic PropDestroy (take-9 bug 2: the host's own
+//     turn-on had NO converge at all -- this same seam drains the prop Element synchronously
+//     with the actor death, so the poll's "element present + actor dead" premise NEVER holds
+//     for a host prop; the client kept a stale off-prop + never saw the NPC).
+// No adjacent fresh NPC -> false: a genuine destroy (hold-R into hand, incinerator) keeps
+// the generic relay. `dyingEid` = the seam's pre-Unmark element id (kInvalidId -> host
+// declines: no wire identity to converge). Game thread (the destroy seam).
+bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
+
+// BOTH ROLES: stamp a freshly-FinishSpawningActor'd kerfur NPC (called from the host_spawn_watcher
+// FinishSpawningActor Func seam for every finished actor; self-gates on the kerfur NPC class,
+// pointer-cheap reject). The stamps are TryCaptureKerfurPropDestroy's load-bearing freshness
+// discriminator: the conversion verbs are SPAWN-then-DESTROY in one synchronous chain, so the true
+// conversion product always carries a milliseconds-old stamp, while a save-loaded / long-lived
+// "unowned" kerfur (the enrollment-gap wanderer) never does -- proximity + untracked alone would
+// let it be mistaken for the product (audit 2026-07-13 findings 1+2). Entries expire after 2 s.
+// Game thread.
+void NoteFreshKerfurNpcSpawn(void* actor);
 
 // Clear per-session state (the pending queue). Net disconnect.
 void OnDisconnect();

@@ -125,19 +125,24 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         return true;
     }
     const std::wstring keyW = KeyToWString(payload.key);
-    // Resolve the doomed actor BEFORE draining the mirror. KEYED props resolve by Key (a
-    // separate key->actor index). The NON-KEYABLE trash clump rides key=None + an eid and
-    // resolves THROUGH the mirror Registry (ResolveLiveActorByEid -> Registry::Get(eid)),
-    // so UnregisterPropMirror MUST come AFTER this lookup -- draining first makes the eid
-    // resolve null and the mirror is never destroyed (the 2026-06-03 clump-dupe
-    // regression: "OnDestroy: eid=N has no local actor" while the ball kept piling up).
-    // Symmetric with the v26 eid-SPAWN; MTA Packet_EntityRemove resolves by element ID
-    // only. [[project-bug-trash-chippile-uaf-crash]]
+    // Resolve the doomed actor BEFORE draining the mirror -- and EID-FIRST (take-9 2026-07-13):
+    // the eid rides the wire exactly so identity survives key divergence, and a mirror bound
+    // under a synthetic row key ('coopkerfur#<eid>', the ghost-adopt path) carries a LOCAL
+    // random actor key the sender's key can never match. The old key-first order leaked that
+    // actor: UnregisterPropMirror drained the row (which HELD the pointer) while the key lookup
+    // found nothing -> a stale UNCLAIMED off-prop survived on the client (take-9 bug 2, eid
+    // 9950). MTA Packet_EntityRemove resolves by element ID ONLY; the key stays as the
+    // join-bootstrap fallback for eids this peer has no row for. UnregisterPropMirror MUST come
+    // AFTER this lookup -- draining first makes the eid resolve null and the mirror is never
+    // destroyed (the 2026-06-03 clump-dupe regression: "OnDestroy: eid=N has no local actor"
+    // while the ball kept piling up). Symmetric with the v26 eid-SPAWN.
+    // [[project-bug-trash-chippile-uaf-crash]]
     void* actor = nullptr;
-    if (!keyW.empty()) {
-        actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
-    } else if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId) {
+    if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId) {
         actor = ResolveLiveActorByEid(payload.elementId);
+    }
+    if (!actor && !keyW.empty()) {
+        actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
     }
     // Now drain the wire-received mirror Element. It must vacate the Registry regardless
     // of whether the local actor still exists (echo bounce where we initiated the destroy

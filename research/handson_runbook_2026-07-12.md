@@ -202,3 +202,74 @@ Test steps (kerfur save, both peers watching):
    elsewhere → the placed prop appears on the client at the new spot (ordinary-spawn first-refusal
    returns false → generic express — must still work same-tick).
 5. Camera regression stays green (no CCTVs — take-8 verified, must not regress).
+
+### RESULT (take-9, user hands-on 2026-07-13 11:51): «наполовину хорошо» — turn_OFF green, TWO turn-ON bugs
+
+What worked: all four client turn_offs converged via the request path (BindFormActor x4,
+KerfurConvert applied on the client each time); cameras stayed gone; hand-place not regressed.
+NOTE: the runbook's step-1 host turn_offs happened DURING the client's join window on
+still-unenrolled NPCs (the kerfur_entity reserve wave came 8 s later) → they expressed as
+generic keyed props (9931/9932) — no dupe, but the take-8 first-refusal itself is STILL not
+live-verified on a tracked NPC.
+
+BUG 1 (kerfur DELETED on both peers): client turned prop 9932 ON → the local verb destroyed the
+mirror actor → the CLIENT DESTROY SEAM relayed a keyed DESTROY (eid=0, host key readable off the
+actor) → the host destroyed its AUTHORITATIVE prop → the turn-on request then found "no live
+prop -- dropped" → the client's parked ghost reaped after 4.2 s → gone everywhere. Eid 9931 sent
+the SAME relay but the request won the race — pure lottery. ROOT: the kerfur conversion axis has
+ONE owner (kerfur_convert), but the destroy chokepoint never offered it first refusal — the
+take-8 lesson's exact class, 3rd instance, now on the DESTROY edge.
+
+BUG 2 (host turn-on → client keeps a stale off prop): the host's OWN turn-on has structurally NO
+converge: the destroy seam drains the prop Element synchronously with the actor death, so the
+poll's "element present + actor dead" premise NEVER holds for a host prop (zero host "POLL
+turn-on" lines in ANY session log — it was always dead). The generic PropDestroy(eid=9950,
+key='BvshDeV6…') went out instead; the client drained the row by eid but resolved the ACTOR by
+KEY — the ghost-adopted mirror carries a local key ('Y25kr…', row key 'coopkerfur#9950') → no
+match → the actor survived as `*** UNCLAIMED (no host mirror -- stale local off-prop) ***`
+(census-proven) and no NPC ever arrived.
+
+## TAKE 10 — KERFUR FIRST-REFUSAL, DESTROY EDGE (the turn-on twin) + eid-first OnDestroy
+
+Deployed DLL: **`12204C8F`** (sha256 first 8), all 4 installs hash-verified. Audit: 2 agents ran
+pre-handoff; perf PASS (reject path pointer-cheap, no hot-path walk — the final cut walks only
+the fresh-stamp list, not GUObjectArray); correctness found 3 findings (conf 80-82), ALL FIXED
+before this deploy: (1+2) "unowned within 5 m" alone would let an enrollment-gap wanderer NPC
+suppress a legit relay / get identity-welded — closed by the FRESH-SPAWN STAMP (below); (3) the
+seam-converged slot could go stale on host-own toggles — closed by the request-verb bracket.
+
+THE FIX (four parts, per rule 1 — completing the kerfur owner boundary):
+1. `kerfur_convert::TryCaptureKerfurPropDestroy` — the destroy seam offers every dying KEYED
+   kerfur PROP to the kerfur layer FIRST. spawnKerfuro is kismet-proven SPAWN-then-DESTROY, so
+   the conversion-product NPC exists ZERO ticks old at the seam — a synchronous premise no
+   periodic claimer can beat. Fresh STAMPED unowned kerfur NPC within 5 m ⇒ conversion churn:
+   CLIENT suppresses the keyed-destroy relay (bug 1; the poll stays the request driver);
+   HOST converges INLINE at the destroy edge (RegisterHostNpcSilent → BindFormActor →
+   ONE KerfurConvert, no generic PropDestroy — bug 2's converge). No stamped NPC nearby ⇒
+   genuine destroy (hold-R pickup, incinerator) keeps the generic relay.
+2. FRESH-SPAWN STAMPS (`NoteFreshKerfurNpcSpawn`): the FinishSpawningActor Func seam
+   (host_spawn_watcher, BOTH roles) stamps every freshly-finished kerfur NPC (2 s expiry).
+   The stamp is the load-bearing freshness discriminator — a save-loaded / long-lived
+   "unowned" kerfur is NEVER stamped, so proximity+untracked alone can no longer misfire.
+3. OnConvertRequest turn-on brackets its verb (`g_requestVerbEid`) and consumes
+   `g_seamConvergedEid` (recorded ONLY inside the bracket — no double converge, no stale slot,
+   reject echo preserved).
+4. `remote_prop::OnDestroy` resolves the doomed actor EID-FIRST (MTA Packet_EntityRemove shape;
+   key = join-bootstrap fallback) — a synthetic-key kerfur mirror now dies correctly (bug 2's
+   client half), and the drained row can no longer outlive its actor.
+
+Test steps (kerfur save, both peers, LET THE JOIN SETTLE ~30 s before touching kerfurs so the
+enroll wave lands — separates the fix's axis from the pre-enroll window):
+1. CLIENT turns a kerfur prop ON → single NPC on both peers, NOTHING deleted. Client log:
+   `CLIENT destroy-edge first refusal ... relay SUPPRESSED`; host log: `HOST executing turn-on`
+   + `already converged at the destroy edge` OR a normal converge — and ZERO
+   `remote_prop::OnDestroy ... -> destroying local actor` for a kerfur key on the host.
+2. HOST turns a kerfur prop ON → NPC appears on the CLIENT too (old off-prop gone, no UNCLAIMED
+   census line). Host log: `FIRST-REFUSAL turn-on converge ... NO generic PropDestroy`.
+3. HOST toggles a TRACKED kerfur OFF (post-enroll — wait for the census to list it as NPC) →
+   single off-prop both peers; host log `FIRST-REFUSAL turn_off converge` (take-8's fix, still
+   never live-verified on a tracked NPC).
+4. CLIENT toggles OFF/ON once more (request path regression) → clean both peers.
+5. Hand-place regression: hold-R a kerfur off-prop into the hand, place elsewhere → appears on
+   the other peer at the new spot (no NPC nearby ⇒ capture declines ⇒ generic path intact).
+6. Cameras stay gone (take-8, must not regress).

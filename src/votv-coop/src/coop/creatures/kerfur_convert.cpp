@@ -434,6 +434,59 @@ struct KerfurWatch { float x, y, z; bool handled; void* actor; };
 std::unordered_map<uint32_t, KerfurWatch> g_kerfurWatch;  // eid -> last-live pose + dedupe + generation actor; GT-only
 std::chrono::steady_clock::time_point g_lastConvPoll{};
 
+// (take-9) request-verb bracket + converge handshake between OnConvertRequest and the destroy-edge
+// first refusal. The seam fires INSIDE the request-executed verb, so OnConvertRequest would run its
+// explicit ConvergeAfterConversion a second time right after the verb returns -- and the fresh
+// NPC, now tracked by the seam converge, would read as "no new kerfur NPC near" (a spurious
+// release + WARN). g_requestVerbEid brackets the CallFunction; the capture records into
+// g_seamConvergedEid ONLY when it fires inside the matching bracket (audit 2026-07-13 finding 3:
+// an unconditional write left one stale eid per host-OWN toggle with nobody to consume it -- a
+// later request whose recycled eid matched would skip its converge AND its reject echo). Verbs
+// are synchronous on the GT, so single slots cannot be raced.
+uint32_t g_requestVerbEid   = 0xFFFFFFFFu;  // eid of the request-path verb currently executing; GT-only
+uint32_t g_seamConvergedEid = 0xFFFFFFFFu;  // set by the capture inside that bracket; GT-only
+
+bool ConsumeSeamConverged(uint32_t eid) {
+    if (g_seamConvergedEid != eid) return false;
+    g_seamConvergedEid = 0xFFFFFFFFu;
+    return true;
+}
+
+// (take-9, audit findings 1+2) FRESH-SPAWN STAMPS -- the real "this NPC is a conversion product"
+// discriminator. "Unowned within 5 m" alone is the take-8 lesson's dead premise wearing a new
+// coat: during enrollment gaps (host pre-ClientWorldReady NPC registration, client join-window
+// NPC adoption) a save-loaded live kerfur is ALSO unowned, and proximity alone would let a plain
+// hold-R pickup / incinerator burn beside it suppress a legit relay (client) or weld the dying
+// prop's KerfurId onto an untouched wanderer (host). The conversion product is different in ONE
+// measured way: it was FinishSpawningActor'd moments ago (spawnKerfuro/dropKerfurProp spawn-then-
+// destroy, same call chain) -- so the FinishSpawningActor Func seam (host_spawn_watcher, both
+// roles) stamps every fresh kerfur NPC here, and the capture requires a stamp. A save-loaded /
+// long-lived NPC is NEVER stamped. GT-only.
+struct FreshNpcStamp { void* actor; int32_t idx; std::chrono::steady_clock::time_point at; };
+std::vector<FreshNpcStamp> g_freshNpcStamps;
+constexpr long kFreshNpcStampMs = 2000;  // verb chains are sub-tick; 2 s is a generous ceiling
+
+void PruneFreshNpcStamps(std::chrono::steady_clock::time_point now) {
+    for (auto it = g_freshNpcStamps.begin(); it != g_freshNpcStamps.end();) {
+        const long age = static_cast<long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - it->at).count());
+        if (age > kFreshNpcStampMs || !it->actor || !R::IsLiveByIndex(it->actor, it->idx))
+            it = g_freshNpcStamps.erase(it);
+        else
+            ++it;
+    }
+}
+
+bool HasFreshNpcStamp(void* actor, std::chrono::steady_clock::time_point now) {
+    for (const auto& st : g_freshNpcStamps) {
+        if (st.actor != actor) continue;
+        const long age = static_cast<long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - st.at).count());
+        return age <= kFreshNpcStampMs;
+    }
+    return false;
+}
+
 void SendConvertRequestDirect(uint32_t eid, uint8_t toProp) {
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
@@ -877,7 +930,18 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         // K2_DestroyActor's the prop (position continuity for the converge).
         const ue_wrap::FVector pos0 = ue_wrap::engine::GetActorLocation(actor);
         uint8_t frame[16] = {};  // spawnKerfuro takes no params (install-guarded)
+        // (take-9) bracket the verb: the prop's K2_DestroyActor INSIDE it hits the destroy seam,
+        // whose kerfur first refusal converges inline and records the eid -- consumed just below
+        // instead of double-converging (the NPC is tracked by then; the search in
+        // ConvergeAfterConversion would spuriously fail and release the eid with a WARN).
+        g_requestVerbEid = static_cast<uint32_t>(eid);
         R::CallFunction(actor, g_spawnKerfuroFn, frame);
+        g_requestVerbEid = 0xFFFFFFFFu;
+        if (ConsumeSeamConverged(static_cast<uint32_t>(eid))) {
+            UE_LOGI("kerfur_convert: turn-on eid=%u already converged at the destroy edge (first refusal) -- request satisfied",
+                    payload.elementId);
+            return;
+        }
         ConvergeAfterConversion(actor, idx, eid, /*toProp=*/0, pos0.X, pos0.Y, pos0.Z);
     }
 }
@@ -948,12 +1012,14 @@ void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& p, void* lo
 
 void Tick() {
     // Conversion sync, BACKSTOP half: poll for kerfur mirrors that converted invisibly (the menu's
-    // PE-invisible EX_CallMath/EX_Local* flow). Since 2026-07-12 (take-8) the PRIMARY host turn_off
-    // detector is TryAdoptFreshKerfurProp at the express chokepoints (event-driven at the fresh
-    // prop's expression edge -- the poll's untracked-search converge always lost the race to the
-    // per-tick spawn-seam drain); this poll remains the owner of turn-ON (no generic NPC lane
-    // exists), the CLIENT request branch, and the solo-host / seam-missed turn_off. Cheap 5
-    // Hz-gated. Game thread.
+    // PE-invisible EX_CallMath/EX_Local* flow). The PRIMARY host detectors are event-driven at the
+    // generic chokepoints: turn_off = TryAdoptFreshKerfurProp at the fresh prop's expression edge
+    // (take-8 2026-07-12 -- the poll's untracked-search converge always lost the race to the
+    // per-tick spawn-seam drain); turn-on = TryCaptureKerfurPropDestroy at the prop's destroy edge
+    // (take-9 2026-07-13 -- the poll's "element present + actor dead" premise NEVER holds for a
+    // host prop: the destroy seam drains the element synchronously with the death). This poll
+    // remains the CLIENT-side driver (request + ghost claim; client mirror rows survive the seam)
+    // and the solo-host / seam-missed backstop. Cheap 5 Hz-gated. Game thread.
     PollKerfurConversions();
 }
 
@@ -1062,9 +1128,136 @@ bool TryAdoptFreshKerfurProp(void* actor) {
     return true;
 }
 
+// FIRST REFUSAL at the DESTROY chokepoint (see the header + the take-9 2026-07-13 RCA) -- the
+// destroy-edge twin of TryAdoptFreshKerfurProp. Runs INSIDE the conversion verb (the prop's
+// K2_DestroyActor Func-patch seam): spawnKerfuro is kismet-proven SPAWN-then-DESTROY
+// (votv-kerfur-convert-RE-2026-06-12.md 2: BeginDeferred+FinishSpawning the NPC at spwn+50Z ->
+// IsValid -> K2_DestroyActor self), so the conversion-product NPC exists ZERO ticks old here --
+// no periodic enroll lane (kerfur_entity reserve wave, npc census) can have claimed it between
+// the two statements of one BP verb. That synchronous premise is what the poll never had
+// ([[lesson-new-generic-lane-must-inherit-owner-boundaries]]: its "element present + actor dead"
+// premise is structurally FALSE for host props -- this very seam drains the element in the same
+// call chain that kills the actor).
+bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid) {
+    namespace KE = coop::kerfur_entity;
+    if (!actor) return false;
+    auto* s = LoadSession();
+    if (!s || !s->connected()) return false;                 // solo / SP: the game owns itself
+    if (!g_kerfurNpcClass || !g_kerfurPropClass) return false;
+    if (!ue_wrap::game_thread::IsGameThread()) return false;  // the destroy seam is GT; defensive
+    void* cls = R::ClassOf(actor);
+    if (!cls || !R::IsDescendantOfAny(cls, &g_kerfurPropClass, 1)) return false;
+
+    const bool isHost = s->role() == coop::net::Role::Host;
+    const ue_wrap::FVector ploc = ue_wrap::engine::GetActorLocation(actor);
+    constexpr float kR2 = 500.f * 500.f;  // spwn billboard + (0,0,50); 500cm mirrors every kerfur proximity site
+    // The conversion-product test (ALL THREE required; audit 2026-07-13 findings 1+2):
+    //   1. FRESH-SPAWN STAMP -- FinishSpawningActor'd within the last 2 s (the seam fires inside
+    //      the spawn-then-destroy verb, so the true product is milliseconds old). This is the
+    //      load-bearing discriminator: a save-loaded / long-lived kerfur is NEVER stamped, so an
+    //      enrollment-gap "unowned" wanderer can neither suppress a legit relay (client) nor be
+    //      identity-welded onto the dying prop (host).
+    //   2. Not an established identity: HOST untracked by npc_sync (mirrors
+    //      FindNewFormKerfurActor); CLIENT not a bound NPC wire mirror (CollectMirrorActors is
+    //      the authoritative ownership signal) and not a PARKED ghost (another pending
+    //      conversion's product).
+    //   3. Within the verb's spawn radius of the dying prop.
+    const auto now = std::chrono::steady_clock::now();
+    PruneFreshNpcStamps(now);
+    if (g_freshNpcStamps.empty()) return false;  // nothing fresh in the world -> genuine destroy
+    std::unordered_set<void*> mirrors;
+    if (!isHost) CollectMirrorActors(/*wantProp=*/false, /*wantNpc=*/true, mirrors);
+    void* freshNpc = nullptr;
+    float bestD2 = kR2;
+    // Walk the STAMP LIST, not GUObjectArray -- the candidate universe is "kerfur NPCs finished
+    // in the last 2 s" (typically 0-1 entries), already class-gated at stamp time.
+    for (const auto& st : g_freshNpcStamps) {
+        void* obj = st.actor;
+        if (!obj || !R::IsLiveByIndex(obj, st.idx)) continue;
+        if (isHost) {
+            if (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId) continue;
+        } else {
+            if (mirrors.count(obj)) continue;
+            bool parked = false;
+            for (const auto& g : g_parkedGhosts)
+                if (g.actor == obj) { parked = true; break; }
+            if (parked) continue;
+        }
+        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        const float dx = loc.X - ploc.X, dy = loc.Y - ploc.Y, dz = loc.Z - ploc.Z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; freshNpc = obj; }
+    }
+    if (!freshNpc) return false;  // no conversion product beside it -> a genuine destroy -> generic relay
+
+    if (!isHost) {
+        // CLIENT: capture = suppress the keyed-destroy relay ONLY. The conversion axis owner stays
+        // the poll (SendConvertRequestDirect + ClaimConversionGhosts, proven in take-9: eid 9931
+        // converged perfectly whenever the relay lost the race). The mirror row survives this seam
+        // (client reverse maps never learn mirror actors, so the Unmarks above it no-op'd) -- the
+        // poll's ALIVE->DEAD premise holds and fires within 200 ms. [[feedback-one-owner-order-axis]]
+        UE_LOGI("kerfur_convert: CLIENT destroy-edge first refusal -- dying kerfur prop %p is conversion "
+                "churn (fresh NPC %.0f cm away); keyed-destroy relay SUPPRESSED (the poll owns the request)",
+                actor, std::sqrt(bestD2));
+        return true;
+    }
+
+    // HOST: converge inline at the destroy edge. The seam already captured dyingEid BEFORE its
+    // Unmarks drained the prop Element (BindFormActor needs only the KerfurRecord table, not the
+    // element row -- it even mints a fresh K for a first-sighted save prop).
+    if (dyingEid == coop::element::kInvalidId) {
+        // Never on the wire (pre-enroll window): no identity to converge; the generic keyed destroy
+        // + the periodic NPC enroll express the flip as destroy+spawn. Rare, lossless, logged.
+        UE_LOGI("kerfur_convert: destroy-edge first refusal declined -- dying kerfur prop %p has no eid "
+                "(never enrolled); generic destroy relay proceeds", actor);
+        return false;
+    }
+    const std::wstring ncls = R::ClassNameOf(freshNpc);
+    const coop::element::ElementId newEid = coop::npc_sync::RegisterHostNpcSilent(freshNpc, ncls);
+    if (newEid == coop::element::kInvalidId) {
+        UE_LOGW("kerfur_convert: destroy-edge converge -- RegisterHostNpcSilent failed for NPC %p; "
+                "generic destroy relay proceeds for prop eid=%u", freshNpc, static_cast<unsigned>(dyingEid));
+        return false;
+    }
+    const auto nloc = ue_wrap::engine::GetActorLocation(freshNpc);
+    const auto nrot = ue_wrap::engine::GetActorRotation(freshNpc);
+    KE::BindFormActor(dyingEid, freshNpc, R::InternalIndexOf(freshNpc), newEid, KE::Form::Npc, ncls,
+                      nloc.X, nloc.Y, nloc.Z, nrot.Pitch, nrot.Yaw, nrot.Roll);
+    auto wit = g_kerfurWatch.find(static_cast<uint32_t>(dyingEid));
+    if (wit != g_kerfurWatch.end()) wit->second.handled = true;      // the poll skips this death
+    // Record the converge for OnConvertRequest ONLY when we are inside ITS verb bracket -- a
+    // host-OWN toggle has no consumer and an unconditional write would leave a stale eid that a
+    // later recycled-eid request could falsely consume (audit finding 3).
+    if (g_requestVerbEid == static_cast<uint32_t>(dyingEid))
+        g_seamConvergedEid = static_cast<uint32_t>(dyingEid);
+    UE_LOGI("kerfur_convert: FIRST-REFUSAL turn-on converge -- dying kerfur prop eid=%u converged to fresh "
+            "NPC %p eid=%u (%.0f cm; KerfurConvert broadcast, NO generic PropDestroy)",
+            static_cast<unsigned>(dyingEid), freshNpc, static_cast<unsigned>(newEid), std::sqrt(bestD2));
+    return true;
+}
+
+// Stamp a freshly-finished kerfur NPC (see the header). Self-gating: called for EVERY finished
+// actor from the FinishSpawningActor Func seam, so the reject path must stay pointer-cheap --
+// null checks, one atomic session load, one ClassOf deref, one SuperStruct climb. No walks, no
+// allocations before the class gate.
+void NoteFreshKerfurNpcSpawn(void* actor) {
+    if (!actor || !g_kerfurNpcClass) return;
+    auto* s = LoadSession();
+    if (!s || !s->connected()) return;                       // solo/SP: no capture consumer
+    if (!ue_wrap::game_thread::IsGameThread()) return;       // seam is GT; defensive
+    void* cls = R::ClassOf(actor);
+    if (!cls || !R::IsDescendantOfAny(cls, &g_kerfurNpcClass, 1)) return;
+    const auto now = std::chrono::steady_clock::now();
+    PruneFreshNpcStamps(now);
+    g_freshNpcStamps.push_back(FreshNpcStamp{actor, R::InternalIndexOf(actor), now});
+}
+
 void OnDisconnect() {
     g_kerfurWatch.clear();   // GT-only; Tick is the sole toucher
     g_parkedGhosts.clear();  // GT-only conversion-ghost claim list
+    g_seamConvergedEid = 0xFFFFFFFFu;  // GT-only destroy-edge converge handshake (take-9)
+    g_requestVerbEid   = 0xFFFFFFFFu;
+    g_freshNpcStamps.clear();          // GT-only fresh kerfur NPC spawn stamps (take-9)
     g_lastConvPoll = {};
 }
 
