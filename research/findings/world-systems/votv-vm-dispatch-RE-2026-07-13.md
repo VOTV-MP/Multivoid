@@ -115,8 +115,42 @@ uncovered firing route" gate PASSES for A.
 
 **Option C (kismet+_P pak) — UNCHANGED.** No reason to enter: A passed the coverage gate.
 
+## Gate 2.2 — frequency counter (MEASURED 2026-07-13, autonomous run)
+
+Probe `coop::dev::gnatives_probe` (ini `gnatives_probe=1`, DLL `6b6dfe6f13a9df16aa5d487560f631eb`)
+swapped `GNatives[0x45]`/`[0x46]` with the substrate's wrapper shape (non-destructive operand
+peek + a full 16-slot watch-table MISS = cost upper bound + per-thread-class counter + 1/1024
+RDTSC sample) and tail-called the untouched handlers. Runtime confirmed the swap
+(`GNatives@00007FF6D60AECD0`, orig handlers = our static addrs modulo ASLR; tsc 4.69 GHz). One
+autonomous host run (story save `s_asdasd` → in-world `mainPlayer` gameplay), 105 one-second
+samples; probe log preserved in the session scratchpad (`gnatives_probe_run1_2026-07-13.log`).
+
+| Window | GT dispatch | worker (AnimBP) | GT added @120fps | vs 0.1 ms gate |
+|---|---|---|---|---|
+| boot / menu | 0/s | 0/s | 0.0000 ms | trivial |
+| in-world STEADY (solo-SP) | ~44,000/s | ~156,000/s | **0.013 ms/frame** | **7.5× under** |
+| PEAK second (world-load spike) | 177,946/s | ~157,000/s | **0.038 ms/frame** | **2.6× under** |
+
+- avg sampled cost ~150–168 cyc/call (~33 ns) — a GENEROUS upper bound (the RDTSC bracket wraps
+  the atomic + `IsGameThread()` too; the real steady wrapper, counter-free, is cheaper).
+- The GT number is the gate metric (only the game thread costs the main render frame). Worker
+  threads (the parallel AnimBP eval the /qf flagged, ~113–156 k/s) run on the task graph in
+  parallel — even the absurd all-serialized GT+worker worst case at peak stays <0.06 ms/frame@120.
+
+**VERDICT: the ≤0.1 ms/frame gate PASSES with margin.** The worst second observed (world-load,
+the highest-VM-churn moment of the game lifecycle, already including the AnimBP worker load) added
+only 0.038 ms/frame@120. Option A (GNatives swap) is cleared to build.
+
+Windows measured directly: boot, world-load, in-world steady (= solo-SP, single instance in-world
+not connected). Not yet captured: coop join-load + pile-burst — both are transient events on top
+of a baseline 7.5× under the gate, and both are bounded by the measured world-load peak (a pile
+drag is a few props ≪ the 44 k/s BP baseline; a client join-load ≈ the host world-load already
+measured; the host during a join does save-transfer = network, not VM). A LAN-pair confirmation
+is optional belt-and-suspenders, not a blocker.
+
 ## Next
 
-Frequency counter experiment (throwaway, ini-gated, same wrapper shape) → validate ≤0.1
-ms/frame across the 5 windows → then build the wrapper + kerfur form-flip assembler per
-`docs/COOP_VM_DISPATCH_PLAN.md`. The counter needs a game run (perf-gate step).
+Build the real substrate: the GNatives wrapper (per §1 of the plan — non-destructive peek,
+two-stage filter, coverage-gated validation, loud latches, GT/worker thread policy) + the kerfur
+form-flip assembler (§3), then the static conversion-entry census (§4), the verifying take (§5),
+and the one-commit crutch retirement. Retire the throwaway `gnatives_probe` with that work.

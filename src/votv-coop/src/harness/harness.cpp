@@ -15,6 +15,7 @@
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
+#include "coop/dev/gnatives_probe.h"
 #include "coop/dev/kerfur_toggle.h"
 #include "coop/session/teleport_client.h"
 #include "coop/dispatch/event_feed.h"
@@ -1189,6 +1190,12 @@ void Start() {
     // CLIENT conversion-adopt path has autonomous coverage (the radial verb is EX_LocalVirtual-
     // Function -- unhookable + needs a player at the menu). No-op unless the trigger env is set.
     coop::dev::kerfur_toggle::Init();
+
+    // GATE 2.2 of docs/COOP_VM_DISPATCH_PLAN.md (THROWAWAY, ini `gnatives_probe=1`):
+    // swap GNatives[0x45]/[0x46] with the substrate's wrapper shape and count EX_Local*
+    // dispatch rate + cost, to decide the <=0.1 ms/frame perf gate before building the
+    // real substrate. Installs at boot so the boot/solo-SP windows are covered too.
+    coop::dev::gnatives_probe::Init();
 
     // TEST-ONLY (VOTVCOOP_TEST_SAVE_ENUM=1): verify the native save browser
     // (ue_wrap::save_browser drives VOTV's loadSlots) at the menu before the ImGui

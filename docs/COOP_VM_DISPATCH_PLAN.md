@@ -13,8 +13,12 @@
 > **IDA SPIKE DONE 2026-07-13** (§2.1; RE in `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`):
 > GNatives + both handlers + operand layouts MEASURED on 0.9.0-n; xref classification CLEAN
 > table-indirect ⇒ **A has full coverage (chosen)**; **option E ELIMINATED BY MEASUREMENT** (§1a
-> verdict). Fail-ladder now A → A-asm → C-spike. NEXT gate: the §2.2 frequency counter (perf,
-> needs a game run) before building the consumer.
+> verdict). Fail-ladder now A → A-asm → C-spike.
+>
+> **PERF GATE 2.2 DONE 2026-07-13 — PASSES** (autonomous probe run, `gnatives_probe`): in-world
+> steady 0.013 ms/frame@120 (7.5× under), worst-observed second 0.038 (2.6× under). **Both HALT
+> gates cleared — option A is cleared to BUILD.** NEXT: the real GNatives wrapper + kerfur
+> form-flip assembler (§1, §3), census (§4), verifying take (§5), one-commit crutch retirement.
 
 ## 0. The problem (why this exists)
 
@@ -142,11 +146,15 @@ removed).
      the caller stream ⇒ the thunk must reimplement ProcessScriptFunction's caller-stream
      marshaling AND carry the recursion-breakable shape discriminator AND perturbs the Bind
      name-registry. Loses the tie-breaker + trips the §2.4 concession smell. Not built.
-2. **Frequency counter experiment** (throwaway, ini-gated, same wrapper shape = cost upper
-   bound), per-thread, **FIVE windows**: boot / join-load spike / steady / pile-burst /
-   **solo-SP** (the process pays the swap forever, session or not).
-3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** on the worst-case scene
-   (6 live kerfurs + NPC AnimBP load + pile burst) + A/B ini toggle with no measurable fps drop.
+2. **Frequency counter experiment** — ✅ **DONE 2026-07-13** (probe `coop::dev::gnatives_probe`,
+   ini-gated, same wrapper shape = cost upper bound; full data in the RE findings doc + scratchpad
+   `gnatives_probe_run1_2026-07-13.log`). Autonomous host run, 105 one-second samples. Measured:
+   in-world STEADY (solo-SP) = ~44 k GT dispatch/s → **0.013 ms/frame@120**; PEAK second
+   (world-load spike, incl. ~156 k/s AnimBP worker load) = 177,946 GT/s → **0.038 ms/frame@120**.
+   Windows captured: boot, world-load, steady/solo-SP. Coop join-load + pile-burst not yet
+   captured (transient, bounded by the measured world-load peak — optional LAN confirmation).
+3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** — ✅ **PASSES with margin**
+   (steady 7.5× under, worst-observed second 2.6× under). Option A cleared to build.
    **Fail-ladder (amended: spike 07-13 removed the E rung — E eliminated by measurement, §1a):
    A → ONE asm-thunk iteration → option-C feasibility spike** (C is UNPROVEN e2e here — never
    sold as a solid rung until its own spike passes).

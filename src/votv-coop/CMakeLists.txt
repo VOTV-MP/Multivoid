@@ -404,6 +404,7 @@ add_library(votv-coop SHARED
     src/coop/dev/heap_probe.cpp
     src/coop/dev/inventory_probe.cpp
     src/coop/dev/drone_probe.cpp
+    src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/pinecone_probe.cpp
