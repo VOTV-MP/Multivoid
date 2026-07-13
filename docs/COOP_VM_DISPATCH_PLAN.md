@@ -7,8 +7,14 @@
 >
 > AMENDED by the **comparative pass 07-13** (5 rounds, converged, same thread file): user asked to
 > re-weigh the pak family (granular patch + auto-repatch automation) against this plan. Verdict:
-> **A stays primary — re-derived from structure, not incumbency.** New option **E** (§1a) displaces
-> C as the PENULTIMATE fail-ladder rung; §2 ladder + §6 entry costs updated accordingly.
+> **A stays primary — re-derived from structure, not incumbency.** New option **E** (§1a) was
+> proposed as a candidate penultimate rung.
+>
+> **IDA SPIKE DONE 2026-07-13** (§2.1; RE in `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`):
+> GNatives + both handlers + operand layouts MEASURED on 0.9.0-n; xref classification CLEAN
+> table-indirect ⇒ **A has full coverage (chosen)**; **option E ELIMINATED BY MEASUREMENT** (§1a
+> verdict). Fail-ladder now A → A-asm → C-spike. NEXT gate: the §2.2 frequency counter (perf,
+> needs a game run) before building the consumer.
 
 ## 0. The problem (why this exists)
 
@@ -93,40 +99,57 @@ the §2.4 concession threshold (a discriminator-to-fix-a-discriminator). A has n
 all (the opcode handler seat knows the shape constructively); (c) `UFunction::Bind()` re-run after
 the flip nulls Func — shipping re-Bind paths must be audited.
 
-**E is evaluated near-free INSIDE the §2.1 IDA spike** (same functions decompiled). Written
-POSITIVELY-falsifiable pass criteria — E PASSES iff ALL of: (i) PLSF directly callable (not fully
-inlined); (ii) one FFrame field provably distinguishes PE-shape from caller-shape across ALL
-construction sites (candidates: PreviousFrame linkage, NewStack Code init, CurrentNativeFunction)
-— zero probabilistic elements; (iii) FUNC_Native side-effect audit clean (netcode flag checks
-inert in SP shipping, no Bind() re-run path); (iv) install = existing Func-patch discipline
-verbatim; (v) same ENTRY/EXIT + context contract. Residual static ambiguity in (ii) resolves by
-PIGGYBACK on the §2.2 counter experiment (dump frame fields of both shapes on the kerfur verbs) —
-no new gate steps. **Pre-written tie-breaker: if the spike passes BOTH A and E → A wins**
-(invariant-not-a-site-list: the substrate must hold the WHOLE dispatch class; A's decode-validation
-and telemetry structurally require seeing every dispatch; E has no discovery mode). If the ladder
-falls to E, E inherits **ALL of A's gates verbatim**: the ≤0.1 ms/frame numeric gate + A/B ini
-toggle, the 5-window counter re-run in E shape (measured, not assumed), a validation-mode analog
-(first-N per-shape routing cross-check), loud latches, 1/s `Func==thunk` integrity check, atomic
-disable, process-lifetime no-unpatch. No gate-less rung exists.
+**E was evaluated near-free INSIDE the §2.1 IDA spike** (same functions decompiled). The written
+POSITIVELY-falsifiable pass criteria were — E PASSES iff ALL of: (i) PLSF directly callable (not
+fully inlined); (ii) one FFrame field provably distinguishes PE-shape from caller-shape across ALL
+construction sites — zero probabilistic elements; (iii) FUNC_Native side-effect audit clean;
+(iv) install = existing Func-patch discipline verbatim; (v) same ENTRY/EXIT + context contract.
+
+**SPIKE VERDICT 2026-07-13 — E ELIMINATED BY MEASUREMENT** (the honest outcome the criteria were
+written to allow): (i) PASSES — PLSF = `ProcessScriptFunction` `0x141453550`, a real shared
+callable. But (ii) FAILS the "zero probabilistic elements" bar and (iii)/(iv) surface real costs:
+a native called via EX_Local* is handed the **caller's** FFrame with args still in the caller
+bytecode stream (measured: `ProcessScriptFunction` is the thing that marshals them; flipping
+FUNC_Native BYPASSES it), so E's thunk must **reimplement ProcessScriptFunction's caller-stream
+param marshaling** — an engine-internal reimplementation — AND still needs the `Stack.Node == fn`
+discriminator that recursion structurally breaks, AND flipping FUNC_Native perturbs the Bind
+name-registry (`0x141306370`). A, by contrast, sits at the opcode handler where the shape is known
+by construction and tail-calls the UNTOUCHED handler (which routes on the real flag every time —
+no discriminator, no reimplementation). **E loses the pre-written tie-breaker AND independently
+trips the §2.4 concession smell. Not built.** The fail-ladder is now **A → A-asm → C-spike** (E rung
+removed).
 
 ## 2. Measurement gates (HALT-gated ladder — no consumer code before verdicts)
 
-1. **IDA spike** (read-only): locate GNatives + fill timing (GRegisterNative statics); decompile
-   both handlers; pin operand layouts FROM THIS BINARY; **xref-classify every handler reference**
-   `{table-indirect | hookable-direct → A' per-copy MinHook | inlined-copy → option C primary
-   for affected verbs + coverage claim narrowed}`. No ship with an uncovered firing route.
-   **Scope absorbs the §1a option-E checks** (near-free, same functions): PLSF callability,
-   ProcessLocalFunction native-branch semantics, FFrame construction-site enumeration for the
-   shape discriminator, FUNC_Native side-effect audit (incl. Bind() re-run paths), BP
-   class-object lifetime across save-reload.
+1. **IDA spike** — ✅ **DONE 2026-07-13** (read-only; full RE in
+   `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`; IDB saved with all
+   functions + `GNatives_table` renamed). Measured on `VotV-Win64-Shipping.exe` 0.9.0-n:
+   - `GNatives_table` = **`0x144D8ECD0`**; dispatch = `call [GNatives + opcode*8]` (FFrame
+     +0x18=Object, +0x20=Code; handler ABI rcx=Context/rdx=&Stack/r8=Result).
+   - `execLocalVirtualFunction` (op 0x45) = `0x1414751A0`, operand = 12-byte FScriptName;
+     `execLocalFinalFunction` (op 0x46) = `0x141474FB0`, operand = 8-byte `UFunction*`. Both
+     peekable non-destructively.
+   - **Xref classification = CLEAN table-indirect**: both handlers reached at dispatch ONLY
+     via the table; zero direct calls, zero inlined copies (other data-xrefs = the Bind
+     name-registry + `.pdata` unwind — benign). **A has full coverage; no A′/C fallback
+     triggered.**
+   - Both handlers branch identically on `FunctionFlags & 0x400 (FUNC_Native)` @UFunction+0xB0
+     → `UFunction::Invoke` (Func@+0xD8 — our existing patch offset, cross-confirmed) vs
+     `ProcessScriptFunction` (`0x141453550`, real callable helper) → `ProcessInternal`
+     (`0x141465DF0`).
+   - **Option E ELIMINATED BY MEASUREMENT** (see §1a): the FUNC_Native flip works
+     mechanically, but a native called via EX_Local* gets the CALLER frame with args still in
+     the caller stream ⇒ the thunk must reimplement ProcessScriptFunction's caller-stream
+     marshaling AND carry the recursion-breakable shape discriminator AND perturbs the Bind
+     name-registry. Loses the tie-breaker + trips the §2.4 concession smell. Not built.
 2. **Frequency counter experiment** (throwaway, ini-gated, same wrapper shape = cost upper
    bound), per-thread, **FIVE windows**: boot / join-load spike / steady / pile-burst /
    **solo-SP** (the process pays the swap forever, session or not).
 3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** on the worst-case scene
    (6 live kerfurs + NPC AnimBP load + pile burst) + A/B ini toggle with no measurable fps drop.
-   **Fail-ladder (amended, comparative pass 07-13): A → ONE asm-thunk iteration → option E
-   (§1a, under the same gates verbatim) → option-C feasibility spike** (C is UNPROVEN e2e
-   here — never sold as a solid rung until its own spike passes).
+   **Fail-ladder (amended: spike 07-13 removed the E rung — E eliminated by measurement, §1a):
+   A → ONE asm-thunk iteration → option-C feasibility spike** (C is UNPROVEN e2e here — never
+   sold as a solid rung until its own spike passes).
 4. **Concession threshold (written):** substrate+assembler > 600 LOC, or a
    discriminator-to-fix-a-discriminator appears ⇒ the trade is lost, concede and stop.
 
