@@ -148,6 +148,39 @@ drag is a few props ≪ the 44 k/s BP baseline; a client join-load ≈ the host 
 measured; the host during a join does save-transfer = network, not VM). A LAN-pair confirmation
 is optional belt-and-suspenders, not a blocker.
 
+## §4 conversion-entry census (measured call-sites 2026-07-13; classification = DESIGN, verify at build)
+
+Tool: `research/bp_reflection/_find_spawn.py` (resolves import call-names per expr — no
+grep false-negative, per `lesson_bp_json_grep_resolve_imports`). Scanned the two conversion
+assets. MEASURED call-sites (the opcode + callee is tool-resolved fact); the CONVERSION-vs-noise
+classification below is my reading and must be re-verified when the assembler is built.
+
+**prop_kerfurOmega (prop -> NPC, "turn ON"):**
+- `ExecuteUbergraph_prop_kerfurOmega` -> `spawnKerfuro` [EX_LocalVirtualFunction] — the ONLY
+  conversion dispatch on the prop side. ✓ (matches the measured verb.)
+- `spawnKerfuro` -> `BeginDeferredActorSpawnFromClass(self, spawnKerfur, …)` [EX_CallMath] — the
+  successor spawn INSIDE the verb (Func-visible; the seam the bracket catches).
+
+**kerfurOmega (NPC -> prop, "turn OFF"):**
+- `ExecuteUbergraph_kerfurOmega` -> `dropKerfurProp` [EX_LocalVirtualFunction] — the ONLY
+  conversion dispatch on the NPC side. ✓
+- `dropKerfurProp` -> `BeginDeferredActorSpawnFromClass(self, dropProp, …)` [EX_CallMath] — the
+  conversion successor spawn (Func-visible).
+- **NOISE (NOT conversions — the assembler must NOT treat these as identity flips):** the NPC
+  ubergraph + helpers do MANY other `BeginDeferredActorSpawnFromClass` — `explosion_C` (death
+  fx), `prop_food_C`/`prop_C`/floppy via `floppyFromType` (dropped LOOT), `kerfusFace_C`
+  (`makeFace`), hold-item spawns (`loadHoldItem`, `holdObject_kerf`). These are the kerfur
+  spawning effects/loot/held-objects, NOT the kerfur converting itself. The successor-catch
+  logic (BeginDeferred inside the bracket window) MUST discriminate the conversion spawn
+  (`dropProp`/`spawnKerfur`) from these co-located loot spawns — e.g. by spawned-class family +
+  the bracket being open, not "any BeginDeferred while a verb runs."
+
+Consequence for the build: the two verbs ARE the complete conversion-dispatch set (both
+EX_LocalVirtualFunction — the wrapper covers them), but the in-bracket successor resolution is
+NOT "the next BeginDeferred" — it must key on the spawned class, because the same ubergraph fires
+loot BeginDeferreds. NOT yet censused: the ~28 kerfur VARIANT JSONs (assumed to inherit the base
+verbs; verify a sample at build). This is a DESIGN-status census, not VERIFIED.
+
 ## Next
 
 Build the real substrate: the GNatives wrapper (per §1 of the plan — non-destructive peek,
