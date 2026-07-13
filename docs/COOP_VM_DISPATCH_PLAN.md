@@ -4,6 +4,11 @@
 > holds"; thread transcript in the session scratchpad `qf_thread.md`, summarized here). Nothing
 > below is built yet. The implementation pass is HALT-GATED: no consumer code before the spike +
 > counter verdicts. This is the living plan doc — keep it current as phases land.
+>
+> AMENDED by the **comparative pass 07-13** (5 rounds, converged, same thread file): user asked to
+> re-weigh the pak family (granular patch + auto-repatch automation) against this plan. Verdict:
+> **A stays primary — re-derived from structure, not incumbency.** New option **E** (§1a) displaces
+> C as the PENULTIMATE fail-ladder rung; §2 ladder + §6 entry costs updated accordingly.
 
 ## 0. The problem (why this exists)
 
@@ -68,18 +73,59 @@ Wrapper mechanics (all /qf-hardened):
   brackets carry an `ownInvocation` flag — structural, so customer #2 cannot silently break the
   self-bracket convention.
 
+## 1a. Option E — runtime per-function nativization (comparative pass 07-13; ladder rung 3)
+
+Granular runtime substitution, NO pak, NO table swap: set `FUNC_Native` + `Func = thunk` on the
+WATCHED script UFunctions at install time, so `ProcessLocalFunction`'s native-check branch routes
+EX_Local* dispatch through `Invoke`/`Func` (the seam class our engine already owns). The thunk
+brackets + discriminates frame shape (PE-shaped invoke → `ProcessInternal`; caller-frame →
+tail-call `ProcessLocalScriptFunction`, resolved via IDA). Zero cost on unwatched dispatches BY
+CONSTRUCTION. This is the honored form of the user's "granular substitution" instinct — in-memory,
+no amendment, no redistribution.
+
+Known weaknesses vs A (rounds C-1..C-3): (a) class-LIFECYCLE obligation A lacks by construction
+(flip applied per class-load + every override in the name-keyed family; inherits the existing
+Func-patch install-on-appearance discipline verbatim — a lifecycle debt, not a new seam);
+(b) SHAPE ORACLE fragility: recursion breaks a naive `Stack.Node == fn` discriminator (recursive
+caller-frame carries Node==fn → misroute → corruption). Kerfur verbs are measured non-recursive,
+but a SUBSTRATE must hold the whole class — E needs a provably-safe discriminator or it loses by
+the §2.4 concession threshold (a discriminator-to-fix-a-discriminator). A has no shape oracle at
+all (the opcode handler seat knows the shape constructively); (c) `UFunction::Bind()` re-run after
+the flip nulls Func — shipping re-Bind paths must be audited.
+
+**E is evaluated near-free INSIDE the §2.1 IDA spike** (same functions decompiled). Written
+POSITIVELY-falsifiable pass criteria — E PASSES iff ALL of: (i) PLSF directly callable (not fully
+inlined); (ii) one FFrame field provably distinguishes PE-shape from caller-shape across ALL
+construction sites (candidates: PreviousFrame linkage, NewStack Code init, CurrentNativeFunction)
+— zero probabilistic elements; (iii) FUNC_Native side-effect audit clean (netcode flag checks
+inert in SP shipping, no Bind() re-run path); (iv) install = existing Func-patch discipline
+verbatim; (v) same ENTRY/EXIT + context contract. Residual static ambiguity in (ii) resolves by
+PIGGYBACK on the §2.2 counter experiment (dump frame fields of both shapes on the kerfur verbs) —
+no new gate steps. **Pre-written tie-breaker: if the spike passes BOTH A and E → A wins**
+(invariant-not-a-site-list: the substrate must hold the WHOLE dispatch class; A's decode-validation
+and telemetry structurally require seeing every dispatch; E has no discovery mode). If the ladder
+falls to E, E inherits **ALL of A's gates verbatim**: the ≤0.1 ms/frame numeric gate + A/B ini
+toggle, the 5-window counter re-run in E shape (measured, not assumed), a validation-mode analog
+(first-N per-shape routing cross-check), loud latches, 1/s `Func==thunk` integrity check, atomic
+disable, process-lifetime no-unpatch. No gate-less rung exists.
+
 ## 2. Measurement gates (HALT-gated ladder — no consumer code before verdicts)
 
 1. **IDA spike** (read-only): locate GNatives + fill timing (GRegisterNative statics); decompile
    both handlers; pin operand layouts FROM THIS BINARY; **xref-classify every handler reference**
    `{table-indirect | hookable-direct → A' per-copy MinHook | inlined-copy → option C primary
    for affected verbs + coverage claim narrowed}`. No ship with an uncovered firing route.
+   **Scope absorbs the §1a option-E checks** (near-free, same functions): PLSF callability,
+   ProcessLocalFunction native-branch semantics, FFrame construction-site enumeration for the
+   shape discriminator, FUNC_Native side-effect audit (incl. Bind() re-run paths), BP
+   class-object lifetime across save-reload.
 2. **Frequency counter experiment** (throwaway, ini-gated, same wrapper shape = cost upper
    bound), per-thread, **FIVE windows**: boot / join-load spike / steady / pile-burst /
    **solo-SP** (the process pays the swap forever, session or not).
 3. **Numeric gate (written, pre-committed): added cost ≤ 0.1 ms/frame** on the worst-case scene
    (6 live kerfurs + NPC AnimBP load + pile burst) + A/B ini toggle with no measurable fps drop.
-   Fail → ONE asm-thunk iteration → fail → **option-C feasibility spike** (C is UNPROVEN e2e
+   **Fail-ladder (amended, comparative pass 07-13): A → ONE asm-thunk iteration → option E
+   (§1a, under the same gates verbatim) → option-C feasibility spike** (C is UNPROVEN e2e
    here — never sold as a solid rung until its own spike passes).
 4. **Concession threshold (written):** substrate+assembler > 600 LOC, or a
    discriminator-to-fix-a-discriminator appears ⇒ the trade is lost, concede and stop.
@@ -143,13 +189,36 @@ e2e in this project** (we ship an asset pak, but "edit a function's kismet → r
 it → behavior changes" has never been demonstrated — tools vendored: unrealpak,
 kismet-analyzer); permanent per-game-update re-patch pipeline (ours forever, automatable);
 **requires a written CLAUDE.md principle-1 / A6 amendment if ever selected** ("permitted to
-consider" ≠ adopted).
+consider" ≠ adopted — and per the comparative pass the amendment is named what it is: a
+deliberate REPEAL of an architectural principle, quoted verbatim to the user for the decision).
 
-C's role in this plan: the pre-committed escape hatch, entered ONLY via (a) the numeric gate
-failing twice, (b) the spike finding inlined handler copies, or (c) a future customer needing
-CANCEL semantics (structurally awkward at the VM seam — requires param consumption). Entry goes
-through a **C feasibility spike first** (~1 day: patch one trivial BP function, verify
-in-game) — C is never load-bearing on hope.
+**Comparative pass 07-13 findings (5 rounds, converged — same thread file):**
+- The pak channel is HALF-proven [V]: NEW-asset paks ship + auto-mount on every peer since 07-02
+  (client-model pipeline). The load-bearing half — `_P` override of an EXISTING cooked package +
+  the engine accepting an edited kismet body — is UNPROVEN here.
+- "Granular" at the pak layer is a tool-level illusion `[inferred-strong, NOT measured on VOTV]`:
+  override shadowing is whole-package-file; a stale override SILENTLY REVERTS any game-update
+  change to the same package. The C spike must MEASURE this (it may be worse: cook-version locks,
+  partial/no shadowing — an outcome that kills the C branch entirely → renegotiate constraint).
+- Peer pak-mismatch divergence is mitigable (pak-hash in the existing handshake = loud refuse,
+  now a MANDATORY C component) — but the loud gate converts EVERY content update into a coop
+  OUTAGE window until re-extract → re-transform → re-pak → redistribute. A/E have no such window
+  (measured: VOTV alpha cadence is frequent CONTENT updates; those never touch engine code).
+- MTA fidelity [V]: MTA ships ZERO modified game assets in 15+ years — all interception is
+  runtime memory. C additionally means redistributing MODIFIED copyrighted game content to peers.
+- C3-last in the ranking does NOT depend on the unmeasured shadowing claim — the measured pillars
+  (MTA precedent, A6-as-written, unproven-e2e, site-list shape, outage window) hold it alone.
+
+C's role in this plan: the FINAL escape hatch (rung 4, after option E — §2.3 ladder), entered
+ONLY via (a) the numeric gate failing through A, A-asm AND E, (b) the spike finding inlined
+handler copies, or (c) a future customer needing CANCEL semantics (structurally awkward at the
+VM seam — requires param consumption). Entry goes through a **C feasibility spike first** (~1
+day: patch one trivial BP function, verify in-game; scope: _P-override-accepted + kismet-edit-
+accepted + whole-package silent-revert MEASURED) — C is never load-bearing on hope. Entry cost
+EXPLICITLY includes: the auto-repatch pipeline (structural kismet signature match → re-apply
+transform → re-pak; boot-time hash check in the DLL) as a MANDATORY component, the pak-hash
+handshake gate, and the CLAUDE.md amendment. **Pipeline scope is priced from the C-spike's
+measurements, never estimated ahead.**
 
 ## 7. Workaround retirement inventory (RULE 2, post-substrate; user mandate)
 
