@@ -40,6 +40,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   primary's answers as settled, so "trust a source for X, distrust it for Y" slips a whole pass. Skill
   patched 2026-07-13 (source-consistency / cross-answer / undone-measurement angles); still check manually.
   `memory/feedback_qf_selective_trust_blindspot.md`
+- **The /qf critic escalates WITHIN THE FRAME it is handed** — so a MIGRATION design (repoint/rebind/re-key)
+  that migrates the ONE identity map the brief names, while a PARALLEL map keyed on the same entity finalizes
+  late, slips a whole multi-round pass (11 rounds + a "that holds" missed the host-only KerfurId table). When
+  a design migrates identity, ENUMERATE every map that keys on the entity + prove the op updates or gates ALL
+  of them. Skill patched 2026-07-13 nite (IDENTITY-MAP-COMPLETENESS angle + brief-enumeration + convergence
+  bar). `memory/feedback_qf_enumerate_identity_maps_on_migration.md`
 - **"per rule 1" = full green light** for the root-cause fix in its complete form (incl. hard
   architectural change). Don't scope down, don't ask "is this too big". `memory/feedback_no_crutch_questions_act_autonomously.md`
 - **No design/architect AGENTS** — design yourself from code + docs + MTA; search + audit agents OK. `memory/feedback_no_design_architect_agents.md`
@@ -258,6 +264,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   [V] two ways: import-resolved body walk + 18/18 hands-on (`722fbe18`). This is the load-bearing 2a
   premise — settled, do NOT re-dig. *Look FIRST:* `research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`
   (body walk + runtime). `memory/lesson_kerfur_verbs_synchronous_capture_in_window.md`
+- **Identity-migrate-at-birth must cover EVERY identity map, not the one you were thinking about.** The
+  correct morph/convert shape = repoint the eid onto successor B at B's `FinishSpawningActor` (measured to
+  precede A's `K2_DestroyActor`) so A dies eid-less (natural husk, `UnmarkKnownKeyedProp` returns on
+  `EidForActor==kInvalidId`) — ZERO suppression, dissolving the §9 `if(isMorphing)skip` crutch. TRAP: "the
+  eid" is not the whole identity surface — the HOST has a SECOND table (`g_actorToKerfurId`/`KerfurRecord.actor`,
+  `kerfur_entity.cpp:62-64`; client is eid-based, no KerfurId map) that `RebindLocalElementActor` does NOT
+  re-key → mid-window KerfurId resolves DEAD-A while eid resolves LIVE-B (heisenbug). FIX: split
+  `BindFormActor` into {actor-migrate ALL maps at birth} + {form-finalize at converge}. *Look FIRST:* grep
+  the entity's id/type + enumerate every keyed map BEFORE the design; `docs/COOP_VM_DISPATCH_PLAN.md` §3.
+  `memory/lesson_identity_migrate_at_birth_covers_every_map.md`
 - **Before installing a PERMANENT / un-removable seam (process-lifetime GNatives swap, never un-swapped),
   measure its real cost in a THROWAWAY removable probe FIRST** — including the ENABLED=false disabled path
   (the eternal tax the process pays forever) and a WORST-CASE frame, not idle. You can't roll back a

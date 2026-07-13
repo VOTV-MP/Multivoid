@@ -78,11 +78,43 @@
 > toggle, on both peers. 2a's HALT-gate (all form spawns + self-destroys in-window; zero from-a-toggle
 > formOut/offGt/anomaly) is **PASSED**.
 >
-> **NEXT = 2a (capture + suppress + converge).** Per the standing rule `[[feedback-qf-before-implementation]]`,
-> 2a OPENS with a `/qf 15` design+implementation pass BEFORE any 2a code (interrogate the capture reservation,
-> suppression-as-loan restore, authority routing by `IsMirror()`, the two-openers dedup, eviction/TTL — against
-> the now-[V] containment facts). Then 1b (harden + self-bracket opener-b) can interleave. Sequence tail:
-> 2a/2b/2c → verifying take → one-commit retirement of the legacy crutches.
+> **2a /qf DESIGN PASS — CONVERGED 2026-07-13 nite (11 critic rounds + user injection; thread
+> `qf_thread.md`).** The pass MATERIALLY RESHAPED 2a: it CAUGHT the "suppress OUR eid-drain" mechanism as
+> the §9 `if(isMorphing) skip` crutch and REMOVED it (RULE-1 win — crutch caught before build), replacing
+> the whole SUPPRESS==RESERVE+loan model with **REPOINT == identity-migrate-at-birth** via the EXISTING
+> `RebindLocalElementActor` (host) / `RegisterPropMirror(...,rebindInPlace)` (client) primitives. Measured
+> roots: `SetActor`->`NoteActorRebind` drops `oldActor->eid` + sets `newActor->eid`
+> (`prop_element_tracker.cpp:460-463`); the existing destroy drain `UnmarkKnownKeyedProp` early-returns on
+> `EidForActor(actor)==kInvalidId` (`:232-233`). So repointing the eid to live-B at B's `FinishSpawning`
+> (measured STMT21/15, BEFORE A's `K2_DestroyActor` STMT26/18) makes A **eid-less -> a natural husk, ZERO
+> suppression**. The §3 CAPTURE/SUPPRESS/BRACKET-EXIT paragraphs below are SUPERSEDED by this repoint-at-birth
+> model (full consolidation owed next doc pass); the converged design in brief:
+> **CAPTURE** B at the FinishSpawningActor Func seam inside the open 0x45 bracket (pairing = the open
+> bracket's Context = A, temporal nesting, verbs synchronous [V]; name+descendant-class filter, variant
+> census static-GREEN over all 45). **REPOINT** at B's birth: migrate BOTH host identity maps — eid->actor
+> (`RebindLocalElementActor`/mirror `RegisterPropMirror rebindInPlace`) AND the HOST-ONLY KerfurId map
+> (`g_actorToKerfurId`+`KerfurRecord.actor`, `kerfur_entity.cpp:62-64`; the client is eid-based, no KerfurId
+> map = simpler) — a pure data store; set an Element **form-transition-pending** flag. A's destroy then
+> husks eid-less (no suppression). During the arm-N/execute-N+1 window the pending flag gates THREE
+> type-dispatched consumers only: SNAPSHOT-OUT, WIRE-MUTATION-IN, POSE-LANE (authoring first-refusal is
+> automatic — B already in the reverse map, enroll idempotent; read/deref is safe — eid->live-B). **DEFERRED
+> converge** (tick N+1, existing two-phase net-pump barrier): `BindFormActor` = {set Element type + move
+> MirrorManager + finalize KerfurRecord.form + clear flag} atomic + broadcast KerfurConvert; direction
+> derived from the eid's CURRENT actor class at execute time (chained A->B->C supersede falls out free — the
+> reverse re-key is last-writer-wins). Guarded `IsLiveByIndex(B)`+serial; B-died-in-window -> no-B branch
+> drains the eid (now dead-B) + PropDestroy (deletes the Element, flag dies with it). RESOLUTION
+> authority-split: host converge+broadcast; client park+adopt-on-broadcast. BACKSTOP: loose staleness-TTL
+> (abnormal churn only, tripwire never scan-adopt); world-lifecycle-reset fanout largely DISSOLVED under
+> repoint (only form-finalization pending; TTL is the guaranteed backstop; registry-rebuild self-heals).
+>
+> **NEXT = the 2a OBSERVE-ONLY measurement increment (gates AHEAD of any capture/suppress code, per
+> PROBE-DON'T-GUESS).** Extend the increment-1 observe consumer (logging only, no 2a logic) + one hands-on
+> run to measure: (1) one-capture-per-A-eid with BOTH openers live (`g_requestVerbEid` correlate); (2)
+> floppy/loot/explosion class-separation (`floppyIn`/`formOut` clean on a floppy-carrying + a death/loot
+> toggle); (3b) per-bracket seam-order (`formIn` precedes `selfIn`); (3c) B-index assigned+live at the
+> capture seam; plus log a pending-eid pose-tick to confirm the type-dispatch misroute. THEN the 2a capture
+> code. Then 1b (harden + self-bracket opener-b) can interleave. Sequence tail: 2a/2b/2c -> verifying take
+> -> one-commit retirement of the legacy crutches.
 
 ## 0. The problem (why this exists)
 
@@ -287,12 +319,49 @@ FunctionParams guard + per-consumer cross-check.
 
 ## 3. The first consumer: kerfur FORM-FLIP ASSEMBLER (REWRITTEN by impl /qf pass 2026-07-13)
 
-**The substrate is a deterministic CAPTURE + destroy-SUPPRESS mechanism that FEEDS THE EXISTING
-deferred converge — NOT a converge rewrite** (impl /qf R4, the key reframe; grounded in measured
-code). It replaces THREE probabilistic crutches (`TryAdoptFreshKerfurProp` / `TryCaptureKerfurPropDestroy`
-/ death-watch poll) with ONE deterministic bracket signal, and REUSES the proven machinery
-(`ConvergeAfterConversion`, `BindFormActor`, the two-phase-armed deferred queue, `OnKerfurConvert`,
-park-by-eid). Reuse-the-proven-author, don't raw-reimplement.
+**The substrate is a deterministic CAPTURE + identity-REPOINT-at-birth mechanism that FEEDS THE EXISTING
+deferred converge — NOT a converge rewrite, and NOT a suppression** (2a /qf pass, the key reframe). It
+replaces THREE probabilistic crutches (`TryAdoptFreshKerfurProp` / `TryCaptureKerfurPropDestroy` /
+death-watch poll) AND the just-designed suppression crutch with ONE deterministic bracket signal + a
+repoint, and REUSES the proven machinery (`ConvergeAfterConversion`, `BindFormActor` — SPLIT into
+{actor-migrate at birth}+{form-finalize at converge}, the two-phase-armed deferred queue, `OnKerfurConvert`,
+park-by-eid, the existing `RebindLocalElementActor` / `RegisterPropMirror rebindInPlace`). Reuse-the-proven-
+author, don't raw-reimplement.
+
+**CONVERGED DESIGN (repoint-at-birth) — the authoritative model:**
+- **CAPTURE** B at the `FinishSpawningActor` Func seam inside the open 0x45 bracket. Pairing = the open
+  bracket's Context = A (temporal nesting; verbs synchronous [V], non-overlapping GT brackets). Filter =
+  name + descendant-class (variant-descent census static-GREEN over all 45: every `prop_kerfurOmega_*` /
+  `kerfurOmega_*` descends from the base, directly or one level via `col_gamer`→`col`→base). The class
+  filter is the WITHIN-bracket role gate (B vs floppy vs loot vs `explosion_C`), NOT the pairing key.
+- **REPOINT at B's birth (identity-migrate-at-birth — measured order: B `FinishSpawning` STMT21/15 PRECEDES
+  A `K2_DestroyActor` STMT26/18):** migrate ALL identity maps onto B in one data store — the eid<->actor
+  Registry reverse via `RebindLocalElementActor` (host) / `RegisterPropMirror(...,rebindInPlace)` (client,
+  which routes through the same `SetActor`→`NoteActorRebind`), AND the HOST-ONLY KerfurId table
+  (`g_actorToKerfurId` + `KerfurRecord.actor`; the client is eid-based, no KerfurId map = simpler). Set an
+  Element `form-transition-pending` flag. **`SetActor`→`NoteActorRebind` drops A→eid + sets B→eid**
+  (`prop_element_tracker.cpp:460-463`), so when A's `K2_DestroyActor` fires the existing
+  `UnmarkKnownKeyedProp(A)` resolves `EidForActor(A)==kInvalidId` and early-returns (`:232-233`) — **A dies
+  a natural husk, ZERO suppression, no gate.** (This is what dissolved the suppression crutch AND retires
+  take-9-bug1's client destroy-relay suppression on the same husk mechanism.)
+- **The `form-transition-pending` flag gates the THREE type-dispatched consumers** during the
+  arm-N/execute-N+1 window (pointer migrated, but Element TYPE + MirrorManager membership + `KerfurRecord.form`
+  finalize at converge): SNAPSHOT-OUT (exclude from join snapshot — the U1 half-migrated-row race),
+  WIRE-MUTATION-IN (coalesce incoming destroy/convert), POSE-LANE (both manager tick loops skip a pending
+  Element — else the old-type lane ticks the new-form actor for one tick). Authoring first-refusal is
+  AUTOMATIC (B already in the reverse map → enroll idempotent); read/deref is safe (eid→live-B).
+- **DEFERRED converge (tick N+1, the existing two-phase net-pump barrier):** `BindFormActor`'s FORM half =
+  {set Element type + move MirrorManager + finalize `KerfurRecord.form` + clear flag} atomic + broadcast
+  `KerfurConvert`. **Direction is derived from the eid's CURRENT actor class at EXECUTE time** (not a stored
+  capture-time flag) — so a chained A→B→C supersede falls out FREE (the reverse re-key is last-writer-wins;
+  the older B husks eid-less; no last-writer-wins field needed). Guarded `IsLiveByIndex(B)` + serial; a B
+  that died in the window → the no-B branch DRAINS the eid (now points at dead B) + PropDestroy, which
+  DELETES the Element (the flag dies with it). RESOLUTION authority-split: host converge+broadcast; client
+  park+adopt-on-broadcast (existing forced-prediction).
+- **BACKSTOP:** loose staleness-TTL (abnormal churn only — a tripwire, NEVER a runtime scan-and-adopt, which
+  IS the retired `TryAdoptFreshKerfurProp` crutch). The world-lifecycle-reset fanout LARGELY DISSOLVED under
+  repoint (the eid rides live-B; only form-finalization is pending; the TTL reaps an un-finalized flag; a
+  registry-rebuilding reset self-heals from the save). TTL alarm response = coverage-hole census audit.
 
 **TWO bracket OPENERS, ONE capture** (impl /qf R6, measured):
 - (a) the GNatives[0x45] wrapper opens the bracket for verb dispatches we DON'T initiate — the host's
@@ -307,73 +376,24 @@ park-by-eid). Reuse-the-proven-author, don't raw-reimplement.
   (FFrame+0x18; the toggled kerfur is ALIVE at verb entry — the eid resolves on a LIVE actor, which is
   exactly why this AVOIDS take-10's post-destroy zero-read).
 
-**FIVE SEAMS (impl /qf R13 — this substrate is NOT one seam; STEP 1.0 exercises only #1):**
+**FIVE SEAMS (this substrate is NOT one seam; STEP 1.0 exercised only #1):**
 (1) `GNatives[0x45]` wrapper = verb-entry opener-a; (2) `R::CallFunction` self-bracket = opener-b
 (EXISTS as `g_requestVerbEid`, wired 1b); (3) `FinishSpawningActor` Func seam (existing
-`host_spawn_watcher`) = B capture MID-verb; (4) `K2_DestroyActor` Func seam = A suppress-branch
-MID-verb; (5) the deferred net-pump barrier (existing two-phase, `kerfur_convert.cpp:11-20`) =
-`BindFormActor` + park + broadcast. A per-seam CENSUS (which native + call site fires for A-destroy in
-turn-OFF[NPC] vs turn-ON[prop], B-FinishSpawning both directions) is owed at incr-2a's capture+LOG
-(v106-enumerate-every-call-site discipline) — NOT deferred past it.
+`host_spawn_watcher`) = B capture + **identity-REPOINT** MID-verb (repoint-at-birth); (4) `K2_DestroyActor`
+Func seam = A's **natural husk** (post-repoint `EidForActor(A)==kInvalidId` → the existing drain early-returns;
+NO suppress-branch — the crutch was removed); (5) the deferred net-pump barrier (existing two-phase,
+`kerfur_convert.cpp:11-20`) = `BindFormActor` FORM-finalize + park + broadcast. A per-seam CENSUS (which
+native + call site fires for A-destroy in turn-OFF[NPC] vs turn-ON[prop], B-FinishSpawning both directions)
+is owed at incr-2a's capture+LOG (v106-enumerate-every-call-site discipline) — NOT deferred past it.
 
-**CAPTURE (mid-verb = ZERO engine calls; reads + branches + DATA STORES only — the re-entrancy
-discipline, impl /qf R4):**
-- B's `FinishSpawningActor` (**SYNCHRONOUS inside the verb [V], artifact-derived body walk 2026-07-13** —
-  import-resolved re-derivation of the two verb bytecodes, superseding the 2026-06-12 [RD] prose per the
-  operand-lie discipline: `dropKerfurProp` is a standalone 30-statement body, `BeginDeferred`@STMT8→
-  `FinishSpawning`@STMT12 (floppy) and `BeginDeferred`@STMT17→`FinishSpawning`@STMT21 (dropProp, cast to
-  `prop_kerfurOmega_C`@STMT22), `sentient` copy@STMT25, `K2_DestroyActor(self)`@STMT26; `spawnKerfuro` a
-  standalone 23-statement body, `BeginDeferred`@STMT7→`FinishSpawning`@STMT15→`IsValid`→`K2_DestroyActor
-  (self)`@STMT18. **Whole-body latent scan = NONE in either — no Delay/RetriggerableDelay/LatentActionInfo,
-  none between any BeginDeferred and its FinishSpawning.** The child exists before the parent self-destroy +
-  before return, so capture-in-window is sound. Same artifact confirms the TWO-spawn premise the class filter
-  rests on — both facts stand or fall together, re-derived, not cherry-picked.) is caught at the EXISTING
-  `host_spawn_watcher` Func seam; if `TLS.converting` is set + the spawned actor is-a successor-form
-  class (`prop_kerfurOmega_C` desc for turn-off, `kerfurOmega_C` for turn-on — the floppy
-  `prop_floppyDisc_C` distinguished by class), record B into the bracket. Capture B deterministically
-  HERE at the distinct mid-verb seam — NOT post-bracket (impl /qf R13: a post-bracket "find the
-  successor that appeared" scan IS `TryAdoptFreshKerfurProp`, the probabilistic crutch being retired;
-  the measured spawn-then-destroy order requires the mid-verb capture).
-- **PENDING-CONVERGE RESERVATION (impl /qf R14 — NEW named element, a mid-verb DATA STORE):** the
-  capture ALSO writes B into a pending-converge reservation **keyed on B's `(object-index, serial)`**
-  (NOT the raw pointer — impl /qf R15, the recycled-slot trap: a raw ptr to a recycled slot would
-  first-refuse an unrelated actor). Every prop enumeration in the ~1-frame window before the deferred
-  barrier (the `MarkPropElement` enroll sweep, the `prop_snapshot` builder, the mirror pass, opener-b)
-  CONSULTS the reservation and **refuses to author a fresh eid for a reserved prop** (first-refusal).
-  This closes the eid-less window (B is live but eid-less from FinishSpawning until the deferred
-  `BindFormActor`) — it is **take-8's first-refusal INTENT done DETERMINISTICALLY**, which is exactly
-  why take-8's probabilistic `TryAdoptFreshKerfurProp` can retire. Bounded lifetime: the reservation
-  is cleared on EVERY exit — converge (`BindFormActor` clears), RESTORE (no-B branch clears), teardown
-  (the fanout drains the whole pending set), and a >N-tick staleness tripwire (loud alarm, impossible
-  state). No live-while-pending-with-no-deadline.
-- A's destroy seam fires mid-verb and (measured kerfur_convert.cpp:185 `UnmarkKnownKeyedProp`) would
-  DRAIN A's eid + broadcast `PropDestroy`(A) → take-9 bug1 (client kills the mirror before
-  KerfurConvert). It is **SUPPRESSED** — a branch (skip drain + skip PropDestroy on the host; suppress
-  the keyed-destroy RELAY on the client — measured take-9 bug1) gated by the deterministic bracket
-  signal (replaces `TryCaptureKerfurPropDestroy`'s proximity guess). No engine calls. Suppressing the
-  drain is what keeps A's eid ALIVE to be migrated onto B at the deferred barrier.
-
-**BRACKET-EXIT (deterministic decision) + DEFERRED action (impl /qf R7, R9):**
-- At bracket EXIT the outcome is deterministically known (everything synchronous): record
-  `{A-eid, B-or-null, was-suppressed}`. The ACTION runs DEFERRED via the EXISTING two-phase-armed
-  net-pump barrier (MEASURED deliberate re-entrancy barrier, kerfur_convert.cpp:11-20 — a nested
-  ProcessEvent pump mid-verb corrupts; converge stays deferred, only capture is mid-verb).
-- B captured → converge: `BindFormActor` (DEFERRED — it can touch engine state, which is why the
-  two-phase barrier exists; NOT at-birth, impl /qf R12 wording correction) migrates A's eid onto B,
-  guarded by `IsLiveByIndex(capturedBIndex)` + serial match (impl /qf R15 — bare `IsLive(B)` passes a
-  recycled slot; a serial mismatch means B's slot recycled → treat as no-B → RESTORE). take-10 is
-  avoided NOT by "migrate before destroy" but by: (a) B's pointer captured at its BIRTH while LIVE (a
-  read, never a post-destroy read); (b) A's destroy-drain SUPPRESSED so A's eid survives to migrate;
-  (c) the `IsLiveByIndex`-guarded deferred migration. Every read is of a LIVE actor; the only dead
-  actor (A) is never read (take-10 died reading `GetActorLocation` on an already-destroyed A). →
-  A's destroy resolves no eid = husk by construction → ONE `KerfurConvert` broadcast.
-- Suppressed-destroy + NO successor (e.g. spawn failed after destroy) → **RESTORE** the suppressed
-  destroy by invoking the EXISTING destroy handler (NOT a new second emitter — suppression=loan paired
-  restore). Turn-on failure (prop survives, no destroy) → clean no-op.
-- Park (`NeutralizeAiTimers` = MEASURED ProcessEvent dispatch, kerfur.cpp:132 — CANNOT run mid-verb) is
-  DEFERRED. The client's predicted B has a bounded brain-on window, no worse than today's 5 Hz poll.
-- ALARM = pure tripwire for IMPOSSIBLE states only (wrong class, double-capture) — NOT a hedge for a
-  non-synchronous case (there is none).
+**Body-walk anchor (measured, [V]):** `dropKerfurProp` = 30-statement standalone body,
+`BeginDeferred`@STMT8→`FinishSpawning`@STMT12 (floppy) + `BeginDeferred`@STMT17→`FinishSpawning`@STMT21
+(dropProp, `EX_DynamicCast` to `prop_kerfurOmega_C`@STMT22), `sentient` copy@STMT25,
+`K2_DestroyActor(self)`@STMT26; `spawnKerfuro` = 23-statement standalone,
+`BeginDeferred`@STMT7→`FinishSpawning`@STMT15→`IsValid`→`K2_DestroyActor(self)`@STMT18. Whole-body latent
+scan = NONE. So B `FinishSpawning` (STMT21/15) PRECEDES A `K2_DestroyActor` (STMT26/18) — the repoint
+targets an already-live B, and A husks eid-less. (Detail:
+`research/findings/world-systems/votv-vm-dispatch-RE-2026-07-13.md`.)
 
 **Authority ROUTING inside the callback — the cross-peer owner is NAMED (impl /qf R14)** (substrate
 stays coop-ignorant, principle 7). The discriminator is `IsMirror()` on the Context actor (the
@@ -381,10 +401,14 @@ stays coop-ignorant, principle 7). The discriminator is `IsMirror()` on the Cont
 - **Authoritative actor** (`IsMirror()` false, i.e. the HOST's prop) → converge (`BindFormActor` +
   broadcast). **The HOST is the SOLE author.**
 - **Mirror actor** (`IsMirror()` true, i.e. a client toggling its OWN kerfur) → the FORCED client
-  prediction: park local B by eid + suppress the local destroy-RELAY + relay the request to the host;
-  it does NOT author a fresh eid. B is adopted on the authoritative `KerfurConvert` (`TakeParkedGhostByEid`).
-  (EX_LocalVirtual is un-cancellable + the menu interceptor was removed, so the client's local verb RUNS
-  — the prediction is forced, not chosen.)
+  prediction: REPOINT the mirror eid onto local B at birth (`RegisterPropMirror rebindInPlace`, which
+  re-keys the same unified reverse — so local-A husks eid-less, retiring take-9-bug1's destroy-relay
+  suppression on the same mechanism) + relay the request to the host; it does NOT author a fresh eid. B is
+  adopted on the authoritative `KerfurConvert` (`TakeParkedGhostByEid`). (EX_LocalVirtual is un-cancellable +
+  the menu interceptor was removed, so the client's local verb RUNS — the prediction is forced, not chosen.
+  The client is SIMPLER than the host: one identity map, no KerfurId table. **OWED confirm:** the client's
+  LOCAL-verb-death seam — that local-A's engine destroy no-ops post-repoint — traced end-to-end on the
+  observe pass before the client suppression is retired.)
 - **A-eid is the SHARED entity id, NOT per-peer** — a synced prop carries the same eid on both peers, so
   the client parks under the same eid the host converges under. Cross-peer reconciliation is by AUTHORITY
   ROUTING (`IsMirror()`) + the shared eid, NOT by A-eid dedup. **A-eid dedup is the SAME-peer
@@ -422,13 +446,17 @@ LIVE-CATCH + positive control (§2.0 — the premise gate, folded in by impl /qf
 NO LONGER in incr-1). Only 0x45 swapped. 1 = permanent substrate + observe-only logging consumer + the
 CONTAINMENT COUNTER (§3a — both seams, class-successor spawn attribution + identity-invariant destroy,
 counters-always-accrue, role-tagged; BUILT 2026-07-13, compiles+links clean; opener-a only). 1b = harden (validation-mode first-N, 1/s slot-integrity, loud
-latches) + the self-bracket TLS opener (b). **2a = capture+LOG both peers + the per-seam CENSUS live
-(every FinishSpawning + every destroy, both directions, both peers) — and MEASURE one-capture-per-A-eid
-with BOTH openers live (the two-openers dedup, impl /qf R14).** 2b = enable SUPPRESS + reconcile (smoke:
-no premature kill). **2c = enable deferred park+converge — GATED ON 2a's dedup confirmation (impl /qf
-R14: converge does not turn on until 2a proves one-capture-per-A-eid)** + gate the 3 crutches behind
-`kerfur_legacy_converge=0` INERT (RULE-2 same commit). 3 = verifying take. 4 = delete inert legacy +
-`gnatives_probe`.
+latches) + the self-bracket TLS opener (b). **2a-observe = capture+LOG both peers + the per-seam CENSUS
+live (every FinishSpawning + every destroy, both directions, both peers) — MEASURE one-capture-per-A-eid
+with BOTH openers live (two-openers dedup); floppy/loot/explosion class-separation; per-bracket seam-order
+(formIn before selfIn, 3b); B-index assigned+live at capture (3c); pending-eid pose-tick misroute; + the
+client LOCAL-verb-death husk trace. NO capture/suppress/repoint code — logging only, ONE hands-on run.**
+2a-capture = enable REPOINT-at-birth (split `BindFormActor` into {actor-migrate ALL identity maps at birth}
++ {form-finalize at converge}, the `form-transition-pending` flag gating snapshot-out / wire-mutation-in /
+pose-lane) — NO suppression (the crutch was removed; A husks eid-less). 2b = enable deferred FORM-finalize
++ reconcile (smoke: no premature kill, no half-migrated snapshot). **2c = full converge live — GATED ON
+2a-observe's dedup confirmation** + gate the 3 legacy crutches behind `kerfur_legacy_converge=0` INERT
+(RULE-2 same commit). 3 = verifying take. 4 = delete inert legacy + `gnatives_probe`.
 
 ## 4. Census (pre-take)
 
@@ -514,10 +542,14 @@ scalar state, mirror-STATE-not-verb stays law.
 ✅ IDA spike → ✅ counter (lower-bound) → ✅ **STEP 1.0 PASSED** (real filter + LIVE-CATCH, operand decode
 corrected) → ✅ **INCREMENT 1 SHIPPED + RUNTIME-VERIFIED `722fbe18`** (permanent GNatives[0x45] swap +
 registration + observe-only consumer + containment counter; containment [V] static+runtime, 18/18
-in-window) → **NEXT: 2a (capture + suppress + converge) — OPENS with a `/qf 15` pass before any code**
-→ 1b harden + self-bracket (opener-b) → 2b suppress+reconcile → 2c park+converge + crutches inert →
-verifying take (JOIN + contested toggle + re-host, legacy off) → retirement commit (same session) →
-melee RE (its own /qf) → smart-items per-item.
+in-window) → ✅ **2a DESIGN /qf pass CONVERGED (11 rounds + user injection; suppression crutch caught →
+REPOINT-at-birth; header block + §3)** → **NEXT: 2a-observe (4 gates + client-verb husk trace + pose-tick,
+logging only, ONE hands-on run — before any capture code)** → 2a-capture (repoint-at-birth, split
+`BindFormActor`, transition-flag) → 1b harden + self-bracket (opener-b) → 2b form-finalize+reconcile → 2c
+full converge + crutches inert → verifying take (JOIN + contested toggle + re-host, legacy off) →
+retirement commit (same session, retires the 3 legacy crutches AND take-9-bug1 client suppression) → melee
+RE (its own /qf) → smart-items per-item.
 
-Design detail lives in §3 (rewritten). The **1h bridge fix** is NO LONGER on the table — the user
-decided (07-13) NO bridge, straight per plan; kerfur coop stays broken until the substrate lands.
+Design detail lives in §3 (rewritten to repoint-at-birth by the 2a /qf pass). The **1h bridge fix** is NO
+LONGER on the table — the user decided (07-13) NO bridge, straight per plan; kerfur coop stays broken until
+the substrate lands.
