@@ -705,7 +705,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 108; // v108: roach infestation sync (RoachState=92,
+inline constexpr uint16_t kProtocolVersion = 109; // v109: desk cursor pose split -- the coords-panel
+                                                  // LIVE cursor (viewCoordinate) moves OFF the reliable
+                                                  // DishAimState onto the unreliable DeskCursorPose=36
+                                                  // stream (60Hz, mirror-interpolated); DishAimStatePayload
+                                                  // becomes committed-coords-only (40->32 B). Mixed 108/109
+                                                  // peers HARD-CLOSE at the version gate (session.cpp:352-371).
+                                                  // v108: roach infestation sync (RoachState=92,
                                                   // RoachConsumed=93) + the ambient owner-mirror flip
                                                   // (pinecone set peer-symmetric) + the OWNER-ENTITY
                                                   // lane (OwnerEntitySpawn/Pose/Destroy=94-96: eyer)
@@ -1004,6 +1010,15 @@ enum class MsgType : uint8_t {
                        //      old 0.5 s reliable drift refresh (user: "attack animation is 1
                        //      frame per second"). Sender identity rides the PacketHeader
                        //      senderSlot (host relay rewrites -- pose precedent); newest-wins.
+    DeskCursorPose = 36, // v109 (2026-07-14): the coords-panel LIVE cursor (ui_coordinates.viewCoordinate)
+                       //      as continuous MOTION (unreliable, 60Hz WHILE the desk is claimed + the cursor
+                       //      moves). Exact sibling of HandPose=35: the reliable DishAimState carries the
+                       //      committed-coord IDENTITY (discrete locks), THIS stream carries the sweep. The
+                       //      3Hz reliable snap it replaces read jaggy (user); the mirror runs the proven
+                       //      LerpWindow error-window interp (50ms) and writes viewCoordinate via a pure
+                       //      memcpy (WriteCursorOnly -- NO updCursorLocations, so no 60Hz pingDishes setRot
+                       //      storm; the widget's own Tick repaints). Sender identity rides the PacketHeader
+                       //      senderSlot (host relay rewrites); newest-wins by seq. Body: DeskCursorPosePacket.
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -2479,6 +2494,22 @@ struct HandPosePacket {
 };
 static_assert(sizeof(HandPosePacket) == 44, "HandPosePacket must be 44 bytes");
 
+// v109: the coords-panel live cursor as continuous motion (MsgType::DeskCursorPose=36).
+// Sibling of HandPoseSnapshot: the reliable DishAimState carries the committed-coord
+// identity, THIS unreliable stream carries the sweep (ui_coordinates.viewCoordinate,
+// FVector2D screen-space). Streamed at sendHz WHILE the desk is claimed + the cursor
+// moves; the mirror interpolates (LerpWindow) and writes it via WriteCursorOnly.
+struct DeskCursorPoseSnapshot {
+    float viewX, viewY;  // ui_coordinates.viewCoordinate (screen-space)
+};
+static_assert(sizeof(DeskCursorPoseSnapshot) == 8, "DeskCursorPoseSnapshot must be 8 bytes");
+
+struct DeskCursorPosePacket {
+    PacketHeader           header;  // 20
+    DeskCursorPoseSnapshot pose;    // 8
+};
+static_assert(sizeof(DeskCursorPosePacket) == 28, "DeskCursorPosePacket must be 28 bytes");
+
 // v66 voice chat: one 20 ms opus frame (MsgType::VoiceFrame). The DATAGRAM
 // carries only 8 + opusLen bytes of this struct (the array is max-sized for
 // the receive copy). seq is the per-sender VOICE sequence (monotonic per
@@ -3146,8 +3177,11 @@ static_assert(sizeof(CompStatePayload) == 12, "CompStatePayload must be 12 bytes
 // updCursorLocations() (which also rotates the physical pingDishes).
 // v70: + direction (ui_coordinates.Direction, the panel polarity toggle that
 // GATES catch success @9189) -- aim state, rides the pad (size unchanged).
+// v109: the LIVE cursor (viewCoordinate) is NO LONGER here -- it moved to the
+// unreliable DeskCursorPose=36 stream (continuous motion). This reliable payload
+// now carries ONLY the discrete committed-coord locks (the triangulation IDENTITY),
+// change-gated + connect-snapshotted. See DeskCursorPoseSnapshot below.
 struct DishAimStatePayload {
-    float   viewX, viewY;            // 8  -- ui_coordinates.viewCoordinate
     float   c0X, c0Y;                // 8  -- Coordinate_0
     float   c1X, c1Y;                // 8  -- Coordinate_1
     float   c2X, c2Y;                // 8  -- Coordinate_2
@@ -3155,7 +3189,7 @@ struct DishAimStatePayload {
     uint8_t direction;               // 1  -- v70: the Direction toggle (catch gate)
     uint8_t _pad[3];                 // 3
 };
-static_assert(sizeof(DishAimStatePayload) == 40, "DishAimStatePayload must be 40 bytes");
+static_assert(sizeof(DishAimStatePayload) == 32, "DishAimStatePayload must be 32 bytes (v109: -viewCoordinate)");
 
 // KeyedScalarPayload -- the SHARED payload for "keyed monotone-decreasing dirt scalar" sync:
 // WindowCleanState (30, v41 -- AbaseWindow_C::clean@0x0260) AND GrimeState/GrimeDestroy (31/32,

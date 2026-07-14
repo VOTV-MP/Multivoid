@@ -100,7 +100,15 @@ struct DishAim {
     uint8_t direction = 0;        // Direction @0x441 -- the catch-gate toggle (v70)
 };
 bool ReadDishAim(DishAim& out);
-bool WriteDishAim(const DishAim& in);
+// v109: the LIVE cursor and the COMMITTED locks are now SEPARATE writes (see the
+// .cpp). WriteCursorOnly = viewCoordinate memcpy, NO dispatch (the 60Hz interpolated
+// stream; the widget's own Tick repaints). WriteDishCommitted = the discrete locks +
+// updCursorLocations repaint (commit rate). WriteDishAim (wrote both + dispatched at
+// 3Hz) is RETIRED -- two authors on viewCoordinate is the dupe shape (RULE 2).
+bool WriteCursorOnly(float viewX, float viewY);
+bool WriteDishCommitted(const DishAim& in);
+// v109: replay the desk's native intComs_unfocused (reset-on-release; dims, not hides).
+bool CallIntComsUnfocused();
 
 // ---- The v70 signal-catch consume surface (coop/signal_catch_sync) ----
 // RE: votv-stolas-signal-catch-RE-2026-06-12.md SS1.3/SS2 + the @33832

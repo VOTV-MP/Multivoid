@@ -127,6 +127,12 @@ void Session::SetLocalHandPose(bool set, const HandPoseSnapshot& pose) {
     if (set) localHandPose_ = pose;
 }
 
+void Session::SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose) {
+    std::lock_guard<std::mutex> lk(localMutex_);
+    hasLocalDeskCursor_ = set;
+    if (set) localDeskCursor_ = pose;
+}
+
 // SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
 // StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
 // 2026-06-07 per the 800-LOC soft cap).
@@ -172,6 +178,17 @@ bool Session::TryGetRemoteHandPose(int peerSlot, HandPoseSnapshot& out, bool* ou
     out = remoteHandPoses_[peerSlot];
     if (outIsNew) *outIsNew = (remoteHandStamp_[peerSlot] != lastReadHandStamp_[peerSlot]);
     lastReadHandStamp_[peerSlot] = remoteHandStamp_[peerSlot];
+    return true;
+}
+
+bool Session::TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, bool* outIsNew) {
+    if (state_.load() != ConnState::Connected) return false;
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteDeskCursor_[peerSlot]) return false;
+    out = remoteDeskCursors_[peerSlot];
+    if (outIsNew) *outIsNew = (remoteDeskCursorStamp_[peerSlot] != lastReadDeskCursorStamp_[peerSlot]);
+    lastReadDeskCursorStamp_[peerSlot] = remoteDeskCursorStamp_[peerSlot];
     return true;
 }
 
@@ -558,6 +575,30 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         break;
     }
+    case MsgType::DeskCursorPose: {  // v109: coords-panel live cursor (sibling of HandPose)
+        if (len < static_cast<int>(sizeof(DeskCursorPosePacket))) return;
+        DeskCursorPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        // Trust-boundary sanitize: viewCoordinate is screen-space (no fixed magnitude
+        // bound), so a finite check is the sane floor before it reaches WriteCursorOnly.
+        if (!std::isfinite(pkt.pose.viewX) || !std::isfinite(pkt.pose.viewY)) return;
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteDeskCursor_[routeSlot] &&
+                static_cast<int32_t>(seq - lastRemoteDeskCursorSeq_[routeSlot]) <= 0) {
+                break;
+            }
+            remoteDeskCursors_[routeSlot] = pkt.pose;
+            lastRemoteDeskCursorSeq_[routeSlot] = seq;
+            hasRemoteDeskCursor_[routeSlot] = true;
+            ++remoteDeskCursorStamp_[routeSlot];
+        }
+        // Host relay: forward this client's cursor to every OTHER client.
+        if (cfg_.role == Role::Host) {
+            RelayUnreliableToOtherClients(peerSlot, data, len);
+        }
+        break;
+    }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
@@ -767,11 +808,14 @@ void Session::NetThread() {
             bool haveRagdoll;
             HandPoseSnapshot localHand;
             bool haveHand;
+            DeskCursorPoseSnapshot localDeskCursor;
+            bool haveDeskCursor;
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_;
               localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
-              localHand = localHandPose_; haveHand = hasLocalHand_; }
+              localHand = localHandPose_; haveHand = hasLocalHand_;
+              localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_; }
             // v37: serialize the live NPC pose batch ONCE (same body for every peer; only the
             // per-peer header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads
             // localNpcBatch_ under localMutex_ + writes the body after the leading PacketHeader,
@@ -786,7 +830,7 @@ void Session::NetThread() {
             // -- SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
             uint8_t tcBuf[kTrashCarryPoseDatagramMax];
             const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
-            if (have || haveProp || haveRagdoll || haveHand ||
+            if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor ||
                 npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
@@ -826,6 +870,16 @@ void Session::NetThread() {
                         WriteHeader(pkt.header, MsgType::HandPose,
                                     sendSeq_.fetch_add(1), ownEpoch_);
                         pkt.pose = localHand;
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, &pkt, sizeof(pkt),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
+                    }
+                    if (haveDeskCursor) {  // v109: coords-panel live cursor (while desk-claimed + moving)
+                        DeskCursorPosePacket pkt{};
+                        WriteHeader(pkt.header, MsgType::DeskCursorPose,
+                                    sendSeq_.fetch_add(1), ownEpoch_);
+                        pkt.pose = localDeskCursor;
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);

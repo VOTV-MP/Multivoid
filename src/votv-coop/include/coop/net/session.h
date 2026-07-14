@@ -155,6 +155,12 @@ public:
     // thread fan-outs a HandPose datagram at sendHz only while set.
     void SetLocalHandPose(bool set, const HandPoseSnapshot& pose);
 
+    // v109: publish the local coords-panel LIVE cursor (viewCoordinate). `set`
+    // true each pump tick WHILE the desk is claimed + the cursor moved, false on
+    // the release / still edge -- same held/release gate shape as SetLocalHandPose.
+    // Net thread fan-outs a DeskCursorPose datagram at sendHz only while set.
+    void SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose);
+
     // v37: HOST publishes the current NPC pose batch (one EntityPoseSnapshot per live NPC);
     // the net thread fan-outs ONE EntityPose datagram to all peers each sendHz tick. Called
     // every game tick by npc_sync::TickPoseStream with the current set; an EMPTY batch clears
@@ -188,6 +194,9 @@ public:
     // v109: per-peer hand-item view-relative transform (hand_item::TickMirrors
     // consumes; newest-wins). Same contract shape as TryGetRemoteRagdollPose.
     bool TryGetRemoteHandPose(int peerSlot, HandPoseSnapshot& out, bool* outIsNew = nullptr);
+    // v109: per-peer coords-panel live cursor (desk_cursor_sync consumes; newest-wins).
+    // Same contract shape as TryGetRemoteHandPose.
+    bool TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, bool* outIsNew = nullptr);
 
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
@@ -486,6 +495,10 @@ private:
     // holding, net thread reads + fan-outs). Same held/release shape as prop/ragdoll.
     HandPoseSnapshot localHandPose_{};
     bool hasLocalHand_ = false;
+    // v109: local coords-panel live cursor (game thread writes while desk-claimed +
+    // moving, net thread reads + fan-outs). Same held/release shape as localHandPose_.
+    DeskCursorPoseSnapshot localDeskCursor_{};
+    bool hasLocalDeskCursor_ = false;
     // v37: host NPC pose batch (game thread writes via SetLocalNpcPoseBatch, net thread reads
     // + fan-outs ONE EntityPose datagram). Empty vector = nothing to send (NPCs gone).
     std::vector<EntityPoseSnapshot> localNpcBatch_;
@@ -524,6 +537,12 @@ private:
     std::array<uint32_t, kMaxPeers> lastRemoteHandSeq_{};
     std::array<uint64_t, kMaxPeers> remoteHandStamp_{};
     std::array<uint64_t, kMaxPeers> lastReadHandStamp_{};
+    // v109: per-peer coords-panel live cursor (same per-slot shape as hand).
+    std::array<DeskCursorPoseSnapshot, kMaxPeers> remoteDeskCursors_{};
+    std::array<bool, kMaxPeers> hasRemoteDeskCursor_{};
+    std::array<uint32_t, kMaxPeers> lastRemoteDeskCursorSeq_{};
+    std::array<uint64_t, kMaxPeers> remoteDeskCursorStamp_{};
+    std::array<uint64_t, kMaxPeers> lastReadDeskCursorStamp_{};
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

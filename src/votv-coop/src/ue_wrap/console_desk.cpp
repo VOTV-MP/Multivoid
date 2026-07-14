@@ -130,6 +130,7 @@ int32_t g_offCoordinate2 = -1;     // FVector2D @0x03D0
 int32_t g_offSelected = -1;        // @0x03D8
 int32_t g_offDirection = -1;       // bool @0x0441 -- the catch-gate toggle (v70)
 void* g_updCursorLocationsFn = nullptr;
+void* g_intComsUnfocusedFn = nullptr;   // v109: desk intComs_unfocused -- reset-on-release target
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -150,6 +151,7 @@ void ResolvePass() {
         if (!r.fn) r.fn = R::FindFunction(g_cls, r.name);
     }
     if (!g_updCompFn) g_updCompFn = R::FindFunction(g_cls, L"updComp");
+    if (!g_intComsUnfocusedFn) g_intComsUnfocusedFn = R::FindFunction(g_cls, L"intComs_unfocused");
     if (!g_writeToCoordLogFn) g_writeToCoordLogFn = R::FindFunction(g_cls, L"writeToCoordLog_2");
 
     if (g_offCoordSignalData < 0)
@@ -574,37 +576,67 @@ bool ReadDishAim(DishAim& out) {
     return true;
 }
 
-bool WriteDishAim(const DishAim& in) {
+// v109: the LIVE cursor apply (the DeskCursorPose stream, ~60Hz interpolated).
+// INVARIANT -- writes ONLY viewCoordinate and dispatches NOTHING. It must NEVER
+// call updCursorLocations: that is the committed-triangle + pingDishes setRot loop
+// (N UFunction dispatches), and running it at 60Hz is a per-frame dispatch STORM.
+// The widget's OWN Tick repaints the cursor from viewCoordinate (updMainCursor) --
+// keeping the field fresh IS the whole job here. If you need the triangle/dish
+// repaint, that is WriteDishCommitted (commit rate), NOT this. The name is the
+// guard: WriteCursorOnly does cursor, only.
+bool WriteCursorOnly(float viewX, float viewY) {
     void* w = UiCoordsInstance();
-    if (!w || g_offViewCoordinate < 0 || g_offCoordinate0 < 0 ||
-        g_offCoordinate1 < 0 || g_offCoordinate2 < 0 || g_offSelected < 0)
+    if (!w || g_offViewCoordinate < 0) return false;
+    auto* p = reinterpret_cast<uint8_t*>(w);
+    std::memcpy(p + g_offViewCoordinate + 0, &viewX, sizeof(float));
+    std::memcpy(p + g_offViewCoordinate + 4, &viewY, sizeof(float));
+    return true;  // NO UFunction dispatch -- see the INVARIANT above.
+}
+
+// v109: the COMMITTED-coords apply (the discrete triangulation locks). Writes
+// Coordinate_0/1/2 + selected + direction and calls updCursorLocations (repaints
+// the committed triangle + rotates the physical pingDishes) + updateCoordCoords
+// (az/alt text). Does NOT touch viewCoordinate -- the live cursor is owned by the
+// DeskCursorPose stream (WriteCursorOnly). Runs at COMMIT rate (change-gated), so
+// the per-call updCursorLocations dish-setRot loop is fine here (it is NOT per-frame).
+bool WriteDishCommitted(const DishAim& in) {
+    void* w = UiCoordsInstance();
+    if (!w || g_offCoordinate0 < 0 || g_offCoordinate1 < 0 ||
+        g_offCoordinate2 < 0 || g_offSelected < 0)
         return false;
     auto* p = reinterpret_cast<uint8_t*>(w);
     auto wr = [&](int32_t off, float x, float y) {
         std::memcpy(p + off + 0, &x, sizeof(float));
         std::memcpy(p + off + 4, &y, sizeof(float));
     };
-    wr(g_offViewCoordinate, in.viewX, in.viewY);
     wr(g_offCoordinate0, in.c0X, in.c0Y);
     wr(g_offCoordinate1, in.c1X, in.c1Y);
     wr(g_offCoordinate2, in.c2X, in.c2Y);
     std::memcpy(p + g_offSelected, &in.selected, sizeof(int32_t));
     if (g_offDirection >= 0) *(p + g_offDirection) = in.direction ? 1 : 0;
-    // The widget's own repaint -- also rotates the physical pingDishes
-    // (setRot) so the world dishes track the mirrored aim. (The remote's own
-    // spaceRenderer tick re-runs this per frame anyway -- belt and braces.)
     if (g_updCursorLocationsFn) {
         ue_wrap::ParamFrame f(g_updCursorLocationsFn);
         if (f.valid()) ue_wrap::Call(w, f);
     }
-    // The desk's az/alt TEXT pane derives from viewCoordinate but nothing
-    // re-calls its painter on a mirror (phase-2 impl RE SS2.4/SS2.6:
-    // updateCoordCoords belongs in the dish-aim apply).
     void* desk = Instance();
     if (desk && g_refresh[8].fn) {  // [8] = updateCoordCoords
         ue_wrap::ParamFrame f(g_refresh[8].fn);
         if (f.valid()) ue_wrap::Call(desk, f);
     }
+    return true;
+}
+
+// v109: replay the desk's native UNFOCUS verb -- the reset-on-release target.
+// Measured: setCursorOpacity dims to 0.25 (never hides), so the correct reset is
+// the game's OWN intComs_unfocused, NOT an invented hide/center. The mirror calls
+// it when the desk claim releases so the cursor reverts to exactly the native
+// unoccupied look.
+bool CallIntComsUnfocused() {
+    void* desk = Instance();
+    if (!desk || !g_intComsUnfocusedFn) return false;
+    ue_wrap::ParamFrame f(g_intComsUnfocusedFn);
+    if (!f.valid()) return false;
+    ue_wrap::Call(desk, f);
     return true;
 }
 
