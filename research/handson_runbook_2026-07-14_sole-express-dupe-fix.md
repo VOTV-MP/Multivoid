@@ -1,7 +1,17 @@
 # Hands-on runbook -- kerfur turn_off SOLE-EXPRESS dupe fix (the 19:09 dupe)
 
+> **RESULT: VERIFIED GREEN (20:20 take, 2026-07-14).** 14/14 host conversions SUPPRESSED the generic
+> `SendPropSpawn`; client kerfur census `6 = 6` across 13 consecutive samples (vs 19:09's host-6/client-8,
+> 2 persistent UNCLAIMED); user confirmed no visual dupes. The single final `i3Z7` UNCLAIMED was a CLIENT
+> turn-off's `POLL→request→KerfurConvert→bind` round-trip caught mid-flight by the last census before
+> disconnect (the 3 prior client turn-offs closed the same ~1s window), NOT a dupe. **Follow-ups landed:**
+> the log-line fix (`6b246201`) + the proximity stamp-walk FALLBACK retired (`3d9da0cd`, 0 fallback fires
+> across 85 captured-B HITs). Current deployed DLL post-retirement = `6C6541ED38B7B74D` x4. This runbook is
+> the record of the take that passed; the steps below stand as the repro if a regression is ever suspected.
+
 **Date:** 2026-07-14 eve. **Take:** sole-express dupe fix (behavior change on host-own turn_off).
-**Deployed DLL SHA256 (first 16):** `23DC7D54A603DF49` -- byte-identical on HOST, CLIENT_1, CLIENT_2, DEV.
+**Deployed DLL SHA256 (first 16):** `23DC7D54A603DF49` (the take's DLL) -- byte-identical on HOST, CLIENT_1,
+CLIENT_2, DEV. Post-take retirement rebuild = `6C6541ED38B7B74D`.
 **Flags:** `vm_dispatch_log=1` on HOST + CLIENT_1. Commit `de3dccb5` (on top of `44f8c69b` captured-B).
 
 ## What this take verifies
