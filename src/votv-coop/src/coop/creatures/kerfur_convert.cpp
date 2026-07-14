@@ -185,9 +185,17 @@ void ReleaseHostPropSilent(void* deadActor) {
     PT::UnmarkKnownKeyedProp(deadActor);  // drains the Prop Element + frees its eid (ABBA-safe)
 }
 
+// `capturedForm` (2a-capture, 2026-07-14): the DETERMINISTIC successor B captured in-bracket at
+// its FinishSpawningActor (coop/creatures/kerfur_form_assembler) -- when supplied + live it REPLACES
+// the probabilistic FindNewFormKerfurActor(position) search (the take-8/10 crutch). nullptr = the
+// legacy position search (retired once the deterministic path is proven). Everything downstream
+// (RegisterHost*Silent mint, ReleaseSilent, BindFormActor -> KerfurConvert) is UNCHANGED -- the
+// capture only fixes WHICH B, not the converge.
 void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid,
-                             uint8_t toProp, float px, float py, float pz) {
+                             uint8_t toProp, float px, float py, float pz,
+                             void* capturedForm = nullptr, int32_t capturedIdx = -1) {
     namespace KE = coop::kerfur_entity;
+    const bool haveCaptured = capturedForm && R::IsLiveByIndex(capturedForm, capturedIdx);
     if (toProp) {
         // turn_off: NPC -> prop. The NPC should have died; a kerfur prop (+ maybe floppy) spawned at
         // its position. A SENTIENT kerfur refused -> the NPC is still live -> echo a reject.
@@ -200,7 +208,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
                                          cls ? R::ToString(R::NameOf(cls)) : std::wstring());
             return;
         }
-        void* newProp = FindNewFormKerfurActor(/*wantNpc=*/false, px, py, pz);
+        void* newProp = haveCaptured ? capturedForm : FindNewFormKerfurActor(/*wantNpc=*/false, px, py, pz);
         if (!newProp) {
             UE_LOGW("kerfur_convert: turn_off converge -- no new kerfur prop near (%.0f,%.0f,%.0f); releasing dead NPC eid=%u (no broadcast)",
                     px, py, pz, static_cast<uint32_t>(oldEid));
@@ -234,7 +242,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
                                          cls ? R::ToString(R::NameOf(cls)) : std::wstring());
             return;
         }
-        void* newNpc = FindNewFormKerfurActor(/*wantNpc=*/true, px, py, pz);
+        void* newNpc = haveCaptured ? capturedForm : FindNewFormKerfurActor(/*wantNpc=*/true, px, py, pz);
         if (!newNpc) {
             UE_LOGW("kerfur_convert: turn-on converge -- no new kerfur NPC near (%.0f,%.0f,%.0f); releasing dead prop eid=%u (no broadcast)",
                     px, py, pz, static_cast<uint32_t>(oldEid));
