@@ -58,6 +58,13 @@ CapturedForm ConsumeCapturedForm(bool wantNpc);
 // starts with an empty slot and never consumes a prior bracket's stale B.
 void ClearCapturedForm();
 
+// NON-CONSUMING peek: is `actor` the DETERMINISTIC conversion successor currently in the capture
+// slot (fresh + live)? The Init POST keyed-express suppressor (prop_lifecycle) reads this to make
+// the kerfur layer the SOLE express (redesign 10.3) -- suppress the generic PropSpawn for a prop
+// the conversion just produced, letting KerfurConvert own it. Distinct from ConsumeCapturedForm:
+// this does NOT clear the slot (the deferred converge still consumes it). GT-only, thread-local.
+bool IsCapturedForm(void* actor);
+
 // Register the two conversion verbs with ue_wrap::vm_dispatch and open the session
 // gate (SetEnabled(true)). Called from subsystems::Install (world-up, session
 // active). Idempotent -- the substrate de-dups the registrations.

@@ -14,6 +14,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp (kerfur-conversion first refusal, take-8)
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (the first-refusal class gate)
+#include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm -- deterministic conversion-successor peek (2026-07-14 sole-express)
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
@@ -232,9 +233,27 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // 5 Hz death-watch poll and left the joiner with an NPC mirror + a generic prop mirror = the
     // dupe. An ordinary kerfur prop spawn (hand-place / purchase) returns false and keeps the
     // generic same-tick expression.
-    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(self)) &&
-        coop::kerfur_convert::TryAdoptFreshKerfurProp(self)) {
-        return;  // converged: silent register + KerfurConvert broadcast (no PropSpawn)
+    // KERFUR-CONVERSION SOLE EXPRESS (2026-07-14 -- REPLACES the take-8 racy dead-NPC suppression).
+    // The DETERMINISTIC test: is this prop the successor the form assembler captured IN-BRACKET
+    // (IsCapturedForm -- a NON-consuming peek; the deferred converge still consumes the slot)? If
+    // so the kerfur layer owns the wire expression (redesign 10.3: ONE entity, KerfurConvert is the
+    // SOLE conversion signal, never a generic PropSpawn) -> TRACK below (so host_spawn_watcher / M2
+    // defer via the tracked flag) but SKIP the SendPropSpawn broadcast (gate at line ~317).
+    // The OLD suppressor gated on "a dead kerfur NPC within 500cm" -- a PROXY that RACED the verb's
+    // spawn-vs-destroy order: when the source NPC was still alive at Init POST (SPAWN->Init POST->
+    // DESTROY) it DECLINED, the keyed express leaked, and the 2a-capture converge double-expressed =
+    // the 2026-07-14 host-own turn_off dupe. The capture is the fact itself (this prop IS B),
+    // race-free, and covers both the destroy-first and spawn-first orderings.
+    // [[lesson-new-generic-lane-must-inherit-owner-boundaries]]
+    const bool kerfurConvSuccessor =
+        coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(self)) &&
+        coop::kerfur_form_assembler::IsCapturedForm(self);
+    if (kerfurConvSuccessor) {
+        // Converge SYNCHRONOUSLY here if the source NPC already died (TryAdopt's dead-NPC match);
+        // otherwise it no-ops and the POLL death-watch converges later via the same captured-B.
+        // Gating TryAdopt behind the capture also kills its old false-positive (a hand-placed kerfur
+        // prop near a coincidentally-dead kerfur NPC). NO early return -- fall through to MarkPropElement.
+        coop::kerfur_convert::TryAdoptFreshKerfurProp(self);
     }
 
     coop::net::PropSpawnPayload p{};
@@ -314,7 +333,17 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // 2026-05-27 reliable-channel rewrite: Send always succeeds (FIFO queue
     // internal to the channel). The previous EnqueuePropSpawnForRetry fallback
     // path retired as RULE 2 baggage.
-    s->SendPropSpawn(p);
+    // SOLE-EXPRESS gate (2026-07-14): a kerfur conversion successor is TRACKED above (so
+    // host_spawn_watcher / M2 defer) but NOT broadcast here -- KerfurConvert is its only wire
+    // signal. Skip ONLY the SendPropSpawn; the self-claim below is unconditional (it keys on
+    // tracking, not on the broadcast, so snapshot-sweep safety is preserved).
+    if (kerfurConvSuccessor) {
+        UE_LOGI("grab_hook[Aprop.Init POST]: kerfur conversion successor %p key='%ls' -- generic "
+                "PropSpawn SUPPRESSED (KerfurConvert is the sole express; tracked so the other "
+                "broadcasters defer)", self, keyStr.c_str());
+    } else {
+        s->SendPropSpawn(p);
+    }
     // Fork B 2c: self-claim -- this peer just wire-expressed the spawn; an
     // open snapshot bracket's sweep must not destroy it as "unclaimed".
     coop::join_membership_sweep::RecordClaimIfTracking(self);

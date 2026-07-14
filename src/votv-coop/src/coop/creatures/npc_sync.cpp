@@ -936,8 +936,13 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid) {
     // Defer the ~Npc/FreeId to the game-thread ElementDeleter Flush (matches NpcDestroy_PRE). A null
     // drained (already-released eid) makes Enqueue a no-op.
     coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
-    UE_LOGI("npc-sync[silent release]: Npc eid=%u released (no EntityDestroy broadcast)",
-            static_cast<uint32_t>(eid));
+    // INVARIANT (2026-07-14): a silent release is safe ONLY if a KerfurConvert (carrying this eid as
+    // oldEid) follows to tear down the client mirror. A release with NO following converge orphans the
+    // client's NPC mirror -- and does so INVISIBLY on the client (no wire signal). That was the pre-2a
+    // orphan-NPC half of the host-own turn_off race (six months, undiagnosed because this path never
+    // reached the client). The sole-express converge now always fires, so the release is always paired.
+    UE_LOGI("npc-sync[silent release]: Npc eid=%u released (no EntityDestroy broadcast -- MUST be paired "
+            "with a KerfurConvert or the client mirror orphans)", static_cast<uint32_t>(eid));
 }
 
 bool GetDevSpawnRefs(DevSpawnRefs& out) {

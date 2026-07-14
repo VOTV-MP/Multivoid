@@ -451,6 +451,17 @@ void ClearCapturedForm() {
     tls_capturedFormIdx = -1;
 }
 
+bool IsCapturedForm(void* actor) {
+    // NON-CONSUMING peek (2a-capture suppression, 2026-07-14): is `actor` the successor currently
+    // in the capture slot? The Init POST keyed-express suppressor (prop_lifecycle) reads this to
+    // decide "this prop IS the conversion successor -> KerfurConvert owns the express, skip the
+    // generic PropSpawn". It MUST NOT consume -- the deferred converge (ConsumeCapturedForm, on the
+    // POLL death-watch / destroy seam) still needs the slot; a destructive peek here starves it.
+    if (!actor || actor != tls_capturedForm) return false;
+    if (std::chrono::steady_clock::now() - tls_capturedAt > std::chrono::seconds(2)) return false;
+    return R::IsLiveByIndex(tls_capturedForm, tls_capturedFormIdx);
+}
+
 void Install(coop::net::Session* session) {
     g_session = session;
     vm::RegisterVirtualVerb(L"dropKerfurProp", kVerbTurnOff, &OnVerbEntry);
