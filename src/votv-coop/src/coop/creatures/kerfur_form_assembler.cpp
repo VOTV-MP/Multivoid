@@ -105,6 +105,7 @@ std::atomic<bool> g_seamsInstalled{false};
 std::atomic<std::uint64_t> g_spawnFormInWindow{0};   // kerfur-form successor spawned INSIDE a bracket
 std::atomic<std::uint64_t> g_spawnFormOutWindow{0};  // kerfur-form successor spawned OUTSIDE any bracket
 std::atomic<std::uint64_t> g_spawnFloppyInWindow{0}; // the floppy spawned inside a bracket (class-distinguished)
+std::atomic<std::uint64_t> g_spawnOtherInWindow{0};  // GATE 2 reject side: an in-window spawn that is NEITHER form NOR floppy (loot/explosion_C/etc.) -- the filter MUST reject it as a repoint target
 std::atomic<std::uint64_t> g_destroySelfInWindow{0}; // dying actor == bracket Context (the verb's self-destroy)
 std::atomic<std::uint64_t> g_destroyOtherInWindow{0};// a kerfur-class actor != Context destroyed inside a bracket (anomaly)
 std::atomic<std::uint64_t> g_destroyKerfurOutWindow{0}; // a kerfur-class actor destroyed OUTSIDE any bracket
@@ -195,7 +196,26 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     if (!cls) return;
     const bool isForm   = IsKerfurFormClass(cls);
     const bool isFloppy = !isForm && IsFloppyClass(cls);
-    if (!isForm && !isFloppy) return;  // unrelated spawn -- not our measurement
+    if (!isForm && !isFloppy) {
+        // GATE 2, REJECT SIDE: an in-window spawn that is NEITHER a kerfur-form successor NOR the
+        // floppy = loot / explosion_C / anything else the conversion ubergraph can BeginDeferred inside
+        // the bracket. The class filter (IsKerfurFormClass) MUST reject it as a repoint target. Counting
+        // it in-window proves the filter REJECTS non-B -- a DIFFERENT claim than the 45/45 descent census
+        // (which only proved it CATCHES every true B). Without this the loot-carrying run would be another
+        // floppyIn=0-style NULL result. Out-of-window neither = an ordinary world spawn (the vast
+        // majority) -> ignored (CurrentThreadVerb is the cheap gate).
+        const vm::ActiveVerb av = vm::CurrentThreadVerb();
+        if (av.active) {
+            g_spawnOtherInWindow.fetch_add(1, std::memory_order_relaxed);
+            if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
+                std::wstring cn = R::ClassNameOf(spawnedResult);
+                UE_LOGI("[kerfur_asm][%s] SPAWN OTHER IN-WINDOW actor=%p class=%ls verbId=%d depth=%d "
+                        "-- filter REJECTS (not form, not floppy; NOT a repoint target)",
+                        RoleTag(), spawnedResult, cn.c_str(), av.verbId, av.depth);
+            }
+        }
+        return;
+    }
 
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
     bool bIndexLive = false;
@@ -305,14 +325,16 @@ void EnsureSeamsInstalled() {
 
 void DumpSummary(const char* when) {
     UE_LOGI("[kerfur_asm][%s] CONTAINMENT SUMMARY (%s): catch{off=%llu on=%llu} "
-            "spawn{formIn=%llu formOut=%llu floppyIn=%llu} "
-            "destroy{selfIn=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, OUT/anomaly = 2a-HALT",
+            "spawn{formIn=%llu formOut=%llu floppyIn=%llu otherIn=%llu} "
+            "destroy{selfIn=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, OUT/anomaly = 2a-HALT; "
+            "spawn.otherIn = loot/explosion the filter REJECTED (GATE 2 reject side -- must NOT be counted formIn)",
             RoleTag(), when,
             (unsigned long long)g_catchTurnOff.load(std::memory_order_relaxed),
             (unsigned long long)g_catchTurnOn.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormOutWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFloppyInWindow.load(std::memory_order_relaxed),
+            (unsigned long long)g_spawnOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroySelfInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyKerfurOutWindow.load(std::memory_order_relaxed));

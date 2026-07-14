@@ -46,6 +46,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   a design migrates identity, ENUMERATE every map that keys on the entity + prove the op updates or gates ALL
   of them. Skill patched 2026-07-13 nite (IDENTITY-MAP-COMPLETENESS angle + brief-enumeration + convergence
   bar). `memory/feedback_qf_enumerate_identity_maps_on_migration.md`
+- **The /qf critic inherits the primary's BRIEF as ground truth (blind-spot #3: CARRIED-FRAMING)** — the
+  fresh-per-round critic sees only what the primary wrote, and the primary writes its own brief, so a
+  load-bearing NOUN it introduced as an inference and hardened by repetition ("the existing two-phase arm
+  record" — actually FOUR distinct converge mechanisms) launders into an apparent fact every fresh critic
+  reads blind. Worst in `/qf N` auto-loop (N self-summarized briefs, no external check). Fix: tag facts by
+  PROVENANCE (measured-artifact vs carried-framing) + code-verify the 1-2 nouns the design hangs on before
+  convergence + SURFACE to the user after any material REFRAME instead of auto-continuing (the user, holding
+  the real history + raw artifacts, is the only party who catches framing drift, retroactive-foundation-
+  invalidation, and cross-artifact synthesis). Skill patched 2026-07-14 (FRAMING-PROVENANCE angle + brief
+  provenance-tag + reframe-surface + carried-primitive convergence bar).
+  `memory/feedback_qf_challenge_carried_framing_not_just_the_frame.md`
 - **"per rule 1" = full green light** for the root-cause fix in its complete form (incl. hard
   architectural change). Don't scope down, don't ask "is this too big". `memory/feedback_no_crutch_questions_act_autonomously.md`
 - **No design/architect AGENTS** — design yourself from code + docs + MTA; search + audit agents OK. `memory/feedback_no_design_architect_agents.md`

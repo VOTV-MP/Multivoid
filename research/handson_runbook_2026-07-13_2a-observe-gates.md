@@ -1,8 +1,13 @@
 # Hands-on runbook — 2a-OBSERVE gates (VM-dispatch substrate, kerfur form-flip)
 
-**Date:** 2026-07-13 (nite) · **Take:** 2a-observe (increment 1 + gate instrumentation)
-**Deployed DLL SHA256:** `1802B5A3A0635FB3681679540543E99837A4192D54BE6C0D0238B01620AAE5EF`
-(byte-identical on HOST, CLIENT_1, CLIENT_2, DEV — verified)
+**Date:** 2026-07-13 nite (gates 1/2/3b/3c run 07-14 10:54+11:04) · **Take:** 2a-observe (+ loot-gate reject side)
+**Deployed DLL SHA256:** `1E41A8070635705CBDDC4C837926449D3DEE357DF5C7EA6F7DDDD678E0C8591D`
+(byte-identical on HOST, CLIENT_1, CLIENT_2, DEV — verified; supersedes 1802B5A3)
+
+**STATUS 2026-07-14:** gates 1 (dedup), 2-floppy, 3b (seam-order), 3c (B-index-live) all **GREEN** both roles
+(host 10:54 + 11:04 runs; client reconstructed from verbose lines). The ONE remaining item is the **loot
+gate (gate 2 REJECT side)** below — a bracketed spawn that is neither form nor floppy must land `spawn.otherIn`,
+NOT `formIn`. Everything else on this runbook is history; jump to "LOOT GATE" at the bottom.
 **Wire protocol:** UNCHANGED — this is observe-only; no packets added, no behavior changed.
 The kerfur conversion verbs run entirely unmodified. NO capture, NO repoint, NO converge.
 **Flags:** `vm_dispatch_log=1` set in HOST + CLIENT_1 inis (`gnatives_probe=0`, the retired probe).
@@ -122,3 +127,43 @@ bracket — a coverage hole), or `catch` counts short of your tally.
   2a-capture), and the client wire-path suppression retirement (that end-to-end trace is owed on
   the capture increment, not here). Neither is a blocker for building capture; both are on the
   2a-capture verification list in the plan.
+
+---
+
+## LOOT GATE (final observe item — 2026-07-14, SHA `1E41A807`)
+
+**Why:** the 45/45 descent census proved the class filter (`IsKerfurFormClass`) **catches every true B**.
+It did NOT prove the filter **rejects every non-B**. Those are different claims — only the first was
+measured. The conversion ubergraph can `BeginDeferred` other actors inside a bracket (loot / `explosion_C`).
+The capture must repoint onto the FORM body, never onto loot. This gate forces that second claim.
+
+**New instrumentation this build:** an in-window spawn that is **neither** kerfur-form **nor** floppy now
+increments `spawn.otherIn` and (with `vm_dispatch_log=1`) logs
+`SPAWN OTHER IN-WINDOW class=... -- filter REJECTS`. Previously such a spawn was **silently dropped** — so
+without this build the loot run would be another `floppyIn=0`-style null result, not a pass.
+
+**On the floppy mechanic (correcting the earlier step — thanks for the detail):** a kerfur *carries* a
+floppy via **"Get reports"** — hold a floppy in hand (R-hold a prop floppy), then on the kerfur **Hold-E →
+scroll the action list to #6 (Get reports)**; the floppy leaves your hand and the kerfur runs off. A later
+**turn-OFF** of a kerfur that is carrying one is what spawns the `floppyDisc` inside the `dropKerfurProp`
+bracket (that's the floppyIn already confirmed at 11:04).
+
+**The loot-gate action (one bracketed spawn that is neither form nor floppy):**
+- The likeliest in-bracket non-form/non-floppy spawn is a kerfur turned OFF while **carrying loot / items**
+  (or in whatever state makes the conversion drop extra actors), OR a death that routes through the
+  conversion bracket. Do the toggle you can most easily make drop *something extra* in the bracket.
+- Deliberately: give a kerfur loot/items (or set up whatever drops loot on its conversion), then **turn it
+  OFF**. Keep a tally.
+
+**Read after (I'll do it):** in the `CONTAINMENT SUMMARY` line —
+- **GREEN:** `spawn.otherIn > 0` AND `formIn` counts only the real bodies (one per toggle). The loot landed
+  in `otherIn` → the filter rejected it as a repoint target. Gate 2 reject side proven.
+- **RED (HALT):** any loot/explosion class shows up as `formIn`/`formOut` instead of `otherIn` → the filter
+  would mis-repoint onto loot → the capture design halts until the filter is fixed.
+- **NULL (not a pass):** `otherIn == 0` AND you never got a non-form/non-floppy spawn into a bracket → the
+  case didn't arise; the gate is unforced (per-diem the concern may be moot if loot is death-verb-scoped, not
+  conversion-scoped — I'll say which from the log, not assume).
+
+After this gate: I write the **full-unify 2a-capture** (one commit + a deletions-only retirement commit),
+with the §3 correction in the code commit, and the **order assertion** (capture@birth → drain@birth →
+converge@A-destroy; loud if inverted).
