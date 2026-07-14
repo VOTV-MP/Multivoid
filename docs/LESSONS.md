@@ -66,6 +66,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `TryCaptureKerfurPropDestroy` dead -> nearly RULE-2-deleted the guard sitting on bug1's actual relay.
   Corollary: when ONE negative-grep turns out blind, RE-RUN the audit on every other "0 fires" in the
   inventory. `memory/lesson_negative_grep_verify_against_known_positive.md`
+- **Before changing a FUNCTION's behavior, enumerate ALL its call sites + state what each expects; before
+  SUBTRACTING an output at a seam, enumerate every other producer/consumer at that seam** — acting on an
+  incomplete map of what you're touching is ONE recurring root with many faces (a "mechanism" that is N
+  mechanisms; a converge fn with an unenumerated 3rd/4th caller; a "suppressor" that is 3 coordinating
+  broadcasters; a proxy criterion that only correlates with the real fact). A subtraction breaks unenumerated
+  consumers SILENTLY (no error). Prefer the DIRECT fact over a PROXY. Cost 2026-07-14: captured-B wired into
+  `ConvergeAfterConversion` without mapping its 4 callers (the POLL death-watch was the one that duped); fixed
+  by enumerating the seam's 3 PropSpawn broadcasters FIRST -> "track-but-don't-broadcast" (remove the output,
+  keep the tracked-flag contract the others coordinate on). `memory/feedback_enumerate_call_sites_before_changing_behavior.md`
 - **"per rule 1" = full green light** for the root-cause fix in its complete form (incl. hard
   architectural change). Don't scope down, don't ask "is this too big". `memory/feedback_no_crutch_questions_act_autonomously.md`
 - **No design/architect AGENTS** — design yourself from code + docs + MTA; search + audit agents OK. `memory/feedback_no_design_architect_agents.md`
