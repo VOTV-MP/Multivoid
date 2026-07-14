@@ -476,40 +476,12 @@ bool ConsumeSeamConverged(uint32_t eid) {
     return true;
 }
 
-// (take-9, audit findings 1+2) FRESH-SPAWN STAMPS -- the real "this NPC is a conversion product"
-// discriminator. "Unowned within 5 m" alone is the take-8 lesson's dead premise wearing a new
-// coat: during enrollment gaps (host pre-ClientWorldReady NPC registration, client join-window
-// NPC adoption) a save-loaded live kerfur is ALSO unowned, and proximity alone would let a plain
-// hold-R pickup / incinerator burn beside it suppress a legit relay (client) or weld the dying
-// prop's KerfurId onto an untouched wanderer (host). The conversion product is different in ONE
-// measured way: it was FinishSpawningActor'd moments ago (spawnKerfuro/dropKerfurProp spawn-then-
-// destroy, same call chain) -- so the FinishSpawningActor Func seam (host_spawn_watcher, both
-// roles) stamps every fresh kerfur NPC here, and the capture requires a stamp. A save-loaded /
-// long-lived NPC is NEVER stamped. GT-only.
-struct FreshNpcStamp { void* actor; int32_t idx; std::chrono::steady_clock::time_point at; };
-std::vector<FreshNpcStamp> g_freshNpcStamps;
-constexpr long kFreshNpcStampMs = 2000;  // verb chains are sub-tick; 2 s is a generous ceiling
-
-void PruneFreshNpcStamps(std::chrono::steady_clock::time_point now) {
-    for (auto it = g_freshNpcStamps.begin(); it != g_freshNpcStamps.end();) {
-        const long age = static_cast<long>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - it->at).count());
-        if (age > kFreshNpcStampMs || !it->actor || !R::IsLiveByIndex(it->actor, it->idx))
-            it = g_freshNpcStamps.erase(it);
-        else
-            ++it;
-    }
-}
-
-bool HasFreshNpcStamp(void* actor, std::chrono::steady_clock::time_point now) {
-    for (const auto& st : g_freshNpcStamps) {
-        if (st.actor != actor) continue;
-        const long age = static_cast<long>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - st.at).count());
-        return age <= kFreshNpcStampMs;
-    }
-    return false;
-}
+// (2026-07-14) The FRESH-SPAWN STAMP proximity fallback that used to live here is RETIRED. Its job
+// -- "which fresh NPC is this dying prop's conversion product?" -- is now answered DETERMINISTICALLY
+// by the form assembler's in-bracket captured-B (ConsumeCapturedForm), consumed at the paired
+// destroy edge in TryCaptureKerfurPropDestroy. Retirement evidence: across the 2026-07-14 takes
+// (G1 + 19:09 + 20:20, both peers) the captured-B path HIT 85 conversions and the stamp fallback
+// was entered ZERO times (0 "MISS in-bracket", 0 DECLINE). Dead as a fallback -> gone (RULE 2).
 
 void SendConvertRequestDirect(uint32_t eid, uint8_t toProp) {
     auto* s = LoadSession();
@@ -1178,16 +1150,14 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
 
     const bool isHost = s->role() == coop::net::Role::Host;
     const ue_wrap::FVector ploc = ue_wrap::engine::GetActorLocation(actor);
-    constexpr float kR2 = 500.f * 500.f;  // spwn billboard + (0,0,50); 500cm mirrors every kerfur proximity site
-    // 2a-capture (2026-07-14): consult the form assembler's DETERMINISTIC in-bracket successor B
-    // FIRST -- captured at B's FinishSpawningActor, consumed here at the paired A-destroy edge (the
-    // measured spawn<destroy order, DESTROY_NO_SPAWN=0). This BYPASSES the (0,0,0) post-destroy
-    // proximity anchor: GetActorLocation(actor) on the dying prop reads ~origin, so the stamp walk
-    // below rejected the real B on every real toggle (take-8/take-10 misfilter, seen live in the G1
-    // take: "1 fresh stamp but NONE qualified"). PRIMARY path; the stamp walk is the FALLBACK,
-    // retired once this deterministic path is hands-on proven.
+    // 2a-capture (2026-07-14): the form assembler's DETERMINISTIC in-bracket successor B -- captured
+    // at B's FinishSpawningActor, consumed here at the paired A-destroy edge (the measured
+    // spawn<destroy order, DESTROY_NO_SPAWN=0). This is the ONLY which-B path now: it bypasses the
+    // (0,0,0) post-destroy proximity anchor (GetActorLocation on the dying prop reads ~origin) that
+    // made the old stamp-list proximity walk reject the real B on every real toggle (take-8/take-10
+    // misfilter). That walk is RETIRED (see the note above SendConvertRequestDirect).
     void* freshNpc = nullptr;
-    float bestD2 = kR2;
+    float bestD2 = 0.f;  // real dist filled in on a capture HIT below; only read for the CLIENT log
     {
         auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/true);
         if (cap.actor) {
@@ -1202,79 +1172,25 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     }
 
     if (!freshNpc) {
-        // ORDER ASSERT (user rule 2026-07-14): B is captured at FinishSpawning, consumed here at A's
-        // destroy; the assembler measured spawn<destroy on every bracket (DESTROY_NO_SPAWN=0). A capture
-        // MISS while a verb bracket is live means either that invariant broke OR this is a genuine
-        // (non-conversion) destroy -- log the in-bracket case loud, then fall back to the stamp walk.
+        // No captured conversion successor at this destroy edge. B is captured at FinishSpawning and
+        // consumed here at the paired A-destroy (measured spawn<destroy, DESTROY_NO_SPAWN=0), so a MISS
+        // means this is a genuine (non-conversion) kerfur-prop destroy -> generic relay. ORDER ASSERT
+        // (user rule 2026-07-14): a MISS *while a verb bracket is live* would mean that invariant broke --
+        // log THAT case loud, with destroy provenance, so it can never hide silently. provenance{}
+        // distinguishes the conversion verb's own self-destroy (vmActive+ctxSelf, or reqEid on the
+        // CallFunction route) from an unrelated teardown.
         if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
             const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
-            if (av.active || ActiveRequestVerbEid() != coop::element::kInvalidId)
+            const coop::element::ElementId reqEid = ActiveRequestVerbEid();
+            if (av.active || reqEid != coop::element::kInvalidId)
                 UE_LOGW("kerfur_convert: 2a-capture MISS in-bracket (%s) actor=%p -- no captured B at the destroy "
-                        "edge (ORDER ASSERT: spawn<destroy expected) -- falling back to proximity walk",
-                        isHost ? "HOST" : "CLIENT", actor);
-        }
-        // ---- legacy stamp-list proximity fallback (the conversion-product test; retired once the
-        // deterministic captured-B path is hands-on proven; audit 2026-07-13 findings 1+2) ----
-        //   1. FRESH-SPAWN STAMP -- FinishSpawningActor'd within the last 2 s (the load-bearing
-        //      discriminator: a save-loaded / long-lived kerfur is NEVER stamped).
-        //   2. Not an established identity (HOST untracked by npc_sync; CLIENT not a bound NPC mirror
-        //      and not a PARKED ghost).
-        //   3. Within the verb's spawn radius of the dying prop (the anchor that (0,0,0) defeats).
-        const auto now = std::chrono::steady_clock::now();
-        PruneFreshNpcStamps(now);
-        if (g_freshNpcStamps.empty()) {
-            // OBSERVE (2026-07-14, G1 increment -- DECLINE reason + destroy provenance). provenance{}
-            // distinguishes the conversion verb's own self-destroy (vmActive + ctxSelf, or reqEid on the
-            // CallFunction route) from an unrelated teardown -- resolving K2-visibility in one line.
-            if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
-                const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
-                const coop::element::ElementId reqEid = ActiveRequestVerbEid();
-                UE_LOGI("kerfur_convert: TryCapture DECLINE (%s) actor=%p -- STAMP LIST EMPTY (no fresh kerfur NPC "
-                        "stamped; client stamp-starved?) -- relay proceeds. provenance{vmActive=%d verbId=%d "
-                        "ctxSelf=%d reqEid=%d}",
+                        "edge (ORDER ASSERT: spawn<destroy expected) -- treating as genuine destroy (generic "
+                        "relay). provenance{vmActive=%d verbId=%d ctxSelf=%d reqEid=%d}",
                         isHost ? "HOST" : "CLIENT", actor, av.active ? 1 : 0, av.verbId,
                         (av.active && av.ctx == actor) ? 1 : 0,
                         reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
-            }
-            return false;  // nothing fresh in the world -> genuine destroy
         }
-        std::unordered_set<void*> mirrors;
-        if (!isHost) CollectMirrorActors(/*wantProp=*/false, /*wantNpc=*/true, mirrors);
-        // Walk the STAMP LIST, not GUObjectArray -- the candidate universe is "kerfur NPCs finished
-        // in the last 2 s" (typically 0-1 entries), already class-gated at stamp time.
-        for (const auto& st : g_freshNpcStamps) {
-            void* obj = st.actor;
-            if (!obj || !R::IsLiveByIndex(obj, st.idx)) continue;
-            if (isHost) {
-                if (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId) continue;
-            } else {
-                if (mirrors.count(obj)) continue;
-                bool parked = false;
-                for (const auto& g : g_parkedGhosts)
-                    if (g.actor == obj) { parked = true; break; }
-                if (parked) continue;
-            }
-            const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
-            const float dx = loc.X - ploc.X, dy = loc.Y - ploc.Y, dz = loc.Z - ploc.Z;
-            const float d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 < bestD2) { bestD2 = d2; freshNpc = obj; }
-        }
-        if (!freshNpc) {
-            // OBSERVE (2026-07-14, G1): stamps EXIST but none qualified (out of 500cm / owned / mirror /
-            // parked) -- the WHICH-B match failed (the take-8/take-10 proximity-misfilter class that the
-            // captured-B path above eliminates). provenance{} as above.
-            if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
-                const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
-                const coop::element::ElementId reqEid = ActiveRequestVerbEid();
-                UE_LOGI("kerfur_convert: TryCapture DECLINE (%s) actor=%p -- %zu fresh stamp(s) but NONE qualified "
-                        "(>500cm / owned / mirror / parked) -- relay proceeds. provenance{vmActive=%d verbId=%d "
-                        "ctxSelf=%d reqEid=%d}",
-                        isHost ? "HOST" : "CLIENT", actor, g_freshNpcStamps.size(), av.active ? 1 : 0, av.verbId,
-                        (av.active && av.ctx == actor) ? 1 : 0,
-                        reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
-            }
-            return false;  // no conversion product beside it -> a genuine destroy -> generic relay
-        }
+        return false;  // no captured conversion successor -> genuine destroy -> generic relay
     }
 
     if (!isHost) {
@@ -1323,22 +1239,6 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     return true;
 }
 
-// Stamp a freshly-finished kerfur NPC (see the header). Self-gating: called for EVERY finished
-// actor from the FinishSpawningActor Func seam, so the reject path must stay pointer-cheap --
-// null checks, one atomic session load, one ClassOf deref, one SuperStruct climb. No walks, no
-// allocations before the class gate.
-void NoteFreshKerfurNpcSpawn(void* actor) {
-    if (!actor || !g_kerfurNpcClass) return;
-    auto* s = LoadSession();
-    if (!s || !s->connected()) return;                       // solo/SP: no capture consumer
-    if (!ue_wrap::game_thread::IsGameThread()) return;       // seam is GT; defensive
-    void* cls = R::ClassOf(actor);
-    if (!cls || !R::IsDescendantOfAny(cls, &g_kerfurNpcClass, 1)) return;
-    const auto now = std::chrono::steady_clock::now();
-    PruneFreshNpcStamps(now);
-    g_freshNpcStamps.push_back(FreshNpcStamp{actor, R::InternalIndexOf(actor), now});
-}
-
 coop::element::ElementId ActiveRequestVerbEid() {
     // GT-only marker set around the OnConvertRequest CallFunction (kerfur_convert.cpp:945-947). The 0x45
     // assembler is blind to the CallFunction dispatch, so it consults this to recognize the
@@ -1353,7 +1253,6 @@ void OnDisconnect() {
     g_parkedGhosts.clear();  // GT-only conversion-ghost claim list
     g_seamConvergedEid = 0xFFFFFFFFu;  // GT-only destroy-edge converge handshake (take-9)
     g_requestVerbEid   = 0xFFFFFFFFu;
-    g_freshNpcStamps.clear();          // GT-only fresh kerfur NPC spawn stamps (take-9)
     g_lastConvPoll = {};
 }
 

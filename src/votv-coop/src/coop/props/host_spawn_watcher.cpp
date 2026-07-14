@@ -2,7 +2,6 @@
 
 #include "coop/props/host_spawn_watcher.h"
 
-#include "coop/creatures/kerfur_convert.h"  // NoteFreshKerfurNpcSpawn (destroy-edge first-refusal stamp, take-9)
 #include "coop/element/element.h"
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
@@ -239,10 +238,6 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!GT::IsGameThread()) return;
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
-    // (take-9) BOTH-ROLES kerfur stamp, BEFORE the host gate: the destroy-edge kerfur first
-    // refusal needs "this NPC was FinishSpawningActor'd moments ago" on the CLIENT too (its own
-    // conversion verb's ghost). Self-gating + pointer-cheap for every non-kerfur actor.
-    coop::kerfur_convert::NoteFreshKerfurNpcSpawn(result);
     if (s->role() != coop::net::Role::Host) return;        // host-only broadcaster
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;

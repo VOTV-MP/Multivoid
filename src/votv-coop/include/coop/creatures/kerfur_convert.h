@@ -146,16 +146,6 @@ bool TryAdoptFreshKerfurProp(void* actor);
 // declines: no wire identity to converge). Game thread (the destroy seam).
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
-// BOTH ROLES: stamp a freshly-FinishSpawningActor'd kerfur NPC (called from the host_spawn_watcher
-// FinishSpawningActor Func seam for every finished actor; self-gates on the kerfur NPC class,
-// pointer-cheap reject). The stamps are TryCaptureKerfurPropDestroy's load-bearing freshness
-// discriminator: the conversion verbs are SPAWN-then-DESTROY in one synchronous chain, so the true
-// conversion product always carries a milliseconds-old stamp, while a save-loaded / long-lived
-// "unowned" kerfur (the enrollment-gap wanderer) never does -- proximity + untracked alone would
-// let it be mistaken for the product (audit 2026-07-13 findings 1+2). Entries expire after 2 s.
-// Game thread.
-void NoteFreshKerfurNpcSpawn(void* actor);
-
 // OBSERVE (2026-07-14, G1 increment): the host-range eid of the conversion request the host is
 // CURRENTLY executing via R::CallFunction inside OnConvertRequest, or kInvalidId when not inside one
 // (the g_requestVerbEid bracket, kerfur_convert.cpp:945-947). The host-exec-client-request path runs
