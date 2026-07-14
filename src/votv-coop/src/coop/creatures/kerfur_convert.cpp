@@ -44,6 +44,8 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/puppet.h"      // DisableCharacterTicks -- park a claimed conversion-ghost NPC
 #include "ue_wrap/reflection.h"
+#include "coop/config/config.h"  // OBSERVE (2026-07-14 G1): vm_dispatch_log gate for the decline/provenance lines
+#include "ue_wrap/vm_dispatch.h" // OBSERVE (2026-07-14 G1): CurrentThreadVerb() destroy-provenance at the decline
 
 #include <atomic>
 #include <chrono>
@@ -1172,7 +1174,25 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     //   3. Within the verb's spawn radius of the dying prop.
     const auto now = std::chrono::steady_clock::now();
     PruneFreshNpcStamps(now);
-    if (g_freshNpcStamps.empty()) return false;  // nothing fresh in the world -> genuine destroy
+    if (g_freshNpcStamps.empty()) {
+        // OBSERVE (2026-07-14, G1 increment -- the DECLINE reason + destroy provenance). The stamp list is
+        // fed by NoteFreshKerfurNpcSpawn off the host_spawn_watcher FinishSpawningActor seam; if that seam is
+        // host-only the CLIENT branch is STARVED (empty stamps) on every turn-on -> TryCapture returns false
+        // -> the generic keyed-destroy relay (bug1) fires unsuppressed. provenance{} distinguishes the
+        // conversion verb's own self-destroy (vmActive + ctxSelf, or reqEid on the CallFunction route) from an
+        // unrelated teardown (neither) -- resolving the K2-visibility question in one line per real destroy.
+        if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
+            const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
+            const coop::element::ElementId reqEid = ActiveRequestVerbEid();
+            UE_LOGI("kerfur_convert: TryCapture DECLINE (%s) actor=%p -- STAMP LIST EMPTY (no fresh kerfur NPC "
+                    "stamped; client stamp-starved?) -- relay proceeds. provenance{vmActive=%d verbId=%d "
+                    "ctxSelf=%d reqEid=%d}",
+                    isHost ? "HOST" : "CLIENT", actor, av.active ? 1 : 0, av.verbId,
+                    (av.active && av.ctx == actor) ? 1 : 0,
+                    reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
+        }
+        return false;  // nothing fresh in the world -> genuine destroy
+    }
     std::unordered_set<void*> mirrors;
     if (!isHost) CollectMirrorActors(/*wantProp=*/false, /*wantNpc=*/true, mirrors);
     void* freshNpc = nullptr;
@@ -1196,7 +1216,22 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < bestD2) { bestD2 = d2; freshNpc = obj; }
     }
-    if (!freshNpc) return false;  // no conversion product beside it -> a genuine destroy -> generic relay
+    if (!freshNpc) {
+        // OBSERVE (2026-07-14, G1 increment): stamps EXIST but none qualified (out of 500cm / owned / a mirror
+        // / a parked ghost). Distinct decline from stamp-starvation above -- here the fresh B was seen but the
+        // WHICH-B match failed (the take-8/take-10 proximity-misfilter class). provenance{} as above.
+        if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
+            const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
+            const coop::element::ElementId reqEid = ActiveRequestVerbEid();
+            UE_LOGI("kerfur_convert: TryCapture DECLINE (%s) actor=%p -- %zu fresh stamp(s) but NONE qualified "
+                    "(>500cm / owned / mirror / parked) -- relay proceeds. provenance{vmActive=%d verbId=%d "
+                    "ctxSelf=%d reqEid=%d}",
+                    isHost ? "HOST" : "CLIENT", actor, g_freshNpcStamps.size(), av.active ? 1 : 0, av.verbId,
+                    (av.active && av.ctx == actor) ? 1 : 0,
+                    reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
+        }
+        return false;  // no conversion product beside it -> a genuine destroy -> generic relay
+    }
 
     if (!isHost) {
         // CLIENT: capture = suppress the keyed-destroy relay ONLY. The conversion axis owner stays
@@ -1258,6 +1293,15 @@ void NoteFreshKerfurNpcSpawn(void* actor) {
     const auto now = std::chrono::steady_clock::now();
     PruneFreshNpcStamps(now);
     g_freshNpcStamps.push_back(FreshNpcStamp{actor, R::InternalIndexOf(actor), now});
+}
+
+coop::element::ElementId ActiveRequestVerbEid() {
+    // GT-only marker set around the OnConvertRequest CallFunction (kerfur_convert.cpp:945-947). The 0x45
+    // assembler is blind to the CallFunction dispatch, so it consults this to recognize the
+    // host-exec-client-request bracket as a SECOND capture scope. See the header.
+    return (g_requestVerbEid == 0xFFFFFFFFu)
+               ? coop::element::kInvalidId
+               : static_cast<coop::element::ElementId>(g_requestVerbEid);
 }
 
 void OnDisconnect() {

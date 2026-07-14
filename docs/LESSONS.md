@@ -57,6 +57,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   invalidation, and cross-artifact synthesis). Skill patched 2026-07-14 (FRAMING-PROVENANCE angle + brief
   provenance-tag + reframe-surface + carried-primitive convergence bar).
   `memory/feedback_qf_challenge_carried_framing_not_just_the_frame.md`
+- **A NEGATIVE grep is only evidence if the pattern can match a KNOWN-POSITIVE line** — before concluding
+  "0 matches -> never happens / mechanism dead / gate clean", prove the pattern CAN match the positive case
+  (grep one real hit; check the log line even CONTAINS the field you filter on). A query structurally blind
+  to its target returns 0 and the null reads as PROOF. Worst kind: not a case that never arose, but one that
+  arose EVERY time and was invisible to the query. Cost 2026-07-14: `grep 'grab_hook\[destroy-seam\].*kerfur'`
+  =0 "proved" the destroy-seam never fires for kerfur (the line prints actor/key/eid, NO class) -> declared
+  `TryCaptureKerfurPropDestroy` dead -> nearly RULE-2-deleted the guard sitting on bug1's actual relay.
+  Corollary: when ONE negative-grep turns out blind, RE-RUN the audit on every other "0 fires" in the
+  inventory. `memory/lesson_negative_grep_verify_against_known_positive.md`
 - **"per rule 1" = full green light** for the root-cause fix in its complete form (incl. hard
   architectural change). Don't scope down, don't ask "is this too big". `memory/feedback_no_crutch_questions_act_autonomously.md`
 - **No design/architect AGENTS** — design yourself from code + docs + MTA; search + audit agents OK. `memory/feedback_no_design_architect_agents.md`

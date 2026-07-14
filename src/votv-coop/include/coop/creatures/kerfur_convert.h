@@ -156,6 +156,15 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
 // Game thread.
 void NoteFreshKerfurNpcSpawn(void* actor);
 
+// OBSERVE (2026-07-14, G1 increment): the host-range eid of the conversion request the host is
+// CURRENTLY executing via R::CallFunction inside OnConvertRequest, or kInvalidId when not inside one
+// (the g_requestVerbEid bracket, kerfur_convert.cpp:945-947). The host-exec-client-request path runs
+// the verb via CallFunction, which is ASSEMBLER-BLIND -- the 0x45 substrate only catches the local
+// EX_Local menu toggle, never a CallFunction dispatch. The kerfur_form_assembler consults this to
+// recognize the CallFunction bracket as a SECOND capture scope (else a CallFunction-route B lands in
+// formOut, indistinguishable from a world-load spawn). Game-thread only marker (no lock needed).
+coop::element::ElementId ActiveRequestVerbEid();
+
 // Clear per-session state (the pending queue). Net disconnect.
 void OnDisconnect();
 

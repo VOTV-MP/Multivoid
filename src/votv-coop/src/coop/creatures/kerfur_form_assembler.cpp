@@ -59,6 +59,7 @@
 #include "coop/creatures/kerfur_form_assembler.h"
 
 #include "coop/config/config.h"
+#include "coop/creatures/kerfur_convert.h"  // OBSERVE (2026-07-14 G1): ActiveRequestVerbEid -- the CallFunction route scope
 #include "coop/element/element.h"    // ElementId, kInvalidId (gate 1 per-eid read)
 #include "coop/element/registry.h"   // Registry::EidForActor (gate 1 per-eid read)
 #include "coop/net/session.h"
@@ -111,6 +112,13 @@ std::atomic<std::uint64_t> g_destroyOtherInWindow{0};// a kerfur-class actor != 
 std::atomic<std::uint64_t> g_destroyKerfurOutWindow{0}; // a kerfur-class actor destroyed OUTSIDE any bracket
 std::atomic<std::uint64_t> g_catchTurnOff{0};        // 0x45 dropKerfurProp entries caught
 std::atomic<std::uint64_t> g_catchTurnOn{0};         // 0x45 spawnKerfuro entries caught
+// G1 (2026-07-14): the CallFunction route (OnConvertRequest host-exec-client-request) is 0x45-BLIND
+// (CallFunction != EX_Local, so no OnVerbEntry / CurrentThreadVerb window). kerfur_convert publishes the
+// request eid it is executing (ActiveRequestVerbEid) as a SECOND capture scope. These count the form-spawn
+// + kerfur self-destroy that fire while a request is executing -- proving the CallFunction-route B/destroy
+// are capturable via the request eid (currently they land in formOut/kerfurOut, mixed with world spawns).
+std::atomic<std::uint64_t> g_spawnFormInReqScope{0};   // kerfur-form successor spawned during a CallFunction request
+std::atomic<std::uint64_t> g_destroySelfInReqScope{0}; // a kerfur-class actor destroyed during a CallFunction request
 
 // ---- 2a-observe gate instrumentation (measures what the repoint-at-birth design rests on) ----
 // GATE 1 (one-capture-per-A-eid): does the verb's Context actor A carry an eid at ENTRY?
@@ -154,6 +162,10 @@ bool IsKerfurFormClass(void* cls) {
 bool IsFloppyClass(void* cls) {
     void* fb = g_floppyClass.load(std::memory_order_relaxed);
     return fb && R::IsDescendantOfAny(cls, &fb, 1);
+}
+// G1: is the host currently executing a client's convert-request via CallFunction (the 0x45-blind route)?
+bool InReqScope() {
+    return coop::kerfur_convert::ActiveRequestVerbEid() != E::kInvalidId;
 }
 
 // ---- the substrate ENTRY callback (observe-only) -------------------------------
@@ -218,6 +230,7 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     }
 
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
+    const bool reqScope = !av.active && InReqScope();  // G1: CallFunction route (0x45-blind)
     bool bIndexLive = false;
     int32_t bIdx = -1;
     if (isForm) {
@@ -231,6 +244,13 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
             bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
             if (bIndexLive) g_spawnBIndexLive.fetch_add(1, std::memory_order_relaxed);
             else            g_spawnBIndexDead.fetch_add(1, std::memory_order_relaxed);
+        } else if (reqScope) {
+            // G1: the host is executing a client's convert-request via CallFunction (0x45-blind route) --
+            // this form-spawn IS the conversion successor B, capturable via the request eid instead of a
+            // 0x45 bracket. Proving formInReqScope>0 closes the CallFunction-route capture gap.
+            g_spawnFormInReqScope.fetch_add(1, std::memory_order_relaxed);
+            bIdx = R::InternalIndexOf(spawnedResult);
+            bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
         } else {
             g_spawnFormOutWindow.fetch_add(1, std::memory_order_relaxed);
         }
@@ -239,10 +259,11 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     }
     if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
         std::wstring cn = R::ClassNameOf(spawnedResult);
-        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verbId=%d depth=%d bIdx=%d bLive=%d",
+        const char* scope = av.active ? "IN-WINDOW" : (reqScope ? "IN-WINDOW(req-scope)" : "out-of-window");
+        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verbId=%d depth=%d bIdx=%d bLive=%d reqEid=%d",
                 RoleTag(), isForm ? L"FORM" : L"floppy", spawnedResult, cn.c_str(),
-                av.active ? "IN-WINDOW" : "out-of-window", av.verbId, av.depth,
-                bIdx, bIndexLive ? 1 : 0);
+                scope, av.verbId, av.depth, bIdx, bIndexLive ? 1 : 0,
+                reqScope ? static_cast<int>(coop::kerfur_convert::ActiveRequestVerbEid()) : -1);
     }
 }
 
@@ -257,8 +278,16 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     const char* kind;
     bool orderGood = false;
     if (!av.active) {
-        g_destroyKerfurOutWindow.fetch_add(1, std::memory_order_relaxed);
-        kind = "out-of-window";
+        if (InReqScope()) {
+            // G1: the host is executing a client's convert-request via CallFunction (0x45-blind route);
+            // a kerfur destroy here is the conversion's own self-destroy. Captures the CallFunction-route
+            // destroy the prop_destroy_seam relay (bug1) fires on -- see prop_destroy_seam:118 provenance.
+            g_destroySelfInReqScope.fetch_add(1, std::memory_order_relaxed);
+            kind = "IN-WINDOW(req-scope) self";
+        } else {
+            g_destroyKerfurOutWindow.fetch_add(1, std::memory_order_relaxed);
+            kind = "out-of-window";
+        }
     } else if (context == av.ctx) {  // IDENTITY invariant: the verb's own self-destroy
         g_destroySelfInWindow.fetch_add(1, std::memory_order_relaxed);
         // GATE 3b -- did B's form-spawn already fire in THIS bracket (spawn-before-destroy)?
@@ -325,17 +354,21 @@ void EnsureSeamsInstalled() {
 
 void DumpSummary(const char* when) {
     UE_LOGI("[kerfur_asm][%s] CONTAINMENT SUMMARY (%s): catch{off=%llu on=%llu} "
-            "spawn{formIn=%llu formOut=%llu floppyIn=%llu otherIn=%llu} "
-            "destroy{selfIn=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, OUT/anomaly = 2a-HALT; "
-            "spawn.otherIn = loot/explosion the filter REJECTED (GATE 2 reject side -- must NOT be counted formIn)",
+            "spawn{formIn=%llu formInReqScope=%llu formOut=%llu floppyIn=%llu otherIn=%llu} "
+            "destroy{selfIn=%llu selfInReqScope=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, "
+            "OUT/anomaly = 2a-HALT; reqScope = G1 CallFunction route (host-exec-client-request, 0x45-blind: "
+            "formInReqScope>0 closes the CallFunction capture gap); "
+            "spawn.otherIn = loot/explosion the filter REJECTED (GATE 2 reject side -- must NOT be formIn)",
             RoleTag(), when,
             (unsigned long long)g_catchTurnOff.load(std::memory_order_relaxed),
             (unsigned long long)g_catchTurnOn.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormInWindow.load(std::memory_order_relaxed),
+            (unsigned long long)g_spawnFormInReqScope.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormOutWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFloppyInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroySelfInWindow.load(std::memory_order_relaxed),
+            (unsigned long long)g_destroySelfInReqScope.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyKerfurOutWindow.load(std::memory_order_relaxed));
     // 2a-observe GATES: the repoint-at-birth design is GREEN only if eidUnbound=0,
