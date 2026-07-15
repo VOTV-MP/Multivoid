@@ -705,13 +705,16 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 110; // v110: clock sync design F -- the world clock moves
-                                                  // OFF the reliable periodic TimeSync onto the unreliable
-                                                  // ClockPose=37 host->all snapshot (~2Hz, newest-wins);
-                                                  // reliable TimeSync(29) kept ONLY for the connect-edge.
-                                                  // WIRE CHANGE -> version bump so a mixed 109/110 pair
-                                                  // HARD-CLOSEs at the gate instead of silently degrading
-                                                  // the clock (109 sends reliable-periodic 110 ignores).
+inline constexpr uint16_t kProtocolVersion = 111; // v111: signal-desk download-SIM host-authoritative --
+                                                  // new unreliable DeskSimPose=38 (host->all output vector)
+                                                  // + the live DeskState apply no longer authors the sim
+                                                  // OUTPUT fields (host owns them via DeskSim; one author,
+                                                  // gate 1). WIRE CHANGE -> version bump so a mixed 110/111
+                                                  // pair HARD-CLOSEs at the gate (a 110 peer would author
+                                                  // the outputs via DeskState AND ignore DeskSimPose).
+                                                  // v110: clock sync design F -- the world clock moves OFF
+                                                  // the reliable periodic TimeSync onto the unreliable
+                                                  // ClockPose=37 host->all snapshot (~2Hz, newest-wins).
                                                   // v109: desk cursor pose split -- the coords-panel
                                                   // LIVE cursor (viewCoordinate) moves OFF the reliable
                                                   // DishAimState onto the unreliable DeskCursorPose=36
@@ -1035,6 +1038,16 @@ enum class MsgType : uint8_t {
                        //      the next. The RELIABLE TimeSync(29) is retained ONLY for the connect-edge
                        //      guaranteed initial sync. Body: ClockPosePacket (PacketHeader + TimeSyncPayload).
                        //      NOT relayed (host-originated; clients never forward it).
+    DeskSimPose = 38,  // v111 (2026-07-15): HOST->all signal-desk download-SIM output vector
+                       //      (unreliable, ~10Hz, newest-wins). OPEN-0 fix (docs qf_thread + signals/):
+                       //      the download rate formula rolls two UNSEEDED RNG terms per tick + integrates
+                       //      the filter offsets from per-peer frame-dt, so decoded/needle/rate/frData/
+                       //      poData/offsets DIVERGE across peers (MEASURED host 0.0064 vs client 0.0262).
+                       //      The host owns the sim + streams this vector; the client OVERWRITES (its local
+                       //      sim self-accrues garbage the overwrite hides) + interpolates like the cursor.
+                       //      The knob INTENTS stay occupant-authored via DeskState (host integrates the
+                       //      offset from them) -> this vector is host-down only, one author. Body:
+                       //      DeskSimPosePacket. NOT relayed (host-originated).
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -3998,6 +4011,29 @@ struct ClockPosePacket {
     TimeSyncPayload clock;   // 24
 };
 static_assert(sizeof(ClockPosePacket) == 44, "ClockPosePacket must be 44 bytes");
+
+// v111 (2026-07-15): the unreliable HOST->all signal-desk download-SIM output vector
+// (MsgType::DeskSimPose=38). The host-authoritative replacement for the per-peer download sim:
+// decoded/needle/rate/frData/poData/offsets/cooldown are host-owned + streamed newest-wins; the
+// client interpolates + OVERWRITES its own (its local sim self-accrues garbage the overwrite hides).
+// See MsgType::DeskSimPose + coop/interactables/desk_sim_sync.
+struct DeskSimSnapshot {
+    float decoded;    // 4 -- DL_SignalDownloadDLData.decoded (progress)
+    float resDetec;   // 4 -- DL_resDetecPercent (needle)
+    float rate;       // 4 -- DL_downloading (0 = idle)
+    float frData;     // 4 -- DL_frData (freq-match)
+    float poData;     // 4 -- DL_poData (polarity-match)
+    float frOffset;   // 4 -- DL_FrFilterOffset (knob position)
+    float poOffset;   // 4 -- DL_poFilterOffset
+    float cooldown;   // 4 -- coord_cooldown
+};
+static_assert(sizeof(DeskSimSnapshot) == 32, "DeskSimSnapshot must be 32 bytes");
+
+struct DeskSimPosePacket {
+    PacketHeader   header;  // 20
+    DeskSimSnapshot sim;    // 32
+};
+static_assert(sizeof(DeskSimPosePacket) == 52, "DeskSimPosePacket must be 52 bytes");
 
 // SkyStatePayload -- the host-authoritative NIGHT-SKY snapshot (SkyState=34, v44). The visible
 // star dome (Anewsky_C's `sky` mesh) is given a per-game UNSEEDED random yaw + a slow per-tick

@@ -139,6 +139,12 @@ void Session::SetHostClock(bool set, const TimeSyncPayload& clock) {
     if (set) localHostClock_ = clock;
 }
 
+void Session::SetHostDeskSim(bool set, const DeskSimSnapshot& sim) {
+    std::lock_guard<std::mutex> lk(localMutex_);
+    hasLocalDeskSim_ = set;
+    if (set) localDeskSim_ = sim;
+}
+
 // SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
 // StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
 // 2026-06-07 per the 800-LOC soft cap).
@@ -205,6 +211,16 @@ bool Session::TryGetHostClock(TimeSyncPayload& out, bool* outIsNew) {
     out = remoteHostClock_;
     if (outIsNew) *outIsNew = (remoteHostClockStamp_ != lastReadHostClockStamp_);
     lastReadHostClockStamp_ = remoteHostClockStamp_;
+    return true;
+}
+
+bool Session::TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew) {
+    if (state_.load() != ConnState::Connected) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteDeskSim_) return false;
+    out = remoteDeskSim_;
+    if (outIsNew) *outIsNew = (remoteDeskSimStamp_ != lastReadDeskSimStamp_);
+    lastReadDeskSimStamp_ = remoteDeskSimStamp_;
     return true;
 }
 
@@ -635,6 +651,25 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         break;
     }
+    case MsgType::DeskSimPose: {  // v111: HOST->all download-sim output vector (single value, newest-wins)
+        if (len < static_cast<int>(sizeof(DeskSimPosePacket))) return;
+        // Host owns the sim and never applies a received one (host-originated + not relayed; guard anyway).
+        if (cfg_.role == Role::Host) break;
+        DeskSimPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteDeskSim_ &&
+                static_cast<int32_t>(seq - lastRemoteDeskSimSeq_) <= 0) {
+                break;  // older/duplicate snapshot -- keep the newer one
+            }
+            remoteDeskSim_ = pkt.sim;
+            lastRemoteDeskSimSeq_ = seq;
+            hasRemoteDeskSim_ = true;
+            ++remoteDeskSimStamp_;
+        }
+        break;
+    }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
@@ -739,6 +774,8 @@ void Session::NetThread() {
     // this loop touches it), like nextSend.
     auto nextClockSend = std::chrono::steady_clock::now();
     constexpr auto kClockSendInterval = std::chrono::milliseconds(500);
+    auto nextDeskSimSend = std::chrono::steady_clock::now();
+    constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // v111: ~10 Hz
 
     auto* sockets = SteamNetworkingSockets();
 
@@ -855,17 +892,21 @@ void Session::NetThread() {
             bool haveDeskCursor;
             TimeSyncPayload localHostClock;
             bool haveHostClock;
+            DeskSimSnapshot localDeskSim;
+            bool haveDeskSim;
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_;
               localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
               localHand = localHandPose_; haveHand = hasLocalHand_;
               localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
-              localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_; }
+              localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_;
+              localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_; }
             // v109 (design F): the clock rides its OWN 500 ms throttle, and only the HOST
             // originates it. Computed once here so the per-peer fan-out below sends the same
             // snapshot to every peer this round (and nextClockSend advances once, after).
             const bool clockDue = haveHostClock && cfg_.role == Role::Host && now >= nextClockSend;
+            const bool deskSimDue = haveDeskSim && cfg_.role == Role::Host && now >= nextDeskSimSend;
             // v37: serialize the live NPC pose batch ONCE (same body for every peer; only the
             // per-peer header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads
             // localNpcBatch_ under localMutex_ + writes the body after the leading PacketHeader,
@@ -880,7 +921,7 @@ void Session::NetThread() {
             // -- SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
             uint8_t tcBuf[kTrashCarryPoseDatagramMax];
             const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
-            if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue ||
+            if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue || deskSimDue ||
                 npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
@@ -971,9 +1012,19 @@ void Session::NetThread() {
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                         if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                     }
+                    if (deskSimDue) {  // v111: HOST download-sim output vector -- same body to every peer
+                        DeskSimPosePacket pkt{};
+                        WriteHeader(pkt.header, MsgType::DeskSimPose, sendSeq_.fetch_add(1), ownEpoch_);
+                        pkt.sim = localDeskSim;
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, &pkt, sizeof(pkt),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
+                    }
                 }
             }
             if (clockDue) nextClockSend = now + kClockSendInterval;  // advance once per round, after the fan-out
+            if (deskSimDue) nextDeskSimSend = now + kDeskSimSendInterval;
             nextSend = now + sendInterval;
         }
 

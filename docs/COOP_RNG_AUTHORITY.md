@@ -128,7 +128,16 @@ Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signa
 `dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic `Array_Shuffle`
 scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar order diverge.
 
-**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: OPEN-DIVERGES, MECHANIC (RE'd 2026-07-15, user-reported).**
+**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: AS-BUILT v111 (2026-07-15, NOT hands-on).**
+FIX SHIPPED: `coop/interactables/desk_sim_sync` + `MsgType::DeskSimPose=38` (proto 110→111). The host owns
+the download sim + rolls both RNG; it streams the 8-float output vector (decoded/needle/rate/frData/poData/
+offsets/cooldown) unreliable ~10 Hz; the client interpolates + OVERWRITES its local sim (self-accrued
+garbage never shows). Knob intents stay occupant-authored on DeskState (gate 1: the live apply keeps the
+host-owned output fields). `/qf`-converged (5 measurement rounds): seed-sync refuted (unseeded+transient
+noise), so host-authoritative was FORCED, not pattern-default; audit READY (0 CRITICAL). Design home:
+`docs/signals/TRACKER.md` OPEN-0. Below = the original RE (kept for the mechanic detail).
+
+**T2-5b (original RE) · Signal DOWNLOAD-RATE sim — was OPEN-DIVERGES, MECHANIC (RE'd 2026-07-15).**
 The desk download rate `DL_downloading` (block `@66736`, `analogDScreenTest`) has TWO RNG terms IN the
 rate formula, rolled per-peer per tick: the detector needle `DL_resDetecPercent` (`RandomFloatInRange`)
 and a `noise` term (`RandomFloat`). `decoded += DL_downloading` -> two peers download at different speeds

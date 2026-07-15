@@ -209,6 +209,15 @@ public:
     // TimeSync seeds the initial value before then). newest-wins by header seq.
     bool TryGetHostClock(TimeSyncPayload& out, bool* outIsNew = nullptr);
 
+    // v111: HOST publishes the download-SIM output vector each desk_sim_sync::Tick; the net thread
+    // fan-outs ONE unreliable DeskSimPose datagram to all peers on a ~100 ms (10 Hz) throttle. `set`
+    // false clears it. Host-only producer; a client call is a harmless no-op store. Game thread.
+    void SetHostDeskSim(bool set, const DeskSimSnapshot& sim);
+    // v111 (CLIENT game thread): move out the latest received host download-sim vector + report
+    // whether it newly arrived (apply on isNew; interpolate between). Returns false until the first
+    // DeskSimPose lands. newest-wins by header seq.
+    bool TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew = nullptr);
+
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
     // packet motion). Returns false if no new batch since the last take. Net thread fills it.
@@ -527,6 +536,11 @@ private:
     // throttle -- independent of the pose sendHz). Single value (host-authoritative, same to all).
     TimeSyncPayload localHostClock_{};
     bool hasLocalHostClock_ = false;
+    // v111: host download-SIM output vector (game thread writes via SetHostDeskSim each desk_sim_sync
+    // Tick, net thread fan-outs ONE unreliable DeskSimPose datagram on its own ~100 ms / 10 Hz
+    // throttle). Single value (host-authoritative, same to all).
+    DeskSimSnapshot localDeskSim_{};
+    bool hasLocalDeskSim_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -567,6 +581,14 @@ private:
     uint32_t lastRemoteHostClockSeq_ = 0;
     uint64_t remoteHostClockStamp_ = 0;
     uint64_t lastReadHostClockStamp_ = 0;
+    // v111: latest received host download-SIM output vector (host->client; ONE slot, host is the
+    // only sender). Net thread stores under remoteMutex_; client game thread drains via
+    // TryGetHostDeskSim (newest-wins by header seq; interpolate + overwrite).
+    DeskSimSnapshot remoteDeskSim_{};
+    bool hasRemoteDeskSim_ = false;
+    uint32_t lastRemoteDeskSimSeq_ = 0;
+    uint64_t remoteDeskSimStamp_ = 0;
+    uint64_t lastReadDeskSimStamp_ = 0;
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

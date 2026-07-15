@@ -587,6 +587,20 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
         coop::dev::desk_diag::NoteJoinAdopt();
 
     CD::Scalars sc = PayloadToScalars(p);
+    // v111 (gate 1): the download-SIM OUTPUT fields (rate/needle/offsets/cooldown) are host-owned
+    // via DeskSimPose=38 -- the LIVE DeskState carries only the occupant INTENTS. Keep the local
+    // (DeskSim-mirrored) output values so this apply never fights the sim stream (two authors = the
+    // dupe shape). The ADOPT snapshot still seeds them (the join baseline before DeskSim catches up).
+    if (!p.adopt) {
+        CD::Scalars local;
+        if (CD::ReadScalars(local)) {
+            sc.dlDownloading     = local.dlDownloading;
+            sc.dlResDetecPercent = local.dlResDetecPercent;
+            sc.dlPoFilterOffset  = local.dlPoFilterOffset;
+            sc.dlFrFilterOffset  = local.dlFrFilterOffset;
+            sc.coordCooldown     = local.coordCooldown;
+        }
+    }
     if (CD::WriteScalars(sc)) {
         // Prime BOTH detectors so this apply never reads as a local edge and
         // never echo-streams back (house lastKnown pattern).

@@ -168,6 +168,36 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity);
 // zeroes it again).
 bool WriteResDetect(float v);
 
+// ---- The host-authoritative download-SIM output vector (coop/desk_sim_sync) ----
+// OPEN-0 fix (2026-07-15, /qf-converged): the download rate formula rolls TWO
+// unseeded RNG terms per tick (needle resDetec + a transient noise) and
+// integrates the filter offsets from per-peer frame-dt, so these OUTPUTS diverge
+// across peers even with identical knob inputs (MEASURED: host decoded 0.0064 vs
+// client 0.0262). The host owns the sim and STREAMS this vector (MsgType
+// DeskSimPose=38, ~10 Hz, interpolated like the cursor); the client OVERWRITES
+// its own (its local sim self-accrues garbage that the overwrite hides). The
+// knob INTENTS (speeds/active/dir) stay occupant-authored via DeskState and the
+// host integrates the offset from them -- so this vector is host-down only, one
+// author (gate 1). frData/poData are streamed too, NOT relied on to "converge
+// for free": they read a filter-size upgrade with no live sync lane (OPEN-3).
+struct SimOutputs {
+    float decoded = 0;    // DL_SignalDownloadDLData.decoded (download progress)
+    float resDetec = 0;   // DL_resDetecPercent (the detection needle)
+    float rate = 0;       // DL_downloading (per-tick rate; 0 = idle)
+    float frData = 0;     // DL_frData (frequency-match, @0x0A0C)
+    float poData = 0;     // DL_poData (polarity-match, @0x0A10)
+    float frOffset = 0;   // DL_FrFilterOffset (knob position)
+    float poOffset = 0;   // DL_poFilterOffset
+    float cooldown = 0;   // coord_cooldown
+};
+bool ReadSimOutputs(SimOutputs& out);
+// Raw-write the sim outputs; repaint the screens (the WriteScalars upd* chain)
+// only when `repaint` -- the interp stream raw-writes every 60 Hz Tick for
+// smoothness (the widget's own Tick repaints self-painting fields) and pulses
+// the full repaint at ~3 Hz for the upd*-only display fields (never a 60 Hz
+// repaint storm -- the WriteCursorOnly discipline).
+bool WriteSimOutputs(const SimOutputs& in, bool repaint);
+
 // True while DL_signalDownloadData.mesh is a live object -- the download
 // machine is ARMED (the joiner's pending adopt applies on this edge).
 bool DownloadMeshValid();

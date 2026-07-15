@@ -23,7 +23,7 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | Refiner pane (comp) | `comp_progress` refine (NOT the download) | 4 single-sim | occupant | `CompState 60` / `CompData 61` | **AS-BUILT** |
 | **Desk coords-panel cursor** | live cursor over the coord screen | 4 owner pose-stream | occupant | `DeskCursorPose 36` (`desk_cursor_sync`) | **VERIFIED** (v109, user TAKE=SMOOTH) — ⚠ see OPEN-1 |
 | **Desk alarm-clock** | HH:MM display, frozen host-mirror | 3 host-mirror | host | `ClockPose 37` + reliable connect-edge | **AS-BUILT** (v110 `2dde3e16`, NOT hands-on) |
-| **Freq/polarity + download rate** | tune → download SPEED; per-peer sim + 2 RNG | 3 host-auth sim | host (planned) | — (no lane yet) | **OPEN** (RE'd + MEASURED divergence; fix UNBUILT — the NEXT `/qf`) |
+| **Freq/polarity + download rate** | tune → download SPEED; per-peer sim + 2 RNG | 3 host-auth sim | host | `DeskSimPose=38` (`desk_sim_sync`) | **AS-BUILT** v111 (host streams 8-float output vector; client interpolates+overwrites; NOT hands-on) |
 | coord log lines (`CR:`/animated) | `ProduceLogLines` runs on EVERY peer | 4 holder-owned | occupant (planned) | partial (`CR:` filtered off wire) | **OPEN** (root of the divergence cluster) |
 | Dishes aim/slew (post-catch) | slew recomputed per-peer after a catch | 3/4 (tbd) | host (planned) | — | **OPEN** |
 | Stationary PC / laptop screen | portable-PC power + screen | 1/4 (tbd) | tbd | — | **OPEN** (screens gap-list #5) |
@@ -36,7 +36,18 @@ generic device layer, not the signal pipeline.
 
 ## OPEN items — detail
 
-### OPEN-0 · Freq/polarity + download-rate SIM (THE gap — next work item)
+### OPEN-0 · Freq/polarity + download-rate SIM — AS-BUILT v111 (2026-07-15, NOT hands-on)
+**As-built (`desk_sim_sync`, `MsgType::DeskSimPose=38`, proto→111):** host owns the sim + streams the
+8-float output vector (decoded/resDetec/rate/frData/poData/frOffset/poOffset/cooldown) unreliable ~10 Hz,
+newest-wins; client interpolates (multi-channel LerpWindow, cursor pattern) + OVERWRITES its local sim
+(the self-accrued garbage never shows). Knob INTENTS stay occupant-authored on DeskState; the live
+DeskState apply keeps the local sim-output fields (gate 1: one author). The `/qf` collapsed a suspected
+sim-migration to this small fix by measurement: seed-sync refuted (unseeded+transient noise), frData/poData
+stream host-auth (NOT rely on native convergence — OPEN-3 upgrade lane absent), coordLog kept separate
+(OPEN-2). Audit READY (0 CRITICAL; hot paths O(1), raw-writes offset-guarded, gate-1 one-author). Full
+design trail: scratchpad qf_thread.md. **Take (verify):** freq/pol numbers match on both peers + the knob
+ramp is smooth not stepped; a 110-vs-111 pair HARD-CLOSEs at the gate.
+
 **Root (MEASURED 2026-07-15, `2de202ed` desk_diag probe):** the entire download sim runs per-peer.
 End-state host `decoded=0.0064 pol=1` vs client `decoded=0.0262 pol=0` — different progress AND
 polarity with the same setup. `DL_downloading` folds two per-peer RNG terms (detector needle
@@ -63,6 +74,18 @@ part-way through a session. Cause unattributed (not yet reproduced deterministic
 `scratchpad/desk_divergence_crash_{HOST,CLIENT_1}_0715.log`. Not a divergence — a rate/transport
 degradation on the shipped stream.
 
+### OPEN-3 · Upgrade-level sync (NOT a desk detail — its own surface; surfaced by OPEN-0 gate 2)
+The freq/pol download formula reads upgrade fields (`upg_scanner`, `upg_downloadSpd`, filter-size) and
+**there is NO live upgrade-sync lane in coop** (grep-confirmed 2026-07-15) — upgrades ride only the join
+save-transfer (seeded once). So a mid-session filter-upgrade purchase diverges silently. The desk build
+(OPEN-0) ROUTES AROUND this by streaming `frData`/`poData` host-authoritatively (6 scalars), so the desk
+freq/pol screens converge regardless — **upgrade-sync is NOT needed for OPEN-0**. But upgrades are shared
+state with ≥2 display consumers (desk freq/pol derivation + the PC screen), so this is its own workstream.
+**Purchase-authority is UNKNOWN and gates the whole design:** if a CLIENT can initiate an upgrade
+purchase, it is a client-event→host-authoritative write (the kerfur seam — dupe risk); if host-only, a
+simple mirror. **RE the purchase path FIRST** (which fields, who writes, is the purchase `EX_Local*`?),
+reconcile with the join-transfer seed, THEN `/qf` the ownership. Do not bolt onto a desk build.
+
 ### OPEN-2 · The console_state_sync divergence cluster (ONE root, five symptoms)
 Per the 2026-07-15 stress test: MOST desk/console OUTPUT is generated per-peer, not holder-owned +
 mirrored. Symptoms: (1) **coordLog** — `ProduceLogLines` runs on every peer and the `CR:` family is
@@ -76,6 +99,10 @@ owns the sim + the log, non-holders mirror the full state and SUPPRESS local gen
 ---
 
 ## CHANGELOG
+- **2026-07-15 (later)** — OPEN-0 AS-BUILT v111 (`desk_sim_sync` / `DeskSimPose=38`, proto 110→111,
+  DLL `84e431bef0bd6982` deployed x4). `/qf` design pass (5 measurement rounds) collapsed a suspected
+  host-auth sim-migration to a small fix; audit READY (0 CRITICAL). NOT hands-on. Surfaced OPEN-3
+  (upgrade-sync, its own workstream). coordLog (OPEN-2) kept separate.
 - **2026-07-15** — folder created; the signal-processing saga given a home (was scattered across
   `research/findings/computers-devices/` + `COOP_RNG_AUTHORITY` T2-5b + `COOP_SYNC_MAP`). Status
   reconciled to code: transport elements AS-BUILT/VERIFIED (cursor v109 SMOOTH, clock v110); the

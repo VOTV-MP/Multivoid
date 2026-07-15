@@ -125,6 +125,7 @@ the cursor) — any new index MUST use the shared component, never raw `NextRang
 | `comp_sync.cpp`, `console_state_sync.cpp` | Computers / the in-game console + desk | CompState/CompData/DeskState/DeskLogLine `[?]` |
 | `signal_sync.cpp`, `signal_catch_sync.cpp`, `signal_wire.cpp` | Sky-signal hardware + catch + dish aim | SkySignalState/SkySignalCatch/DishAimState/SavedSignalAppend/Delete `[?]` |
 | `desk_cursor_sync.cpp` | Desk coords-panel live cursor (unreliable pose stream, 50ms interp) | DeskCursorPose=36 `[V v109, TAKE=SMOOTH]` |
+| `desk_sim_sync.cpp` | Signal-desk download-SIM host-auth output vector (decoded/needle/rate/frData/poData/offsets/cooldown; host streams 10Hz, client interpolates+overwrites; knob intents stay occupant-authored on DeskState) | DeskSimPose=38 `[AS-BUILT v111; NOT hands-on -- take: freq/pol numbers match on both peers + knob ramp smooth]` |
 
 > **Signal-processing subsystem** (catch → screens → freq/pol tune → download → decode): the whole
 > desk workstation's element-by-element status lives in `docs/signals/TRACKER.md`; native pipeline +

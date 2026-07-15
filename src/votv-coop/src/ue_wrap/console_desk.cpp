@@ -781,6 +781,48 @@ bool WriteResDetect(float v) {
     return true;
 }
 
+bool ReadSimOutputs(SimOutputs& out) {
+    void* d = Instance();
+    if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)
+        return false;
+    out.poOffset  = *FieldPtr<float>(d, 0);   // DL_poFilterOffset
+    out.frOffset  = *FieldPtr<float>(d, 1);   // DL_FrFilterOffset
+    out.rate      = *FieldPtr<float>(d, 4);   // DL_downloading
+    out.resDetec  = *FieldPtr<float>(d, 5);   // DL_resDetecPercent
+    out.cooldown  = *FieldPtr<float>(d, 7);   // coord_cooldown
+    out.frData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData);
+    out.poData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData);
+    auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
+    out.decoded = SigRead<float>(dld, ue_wrap::signal_dynamic::kOff_decoded);
+    return true;
+}
+
+bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
+    void* d = Instance();
+    if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)
+        return false;
+    *FieldPtr<float>(d, 0) = in.poOffset;
+    *FieldPtr<float>(d, 1) = in.frOffset;
+    *FieldPtr<float>(d, 4) = in.rate;
+    *FieldPtr<float>(d, 5) = in.resDetec;
+    *FieldPtr<float>(d, 7) = in.cooldown;
+    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = in.frData;
+    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = in.poData;
+    auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
+    *reinterpret_cast<float*>(dld + ue_wrap::signal_dynamic::kOff_decoded) = in.decoded;
+    // Repaint only on the throttled pulse (never per-Tick): the interp stream
+    // raw-writes every 60 Hz for smoothness and the widget's own Tick repaints
+    // the self-painting screens; this pulse (~3 Hz) covers the upd*-only fields.
+    if (repaint) {
+        for (auto& r : g_refresh) {
+            if (!r.fn) continue;
+            ue_wrap::ParamFrame f(r.fn);
+            if (f.valid()) ue_wrap::Call(d, f);
+        }
+    }
+    return true;
+}
+
 bool PlayPingSuccess() {
     void* d = Instance();
     if (!d || !g_playPingSoundFn || !g_sndPingSuccess) return false;
