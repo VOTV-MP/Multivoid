@@ -705,7 +705,14 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 109; // v109: desk cursor pose split -- the coords-panel
+inline constexpr uint16_t kProtocolVersion = 110; // v110: clock sync design F -- the world clock moves
+                                                  // OFF the reliable periodic TimeSync onto the unreliable
+                                                  // ClockPose=37 host->all snapshot (~2Hz, newest-wins);
+                                                  // reliable TimeSync(29) kept ONLY for the connect-edge.
+                                                  // WIRE CHANGE -> version bump so a mixed 109/110 pair
+                                                  // HARD-CLOSEs at the gate instead of silently degrading
+                                                  // the clock (109 sends reliable-periodic 110 ignores).
+                                                  // v109: desk cursor pose split -- the coords-panel
                                                   // LIVE cursor (viewCoordinate) moves OFF the reliable
                                                   // DishAimState onto the unreliable DeskCursorPose=36
                                                   // stream (60Hz, mirror-interpolated); DishAimStatePayload
