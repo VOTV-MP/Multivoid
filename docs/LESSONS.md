@@ -379,6 +379,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   for display data (the 2026-07-11 picker freeze). `b_` = the SANDBOX prefix, not a backup marker.
   `memory/lesson_gvas_savefile_delta_vs_cdo.md`
 
+- **Injecting a native-parity UMG menu button = 5 gotchas** — (1) the style clone-source `tex_btnStart` is
+  NULL at inject time → cloning silently falls back to Roboto/Center/white; set font/colour/justify
+  DETERMINISTICALLY. (2) A spawned `UButtonSlot` (content slot) defaults to `HAlign_Center` → indented;
+  set `HAlign_Fill(0)`+zero padding after SetContent (UMG.hpp:314-318; `Fill=0/Left=1/Center=2`). (3) An
+  external-poll click on a real UButton must fire on the RELEASE edge (down-edge → overlay swallows the
+  UP → button stuck DOWN). (4) Keep FSlateSound `ResourceObject`(0x00), zero ONLY the trailing TSharedPtr
+  cache(0x08) → native `buttonclick`/`buttonrollover` play without aliasing. (5) Play VOTV sounds via
+  `PlaySoundAtLocation` (null att = 2D) so the game's SoundClass/mix apply; the menu's press bg-dim is the
+  submenu/loadLevel fade, NOT a per-button style (replicate with a modal ImGui backdrop).
+  `memory/lesson_umg_injected_menu_button_native_parity.md`
+
 ## 6. Assets, models, geometry
 
 - **Curating GAME assets = census EVERY asset** — games ship broken leftovers. `memory/lesson_game_asset_census_before_curation.md`

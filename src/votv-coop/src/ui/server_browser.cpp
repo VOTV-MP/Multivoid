@@ -13,6 +13,7 @@
 #include "ui/server_browser.h"
 
 #include "ui/host_save_picker.h"
+#include "ui/menu_sfx.h"        // native VOTV button click + rollover sounds
 #include "coop/net/protocol.h"  // kProtocolVersion (the v59 "Ver" mismatch tint)
 #include "coop/session/session_manager.h"
 #include "coop/config/config.h"   // local-only ini persistence for the name + last direct address
@@ -57,6 +58,7 @@ bool IsOpen(){ return g_open.load(std::memory_order_relaxed); }
 
 void Render() {
     if (!IsOpen()) return;
+    ui::menu_sfx::FrameBegin();  // arm per-frame hover-enter detection for the sfx buttons
 
     // Auto-refresh once when the browser is opened (so the list isn't stale/empty) + load
     // the current nickname (config default, or whatever the user last set) into the field.
@@ -73,6 +75,16 @@ void Render() {
     if (g_selected >= static_cast<int>(g_rows.size())) g_selected = -1;
 
     const ImGuiIO& io = ImGui::GetIO();
+
+    // Modal backdrop: dim the whole screen behind the browser so the menu behind reads
+    // "slightly darker" the moment MULTIPLAYER is pressed (and restores when the browser
+    // closes). This is the coop analogue of the native menu's darken-on-navigate feel --
+    // VOTV's native darken is the loadLevel transition fade (fade/fadein + SetRenderOpacity),
+    // which opening a browser has no equivalent for, so we supply the dim ourselves. Drawn
+    // on the BACKGROUND draw list: it sits UNDER this window but OVER the game/menu.
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize,
+                                                  IM_COL32(0, 0, 0, 80));
+
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(S(780.0f), S(480.0f)), ImGuiCond_Appearing);
@@ -83,7 +95,12 @@ void Render() {
 
     bool open = true;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-    if (ImGui::Begin("MULTIPLAYER###coop_browser", &open, flags)) {
+    const bool visible = ImGui::Begin("MULTIPLAYER###coop_browser", &open, flags);
+    // The title-bar X clears `open` DURING Begin(), before the body runs -- so if `open`
+    // is already false here, the X was clicked (the in-body "Close" button plays its own
+    // click later). Give the X the click sound too (click only, no rollover).
+    if (!open) ui::menu_sfx::PlayClick();
+    if (visible) {
         // Header.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
         ImGui::TextUnformatted("Server browser");
@@ -109,14 +126,14 @@ void Render() {
         ImGui::SameLine();
         ImGui::Checkbox("Locked", &g_hostLocked);
         ImGui::SameLine();
-        if (ImGui::Button("Host Game")) {
+        if (ui::menu_sfx::Button("Host Game")) {
             // Open the save picker (native loadSlots list + New Game); on confirm it
             // calls HostWithSave -> the harness loads the chosen world then hosts. (The
             // old immediate HostLobby-on-the-current-world path is gone, RULE 2.)
             ui::host_save_picker::Open(g_hostName, g_hostLocked, /*playersMax=*/4);
         }
         ImGui::SameLine(0.0f, S(24.0f));
-        if (ImGui::Button("Refresh")) sm::Refresh();
+        if (ui::menu_sfx::Button("Refresh")) sm::Refresh();
 
         // Direct-connect row (rung 0 -- works even with the master down).
         ImGui::TextDisabled("Direct connect:");
@@ -131,7 +148,7 @@ void Render() {
         // Close the browser only if the action was ACCEPTED (good address, not busy) so a
         // rejected click leaves the browser open instead of stranding the user on a clean
         // menu. The loading screen (raised inside ConnectDirect) takes over. (regression B.)
-        if (ImGui::Button("Connect##direct") || ipEnter) { if (sm::ConnectDirect(g_directIp)) Close(); }
+        if (ui::menu_sfx::Button("Connect##direct") || ipEnter) { if (sm::ConnectDirect(g_directIp)) Close(); }
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -213,12 +230,12 @@ void Render() {
         const bool selOwn = hasSel && !ownLobby.empty() && g_rows[g_selected].lobbyId == ownLobby;
         const bool canConnect = hasSel && !selOwn;
         if (!canConnect) ImGui::BeginDisabled();
-        if (ImGui::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
+        if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
             if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name,
                               g_rows[g_selected].proto)) Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;
+        if (ui::menu_sfx::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;
         ImGui::SameLine(0.0f, S(18.0f));
         const std::string status = sm::Status();
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.00f, 1.0f), "%s", status.c_str());
@@ -241,6 +258,8 @@ void Render() {
 
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+
+    ui::menu_sfx::FrameEnd();  // re-arm rollover if the pointer left all sfx buttons
 
     if (!open) Close();  // title-bar X or the Close button
 }

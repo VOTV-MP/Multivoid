@@ -512,20 +512,24 @@ bool RemoveWidgetFromViewport(void* userWidget);
 // Construct a UButton at runtime inside an existing UCanvasPanel and position it
 // relative to a reference widget already in that canvas. Engine substrate only
 // (principle 7): no coop/menu knowledge -- the caller (coop::multiplayer_menu)
-// resolves the VOTV menu's canvMenu/button_start/tex_btnStart and passes them in.
+// resolves the VOTV menu's canvMenu/button_start and passes them in.
 //
 //   refButton   the menu UButton to sit ABOVE (e.g. button_start / NEW GAME). We
 //               derive its list panel (a UVerticalBox), insert our button into it at
-//               the TOP (above refButton), and clone refButton's FButtonStyle for the
-//               look. The VerticalBox owns layout, so spacing matches the other items.
+//               the TOP (above refButton), clone refButton's FButtonStyle for the
+//               look, and copy its VBox slot layout so spacing/indent match. The
+//               VerticalBox owns layout, so spacing matches the other items.
 //   label       button text (e.g. L"MULTIPLAYER")
-//   refText     UTextBlock whose FSlateFontInfo + colour we clone for the label
-//               (e.g. tex_btnStart). May be null (then the nameplate's default style).
 //   outButton   receives the spawned UButton* (for the click poll). May be null.
 //
+// The label is styled DETERMINISTICALLY to match VOTV's native menu items --
+// font_ui (the menu font) @ size 16, left-justified -- and tinted cyan to mark the
+// coop entry. (We do NOT clone tex_btnStart's style: its pointer is null at some
+// inject timings, which fell through to a Roboto/centered/white default = the
+// "wrong font, indented" bug.)
+//
 // Returns true on success. Game thread only (SpawnObject + UFunction dispatch).
-bool InjectCanvasButton(void* refButton, const wchar_t* label, void* refText,
-                        void** outButton);
+bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton);
 
 // UWidget::IsHovered() -> bool. The mouse-over test for the menu click poll
 // (paired with a global VK_LBUTTON edge in coop::multiplayer_menu). Returns false

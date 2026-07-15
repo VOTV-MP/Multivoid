@@ -398,6 +398,7 @@ inline constexpr const wchar_t* AddChildToVerticalBoxFn = L"AddChildToVerticalBo
 inline constexpr const wchar_t* SetWidgetFn = L"SetWidget";            // UWidgetComponent::SetWidget(UUserWidget*)
 inline constexpr const wchar_t* FontName = L"Roboto";                  // /Engine/EngineFonts/Roboto.Roboto
 inline constexpr const wchar_t* FontClassName = L"Font";
+inline constexpr const wchar_t* MenuFontName = L"font_ui";             // /Game/main/fonts/font_ui (Share Tech Mono) -- VOTV's native menu/subtitle font; ui_menu labels use it @ size 16 (bp_reflection/ui_menu.json tex_btnStart)
 // Screen-space HUD feed (UUserWidget added to the viewport, not a world WidgetComponent).
 inline constexpr const wchar_t* AddToViewportFn = L"AddToViewport";        // UUserWidget::AddToViewport(int32 ZOrder)
 inline constexpr const wchar_t* RemoveFromViewportFn = L"RemoveFromViewport";  // UUserWidget::RemoveFromViewport()
@@ -427,7 +428,6 @@ inline constexpr const wchar_t* WidgetIsHoveredFn = L"IsHovered";             //
 inline constexpr const wchar_t* ClearChildrenFn = L"ClearChildren";           // UPanelWidget::ClearChildren() -- detach all children (objects survive); for the insert-at-top reorder
 // ui_menu_C fields for the inject (resolved by FindPropertyOffset -- recook-robust).
 inline constexpr const wchar_t* UiMenuButtonStartProp = L"button_start";      // UButton*  @ +0x2E0 (NEW GAME -- the inject derives its VerticalBox + clones its style)
-inline constexpr const wchar_t* UiMenuTexBtnStartProp = L"tex_btnStart";      // UTextBlock* @ +0x3A8 (NEW GAME label -- font/color template)
 inline constexpr const wchar_t* MainPlayerEscapeFn = L"InpActEvt_Escape_K2Node_InputKeyEvent_0";  // engine input event that opens the pause menu (ProcessEvent-dispatched, same class as the flashlight InpActEvt_* we already observe)
 // Head-bone anchoring (USceneComponent::GetSocketLocation world; enumerate bones to find head).
 inline constexpr const wchar_t* GetSocketLocationFn = L"GetSocketLocation";  // (FName)->FVector (world)

@@ -85,6 +85,25 @@ Session's packet counters moved there; bytes counted at every GNS accept;
 rates published by Session's existing 1 Hz net-thread telemetry sample). MTA
 precedent: CNetworkStats. The F1 page doubles as a live readout while the
 overlay is off.
+
+**MULTIPLAYER menu button — native-parity polish (AS-BUILT 2026-07-15;
+user hands-on iterated, appearance/behavior VERIFIED, font DEFERRED):** the
+injected `UButton` (`engine::InjectCanvasButton` + `coop::multiplayer_menu`)
+now matches native menu items: label "Multiplayer" + CYAN, flush-left
+(content slot forced `HAlign_Fill` — a spawned `UButtonSlot` defaults to
+Center), native press dip+springback (click fires on the mouse-RELEASE edge so
+the real UButton finishes its own press animation), non-interactive while the
+server browser is up (HitTestInvisible), a modal ImGui backdrop dims the menu
+behind the browser, and the native menu SOUNDS play — `buttonclick` +
+`buttonrollover` on the menu button (Slate, via the restored FSlateSound
+ResourceObject in the style clone) AND on all browser buttons + the title-bar X
+(click only) via `ui/menu_sfx.cpp` (`PlaySoundAtLocation` 2D → honors the
+game's sound settings). The old `tex_btnStart` style-clone was retired (RULE 2):
+its pointer is null at inject time, which silently fell back to Roboto/Center/
+white. DEFERRED: `font_ui` (Share Tech Mono, the true native menu font) doesn't
+resolve via `FindObject` yet — Roboto fallback stands. Full detail +
+gotchas: `memory/lesson_umg_injected_menu_button_native_parity.md`.
+
 This doc is kept for the **design rationale** (why runtime UMG, not
 BPModLoader/paks); the code is the truth for the as-built UI.
 

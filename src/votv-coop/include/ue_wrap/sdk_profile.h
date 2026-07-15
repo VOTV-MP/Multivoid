@@ -148,19 +148,28 @@ inline constexpr size_t UVerticalBoxSlot_LayoutSize  = 0x0022;  // 0x38..0x5A (S
 inline constexpr size_t UPanelSlot_Parent = 0x0028;            // UPanelSlot::Parent (UPanelWidget*) -- the containing panel. UMG.hpp:1009
 inline constexpr size_t UPanelSlot_Content = 0x0030;           // UPanelSlot::Content (UWidget*). UMG.hpp:1010
 inline constexpr size_t UPanelWidget_Slots = 0x0108;           // UPanelWidget::Slots (TArray<UPanelSlot*>). UMG.hpp:1016
+// UButtonSlot (a UButton's single content slot, holding its label). UMG.hpp:314-318.
+// A freshly-spawned button's content slot defaults to HAlign_Center -> the label sits
+// indented/centered; we set it Fill + left-justified text to sit flush like the native
+// menu items. EHorizontalAlignment: Fill=0/Left=1/Center=2; EVerticalAlignment: Center=2.
+inline constexpr size_t UButtonSlot_Padding = 0x0038;         // FMargin (0x10)
+inline constexpr size_t UButtonSlot_HAlign  = 0x0048;         // TEnumAsByte<EHorizontalAlignment>
+inline constexpr size_t UButtonSlot_VAlign  = 0x0049;         // TEnumAsByte<EVerticalAlignment>
 inline constexpr size_t UButton_WidgetStyle = 0x0128;          // FButtonStyle (size 0x278). UMG.hpp:287
 inline constexpr size_t UButton_ColorAndOpacity = 0x03A0;      // FLinearColor. UMG.hpp:288
 inline constexpr size_t UButton_BackgroundColor = 0x03B0;      // FLinearColor. UMG.hpp:289
 inline constexpr size_t FButtonStyle_Size = 0x278;             // clone size for the button-style copy (matches NEW GAME)
-// FButtonStyle carries two FSlateSound members; each holds an UNREFLECTED
-// TSharedPtr<FSlateSoundResource> (0x10 past the 0x8 ResourceObject). A raw
-// FButtonStyle memcpy would shallow-alias that refcounted ptr -- so the clone
-// ZEROES these two fields (our button is silent; no aliased TSharedPtr). Offsets
-// are WITHIN FButtonStyle. SlateCore.hpp:18-19,320-324.
+// FButtonStyle carries two FSlateSound members. Each is { UObject* ResourceObject @
+// 0x00 (the USoundBase to play) } + an UNREFLECTED TSharedPtr<FSlateSoundResource>
+// cache @ 0x08 (0x10 bytes). A raw FButtonStyle memcpy shallow-aliases that refcounted
+// cache (no AddRef). The clone therefore KEEPS the copied ResourceObject (so Slate plays
+// the native press/hover sounds on our real UButton) but ZEROES only the trailing cache
+// (SlateCore rebuilds it lazily from ResourceObject). Offsets WITHIN FButtonStyle.
+// SlateCore.hpp:18-19,320-324.
 inline constexpr size_t FButtonStyle_PressedSlateSound = 0x248;  // FSlateSound (0x18) within FButtonStyle
 inline constexpr size_t FButtonStyle_HoveredSlateSound = 0x260;  // FSlateSound (0x18) within FButtonStyle
 inline constexpr size_t FSlateSound_Size = 0x18;                 // SlateCore.hpp:324
-inline constexpr size_t FSlateFontInfo_StructSize = 0x58;      // full FSlateFontInfo clone size (font object + size + outline + spacing)
+inline constexpr size_t FSlateSound_CacheStart = 0x08;           // trailing TSharedPtr cache (zero only this, keep ResourceObject @ 0x00)
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):

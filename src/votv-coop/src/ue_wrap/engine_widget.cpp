@@ -197,9 +197,13 @@ bool ResolveScreenWidgetFns() {
 void* g_biButtonClass = nullptr, *g_biContentWidgetClass = nullptr;
 void* g_biSetContentFn = nullptr, *g_biIsHoveredFn = nullptr;
 void* g_biClearChildrenFn = nullptr;  // UPanelWidget::ClearChildren (insert-at-top reorder)
+void* g_votvMenuFont = nullptr;       // font_ui (Share Tech Mono) -- VOTV's native menu label font
 
 bool ResolveButtonInjectFns() {
     if (!ResolveNameplateFns()) return false;  // SpawnObject + UMG text classes + text fns + AddChildToVerticalBox
+    // font_ui is the font VOTV's ui_menu labels use; resolve it so the injected
+    // MULTIPLAYER label matches them (it is loaded whenever the menu is up).
+    if (!g_votvMenuFont) g_votvMenuFont = R::FindObject(P::name::MenuFontName, P::name::FontClassName);
     if (!g_biButtonClass) g_biButtonClass = R::FindClass(P::name::ButtonClass);
     if (!g_biContentWidgetClass) g_biContentWidgetClass = R::FindClass(P::name::ContentWidgetClass);
     if (g_biContentWidgetClass && !g_biSetContentFn)
@@ -281,8 +285,7 @@ bool SpawnScreenTextWidget(void* outer, int zOrder, FVector2D alignment, FVector
     return true;
 }
 
-bool InjectCanvasButton(void* refButton, const wchar_t* label, void* refText,
-                        void** outButton) {
+bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton) {
     if (outButton) *outButton = nullptr;
     if (!refButton || !label) return false;
     if (!ResolveButtonInjectFns()) {
@@ -312,34 +315,53 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void* refText,
         return false;
     }
 
-    // Label styling: clone the reference label's FSlateFontInfo + colour so our text
-    // matches NEW GAME exactly; else fall back to the nameplate's outlined default.
-    if (refText) {
+    // Label styling: match VOTV's native menu items DETERMINISTICALLY. We do NOT clone
+    // a reference UTextBlock (tex_btnStart): its pointer is null at some inject timings,
+    // which fell through to a Roboto / centered / white default -- the "wrong font,
+    // indented, wrong colour" bug. The native ui_menu labels are font_ui (Share Tech
+    // Mono) @ size 16, left-justified, no outline, drop shadow offset (2,2) opaque black
+    // (verified: bp_reflection/ui_menu.json tex_btnStart/tex_btnstat -> FontObject=font_ui,
+    // TypefaceFontName="Font", Size=16, ShadowOffset=(2,2), ShadowColor=(0,0,0,1)). We set
+    // exactly that here and tint the label CYAN to mark the coop entry. TypefaceFontName is
+    // left None -> font_ui's single (default) typeface, correct for this one-face font.
+    {
         auto* d = reinterpret_cast<uint8_t*>(txt);
-        auto* s = reinterpret_cast<uint8_t*>(refText);
-        std::memcpy(d + P::off::UTextBlock_Font, s + P::off::UTextBlock_Font,
-                    P::off::FSlateFontInfo_StructSize);
+        auto* font = d + P::off::UTextBlock_Font;
+        // Prefer font_ui (the native menu font); fall back to engine Roboto so the label
+        // is always readable if font_ui hasn't resolved. (Font parity is deferred.)
+        void* chosenFont = g_votvMenuFont ? g_votvMenuFont : g_npFont;
+        if (chosenFont) *reinterpret_cast<void**>(font) = chosenFont;
+        *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_Size) = 16;
+        // No outline (native has none) -- OutlineSize 0.
+        *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_OutlineSettings +
+                                    P::off::FFontOutlineSettings_OutlineSize) = 0;
+        // Cyan, ColorUseRule = UseColor_Specified (0).
         *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ColorAndOpacity) =
-            *reinterpret_cast<FLinearColor*>(s + P::off::UTextBlock_ColorAndOpacity);
-        *(d + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) =
-            *(s + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule);
-        // Match the reference's LAYOUT + shadow too, not only font+colour -- else the
-        // label read as "different font, indented": a fresh UTextBlock does not inherit
-        // the native menu text's Justification (-> our label sat indented vs the native
-        // left-aligned items) nor its drop SHADOW (native menu text is shadowed; a fresh
-        // block has none, which reads as a lighter/different face).
-        *(d + P::off::UTextLayoutWidget_Justification) = *(s + P::off::UTextLayoutWidget_Justification);
-        *reinterpret_cast<FVector2D*>(d + P::off::UTextBlock_ShadowOffset) =
-            *reinterpret_cast<FVector2D*>(s + P::off::UTextBlock_ShadowOffset);
+            FLinearColor{0.f, 1.f, 1.f, 1.f};
+        *(d + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+        // Left-justify (0), matching the native list items (fixes the indent).
+        *(d + P::off::UTextLayoutWidget_Justification) = 0;
+        // Drop shadow: offset (2,2), opaque black -- exactly the native menu labels.
+        *reinterpret_cast<FVector2D*>(d + P::off::UTextBlock_ShadowOffset) = FVector2D{2.f, 2.f};
         *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ShadowColorAndOpacity) =
-            *reinterpret_cast<FLinearColor*>(s + P::off::UTextBlock_ShadowColorAndOpacity);
+            FLinearColor{0.f, 0.f, 0.f, 1.f};
         SetTextOnBlock(txt, label);
-    } else {
-        ConfigureTextBlock(txt, label, FLinearColor{1.f, 1.f, 1.f, 1.f}, 24, /*Center*/ 1);
     }
 
     // Nest the label inside the button (UContentWidget::SetContent).
     { ParamFrame f(g_biSetContentFn); f.Set<void*>(L"Content", txt); Call(button, f); }
+
+    // Left-align the label within the button. SetContent created a UButtonSlot whose
+    // default HAlign is Center -> the label sat INDENTED vs the flush-left native items.
+    // Set it to Fill + zero padding so the text block spans the button and its Left text
+    // justification pins the text to the button's left edge (= flush with NEW GAME etc.).
+    // The slot is reachable via the label's UWidget::Slot back-pointer (set by SetContent).
+    if (void* cslot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(txt) + P::off::UWidget_Slot)) {
+        auto* cs = reinterpret_cast<uint8_t*>(cslot);
+        *(cs + P::off::UButtonSlot_HAlign) = 0;  // HAlign_Fill
+        *(cs + P::off::UButtonSlot_VAlign) = 2;  // VAlign_Center
+        std::memset(cs + P::off::UButtonSlot_Padding, 0, 0x10);  // FMargin = 0 (no left indent)
+    }
 
     // Clone the reference button's visual style (brushes + tint) so ours matches.
     if (refButton) {
@@ -348,14 +370,15 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void* refText,
         std::memcpy(d + P::off::UButton_WidgetStyle, s + P::off::UButton_WidgetStyle,
                     P::off::FButtonStyle_Size);
         // FButtonStyle's two FSlateSound members each hold an unreflected
-        // TSharedPtr<FSlateSoundResource>; the raw memcpy shallow-aliased that
-        // refcounted pointer (no AddRef). Zero them so our button carries no
-        // aliased sound (it stays silent -- the click is driven by our poll, not
-        // the UButton's own OnClicked, so the press sound is irrelevant).
-        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_PressedSlateSound, 0,
-                    P::off::FSlateSound_Size);
-        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_HoveredSlateSound, 0,
-                    P::off::FSlateSound_Size);
+        // TSharedPtr<FSlateSoundResource> cache past the ResourceObject; the raw memcpy
+        // shallow-aliased that refcounted cache (no AddRef). KEEP the copied ResourceObject
+        // (@ 0x00) so the button plays the native press + hover sounds -- the user pressing/
+        // hovering our real UButton drives Slate, which plays them -- and zero ONLY the
+        // trailing cache (SlateCore rebuilds it lazily from ResourceObject).
+        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_PressedSlateSound +
+                    P::off::FSlateSound_CacheStart, 0, P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
+        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_HoveredSlateSound +
+                    P::off::FSlateSound_CacheStart, 0, P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
         *reinterpret_cast<FLinearColor*>(d + P::off::UButton_ColorAndOpacity) =
             *reinterpret_cast<FLinearColor*>(s + P::off::UButton_ColorAndOpacity);
         *reinterpret_cast<FLinearColor*>(d + P::off::UButton_BackgroundColor) =

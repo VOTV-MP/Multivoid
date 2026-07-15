@@ -39,12 +39,12 @@ std::atomic<bool> g_retrying{false};    // a retry thread is already running
 // Resolved once at install (UClass + UFunction + field offsets never move).
 void* g_tickFn = nullptr;               // ui_menu_C::Tick (observer anchor)
 int32_t g_buttonStartOff = -1;          // ui_menu_C -> button_start (UButton*, NEW GAME)
-int32_t g_texBtnStartOff = -1;          // ui_menu_C -> tex_btnStart (UTextBlock*)
 int32_t g_isPauseOff = -1;              // ui_menu_C -> isPause (bool)
 
 // Injected-button tracking (game-thread only -- touched solely in the Tick observer).
 void* g_injectedMenu = nullptr;         // the menu instance we last injected into
 void* g_button = nullptr;               // our MULTIPLAYER UButton
+bool  g_buttonInputBlocked = false;     // edge-tracking: is g_button currently HitTestInvisible?
 bool  g_prevLmb = false;                // VK_LBUTTON state last tick (click-edge detect)
 bool  g_lmbPrimed = false;             // first-tick guard: seed g_prevLmb without firing an edge
 uint64_t g_lastInjectMs = 0;            // throttle inject attempts on failure / self-heal
@@ -73,10 +73,9 @@ inline void* ReadPtr(void* base, int32_t off) {
 bool DoInject(void* menu) {
     if (menu == g_injectedMenu && g_button && R::IsLive(g_button)) return true;  // already done
     void* buttonStart = ReadPtr(menu, g_buttonStartOff);
-    void* texBtnStart = ReadPtr(menu, g_texBtnStartOff);
     if (!buttonStart) return false;  // menu not fully constructed yet
     g_button = nullptr;
-    if (E::InjectCanvasButton(buttonStart, L"MULTIPLAYER", texBtnStart, &g_button)) {
+    if (E::InjectCanvasButton(buttonStart, L"Multiplayer", &g_button)) {
         g_injectedMenu = menu;
         UE_LOGI("multiplayer_menu: MULTIPLAYER button injected into menu=%p (button=%p)", menu, g_button);
         return true;
@@ -126,16 +125,37 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         if (now - g_lastInjectMs >= 1000) { g_lastInjectMs = now; DoInject(self); }
     }
 
-    // Click poll: a global LBUTTON press edge while hovering our button opens the
-    // browser. IsHovered() (a UFunction) is called ONLY on the press edge, not per
-    // frame. Suppressed while the browser is already up (it owns input then).
+    // While the server browser owns input, make OUR button NON-interactive (HitTest
+    // invisible) so a click over it cannot drive the native UButton pressed visual. If
+    // it could, the overlay input hook (imgui_overlay) swallows the release while the
+    // browser is up -> the button never sees its mouse-up and sticks DOWN until the next
+    // click. The native menu buttons are already blocked by that same input swallow;
+    // this makes ours behave identically. Edge-applied (SetVisibility only on a change);
+    // restored to Visible (input-receiving) the moment the browser closes.
+    if (g_button && R::IsLive(g_button)) {
+        const bool block = ui::server_browser::IsOpen();
+        if (block != g_buttonInputBlocked) {
+            E::SetWidgetVisibility(g_button, block ? 3 : 0);  // 3=HitTestInvisible, 0=Visible
+            g_buttonInputBlocked = block;
+        }
+    }
+
+    // Click poll: open the browser on the LBUTTON RELEASE edge (not the press edge)
+    // while hovering our button. Releasing -- not pressing -- is deliberate: our button
+    // is a real UButton, so the mouse-DOWN drives its native Pressed (moved-down) visual.
+    // If we opened the browser on the down edge, CaptureActive() flips true and the
+    // WndProc hook (imgui_overlay) then SWALLOWS the WM_LBUTTONUP -> the UButton never
+    // sees its release and stays stuck DOWN. Triggering on release lets the button
+    // complete its own press->release ("moves down, springs back") exactly like the
+    // native items; we open only after that. IsHovered() (a UFunction) is called ONLY on
+    // the release edge, not per frame. Suppressed while the browser is already up.
     const bool down = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     // Seed the edge state on the very first tick so a mouse button already held
     // when the observer installs can't synthesize a phantom click on the button.
     if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = down; }
-    const bool pressEdge = down && !g_prevLmb;
+    const bool releaseEdge = !down && g_prevLmb;
     g_prevLmb = down;
-    if (pressEdge && g_button && R::IsLive(g_button) && !ui::server_browser::IsOpen() &&
+    if (releaseEdge && g_button && R::IsLive(g_button) && !ui::server_browser::IsOpen() &&
         !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
         ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(g_button)) {
         UE_LOGI("multiplayer_menu: MULTIPLAYER clicked -> opening server browser");
@@ -153,14 +173,14 @@ bool TryInstall() {
 
     g_tickFn         = R::FindFunction(uiMenuCls, prof::name::UiMenuTickFn);
     g_buttonStartOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuButtonStartProp);
-    g_texBtnStartOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuTexBtnStartProp);
     g_isPauseOff     = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuIsPauseProp);
-    // button_start is the only field the inject NEEDS (we derive its VerticalBox);
-    // isPause gates main-vs-pause; tex_btnStart is optional (style only).
+    // button_start is the only field the inject NEEDS (we derive its VerticalBox +
+    // clone its slot layout / button style); isPause gates main-vs-pause. The label
+    // font/colour is set deterministically in InjectCanvasButton (font_ui + cyan), so
+    // no tex_btnStart clone-source is needed.
     if (!g_tickFn || g_buttonStartOff < 0 || g_isPauseOff < 0) {
-        UE_LOGW("multiplayer_menu: resolve incomplete (tick=%p button_start=%d tex_btnStart=%d "
-                "isPause=%d) -- retry",
-                g_tickFn, g_buttonStartOff, g_texBtnStartOff, g_isPauseOff);
+        UE_LOGW("multiplayer_menu: resolve incomplete (tick=%p button_start=%d isPause=%d) -- retry",
+                g_tickFn, g_buttonStartOff, g_isPauseOff);
         return false;
     }
     if (!GT::RegisterPostObserver(g_tickFn, &OnMenuTickPost)) {
@@ -168,9 +188,9 @@ bool TryInstall() {
         return false;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("multiplayer_menu: INSTALLED (tickFn=%p button_start@+0x%X tex_btnStart@+0x%X isPause@+0x%X)",
+    UE_LOGI("multiplayer_menu: INSTALLED (tickFn=%p button_start@+0x%X isPause@+0x%X)",
             g_tickFn, static_cast<unsigned>(g_buttonStartOff),
-            static_cast<unsigned>(g_texBtnStartOff), static_cast<unsigned>(g_isPauseOff));
+            static_cast<unsigned>(g_isPauseOff));
     return true;
 }
 

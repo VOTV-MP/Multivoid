@@ -440,6 +440,7 @@ add_library(votv-coop SHARED
     src/ui/world_rules_panel.cpp
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
+    src/ui/menu_sfx.cpp
     src/ui/host_save_picker.cpp
     src/ui/loading_screen.cpp
     src/ui/console.cpp
