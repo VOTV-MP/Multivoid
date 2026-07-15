@@ -62,6 +62,12 @@ void* Instance();
 
 bool ReadScalars(Scalars& out);
 
+// The detected frequency/polarity DATA floats (DL_frData@0x0A0C / DL_poData@
+// 0x0A10) -- the decode's view of the matched signal's freq/polarity, distinct
+// from the filter-knob OFFSETS in Scalars. Diagnostic read-only (desk_diag);
+// NOT on the DeskState wire. False if unresolved.
+bool ReadFreqPolData(float& frData, float& poData);
+
 // Raw-write the scalar set, then run the desk's own parameterless upd*
 // refresh chain so the screens/LEDs repaint from the new fields. Game thread.
 bool WriteScalars(const Scalars& in);

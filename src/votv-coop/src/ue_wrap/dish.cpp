@@ -98,6 +98,29 @@ int32_t MovingCount() {
     return moving;
 }
 
+int32_t ReadAllDishStates(DishState* out, int32_t cap) {
+    TArrayView* a = Dishs();
+    if (!a || !g_coreResolved || !out || cap <= 0) return 0;
+    if (a->num < 0 || a->num > 64) return 0;
+    int32_t n = 0;
+    for (int32_t i = 0; i < a->num && n < cap; ++i) {
+        void* d = DishAt(a, i);
+        if (!d) continue;
+        // lookAt = the absolute commanded TARGET (rewritten param+ActorLocation
+        // at startMovingTo). It is the SETTLED per-dish discriminator: readable
+        // WHILE isMoving=true, so a diff can compare aim targets mid-slew.
+        const auto* la = reinterpret_cast<const float*>(
+            reinterpret_cast<uint8_t*>(d) + g_offLookAt);
+        out[n].index    = i;
+        out[n].lookAtX  = la[0];
+        out[n].lookAtY  = la[1];
+        out[n].lookAtZ  = la[2];
+        out[n].isMoving = *(reinterpret_cast<uint8_t*>(d) + g_offIsMoving) != 0;
+        ++n;
+    }
+    return n;
+}
+
 bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
     TArrayView* a = Dishs();
     if (!a || !g_coreResolved) return false;

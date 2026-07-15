@@ -51,10 +51,15 @@ uint64_t NowMs() {
 // window; on arrival it snaps exact (kills float drift), matching LerpWindow's
 // contract. Its OWN tiny buffer -- NOT the actor-eid interpolator (a keyless screen
 // coord has no actor / IsLiveByIndex), same math per the /qf design.
-constexpr int   kInterpWindowMs = 50;    // derived: 3x the 60Hz send interval (jitter
-                                         // bridge), trimmed from the 75ms physics value.
-                                         // TAKE-tunable: laggy -> 33ms/extrapolate;
-                                         // snapping/starving -> up toward 75ms.
+constexpr int   kInterpWindowMs = 33;    // 2x the 60Hz send interval. WAS 50 (3x); the take
+                                         // (2026-07-15) reported the WASD-driven cursor LAGGY --
+                                         // constant-velocity motion makes the interp's inherent
+                                         // render-behind maximally visible (mouse hid it). 33ms =
+                                         // one interval less behind. If STILL laggy at 33: the
+                                         // real fix is EXTRAPOLATION (dead-reckon from the last two
+                                         // samples) -- an aiming cursor wants to be AHEAD, and
+                                         // constant-velocity WASD is perfectly predictable. Do NOT
+                                         // shrink below 33 (starves the jitter bridge); extrapolate.
 constexpr float kSnapPx = 4000.f;        // a jump beyond a window's plausible screen
                                          // motion -> snap (first sample / re-claim).
 

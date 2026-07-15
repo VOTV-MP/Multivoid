@@ -5,6 +5,7 @@
 #include "coop/interactables/device_occupancy.h"
 #include "coop/net/session.h"
 #include "coop/interactables/signal_catch_sync.h"
+#include "coop/dev/desk_diag.h"  // [dev] JOIN-ADOPT pre-apply baseline hook (no-op unless desk_diag=1)
 
 #include "ue_wrap/console_desk.h"
 #include "ue_wrap/log.h"
@@ -579,6 +580,11 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
     // The local holder ignores incoming live state (it IS the authority).
     if (!p.adopt && coop::device_occupancy::LocalHolds(kDeskClaim)) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
+
+    // [dev] desk_diag JOIN-ADOPT: capture the client's PRE-ADOPT local scalars
+    // BEFORE WriteScalars overwrites them with the host seed (join-seed vs drift).
+    if (p.adopt && s->role() == coop::net::Role::Client)
+        coop::dev::desk_diag::NoteJoinAdopt();
 
     CD::Scalars sc = PayloadToScalars(p);
     if (CD::WriteScalars(sc)) {

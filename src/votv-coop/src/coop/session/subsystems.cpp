@@ -31,6 +31,7 @@
 #include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/rng_roll_census.h"  // [dev] T1 probe v9
+#include "coop/dev/desk_diag.h"        // [dev] desk/console divergence census
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/world/spawn_authority.h"  // T1 Inc-1: client shared-world spawner park/cancel (absorbed ambient_spawner_suppress)
 #include "coop/props/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
@@ -152,6 +153,7 @@ void Install(coop::net::Session& session) {
     coop::garbage_sync::Install();           // Phase 5G garbage
     coop::spawn_authority::Install(&session);  // T1 Inc-1: t3 cancels + t1 park-class resolve (host results stream via the mirrors)
     coop::dev::rng_roll_census::Install(&session);  // [dev] T1 probe v9: driver/QuitGame interceptors (no-op unless rng_roll_census=1)
+    coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::host_spawn_watcher::Install(&session);  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
     coop::prop_drop_intent::Install(&session);    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
     coop::kerfur_entity::SetSession(&session);  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
@@ -408,7 +410,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // (cheap no-op syncs stay silent). Remove once the heavy one is found + fixed. WT = ue_wrap::ScopedWalkTimer.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }          // v36 world clock: host throttled poll+broadcast (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }          // v36/v109 world clock: HOST publishes the clock (net thread streams unreliable ClockPose); CLIENT drains + applies (design F)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }           // v44 night-sky: host throttled push (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_sync::Tick(); }          // v46 base power panel: poll breaker edges + deferred-apply retry (symmetric)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }            // v47 ATV: occupant streams its pose / mirror drives the interp (host+client)
@@ -422,6 +424,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }               // v108 roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }        // v108 owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     coop::dev::rng_roll_census::Tick();      // [dev] T1 probe v9 censuses (single bool read when off/idle)
+    coop::dev::desk_diag::Tick();            // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry

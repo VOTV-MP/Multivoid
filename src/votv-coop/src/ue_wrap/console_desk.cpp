@@ -335,6 +335,14 @@ bool ReadScalars(Scalars& out) {
     return true;
 }
 
+bool ReadFreqPolData(float& frData, float& poData) {
+    void* d = Instance();
+    if (!d || g_offDLFrData < 0 || g_offDLPoData < 0) return false;
+    frData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData);
+    poData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData);
+    return true;
+}
+
 bool WriteScalars(const Scalars& in) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;

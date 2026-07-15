@@ -400,6 +400,7 @@ add_library(votv-coop SHARED
     src/coop/dev/eid_lifetime_trace.cpp
     src/coop/dev/join_window_pos_trace.cpp
     src/coop/dev/rng_roll_census.cpp
+    src/coop/dev/desk_diag.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/perf_probe.cpp

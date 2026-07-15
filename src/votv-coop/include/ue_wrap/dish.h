@@ -28,6 +28,17 @@ bool EnsureResolved();
 // Number of live dishes in gamemode.dishs (0 if unresolved / no world).
 int32_t Count();
 
+// Per-dish diagnostic snapshot: the commanded TARGET (lookAt, absolute) + the
+// slew flag, per live dish. lookAt is the SETTLED discriminator (readable while
+// isMoving=true), so a HOST-vs-CLIENT diff can compare aim targets even mid-slew.
+// Read-only (desk_diag). Fills up to `cap` entries; returns the count written.
+struct DishState {
+    int32_t index = 0;
+    float   lookAtX = 0, lookAtY = 0, lookAtZ = 0;  // absolute commanded target
+    bool    isMoving = false;
+};
+int32_t ReadAllDishStates(DishState* out, int32_t cap);
+
 // Count of dishes currently slewing (isMoving). The v70 catch detector uses
 // the RISING edge of this between two 1 Hz polls as the catch-success
 // signature: dishes start moving ONLY from the catch chain's startMovingTo
