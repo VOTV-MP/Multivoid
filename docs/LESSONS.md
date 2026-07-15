@@ -233,8 +233,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   own the SIM and roll the RNG, client SUPPRESSES its tick. Found only by reading the RATE block
   byte-by-byte (desk `DL_downloading @66736`: `RandomFloatInRange` needle + `RandomFloat` noise sit IN the
   rate). A "numbers differ between peers" report on anything that ACCUMULATES → read the rate, don't
-  output-mirror. *Look FIRST:* `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
+  output-mirror. **COROLLARY (v111 AS-BUILT):** measure SEEDED-vs-unseeded + STORED-vs-transient first —
+  the desk `noise` is unseeded AND transient (never stored; 0 RandomStream) → seed-sync structurally
+  impossible → host-auth FORCED; and if the client sim writes only display-local, you OVERWRITE the
+  outputs (client sim runs harmlessly), you don't suppress the tick — except an APPEND buffer (log) which
+  a scalar mirror can't overwrite (kept separate). *Look FIRST:*
+  `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md` (AS-BUILT section).
   `memory/lesson_rng_in_rate_path_is_mechanic_desync.md`
+- **"Derived output converges for free once inputs mirror" is valid ONLY if the WHOLE input read-set
+  mirrors** — enumerate every field the derivation reads; a single un-synced input silently diverges the
+  output on a screen you thought was covered. Desk gate 2: frData/poData read a filter-size UPGRADE with
+  NO live sync lane → would diverge on a mid-session purchase; fix = stream the OUTPUT host-auth (2 extra
+  scalars) instead of trusting native convergence. *Look FIRST:*
+  `memory/lesson_converges_for_free_needs_complete_input_readset.md`
 
 - **Classify an ambient spawner's tier by its ANCHOR read** (minutes in the dump): player-camera source
   → OWNER-EFFECT; absolute float coords → world host-auth; navmesh random-walk var → world roamer; a

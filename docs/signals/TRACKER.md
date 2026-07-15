@@ -64,7 +64,7 @@ MIRROR STATE + SUPPRESS the local sim, never verb-hook
 (`[[lesson-votv-world-system-sync-mirror-state-not-verb]]`,
 `[[lesson-rng-in-rate-path-is-mechanic-desync]]`).
 - RE + field-ownership table: `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
-- RNG-authority row: `COOP_RNG_AUTHORITY.md` **T2-5b** (OPEN-DIVERGES, MEASURED).
+- RNG-authority row: `COOP_RNG_AUTHORITY.md` **T2-5b** (AS-BUILT v111, `desk_sim_sync`; NOT hands-on).
 - **TAKE (verify line):** host + client show the same `decoded %` and the same detector-needle
   position with identical freq/pol knobs, and the download HALTS on both when either knob is zeroed.
 

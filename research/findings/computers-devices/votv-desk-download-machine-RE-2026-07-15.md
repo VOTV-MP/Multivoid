@@ -111,3 +111,33 @@ also invisible). => The fix CANNOT verb-hook; it must MIRROR STATE + SUPPRESS th
    host-sim-input). Do NOT sync as one blob — split by field ownership (user rule 2026-07-15).
 5. Transport: the animated offsets + the needle want an unreliable STREAM (user: "as a stream udp");
    the discrete toggles (active/dir) + arm/complete edges want reliable.
+
+---
+
+## AS-BUILT (v111, 2026-07-15, `33cd7404`, NOT hands-on)
+
+The `/qf` design pass (5 measurement rounds, scratchpad qf_thread.md) CONVERGED BY SHRINKING: it
+opened toward a host-authoritative sim MIGRATION and ended at a small fix, because each round deleted
+an assumption by measurement:
+- **Seed-sync REFUTED** — `noise` is UNSEEDED *and* TRANSIENT (a `RandomFloat` consumed in-expression,
+  never stored to a member; grep-confirmed: 0 RandomStream in the asset, line 298395 is the audio
+  asset not a field). So the client re-rolls it every tick inside the formula -> no seed and no field
+  to inject -> `decoded += DL_downloading` can never agree while the client evaluates the formula.
+  Host-authoritative was FORCED, not the pattern-default reach.
+- **frData/poData do NOT "converge for free"** — they read a filter-size upgrade with NO live sync lane
+  (grep-empty), so a mid-session upgrade purchase would silently diverge them. Fix: stream them
+  host-auth (6->8 scalars), don't rely on native convergence. (The upgrade lane is its own workstream:
+  signals OPEN-3.)
+- **The client sim writes NOTHING that propagates** (display-local only), and the mirror OVERWRITES
+  the diverging scalars -> the fix is "host owns + streams the output vector; client overwrites its
+  local garbage", not a sim suppression. The one field the mirror can't overwrite (coordLog, an
+  append-buffer) is kept SEPARATE (signals OPEN-2).
+- **The host ALREADY consumes the occupant's DeskState** (`OnDeskState` applies on any non-holder; the
+  "host never applies" at console_state_sync.cpp:517 is SkySignal-specific) -> no new host-consume seam.
+
+AS-BUILT: `coop/interactables/desk_sim_sync` + `MsgType::DeskSimPose=38` (unreliable, host->all, ~10Hz,
+newest-wins). Host reads `ReadSimOutputs` + `SetHostDeskSim`; client `TryGetHostDeskSim` + multi-channel
+LerpWindow interp (cursor pattern) + `WriteSimOutputs` (raw every tick, screen repaint pulsed ~3Hz).
+Gate 1: the live DeskState apply keeps the local sim-output fields (console_state_sync.cpp ~594); adopt
+still seeds them. Proto 110->111. Audit READY (0 CRITICAL). DLL `84e431bef0bd6982` deployed x4.
+Take (verify): freq/pol numbers match on both peers + the knob ramp is smooth (not stepped).

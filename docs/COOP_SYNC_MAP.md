@@ -129,8 +129,9 @@ the cursor) — any new index MUST use the shared component, never raw `NextRang
 
 > **Signal-processing subsystem** (catch → screens → freq/pol tune → download → decode): the whole
 > desk workstation's element-by-element status lives in `docs/signals/TRACKER.md`; native pipeline +
-> the four sync shapes in `docs/signals/README.md`. The freq/pol + download-rate SIM is the open gap
-> (RE'd, divergence MEASURED, host-auth fix UNBUILT — `COOP_RNG_AUTHORITY` T2-5b / signals OPEN-0).
+> the four sync shapes in `docs/signals/README.md`. The freq/pol + download-rate SIM is **AS-BUILT v111**
+> (`desk_sim_sync` / `DeskSimPose=38`, host-auth output stream; NOT hands-on — `COOP_RNG_AUTHORITY` T2-5b
+> / signals OPEN-0). The remaining gap is OPEN-3 (upgrade-sync) — its own workstream.
 
 ## L3 — Global / ambient world state (singletons, no key)
 One value, host-authoritative, peers apply. Template sibling: `time_sync`.

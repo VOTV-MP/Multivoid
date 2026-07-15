@@ -12,7 +12,7 @@ peer's screens + download progress identical."** The cross-cutting contracts sta
 these docs LINK to them, never restate them (RULE 2):
 
 - **`docs/COOP_RNG_AUTHORITY.md`** — the RNG host-authority tracker. The download-rate divergence is
-  its row **T2-5b** (OPEN-DIVERGES, MEASURED). Signal RNG-authority PROGRESS is tracked THERE; this
+  its row **T2-5b** (AS-BUILT v111, `desk_sim_sync`; NOT hands-on). Signal RNG-authority PROGRESS is tracked THERE; this
   folder tracks subsystem COMPLETENESS and points at that row.
 - **`docs/COOP_SYNC_MAP.md`** — where each wire lane lives (rows: `console_state_sync`,
   `signal_sync`/`signal_catch_sync`/`signal_wire`, `desk_cursor_sync`, `comp_sync`). Find the file
@@ -86,5 +86,6 @@ Every signal element earns its row in `TRACKER.md` only when it reaches VERIFIED
 
 The living element-by-element ledger is **[TRACKER.md](TRACKER.md)**. Headline (2026-07-15): the
 transport-layer elements are SHIPPED (occupancy, desk scalars, dish-aim, saved signals, **cursor
-v109 SMOOTH**, **clock v110**); the **freq/pol + download-rate SIM is the open gap** — RE'd +
-divergence MEASURED, host-authoritative fix UNBUILT (its `/qf` is the next work item).
+v109 SMOOTH**, **clock v110**, **freq/pol + download-rate SIM AS-BUILT v111** — `desk_sim_sync` /
+`DeskSimPose=38`, host-auth output stream, NOT hands-on). The remaining gaps are OPEN-1 (cursor 5fps),
+OPEN-2 (coordLog cluster), OPEN-3 (upgrade-sync, its own workstream).

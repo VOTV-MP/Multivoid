@@ -65,3 +65,16 @@ TAKE (2 peers, one look): host + client show the **same HH:MM at a paused moment
 (client): one-shot `time_sync: applied CONNECT-EDGE host clock` on join, then
 `time_sync: applied STREAM host clock` ~every 10 s; and NO `SendReliable(TimeSync)` spam on the
 host. Design: `research/findings/computers-devices/votv-clock-sync-design-F-2026-07-15.md`.
+
+### DESK download-SIM host-auth (v111) — pending hands-on (DLL `84e431bef0bd6982`, proto 111)
+What changed: the freq/pol + download-rate sim is now host-authoritative (`desk_sim_sync` /
+`MsgType::DeskSimPose=38`). Host owns the sim + streams the 8-float output vector ~10Hz; client
+interpolates + overwrites. Knob intents stay occupant-authored.
+STEPS: both peers to the signal desk; catch a signal; arm a download; on one peer tune the
+frequency + polarity knobs while the OTHER peer watches the same desk (or a joiner enters after).
+TAKE: (1) the **download % and the freq/polarity numbers MATCH on both peers** (were host 0.0064 vs
+client 0.0262); (2) the **knob ramp is SMOOTH, not stepped** (offset rides the interp buffer);
+(3) a **110-vs-111 peer pair HARD-CLOSEs** at the gate (proves the proto bump). Log cue: `sync:desk_sim`
+in the walk-timer output. Design/as-built:
+`research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md` (AS-BUILT section).
+STATUS: built + deployed + audit READY (0 CRITICAL); NOT hands-on.
