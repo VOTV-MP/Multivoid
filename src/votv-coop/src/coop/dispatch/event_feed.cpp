@@ -59,6 +59,12 @@ void SetLocalNickname(const std::wstring& nick) {
     coop::player_handshake::SetLocalNickname(nick);
 }
 
+void SuppressPeerLeaveEdges() {
+    // See header: the local peer is fleeing to the menu, so the imminent
+    // Stop()-driven slot disconnects must NOT be surfaced as "<X> left the game".
+    g_lastConnectedBySlot.fill(false);
+}
+
 void OnSessionStart() {
     // File-scope per-slot state persists across Session::Stop()/Start() in
     // the same process. The harness only resets its own `g_wasConnected`

@@ -12,7 +12,11 @@
 
 #include "coop/session/net_pump.h"
 
-#include "coop/comms/chat_feed.h"  // Reset() on the leave-world flee (session UI dies with the session)
+#include "coop/comms/chat_feed.h"    // Reset() on the leave-world flee (session UI dies with the session)
+#include "coop/comms/chat_bubbles.h" // ResetSlots() on flee -- overhead bubbles are session UI too
+#include "coop/player/nameplate.h"   // ResetSlots() on flee -- HasAny() keeps hud::IsActive() alive in the menu
+#include "ui/chat_input.h"           // Close() on flee -- an OPEN chat box must not survive into the menu
+#include "ui/voice_panel.h"          // Close() on flee -- don't leave the voice panel open across the transition
 #include "coop/dev/leak_probe.h"
 #include "coop/dev/heap_probe.h"
 #include "coop/dev/perf_probe.h"
@@ -181,7 +185,29 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
     // last lines ride their 11 s TTL into the MAIN MENU overlay (user 2026-07-11,
     // eyer death -> menu). The host-stays-in-world case (its last client leaving)
     // never flees, so its feed keeps the "X left the game" line as before.
+    //
+    // 2026-07-15: the reset was INCOMPLETE -- only chat_feed cleared, so an open chat
+    // box, overhead bubbles, and nameplates leaked into the menu (user: "chat and
+    // probably something else leaking into main menu from SESSION"). Every SESSION-
+    // SCOPED overlay must die at this funnel (DisconnectAll is the WRONG home -- it
+    // also runs on the HOST when a client leaves, and the host must KEEP its UI).
+    // hud::IsActive() keys on chat_feed::HasAny() || nameplate::HasAny() || ... so a
+    // stale nameplate alone re-activates the whole HUD in the menu.
     coop::chat_feed::Reset();
+    coop::chat_bubbles::ResetSlots();
+    coop::nameplate::ResetSlots();
+    ui::chat_input::Close();
+    ui::voice_panel::Close();
+    // The feed Reset above is NOT sufficient on its own: session.Stop() (called
+    // above) flips every peer slot connected->disconnected, and the NEXT
+    // event_feed::Update reads that as a per-slot "<X> left the game" departure and
+    // Pushes it into the just-cleared feed -- so a client's OWN quit-to-menu surfaced
+    // "Host left the game" AFTER this reset and rode its 11 s TTL into the MAIN MENU
+    // (user 2026-07-15; the message is also semantically wrong -- WE left, not the
+    // host). Neutralize the edge detectors so the local teardown emits no spurious
+    // peer-left toast. Host-stays-on-client-leave never reaches this funnel, so its
+    // legitimate departure toast is preserved.
+    coop::event_feed::SuppressPeerLeaveEdges();
     // Hold the detour dormant over the world teardown, but RESUME the instant the
     // menu's ui_menu_C::Tick first dispatches (menu world up) so MULTIPLAYER is
     // injected on the first menu frame. kDeathMenuBypassMs is only the safety
