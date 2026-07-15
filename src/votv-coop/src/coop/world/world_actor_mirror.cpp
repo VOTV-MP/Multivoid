@@ -205,11 +205,15 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     void* actor = drained->GetActor();
     const D::SpawnPath sp = D::GetSpawnPath();
-    if (actor && sp.k2DestroyFn && R::IsLive(actor)) {
+    // IsLiveByIndex, NOT plain IsLive (2026-07-15 IsLive-enumeration sweep): a CACHED mirror
+    // actor drained from the table + a K2_DestroyActor CALL -- if its slot was recycled (this
+    // can race a world teardown), plain IsLive passes the foreign occupant and the call runs on
+    // the wrong object. [[lesson-islive-recycled-slot-blind-use-by-index]]
+    if (actor && sp.k2DestroyFn && R::IsLiveByIndex(actor, drained->GetInternalIdx())) {
         R::CallFunction(actor, sp.k2DestroyFn, nullptr);
         UE_LOGI("world-actor[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
                 payload.elementId, actor);
-    } else if (actor && !R::IsLive(actor)) {
+    } else if (actor && !R::IsLiveByIndex(actor, drained->GetInternalIdx())) {
         UE_LOGI("world-actor[client OnDestroy]: mirror eid=%u actor already not-live -- skipping K2",
                 payload.elementId);
     }

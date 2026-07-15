@@ -135,14 +135,26 @@ std::atomic<bool> g_causeRainEchoSuppress{false};
 
 // Cached cycle pointer. The cycle is singleton-per-session; FindObjectByClass
 // is a linear GUObjectArray walk and CLAUDE.md's audit rule prohibits per-
-// frame full-array scans. Cache the pointer; revalidate on use via IsLive
-// (the cycle is destroyed + recreated on level transitions OMEGA -> story,
-// at which point we re-resolve). Game-thread only.
+// frame full-array scans. Cache the pointer + its InternalIndex; revalidate on
+// use via IsLiveByIndex (the cycle is destroyed + recreated on level transitions
+// OMEGA -> story, at which point we re-resolve). Game-thread only.
+//
+// IsLiveByIndex, NOT plain IsLive (2026-07-15 crash fix): on world teardown the
+// daynightCycle is destroyed and its GUObjectArray slot is RECYCLED to another
+// actor (observed: prop_swinger_crematorDoor_C). Plain IsLive passes the recycled
+// slot -- it IS live, just a different object -- so a weather apply would dispatch
+// the cycle's setRainParticles / intComs_triggerSnow UFunction on the foreign
+// object -> "Failed to find function setRainParticles in prop_swinger_crematorDoor_C"
+// -> LowLevelFatalError (user client crash on exit-to-menu). The cached index's
+// serial check rejects the recycled slot -> we re-resolve (finding the new cycle or
+// null, whereupon Apply no-ops). [[lesson-islive-recycled-slot-blind-use-by-index]]
 void* g_cycleCache = nullptr;
+int32_t g_cycleIdx = -1;
 
 void* ResolveCycle() {
-    if (g_cycleCache && R::IsLive(g_cycleCache)) return g_cycleCache;
+    if (g_cycleCache && R::IsLiveByIndex(g_cycleCache, g_cycleIdx)) return g_cycleCache;
     g_cycleCache = R::FindObjectByClass(P::name::DaynightCycleClass);
+    g_cycleIdx = g_cycleCache ? R::InternalIndexOf(g_cycleCache) : -1;
     return g_cycleCache;
 }
 
@@ -913,6 +925,7 @@ void OnDisconnect() {
     // Cycle cache may dangle if the session ends mid-level-transition;
     // clear so the next ResolveCycle re-walks via FindObjectByClass.
     g_cycleCache = nullptr;
+    g_cycleIdx = -1;
 
     // Audit M26 (2026-05-27): unregister observers that are bound to
     // long-lived engine UFunctions (BeginDeferredActorSpawnFromClass +

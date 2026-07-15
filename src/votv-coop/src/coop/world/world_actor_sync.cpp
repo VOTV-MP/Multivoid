@@ -377,7 +377,13 @@ void OnDisconnect() {
         if (!el->IsMirror()) { ++nHost; continue; }
         ++nMirrors;
         void* actor = el->GetActor();
-        if (actor && g_k2DestroyFn && R::IsLive(actor)) {
+        // IsLiveByIndex, NOT plain IsLive (2026-07-15 IsLive-enumeration sweep): this is a
+        // TEARDOWN drain (OnDisconnect) of a CACHED mirror actor, then a K2_DestroyActor CALL
+        // -- exactly the recycled-slot-fatal shape (a foreign live occupant passes plain IsLive,
+        // then the call runs on the wrong object). WorldActor already stores its index (the drive
+        // Tick uses IsLiveByIndex@world_actor.cpp:121); the drain just didn't.
+        // [[lesson-islive-recycled-slot-blind-use-by-index]]
+        if (actor && g_k2DestroyFn && R::IsLiveByIndex(actor, el->GetInternalIdx())) {
             R::CallFunction(actor, g_k2DestroyFn, nullptr);  // K2_DestroyActor (game thread)
             ++nK2;
         }
