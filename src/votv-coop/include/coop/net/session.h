@@ -198,6 +198,17 @@ public:
     // Same contract shape as TryGetRemoteHandPose.
     bool TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, bool* outIsNew = nullptr);
 
+    // v109 (design F): HOST publishes the current world-clock snapshot each game tick
+    // (time_sync::Tick); the net thread fan-outs ONE unreliable ClockPose datagram to all
+    // peers on a ~500 ms throttle (independent of the pose sendHz). `set` false clears it.
+    // Host-only producer; a client call is a harmless no-op store. Game thread.
+    void SetHostClock(bool set, const TimeSyncPayload& clock);
+    // v109 (design F, CLIENT game thread): move out the latest received host clock + report
+    // whether it is newly arrived (apply only on isNew -- between arrivals the frozen mirror
+    // holds). Returns false until the first ClockPose lands (the reliable connect-edge
+    // TimeSync seeds the initial value before then). newest-wins by header seq.
+    bool TryGetHostClock(TimeSyncPayload& out, bool* outIsNew = nullptr);
+
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
     // packet motion). Returns false if no new batch since the last take. Net thread fills it.
@@ -511,6 +522,11 @@ private:
     // SetLocalTrashCarryBatch, net thread reads + fan-outs ONE TrashCarryPose datagram). Empty = none.
     std::vector<TrashClumpPoseSnapshot> localTrashCarryBatch_;
     bool hasLocalTrashCarryBatch_ = false;
+    // v109 (design F): host world-clock snapshot (game thread writes via SetHostClock each
+    // tick, net thread reads + fan-outs ONE unreliable ClockPose datagram on its own ~500 ms
+    // throttle -- independent of the pose sendHz). Single value (host-authoritative, same to all).
+    TimeSyncPayload localHostClock_{};
+    bool hasLocalHostClock_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -543,6 +559,14 @@ private:
     std::array<uint32_t, kMaxPeers> lastRemoteDeskCursorSeq_{};
     std::array<uint64_t, kMaxPeers> remoteDeskCursorStamp_{};
     std::array<uint64_t, kMaxPeers> lastReadDeskCursorStamp_{};
+    // v109 (design F): latest received host world-clock snapshot (host->client; ONE slot, not
+    // per-peer -- the host is the only sender). Net thread stores under remoteMutex_; client game
+    // thread drains via TryGetHostClock (newest-wins by header seq; apply on isNew).
+    TimeSyncPayload remoteHostClock_{};
+    bool hasRemoteHostClock_ = false;
+    uint32_t lastRemoteHostClockSeq_ = 0;
+    uint64_t remoteHostClockStamp_ = 0;
+    uint64_t lastReadHostClockStamp_ = 0;
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

@@ -133,6 +133,12 @@ void Session::SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose) {
     if (set) localDeskCursor_ = pose;
 }
 
+void Session::SetHostClock(bool set, const TimeSyncPayload& clock) {
+    std::lock_guard<std::mutex> lk(localMutex_);
+    hasLocalHostClock_ = set;
+    if (set) localHostClock_ = clock;
+}
+
 // SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
 // StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
 // 2026-06-07 per the 800-LOC soft cap).
@@ -189,6 +195,16 @@ bool Session::TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, 
     out = remoteDeskCursors_[peerSlot];
     if (outIsNew) *outIsNew = (remoteDeskCursorStamp_[peerSlot] != lastReadDeskCursorStamp_[peerSlot]);
     lastReadDeskCursorStamp_[peerSlot] = remoteDeskCursorStamp_[peerSlot];
+    return true;
+}
+
+bool Session::TryGetHostClock(TimeSyncPayload& out, bool* outIsNew) {
+    if (state_.load() != ConnState::Connected) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteHostClock_) return false;
+    out = remoteHostClock_;
+    if (outIsNew) *outIsNew = (remoteHostClockStamp_ != lastReadHostClockStamp_);
+    lastReadHostClockStamp_ = remoteHostClockStamp_;
     return true;
 }
 
@@ -599,6 +615,26 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         break;
     }
+    case MsgType::ClockPose: {  // v109 (design F): HOST->all world-clock snapshot (single value, newest-wins)
+        if (len < static_cast<int>(sizeof(ClockPosePacket))) return;
+        // Host is authoritative -- it owns the clock and never applies a received one (a self-echo
+        // via the relay can't reach it: this kind is host-originated + not relayed, but guard anyway).
+        if (cfg_.role == Role::Host) break;
+        ClockPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteHostClock_ &&
+                static_cast<int32_t>(seq - lastRemoteHostClockSeq_) <= 0) {
+                break;  // older/duplicate snapshot -- keep the newer one
+            }
+            remoteHostClock_ = pkt.clock;
+            lastRemoteHostClockSeq_ = seq;
+            hasRemoteHostClock_ = true;
+            ++remoteHostClockStamp_;
+        }
+        break;
+    }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
@@ -696,6 +732,13 @@ void Session::NetThread() {
         cfg_.sendHz > 0 ? 1000 / cfg_.sendHz : 33);
     auto nextSend = std::chrono::steady_clock::now();
     auto nextRttSample = std::chrono::steady_clock::now();
+    // v109 (design F): the host world-clock snapshot streams on its OWN ~500 ms cadence,
+    // independent of (and far slower than) the pose sendHz -- one game-minute of real time
+    // is well over 500 ms at any plausible day length, so this keeps the frozen client
+    // mirror within a minute of the host without loading the wire. Net-thread-local (only
+    // this loop touches it), like nextSend.
+    auto nextClockSend = std::chrono::steady_clock::now();
+    constexpr auto kClockSendInterval = std::chrono::milliseconds(500);
 
     auto* sockets = SteamNetworkingSockets();
 
@@ -810,12 +853,19 @@ void Session::NetThread() {
             bool haveHand;
             DeskCursorPoseSnapshot localDeskCursor;
             bool haveDeskCursor;
+            TimeSyncPayload localHostClock;
+            bool haveHostClock;
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_;
               localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
               localHand = localHandPose_; haveHand = hasLocalHand_;
-              localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_; }
+              localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
+              localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_; }
+            // v109 (design F): the clock rides its OWN 500 ms throttle, and only the HOST
+            // originates it. Computed once here so the per-peer fan-out below sends the same
+            // snapshot to every peer this round (and nextClockSend advances once, after).
+            const bool clockDue = haveHostClock && cfg_.role == Role::Host && now >= nextClockSend;
             // v37: serialize the live NPC pose batch ONCE (same body for every peer; only the
             // per-peer header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads
             // localNpcBatch_ under localMutex_ + writes the body after the leading PacketHeader,
@@ -830,7 +880,7 @@ void Session::NetThread() {
             // -- SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
             uint8_t tcBuf[kTrashCarryPoseDatagramMax];
             const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
-            if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor ||
+            if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue ||
                 npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
@@ -912,8 +962,18 @@ void Session::NetThread() {
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                         if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(tcMsgLen)); else ++sendFails;
                     }
+                    if (clockDue) {  // v109 (design F): HOST world-clock snapshot -- same body to every peer
+                        ClockPosePacket pkt{};
+                        WriteHeader(pkt.header, MsgType::ClockPose, sendSeq_.fetch_add(1), ownEpoch_);
+                        pkt.clock = localHostClock;
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, &pkt, sizeof(pkt),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
+                    }
                 }
             }
+            if (clockDue) nextClockSend = now + kClockSendInterval;  // advance once per round, after the fan-out
             nextSend = now + sendInterval;
         }
 

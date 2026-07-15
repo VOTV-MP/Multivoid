@@ -18,7 +18,6 @@ namespace {
 namespace DNC = ue_wrap::daynightcycle;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-std::chrono::steady_clock::time_point g_lastBroadcast{};
 bool g_suppressedClient = false;  // U6: we zeroed the local TimeScale (client)
 // v71 sleep gate: while the accelerate phase runs, the CLIENT clock free-runs
 // at TimeScale=1 (its world is already dilated 20x, so 1.0 advances the clock
@@ -30,9 +29,12 @@ std::atomic<bool> g_sleepAccelerate{false};
 
 float ClientTimeScale() { return g_sleepAccelerate.load(std::memory_order_acquire) ? 1.0f : 0.0f; }
 
-// The clock is continuous + the client free-runs its own ReceiveTick at the synced TimeScale,
-// so the push is only an anti-drift correction -- a slow rate is plenty and keeps the wire quiet.
-constexpr auto kPushInterval = std::chrono::milliseconds(2000);
+// v109 (design F): the client daynightCycle is a PURE host-authoritative mirror frozen at
+// TimeScale=0 (never free-runs -- that was the pre-F belief, and the load-bearing invariant is
+// "client totalTime never wraps MaxTime locally" -> the midnight cascade stays unreachable). The
+// host's clock now streams as an UNRELIABLE ClockPose snapshot at ~500 ms (session net thread), so
+// the frozen mirror is refreshed at HH:MM display granularity. The RELIABLE TimeSync(29) is kept
+// ONLY for the connect-edge guaranteed initial sync (no periodic reliable push -- RULE 2).
 
 bool MakePayload(coop::net::TimeSyncPayload& out) {
     float t = 0, d = 0, s = 0;
@@ -46,6 +48,23 @@ bool MakePayload(coop::net::TimeSyncPayload& out) {
     return true;
 }
 
+// The shared CLIENT-apply: write the host's clock into the local (frozen) daynightCycle. Called
+// by BOTH the reliable connect-edge (OnReliable) and the unreliable steady-state stream (Tick's
+// client branch). TimeScale is forced to ClientTimeScale() (0 normally, 1 during sleep-accelerate)
+// -- NEVER payload.timeScale -- so the client stays a frozen pure mirror and the midnight cascade
+// stays structurally unreachable (design F invariant).
+void ApplyClockSnapshot(const coop::net::TimeSyncPayload& p) {
+    DNC::ApplyClock(p.totalTime, p.day, ClientTimeScale());
+    // v96: mirror the host's NAMED clock (HUD time + the day number in timeZ.Z). The suppressed
+    // client minute pulse never rebuilds it locally, and instant host set-clock jumps (dev menu)
+    // must land here.
+    DNC::WriteTimeZ(p.hour, p.minute, p.dayZ);
+    // U6: re-assert the daily-delivery latch (the suppressed cascade can't reset it, but a fresh
+    // save-load mid-session could).
+    DNC::LatchDailyDelivery();
+    g_suppressedClient = true;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -56,26 +75,15 @@ void Install(coop::net::Session* session) {
 void OnReliable(const coop::net::TimeSyncPayload& payload) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (s && s->role() == coop::net::Role::Host) return;  // host is authoritative -- never apply a received clock
-    // U6 (v65): the CLIENT runs at TimeScale=0 -- its `day` advances ONLY via
-    // these corrections (always < MaxTime: the host wraps in-tick), which
-    // makes the midnight task/email/points cascade structurally unreachable
-    // client-side (the host's rolls mirror via the email/order channels).
-    // The dailyDelivery latch kills the 6am duplicate auto-order, including
-    // the join-edge instant fire (the first snap crossing 06:00); it re-
-    // asserts with every correction (the suppressed cascade can't reset it,
-    // but a fresh save-load mid-session could). Restore on disconnect writes
-    // the game's own value (1.0) back.
-    DNC::ApplyClock(payload.totalTime, payload.day, ClientTimeScale());
-    // v96: mirror the host's NAMED clock (HUD time + the day number in timeZ.Z). The
-    // suppressed client minute pulse never rebuilds it locally, and instant host
-    // set-clock jumps (dev menu) must land here on the same correction.
-    DNC::WriteTimeZ(payload.hour, payload.minute, payload.dayZ);
-    DNC::LatchDailyDelivery();
-    g_suppressedClient = true;
-    static int s_n = 0;
-    if ((s_n++ % 5) == 0)  // ~every 10s -- enough to confirm convergence, not spam
-        UE_LOGI("time_sync: applied host clock totalTime=%.1f day=%.1f (client scale=%.0f)",
-                payload.totalTime, payload.day, ClientTimeScale());
+    // v109 (design F): the RELIABLE TimeSync is now ONLY the CONNECT-EDGE guaranteed initial sync
+    // (QueueConnectBroadcastForSlot). Steady-state corrections ride the unreliable ClockPose stream
+    // (Tick's client branch). Both funnel through ApplyClockSnapshot, which keeps the client frozen
+    // at TimeScale=0 (U6: `day` advances only via these applies, never wraps MaxTime locally -> the
+    // midnight task/email/points cascade stays structurally unreachable; the daily-delivery latch it
+    // re-asserts kills the 6am duplicate auto-order). Restore on disconnect writes 1.0 back.
+    ApplyClockSnapshot(payload);
+    UE_LOGI("time_sync: applied CONNECT-EDGE host clock totalTime=%.1f day=%.1f (client scale=%.0f)",
+            payload.totalTime, payload.day, ClientTimeScale());
 }
 
 void SetSleepAccelerate(bool on) {
@@ -104,23 +112,31 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 void Tick() {
     if (!DNC::EnsureResolved()) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;  // host broadcasts; client applies on receipt
-    const auto now = std::chrono::steady_clock::now();
-    if (now - g_lastBroadcast < kPushInterval) return;
-    coop::net::TimeSyncPayload p{};
-    if (!MakePayload(p)) return;
-    g_lastBroadcast = now;
-    if (s->SendReliable(coop::net::ReliableKind::TimeSync, &p, sizeof(p))) {
-        static int s_n = 0;
-        if ((s_n++ % 5) == 0)  // ~every 10s
-            UE_LOGI("time_sync: host clock totalTime=%.1f day=%.1f scale=%.3f", p.totalTime, p.day, p.timeScale);
+    if (!s || !s->connected()) return;
+    if (s->role() == coop::net::Role::Host) {
+        // HOST: publish the current clock every tick; the session net thread fan-outs it as an
+        // unreliable ClockPose snapshot on its OWN ~500 ms throttle (design F transport). Cheap
+        // (two raw reflected reads + a mutex'd copy); MakePayload returns false until the cycle is
+        // streamed in, so we never publish garbage.
+        coop::net::TimeSyncPayload p{};
+        if (MakePayload(p)) s->SetHostClock(true, p);
     } else {
-        UE_LOGW("time_sync: SendReliable(TimeSync) failed");
+        // CLIENT: drain the latest unreliable host clock + apply on arrival. Between arrivals the
+        // frozen mirror holds (pure host-auth mirror -- no local sim). The reliable connect-edge
+        // seeds the first value before the stream lands.
+        coop::net::TimeSyncPayload p{};
+        bool isNew = false;
+        if (s->TryGetHostClock(p, &isNew) && isNew) {
+            ApplyClockSnapshot(p);
+            static int s_n = 0;
+            if ((s_n++ % 20) == 0)  // ~every 10s at 2 Hz -- confirm convergence, not spam
+                UE_LOGI("time_sync: applied STREAM host clock totalTime=%.1f day=%.1f (client scale=%.0f)",
+                        p.totalTime, p.day, ClientTimeScale());
+        }
     }
 }
 
 void OnDisconnect() {
-    g_lastBroadcast = {};
     g_sleepAccelerate.store(false, std::memory_order_release);
     if (g_suppressedClient) {
         // U6 restore: 1.0 is the game's own TimeScale restore value (uber

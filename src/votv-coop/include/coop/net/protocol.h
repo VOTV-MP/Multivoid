@@ -1019,6 +1019,15 @@ enum class MsgType : uint8_t {
                        //      memcpy (WriteCursorOnly -- NO updCursorLocations, so no 60Hz pingDishes setRot
                        //      storm; the widget's own Tick repaints). Sender identity rides the PacketHeader
                        //      senderSlot (host relay rewrites); newest-wins by seq. Body: DeskCursorPosePacket.
+    ClockPose = 37,    // v109 (2026-07-15): HOST->all world-clock ABSOLUTE snapshot (unreliable, ~2Hz).
+                       //      Design F (docs qf_thread_clock): the client daynightCycle is a PURE
+                       //      host-auth mirror frozen at TimeScale=0; the desync was the RELIABLE 2 s
+                       //      correction refreshing SLOWER than the HH:MM display granularity. This
+                       //      is the correct transport for periodic idempotent absolute state (the
+                       //      pose-stream pattern) -- newest-wins, a dropped snapshot is corrected by
+                       //      the next. The RELIABLE TimeSync(29) is retained ONLY for the connect-edge
+                       //      guaranteed initial sync. Body: ClockPosePacket (PacketHeader + TimeSyncPayload).
+                       //      NOT relayed (host-originated; clients never forward it).
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -3971,6 +3980,17 @@ struct TimeSyncPayload {
     int32_t dayZ;
 };
 static_assert(sizeof(TimeSyncPayload) == 24, "TimeSyncPayload must be 24 bytes");
+
+// v109 (2026-07-15, design F): the unreliable HOST->all world-clock stream datagram
+// (MsgType::ClockPose=37). Wraps the SAME TimeSyncPayload the reliable TimeSync(29) connect-edge
+// carries -- the ONLY difference is the transport: this periodic snapshot rides the unreliable
+// pose channel (newest-wins by header seq), so the frozen client mirror is refreshed at HH:MM
+// display granularity without loading the reliable ARQ. See MsgType::ClockPose.
+struct ClockPosePacket {
+    PacketHeader    header;  // 20
+    TimeSyncPayload clock;   // 24
+};
+static_assert(sizeof(ClockPosePacket) == 44, "ClockPosePacket must be 44 bytes");
 
 // SkyStatePayload -- the host-authoritative NIGHT-SKY snapshot (SkyState=34, v44). The visible
 // star dome (Anewsky_C's `sky` mesh) is given a per-game UNSEEDED random yaw + a slow per-tick
