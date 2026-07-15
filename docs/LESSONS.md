@@ -93,6 +93,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **RULE 2 does NOT apply to probes/diagnostics/tools** (they may stay). `memory/feedback_rule2_exempts_probes_diagnostics_tools.md`
 - **Test/probe flags live in `votv-coop.ini [dev]`, NOT bats/env.** `memory/feedback_test_flags_in_ini_not_bats_or_env.md`
 - **`docs/piles/` is the LIVING pile KB** — mark DESIGN vs AS-BUILT vs VERIFIED. `memory/feedback_docs_piles_living_knowledge_base.md`
+- **A diagnostic probe's built-in comparability/quiescent tag is only as good as its DERIVED inputs** —
+  validate EACH gate input against the codebase's MEASURED field-behavior before trusting the tag; a wrong
+  input silently mislabels samples (a clean diff on mislabeled data is worse than none). Two inputs broke
+  the desk_diag `q=Y` tag (game-jittered knobs → always-N; unchecked active-filter integration → q=Y
+  mid-ramp). Prefer clean DISCRETE state over float-delta heuristics; first check the log = do `q=Y`
+  samples cluster at the real pauses. `memory/lesson_comparability_tag_inputs_need_measured_validation.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -171,7 +177,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Follow MTA architecture when possible** (vendored `reference/mtasa-blue/`). `memory/feedback_follow_mta_architecture.md`
 - **A new `ReliableKind` wires in THREE places** — check the router checklist. `memory/feedback_reliablekind_router_checklist.md`
 - **Host TRACKING/enroll gates on HOSTING, never `connected()`.** `memory/lesson_tracking_gates_on_hosting_not_connected.md`
-- **EVERY session-end path runs the FULL teardown fanout.** `memory/lesson_every_session_end_path_full_teardown_fanout.md`
+- **EVERY session-end path runs the FULL teardown fanout** — AND session-scoped UI (chat feed/input/
+  bubbles/nameplate/voice_panel) dies at the FLEE funnel (`FleeToMainMenu`), NOT `DisconnectAll` (which
+  also runs on the HOST keeping its world, so it must not clear on-screen UI). *Look FIRST:* net_pump.cpp:184
+  (chat-leak-into-menu, 2026-07-15). `memory/lesson_every_session_end_path_full_teardown_fanout.md`
 - **Every client-side SUPPRESSION is a LOAN, not a purchase (N=3: weather 06-11, serverbox 07-09,
   garbage_sync 07-10).** Persistent-state neutralizations (tick-disable, field-zero, TimeScale=0,
   suppress flags) need an EXPLICIT OnDisconnect restore; fn-body PRE-cancels SELF-restore ONLY when
@@ -206,6 +215,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `RandomStream` (garbagePileSpawner/radiotower/xmaslight) → seed-replicate; all else unseeded → suppress
   or intent. Every gap row is STATIC-INFERRED → run a LIVE client-roll probe before any fix. *Look FIRST:*
   `docs/COOP_RNG_AUTHORITY.md` (living tracker) + `memory/lesson_votv_rng_host_ownable_at_ticker_director_layer.md`.
+- **RNG IN a per-peer sim's RATE/output formula = a MECHANIC desync, not a display bug** — mirroring the
+  output chases the divergence forever (the client re-sims with its own RNG between ticks); the host must
+  own the SIM and roll the RNG, client SUPPRESSES its tick. Found only by reading the RATE block
+  byte-by-byte (desk `DL_downloading @66736`: `RandomFloatInRange` needle + `RandomFloat` noise sit IN the
+  rate). A "numbers differ between peers" report on anything that ACCUMULATES → read the rate, don't
+  output-mirror. *Look FIRST:* `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
+  `memory/lesson_rng_in_rate_path_is_mechanic_desync.md`
 
 - **Classify an ambient spawner's tier by its ANCHOR read** (minutes in the dump): player-camera source
   → OWNER-EFFECT; absolute float coords → world host-auth; navmesh random-walk var → world roamer; a
@@ -363,7 +379,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 - **NEVER raw-write a UE field the game sets via a setter UFunction** — call the setter. `memory/feedback_no_raw_write_of_setter_managed_fields.md`
 - **UE `TArray<struct>` stride = 16-ALIGNED size, NOT the raw `Size:`.** `memory/feedback_tarray_stride_aligned_not_raw_size.md`
-- **plain `IsLive` passes a RECYCLED slot** — cached instances need `IsLiveByIndex`. `memory/lesson_islive_recycled_slot_blind_use_by_index.md`
+- **plain `IsLive` passes a RECYCLED slot** — cached instances need `IsLiveByIndex`. A recycled-slot fix
+  must sweep EVERY cache of that entity: the 07-04 audit converted `daynightcycle.cpp Cycle()` but MISSED
+  `weather_sync.cpp ResolveCycle()` → the SAME crash recurred 2026-07-15 (`setRainParticles` on a recycled
+  `crematorDoor`, exit-to-menu); fixed at weather_sync.cpp:154. `memory/lesson_islive_recycled_slot_blind_use_by_index.md`
 - **A runtime-spawned `AStaticMeshActor` is STATIC mobility** → set Movable BEFORE `SetActorLocation` (a
   Static root silently no-ops the teleport). `memory/lesson_runtime_staticmeshactor_must_be_movable.md`
 - **SEH shields must NEVER absorb `0xC00000FD`** (stack overflow). `memory/lesson_never_absorb_stack_overflow.md`

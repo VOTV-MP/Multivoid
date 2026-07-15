@@ -128,6 +128,17 @@ Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signa
 `dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic `Array_Shuffle`
 scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar order diverge.
 
+**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: OPEN-DIVERGES, MECHANIC (RE'd 2026-07-15, user-reported).**
+The desk download rate `DL_downloading` (block `@66736`, `analogDScreenTest`) has TWO RNG terms IN the
+rate formula, rolled per-peer per tick: the detector needle `DL_resDetecPercent` (`RandomFloatInRange`)
+and a `noise` term (`RandomFloat`). `decoded += DL_downloading` -> two peers download at different speeds
+even with identical knobs = a live MECHANIC desync, not display lag. The whole download/detector sim runs
+per-peer today. FIX (planned, /qf next): host-authoritative SIM — host runs the tick + rolls both RNG,
+client SUPPRESSES its own accrual + mirrors the outputs; the freq/pol knobs are host-sim-inputs (client
+intent up, host owns the value + streams the animated offset back, INTERPOLATED like the cursor). Full RE +
+field-ownership table: `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
+See `[[lesson-rng-in-rate-path-is-mechanic-desync]]`.
+
 ### T2-6 · Ambient wildlife / flora spawners — STATUS: PARTIAL (2026-07-10 eve anchor audit)
 **DONE-MIRROR (host-auth):** mushroomMaster, mushroomSpawner (own-transform world spawns; t3
 cancels + host mirror), **ticker_wispSpawner sky wisps** (2026-07-10 eve REVERSAL: dump-measured
