@@ -53,7 +53,7 @@ echo "LOCAL_IP=$LOCAL_IP  PUBLIC_IP=$PUBLIC_IP"
 
 # Safety guard: assert we are NOT about to clobber a port of the box's own
 # services (sshd + the other tenants' listeners; superset of both boxes).
-for reserved in 443 8443 2096 43766 57210 9987 10011 30033 22; do
+for reserved in 443 8443 2096 43766 57210 22; do  # (TS3 ports dropped 2026-07-16: container removed)
   for ours in "$SIG_PORT" "$MASTER_PORT" "$TURN_PORT"; do
     if [ "$ours" = "$reserved" ]; then
       echo "ABORT: chosen port $ours collides with reserved $reserved"; exit 1

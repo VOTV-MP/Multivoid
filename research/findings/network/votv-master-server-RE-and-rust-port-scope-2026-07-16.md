@@ -110,7 +110,7 @@ Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (ser
 
 The whole stack moved to the **new Cloudzy box `172.86.94.3`**; the old box now hosts **only unrelated services**
 (coop services stopped/removed there per RULE 2, verified: no coop listeners, master dead, the box's other tenants
-untouched). The new box was provisioned by the REWORKED `tools/vps_provision.sh` (commit `2932a18d`):
+untouched). The new box was provisioned by the REWORKED `tools/vps_provision.sh` (commit `d56a4f69`):
 Rust ExecStart directly (no Python ever landed), stop-before-replace binary install, `curl -4`
 public-IP (the dual-stack box answered ifconfig.me over v6 → master handed unbracketed-v6 URIs,
 measured), ufw allows (10000/10001/3478/61000-61100/udp + **80/tcp for Let's Encrypt**), realm
@@ -118,12 +118,21 @@ measured), ufw allows (10000/10001/3478/61000-61100/udp + **80/tcp for Let's Enc
 `net.master` is a client-side constant). **Functionally verified from OUTSIDE**: healthz,
 `/v1/latest`→111, host→join full ICE, signaling relay A→B, leave (+ the 5s `/v1/lobbies` cache),
 TTL=90 reaper (`expired ... stale 98s`), TURN-cred HMAC recomputed on-box = MATCH.
-Client side (commit `ee8b463e`, DLL `AFBF5728` x4 hash-verified): `protocol.h`
+Client side (commit `cd6faf81`, DLL `AFBF5728` x4 hash-verified): `protocol.h`
 `kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`; `session_manager.cpp` `kDefaultMaster`
 duplicate literal retired (aliases protocol.h); all 4 installs' inis carry explicit `net.*`
 (HOST had NO `[net]` block — rode the compiled default; CLIENT_3 had no ini at all — created).
 Domain `votv.mp`: Cloudflare DNS-only zone, NS delegation pending at the .mp registry (~24h;
 `.mp` is NOT transferable to CF Registrar — checked the 422-TLD list).
+
+**s13b addendum (2026-07-16, later same day):** the box was apt full-upgraded (87 pkgs) +
+**REBOOTED**, and slimmed per user order — docker (a TS3 container + two dead ones) and WireGuard
+fully purged, their ufw cruft deleted. Post-reboot the whole coop stack was re-verified **from
+outside** (healthz, `/v1/latest`->111, signaling TCP connect, STUN 0x0101; RSS 360Mi/961Mi).
+Before pushing, a leak audit found the commits tied both boxes' IPs to the other tenants' service
+names in a PUBLIC repo — wording neutralized across 6 files and the three unpushed commits REBUILT
+(final SHAs `d56a4f69`/`cd6faf81`/`c653a538`), then pushed. See
+[[feedback-push-leak-audit-service-ties-and-sha-rewrite]] (memory).
 
 ## Status
 
@@ -132,7 +141,7 @@ Domain `votv.mp`: Cloudflare DNS-only zone, NS delegation pending at the .mp reg
 - Ghost-lobby TTL: **DONE** — `LOBBY_TTL = 90s` (commit `6d640679`); reaper verified on the new box.
 - `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`; compiled default 111;
   provisioner writes `COOP_LATEST_PROTO=111`). Live-verified on the new box -> proto 111.
-- RULE-2 finalization: provision script is Rust-native (`2932a18d`) and the old box is wiped — DONE.
+- RULE-2 finalization: provision script is Rust-native (`d56a4f69`) and the old box is wiped — DONE.
   REMAINING (user-gated): delete the retired Python reference impls from the REPO
   (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`) + `tools/vps.py`'s fate (it
   targets the old box, now coop-free; banner added meanwhile).

@@ -329,7 +329,8 @@ Each item below is a feature increment series. Cross-referenced in
          followed (server `249a22b0`, client `7e8b1d2c`).
        - 2026-07-16 (evening): stack **MIGRATED to the new coop VPS `172.86.94.3`**
          (Rust-native provision, verified; old box keeps only unrelated services, coop wiped per RULE 2;
-         compiled endpoints flipped `ee8b463e`). Domain `votv.mp` on Cloudflare DNS
+         compiled endpoints flipped `cd6faf81`; box upgraded +
+         rebooted, docker/WG removed, re-verified outside). Domain `votv.mp` on Cloudflare DNS
          (NS pending). NEXT: Tier B TLS (`master.votv.mp` + rustls + client https
          cutover), then Tier C per-session tokens. Control plane cleartext until then.
          See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
