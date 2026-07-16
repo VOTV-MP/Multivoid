@@ -194,8 +194,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   SimInterp's window reopens on every 10 Hz packet -> never snaps to exactly 1.0 -> sub-ulp freeze just
   under the detector latch -> the client's unsuppressed native block re-crosses the threshold every frame
   -> stuck beep. Check (a) the interp actually emits exactly X under packet cadence, (b) the local
-  crossing side-effect is suppressed/idempotent. *Look FIRST:* desk_sim_sync.cpp SimInterp + the native
-  `< 1.0` gate. `memory/lesson_mirrored_threshold_latch_needs_exact_snap.md`
+  crossing side-effect is suppressed/idempotent. **v112 corollary: the exact-snap must be PER-CHANNEL**
+  (a whole-vector skip never fires while any channel moves — decoded accrues every packet), and a
+  DISCRETE channel (0/1 flag) never rides the ease at all — snap on arrival. *Look FIRST:*
+  desk_sim_sync.cpp SimInterp (v112 per-channel). `memory/lesson_mirrored_threshold_latch_needs_exact_snap.md`
+- **Presser-authored STATE broadcasts, never intent lanes, for EX-invisible verbs.** The verb has
+  ALREADY run locally (incl. RNG rolls + id mints) before any seam can see it — "intent -> host
+  executes" cannot exist; detect the local change (PE seam > raw-field poll > VM-bracket dirty-mark),
+  broadcast field-granular deltas, receivers apply+prime in the same GT task, host relays EXCLUDING
+  the originator (an echo reverts a newer local value = the eaten-scroll race). *Look FIRST:* the
+  all-units design doc + coop/desk_input_sync (the v112 template).
+  `memory/lesson_presser_authored_state_not_intent_for_invisible_verbs.md`
+- **The desk's `active_*` unit toggles are SETTER-EVENT-managed; `powerChanged` is FUSED.** Raw field
+  writes leave mirror hums/lights dead (half of bug 3); the only native setter (powerChanged, 5 bools)
+  runs EVERY unit's block incl. an UNCONDITIONAL stopSound — replicate each field's effects reflected
+  instead. *Look FIRST:* ue_wrap/console_desk.cpp ApplyActiveToggleEffects + uber [1113-1156].
+  `memory/lesson_active_toggles_setter_events_powerchanged_fused.md`
 - **Follow MTA architecture when possible** (vendored `reference/mtasa-blue/`). `memory/feedback_follow_mta_architecture.md`
 - **A new `ReliableKind` wires in THREE places** — check the router checklist. `memory/feedback_reliablekind_router_checklist.md`
 - **Host TRACKING/enroll gates on HOSTING, never `connected()`.** `memory/lesson_tracking_gates_on_hosting_not_connected.md`

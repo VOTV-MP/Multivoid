@@ -143,7 +143,7 @@ sync; kinematics = `docs/signals/TRACKER.md` OPEN-4; RE `votv-dish-rotation-RE-2
 | red phone | 60-75 min looping timer + 2.5% roll per fire | EVENT timing, per-peer; low stakes (T3-adjacent) |
 | spectrum-bar jitter, hecer chars (`AMOGUS` p=0.005), consumption% flicker | cosmetic per-tick rolls | T3 — leave local |
 
-**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: AS-BUILT v111 (2026-07-15) — hands-on 2026-07-16 FAILED (5 bugs, all root-caused: `docs/signals/TRACKER.md` BUGS-v111; the RNG-authority core held, the transport/claim layer around it did not).**
+**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: AS-BUILT v112 (2026-07-16, the BUGS-v111 fix: claim-free `DeskInput` field deltas + per-channel exact-snap interp + charge-event cooldown; smoke PASS x2, commit `7d57478f`) — awaiting hands-on. History: v111 hands-on FAILED on the transport/claim layer (5 bugs, all root-caused + designed out: `votv-desk-input-lane-DESIGN-2026-07-16.md`); the RNG-authority core held throughout.**
 FIX SHIPPED: `coop/interactables/desk_sim_sync` + `MsgType::DeskSimPose=38` (proto 110→111). The host owns
 the download sim + rolls both RNG; it streams the 8-float output vector (decoded/needle/rate/frData/poData/
 offsets/cooldown) unreliable ~10 Hz; the client interpolates + OVERWRITES its local sim (self-accrued
