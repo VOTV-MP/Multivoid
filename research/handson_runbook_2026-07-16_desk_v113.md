@@ -1,4 +1,8 @@
 # Hands-on runbook — v112 desk INPUT + v113 L4 DISHES (batched), take 1
+> **PARTIALLY SUPERSEDED 2026-07-17:** the deployed DLL is now **v114** (`13874C48D3D7F220`,
+> HEAD `ba8ce297`) — the v112+v113 STEPS below are STILL CURRENT for those lanes, but run them
+> as part of the combined take in `handson_runbook_2026-07-17_desk_v114.md` (adds the L7
+> caddy/task half + the updated deploy facts).
 
 DEPLOYED: `votv-coop.dll A1C13DB9108775DC` x4 (HOST + CLIENT_1/2/3), hash-verified.
 kProtocolVersion **113** (a 112-or-older peer HARD-CLOSEs at the gate). HEAD `71e6d7b2`

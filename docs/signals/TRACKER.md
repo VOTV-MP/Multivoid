@@ -37,8 +37,8 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | U4 comp pane | RNG rate sim; level-up re-mints ID; upgrade gate | 4 single-sim | occupant | `CompState 60` / `CompData 61` | **AS-BUILT** (payload/slot halves = OPEN-5) |
 | physMods (desk modules) | 12 slots; module prop destroyed on plug; hot-plug explosion; gates tape speed/level lamps/weather shield | state-mirror (tbd) | host (tbd) | — none | **OPEN-8** |
 | Meadow DATABASE (`saveSlot.savedSignals_0/_comp_0`) | U3 SAVE copies rows in; laptop plays/deletes/moves | 2 intent (tbd) | host (tbd) | — (join save-transfer only) | **OPEN-9** |
-| Tape caddy `wallunit_tapes` | 1 Hz accrual ×2 reels; reels ride props; speed from physMods | 3 host-owned prop sim (tbd) | host (planned) | — (join save-transfer only) | **OPEN-7** (world-prop-divergence class) |
-| Daily task `saveSlot.taskNew` | drone `sell` writes reel_big/small; day rollover regrades | 2 intent (tbd) | host (tbd) | — | **OPEN-7** |
+| Tape caddy `wallunit_tapes` | 1 Hz accrual ×2 reels; reels ride props; speed from physMods | presser slot edges + host corrector | presser / host | `ReelSlot 102` + `ReelPose 40` (`tape_caddy_sync`) | **AS-BUILT v114** (smoke PASS, NOT hands-on) |
+| Daily task `saveSlot.taskNew` | drone `sell` writes reel_big/small; day rollover regrades | 3 host-mirror | host (all writers host-only, census) | `TaskNewState 103` (`daily_task_sync`) | **AS-BUILT v114** (smoke PASS, NOT hands-on) |
 | Red phone | per-peer RNG ring event; E does nothing | tbd (low) | — | — | **OPEN-low** |
 
 Screens gap-list items beyond the signal desk (reactor rods, generator, SAT-console scrollback, TV,
@@ -213,7 +213,19 @@ non-occupant natively hears nothing; playback state (`play_selectIndex`, volume,
 `remapValue`, spectrum/typewriter panes) is per-desk local. Scroll/select is occupant-authored.
 Needs the holder-owned shape; low risk, but the audible half is player-visible.
 
-### OPEN-7 · Tape caddy + daily task
+### OPEN-7 · Tape caddy + daily task — **BUILT v114 (2026-07-17; smoke PASS, NOT hands-on)**
+
+> **AS-BUILT (commit `ba8ce297`, proto 114, DLL `13874C48D3D7F220` x4):** impl design
+> `votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md` (9-round /qf "that holds") built as designed:
+> `coop/interactables/tape_caddy_sync` (ReelSlot=102 presser sentinel edges 4 Hz + ReelPose=40
+> host 1 Hz corrector; client accrual NOT parked — written park-doctrine deviation, upd()
+> makes a park un-holdable) + `coop/world/daily_task_sync` (TaskNewState=103 host change-hash
+> mirror; every live writer host-only by census) + the savedScalar identity-at-birth channel
+> (PropSpawn/_pad2 + flag 0x40; PropDropIntent 168->172 — BOTH intent kinds carry it) +
+> ReelEjectIntent=104 (client-eject birth via the F2 author, reel-class whitelist). The
+> `active` toggle stays on the ApplianceState lane. Residuals R1-R5 named in the design doc
+> (R1: client-loaded sack contents can't grade until the sack-contents lane). Legacy fact
+> base below (still authoritative for the mechanics).
 RE: `votv-tape-caddy-daily-task-RE-2026-07-16.md`. The wallunit is the concreteBucket class
 (`COOP_WORLD_PROP_DIVERGENCE`): 1 Hz `+= dt/speed` accrual per peer on both reels; `speed`
 written cross-object by desk physMods (byte 21); eject/insert/toggle local-only (the reel PROPS
