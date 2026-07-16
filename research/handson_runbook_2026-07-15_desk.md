@@ -1,5 +1,11 @@
 # Hands-on runbook — desk divergence repro + this session's fixes (2026-07-15, take 1)
 
+> **OUTCOME (closed):** the 07-15 take ran — divergence MEASURED (`2de202ed` desk_diag) → the v111
+> `desk_sim_sync` build. The v111 hands-on then ran **2026-07-16 and FAILED on 5 fronts, all
+> root-caused**: `docs/signals/TRACKER.md` **BUGS-v111** +
+> `research/findings/computers-devices/votv-desk-sim-v111-coop-bugs-audit-2026-07-16.md`. This
+> runbook is historical; do not re-run it.
+
 DEPLOYED: `votv-coop.dll 65C0AC37E83BF40D` x4 (HOST + CLIENT_1/2/3), verified by hash.
 kProtoVer **109** (no wire changes this session). HEAD `b67d7063`; the desk work + 3 fixes
 below are UNCOMMITTED (held pending this hands-on). `[dev] desk_diag=1` set on HOST + CLIENT_1.

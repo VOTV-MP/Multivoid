@@ -125,13 +125,15 @@ the cursor) — any new index MUST use the shared component, never raw `NextRang
 | `comp_sync.cpp`, `console_state_sync.cpp` | Computers / the in-game console + desk | CompState/CompData/DeskState/DeskLogLine `[?]` |
 | `signal_sync.cpp`, `signal_catch_sync.cpp`, `signal_wire.cpp` | Sky-signal hardware + catch + dish aim | SkySignalState/SkySignalCatch/DishAimState/SavedSignalAppend/Delete `[?]` |
 | `desk_cursor_sync.cpp` | Desk coords-panel live cursor (unreliable pose stream, 50ms interp) | DeskCursorPose=36 `[V v109, TAKE=SMOOTH]` |
-| `desk_sim_sync.cpp` | Signal-desk download-SIM host-auth output vector (decoded/needle/rate/frData/poData/offsets/cooldown; host streams 10Hz, client interpolates+overwrites; knob intents stay occupant-authored on DeskState) | DeskSimPose=38 `[AS-BUILT v111; NOT hands-on -- take: freq/pol numbers match on both peers + knob ramp smooth]` |
+| `desk_sim_sync.cpp` | Signal-desk download-SIM host-auth output vector (decoded/needle/rate/frData/poData/offsets/cooldown; host streams 10Hz, client interpolates+overwrites; knob intents stay occupant-authored on DeskState) | DeskSimPose=38 `[AS-BUILT v111 — hands-on 2026-07-16 FAILED, 5 bugs root-caused: docs/signals/TRACKER.md BUGS-v111]` |
 
-> **Signal-processing subsystem** (catch → screens → freq/pol tune → download → decode): the whole
-> desk workstation's element-by-element status lives in `docs/signals/TRACKER.md`; native pipeline +
-> the four sync shapes in `docs/signals/README.md`. The freq/pol + download-rate SIM is **AS-BUILT v111**
-> (`desk_sim_sync` / `DeskSimPose=38`, host-auth output stream; NOT hands-on — `COOP_RNG_AUTHORITY` T2-5b
-> / signals OPEN-0). The remaining gap is OPEN-3 (upgrade-sync) — its own workstream.
+> **Signal-processing subsystem** (catch → screens → freq/pol tune → download → decode → play deck →
+> drive → comp processing → tapes): the whole workstation's element-by-element status lives in
+> `docs/signals/TRACKER.md`; native pipeline + the four sync shapes in `docs/signals/README.md`. The
+> freq/pol + download-rate SIM is AS-BUILT v111 but its **2026-07-16 hands-on FAILED on 5 fronts, all
+> root-caused** (TRACKER **BUGS-v111**; axis: the desk claim never engages for world-space buttons).
+> Downstream units RE'd 2026-07-16 (`votv-signal-chain-units-RE-2026-07-16.md`), lanes OPEN-4..9.
+> OPEN-3 (upgrade-sync) stays its own workstream.
 
 ## L3 — Global / ambient world state (singletons, no key)
 One value, host-authoritative, peers apply. Template sibling: `time_sync`.

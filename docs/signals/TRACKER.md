@@ -79,7 +79,7 @@ fix is architectural, not five patches
 
 ## OPEN items — detail
 
-### OPEN-0 · Freq/polarity + download-rate SIM — AS-BUILT v111 (2026-07-15, NOT hands-on)
+### OPEN-0 · Freq/polarity + download-rate SIM — AS-BUILT v111; hands-on 2026-07-16 FAILED → BUGS-v111
 **As-built (`desk_sim_sync`, `MsgType::DeskSimPose=38`, proto→111):** host owns the sim + streams the
 8-float output vector (decoded/resDetec/rate/frData/poData/frOffset/poOffset/cooldown) unreliable ~10 Hz,
 newest-wins; client interpolates (multi-channel LerpWindow, cursor pattern) + OVERWRITES its local sim
@@ -107,7 +107,7 @@ MIRROR STATE + SUPPRESS the local sim, never verb-hook
 (`[[lesson-votv-world-system-sync-mirror-state-not-verb]]`,
 `[[lesson-rng-in-rate-path-is-mechanic-desync]]`).
 - RE + field-ownership table: `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
-- RNG-authority row: `COOP_RNG_AUTHORITY.md` **T2-5b** (AS-BUILT v111, `desk_sim_sync`; NOT hands-on).
+- RNG-authority row: `COOP_RNG_AUTHORITY.md` **T2-5b** (AS-BUILT v111; hands-on 2026-07-16 FAILED → BUGS-v111).
 - **TAKE (verify line):** host + client show the same `decoded %` and the same detector-needle
   position with identical freq/pol knobs, and the download HALTS on both when either knob is zeroed.
 

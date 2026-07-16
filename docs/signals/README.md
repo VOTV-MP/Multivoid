@@ -12,7 +12,8 @@ peer's screens + download progress identical."** The cross-cutting contracts sta
 these docs LINK to them, never restate them (RULE 2):
 
 - **`docs/COOP_RNG_AUTHORITY.md`** — the RNG host-authority tracker. The download-rate divergence is
-  its row **T2-5b** (AS-BUILT v111, `desk_sim_sync`; NOT hands-on). Signal RNG-authority PROGRESS is tracked THERE; this
+  its row **T2-5b** (AS-BUILT v111 `desk_sim_sync`; hands-on 2026-07-16 FAILED → BUGS-v111 in the
+  TRACKER; + the T2-5c signal-chain RNG census). Signal RNG-authority PROGRESS is tracked THERE; this
   folder tracks subsystem COMPLETENESS and points at that row.
 - **`docs/COOP_SYNC_MAP.md`** — where each wire lane lives (rows: `console_state_sync`,
   `signal_sync`/`signal_catch_sync`/`signal_wire`, `desk_cursor_sync`, `comp_sync`). Find the file

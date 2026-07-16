@@ -116,7 +116,7 @@ also invisible). => The fix CANNOT verb-hook; it must MIRROR STATE + SUPPRESS th
 
 ---
 
-## AS-BUILT (v111, 2026-07-15, `33cd7404`, NOT hands-on)
+## AS-BUILT (v111, 2026-07-15, `33cd7404`) — hands-on 2026-07-16 FAILED (5 bugs root-caused: `votv-desk-sim-v111-coop-bugs-audit-2026-07-16.md` / signals TRACKER BUGS-v111)
 
 The `/qf` design pass (5 measurement rounds, scratchpad qf_thread.md) CONVERGED BY SHRINKING: it
 opened toward a host-authoritative sim MIGRATION and ended at a small fix, because each round deleted
