@@ -85,13 +85,33 @@ Behaviour-equivalent improvements (NOT wire changes): multi-thread tokio + one `
 old socket immediately (dropping the relay-channel Sender is the stop signal); bounded per-dest relay
 channel (drop-on-full) replaces the 5s drain. Detail in `tools/coop-server-rs/README.md`.
 
+## Security audit + Tier A hardening (2026-07-16) — DEPLOYED
+
+A 4-agent audit (master HTTP / signaling relay / crypto+coturn / client parsing) ran after the deploy.
+Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (server `249a22b0`, client
+`7e8b1d2c`). Highlights:
+- **S-1 (HIGH, port regression):** signaling relay buffered up to 1024x64 KiB (~64 MiB) per stalled
+  destination → one token-holder OOMs the shared box. Fixed: 8 KiB frame cap + queue 64 (<=512 KiB/dest).
+- **C-1 (HIGH, client remote crash):** a hostile/MITM master's deeply-nested JSON overflowed the worker
+  stack on the recursive `~basic_json` destructor (uncatchable SEH). Fixed: depth-32 parse cap in
+  `json_util.h::ParseObject`.
+- master: IPv6 /64 rate-keying (+ bucket cap), TURN username IP-bound, atomic authed-admission, Arc'd
+  `/v1/lobbies` body, bounded write, `panic=unwind` + poison-tolerant locks (per-conn fault isolation),
+  `clamp_str` bidi/zero-width/PUA strip. client: L4/L5/L6 (clamp/cap/comma-reject).
+- coturn (live-applied): `user-quota`, aggregate `bps-capacity`, CGNAT `100.64/10` + v4-mapped-IPv6
+  denies; provisioner prints secret FINGERPRINTS not raw values.
+- **ROOT (UNFIXED):** the control plane is **cleartext** (master HTTP :10001 + signaling TCP :10000) —
+  the `signalingToken` (static shared bearer) + TURN creds are sniffable → signaling MITM / relay theft.
+  **Tier B = TLS front** (xray:443+domain OR standalone stunnel/nginx + client-pinned self-signed cert;
+  needs a client https/wss cutover). **Tier C = per-session signaling tokens** (retire the shared
+  bearer / identity-hijack). Both await a USER decision.
+
 ## Status
 
-- Master/signaling: **AS-IS in Python, still the LIVE service** the coop connects through today.
-- Rust port: **AS-BUILT + wire-verified locally (2026-07-16), NOT deployed.** NEXT to ship it:
-  cross-compile for the Linux VPS, run it on spare ports alongside the Python, point ONE test client's
-  master URL at it, verify a real host+join+relay end-to-end, then cut the production URL over and
-  retire the `.py` files (RULE 2 — no dual-run kept).
-- Ghost-lobby TTL fix: **identified (master L100), NOT applied** (production VPS action, awaiting go).
-  When shipping the Rust master, set its `LOBBY_TTL` (const in `src/bin/master.rs`) to the chosen value
-  (~90s) so the cutover carries the fix rather than re-porting 300.
+- Master/signaling: **RUST, DEPLOYED LIVE (2026-07-16)** — verified on the box against the REAL secret
+  (TURN cred byte-exact), + a live host/join/relay smoke on the prod ports. systemd drop-in cutover,
+  Python stopped + backed up for rollback, reboot-safe (`enabled` + drop-in persists), hash-verified.
+- Ghost-lobby TTL: **STILL OPEN** — the deployed Rust master carries `LOBBY_TTL = Duration::from_secs(300)`
+  (`src/bin/master.rs`); lowering it to ~90 + redeploy is a user-gated action.
+- RULE-2 finalization (user-gated): update `tools/vps_provision.sh` to ExecStart the Rust bins + stop
+  shipping the `.py`, then DELETE the Python + the drop-ins / `.prev` backups (no dual-run kept).

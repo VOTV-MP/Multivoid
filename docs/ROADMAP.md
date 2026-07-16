@@ -323,6 +323,12 @@ Each item below is a feature increment series. Cross-referenced in
        (`config.cpp` kBuiltinMasterUrl), opt-in "Show in server browser"
        toggle (`scoreboard.cpp` -> /v1/visibility), reference master server at
        `tools/coop_master_server.py`. Landed in commit 43e2a843.
+       - 2026-07-16: the VPS master + signaling were **rewritten in Rust**
+         (`tools/coop-server-rs/`, static musl) and **DEPLOYED LIVE** (wire-compatible;
+         Python retired on the box). A 4-agent security audit + Tier A hardening
+         followed (server `249a22b0`, client `7e8b1d2c`). ROOT open item: the control
+         plane is cleartext — TLS front (Tier B) + per-session tokens (Tier C) await a
+         user call. See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
 
 ### Open / future
 - ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose

@@ -201,6 +201,28 @@ Two coupled fixes to the join/leave surface — shipped (DLL `a760f9f51bec2f07`,
   that leaked into the menu. See `[[lesson-departure-toast-gates-on-ready-edge-not-transport]]`.
 
 The **ghost lobby** a killed host leaves in the browser (up to `LOBBY_TTL`=300s) is a SEPARATE,
-server-side item — `tools/coop_master_server.py:100`; see
-`research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md` (which also scopes
-the planned Rust port of the master/signaling server).
+server-side item — still OPEN as of 2026-07-16 (the deployed Rust master carries `LOBBY_TTL=300`); see
+`research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+
+## Main-menu version / update line (AS-BUILT 2026-07-16, NOT hands-on)
+
+The old v59 **launch UPDATE toast** (a top-center pop of `session_manager::LatestVersionLine`) is
+RETIRED — the entire `ui::toast` subsystem was its only user and is gone (RULE 2; commit `ed009c0d`).
+In its place, `imgui_overlay.cpp::DrawVersionCorner()` renders that same async `/v1/latest` verdict as a
+**self-updating string in VOTV's MAIN-MENU top-left corner**, among the game's own build labels (e.g.
+"Alpha 0.9.0n") — amber when an update is available, subtle otherwise, with a `VOTV-Coop v<N>` fallback
+until the check lands. Gated on the new `coop::multiplayer_menu::IsMainMenuOpen()` (same
+freshness-stamped-atomic model as `IsPauseMenuOpen`, off the `ui_menu_C::Tick` observer's `isPause`
+read) so it shows on the main menu only, never over gameplay. DLL `92B216EF...` (deployed x4,
+hash-verified). Position/size (top-left, 15px) are a first cut, easy to nudge.
+
+## Master / signaling server — Rust port DEPLOYED LIVE (AS-BUILT + wire-verified 2026-07-16)
+
+The master + signaling servers are now **Rust** (`tools/coop-server-rs/`, static musl), **deployed live**
+on the VPS (systemd drop-in cutover, Python stopped, reboot-safe, hash-verified) — wire-compatible with
+the Python (byte-exact TURN cred). A 4-agent **security audit** followed; the Tier A hardening is
+BUILT + DEPLOYED (server relay-OOM cap, atomic admission, IPv6 /64 rate-keying, panic-isolation, coturn
+quotas/denies; client JSON-depth crash-fix + parse clamps). The ROOT finding — the control plane is
+**cleartext HTTP/TCP** — is UNFIXED: **Tier B (TLS front)** + **Tier C (per-session tokens)** await a
+user decision. Full detail:
+`research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
