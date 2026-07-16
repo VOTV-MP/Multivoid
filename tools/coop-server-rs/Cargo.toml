@@ -33,4 +33,9 @@ socket2 = "0.6"
 opt-level = 2
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "unwind" (the default) is deliberate: under the multi-thread tokio runtime
+# a panic in one connection's task unwinds and drops only THAT connection, leaving
+# the runtime + every other connection alive (per-request fault isolation, matching
+# the Python's per-request try/except). With panic="abort" a single handler panic
+# would abort the whole process. Locks are poison-tolerant so a panic-while-holding
+# can't brick subsequent handlers (security audit 2026-07-16, M4).

@@ -37,7 +37,15 @@ const GREETING_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_PENDING: usize = 128;
 const MAX_AUTHED: usize = 512;
 const MAX_AUTHED_PER_IP: u32 = 32;
-const RELAY_QUEUE: usize = 1024; // bounded relay backlog per destination (drop on full)
+const MAX_IDENTITY: usize = 64; // cap the greeting identity length (audit L10)
+// Bounded relay backlog per destination. Worst-case per-dest heap =
+// RELAY_QUEUE * MAX_RELAY_PAYLOAD. Sizing (security audit 2026-07-16, S-1): the
+// prior 1024-deep queue of up-to-MAX_LINE (64 KiB) items let ONE token-holder pin
+// ~64 MiB per stalled destination and OOM the shared box. Signaling payloads
+// (SDP/ICE trickle) are a few KB, so we cap the relayed frame at MAX_RELAY_PAYLOAD
+// and keep the queue shallow: 64 * 8 KiB = 512 KiB per dest, hard bound.
+const RELAY_QUEUE: usize = 64;
+const MAX_RELAY_PAYLOAD: usize = 8 * 1024; // drop a relayed line longer than this
 
 static TOKEN: LazyLock<String> = LazyLock::new(|| env_str("COOP_SIGNALING_TOKEN", ""));
 static CLIENTS: LazyLock<Mutex<HashMap<String, (u64, mpsc::Sender<Vec<u8>>)>>> =
@@ -111,7 +119,7 @@ async fn handle(stream: TcpStream, ip: String) {
         Some(reg) => {
             AUTHED.fetch_sub(1, Ordering::Relaxed);
             {
-                let mut per = AUTHED_PER_IP.lock().expect("per-ip mutex");
+                let mut per = AUTHED_PER_IP.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(c) = per.get_mut(&ip) {
                     *c = c.saturating_sub(1);
                     if *c == 0 {
@@ -119,7 +127,7 @@ async fn handle(stream: TcpStream, ip: String) {
                     }
                 }
             }
-            let mut cl = CLIENTS.lock().expect("clients mutex");
+            let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
             if cl.get(&reg.identity).map(|(id, _)| *id) == Some(reg.conn_id) {
                 cl.remove(&reg.identity);
                 log(&format!("[{}@{}] disconnected", reg.identity, ip));
@@ -156,26 +164,34 @@ async fn serve(stream: TcpStream, ip: &str, reg_out: &mut Option<Reg>) {
         log(&format!("[{ip}] bad token -- dropped"));
         return;
     }
-    if ident.is_empty() || ident.contains(' ') {
-        log(&format!("[{ip}] empty/spaced identity -- dropped"));
+    if ident.is_empty() || ident.contains(' ') || ident.len() > MAX_IDENTITY {
+        log(&format!("[{ip}] empty/spaced/oversized identity -- dropped"));
         return;
     }
 
-    // Auth OK -> enforce the authed-pool caps (token-holders only), then promote.
+    // Auth OK -> reserve an authed slot ATOMICALLY (audit LOW-1: the prior
+    // check-then-increment let concurrent connections over-admit past the caps on
+    // the multi-thread runtime). Take the global slot first and roll back if over;
+    // then check+take the per-IP slot under one lock.
+    if AUTHED.fetch_add(1, Ordering::Relaxed) >= MAX_AUTHED {
+        AUTHED.fetch_sub(1, Ordering::Relaxed);
+        log(&format!("[{ident}@{ip}] refused: authed cap"));
+        return; // pending stays +1 -> handle() cleanup decrements it (None branch)
+    }
     {
-        let per = AUTHED_PER_IP.lock().expect("per-ip mutex");
-        let per_ip = per.get(ip).copied().unwrap_or(0);
-        if AUTHED.load(Ordering::Relaxed) >= MAX_AUTHED || per_ip >= MAX_AUTHED_PER_IP {
-            log(&format!("[{ident}@{ip}] refused: authed cap"));
-            return; // pending stays +1 -> handle() cleanup decrements it (None branch)
+        let mut per = AUTHED_PER_IP.lock().unwrap_or_else(|e| e.into_inner());
+        let cnt = per.entry(ip.to_string()).or_insert(0);
+        if *cnt >= MAX_AUTHED_PER_IP {
+            drop(per);
+            AUTHED.fetch_sub(1, Ordering::Relaxed); // release the global slot we took
+            log(&format!("[{ident}@{ip}] refused: per-ip authed cap"));
+            return;
         }
+        *cnt += 1;
     }
+    // Promotion committed: this connection now owns one AUTHED + one per-IP slot,
+    // released exactly once by the handle() cleanup Some-branch.
     PENDING.fetch_sub(1, Ordering::Relaxed);
-    AUTHED.fetch_add(1, Ordering::Relaxed);
-    {
-        let mut per = AUTHED_PER_IP.lock().expect("per-ip mutex");
-        *per.entry(ip.to_string()).or_insert(0) += 1;
-    }
 
     let identity = ident.to_string();
     let conn_id = CONN_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -185,7 +201,7 @@ async fn serve(stream: TcpStream, ip: &str, reg_out: &mut Option<Reg>) {
     // drops the previous Sender -> the previous connection's select sees recv()==None
     // -> it stops and closes its socket.
     {
-        let mut cl = CLIENTS.lock().expect("clients mutex");
+        let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((prev_id, _)) = cl.get(&identity) {
             if *prev_id != conn_id {
                 log(&format!("[{identity}@{ip}] replaced previous connection"));
@@ -223,6 +239,12 @@ async fn serve(stream: TcpStream, ip: &str, reg_out: &mut Option<Reg>) {
 /// as "<sender-identity> <hexpayload>\n" (best-effort; drop if dest absent or its
 /// relay queue is full).
 fn relay_line(sender: &str, line: &[u8]) {
+    // S-1 (audit 2026-07-16): drop over-length lines BEFORE building/queuing the
+    // relayed frame, so a single sender can't pin RELAY_QUEUE * MAX_LINE per dest.
+    // Real SDP/ICE frames are a few KB; MAX_RELAY_PAYLOAD is generous headroom.
+    if line.len() > MAX_RELAY_PAYLOAD {
+        return;
+    }
     let text = String::from_utf8_lossy(line);
     let sp = match text.find(' ') {
         Some(i) if i > 0 => i,
@@ -234,7 +256,7 @@ fn relay_line(sender: &str, line: &[u8]) {
         return;
     }
     let msg = format!("{sender} {payload}").into_bytes();
-    let cl = CLIENTS.lock().expect("clients mutex");
+    let cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, dest_tx)) = cl.get(dest) {
         // try_send is non-blocking: drop on Full (slow dest) or Closed (gone). This is
         // the bounded-channel form of the Python 5s-drain best-effort relay.

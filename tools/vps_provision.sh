@@ -205,18 +205,29 @@ no-dtls
 # ~tens of KB/s, but caps a leaked cred from saturating xray's uplink). Audit H2.
 total-quota=200
 max-bps=262144
+# user-quota: per-username simultaneous-allocation cap. Sized for a NAT'd household
+# (the master now binds the REST username to the client IP bucket). NOTE: coturn's
+# REST username carries a rolling expiry, so this does not fully aggregate a rotating
+# source; the master's per-/64 rate limit on cred minting is the primary bound. DiD.
+user-quota=12
+# Aggregate server bandwidth ceiling (bytes/sec, all sessions) so a leaked/abused cred
+# pool cannot saturate the shared xray uplink even at total-quota x max-bps. Sized well
+# above realistic coop relay (~hundreds of KB/s per household). Audit M2/M5. 0=unlimited.
+bps-capacity=8388608
 stale-nonce=600
 no-multicast-peers
 # Block relaying to loopback/private -- v4 AND v6 (an IPv6 / v4-mapped pivot to the
-# box's own x-ui on 127.0.0.1/::1 must be closed). Audit.
+# box's own x-ui on 127.0.0.1/::1 must be closed). Audit + M5 (CGNAT + v4-mapped).
 no-loopback-peers
 denied-peer-ip=0.0.0.0-0.255.255.255
 denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
 denied-peer-ip=127.0.0.0-127.255.255.255
 denied-peer-ip=169.254.0.0-169.254.255.255
 denied-peer-ip=172.16.0.0-172.31.255.255
 denied-peer-ip=192.168.0.0-192.168.255.255
 denied-peer-ip=::1
+denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255
 denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 EOF
@@ -245,8 +256,11 @@ echo "=== RESULT ==="
 echo "signaling  : $(systemctl is-active coop-signaling) tcp/$SIG_PORT (async, token-authed)"
 echo "master     : $(systemctl is-active coop-master) tcp/$MASTER_PORT (async HTTP)"
 echo "coturn     : $(systemctl is-active coturn) udp+tcp/$TURN_PORT relay $RELAY_MIN-$RELAY_MAX (use-auth-secret)"
-echo "SIG_TOKEN  : $SIG_TOKEN"
-echo "TURN_SECRET: $TURN_SECRET   (SECRET -- coturn static-auth-secret + master COOP_TURN_SECRET)"
+# Print only a NON-reversible fingerprint of each secret, never the raw value (audit
+# M4): a raw echo lands in terminal scrollback / shell history / journald / CI capture,
+# turning a one-time provision into a secret-at-rest leak outside the root-600 files.
+echo "SIG_TOKEN  : sha256:$(printf '%s' "$SIG_TOKEN" | sha256sum | cut -c1-12)  (written to $SIG_TOKEN_FILE, chmod 600)"
+echo "TURN_SECRET: sha256:$(printf '%s' "$TURN_SECRET" | sha256sum | cut -c1-12)  (written to $TURN_SECRET_FILE, chmod 600)"
 echo "MASTER_URL : http://$PUBLIC_IP:$MASTER_PORT  (GET /v1/lobbies, /healthz)"
 echo "STUN_URL   : stun:$PUBLIC_IP:$TURN_PORT"
 echo "TURN_URL   : turn:$PUBLIC_IP:$TURN_PORT"

@@ -18,8 +18,10 @@ use coop_server::common::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::Ipv6Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -38,6 +40,12 @@ const LOBBIES_CACHE_TTL: Duration = Duration::from_secs(5);
 
 const MAX_LOBBIES_PER_IP: usize = 8;
 const MAX_LOBBIES_GLOBAL: usize = 1000;
+// Hard cap on distinct rate-limit buckets, so a source-diverse flood can't grow the
+// `rate` map toward MemoryMax between the 30s sweeps (security audit 2026-07-16, M3).
+// With /64 IPv6 coarsening a flood needs distinct routable prefixes to add keys, so
+// this is a belt-and-suspenders ceiling; when hit, new buckets are refused (the
+// flooding prefixes are simply treated as rate-limited).
+const MAX_RATE_KEYS: usize = 50_000;
 
 // per-(IP, class) sliding-window rate limits: (window, max events).
 const RL_CREATE: (Duration, usize) = (Duration::from_secs(60), 10);
@@ -82,6 +90,14 @@ impl Config {
 static CFG: LazyLock<Config> = LazyLock::new(Config::from_env);
 static CONNS: AtomicUsize = AtomicUsize::new(0);
 static STATE: LazyLock<Mutex<MasterState>> = LazyLock::new(|| Mutex::new(MasterState::new()));
+
+/// Lock STATE, tolerating poisoning (audit M4): under panic=unwind a handler that
+/// panics while holding the lock would poison it; recovering the inner guard keeps
+/// one bad request from bricking every subsequent handler. The state is structurally
+/// usable post-panic (handlers only mutate maps, no half-torn invariants).
+fn lock_state() -> MutexGuard<'static, MasterState> {
+    STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 // ---- state ------------------------------------------------------------------
 
@@ -130,10 +146,13 @@ impl Lobby {
 struct MasterState {
     lobbies: HashMap<String, Lobby>,      // sessionId -> Lobby
     lobby_by_public: HashMap<String, String>, // lobbyId -> sessionId
-    rate: HashMap<String, Vec<Instant>>,  // "ip|class" -> recent timestamps
+    rate: HashMap<String, Vec<Instant>>,  // "ipbucket|class" -> recent timestamps
     cache_t: Option<Instant>,
-    cache_rows: Vec<Value>,
-    cache_all_body: Vec<u8>,
+    // Arc so /v1/lobbies can clone the cached body/rows cheaply under the lock and
+    // serialize the response OUTSIDE it (audit L5: serializing a ~200 KB body under
+    // the global lock serialized it against all host/join/heartbeat processing).
+    cache_rows: Arc<Vec<Value>>,
+    cache_all_body: Arc<Vec<u8>>,
 }
 
 impl MasterState {
@@ -143,8 +162,8 @@ impl MasterState {
             lobby_by_public: HashMap::new(),
             rate: HashMap::new(),
             cache_t: None,
-            cache_rows: Vec::new(),
-            cache_all_body: Vec::new(),
+            cache_rows: Arc::new(Vec::new()),
+            cache_all_body: Arc::new(Vec::new()),
         }
     }
 }
@@ -218,9 +237,28 @@ fn resolve_client_ip(peer_ip: &str, headers: &HashMap<String, String>) -> String
     peer_ip.to_string()
 }
 
+/// Coarsen a client address to the allocation an attacker realistically controls, so
+/// abuse controls (rate limits, lobby caps, TURN-cred accounting) can't be bypassed by
+/// address rotation (audit M2/M3): a full IPv4 address, or an IPv6 /64 (the smallest
+/// prefix a host is routably assigned — a single tenant typically owns a whole /64).
+fn ip_bucket(ip: &str) -> String {
+    if ip.contains(':') {
+        if let Ok(v6) = ip.parse::<Ipv6Addr>() {
+            let s = v6.segments();
+            return format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]);
+        }
+    }
+    ip.to_string()
+}
+
 fn rate_ok(state: &mut MasterState, ip: &str, cls: &str, window: Duration, limit: usize) -> bool {
-    let key = format!("{ip}|{cls}");
+    let key = format!("{}|{}", ip_bucket(ip), cls);
     let now = Instant::now();
+    // Bound the map: refuse a brand-new bucket once at the ceiling (audit M3) so a
+    // source-diverse flood can't outgrow the 30s sweeper. Existing buckets still work.
+    if !state.rate.contains_key(&key) && state.rate.len() >= MAX_RATE_KEYS {
+        return false;
+    }
     let bucket = state.rate.entry(key).or_default();
     bucket.retain(|ts| now.duration_since(*ts) < window);
     if bucket.len() >= limit {
@@ -230,13 +268,20 @@ fn rate_ok(state: &mut MasterState, ip: &str, cls: &str, window: Duration, limit
     true
 }
 
-/// The connectivity block every host/join response carries.
-fn ice_block(label: &str) -> serde_json::Map<String, Value> {
+/// The connectivity block every host/join response carries. `turn_label` is the
+/// coarse per-client identity the TURN username is bound to (audit M2). NOTE: coturn's
+/// REST username is "<exp>:<label>" with a per-mint expiry, so coturn cannot aggregate
+/// `user-quota` on the label — the EFFECTIVE per-source bound on cred minting is the
+/// master's per-/64 rate limit on /v1/join (RL_JOIN) plus coturn's global total-quota
+/// + per-session max-bps + aggregate bps-capacity. Binding the label to the IP bucket
+/// (vs a fresh-random per-mint identity) removes the "unique identity per mint" faucet
+/// framing and gives coherent per-source attribution; it is not the quota enforcer.
+fn ice_block(turn_label: &str) -> serde_json::Map<String, Value> {
     let mut m = serde_json::Map::new();
     m.insert("signalingUrl".into(), json!(CFG.signaling_url));
     m.insert("signalingToken".into(), json!(CFG.signaling_token));
     m.insert("stun".into(), json!(CFG.stun_uri));
-    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, label, TURN_TTL).unwrap_or_else(|| json!({}));
+    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, turn_label, TURN_TTL).unwrap_or_else(|| json!({}));
     m.insert("turn".into(), turn);
     m
 }
@@ -265,7 +310,10 @@ fn evict_if_full(state: &mut MasterState) {
 }
 
 fn lobbies_per_ip(state: &MasterState, ip: &str) -> usize {
-    state.lobbies.values().filter(|lo| lo.ip == ip).count()
+    // Count by the coarse bucket (audit M3), not the exact address, so an IPv6 /64
+    // can't mint MAX_LOBBIES_PER_IP lobbies per /128.
+    let bucket = ip_bucket(ip);
+    state.lobbies.values().filter(|lo| ip_bucket(&lo.ip) == bucket).count()
 }
 
 fn auth_by_session<'a>(state: &'a MasterState, body: &Value) -> Option<&'a Lobby> {
@@ -338,8 +386,9 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     resp.insert("token".into(), json!(token));
     resp.insert("conn".into(), json!(conn));
     // A DIRECT host never touches signaling/ICE -> no creds. P2P hosts get the block.
+    // TURN cred is bound to the client's IP bucket (audit M2), not the host identity.
     if !is_direct {
-        resp.extend(ice_block(&host_identity));
+        resp.extend(ice_block(&ip_bucket(ip)));
     }
     (200, Value::Object(resp))
 }
@@ -353,7 +402,6 @@ fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) 
         Some(lo) => lo.session_id.clone(),
         None => return (403, json!({"error": "unknown session or bad token"})),
     };
-    let host_identity;
     {
         let lo = state.lobbies.get_mut(&sid).expect("just authed");
         let pc = as_int(body, "players_cur", lo.players_cur);
@@ -362,9 +410,9 @@ fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) 
             lo.listed = as_bool(body, "listed", lo.listed);
         }
         lo.last_seen = Instant::now();
-        host_identity = lo.host_identity.clone();
     }
-    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, &host_identity, TURN_TTL)
+    // TURN cred bound to the client IP bucket (audit M2), refreshed each heartbeat.
+    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, &ip_bucket(ip), TURN_TTL)
         .unwrap_or_else(|| json!({}));
     (200, json!({"ok": true, "turn": turn}))
 }
@@ -448,7 +496,8 @@ fn h_join(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     resp.insert("peerIdentity".into(), json!(peer_identity));
     resp.insert("hostIdentity".into(), json!(host_identity));
     resp.insert("conn".into(), json!("p2p"));
-    resp.extend(ice_block(&peer_identity));
+    // TURN cred bound to the joiner's IP bucket (audit M2), not the fresh peer id.
+    resp.extend(ice_block(&ip_bucket(ip)));
     (200, Value::Object(resp))
 }
 
@@ -475,9 +524,11 @@ fn build_rows(state: &MasterState) -> Vec<Value> {
     rows
 }
 
-/// GET /v1/lobbies -> raw JSON bytes. The full listed set is rebuilt at most once
-/// per LOBBIES_CACHE_TTL; a version filter is applied to the cached row list.
-fn h_lobbies(state: &mut MasterState, version_filter: &str) -> Vec<u8> {
+/// Refresh the /v1/lobbies cache if stale and return cheap Arc handles to the cached
+/// unfiltered body + the row set. Called UNDER the lock; the caller serializes any
+/// version-filtered response from the returned rows AFTER dropping the lock (audit
+/// L5 — the ~200 KB clone/serialize no longer runs under the global mutex).
+fn lobbies_snapshot(state: &mut MasterState) -> (Arc<Vec<u8>>, Arc<Vec<Value>>) {
     let now = Instant::now();
     let stale = match state.cache_t {
         Some(t) => now.duration_since(t) >= LOBBIES_CACHE_TTL,
@@ -485,26 +536,28 @@ fn h_lobbies(state: &mut MasterState, version_filter: &str) -> Vec<u8> {
     };
     if stale {
         let rows = build_rows(state);
-        state.cache_all_body = serde_json::to_vec(&json!({"lobbies": rows})).unwrap_or_default();
-        state.cache_rows = rows;
+        let body = serde_json::to_vec(&json!({"lobbies": rows})).unwrap_or_default();
+        state.cache_all_body = Arc::new(body);
+        state.cache_rows = Arc::new(rows);
         state.cache_t = Some(now);
     }
-    if version_filter.is_empty() {
-        return state.cache_all_body.clone();
-    }
-    let rows: Vec<Value> = state
-        .cache_rows
+    (Arc::clone(&state.cache_all_body), Arc::clone(&state.cache_rows))
+}
+
+/// Serialize a version-filtered lobby list from a cached row snapshot (runs OFF the
+/// lock). Bounded by MAX_LOBBIES rows.
+fn filter_lobbies(rows: &[Value], version_filter: &str) -> Vec<u8> {
+    let filtered: Vec<&Value> = rows
         .iter()
         .filter(|r| r.get("version").and_then(|v| v.as_str()) == Some(version_filter))
-        .cloned()
         .collect();
-    serde_json::to_vec(&json!({"lobbies": rows})).unwrap_or_default()
+    serde_json::to_vec(&json!({"lobbies": filtered})).unwrap_or_default()
 }
 
 // ---- HTTP plumbing ----------------------------------------------------------
 
 fn dispatch_post(path: &str, ip: &str, body: &Value) -> Option<(u16, Value)> {
-    let mut state = STATE.lock().expect("state mutex poisoned");
+    let mut state = lock_state();
     let r = match path {
         "/v1/host" => h_host(&mut state, ip, body),
         "/v1/heartbeat" => h_heartbeat(&mut state, ip, body),
@@ -537,9 +590,14 @@ async fn write_response(stream: &mut TcpStream, status: u16, body: &[u8]) {
         reason_phrase(status),
         body.len()
     );
-    let _ = stream.write_all(head.as_bytes()).await;
-    let _ = stream.write_all(body).await;
-    let _ = stream.flush().await;
+    // Bound the write (audit L6): a client that stops reading a large /v1/lobbies body
+    // must not pin its CONNS admission slot until the OS TCP timeout. Drop on expiry.
+    let _ = timeout(HTTP_TIMEOUT, async {
+        stream.write_all(head.as_bytes()).await?;
+        stream.write_all(body).await?;
+        stream.flush().await
+    })
+    .await;
 }
 
 fn json_bytes(v: &Value) -> Vec<u8> {
@@ -676,11 +734,17 @@ async fn handle(mut stream: TcpStream, peer_ip: String) {
                 vf = clamp_str(rest, MAX_VERSION);
             }
         }
-        let body = {
-            let mut state = STATE.lock().expect("state mutex poisoned");
-            h_lobbies(&mut state, &vf)
+        // Refresh + snapshot under the lock; serialize the response OFF the lock (L5).
+        let (all_body, rows) = {
+            let mut state = lock_state();
+            lobbies_snapshot(&mut state)
         };
-        write_response(&mut stream, 200, &body).await;
+        if vf.is_empty() {
+            write_response(&mut stream, 200, &all_body).await;
+        } else {
+            let body = filter_lobbies(&rows, &vf);
+            write_response(&mut stream, 200, &body).await;
+        }
     } else if method == "GET" && path == "/v1/latest" {
         write_response(
             &mut stream,
@@ -689,7 +753,7 @@ async fn handle(mut stream: TcpStream, peer_ip: String) {
         )
         .await;
     } else if method == "GET" && path == "/healthz" {
-        let n = STATE.lock().expect("state mutex poisoned").lobbies.len();
+        let n = lock_state().lobbies.len();
         write_response(&mut stream, 200, &json_bytes(&json!({"ok": true, "lobbies": n}))).await;
     } else if method == "POST" {
         match dispatch_post(path, &client_ip, &body_obj) {
@@ -706,7 +770,7 @@ async fn sweeper() {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
         let now = Instant::now();
-        let mut state = STATE.lock().expect("state mutex poisoned");
+        let mut state = lock_state();
         // expire stale lobbies
         let dead: Vec<(String, String, u64)> = state
             .lobbies

@@ -67,15 +67,47 @@ pub fn token_urlsafe(nbytes: usize) -> String {
     B64URL.encode(&buf)
 }
 
-/// `clamp_str(v, maxlen)` — strip control/whitespace-separator chars (keep printable
-/// + ASCII space), clamp to `maxlen` code points. Mirrors the Python `clamp_str`
-/// (which uses `str.isprintable()`); a host-supplied `name`/`world`/`version` is a
-/// cheap DoS on every client that fetches the list, hence the strip + clamp.
+/// `clamp_str(v, maxlen)` — keep only genuinely printable chars (plus ASCII space),
+/// clamp to `maxlen` code points. Matches Python `str.isprintable()`'s intent: a
+/// host-supplied `name`/`world`/`version` renders in every client's server browser,
+/// so it must not carry control chars, whitespace-separators, OR the invisible /
+/// bidirectional-format chars (RLO U+202E, zero-width U+200B/U+200C/U+200D, BOM
+/// U+FEFF, soft-hyphen, etc.) — those enable lobby-name spoofing/disguise. Rust's
+/// `is_control()`+`is_whitespace()` alone MISS the Cf/format + default-ignorable set
+/// (security audit 2026-07-16, M3), so we reject those explicitly here.
 pub fn clamp_str(s: &str, maxlen: usize) -> String {
     s.chars()
-        .filter(|c| *c == ' ' || (!c.is_control() && !c.is_whitespace()))
+        .filter(|&c| c == ' ' || is_display_safe(c))
         .take(maxlen)
         .collect()
+}
+
+/// True for a char that is safe to render in a UI label: not control, not any
+/// whitespace (we allow ASCII space separately), and not a bidi-control /
+/// zero-width / format / default-ignorable code point. Conservative allow-of-the-
+/// rest — the goal is parity with Python `isprintable()` for the categories that
+/// matter for spoofing, without pulling a full Unicode-category crate.
+fn is_display_safe(c: char) -> bool {
+    if c.is_control() || c.is_whitespace() {
+        return false;
+    }
+    // Reject the invisible / format / bidi-control / private-use ranges that Rust's
+    // is_control()+is_whitespace() do not cover but Python's isprintable() strips.
+    !matches!(c as u32,
+        0x00AD |                 // SOFT HYPHEN
+        0x200B..=0x200F |        // ZERO WIDTH SPACE/NJ/J, LRM, RLM
+        0x202A..=0x202E |        // LRE RLE PDF LRO RLO (bidi overrides)
+        0x2060..=0x2064 |        // WORD JOINER / invisible math operators
+        0x2066..=0x206F |        // LRI RLI FSI PDI + deprecated format
+        0xFE00..=0xFE0F |        // Variation Selectors 1-16
+        0xFEFF |                 // ZERO WIDTH NO-BREAK SPACE / BOM
+        0xFFF9..=0xFFFB |        // interlinear annotation anchors
+        0xE000..=0xF8FF |        // BMP Private Use Area (attacker glyphs)
+        0x1D173..=0x1D17A |      // musical format controls
+        0xE0000..=0xE01EF |      // tags block + variation-selector supplement
+        0xF0000..=0xFFFFD |      // Supplementary Private Use Area-A
+        0x100000..=0x10FFFD      // Supplementary Private Use Area-B
+    )
 }
 
 /// Constant-time byte compare, matching Python's `hmac.compare_digest` (which is
@@ -156,6 +188,17 @@ mod tests {
         assert_eq!(clamp_str("hello\tworld\n", 64), "helloworld");
         assert_eq!(clamp_str("keep spaces", 64), "keep spaces");
         assert_eq!(clamp_str("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn clamp_str_strips_bidi_and_zero_width() {
+        // M3 (2026-07-16): must strip bidi overrides / zero-width / BOM / PUA that
+        // is_control()+is_whitespace() alone would let through.
+        assert_eq!(clamp_str("ab\u{202E}cd", 64), "abcd"); // RLO
+        assert_eq!(clamp_str("a\u{200B}b\u{200D}c", 64), "abc"); // ZWSP / ZWJ
+        assert_eq!(clamp_str("x\u{FEFF}y", 64), "xy"); // BOM
+        assert_eq!(clamp_str("p\u{E000}q", 64), "pq"); // PUA
+        assert_eq!(clamp_str("normal Name 123", 64), "normal Name 123"); // real text intact
     }
 
     #[test]
