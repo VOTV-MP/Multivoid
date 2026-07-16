@@ -158,7 +158,21 @@ sibling `writeToCoordLog`/`coord_coordLogText` are DEAD code). = BUG-5's second 
 > (v112: claim-free DeskInput lane; impl in progress). The per-lane sections below remain the
 > FACT base; the design doc is the plan of record.
 
-### OPEN-4 · Dish rotation/kinematics (24 big dishes) — impl-RE DONE, design /qf next
+### OPEN-4 · Dish rotation/kinematics (24 big dishes) — **BUILT v113 (2026-07-16 night; smoke PASS, NOT hands-on)**
+
+> **AS-BUILT (commit `f204c0f7`, proto 113, DLL `A1C13DB9108775DC` x4):** impl design
+> `votv-dish-L4-impl-DESIGN-2026-07-16.md` (10-round /qf "that holds") built as designed:
+> `coop/interactables/dish_sync` — client tickers parked (live-checked restores on the teardown
+> fanout) + own-ping slews killed-with-cleanup by the reworked catch detector (coord identity-tuple
+> change-edge; MovingCount signature retired); HOST streams DishPose=39 (movers 4 Hz + settle-tail);
+> ONE ApplyDishRow (stream + DishSnapshot=100 join seed); ARM axis single-author DishArm=99 with
+> HOST polarity (mesh|FName|polarity 4 Hz raw poll; client apply = pre-clear -> reflected
+> checkFordDishes -> Arm); DishCalib=101 symmetric diff-poll batches; v70 pending-adopt RETIRED
+> end-to-end (DeskState 60->52 B). Smoke evidence: client parked both tickers, snapshot 24/24,
+> zero lane WARN/ERROR. **NOT yet hands-on** (and the v112 hands-on verdict is still pending —
+> combined v113 take or per-lane logs). Residuals + backlog in the design doc §"Accepted residuals".
+
+Legacy fact base (RE, still authoritative for the mechanics):
 RE: `votv-dish-rotation-RE-2026-07-16.md` + **impl-gap addendum
 `votv-dish-impl-RE-2026-07-16.md` (2026-07-16 eve, 5-agent pass)**: components/write path
 (axis_Z=Yaw, axis_Y=ROLL, relative frame; K2_SetRelativeRotation precedent), stop()/kill stale
@@ -171,9 +185,9 @@ checkFordDishes tail gamemode-inline; **polarity per-peer RNG at arm(-1)**; begi
 cosmetic — RT + camera + triggers + prop_argm spawn hazard), calibrate-terminal = client-side
 per-frame calibration writer. Open design decisions listed at the addendum's tail (own-ping
 kill-vs-let-run, ARM transport, begin() limbs, calibration authority, park cleanup set).
-**NEXT: impl-level design /qf 15 (next session), then build.**
-Catch TARGETS already sync (`SkySignalCatch` replays
-`StartMovingAll`); everything else diverges: **rest pose is per-peer RNG at BeginPlay
+Pre-L4 divergence picture (FIXED by the build above; kept for context):
+catch TARGETS synced (`SkySignalCatch` replays
+`StartMovingAll`); everything else diverged: **rest pose is per-peer RNG at BeginPlay
 (`randrot`: yaw 0-360, pitch 90-135) and orientation is NEVER SAVED** (no save channel to fight);
 per-slew RNG (MaxSpeed 4.5-5.5, start delay 1-12 s, phase delays, calibration decay per frame);
 the `isMoving` gate silently DROPS a catch target on a dish already slewing (ticker_disher fires
