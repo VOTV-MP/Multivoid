@@ -1,4 +1,11 @@
-"""SSH/SFTP helper for the coop master/signaling/TURN VPS (paramiko, password auth).
+"""SSH/SFTP helper for the OLD VPS ONLY (paramiko, password auth).
+
+!!! 2026-07-16: the coop stack MIGRATED to the NEW Cloudzy box 172.86.94.3 !!!
+This tool targets the OLD box (87.121.218.33), which hosts only unrelated services after the
+client cutover to master.votv.mp. For the NEW coop box use plain OpenSSH:
+    ssh -i ~/.ssh/id_rsa root@172.86.94.3
+(creds + survey: reference_coop_vps_cloudzy.md, gitignored). Do NOT run coop
+provisioning/deploys through this tool.
 
 Credentials come from reference_master_server_vps.md (gitignored) -- THIS file
 carries NO secrets and is safe to track. Dev/ops only (RULE 3: VPS infra never
@@ -53,6 +60,8 @@ def _new_client() -> paramiko.SSHClient:
 
 
 def connect(c: dict) -> paramiko.SSHClient:
+    print("[vps] NOTE: target = OLD box (no coop services there after the cutover). "
+          "Coop box is 172.86.94.3 via plain ssh (reference_coop_vps_cloudzy.md).")
     # Prefer KEY auth (no password on the wire -> nothing for a MITM to steal).
     # Fall back to password so a key problem can never lock us out of the box.
     key = None

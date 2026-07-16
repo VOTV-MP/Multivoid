@@ -112,6 +112,7 @@ CLAUDE.md
 # ===== Secrets — NEVER COMMIT (per-machine VPS / master-server credentials) =====
 # RULE: the VPS creds file stays LOCAL ONLY, never staged/committed/pushed.
 reference_master_server_vps.md
+reference_coop_vps_cloudzy.md
 *.secret
 *_creds.md
 *credentials*.md
