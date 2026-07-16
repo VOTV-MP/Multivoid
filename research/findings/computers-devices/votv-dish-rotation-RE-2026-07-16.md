@@ -54,6 +54,12 @@ done -> `isMoving=false`, audio fade, `gamemode.activeDishes[i]=false` +
 `calibration -= Ease(0, dt/5, RandomFloat(), ...) * calibLose` (clamp 0..1) — **per-frame
 per-peer RNG decay**.
 
+> CORRECTIONS 2026-07-16 (impl-gap pass, `votv-dish-impl-RE-2026-07-16.md`): (a) §5's tail was
+> mis-attributed — `objectRenderer.begin()` + `signalFound()` + the camera aim run INLINE in
+> `checkFordDishes` AFTER the broadcast (gamemode-side), NOT in the desk's dishesStop handler
+> (which is `formDownload(0,-1)` only); (b) §6's "Solar event" is the desk's `virusEvent` chain
+> (initiating peer only), `event_solar` is a trigger REFERENCE on trigger_eventer, not an event.
+
 **Slew start** (`startMovingTo` -> `startMove` -> @2994): gate `isMoving`; roll MaxSpeed;
 `activeDishes[Find(dishs, self)] = true`; roll calibLose; **`Delay(RandomFloatInRange(1.0,
 12.0))`** (!) -> isRotate + `Delay(Random 2.0-4.0)` -> @2200 `rot_B = ComposeRotators(

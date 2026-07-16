@@ -236,6 +236,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   gated on `s->running()`/`connected()` — a bare `role()==Client` gate keeps suppressing in SOLO play
   forever (Stop never resets cfg_.role). *Look FIRST:* name the restore mechanism in the SAME commit;
   census: grep bare role-gates without running(). `memory/lesson_suppression_needs_paired_restore_or_running_gate.md`
+- **Killing a BP latent frame-loop by clearing its gate flag exits at the loop HEAD — the whole
+  arrival/END chain is skipped and stale** (dish: looping motor cues stay Active forever;
+  `activeDishes[i]` stuck true → the OnKeyDown ping gate blocks that peer permanently); and
+  CO-WRITING a live loop's component never oscillates — it STARVES the loop's arrival check
+  indefinitely (it re-reads fresh, steps toward its LOCAL target, checks its own post-write value).
+  Park = kill + explicit end-chain cleanup; mirror only onto a DEAD loop. *Look FIRST:*
+  `votv-dish-impl-RE-2026-07-16.md` §2-3. `memory/lesson_bp_latent_loop_kill_skips_end_chain.md`
 - **Pre-world subsystems Install at StartCoopSession, NOT world-gated.** `memory/feedback_preworld_install_at_startcoopsession.md`
 - **When a release VERB can't be caught, STREAM THROUGH the state.** `memory/lesson_stream_through_release_not_verb.md`
 - **An e2e assert must DISCRIMINATE the axis it claims.** `memory/lesson_e2e_assert_must_discriminate_the_axis.md`

@@ -132,6 +132,13 @@ calibration drift — it's (a) per-peer `randrot` REST POSE at world load (yaw 0
 NEVER saved), (b) per-slew RNG (MaxSpeed 4.5-5.5, start delay 1-12 s, phase delays), (c) the
 `isMoving` gate silently dropping a catch target on a locally-slewing dish. Catch TARGETS already
 sync; kinematics = `docs/signals/TRACKER.md` OPEN-4; RE `votv-dish-rotation-RE-2026-07-16.md`.
+**2026-07-16 impl-RE additions (`votv-dish-impl-RE-2026-07-16.md`):** (d) **download-ARM polarity
+is per-peer RNG** — `initDownloadSignal(decoded, -1)` rolls `RandomIntegerInRange(0,2)` when armed
+with polarity=-1, i.e. each peer's native dishesStop arm mints its OWN polarity (this root-causes
+the 07-15 measured `pol=1` vs `pol=0` divergence) → the L4 ARM edge must carry the HOST's polarity;
+(e) the "solar" calibration scramble is NOT per-peer — it is the desk `virusEvent` chain and runs
+on the INITIATING peer only (`event_solar` = a trigger REFERENCE on trigger_eventer, not an event)
+→ presser-authored broadcast class, and the prior "per-peer values" phrasing is corrected.
 
 **T2-5c · Signal-chain RNG census (2026-07-16, byte-level; `votv-signal-chain-units-RE-2026-07-16.md` §7):**
 | site | roll | class / verdict |

@@ -158,8 +158,21 @@ sibling `writeToCoordLog`/`coord_coordLogText` are DEAD code). = BUG-5's second 
 > (v112: claim-free DeskInput lane; impl in progress). The per-lane sections below remain the
 > FACT base; the design doc is the plan of record.
 
-### OPEN-4 · Dish rotation/kinematics (24 big dishes) — RE'd, unsynced
-RE: `votv-dish-rotation-RE-2026-07-16.md`. Catch TARGETS already sync (`SkySignalCatch` replays
+### OPEN-4 · Dish rotation/kinematics (24 big dishes) — impl-RE DONE, design /qf next
+RE: `votv-dish-rotation-RE-2026-07-16.md` + **impl-gap addendum
+`votv-dish-impl-RE-2026-07-16.md` (2026-07-16 eve, 5-agent pass)**: components/write path
+(axis_Z=Yaw, axis_Y=ROLL, relative frame; K2_SetRelativeRotation precedent), stop()/kill stale
+set (audio cues + `activeDishes[i]` — the OnKeyDown ping-block gate makes it load-bearing),
+mirror-vs-live-loop = arrival STARVATION (never co-write), ticker kill/restore seams
+(ClearTimer "do" / TickEnabled), pak-wide census (slew starters = desk ping + ticker_disher
+ONLY; axis writers = dish uber ONLY), status-UI chain (desk 20 Hz pusher; getDir() live —
+mirrored pose feeds the panel free), arm chain (dishesStop handler = formDownload(0,-1) only;
+checkFordDishes tail gamemode-inline; **polarity per-peer RNG at arm(-1)**; begin() NOT
+cosmetic — RT + camera + triggers + prop_argm spawn hazard), calibrate-terminal = client-side
+per-frame calibration writer. Open design decisions listed at the addendum's tail (own-ping
+kill-vs-let-run, ARM transport, begin() limbs, calibration authority, park cleanup set).
+**NEXT: impl-level design /qf 15 (next session), then build.**
+Catch TARGETS already sync (`SkySignalCatch` replays
 `StartMovingAll`); everything else diverges: **rest pose is per-peer RNG at BeginPlay
 (`randrot`: yaw 0-360, pitch 90-135) and orientation is NEVER SAVED** (no save channel to fight);
 per-slew RNG (MaxSpeed 4.5-5.5, start delay 1-12 s, phase delays, calibration decay per frame);
