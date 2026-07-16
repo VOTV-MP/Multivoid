@@ -1,8 +1,9 @@
 # Master/lobby + signaling server — RE + Rust-port scope (2026-07-16)
 
-**Type:** point-in-time RE + DESIGN scope → **now AS-BUILT** (the Rust port was written +
-wire-verified 2026-07-16; see "## Status" + "## AS-BUILT" below). Not yet deployed to the VPS.
-The Rust project lives at `tools/coop-server-rs/` (its README is the operator guide).
+**Type:** point-in-time RE + DESIGN scope → **now AS-BUILT + LIVE** (written, wire-verified,
+deployed, security-hardened AND migrated to the new coop VPS `172.86.94.3` — all 2026-07-16; see
+"## Status" + "## MIGRATED" below). The Rust project lives at `tools/coop-server-rs/` (its README
+is the operator guide).
 
 **SECURITY:** all live credentials are GITIGNORED and must stay so — never paste them into a committed
 file. The VPS SSH creds (IP / user / password) live in `reference_master_server_vps.md` (`.gitignore:114`);
@@ -101,19 +102,40 @@ Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (ser
   denies; provisioner prints secret FINGERPRINTS not raw values.
 - **ROOT (UNFIXED):** the control plane is **cleartext** (master HTTP :10001 + signaling TCP :10000) —
   the `signalingToken` (static shared bearer) + TURN creds are sniffable → signaling MITM / relay theft.
-  **Tier B = TLS front** (xray:443+domain OR standalone stunnel/nginx + client-pinned self-signed cert;
+  **Tier B = TLS front** (a :443 front+domain OR standalone stunnel/nginx + client-pinned self-signed cert;
   needs a client https/wss cutover). **Tier C = per-session signaling tokens** (retire the shared
   bearer / identity-hijack). Both await a USER decision.
 
+## MIGRATED to the new coop VPS (2026-07-16 evening, user decision)
+
+The whole stack moved to the **new Cloudzy box `172.86.94.3`**; the old box now hosts **only unrelated services**
+(coop services stopped/removed there per RULE 2, verified: no coop listeners, master dead, the box's other tenants
+untouched). The new box was provisioned by the REWORKED `tools/vps_provision.sh` (commit `2932a18d`):
+Rust ExecStart directly (no Python ever landed), stop-before-replace binary install, `curl -4`
+public-IP (the dual-stack box answered ifconfig.me over v6 → master handed unbracketed-v6 URIs,
+measured), ufw allows (10000/10001/3478/61000-61100/udp + **80/tcp for Let's Encrypt**), realm
+`votv.mp`, fresh secrets (clients fetch signaling token + TURN creds FROM the master; only
+`net.master` is a client-side constant). **Functionally verified from OUTSIDE**: healthz,
+`/v1/latest`→111, host→join full ICE, signaling relay A→B, leave (+ the 5s `/v1/lobbies` cache),
+TTL=90 reaper (`expired ... stale 98s`), TURN-cred HMAC recomputed on-box = MATCH.
+Client side (commit `ee8b463e`, DLL `AFBF5728` x4 hash-verified): `protocol.h`
+`kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`; `session_manager.cpp` `kDefaultMaster`
+duplicate literal retired (aliases protocol.h); all 4 installs' inis carry explicit `net.*`
+(HOST had NO `[net]` block — rode the compiled default; CLIENT_3 had no ini at all — created).
+Domain `votv.mp`: Cloudflare DNS-only zone, NS delegation pending at the .mp registry (~24h;
+`.mp` is NOT transferable to CF Registrar — checked the 422-TLD list).
+
 ## Status
 
-- Master/signaling: **RUST, DEPLOYED LIVE (2026-07-16)** — verified on the box against the REAL secret
-  (TURN cred byte-exact), + a live host/join/relay smoke on the prod ports. systemd drop-in cutover,
-  Python stopped + backed up for rollback, reboot-safe (`enabled` + drop-in persists), hash-verified.
-- Ghost-lobby TTL: **DONE, DEPLOYED** (2026-07-16, user go) — `LOBBY_TTL = 90s` live (commit `6d640679`,
-  binary `ad9844b6`).
-- `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`, compiled default 111;
-  `/etc/coop-master.env` carries `COOP_LATEST_PROTO=111`, provisioner writes it). Root fix for the stale
-  "latest = v66" verdict (was compile-time only). Live-verified: `/v1/latest` -> proto 111.
-- RULE-2 finalization (user-gated): update `tools/vps_provision.sh` to ExecStart the Rust bins + stop
-  shipping the `.py`, then DELETE the Python + the drop-ins / `.prev` backups (no dual-run kept).
+- Master/signaling: **RUST, LIVE on `172.86.94.3`** (migrated 2026-07-16; see "## MIGRATED").
+  Same binaries byte-exact as the audited deploy (master `ad9844b6`, signaling `930b6173`).
+- Ghost-lobby TTL: **DONE** — `LOBBY_TTL = 90s` (commit `6d640679`); reaper verified on the new box.
+- `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`; compiled default 111;
+  provisioner writes `COOP_LATEST_PROTO=111`). Live-verified on the new box -> proto 111.
+- RULE-2 finalization: provision script is Rust-native (`2932a18d`) and the old box is wiped — DONE.
+  REMAINING (user-gated): delete the retired Python reference impls from the REPO
+  (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`) + `tools/vps.py`'s fate (it
+  targets the old box, now coop-free; banner added meanwhile).
+- NEXT: **Tier B TLS** on the new box once DNS lands (LE cert `master.votv.mp` via :80 + rustls in
+  our bins — :443 is another tenant's there too + client https/wss cutover, `net.master=https://master.votv.mp`),
+  then **Tier C per-session signaling tokens**. Control plane is cleartext until Tier B.

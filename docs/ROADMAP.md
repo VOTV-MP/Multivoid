@@ -326,9 +326,13 @@ Each item below is a feature increment series. Cross-referenced in
        - 2026-07-16: the VPS master + signaling were **rewritten in Rust**
          (`tools/coop-server-rs/`, static musl) and **DEPLOYED LIVE** (wire-compatible;
          Python retired on the box). A 4-agent security audit + Tier A hardening
-         followed (server `249a22b0`, client `7e8b1d2c`). ROOT open item: the control
-         plane is cleartext — TLS front (Tier B) + per-session tokens (Tier C) await a
-         user call. See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+         followed (server `249a22b0`, client `7e8b1d2c`).
+       - 2026-07-16 (evening): stack **MIGRATED to the new coop VPS `172.86.94.3`**
+         (Rust-native provision, verified; old box keeps only unrelated services, coop wiped per RULE 2;
+         compiled endpoints flipped `ee8b463e`). Domain `votv.mp` on Cloudflare DNS
+         (NS pending). NEXT: Tier B TLS (`master.votv.mp` + rustls + client https
+         cutover), then Tier C per-session tokens. Control plane cleartext until then.
+         See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
 
 ### Open / future
 - ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose

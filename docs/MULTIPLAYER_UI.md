@@ -229,13 +229,24 @@ The master's `/v1/latest` answer is env-overridable on the VPS (`COOP_LATEST_PRO
 hardcoded 66 was the "latest released: v66" bug). USER hands-on confirmed: cyan, above the game labels,
 correct "(latest)" verdict. DLL `22CD3EAF...` deployed x4; commits `6d640679` + `fd50f127`, pushed.
 
-## Master / signaling server — Rust port DEPLOYED LIVE (AS-BUILT + wire-verified 2026-07-16)
+## Master / signaling server — Rust, on the NEW coop VPS `172.86.94.3` (migrated 2026-07-16)
 
-The master + signaling servers are now **Rust** (`tools/coop-server-rs/`, static musl), **deployed live**
-on the VPS (systemd drop-in cutover, Python stopped, reboot-safe, hash-verified) — wire-compatible with
-the Python (byte-exact TURN cred). A 4-agent **security audit** followed; the Tier A hardening is
-BUILT + DEPLOYED (server relay-OOM cap, atomic admission, IPv6 /64 rate-keying, panic-isolation, coturn
-quotas/denies; client JSON-depth crash-fix + parse clamps). The ROOT finding — the control plane is
-**cleartext HTTP/TCP** — is UNFIXED: **Tier B (TLS front)** + **Tier C (per-session tokens)** await a
-user decision. Full detail:
-`research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+The master + signaling servers are **Rust** (`tools/coop-server-rs/`, static musl), wire-compatible
+with the retired Python (byte-exact TURN cred), with the 4-agent security audit's Tier A hardening
+built in (relay-OOM cap, atomic admission, IPv6 /64 rate-keying, panic-isolation, coturn
+quotas/denies; client JSON-depth crash-fix + parse clamps).
+
+**2026-07-16 (evening): the whole stack MIGRATED to a new VPS** (`172.86.94.3`; the old box is
+repurposed for unrelated services, its coop stack wiped per RULE 2 and verified dead). The new box was provisioned
+Rust-native by the reworked `tools/vps_provision.sh` (Rust ExecStart — no Python ever landed there;
+ufw allows incl. 80/tcp for Let's Encrypt; `curl -4` public-IP fix) and **functionally verified from
+outside**: healthz, `/v1/latest`→111, host→join with full ICE, signaling relay A→B, leave + TTL=90
+reaper, TURN-cred HMAC match vs the box's coturn secret. Compiled official endpoints flipped
+(`protocol.h` `kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`, commit `ee8b463e`, DLL
+`AFBF5728` x4) and all four installs' `votv-coop.ini` carry explicit `net.*` fallbacks.
+
+**Domain: `votv.mp`** (Cloudflare DNS-only zone; NS delegation pending at the .mp registry). Next:
+**Tier B TLS** — Let's Encrypt cert on `master.votv.mp` + rustls in our bins (:443 is another tenant's on this
+box too → TLS on our own ports) + the client https/wss cutover (`net.master=https://master.votv.mp`);
+**Tier C (per-session tokens)** after B. The control plane is **cleartext until Tier B ships**. Full
+detail: `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.

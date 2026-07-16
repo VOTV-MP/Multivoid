@@ -507,6 +507,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 ## 8. Build / deploy / git hygiene
 
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
+- **A NEW shared box invalidates the provision script's box-#1 assumptions — verify each service from
+  OUTSIDE.** Measured on the 2026-07-16 Cloudzy migration: ufw was active default-deny (old box ran
+  none) — all services green on-box, ALL dead from the internet; and dual-stack `curl ifconfig.me`
+  answered v6 → the master handed unbracketed-IPv6 URIs (`curl -4` fix, `2932a18d`). *Look FIRST:*
+  survey the new box (ufw, `ss -tulnp`, its own port map) + external curl/socket check after provision.
+  `memory/lesson_new_shared_box_verify_from_outside.md`
+- **Endpoint move: enumerate EVERY config layer — a key ABSENT from an ini silently rides the COMPILED
+  default.** 2026-07-16 VPS cutover: HOST's ini had no `[net]` block, CLIENT_3 no ini at all — a
+  value-grep found only CLIENT_1/2 and would have left half the installs on the dead box. Also: a
+  duplicated default literal with a "keep in sync" comment = drift bomb — alias the ONE definition
+  (`ee8b463e`). *Look FIRST:* grep the OLD value repo-wide AND check each install for key-ABSENCE;
+  flip `protocol.h` constants in the same change. `memory/lesson_endpoint_move_enumerate_config_layers.md`
 - **Git-Bash (MSYS2) MANGLES remote `/abs/paths` → `C:/Program Files/Git/...`** — any argv that looks
   like a POSIX absolute path is Windows-ified BEFORE the child sees it, so `vps.py put <local>
   /opt/x/y` uploads to a REMOTE path literally named `C:/Program Files/Git/opt/x/y` (silent, no error).
