@@ -502,6 +502,15 @@ bool SetWidgetText(void* textBlock, const wchar_t* text);
 // (vitals Inc3). Returns false on null textBlock. Game thread only.
 bool SetTextBlockColor(void* textBlock, const FLinearColor& color);
 
+// Set a UTextBlock's colour via the UTextBlock::SetColorAndOpacity(FSlateColor) SETTER
+// dispatch. REQUIRED for a block living in a constructed UMG/Slate tree (the injected
+// version label): UMG bakes properties into the Slate widget at attach, so the raw
+// SetTextBlockColor write above never propagates there -- it only works for the
+// WidgetComponent nameplates, which re-render from properties every frame. (The standing
+// rule "never raw-write a field the game sets via a setter UFunction" applies; the raw
+// variant survives solely for that verified nameplate redraw path.) Game thread only.
+bool SetTextBlockColorDispatch(void* textBlock, const FLinearColor& color);
+
 // UUserWidget::AddToViewport(zOrder) / RemoveFromViewport -- re-attach the HUD feed
 // after a level load (the widget object survives with a GameInstance outer, but its
 // Slate viewport tree is torn down with the old world). Game thread only.
@@ -530,6 +539,21 @@ bool RemoveWidgetFromViewport(void* userWidget);
 //
 // Returns true on success. Game thread only (SpawnObject + UFunction dispatch).
 bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton);
+
+// Inject a NATIVE UTextBlock as a new ROW directly ABOVE `refText`'s row. Expects the
+// VOTV label shape (verified vs bp_reflection/ui_menu_fixed.json): refText sits in a row
+// panel (a UHorizontalBox) whose slot lives in a UVerticalBox of label rows; we insert
+// our block at the TOP of that VerticalBox and clone the row's slot layout (padding /
+// alignment) + refText's text style (font/color/shadow/justification) so ours reads as
+// one more native label line. Used for the coop version/update line above VOTV's own
+// txt_version ("Alpha 0.9.0" / "Build a090n") in the main menu -- a child of the menu,
+// so it auto show/hides with the menu (no viewport add/remove, no per-frame gating).
+// outText receives the spawned UTextBlock* (drive it via SetWidgetText); the cloned
+// "normal" text colour is written to outColor (so the caller can restore it after a
+// temporary amber "update available" tint). Either out-param may be null.
+// Engine substrate only (principle 7): no coop/menu knowledge. Game thread only.
+bool InjectTextRowAbove(void* refText, const wchar_t* initial,
+                        void** outText, FLinearColor* outColor);
 
 // UWidget::IsHovered() -> bool. The mouse-over test for the menu click poll
 // (paired with a global VK_LBUTTON edge in coop::multiplayer_menu). Returns false

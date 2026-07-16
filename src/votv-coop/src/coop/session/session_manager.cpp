@@ -120,9 +120,11 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
                 g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1,
                 g_fallbackHostCfg.localIdentity.c_str());
     }
-    // v59 LAUNCH TOAST: one /v1/latest check per process, kicked at boot config
-    // time (the overlay polls LatestVersionLine and toasts the verdict).
-    CheckLatestVersionAsync();
+    // Version line: kick the first /v1/latest check at boot config time (the native
+    // main-menu version label polls LatestVersionLine). It is RE-POLLED on every main-
+    // menu entrance (coop::multiplayer_menu) -- RefreshLatestVersion debounces so rapid
+    // menu re-entry can't DoS the master.
+    RefreshLatestVersion();
 }
 
 std::string MasterUrl() {
@@ -171,45 +173,57 @@ void SetOwnLobbyId(const std::string& id) {
 const char* ModVersion() { return kModVersion; }
 
 namespace {
-// v59 launch-toast state: one check per process; the overlay polls the line.
+// Version-line state: the native main-menu label (coop::multiplayer_menu) polls the line.
+// RE-POLLED on each main-menu entrance; the two guards below make that safe (no DoS):
+//   g_latestInFlight -- at most ONE fetch worker alive at a time.
+//   g_latestFetchMs  -- min interval floor between fetch STARTS (a burst of entrances
+//                       within the floor is coalesced to one fetch).
 std::mutex g_latestMu;
-std::string g_latestLine;          // empty until the check completes WITH a verdict
+std::string g_latestLine;          // empty until a check completes WITH a verdict
 bool g_latestOutdated = false;     // amber tint when true
-std::atomic<bool> g_latestStarted{false};
+std::atomic<bool> g_latestInFlight{false};
+std::atomic<uint64_t> g_latestFetchMs{0};  // GetTickCount64() of the last fetch START (0 = none yet)
+constexpr uint64_t kLatestMinIntervalMs = 8000;  // no-DoS floor between /v1/latest fetches
 }  // namespace
 
-void CheckLatestVersionAsync() {
-    if (g_latestStarted.exchange(true)) return;  // once per process
+void RefreshLatestVersion() {
+    // Debounce: skip if a fetch started within the floor, or one is already running.
+    const uint64_t now = ::GetTickCount64();
+    const uint64_t last = g_latestFetchMs.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < kLatestMinIntervalMs) return;
+    if (g_latestInFlight.exchange(true)) return;  // one worker at a time
+    g_latestFetchMs.store(now, std::memory_order_relaxed);
     const std::string masterUrl = MasterUrl();
     std::thread([masterUrl] {
         try {
-            if (coop::shutdown::IsShuttingDown()) return;
+            if (coop::shutdown::IsShuttingDown()) { g_latestInFlight.store(false, std::memory_order_release); return; }
             const lobby::LatestInfo info = lobby::LobbyClient::FetchLatest(masterUrl, 8000);
-            if (!info.ok) return;  // unreachable / pre-v59 master: stay silent
-            const int ours = static_cast<int>(net::kProtocolVersion);
-            std::string line;
-            bool outdated = false;
-            if (info.proto == ours) {
-                line = "VOTV-Coop is up to date (v" + std::to_string(ours) +
-                       (info.mod.empty() ? std::string() : " / " + info.mod) + ")";
-            } else if (info.proto > ours) {
-                outdated = true;
-                line = "VOTV-Coop UPDATE AVAILABLE: v" + std::to_string(info.proto) +
-                       (info.mod.empty() ? std::string() : " (" + info.mod + ")") +
-                       " -- you have v" + std::to_string(ours) + ". Get it: " +
-                       (info.url.empty() ? "github.com/pelmentor/VOTV_MP/releases" : info.url);
-            } else {
-                // We are NEWER than the master's latest (a dev build) -- informational.
-                line = "VOTV-Coop dev build v" + std::to_string(ours) +
-                       " (latest released: v" + std::to_string(info.proto) + ")";
+            if (info.ok) {  // unreachable / pre-v59 master: keep the last known line
+                const int ours = static_cast<int>(net::kProtocolVersion);
+                std::string line;
+                bool outdated = false;
+                if (info.proto == ours) {
+                    // Current build IS the latest release -> compact "(latest)" tag.
+                    line = "VOTV-Coop v" + std::to_string(ours) + " (latest)";
+                } else if (info.proto > ours) {
+                    outdated = true;
+                    line = "VOTV-Coop v" + std::to_string(ours) + " -- UPDATE v" +
+                           std::to_string(info.proto) + " AVAILABLE: " +
+                           (info.url.empty() ? "github.com/pelmentor/VOTV_MP/releases" : info.url);
+                } else {
+                    // We are NEWER than the master's latest (a dev build) -- informational.
+                    line = "VOTV-Coop v" + std::to_string(ours) + " (dev; latest released v" +
+                           std::to_string(info.proto) + ")";
+                }
+                UE_LOGI("session_manager: version check -- %s", line.c_str());
+                std::lock_guard<std::mutex> lk(g_latestMu);
+                g_latestLine = line;
+                g_latestOutdated = outdated;
             }
-            UE_LOGI("session_manager: version check -- %s", line.c_str());
-            std::lock_guard<std::mutex> lk(g_latestMu);
-            g_latestLine = line;
-            g_latestOutdated = outdated;
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: version check worker exception: %s", e.what());
         }
+        g_latestInFlight.store(false, std::memory_order_release);
     }).detach();
 }
 

@@ -37,12 +37,6 @@ void ForceInjectNow();
 // Auto-clears ~250 ms after the pause menu stops ticking (closed or back in gameplay).
 bool IsPauseMenuOpen();
 
-// True while VOTV's native MAIN menu (ui_menu_C with isPause==false) is currently up.
-// Same freshness-stamped-atomic model as IsPauseMenuOpen (render-thread / WndProc safe),
-// false once in gameplay. The ImGui overlay reads it to draw the coop version/update
-// line in the top-left corner among the game's own build labels -- main menu only.
-bool IsMainMenuOpen();
-
 // The resolved ui_menu_C::Tick UFunction* (the menu's per-frame tick), or null if
 // not resolved yet. net_pump uses it as the death-flee transparent-bypass RELEASE
 // condition: the first time this dispatches, the menu world is up so the detour

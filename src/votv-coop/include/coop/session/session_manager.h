@@ -115,12 +115,13 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
 // should Close); false on a bad address or a busy action (browser stays open).
 bool ConnectDirect(const std::string& hostPort);
 
-// v59 launch toast: kick ONE async GET /v1/latest per process (Configure calls it
-// at boot; safe to call again -- latched). The verdict line is readable via
-// LatestVersionLine: empty until the check completes successfully; the overlay
-// polls it and toasts once. Unreachable master / pre-v59 master = stays empty
-// (never nag an offline player).
-void CheckLatestVersionAsync();
+// Kick an async GET /v1/latest. Configure calls it at boot; coop::multiplayer_menu
+// calls it again on EACH main-menu entrance so the native version label refreshes.
+// Self-debounced (no DoS): at most one worker in flight, and a min-interval floor
+// between fetch starts coalesces a burst of entrances into one fetch. The verdict
+// line is readable via LatestVersionLine: empty until a check completes successfully;
+// unreachable / pre-v59 master keeps the last known line (never nag an offline player).
+void RefreshLatestVersion();
 std::string LatestVersionLine(bool* outdated);
 
 // Host hide-toggle passthrough (POST /v1/visibility). Session stays live. (design 5.6)

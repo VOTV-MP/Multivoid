@@ -426,6 +426,13 @@ inline constexpr const wchar_t* ContentWidgetClass = L"ContentWidget";        //
 inline constexpr const wchar_t* SetContentFn = L"SetContent";                 // UContentWidget::SetContent(UWidget*)->UPanelSlot*
 inline constexpr const wchar_t* WidgetIsHoveredFn = L"IsHovered";             // UWidget::IsHovered()->bool ReturnValue
 inline constexpr const wchar_t* ClearChildrenFn = L"ClearChildren";           // UPanelWidget::ClearChildren() -- detach all children (objects survive); for the insert-at-top reorder
+
+// Native main-menu version label (2026-07-16): inject our own UTextBlock as the TOP row
+// of the VerticalBox that holds VOTV's label rows (txt_version's HorizontalBox row sits
+// in VerticalBox_138 -- bp_reflection/ui_menu_fixed.json), so the coop version/update
+// line reads as one more native label line and auto show/hides with the menu.
+inline constexpr const wchar_t* UiMenuTxtVersionProp = L"txt_version";        // UTextBlock* @ ui_menu_C+0x430 (the version label -- our anchor)
+inline constexpr const wchar_t* TextBlockSetColorFn = L"SetColorAndOpacity";  // UTextBlock::SetColorAndOpacity(FSlateColor) -- the SETTER; a raw ColorAndOpacity write after Slate construction never propagates (UMG bakes props at attach)
 // ui_menu_C fields for the inject (resolved by FindPropertyOffset -- recook-robust).
 inline constexpr const wchar_t* UiMenuButtonStartProp = L"button_start";      // UButton*  @ +0x2E0 (NEW GAME -- the inject derives its VerticalBox + clones its style)
 inline constexpr const wchar_t* MainPlayerEscapeFn = L"InpActEvt_Escape_K2Node_InputKeyEvent_0";  // engine input event that opens the pause menu (ProcessEvent-dispatched, same class as the flashlight InpActEvt_* we already observe)

@@ -219,6 +219,69 @@ bool ResolveButtonInjectFns() {
     return g_biButtonClass && g_biSetContentFn && g_biIsHoveredFn;
 }
 
+// Insert `child` at the TOP of a UVerticalBox. UMG has no insert-at-index, so the
+// canonical reorder is: snapshot the current children, ClearChildren (DETACHES them --
+// the widget OBJECTS survive, still referenced by their owner's fields), then re-add
+// `child` first + the originals after. If the snapshot fails (or the list exceeds the
+// buffer) we DELIBERATELY fall back to a plain append (bottom) so we NEVER ClearChildren
+// without being able to fully restore the panel. Shared by the MULTIPLAYER button inject
+// and the version-label row inject (RULE 2: one reorder, not two).
+// Requires ResolveButtonInjectFns() (g_npAddChildVBoxFn + g_biClearChildrenFn). Game thread.
+bool InsertAtTopOfVBox(void* vbox, void* child) {
+    if (!vbox || !child || !g_npAddChildVBoxFn) return false;
+    constexpr int kMaxList = 128;  // VOTV's menu VBoxes have <= ~13 children; generous headroom
+    // Snapshot each child AND its VerticalBoxSlot layout region: ClearChildren DESTROYS
+    // the slots, and AddChildToVerticalBox creates fresh DEFAULT ones -- without the
+    // restore below, every native row's padding/alignment would silently reset.
+    void* prev[kMaxList]; uint8_t prevLayout[kMaxList][P::off::UVerticalBoxSlot_LayoutSize];
+    int prevN = 0;
+    {
+        auto* sp = reinterpret_cast<uint8_t*>(vbox) + P::off::UPanelWidget_Slots;
+        void* data = *reinterpret_cast<void**>(sp);
+        const int32_t n = *reinterpret_cast<int32_t*>(sp + 0x8);
+        if (data && n > 0 && n <= kMaxList) {
+            auto** slots = reinterpret_cast<void**>(data);
+            for (int i = 0; i < n; ++i) {
+                if (void* sl = slots[i]) {
+                    prev[prevN] = *reinterpret_cast<void**>(
+                        reinterpret_cast<uint8_t*>(sl) + P::off::UPanelSlot_Content);
+                    std::memcpy(prevLayout[prevN],
+                                reinterpret_cast<uint8_t*>(sl) + P::off::UVerticalBoxSlot_LayoutStart,
+                                P::off::UVerticalBoxSlot_LayoutSize);
+                    ++prevN;
+                }
+            }
+        } else if (n > kMaxList) {
+            UE_LOGW("engine: InsertAtTopOfVBox -- VerticalBox has %d children (> cap %d); "
+                    "appending at bottom instead (no ClearChildren)", n, kMaxList);
+        }
+    }
+    auto addToVBox = [&](void* c) {
+        ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", c); Call(vbox, f);
+    };
+    // Restore a widget's saved layout onto its NEW slot (re-read via UWidget::Slot --
+    // the old slot pointer is dead after ClearChildren).
+    auto restoreLayout = [&](void* w, const uint8_t* saved) {
+        void* sl = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + P::off::UWidget_Slot);
+        if (sl)
+            std::memcpy(reinterpret_cast<uint8_t*>(sl) + P::off::UVerticalBoxSlot_LayoutStart,
+                        saved, P::off::UVerticalBoxSlot_LayoutSize);
+    };
+    if (prevN > 0 && g_biClearChildrenFn) {
+        { ParamFrame cf(g_biClearChildrenFn); Call(vbox, cf); }
+        addToVBox(child);                                    // ours -> index 0 (top)
+        for (int i = 0; i < prevN; ++i) {                    // originals re-added below,
+            addToVBox(prev[i]);                              // each with its layout restored
+            restoreLayout(prev[i], prevLayout[i]);
+        }
+        UE_LOGI("engine: InsertAtTopOfVBox inserted at TOP (%d items re-added below, layouts restored)", prevN);
+    } else {
+        addToVBox(child);
+        UE_LOGW("engine: InsertAtTopOfVBox -- list snapshot empty (n=%d); appended at bottom", prevN);
+    }
+    return true;
+}
+
 }  // namespace
 
 bool SetWidgetText(void* textBlock, const wchar_t* text) {
@@ -237,6 +300,20 @@ bool SetTextBlockColor(void* textBlock, const FLinearColor& color) {
     *reinterpret_cast<FLinearColor*>(base + P::off::UTextBlock_ColorAndOpacity) = color;
     *reinterpret_cast<uint8_t*>(base + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
     return true;
+}
+
+bool SetTextBlockColorDispatch(void* textBlock, const FLinearColor& color) {
+    if (!textBlock || !ResolveNameplateFns() || !g_npTbClass) return false;
+    static void* s_setColorFn = nullptr;  // UTextBlock::SetColorAndOpacity (never moves)
+    if (!s_setColorFn) s_setColorFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetColorFn);
+    if (!s_setColorFn) return false;
+    // FSlateColor (0x28): SpecifiedColor (FLinearColor) @0x00, ColorUseRule @0x10
+    // (0 = UseColor_Specified), trailing pad/unreflected bytes zeroed.
+    uint8_t sc[0x28] = {};
+    std::memcpy(sc, &color, sizeof(FLinearColor));
+    ParamFrame f(s_setColorFn);
+    f.SetRaw(L"InColorAndOpacity", sc, sizeof(sc));
+    return Call(textBlock, f);
 }
 
 bool AddWidgetToViewport(void* userWidget, int zOrder) {
@@ -385,42 +462,10 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
             *reinterpret_cast<FLinearColor*>(s + P::off::UButton_BackgroundColor);
     }
 
-    // Insert at the TOP of the VerticalBox. UMG has no insert-at-index, so the
-    // canonical reorder is: snapshot the current children, ClearChildren (DETACHES
-    // them -- the widget OBJECTS survive, still referenced by ui_menu_C's fields), then
-    // re-add OUR button first + the originals after. If the snapshot fails (or the list
-    // is bigger than our buffer) we DELIBERATELY fall back to a plain append (bottom) so
-    // we NEVER ClearChildren without being able to fully restore the menu.
-    constexpr int kMaxList = 128;  // VOTV's menu VBox has ~13 children; generous headroom
-    void* prev[kMaxList]; int prevN = 0;
-    {
-        auto* sp = reinterpret_cast<uint8_t*>(listBox) + P::off::UPanelWidget_Slots;
-        void* data = *reinterpret_cast<void**>(sp);
-        const int32_t n = *reinterpret_cast<int32_t*>(sp + 0x8);
-        if (data && n > 0 && n <= kMaxList) {
-            auto** slots = reinterpret_cast<void**>(data);
-            for (int i = 0; i < n; ++i) {
-                if (void* sl = slots[i])
-                    prev[prevN++] = *reinterpret_cast<void**>(
-                        reinterpret_cast<uint8_t*>(sl) + P::off::UPanelSlot_Content);
-            }
-        } else if (n > kMaxList) {
-            UE_LOGW("engine: InjectCanvasButton -- VerticalBox has %d children (> cap %d); "
-                    "appending at bottom instead of inserting at top (no ClearChildren)", n, kMaxList);
-        }
-    }
-    auto addToVBox = [&](void* child) {
-        ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", child); Call(listBox, f);
-    };
-    if (prevN > 0 && g_biClearChildrenFn) {
-        { ParamFrame cf(g_biClearChildrenFn); Call(listBox, cf); }
-        addToVBox(button);                                   // MULTIPLAYER -> index 0 (top)
-        for (int i = 0; i < prevN; ++i) addToVBox(prev[i]);  // originals re-added below
-        UE_LOGI("engine: InjectCanvasButton inserted at TOP of VerticalBox (%d items re-added below)", prevN);
-    } else {
-        addToVBox(button);
-        UE_LOGW("engine: InjectCanvasButton -- list snapshot empty (n=%d); appended at bottom", prevN);
-    }
+    // Insert at the TOP of the VerticalBox (above NEW GAME) -- shared snapshot ->
+    // ClearChildren -> re-add reorder (InsertAtTopOfVBox; falls back to a bottom
+    // append rather than ever leaving the menu unrestorable).
+    InsertAtTopOfVBox(listBox, button);
 
     // Match the reference item's VBox SLOT layout (padding + H/V alignment + size) so
     // our button sits EXACTLY like NEW GAME -- same indent, same spacing. The slot was
@@ -443,6 +488,88 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
 
     if (outButton) *outButton = button;
     UE_LOGI("engine: InjectCanvasButton '%ls' button=%p listBox=%p", label, button, listBox);
+    return true;
+}
+
+bool InjectTextRowAbove(void* refText, const wchar_t* initial,
+                        void** outText, FLinearColor* outColor) {
+    if (outText) *outText = nullptr;
+    if (!refText) return false;
+    // ResolveButtonInjectFns gives SpawnObject + the UTextBlock class + the text-set fns
+    // + AddChildToVerticalBox/ClearChildren (the InsertAtTopOfVBox dependencies).
+    if (!ResolveButtonInjectFns()) {
+        UE_LOGE("engine: InjectTextRowAbove unresolved base (tbCls=%p spawn=%p)",
+                g_npTbClass, g_npSpawnObjFn);
+        return false;
+    }
+
+    // The VOTV shape (bp_reflection/ui_menu_fixed.json, verified 2026-07-16): refText
+    // (txt_version) sits in a ROW panel (HorizontalBox_122) whose own slot lives in the
+    // rows container (VerticalBox_138). Climb TWO slot->parent hops: refText's direct
+    // panel = the row; the row's panel = the VBox. Inserting our block at the VBox TOP
+    // puts it ABOVE every label row. (First attempt assumed a canvas + slot offsets --
+    // wrong: the parent is a flow panel, so our block flowed to the RIGHT of the label.)
+    void* refSlot  = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refText) + P::off::UWidget_Slot);
+    void* rowPanel = refSlot ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refSlot) + P::off::UPanelSlot_Parent) : nullptr;
+    void* rowSlot  = rowPanel ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(rowPanel) + P::off::UWidget_Slot) : nullptr;
+    void* vbox     = rowSlot ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(rowSlot) + P::off::UPanelSlot_Parent) : nullptr;
+    if (!vbox) {
+        UE_LOGE("engine: InjectTextRowAbove -- row/vbox chain broken (refSlot=%p rowPanel=%p rowSlot=%p)",
+                refSlot, rowPanel, rowSlot);
+        return false;
+    }
+
+    void* txt = SpawnObject(g_npTbClass, vbox);
+    if (!txt) { UE_LOGE("engine: InjectTextRowAbove SpawnObject(TextBlock) failed"); return false; }
+
+    // Clone refText's TEXT STYLE so ours is visually identical (same font/size/colour/
+    // shadow/justification). Copy the FSlateFontInfo FIELD-BY-FIELD, NOT the whole 0x58
+    // struct: its trailing (0x50) TSharedPtr<FCompositeFont> would be shallow-aliased
+    // without an AddRef (the same refcount hazard the button's FSlateSound had). The
+    // 0x00..0x50 head is all scalar/pointer (FontObject/FontMaterial/OutlineSettings/
+    // TypefaceFontName/Size/LetterSpacing); Slate rebuilds the composite lazily from
+    // FontObject, so leaving our TSharedPtr default (empty) is correct.
+    {
+        auto* d = reinterpret_cast<uint8_t*>(txt);
+        auto* s = reinterpret_cast<uint8_t*>(refText);
+        std::memcpy(d + P::off::UTextBlock_Font, s + P::off::UTextBlock_Font, 0x50);
+        // ColorAndOpacity: FSlateColor (FLinearColor@0 + ColorUseRule@0x10) -- plain, safe.
+        std::memcpy(d + P::off::UTextBlock_ColorAndOpacity, s + P::off::UTextBlock_ColorAndOpacity, 0x18);
+        if (outColor)
+            *outColor = *reinterpret_cast<FLinearColor*>(s + P::off::UTextBlock_ColorAndOpacity);
+        *reinterpret_cast<FVector2D*>(d + P::off::UTextBlock_ShadowOffset) =
+            *reinterpret_cast<FVector2D*>(s + P::off::UTextBlock_ShadowOffset);
+        *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ShadowColorAndOpacity) =
+            *reinterpret_cast<FLinearColor*>(s + P::off::UTextBlock_ShadowColorAndOpacity);
+        *(d + P::off::UTextLayoutWidget_Justification) = *(s + P::off::UTextLayoutWidget_Justification);
+        SetTextOnBlock(txt, initial);
+    }
+
+    // Insert as the TOP row of the VBox (above refText's row + every other label row),
+    // then clone the reference ROW's VerticalBoxSlot layout region (padding + H/V
+    // alignment + size) into our fresh slot so our line carries the same indent/spacing
+    // as the native rows below it.
+    if (!InsertAtTopOfVBox(vbox, txt)) {
+        UE_LOGE("engine: InjectTextRowAbove -- InsertAtTopOfVBox failed");
+        return false;
+    }
+    {
+        // RE-READ both slots: the reorder destroyed + recreated every slot, so the
+        // pre-insert rowSlot pointer is dead. The helper restored the row's original
+        // layout onto its NEW slot; clone that region so our line matches its indent.
+        void* ourSlot    = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(txt) + P::off::UWidget_Slot);
+        void* rowSlotNew = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(rowPanel) + P::off::UWidget_Slot);
+        if (ourSlot && rowSlotNew) {
+            std::memcpy(reinterpret_cast<uint8_t*>(ourSlot) + P::off::UVerticalBoxSlot_LayoutStart,
+                        reinterpret_cast<uint8_t*>(rowSlotNew) + P::off::UVerticalBoxSlot_LayoutStart,
+                        P::off::UVerticalBoxSlot_LayoutSize);
+        } else {
+            UE_LOGW("engine: InjectTextRowAbove -- no slot to clone (our=%p row=%p)", ourSlot, rowSlotNew);
+        }
+    }
+
+    if (outText) *outText = txt;
+    UE_LOGI("engine: InjectTextRowAbove txt=%p vbox=%p (row inserted above %p)", txt, vbox, rowPanel);
     return true;
 }
 

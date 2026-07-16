@@ -12,6 +12,8 @@
 #include "coop/config/config.h"
 #include "ui/input_focus.h"
 #include "coop/session/join_progress.h"
+#include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
+#include "coop/net/protocol.h"             // kProtocolVersion (version-label fallback)
 #include "ui/server_browser.h"
 #include "ue_wrap/engine.h"
 #include "ue_wrap/game_thread.h"
@@ -23,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 namespace coop::multiplayer_menu {
 
@@ -40,6 +43,7 @@ std::atomic<bool> g_retrying{false};    // a retry thread is already running
 void* g_tickFn = nullptr;               // ui_menu_C::Tick (observer anchor)
 int32_t g_buttonStartOff = -1;          // ui_menu_C -> button_start (UButton*, NEW GAME)
 int32_t g_isPauseOff = -1;              // ui_menu_C -> isPause (bool)
+int32_t g_txtVersionOff = -1;           // ui_menu_C -> txt_version (UTextBlock*, the version label)
 
 // Injected-button tracking (game-thread only -- touched solely in the Tick observer).
 void* g_injectedMenu = nullptr;         // the menu instance we last injected into
@@ -55,11 +59,19 @@ uint64_t g_lastInjectMs = 0;            // throttle inject attempts on failure /
 // gates the passive coop HUD (chat feed / nameplates) off so we never draw OVER the
 // native modal pause menu.
 std::atomic<uint64_t> g_pauseTickMs{0};
-// Render-thread-readable "MAIN menu is up" signal (isPause==false). Stamped on every
-// main-menu tick; IsMainMenuOpen() reports open while fresh, auto-clearing ~250 ms after
-// the menu stops ticking (i.e. once in gameplay). The overlay reads it to draw the coop
-// version/update line in the top-left corner ONLY on the main menu.
-std::atomic<uint64_t> g_mainMenuTickMs{0};
+
+// Native version/update label (game-thread only -- touched solely in the Tick observer).
+// A UTextBlock we inject as a sibling of VOTV's txt_version ("Alpha 0.9.0 / Build a090n"),
+// so the coop line sits organically among the game's build labels and auto show/hides with
+// the menu. Driven from session_manager::LatestVersionLine; refreshed on each menu entrance.
+void* g_versionText = nullptr;          // our injected UTextBlock
+void* g_versionMenu = nullptr;          // the menu instance we injected it into
+// "Normal" label colour: CYAN -- the coop accent, matching the injected MULTIPLAYER
+// button (user 2026-07-16). Amber overrides while an update is available.
+constexpr ue_wrap::FLinearColor kVersionCyan{0.f, 1.f, 1.f, 1.f};
+std::string g_versionLastLine;          // last string pushed to the block (edge-apply SetText)
+bool g_versionLastOutdated = false;     // last colour state pushed (edge-apply SetColor)
+uint64_t g_lastMainTickMs = 0;          // main-menu tick timestamp; a >500ms gap = a fresh ENTRANCE (re-poll edge)
 // Client loading state: the menu instance + hidden-state we last applied for a join-in-
 // progress fade. Edge-applied so the SetVisibility/SetRenderOpacity UFunctions run only on
 // a change, not per tick. (g_menuFadeMenu is never dereferenced -- pointer compare only --
@@ -88,6 +100,63 @@ bool DoInject(void* menu) {
     return false;
 }
 
+// The current version/update line (verdict if the check landed, else a plain identity so
+// the label is never empty). `outdated` => amber tint. Game thread.
+std::string VersionLine(bool* outdated) {
+    std::string line = coop::session_manager::LatestVersionLine(outdated);
+    if (line.empty()) {
+        if (outdated) *outdated = false;
+        line = "VOTV-Coop v" + std::to_string(static_cast<int>(coop::net::kProtocolVersion));
+    }
+    return line;
+}
+
+// Inject (once per menu instance) our NATIVE version/update label as a sibling of VOTV's
+// txt_version, then keep its text + colour in sync with the /v1/latest verdict. Text and
+// colour are edge-applied (a UFunction runs only on a real change), so steady state costs
+// nothing. Game thread only.
+void UpdateVersionLabel(void* menu) {
+    if (g_txtVersionOff < 0) return;  // txt_version field not resolved -> label disabled
+    // Inject once per menu instance; self-heal if VOTV ever rebuilt the menu widget.
+    if (menu != g_versionMenu || !g_versionText || !R::IsLive(g_versionText)) {
+        void* txtVersion = ReadPtr(menu, g_txtVersionOff);
+        if (!txtVersion || !R::IsLive(txtVersion)) return;  // game's label not constructed yet
+        g_versionText = nullptr;
+        bool outdated = false;
+        const std::string initial = VersionLine(&outdated);
+        const std::wstring winit(initial.begin(), initial.end());  // line is ASCII (URLs/idents)
+        if (E::InjectTextRowAbove(txtVersion, winit.c_str(),
+                                  &g_versionText, /*outColor=*/nullptr)) {
+            g_versionMenu = menu;
+            g_versionLastLine = initial;
+            g_versionLastOutdated = outdated;
+            // The block inherits txt_version's colour from the style clone -- override
+            // with the coop accent (cyan; amber if we already know we're behind). MUST be
+            // the SetColorAndOpacity DISPATCH: the block is already attached to Slate at
+            // this point, so a raw property write would never repaint (user 2026-07-16:
+            // "no cyan" -- the raw write was exactly this trap).
+            const ue_wrap::FLinearColor amber{1.f, 0.78f, 0.35f, 1.f};
+            E::SetTextBlockColorDispatch(g_versionText, outdated ? amber : kVersionCyan);
+            UE_LOGI("multiplayer_menu: native version label injected (text=%p) ABOVE txt_version=%p",
+                    g_versionText, txtVersion);
+        }
+        return;  // drive text/colour from next tick on
+    }
+    // Steady state: push text/colour only when the verdict changed.
+    bool outdated = false;
+    const std::string line = VersionLine(&outdated);
+    if (line != g_versionLastLine) {
+        const std::wstring wline(line.begin(), line.end());
+        E::SetWidgetText(g_versionText, wline.c_str());
+        g_versionLastLine = line;
+    }
+    if (outdated != g_versionLastOutdated) {
+        const ue_wrap::FLinearColor amber{1.f, 0.78f, 0.35f, 1.f};
+        E::SetTextBlockColorDispatch(g_versionText, outdated ? amber : kVersionCyan);
+        g_versionLastOutdated = outdated;
+    }
+}
+
 // POST observer on ui_menu_C::Tick. `self` IS the menu (zero scan). Game thread.
 void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
@@ -100,9 +169,21 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         g_pauseTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
         return;
     }
-    // Reached only on the MAIN menu (isPause==false): publish the freshness signal the
-    // overlay reads to place the coop version/update line among the game's top-left labels.
-    g_mainMenuTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
+    // Reached only on the MAIN menu (isPause==false). Detect a fresh ENTRANCE: the menu
+    // stops ticking during gameplay, so a >500 ms gap since the last main-menu tick means
+    // the player just (re)entered the title screen -> re-poll /v1/latest so the version
+    // label reflects the newest release. RefreshLatestVersion is self-debounced (one
+    // fetch in flight + an 8 s floor between starts), so a stutter or rapid re-entry can't
+    // DoS the master. Fires on first boot too (g_lastMainTickMs == 0).
+    {
+        const uint64_t now = ::GetTickCount64();
+        if (g_lastMainTickMs == 0 || now - g_lastMainTickMs > 500)
+            coop::session_manager::RefreshLatestVersion();
+        g_lastMainTickMs = now;
+    }
+    // Inject / drive the native version label (sibling of txt_version). Auto show/hides
+    // with the menu (it's a child), so no viewport add/remove or visibility gating.
+    UpdateVersionLabel(self);
 
     // Client loading state: while a join is in progress, hide the WHOLE menu widget so only
     // the 3D menu background remains -- the "clean menu canvas" the connecting screen
@@ -182,6 +263,11 @@ bool TryInstall() {
     g_tickFn         = R::FindFunction(uiMenuCls, prof::name::UiMenuTickFn);
     g_buttonStartOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuButtonStartProp);
     g_isPauseOff     = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuIsPauseProp);
+    // txt_version is the anchor for the native coop version label (non-fatal if absent --
+    // the label just won't inject; the button + fade still work).
+    g_txtVersionOff  = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuTxtVersionProp);
+    if (g_txtVersionOff < 0)
+        UE_LOGW("multiplayer_menu: txt_version offset unresolved -- native version label disabled");
     // button_start is the only field the inject NEEDS (we derive its VerticalBox +
     // clone its slot layout / button style); isPause gates main-vs-pause. The label
     // font/colour is set deterministically in InjectCanvasButton (font_ui + cyan), so
@@ -196,9 +282,9 @@ bool TryInstall() {
         return false;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("multiplayer_menu: INSTALLED (tickFn=%p button_start@+0x%X isPause@+0x%X)",
+    UE_LOGI("multiplayer_menu: INSTALLED (tickFn=%p button_start@+0x%X isPause@+0x%X txt_version@+0x%X)",
             g_tickFn, static_cast<unsigned>(g_buttonStartOff),
-            static_cast<unsigned>(g_isPauseOff));
+            static_cast<unsigned>(g_isPauseOff), static_cast<unsigned>(g_txtVersionOff));
     return true;
 }
 
@@ -241,14 +327,6 @@ bool IsPauseMenuOpen() {
     // back to false within the window. Lock-free (atomic load + GetTickCount64) so it is
     // safe to call from the render thread (the ImGui overlay) and the WndProc thread.
     const uint64_t t = g_pauseTickMs.load(std::memory_order_relaxed);
-    return t != 0 && (::GetTickCount64() - t) < 250;
-}
-
-bool IsMainMenuOpen() {
-    // Same freshness model as IsPauseMenuOpen but for the MAIN menu (isPause==false).
-    // Lock-free -> safe from the render thread. False once in gameplay (ui_menu_C stops
-    // ticking) so the overlay's version corner shows on the main menu only.
-    const uint64_t t = g_mainMenuTickMs.load(std::memory_order_relaxed);
     return t != 0 && (::GetTickCount64() - t) < 250;
 }
 

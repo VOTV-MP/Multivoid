@@ -48,7 +48,6 @@
 #include "ui/join_curtain.h"  // instant-world: the short curtain (full-viewport alpha-fade cover)
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"
-#include "coop/net/protocol.h"  // kProtocolVersion -- the fallback version-corner line
 #include "coop/dev/perf_probe.h"
 #include "ue_wrap/hook.h"
 #include "ue_wrap/log.h"
@@ -347,31 +346,6 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     return true;
 }
 
-// Self-updating coop version / update-availability line, drawn in the TOP-LEFT corner
-// among VOTV's own build labels (e.g. "Alpha 0.9.0n") -- MAIN MENU ONLY. Replaces the
-// old top-center launch toast (RULE 2: the toast subsystem is retired). The line tracks
-// the async /v1/latest verdict as soon as it lands (session_manager::LatestVersionLine);
-// until then it shows a plain identity so the corner is never empty. Ordinary function
-// (NOT inside the __try -- C++ locals with destructors are illegal in an SEH frame).
-void DrawVersionCorner() {
-    if (!coop::multiplayer_menu::IsMainMenuOpen()) return;
-    bool outdated = false;
-    std::string line = coop::session_manager::LatestVersionLine(&outdated);
-    if (line.empty())
-        line = "VOTV-Coop v" + std::to_string(static_cast<int>(coop::net::kProtocolVersion));
-
-    const float s = ui::scale::Ui();
-    ImFont* font = ImGui::GetFont();
-    const float fsz = 15.0f * s;
-    const ImVec2 pos(12.0f * s, 12.0f * s);   // top-left, beside the game's version text
-    const ImU32 col = outdated ? IM_COL32(255, 200, 90, 255)    // amber = update available
-                               : IM_COL32(205, 210, 216, 205);  // subtle = up-to-date / dev
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    dl->AddText(font, fsz, ImVec2(pos.x + 1.0f, pos.y + 1.0f),
-                IM_COL32(0, 0, 0, 170), line.c_str());          // legibility shadow
-    dl->AddText(font, fsz, pos, col, line.c_str());
-}
-
 // Per-frame (render thread, BEFORE NewFrame): follow the game window's client
 // size. On a quantized scale change (or an F1 font-family switch) re-bake the
 // atlas at the new real pixel size, drop the backend's device objects (the
@@ -437,7 +411,6 @@ void RenderFrameGuarded() {
         // LoadingOpen). Its own alpha-fade clock runs off ImGui::GetTime().
         coop::join_curtain::Render();
         if (LoadingOpen()) ui::loading_screen::Render();
-        DrawVersionCorner();  // top-left main-menu version/update line (replaces the toast)
 
         // Publish "our overlay is capturing typed text" for the global-key hotkey
         // pollers (voice PTT/whisper/mute, freecam, spawn-menu Q): while a text
