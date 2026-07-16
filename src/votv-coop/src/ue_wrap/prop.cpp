@@ -7,6 +7,7 @@
 #include "ue_wrap/log.h"
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/tape_caddy.h"  // v114 (L7): the reel save-scalar (Progress) reader/writer
 
 #include <atomic>
 #include <cmath>
@@ -775,6 +776,24 @@ bool ForceRestoreDefaultCollision(void* prop) {
         return false;
     }
     return true;
+}
+
+// --- v114 (L7): the save-scalar birth channel (see prop.h) -------------------
+
+bool ReadSavedScalarForClass(void* actor, float& out) {
+    if (!actor) return false;
+    // Reel lineage (Aprop_reel_C declares Progress). tape_caddy resolves lazily;
+    // an unresolved state (classes not loaded) just reads as "no scalar".
+    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
+    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
+    return ue_wrap::tape_caddy::ReadProgress(actor, out);
+}
+
+bool ApplySavedScalarForClass(void* actor, float value) {
+    if (!actor) return false;
+    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
+    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
+    return ue_wrap::tape_caddy::WriteProgress(actor, value);
 }
 
 }  // namespace ue_wrap::prop

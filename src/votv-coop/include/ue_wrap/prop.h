@@ -350,4 +350,16 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist 
 // engine's component-render path beyond a dirty-state flag flip.
 bool ForceRestoreDefaultCollision(void* prop);
 
+// v114 (L7): the per-class SAVE-SCALAR birth channel (PropSpawnPayload.savedScalar /
+// PropDropIntentPayload.savedScalar). A "save scalar" is per-prop state VOTV's own save carries in
+// struct_save.mFloat[0] and loadData restores -- state a mirror must receive AT BIRTH or a peer
+// interacting with the mirror reads a CDO default and re-broadcasts it as truth (the L7 3rd-peer
+// wrong-progress insert). Currently: the Aprop_reel_C lineage (Progress @0x0364, via
+// ue_wrap::tape_caddy). Read returns false for classes with no save scalar (the caller leaves
+// kHasSavedScalar clear); Apply is the ONE mirror-birth write site (post-Finish safe -- measured:
+// the reel's consumers are lookAt + loadData only). Design:
+// research/findings/computers-devices/votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
+bool ReadSavedScalarForClass(void* actor, float& out);
+bool ApplySavedScalarForClass(void* actor, float value);
+
 }  // namespace ue_wrap::prop

@@ -61,6 +61,15 @@ void NoteClientKeyedDestroy(const std::wstring& key);
 void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                       uint8_t senderSlot);
 
+// v114 (L7): HOST handler for ReliableKind::ReelEjectIntent -- a CLIENT's caddy/reelbox eject
+// birthed a reel prop in its hands (a client Aprop_C spawn never broadcasts), so the host authors
+// it via the SAME HostSpawnPlacedProp path. CLASS-WHITELISTED to the Aprop_reel_C lineage (not a
+// general client-spawn door). The payload's savedScalar carries the reel's Progress; the kSleep
+// flag makes the host copy spawn inert until the client's held-prop pose stream drives it.
+// Design: research/findings/computers-devices/votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
+void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
+                       uint8_t senderSlot);
+
 // Session teardown -- clear the park set + pending. Game thread.
 void Reset();
 

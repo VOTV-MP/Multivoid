@@ -365,6 +365,14 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
         for (size_t j = 0; j < nm.size() && j < 31; ++j) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
         }
+        // v114 (L7): the save-scalar birth channel -- a join-window-ejected reel is NOT in
+        // the transferred save, so the snapshot row must carry its Progress (shared reader
+        // with the live-express fill).
+        float sc = 0.f;
+        if (ue_wrap::prop::ReadSavedScalarForClass(obj, sc)) {
+            p.savedScalar = sc;
+            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
+        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;

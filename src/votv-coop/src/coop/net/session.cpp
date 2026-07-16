@@ -151,6 +151,12 @@ void Session::SetHostDishPose(const DishPoseBody& body) {
     dishPoseDirty_ = true;  // one-shot: the net thread sends once + clears
 }
 
+void Session::SetHostReelPose(const ReelPosePayload& body) {  // v114 (L7)
+    std::lock_guard<std::mutex> lk(localMutex_);
+    localReelPose_ = body;
+    reelPoseDirty_ = true;  // one-shot: the net thread sends once + clears
+}
+
 // SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
 // StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
 // 2026-06-07 per the 800-LOC soft cap).
@@ -227,6 +233,15 @@ bool Session::TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew) {
     out = remoteDeskSim_;
     if (outIsNew) *outIsNew = (remoteDeskSimStamp_ != lastReadDeskSimStamp_);
     lastReadDeskSimStamp_ = remoteDeskSimStamp_;
+    return true;
+}
+
+bool Session::TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew) {  // v114 (L7)
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteReelPose_) return false;
+    out = remoteReelPose_;
+    if (outIsNew) *outIsNew = (remoteReelPoseStamp_ != lastReadReelPoseStamp_);
+    lastReadReelPoseStamp_ = remoteReelPoseStamp_;
     return true;
 }
 
@@ -705,6 +720,24 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         break;
     }
+    case MsgType::ReelPose: {  // v114 (L7): HOST->all reel corrector (newest-wins)
+        if (len < static_cast<int>(sizeof(ReelPosePacket))) return;
+        if (cfg_.role == Role::Host) break;  // host-originated; never applied locally
+        ReelPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteReelPose_ &&
+                static_cast<int32_t>(seq - lastRemoteReelPoseSeq_) <= 0) {
+                break;  // older/duplicate -- keep the newer one
+            }
+            remoteReelPose_ = pkt.body;
+            lastRemoteReelPoseSeq_ = seq;
+            hasRemoteReelPose_ = true;
+            ++remoteReelPoseStamp_;
+        }
+        break;
+    }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
@@ -931,6 +964,8 @@ void Session::NetThread() {
             bool haveDeskSim;
             DishPoseBody localDishPose;
             bool dishPoseDue;
+            ReelPosePayload localReelPose;
+            bool reelPoseDue;
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_;
@@ -942,7 +977,11 @@ void Session::NetThread() {
               // v113 (L4): dirty one-shot -- the GT sweep owns the cadence; consume the flag.
               localDishPose = localDishPose_;
               dishPoseDue = dishPoseDirty_ && cfg_.role == Role::Host;
-              dishPoseDirty_ = false; }
+              dishPoseDirty_ = false;
+              // v114 (L7): reel corrector -- same dirty one-shot shape.
+              localReelPose = localReelPose_;
+              reelPoseDue = reelPoseDirty_ && cfg_.role == Role::Host;
+              reelPoseDirty_ = false; }
             // v109 (design F): the clock rides its OWN 500 ms throttle, and only the HOST
             // originates it. Computed once here so the per-peer fan-out below sends the same
             // snapshot to every peer this round (and nextClockSend advances once, after).
@@ -963,7 +1002,7 @@ void Session::NetThread() {
             uint8_t tcBuf[kTrashCarryPoseDatagramMax];
             const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
             if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue || deskSimDue ||
-                dishPoseDue || npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
+                dishPoseDue || reelPoseDue || npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
                     if (hConn == 0) continue;
@@ -1066,6 +1105,15 @@ void Session::NetThread() {
                         DishPosePacket pkt{};
                         WriteHeader(pkt.header, MsgType::DishPose, sendSeq_.fetch_add(1), ownEpoch_);
                         pkt.body = localDishPose;
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, &pkt, sizeof(pkt),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
+                    }
+                    if (reelPoseDue) {  // v114 (L7): HOST reel corrector -- same body to every peer
+                        ReelPosePacket pkt{};
+                        WriteHeader(pkt.header, MsgType::ReelPose, sendSeq_.fetch_add(1), ownEpoch_);
+                        pkt.body = localReelPose;
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);

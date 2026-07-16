@@ -298,6 +298,15 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         UE_LOGI("remote_prop::OnSpawn: applied chipType=%u variant to '%ls'",
                 static_cast<unsigned>(variant), classW.c_str());
     }
+    // v114 (L7): the save-scalar birth channel -- write the reel's Progress onto the
+    // fully-constructed mirror (post-Finish is measured safe: the reel's only Progress
+    // consumers are lookAt + loadData). ONE apply site for live express + join snapshot.
+    if (payload.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
+        if (ue_wrap::prop::ApplySavedScalarForClass(spawned, payload.savedScalar)) {
+            UE_LOGI("remote_prop::OnSpawn: applied savedScalar=%.2f to '%ls'",
+                    payload.savedScalar, classW.c_str());
+        }
+    }
     // (v52 RULE 1+2: the former kFreshLanded -> turnToPile(landingVel) call here was a
     // CATASTROPHIC BUG, removed. The comment claimed turnToPile "operates on `this`, spawns
     // nothing" -- the disassembly proves the OPPOSITE: actorChipPile_C::turnToPile is the

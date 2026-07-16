@@ -227,6 +227,13 @@ public:
     // report whether it newly arrived (apply on isNew). newest-wins by header seq.
     bool TryGetHostDishPose(DishPoseBody& out, bool* outIsNew = nullptr);
 
+    // v114 (L7): HOST publishes the tape-caddy reel corrector (the GT sweep owns the ~1 Hz
+    // cadence; dirty one-shot -- the net thread sends ONE unreliable ReelPose datagram per
+    // publish). Host-only producer; a client call is a harmless no-op.
+    void SetHostReelPose(const ReelPosePayload& body);
+    // v114 (CLIENT game thread): latest received reel corrector + isNew (newest-wins by header seq).
+    bool TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew = nullptr);
+
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
     // packet motion). Returns false if no new batch since the last take. Net thread fills it.
@@ -555,6 +562,10 @@ private:
     // sweep owns the cadence).
     DishPoseBody localDishPose_{};
     bool dishPoseDirty_ = false;
+    // v114 (L7): host reel-corrector value (game thread writes via SetHostReelPose; the net
+    // thread sends ONE unreliable ReelPose datagram per publish -- dirty one-shot).
+    ReelPosePayload localReelPose_{};
+    bool reelPoseDirty_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -611,6 +622,13 @@ private:
     uint32_t lastRemoteDishPoseSeq_ = 0;
     uint64_t remoteDishPoseStamp_ = 0;
     uint64_t lastReadDishPoseStamp_ = 0;
+    // v114 (L7): latest received reel corrector (host->client; ONE slot, host is the only
+    // sender). Net thread stores under remoteMutex_; client drains via TryGetHostReelPose.
+    ReelPosePayload remoteReelPose_{};
+    bool hasRemoteReelPose_ = false;
+    uint32_t lastRemoteReelPoseSeq_ = 0;
+    uint64_t remoteReelPoseStamp_ = 0;
+    uint64_t lastReadReelPoseStamp_ = 0;
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

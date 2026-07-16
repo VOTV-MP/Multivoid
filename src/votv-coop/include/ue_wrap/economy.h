@@ -14,6 +14,11 @@
 
 namespace ue_wrap::economy {
 
+// v114 (L7): the live UsaveSlot_C* (gamemode.saveSlot), or nullptr while unresolvable.
+// Exposed for sibling ue_wrap accessors of OTHER saveSlot fields (daily_task) so the
+// gamemode->saveSlot resolve lives in exactly one place. Game thread.
+void* SaveSlotPtr();
+
 // Read the local machine's balance into *out. Returns false (out untouched) if the
 // store isn't resolvable yet (still booting / at the menu).
 bool ReadPoints(int32_t* out);

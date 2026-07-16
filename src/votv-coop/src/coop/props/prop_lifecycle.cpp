@@ -315,6 +315,13 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
+        // v114 (L7): the save-scalar birth channel (reel Progress) -- identity-at-birth,
+        // shared reader with the snapshot/extract fills.
+        float sc = 0.f;
+        if (ue_wrap::prop::ReadSavedScalarForClass(self, sc)) {
+            p.savedScalar = sc;
+            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
+        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;

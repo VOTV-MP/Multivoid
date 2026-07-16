@@ -14,6 +14,8 @@
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/signal_catch_sync.h"
+#include "coop/interactables/tape_caddy_sync.h"  // v114 (L7): ReelSlot
+#include "coop/world/daily_task_sync.h"          // v114 (L7): TaskNewState
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/world/email_sync.h"
@@ -440,6 +442,38 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::dish_sync::OnDishCalib(cp2, c2slot);
+        break;
+    }
+    case net::ReliableKind::ReelSlot: {
+        // v114 (L7): a caddy slot sentinel edge (presser-authored; host relays).
+        if (msg.payloadLen < sizeof(net::ReelSlotPayload)) {
+            UE_LOGW("event_feed: ReelSlot payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ReelSlotPayload));
+            break;
+        }
+        net::ReelSlotPayload rsp{};
+        std::memcpy(&rsp, msg.payload, sizeof(rsp));
+        const uint8_t rslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::tape_caddy_sync::OnReelSlot(rsp, rslot);
+        break;
+    }
+    case net::ReliableKind::TaskNewState: {
+        // v114 (L7): the host's saveSlot.taskNew mirror (host-authored; trust-gated in the handler).
+        if (msg.payloadLen < sizeof(net::TaskNewStatePayload)) {
+            UE_LOGW("event_feed: TaskNewState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::TaskNewStatePayload));
+            break;
+        }
+        net::TaskNewStatePayload tnp{};
+        std::memcpy(&tnp, msg.payload, sizeof(tnp));
+        const uint8_t tslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::daily_task_sync::OnTaskNewState(tnp, tslot);
         break;
     }
     case net::ReliableKind::DeskLogLine: {

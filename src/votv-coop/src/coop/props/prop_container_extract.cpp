@@ -134,6 +134,13 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
+        // v114 (L7): the save-scalar birth channel (a reel extracted from a container
+        // keeps its Progress on every peer's mirror).
+        float sc = 0.f;
+        if (ue_wrap::prop::ReadSavedScalarForClass(spawnedActor, sc)) {
+            p.savedScalar = sc;
+            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
+        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;

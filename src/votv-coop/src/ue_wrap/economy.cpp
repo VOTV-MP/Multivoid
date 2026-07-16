@@ -45,6 +45,15 @@ void* ResolveSaveSlotAndPoints(int32_t* outOff) {
 
 }  // namespace
 
+void* SaveSlotPtr() {  // v114 (L7): the shared gamemode->saveSlot resolve, ptr only
+    void* gm = ResolveGamemode();
+    if (!gm) return nullptr;
+    if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
+    if (g_offSave < 0) return nullptr;
+    void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offSave);
+    return (save && R::IsLive(save)) ? save : nullptr;
+}
+
 bool ReadPoints(int32_t* out) {
     if (!out) return false;
     int32_t off = -1;

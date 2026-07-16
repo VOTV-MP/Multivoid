@@ -705,7 +705,19 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 113; // v113 (2026-07-16, L4 dishes): host-auth dish pose
+inline constexpr uint16_t kProtocolVersion = 114; // v114 (2026-07-17, L7 tape caddy + daily task):
+                                                  // wallunit reel slots (presser-authored ReelSlot=102
+                                                  // sentinel edges + host ReelPose=40 corrector; client
+                                                  // accrual NOT parked -- written park-doctrine
+                                                  // deviation), host-authored TaskNewState=103 mirror
+                                                  // of saveSlot.taskNew, and the client-eject prop
+                                                  // birth path: ReelEjectIntent=104 (client->host,
+                                                  // HostSpawnPlacedProp author) + the savedScalar
+                                                  // identity-at-birth channel (PropSpawnPayload _pad2
+                                                  // -> savedScalar + flag 0x40; PropDropIntentPayload
+                                                  // 168->172 B). WIRE CHANGE (new kinds + two payload
+                                                  // layouts) -> bump; a mixed 113/114 pair HARD-CLOSEs.
+                                                  // v113 (2026-07-16, L4 dishes): host-auth dish pose
                                                   // mirror (new unreliable DishPose=39; client sim
                                                   // PARKED -- tickers killed + own-ping slews killed-
                                                   // with-cleanup; StartMovingAll client half RETIRED),
@@ -1080,6 +1092,18 @@ enum class MsgType : uint8_t {
                        //      -> K2_SetRelativeRotation both axes -> raw isMoving -> activeDishes
                        //      -> cue edges. Design: votv-dish-L4-impl-DESIGN-2026-07-16.md.
                        //      Body: DishPosePacket. NOT relayed (host-originated).
+    ReelPose = 40,     // v114 (2026-07-17, L7): HOST->all tape-caddy reel CORRECTOR (unreliable,
+                       //      newest-wins seq). The wallunit's 1 Hz accrual keeps running on every
+                       //      peer (the park is un-holdable: upd() re-applies SetActorTickEnabled
+                       //      at every native verb + wire apply -- the WRITTEN park-doctrine
+                       //      deviation, L7 design doc); the host streams {reelBig, reelSmall} at
+                       //      1 Hz while ANY slot is occupied (active or not -- heals inactive
+                       //      divergence). Client applies per-channel EXACT-SNAP ONLY when
+                       //      local != -1 AND wire != -1 (slot-sentinel transitions live
+                       //      exclusively on the reliable ReelSlot lane) + an IsRecent window
+                       //      after a local insert. Sawtooth <= 1 native increment.
+                       //      Body: ReelPosePayload. NOT relayed (host-originated).
+                       //      Design: votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -2197,6 +2221,40 @@ enum class ReliableKind : uint8_t {
                        //     the ui_console calibrate terminal (any peer), tool_setDishCalibration,
                        //     the virusEvent scramble (initiating peer). Payload: DishCalibPayload.
                        //     Relayed.
+    ReelSlot = 102,    // v114 (2026-07-17, L7): tape-caddy SLOT sentinel edge, PRESSER-authored --
+                       //     both peers poll wallunit {reelBig @0x288, reelSmall @0x28C} at 4 Hz
+                       //     for -1.0-sentinel transitions (ONE invariant detector for every native
+                       //     writer: playerUsedOn insert, reelbox throw-in overlap, eject).
+                       //     -1->P = INSERT{reel, progress}; P->-1 = EJECT{reel}. Apply GT-atomic
+                       //     + PRIME (fields + poll baselines in one task; sender primes at send --
+                       //     the poll echo is dead by construction). INSERT on an OCCUPIED slot:
+                       //     the HOST keeps its own value + WARN (authority tiebreak; the ReelPose
+                       //     corrector re-asserts <=1 s), a CLIENT writes-if-differs. The `active`
+                       //     toggle carries NO event here -- it already rides the symmetric
+                       //     ApplianceState lane (appliance.cpp wallunit row). Payload:
+                       //     ReelSlotPayload. Relayed (presser may be a client).
+    TaskNewState = 103, // v114 (L7): saveSlot.taskNew mirror, HOST-authored -- every live writer
+                       //     is host-only (createNewTask: client daynightCycle frozen at
+                       //     TimeScale=0; processTask: reachable only via setTaskNew + sell;
+                       //     sell: client drone tick suppressed -- GUID census across all dumped
+                       //     assets). ~1 Hz change-hash poll (fires a few times per game-day;
+                       //     taskNew.reel_* is the task's best-SENT pair, not the accruing
+                       //     wallunit pair). Client apply GT-atomic: scalars raw; the three
+                       //     int32 arrays in-place when count==Num else EngineAlloc + copy +
+                       //     EngineFree + {ptr,num,max} (ue_wrap/inventory.cpp precedent).
+                       //     Payload: TaskNewStatePayload. NOT relayed (host-originated).
+    ReelEjectIntent = 104, // v114 (L7): CLIENT->HOST -- "my native eject just birthed this reel
+                       //     prop in my hands; author it". A client's fresh Aprop_C spawn never
+                       //     broadcasts (prop_lifecycle client-skip), so the ejecting client mints
+                       //     a synth key at the F2 FinishSpawn-drain seam, setKey's its local
+                       //     reel, and sends PropDropIntentPayload {className, key, progress in
+                       //     savedScalar, transform, physFlags|kSleep}; the host authors via
+                       //     HostSpawnPlacedProp (dup-guard by key; Progress written from
+                       //     savedScalar; born ASLEEP -- the client's held-prop pose stream takes
+                       //     over <=100 ms) and its watcher broadcasts the PropSpawn. HOST-INGEST
+                       //     ONLY (class-whitelisted to the reel classes -- NOT a general client
+                       //     spawn door); NOT relayed. Lane::Bulk so a fast pocket-DESTROY(key)
+                       //     cannot overtake the intent in-lane.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2840,7 +2898,16 @@ struct PropSpawnPayload {
     // Valid IFF hasMatchPos (only the join snapshot stamps it; a mid-game/incremental spawn leaves it 0,
     // and the receiver falls back to `loc`). See votv-pile-dup-join-window-two-channel-RE-2026-06-23.
     float         matchX, matchY, matchZ;   // 12 -- save-time position (world cm); valid iff hasMatchPos
-    uint32_t      _pad2;            // 4 -- alignment (size 212)
+    // v114 (L7): per-prop SAVE-SCALAR identity-at-birth channel (the reel's Progress @0x364 IS the
+    // native save's struct_save.mFloat[0]; PropSpawn already carries the rest of the loadData set --
+    // Name/scale/physFlags -- so a scalar-bearing class's mirror must get its scalar AT BIRTH too,
+    // or a 3rd peer inserting a progress-less mirror broadcasts a wrong value into everyone's unit).
+    // Filled by the ONE shared reader ue_wrap::prop::ReadSavedScalarForClass at BOTH fill sites
+    // (host live express + prop_snapshot builder); applied post-Finish at mirror birth (measured:
+    // prop_reel's Progress consumers are lookAt + loadData only). Valid iff physFlags bit
+    // propspawn_flags::kHasSavedScalar (the formerly-free 0x40). Occupies the old _pad2 slot --
+    // size stays 212.
+    float         savedScalar;      // 4 -- per-class save scalar (reels: Progress); valid iff kHasSavedScalar
 };
 static_assert(sizeof(PropSpawnPayload) == 212, "PropSpawnPayload must be 212 bytes (v86: +matchX/Y/Z save-time key)");
 static_assert(sizeof(PropSpawnPayload) <= 256 - 20 - 8,
@@ -2865,7 +2932,9 @@ inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static @0x02D8
 inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep  @0x02DD
 inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn @0x02D9
 // (0x40 was kFlagKerfur in K-4a; REMOVED in K-5 -- a client identifies a kerfur prop mirror by CLASS
-//  (kerfur_entity::IsKerfurClass), not a PropSpawn flag, so no bit is needed. 0x40 is free.)
+//  (kerfur_entity::IsKerfurClass), not a PropSpawn flag, so no bit is needed.)
+inline constexpr uint8_t kHasSavedScalar  = 0x40;  // v114 (L7): PropSpawnPayload.savedScalar /
+                                                   // PropDropIntentPayload.savedScalar is valid
 }  // namespace propspawn_flags
 
 // v5 Phase 5S0 Inc2: prop-destroy reliable payload. WireKey identifies the
@@ -2904,8 +2973,12 @@ struct PropDropIntentPayload {
     float         scaleX, scaleY, scaleZ;       // 12 -- placed actor's GetActorScale3D
     uint8_t       physFlags;                    // 1  -- propspawn_flags (kStatic/kFrozen/kSleep/kRemoveWOrespawn parity)
     uint8_t       _pad[3];                      // 3  -- 4-byte alignment; zero on the wire
+    // v114 (L7): the save-scalar birth channel (see PropSpawnPayload.savedScalar). Used by
+    // ReliableKind::ReelEjectIntent (the reel's Progress); a PropDropIntent sender leaves it 0 with
+    // the kHasSavedScalar flag clear. 168 -> 172 B (proto 114 hard-closes mixed pairs).
+    float         savedScalar;                  // 4 -- valid iff physFlags & kHasSavedScalar
 };
-static_assert(sizeof(PropDropIntentPayload) == 168, "PropDropIntentPayload must be 168 bytes");
+static_assert(sizeof(PropDropIntentPayload) == 172, "PropDropIntentPayload must be 172 bytes (v114: +savedScalar)");
 static_assert(sizeof(PropDropIntentPayload) <= 256 - 20 - 8, "PropDropIntentPayload must fit one datagram");
 
 // --- v56 save-transfer join bootstrap ------------------------------------------
@@ -4239,6 +4312,63 @@ struct DishCalibPayload {
 static_assert(sizeof(DishCalibPayload) == 100, "DishCalibPayload must be 100 bytes");
 static_assert(sizeof(DishCalibPayload) <= 256 - 20 - 8,
               "DishCalibPayload must fit in one reliable datagram");
+
+// --- v114 (L7): tape caddy + daily task --------------------------------------------------------
+// Design of record: research/findings/computers-devices/votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
+
+// ReelSlotPayload (ReliableKind::ReelSlot=102) -- ONE wallunit slot sentinel edge, presser-authored.
+// reel: 0 = big, 1 = small. op: 0 = INSERT (progress valid), 1 = EJECT (progress = the last value,
+// informational only -- the prop carries the truth via savedScalar). Detected by the 4 Hz sentinel
+// poll (never the verbs); applied GT-atomically with a poll-baseline prime.
+struct ReelSlotPayload {
+    float   progress;   // 4 -- INSERT: the value entering the unit (0..100); EJECT: last value
+    uint8_t reel;       // 1 -- 0 = reelBig @0x288, 1 = reelSmall @0x28C
+    uint8_t op;         // 1 -- 0 = INSERT (-1 -> P), 1 = EJECT (P -> -1)
+    uint8_t _pad[2];    // 2
+};
+static_assert(sizeof(ReelSlotPayload) == 8, "ReelSlotPayload must be 8 bytes");
+
+// ReelPosePayload (MsgType::ReelPose=40, unreliable) -- the HOST's 1 Hz accrual corrector.
+// Newest-wins by the PACKET HEADER seq (the DishPose shape). A channel value of -1.0 means "my
+// slot is empty" and is NEVER applied (the receiver also skips any channel whose LOCAL slot is
+// empty -- sentinel transitions belong to ReelSlot alone).
+struct ReelPosePayload {
+    float reelBig;   // 4
+    float reelSmall; // 4
+};
+static_assert(sizeof(ReelPosePayload) == 8, "ReelPosePayload must be 8 bytes");
+
+// The ReelPose datagram (header seq = the newest-wins guard).
+struct ReelPosePacket {
+    PacketHeader    header;  // 20
+    ReelPosePayload body;    // 8
+};
+static_assert(sizeof(ReelPosePacket) == 28, "ReelPosePacket must be 28 bytes");
+
+// TaskNewStatePayload (ReliableKind::TaskNewState=103) -- the HOST's saveSlot.taskNew mirror.
+// Serialized field-by-field (the struct holds three engine TArrays -- never byte-copied). Counts
+// are clamped AT SEND with a WARN (never silent); the receiver rejects counts over the caps.
+// sigRequired/sigCompleted are indexed by process LEVEL (fixed MakeArray + Array_Set(processLvl));
+// requiredDishes holds dish INDICES (Shuffle(gamemode.dishs) subset). i16 everywhere: measured
+// values are tiny (counts < 100, indices < 24); caps carry headroom over the measured bounds.
+inline constexpr uint8_t kTaskSigCap  = 24;  // measured: fixed MakeArray literal (<= enum-ish small)
+inline constexpr uint8_t kTaskDishCap = 32;  // measured: <= gamemode.dishs.Num = 24 on the base map
+struct TaskNewStatePayload {
+    uint8_t active;                       // 1 -- taskNew.active
+    uint8_t sigRequiredCount;             // 1
+    uint8_t sigCompletedCount;            // 1
+    uint8_t requiredDishesCount;          // 1
+    int32_t rewardSig;                    // 4
+    int32_t rewardSat;                    // 4
+    float   reelBig;                      // 4 -- taskNew.reel_big (best-SENT; not the accruing pair)
+    float   reelSmall;                    // 4 -- taskNew.reel_small
+    int16_t sigRequired[kTaskSigCap];     // 48
+    int16_t sigCompleted[kTaskSigCap];    // 48
+    int16_t requiredDishes[kTaskDishCap]; // 64
+};
+static_assert(sizeof(TaskNewStatePayload) == 180, "TaskNewStatePayload must be 180 bytes");
+static_assert(sizeof(TaskNewStatePayload) <= 256 - 20 - 8,
+              "TaskNewStatePayload must fit in one reliable datagram");
 
 // SkyStatePayload -- the host-authoritative NIGHT-SKY snapshot (SkyState=34, v44). The visible
 // star dome (Anewsky_C's `sky` mesh) is given a per-game UNSEEDED random yaw + a slow per-tick

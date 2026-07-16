@@ -19,6 +19,7 @@
                                             // GetPropNameString, WriteSpParityIdentity
 #include "ue_wrap/reflection.h"
 #include "ue_wrap/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
+#include "ue_wrap/tape_caddy.h"             // v114 (L7): IsReelClass whitelist + the Progress birth scalar
 #include "ue_wrap/types.h"
 #include "ue_wrap/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
 
@@ -185,6 +186,14 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     if (p.scaleX > 0.001f || p.scaleY > 0.001f || p.scaleZ > 0.001f) {
         E::SetActorScale3D(actor, ue_wrap::FVector{p.scaleX, p.scaleY, p.scaleZ});
     }
+    // v114 (L7): the save-scalar birth channel -- write it NOW so the next-tick express drain
+    // re-reads the live actor and the broadcast PropSpawn carries it (reel Progress; post-Finish
+    // is measured safe -- the reel's consumers are lookAt + loadData only).
+    if (p.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
+        if (!ue_wrap::prop::ApplySavedScalarForClass(actor, p.savedScalar)) {
+            UE_LOGW("[PROP-DROP] HOST savedScalar=%.2f apply failed on '%ls'", p.savedScalar, cls.c_str());
+        }
+    }
     return actor;
 }
 
@@ -240,22 +249,45 @@ void Tick(coop::net::Session* session) {
             if (++e.tries <= kMaxKeyTries) keep.push_back(e);
             continue;
         }
-        if (g_parkedKeys.find(key) == g_parkedKeys.end()) continue;  // not a prop this client picked up -> not our place
-        // A place of a prop the client picked up (its pickup-DESTROY already crossed -> host has no
-        // copy). Author the host-authoritative drop intent.
+        const bool parked = (g_parkedKeys.find(key) != g_parkedKeys.end());
+        // v114 (L7): the reel EJECT birth. A client's fresh Aprop_C spawn never broadcasts
+        // (prop_lifecycle client-skip), so a caddy/reelbox eject on a CLIENT is a local-only
+        // ghost. An UNPARKED reel-class pending entry here IS that birth (mirrors are excluded
+        // by PeekIncomingSpawn above; tracked actors by the EidForActor check; the actor already
+        // carries the NewGuid key Init minted inside FinishSpawn). Author it host-side via
+        // ReelEjectIntent -- the same HostSpawnPlacedProp author, class-whitelisted at the host.
+        const bool reelEject = !parked &&
+                               ue_wrap::tape_caddy::EnsureResolved() &&
+                               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor));
+        if (!parked && !reelEject) continue;  // not a place of a picked-up prop, not a reel birth
+        // Author the host-authoritative spawn intent (place OR reel-eject birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
         FillWireStr(p.className.len, p.className.data, cls);
         FillWireStr(p.key.len, p.key.data, key);
+        namespace pf = coop::net::propspawn_flags;
         if (ue_wrap::prop::IsDescendantOfProp(e.actor)) {
             const std::wstring nm = ue_wrap::prop::GetPropNameString(e.actor);
             FillWireStr(p.propName.len, p.propName.data, nm);
-            namespace pf = coop::net::propspawn_flags;
             p.physFlags = 0;
             if (ue_wrap::prop::IsStatic(e.actor))           p.physFlags |= pf::kStatic;
             if (ue_wrap::prop::IsFrozen(e.actor))           p.physFlags |= pf::kFrozen;
             if (ue_wrap::prop::IsSleeping(e.actor))         p.physFlags |= pf::kSleep;
             if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
+            // The save-scalar birth channel rides BOTH intent kinds (correctness-audit
+            // CRITICAL 1): the parked place (pocket->place of a reel) must carry Progress
+            // exactly like the eject birth, or the host respawn resets it to the CDO
+            // default (a blank tape) and broadcasts that as truth. No-op for classes
+            // without a save scalar.
+            float sc = 0.f;
+            if (ue_wrap::prop::ReadSavedScalarForClass(e.actor, sc)) {
+                p.savedScalar = sc;
+                p.physFlags |= pf::kHasSavedScalar;
+            }
+        }
+        if (reelEject) {
+            // Born ASLEEP on the host (no free-fall; the held-prop pose stream takes over).
+            p.physFlags |= pf::kSleep;
         }
         const auto loc = ue_wrap::engine::GetActorLocation(e.actor);
         const auto rot = ue_wrap::engine::GetActorRotation(e.actor);
@@ -265,12 +297,16 @@ void Tick(coop::net::Session* session) {
         p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-        session->SendReliable(coop::net::ReliableKind::PropDropIntent, &p, sizeof(p));
-        UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
-        UE_LOGI("[PROP-DROP] CLIENT authored drop intent key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f)",
+        session->SendReliable(reelEject ? coop::net::ReliableKind::ReelEjectIntent
+                                        : coop::net::ReliableKind::PropDropIntent,
+                              &p, sizeof(p));
+        if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
+        UE_LOGI("[PROP-DROP] CLIENT authored %s key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f)%s",
+                reelEject ? "REEL-EJECT intent" : "drop intent",
                 key.c_str(), cls.c_str(),
                 WireToWide(p.propName.len, p.propName.data, sizeof(p.propName.data)).c_str(),
-                p.locX, p.locY, p.locZ);
+                p.locX, p.locY, p.locZ,
+                (p.physFlags & pf::kHasSavedScalar) ? " +savedScalar" : "");
     }
     g_pending.swap(keep);
 }
@@ -309,6 +345,24 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
                 "-- FinishSpawn watcher broadcasts it this tick",
                 key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ);
     }
+}
+
+void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
+                       uint8_t senderSlot) {
+    UE_ASSERT_GAME_THREAD("prop_drop_intent::OnReelEjectIntent");
+    if (session.role() != coop::net::Role::Host) return;
+    // v114 (L7): the client-eject birth author. CLASS-WHITELISTED to the Aprop_reel_C lineage --
+    // this is NOT a general client-spawn door (the design's explicit gate; a non-reel class here
+    // is a protocol violation, logged and dropped).
+    const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
+    void* clsObj = R::FindClass(cls.c_str());
+    if (!clsObj || !ue_wrap::tape_caddy::EnsureResolved() ||
+        !ue_wrap::tape_caddy::IsReelClass(clsObj)) {
+        UE_LOGW("[PROP-DROP] HOST ReelEjectIntent from slot=%u rejected: class '%ls' is not a reel",
+                senderSlot, cls.c_str());
+        return;
+    }
+    OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 
 void Reset() {

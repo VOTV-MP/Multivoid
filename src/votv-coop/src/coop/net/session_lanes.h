@@ -56,6 +56,10 @@ inline Lane LaneForKind(ReliableKind k) {
     // place lost) or the husk-destroy could land after the intent's re-spawn (fresh authoritative copy
     // retracted on every peer -- the exact v2 killer this lane exists to beat).
     case ReliableKind::PropDropIntent: return Lane::Bulk;
+    // v114 (L7): ReelEjectIntent is the same order-paired family as PropDropIntent -- the
+    // ejecting client may pocket the reel one pass later (a keyed DESTROY on Bulk); in-lane
+    // ordering guarantees the host authors the spawn BEFORE it processes that destroy.
+    case ReliableKind::ReelEjectIntent: return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
     // v80 (B3b): WorldActorSpawn + WorldActorDestroy share the Spawn/Destroy lane for the same reason --
@@ -177,6 +181,7 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::CompData:          // v65: comp_data_0 edges come from the claim-owner OR the simulator -- relay
     case ReliableKind::VoiceState:        // v66: voice mute/disabled display state is PLAYER-SYMMETRIC -- relay a client's edge to the others
     case ReliableKind::DeskLogLine:       // v70: coords-terminal event lines are PRODUCER-SYMMETRIC (the line originates where the action ran) -- relay a client's line to the others
+    case ReliableKind::ReelSlot:          // v114 (L7): caddy slot edges are PRESSER-authored (any peer inserts/ejects) -- relay a client's edge to the others
         return true;
     default:
         return false;

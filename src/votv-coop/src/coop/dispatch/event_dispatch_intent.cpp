@@ -214,6 +214,27 @@ bool HandleIntentEvent(net::Session& session,
         coop::prop_drop_intent::OnPropDropIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
+    case net::ReliableKind::ReelEjectIntent: {  // v114 (L7): CLIENT->HOST -- a caddy/reelbox eject
+                                                // birthed a reel prop in the client's hands; the HOST
+                                                // authors it (class-whitelisted to the reel lineage).
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: ReelEjectIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: ReelEjectIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropDropIntentPayload)) {
+            UE_LOGW("event_feed: ReelEjectIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropDropIntentPayload));
+            break;
+        }
+        net::PropDropIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_drop_intent::OnReelEjectIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::RoachConsumed: {  // v108: CLIENT->HOST -- a native eat/stomp destroyed a
                                               // roach component locally; the host deletes its nearest
                                               // roach and the next RoachState converges every peer.

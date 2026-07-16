@@ -209,6 +209,8 @@ add_library(votv-coop SHARED
     src/ue_wrap/space_renderer.cpp
     src/ue_wrap/console_desk.cpp
     src/ue_wrap/dish.cpp
+    src/ue_wrap/tape_caddy.cpp
+    src/ue_wrap/daily_task.cpp
     src/ue_wrap/sleep.cpp
     src/ue_wrap/email.cpp
     src/ue_wrap/passwordlock.cpp
@@ -245,6 +247,7 @@ add_library(votv-coop SHARED
     src/coop/props/remote_prop_destroy.cpp
     src/coop/save/save_guard.cpp
     src/coop/world/balance_sync.cpp
+    src/coop/world/daily_task_sync.cpp
     src/coop/save/save_block.cpp
     src/coop/save/save_button_disable.cpp
     src/ui/multiplayer_menu.cpp
@@ -379,6 +382,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/desk_input_sync.cpp
     src/coop/interactables/desk_sim_sync.cpp
     src/coop/interactables/dish_sync.cpp
+    src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/signal_catch_sync.cpp
     src/coop/player/sleep_sync.cpp
     src/coop/creatures/wisp_attack_sync.cpp
