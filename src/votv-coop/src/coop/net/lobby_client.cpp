@@ -58,14 +58,17 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                 for (const auto& e : *lit) {
                     if (!e.is_object()) continue;
                     LobbyRow r;
-                    r.lobbyId    = J::Str(e, "lobbyId");
-                    r.name       = J::Str(e, "name");
-                    r.version    = J::Str(e, "version");
-                    r.world      = J::Str(e, "world");
-                    r.playersCur = J::Int(e, "players_cur");
-                    r.playersMax = J::Int(e, "players_max");
-                    r.ageSec     = J::Int(e, "age");
-                    r.proto      = J::Int(e, "proto");  // v59 join gate (0 = pre-field host)
+                    // Length-cap + range-clamp every server-supplied field (audit L4/L5):
+                    // a hostile/MITM master must not feed oversized strings or out-of-range
+                    // numbers into the browser UI. Caps mirror the master's own clamps.
+                    r.lobbyId    = J::StrN(e, "lobbyId", 64);
+                    r.name       = J::StrN(e, "name", 64);
+                    r.version    = J::StrN(e, "version", 24);
+                    r.world      = J::StrN(e, "world", 40);
+                    r.playersCur = J::IntClamped(e, "players_cur", 0, 64);
+                    r.playersMax = J::IntClamped(e, "players_max", 0, 64);
+                    r.ageSec     = J::IntClamped(e, "age", 0, 2000000000);
+                    r.proto      = J::IntClamped(e, "proto", 0, 65535);  // v59 join gate (0 = pre-field host)
                     r.locked     = J::Bool(e, "locked");
                     r.direct     = (J::Str(e, "conn") == "direct");  // 2026-06-11 direct lobbies
                     if (!r.lobbyId.empty()) parsed.push_back(std::move(r));
@@ -150,17 +153,21 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
         if (!info.ok) UE_LOGW("lobby: join '%s' -- direct response missing addr", lobbyId.c_str());
         return info;
     }
-    info.sessionId      = J::Str(j, "sessionId");
-    info.peerIdentity   = J::Str(j, "peerIdentity");
-    info.hostIdentity   = J::Str(j, "hostIdentity");
-    info.signalingUrl   = J::Str(j, "signalingUrl");
-    info.signalingToken = J::Str(j, "signalingToken");
-    info.stun           = J::Str(j, "stun");
+    // Length-cap identities/URLs/tokens (audit L5) -- a hostile/MITM master must not
+    // feed oversized strings into GNS config. turnUser/turnPass go through CredField
+    // (audit L6): a comma/whitespace there would inject an extra element into GNS's
+    // parallel comma-separated TURN user/pass/uri lists and desync them.
+    info.sessionId      = J::StrN(j, "sessionId", 64);
+    info.peerIdentity   = J::StrN(j, "peerIdentity", 64);
+    info.hostIdentity   = J::StrN(j, "hostIdentity", 64);
+    info.signalingUrl   = J::StrN(j, "signalingUrl", 128);
+    info.signalingToken = J::StrN(j, "signalingToken", 128);
+    info.stun           = J::StrN(j, "stun", 128);
     auto turn = j.find("turn");
     if (turn != j.end() && turn->is_object()) {
-        info.turnUri  = J::FirstTurnUri(*turn);
-        info.turnUser = J::Str(*turn, "user");
-        info.turnPass = J::Str(*turn, "pass");
+        info.turnUri  = J::FirstTurnUri(*turn);      // comma/ws-rejected inside
+        info.turnUser = J::CredField(*turn, "user", 256);
+        info.turnPass = J::CredField(*turn, "pass", 256);
     }
     // The peer identity + the host identity to dial are the minimum to start P2P.
     info.ok = !info.peerIdentity.empty() && !info.hostIdentity.empty() &&
