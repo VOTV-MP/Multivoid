@@ -127,8 +127,23 @@ still be per-peer. Confirm the host owns the chipType roll.
 Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signal_catch_sync). RESIDUAL:
 `dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic `Array_Shuffle`
 scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar order diverge.
+**2026-07-16 dish-kinematics RE sharpened this row:** the biggest dish divergence is NOT the
+calibration drift — it's (a) per-peer `randrot` REST POSE at world load (yaw 0-360 / pitch 90-135,
+NEVER saved), (b) per-slew RNG (MaxSpeed 4.5-5.5, start delay 1-12 s, phase delays), (c) the
+`isMoving` gate silently dropping a catch target on a locally-slewing dish. Catch TARGETS already
+sync; kinematics = `docs/signals/TRACKER.md` OPEN-4; RE `votv-dish-rotation-RE-2026-07-16.md`.
 
-**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: AS-BUILT v111 (2026-07-15, NOT hands-on).**
+**T2-5c · Signal-chain RNG census (2026-07-16, byte-level; `votv-signal-chain-units-RE-2026-07-16.md` §7):**
+| site | roll | class / verdict |
+|---|---|---|
+| `gatherSignal` catch | `RandomBoolWithWeight(percent^k)` on the pinging peer | MECHANIC — catch result is already host-published (v70) but the ROLL is peer-local; fine while the pinging occupant is authoritative for its own ping |
+| weather knob jitter | per-tick `RandomFloatInRange(-1,1)*RandomFloat()^3*Lerp(0.01,10,rain)` on BOTH filter offsets | MECHANIC input — on clients neutralized by the v111 host-stream overwrite (host's own jitter rides the stream) |
+| `lib::setSignalID` | `GenerateRandomBytes(16)`→Base64Url at U2-save; RE-MINTED at every comp level-up | IDENTITY — per-peer mint; never design coop identity on the drive/signal `id` without a host-authority pass |
+| comp rate noise | `(RandomFloat()-0.5)*comp_noiseScale` per tick | contained — only the simulating peer runs it (CompState streams outputs) |
+| red phone | 60-75 min looping timer + 2.5% roll per fire | EVENT timing, per-peer; low stakes (T3-adjacent) |
+| spectrum-bar jitter, hecer chars (`AMOGUS` p=0.005), consumption% flicker | cosmetic per-tick rolls | T3 — leave local |
+
+**T2-5b · Signal DOWNLOAD-RATE sim — STATUS: AS-BUILT v111 (2026-07-15) — hands-on 2026-07-16 FAILED (5 bugs, all root-caused: `docs/signals/TRACKER.md` BUGS-v111; the RNG-authority core held, the transport/claim layer around it did not).**
 FIX SHIPPED: `coop/interactables/desk_sim_sync` + `MsgType::DeskSimPose=38` (proto 110→111). The host owns
 the download sim + rolls both RNG; it streams the 8-float output vector (decoded/needle/rate/frData/poData/
 offsets/cooldown) unreliable ~10 Hz; the client interpolates + OVERWRITES its local sim (self-accrued
@@ -517,6 +532,12 @@ registry). First member: eyer_C. eyers therefore LEAVES the Inc-2 mirror-then-pa
 never parked). F1 reorg shipped with it: Content section (Entities + Events), Game dissolved.
 
 ## CHANGELOG
+- **2026-07-16** — **T2-5c signal-chain RNG census added** (7-agent byte-level RE of the whole
+  desk chain): catch roll / weather knob jitter / `setSignalID` identity mint / comp noise / red
+  phone / cosmetics, each classified. T2-5 sharpened with the dish-kinematics roots (per-peer
+  `randrot` rest pose UNSAVED + per-slew RNG + the `isMoving` target-drop gate → signals OPEN-4).
+  T2-5b flipped: v111 hands-on FAILED on the transport/claim layer (5 bugs root-caused —
+  `docs/signals/TRACKER.md` BUGS-v111); the RNG-authority core itself held.
 - **2026-07-10 (eve, later)** — **OWNER-ENTITY lane BUILT (eyer)** per the user rule (decision (4)):
   new `coop/creatures/owner_entity_sync` (kinds 94-96, relayed; owner BeginDeferred POST detect +
   4 Hz pose/keepalive/death-watch; receivers park ticks + disable collision so the mirror's

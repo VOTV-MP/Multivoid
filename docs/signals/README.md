@@ -43,8 +43,37 @@ The signal-processing loop, source → decoded, and the RE finding that owns eac
 6. **Screens + cursor** — all of the above renders through shared console widgets (one
    `ui_consolesAtlas`/`ui_console`/`ui_radar` instance — per-player screens are impossible without
    editing assets, A6), operated by the desk coords-panel cursor. Occupancy (`DeviceClaim=51`) is the
-   per-player routing. Screens design + gap list:
+   per-player routing. **The desk keyboard verbs (SHIFT/1/2/3/ENTER/arrows) enter through
+   `ui_consolesAtlas.OnKeyDown/Up` — the PE-visible key router on the occupant's machine** (RE'd
+   2026-07-16; the panel actor's own input events are dead stubs). Screens design + gap list:
    `research/findings/computers-devices/votv-screens-panels-sync-DESIGN-2026-07-03.md`.
+
+The chain does NOT end at the download. Downstream (all RE'd byte-level 2026-07-16 —
+`votv-signal-chain-units-RE-2026-07-16.md`, the four desk units are panes of ONE
+`AanalogDScreenTest_C`):
+
+7. **Save** — unit-2 SAVE SIGNAL (gate: detector >= 1, NOT decoded>=size) mints the signal's ID
+   (`lib::setSignalID` = GenerateRandomBytes(16), per-peer PRNG — an identity hazard) and appends
+   to **`gamemode.savedSignals_0`** (the deck list). DELETE (under the lid) aborts the ACTIVE
+   space signal instead. The red phone is a decorative RNG world event ("Doesn't work" is
+   literal).
+8. **Play deck (unit 3, ASO)** — plays the level-variant audio/image/text of a selected row
+   (world-audible `signalSound`), SARV = display contrast remap, volume knob. IMPORT/EXPORT
+   **MOVES** the row list<->drive (`prop_drive.Data_0`). SAVE SIGNAL here COPIES the row to the
+   **Meadow DATABASE** (`saveSlot.savedSignals_0`, via `laptop.addSignal`).
+9. **Drive chain** — `AdriveSlot_C` freezes+teleports the prop (never destroys — identity
+   survives insertion); `prop_drive.Data_0` @0x550 is the payload (name/id/level/size/image);
+   LED = level template + red/green/yellow color. `AsignalDriveEraser_C` = 3 s wipe of the whole
+   payload.
+10. **Processing (unit 4, comp)** — the CompState/CompData "refiner": per-tick RNG-noised rate,
+    upgrade gate `level < upg_processLvl`, level-up re-mints the ID, level 3 fires per-signal
+    world triggers; target-level knob + auto-continue need physMod byte 3.
+11. **Tapes + the daily task** — `Awallunit_tapes_C` accrues both reels 1 Hz (`+= dt/speed`);
+    reels ride the props; drone `sell` grades `saveSlot.taskNew.reel_big/small` (reward only if
+    BOTH > 0). `votv-tape-caddy-daily-task-RE-2026-07-16.md`.
+12. **The 24 big dishes** — every catch slews all of them to one shared target; rest pose is
+    per-peer RNG at world load (never saved) + per-slew RNG everywhere; two ambient tickers add
+    per-peer slews/decay. `votv-dish-rotation-RE-2026-07-16.md`.
 
 ## The four coop shapes (pick PER ELEMENT — never sync the desk as one blob)
 
@@ -84,8 +113,12 @@ Every signal element earns its row in `TRACKER.md` only when it reaches VERIFIED
 
 ## Status at a glance → `TRACKER.md`
 
-The living element-by-element ledger is **[TRACKER.md](TRACKER.md)**. Headline (2026-07-15): the
-transport-layer elements are SHIPPED (occupancy, desk scalars, dish-aim, saved signals, **cursor
-v109 SMOOTH**, **clock v110**, **freq/pol + download-rate SIM AS-BUILT v111** — `desk_sim_sync` /
-`DeskSimPose=38`, host-auth output stream, NOT hands-on). The remaining gaps are OPEN-1 (cursor 5fps),
-OPEN-2 (coordLog cluster), OPEN-3 (upgrade-sync, its own workstream).
+The living element-by-element ledger is **[TRACKER.md](TRACKER.md)**. Headline (2026-07-16): the
+transport-layer elements are SHIPPED (occupancy, desk scalars, dish-aim, saved signals, cursor
+v109 SMOOTH, clock v110, freq/pol + download-rate SIM v111). **The v111 hands-on FAILED on 5
+fronts — all root-caused** (`votv-desk-sim-v111-coop-bugs-audit-2026-07-16.md`): the claim model
+never engages for world-space desk buttons (kills client input + cooldown + sounds), the interp
+never snaps the detector to exactly 1.0 (stuck beep), SHIFT-scan + the coordLog families were
+never synced. Downstream units 3/4/5/6 + the dish kinematics are RE'd, sync mostly OPEN.
+Remaining: BUG-1..5 (v111 regressions), OPEN-1 (cursor 5fps), OPEN-2 (coordLog cluster),
+OPEN-3 (upgrade-sync), OPEN-4..9 (the downstream chain).

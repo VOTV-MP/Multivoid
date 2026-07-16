@@ -90,11 +90,13 @@ also invisible). => The fix CANNOT verb-hook; it must MIRROR STATE + SUPPRESS th
   clamp ±1000. Toggle `button_downl_FF_toggle` -> `DL_activeFrFilter=!` `[875]` (tag `toggleFrequencyPressed`).
 - **Polarity knob**: `..._PF_spdAdd_{1,5,15}` -> `DL_poFilterSpeed += ±{1,5,15}` clamp ±360. Toggle
   `..._PF_toggle` -> `DL_activePoFilter=!` `[861]`. Dir toggle `..._pdir_toggle` -> `DL_PolarityDir=(x+1)%3` `[850-852]`.
-- **SHIFT ping (cursor screen)**: `useSearch`->uber(83010) + FSM in `process_coords`->uber(83259). Trigger
-  `[2505-2511]`: `playPingSound(newdesk_beepLong1)`, `spawnDirs()`, `coord_cooldown=coord_maxCooldown`,
-  `coord_pingStage=3`. Stage 3->2->1->0 with `coord_ping_ping/inner/outer` integrating `[2546/2560/2574]`,
-  gated `coord_isPing @0x0A7C`. **`coord_isPing` is only set FALSE in-asset `[170]`; set-TRUE is external**
-  (`controllingCoordinatePanel @0x1410`) — NOT FOUND here [MEASURED absent / INFERRED external setter].
+- **SHIFT quick-scan (cursor screen)** *(CORRECTED 2026-07-16 — the original line here fused two
+  distinct verbs)*: `useSearch`->uber(83010) = SHIFT: `playPingSound(newdesk_beepLong1)`,
+  `spawnDirs()` (direction-arrow UMG widgets), `coord_cooldown=coord_maxCooldown`. **SHIFT does
+  NOT touch the ping FSM.** The stage FSM (`coord_pingStage`, rings `coord_ping_ping/inner/outer`
+  `[2546/2560/2574]`, gated `coord_isPing @0x0A7C`) belongs to the ENTER triangulation ping; its
+  set-TRUE lives in **`ui_consolesAtlas.OnKeyDown` [45-56]** (the widget key router — resolved
+  2026-07-16). Full unit-1 RE: `votv-signal-chain-units-RE-2026-07-16.md` §0-§1.
 - The `buttonPressed_frequencyToggle/polarityToggle` class delegates are EMPTY stubs (RETURN only) — real
   logic is the inline button-switch.
 

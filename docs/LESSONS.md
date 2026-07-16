@@ -184,6 +184,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
+- **A claim-gated intent lane must cover EVERY entry surface of the device.** v111 routed desk knob
+  intents over the claimed-occupant lane, but the claim engages only on the intComs `activeInterface`
+  edge — the download unit's WORLD-SPACE buttons never raise it, so the lane was structurally dead for
+  the unit it was built for (bugs 1/2/3 of the 2026-07-16 hands-on = ONE axis fact). *Look FIRST:*
+  enumerate the device's verb surfaces (widget focus / world-space press / hold-E / overlap) and grep the
+  claim writer for the edge each raises. `memory/lesson_claim_gated_intent_lane_must_cover_every_entry_surface.md`
+- **A mirrored float feeding a native `>= X` latch needs EXACT-SNAP, not an asymptote.** v111 BUG-4:
+  SimInterp's window reopens on every 10 Hz packet -> never snaps to exactly 1.0 -> sub-ulp freeze just
+  under the detector latch -> the client's unsuppressed native block re-crosses the threshold every frame
+  -> stuck beep. Check (a) the interp actually emits exactly X under packet cadence, (b) the local
+  crossing side-effect is suppressed/idempotent. *Look FIRST:* desk_sim_sync.cpp SimInterp + the native
+  `< 1.0` gate. `memory/lesson_mirrored_threshold_latch_needs_exact_snap.md`
 - **Follow MTA architecture when possible** (vendored `reference/mtasa-blue/`). `memory/feedback_follow_mta_architecture.md`
 - **A new `ReliableKind` wires in THREE places** — check the router checklist. `memory/feedback_reliablekind_router_checklist.md`
 - **Host TRACKING/enroll gates on HOSTING, never `connected()`.** `memory/lesson_tracking_gates_on_hosting_not_connected.md`
