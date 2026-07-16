@@ -65,7 +65,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   =0 "proved" the destroy-seam never fires for kerfur (the line prints actor/key/eid, NO class) -> declared
   `TryCaptureKerfurPropDestroy` dead -> nearly RULE-2-deleted the guard sitting on bug1's actual relay.
   Corollary: when ONE negative-grep turns out blind, RE-RUN the audit on every other "0 fires" in the
-  inventory. `memory/lesson_negative_grep_verify_against_known_positive.md`
+  inventory. 2nd instance 2026-07-16: asserted "the master server isn't in the repo" from a `find -type d
+  -iname '*master*'` — blind, because it's a FILE `tools/coop_master_server.py` (679 LOC stdlib) a dir
+  search can't match. Search by the artifact's real shape (`glob **/*.py`, a signature string like
+  `/v1/host`), not a guessed folder. `memory/lesson_negative_grep_verify_against_known_positive.md`
 - **Before changing a FUNCTION's behavior, enumerate ALL its call sites + state what each expects; before
   SUBTRACTING an output at a seam, enumerate every other producer/consumer at that seam** — acting on an
   incomplete map of what you're touching is ONE recurring root with many faces (a "mechanism" that is N
@@ -283,6 +286,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   fn call + notify-free re-apply of derived state. Measured for container `GObjStack[Index].obj`
   (`recalculateNames`/`getObj`/`updateVolumesAndMass`/UI-copy all GT, 2026-07-15 `bp_reflect`).
   *Look FIRST:* `memory/lesson_gobjstack_mirror_single_gt_task_overwrite_atomic.md`
+
+- **A peer-DEPARTURE notify (a "<X> left the game" toast) gates on the PRESENCE edge (`IsSlotReady` =
+  `peerLanesConfigured_`, Connected callback), NOT the transport edge (`IsSlotConnected` = `peerConns_`,
+  set already in the Connecting callback)** — a doomed browser connect to a dead/ghost host stays in
+  `ConnState::Handshaking(1)`, holds a conn handle (IsSlotConnected TRUE) but never latches lanes, so a
+  connected-edge detector fires a FALSE "Remote player left the game" (default nick, Join never processed)
+  that leaks into the menu. `net_pump.cpp:791` already gated its disconnect edge on `IsSlotReady`;
+  `event_feed.cpp`'s leave edge was the inconsistent one. You can only "leave" a game you were PRESENT in.
+  Fix 2026-07-16: `g_lastConnectedBySlot`->`g_lastReadyBySlot`, leave edge on the IsSlotReady falling edge
+  (`SuppressPeerLeaveEdges` — the separate "WE are leaving" axis — kept). *Look FIRST:*
+  `memory/lesson_departure_toast_gates_on_ready_edge_not_transport.md`
 
 ## 4. Dispatch, hooks & input seams
 

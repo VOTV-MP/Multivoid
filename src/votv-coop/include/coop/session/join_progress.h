@@ -86,6 +86,17 @@ void RequestCancel();
 void Fail(const std::string& reason);
 bool TakeAbortRequest();  // true once if an abort (cancel OR fail) is pending, then clears
 
+// Connect-failure reason (for ui/connect_failed_dialog). Fail() stashes `reason`
+// ONLY when it wins the abort (a racing user Cancel that won first blocks it) and
+// only when not shutting down; a user Cancel clears it (silent). This is SEPARATE
+// from the abort flag drained by TakeAbortRequest -- the reason lives until the
+// user acknowledges the dialog (ClearFailReason) or a new BeginConnect clears it,
+// so the harness's Stop+Reset in the abort drain does NOT wipe it. Render-thread
+// reads via PeekFailReason each frame; the "OK" button calls ClearFailReason.
+bool FailPending();                     // lock-free: is a failure modal pending? (per-frame gate)
+bool PeekFailReason(std::string& out);  // true + copies iff a failure is pending (takes the mutex)
+void ClearFailReason();                 // acknowledge (hide the dialog)
+
 // --- Read by the renderer ------------------------------------------------------
 bool Active();        // phase != Idle (the cover should be drawn)
 View Snapshot();      // thread-safe copy of the current state

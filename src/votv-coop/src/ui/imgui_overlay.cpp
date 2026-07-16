@@ -31,6 +31,7 @@
 #include "ui/dev_menu.h"
 #include "ui/scoreboard.h"
 #include "ui/server_browser.h"
+#include "ui/connect_failed_dialog.h"
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
 #include "ui/console.h"
@@ -120,11 +121,13 @@ inline bool LoadingOpen() { return ui::loading_screen::IsOpen(); }
 inline bool ConsoleOpen() { return ui::console::IsOpen(); }
 inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
 inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
+inline bool ConnectFailedOpen() { return ui::connect_failed_dialog::IsOpen(); }
 // VOTV's native pause/ESC menu is up (render-thread-safe atomic; see multiplayer_menu).
 // Gates the passive coop HUD + chat off so they never draw OVER the modal pause menu.
 inline bool PauseMenuOpen() { return coop::multiplayer_menu::IsPauseMenuOpen(); }
 inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
-                                   LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen(); }
+                                   LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen() ||
+                                   ConnectFailedOpen(); }
 inline bool CaptureActive() {
     // Interactive surfaces take the cursor + input: the F1 menu, the server browser + Host-
     // Game save picker (Connect / Host / type an IP / pick a save), the loading screen (its
@@ -132,7 +135,8 @@ inline bool CaptureActive() {
     // must reach ImGui, not the game), and the V voice-settings panel (sliders + combos).
     // The host scoreboard is interactive too; the client scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
-           ChatOpen() || VoiceOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
+           ChatOpen() || VoiceOpen() || ConnectFailedOpen() ||
+           (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
 void CreateRTV(IDXGISwapChain* sc) {
@@ -412,6 +416,9 @@ void RenderFrameGuarded() {
         if (ScoreOpen())   ui::scoreboard::Render();
         if (VoiceOpen())   ui::voice_panel::Render();
         if (BrowserOpen()) ui::server_browser::Render();
+        // The connect-failed modal draws AFTER the browser so it layers on top of the
+        // reopened browser (a failed browser join reopens it). No-ops when nothing pending.
+        if (ui::connect_failed_dialog::IsOpen()) ui::connect_failed_dialog::Render();
         if (PickerOpen())  ui::host_save_picker::Render();
         if (ChatOpen() && !PauseMenuOpen()) ui::chat_input::Render();
         // The console (bottom log panel) then the loading screen (centered) draw LAST, so the
@@ -445,6 +452,9 @@ void RenderFrameGuarded() {
         g_scoreboard.store(false, std::memory_order_relaxed);
         ui::voice_panel::Close();  // re-fault guard, same as the picker/loading below
         ui::server_browser::Close();
+        // Same re-fault guard for the connect-failed modal: clear the pending reason so a
+        // faulted Render can't re-enter + re-fault every frame (the reason is its open flag).
+        coop::join_progress::ClearFailReason();
         // CLOSE the picker too: if its Render() faulted, leaving it open re-enters
         // Render() every frame and re-faults forever (audit HIGH-2 re-fault loop).
         ui::host_save_picker::Close();

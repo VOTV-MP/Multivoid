@@ -47,11 +47,20 @@ namespace coop::event_feed {
 
 namespace {
 
-// Per-slot connect/disconnect edge detector. The Join-sent latch and
-// per-slot nicknames live in coop::player_handshake (C5 extraction
-// 2026-05-29); event_feed only needs the prior-connected bit to fire
-// the "<X> left the game" hud message on the disconnect transition.
-std::array<bool, net::kMaxPeers> g_lastConnectedBySlot{};
+// Per-slot READY edge detector. The Join-sent latch and per-slot nicknames
+// live in coop::player_handshake (C5 extraction 2026-05-29); event_feed only
+// needs the prior-READY bit to fire the "<X> left the game" hud message on the
+// present->absent transition.
+//
+// Gate on IsSlotReady (lanes configured, Connected callback), NOT IsSlotConnected
+// (a conn handle, set already in the Connecting callback). A doomed connect to a
+// dead/ghost host stays in Handshaking, never reaches Connected, so IsSlotReady
+// never latches -- gating the LEFT toast on it means a timed-out connect emits no
+// spurious "Remote player left the game" (2026-07-16 repro: it leaked into the
+// menu on a failed browser join). Any peer that was really PRESENT reached
+// Connected+lane-config, so its IsSlotReady WAS true -> no legit toast is lost.
+// This is the same falling edge net_pump.cpp's disconnect edge already uses.
+std::array<bool, net::kMaxPeers> g_lastReadyBySlot{};
 
 }  // namespace
 
@@ -62,7 +71,11 @@ void SetLocalNickname(const std::wstring& nick) {
 void SuppressPeerLeaveEdges() {
     // See header: the local peer is fleeing to the menu, so the imminent
     // Stop()-driven slot disconnects must NOT be surfaced as "<X> left the game".
-    g_lastConnectedBySlot.fill(false);
+    // This is a DIFFERENT axis from the ready-latch gate below ("was the peer
+    // present" vs "WE are the one leaving"); both are necessary preconditions for
+    // a toast, so this stays even though the ready-latch already silences a
+    // never-present peer (2026-07-16 /qf: the two do not overlap).
+    g_lastReadyBySlot.fill(false);
 }
 
 void OnSessionStart() {
@@ -71,7 +84,7 @@ void OnSessionStart() {
     // bit on each Start; we own the corresponding event_feed state and
     // reset it here so a restart of the session sees clean per-slot
     // edge-detector input.
-    g_lastConnectedBySlot.fill(false);
+    g_lastReadyBySlot.fill(false);
     coop::player_handshake::Reset();
     coop::seen_players::OnSessionStart();  // clear stale online marks (same discipline)
     coop::chat_feed::Reset();  // drop any prior session's lingering event lines
@@ -96,17 +109,22 @@ void Update(net::Session& session, void* localPlayer) {
     std::vector<uint8_t> joinPayload;
     bool joinPayloadBuilt = false;
     for (int slot = 0; slot < net::kMaxPeers; ++slot) {
-        // Two distinct edges:
-        // - LEFT toast / disconnect cleanup: IsSlotConnected (cleared in
-        //   the Closed callback) is the right signal.
-        // - Send Join: must wait for IsSlotReady (lanes configured in the
-        //   Connected callback), otherwise SendReliableToSlot's m_idxLane
-        //   rides GNS lane 0 instead of the assigned Normal lane,
-        //   undermining PR-3's head-of-line isolation for the first
-        //   reliable message per peer. N-4 (2026-05-29 audit).
-        const bool slotConnected = session.IsSlotConnected(slot);
+        // Both the LEFT toast AND the Join send gate on IsSlotReady (lanes
+        // configured in the Connected callback), NOT IsSlotConnected (a conn
+        // handle, set already in the earlier Connecting callback):
+        // - LEFT toast: a peer only ever "left" if it was PRESENT, and presence
+        //   requires reaching Connected+lane-config. A doomed connect stuck in
+        //   Handshaking (dead/ghost host) never sets IsSlotReady, so its
+        //   transport close emits no spurious "<X> left the game" (2026-07-16).
+        //   IsSlotReady is cleared on disconnect too, so it is an equally valid
+        //   present->absent signal as the old IsSlotConnected -- net_pump's
+        //   disconnect edge already uses exactly this.
+        // - Send Join: must wait for IsSlotReady, otherwise SendReliableToSlot's
+        //   m_idxLane rides GNS lane 0 instead of the assigned Normal lane,
+        //   undermining PR-3's head-of-line isolation for the first reliable
+        //   message per peer. N-4 (2026-05-29 audit).
         const bool slotReady = session.IsSlotReady(slot);
-        if (g_lastConnectedBySlot[slot] && !slotConnected) {
+        if (g_lastReadyBySlot[slot] && !slotReady) {
             coop::chat_feed::Push(
                 coop::player_handshake::NicknameForSlot(slot) + L" left the game");
             coop::player_handshake::OnSlotDisconnected(slot);
@@ -119,7 +137,7 @@ void Update(net::Session& session, void* localPlayer) {
             coop::player_handshake::MaybeSendJoinToSlot(
                 session, slot, joinPayload, joinPayloadBuilt);
         }
-        g_lastConnectedBySlot[slot] = slotConnected;
+        g_lastReadyBySlot[slot] = slotReady;
     }
 
     // Drain delivered reliable messages. The switch handles the inline special

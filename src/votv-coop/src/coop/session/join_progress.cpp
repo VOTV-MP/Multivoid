@@ -3,11 +3,13 @@
 #include "coop/session/join_progress.h"
 
 #include "ui/join_curtain.h"  // instant-world: drop the curtain on a join ABORT (not the normal Complete path)
+#include "coop/session/shutdown.h"  // IsShuttingDown -- suppress the failure dialog during teardown
 #include "ue_wrap/log.h"
 
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <string>
 
 namespace coop::join_progress {
 namespace {
@@ -24,6 +26,16 @@ std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure 
 
 std::mutex  g_hostMu;
 std::string g_host;  // guarded by g_hostMu
+
+// Connect-failure reason for ui/connect_failed_dialog (see the header). Set by the
+// abort WINNER (Fail stashes / Cancel clears) and read/cleared by the render thread;
+// its own mutex, independent of g_abortReq (which the harness drains separately).
+std::mutex  g_failMu;
+std::string g_failReason;  // guarded by g_failMu; non-empty == a modal is pending
+// Lock-free mirror of "g_failReason is non-empty" so the per-frame overlay GATE
+// (FailPending) never takes g_failMu -- only Render's actual string read does. Kept
+// in sync inside g_failMu's critical sections.
+std::atomic<bool> g_failPending{false};
 
 // Generous failsafe: v56 save-transfer joins legitimately spend the cover on a
 // ~17 MB save download (WAN: tens of seconds) + the full world load (~30-60 s)
@@ -56,6 +68,9 @@ void BeginConnect(const std::string& hostLabel) {
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
+    // A fresh attempt clears any prior failure modal so a retry starts clean (the
+    // dialog otherwise lives until the user acknowledges it).
+    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     g_startMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
     UE_LOGI("join_progress: BeginConnect -- loading screen up (connecting to '%s')",
@@ -71,6 +86,8 @@ void BeginHostBoot(const std::string& worldLabel) {
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
+    // Hosting after a failed join -- drop any lingering connect-failure modal.
+    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     g_startMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
     UE_LOGI("join_progress: BeginHostBoot -- host loading cover up (loading world '%s'); menu hidden",
@@ -132,7 +149,10 @@ void Reset() {
 
 void RequestCancel() {
     if (!Active()) return;
-    if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting
+    if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
+    // We won the abort as a user CANCEL: silent, no failure modal. Clear any reason a
+    // losing Fail set in a race (the winner defines the abort's semantics).
+    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     UE_LOGI("join_progress: Cancel requested -- aborting the join");
 }
 
@@ -141,11 +161,34 @@ void Fail(const std::string& reason) {
     // client cover) and idempotent (the connect-fail detector re-fires every tick until the
     // harness drains the abort -- log + flag exactly once).
     if (!Active()) return;
-    if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting
+    if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
+    // We won the abort as a FAILURE: stash the reason for ui/connect_failed_dialog, unless
+    // the process is tearing down (no UI to show; a "shutting down" reason must not pop a
+    // modal). Set only by the winner, so a racing Cancel that won first keeps it silent.
+    if (!coop::shutdown::IsShuttingDown()) {
+        std::lock_guard<std::mutex> lk(g_failMu);
+        g_failReason = reason;
+        g_failPending.store(true);
+    }
     UE_LOGW("join_progress: join FAILED (%s) -- aborting + reopening the browser", reason.c_str());
 }
 
 bool TakeAbortRequest() { return g_abortReq.exchange(false, std::memory_order_acq_rel); }
+
+bool PeekFailReason(std::string& out) {
+    std::lock_guard<std::mutex> lk(g_failMu);
+    if (g_failReason.empty()) return false;
+    out = g_failReason;
+    return true;
+}
+
+void ClearFailReason() {
+    std::lock_guard<std::mutex> lk(g_failMu);
+    g_failReason.clear();
+    g_failPending.store(false);
+}
+
+bool FailPending() { return g_failPending.load(std::memory_order_relaxed); }
 
 bool Active() { return PhaseOf() != Phase::Idle; }
 

@@ -182,3 +182,25 @@ the hands-on workflow and replication feature-work (5N*/5S*/5T/5D) was the
 priority. **That deferral is over — the menu/flows shipped (see the Status
 banner + `ui/` modules).** The `.bat` launchers remain the autonomous-test entry
 points (see `docs/AUTONOMOUS_TESTING.md`).
+
+## Connect / disconnect UX (AS-BUILT 2026-07-16, NOT hands-on)
+
+Two coupled fixes to the join/leave surface — shipped (DLL `a760f9f51bec2f07`, deployed x4),
+**not yet hands-on** (take pending). No wire change / no `kProtocolVersion` bump (both local-only).
+
+- **Connect-failed dialog.** A failed browser join (dead/ghost host timeout, master unreachable,
+  bad address) now shows a `COULD NOT CONNECT — <reason>` modal over the reopened browser, with an
+  OK button, instead of silently reopening the browser (or leaking a stray toast). A user CANCEL is
+  silent (no dialog). The reason is owned by `coop::join_progress` (`Fail(reason)` stashes it ONLY
+  when it wins the abort exchange + not shutting down; `RequestCancel` clears it) and rendered by the
+  new `ui/connect_failed_dialog.{h,cpp}` (dependency ui->session, like `loading_screen`). Per-frame
+  gate is lock-free (`join_progress::FailPending()` atomic mirror); the mutex is taken only in Render.
+- **Leave-toast false-positive fix.** The `"<X> left the game"` feed edge in `event_feed.cpp` now
+  gates on `IsSlotReady` (the present edge), not `IsSlotConnected` (a transport handle held during a
+  doomed connect) — so a timed-out connect no longer emits a false `"Remote player left the game"`
+  that leaked into the menu. See `[[lesson-departure-toast-gates-on-ready-edge-not-transport]]`.
+
+The **ghost lobby** a killed host leaves in the browser (up to `LOBBY_TTL`=300s) is a SEPARATE,
+server-side item — `tools/coop_master_server.py:100`; see
+`research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md` (which also scopes
+the planned Rust port of the master/signaling server).

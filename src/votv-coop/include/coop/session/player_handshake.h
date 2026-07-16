@@ -19,8 +19,9 @@
 //
 // State ownership split with event_feed:
 //   - player_handshake owns: g_localNick, g_remoteNickBySlot, g_joinSentBySlot.
-//   - event_feed owns: g_lastConnectedBySlot (connect/disconnect edge
-//     detector for the "<X> left the game" feed message).
+//   - event_feed owns: g_lastReadyBySlot (per-slot READY edge detector for
+//     the "<X> left the game" feed message; gated on IsSlotReady so a
+//     never-present connect can't emit a false leave).
 //   - On a per-slot disconnect, event_feed calls NicknameForSlot for the
 //     hud message and OnSlotDisconnected to reset our Join-sent latch so
 //     a reconnect re-announces.
