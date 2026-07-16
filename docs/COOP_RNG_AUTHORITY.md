@@ -123,10 +123,20 @@ still be per-peer. Confirm the host owns the chipType roll.
 
 ## TIER 2 — world consistency (shared, lower stakes)
 
-### T2-5 · Signal calibration / scramble — STATUS: OPEN-DIVERGES  (the `sv.request` residual)
-Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signal_catch_sync). RESIDUAL:
-`dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic `Array_Shuffle`
-scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar order diverge.
+### T2-5 · Signal calibration / scramble — STATUS: **DISH HALF AS-BUILT v113 (2026-07-16 night, `f204c0f7`, smoke PASS — NOT hands-on); radar/radiotower shuffle still OPEN**
+**AS-BUILT v113 (`coop/interactables/dish_sync`):** the dish kinematic + calibration + ARM RNG is
+now host-owned/authored — client `ticker_disher`/`ticker_dishUncalib` PARKED (live-checked
+restores), client dish poses = host `DishPose=39` mirror (rest pose + per-slew RNG divergence
+gone by construction), **download-ARM polarity = the HOST roll carried on `DishArm=99`** (closes
+(d) below), calibration = symmetric `DishCalib=101` peer-authored batches (host relay = total
+order; covers losePrec decay/terminal/toolgun/virusEvent invariantly — the virusEvent scramble
+(e) rides it as the initiating peer's local writes). RESIDUAL STILL OPEN:
+`coordRadarDish`/`radiotower` periodic `Array_Shuffle` scramble (not a dish; untouched by L4).
+Pre-L4 context below.
+Sky-signal GENERATION host-auth (console_state_sync); CATCH host-mediated (signal_catch_sync). RESIDUAL
+(pre-v113): `dish` calibration drift (RandomFloat losePrec), `coordRadarDish`/`radiotower` periodic
+`Array_Shuffle` scramble, `ticker_dishUncalib`/`ticker_disher`. Two peers' dish calibration + radar
+order diverged.
 **2026-07-16 dish-kinematics RE sharpened this row:** the biggest dish divergence is NOT the
 calibration drift — it's (a) per-peer `randrot` REST POSE at world load (yaw 0-360 / pitch 90-135,
 NEVER saved), (b) per-slew RNG (MaxSpeed 4.5-5.5, start delay 1-12 s, phase delays), (c) the

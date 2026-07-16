@@ -1,4 +1,6 @@
 # Hands-on runbook — v112 desk INPUT lane (the BUGS-v111 fix), take 1
+> **SUPERSEDED 2026-07-16 night: v113 (L4 dishes) deployed over this before the take happened —
+> use `handson_runbook_2026-07-16_desk_v113.md` (batches both verdicts). Steps below folded in.**
 
 DEPLOYED: `votv-coop.dll 43E662E19057216F` x4 (HOST + CLIENT_1/2/3), hash-verified.
 kProtocolVersion **112** (a 111 peer HARD-CLOSEs at the gate — that itself is a take point).

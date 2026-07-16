@@ -4,9 +4,14 @@ The architecture-level sync design for the six remaining signal-chain lanes, pro
 9-round `/qf` design pass (user: "Давай дизайн qf 15 раундов на все юниты"; converged with a
 genuine critic hold at round 9/15; thread: scratchpad qf_thread.md, archived on next topic).
 Fact bases: `votv-signal-chain-units-RE-2026-07-16.md`, `votv-dish-rotation-RE-2026-07-16.md`,
-`votv-tape-caddy-daily-task-RE-2026-07-16.md`, TRACKER OPEN-4..9. Status: **DESIGN** (nothing
-here is built). PRECONDITION: the v112 desk-INPUT lane (`votv-desk-input-lane-DESIGN-2026-07-16.md`)
-ships first.
+`votv-tape-caddy-daily-task-RE-2026-07-16.md`, TRACKER OPEN-4..9. Status: **L4 = BUILT v113**
+(2026-07-16 night, commit `f204c0f7` — see the impl-level design of record
+`votv-dish-L4-impl-DESIGN-2026-07-16.md`, which REVISES two lines of this doc's §L4: the ARM edge
+went RELIABLE `DishArm=99` with host polarity, NOT DeskSimPose ch8 — the ch8 float cannot carry the
+per-peer-RNG polarity fact; and the 0.5 Hz host calibration sweep was replaced by a SYMMETRIC 1 Hz
+diff-poll lane `DishCalib=101` — the impl-RE found client-side legit calibration writers a host
+sweep would echo-fight). **L5..L9 remain DESIGN** (nothing built). PRECONDITION v112 shipped
+(`7d57478f`).
 
 ## The cross-cutting rules this design stands on
 
@@ -32,6 +37,9 @@ ships first.
    disconnect = the shared transport-truncation class (documented, not new).
 
 ## L4 — DISHES (OPEN-4): host-auth pose mirror; client sim parked
+> **BUILT v113 (`f204c0f7`) per `votv-dish-L4-impl-DESIGN-2026-07-16.md`** — with the two
+> deviations named in the Status header (reliable DishArm, symmetric DishCalib). The section
+> below is the ARCH-level frame as designed; the impl doc is the as-built truth.
 
 - Client slew PARKED: kill the client's ticker_disher + ticker_dishUncalib timers with a
   PAIRED RESTORE on disconnect (the sky-roller precedent), and **RETIRE the client half of the

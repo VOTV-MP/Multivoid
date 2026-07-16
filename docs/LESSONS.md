@@ -234,15 +234,32 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   garbage_sync 07-10).** Persistent-state neutralizations (tick-disable, field-zero, TimeScale=0,
   suppress flags) need an EXPLICIT OnDisconnect restore; fn-body PRE-cancels SELF-restore ONLY when
   gated on `s->running()`/`connected()` — a bare `role()==Client` gate keeps suppressing in SOLO play
-  forever (Stop never resets cfg_.role). *Look FIRST:* name the restore mechanism in the SAME commit;
+  forever (Stop never resets cfg_.role). ADDED 2026-07-16: the restore must RE-LOOKUP a live
+  instance (never PE-dispatch on the cached parked ptr = UAF; caught twice — serverbox 07-10,
+  dish tickers 07-16 audit F1). *Look FIRST:* name the restore mechanism in the SAME commit;
   census: grep bare role-gates without running(). `memory/lesson_suppression_needs_paired_restore_or_running_gate.md`
 - **Killing a BP latent frame-loop by clearing its gate flag exits at the loop HEAD — the whole
   arrival/END chain is skipped and stale** (dish: looping motor cues stay Active forever;
   `activeDishes[i]` stuck true → the OnKeyDown ping gate blocks that peer permanently); and
   CO-WRITING a live loop's component never oscillates — it STARVES the loop's arrival check
   indefinitely (it re-reads fresh, steps toward its LOCAL target, checks its own post-write value).
-  Park = kill + explicit end-chain cleanup; mirror only onto a DEAD loop. *Look FIRST:*
+  Park = kill + explicit end-chain cleanup; mirror only onto a DEAD loop. COROLLARY 07-16: a
+  one-shot sweep can't outrun a PENDING latent (movePow re-arms audio at the delayed resume,
+  AFTER the sweep) — pair the kill with a standing 1 Hz reconciler over a watch-set
+  (dish_sync ClientParkLatch as-built). *Look FIRST:*
   `votv-dish-impl-RE-2026-07-16.md` §2-3. `memory/lesson_bp_latent_loop_kill_skips_end_chain.md`
+- **`init_objectRenderer` (inside every formDownload) pre-DELETES the previous display actor then
+  SPAWNS a fresh one (class from the signal DT row)** — back-to-back formDownload CONVERGES (safe
+  to overwrite an arm with host values); but a field-zeroing un-arm (`ResetDownloadMachine`)
+  leaves the rendered signal object ALIVE — the native un-arm chain calls `deleteSignalActor` and
+  a mirrored disarm must too (as-built: DishArm=99 armed=0 apply). *Look FIRST:*
+  `votv-dish-L4-impl-DESIGN-2026-07-16.md` D4. `memory/lesson_objectrenderer_init_spawns_display_actor_converges.md`
+- **Wire packets: check `kMaxPacketBytes`=256 / `kMaxReliablePayload`=228 FIRST; quantize u16.**
+  The L4 draft shipped 312/388 B structs before reading the caps; the shipped pattern = u16
+  centidegrees (`QuantDeg`, 0.01 deg vs the 1.0-deg native tolerance) + u16/65535 scalars →
+  full-24-dish packets fit (168/196/100 B). Oversize-by-design = the chunking precedents, not a
+  bigger datagram. *Look FIRST:* protocol.h QuantDeg + the static_asserts.
+  `memory/lesson_wire_packet_caps_check_first_quantize_u16.md`
 - **Pre-world subsystems Install at StartCoopSession, NOT world-gated.** `memory/feedback_preworld_install_at_startcoopsession.md`
 - **When a release VERB can't be caught, STREAM THROUGH the state.** `memory/lesson_stream_through_release_not_verb.md`
 - **An e2e assert must DISCRIMINATE the axis it claims.** `memory/lesson_e2e_assert_must_discriminate_the_axis.md`
