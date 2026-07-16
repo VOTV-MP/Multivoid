@@ -12,6 +12,7 @@
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
+#include "coop/interactables/dish_sync.h"
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
@@ -391,6 +392,54 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::signal_catch_sync::OnReliable(cp, cslot);
+        break;
+    }
+    case net::ReliableKind::DishArm: {
+        // v113 (L4): the download-ARM state edge (host-authored; host polarity).
+        if (msg.payloadLen < sizeof(net::DishArmPayload)) {
+            UE_LOGW("event_feed: DishArm payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DishArmPayload));
+            break;
+        }
+        net::DishArmPayload ap{};
+        std::memcpy(&ap, msg.payload, sizeof(ap));
+        const uint8_t aslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::dish_sync::OnDishArm(ap, aslot);
+        break;
+    }
+    case net::ReliableKind::DishSnapshot: {
+        // v113 (L4): the joiner's full-24 dish pose/state seed.
+        if (msg.payloadLen < sizeof(net::DishSnapshotPayload)) {
+            UE_LOGW("event_feed: DishSnapshot payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DishSnapshotPayload));
+            break;
+        }
+        net::DishSnapshotPayload sp2{};
+        std::memcpy(&sp2, msg.payload, sizeof(sp2));
+        const uint8_t s2slot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::dish_sync::OnDishSnapshot(sp2, s2slot);
+        break;
+    }
+    case net::ReliableKind::DishCalib: {
+        // v113 (L4): the symmetric calibration batch (apply + prime; host relays).
+        if (msg.payloadLen < sizeof(net::DishCalibPayload)) {
+            UE_LOGW("event_feed: DishCalib payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DishCalibPayload));
+            break;
+        }
+        net::DishCalibPayload cp2{};
+        std::memcpy(&cp2, msg.payload, sizeof(cp2));
+        const uint8_t c2slot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::dish_sync::OnDishCalib(cp2, c2slot);
         break;
     }
     case net::ReliableKind::DeskLogLine: {

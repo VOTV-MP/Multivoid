@@ -218,6 +218,15 @@ public:
     // DeskSimPose lands. newest-wins by header seq.
     bool TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew = nullptr);
 
+    // v113 (L4): HOST publishes ONE dish-pose row batch (the 4 Hz movers sweep or a
+    // settle-tail full-24 sweep -- the GAME-THREAD sweep owns the cadence); the net
+    // thread fan-outs ONE unreliable DishPose datagram per publish (dirty one-shot,
+    // not interval-driven). Host-only producer; a client call is a harmless no-op.
+    void SetHostDishPose(const DishPoseBody& body);
+    // v113 (CLIENT game thread): move out the latest received dish-pose batch +
+    // report whether it newly arrived (apply on isNew). newest-wins by header seq.
+    bool TryGetHostDishPose(DishPoseBody& out, bool* outIsNew = nullptr);
+
     // v37 (CLIENT game thread): move out the latest received NPC pose batch + clear the new-data
     // flag (consume-once -- a tick with no new batch returns false, the interp Tick covers between-
     // packet motion). Returns false if no new batch since the last take. Net thread fills it.
@@ -541,6 +550,11 @@ private:
     // throttle). Single value (host-authoritative, same to all).
     DeskSimSnapshot localDeskSim_{};
     bool hasLocalDeskSim_ = false;
+    // v113 (L4): host dish-pose row batch (game thread writes via SetHostDishPose; the net
+    // thread sends ONE unreliable DishPose datagram per publish -- dirty one-shot, the GT
+    // sweep owns the cadence).
+    DishPoseBody localDishPose_{};
+    bool dishPoseDirty_ = false;
 
     // Per-peer remote pose slots. Net thread writes (under remoteMutex_) on
     // receive; game thread reads via TryGetRemotePose(...).
@@ -589,6 +603,14 @@ private:
     uint32_t lastRemoteDeskSimSeq_ = 0;
     uint64_t remoteDeskSimStamp_ = 0;
     uint64_t lastReadDeskSimStamp_ = 0;
+    // v113 (L4): latest received dish-pose batch (host->client; ONE slot, host is the only
+    // sender). Net thread stores under remoteMutex_; client game thread drains via
+    // TryGetHostDishPose (newest-wins by header seq; apply on isNew).
+    DishPoseBody remoteDishPose_{};
+    bool hasRemoteDishPose_ = false;
+    uint32_t lastRemoteDishPoseSeq_ = 0;
+    uint64_t remoteDishPoseStamp_ = 0;
+    uint64_t lastReadDishPoseStamp_ = 0;
     // v37: latest received NPC pose batch (host->client; ONE slot, not per-peer -- the host is the
     // only sender). Net thread stores under remoteMutex_; game thread drains via TakeRemoteNpcBatch.
     std::vector<EntityPoseSnapshot> remoteNpcBatch_;

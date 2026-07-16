@@ -810,6 +810,32 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
     return true;
 }
 
+bool DeleteSignalActor() {
+    // objectRenderer_C is a per-world singleton; resolve lazily + call the
+    // reflected deleteSignalActor() (Public|BlueprintCallable -- impl-RE SS7).
+    static void* sCls = nullptr;
+    static void* sFn = nullptr;
+    if (!sCls) sCls = R::FindClass(L"objectRenderer_C");
+    if (sCls && !sFn) sFn = R::FindFunction(sCls, L"deleteSignalActor");
+    if (!sFn) return false;
+    for (void* obj : R::FindObjectsByClass(L"objectRenderer_C")) {
+        if (!obj || !R::IsLive(obj) ||
+            R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
+        ue_wrap::ParamFrame f(sFn);
+        if (!f.valid()) return false;
+        return ue_wrap::Call(obj, f);
+    }
+    return false;
+}
+
+bool ReadDLSignalKey(uint64_t& out) {
+    void* d = Instance();
+    if (!d || g_offDLData < 0) return false;
+    auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
+    out = SigRead<uint64_t>(dld, ue_wrap::signal_dynamic::kOff_signal);
+    return true;
+}
+
 bool DownloadMeshValid() {
     void* d = Instance();
     if (!d || g_offDLRow < 0 || g_offRowMesh < 0) return false;

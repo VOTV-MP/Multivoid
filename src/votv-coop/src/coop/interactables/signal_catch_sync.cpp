@@ -5,6 +5,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/device_occupancy.h"
+#include "coop/interactables/dish_sync.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/console_desk.h"
@@ -45,11 +46,10 @@ bool IdentityEq(const Identity& a, const Identity& b) {
 Clock::time_point g_nextPoll{};
 bool g_announced = false;
 
-// Last-poll detector inputs.
-std::vector<Identity> g_prevRows;
-bool g_havePrevRows = false;
-int32_t g_prevMoving = -1;
-std::wstring g_prevSigName;   // coord_signalData.objectName at the last poll
+// The catch detector's baseline: the FULL identity of coord_signalData at the
+// last poll (tuple + name -- the L4 change-edge signature; impl-RE SS7/SS8).
+Identity g_prevId{};
+std::wstring g_prevSigName;
 bool g_havePrevSig = false;
 // The desk instance the baselines were read from. A mid-session level reload
 // spawns a FRESH desk whose runtime-only coord_signalData starts at 'None' --
@@ -64,30 +64,19 @@ void* g_deskInst = nullptr;
 struct Recent { Identity id; Clock::time_point at; };
 std::vector<Recent> g_recent;
 
-// The joiner's download-progress catch-up (see the header).
-struct PendingAdopt {
-    bool armed = false;
-    float decoded = 0;
-    int32_t polarity = -1;
-    float resDetect = 0;
-    Clock::time_point at{};  // set time -- see the kind=0 staleness void below
-};
-PendingAdopt g_pending;
-
 // Re-baseline the detectors against the CURRENT desk instance without firing
 // anything (fresh-instance prime + the explicit re-prime after a replay).
 void PrimeBaselinesFromDesk() {
     CD::CoordSignal sig;
     if (CD::ReadCoordSignal(sig)) {
+        g_prevId = { sig.x, sig.y, sig.z, sig.frequency };
         g_prevSigName = sig.objectName;
         g_havePrevSig = true;
     } else {
+        g_prevId = {};
         g_prevSigName.clear();
         g_havePrevSig = false;
     }
-    g_prevRows.clear();
-    g_havePrevRows = false;
-    g_prevMoving = -1;
 }
 
 // True once per desk-instance change (boot + mid-session level reload):
@@ -168,15 +157,16 @@ void SendOut(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p,
     }
 }
 
-// The receiver-side replay of the SP consume chain (everything the catcher's
-// native run did, minus the log line -- DeskLogLine carries that from the
-// catcher's own terminal diff).
-void ApplyReplay(const coop::net::SkySignalCatchPayload& p) {
+// The receiver-side replay of the SP consume chain's IDENTITY half. Since L4
+// the dish THEATER is host-only (the host replays StartMovingAll + streams
+// poses via dish_sync; a client never slews from wire) and the ARM rides the
+// host-authored DishArm lane -- the v70 slewValid=0 direct arm is RETIRED.
+void ApplyReplay(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p) {
     if (p.kind == 1) {
         // The @33832-34222 'Signal data deleted' chain.
         CD::ClearCoordSignal();
         CD::ResetDownloadMachine();
-        g_pending.armed = false;  // a cleared signal voids any queued adopt
+        g_prevId = {};
         g_prevSigName = L"None";  // prime: the wire apply must not re-fire the edge
         g_havePrevSig = true;
         coop::desk_input_sync::PrimeBaselines();
@@ -184,32 +174,30 @@ void ApplyReplay(const coop::net::SkySignalCatchPayload& p) {
         return;
     }
     const CD::CoordSignal sig = CoordSignalFromRow(p.row);
-    // A pending adopt belongs to the signal armed at JOIN time; the join's
-    // own kind=0 follows its desk adopt within the same connect replay
-    // (milliseconds), so a pending older than this is a leftover whose arm
-    // never happened -- void it rather than true-up a NEW catch with stale
-    // progress (correctness audit 2026-06-12 finding 4).
-    if (g_pending.armed && Clock::now() - g_pending.at > std::chrono::seconds(60))
-        g_pending = {};
     CD::WriteCoordSignal(sig);                                  // @79303
     SR::RemoveSignalByIdentity(sig.x, sig.y, sig.z, sig.frequency);  // @9337
     CD::ResetDownloadMachine();                                 // @10050/@10244
     CD::PlayPingSuccess();                                      // @10027 (presence)
-    if (p.slewValid) {
-        const int32_t n = D::StartMovingAll(
-            ue_wrap::FVector{ p.slewX, p.slewY, p.slewZ });     // @9494 fan-out
-        UE_LOGI("signal_catch: catch replay applied ('%ls', %d dish(es) slewing)",
-                sig.objectName.c_str(), n);
+    if (s->role() == coop::net::Role::Host) {
+        if (p.slewValid) {
+            const int32_t n = D::StartMovingAll(
+                ue_wrap::FVector{ p.slewX, p.slewY, p.slewZ });  // @9494 fan-out
+            UE_LOGI("signal_catch: catch replay applied ('%ls', %d dish(es) slewing)",
+                    sig.objectName.c_str(), n);
+        } else {
+            // Unreachable from a live catch (the coord write and the slew
+            // fan-out are one synchronous chain) -- log the decline.
+            UE_LOGW("signal_catch: host catch replay with slewValid=0 ('%ls') -- "
+                    "no theater started", sig.objectName.c_str());
+        }
     } else {
-        // No dish carried the slew (joiner replay after the dishes settled):
-        // skip the theater, arm the downloader directly -- the native
-        // dishesStop arm is formDownload(0, -1).
-        CD::ArmDownloadFromSignal(0.f, -1);
-        UE_LOGW("signal_catch: catch replay with slewValid=0 ('%ls') -- "
-                "downloader armed directly, dish theater skipped",
+        // CLIENT: identity only. Poses arrive on the DishPose stream; the arm
+        // arrives on DishArm with the HOST polarity (L4).
+        UE_LOGI("signal_catch: catch identity applied ('%ls') -- host owns the theater",
                 sig.objectName.c_str());
     }
-    g_prevSigName = sig.objectName;  // prime the cleared detector
+    g_prevId = { sig.x, sig.y, sig.z, sig.frequency };  // prime the FULL tuple
+    g_prevSigName = sig.objectName;
     g_havePrevSig = true;
     coop::desk_input_sync::PrimeBaselines();
 }
@@ -228,56 +216,48 @@ bool BuildCatchPayload(const CD::CoordSignal& sig, uint8_t kind,
     return true;
 }
 
-// The catch detector body, shared by the 1 Hz Tick and the snapshot-arrival
-// race check. Takes the CURRENT poll inputs, compares against the previous
-// poll's, fires the relay, and rolls the previous-poll state forward.
-void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSig,
-                  const std::vector<Identity>& curRows, bool haveRows,
-                  int32_t curMoving) {
-    if (s && s->connected() && haveSig) {
+// The catch/cleared detector body, shared by the 1 Hz Tick and the
+// snapshot-arrival race check. L4 signature: the coord_signalData identity
+// (tuple | name) CHANGE-edge -- no sky-row corroboration, no dish edge
+// (design R4: coord has exactly two native writers; wire writes are primed).
+void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSig) {
+    if (s && s->connected() && haveSig && g_havePrevSig) {
         // ---- CLEARED (any peer; unclaimed trust like the physical button) --
-        if (g_havePrevSig && !IsNoneName(g_prevSigName) && IsNoneName(sig.objectName)) {
+        if (!IsNoneName(g_prevSigName) && IsNoneName(sig.objectName)) {
             coop::net::SkySignalCatchPayload p{};
             BuildCatchPayload(sig, 1, p);
             SendOut(s, p, /*exceptSlot*/ -1);  // client -> host; host -> all clients
             UE_LOGI("signal_catch: local 'Signal data deleted' relayed");
         }
-        // ---- CATCH (claim holder only; dish rising edge = success signature)
-        if (haveRows && g_havePrevRows && !IsNoneName(sig.objectName) &&
+        // ---- CATCH (claim holder only): identity change-edge to non-None --
+        if (!IsNoneName(sig.objectName) &&
             coop::device_occupancy::LocalHolds(kDeskClaim)) {
-            const bool dishEdge = curMoving >= 0 && g_prevMoving >= 0 &&
-                                  curMoving > g_prevMoving;
-            if (dishEdge) {
-                const Identity id{ sig.x, sig.y, sig.z, sig.frequency };
-                bool inPrev = false, inCur = false;
-                for (const auto& r : g_prevRows)
-                    if (IdentityEq(r, id)) { inPrev = true; break; }
-                for (const auto& r : curRows)
-                    if (IdentityEq(r, id)) { inCur = true; break; }
-                if (inPrev && !inCur && !IsRecent(id)) {
-                    coop::net::SkySignalCatchPayload p{};
-                    BuildCatchPayload(sig, 0, p);
-                    RegisterRecent(id);
-                    SendOut(s, p, /*exceptSlot*/ -1);  // host: all clients; client: the host
-                    UE_LOGI("signal_catch: local catch detected ('%ls' at %.0f,%.0f,%.0f; "
-                            "slewValid=%u) -- relayed",
-                            sig.objectName.c_str(), sig.x, sig.y, sig.z,
-                            static_cast<unsigned>(p.slewValid));
-                }
+            const Identity id{ sig.x, sig.y, sig.z, sig.frequency };
+            const bool changed = !IdentityEq(id, g_prevId) ||
+                                 sig.objectName != g_prevSigName;
+            if (changed && !IsRecent(id)) {
+                coop::net::SkySignalCatchPayload p{};
+                BuildCatchPayload(sig, 0, p);
+                RegisterRecent(id);
+                SendOut(s, p, /*exceptSlot*/ -1);  // host: all clients; client: the host
+                UE_LOGI("signal_catch: local catch detected ('%ls' at %.0f,%.0f,%.0f; "
+                        "slewValid=%u) -- relayed",
+                        sig.objectName.c_str(), sig.x, sig.y, sig.z,
+                        static_cast<unsigned>(p.slewValid));
+                // L4: the client's own ping slews are unpreventable
+                // (EX-invisible) -- kill them NOW, after the payload (built
+                // from a still-moving dish) is on the wire. Host keeps its
+                // native theater (it is the pose authority).
+                coop::dish_sync::KillOwnPingSlews();
             }
         }
     }
     // Roll the previous-poll state forward.
-    if (haveSig) { g_prevSigName = sig.objectName; g_havePrevSig = true; }
-    if (haveRows) { g_prevRows = curRows; g_havePrevRows = true; }
-    if (curMoving >= 0) g_prevMoving = curMoving;
-}
-
-std::vector<Identity> RowsToIdentities(const std::vector<SR::SignalRow>& rows) {
-    std::vector<Identity> ids;
-    ids.reserve(rows.size());
-    for (const auto& r : rows) ids.push_back({ r.x, r.y, r.z, r.frequency });
-    return ids;
+    if (haveSig) {
+        g_prevId = { sig.x, sig.y, sig.z, sig.frequency };
+        g_prevSigName = sig.objectName;
+        g_havePrevSig = true;
+    }
 }
 
 bool PayloadFinite(const coop::net::SkySignalCatchPayload& p) {
@@ -304,52 +284,15 @@ void Tick() {
 
     const bool cdUp = CD::EnsureResolved() && CD::Instance();
     if (!cdUp) return;
-    const bool srUp = SR::EnsureResolved() && SR::Instance();
-    const bool dishUp = D::EnsureResolved();
-    if (!g_announced && srUp && dishUp) {
+    if (!g_announced) {
         g_announced = true;
-        UE_LOGI("signal_catch: installed (desk + sky + dish surfaces resolved)");
+        UE_LOGI("signal_catch: installed (desk surface resolved; L4 tuple detector)");
     }
     if (CheckDeskInstance()) return;  // fresh desk: baselines primed, detect next poll
 
     CD::CoordSignal sig;
     const bool haveSig = CD::ReadCoordSignal(sig);
-
-    // The dish/row reads only matter for the catch detector (claim holder);
-    // the cleared detector needs just the struct. Keep idle peers at one
-    // struct read + one moving-count walk.
-    std::vector<Identity> curRows;
-    bool haveRows = false;
-    if (srUp && coop::device_occupancy::LocalHolds(kDeskClaim)) {
-        std::vector<SR::SignalRow> rows;
-        if (SR::ReadSignals(rows)) {
-            curRows = RowsToIdentities(rows);
-            haveRows = true;
-        }
-    } else {
-        // NOT holding: the row baseline is no longer maintained -- drop it.
-        // A stale baseline surviving a release/re-claim could pair an ancient
-        // row set with a fresh dish edge (another peer's catch in flight at
-        // re-claim time) and false-fire a catch for an already-consumed
-        // identity past the recent-TTL, re-zeroing everyone's download
-        // progress (self-review 2026-06-12). The detector re-arms on the
-        // second poll after re-claiming.
-        g_prevRows.clear();
-        g_havePrevRows = false;
-    }
-    const int32_t moving = dishUp ? D::MovingCount() : -1;
-
-    RunDetectors(s, sig, haveSig, curRows, haveRows, moving);
-
-    // Joiner download catch-up: apply once OUR machine armed (mesh valid).
-    if (g_pending.armed && CD::DownloadMeshValid()) {
-        CD::ArmDownloadFromSignal(g_pending.decoded, g_pending.polarity);
-        CD::WriteResDetect(g_pending.resDetect);
-        UE_LOGI("signal_catch: pending download adopt applied (decoded=%.1f polarity=%d "
-                "resDetect=%.2f)", g_pending.decoded, g_pending.polarity, g_pending.resDetect);
-        g_pending = {};
-    }
-
+    RunDetectors(s, sig, haveSig);
     PruneRecent();
 }
 
@@ -378,14 +321,14 @@ void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
         // trust level as the unclaimed DeskState button edges). The replay is
         // idempotent and primes the receivers' detectors, so repeats are
         // bounded no-ops.
-        ApplyReplay(p);
+        ApplyReplay(s, p);
         SendOut(s, p, /*exceptSlot*/ senderSlot);  // fan out to the other clients
         // The host's own 1 Hz sky poll sees the row removal and broadcasts a
         // fresh snapshot; the recent-catch filter covers any stale one in flight.
     } else {
         // Client: transport-trusted (we only receive from the host).
         if (p.kind == 0) RegisterRecent(id);
-        ApplyReplay(p);
+        ApplyReplay(s, p);
     }
 }
 
@@ -410,15 +353,7 @@ void NoteIncomingSnapshot(std::vector<SR::SignalRow>& rows) {
         coop::device_occupancy::LocalHolds(kDeskClaim)) {
         CD::CoordSignal sig;
         const bool haveSig = CD::ReadCoordSignal(sig);
-        std::vector<SR::SignalRow> liveRows;
-        bool haveRows = false;
-        std::vector<Identity> ids;
-        if (SR::EnsureResolved() && SR::Instance() && SR::ReadSignals(liveRows)) {
-            ids = RowsToIdentities(liveRows);
-            haveRows = true;
-        }
-        const int32_t moving = D::EnsureResolved() ? D::MovingCount() : -1;
-        RunDetectors(s, sig, haveSig, ids, haveRows, moving);
+        RunDetectors(s, sig, haveSig);
     }
     // Strip recently-caught identities -- a snapshot sent before the host
     // processed the catch must not resurrect the row.
@@ -433,24 +368,12 @@ void NoteIncomingSnapshot(std::vector<SR::SignalRow>& rows) {
     }
 }
 
-void SetPendingDownloadAdopt(float decoded, int32_t polarity, float resDetect) {
-    if (!std::isfinite(decoded) || !std::isfinite(resDetect)) return;
-    g_pending.armed = true;
-    g_pending.decoded = decoded;
-    g_pending.polarity = polarity;
-    g_pending.resDetect = resDetect;
-    g_pending.at = Clock::now();
-}
-
 void OnDisconnect() {
-    g_prevRows.clear();
-    g_havePrevRows = false;
-    g_prevMoving = -1;
+    g_prevId = {};
     g_prevSigName.clear();
     g_havePrevSig = false;
     g_deskInst = nullptr;
     g_recent.clear();
-    g_pending = {};
 }
 
 }  // namespace coop::signal_catch_sync

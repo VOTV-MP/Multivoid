@@ -705,7 +705,18 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 112; // v112 (2026-07-16, the BUGS-v111 fix): the desk INPUT
+inline constexpr uint16_t kProtocolVersion = 113; // v113 (2026-07-16, L4 dishes): host-auth dish pose
+                                                  // mirror (new unreliable DishPose=39; client sim
+                                                  // PARKED -- tickers killed + own-ping slews killed-
+                                                  // with-cleanup; StartMovingAll client half RETIRED),
+                                                  // host-polarity download ARM edge (DishArm=99 +
+                                                  // DishSnapshot=100 join seed), symmetric calibration
+                                                  // lane (DishCalib=101), and the v70 pending-adopt
+                                                  // RETIRED: DeskStatePayload drops the ADOPT-ONLY
+                                                  // dlDecoded/dlPolarity fields (60->52 B). WIRE CHANGE
+                                                  // (new kinds + DeskState layout) -> bump so a mixed
+                                                  // 112/113 pair HARD-CLOSEs at the gate.
+                                                  // v112 (2026-07-16, the BUGS-v111 fix): the desk INPUT
                                                   // re-partition -- claim-free field-granular DeskInput=97
                                                   // deltas + DeskScanEvent=98 replace the v64 claimed/
                                                   // unclaimed live DeskState lanes (DeskState=54 is now
@@ -1059,6 +1070,16 @@ enum class MsgType : uint8_t {
                        //      The knob INTENTS stay occupant-authored via DeskState (host integrates the
                        //      offset from them) -> this vector is host-down only, one author. Body:
                        //      DeskSimPosePacket. NOT relayed (host-originated).
+    DishPose = 39,     // v113 (2026-07-16, L4): HOST->all satellite-dish POSE rows (unreliable,
+                       //      newest-wins). The client dish sim is PARKED (tickers killed; own-ping
+                       //      slews killed-with-cleanup by the catch detector), so the host streams
+                       //      movers-only rows {index, isMoving, axis_Z.rel.Yaw, axis_Y.rel.ROLL}
+                       //      at 4 Hz while any dish moves + a SETTLE-TAIL (full-24 sweeps, 1 Hz x3
+                       //      after MovingCount hits 0 -- self-heals lost falling edges). ONE
+                       //      applier (ApplyDishRow) shared with the DishSnapshot join row: shadow
+                       //      -> K2_SetRelativeRotation both axes -> raw isMoving -> activeDishes
+                       //      -> cue edges. Design: votv-dish-L4-impl-DESIGN-2026-07-16.md.
+                       //      Body: DishPosePacket. NOT relayed (host-originated).
     VoiceFrame = 64,   // v66 (2026-06-12): proximity VOICE CHAT -- one 20 ms / 48 kHz mono
                        //      opus frame (SVC pipeline port, MTA transport shape: voice
                        //      multiplexes over the main session, no second socket). A STREAM,
@@ -2148,6 +2169,34 @@ enum class ReliableKind : uint8_t {
                        //     (never useSearch() -- its cooldown gate would refuse on decay
                        //     jitter). The charge itself rides a DeskInput cooldown delta; the log
                        //     line rides DeskLogLine. Payload: DeskScanEventPayload. Relayed.
+    DishArm = 99,      // v113 (2026-07-16, L4): the download-ARM state edge, HOST-authored --
+                       //     initDownloadSignal(-1) rolls PER-PEER RNG polarity, so the host's roll
+                       //     is THE roll (COOP_RNG_AUTHORITY T2-5d). Host detects via a 4 Hz raw
+                       //     poll (DownloadMeshValid EDGE | DL signal-FName change | polarity
+                       //     change; decoded excluded -- it accrues on the 10 Hz DeskSimPose
+                       //     stream). armed=1: client pre-clears mirrored moving state, calls
+                       //     reflected checkFordDishes() (the native display tail: camera aim +
+                       //     objectRenderer.begin() + signalFound), then ArmDownloadFromSignal
+                       //     (decoded, host polarity). armed=0 (disarm): ResetDownloadMachine +
+                       //     reflected deleteSignalActor (native un-arm parity). Also the JOINER
+                       //     arm delivery (a connect-replay row after the desk rows -- replaced
+                       //     the v70 pending-adopt, RULE 2). ONE author for the ARM axis;
+                       //     kind=0/1 SkySignalCatch remain the CATCH/DELETE verb replays.
+                       //     Payload: DishArmPayload. NOT relayed (host-originated).
+    DishSnapshot = 100, // v113 (L4): full-24 dish pose/state seed for a joiner (world-ready
+                       //     connect replay, AFTER the desk rows; re-rides the re-seed) --
+                       //     {yawZ, rollY, calibration, isMoving} x N + the activeDishes mask
+                       //     (orientation is never saved; BeginPlay randrot diverges per peer).
+                       //     Applied through the same ApplyDishRow as the DishPose stream (cue
+                       //     edges fire for a mid-slew join). Payload: DishSnapshotPayload.
+    DishCalib = 101,   // v113 (L4): symmetric per-dish CALIBRATION batch -- ANY peer whose local
+                       //     values changed (1 Hz diff-poll, baseline-gated) broadcasts absolute
+                       //     {index, value} pairs; host applies + relays (arrival order = the
+                       //     total order); receivers apply + prime GT-atomically (echo-proof).
+                       //     Covers all four native writers invariantly: host losePrec decay,
+                       //     the ui_console calibrate terminal (any peer), tool_setDishCalibration,
+                       //     the virusEvent scramble (initiating peer). Payload: DishCalibPayload.
+                       //     Relayed.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -2993,17 +3042,16 @@ struct SkySignalCatchPayload {
 };
 static_assert(sizeof(SkySignalCatchPayload) == 80, "SkySignalCatchPayload must be 80 bytes");
 
-// v64 (reshaped v70): the desk's live-visible scalars (ReliableKind::DeskState).
+// v64 (reshaped v70, v113): the desk's live-visible scalars (ReliableKind::DeskState).
 // Field set = the RE doc SS4.1 live actor fields; receivers write raw + run the
 // desk's own upd* refresh chain. `adopt` = 1 on the host connect snapshot.
 // v70 removals (RULE 2): the coordLog[96] tail + len moved to the lossless
 // DeskLogLine event-line channel; canDL is DERIVED (canSaveSignal recomputes it
-// per detector pulse) and never belonged on the wire. v70 additions: dlDecoded
-// + dlPolarity (DL_SignalDownloadDLData download progress) -- ADOPT-ONLY: live
-// decoded accrues per tick on EVERY armed peer (bytecode @66736-68635, no
-// occupancy gate) so receivers ignore them on live edges; on adopt=1 the joiner
-// stores them as a pending formDownload(decoded, polarity) catch-up applied once
-// its own download machine arms (mesh valid after the replayed dishes arrive).
+// per detector pulse) and never belonged on the wire.
+// v113 removal (RULE 2): the v70 ADOPT-ONLY dlDecoded/dlPolarity fields are gone --
+// the pending-adopt mechanism is RETIRED; the joiner's arm (with host polarity)
+// rides a DishArm=99 connect-replay row, and decoded/resDetect ride the standing
+// 10 Hz DeskSimPose stream (L4 design doc).
 struct DeskStatePayload {
     float   dlPoFilterOffset;   // 4
     float   dlFrFilterOffset;   // 4
@@ -3012,12 +3060,10 @@ struct DeskStatePayload {
     float   dlDownloading;      // 4 -- float in the BP (0 = idle)
     float   dlResDetecPercent;  // 4 -- the live detection-needle percent
     float   coordCooldown;      // 4
-    float   dlDecoded;          // 4 -- v70 adopt-only (see header note)
     int32_t playVolume;         // 4 -- int32 in the BP (header-verified)
     int32_t dlPolarityDir;      // 4
     int32_t compMaxLevel;       // 4 -- claim-owner edit; the comp DECODE stream is CompState (v65)
     int32_t playSelectIndex;    // 4
-    int32_t dlPolarity;         // 4 -- v70 adopt-only (DLData.polarity; -1 = unset)
     uint8_t dlActiveFrFilter;   // 1
     uint8_t dlActivePoFilter;   // 1
     uint8_t activePlay;         // 1
@@ -3027,7 +3073,7 @@ struct DeskStatePayload {
     uint8_t coordIsPing;        // 1
     uint8_t adopt;              // 1
 };
-static_assert(sizeof(DeskStatePayload) == 60, "DeskStatePayload must be 60 bytes");
+static_assert(sizeof(DeskStatePayload) == 52, "DeskStatePayload must be 52 bytes (v113)");
 static_assert(sizeof(DeskStatePayload) <= 256 - 20 - 8,
               "DeskStatePayload must fit in one reliable datagram");
 
@@ -4102,6 +4148,97 @@ struct DeskScanEventPayload {
     float observedCooldown;  // 4 -- the presser's post-charge cooldown (diagnostic)
 };
 static_assert(sizeof(DeskScanEventPayload) == 4, "DeskScanEventPayload must be 4 bytes");
+
+// v113 (L4 dishes): the host->all dish POSE stream (DishPose=39, unreliable,
+// newest-wins by header seq). Movers-only rows at 4 Hz while any dish slews +
+// full-24 settle-tail sweeps (1 Hz x3) after MovingCount hits 0. The pose frame
+// is RELATIVE: yawZ = axis_Z.RelativeRotation.Yaw, rollY = axis_Y.RelativeRotation
+// .Roll (the native loop's own channels -- impl-RE SS1). One applier with the
+// DishSnapshot join row. See coop/interactables/dish_sync.
+inline constexpr int32_t kMaxDishes = 24;
+
+// Angles ride as unsigned centidegrees normalized to [0, 36000) -- 0.01 deg
+// resolution against the loop's own 1.0 deg arrival tolerance; calibration as
+// value*65535 (0..1). Keeps the full-24 packets inside kMaxPacketBytes /
+// kMaxReliablePayload.
+inline uint16_t QuantDeg(float deg) {
+    if (!(deg > -1.0e6f && deg < 1.0e6f)) return 0;  // NaN/inf/absurd -> 0 (UB-safe int cast)
+    float n = deg - 360.f * static_cast<float>(static_cast<int>(deg / 360.f));
+    if (n < 0.f) n += 360.f;
+    if (n >= 360.f) n = 0.f;  // float edge: -1e-5 + 360 rounds to 36000
+    return static_cast<uint16_t>(n * 100.f + 0.5f);
+}
+inline float DequantDeg(uint16_t q) { return static_cast<float>(q) * 0.01f; }
+
+struct DishPoseRow {
+    uint8_t  index;      // 1 -- gamemode.dishs index
+    uint8_t  isMoving;   // 1
+    uint16_t yawCdeg;    // 2 -- axis_Z.RelativeRotation.Yaw, centidegrees
+    uint16_t rollCdeg;   // 2 -- axis_Y.RelativeRotation.Roll, centidegrees
+};
+static_assert(sizeof(DishPoseRow) == 6, "DishPoseRow must be 6 bytes");
+
+struct DishPoseBody {
+    uint8_t     count;             // 1 -- used rows
+    uint8_t     _pad[3];           // 3
+    DishPoseRow rows[kMaxDishes];  // 144
+};
+static_assert(sizeof(DishPoseBody) == 148, "DishPoseBody must be 148 bytes");
+
+struct DishPosePacket {
+    PacketHeader header;  // 20
+    DishPoseBody body;    // 148
+};
+static_assert(sizeof(DishPosePacket) == 168, "DishPosePacket must be 168 bytes");
+
+// v113 (L4): the download-ARM state edge (DishArm=99), host-authored.
+// armed=1 -> {decoded, polarity} valid (polarity = THE host roll); armed=0 ->
+// disarm (receivers ResetDownloadMachine + deleteSignalActor).
+struct DishArmPayload {
+    uint8_t armed;      // 1
+    uint8_t _pad[3];    // 3
+    float   decoded;    // 4 -- arm-time initializer only (the 10 Hz sim stream is
+                        //      the standing authority; staleness heals <=100 ms)
+    int32_t polarity;   // 4 -- host-rolled (RNG_AUTHORITY T2-5d)
+};
+static_assert(sizeof(DishArmPayload) == 12, "DishArmPayload must be 12 bytes");
+
+// v113 (L4): the joiner's full-24 dish seed (DishSnapshot=100, connect replay).
+struct DishSnapshotRow {
+    uint16_t yawCdeg;      // 2
+    uint16_t rollCdeg;     // 2
+    uint16_t calibQ;       // 2 -- calibration * 65535 (0..1)
+    uint8_t  isMoving;     // 1
+    uint8_t  activeDish;   // 1 -- gamemode.activeDishes[i]
+};
+static_assert(sizeof(DishSnapshotRow) == 8, "DishSnapshotRow must be 8 bytes");
+
+struct DishSnapshotPayload {
+    uint8_t         count;             // 1 -- used rows (dish i = rows[i])
+    uint8_t         _pad[3];           // 3
+    DishSnapshotRow rows[kMaxDishes];  // 192
+};
+static_assert(sizeof(DishSnapshotPayload) == 196, "DishSnapshotPayload must be 196 bytes");
+static_assert(sizeof(DishSnapshotPayload) <= 256 - 20 - 8,
+              "DishSnapshotPayload must fit in one reliable datagram");
+
+// v113 (L4): the symmetric calibration batch (DishCalib=101) -- absolute values
+// from the peer whose LOCAL values changed; host-relayed (total order).
+struct DishCalibEntry {
+    uint8_t  index;      // 1
+    uint8_t  _pad;       // 1
+    uint16_t valueQ;     // 2 -- calibration * 65535 (0..1)
+};
+static_assert(sizeof(DishCalibEntry) == 4, "DishCalibEntry must be 4 bytes");
+
+struct DishCalibPayload {
+    uint8_t        count;               // 1
+    uint8_t        _pad[3];             // 3
+    DishCalibEntry entries[kMaxDishes]; // 96
+};
+static_assert(sizeof(DishCalibPayload) == 100, "DishCalibPayload must be 100 bytes");
+static_assert(sizeof(DishCalibPayload) <= 256 - 20 - 8,
+              "DishCalibPayload must fit in one reliable datagram");
 
 // SkyStatePayload -- the host-authoritative NIGHT-SKY snapshot (SkyState=34, v44). The visible
 // star dome (Anewsky_C's `sky` mesh) is given a per-game UNSEEDED random yaw + a slow per-tick

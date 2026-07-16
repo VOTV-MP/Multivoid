@@ -378,6 +378,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp
     src/coop/interactables/desk_sim_sync.cpp
+    src/coop/interactables/dish_sync.cpp
     src/coop/interactables/signal_catch_sync.cpp
     src/coop/player/sleep_sync.cpp
     src/coop/creatures/wisp_attack_sync.cpp

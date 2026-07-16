@@ -145,6 +145,12 @@ void Session::SetHostDeskSim(bool set, const DeskSimSnapshot& sim) {
     if (set) localDeskSim_ = sim;
 }
 
+void Session::SetHostDishPose(const DishPoseBody& body) {
+    std::lock_guard<std::mutex> lk(localMutex_);
+    localDishPose_ = body;
+    dishPoseDirty_ = true;  // one-shot: the net thread sends once + clears
+}
+
 // SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
 // StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
 // 2026-06-07 per the 800-LOC soft cap).
@@ -221,6 +227,16 @@ bool Session::TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew) {
     out = remoteDeskSim_;
     if (outIsNew) *outIsNew = (remoteDeskSimStamp_ != lastReadDeskSimStamp_);
     lastReadDeskSimStamp_ = remoteDeskSimStamp_;
+    return true;
+}
+
+bool Session::TryGetHostDishPose(DishPoseBody& out, bool* outIsNew) {
+    if (state_.load() != ConnState::Connected) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!hasRemoteDishPose_) return false;
+    out = remoteDishPose_;
+    if (outIsNew) *outIsNew = (remoteDishPoseStamp_ != lastReadDishPoseStamp_);
+    lastReadDishPoseStamp_ = remoteDishPoseStamp_;
     return true;
 }
 
@@ -670,6 +686,25 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         break;
     }
+    case MsgType::DishPose: {  // v113 (L4): HOST->all dish-pose row batch (newest-wins)
+        if (len < static_cast<int>(sizeof(DishPosePacket))) return;
+        if (cfg_.role == Role::Host) break;  // host-originated; never applied locally
+        DishPosePacket pkt;
+        std::memcpy(&pkt, data, sizeof(pkt));
+        if (pkt.body.count > kMaxDishes) return;
+        {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (hasRemoteDishPose_ &&
+                static_cast<int32_t>(seq - lastRemoteDishPoseSeq_) <= 0) {
+                break;  // older/duplicate batch -- keep the newer one
+            }
+            remoteDishPose_ = pkt.body;
+            lastRemoteDishPoseSeq_ = seq;
+            hasRemoteDishPose_ = true;
+            ++remoteDishPoseStamp_;
+        }
+        break;
+    }
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
@@ -894,6 +929,8 @@ void Session::NetThread() {
             bool haveHostClock;
             DeskSimSnapshot localDeskSim;
             bool haveDeskSim;
+            DishPoseBody localDishPose;
+            bool dishPoseDue;
             { std::lock_guard<std::mutex> lk(localMutex_);
               local = localPose_; have = hasLocal_;
               localProp = localPropPose_; haveProp = hasLocalProp_;
@@ -901,7 +938,11 @@ void Session::NetThread() {
               localHand = localHandPose_; haveHand = hasLocalHand_;
               localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
               localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_;
-              localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_; }
+              localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_;
+              // v113 (L4): dirty one-shot -- the GT sweep owns the cadence; consume the flag.
+              localDishPose = localDishPose_;
+              dishPoseDue = dishPoseDirty_ && cfg_.role == Role::Host;
+              dishPoseDirty_ = false; }
             // v109 (design F): the clock rides its OWN 500 ms throttle, and only the HOST
             // originates it. Computed once here so the per-peer fan-out below sends the same
             // snapshot to every peer this round (and nextClockSend advances once, after).
@@ -922,7 +963,7 @@ void Session::NetThread() {
             uint8_t tcBuf[kTrashCarryPoseDatagramMax];
             const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
             if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue || deskSimDue ||
-                npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
+                dishPoseDue || npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
                 for (int i = 0; i < kMaxPeers; ++i) {
                     const uint32_t hConn = peerConns_[i].load();
                     if (hConn == 0) continue;
@@ -1016,6 +1057,15 @@ void Session::NetThread() {
                         DeskSimPosePacket pkt{};
                         WriteHeader(pkt.header, MsgType::DeskSimPose, sendSeq_.fetch_add(1), ownEpoch_);
                         pkt.sim = localDeskSim;
+                        const EResult rc = sockets->SendMessageToConnection(
+                            hConn, &pkt, sizeof(pkt),
+                            k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                        if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
+                    }
+                    if (dishPoseDue) {  // v113 (L4): HOST dish-pose batch -- same body to every peer
+                        DishPosePacket pkt{};
+                        WriteHeader(pkt.header, MsgType::DishPose, sendSeq_.fetch_add(1), ownEpoch_);
+                        pkt.body = localDishPose;
                         const EResult rc = sockets->SendMessageToConnection(
                             hConn, &pkt, sizeof(pkt),
                             k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);

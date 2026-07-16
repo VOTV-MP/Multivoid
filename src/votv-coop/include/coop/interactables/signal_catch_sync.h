@@ -1,29 +1,33 @@
-// coop/signal_catch_sync.h -- v70: the STOLAS signal-catch CONSUME REPLAY.
+// coop/signal_catch_sync.h -- v70 (reworked v113/L4): the STOLAS signal-catch
+// CONSUME REPLAY.
 //
-// RE ground truth (votv-stolas-signal-catch-RE-2026-06-12.md): the SP chain
-// after a successful ping -- coord_signalData := gatherSignal.data -> row
-// delete -> download-machine reset -> playPingSound -> startMovingTo on EVERY
-// gamemode dish -> (native, per peer) arrival -> activeDishes all-false ->
-// dishesStop broadcast -> the desk arms formDownload(0,-1) -- ran on the
-// CATCHING peer only. Every other peer's downloader said NO SIGNAL forever
-// (DL_signalDownloadData.mesh never valid) and its dishes never slewed.
+// RE ground truth (votv-stolas-signal-catch-RE-2026-06-12.md +
+// votv-dish-impl-RE-2026-07-16.md): the SP chain after a successful ping --
+// coord_signalData := gatherSignal.data -> row delete -> download-machine
+// reset -> playPingSound -> startMovingTo on EVERY gamemode dish -> (native,
+// per peer) arrival -> activeDishes all-false -> dishesStop broadcast -> the
+// desk arms formDownload(0,-1) -- ran on the CATCHING peer only.
 //
 // This module relays the catch as ONE host-validated world event and replays
-// it on every other peer; the native dish-arrival chain then re-arms the
-// downloader, the letter-board lamps, and the signalFound trigger everywhere
-// with zero extra wire. MTA shape: a one-shot world event relayed host-
-// authoritatively + local simulation of its deterministic consequences (the
-// CClientExplosionManager / projectile precedent).
+// its IDENTITY half on every other peer (coord_signalData + sky-row delete +
+// machine reset + ping sound). Since L4 (v113) the dish THEATER half is
+// host-only: the HOST replays StartMovingAll and streams poses (dish_sync);
+// a CLIENT never slews from wire, and its own unpreventable ping slews are
+// killed-with-cleanup right after the catch payload is sent
+// (dish_sync::KillOwnPingSlews). The download ARM rides the host-authored
+// DishArm lane (host polarity) -- the v70 pending-adopt and the joiner
+// direct-arm are RETIRED (RULE 2).
 //
-// Catcher detection (1 Hz poll, claim holder only): a row vanished from
-// `signals` AND a dish isMoving count ROSE in the same poll window -- the
-// dish edge is the catch-success signature (expiry deletes rows without
-// moving dishes; a FAILED ping writes coord_signalData but moves no dish;
-// and unlike the RE doc's struct-changed AND-detector this also catches a
-// success on an identity the struct already pointed at from an earlier
-// failed ping). kind=1 (cleared): the 'Signal data deleted' button =
-// coord_signalData.objectName -> 'None' edge on ANY peer (unclaimed trust,
-// matching the physical button's authority model).
+// Catcher detection (1 Hz poll, claim holder only, since L4): the
+// coord_signalData IDENTITY TUPLE (x,y,z,frequency | objectName) CHANGE-edge
+// to a non-None state. Derivation (impl-RE SS7/SS8): coord_signalData has
+// exactly TWO native writers -- ping-success (:= row) and the delete chain
+// (:= None) -- and our wire writes are apply+primed, so a local change under
+// the claim IS a catch, definitionally. (The old MovingCount rising-edge
+// signature is retired: it was indirect, raced the L4 kill sweep, and ATE a
+// catch pinged while dishes already moved.) kind=1 (cleared): the 'Signal
+// data deleted' button = objectName -> 'None' edge on ANY peer (unclaimed
+// trust, matching the physical button's authority model).
 //
 // Game thread throughout.
 
@@ -41,19 +45,19 @@ namespace coop::signal_catch_sync {
 
 void Install(coop::net::Session* session);
 
-// 1 Hz: the catch + cleared detectors, the pending download-adopt apply, and
-// recent-catch TTL pruning. Cheap when idle (one struct read + one array
-// walk; dish reads only while holding the desk claim).
+// 1 Hz: the catch + cleared detectors and recent-catch TTL pruning. Cheap
+// when idle (one struct read).
 void Tick();
 
 // Wire ingest (both roles). HOST: validates kind=0 against the desk-claim
-// holder, replays locally, rebroadcasts to everyone but the catcher. CLIENT:
-// replays (transport-trusted -- clients only receive from the host).
+// holder, replays locally (incl. the StartMovingAll theater), rebroadcasts to
+// everyone but the catcher. CLIENT: replays the identity half only
+// (transport-trusted -- clients only receive from the host).
 void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot);
 
-// HOST: if coord_signalData is armed, send the joiner one kind=0 replay so
-// its dishes slew (or, with no dish in flight, its downloader arms directly);
-// the DeskState adopt's dlDecoded/dlPolarity then true up its progress.
+// HOST: if coord_signalData is armed, send the joiner one kind=0 replay for
+// the signal IDENTITY (the poses/arm ride dish_sync's snapshot + DishArm rows
+// on the same ordered lane, queued right after this).
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Called by console_state_sync BEFORE applying an assembled SkySignalState
@@ -62,15 +66,6 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // from `rows` (a snapshot sent before the host processed the catch must not
 // resurrect the row).
 void NoteIncomingSnapshot(std::vector<ue_wrap::space_renderer::SignalRow>& rows);
-
-// Called by console_state_sync's OnDeskState on an adopt=1 snapshot: queue
-// the host's download progress; applied via formDownload(decoded, polarity)
-// + the resDetect raw write once OUR download machine arms (mesh valid --
-// before that, the native mesh-invalid pulse would zero resDetect again).
-// Safe to leave armed: coord_signalData=='None' implies host decoded==0/-1
-// (the clear chain rebuilds DLData zeroed), so a stale pending is an
-// idempotent no-op over a fresh arm.
-void SetPendingDownloadAdopt(float decoded, int32_t polarity, float resDetect);
 
 void OnDisconnect();
 

@@ -163,6 +163,16 @@ bool ArmDownloadFromSignal(float decoded, int32_t polarity);
 // joiner adopt carries). False if unresolved.
 bool ReadDownloadProgress(float& decoded, int32_t& polarity);
 
+// v113 (L4): the DL identity FName raw bits (DL_SignalDownloadDLData.signal,
+// signal_dynamic kOff_signal) for the host arm poll's change-compare.
+// Compare-only -- never rendered to a string.
+bool ReadDLSignalKey(uint64_t& out);
+
+// v113 (L4): reflected objectRenderer_C::deleteSignalActor() (the display-
+// actor half of the native un-arm chain @33832 -- our ResetDownloadMachine
+// alone leaves the rendered signal object alive). Public|BlueprintCallable.
+bool DeleteSignalActor();
+
 // Raw DL_resDetecPercent write (the joiner adopt's needle catch-up -- applied
 // AFTER the machine arms; while the mesh is invalid the native @4602 pulse
 // zeroes it again).

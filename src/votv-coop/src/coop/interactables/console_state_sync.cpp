@@ -212,15 +212,9 @@ void ScalarsToPayload(const CD::Scalars& sc, uint8_t adopt,
     p.activeComp = sc.activeComp ? 1 : 0;
     p.coordIsPing = sc.coordIsPing ? 1 : 0;
     p.adopt = adopt;
-    // dlDecoded/dlPolarity: ADOPT-ONLY consumers (the joiner catch-up); filled
-    // on every send for simplicity, ignored by live appliers.
-    float decoded = 0; int32_t polarity = -1;
-    if (CD::ReadDownloadProgress(decoded, polarity)) {
-        p.dlDecoded = decoded;
-        p.dlPolarity = polarity;
-    } else {
-        p.dlPolarity = -1;
-    }
+    // v113 (RULE 2): the v70 ADOPT-ONLY dlDecoded/dlPolarity fields are gone --
+    // the joiner's arm rides the DishArm connect row (host polarity), and
+    // decoded/resDetect ride the standing 10 Hz DeskSimPose stream.
 }
 
 CD::Scalars PayloadToScalars(const coop::net::DeskStatePayload& p) {
@@ -503,7 +497,7 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
     // discipline -- a NaN filter offset/cooldown must never land in BP floats).
     const float vals[] = { p.dlPoFilterOffset, p.dlFrFilterOffset, p.dlPoFilterSpeed,
                            p.dlFrFilterSpeed, p.dlDownloading, p.dlResDetecPercent,
-                           p.coordCooldown, p.dlDecoded };
+                           p.coordCooldown };
     for (float v : vals)
         if (!std::isfinite(v)) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
@@ -518,13 +512,9 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
         // Prime the INPUT lane's poll baselines so the seeded values never
         // read as local edges (echo-proof; same-GT-task atomicity).
         coop::desk_input_sync::PrimeBaselines();
-        // dlDecoded/dlPolarity are ADOPT-ONLY (live decoded self-accrues on
-        // every armed peer -- see the protocol v70 note): the joiner queues
-        // the host's progress and applies it once its own machine arms.
-        if (s->role() == coop::net::Role::Client) {
-            coop::signal_catch_sync::SetPendingDownloadAdopt(
-                p.dlDecoded, p.dlPolarity, p.dlResDetecPercent);
-        }
+        // v113 (RULE 2): the v70 pending-adopt is RETIRED -- the joiner's arm
+        // (with the HOST polarity) rides a DishArm connect-replay row on the
+        // same ordered lane; decoded/resDetect ride the 10 Hz DeskSimPose.
     }
 }
 
