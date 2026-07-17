@@ -10,8 +10,15 @@ Fact bases: `votv-signal-chain-units-RE-2026-07-16.md`, `votv-dish-rotation-RE-2
 went RELIABLE `DishArm=99` with host polarity, NOT DeskSimPose ch8 — the ch8 float cannot carry the
 per-peer-RNG polarity fact; and the 0.5 Hz host calibration sweep was replaced by a SYMMETRIC 1 Hz
 diff-poll lane `DishCalib=101` — the impl-RE found client-side legit calibration writers a host
-sweep would echo-fight). **L5..L9 remain DESIGN** (nothing built). PRECONDITION v112 shipped
-(`7d57478f`).
+sweep would echo-fight). **L7 = BUILT v114** (2026-07-17, commit `ba8ce297` — impl design of
+record `votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md`, which REVISES three lines of this doc's
+§L7: the `active`-toggle event is RETIRED (already on the ApplianceState lane); "the HOST adopts
+the inserted progress and owns the accrual" became a both-peers-accrue + host ReelPose CORRECTOR
+(the park is un-holdable: upd() re-applies SetActorTickEnabled everywhere); and "eject spawns via
+the generic lanes" was measured HALF-TRUE — the client half needed ReelEjectIntent=104 + the
+PropSpawn savedScalar birth channel). **L5/L6/L8/L9 remain DESIGN** (nothing built; verified
+against HEAD `3fd39d22` — no drive/deck/physmods/meadow lane modules exist in src).
+PRECONDITION v112 shipped (`7d57478f`).
 
 ## The cross-cutting rules this design stands on
 
@@ -89,6 +96,10 @@ sweep would echo-fight). **L5..L9 remain DESIGN** (nothing built). PRECONDITION 
   has no seek; documented).
 
 ## L7 — TAPE CADDY + DAILY TASK (OPEN-7): regime-bounded host sim
+> **BUILT v114 (`ba8ce297`) per `votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md`** — with the
+> three deviations named in the Status header (toggle retired to the appliance lane; corrector
+> instead of host-adopted accrual; client-eject birth via ReelEjectIntent + savedScalar). The
+> section below is the ARCH-level frame as designed; the impl doc is the as-built truth.
 
 - **Regime boundary:** transitions across the -1.0 empty sentinel (insert/eject, both
   directions) AND the `active` record toggle (measured: accrual gated on `active` @2022) =

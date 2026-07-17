@@ -114,11 +114,14 @@ Every signal element earns its row in `TRACKER.md` only when it reaches VERIFIED
 
 ## Status at a glance → `TRACKER.md`
 
-The living element-by-element ledger is **[TRACKER.md](TRACKER.md)**. Headline (2026-07-16 night):
+The living element-by-element ledger is **[TRACKER.md](TRACKER.md)**. Headline (2026-07-17):
 the transport-layer elements are SHIPPED (occupancy, desk scalars, dish-aim, saved signals, cursor
 v109 SMOOTH, clock v110, freq/pol + download-rate SIM v111, the BUGS-v111 fix v112, **L4 dish
-kinematics v113** — host-auth pose mirror + host-polarity ARM + symmetric calibration, commit
-`f204c0f7`, smoke PASS). **NOT hands-on: v112 AND v113 both await the user take** (batched;
-per-lane logs keep attribution). The v111 hands-on FAILED on 5 fronts — all designed out in v112
+kinematics v113** commit `f204c0f7`, **L7 tape caddy + daily task v114** — presser reel-slot
+edges + host accrual corrector + taskNew host mirror + the client-eject prop birth, commit
+`ba8ce297`, smoke PASS). **NOT hands-on: v112, v113 AND v114 all await the user take** (batched —
+THREE proto layers stack; runbook `research/handson_runbook_2026-07-17_desk_v114.md`; per-lane
+logs keep attribution). The v111 hands-on FAILED on 5 fronts — all designed out in v112
 (`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining OPEN: OPEN-1 (cursor 5fps), OPEN-2
-(coordLog cluster), OPEN-3 (upgrade-sync), OPEN-5..9 (the downstream chain; L4 is BUILT).
+(coordLog cluster), OPEN-3 (upgrade-sync), OPEN-5/6/8/9 (L4+L7 are BUILT; the train order is
+L6 -> L8 -> L5 -> L9).

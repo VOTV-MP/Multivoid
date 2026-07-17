@@ -260,6 +260,29 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   full-24-dish packets fit (168/196/100 B). Oversize-by-design = the chunking precedents, not a
   bigger datagram. *Look FIRST:* protocol.h QuantDeg + the static_asserts.
   `memory/lesson_wire_packet_caps_check_first_quantize_u16.md`
+- **A CLIENT-born Aprop_C crosses at the SPAWN seam, never "at place"** — client spawns don't
+  broadcast (local ghost) and a plain drop/throw fires NO FinishSpawn (only pocket→place does);
+  the reusable seam = the F2 client FinishSpawn drain (Init already minted the NewGuid key) →
+  class-gated intent → `HostSpawnPlacedProp` born-ASLEEP → the held-prop stream drives it →
+  adopt-by-key. First instance: ReelEjectIntent=104 (L7 v114 `ba8ce297`). *Look FIRST:*
+  `votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md` D4 + prop_drop_intent.cpp.
+  `memory/lesson_client_prop_birth_crosses_at_spawn_seam_not_place.md`
+- **A save-scalar birth channel must be filled at EVERY birth/author path** (live express + join
+  snapshot + container extract + BOTH client intent kinds) via ONE shared per-class reader —
+  missing one path = a CDO-default mirror re-broadcast as truth (the L7 correctness CRITICAL:
+  pocket→place respawned a blank tape). NEXT class with per-prop save state = the L5 drive
+  payload. *Look FIRST:* prop.h savedScalar block; grep `ReadSavedScalarForClass` for the fill
+  set. `memory/lesson_saved_scalar_birth_channel_covers_every_birth_path.md`
+- **When the prop's own refresh verb re-applies `SetActorTickEnabled`, a client-tick PARK is
+  un-holdable — ship the host exact-snap CORRECTOR instead** (valid only for RNG-free,
+  deterministic, clamped sims; sawtooth ≤ 1 native increment). Pick rule + instance table in
+  `docs/COOP_WORLD_PROP_DIVERGENCE.md`; as-built ReelPose=40 (L7). *Look FIRST:* the L7 design
+  D2. `memory/lesson_unholdable_tick_park_use_corrector_shape.md`
+- **Rollover- and sell-derived saveSlot state is HOST-ONLY FOR FREE** (client daynightCycle
+  frozen at TimeScale=0 + client drone tick suppressed → createNewTask/processTask/sell never
+  run client-side) — census the writers, then ship a host MIRROR (TaskNewState=103 shape), not
+  an intent lane. Applies to L9 meadow / any daily-graded state. *Look FIRST:*
+  `memory/lesson_rollover_sell_state_host_only_for_free.md` (the census) + daily_task_sync.cpp.
 - **Pre-world subsystems Install at StartCoopSession, NOT world-gated.** `memory/feedback_preworld_install_at_startcoopsession.md`
 - **When a release VERB can't be caught, STREAM THROUGH the state.** `memory/lesson_stream_through_release_not_verb.md`
 - **An e2e assert must DISCRIMINATE the axis it claims.** `memory/lesson_e2e_assert_must_discriminate_the_axis.md`
@@ -549,7 +572,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **`GetActorLocation`/`GetComponentLocation` are UFunction DISPATCHES, not raw reads** — never bulk-call
   per-tick over thousands of actors (invisible on a fresh save, hitches the host on a mature world);
   throttle / pre-filter / read the raw transform. *Look FIRST:* `engine.cpp GetActorLocation`. `memory/lesson_getactorlocation_is_a_ufunction_dispatch.md`
-- **Per-tick `GUObjectArray` walk: cheap class check BEFORE `NameOf`.** `memory/lesson_full_array_walk_cheap_filter_before_nameof.md`
+- **Per-tick `GUObjectArray` walk: cheap class check BEFORE `NameOf`.** COROLLARY (v114): a
+  class resolver reachable from another module's hot path (savedScalar reader at every PropSpawn
+  express) carries its negative-result backoff INSIDE itself — call-site throttles don't survive
+  new callers. `memory/lesson_full_array_walk_cheap_filter_before_nameof.md`
 - **A periodic FPS hitch by PERIOD COINCIDENCE is not causation** — measure the real source. `memory/lesson_periodic_hitch_not_the_walk_by_period_coincidence.md`
 - **A fixed-capacity hook table + ASYMMETRIC roles = a half-working fix.** `memory/lesson_hook_table_capacity_asymmetric_peers.md`
 - **ImGui COMPOSITE widgets: commit via a DEBOUNCE on value-changed.** `memory/lesson_imgui_composite_commit_debounce.md`

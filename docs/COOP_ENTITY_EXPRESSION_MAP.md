@@ -55,7 +55,16 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
   and on a receiver write the host's Key via `setKey` before FinishSpawningActor) **[V/RD]**; a host eid
   rides alongside.
 - **Client never authors a save-loaded Aprop_C** (`prop_lifecycle.cpp:193` `IsDescendantOfProp → return`) —
-  host-authoritative. **[V]**
+  host-authoritative. **[V]** Two INTENT doors route around it, host as the sole author: the F2
+  **PropDropIntent** (a parked-key pocket→place, v106) and — v114 (L7, `ba8ce297`) — **ReelEjectIntent**
+  (a client caddy/reelbox EJECT births a reel in-hand; the unparked reel-class client FinishSpawn in the
+  F2 drain sends the intent; the host `HostSpawnPlacedProp`s it born-ASLEEP, class-whitelisted to the
+  `Aprop_reel_C` lineage — NOT a general client-spawn door) **[AS-BUILT, smoke]**.
+- **Save-scalar at birth (v114):** per-prop save state (`struct_save.mFloat[0]`-class — the reel's
+  `Progress @0x364`) rides `PropSpawnPayload.savedScalar` (+flag 0x40) on EVERY birth path — live express,
+  join snapshot, container extract, BOTH intent kinds — via ONE shared reader
+  (`prop::ReadSavedScalarForClass`); ONE mirror-birth apply. Missing ANY path = a CDO-default mirror whose
+  value a peer re-broadcasts as truth (the correctness-audit CRITICAL of the L7 build). **[AS-BUILT]**
 - **Destroy:** engine `K2_DestroyActor` **PRE** → `PropDestroy(key,eid)` **[V]**; BP-internal vanishes
   (truck/cull/LifeSpan, EX_CallMath) → the host **reaper death-watch** (`ReapDeadLocalPropElements` →
   explicit `PropDestroy(eid)`, kerfur-skipped) **[V]**.

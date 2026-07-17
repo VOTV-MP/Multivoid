@@ -63,12 +63,22 @@ mutation derived from a **synced global clock** (`getTimeSeconds`, day/night, we
 diverge (the clock is already synced). So before counting an instance, **measure whether its timer is
 a local accumulator or a synced-clock read.**
 
-- Confirmed instances so far: **N=1** (concreteBucket). customWall a possible 2nd (unmeasured).
+- Confirmed instances so far: **N=2** — concreteBucket (still un-built) and **wallunit_tapes
+  (BUILT v114 `ba8ce297`, 2026-07-17)**. customWall a possible 3rd (unmeasured).
+- **The v114 as-built shipped a SECOND transport for the class — the host CORRECTOR, not a park.**
+  The wallunit's `upd()` re-applies `SetActorTickEnabled(active)` at every native verb AND every
+  wire apply, so a client-tick park is UN-HOLDABLE without a site-list or a verb hook; because the
+  accrual is RNG-free/deterministic/FClamp'd, host-owns-progression is delivered instead by a 1 Hz
+  host exact-snap corrector (`ReelPose=40`, sawtooth <= 1 native increment;
+  `votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md` D2). **Pick per instance:** park (the L4 dish
+  shape) when the sim is RNG-driven/un-boundable OR the tick stays off once killed; corrector when
+  a native refresher keeps re-enabling the tick and the sim is deterministic+clamped.
 - **Do NOT** build a generic per-prop scalar channel or park every keyed-prop brain yet — rule-of-three
   (OPUS §11) is unmet, and park-every-brain has real blast radius (freezes harmless local cosmetics —
   idle anims, flicker — and breaks tick-dependent behavior in save-loaded natives).
-- Fix the **confirmed instance** (concreteBucket) by extending the pile pattern; **document the class**
-  (this file); generalize into a primitive only once 2-3 measured same-mechanism instances exist.
+- Fix the remaining **confirmed instance** (concreteBucket) by extending the pile pattern OR the v114
+  corrector shape (measure which per the pick rule above); generalize into a primitive only once a
+  3rd measured same-mechanism instance lands.
 
 ## Not in the class: STATIC world-state (e.g. world rules) rides the save cleanly
 
