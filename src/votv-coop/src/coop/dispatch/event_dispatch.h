@@ -43,11 +43,20 @@ bool HandleEntityEvent(net::Session& session,
 // Keyed device-state family: DoorState/LightState/ContainerState/GarageDoorState/
 // ApplianceState (the shared KeyedTogglePayload case), KeypadState,
 // PowerControlState, AtvState, DroneState, WindowCleanState, GrimeState,
-// TrashPileState, KerfurConvert (v78 client apply), email/signal/comp/voice.
+// TrashPileState, KerfurConvert (v78 client apply), DeviceClaim/Sleep/email/
+// inventory/voice.
 // `localPlayer` threads into the KerfurConvert client apply (prop teardown/materialize).
 bool HandleStateEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg,
                       void* localPlayer);
+
+// Signal-pipeline family (2026-07-18 extraction; every future signal-chain
+// lane L6/L8/L5/L9 lands here): SkySignalState, SkySignalCatch, LaptopState,
+// DishArm/DishSnapshot/DishCalib, ReelSlot, TaskNewState, DeskLogLine,
+// DeskState, DeskInput, DeskScanEvent, DeskSndFx, DishAimState,
+// SavedSignalAppend/Delete, CompState/CompData.
+bool HandleSignalEvent(net::Session& session,
+                       const net::Session::ReliableMessage& msg);
 
 // CLIENT->HOST intent/request family (2026-07-10 extraction): OrderRequest,
 // DoorOpenRequest, KerfurConvertRequest, KerfurCommand, GrabIntent,

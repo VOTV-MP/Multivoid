@@ -512,6 +512,7 @@ void Update(net::Session& session, void* localPlayer) {
             // every family and take priority via their own case labels.
             if (HandleEntityEvent(session, msg, localPlayer)) break;
             if (HandleStateEvent(session, msg, localPlayer)) break;
+            if (HandleSignalEvent(session, msg)) break;
             if (HandleIntentEvent(session, msg, localPlayer)) break;
             if (HandleWorldEvent(session, msg)) break;
             // Audit-fix 2026-05-25 LATE +5h: log-and-drop unknown ReliableKind
