@@ -41,6 +41,26 @@ PRECONDITION v112 shipped (`7d57478f`).
    identity MEMORY reads only (no engine calls); heavy state is read at the net-pump barrier.
    **HALT GATE: the 0x45 frequency-counter probe with desk+laptop matchers MUST run and pass
    before any L5/L9 code** (the same run measures meadow row/image sizes).
+   **GATE RUN 2026-07-18 (gnatives_probe v4, 120 s autonomous LAN smoke, host log 22:28-22:30)
+   — PASS with one matcher rejection + one measurement miss:**
+   - Opcode census (static, scan_call_opcodes over UAssetAPI JSONs w/ resolved imports): ALL
+     candidate verbs = EX_LocalVirtualFunction (0x45) — saveSignal/deleteSignal x3 each +
+     comp_uploadData (analogDScreenTest), addSignal x2 (analogDScreenTest), removeSignal x1 +
+     sortSignal x2 (ui_laptop uber; sortSignal IS the "move" verb, moveUp/moveDown -> uber ->
+     sortSignal), putDriveIn x2 / drivePulledOut x3 (driveSlot + prop_drive).
+   - Ambient frequency (coop steady state, no desk occupancy): saveSignal/deleteSignal/
+     removeSignal/sortSignal/comp_uploadData/putDriveIn/drivePulledOut = ZERO hits -> clean
+     dirty-mark matchers. addSignal = 3 hits/2 min (boot/world-load window; a same-FName
+     collision from a non-laptop class — consumer callback MUST class-check ctx, the standing
+     doctrine). **upd = ~238/s ambient (boot burst on uicomp_gameRuleSlot_C; steady ~238/s)
+     -> REJECTED as a matcher.** Consequence: the eraser wipe (EX_Let + upd, no named verb)
+     is detected by the 1 Hz payload poll ONLY (already the design's safety sweep).
+   - Perf: widened 11-name filter + full diag = 0.010-0.015 ms/frame@120 (gate <=0.1) — PASS.
+   - SIZES: store offsets resolved [V] (gamemode.savedSignals_0=0x968, saveSlot
+     .savedSignals_0=0x680, .savedSignals_comp_0=0x690) but s_1234 held 0 rows in all three
+     stores -> **image-blob size NOT measured; L9 must NOT depend on a bounded image size —
+     route the ADD payload through blob_chunks whenever it exceeds the packet budget** (the
+     doc already names blob_chunks as the overflow path).
 3. **PumpBarrier() = the structural ordering owner:** one pump function drains ALL VM-capture
    emits, THEN runs ALL poll sweeps. Lanes register (emit, sweep) pairs. A capture emit advances
    the corresponding poll baseline (never a double-emit; the sweep only covers matcher gaps).

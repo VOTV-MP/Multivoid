@@ -195,13 +195,21 @@ bool ValidateTable(const std::uintptr_t* tbl) {
 bool EnsureInstalled() {
     if (g_installed.load(std::memory_order_acquire)) return true;
 
+    // v119 perf-audit F-1: AOB resolution is process-immutable -- a failed
+    // resolve can never succeed later, so LATCH the failure (log-once) or a
+    // per-tick registration retry re-runs the full-image scan forever.
+    static std::atomic<bool> s_installFailed{false};
+    if (s_installFailed.load(std::memory_order_relaxed)) return false;
+
     g_gnatives = ResolveGNatives();
     if (!g_gnatives) {
-        UE_LOGE("[vm_dispatch] GNatives AOB unresolved -- substrate NOT installed");
+        s_installFailed.store(true, std::memory_order_relaxed);
+        UE_LOGE("[vm_dispatch] GNatives AOB unresolved -- substrate NOT installed (latched)");
         return false;
     }
     if (!ValidateTable(g_gnatives)) {
-        UE_LOGE("[vm_dispatch] GNatives@%p failed validation -- substrate NOT installed",
+        s_installFailed.store(true, std::memory_order_relaxed);
+        UE_LOGE("[vm_dispatch] GNatives@%p failed validation -- substrate NOT installed (latched)",
                 (void*)g_gnatives);
         return false;
     }

@@ -33,9 +33,9 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | U2 desk gauge/detector sounds | vol=match×\|speed\|, pitch=Lerp(match); loops on toggles | derived (needs speeds mirrored) | occupant/host | speeds on NO lane | **BUG-3** (data starvation) |
 | U2 save/delete/lid verbs | SAVE→savedSignals_0 (id mint); DELETE aborts active signal; lid=collision gate | 2 intent | host-gate | `SavedSignalAppend/Delete 58/59` cover the list; capOpened/delete-active NOT | **PARTIAL** |
 | U3 play deck (playback/volume/SARV/scroll) | world-audible signalSound; display remaps | presser-authored edge events (seam) | presser (any peer may stop) | `PlayDeckEvent 107` (`deck_play_sync`) + volume/index/toggle on `DeskInput 97` (v112) | **AS-BUILT v117 (2026-07-18)** — L6 built per `votv-deck-play-L6-impl-DESIGN-2026-07-18.md` (7-round /qf "that holds"): detection at the v115 audio Func seam (signalSound Activate x1 = playSignal / Deactivate x1 = stopSound, whole-asset census; Deactivate = the 4th Func patch), GEN GUARD decouples correctness from fin()'s inferred PE visibility, mirrors replay reflected playSignal/stopSound under the shared wire guard, selectIndex rides the v112 apply author. SARV/scroll/volume were ALREADY on DeskInput (stale-open half of this row). Smoke x2 + e2e self-test chain proven; audits 0 CRIT; NOT hands-on (the audio positive = the take). Residuals a-e in the design doc |
-| Drive payload `prop_drive.Data_0` | moves list↔drive↔comp; eraser wipes; LED from payload | 2 intent / state-mirror (tbd) | host (tbd) | — none (`grep prop_drive` = 0 hits) | **OPEN-5** |
-| driveSlot occupancy (slot FSM) | freeze+teleport, slot/drive pointers, anti-bounce latch | state-mirror (tbd) | tbd | — (generic prop pose only) | **OPEN-5** |
-| signalDriveEraser | 3 s wipe → payload zeroed | 2 intent (tbd) | tbd | — | **OPEN-5** |
+| Drive payload `prop_drive.Data_0` | moves list↔drive↔comp; eraser wipes; LED from payload | state-mirror | writer-authored, host store | `DrivePayload 110` | **AS-BUILT v119** |
+| driveSlot occupancy (slot FSM) | freeze+teleport, slot/drive pointers, anti-bounce latch | state-mirror | any-peer lines, host canonical | `DriveSlotState 109` | **AS-BUILT v119** |
+| signalDriveEraser | 3 s wipe → payload zeroed | poll-detected (verbless wipe) | eraser-side peer | `DrivePayload 110` | **AS-BUILT v119** |
 | U4 comp pane | RNG rate sim; level-up re-mints ID; upgrade gate | 4 single-sim | occupant | `CompState 60` / `CompData 61` | **AS-BUILT** (payload/slot halves = OPEN-5) |
 | physMods (desk modules) | 12-slot SET (byte unique); plug destroys the held module; UNPLUG (hit the socket) rebirths it into the hand; hot-op in EITHER direction explodes (presser-local, measured); gates tape speed/lamps/laptop-fwd/weather shield | value-ops + host-canonical array | host (canonical) / presser (ops) | `PhysModsState 108` (`physmods_sync` + `ue_wrap/desk/phys_mods`) | **AS-BUILT v118 (2026-07-18)** — L8 per `votv-physmods-L8-impl-DESIGN-2026-07-18.md` (8-round /qf "that holds"; the arch's slot-deltas REVISED to value-ops + canonical — the SET fact makes layout divergence structurally impossible): 1 Hz diff poll + drain-before-adopt; deny/refund op (dup plug refunded, raced unplug ghost swept + birth reaped); client unplug births via the widened kind-104 whitelist (IsChildOf(Aprop_physModule_C)); consume rides the bidirectional destroy seam (zero lane code). Smoke PASS + join canonical proven; NOT hands-on |
 | Meadow DATABASE (`saveSlot.savedSignals_0/_comp_0`) | U3 SAVE copies rows in; laptop plays/deletes/moves | 2 intent (tbd) | host (tbd) | — (join save-transfer only) | **OPEN-9** |
@@ -220,7 +220,18 @@ Ambient tickers (`ticker_disher` timing, `ticker_dishUncalib` target pick) are p
 RNG-authority rows. Identity for logging: `Index` + `techName` (NATO from Bravo, no Alpha) +
 `Key`. User ask 2026-07-16: per-dish logging (cls+key+loc rule).
 
-### OPEN-5 · The drive chain (payload + slot + eraser) — RE'd, zero lanes
+### OPEN-5 · The drive chain — **BUILT v119 (2026-07-18/19 night; smoke x2 + connect-seed payloads proven, NOT hands-on)**
+
+> **AS-BUILT:** `coop/interactables/drive_sync` + `ue_wrap/desk/drive_chain` per
+> `votv-drive-chain-L5-impl-DESIGN-2026-07-18.md` (7-round /qf + 4 build deviations, all
+> evidence-driven — see the doc's BUILD OUTCOME). Three lanes: DriveSlotState=109 (idempotent
+> any-peer slot FSM lines, host canonical; the deterministic eject-latch completion),
+> DrivePayload=110 (data_0 rows via the v65 signal_wire codec sans image; 0x45 dirty-marks +
+> 1 Hz diff poll; authored-birth broadcast-at-adoption), RackState=111 (prop_driveRack 16-row
+> storage: index ops -> host + canonical + CONTENT-correlated deny/reap). The pre-build text
+> below is kept as fact-base context.
+
+#### (pre-L5 fact base, as it read before v119)
 `prop_drive.Data_0 @0x550` (the signal payload incl. the identity string) is mutated by FOUR
 verbs (deck import/export, comp swap, eraser wipe, level-up) — all EX_Local*/inline, NO wire
 lane (`grep prop_drive src/votv-coop` = 0). The mirror drive keeps a stale payload → wrong
@@ -293,6 +304,18 @@ save-transfer only, no live lane. Same intent-CRDT shape as the shipped
 ---
 
 ## CHANGELOG
+- **2026-07-19 night (v119, L5 drive chain)** — the 0x45 HALT gate run + PASSED (gnatives_probe
+  v4: desk/drive/laptop matchers, upd REJECTED ~238/s ambient, SIZES offsets [V] but 0 rows in
+  s_1234 -> L9 image size unmeasured, blob_chunks mandated). L5 built per its own 7-round /qf
+  (idempotent slot-state lines + host canonical REVISING the arch's authored events; eject
+  ordering RETRACTED to deterministic latch-completion; the RACK discovered IN scope — the L8
+  canonical shape on 0x70 rows; the slotted-latch satisfied by the standing frozen-pose gate).
+  DriveSlotState=109/DrivePayload=110/RackState=111, proto 119; kind-104 whitelist widened to
+  drives. Smoke x2 PASS + connect-seed payloads proven cross-peer in-log; audits: perf 0 CRIT
+  (F-1/2/3/6/7 folded), correctness 1 CRIT (stale pending-replay -> per-role coalesce +
+  baseline-stash drop) + 1 MAJOR (slot-only reap -> CONTENT-correlated taken-ring/payload-hash
+  reap; HostShouldReapDriveBirth retired) — both fixed pre-handoff. drive_sync.cpp 1007 LOC >
+  soft cap: rack extraction QUEUED as its own commit. OPEN-5 flipped AS-BUILT.
 - **2026-07-18 (v118 `45a886a4`, L8 physMods)** — L8 built per its own 8-round /qf
   (value-ops + host-canonical array REVISING the arch's slot-deltas; the unplug path
   discovered — the R1 reframe; the explosion measured presser-local — an inference

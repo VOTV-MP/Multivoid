@@ -705,11 +705,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 118; // v118 (2026-07-18, L8 physMods): NEW
-                                                  // ReliableKind PhysModsState=108 (value-ops
-                                                  // + host-canonical module array). A peer
-                                                  // without the kind silently drops the lane;
-                                                  // hard-close at the gate.
+inline constexpr uint16_t kProtocolVersion = 119; // v119 (2026-07-18, L5 drive chain): NEW
+                                                  // ReliableKinds DriveSlotState=109 (idempotent
+                                                  // slot-FSM state lines), DrivePayload=110
+                                                  // (drive Data_0 rows, blob chunks) and
+                                                  // RackState=111 (rack ops + host canonical).
+                                                  // A peer without the kinds silently drops the
+                                                  // lanes; hard-close at the gate.
 // v117 (2026-07-18, L6 deck playback): NEW ReliableKind PlayDeckEvent=107 (unit-3
 // playback play/stop edges at the audio Func seam, gen-guarded).
 // v116 (2026-07-17 eve, the catch-attribution retire):
@@ -2379,6 +2381,37 @@ enum class ReliableKind : uint8_t {
                        //     bidirectional destroy seam; the spawn watcher; the widened
                        //     client-birth class whitelist). NOT client-relayed.
                        //     Payload: PhysModsStatePayload (16 B).
+    DriveSlotState = 109, // v119 (drive_sync -- L5): IDEMPOTENT drive-slot FSM state lines
+                       //     (desk play/comp ChildActor slots + the eraser's slot -- slot
+                       //     actors have NO eids; keyed by role). Design: 7-round /qf
+                       //     2026-07-18 (votv-drive-chain-L5-impl-DESIGN). ANY peer
+                       //     announces its organic slot transitions (the receiver-side
+                       //     overlap SELF-SIMULATES inserts; ejects never self-sim);
+                       //     receivers pre-check-then-apply (reflected putDriveIn /
+                       //     drivePulledOut + the deterministic eject-latch completion);
+                       //     HOST canonical on conflict + 1 Hz host sweep + connect
+                       //     broadcast. Relay-whitelisted. Payload: DriveSlotStatePayload
+                       //     (8 B).
+    DrivePayload = 110, // v119 (drive_sync -- L5): one prop_drive's Data_0 payload row
+                       //     (Fstruct_signalDataDynamic sans image -- the v65 signal_wire
+                       //     codec + BlobChunkPayload chunks, the 58/59 precedent). Blob =
+                       //     {u32 driveEid} + signal_wire row. Writers detected by 0x45
+                       //     dirty-marks (saveSignal/deleteSignal MARK-ALL, comp_uploadData,
+                       //     rack putDriveIn) + a 1 Hz baseline poll (eraser wipe is
+                       //     poll-only); emission diff-gated; birth authors broadcast at
+                       //     adoption. Receivers: WriteStructLive + reflected upd() + prime,
+                       //     one GT task. Relay-whitelisted.
+    RackState = 111,   // v119 (drive_sync -- L5): prop_driveRack 16-row storage (the L8
+                       //     value/canonical shape generalized to 0x70 rows, index-keyed
+                       //     because rack rows are positional). Blob = RackStateHead {u32
+                       //     rackEid, u8 op(0=set 1=take 2=deny 3=canonical), u8 idx, u16
+                       //     _pad} + row blob (set) / 16x{u8 has + row} (canonical). Ops
+                       //     peer->host HOST-TERMINAL (host serializes; occupied/absent
+                       //     races -> deny + the taker destroys its local ghost / host
+                       //     reaps an adopted birth via the deny TTL); host canonical
+                       //     after every apply; receivers write rows + reflected gen() +
+                       //     prime. NOT client-relayed (host-terminal ops, host-authored
+                       //     canonical).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -4439,6 +4472,32 @@ struct PhysModsStatePayload {
     uint8_t bytes[12];  // 12 -- op 2: the canonical array; else zero
 };
 static_assert(sizeof(PhysModsStatePayload) == 16, "PhysModsStatePayload must be 16 bytes");
+
+// v119 (L5): one idempotent drive-slot state line. role: 0=desk play slot,
+// 1=desk comp slot, 2=eraser slot (+censusIdx for a hypothetical multi-eraser
+// world; 0 today). occupied=1 => driveEid names the slotted drive; 0 => empty
+// (driveEid = the LAST known occupant, receiver uses it for the latch
+// completion). Announced by ANY peer on its organic slot FSM edges; host
+// re-announces canonically on conflict.
+struct DriveSlotStatePayload {
+    uint8_t  role;       // 1 -- ue_wrap::drive_chain::kRole*
+    uint8_t  occupied;   // 1
+    uint16_t censusIdx;  // 2 -- eraser census index (0 today)
+    uint32_t driveEid;   // 4
+};
+static_assert(sizeof(DriveSlotStatePayload) == 8, "DriveSlotStatePayload must be 8 bytes");
+
+// v119 (L5): the RackState blob HEAD (rides inside BlobChunkPayload chunks,
+// followed by the row payload -- see ReliableKind::RackState).
+struct RackStateHead {
+    uint32_t rackEid;  // 4
+    uint8_t  op;       // 1 -- 0=set{idx,row} 1=take{idx} 2=deny{idx, orig op in _pad0}
+                       //      3=canonical{16 x (u8 has + row)}
+    uint8_t  idx;      // 1
+    uint8_t  _pad0;    // 1 -- op 2: the denied ORIGINAL op
+    uint8_t  _pad1;    // 1
+};
+static_assert(sizeof(RackStateHead) == 8, "RackStateHead must be 8 bytes");
 
 // v113 (L4 dishes): the host->all dish POSE stream (DishPose=39, unreliable,
 // newest-wins by header seq). Movers-only rows at 4 Hz while any dish slews +

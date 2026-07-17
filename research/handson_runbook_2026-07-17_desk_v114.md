@@ -1,8 +1,28 @@
-# Hands-on runbook — v112..v116 + v117 L6 DECK + v118 L8 PHYSMODS (batched), take 4
+# Hands-on runbook — v112..v116 + v117 L6 DECK + v118 L8 PHYSMODS + v119 L5 DRIVES (batched), take 4
 
 DEPLOYED: `votv-coop.dll 2bb5f2a256adde7a...` x4, hash-verified 2026-07-18 late.
 kProtocolVersion **118** (v117's PlayDeckEvent + the NEW PhysModsState lane;
 a 117-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS).
+
+## What changed in v119 (2026-07-19 night — L5 drive chain) — proto 119, DLL b9b0727e04d38e0e x4
+
+Drive payloads (data_0), slot insert/eject (deck play/comp + eraser) and the drive RACK now
+sync. Grep prefixes: `drive_sync:` / `drive_chain:`.
+
+**STEPS (v119):** with a payload-carrying drive (import a downloaded signal to it first if
+none): (a) HOST inserts the drive into the deck slot — CLIENT sees it freeze into the port
+(watch `drive_sync: slot role=0 INSERT` on the client; the client-side self-sim may land
+first — then the line logs a no-op, both fine); (b) HOST ejects (E-grab the slotted drive)
+— CLIENT sees it leave (`slot role=0 EJECT applied`); (c) CLIENT repeats both (symmetric);
+(d) EXPORT a deck row to the drive on one peer — the OTHER peer's hover/LED shows the
+payload within ~1 s (`payload applied eid=...`); (e) ERASER: wipe a drive on one peer —
+the other's LED goes red within ~1 s (poll-detected, no verb); (f) RACK (if placed/bought):
+put a drive in on one peer — the other's rack shows the instance (`rack ... canonical
+adopted`); take it out — crosses back; try a same-slot race if possible (expect ONE winner
++ a deny line + no item loss). WATCH-FOR: a phys-grabbed item dropping from your hand
+exactly when a remote insert applies = the documented rare miss-path residual (report it);
+signal appearing in BOTH the deck list and the drive (or neither) for <=1 s during
+import/export = the two-lane transient, NOT a bug.
 
 ## What changed in v118 (2026-07-18 — L8 physMods)
 The desk's 12-slot physical-modules array now syncs (design
@@ -31,7 +51,7 @@ authority) + adds the laptop PC lane + catch -> activity feed.
 log prefixes keep attribution:
 `desk_input:`/`desk_sim:` = v112, `dish_sync:`/`[dish]` = v113, `[reel]`/`[task]` = v114,
 `desk_snd:`/`desk_cursor:` = v115, `FSM-hold`/`ping attribution`/`re-init window` = v115b,
-`signal_catch:`/`laptop_sync:`/`laptop:` = v116, `deck_play:` = v117, `physmods:` = v118.
+`signal_catch:`/`laptop_sync:`/`laptop:` = v116, `deck_play:` = v117, `physmods:` = v118, `drive_sync:` = v119.
 
 ## What changed in v117 (2026-07-18 — L6 deck playback)
 The unit-3 play deck's PLAYBACK now mirrors (it was fully local: a non-occupant heard

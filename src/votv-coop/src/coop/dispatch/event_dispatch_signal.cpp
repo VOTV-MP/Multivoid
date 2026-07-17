@@ -18,6 +18,7 @@
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/laptop_sync.h"      // v116: LaptopState
 #include "coop/interactables/physmods_sync.h"    // v118 (L8): PhysModsState
+#include "coop/interactables/drive_sync.h"       // v119 (L5): DriveSlotState/DrivePayload/RackState
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/signal_sync.h"
 #include "coop/interactables/tape_caddy_sync.h"  // v114 (L7): ReelSlot
@@ -117,6 +118,55 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::physmods_sync::OnPhysMods(pm, pmslot);
+        break;
+    }
+    case net::ReliableKind::DriveSlotState: {
+        // v119 (L5): an idempotent drive-slot FSM state line (any-peer
+        // announced; pre-check + host-canonical logic in drive_sync).
+        if (msg.payloadLen < sizeof(net::DriveSlotStatePayload)) {
+            UE_LOGW("event_feed: DriveSlotState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DriveSlotStatePayload));
+            break;
+        }
+        net::DriveSlotStatePayload ds{};
+        std::memcpy(&ds, msg.payload, sizeof(ds));
+        const uint8_t dslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::drive_sync::OnDriveSlotState(ds, dslot);
+        break;
+    }
+    case net::ReliableKind::DrivePayload: {
+        // v119 (L5): chunked drive data_0 rows (writer-authored, host-relayed).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: DrivePayload payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload dp{};
+        std::memcpy(&dp, msg.payload, sizeof(dp));
+        const uint8_t dpslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::drive_sync::OnDrivePayloadChunk(dp, dpslot);
+        break;
+    }
+    case net::ReliableKind::RackState: {
+        // v119 (L5): rack index ops (peer->host) / canonical + deny (host->peer).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: RackState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload rc{};
+        std::memcpy(&rc, msg.payload, sizeof(rc));
+        const uint8_t rcslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::drive_sync::OnRackStateChunk(rc, rcslot);
         break;
     }
     case net::ReliableKind::DishArm: {

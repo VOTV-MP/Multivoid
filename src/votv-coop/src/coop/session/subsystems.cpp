@@ -12,6 +12,7 @@
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // v117 (L6): deck playback lane
 #include "coop/interactables/physmods_sync.h"    // v118 (L8): desk physical-modules lane
+#include "coop/interactables/drive_sync.h"       // v119 (L5): drive chain (slots + payloads + rack)
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/desk_sim_sync.h"
 #include "coop/interactables/dish_sync.h"
@@ -155,6 +156,7 @@ void Install(coop::net::Session& session) {
     coop::desk_snd_fx::Install(&session);         // v115: desk audio-effect mirror (Func-patch audio seam)
     coop::deck_play_sync::Install(&session);      // v117 (L6): deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
     coop::physmods_sync::Install(&session);       // v118 (L8): physMods value-ops + host-canonical array
+    coop::drive_sync::Install(&session);          // v119 (L5): drive-chain lanes (0x45 dirty-marks + sweeps)
     coop::desk_sim_sync::Install(&session);       // v111: download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);           // v113 (L4): host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
     coop::tape_caddy_sync::Install(&session);     // v114 (L7): caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
@@ -256,6 +258,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();      // v115b: a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold (audit CRIT-1)
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);        // v115: desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);      // v118 (L8): canonical module array (ground truth over save drift)
+    coop::drive_sync::QueueConnectBroadcastForSlot(slot);         // v119 (L5): slot lines + drive payloads + rack canonicals
     coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // v70 in-flight catch replay (identity half; kind=2 state-seed since v116)
     coop::laptop_sync::QueueConnectBroadcastForSlot(slot);        // v116: PC power/slot state + content + live disc rows (ground truth)
     coop::dish_sync::QueueConnectBroadcastForSlot(slot);          // v113 (L4): dish snapshot + (if armed) the DishArm row -- AFTER the desk rows + the kind=0 catch row (same ordered lane)
@@ -409,6 +412,7 @@ DisconnectStats DisconnectAll() {
     coop::desk_snd_fx::OnDisconnect();
     coop::deck_play_sync::OnDisconnect();      // v117 (L6): gen counters + ring + self-test latch
     coop::physmods_sync::OnDisconnect();       // v118 (L8): poll baselines + parked canonical + deny records
+    coop::drive_sync::OnDisconnect();          // v119 (L5): baselines + latch/dirty state + pending + denies
     coop::sleep_sync::OnDisconnect();
     coop::wisp_attack_sync::OnDisconnect();  // v72: clear damage-cancel latch + handled-wisp edges + pending despawns
     coop::wisp_tear_mirror::OnDisconnect();  // v72: clear any armed victim-death deadline
@@ -474,6 +478,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // v115: audio-seam ring flush + lazy hook install + pending loop retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // v117 (L6): deck playback ring flush + lazy Deactivate/fin seam install + gen author
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // v118 (L8): 1 Hz module-array diff poll + parked-canonical apply
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); }         // v119 (L5): barrier drain + 1 Hz drive-chain sweeps
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }          // v64 inc 2: email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }         // v65: saved-signals shadow poll (same shape on gamemode.savedSignals_0)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }           // v65: decode-pane simulator stream + comp_data edges + client world-up unlatch

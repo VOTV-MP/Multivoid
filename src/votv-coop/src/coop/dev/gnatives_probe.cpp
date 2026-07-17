@@ -31,6 +31,25 @@
 //     wrong (the log dumps the raw operand bytes to diff vs StringToFName) -> HALT.
 //   - no flip triggered => unexercised INVALID run, re-run with a forced toggle.
 //
+// v4 (2026-07-18, the L5/L9 HALT gate of votv-signal-chain-all-units-DESIGN-2026-07-16):
+// adds the DESK/DRIVE/LAPTOP matcher family + the meadow row/image size dump.
+//   (iii) FAMILY-2 name matchers -- the 9 candidate L5/L9 verbs, all STATICALLY measured
+//         EX_LocalVirtualFunction=0x45 (scan_call_opcodes over the UAssetAPI JSONs,
+//         resolved imports per lesson_bp_json_grep_resolve_imports):
+//         saveSignal/deleteSignal (deck import/export + unit-2 save/delete),
+//         addSignal/removeSignal/sortSignal (meadow DB add/delete/move),
+//         comp_uploadData (unit-4 drive swap), putDriveIn/drivePulledOut (slot FSM),
+//         upd (prop_drive LED refresh -- EXPECTED noisy/generic; measured to decide
+//         whether it is usable as a matcher at all). Per-name GT hit counters +
+//         rich-log of the first hits (Context class discriminates same-name
+//         collisions from other BPs). 0x45 only: EX_LocalFinalFunction's (0x46)
+//         operand is a packed UFunction*, not FScriptName -- a name compare there
+//         would read garbage.
+//   (iv)  SIZES dump every 30 s (GT-posted): gamemode.savedSignals_0 (deck list) +
+//         saveSlot.savedSignals_0 (meadow DB) + saveSlot.savedSignals_comp_0
+//         (processed DB) row counts + per-row image-blob (row+0x58 TArray<uint8>)
+//         min/max/avg -- the L9 packet-budget measurement the design doc names.
+//
 // THROWAWAY / diagnostics (RULE 2 exempt); does NOT ship (RULE 3). Retired with
 // the substrate work (increment 4).
 
@@ -42,6 +61,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sig_scan.h"
+#include "ue_wrap/desk/signal_dynamic.h"
+#include "ue_wrap/world/economy.h"
 
 #include <windows.h>
 
@@ -100,6 +121,22 @@ std::atomic<int>           g_verbLogged{0};
 constexpr int kLiveCatchCap = 16;  // log the first N name-matches richly, then just count.
 constexpr int kVerbLogCap   = 64;  // v3: rich-log the first N VERB-comparison-index hits.
 
+// ---- v4 FAMILY-2: the L5/L9 desk/drive/laptop verb matchers (all 0x45, measured) ----
+struct F2Verb {
+    const wchar_t* name;
+    std::atomic<std::uint64_t> packed{0};  // FName {CmpIdx | Number<<32}; 0 = unresolved
+    std::atomic<std::uint64_t> hits{0};    // GT 0x45 name-matches
+};
+F2Verb g_f2[] = {
+    {L"saveSignal"}, {L"deleteSignal"}, {L"addSignal"}, {L"removeSignal"},
+    {L"sortSignal"}, {L"comp_uploadData"}, {L"putDriveIn"}, {L"drivePulledOut"},
+    {L"upd"},
+};
+constexpr int kF2Count = sizeof(g_f2) / sizeof(g_f2[0]);
+std::atomic<bool> g_f2Resolved{false};
+std::atomic<int>  g_f2Logged{0};
+constexpr int kF2LogCap = 48;  // rich-log the first N family-2 hits (class discriminates)
+
 double g_tscGHz = 0.0;
 
 inline void* PeekCode(void* stack) {
@@ -134,6 +171,23 @@ inline void RunKerfurDiag(void* ctx, void* stack) {
         const std::uint32_t opNum = op[2];  // int32 #3 = Number@byte8
         const std::uint32_t vDropCmp  = static_cast<std::uint32_t>(g_verbDropProp.load(std::memory_order_relaxed)  & 0xffffffff);
         const std::uint32_t vSpawnCmp = static_cast<std::uint32_t>(g_verbSpawnKerf.load(std::memory_order_relaxed) & 0xffffffff);
+        // v4 FAMILY-2: linear scan of the 9 desk/drive/laptop verb CmpIdx (zero-skip
+        // guards unresolved slots -- CmpIdx 0 is FName "None", never a real call).
+        for (int i = 0; i < kF2Count; ++i) {
+            const std::uint32_t cmp = static_cast<std::uint32_t>(
+                g_f2[i].packed.load(std::memory_order_relaxed) & 0xffffffff);
+            if (!cmp || opCmp != cmp) continue;
+            g_f2[i].hits.fetch_add(1, std::memory_order_relaxed);
+            if (g_f2Logged.load(std::memory_order_relaxed) < kF2LogCap) {
+                const int n = g_f2Logged.fetch_add(1, std::memory_order_relaxed);
+                if (n < kF2LogCap) {
+                    std::wstring clsName = R::ClassNameOf(ctx);
+                    UE_LOGI("[gnatives_probe] F2-HIT #%d: %ls Number=0x%x Context.class=%ls",
+                            n, g_f2[i].name, op[2], clsName.c_str());
+                }
+            }
+            break;
+        }
         if (vDropCmp && (opCmp == vDropCmp || opCmp == vSpawnCmp)) {
             g_nameMatch.fetch_add(1, std::memory_order_relaxed);
             if (g_verbLogged.load(std::memory_order_relaxed) < kVerbLogCap) {
@@ -208,6 +262,85 @@ void ResolveOnGameThread() {
                 "kerfurOmega_C=%p prop_kerfurOmega_C=%p -- name-first filter ARMED",
                 (unsigned long long)vDrop, (unsigned long long)vSpawn, npc, prop);
     }
+
+    // v4 FAMILY-2 names (Conv_StringToName is Add-semantics -- resolves first pass;
+    // the FName table is global, so our CmpIdx == the load-patched bytecode operand's).
+    if (!g_f2Resolved.load(std::memory_order_relaxed)) {
+        bool all = true;
+        for (int i = 0; i < kF2Count; ++i) {
+            if (g_f2[i].packed.load(std::memory_order_relaxed)) continue;
+            R::FName f = ue_wrap::fname_utils::StringToFName(g_f2[i].name);
+            if (f.ComparisonIndex) g_f2[i].packed.store(PackFName(f), std::memory_order_relaxed);
+            else all = false;
+        }
+        if (all) {
+            g_f2Resolved.store(true, std::memory_order_release);
+            UE_LOGI("[gnatives_probe] FAMILY-2 RESOLVED: %d desk/drive/laptop verb matchers armed",
+                    kF2Count);
+        }
+    }
+}
+
+// v4 SIZES dump (GT-posted every 30 s): the three signal stores' row counts + the
+// per-row image blob (row+0x58 = TArray<uint8>) stats -- the L9 budget measurement.
+void DumpSignalStoreSizes() {
+    namespace SD = ue_wrap::signal_dynamic;
+
+    struct Stats { int rows = -1; int imgMin = 0, imgMax = 0; long long imgSum = 0; };
+    auto walk = [](const std::uint8_t* base, std::int32_t off) -> Stats {
+        Stats s;
+        if (!base || off < 0) return s;
+        const auto* arr = reinterpret_cast<const std::int32_t*>(base + off + 8);  // TArray.Num
+        const std::uint8_t* data = *reinterpret_cast<std::uint8_t* const*>(base + off);
+        const std::int32_t num = arr[0];
+        if (num < 0 || num > 4096) return s;
+        s.rows = num;
+        if (!data) return s;
+        s.imgMin = num ? INT32_MAX : 0;
+        for (std::int32_t i = 0; i < num; ++i) {
+            const std::int32_t imgNum = *reinterpret_cast<const std::int32_t*>(
+                data + std::size_t(i) * SD::kStride + SD::kOff_image + 8);
+            const std::int32_t n = (imgNum >= 0 && imgNum < (64 << 20)) ? imgNum : 0;
+            if (n < s.imgMin) s.imgMin = n;
+            if (n > s.imgMax) s.imgMax = n;
+            s.imgSum += n;
+        }
+        return s;
+    };
+
+    // Deck list: gamemode.savedSignals_0.
+    static void* gmCls = nullptr;
+    static std::int32_t offDeck = -1;
+    if (!gmCls) gmCls = R::FindClass(L"mainGamemode_C");
+    if (gmCls && offDeck < 0) offDeck = R::FindPropertyOffset(gmCls, L"savedSignals_0");
+    void* gm = nullptr;
+    if (gmCls) {
+        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C"))
+            if (obj && R::IsLive(obj)) { gm = obj; break; }
+    }
+    const Stats deck = walk(static_cast<const std::uint8_t*>(gm), offDeck);
+
+    // Meadow DB + processed DB: saveSlot.savedSignals_0 / savedSignals_comp_0.
+    void* ss = ue_wrap::economy::SaveSlotPtr();
+    static std::int32_t offMeadow = -1, offComp = -1;
+    if (ss && offMeadow < 0) {
+        void* ssCls = R::ClassOf(ss);
+        if (ssCls) {
+            offMeadow = R::FindPropertyOffset(ssCls, L"savedSignals_0");
+            offComp   = R::FindPropertyOffset(ssCls, L"savedSignals_comp_0");
+        }
+    }
+    const Stats meadow = walk(static_cast<const std::uint8_t*>(ss), offMeadow);
+    const Stats comp   = walk(static_cast<const std::uint8_t*>(ss), offComp);
+
+    auto avg = [](const Stats& s) -> long long { return s.rows > 0 ? s.imgSum / s.rows : 0; };
+    UE_LOGI("[gnatives_probe] SIZES (stride 0x70): deck=%d rows (img min/max/avg=%d/%d/%lld B) "
+            "| meadowDB=%d (img %d/%d/%lld) | compDB=%d (img %d/%d/%lld) "
+            "[offs deck=0x%X meadow=0x%X comp=0x%X]",
+            deck.rows, deck.imgMin, deck.imgMax, avg(deck),
+            meadow.rows, meadow.imgMin, meadow.imgMax, avg(meadow),
+            comp.rows, comp.imgMin, comp.imgMax, avg(comp),
+            offDeck, offMeadow, offComp);
 }
 
 std::uintptr_t* ResolveGNatives() {
@@ -243,11 +376,18 @@ void CalibrateTsc() {
 
 void DumperThread() {
     std::uint64_t lastGT = 0, lastWk = 0, lastCyc = 0, lastN = 0, lastNM = 0, lastCC = 0;
+    int tick = 0;
     for (;;) {
         ::Sleep(1000);
+        ++tick;
 
-        if (!g_resolved.load(std::memory_order_acquire) && g_enabled)
+        if ((!g_resolved.load(std::memory_order_acquire) ||
+             !g_f2Resolved.load(std::memory_order_acquire)) && g_enabled)
             GT::Post([] { ResolveOnGameThread(); });
+
+        // v4: the SIZES dump every 30 s (GT task -- UObject walks are GT-only).
+        if (g_enabled && (tick % 30) == 0)
+            GT::Post([] { DumpSignalStoreSizes(); });
 
         const std::uint64_t gt = g_countGT.load(std::memory_order_relaxed);
         const std::uint64_t wk = g_countWorker.load(std::memory_order_relaxed);
@@ -281,6 +421,27 @@ void DumperThread() {
                 (unsigned long long)dNM, (unsigned long long)kc45, (unsigned long long)kc46,
                 g_resolved.load(std::memory_order_relaxed) ? 1 : 0);
         (void)dCC;
+
+        // v4: family-2 totals once per 10 s (only when any counter is non-zero --
+        // ambient-quiet runs stay ambient-quiet in the log).
+        if ((tick % 10) == 0) {
+            std::uint64_t total = 0;
+            for (int i = 0; i < kF2Count; ++i) total += g_f2[i].hits.load(std::memory_order_relaxed);
+            if (total) {
+                UE_LOGI("[gnatives_probe] F2 totals: saveSignal=%llu deleteSignal=%llu addSignal=%llu "
+                        "removeSignal=%llu sortSignal=%llu comp_uploadData=%llu putDriveIn=%llu "
+                        "drivePulledOut=%llu upd=%llu",
+                        (unsigned long long)g_f2[0].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[1].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[2].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[3].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[4].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[5].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[6].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[7].hits.load(std::memory_order_relaxed),
+                        (unsigned long long)g_f2[8].hits.load(std::memory_order_relaxed));
+            }
+        }
     }
 }
 
@@ -319,8 +480,8 @@ void Init() {
     g_gnatives[0x46] = reinterpret_cast<std::uintptr_t>(&Wrapper<0x46>);
     VirtualProtect(&g_gnatives[0x45], sizeof(void*) * 2, oldProt, &oldProt);
 
-    UE_LOGI("[gnatives_probe] ARMED-v3 (%s): GNatives@%p [0x45]->%p [0x46]->%p (origV=%p origF=%p) "
-            "tsc=%.2f GHz -- STEP 1.0 DIAG: class-gated kerfur-context catch on BOTH opcodes",
+    UE_LOGI("[gnatives_probe] ARMED-v4 (%s): GNatives@%p [0x45]->%p [0x46]->%p (origV=%p origF=%p) "
+            "tsc=%.2f GHz -- v4: kerfur family + 9 desk/drive/laptop matchers + SIZES dump",
             g_enabled ? "ENABLED-filter" : "DISABLED-tax",
             (void*)g_gnatives, (void*)&Wrapper<0x45>, (void*)&Wrapper<0x46>,
             (void*)g_origVirtual, (void*)g_origFinal, g_tscGHz);

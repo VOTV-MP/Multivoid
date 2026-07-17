@@ -22,6 +22,8 @@
 #include "ue_wrap/desk/tape_caddy.h"            // v114 (L7): IsReelClass whitelist + the Progress birth scalar
 #include "ue_wrap/desk/phys_mods.h"             // v118 (L8): IsModuleClass whitelist
 #include "coop/interactables/physmods_sync.h"   // v118 (L8): the denied-birth reap
+#include "coop/interactables/drive_sync.h"      // v119 (L5): the denied rack-take reap
+#include "ue_wrap/desk/drive_chain.h"           // v119 (L5): IsDriveClass whitelist
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
 
@@ -262,11 +264,17 @@ void Tick(coop::net::Session* session) {
         // the playerHitWith UNPLUG births a module INTO THE HAND (a client
         // Aprop_C spawn never broadcasts), so its later drop is the same
         // local-only-ghost class as the v114 reel eject.
+        // v119 (L5): drives join the whitelist -- a rack getDrive on a CLIENT
+        // births a payload-bearing drive into the hand (the same local-only-
+        // ghost class); the payload rides DrivePayload broadcast-at-adoption,
+        // no birth scalar needed.
         const bool freshBirth = !parked &&
             ((ue_wrap::tape_caddy::EnsureResolved() &&
               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor))) ||
              (ue_wrap::phys_mods::EnsureResolved() &&
-              ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))));
+              ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
+             (ue_wrap::drive_chain::EnsureResolved() &&
+              ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))));
         if (!parked && !freshBirth) continue;  // not a place of a picked-up prop, not a whitelisted birth
         // Author the host-authoritative spawn intent (place OR reel-eject birth).
         coop::net::PropDropIntentPayload p{};
@@ -296,6 +304,11 @@ void Tick(coop::net::Session* session) {
         if (freshBirth) {
             // Born ASLEEP on the host (no free-fall; the held-prop pose stream takes over).
             p.physFlags |= pf::kSleep;
+            // v119 (L5): a locally-born DRIVE carries its payload in data_0 --
+            // note the authorship so drive_sync broadcasts it at adoption
+            // (first eid sight); un-noted first sights stay prime-only.
+            if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
+                coop::drive_sync::NoteLocalDriveBirth(e.actor);
         }
         const auto loc = ue_wrap::engine::GetActorLocation(e.actor);
         const auto rot = ue_wrap::engine::GetActorRotation(e.actor);
@@ -368,7 +381,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                         ue_wrap::tape_caddy::IsReelClass(clsObj);
     const bool isModule = clsObj && ue_wrap::phys_mods::EnsureResolved() &&
                           ue_wrap::phys_mods::IsModuleClass(clsObj);
-    if (!isReel && !isModule) {
+    const bool isDrive = clsObj && ue_wrap::drive_chain::EnsureResolved() &&
+                         ue_wrap::drive_chain::IsDriveClass(clsObj);
+    if (!isReel && !isModule && !isDrive) {
         UE_LOGW("[PROP-DROP] HOST birth intent from slot=%u rejected: class '%ls' not whitelisted",
                 senderSlot, cls.c_str());
         return;
@@ -376,6 +391,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     // v118 (L8): a module birth matching a fresh unplug-DENY for this sender is the raced
     // ghost that got dropped before the deny landed -- reap it (physmods_sync logs).
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
+    // v119 (L5): drive births are authored normally -- a denied rack-take ghost is
+    // reaped LATER by its adoption payload's content hash (drive_sync, audit MAJOR-1).
     OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 

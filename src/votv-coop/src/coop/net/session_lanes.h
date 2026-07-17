@@ -127,6 +127,13 @@ inline Lane LaneForKind(ReliableKind k) {
     // NOT in the relay whitelist: ops are host-terminal, the canonical is
     // host-authored point/broadcast.
     case ReliableKind::PhysModsState:  return Lane::Normal;
+    // v119 (L5): the drive-chain trio assumes in-lane ordering between a slot
+    // line, the payload row it references, and a rack op/canonical pair. All
+    // ride Normal (the desk family lane). Pinned so a future single-kind lane
+    // move can't split the group.
+    case ReliableKind::DriveSlotState: return Lane::Normal;
+    case ReliableKind::DrivePayload:   return Lane::Normal;
+    case ReliableKind::RackState:      return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -176,6 +183,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
     case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
     case ReliableKind::PlayDeckEvent:     // v117 (L6): deck playback edges are PRESSER-authored (organic Activate/Deactivate at the seam; any peer may stop) -- relay a client's edge to the others
+    case ReliableKind::DriveSlotState:    // v119 (L5): slot FSM lines are ANY-PEER-announced idempotent state -- relay a client's edge to the others (host canonical on conflict)
+    case ReliableKind::DrivePayload:      // v119 (L5): drive Data_0 rows are WRITER-authored -- relay a client writer's row to the others
     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others
