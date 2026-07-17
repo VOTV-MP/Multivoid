@@ -14,6 +14,7 @@
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_sync.h"
+#include "coop/interactables/laptop_sync.h"      // v116: LaptopState
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/tape_caddy_sync.h"  // v114 (L7): ReelSlot
 #include "coop/world/daily_task_sync.h"          // v114 (L7): TaskNewState
@@ -395,6 +396,23 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::signal_catch_sync::OnReliable(cp, cslot);
+        break;
+    }
+    case net::ReliableKind::LaptopState: {
+        // v116: the stationary PC power/floppy lane. HOST applies + re-fans
+        // (origin excluded); the gates live in laptop_sync::OnLaptopState.
+        if (msg.payloadLen < sizeof(net::LaptopStatePayload)) {
+            UE_LOGW("event_feed: LaptopState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::LaptopStatePayload));
+            break;
+        }
+        net::LaptopStatePayload lp{};
+        std::memcpy(&lp, msg.payload, sizeof(lp));
+        const uint8_t lslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::laptop_sync::OnLaptopState(lp, lslot);
         break;
     }
     case net::ReliableKind::DishArm: {

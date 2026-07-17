@@ -17,6 +17,7 @@
 #include "coop/world/daily_task_sync.h"          // v114 (L7)
 #include "coop/interactables/device_occupancy.h"
 #include "coop/world/email_sync.h"
+#include "coop/interactables/laptop_sync.h"  // v116: the stationary PC lane
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/signal_sync.h"
 #include "coop/player/hand_item.h"   // v105: hotbar hand-item display axis (connect replay)
@@ -146,6 +147,7 @@ void Install(coop::net::Session& session) {
     coop::device_occupancy::Install(&session);  // v63 enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // v64 signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);   // v70: the signal-catch consume replay (dish slew + downloader arm on every peer)
+    coop::laptop_sync::Install(&session);         // v116: the stationary PC power + floppy lane
     coop::desk_cursor_sync::Install(&session);    // v109: coords-panel live-cursor unreliable motion stream (interpolated mirror)
     coop::desk_input_sync::Install(&session);     // v112: claim-free field-granular desk INPUT lane (the BUGS-v111 axis fix)
     coop::desk_snd_fx::Install(&session);         // v115: desk audio-effect mirror (Func-patch audio seam)
@@ -249,7 +251,8 @@ void ConnectReplayForSlot(int slot) {
     coop::console_state_sync::QueueConnectBroadcastForSlot(slot); // v64 sky-signal snapshot + desk adopt
     coop::desk_input_sync::SeedPingAttributionFromMachine();      // v115b: a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold (audit CRIT-1)
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);        // v115: desk loop-sound ground truth (a mid-loop joiner gets the ON)
-    coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // v70 in-flight catch replay (identity half)
+    coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // v70 in-flight catch replay (identity half; kind=2 state-seed since v116)
+    coop::laptop_sync::QueueConnectBroadcastForSlot(slot);        // v116: PC power/slot state + content + live disc rows (ground truth)
     coop::dish_sync::QueueConnectBroadcastForSlot(slot);          // v113 (L4): dish snapshot + (if armed) the DishArm row -- AFTER the desk rows + the kind=0 catch row (same ordered lane)
     coop::sleep_sync::QueueConnectBroadcastForSlot(slot);         // v71 a joiner arrives awake -- end a running accelerate + re-tally
     coop::comp_sync::QueueConnectBroadcastForSlot(slot);          // v65 decode-pane adopt (CompState + CompData)
@@ -391,6 +394,7 @@ DisconnectStats DisconnectAll() {
     coop::device_occupancy::OnDisconnect();
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
+    coop::laptop_sync::OnDisconnect();
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
     coop::dish_sync::OnDisconnect();           // v113 (L4): wire-residue sweep + ticker restores (the suppression loan)
@@ -452,7 +456,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // v64 signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }   // v70/v113: catch/cleared detectors (1 Hz, L4 tuple signature)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }   // v70/v113: catch/cleared detectors (1 Hz, L4 tuple signature; UNGATED v116)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }    // v116: PC power/floppy edge polls (4 Hz) + content watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_cursor"}; coop::desk_cursor_sync::Tick(); }    // v109: coords-panel live cursor -- holder streams viewCoordinate / mirror interpolates (50ms) + WriteCursorOnly
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_sim"}; coop::desk_sim_sync::Tick(); }    // v111: download-SIM -- host streams outputs (10Hz) / client interpolates + WriteSimOutputs
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:dish"}; coop::dish_sync::Tick(); }    // v113 (L4): host pose sweep + arm poll (4Hz) / client apply + park latch / calib diff-poll (1Hz)

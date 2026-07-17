@@ -111,6 +111,12 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::DeskState:      return Lane::Normal;
     case ReliableKind::DeskInput:      return Lane::Normal;
     case ReliableKind::DeskScanEvent:  return Lane::Normal;
+    // v116: LaptopState's op=1/3 scalar edges and their op=4 content chunks
+    // assume in-lane ordering (scalars first, chunks after) -- pin the kind so
+    // a future lane move can't split the pair. The disc PROP lifecycle rides
+    // Bulk independently BY DESIGN (receivers never act on LaptopState for
+    // destroys; the host's one PropDestroy owns twin deaths -- qf R7-Q1).
+    case ReliableKind::LaptopState:    return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

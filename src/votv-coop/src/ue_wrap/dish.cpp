@@ -262,21 +262,30 @@ bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
     TArrayView* a = Dishs();
     if (!a || !g_coreResolved) return false;
     if (a->num < 0 || a->num > 64) return false;
+    // Moving dish preferred; else FIRST live dish. v116 fallback (qf R5-Q1):
+    // the catch chain writes lookAt ABSOLUTE to ALL dishes at the catch moment
+    // (impl-RE SS8 loop), so within the detector's <=1 s poll window a fully
+    // SETTLED array still holds the fresh target -- without the fallback a
+    // near-aim catch shipped slewValid=0 and the host never armed (no theater
+    // -> no dishesStop -> no formDownload).
+    void* pick = nullptr;
     for (int32_t i = 0; i < a->num; ++i) {
         void* d = DishAt(a, i);
-        if (!d || !*(reinterpret_cast<uint8_t*>(d) + g_offIsMoving)) continue;
-        // lookAt was rewritten absolute at startMovingTo (@162: param +
-        // ActorLocation); subtracting the dish's own location recovers the
-        // shared relative vector the catch chain passed to every dish.
-        const auto* la = reinterpret_cast<const float*>(
-            reinterpret_cast<uint8_t*>(d) + g_offLookAt);
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(d);
-        out.X = la[0] - loc.X;
-        out.Y = la[1] - loc.Y;
-        out.Z = la[2] - loc.Z;
-        return true;
+        if (!d) continue;
+        if (!pick) pick = d;
+        if (*(reinterpret_cast<uint8_t*>(d) + g_offIsMoving)) { pick = d; break; }
     }
-    return false;
+    if (!pick) return false;
+    // lookAt was rewritten absolute at startMovingTo (@162: param +
+    // ActorLocation); subtracting the dish's own location recovers the
+    // shared relative vector the catch chain passed to every dish.
+    const auto* la = reinterpret_cast<const float*>(
+        reinterpret_cast<uint8_t*>(pick) + g_offLookAt);
+    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(pick);
+    out.X = la[0] - loc.X;
+    out.Y = la[1] - loc.Y;
+    out.Z = la[2] - loc.Z;
+    return true;
 }
 
 int32_t StartMovingAll(const ue_wrap::FVector& slew) {

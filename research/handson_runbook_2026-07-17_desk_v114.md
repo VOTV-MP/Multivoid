@@ -1,15 +1,50 @@
-# Hands-on runbook — v112 INPUT + v113 DISHES + v114 CADDY/TASK + v115 AUDIO/CURSOR + v115b PING-FSM (batched), take 3
+# Hands-on runbook — v112..v115b + v116 CATCH-FIX/LAPTOP/FEED (batched), take 4
 
-DEPLOYED: `votv-coop.dll 0926373e2a256beb` x4 (HOST + CLIENT_1/2/3), hash-verified
-2026-07-17 evening. kProtocolVersion **115** (v115b is a BEHAVIOR-only layer on the same
-proto; a 114-or-older peer HARD-CLOSEs at the gate). v115 smoke PASS x2 + e2e audio
-self-test PROVEN (see take-2 history in git); v115b smoke PASS (both peers stable, client
-connected, puppet spawned, no RAM breach; zero new-lane lines while nobody pings —
-correct; zero new WARN/ERROR from the diff).
-**NOTHING below is hands-on verified yet.** This take BATCHES FIVE unverified layers
-(v112 + v113 + v114 + v115 + v115b); per-lane log prefixes keep attribution:
+DEPLOYED: `votv-coop.dll 3a9470ee...` x4, hash-verified 2026-07-17 late evening.
+kProtocolVersion **116** (the SkySignalCatch kind=2 semantic change + the LaptopState
+lane; a 115-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS).
+**The take-3 test (17:00-17:09) found the v113-116 root this build fixes**: the client's
+successful ping at 17:04:46 never crossed (the claim-gated catch detector raced the
+FSM-hold release) -> host NO SIGNAL / frozen host dishes / diverged client dishes /
+detector asymmetry. v116 retires the claim gates (the unprimed change-edge is the
+authority) + adds the laptop PC lane + catch -> activity feed.
+**NOTHING below is hands-on verified yet.** SIX unverified layers batch here; per-lane
+log prefixes keep attribution:
 `desk_input:`/`desk_sim:` = v112, `dish_sync:`/`[dish]` = v113, `[reel]`/`[task]` = v114,
-`desk_snd:`/`desk_cursor:` = v115, `FSM-hold`/`ping attribution`/`re-init window` = v115b.
+`desk_snd:`/`desk_cursor:` = v115, `FSM-hold`/`ping attribution`/`re-init window` = v115b,
+`signal_catch:`/`laptop_sync:`/`laptop:` = v116.
+
+## What changed in v116 (this build — the take-3 report fixes)
+1. **The lost catch**: a successful ping now ALWAYS crosses — expect
+   `signal_catch: local catch detected ('X' ...) -- relayed` on the CATCHER within ~1 s of
+   the catch, `signal_catch: catch replay applied` on the host (or `catch identity
+   applied` on observing clients), the host dishes slewing, and the observer's detector
+   arming via the DishArm lane. The 17:04 symptom set (one peer detects, other NO SIGNAL,
+   dishes frozen/diverged) must NOT reproduce.
+2. **Activity feed**: every catch lands one chat line per peer — "You caught signal 'X'"
+   for the catcher, "<nick> caught signal 'X'" for everyone else. A JOINER must NOT get a
+   stale "caught" line (the connect seed is feed-silent).
+3. **The stationary PC (laptop) syncs**: ACTIVATE (power/boot) crosses (`laptop_sync:
+   local POWER edge` / `power replay dispatched`); floppy insert/eject crosses
+   (`laptop_sync: local INSERT edge` / `wire INSERT applied` / `EJECT`); the observer's PC
+   shows the same slot state + the mirrored disc content. The PC BUFFER (files copied
+   onto the PC) + the portable PC are NOT in v1 (known-open, TRACKER row).
+4. **Cursor/diag hygiene**: the closed-measurement diagnostics are OFF in the inis
+   (kerfur_census's 8-25 ms walk every 10 s among them); the HOST now runs perf_probe —
+   if the cursor still jerks, the host [perf] frames + desk_diag pacing + desk_cursor ema
+   lines are the attribution set. Re-judge the cursor + right-screen text this take.
+
+## STEPS (v116 half)
+1. Repeat the 17:04 scenario EXACTLY: client sits at unit 1, 3 dots, Enter, and STAND UP
+   mid-ping. On success watch BOTH logs for the chain in (1) above + the feed lines (2).
+2. Host then catches one too (roles swapped) — the client must see the host's catch
+   (detector arms, dishes move, feed line).
+3. The stationary PC: host presses ACTIVATE — client's PC boots too (~6 s native lag is
+   expected: the replay runs the native boot chain). Insert a floppy on one peer (both
+   the throw-into-slot and the E-with-disc-in-hand paths if possible) — the other peer's
+   PC shows the disc; eject on the OTHER peer — the disc pops out with its content.
+4. Watch-fors (regressions): no `laptop_sync:` WARN spam; no double feed lines; no
+   phantom ping behavior returning (v115b watch-fors still apply).
 The v112+v113 steps live in `handson_runbook_2026-07-16_desk_v113.md` (still current for
 those lanes — run its STEPS first or interleave); THIS file adds the v114 half + the v115
 half + the v115b ping half (take-2 was superseded mid-take: the user's LIVE ping test at

@@ -705,7 +705,24 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 115; // v115b (2026-07-17 pm, BEHAVIOR-only -- no wire
+inline constexpr uint16_t kProtocolVersion = 116; // v116 (2026-07-17 eve, the catch-attribution retire):
+                                                  // SkySignalCatch kind gains 2 = connect STATE-SEED
+                                                  // (applied like 0, never announced to the activity
+                                                  // feed) -- a SEMANTIC wire change, hence the bump.
+                                                  // Root (measured live 17:04): the successful ping's
+                                                  // own completion released the desk FSM-hold in the
+                                                  // same second as the catch edge -> the 1 Hz
+                                                  // claim-gated detector lost the race and the
+                                                  // baseline roll-forward ate the catch PERMANENTLY
+                                                  // (host NO SIGNAL, no dish theater, client
+                                                  // self-slewed 24 dishes). Retired (RULE 2): the
+                                                  // detector LocalHolds gate, the NoteIncomingSnapshot
+                                                  // pre-gate, the host holder==sender validator.
+                                                  // Added: host-side IsRecent dup guard, the settled-
+                                                  // dish lookAt slew fallback, catch -> activity feed
+                                                  // (peer_action_feed; kind=0 only).
+                                                  // ---- history ----
+                                                  // v115b (2026-07-17 pm, BEHAVIOR-only -- no wire
                                                   // format change, no bump): the coord_isPing RAW APPLY
                                                   // is retired at every receiver (DeskInput field 12 ->
                                                   // bookkeeping only; DeskState adopt never copies it).
@@ -2303,6 +2320,23 @@ enum class ReliableKind : uint8_t {
                        //     truth (bIsActive) at the joiner's ready edge; leaver teardown is
                        //     HOST-OWNED (attribution map host-only; host broadcasts the OFF).
                        //     Payload: DeskSndFxPayload (44 B).
+    LaptopState = 106, // v116 (laptop_sync): the stationary PC (Alaptop_C) power + floppy axes.
+                       //     RE base: votv-laptop-pc-RE-2026-07-17.md; design qf rounds 7-9.
+                       //     Presser-authored edges (all entry verbs are EX-invisible -> 1 Hz
+                       //     poll; the THROWN-disc insert is authored at the PE-visible
+                       //     BndEvt overlap PRE/POST pair, atomic with the native accept).
+                       //     Ops: 0=power (isOpened edge; receivers replay the native
+                       //     actionOptionIndex b8 under echo guard), 1=insert (slot scalars +
+                       //     the thrown world-disc eid; the HOST destroys its authoritative
+                       //     disc on apply -> ONE PropDestroy fan-out owns the twin deaths),
+                       //     2=eject (receivers clear scalars only -- the presser's native
+                       //     spawn crosses on the existing birth channels), 3=connect state,
+                       //     4=content chunk (kind 0 = laptop slot content, kind 1 = disc
+                       //     prop content keyed by eid -- the HOST is the content authority;
+                       //     a client-ejected disc's content arrives client->host after the
+                       //     adoption eid-binding, host loadDatas its actor + re-fans).
+                       //     Symmetric + RELAYED (host applies + refans except origin).
+                       //     Payload: LaptopStatePayload (216 B).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -3149,19 +3183,50 @@ static_assert(sizeof(SkySignalStatePayload) <= 256 - 20 - 8,
 // the exact startMovingTo argument, read as (dish.lookAt - dish.ActorLocation)
 // off any just-started dish -- the BP computes ONE vector for all dishes, and
 // startMovingTo re-adds each receiver dish's own ActorLocation, so one relative
-// vector replays exactly everywhere. slewValid=0 (no moving dish -- the joiner
-// replay after dishes settled): receivers skip the dish theater and arm
-// formDownload(0,-1) directly. kind: 0 = catch (claim-holder-gated on the host),
+// vector replays exactly everywhere. v116: the sender reads it from a MOVING dish
+// preferred, else the first live dish's lookAt (the catch chain wrote ALL dishes
+// absolute at the catch moment, so a settled array still holds the fresh target);
+// slewValid=0 survives only for a zero-dish machine (dead-guard WARN on apply).
+// kind: 0 = catch (v116: UNGATED -- the unprimed local change-edge is the
+// authority, the v63 holder validation is retired; host dedups via recent-TTL),
 // 1 = cleared (the 'Signal data deleted' button -- unclaimed trust; row + slew
-// ignored, receivers replay the @33832 reset chain).
+// ignored, receivers replay the @33832 reset chain), 2 = connect STATE-SEED
+// (host-authored only; applied exactly like 0 but NEVER announced to the
+// activity feed -- the joiner adopts state, it does not witness an action).
 struct SkySignalCatchPayload {
     WireSkySignal row;          // 64 -- the caught signal's full row content
     float   slewX, slewY, slewZ;// 12 -- the startMovingTo relative vector
-    uint8_t kind;               // 1  -- 0 = catch, 1 = cleared
+    uint8_t kind;               // 1  -- 0 = catch, 1 = cleared, 2 = connect seed (v116)
     uint8_t slewValid;          // 1  -- 0 = no dish was moving; arm directly
     uint8_t _pad[2];            // 2
 };
 static_assert(sizeof(SkySignalCatchPayload) == 80, "SkySignalCatchPayload must be 80 bytes");
+
+// v116 (laptop_sync): the stationary PC's power + floppy axes (ReliableKind::
+// LaptopState). op: 0=power edge {isOpened}, 1=insert edge {slot scalars +
+// thrown-disc eid (0=held)}, 2=eject edge (receivers clear scalars only),
+// 3=connect state {isOpened + slot scalars}, 4=content chunk (contentKind
+// 0 = laptop slot content, target the laptop; 1 = disc prop content, target
+// eid). Content serialization: UTF-8, fields joined by 0x1F; chunks assemble
+// per (sender, kind, eid), total cap 4 KB (truncate+WARN beyond -- OPEN-9
+// residual). In-lane ordering guarantees scalars-before-chunks.
+struct LaptopStatePayload {
+    uint8_t  op;          // 0=power, 1=insert, 2=eject, 3=state, 4=content chunk
+    uint8_t  isOpened;    // op 0/3
+    uint8_t  zip;         // op 1/3
+    uint8_t  slot;        // op 1: 0=floppy hitbox, 1=zip hitbox
+    int32_t  floppyType;  // op 1/3 (-1 = empty)
+    int32_t  readWrites;  // op 1/3
+    uint32_t eid;         // op 1: thrown world-disc eid (0=held); op 4 kind 1: target disc eid
+    uint16_t chunkSeq;    // op 4: 0..chunkTotal-1
+    uint16_t chunkTotal;  // op 4
+    uint16_t contentLen;  // op 4: bytes used in content[]
+    uint8_t  contentKind; // op 4: 0 = laptop slot content, 1 = disc content
+    uint8_t  _pad;
+    char     content[192];
+};
+static_assert(sizeof(LaptopStatePayload) == 216, "LaptopStatePayload must be 216 bytes");
+static_assert(sizeof(LaptopStatePayload) <= 228, "LaptopStatePayload must fit the inline reliable buffer");
 
 // v64 (reshaped v70, v113): the desk's live-visible scalars (ReliableKind::DeskState).
 // Field set = the RE doc SS4.1 live actor fields; receivers write raw + run the

@@ -18,16 +18,26 @@
 // DishArm lane (host polarity) -- the v70 pending-adopt and the joiner
 // direct-arm are RETIRED (RULE 2).
 //
-// Catcher detection (1 Hz poll, claim holder only, since L4): the
-// coord_signalData IDENTITY TUPLE (x,y,z,frequency | objectName) CHANGE-edge
-// to a non-None state. Derivation (impl-RE SS7/SS8): coord_signalData has
-// exactly TWO native writers -- ping-success (:= row) and the delete chain
-// (:= None) -- and our wire writes are apply+primed, so a local change under
-// the claim IS a catch, definitionally. (The old MovingCount rising-edge
-// signature is retired: it was indirect, raced the L4 kill sweep, and ATE a
-// catch pinged while dishes already moved.) kind=1 (cleared): the 'Signal
-// data deleted' button = objectName -> 'None' edge on ANY peer (unclaimed
-// trust, matching the physical button's authority model).
+// Catcher detection (1 Hz poll, UNGATED since v116): the coord_signalData
+// IDENTITY TUPLE (x,y,z,frequency | objectName) CHANGE-edge to a non-None
+// state. Derivation (impl-RE SS7/SS8 + the v116 tree-wide writer grep):
+// coord_signalData has exactly TWO native writers -- ping-success (:= row)
+// and the delete chain (:= None) -- and our ONLY wire writers
+// (ApplyReplay/connect-seed) prime these baselines, so an unprimed local
+// change IS a catch, definitionally. The v63-v115 claim gate is RETIRED
+// (RULE 2): a successful ping's own completion releases the desk FSM-hold
+// within the same second as the edge (measured 17:04:46/47), so any
+// claim-anchored gate loses that race by construction -- and the baseline
+// roll-forward then eats the catch permanently (the 17:04 lost-catch root).
+// Same retire on the host validator (holder==sender): replaced by the
+// recent-TTL dup guard. kind=1 (cleared): the 'Signal data deleted' button =
+// objectName -> 'None' edge on ANY peer (unclaimed trust, matching the
+// physical button's authority model). kind=2 (v116): host-authored connect
+// STATE-SEED -- applied like kind=0, never announced to the activity feed.
+//
+// v116 feature: every kind=0 catch lands one activity-feed line per peer
+// ("You caught signal 'X'" at the catcher; "<nick> caught signal 'X'"
+// elsewhere, attributed via the v18 logical-origin stamp).
 //
 // Game thread throughout.
 
@@ -49,15 +59,17 @@ void Install(coop::net::Session* session);
 // when idle (one struct read).
 void Tick();
 
-// Wire ingest (both roles). HOST: validates kind=0 against the desk-claim
-// holder, replays locally (incl. the StartMovingAll theater), rebroadcasts to
-// everyone but the catcher. CLIENT: replays the identity half only
-// (transport-trusted -- clients only receive from the host).
+// Wire ingest (both roles). HOST: dedups kind=0 via the recent-TTL, replays
+// locally (incl. the StartMovingAll theater), rebroadcasts to everyone but
+// the catcher, feeds the activity line; drops kind=2 (host-authored only).
+// CLIENT: replays the identity half only (transport-trusted -- clients only
+// receive from the host; senderSlot = the stamped logical catcher).
 void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot);
 
-// HOST: if coord_signalData is armed, send the joiner one kind=0 replay for
-// the signal IDENTITY (the poses/arm ride dish_sync's snapshot + DishArm rows
-// on the same ordered lane, queued right after this).
+// HOST: if coord_signalData is armed, send the joiner one kind=2 STATE-SEED
+// for the signal IDENTITY (the poses/arm ride dish_sync's snapshot + DishArm
+// rows on the same ordered lane, queued right after this). kind=2 applies
+// like a catch but never announces to the activity feed.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Called by console_state_sync BEFORE applying an assembled SkySignalState

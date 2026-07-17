@@ -4,9 +4,10 @@
 
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
-#include "coop/interactables/device_occupancy.h"
 #include "coop/interactables/dish_sync.h"
+#include "coop/comms/peer_action_feed.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
 
 #include "ue_wrap/console_desk.h"
 #include "ue_wrap/dish.h"
@@ -32,8 +33,10 @@ using Clock = std::chrono::steady_clock;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr auto kPoll = std::chrono::milliseconds(1000);
+// Recent-catch TTL: a same-identity re-catch needs a full ping cycle -- measured
+// >= 6 s (fail cycle 17:04:07-13) plus the native satellites-moving re-Enter
+// block -- so 5 s can never swallow a legitimate re-catch (qf R3-Q2 bound).
 constexpr auto kRecentTTL = std::chrono::seconds(5);
-const wchar_t* const kDeskClaim = L"desk";
 
 struct Identity { float x = 0, y = 0, z = 0, frequency = 0; };
 
@@ -125,6 +128,12 @@ void FillRowFromCoordSignal(const CD::CoordSignal& sig, coop::net::WireSkySignal
     for (; n < sig.objectName.size() && n < sizeof(w.objectName); ++n)
         w.objectName[n] = static_cast<char>(sig.objectName[n]);  // rolled names are ASCII
     w.nameLen = static_cast<uint8_t>(n);
+}
+
+// The wire row's ASCII name widened for feed/log lines.
+std::wstring WireName(const coop::net::WireSkySignal& w) {
+    const size_t n = w.nameLen <= sizeof(w.objectName) ? w.nameLen : sizeof(w.objectName);
+    return std::wstring(w.objectName, w.objectName + n);
 }
 
 CD::CoordSignal CoordSignalFromRow(const coop::net::WireSkySignal& w) {
@@ -230,9 +239,15 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
             SendOut(s, p, /*exceptSlot*/ -1);  // client -> host; host -> all clients
             UE_LOGI("signal_catch: local 'Signal data deleted' relayed");
         }
-        // ---- CATCH (claim holder only): identity change-edge to non-None --
-        if (!IsNoneName(sig.objectName) &&
-            coop::device_occupancy::LocalHolds(kDeskClaim)) {
+        // ---- CATCH: identity change-edge to non-None. v116: the claim gate is
+        // RETIRED (RULE 2) -- the successful ping's own completion releases the
+        // desk FSM-hold within the same second as the edge (measured 17:04:46/47),
+        // so the 1 Hz claim-gated detector LOST the race and the roll-forward
+        // below ate the catch permanently. Post-v115b the unprimed change-edge
+        // itself proves local authorship: the ONLY writers of coord_signalData
+        // are the native ping-success chain (impl-RE SS7/SS8) and our wire
+        // appliers, and every wire applier primes these baselines.
+        if (!IsNoneName(sig.objectName)) {
             const Identity id{ sig.x, sig.y, sig.z, sig.frequency };
             const bool changed = !IdentityEq(id, g_prevId) ||
                                  sig.objectName != g_prevSigName;
@@ -245,6 +260,14 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                         "slewValid=%u) -- relayed",
                         sig.objectName.c_str(), sig.x, sig.y, sig.z,
                         static_cast<unsigned>(p.slewValid));
+                // v116 feature: the catcher's own activity-feed line ("You caught
+                // signal 'X'"); receivers announce at their OnReliable sites.
+                uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
+                if (s->role() == coop::net::Role::Host ||
+                    localSlot == coop::players::kPeerIdUnknown)
+                    localSlot = 0;
+                coop::peer_action_feed::Announce(localSlot, /*isLocalActor=*/true,
+                    L"caught signal '" + sig.objectName + L"'");
                 // L4: the client's own ping slews are unpreventable
                 // (EX-invisible) -- kill them NOW, after the payload (built
                 // from a still-moving dish) is on the wire. Host keeps its
@@ -300,36 +323,53 @@ void Tick() {
 void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    if (p.kind > 1 || !PayloadFinite(p)) return;
+    if (p.kind > 2 || !PayloadFinite(p)) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
 
     const Identity id{ p.row.x, p.row.y, p.row.z, p.row.frequency };
     if (s->role() == coop::net::Role::Host) {
+        // kind=2 (connect state-seed) is host-AUTHORED only -- receiving one
+        // here is a protocol violation, never a legitimate edge.
+        if (p.kind == 2) {
+            UE_LOGW("signal_catch: kind=2 seed arrived AT the host from slot %u -- "
+                    "protocol violation, dropped", static_cast<unsigned>(senderSlot));
+            return;
+        }
         if (p.kind == 0) {
-            // Only the desk-claim holder legitimately catches (v63 occupancy).
-            const uint8_t holder = coop::device_occupancy::HolderOf(kDeskClaim);
-            if (holder != senderSlot) {
-                UE_LOGW("signal_catch: catch from slot %u but desk held by %u -- dropping",
-                        static_cast<unsigned>(senderSlot), static_cast<unsigned>(holder));
+            // v116: the v63 holder validation is RETIRED (RULE 2) with the
+            // detector's claim gate -- the FSM-hold releases in the same second
+            // as the catch edge (measured 17:04:47), so holder==sender raced
+            // exactly like the detector did. Post-v115b the client's unprimed
+            // edge is the authority; transport is trusted (co-op). The recent-
+            // dedup below bounds duplicates AND protects an in-progress
+            // download from a dup's ResetDownloadMachine.
+            if (IsRecent(id)) {
+                UE_LOGI("signal_catch: duplicate catch ('%.*s') within recent-TTL -- dropped",
+                        static_cast<int>(p.row.nameLen), p.row.objectName);
                 return;
             }
             RegisterRecent(id);
         }
-        // kind=1 is deliberately NOT holder-gated (audit 2026-06-12 finding 2
-        // REJECTED): the delete button is a PHYSICAL desk button -- the v63
-        // claim gates ENTERING the screen, not pressing panel buttons, so any
-        // peer can legitimately clear without holding the claim (the same
-        // trust level as the unclaimed DeskState button edges). The replay is
-        // idempotent and primes the receivers' detectors, so repeats are
-        // bounded no-ops.
+        // kind=1 is deliberately NOT gated (audit 2026-06-12 finding 2
+        // REJECTED): the delete button is a PHYSICAL desk button -- any peer
+        // can legitimately clear. The replay is idempotent and primes the
+        // receivers' detectors, so repeats are bounded no-ops.
         ApplyReplay(s, p);
         SendOut(s, p, /*exceptSlot*/ senderSlot);  // fan out to the other clients
         // The host's own 1 Hz sky poll sees the row removal and broadcasts a
         // fresh snapshot; the recent-catch filter covers any stale one in flight.
+        if (p.kind == 0)
+            coop::peer_action_feed::Announce(senderSlot, /*isLocalActor=*/false,
+                L"caught signal '" + WireName(p.row) + L"'");
     } else {
-        // Client: transport-trusted (we only receive from the host).
-        if (p.kind == 0) RegisterRecent(id);
+        // Client: transport-trusted (we only receive from the host; senderSlot
+        // carries the LOGICAL catcher via the v18 relay stamp).
+        if (p.kind == 0 || p.kind == 2) RegisterRecent(id);
         ApplyReplay(s, p);
+        // kind=2 (connect seed) is state adoption, not a live action -- no feed.
+        if (p.kind == 0)
+            coop::peer_action_feed::Announce(senderSlot, /*isLocalActor=*/false,
+                L"caught signal '" + WireName(p.row) + L"'");
     }
 }
 
@@ -340,18 +380,22 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     CD::CoordSignal sig;
     if (!CD::ReadCoordSignal(sig) || IsNoneName(sig.objectName)) return;
     coop::net::SkySignalCatchPayload p{};
-    BuildCatchPayload(sig, 0, p);
+    // v116: kind=2 = connect STATE-SEED -- applied exactly like kind=0 but never
+    // announced to the activity feed (a joiner must not see a stale
+    // host-attributed "caught signal" line; qf R2-Q1).
+    BuildCatchPayload(sig, 2, p);
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::SkySignalCatch, &p, sizeof(p));
-    UE_LOGI("signal_catch: connect catch replay -> slot %d ('%ls', slewValid=%u)",
+    UE_LOGI("signal_catch: connect catch seed (kind=2) -> slot %d ('%ls', slewValid=%u)",
             peerSlot, sig.objectName.c_str(), static_cast<unsigned>(p.slewValid));
 }
 
 void NoteIncomingSnapshot(std::vector<SR::SignalRow>& rows) {
     auto* s = g_session.load(std::memory_order_acquire);
     // Run the catch detector NOW (fresh reads) so an in-flight local catch
-    // outranks the stale snapshot row about to apply.
-    if (s && CD::EnsureResolved() && CD::Instance() && !CheckDeskInstance() &&
-        coop::device_occupancy::LocalHolds(kDeskClaim)) {
+    // outranks the stale snapshot row about to apply. v116: the LocalHolds
+    // pre-gate is retired with the detector's claim gate (same RULE-2 sweep) --
+    // any peer with an unprimed edge is the catch authority.
+    if (s && CD::EnsureResolved() && CD::Instance() && !CheckDeskInstance()) {
         CD::CoordSignal sig;
         const bool haveSig = CD::ReadCoordSignal(sig);
         RunDetectors(s, sig, haveSig);
