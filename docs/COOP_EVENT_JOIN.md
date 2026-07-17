@@ -154,7 +154,15 @@ the two LOOPS (corrds_loop / pingLoop) are STATE: `desk_snd_fx::QueueConnectBroa
 reads COMPONENT GROUND TRUTH (bIsActive) on the host at the join edge and re-sends a LoopOn
 per active loop (covers host-pressed and client-pressed loops alike -- qf R5); a re-assert
 landing before the joiner's desk resolves parks in `g_pendingLoop` and retries each Tick
-(the snapshot-before-state-ready class, qf R3) [AS-BUILT v115]**.
+(the snapshot-before-state-ready class, qf R3) [AS-BUILT v115]**;
+ping FSM (v115b)=**the RUNNING ping never re-expresses on a joiner (one machine per ping --
+the presser's; observers/joiners get no stage visuals, the accepted residual). What a mid-ping
+joiner DOES get: the desk FSM-hold busy-entry via the device_occupancy claim snapshot (so it
+cannot claim the desk mid-FSM), seeded even for a SOLO host's ping by
+`desk_input_sync::SeedPingAttributionFromMachine` at ConnectReplayForSlot (the connected()-gated
+poll absorbs pre-connect edges -- the audit CRIT-1 hole); the ping's OUTCOME reaches the joiner
+through the normal state lanes (SkySignalCatch identity + DishArm + the detector's DeskSimPose)
+[AS-BUILT v115b de31889e]**.
 
 ### 3.5 Phases
 

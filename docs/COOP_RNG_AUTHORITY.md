@@ -184,7 +184,9 @@ See `[[lesson-rng-in-rate-path-is-mechanic-desync]]`.
 `decoded=0.0064 pol=1` vs client `decoded=0.0262 pol=0` — different progress AND polarity, confirming the
 per-peer sim (not just RE-inferred). Also measured diverging on the same desk: `coordCooldown` (per-peer
 timer -> the detector status string), `coordLog2Text` (host 55 vs client 34 lines), `coordIsPing`
-(local-only, no wire mirror). The freq/pol FILTER offsets stayed 0 that run (no signal caught) -> the
+(local-only, no wire mirror). *(History note: v112 then MIRRORED coordIsPing raw -- which woke a
+phantom ping FSM on observers; v115b `de31889e` retired the raw apply, so the field is
+deliberately local-only again, with the edge crossing as bookkeeping. One machine per ping.)* The freq/pol FILTER offsets stayed 0 that run (no signal caught) -> the
 filter-machine divergence still needs a re-test with a locked signal, but the RATE divergence is proven.
 The fix is STILL UNBUILT as of `2dde3e16` (only the probe + RE shipped this session).
 

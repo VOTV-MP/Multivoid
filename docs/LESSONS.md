@@ -196,8 +196,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   -> stuck beep. Check (a) the interp actually emits exactly X under packet cadence, (b) the local
   crossing side-effect is suppressed/idempotent. **v112 corollary: the exact-snap must be PER-CHANNEL**
   (a whole-vector skip never fires while any channel moves — decoded accrues every packet), and a
-  DISCRETE channel (0/1 flag) never rides the ease at all — snap on arrival. *Look FIRST:*
-  desk_sim_sync.cpp SimInterp (v112 per-channel). `memory/lesson_mirrored_threshold_latch_needs_exact_snap.md`
+  DISCRETE channel (0/1 flag) never rides the ease at all — snap on arrival. **v115b BOUNDARY:
+  exact-snap does NOT extend to EVENT-FIRING machines — the ping FSM's stage transitions are
+  `==1.0` checks whose consequences are events/spawns/append-text; snapping values onto any
+  un-parked machine fires them locally = double events. Such machines: single-author only.**
+  *Look FIRST:* desk_sim_sync.cpp SimInterp (v112 per-channel).
+  `memory/lesson_mirrored_threshold_latch_needs_exact_snap.md`
+- **connected()-gated poll lanes EAT pre-connect edges — every such lane owes a connect-edge seed
+  from GROUND TRUTH** (v115b audit CRIT-1: a SOLO host's ping edge was absorbed by the unwired
+  baseline → a mid-ping joiner got no FSM-hold; desk_input gates its BOOKKEEPING on connected()
+  while device_occupancy gates only the SEND — two adjacent lanes, opposite gating, one silent
+  hole). Seed in ConnectReplayForSlot by reading the ENGINE state, never the baseline; never
+  clobber a live wire attribution. *Look FIRST:* `desk_input_sync::SeedPingAttributionFromMachine`
+  + `desk_snd_fx::QueueConnectBroadcastForSlot`.
+  `memory/lesson_connected_gated_poll_needs_connect_seed.md`
+- **Edge-authority polls: classify wire-replay transients by STATE PREDICATE, not flags/timers**
+  (v115b root-3: the catch replay's ResetDownloadMachine made the dish mesh transiently invalid
+  ~24 s → the ARM/DISARM edge poll broadcast a false DISARM that stomped the fresh catch. A
+  one-shot flag loses the legit ARM on fast respawns; a timer is a guess. The predicate: mesh
+  down + signalData LIVE = re-init window — a real disarm deletes signalData FIRST). *Look
+  FIRST:* `dish_sync.cpp HostArmPoll` reinitWindow.
+  `memory/lesson_edge_authority_poll_wire_transient_state_predicate.md`
 - **Presser-authored STATE broadcasts, never intent lanes, for EX-invisible verbs.** The verb has
   ALREADY run locally (incl. RNG rolls + id mints) before any seam can see it — "intent -> host
   executes" cannot exist; detect the local change (PE seam > raw-field poll > VM-bracket dirty-mark),
@@ -601,6 +620,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 ## 8. Build / deploy / git hygiene
 
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
+- **env/.bat host = HIDDEN lobby by design; the scoreboard listed-checkbox mirror LIES on that path**
+  (2026-07-17: absence from the server browser after a .bat launch is NOT a bug — v56 rule, test
+  lobbies must not pollute the list; but `AnnounceEnvHostHidden` bypasses `session_manager::SetListed`
+  so `g_listedState` stays true → the checkbox shows ON while hidden; toggle off+on re-lists.
+  One-line fix on record, deferred by the user). *Look FIRST:* `session_manager.cpp
+  AnnounceEnvHostHidden` vs `HostWithSave`'s mirror seed.
+  `memory/lesson_env_host_hidden_listed_mirror.md`
 - **A NEW shared box invalidates the provision script's box-#1 assumptions — verify each service from
   OUTSIDE.** Measured on the 2026-07-16 Cloudzy migration: ufw was active default-deny (old box ran
   none) — all services green on-box, ALL dead from the internet; and dual-stack `curl ifconfig.me`
@@ -664,7 +690,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the motion now DRIVES (the log). Rule: after animating any mirror, enumerate every per-peer producer that
   reads the now-moving field (log producers, tick-sims, ship counters) and gate it to the owner / suppress
   the non-owner path. A "mirror the input" change is incomplete until "don't ALSO generate the output
-  locally" is done. Family of OWNER-EFFECT + mirror-STATE-not-verb. Look FIRST:
+  locally" is done. **2nd instance (v115b `de31889e`): the wake needs NO animation — ONE wire-applied
+  BOOL (coord_isPing) started a phantom ping FSM on every observer (latent tick machine, analogd uber
+  @82980 → @80105). Before mirroring ANY BP field, classify it: display scalar vs a latent machine's
+  RUN-FLAG — run-flags NEVER raw-mirror.** Family of OWNER-EFFECT + mirror-STATE-not-verb. Look FIRST:
   `memory/lesson_smooth_mirror_wakes_dormant_per_peer_generation.md`,
   `memory/project_desk_console_sync_2026-07-15.md`
 - **NEVER `git add -A`/`<dir>` over held WIP — explicit paths or stash.** `memory/lesson_never_git_add_A_over_held_wip.md`

@@ -122,11 +122,20 @@ mirror + cursor v2** commit `c5ff11a4` — the user's mid-v114-hands-on reports 
 keypress/beep/loop sounds for observers; cursor jerks; the momentum tail lost at dismount) fixed
 at the native audio seam (Func-patch Play/SetActive/Activate, relayed DeskSndFx=105) + a
 claim-DECOUPLED cursor stream with a settle-gated momentum tail and an adaptive interp window;
-smoke PASS x2 + the e2e audio self-test proven host->client). **NOT hands-on: v112, v113, v114
-AND v115 all await the user take** (batched — FOUR proto layers stack; runbook
-`research/handson_runbook_2026-07-17_desk_v114.md` [now incl. the v115 half]; per-lane log
-prefixes keep attribution: `desk_input:`/`dish_sync:`/`[reel]`/`[task]`/`desk_snd:`/
-`desk_cursor:`). The v111 hands-on FAILED on 5 fronts — all designed out in v112
-(`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining OPEN: OPEN-1 (cursor 5fps — the v115
-adaptive window may absorb it, re-judge at the take), OPEN-2 (coordLog cluster), OPEN-3
+smoke PASS x2 + the e2e audio self-test proven host->client; and **v115b the PHANTOM ping-FSM
+fix** commit `de31889e` — the user's LIVE 14:46 ping test caught the v112 coordIsPing raw apply
+WAKING a parallel ping sim on the host [the FSM is a latent tick machine gated on the flag,
+analogd uber @82980] -> divergent verdicts + a phantom ARM raising the mirrored detector during
+a local FAIL + double coordLog authorship + a false post-catch DISARM stomp; fixed same evening:
+receivers never write the flag [bookkeeping only], a desk FSM-hold claim covers the pinger's
+run, and the arm poll's re-init-window predicate; design
+`votv-ping-fsm-phantom-v115b-DESIGN-2026-07-17.md`). **NOT hands-on: v112, v113, v114, v115 AND
+v115b all await the user take** (batched — FIVE layers stack; runbook
+`research/handson_runbook_2026-07-17_desk_v114.md` take 3; per-lane log prefixes keep
+attribution: `desk_input:`/`dish_sync:`/`[reel]`/`[task]`/`desk_snd:`/`desk_cursor:`/
+`FSM-hold`). The v111 hands-on FAILED on 5 fronts — all designed out in v112
+(`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining OPEN: OPEN-1 (cursor jerks — v115b
+removed two more mechanisms [the phantom's per-tick machine on the observer + the double-author
+text thrash]; apply cadence measured CLEAN 60 Hz; a smoke-env lead points at the client
+npc_client walk ~30 ms/tick — re-judge at the take), OPEN-2 (coordLog cluster), OPEN-3
 (upgrade-sync), OPEN-5/6/8/9 (L4+L7 are BUILT; the train order is L6 -> L8 -> L5 -> L9).

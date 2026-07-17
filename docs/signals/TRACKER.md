@@ -29,6 +29,7 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | Dishes rotation/kinematics (24 big) | rest pose = load-time RNG (unsaved); per-slew RNG; catch targets already synced | 3/4 (tbd) | host (planned) | — (`SkySignalCatch` covers targets only) | **OPEN-4** (RE'd 2026-07-16) |
 | Stationary PC / laptop screen | portable-PC power + screen | 1/4 (tbd) | tbd | — | **OPEN** (screens gap-list #5) |
 | U1 SHIFT quick-scan (arrows) | spawnDirs UMG arrows + beep + shared cooldown charge | 2 presser-event | presser | `DeskScanEvent 98` (arrows visual + charge, v112 `desk_input_sync` scan classification) + `DeskSndFx 105` (the beep, v115) | **AS-BUILT v112+v115** — was stale-OPEN here; code: `SendScan`/`OnDeskScan` + the fx lane; awaiting hands-on |
+| U1 ENTER triangulation ping (the FSM) | latent tick machine gated on `coord_isPing` (@82980 -> @80105 stage engine; ==1.0 latches; verdict spawns signalData + moves the theater) | ONE machine = the presser's, organically; observers: bookkeeping only | presser (FSM) / host (theater+ARM, v113) | CoordIsPing rides `DeskInput 97` as an edge NOTIFICATION (never machine-applied since v115b); catch on `SkySignalCatch`; ARM on `DishArm 99` | **AS-BUILT v115b `de31889e`** — the v112 raw apply WOKE a phantom sim on observers (live-caught 2026-07-17 14:46: divergent verdicts, phantom ARM raising the mirrored detector, double coordLog authorship, false post-catch DISARM). Fix: bookkeeping-only + desk FSM-hold claim (device_occupancy reconciler; deny+ForceExit for others mid-ping) + arm-poll re-init window (DISARM suppressed while signalData lives) + solo-host connect seed (audit CRIT-1). Observers still see no stage visuals (R-a = the old R2 residual). Awaiting hands-on |
 | U2 desk gauge/detector sounds | vol=match×\|speed\|, pitch=Lerp(match); loops on toggles | derived (needs speeds mirrored) | occupant/host | speeds on NO lane | **BUG-3** (data starvation) |
 | U2 save/delete/lid verbs | SAVE→savedSignals_0 (id mint); DELETE aborts active signal; lid=collision gate | 2 intent | host-gate | `SavedSignalAppend/Delete 58/59` cover the list; capOpened/delete-active NOT | **PARTIAL** |
 | U3 play deck (playback/volume/SARV/scroll) | world-audible signalSound; display remaps | 4 holder-owned (tbd) | occupant | — none | **OPEN-6** |
@@ -127,6 +128,16 @@ mid-v114-hands-on; two mechanisms were code-measured and removed (claim release/
 reset+snap; same-pos-new-seq packets reopening the fixed 33ms window = staircase at sender-fps
 dips) — the v115 adaptive window + dedupe + claim-decoupling may close this OPEN entirely;
 re-judge at the v115 take (a same-slot claim-flap WARN now attributes any residual).**
+**v115b UPDATE (2026-07-17 eve): two MORE mechanisms attributed + removed with the phantom
+ping-FSM fix (`de31889e`): the phantom was a PER-TICK uber machine running on the observer during
+any ping, and both peers double-authored the right-screen console lines (measured 220+93
+lines/min crossing simultaneously) = the "messages jerky like the cursor" report. Also MEASURED
+CLEAN: the observer's apply cadence (desk_cursor applying-line spacing steady 5 s = 60 Hz through
+the whole live session incl. the jerk window) — the apply side is exonerated. Residual lead: the
+smoke env showed client `[WALK-TIME] sync:npc_client ~30 ms/tick` + HITCH-SRC net_pump ~30 ms
+steady — a per-tick walk that heavy grows with NPC count = "jerky over time"; NOT measurable in
+the live logs (that instrumentation was off there). Re-judge at the take; if jerks persist,
+enable the WALK-TIME instrumentation and read `sync:npc_client` first.**
 
 ### OPEN-3 · Upgrade-level sync (NOT a desk detail — its own surface; surfaced by OPEN-0 gate 2)
 The freq/pol download formula reads upgrade fields (`upg_scanner`, `upg_downloadSpd`, filter-size) and
