@@ -147,7 +147,14 @@ reflected runTrigger — full native fanout (klaxon+lamps+grate+setEvent), idemp
 a transferred save already carrying the state. trigger_alarm_C is also the first
 kLaneOwnedClasses entry: EventSnapshot SKIPS it with an INFO (the 07-05 "unmapped alarm
 logged LOUD" joiner hole closes at the lane, and the WARN stays meaningful for genuinely
-uncovered classes) [autonomous e2e PASS 2026-07-05 13:50: the ON landed while the joiner was loading -> the gated live broadcast was correctly skipped and the connect snapshot delivered active=1 at world-ready, client native-replay applied same second; live OFF transition also proven]**.
+uncovered classes) [autonomous e2e PASS 2026-07-05 13:50: the ON landed while the joiner was loading -> the gated live broadcast was correctly skipped and the connect snapshot delivered active=1 at world-ready, client native-replay applied same second; live OFF transition also proven]**;
+desk_snd_fx (v115)=**one-shot sounds are EVENTS (missable by definition -- a joiner misses
+clicks it wasn't present for, and while its desk is unresolved arriving one-shots drop);
+the two LOOPS (corrds_loop / pingLoop) are STATE: `desk_snd_fx::QueueConnectBroadcastForSlot`
+reads COMPONENT GROUND TRUTH (bIsActive) on the host at the join edge and re-sends a LoopOn
+per active loop (covers host-pressed and client-pressed loops alike -- qf R5); a re-assert
+landing before the joiner's desk resolves parks in `g_pendingLoop` and retries each Tick
+(the snapshot-before-state-ready class, qf R3) [AS-BUILT v115]**.
 
 ### 3.5 Phases
 

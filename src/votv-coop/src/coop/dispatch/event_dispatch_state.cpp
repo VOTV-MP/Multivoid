@@ -12,6 +12,7 @@
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
+#include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/tape_caddy_sync.h"  // v114 (L7): ReelSlot
@@ -560,6 +561,23 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::desk_input_sync::OnDeskScan(sp2, sslot2);
+        break;
+    }
+    case net::ReliableKind::DeskSndFx: {
+        // v115: a peer's desk audio effect (organic Play/SetActive caught at the
+        // native seam) -- replay on this mirror. Symmetric, relayed.
+        if (msg.payloadLen < sizeof(net::DeskSndFxPayload)) {
+            UE_LOGW("event_feed: DeskSndFx payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DeskSndFxPayload));
+            break;
+        }
+        net::DeskSndFxPayload fx{};
+        std::memcpy(&fx, msg.payload, sizeof(fx));
+        const uint8_t fxslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::desk_snd_fx::OnDeskSndFx(fx, fxslot);
         break;
     }
     case net::ReliableKind::DishAimState: {

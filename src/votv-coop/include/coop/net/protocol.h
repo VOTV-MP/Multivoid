@@ -705,7 +705,20 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 114; // v114 (2026-07-17, L7 tape caddy + daily task):
+inline constexpr uint16_t kProtocolVersion = 115; // v115 (2026-07-17, desk audio-effect mirror):
+                                                  // presser-authored one-shot/loop sound forward at the
+                                                  // NATIVE audio seam -- Func-patch on AudioComponent:Play
+                                                  // + ActorComponent:SetActive/Activate (every whitelist-
+                                                  // comp call site measured EX_VirtualFunction on a native
+                                                  // target -> funnels through UFunction->Func), pointer-
+                                                  // whitelisted to the desk's 6 unit-1 audio comps; new
+                                                  // relayed DeskSndFx=105 (44 B) carries {op,comp,cue};
+                                                  // mirrors replay SetSound+Play / SetActive under the
+                                                  // wire-apply echo guard. RULE-2: PlayScanEffects' beep +
+                                                  // signal_catch's PlayPingSuccess replay RETIRED (the fx
+                                                  // lane owns desk one-shot audio). WIRE CHANGE (new kind)
+                                                  // -> bump; a mixed 114/115 pair HARD-CLOSEs at the gate.
+                                                  // v114 (2026-07-17, L7 tape caddy + daily task):
                                                   // wallunit reel slots (presser-authored ReelSlot=102
                                                   // sentinel edges + host ReelPose=40 corrector; client
                                                   // accrual NOT parked -- written park-doctrine
@@ -2255,6 +2268,28 @@ enum class ReliableKind : uint8_t {
                        //     ONLY (class-whitelisted to the reel classes -- NOT a general client
                        //     spawn door); NOT relayed. Lane::Bulk so a fast pocket-DESTROY(key)
                        //     cannot overtake the intent in-lane.
+    DeskSndFx = 105,   // v115: presser-authored desk AUDIO EFFECT forward. The desk's one-shot
+                       //     clicks/beeps and the two loops are played by presser-LOCAL BP paths
+                       //     (OnKeyDown/OnKeyUp/screen buttons/verb internals -- all EX_Local*
+                       //     or presser-only FSM), so observers heard nothing. The seam is the
+                       //     NATIVE audio layer: Func-patch on AudioComponent:Play +
+                       //     ActorComponent:SetActive/Activate (every whitelist-comp call site
+                       //     measured EX_VirtualFunction on a NATIVE target -> dispatch funnels
+                       //     through UFunction->Func regardless of caller opcode). Filter =
+                       //     pointer compare against the 6 resolved unit-1 comps (kDeskSndComp*).
+                       //     Ops: Play (cue name rides the payload -- SetSound ran before Play,
+                       //     so the comp's Sound prop is the truth at hook time), LoopOn
+                       //     (SetActive(true,true) -- ALL measured native ON sites use reset
+                       //     semantics), LoopOff (SetActive(false,false); engine ignores bReset
+                       //     on deactivate). Mirrors replay via reflected SetSound+Play /
+                       //     SetActive under the wire-apply echo guard (our own replay dispatch
+                       //     also funnels through ->Func -- the guard kills the echo).
+                       //     Symmetric + RELAYED (claim-free desk doctrine: whoever really
+                       //     pressed authors; host relays, origin excluded by construction).
+                       //     Loop state is join-re-asserted by the HOST from component ground
+                       //     truth (bIsActive) at the joiner's ready edge; leaver teardown is
+                       //     HOST-OWNED (attribution map host-only; host broadcasts the OFF).
+                       //     Payload: DeskSndFxPayload (44 B).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -4216,11 +4251,46 @@ struct DeskInputPayload {
 static_assert(sizeof(DeskInputPayload) == 12, "DeskInputPayload must be 12 bytes");
 
 // v112: the SHIFT quick-scan notification (DeskScanEvent=98). Carries the observed
-// charge for the log line only; mirrors replay spawnDirs()+beep (effects, no gate).
+// charge for the log line only; mirrors replay spawnDirs() (the VISUAL; the beep
+// itself rides DeskSndFx since v115 -- RULE 2: one owner for desk one-shot audio).
 struct DeskScanEventPayload {
     float observedCooldown;  // 4 -- the presser's post-charge cooldown (diagnostic)
 };
 static_assert(sizeof(DeskScanEventPayload) == 4, "DeskScanEventPayload must be 4 bytes");
+
+// ---- v115: the desk audio-effect forward (DeskSndFx=105) ----
+//
+// The component index is a COMPILE-TIME wire contract (never discovery order):
+// both peers map index <-> the same ObjectProperty name on AanalogDScreenTest_C
+// via the static table in ue_wrap/desk_audio.cpp. Order below is frozen.
+enum class DeskSndComp : uint8_t {
+    KeyPress    = 0,  // audio_coordKeyPress    -- one-shot, every accepted key down/up
+    CoordFail   = 1,  // audio_coordFail        -- one-shot, broken-radar fail
+    ButtonSound = 2,  // audio_coordButtonSound -- one-shot channel (playButtonSound: SetSound+Play)
+    PingSound   = 3,  // audio_coord_pingSound  -- one-shot channel (playPingSound: SetSound+Play)
+    CorrdsLoop  = 4,  // corrds_loop            -- LOOP: cursor movement (spaceRenderer edge-guard)
+    PingLoop    = 5,  // audio_coord_pingLoop   -- LOOP: the ping FSM loop
+    Count       = 6,
+};
+inline constexpr int kDeskSndFirstLoop = 4;  // comps >= this are loops (state, join-re-asserted)
+
+enum class DeskSndOp : uint8_t {
+    Play    = 0,  // one-shot: mirror replays SetSound(cue)+Play(0) on the comp
+    LoopOn  = 1,  // mirror replays SetActive(true, true)  (all native ON sites reset)
+    LoopOff = 2,  // mirror replays SetActive(false, false) (bReset ignored on deactivate)
+};
+
+inline constexpr int kDeskSndCueCap = 40;  // longest measured cue name = 35 chars
+                                           // (newdesk_panelCoord_pingChangeCursor) + NUL + slack
+
+struct DeskSndFxPayload {
+    uint8_t op;                  // 1 -- DeskSndOp
+    uint8_t comp;                // 1 -- DeskSndComp
+    uint8_t cueLen;              // 1 -- strlen(cue); 0 for loop ops
+    uint8_t _pad;                // 1
+    char    cue[kDeskSndCueCap]; // 40 -- ASCII cue object short name, NUL-padded
+};
+static_assert(sizeof(DeskSndFxPayload) == 44, "DeskSndFxPayload must be 44 bytes");
 
 // v113 (L4 dishes): the host->all dish POSE stream (DishPose=39, unreliable,
 // newest-wins by header seq). Movers-only rows at 4 Hz while any dish slews +

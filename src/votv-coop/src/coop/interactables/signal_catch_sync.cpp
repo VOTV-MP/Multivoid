@@ -177,7 +177,8 @@ void ApplyReplay(coop::net::Session* s, const coop::net::SkySignalCatchPayload& 
     CD::WriteCoordSignal(sig);                                  // @79303
     SR::RemoveSignalByIdentity(sig.x, sig.y, sig.z, sig.frequency);  // @9337
     CD::ResetDownloadMachine();                                 // @10050/@10244
-    CD::PlayPingSuccess();                                      // @10027 (presence)
+    // v115 (RULE 2): the pingSuccess beep replay is RETIRED -- the pinging
+    // peer's organic playPingSound(@10027) now crosses on the DeskSndFx lane.
     if (s->role() == coop::net::Role::Host) {
         if (p.slewValid) {
             const int32_t n = D::StartMovingAll(

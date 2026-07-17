@@ -2,6 +2,7 @@
 
 #include "coop/interactables/desk_input_sync.h"
 
+#include "coop/interactables/desk_snd_fx.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/console_desk.h"
@@ -198,7 +199,12 @@ void OnDeskInput(const coop::net::DeskInputPayload& p, uint8_t senderSlot) {
     if (!CD::EnsureResolved() || !CD::Instance()) return;  // inherited residual: dropped at unresolved desk
     CD::Scalars sc;
     if (!CD::ReadScalars(sc)) return;
-    if (!ApplyField(p, sc)) return;
+    {
+        // v115: wire-caused engine writes hold the audio-seam echo guard --
+        // any sound a setter side effect plays must not re-forward.
+        coop::desk_snd_fx::ScopedWireApply guard;
+        if (!ApplyField(p, sc)) return;
+    }
     // ECHO-PRIME: the applied field (and only it) advances the baseline in the
     // same GT task -- the next poll never reads this apply as a local edge.
     if (g_primed) PatchScalar(p, g_baseline);
@@ -213,6 +219,7 @@ void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
+    coop::desk_snd_fx::ScopedWireApply guard;  // v115: the spawnDirs replay is wire-caused
     if (!CD::PlayScanEffects()) {
         if (!g_scanWidgetWarned) {
             g_scanWidgetWarned = true;
@@ -220,7 +227,7 @@ void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {
         }
         return;
     }
-    UE_LOGI("desk_input: scan replayed (spawnDirs + beep)");
+    UE_LOGI("desk_input: scan replayed (spawnDirs visual; the beep rides DeskSndFx)");
 }
 
 void PrimeBaselines() {
@@ -242,6 +249,7 @@ void OnPeerLeft(int slot) {
     // The leaver's dangling ping would swallow every peer's desk keys forever:
     // host-author the falling edge.
     sc.coordIsPing = false;
+    coop::desk_snd_fx::ScopedWireApply guard;  // v115: echo guard
     if (CD::WriteScalars(sc)) {
         g_baseline.coordIsPing = false;
         coop::net::DeskInputPayload p{};
@@ -262,6 +270,7 @@ void OnDisconnect() {
         CD::Scalars sc;
         if (CD::EnsureResolved() && CD::Instance() && CD::ReadScalars(sc) && sc.coordIsPing) {
             sc.coordIsPing = false;
+            coop::desk_snd_fx::ScopedWireApply guard;  // v115: echo guard
             if (CD::WriteScalars(sc))
                 UE_LOGI("desk_input: cleared wire-applied coordIsPing at session end");
         }

@@ -214,10 +214,6 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint);
 // machine is ARMED (the joiner's pending adopt applies on this edge).
 bool DownloadMeshValid();
 
-// playPingSound(newdesk_panelCoord_pingSuccess) -- the catch-replay presence
-// cue (@10027).
-bool PlayPingSuccess();
-
 // ---- The v112 desk-INPUT apply surface (coop/interactables/desk_input_sync) ----
 // The claim-free field-granular input lane's engine writes. RE: the signal-chain
 // units RE 2026-07-16 + the desk-input-lane DESIGN doc (12-round /qf).
@@ -242,12 +238,13 @@ bool ApplyActiveToggleEffects(int unit, bool value);
 // signalSound.SetVolumeMultiplier(FClamp(v/10, 0.1, 5)). Game thread.
 bool ApplyPlayVolumeEffects(int32_t value);
 
-// The SHIFT-scan accepted-branch EFFECTS for a mirror: reflected spawnDirs()
+// The SHIFT-scan accepted-branch VISUAL for a mirror: reflected spawnDirs()
 // (arrows regenerate from the wire-mirrored signals_a -- bytecode-verified no
-// RNG / no local-peer read) + playPingSound(newdesk_beepLong1). NEVER a
-// useSearch() replay -- its cooldown gate would refuse on per-peer decay
-// jitter. Null-guarded on the widget; false (log once at the caller) if the
-// atlas/ui_coordinates widget is not live yet.
+// RNG / no local-peer read). The beep no longer plays here (v115, RULE 2 --
+// the presser's organic playPingSound rides the DeskSndFx audio-seam lane).
+// NEVER a useSearch() replay -- its cooldown gate would refuse on per-peer
+// decay jitter. Null-guarded on the widget; false (log once at the caller)
+// if the atlas/ui_coordinates widget is not live yet.
 bool PlayScanEffects();
 
 // ---- The refiner (comp) pane (v65, coop/comp_sync) ----

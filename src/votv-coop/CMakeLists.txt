@@ -210,6 +210,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/console_desk.cpp
     src/ue_wrap/dish.cpp
     src/ue_wrap/tape_caddy.cpp
+    src/ue_wrap/desk_audio.cpp
     src/ue_wrap/daily_task.cpp
     src/ue_wrap/sleep.cpp
     src/ue_wrap/email.cpp
@@ -380,6 +381,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/console_state_sync.cpp
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp
+    src/coop/interactables/desk_snd_fx.cpp
     src/coop/interactables/desk_sim_sync.cpp
     src/coop/interactables/dish_sync.cpp
     src/coop/interactables/tape_caddy_sync.cpp

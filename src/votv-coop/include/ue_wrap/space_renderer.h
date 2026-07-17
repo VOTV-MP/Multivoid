@@ -76,6 +76,12 @@ bool KillClientSpawnTimer();
 // signal; the world is back to SP behavior).
 bool RestoreRoller();
 
+// v115 cursor mirror: zero the glide integrator state (`movement`, a raw
+// EX_Let-written FVector2D -- NOT setter-managed) so a residual local glide
+// never co-writes against an incoming remote cursor stream. One write at the
+// receiver's stream-start edge (desk_cursor_sync).
+bool ZeroMovement();
+
 // (The dish aim does NOT live here: spaceRenderer.coords/coords_rot are dead
 // bytecode -- the real cursor state is on the ui_coordinates widget; see
 // ue_wrap::console_desk::ReadDishAim/WriteDishAim. Phase-2 impl RE.)

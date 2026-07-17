@@ -51,6 +51,7 @@ int32_t g_instanceIdx = -1;
 
 int32_t g_offSignals = -1;    // TArray<Fstruct_signal_spawn>
 int32_t g_offSignalsA = -1;   // TArray<ui_signal_C*>
+int32_t g_offMovement = -1;   // FVector2D movement -- the cursor glide integrator state
 // (No coords/coords_rot/move_* offsets: dead bytecode -- the dish aim lives
 // on the ui_coordinates widget, handled by ue_wrap::console_desk.)
 
@@ -81,6 +82,7 @@ void ResolvePass() {
     if (!g_cls) return;
     if (g_offSignals < 0)   g_offSignals   = R::FindPropertyOffset(g_cls, L"signals");
     if (g_offSignalsA < 0)  g_offSignalsA  = R::FindPropertyOffset(g_cls, L"signals_a");
+    if (g_offMovement < 0)  g_offMovement  = R::FindPropertyOffset(g_cls, L"movement");
     if (!g_addSignalFn)    g_addSignalFn    = R::FindFunction(g_cls, L"addSignal");
     if (!g_deleteSignalFn) g_deleteSignalFn = R::FindFunction(g_cls, L"deleteSignal");
     if (!g_spawnSignalFn)  g_spawnSignalFn  = R::FindFunction(g_cls, L"spawnSignal");
@@ -377,6 +379,20 @@ bool KillClientSpawnTimer() {
     struct { const wchar_t* data; int32_t num; int32_t max; } fs{ fn, 12, 12 };
     if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return false;
     return ue_wrap::Call(g_kismetSysCdo, f);
+}
+
+bool ZeroMovement() {
+    // v115 cursor mirror: kill a residual local glide when a REMOTE stream
+    // takes cursor authority (qf R5 Q4 -- the integrator adds `movement` to
+    // the cursor every tick with NO focus gate, so a stale glide co-writes
+    // against the wire stream). `movement` is a raw EX_Let-written Vector2D
+    // (NOT setter-managed) -- the same write class as WriteCursorOnly.
+    void* inst = Instance();
+    if (!inst || g_offMovement < 0) return false;
+    float* v = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(inst) + g_offMovement);
+    v[0] = 0.0f;
+    v[1] = 0.0f;
+    return true;
 }
 
 bool RestoreRoller() {

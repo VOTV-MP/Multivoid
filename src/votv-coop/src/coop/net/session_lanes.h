@@ -157,7 +157,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     // DeskState is NOT relayable since v112 (RULE 2): it is ADOPT-ONLY, host->joiner
     // point-to-point; clients never send it. Live desk input rides DeskInput below.
     case ReliableKind::DeskInput:         // v112: claim-free field-granular desk input deltas are PRESSER-authored -- relay a client's delta to the others (the host excludes the originator by relay construction)
-    case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays dirs+beep
+    case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
+    case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others

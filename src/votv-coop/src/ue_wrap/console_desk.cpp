@@ -100,7 +100,6 @@ int32_t g_offRowMesh = -1;           // mesh_9_... (UStaticMesh*)
 void* g_formDownloadFn = nullptr;        // formDownload(decoded, polarity)
 void* g_initDownloadSignalFn = nullptr;  // initDownloadSignal(signalLocation, decoded, polarity)
 void* g_playPingSoundFn = nullptr;       // playPingSound(NewSound)
-void* g_sndPingSuccess = nullptr;        // newdesk_panelCoord_pingSuccess cue/wave
 
 // ---- comp pane substrate (v65) ----
 int32_t g_offWidget = -1;            // desk.Widget (Uui_consolesAtlas_C*)
@@ -152,7 +151,6 @@ void* g_spawnDirsFn = nullptr;           // desk spawnDirs() (the scan arrows)
 void* g_setActiveFn = nullptr;           // UActorComponent::SetActive(bNewActive, bReset)
 void* g_setVisibilityFn = nullptr;       // USceneComponent::SetVisibility(bNewVisibility, bPropagate)
 void* g_setVolumeMultFn = nullptr;       // UAudioComponent::SetVolumeMultiplier(float)
-void* g_sndBeepLong1 = nullptr;          // newdesk_beepLong1 (the scan beep)
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -186,11 +184,6 @@ void ResolvePass() {
     if (!g_initDownloadSignalFn)
         g_initDownloadSignalFn = R::FindFunction(g_cls, L"initDownloadSignal");
     if (!g_playPingSoundFn) g_playPingSoundFn = R::FindFunction(g_cls, L"playPingSound");
-    if (!g_sndPingSuccess) {
-        g_sndPingSuccess = R::FindObject(L"newdesk_panelCoord_pingSuccess", L"SoundCue");
-        if (!g_sndPingSuccess)
-            g_sndPingSuccess = R::FindObject(L"newdesk_panelCoord_pingSuccess", L"SoundWave");
-    }
     if (g_offRowSignalName < 0 || g_offRowMesh < 0) {
         // The list_objects DataTable row type (struct_signal_data), reached
         // through the property's OWN FStructProperty::Struct pointer -- a
@@ -245,10 +238,6 @@ void ResolvePass() {
         g_downloadPlaySignallFn = R::FindFunction(g_cls, L"download_playSignall");
     if (!g_setMatsFn)  g_setMatsFn = R::FindFunction(g_cls, L"setMats");
     if (!g_spawnDirsFn) g_spawnDirsFn = R::FindFunction(g_cls, L"spawnDirs");
-    if (!g_sndBeepLong1) {
-        g_sndBeepLong1 = R::FindObject(L"newdesk_beepLong1", L"SoundCue");
-        if (!g_sndBeepLong1) g_sndBeepLong1 = R::FindObject(L"newdesk_beepLong1", L"SoundWave");
-    }
 
     if (!g_uiCoordsCls) g_uiCoordsCls = R::FindClass(L"ui_coordinates_C");
     if (g_uiCoordsCls) {
@@ -276,7 +265,7 @@ void ResolvePass() {
                 "writeToCoordLog_2=%s, uiCoords view/c0/sel/dir=0x%X/0x%X/0x%X/0x%X updCursor=%s, "
                 "comp widget/texts/cues=%s/%s/%s sounds=%s/%s, "
                 "catch sig/row/dld=0x%X/0x%X/0x%X rowName/mesh=0x%X/0x%X "
-                "form/init/ping=%s/%s/%s pingSnd=%s",
+                "form/init/ping=%s/%s/%s",
                 fns, g_updCompFn ? "yes" : "NO",
                 g_writeToCoordLogFn ? "yes" : "NO",
                 g_offViewCoordinate, g_offCoordinate0, g_offSelected, g_offDirection,
@@ -288,7 +277,7 @@ void ResolvePass() {
                 g_offCoordSignalData, g_offDLRow, g_offDLData,
                 g_offRowSignalName, g_offRowMesh,
                 g_formDownloadFn ? "yes" : "NO", g_initDownloadSignalFn ? "yes" : "NO",
-                g_playPingSoundFn ? "yes" : "NO", g_sndPingSuccess ? "yes" : "NO");
+                g_playPingSoundFn ? "yes" : "NO");
     }
 }
 
@@ -893,15 +882,6 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     return true;
 }
 
-bool PlayPingSuccess() {
-    void* d = Instance();
-    if (!d || !g_playPingSoundFn || !g_sndPingSuccess) return false;
-    ue_wrap::ParamFrame f(g_playPingSoundFn);
-    if (!f.valid()) return false;
-    f.Set<void*>(L"NewSound", g_sndPingSuccess);
-    return ue_wrap::Call(d, f);
-}
-
 // ---- v112 desk-INPUT apply surface ----
 
 bool ReadMaxCooldown(float& out) {
@@ -1016,15 +996,10 @@ bool PlayScanEffects() {
     // Null-guard: spawnDirs derefs ui_coordinates.CanvasPanel_245 -- skip the
     // replay while the desk's screen widget isn't live yet (the caller logs once).
     if (!UiCoordsInstance()) return false;
-    if (!CallParamless(d, g_spawnDirsFn)) return false;
-    if (g_playPingSoundFn && g_sndBeepLong1) {
-        ue_wrap::ParamFrame f(g_playPingSoundFn);
-        if (f.valid()) {
-            f.Set<void*>(L"NewSound", g_sndBeepLong1);
-            ue_wrap::Call(d, f);
-        }
-    }
-    return true;
+    // v115 (RULE 2): the beepLong1 no longer plays here -- the presser's
+    // organic playPingSound rides the DeskSndFx audio-seam lane; this replay
+    // keeps only the VISUAL (the ui_coordArrow widgets).
+    return CallParamless(d, g_spawnDirsFn);
 }
 
 }  // namespace ue_wrap::console_desk
