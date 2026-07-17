@@ -1,18 +1,39 @@
-# Hands-on runbook — v112..v115b + v116 CATCH-FIX/LAPTOP/FEED (batched), take 4
+# Hands-on runbook — v112..v116 + v117 L6 DECK PLAYBACK (batched), take 4
 
-DEPLOYED: `votv-coop.dll 3a9470ee...` x4, hash-verified 2026-07-17 late evening.
-kProtocolVersion **116** (the SkySignalCatch kind=2 semantic change + the LaptopState
-lane; a 115-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS).
+DEPLOYED: see the v117 section below for the current DLL hash (2026-07-18 build).
+kProtocolVersion **117** (v116's catch/laptop changes + the NEW PlayDeckEvent lane;
+a 116-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS).
 **The take-3 test (17:00-17:09) found the v113-116 root this build fixes**: the client's
 successful ping at 17:04:46 never crossed (the claim-gated catch detector raced the
 FSM-hold release) -> host NO SIGNAL / frozen host dishes / diverged client dishes /
 detector asymmetry. v116 retires the claim gates (the unprimed change-edge is the
 authority) + adds the laptop PC lane + catch -> activity feed.
-**NOTHING below is hands-on verified yet.** SIX unverified layers batch here; per-lane
+**NOTHING below is hands-on verified yet.** SEVEN unverified layers batch here; per-lane
 log prefixes keep attribution:
 `desk_input:`/`desk_sim:` = v112, `dish_sync:`/`[dish]` = v113, `[reel]`/`[task]` = v114,
 `desk_snd:`/`desk_cursor:` = v115, `FSM-hold`/`ping attribution`/`re-init window` = v115b,
-`signal_catch:`/`laptop_sync:`/`laptop:` = v116.
+`signal_catch:`/`laptop_sync:`/`laptop:` = v116, `deck_play:` = v117.
+
+## What changed in v117 (2026-07-18 — L6 deck playback)
+The unit-3 play deck's PLAYBACK now mirrors (it was fully local: a non-occupant heard
+NOTHING from the world-audible deck). Design votv-deck-play-L6-impl-DESIGN-2026-07-18.md
+(7-round /qf); smoke x2 PASS with the e2e self-test chain proven (patch/routing/wire/gen);
+the AUDIO half is exactly what only this take can verify.
+**STEPS (v117):** save at least one fully-downloaded signal to the deck list first (or use
+an existing one). (a) Peer A presses the deck PLAY button -> peer B (standing at the desk,
+NOT occupying) must HEAR the same track from the desk + see the deck panes playing; logs:
+A `deck_play: organic play idx=N gen=G`, B `deck_play: applied play idx=N gen=G`. (b) B
+presses STOP (any peer may stop) -> playback stops for BOTH; logs: B `organic stop`, A
+`applied stop`. (c) Let a track play to its NATURAL END -> it must stop on both with NO
+`deck_play: applied stop` line (each peer self-terminates; a flood of stop lines here =
+the fin bracket failed -- gen guard still keeps it correct, but report it). (d) Volume
+knob + scroll while playing (rides v112 -- mirror volume must track). (e) IMPORT/EXPORT a
+drive while playing -> playback stops on both (the seam covers those stops generically).
+Watch-fors: double audio on a receiver (= routing bug), a play that never crosses
+(`gates failed` WARN on the receiver names why), phantom stops killing a fresh playback
+(= gen guard bug -- grep `stale stop`). NOTE: [dev] deck_selftest=1 is ON on the HOST --
+at +25 s post-connect it fires one silent Activate/Deactivate pair (no sound, no panes);
+ignore the matching gate-WARN pair on the client, or flip the ini key to 0.
 
 ## What changed in v116 (this build — the take-3 report fixes)
 1. **The lost catch**: a successful ping now ALWAYS crosses — expect

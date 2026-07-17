@@ -12,6 +12,7 @@
 
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
+#include "coop/interactables/deck_play_sync.h"    // v117 (L6): PlayDeckEvent
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_sync.h"
@@ -81,6 +82,23 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::laptop_sync::OnLaptopState(lp, lslot);
+        break;
+    }
+    case net::ReliableKind::PlayDeckEvent: {
+        // v117 (L6): a deck playback edge (presser-authored; host relays; the
+        // gen guard + gate prechecks live in deck_play_sync::OnPlayDeck).
+        if (msg.payloadLen < sizeof(net::PlayDeckEventPayload)) {
+            UE_LOGW("event_feed: PlayDeckEvent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PlayDeckEventPayload));
+            break;
+        }
+        net::PlayDeckEventPayload pd{};
+        std::memcpy(&pd, msg.payload, sizeof(pd));
+        const uint8_t pdslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::deck_play_sync::OnPlayDeck(pd, pdslot);
         break;
     }
     case net::ReliableKind::DishArm: {

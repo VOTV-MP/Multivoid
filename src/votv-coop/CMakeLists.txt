@@ -383,6 +383,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/console_state_sync.cpp
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp
+    src/coop/interactables/deck_play_sync.cpp
     src/coop/interactables/desk_snd_fx.cpp
     src/coop/interactables/desk_sim_sync.cpp
     src/coop/interactables/dish_sync.cpp

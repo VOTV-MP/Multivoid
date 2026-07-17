@@ -145,6 +145,8 @@ int32_t g_offLightCoord = -1;        // light_coord
 int32_t g_offLightComp = -1;         // light_comp
 int32_t g_offSignalSound = -1;       // signalSound (UAudioComponent* -- playback volume)
 void* g_stopSoundFn = nullptr;           // desk stopSound() (the active_play setter runs it)
+void* g_playSignalFn = nullptr;          // desk playSignal() (L6 deck-playback mirror replay)
+void* g_finFn = nullptr;                 // desk fin() (OnAudioFinished delegate cb -- L6 PE bracket)
 void* g_downloadPlaySignallFn = nullptr; // desk download_playSignall() (the active_download setter)
 void* g_setMatsFn = nullptr;             // desk setMats() (screen materials -- the comp setter)
 void* g_spawnDirsFn = nullptr;           // desk spawnDirs() (the scan arrows)
@@ -234,6 +236,8 @@ void ResolvePass() {
     if (g_offLightComp < 0)  g_offLightComp = R::FindPropertyOffset(g_cls, L"light_comp");
     if (g_offSignalSound < 0) g_offSignalSound = R::FindPropertyOffset(g_cls, L"signalSound");
     if (!g_stopSoundFn) g_stopSoundFn = R::FindFunction(g_cls, L"stopSound");
+    if (!g_playSignalFn) g_playSignalFn = R::FindFunction(g_cls, L"playSignal");
+    if (!g_finFn) g_finFn = R::FindFunction(g_cls, L"fin");
     if (!g_downloadPlaySignallFn)
         g_downloadPlaySignallFn = R::FindFunction(g_cls, L"download_playSignall");
     if (!g_setMatsFn)  g_setMatsFn = R::FindFunction(g_cls, L"setMats");
@@ -1001,5 +1005,17 @@ bool PlayScanEffects() {
     // keeps only the VISUAL (the ui_coordArrow widgets).
     return CallParamless(d, g_spawnDirsFn);
 }
+
+bool CallDeckPlaySignal() {
+    void* d = Instance();
+    return d && CallParamless(d, g_playSignalFn);
+}
+
+bool CallDeckStopSound() {
+    void* d = Instance();
+    return d && CallParamless(d, g_stopSoundFn);
+}
+
+void* DeckFinFn() { return g_finFn; }
 
 }  // namespace ue_wrap::console_desk

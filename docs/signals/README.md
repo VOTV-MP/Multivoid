@@ -139,13 +139,20 @@ authority), adds kind=2 feed-silent connect seeds + the settled-dish slew fallba
 guard, lands one "caught signal 'X'" feed line per peer, and ships the stationary-PC lane
 (LaptopState=106: power replay + atomic floppy scalars+content + HOST disc-content authority;
 design `votv-v116-catch-attribution-and-laptop-DESIGN-2026-07-17.md`, RE
-`votv-laptop-pc-RE-2026-07-17.md`). **NOT hands-on: v112..v116 all await the user take**
-(batched — SIX layers stack; runbook `research/handson_runbook_2026-07-17_desk_v114.md` take 4;
+`votv-laptop-pc-RE-2026-07-17.md`). **v117 L6 DECK PLAYBACK BUILT (2026-07-18)**: the
+event_dispatch_signal.cpp extraction landed first (`e88cc5e0`, the 18 signal-pipeline router
+cases into their own family), then `deck_play_sync` per its own 7-round /qf
+(`votv-deck-play-L6-impl-DESIGN-2026-07-18.md`): PlayDeckEvent=107 at the v115 audio Func seam
+(Deactivate = the 4th patch; census: the signalSound edges ARE playSignal/stopSound), the GEN
+GUARD (correctness independent of fin's PE visibility), any-peer stop, proto 117; smoke x2 +
+e2e self-test chain proven, audits 0 CRIT. **NOT hands-on: v112..v117 all await the user take**
+(batched — SEVEN layers stack; runbook `research/handson_runbook_2026-07-17_desk_v114.md` take 4;
 per-lane log prefixes keep attribution: `desk_input:`/`dish_sync:`/`[reel]`/`[task]`/
-`desk_snd:`/`desk_cursor:`/`FSM-hold`/`signal_catch:`/`laptop_sync:`). The v111 hands-on FAILED
+`desk_snd:`/`desk_cursor:`/`FSM-hold`/`signal_catch:`/`laptop_sync:`/`deck_play:`). The v111
+hands-on FAILED
 on 5 fronts — all designed out in v112 (`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining
 OPEN: OPEN-1 (cursor jerks — v116 removed the diag-battery noise [kerfur_census 8-25 ms walk] and
 added HOST perf_probe, the never-measured half; npc_client walk = the named suspect), OPEN-2
-(coordLog cluster), OPEN-3 (upgrade-sync), OPEN-5/6/8/9 + OPEN-10 NEW (laptop v2: PC buffer +
-portable PC; per-device claim discrimination) (L4+L7 BUILT; the train is L6 -> L8 -> L5 -> L9,
-with the event_dispatch_signal.cpp extraction FIRST — the dispatch file sits at 791/800).
+(coordLog cluster), OPEN-3 (upgrade-sync), OPEN-5/8/9 + OPEN-10 (laptop v2: PC buffer +
+portable PC; per-device claim discrimination) (L4+L7+L6 BUILT; the remaining train is
+L8 -> L5 -> L9, the 0x45 frequency probe HALT-gates L5/L9).

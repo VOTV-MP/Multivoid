@@ -705,7 +705,13 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 116; // v116 (2026-07-17 eve, the catch-attribution retire):
+inline constexpr uint16_t kProtocolVersion = 117; // v117 (2026-07-18, L6 deck playback): NEW
+                                                  // ReliableKind PlayDeckEvent=107 (unit-3
+                                                  // playback play/stop edges at the audio Func
+                                                  // seam, gen-guarded) -- a peer without the
+                                                  // kind would silently drop the lane, so the
+                                                  // pair must hard-close at the gate.
+// v116 (2026-07-17 eve, the catch-attribution retire):
                                                   // SkySignalCatch kind gains 2 = connect STATE-SEED
                                                   // (applied like 0, never announced to the activity
                                                   // feed) -- a SEMANTIC wire change, hence the bump.
@@ -2337,6 +2343,25 @@ enum class ReliableKind : uint8_t {
                        //     adoption eid-binding, host loadDatas its actor + re-fans).
                        //     Symmetric + RELAYED (host applies + refans except origin).
                        //     Payload: LaptopStatePayload (216 B).
+    PlayDeckEvent = 107, // v117 (deck_play_sync -- L6): unit-3 deck PLAYBACK edges.
+                       //     Design: 7-round /qf 2026-07-18. Detection at the v115 audio
+                       //     Func seam (census: signalSound.Activate x1 = playSignal's body,
+                       //     .Deactivate x1 = stopSound's body -> the edges ARE the verbs,
+                       //     invariant not a site list; Deactivate = the 4th Func patch).
+                       //     Presser-authored, claim-free (world buttons; any peer may
+                       //     stop). op 0=play {selectIndex, gen} / 1=stop {gen}. GEN GUARD:
+                       //     the author mints max(seen)+1 per play; a stop carries the gen
+                       //     it terminates; receivers drop stale/duplicate stops -- makes
+                       //     correctness independent of fin()'s (inferred) PE visibility;
+                       //     the fin PE bracket only suppresses natural-end spam. Receivers
+                       //     pre-check active_play + index (rows byte-identical -- the
+                       //     decoded gate cannot diverge), route selectIndex through the
+                       //     v112 DeskInput apply author (write + echo-prime), then replay
+                       //     reflected playSignal()/stopSound() under the audio wire guard
+                       //     (Activate operand measured bReset=TRUE -> mid-play apply is a
+                       //     clean restart). Symmetric + RELAYED. No join seed (a joiner
+                       //     misses in-flight playback -- arch residual; fields seed via
+                       //     DeskState adopt). Payload: PlayDeckEventPayload (12 B).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -4376,6 +4401,16 @@ struct DeskSndFxPayload {
     char    cue[kDeskSndCueCap]; // 40 -- ASCII cue object short name, NUL-padded
 };
 static_assert(sizeof(DeskSndFxPayload) == 44, "DeskSndFxPayload must be 44 bytes");
+
+// v117 (L6): one unit-3 deck playback EDGE (PlayDeckEvent=107). See the
+// ReliableKind entry for the full design comment (gen guard semantics).
+struct PlayDeckEventPayload {
+    uint8_t  op;           // 1 -- 0=play 1=stop
+    uint8_t  _pad[3];      // 3
+    int32_t  selectIndex;  // 4 -- play: the presser's validated play_selectIndex; stop: -1
+    uint32_t gen;          // 4 -- play: the minted playback generation; stop: the gen it ends
+};
+static_assert(sizeof(PlayDeckEventPayload) == 12, "PlayDeckEventPayload must be 12 bytes");
 
 // v113 (L4 dishes): the host->all dish POSE stream (DishPose=39, unreliable,
 // newest-wins by header seq). Movers-only rows at 4 Hz while any dish slews +

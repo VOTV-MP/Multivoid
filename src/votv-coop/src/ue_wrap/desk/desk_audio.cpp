@@ -38,6 +38,8 @@ void*   g_playFn = nullptr;       // AudioComponent:Play(StartTime)
 void*   g_setSoundFn = nullptr;   // AudioComponent:SetSound(NewSound)
 void*   g_setActiveFn = nullptr;  // ActorComponent:SetActive(bNewActive, bReset)
 void*   g_activateFn = nullptr;   // ActorComponent:Activate(bReset)
+void*   g_deactivateFn = nullptr; // ActorComponent:Deactivate() -- L6 deck stop edge
+int32_t g_sigOff = -1;            // signalSound ObjectProperty (L6 -- NOT in the wire table)
 int32_t g_soundOff = -1;          // AudioComponent::Sound (USoundBase*)
 int32_t g_activeByteOff = -1;     // ActorComponent::bIsActive bitfield
 uint8_t g_activeMask = 0;
@@ -51,6 +53,7 @@ Clock::time_point g_nextResolveTry{};
 void*   g_desk = nullptr;
 int32_t g_deskIdx = -1;
 void*   g_comps[kCompCount] = {};
+void*   g_sigComp = nullptr;      // L6: the desk's signalSound (same lifecycle as g_comps)
 bool    g_compsValid = false;
 
 // Mirror-side cue cache: short name -> USoundBase* (validated live on use).
@@ -62,6 +65,7 @@ std::unordered_map<std::string, CueEntry> g_cueCache;
 void RefreshInstanceCache() {
     g_compsValid = false;
     g_desk = nullptr;
+    g_sigComp = nullptr;
     if (!g_offsetsResolved) return;
     void* d = ue_wrap::console_desk::Instance();
     if (!d) return;
@@ -70,6 +74,17 @@ void RefreshInstanceCache() {
         if (!comp) return;  // desk not fully constructed yet; retry next EnsureResolved
         g_comps[i] = comp;
     }
+    void* sig = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(d) + g_sigOff);
+    if (!sig) return;  // same not-fully-constructed retry as the whitelist comps
+    for (int i = 0; i < kCompCount; ++i) {
+        if (g_comps[i] == sig) {
+            // 7 distinct ObjectProperties can never alias -- if they do, the
+            // routing invariant (deck vs DeskSndFx) is broken: refuse the cache.
+            UE_LOGW("desk_audio: signalSound aliases whitelist comp %d -- deck routing disabled", i);
+            return;
+        }
+    }
+    g_sigComp = sig;
     g_desk = d;
     g_deskIdx = R::InternalIndexOf(d);
     g_compsValid = true;
@@ -105,33 +120,62 @@ bool EnsureResolved() {
         if (actorCompCls) {
             if (!g_setActiveFn) g_setActiveFn = R::FindFunction(actorCompCls, L"SetActive");
             if (!g_activateFn)  g_activateFn = R::FindFunction(actorCompCls, L"Activate");
+            if (!g_deactivateFn) g_deactivateFn = R::FindFunction(actorCompCls, L"Deactivate");
             if (g_activeByteOff < 0)
                 R::FindBoolProperty(actorCompCls, L"bIsActive", g_activeByteOff, g_activeMask);
         }
+        if (g_sigOff < 0) g_sigOff = R::FindPropertyOffset(g_deskCls, L"signalSound");
         if (!all || !g_playFn || !g_setSoundFn || !g_setActiveFn || !g_activateFn ||
-            g_soundOff < 0 || g_activeByteOff < 0) {
+            !g_deactivateFn || g_soundOff < 0 || g_activeByteOff < 0 || g_sigOff < 0) {
             static bool s_warned = false;  // log-once: a permanently-renamed
             if (!s_warned) {               // property (game recook) must not spam 1 Hz
                 s_warned = true;
                 UE_LOGW("desk_audio: resolve incomplete (offs=%d play=%d setSound=%d setActive=%d "
-                        "activate=%d sound=%d bIsActive=%d) -- backoff retry (log-once)",
+                        "activate=%d deactivate=%d sound=%d bIsActive=%d sig=%d) -- backoff retry (log-once)",
                         all ? 1 : 0, g_playFn ? 1 : 0, g_setSoundFn ? 1 : 0, g_setActiveFn ? 1 : 0,
-                        g_activateFn ? 1 : 0, g_soundOff >= 0 ? 1 : 0, g_activeByteOff >= 0 ? 1 : 0);
+                        g_activateFn ? 1 : 0, g_deactivateFn ? 1 : 0, g_soundOff >= 0 ? 1 : 0,
+                        g_activeByteOff >= 0 ? 1 : 0, g_sigOff >= 0 ? 1 : 0);
             }
             return false;
         }
         g_offsetsResolved = true;
-        UE_LOGI("desk_audio: class-level resolve complete (6 comp offsets + Sound@0x%X + "
-                "bIsActive@0x%X/%02X + 4 UFunctions)", g_soundOff, g_activeByteOff, g_activeMask);
+        UE_LOGI("desk_audio: class-level resolve complete (6 comp offsets + signalSound@0x%X + "
+                "Sound@0x%X + bIsActive@0x%X/%02X + 5 UFunctions)",
+                g_sigOff, g_soundOff, g_activeByteOff, g_activeMask);
     }
 
     RefreshInstanceCache();
     return g_compsValid;
 }
 
-void* PlayFn()      { return g_playFn; }
-void* SetActiveFn() { return g_setActiveFn; }
-void* ActivateFn()  { return g_activateFn; }
+void* PlayFn()       { return g_playFn; }
+void* SetActiveFn()  { return g_setActiveFn; }
+void* ActivateFn()   { return g_activateFn; }
+void* DeactivateFn() { return g_deactivateFn; }
+
+bool IsSignalSound(void* comp) {
+    // HOT PATH (inside the Deactivate/Activate Func-patch, game-wide): one
+    // pointer compare on the miss path; liveness only on a match (the
+    // IndexOfComp discipline -- a recycled address must never spoof-route).
+    if (!g_compsValid || !comp || comp != g_sigComp) return false;
+    if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }
+    return true;
+}
+
+bool SelfTestSignalSound(bool on) {
+    if (!g_compsValid || !g_sigComp) return false;
+    if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }
+    if (on) {
+        if (!g_activateFn) return false;
+        ue_wrap::ParamFrame f(g_activateFn);
+        if (!f.valid()) return false;
+        f.Set<bool>(L"bReset", true);  // the measured playSignal operand shape
+        return ue_wrap::Call(g_sigComp, f);
+    }
+    if (!g_deactivateFn) return false;
+    ue_wrap::ParamFrame f(g_deactivateFn);
+    return f.valid() && ue_wrap::Call(g_sigComp, f);
+}
 
 int IndexOfComp(void* comp) {
     // HOT PATH (inside the Func-patch, fires for every BP Play/SetActive
@@ -227,6 +271,7 @@ void ResetCache() {
     g_desk = nullptr;
     g_deskIdx = -1;
     for (auto& c : g_comps) c = nullptr;
+    g_sigComp = nullptr;
     g_cueCache.clear();
     g_nextResolveTry = {};
 }

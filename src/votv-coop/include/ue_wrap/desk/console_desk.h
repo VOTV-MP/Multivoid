@@ -238,6 +238,18 @@ bool ApplyActiveToggleEffects(int unit, bool value);
 // signalSound.SetVolumeMultiplier(FClamp(v/10, 0.1, 5)). Game thread.
 bool ApplyPlayVolumeEffects(int32_t value);
 
+// ---- The L6 deck-playback replay surface (coop/interactables/deck_play_sync) ----
+// Reflected desk playSignal() / stopSound() (parameterless; playSignal reads
+// play_selectIndex and gates active_play / IsValidIndex / decoded>=size
+// internally -- the caller pre-checks the divergence-capable gates and holds
+// the audio-seam wire guard). Game thread.
+bool CallDeckPlaySignal();
+bool CallDeckStopSound();
+// The desk fin() UFunction (the OnAudioFinished delegate callback; census:
+// zero direct BP callers -> delegate-only dispatch). The deck lane's PE
+// pre/post bracket target. Null until resolved.
+void* DeckFinFn();
+
 // The SHIFT-scan accepted-branch VISUAL for a mirror: reflected spawnDirs()
 // (arrows regenerate from the wire-mirrored signals_a -- bytecode-verified no
 // RNG / no local-peer read). The beep no longer plays here (v115, RULE 2 --

@@ -117,6 +117,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // Bulk independently BY DESIGN (receivers never act on LaptopState for
     // destroys; the host's one PropDestroy owns twin deaths -- qf R7-Q1).
     case ReliableKind::LaptopState:    return Lane::Normal;
+    // v117 (L6): PlayDeckEvent is ORDER-COUPLED with DeskInput (a play carries
+    // + primes play_selectIndex through the same apply author) and with
+    // SavedSignalAppend (a play must land after its row's append -- the
+    // append-before-play proof assumes one ordered stream). Pin it.
+    case ReliableKind::PlayDeckEvent:  return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -165,6 +170,7 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DeskInput:         // v112: claim-free field-granular desk input deltas are PRESSER-authored -- relay a client's delta to the others (the host excludes the originator by relay construction)
     case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
     case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
+    case ReliableKind::PlayDeckEvent:     // v117 (L6): deck playback edges are PRESSER-authored (organic Activate/Deactivate at the seam; any peer may stop) -- relay a client's edge to the others
     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others

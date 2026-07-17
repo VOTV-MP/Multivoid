@@ -32,7 +32,7 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | U1 ENTER triangulation ping (the FSM) | latent tick machine gated on `coord_isPing` (@82980 -> @80105 stage engine; ==1.0 latches; verdict spawns signalData + moves the theater) | ONE machine = the presser's, organically; observers: bookkeeping only | presser (FSM) / host (theater+ARM, v113) | CoordIsPing rides `DeskInput 97` as an edge NOTIFICATION (never machine-applied since v115b); catch on `SkySignalCatch`; ARM on `DishArm 99` | **AS-BUILT v115b `de31889e`** — the v112 raw apply WOKE a phantom sim on observers (live-caught 2026-07-17 14:46: divergent verdicts, phantom ARM raising the mirrored detector, double coordLog authorship, false post-catch DISARM). Fix: bookkeeping-only + desk FSM-hold claim (device_occupancy reconciler; deny+ForceExit for others mid-ping) + arm-poll re-init window (DISARM suppressed while signalData lives) + solo-host connect seed (audit CRIT-1). **v116 `613f2ac4` closed the SECOND defect the same FSM-hold exposed**: the catch detector's claim gate raced the hold's release (see the Signal-catch row). Observers still see no stage visuals (R-a; SURFACED to the user 2026-07-17 as a product question — display-only mirror if wanted). Awaiting hands-on take 4 |
 | U2 desk gauge/detector sounds | vol=match×\|speed\|, pitch=Lerp(match); loops on toggles | derived (needs speeds mirrored) | occupant/host | speeds on NO lane | **BUG-3** (data starvation) |
 | U2 save/delete/lid verbs | SAVE→savedSignals_0 (id mint); DELETE aborts active signal; lid=collision gate | 2 intent | host-gate | `SavedSignalAppend/Delete 58/59` cover the list; capOpened/delete-active NOT | **PARTIAL** |
-| U3 play deck (playback/volume/SARV/scroll) | world-audible signalSound; display remaps | 4 holder-owned (tbd) | occupant | — none | **OPEN-6** |
+| U3 play deck (playback/volume/SARV/scroll) | world-audible signalSound; display remaps | presser-authored edge events (seam) | presser (any peer may stop) | `PlayDeckEvent 107` (`deck_play_sync`) + volume/index/toggle on `DeskInput 97` (v112) | **AS-BUILT v117 (2026-07-18)** — L6 built per `votv-deck-play-L6-impl-DESIGN-2026-07-18.md` (7-round /qf "that holds"): detection at the v115 audio Func seam (signalSound Activate x1 = playSignal / Deactivate x1 = stopSound, whole-asset census; Deactivate = the 4th Func patch), GEN GUARD decouples correctness from fin()'s inferred PE visibility, mirrors replay reflected playSignal/stopSound under the shared wire guard, selectIndex rides the v112 apply author. SARV/scroll/volume were ALREADY on DeskInput (stale-open half of this row). Smoke x2 + e2e self-test chain proven; audits 0 CRIT; NOT hands-on (the audio positive = the take). Residuals a-e in the design doc |
 | Drive payload `prop_drive.Data_0` | moves list↔drive↔comp; eraser wipes; LED from payload | 2 intent / state-mirror (tbd) | host (tbd) | — none (`grep prop_drive` = 0 hits) | **OPEN-5** |
 | driveSlot occupancy (slot FSM) | freeze+teleport, slot/drive pointers, anti-bounce latch | state-mirror (tbd) | tbd | — (generic prop pose only) | **OPEN-5** |
 | signalDriveEraser | 3 s wipe → payload zeroed | 2 intent (tbd) | tbd | — | **OPEN-5** |
@@ -231,11 +231,17 @@ as a generic prop move. The eraser adds a 3 s `processing` latch + the wipe. **I
 the signal `id` is minted per-peer (`GenerateRandomBytes(16)`) at U2-save and RE-MINTED at every
 comp level-up — do NOT design any coop identity on it without a host-authority pass.
 
-### OPEN-6 · U3 play deck outputs
+### OPEN-6 · U3 play deck outputs — **BUILT v117 (2026-07-18; smoke x2 + e2e self-test, NOT hands-on)**
+
+> **AS-BUILT:** `coop/interactables/deck_play_sync` per
+> `votv-deck-play-L6-impl-DESIGN-2026-07-18.md` (7-round /qf; the arch doc's 250 ms poll
+> REVISED to seam detection per its own tier rule; + the gen guard). The row above is the
+> as-built truth. SARV `remapValue` remains per-desk display-local (pure contrast remap, no
+> signal data — deliberately unsynced; spectrum jitter per-peer cosmetic). Legacy fact base:
 `signalSound` is a WORLD-audible component (`SetSound(level-variant)` + Activate) — a nearby
-non-occupant natively hears nothing; playback state (`play_selectIndex`, volume, SARV
-`remapValue`, spectrum/typewriter panes) is per-desk local. Scroll/select is occupant-authored.
-Needs the holder-owned shape; low risk, but the audible half is player-visible.
+non-occupant natively heard nothing; playback state panes are rebuilt by the mirror's own
+playSignal replay from the synced deck row + static DataTable. Scroll/select/volume ride
+DeskInput (v112).
 
 ### OPEN-7 · Tape caddy + daily task — **BUILT v114 (2026-07-17; smoke PASS, NOT hands-on)**
 
@@ -282,6 +288,15 @@ save-transfer only, no live lane. Same intent-CRDT shape as the shipped
 ---
 
 ## CHANGELOG
+- **2026-07-18 (v117 `pending-commit`, L6 deck playback)** — the event_dispatch_signal.cpp
+  extraction landed first (e88cc5e0: the 18 signal-pipeline cases out of the 791-LOC state
+  router; every future lane case lands in the signal family). Then L6 built per its own
+  7-round /qf (design `votv-deck-play-L6-impl-DESIGN-2026-07-18.md`): PlayDeckEvent=107,
+  proto 117, the 4th Func patch (Deactivate), the gen guard, the fin PE bracket. Smoke x2
+  PASS + the e2e self-test chain proven end-to-end (organic mint -> wire -> gate-WARN ->
+  stale-stop drop); perf audit PASS (ambient Deactivate ~26/s, miss path = 2 compares);
+  correctness audit 0 CRIT/IMPORTANT. OPEN-6 row flipped AS-BUILT. NOT hands-on (take gains
+  the v117 STEPS section). PRODUCT QUESTION (default NO): a deck-play activity-feed line.
 - **2026-07-17 nite (v116 `613f2ac4` + ue_wrap split `9d24ac0c`, PUSHED)** — the take-3 live test
   (17:00-17:09) caught the LOST-CATCH root: the claim-gated catch detector raced the FSM-hold release
   the successful ping itself triggers (measured 17:04:46/47) -> the whole R2-R5 symptom set from ONE
