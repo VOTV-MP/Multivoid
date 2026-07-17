@@ -2,9 +2,9 @@
 
 #include "coop/dev/save_probe.h"
 
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/save_browser.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/save_browser.h"
 
 #include <windows.h>
 

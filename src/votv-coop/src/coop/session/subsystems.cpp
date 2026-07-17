@@ -106,8 +106,8 @@
 #include "coop/world/event_active_sync.h"  // join-during-event Phase 0: native activeEvents registry probe (docs/COOP_EVENT_JOIN.md)
 #include "coop/world/weather_sync.h"
 
-#include "ue_wrap/log.h"
-#include "ue_wrap/walk_timer.h"  // L5 per-sync [WALK-TIME] attribution (diagnostic)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/walk_timer.h"  // L5 per-sync [WALK-TIME] attribution (diagnostic)
 
 namespace coop::subsystems {
 

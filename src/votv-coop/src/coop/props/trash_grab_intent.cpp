@@ -24,12 +24,12 @@
 #include "coop/player/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
 #include "coop/player/remote_player.h"       // RemotePlayer::GetActor / valid
 #include "coop/props/prop_snapshot.h"  // ExpressIncrementalSpawn (wrong-class deny -> re-assert the row)
-#include "ue_wrap/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
-#include "ue_wrap/engine.h"      // grab-state read + physics/velocity drives
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"        // IsChipPile / IsGarbageClump / GetChipType
-#include "ue_wrap/reflection.h"  // ClassNameOf / ClassOf / FindFunction
-#include "ue_wrap/types.h"       // FVector / FRotator
+#include "ue_wrap/core/call.h"        // ParamFrame / Call (the probe-proven puppet-grab pattern)
+#include "ue_wrap/engine/engine.h"      // grab-state read + physics/velocity drives
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"        // IsChipPile / IsGarbageClump / GetChipType
+#include "ue_wrap/core/reflection.h"  // ClassNameOf / ClassOf / FindFunction
+#include "ue_wrap/core/types.h"       // FVector / FRotator
 
 #include <chrono>     // wrong-class deny heal debounce (per-eid, 5 s)
 #include <cmath>      // std::sqrt -- clamp the inherited throw velocity (L4)

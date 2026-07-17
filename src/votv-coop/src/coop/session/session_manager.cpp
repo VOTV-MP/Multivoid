@@ -6,7 +6,7 @@
 #include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask)
 #include "coop/session/join_progress.h"
 #include "coop/session/shutdown.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

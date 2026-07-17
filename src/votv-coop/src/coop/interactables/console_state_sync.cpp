@@ -8,9 +8,9 @@
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/dev/desk_diag.h"  // [dev] JOIN-ADOPT pre-apply baseline hook (no-op unless desk_diag=1)
 
-#include "ue_wrap/console_desk.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/space_renderer.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/desk/space_renderer.h"
 
 #include <atomic>
 #include <chrono>

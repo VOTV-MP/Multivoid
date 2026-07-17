@@ -2,7 +2,7 @@
 
 #include "coop/element/element_deleter.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 namespace coop::element {
 

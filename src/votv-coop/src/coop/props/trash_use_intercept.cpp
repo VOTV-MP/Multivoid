@@ -33,14 +33,14 @@
 #include "coop/props/trash_channel.h"      // ClientCarryEid / SendGrabIntent / SendThrowIntent / ClearClientCarry
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy / ProxyActorForEid (client-grab camera-ray cone)
 #include "coop/save/save_transfer.h"      // RecordGrabTimePileXform
-#include "ue_wrap/engine.h"                // ReadMainPlayerLookAtActor / GetCamera{Location,Rotation}
-#include "ue_wrap/game_thread.h"           // RegisterInterceptor / RegisterPreObserver
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                  // IsChipPile
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"           // MainPlayer class + use/fire input-event fn names
-#include "ue_wrap/types.h"
-#include "ue_wrap/ufunction_hook.h"
+#include "ue_wrap/engine/engine.h"                // ReadMainPlayerLookAtActor / GetCamera{Location,Rotation}
+#include "ue_wrap/core/game_thread.h"           // RegisterInterceptor / RegisterPreObserver
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"                  // IsChipPile
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"           // MainPlayer class + use/fire input-event fn names
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/core/ufunction_hook.h"
 
 #include <atomic>
 #include <chrono>

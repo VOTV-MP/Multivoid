@@ -5,8 +5,8 @@
 #include "coop/config/config.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/restore_vitals.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/vitals.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/vitals.h"
 
 #include <windows.h>
 

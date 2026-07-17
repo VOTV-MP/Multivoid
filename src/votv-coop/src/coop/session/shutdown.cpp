@@ -4,9 +4,9 @@
 
 #include "coop/net/session.h"
 #include "coop/items/player_inventory_sync.h"  // v73: flush inventories on shutdown
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hook.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

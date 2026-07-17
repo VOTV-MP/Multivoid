@@ -4,11 +4,11 @@
 
 #include "coop/config/config.h"
 
-#include "ue_wrap/engine.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <chrono>
 #include <cstdint>

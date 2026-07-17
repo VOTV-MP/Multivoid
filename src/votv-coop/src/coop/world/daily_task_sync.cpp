@@ -4,10 +4,10 @@
 
 #include "coop/net/session.h"
 
-#include "ue_wrap/daily_task.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/desk/daily_task.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <chrono>

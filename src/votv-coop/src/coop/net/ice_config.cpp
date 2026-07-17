@@ -2,7 +2,7 @@
 
 #include "ice_config.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)

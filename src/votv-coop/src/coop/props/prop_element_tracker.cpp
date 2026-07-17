@@ -19,12 +19,12 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
 #include "coop/props/prop_synth_key.h"  // KEY-UNIQUENESS authority: MintFreshKeyForDuplicate (host re-key of save-born clone keys)
-#include "ue_wrap/engine.h"  // GetActorLocation (v86 Path 1c pile save-time map + the re-key identity log)
-#include "ue_wrap/game_thread.h"  // IsGameThread (setKey is a ProcessEvent dispatch -- GT-gate the re-key)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"  // GetActorLocation (v86 Path 1c pile save-time map + the re-key identity log)
+#include "ue_wrap/core/game_thread.h"  // IsGameThread (setKey is a ProcessEvent dispatch -- GT-gate the re-key)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
 #include <cstdint>

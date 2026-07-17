@@ -18,9 +18,9 @@
 
 #pragma once
 
-#include "ue_wrap/engine.h"      // SetActorLocation / SetActorRotation
-#include "ue_wrap/reflection.h"  // IsLive
-#include "ue_wrap/types.h"       // FVector / FRotator / NormalizeAxis
+#include "ue_wrap/engine/engine.h"      // SetActorLocation / SetActorRotation
+#include "ue_wrap/core/reflection.h"  // IsLive
+#include "ue_wrap/core/types.h"       // FVector / FRotator / NormalizeAxis
 
 #include <chrono>
 #include <cmath>

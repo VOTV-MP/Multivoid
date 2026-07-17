@@ -18,7 +18,7 @@
 #include "coop/session/session_manager.h"
 #include "coop/config/config.h"   // local-only ini persistence for the name + last direct address
 #include "ui/scale.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include "imgui.h"
 

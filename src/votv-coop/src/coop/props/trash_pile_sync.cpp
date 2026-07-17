@@ -10,13 +10,13 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
 
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
+#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <chrono>

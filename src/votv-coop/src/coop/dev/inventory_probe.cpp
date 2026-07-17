@@ -4,8 +4,8 @@
 
 #include "coop/config/config.h"
 #include "coop/items/inventory_wire.h"
-#include "ue_wrap/inventory.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/actors/inventory.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstdint>
 #include <vector>

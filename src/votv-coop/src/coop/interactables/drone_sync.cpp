@@ -12,9 +12,9 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/drone.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/types.h"  // FVector, FRotator, NormalizeAxis
+#include "ue_wrap/devices/drone.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/types.h"  // FVector, FRotator, NormalizeAxis
 
 #include <atomic>
 #include <chrono>

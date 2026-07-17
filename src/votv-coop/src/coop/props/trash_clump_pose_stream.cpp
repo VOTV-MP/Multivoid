@@ -7,9 +7,9 @@
 #include "coop/net/session.h"         // TakeRemoteTrashCarryBatch
 #include "coop/props/trash_channel.h"       // IsInboundStreamCtxFresh / CtxForEid (the stale-pose / pile-jump guard)
 #include "coop/props/trash_proxy.h"         // ProxyActorForEid (resolve the per-eid target)
-#include "ue_wrap/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"       // IsLive
+#include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"       // IsLive
 
 #include <cstdint>
 #include <unordered_map>

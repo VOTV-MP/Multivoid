@@ -31,7 +31,7 @@
 #include "coop/net/session.h"
 
 #include "coop/player/players_registry.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)

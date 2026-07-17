@@ -72,12 +72,12 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/door.h"          // the active mirror keeps the gated door's LOCK state in step
-#include "ue_wrap/log.h"
-#include "ue_wrap/passwordlock.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/devices/door.h"          // the active mirror keeps the gated door's LOCK state in step
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/devices/passwordlock.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
+#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
 
 #include <atomic>
 #include <chrono>

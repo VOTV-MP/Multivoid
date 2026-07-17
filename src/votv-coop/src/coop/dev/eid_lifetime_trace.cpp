@@ -3,7 +3,7 @@
 #include "coop/dev/eid_lifetime_trace.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <unordered_map>
 #include <unordered_set>

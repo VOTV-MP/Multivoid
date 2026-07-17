@@ -7,11 +7,11 @@
 #include "coop/player/hand_item.h"          // IsHandAxisActor (channel e exclusion; GT-only)
 #include "coop/session/world_load_episode.h"  // InEpisode (JOIN-EPISODE tag; atomic-read safe)
 #include "coop/config/config.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/ufunction_hook.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 #include <chrono>

@@ -12,7 +12,7 @@
 
 #include "coop/net/protocol.h"  // PacketHeader / EntityPoseBatchHeader / WorldActorPoseSnapshot / kMaxWorldActorBatchEntries
 
-#include "ue_wrap/log.h"  // [WA-TRACE] wire-hop tracing (2026-07-05 0s-frozen-pyramid hunt)
+#include "ue_wrap/core/log.h"  // [WA-TRACE] wire-hop tracing (2026-07-05 0s-frozen-pyramid hunt)
 
 #include <chrono>
 #include <cstdint>

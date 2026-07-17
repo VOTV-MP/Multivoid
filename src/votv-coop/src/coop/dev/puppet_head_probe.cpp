@@ -6,11 +6,11 @@
 #include <unordered_map>
 
 #include "coop/config/config.h"
-#include "ue_wrap/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"           // PuppetHeadLookProbe + ReadPuppetHeadLookProbe
-#include "ue_wrap/reflection.h"       // IsLive
-#include "ue_wrap/types.h"            // NormalizeAxis
+#include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"           // PuppetHeadLookProbe + ReadPuppetHeadLookProbe
+#include "ue_wrap/core/reflection.h"       // IsLive
+#include "ue_wrap/core/types.h"            // NormalizeAxis
 
 namespace coop::puppet_head_probe {
 

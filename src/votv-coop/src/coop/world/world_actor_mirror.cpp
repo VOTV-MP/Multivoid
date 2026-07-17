@@ -20,11 +20,11 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <chrono>
 #include <cmath>

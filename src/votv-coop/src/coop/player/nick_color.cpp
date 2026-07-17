@@ -4,8 +4,8 @@
 #include "coop/player/players_registry.h"
 #include "coop/session/player_handshake.h"
 #include "coop/config/config.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 
 #include <array>
 #include <atomic>

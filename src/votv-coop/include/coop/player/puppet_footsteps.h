@@ -23,8 +23,8 @@
 
 #pragma once
 
-#include "ue_wrap/types.h"
-#include "ue_wrap/votv_lib.h"
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/world/votv_lib.h"
 
 #include <cmath>
 

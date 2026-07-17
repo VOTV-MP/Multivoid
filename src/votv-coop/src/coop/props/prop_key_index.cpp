@@ -15,10 +15,10 @@
 
 #include "prop_element_tracker_detail.h"  // co-located private header (src tree, not include/)
 
-#include "ue_wrap/engine.h"  // GetActorLocation (F1 keyed save-time map)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/engine/engine.h"  // GetActorLocation (F1 keyed save-time map)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <chrono>
 #include <cstdint>

@@ -13,11 +13,11 @@
 
 #include "coop/element/registry.h"
 #include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
-#include "ue_wrap/engine.h"  // IsChildActor (child-actor exclusion, take-7 floating-CCTV RCA)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"  // IsChildActor (child-actor exclusion, take-7 floating-CCTV RCA)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
 #include <cstdint>

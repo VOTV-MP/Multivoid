@@ -24,7 +24,7 @@
 #include "coop/dev/event_force.h"
 #include "coop/dev/set_clock.h"
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

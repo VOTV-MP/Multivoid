@@ -7,9 +7,9 @@
 #include "coop/element/prop.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/laptop.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/devices/laptop.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <windows.h>
 

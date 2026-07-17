@@ -8,9 +8,9 @@
 #include "coop/dev/perf_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <windows.h>
 #include <psapi.h>  // PROCESS_MEMORY_COUNTERS_EX + K32GetProcessMemoryInfo (kernel32 export; no psapi.lib link)

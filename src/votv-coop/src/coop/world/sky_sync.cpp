@@ -7,9 +7,9 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/log.h"
-#include "ue_wrap/skysphere.h"
-#include "ue_wrap/types.h"  // FRotator
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/world/skysphere.h"
+#include "ue_wrap/core/types.h"  // FRotator
 
 #include <atomic>
 #include <chrono>

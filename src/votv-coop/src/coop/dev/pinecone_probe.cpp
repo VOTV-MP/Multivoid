@@ -5,11 +5,11 @@
 #include "coop/config/config.h"
 #include "coop/creatures/npc_sync.h"            // GetDevSpawnRefs (generic GameplayStatics spawn fns)
 #include "coop/player/players_registry.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <chrono>
 #include <cmath>

@@ -14,18 +14,18 @@
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter + Channel (+ ProbeLog, R alias, WireKey usings)
 
-#include "ue_wrap/appliance.h"     // the 6-class save-actor toggle family (faucet/sink/shower/kitchen/serverBox/wallunit_tapes)
-#include "ue_wrap/door.h"
-#include "ue_wrap/door_box.h"      // v62 lockers + drone-console hinged doors
-#include "ue_wrap/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/garage.h"
-#include "ue_wrap/lightswitch.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"          // GetKeyString for swinger (it is an Aprop_C)
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"   // MainPlayerClass + the InpActEvt_use input-action fn
-#include "ue_wrap/swinger.h"
+#include "ue_wrap/devices/appliance.h"     // the 6-class save-actor toggle family (faucet/sink/shower/kitchen/serverBox/wallunit_tapes)
+#include "ue_wrap/devices/door.h"
+#include "ue_wrap/devices/door_box.h"      // v62 lockers + drone-console hinged doors
+#include "ue_wrap/engine/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/devices/garage.h"
+#include "ue_wrap/devices/lightswitch.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"          // GetKeyString for swinger (it is an Aprop_C)
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"   // MainPlayerClass + the InpActEvt_use input-action fn
+#include "ue_wrap/actors/swinger.h"
 
 #include <chrono>
 #include <string>

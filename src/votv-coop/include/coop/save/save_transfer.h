@@ -32,7 +32,7 @@
 
 #include "coop/element/element.h"  // ElementId (v86 Path 1c save-time pile map)
 #include "coop/net/protocol.h"
-#include "ue_wrap/types.h"  // ue_wrap::FVector
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector
 
 #include <cstdint>
 #include <string>

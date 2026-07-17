@@ -26,12 +26,12 @@
 #include "coop/props/prop_element_tracker.h"  // ResolveLiveActorByKey
 #include "coop/props/trash_channel.h"         // ClearClientCarry (destroyed carried proxy)
 #include "coop/props/trash_proxy.h"           // IsProxy / RetireProxy (proxy teardown path)
-#include "ue_wrap/engine.h"                   // ReleaseMainPlayerGrabIfHolding
-#include "ue_wrap/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                     // IsChipPile / IsGarbageClump
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"              // P::name::ActorClassName / DestroyActorFn
+#include "ue_wrap/engine/engine.h"                   // ReleaseMainPlayerGrabIfHolding
+#include "ue_wrap/core/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"                     // IsChipPile / IsGarbageClump
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"              // P::name::ActorClassName / DestroyActorFn
 
 #include <string>
 

@@ -23,8 +23,8 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/skin_registry.h"
-#include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstdint>
 #include <string>

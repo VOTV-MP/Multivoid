@@ -2,9 +2,9 @@
 
 #include "coop/props/snapshot_census.h"
 
-#include "ue_wrap/prop.h"         // IsChipPile
-#include "ue_wrap/reflection.h"   // NumObjects / ObjectAt / IsLive / ClassNameOf
-#include "ue_wrap/log.h"
+#include "ue_wrap/actors/prop.h"         // IsChipPile
+#include "ue_wrap/core/reflection.h"   // NumObjects / ObjectAt / IsLive / ClassNameOf
+#include "ue_wrap/core/log.h"
 
 #include <algorithm>
 #include <cstring>

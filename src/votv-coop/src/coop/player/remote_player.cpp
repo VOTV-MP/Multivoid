@@ -5,13 +5,13 @@
 #include "coop/player/local_body.h"
 #include "coop/player/skin_effects.h"
 #include "coop/player/players_registry.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/reflected_offset.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/reflected_offset.h"
 
 #include <algorithm>
 #include <chrono>

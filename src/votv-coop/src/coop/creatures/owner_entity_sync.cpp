@@ -11,14 +11,14 @@
 #include "coop/player/players_registry.h"    // kMaxPeers
 #include "coop/props/prop_echo_suppress.h"   // ScopedMirrorSpawn / InMirrorSpawnScope
 
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"                  // DisableCharacterTicks (the npc-mirror park)
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"                  // DisableCharacterTicks (the npc-mirror park)
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <chrono>

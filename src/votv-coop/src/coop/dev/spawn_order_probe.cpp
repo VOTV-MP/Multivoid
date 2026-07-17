@@ -4,9 +4,9 @@
 
 #include "coop/config/config.h"
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (off-prop kerfur family)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"         // IsChipPile
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"         // IsChipPile
+#include "ue_wrap/core/reflection.h"
 
 #include <unordered_map>
 #include <unordered_set>

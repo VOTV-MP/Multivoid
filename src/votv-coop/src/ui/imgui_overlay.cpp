@@ -49,8 +49,8 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"
 #include "coop/dev/perf_probe.h"
-#include "ue_wrap/hook.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 #include <d3d11.h>

@@ -21,12 +21,12 @@
 
 #include "ui/multiplayer_menu.h"
 #include "coop/session/shutdown.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/fname_utils.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <windows.h>
 

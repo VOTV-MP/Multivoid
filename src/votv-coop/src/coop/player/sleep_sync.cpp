@@ -6,8 +6,8 @@
 #include "coop/net/session.h"
 #include "coop/world/time_sync.h"
 
-#include "ue_wrap/log.h"
-#include "ue_wrap/sleep.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/sleep.h"
 
 #include <atomic>
 #include <cstdio>

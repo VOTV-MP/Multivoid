@@ -30,9 +30,9 @@
 #pragma once
 
 #include "coop/props/prop_element_tracker.h"  // UnmarkKnownKeyedProp
-#include "ue_wrap/engine.h"             // DestroyActor
-#include "ue_wrap/reflection.h"         // IsLiveByIndex
-#include "ue_wrap/types.h"             // FVector
+#include "ue_wrap/engine/engine.h"             // DestroyActor
+#include "ue_wrap/core/reflection.h"         // IsLiveByIndex
+#include "ue_wrap/core/types.h"             // FVector
 
 #include <vector>
 

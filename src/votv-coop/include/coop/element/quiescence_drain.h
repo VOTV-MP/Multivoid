@@ -52,7 +52,7 @@
 #include "coop/element/element.h"  // coop::element::ElementId
 #include "coop/props/join_membership_sweep.h"
 #include "coop/net/protocol.h"     // PropDestroyPayload
-#include "ue_wrap/types.h"         // ue_wrap::FVector / FRotator
+#include "ue_wrap/core/types.h"         // ue_wrap::FVector / FRotator
 
 namespace coop::element::quiescence_drain {
 

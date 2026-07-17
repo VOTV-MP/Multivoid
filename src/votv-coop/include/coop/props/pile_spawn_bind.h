@@ -36,7 +36,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
-#include "ue_wrap/types.h"  // ue_wrap::FVector
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector
 
 #include <string>
 #include <unordered_set>

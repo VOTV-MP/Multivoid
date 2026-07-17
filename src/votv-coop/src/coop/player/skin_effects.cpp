@@ -30,14 +30,14 @@
 
 #include "coop/player/puppet_footsteps.h"
 #include "coop/player/skin_registry.h"
-#include "ue_wrap/asset_load.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/scs_rig.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/scs_rig.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <cstdint>
 #include <cstring>

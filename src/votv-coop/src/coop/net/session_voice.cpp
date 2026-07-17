@@ -14,7 +14,7 @@
 
 #include "coop/net/session.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <steam/steamnetworkingsockets.h>
 #include <steam/isteamnetworkingutils.h>

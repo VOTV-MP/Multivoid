@@ -43,14 +43,14 @@
 #include "coop/session/subsystems.h"
 #include "coop/session/world_load_episode.h"  // JOIN BARRIER 2026-07-12: the announce waits on the load-tail quiescence latch
 
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/walk_timer.h"  // L5: [WALK-TIME] profiling of the reaper World walk + the re-seed census
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/walk_timer.h"  // L5: [WALK-TIME] profiling of the reaper World walk + the re-seed census
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
 
 #include <array>
 #include <atomic>

@@ -50,7 +50,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstddef>
 #include <memory>

@@ -15,10 +15,10 @@
 
 #include "coop/net/session.h"
 
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/tape_caddy.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/desk/tape_caddy.h"
 
 #include <atomic>
 #include <chrono>

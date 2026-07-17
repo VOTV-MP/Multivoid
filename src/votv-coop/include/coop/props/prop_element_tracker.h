@@ -47,7 +47,7 @@
 #pragma once
 
 #include "coop/element/element.h"
-#include "ue_wrap/types.h"  // ue_wrap::FVector (v86 Path 1c pile save-time map)
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector (v86 Path 1c pile save-time map)
 
 #include <cstddef>
 #include <string>

@@ -6,9 +6,9 @@
 #include "coop/net/session.h"
 #include "coop/interactables/signal_wire.h"
 
-#include "ue_wrap/console_desk.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/signal_dynamic.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/desk/signal_dynamic.h"
 
 #include <atomic>
 #include <chrono>

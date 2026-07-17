@@ -4,9 +4,9 @@
 
 #include "coop/net/session.h"
 
-#include "ue_wrap/console_desk.h"
-#include "ue_wrap/dish.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/desk/dish.h"
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <chrono>

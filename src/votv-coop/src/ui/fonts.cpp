@@ -4,7 +4,7 @@
 
 #include "coop/config/config.h"
 #include "ui/scale.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include "imgui.h"
 

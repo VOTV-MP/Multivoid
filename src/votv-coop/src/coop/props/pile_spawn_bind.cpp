@@ -15,11 +15,11 @@
 #include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
 #include "coop/props/save_time_retire_util.h"  // UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
 #include "coop/props/trash_proxy.h"  // NearestPileProxy (the L1 orphan census)
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <cmath>
 #include <cstdint>

@@ -19,11 +19,11 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/base_window.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/walk_timer.h"                  // L5: [WALK-TIME] profiling (logs only the rare full safety)
+#include "ue_wrap/devices/base_window.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
+#include "ue_wrap/core/walk_timer.h"                  // L5: [WALK-TIME] profiling (logs only the rare full safety)
 
 #include <algorithm>
 #include <atomic>

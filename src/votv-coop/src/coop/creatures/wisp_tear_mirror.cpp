@@ -7,10 +7,10 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/wisp.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/wisp.h"
 
 #include <chrono>
 #include <cstdint>

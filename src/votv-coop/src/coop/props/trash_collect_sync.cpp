@@ -26,14 +26,14 @@
 #include "coop/props/trash_channel.h"      // NoteClumpBorn (v106: the clump birth certificate; docs/piles/08)
 #include "coop/props/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
 #include "coop/props/trash_use_intercept.h"  // B1a: the InpActEvt_use client-grab interceptor (Install/OnDisconnect delegate here)
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
-#include "ue_wrap/types.h"
-#include "ue_wrap/ufunction_hook.h"  // the deterministic re-pile: BeginDeferred Func-patch (docs/piles/08)
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/core/ufunction_hook.h"  // the deterministic re-pile: BeginDeferred Func-patch (docs/piles/08)
 
 #include <atomic>
 #include <chrono>

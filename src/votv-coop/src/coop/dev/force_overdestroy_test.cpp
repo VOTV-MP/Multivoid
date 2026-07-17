@@ -3,7 +3,7 @@
 #include "coop/dev/force_overdestroy_test.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 namespace coop::dev::force_overdestroy_test {
 

@@ -8,10 +8,10 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/trash_channel.h"     // IsCarrying / HasPendingSettle / CtxForEid (carry latch + stamp)
-#include "ue_wrap/engine.h"          // SetActorLocation / GetActorLocation / GetActorRotation
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"      // IsLiveByIndex / InternalIndexOf
-#include "ue_wrap/types.h"           // FVector / FRotator / NormalizeAxis
+#include "ue_wrap/engine/engine.h"          // SetActorLocation / GetActorLocation / GetActorRotation
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"      // IsLiveByIndex / InternalIndexOf
+#include "ue_wrap/core/types.h"           // FVector / FRotator / NormalizeAxis
 
 #include <cmath>
 #include <cstdint>

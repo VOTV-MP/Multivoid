@@ -10,8 +10,8 @@
 #include "coop/net/protocol.h"   // KerfurConvertBroadcastPayload + ReliableKind (the BindFormActor wire)
 #include "coop/net/session.h"
 #include "coop/save/save_transfer.h"  // scope A: TryGetSaveTimeKerfurXformAnySlot (blob-instant off-prop pos)
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 #include <memory>

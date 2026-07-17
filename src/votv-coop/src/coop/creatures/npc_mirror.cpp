@@ -26,14 +26,14 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: one-shot kerfur census at quiescence (forward-dup root)
 #include "coop/creatures/npc_sync.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/kerfur.h"  // thorough park (NeutralizeAiTimers) for fresh-spawn mirrors
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/kerfur.h"  // thorough park (NeutralizeAiTimers) for fresh-spawn mirrors
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
+#include "ue_wrap/core/types.h"
 
 #include <cmath>
 #include <cstdint>

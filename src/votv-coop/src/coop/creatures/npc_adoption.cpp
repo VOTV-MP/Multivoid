@@ -13,12 +13,12 @@
 #include "coop/props/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: re-arm the kerfur census on world-ready / session-end
-#include "ue_wrap/engine.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
-#include "ue_wrap/kerfur.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
+#include "ue_wrap/actors/kerfur.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <chrono>
 #include <memory>

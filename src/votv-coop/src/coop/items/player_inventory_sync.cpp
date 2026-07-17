@@ -10,10 +10,10 @@
 #include "coop/session/player_handshake.h"
 #include "coop/save/save_transfer.h"
 #include "coop/config/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
-#include "ue_wrap/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
-#include "ue_wrap/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point
-#include "ue_wrap/inventory.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/actors/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
+#include "ue_wrap/engine/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point
+#include "ue_wrap/actors/inventory.h"
+#include "ue_wrap/core/log.h"
 
 #include <array>
 #include <atomic>

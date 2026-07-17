@@ -8,11 +8,11 @@
 #include "coop/session/player_handshake.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/config/config.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/trace.h"   // LineBlockedStatDyn -- the occlusion (gray plate) check
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/trace.h"   // LineBlockedStatDyn -- the occlusion (gray plate) check
+#include "ue_wrap/core/types.h"
 
 #include <algorithm>
 #include <array>

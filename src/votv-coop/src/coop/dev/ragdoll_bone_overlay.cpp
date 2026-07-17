@@ -7,10 +7,10 @@
 #include "coop/player/remote_player.h"
 #include "coop/config/config.h"
 #include "coop/session/net_pump.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <cstdio>

@@ -5,11 +5,11 @@
 #include "coop/element/player.h"
 #include "coop/element/registry.h"
 #include "coop/player/remote_player.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/hot_path_guard.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <windows.h>  // GetTickCount64 (the Local() negative-miss TTL clock)
 

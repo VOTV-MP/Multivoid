@@ -20,9 +20,9 @@
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
 #include "coop/element/quiescence_drain.h"      // ArmGhostSweep (v106b: displaced live native -> wholesale adjudication)
 #include "coop/props/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
+#include "ue_wrap/core/reflection.h"
 
 namespace coop::element {
 // The friended gateway to the sealed MirrorManager::Install (Inc C, 2026-06-29).

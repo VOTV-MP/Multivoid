@@ -23,11 +23,11 @@
 #include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness census appended to SnapshotComplete
 #include "coop/dev/eid_lifetime_trace.h"  // Phase 1 S8.2: read-only capture-eid vs wire-eid trace
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: inject the over-destroy to PROVE the floor
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <algorithm>
 #include <array>

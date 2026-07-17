@@ -23,11 +23,11 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // coop::players::kMaxPeers
-#include "ue_wrap/settled_object_scan.h"  // the stream-settle scan discipline (L5 fix + the 18:41 reload cure)
+#include "ue_wrap/core/settled_object_scan.h"  // the stream-settle scan discipline (L5 fix + the 18:41 reload cure)
 
-#include "ue_wrap/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/devices/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 #include <chrono>

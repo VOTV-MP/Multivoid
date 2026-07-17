@@ -2,8 +2,8 @@
 
 #include "coop/session/pause_guard.h"
 
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
 
 namespace coop::pause_guard {
 namespace {

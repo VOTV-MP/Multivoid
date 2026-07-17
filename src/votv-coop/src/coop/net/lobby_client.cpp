@@ -4,7 +4,7 @@
 
 #include "coop/net/http_client.h"
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <thread>
 #include <utility>

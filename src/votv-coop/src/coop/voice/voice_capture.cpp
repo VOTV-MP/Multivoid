@@ -3,7 +3,7 @@
 #include "coop/voice/voice_capture.h"
 
 #include "ui/input_focus.h"  // IsOurWindowForeground -- the cross-process PTT gate
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <Windows.h>
 

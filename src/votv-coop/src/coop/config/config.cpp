@@ -7,7 +7,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/skin_registry.h"  // IsValidSkinName + kDefaultSkinName (v93 player_skin=)
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

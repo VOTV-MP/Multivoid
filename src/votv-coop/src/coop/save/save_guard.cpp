@@ -2,7 +2,7 @@
 
 #include "coop/save/save_guard.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

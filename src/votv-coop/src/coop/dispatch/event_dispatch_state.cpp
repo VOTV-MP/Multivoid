@@ -34,8 +34,8 @@
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/window_sync.h"
 
-#include "ue_wrap/log.h"
-#include "ue_wrap/types.h"  // ue_wrap::FVector (ThrowIntent camFwd)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector (ThrowIntent camFwd)
 
 #include <cmath>
 #include <cstring>

@@ -28,10 +28,10 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_world_enum.h"  // InstallExSpawnCatch (the EX_CallMath spawn catch)
 #include "coop/props/prop_echo_suppress.h"  // InMirrorSpawnScope (census mirror exclusion, F-6)
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 // NOTE (K-0 2026-06-16): engine.h / kerfur.h / puppet.h were dropped when
 // RegisterExistingWorldNpcs moved to coop/npc_world_enum.cpp -- they were the
 // last users of GetActorLocation/Rotation, HasSaveKey, and ReadCharacterIsFalling

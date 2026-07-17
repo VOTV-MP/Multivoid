@@ -6,7 +6,7 @@
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the v59 browser join gate
 #include "coop/session/shutdown.h"
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <chrono>
 #include <thread>

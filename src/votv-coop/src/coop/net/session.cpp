@@ -51,7 +51,7 @@
 #include "coop/player/players_registry.h"
 #include "session_lanes.h"      // co-located private header (src tree, not include/)
 #include "signaling_client.h"   // co-located: complete type for the shared_ptr<SignalingClient> dtor + Poll()
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)

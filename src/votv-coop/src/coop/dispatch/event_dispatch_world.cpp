@@ -21,8 +21,8 @@
 #include "coop/world/time_sync.h"
 #include "coop/world/weather_sync.h"
 
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 
 #include <cmath>
 #include <cstring>

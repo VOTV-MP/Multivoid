@@ -12,11 +12,11 @@
 #include "coop/props/save_identity_map.h"  // Phase 1B: host-side keyless index->eid map build + log (gated, no wire)
 #include "coop/save/save_guard.h"
 #include "coop/save/save_indicator_suppress.h"  // detect/suppress the SAVED HUD on join-save
-#include "ue_wrap/engine.h"      // b3: GetActorLocation/GetActorRotation (host current pile pos)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"        // b3: IsChipPile (skip a grabbed clump -- the convert stream owns it)
-#include "ue_wrap/reflection.h"  // b3: IsLive (skip a dead/mid-carry host actor)
-#include "ue_wrap/save_capture.h"
+#include "ue_wrap/engine/engine.h"      // b3: GetActorLocation/GetActorRotation (host current pile pos)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"        // b3: IsChipPile (skip a grabbed clump -- the convert stream owns it)
+#include "ue_wrap/core/reflection.h"  // b3: IsLive (skip a dead/mid-carry host actor)
+#include "ue_wrap/engine/save_capture.h"
 
 #include <windows.h>
 

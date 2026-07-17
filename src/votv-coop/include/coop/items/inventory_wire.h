@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "ue_wrap/inventory.h"  // PlayerInventory
+#include "ue_wrap/actors/inventory.h"  // PlayerInventory
 
 #include <cstdint>
 #include <vector>

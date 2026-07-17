@@ -33,7 +33,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/lerp_window.h"
-#include "ue_wrap/types.h"  // FVector
+#include "ue_wrap/core/types.h"  // FVector
 
 #include <cstdint>
 

@@ -37,11 +37,11 @@
 #include "coop/dev/gnatives_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/fname_utils.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sig_scan.h"
+#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sig_scan.h"
 
 #include <windows.h>
 

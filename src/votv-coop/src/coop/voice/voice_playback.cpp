@@ -2,7 +2,7 @@
 
 #include "coop/voice/voice_playback.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <chrono>
 #include <cmath>

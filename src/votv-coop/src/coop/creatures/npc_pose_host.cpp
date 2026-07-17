@@ -22,12 +22,12 @@
 #include "coop/dev/kerfur_census.h"        // [dev] kerfur_census=1: periodic HOST census (5-vs-6 measurement)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/kerfur.h"  // HasSaveKey (savePersisted flag) + ReadKerfurState (mirror fidelity)
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"  // NormalizeAxis
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/kerfur.h"  // HasSaveKey (savePersisted flag) + ReadKerfurState (mirror fidelity)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"  // NormalizeAxis
 
 #include <cmath>
 #include <cstdint>

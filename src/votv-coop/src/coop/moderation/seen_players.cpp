@@ -6,7 +6,7 @@
 #include "coop/player/players_registry.h"  // kMaxPeers
 #include "coop/session/player_handshake.h"
 #include "coop/config/config.h"                // ModuleDir -- the file lives next to the DLL
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

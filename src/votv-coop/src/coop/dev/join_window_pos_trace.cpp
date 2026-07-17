@@ -5,9 +5,9 @@
 #include "coop/element/registry.h"     // Registry::Get (resolve the final bound actor by eid)
 #include "coop/element/element.h"      // Element::GetActor / GetInternalIdx
 #include "coop/config/config.h"
-#include "ue_wrap/engine.h"            // GetActorLocation, FVector
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"        // IsLiveByIndex
+#include "ue_wrap/engine/engine.h"            // GetActorLocation, FVector
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"        // IsLiveByIndex
 
 #include <cmath>
 #include <unordered_map>

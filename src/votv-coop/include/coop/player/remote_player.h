@@ -24,7 +24,7 @@
 #include "coop/player/puppet_body_yaw.h"
 #include "coop/player/puppet_footsteps.h"
 #include "coop/player/remote_player_ragdoll.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/types.h"
 
 #include <cstdint>
 #include <string>

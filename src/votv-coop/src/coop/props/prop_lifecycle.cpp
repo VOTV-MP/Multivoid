@@ -23,16 +23,16 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
 #include "coop/props/prop_drop_intent.h"       // F2 Inc-1: park a client keyed-destroy key for a later host-auth re-place
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/fname_utils.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
-#include "ue_wrap/ufunction_hook.h"  // v106 destroy seam: Func-patch on K2_DestroyActor
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/core/ufunction_hook.h"  // v106 destroy seam: Func-patch on K2_DestroyActor
 
 #include <atomic>
 #include <cstdint>

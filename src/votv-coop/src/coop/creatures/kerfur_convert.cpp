@@ -39,14 +39,14 @@
 #include "coop/props/remote_prop.h"        // OnDestroy (eid teardown of the old prop mirror in OnKerfurConvert)
 #include "coop/props/remote_prop_spawn.h"  // OnSpawn (prop materialize) + HasLoadTailQuiesced (poll gate)
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "ue_wrap/engine.h"      // GetActorLocation + SetActorSimulatePhysics (freeze a ghost prop)
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/kerfur.h"      // NeutralizeAiTimers -- park a claimed conversion-ghost NPC
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"      // DisableCharacterTicks -- park a claimed conversion-ghost NPC
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/engine/engine.h"      // GetActorLocation + SetActorSimulatePhysics (freeze a ghost prop)
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/actors/kerfur.h"      // NeutralizeAiTimers -- park a claimed conversion-ghost NPC
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"      // DisableCharacterTicks -- park a claimed conversion-ghost NPC
+#include "ue_wrap/core/reflection.h"
 #include "coop/config/config.h"  // OBSERVE (2026-07-14 G1): vm_dispatch_log gate for the decline/provenance lines
-#include "ue_wrap/vm_dispatch.h" // OBSERVE (2026-07-14 G1): CurrentThreadVerb() destroy-provenance at the decline
+#include "ue_wrap/core/vm_dispatch.h" // OBSERVE (2026-07-14 G1): CurrentThreadVerb() destroy-provenance at the decline
 
 #include <atomic>
 #include <chrono>

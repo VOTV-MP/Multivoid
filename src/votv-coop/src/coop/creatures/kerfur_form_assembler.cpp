@@ -70,12 +70,12 @@
 #include "coop/element/registry.h"   // Registry::EidForActor (gate 1 per-eid read)
 #include "coop/net/session.h"
 
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile_names.h"
-#include "ue_wrap/ufunction_hook.h"
-#include "ue_wrap/vm_dispatch.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/core/vm_dispatch.h"
 
 #include <atomic>
 #include <chrono>

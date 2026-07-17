@@ -2,10 +2,10 @@
 
 #include "coop/element/mirror_defer.h"
 
-#include "ue_wrap/engine.h"          // SetActorHiddenInGame + SetActorEnableCollision
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"      // InternalIndexOf + IsLiveByIndex
+#include "ue_wrap/engine/engine.h"          // SetActorHiddenInGame + SetActorEnableCollision
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"      // InternalIndexOf + IsLiveByIndex
 
 #include <cstdint>
 #include <unordered_map>

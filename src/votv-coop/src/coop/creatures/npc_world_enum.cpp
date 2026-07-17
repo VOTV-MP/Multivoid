@@ -20,12 +20,12 @@
 #include "coop/creatures/kerfur_entity.h"  // K-3: reserve the stable KerfurId when a kerfur NPC is registered
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
-#include "ue_wrap/engine.h"   // GetActorLocation / GetActorRotation
-#include "ue_wrap/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"      // NpcClass_Wisp (the ambient-wisp walk skip)
-#include "ue_wrap/ufunction_hook.h"   // the EX_CallMath spawn-catch thunk
+#include "ue_wrap/engine/engine.h"   // GetActorLocation / GetActorRotation
+#include "ue_wrap/actors/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"      // NpcClass_Wisp (the ambient-wisp walk skip)
+#include "ue_wrap/core/ufunction_hook.h"   // the EX_CallMath spawn-catch thunk
 
 #include <cstdint>
 #include <memory>

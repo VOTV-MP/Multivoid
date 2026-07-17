@@ -14,11 +14,11 @@
 #include "coop/element/registry.h"    // EidForActor (birth prune) + Get(eid) (carry termination)
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
 #include "coop/save/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
-#include "ue_wrap/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + transform/velocity reads
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"        // IsGarbageClump (rest detection)
-#include "ue_wrap/reflection.h"  // ClassNameOf / InternalIndexOf / IsLiveByIndex
-#include "ue_wrap/types.h"       // FVector / FRotator / NormalizeAxis
+#include "ue_wrap/engine/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + transform/velocity reads
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"        // IsGarbageClump (rest detection)
+#include "ue_wrap/core/reflection.h"  // ClassNameOf / InternalIndexOf / IsLiveByIndex
+#include "ue_wrap/core/types.h"       // FVector / FRotator / NormalizeAxis
 
 #include <cstdint>
 #include <string>

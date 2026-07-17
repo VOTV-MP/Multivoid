@@ -3,8 +3,8 @@
 #include "coop/dev/leak_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <algorithm>
 #include <chrono>

@@ -4,7 +4,7 @@
 
 #include "coop/world/balance_sync.h"
 #include "coop/dev/dev_gate.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 namespace coop::dev::add_points {
 

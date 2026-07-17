@@ -16,7 +16,7 @@
 
 #include "coop/world/event_fire_sync.h"
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

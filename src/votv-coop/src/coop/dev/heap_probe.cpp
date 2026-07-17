@@ -3,8 +3,8 @@
 #include "coop/dev/heap_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/hook.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

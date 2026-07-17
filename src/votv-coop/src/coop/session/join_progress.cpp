@@ -4,7 +4,7 @@
 
 #include "ui/join_curtain.h"  // instant-world: drop the curtain on a join ABORT (not the normal Complete path)
 #include "coop/session/shutdown.h"  // IsShuttingDown -- suppress the failure dialog during teardown
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <chrono>

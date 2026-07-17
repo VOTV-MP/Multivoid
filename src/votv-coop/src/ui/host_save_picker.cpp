@@ -6,8 +6,8 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/save_browser.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/save_browser.h"
 
 #include "imgui.h"
 

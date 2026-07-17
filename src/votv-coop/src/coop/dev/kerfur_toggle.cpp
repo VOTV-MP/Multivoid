@@ -5,10 +5,10 @@
 #include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/shutdown.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <windows.h>
 

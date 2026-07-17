@@ -3,10 +3,10 @@
 
 #include <chrono>
 
-#include "ue_wrap/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/ufunction_hook.h"
+#include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/ufunction_hook.h"
 
 namespace coop::save_indicator_suppress {
 

@@ -8,9 +8,9 @@
 #include "ui/input_focus.h"
 #include "coop/session/shutdown.h"
 
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/spawn_menu.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/spawn_menu.h"
 
 #include <windows.h>
 

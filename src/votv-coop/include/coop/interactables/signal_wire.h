@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "ue_wrap/signal_dynamic.h"
+#include "ue_wrap/desk/signal_dynamic.h"
 
 #include <cstdint>
 #include <vector>

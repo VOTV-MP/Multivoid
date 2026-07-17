@@ -4,9 +4,9 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "ue_wrap/economy.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/world/economy.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <cstdint>

@@ -6,8 +6,8 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/daynightcycle.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/world/daynightcycle.h"
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <chrono>

@@ -37,15 +37,15 @@
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_proxy.h"   // phase 1: the host-authoritative AStaticMeshActor trash mirror (dup fix)
 #include "coop/props/native_pile_mirror.h"  // nativization 2026-06-30: a rooted real chipPile native is the PILE mirror
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/fname_utils.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
 
 #include <algorithm>
 #include <chrono>

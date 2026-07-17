@@ -14,11 +14,11 @@
 #include "coop/props/remote_prop.h"          // RegisterPropMirror
 #include "coop/props/remote_prop_spawn.h"    // OnSpawn (fresh-spawn fallback) + RecordClaimIfTracking + HasLoadTailQuiesced
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "ue_wrap/engine.h"            // GetActorLocation + SetActorSimulatePhysics
-#include "ue_wrap/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)
-#include "ue_wrap/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/engine/engine.h"            // GetActorLocation + SetActorSimulatePhysics
+#include "ue_wrap/actors/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)
+#include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <chrono>
 #include <string>

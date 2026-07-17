@@ -16,10 +16,10 @@
 #include "coop/props/save_time_retire_util.h"    // FindExactMatch (variant-1 position re-bind, shared 1cm kernel)
 #include "coop/props/trash_proxy.h"              // (X) item 4: IsProxy / RetireProxy (proxy-before-bind race)
 #include "coop/props/trash_channel.h"            // b1 (#2): CtxForEid -- was E converted in-window? (proxy-wins discriminator)
-#include "ue_wrap/engine.h"                // GetActorLocation (variant-1 position re-bind)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                  // GetInteractableKeyString, IsChipPile
-#include "ue_wrap/reflection.h"            // ClassNameOf, IsLive, ClassOf
+#include "ue_wrap/engine/engine.h"                // GetActorLocation (variant-1 position re-bind)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"                  // GetInteractableKeyString, IsChipPile
+#include "ue_wrap/core/reflection.h"            // ClassNameOf, IsLive, ClassOf
 
 #include <mutex>
 #include <string>

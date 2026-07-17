@@ -8,10 +8,10 @@
 #include "coop/creatures/npc_sync.h"          // IsAllowlistedClass (the NPC load tail)
 #include "coop/props/prop_element_tracker.h"  // HasSeededOnce / InPurgeEpisode (purge-aware progress)
 #include "coop/props/prop_lifecycle.h"        // IsPerPlayerPropClass
-#include "ue_wrap/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD (probe fields are GT-owned)
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD (probe fields are GT-owned)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 #include <chrono>

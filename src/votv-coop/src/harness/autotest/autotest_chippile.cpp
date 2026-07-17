@@ -51,14 +51,14 @@
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent (Increment-2 synthetic wire test)
 #include "coop/props/trash_proxy.h"          // NearestPileProxy (CLIENT visual showcase: aim at a mirrored pile)
-#include "ue_wrap/call.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
 
 #include <algorithm>
 #include <atomic>

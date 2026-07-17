@@ -35,8 +35,8 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/session/teleport_client.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 
 #include <array>
 #include <cmath>

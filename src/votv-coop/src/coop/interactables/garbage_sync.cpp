@@ -21,9 +21,9 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 #include <string>

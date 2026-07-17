@@ -5,11 +5,11 @@
 #include "coop/element/element.h"          // ElementId, kInvalidId
 #include "coop/creatures/kerfur_entity.h"            // IsKerfurPropClass (UClass* form)
 #include "coop/props/prop_element_tracker.h"     // CollectTrackedPileTransforms / CollectTrackedKerfurTransforms
-#include "ue_wrap/hot_path_guard.h"        // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"            // FindObjectByClass, FindClass, IsDescendantOfAny, NameEquals, ClassNameOf
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/types.h"                 // ue_wrap::FVector
+#include "ue_wrap/core/hot_path_guard.h"        // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"            // FindObjectByClass, FindClass, IsDescendantOfAny, NameEquals, ClassNameOf
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"                 // ue_wrap::FVector
 
 #include <algorithm>
 #include <cmath>

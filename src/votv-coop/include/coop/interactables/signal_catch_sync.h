@@ -44,7 +44,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
-#include "ue_wrap/space_renderer.h"
+#include "ue_wrap/desk/space_renderer.h"
 
 #include <cstdint>
 #include <vector>

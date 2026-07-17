@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/types.h"
 
 #include <algorithm>
 #include <cmath>

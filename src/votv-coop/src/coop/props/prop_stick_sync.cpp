@@ -8,12 +8,12 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/remote_prop.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <cstdint>

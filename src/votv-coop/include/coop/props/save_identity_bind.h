@@ -29,7 +29,7 @@
 
 #include "coop/props/save_identity_map.h"  // IdMap, Family
 #include "coop/element/element.h"          // ElementId (UpdateChipSavePosAndGetOld)
-#include "ue_wrap/types.h"                 // FVector (UpdateChipSavePosAndGetOld)
+#include "ue_wrap/core/types.h"                 // FVector (UpdateChipSavePosAndGetOld)
 
 namespace coop::save_identity_bind {
 

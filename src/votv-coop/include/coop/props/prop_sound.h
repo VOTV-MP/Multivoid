@@ -39,7 +39,7 @@
 
 #pragma once
 
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/types.h"
 
 namespace coop::prop_sound {
 

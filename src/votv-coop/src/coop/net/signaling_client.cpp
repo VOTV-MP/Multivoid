@@ -13,7 +13,7 @@
 
 #include "signaling_client.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstring>
 #include <utility>

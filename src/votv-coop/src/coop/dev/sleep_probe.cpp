@@ -3,8 +3,8 @@
 #include "coop/dev/sleep_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/sleep.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/sleep.h"
 
 #include <chrono>
 

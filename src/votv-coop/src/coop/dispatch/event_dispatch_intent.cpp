@@ -20,8 +20,8 @@
 #include "coop/props/prop_drop_intent.h"  // v106 F2 Inc-1: CLIENT->HOST client-placed keyed prop
 #include "coop/props/trash_channel.h"
 
-#include "ue_wrap/log.h"
-#include "ue_wrap/types.h"  // ue_wrap::FVector (ThrowIntent camFwd)
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector (ThrowIntent camFwd)
 
 #include <cmath>
 #include <cstring>

@@ -39,9 +39,9 @@
 #include "coop/interactables/device_occupancy.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/console_desk.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/space_renderer.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/desk/space_renderer.h"
 
 #include <atomic>
 #include <chrono>

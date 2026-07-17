@@ -3,11 +3,11 @@
 #include "coop/save/save_block.h"
 
 #include "coop/net/session.h"
-#include "ue_wrap/hook.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
-#include "ue_wrap/sig_scan.h"
+#include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/sig_scan.h"
 
 #include <windows.h>  // SEH (__try/__except) -- the detour's crash firewall
 

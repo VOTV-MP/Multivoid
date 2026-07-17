@@ -12,11 +12,11 @@
 #include "coop/element/npc.h"
 
 #include "coop/net/protocol.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/kerfur.h"   // v74: DriveKerfurState (host-authoritative command/spooky on the mirror)
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/wisp.h"     // 2026-07-03: DriveWispLanding (fade-in edge on the wisp_C mirror)
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/kerfur.h"   // v74: DriveKerfurState (host-authoritative command/spooky on the mirror)
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/wisp.h"     // 2026-07-03: DriveWispLanding (fade-in edge on the wisp_C mirror)
 
 #include <algorithm>
 #include <chrono>

@@ -3,7 +3,7 @@
 #include "coop/player/skin_registry.h"
 
 #include "coop/config/config.h"  // ModuleDir -- the pak folder is derived from the DLL location
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <cwctype>
 #include <filesystem>

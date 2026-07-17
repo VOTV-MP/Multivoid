@@ -7,12 +7,12 @@
 #include "coop/element/prop.h"
 #include "coop/props/remote_prop.h"       // ClearAnyDriveFor (evict the pose drive before destroying a proxy)
 #include "coop/props/trash_clump_pose_stream.h"  // v85: evict the per-eid carry drive before destroying a proxy
-#include "ue_wrap/engine.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"            // ResolvePileMesh
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"          // FVector / FRotator
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"            // ResolvePileMesh
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"          // FVector / FRotator
 
 #include <cmath>
 #include <cstddef>

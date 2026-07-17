@@ -2,7 +2,7 @@
 
 #include "coop/moderation/ban_list.h"
 
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

@@ -16,10 +16,10 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/skin_registry.h"
-#include "ue_wrap/hot_path_guard.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 

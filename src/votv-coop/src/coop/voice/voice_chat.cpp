@@ -11,8 +11,8 @@
 
 #include "coop/config/config.h"
 
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
 
 #include <Windows.h>
 

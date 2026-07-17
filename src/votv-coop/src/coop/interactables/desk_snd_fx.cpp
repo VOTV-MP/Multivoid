@@ -5,10 +5,10 @@
 #include "coop/config/config.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/console_desk.h"
-#include "ue_wrap/desk_audio.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/ufunction_hook.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/desk/desk_audio.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/ufunction_hook.h"
 
 #include <atomic>
 #include <chrono>

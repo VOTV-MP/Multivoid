@@ -7,15 +7,15 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
-#include "ue_wrap/engine.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/puppet.h"  // GetSkeletalMeshComponent (owner head-bone anchor for the hold measure)
-#include "ue_wrap/fname_utils.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/puppet.h"  // GetSkeletalMeshComponent (owner head-bone anchor for the hold measure)
+#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <cmath>
 #include <cstring>

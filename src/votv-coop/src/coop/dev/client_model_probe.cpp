@@ -6,12 +6,12 @@
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
 
-#include "ue_wrap/asset_load.h"
-#include "ue_wrap/engine.h"
-#include "ue_wrap/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/puppet.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/types.h"
 
 #include <chrono>
 #include <cmath>

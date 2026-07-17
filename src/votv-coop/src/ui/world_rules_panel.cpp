@@ -2,8 +2,8 @@
 
 #include "ui/world_rules_panel.h"
 
-#include "ue_wrap/game_rules.h"
-#include "ue_wrap/game_thread.h"
+#include "ue_wrap/world/game_rules.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ui/scale.h"
 
 #include "imgui.h"

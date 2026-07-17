@@ -1,7 +1,7 @@
 #include "harness/screenshot.h"
 
 #include "coop/session/shutdown.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/core/log.h"
 
 #include <windows.h>
 #include <gdiplus.h>

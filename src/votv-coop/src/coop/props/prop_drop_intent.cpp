@@ -9,19 +9,19 @@
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
-#include "ue_wrap/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
-#include "ue_wrap/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
-#include "ue_wrap/fname_utils.h"            // StringToFName
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"                   // IsDescendantOfProp, GetInteractableKeyString,
+#include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
+#include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
+#include "ue_wrap/core/fname_utils.h"            // StringToFName
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"                   // IsDescendantOfProp, GetInteractableKeyString,
                                             // GetPropNameString, WriteSpParityIdentity
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
-#include "ue_wrap/tape_caddy.h"             // v114 (L7): IsReelClass whitelist + the Progress birth scalar
-#include "ue_wrap/types.h"
-#include "ue_wrap/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
+#include "ue_wrap/desk/tape_caddy.h"             // v114 (L7): IsReelClass whitelist + the Progress birth scalar
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
 
 #include <atomic>
 #include <cstdint>

@@ -3,9 +3,9 @@
 #include "coop/dev/set_clock.h"
 
 #include "coop/dev/dev_gate.h"
-#include "ue_wrap/daynightcycle.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
+#include "ue_wrap/world/daynightcycle.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstdint>
 

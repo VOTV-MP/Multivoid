@@ -4,12 +4,12 @@
 
 #include "coop/creatures/kerfur_command.h"  // TryRecordMenuCommand (the existing client->host relay)
 #include "coop/net/session.h"
-#include "ue_wrap/engine.h"       // ReadMainPlayerLookAtActor + ReadMainPlayerRadialSelect
-#include "ue_wrap/game_thread.h"  // RegisterPreObserver
-#include "ue_wrap/kerfur.h"       // IsKerfurActor + ReadKerfurState
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"       // ReadMainPlayerLookAtActor + ReadMainPlayerRadialSelect
+#include "ue_wrap/core/game_thread.h"  // RegisterPreObserver
+#include "ue_wrap/actors/kerfur.h"       // IsKerfurActor + ReadKerfurState
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
 #include <chrono>

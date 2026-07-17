@@ -21,11 +21,11 @@
 #include "coop/player/players_registry.h"      // F1 piece 2: Local() -> settled-skip a held actor at apply
 #include "coop/props/save_time_retire_util.h"  // FindExactMatch + UnmarkAndDestroy (shared kernel)
 #include "coop/config/config.h"           // IsIniKeyTrue (pile_dup_probe gate)
-#include "ue_wrap/engine.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/prop.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 #include <chrono>
 #include <cmath>

@@ -3,11 +3,11 @@
 #include "coop/save/save_button_disable.h"
 
 #include "coop/net/session.h"
-#include "ue_wrap/call.h"
-#include "ue_wrap/game_thread.h"
-#include "ue_wrap/log.h"
-#include "ue_wrap/reflection.h"
-#include "ue_wrap/sdk_profile.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
 #include <cstdint>
