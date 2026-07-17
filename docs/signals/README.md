@@ -129,13 +129,23 @@ analogd uber @82980] -> divergent verdicts + a phantom ARM raising the mirrored 
 a local FAIL + double coordLog authorship + a false post-catch DISARM stomp; fixed same evening:
 receivers never write the flag [bookkeeping only], a desk FSM-hold claim covers the pinger's
 run, and the arm poll's re-init-window predicate; design
-`votv-ping-fsm-phantom-v115b-DESIGN-2026-07-17.md`). **NOT hands-on: v112, v113, v114, v115 AND
-v115b all await the user take** (batched — FIVE layers stack; runbook
-`research/handson_runbook_2026-07-17_desk_v114.md` take 3; per-lane log prefixes keep
-attribution: `desk_input:`/`dish_sync:`/`[reel]`/`[task]`/`desk_snd:`/`desk_cursor:`/
-`FSM-hold`). The v111 hands-on FAILED on 5 fronts — all designed out in v112
-(`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining OPEN: OPEN-1 (cursor jerks — v115b
-removed two more mechanisms [the phantom's per-tick machine on the observer + the double-author
-text thrash]; apply cadence measured CLEAN 60 Hz; a smoke-env lead points at the client
-npc_client walk ~30 ms/tick — re-judge at the take), OPEN-2 (coordLog cluster), OPEN-3
-(upgrade-sync), OPEN-5/6/8/9 (L4+L7 are BUILT; the train order is L6 -> L8 -> L5 -> L9).
+`votv-ping-fsm-phantom-v115b-DESIGN-2026-07-17.md`); and **v116 the CATCH-ATTRIBUTION RETIRE +
+the laptop_C lane + catch->activity-feed** commit `613f2ac4` (proto 116) — the take-3 live test
+(17:00-17:09) measured the LOST-CATCH root: the claim-gated catch detector raced the FSM-hold
+release the successful ping itself triggers (17:04:46 catch / 17:04:47 release; the baseline
+roll-forward ate the edge) -> the whole one-peer-detects/other-NO-SIGNAL/frozen-diverged-dishes
+symptom set from ONE eaten edge; v116 retires the claim gates (the unprimed change-edge is the
+authority), adds kind=2 feed-silent connect seeds + the settled-dish slew fallback + a host dup
+guard, lands one "caught signal 'X'" feed line per peer, and ships the stationary-PC lane
+(LaptopState=106: power replay + atomic floppy scalars+content + HOST disc-content authority;
+design `votv-v116-catch-attribution-and-laptop-DESIGN-2026-07-17.md`, RE
+`votv-laptop-pc-RE-2026-07-17.md`). **NOT hands-on: v112..v116 all await the user take**
+(batched — SIX layers stack; runbook `research/handson_runbook_2026-07-17_desk_v114.md` take 4;
+per-lane log prefixes keep attribution: `desk_input:`/`dish_sync:`/`[reel]`/`[task]`/
+`desk_snd:`/`desk_cursor:`/`FSM-hold`/`signal_catch:`/`laptop_sync:`). The v111 hands-on FAILED
+on 5 fronts — all designed out in v112 (`votv-desk-input-lane-DESIGN-2026-07-16.md`). Remaining
+OPEN: OPEN-1 (cursor jerks — v116 removed the diag-battery noise [kerfur_census 8-25 ms walk] and
+added HOST perf_probe, the never-measured half; npc_client walk = the named suspect), OPEN-2
+(coordLog cluster), OPEN-3 (upgrade-sync), OPEN-5/6/8/9 + OPEN-10 NEW (laptop v2: PC buffer +
+portable PC; per-device claim discrimination) (L4+L7 BUILT; the train is L6 -> L8 -> L5 -> L9,
+with the event_dispatch_signal.cpp extraction FIRST — the dispatch file sits at 791/800).

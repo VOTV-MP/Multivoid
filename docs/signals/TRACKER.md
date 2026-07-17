@@ -15,7 +15,7 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | Element | Native behavior (1-line) | Shape | Owner | Wire lane | Status |
 |---|---|---|---|---|---|
 | Sky-signal generation | director rolls signals into space | 3 host-roller | host | `SkySignalState 52/53` (`signal_sync`) | **AS-BUILT** (host-roller + full consume replay) |
-| Signal catch | dish catch → `coord_signalData` = truth | 2 intent→host | host | `SkySignalCatch` (`signal_catch_sync`) | **AS-BUILT** (v70 host-owned catch truth) |
+| Signal catch | dish catch → `coord_signalData` = truth | 2 intent→host | host | `SkySignalCatch` (`signal_catch_sync`) | **AS-BUILT v116 `613f2ac4`** — the v70-v115 claim-gated detector LOST the 17:04 live catch (the successful ping's own completion releases the FSM-hold in the same second; the 1 Hz claim-gated poll raced it and the baseline roll-forward ate the edge PERMANENTLY -> host NO SIGNAL / frozen host dishes / client 24-dish self-slew). v116 (RULE 2): detector + NoteIncomingSnapshot + host holder-validator gates RETIRED (the UNPRIMED change-edge is the authority; writer set grep-enumerated), host IsRecent dup guard, kind=2 connect STATE-SEED (feed-silent), settled-dish lookAt slew fallback, catch -> activity feed (peer_action_feed, one line per peer). Smoke x3, awaiting hands-on take 4 |
 | Dish aim / slew (committed) | aim coords, slews to target | 4 owner-stream | occupant | `DishAimState 55` | **AS-BUILT** (v109: committed-coords-only + connect-snapshot) |
 | Saved signals | append/delete decoded signals | 2 intent (CRDT) | host-gate | `SavedSignalAppend/Delete 58/59` | **AS-BUILT** |
 | Desk/console occupancy | one peer "inside" an enterable screen | 4 claim | host-arbitrated | `DeviceClaim 51` (`device_occupancy`) | **AS-BUILT** (all 8 devices; hands-on for entry) |
@@ -27,9 +27,9 @@ tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Nei
 | **Freq/polarity + download rate** | tune → download SPEED; per-peer sim + 2 RNG | 3 host-auth sim (outputs) + claim-free input deltas | host / presser | `DeskSimPose=38` 7ch + `DeskInput=97`/`DeskScanEvent=98` (`desk_sim_sync` + `desk_input_sync`) | **AS-BUILT v112** (the BUGS-v111 fix; smoke PASS) — awaiting hands-on |
 | coord log lines (`CR:`/animated) | `ProduceLogLines` runs on EVERY peer | 4 holder-owned | occupant (planned) | partial (`CR:` filtered off wire) | **OPEN-2** (filter premise now MEASURED false for CR/APPROX/ANALYSIS) |
 | Dishes rotation/kinematics (24 big) | rest pose = load-time RNG (unsaved); per-slew RNG; catch targets already synced | 3/4 (tbd) | host (planned) | — (`SkySignalCatch` covers targets only) | **OPEN-4** (RE'd 2026-07-16) |
-| Stationary PC / laptop screen | portable-PC power + screen | 1/4 (tbd) | tbd | — | **OPEN** (screens gap-list #5) |
+| Stationary PC (laptop_C) power + floppy | ACTIVATE boot/shutdown (isOpened, fused latent chain) + floppy insert/eject (insert DESTROYS the disc into laptop scalars; eject SPAWNS a fresh one) | presser edges + host content authority | presser (edges) / host (disc content) | `LaptopState 106` (`laptop_sync` + `ue_wrap/devices/laptop`) | **AS-BUILT v116 `613f2ac4`** — power = isOpened edge + native actionOptionIndex(b8) replay under want-target predicate; floppy = 4 Hz slot edges, ATOMIC scalars+content apply at chunk assembly (audit IMPORTANT-1), content chunked 192 B/4 KB; disc destroy rides the v106 K2_DestroyActor seam (one owner), eject spawn rides birth channels; DiscContent by eid (adoption-binding correlation for client ejects; ground-truth rows at join). RE `votv-laptop-pc-RE-2026-07-17.md`. Smoke x3, awaiting hands-on. **OUT of v1 -> OPEN-10** |
 | U1 SHIFT quick-scan (arrows) | spawnDirs UMG arrows + beep + shared cooldown charge | 2 presser-event | presser | `DeskScanEvent 98` (arrows visual + charge, v112 `desk_input_sync` scan classification) + `DeskSndFx 105` (the beep, v115) | **AS-BUILT v112+v115** — was stale-OPEN here; code: `SendScan`/`OnDeskScan` + the fx lane; awaiting hands-on |
-| U1 ENTER triangulation ping (the FSM) | latent tick machine gated on `coord_isPing` (@82980 -> @80105 stage engine; ==1.0 latches; verdict spawns signalData + moves the theater) | ONE machine = the presser's, organically; observers: bookkeeping only | presser (FSM) / host (theater+ARM, v113) | CoordIsPing rides `DeskInput 97` as an edge NOTIFICATION (never machine-applied since v115b); catch on `SkySignalCatch`; ARM on `DishArm 99` | **AS-BUILT v115b `de31889e`** — the v112 raw apply WOKE a phantom sim on observers (live-caught 2026-07-17 14:46: divergent verdicts, phantom ARM raising the mirrored detector, double coordLog authorship, false post-catch DISARM). Fix: bookkeeping-only + desk FSM-hold claim (device_occupancy reconciler; deny+ForceExit for others mid-ping) + arm-poll re-init window (DISARM suppressed while signalData lives) + solo-host connect seed (audit CRIT-1). Observers still see no stage visuals (R-a = the old R2 residual). Awaiting hands-on |
+| U1 ENTER triangulation ping (the FSM) | latent tick machine gated on `coord_isPing` (@82980 -> @80105 stage engine; ==1.0 latches; verdict spawns signalData + moves the theater) | ONE machine = the presser's, organically; observers: bookkeeping only | presser (FSM) / host (theater+ARM, v113) | CoordIsPing rides `DeskInput 97` as an edge NOTIFICATION (never machine-applied since v115b); catch on `SkySignalCatch`; ARM on `DishArm 99` | **AS-BUILT v115b `de31889e`** — the v112 raw apply WOKE a phantom sim on observers (live-caught 2026-07-17 14:46: divergent verdicts, phantom ARM raising the mirrored detector, double coordLog authorship, false post-catch DISARM). Fix: bookkeeping-only + desk FSM-hold claim (device_occupancy reconciler; deny+ForceExit for others mid-ping) + arm-poll re-init window (DISARM suppressed while signalData lives) + solo-host connect seed (audit CRIT-1). **v116 `613f2ac4` closed the SECOND defect the same FSM-hold exposed**: the catch detector's claim gate raced the hold's release (see the Signal-catch row). Observers still see no stage visuals (R-a; SURFACED to the user 2026-07-17 as a product question — display-only mirror if wanted). Awaiting hands-on take 4 |
 | U2 desk gauge/detector sounds | vol=match×\|speed\|, pitch=Lerp(match); loops on toggles | derived (needs speeds mirrored) | occupant/host | speeds on NO lane | **BUG-3** (data starvation) |
 | U2 save/delete/lid verbs | SAVE→savedSignals_0 (id mint); DELETE aborts active signal; lid=collision gate | 2 intent | host-gate | `SavedSignalAppend/Delete 58/59` cover the list; capOpened/delete-active NOT | **PARTIAL** |
 | U3 play deck (playback/volume/SARV/scroll) | world-audible signalSound; display remaps | 4 holder-owned (tbd) | occupant | — none | **OPEN-6** |
@@ -138,6 +138,14 @@ smoke env showed client `[WALK-TIME] sync:npc_client ~30 ms/tick` + HITCH-SRC ne
 steady — a per-tick walk that heavy grows with NPC count = "jerky over time"; NOT measurable in
 the live logs (that instrumentation was off there). Re-judge at the take; if jerks persist,
 enable the WALK-TIME instrumentation and read `sync:npc_client` first.**
+**v116 UPDATE (2026-07-17 nite): the live-env measurement noise is now REMOVED and the missing
+instrument ADDED — the deployed inis had a closed-measurement diag battery still ON (kerfur_census=1:
+a full ~281k-object GUObjectArray walk measured 8-25 ms EVERY 10 s inside sync:npc_client, + 6 more
+probes); all flipped off in all 4 installs, desk_diag KEPT (the proven 1 Hz discriminator), and the
+HOST gained perf_probe=1 — host fps was never measured in any prior take (the observer of the mirror
+cursor IS the host). The npc_client ~30 ms/tick walk reproduced in the v116 smoke WITH census OFF ->
+the walk itself (mirror Tick loop) is the remaining named suspect, smoke-env-conditioned. Attribution
+set for take 4: host [perf] frames + desk_diag 1 Hz pacing + desk_cursor ema.**
 
 ### OPEN-3 · Upgrade-level sync (NOT a desk detail — its own surface; surfaced by OPEN-0 gate 2)
 The freq/pol download formula reads upgrade fields (`upg_scanner`, `upg_downloadSpd`, filter-size) and
@@ -255,6 +263,16 @@ its consumers (tape speed byte 21, level lamps + auto-continue byte 3, laptop au
 5, weather shield byte 6) + the `explotano` hot-plug explosion are unsynced. Gates OPEN-7 speed
 and U4 behavior.
 
+### OPEN-10 · Laptop v2: PC file buffer + the portable PC (NEW 2026-07-17, cut from v116 v1)
+`laptop_C.floppyBuffer/floppyBufferUIDs` (files copied onto the PC; persisted; mutates only while a
+peer drives the PC UI) + the sibling device `prop_portablePc_C` (own floppyTypes/floppyData) are
+UNSYNCED. **The first design question is per-device claim discrimination**: `device_screen.cpp`
+maps BOTH `laptop_C` AND `prop_portablePc_C` to the SAME occupancy claim key "laptop" — a
+claim-release-authored buffer snapshot cannot tell which device the leaving holder drove, and two
+peers on the two devices cannot both hold the claim (qf R7-Q4). Also here: the v116 content-cap
+residual (>4 KB disc content truncates with a WARN) + the mid-session content-loss TTL fallback.
+RE base: `votv-laptop-pc-RE-2026-07-17.md` FD-Q5/§4.
+
 ### OPEN-9 · Meadow DATABASE stores
 `saveSlot.savedSignals_0 @0x680` (DATABASE tab) + `savedSignals_comp_0 @0x690` (processed DB) get
 rows from U3 SAVE (`laptop.addSignal`, EX_Local-invisible) and laptop-side delete/move — join
@@ -264,6 +282,14 @@ save-transfer only, no live lane. Same intent-CRDT shape as the shipped
 ---
 
 ## CHANGELOG
+- **2026-07-17 nite (v116 `613f2ac4` + ue_wrap split `9d24ac0c`, PUSHED)** — the take-3 live test
+  (17:00-17:09) caught the LOST-CATCH root: the claim-gated catch detector raced the FSM-hold release
+  the successful ping itself triggers (measured 17:04:46/47) -> the whole R2-R5 symptom set from ONE
+  eaten edge. v116 retires the claim gates (/qf rounds 1-6), adds catch->activity-feed, and ships the
+  laptop_C power+floppy lane (LaptopState=106, /qf rounds 7-9; RE `votv-laptop-pc-RE-2026-07-17.md`);
+  proto 115->116. Diag-battery ini hygiene + host perf_probe (OPEN-1). Rows flipped: Signal catch ->
+  v116; Stationary PC -> AS-BUILT v116 (was stale-OPEN "screens gap-list #5"); +OPEN-10. Smoke x3;
+  NOT hands-on (runbook take 4, SIX layers).
 - **2026-07-16** — the user walked the WHOLE downstream chain hands-on + reported 5 v111 bugs; a
   7-agent RE pass covered units 1-4 byte-level + the drive chain + eraser + tape caddy + the 24
   dishes; ALL 5 bugs root-caused to file:line (**BUGS-v111** section; the claim-model axis fact).

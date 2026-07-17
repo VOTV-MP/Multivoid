@@ -396,6 +396,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   Fix 2026-07-16: `g_lastConnectedBySlot`->`g_lastReadyBySlot`, leave edge on the IsSlotReady falling edge
   (`SuppressPeerLeaveEdges` — the separate "WE are leaving" axis — kept). *Look FIRST:*
   `memory/lesson_departure_toast_gates_on_ready_edge_not_transport.md`
+- **A gate anchored on a claim the GATED EVENT itself releases = lost by construction** (2026-07-17,
+  the v116 lost-catch root: the catch wrote signalData at 17:04:46, the SAME success released the desk
+  FSM-hold at :47, and the 1 Hz claim-gated detector + the host holder-validator both raced it; the
+  baseline roll-forward made the loss PERMANENT). Derive authority from the event's OWN evidence (the
+  unprimed change-edge, writer set enumerated), not from concurrent occupancy. *Look FIRST:*
+  `signal_catch_sync.h` header. `memory/lesson_claim_anchored_gate_races_its_own_release.md`
+- **Census the GENERIC lifecycle channels BEFORE building lane-side capture** for any consume/slot
+  machine (2026-07-17: one read of `prop_destroy_seam.cpp` — the v106 K2_DestroyActor seam crosses
+  keyed destroys BOTH roles — dissolved the laptop lane's whole planned BndEvt eid-capture; births
+  ride the watcher/F2/eject-intent channels). The lane owns only the residue (scalars + content).
+  `memory/lesson_census_generic_channels_before_new_lane_capture.md`
+- **Client-birth SIDE-DATA (strings > savedScalar) correlates via the ADOPTION eid-binding** — park
+  pending data on the local actor, drain until the eid lands, ship {eid, chunks}; no nonce, no intent
+  format change (v116 disc content, qf R8-Q3). *Look FIRST:* `laptop_sync.cpp DriveEjectContentWatch`.
+  `memory/lesson_adoption_eid_binding_correlates_client_birth_sidedata.md`
 
 ## 4. Dispatch, hooks & input seams
 
@@ -616,6 +631,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A periodic FPS hitch by PERIOD COINCIDENCE is not causation** — measure the real source. `memory/lesson_periodic_hitch_not_the_walk_by_period_coincidence.md`
 - **A fixed-capacity hook table + ASYMMETRIC roles = a half-working fix.** `memory/lesson_hook_table_capacity_asymmetric_peers.md`
 - **ImGui COMPOSITE widgets: commit via a DEBOUNCE on value-changed.** `memory/lesson_imgui_composite_commit_debounce.md`
+- **The FString PIN doctrine ("mint engine-side, never free") holds ONLY for FRESH buffers** —
+  repeated in-place mints on the SAME live object's fields LEAK on receivers (no native reassign ever
+  runs there); swap-and-EngineFree instead (v116 perf audit finding 1). *Look FIRST:*
+  `ue_wrap/devices/laptop.cpp FreeFStringSlot`. `memory/lesson_fstring_pin_doctrine_fresh_buffers_only.md`
 
 ## 8. Build / deploy / git hygiene
 
@@ -697,4 +716,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/lesson_smooth_mirror_wakes_dormant_per_peer_generation.md`,
   `memory/project_desk_console_sync_2026-07-15.md`
 - **NEVER `git add -A`/`<dir>` over held WIP — explicit paths or stash.** `memory/lesson_never_git_add_A_over_held_wip.md`
+- **Held-WIP files inside a tree-wide refactor: commit the MECHANICAL hunks index-side**
+  (`git show HEAD:f | rewrite | git hash-object -w | git update-index --cacheinfo` -> status `MM`;
+  the WIP semantics stay uncommitted, the committed tree stays self-consistent — the ue_wrap split
+  `9d24ac0c`). `memory/lesson_held_wip_index_side_include_commit.md`
+- **pwsh7 -> nested Windows PowerShell 5.1 inherits a poisoned PSModulePath** — built-in cmdlets fail
+  as "not recognized" (Get-FileHash, 2026-07-17 smoke deploy). Run mp.py/deploys from the BASH env.
+  `memory/lesson_pwsh_nested_powershell_psmodulepath.md`
 - **AUTONOMOUS pile test loop harness** (reference). `memory/reference_pile_test_harness.md`

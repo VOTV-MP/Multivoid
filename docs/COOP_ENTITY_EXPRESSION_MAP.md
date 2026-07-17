@@ -68,6 +68,15 @@ host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range case
 - **Destroy:** engine `K2_DestroyActor` **PRE** → `PropDestroy(key,eid)` **[V]**; BP-internal vanishes
   (truck/cull/LifeSpan, EX_CallMath) → the host **reaper death-watch** (`ReapDeadLocalPropElements` →
   explicit `PropDestroy(eid)`, kerfur-skipped) **[V]**.
+- **The floppy disc across the laptop slot (v116 `613f2ac4`):** insert = `floppyIn.K2_DestroyActor`
+  (uber@7404) — the disc DIES into laptop scalars; that destroy rides the generic seam above (ONE
+  owner — the planned lane-side eid capture was dropped once `prop_destroy_seam.cpp` proved to cover
+  both roles). Eject = fresh `BeginDeferredActorSpawnFromClass`+`FinishSpawningActor` (uber@8593/8717)
+  with `loadData` restore — the spawn rides the SAME birth channels as the reel (host watcher / the F2
+  drain); the disc's CONTENT (strings — too big for `savedScalar`) rides the `LaptopState` DiscContent
+  side-channel under HOST authority, correlated to a client-eject birth via the adoption eid-binding.
+  A held disc's world identity died at pickup (hand-actor keyless+eidless = correctly seam-dropped).
+  **[AS-BUILT v116, smoke; RE votv-laptop-pc-RE-2026-07-17.md FD-Q1]**
 - **Connect reconcile:** R2 blob-vs-live key-diff deletes → SnapshotBegin/claim-tracking → bracketed
   PropSpawn stream → SnapshotComplete → quiescence-gated **divergence sweep** (membership = the client's
   own local Prop Elements, mirror-excluded; **>50% world-wipe valve**) → `EnsurePileBindIndex` position-bind
