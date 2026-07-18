@@ -1,6 +1,20 @@
 # Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-DEPLOYED: `votv-coop.dll 06b9e2d23c84037f...` x4, hash-verified 2026-07-18 night
+DEPLOYED: `votv-coop.dll 32aac4e57168d44d...` x4, hash-verified 2026-07-18 late night
+(= the 06b9e2d2 stack + THREE s23 additions, no proto change:
+ - **env-host checkbox fix** (`2de5ad31`): the scoreboard "Show in server browser"
+   checkbox now correctly shows OFF for an env/.bat host (the mirror is seeded);
+   check: open the scoreboard on the host -- checkbox unchecked, one click LISTS.
+ - **device-busy chat notice** (`197d11e5` feat A): press E at a device another
+   peer is inside -> deny click + a LOCAL chat line "<HolderNick> is using
+   <native unit name>" (e.g. the exact SAT-console instance you aimed at).
+   Check: peer A sits in a console, peer B presses E on it (and on a DIFFERENT
+   SAT console -- the shared-widget deny must name the unit B aimed at). Line
+   repeats at most 1/3s per device; the click still every press.
+ - **nickname-always feed** (`197d11e5` feat B): catching a signal / deleting an
+   email shows "<YourNick> caught signal 'X'" to the ACTOR TOO -- "You" is gone
+   everywhere in the activity feed. Check: catch a signal, your own line shows
+   your nick, identical to what the other peer sees.)
 (= v121 + the rack extraction trio + **v122 no-passive-mint stable-ID root fix** — the
 join-identity layer: client census no longer mints keyed Elements (~2200 zombie
 double-rows per join GONE, smoke A/B measured: sweep universe 2236->1, rack under ONE
@@ -13,7 +27,7 @@ each firing is diagnostic evidence, not necessarily a bug).
 Design: votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md).
 kProtocolVersion **121** (v121's LaptopBlob/LaptopQuad/FloppyBoxState lanes + the
 LaptopState struct shrink; a 120-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH
-PEERS). TWELVE unverified layers v112..v122; prefixes attribute.
+PEERS). TWELVE unverified layers v112..v122 + the s23 trio above; prefixes attribute.
 
 ## What changed in v121 (2026-07-18 — OPEN-10 laptop v2) — proto 121, DLL a451fce7cb674d04 x4
 
