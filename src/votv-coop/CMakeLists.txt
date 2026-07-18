@@ -365,6 +365,7 @@ add_library(votv-coop SHARED
     src/coop/element/identity_create.cpp
     src/coop/element/identity_destroy.cpp
     src/coop/net/session.cpp
+    src/coop/net/session_streams.cpp
     src/coop/net/net_stats.cpp
     src/coop/net/session_npc.cpp
     src/coop/net/session_worldactor.cpp

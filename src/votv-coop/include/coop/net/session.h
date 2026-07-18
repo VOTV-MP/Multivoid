@@ -29,6 +29,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -456,6 +457,23 @@ private:
     // v66 voice receive-side store (defined in session_voice.cpp): validate one
     // VoiceFrame datagram, queue it on the voice inbox, host-relay. Net thread.
     void StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int len);
+    // The 9 SCALAR stream channels' receive-store (defined in session_streams.cpp,
+    // extracted 2026-07-18 per the 800-LOC cap -- bodies verbatim from the old
+    // inline HandleMessage cases). Called from HandleMessage's grouped scalar case
+    // labels AFTER the header parse / epoch latch / routeSlot derivation. Net thread.
+    void StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
+                           const void* data, int len, uint32_t seq);
+    // NetThread step 3 (defined in session_streams.cpp): the per-sendHz-tick
+    // stream fan-out -- scalar channels + the npc/worldactor/trashcarry batch
+    // stamps (their Serialize* stay in their TUs). `now` is the shell's single
+    // per-iteration timestamp (step-4 net-diag shares it); the cadence
+    // time_points are NetThread locals advanced here by reference. Net thread.
+    void SendStreamsTick(std::chrono::steady_clock::time_point now,
+                         std::chrono::milliseconds sendInterval,
+                         std::chrono::steady_clock::time_point& nextSend,
+                         std::chrono::steady_clock::time_point& nextClockSend,
+                         std::chrono::steady_clock::time_point& nextDeskSimSend,
+                         uint64_t& sendFails);
     void HandleConnStatusChanged(void* info);
     // Host-only: find the lowest empty slot in [1..kMaxPeers-1]. Returns -1
     // if all client slots are taken (host is full).
