@@ -614,7 +614,8 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
 void ExpressIncrementalSpawn(void* actor) {
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     // Host-authoritative: only the host broadcasts world spawns. The steady-world
-    // re-seed still runs on a client (it mints the client's OWN local eids) but
+    // re-seed still runs on a client (keyed -> key-index only since v122 no-passive-mint;
+    // keyless chipPile elements still mint) but
     // never broadcasts -- a client's runtime spawns route through the host (phase 2).
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!actor || !R::IsLive(actor)) return;

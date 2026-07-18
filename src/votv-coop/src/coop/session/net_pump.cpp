@@ -732,8 +732,10 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // sweep is not re-armed. MTA's strictly-incremental streaming: one
                 // CEntityAddPacket per new entity, never a world re-send
                 // (Server/.../CStaticFunctionDefinitions.cpp:8349). ExpressIncrementalSpawn
-                // is host-only internally; the re-seed still mints local eids on a client
-                // (its own tracking) but broadcasts nothing. (retriggerReadySlots stays --
+                // is host-only internally; on a client the re-seed key-INDEXES keyed props
+                // WITHOUT minting Elements (v122 no-passive-mint -- the silent census mint
+                // was the zombie double-row factory) and still mints keyless chipPile
+                // elements; it broadcasts nothing. (retriggerReadySlots stays --
                 // the episode-end + small-travel branches above legitimately re-bracket on
                 // a real world transition, where the client SHOULD re-reconcile.)
                 // PERF (FPS #3, user 2026-06-22 -- a periodic ~4s FPS stutter on BOTH peers): ReSeedKnownKeyedProps

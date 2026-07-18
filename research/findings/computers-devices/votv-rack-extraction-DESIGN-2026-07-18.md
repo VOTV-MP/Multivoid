@@ -189,5 +189,10 @@ convergence. This is the join-window save-loaded-keyed-prop identity class
 joined a world whose save contained a rack. Evidence: scratchpad
 rackB_reconnect_CLIENT_phase2.log (18:45:10-44). Queued for the stable-ID thread, not a
 lane bug (the pre-split code behaves identically).
+**RESOLVED 2026-07-18 s22 (`4403606c` v122 no-passive-mint):** the residual was the tip of a
+~2200-per-join zombie class (client passive census minting silent keyed Elements + the adopt
+stacking a mirror + the host reverse-steal door). Root fix B/S/A'/H; the SAME reconnect
+scenario re-run measures the rack under ONE host-band eid with single ops and matching digest
+circles. See votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md (AS-BUILT).
 
 Honest status: **AS-BUILT** — smoke + digest-equality + reconnect evidence, no hands-on.
