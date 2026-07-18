@@ -135,17 +135,9 @@ bool IsHost() {
     return s && s->role() == coop::net::Role::Host;
 }
 
-// eid -> live actor. O(1) Registry::Get (perf-audit F-2: the snapshot-scan
-// version cost a full 65536-slot copy per call and stacked in the join
-// window's pending retries).
-void* ActorForEid(uint32_t eid) {
-    if (!eid) return nullptr;
-    coop::element::Element* e = coop::element::Registry::Get().Get(eid);
-    if (!e || e->GetType() != coop::element::ElementType::Prop) return nullptr;
-    void* a = e->GetActor();
-    if (!a || !R::IsLiveByIndex(a, e->GetInternalIdx())) return nullptr;
-    return a;
-}
+// eid -> live actor: coop::element::LivePropActor (O(1) Registry::Get; the
+// promoted canonical resolve idiom -- perf-audit F-2 history in registry.cpp).
+using coop::element::LivePropActor;
 
 // All live drive-class props as (eid, actor).
 void SnapshotDrives(std::vector<std::pair<uint32_t, void*>>& out) {
@@ -369,7 +361,7 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
     if (blob.size() < 5) return;
     uint32_t eid = 0;
     std::memcpy(&eid, blob.data(), 4);
-    void* actor = ActorForEid(eid);
+    void* actor = LivePropActor(eid);
     if (!actor || !DC::IsDriveClass(R::ClassOf(actor))) {
         if (!fromPending) {
             Pending pd;
@@ -532,7 +524,7 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
                      uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    void* rack = ActorForEid(h.rackEid);
+    void* rack = LivePropActor(h.rackEid);
     if (!rack || !DC::IsRackClass(R::ClassOf(rack))) return;
     DC::RackRow rows[DC::kRackSlots];
     int n = 0;
@@ -655,7 +647,7 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
         return;
     }
     if (h.op != 3) return;  // clients only ever apply canonical (+deny)
-    void* rack = ActorForEid(h.rackEid);
+    void* rack = LivePropActor(h.rackEid);
     if (!rack || !DC::IsRackClass(R::ClassOf(rack))) {
         if (!fromPending) {
             Pending pd;
@@ -708,7 +700,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             g_slotBase[p.role] = {true, true, curEid};
             return;
         }
-        void* drive = ActorForEid(p.driveEid);
+        void* drive = LivePropActor(p.driveEid);
         if (!drive || !DC::IsDriveClass(R::ClassOf(drive))) {
             if (!fromPending) {
                 // Audit CRIT-1: at most ONE pending line per role (a newer
@@ -758,7 +750,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
     } else {
         if (!cur) {  // already empty: prime + belt latch completion
             g_slotBase[p.role] = {true, false, 0};
-            DC::CompleteEjectLatch(slot, ActorForEid(p.driveEid));
+            DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
             return;
         }
         {
@@ -795,7 +787,7 @@ void RetryPendingTick() {
                         pd.slotLine.role);
                 continue;
             }
-            void* drive = ActorForEid(pd.slotLine.driveEid);
+            void* drive = LivePropActor(pd.slotLine.driveEid);
             if (drive || !pd.slotLine.occupied) {
                 OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
                 done = true;
@@ -803,14 +795,14 @@ void RetryPendingTick() {
         } else if (pd.kind == 1) {
             uint32_t eid = 0;
             if (pd.blob.size() >= 4) std::memcpy(&eid, pd.blob.data(), 4);
-            if (ActorForEid(eid)) {
+            if (LivePropActor(eid)) {
                 ApplyPayloadBlob(pd.blob, pd.senderSlot, /*fromPending*/true);
                 done = true;
             }
         } else if (pd.kind == 2) {
             coop::net::RackStateHead h{};
             if (pd.blob.size() >= sizeof(h)) std::memcpy(&h, pd.blob.data(), sizeof(h));
-            if (ActorForEid(h.rackEid)) {
+            if (LivePropActor(h.rackEid)) {
                 ClientApplyRackBlob(h, pd.blob, /*fromPending*/true);
                 done = true;
             }

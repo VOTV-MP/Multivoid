@@ -327,14 +327,7 @@ void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
 
 // ---- v121: the portable-PC lid axis (op=6) ---------------------------------
 
-void* LidActorForEid(uint32_t eid) {
-    if (!eid) return nullptr;
-    coop::element::Element* e = coop::element::Registry::Get().Get(eid);
-    if (!e || e->GetType() != coop::element::ElementType::Prop) return nullptr;
-    void* a = e->GetActor();
-    if (!a || !R::IsLiveByIndex(a, e->GetInternalIdx())) return nullptr;
-    return a;
-}
+using coop::element::LivePropActor;  // the promoted canonical eid->live-Prop resolve
 
 void SendLid(coop::net::Session* s, uint32_t eid, bool opened, int exceptSlot) {
     coop::net::LaptopStatePayload p{};
@@ -352,7 +345,7 @@ void LidSweep(coop::net::Session* s, uint64_t now) {
 
     // Drain the unresolved-eid stash first (birth-lane skew heals here).
     for (auto it = g_lidPending.begin(); it != g_lidPending.end();) {
-        void* actor = LidActorForEid(it->first);
+        void* actor = LivePropActor(it->first);
         if (actor && PPC::IsPortablePcClass(R::ClassOf(actor))) {
             bool cur = false;
             if (PPC::ReadOpened(actor, cur) && cur != it->second.opened)
@@ -501,7 +494,7 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
     // eid -> stash with TTL (birth-lane skew).
     if (p.op == 6) {
         const bool opened = p.isOpened != 0;
-        void* actor = LidActorForEid(p.eid);
+        void* actor = LivePropActor(p.eid);
         if (actor && PPC::IsPortablePcClass(R::ClassOf(actor))) {
             bool cur = false;
             if (PPC::ReadOpened(actor, cur) && cur != opened) {

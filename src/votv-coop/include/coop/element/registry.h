@@ -249,4 +249,10 @@ private:
     void RefillFreeStacks_();
 };
 
+// eid -> live Prop actor, or nullptr (wrong type, unbound, or the engine slot
+// was recycled -- IsLiveByIndex-checked). THE canonical resolve idiom for wire
+// receivers; promoted 2026-07-18 from three byte-identical module-local copies
+// (drive_sync/floppybox_sync/laptop_sync). GT-only (touches engine object state).
+void* LivePropActor(ElementId eid);
+
 }  // namespace coop::element

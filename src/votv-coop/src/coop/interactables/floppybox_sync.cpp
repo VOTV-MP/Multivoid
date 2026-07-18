@@ -121,14 +121,7 @@ bool IsHost() {
     return s && s->role() == coop::net::Role::Host;
 }
 
-void* ActorForEid(uint32_t eid) {
-    if (!eid) return nullptr;
-    coop::element::Element* e = coop::element::Registry::Get().Get(eid);
-    if (!e || e->GetType() != coop::element::ElementType::Prop) return nullptr;
-    void* a = e->GetActor();
-    if (!a || !R::IsLiveByIndex(a, e->GetInternalIdx())) return nullptr;
-    return a;
-}
+using coop::element::LivePropActor;  // the promoted canonical eid->live-Prop resolve
 
 std::vector<uint8_t> PackCanonical(uint32_t eid, const FB::BoxArrays& a) {
     std::vector<uint8_t> b = Head(3, eid);
@@ -227,7 +220,7 @@ void Sweep(coop::net::Session* s, uint64_t now) {
     if (IsHost() && !g_canonRetry.empty()) {
         std::set<uint32_t> retry = g_canonRetry;
         for (uint32_t eid : retry) {
-            void* actor = ActorForEid(eid);
+            void* actor = LivePropActor(eid);
             if (!actor || !FB::IsFloppyBoxClass(R::ClassOf(actor))) {
                 g_canonRetry.erase(eid);
                 continue;
@@ -238,7 +231,7 @@ void Sweep(coop::net::Session* s, uint64_t now) {
 
     // Drain unresolved-eid canonicals (birth skew).
     for (auto it = g_pending.begin(); it != g_pending.end();) {
-        void* actor = ActorForEid(it->first);
+        void* actor = LivePropActor(it->first);
         if (actor && FB::IsFloppyBoxClass(R::ClassOf(actor))) {
             Reader r{it->second.blob.data(), it->second.blob.size()};
             FB::BoxArrays a;
@@ -393,7 +386,7 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     const bool host = IsHost();
 
     if (host) {
-        void* actor = ActorForEid(eid);
+        void* actor = LivePropActor(eid);
         if (!actor || !FB::IsFloppyBoxClass(R::ClassOf(actor))) {
             UE_LOGW("floppybox: op=%u for unresolved box eid=%u -- dropped", op, eid);
             return;
@@ -462,7 +455,7 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         UE_LOGW("floppybox: malformed canonical eid=%u -- dropped", eid);
         return;
     }
-    void* actor = ActorForEid(eid);
+    void* actor = LivePropActor(eid);
     if (!actor || !FB::IsFloppyBoxClass(R::ClassOf(actor))) {
         PendingCanonical pc;
         pc.blob.assign(blob.begin() + 5, blob.end());

@@ -17,6 +17,7 @@
 
 #include "coop/player/players_registry.h"  // kMaxPeers (peer-band count, D9-2)
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"       // IsLiveByIndex (LivePropActor)
 
 namespace coop::element {
 
@@ -294,6 +295,15 @@ size_t Registry::SnapshotActorsByType(ElementType t,
         }
     }
     return out.size();
+}
+
+void* LivePropActor(ElementId eid) {
+    if (!eid) return nullptr;
+    Element* e = Registry::Get().Get(eid);
+    if (!e || e->GetType() != ElementType::Prop) return nullptr;
+    void* a = e->GetActor();
+    if (!a || !ue_wrap::reflection::IsLiveByIndex(a, e->GetInternalIdx())) return nullptr;
+    return a;
 }
 
 }  // namespace coop::element
