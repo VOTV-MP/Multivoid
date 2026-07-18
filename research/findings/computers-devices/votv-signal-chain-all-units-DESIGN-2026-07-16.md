@@ -29,11 +29,16 @@ never enters). **L5 = BUILT v119** (2026-07-19 night, commit `b7ed3799` — impl
 authored events -> idempotent any-peer state lines + host canonical; the eject FIFO
 assumption RETRACTED [the grab-half is the unreliable pose stream] -> deterministic
 latch-completion; prop_driveRack discovered IN scope [the L8 canonical shape on 0x70
-rows]; the slotted-latch satisfied by the standing frozen-pose gate). **L9 remains
-DESIGN** (verified against HEAD `b7ed3799` — no meadow lane module in src; its HALT
-gate PASSED 2026-07-18, see the GATE RUN block below; NOTE the comp_0 REFRAME:
-savedSignals_comp_0 is the DECK list's save mirror, not a sibling DB — L9 scope is
-saveSlot.savedSignals_0 alone).
+rows]; the slotted-latch satisfied by the standing frozen-pose gate). **L9 BUILT
+v120 (2026-07-19, commit `6967a13a`)** per its own 15-round /qf
+`votv-meadow-db-L9-impl-DESIGN-2026-07-19.md`, which REVISES §L9 in three majors:
+the "never addSignal replay" claim was WRONG (id-preserving, corrected in §L9 below);
+identity = content-hash MULTISET (index/id keying both invalid — sortSignal moves
+deep-copy FStrings); ORDER SYNCED host-canonical (user rule-1 decision; MeadowOrder=114).
+comp_0 REFRAME stands: savedSignals_comp_0 = the DECK list's save mirror — L9 scope is
+saveSlot.savedSignals_0 alone. With L9 built, EVERY lane of this design (L4-L9) is
+AS-BUILT; this doc is now the ARCHITECTURE RECORD, per-lane truth lives in the impl
+design docs.
 PRECONDITION v112 shipped (`7d57478f`).
 
 ## The cross-cutting rules this design stands on

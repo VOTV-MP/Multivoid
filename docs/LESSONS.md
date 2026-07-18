@@ -248,7 +248,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **`subsystems::Install` is called EVERY net_pump tick (idempotent contract)** — net_pump.cpp:1014, "one-
   shot install ... idempotent"; each sub-Install MUST latch its noisy/expensive work or it re-runs per
   frame (desk_diag ENABLED banner ~37k/session, `2de202ed`). *Look FIRST:* add a `static bool` latch to
-  any new Install that logs/allocates/hooks/resolves. `memory/lesson_subsystems_install_runs_every_tick_must_latch.md`
+  any new Install that logs/allocates/hooks/resolves. `memory/lesson_subsystems_install_runs_every_tick_must_latch.md` (SHARPENED v120: a success-only latch whose FAILED retry re-runs FindClass = a 60 Hz pre-world array-walk bomb — put every resolve retry behind a throttled gate or a cached resolver)
 - **Every client-side SUPPRESSION is a LOAN, not a purchase (N=3: weather 06-11, serverbox 07-09,
   garbage_sync 07-10).** Persistent-state neutralizations (tick-disable, field-zero, TimeScale=0,
   suppress flags) need an EXPLICIT OnDisconnect restore; fn-body PRE-cancels SELF-restore ONLY when
@@ -432,6 +432,26 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   broadcast rule (v119 smoke-measured) — note authorship at the local birth drain (actor+TTL);
   clients broadcast only noted births, the host its organic world.
   `memory/lesson_first_sight_is_not_birth_authorship.md`
+
+- **A move/sort verb on a BP array store invalidates POINTER identity AND positional diffs**
+  (sortSignal = Array_Get copy + Remove + Insert -> FString deep-copy -> new ptrs every move; the v65
+  RowKey + prefix-walk + ptr-keyed caches all died in one v120 pass — they were valid ONLY because the
+  deck list has no move verb). Identity for such stores = content-hash MULTISET {hash->count} (move =
+  no-op, duplicates = counts). LOOK FIRST: meadow_db_sync.cpp vs signal_sync.cpp; meadow_store.h doctrine
+  note. `memory/lesson_bp_struct_copy_kills_pointer_identity_at_moves.md`
+- **Lane FIFO orders HAND-OVER, not authorship** — a line deferred to a pending/retry queue is outside
+  the shared-lane pin; a later cross-REFERENCING line (order/permutation/canonical-by-instance) that
+  sends immediately overtakes it and the receiver skips the unknown reference (v120 order HIGH-1:
+  permanent order divergence). Gate cross-referencing sends on an EMPTY pending queue (poll + rebroadcast
+  + seed paths all). LOOK FIRST: meadow_db_sync.cpp "FIFO guard" comments.
+  `memory/lesson_lane_fifo_covers_only_handed_to_gns.md`
+- **The B2 not-ready skip makes join-window lines a PERMANENT loss** (SendReliable + relay `continue`
+  past !IsSlotWorldReady — nothing queues, nothing retries; a no-reconcile lane diverges at every
+  mid-activity join until the NEXT join). Root idiom: per-slot snapshot at save_transfer OnRequest (the
+  g_blobKeys precedent) + ready-edge seedDelta(h)=cur-snap-unmaskedPending (op-counter masks) + a client
+  send gate on own ClientWorldReady. UN-RETROFITTED sharers: signal_sync (deck), email_sync. LOOK FIRST:
+  meadow_db_sync.cpp CaptureJoinSnapshot/QueueConnectBroadcastForSlot.
+  `memory/lesson_join_window_b2_skip_is_permanent_loss_seed_delta.md`
 
 ## 4. Dispatch, hooks & input seams
 
@@ -649,6 +669,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   (txt_version = a HorizontalBox row in VerticalBox_138, NOT a canvas child; the canvas-API attempt
   rendered inline-RIGHT). Look here FIRST: reuse `InjectTextRowAbove`/`SetTextBlockColorDispatch`.
   `memory/lesson_umg_runtime_inject_traps.md`
+
+- **The literal string "None" trips WriteFNameField's failed-intern check** (StringToFName("None") ==
+  {0,0} == NAME_None, indistinguishable from a failed intern; ReadStruct renders NAME_None back AS
+  "None" -> string round-trips asymmetrically fail). Express NAME_None with the EMPTY string. Cost a
+  3-smoke dig (v120 selftest). LOOK FIRST: signal_dynamic.cpp WriteFNameField.
+  `memory/lesson_none_string_trips_fname_intern_check.md`
 
 ## 6. Assets, models, geometry
 
