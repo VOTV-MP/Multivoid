@@ -231,6 +231,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/core/ftext_utils.cpp
     src/ue_wrap/core/fstring_utils.cpp
     src/ue_wrap/desk/signal_dynamic.cpp
+    src/ue_wrap/desk/meadow_store.cpp
     src/ue_wrap/desk/saved_signals.cpp
     src/ue_wrap/actors/puppet.cpp
     src/ue_wrap/actors/kerfur.cpp
@@ -404,6 +405,7 @@ add_library(votv-coop SHARED
     src/coop/world/email_sync.cpp
     src/coop/net/blob_chunks.cpp
     src/coop/interactables/signal_wire.cpp
+    src/coop/interactables/meadow_db_sync.cpp
     src/coop/interactables/signal_sync.cpp
     src/coop/interactables/comp_sync.cpp
     src/coop/voice/voice_chat.cpp

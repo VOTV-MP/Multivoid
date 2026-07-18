@@ -169,8 +169,13 @@ PRECONDITION v112 shipped (`7d57478f`).
 - Identity = the row's id string: content-replicated (byte-identical on every peer via save
   copy + deltas); the per-peer-mint hazard applies only to CREATION. Index-keying REJECTED
   (concurrent-delete shifts corrupt).
-- Mirror apply = **RAW TArray row append** (the ApplySignalSet precedent) — NEVER an
-  addSignal replay (it derives new ids for copies = silent re-mint).
+- Mirror apply — **CORRECTED 2026-07-19 (L9 /qf round 1, full-body dump):** the original
+  "NEVER an addSignal replay (it derives new ids)" claim was WRONG — ui_laptop.addSignal has
+  ZERO id-mint sites (the re-mint lives upstream in the unit-2/unit-4 chain); it is
+  id-PRESERVING and keeps the data array + the PARALLEL WIDGET ARRAY (`slots` + vb_signals
+  children) coherent in one call. The L9 impl design (votv-meadow-db-L9-impl-DESIGN) uses
+  the reflected addSignal/removeSignal replay as the apply authors; raw TArray append would
+  leave the widget list stale.
 - The image blob (@0x58, render-target bytes) rides the existing blob_chunks when it exceeds
   the packet budget; its real size is measured by the frequency-probe run.
 

@@ -50,4 +50,11 @@ void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why);
 // array is module-owned.
 coop::RemotePlayer& Puppet(int slot);
 
+// True once THIS client has announced ClientWorldReady for the current
+// connection (false on the host, which never announces; latched false again
+// at disconnect). v120: the meadow lane's client send gate -- a client line
+// reaching the host before the ready flip would ride the join seed back as a
+// duplicate, so peer-symmetric lanes stay mute until the announce.
+bool HasAnnouncedWorldReady();
+
 }  // namespace coop::net_pump

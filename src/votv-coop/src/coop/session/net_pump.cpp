@@ -1222,4 +1222,8 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
     { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal); }
 }
 
+bool HasAnnouncedWorldReady() {
+    return g_worldReadyAnnounced.load(std::memory_order_relaxed);
+}
+
 }  // namespace coop::net_pump

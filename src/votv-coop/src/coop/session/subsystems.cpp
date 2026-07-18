@@ -13,6 +13,7 @@
 #include "coop/interactables/deck_play_sync.h"  // v117 (L6): deck playback lane
 #include "coop/interactables/physmods_sync.h"    // v118 (L8): desk physical-modules lane
 #include "coop/interactables/drive_sync.h"       // v119 (L5): drive chain (slots + payloads + rack)
+#include "coop/interactables/meadow_db_sync.h"   // v120 (L9): meadow signal-DB mirror (multiset shadow + join seed)
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/desk_sim_sync.h"
 #include "coop/interactables/dish_sync.h"
@@ -163,6 +164,7 @@ void Install(coop::net::Session& session) {
     coop::daily_task_sync::Install(&session);     // v114 (L7): saveSlot.taskNew host mirror (rollover/sell are host-only live)
     coop::email_sync::Install(&session);     // v64 inc 2: meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);    // v65: desk signal-library mirror (savedSignals_0 shadow/diff)
+    coop::meadow_db_sync::Install(&session); // v120 (L9): meadow-DB mirror (content-hash multiset + id-preserving replay)
     coop::comp_sync::Install(&session);      // v65: refiner decode pane (single-simulator stream + passive mirrors)
     coop::voice_chat::Install(&session);     // v66: proximity voice chat (opus over the session; PTT X)
     coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
@@ -259,6 +261,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);        // v115: desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);      // v118 (L8): canonical module array (ground truth over save drift)
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);         // v119 (L5): slot lines + drive payloads + rack canonicals
+    coop::meadow_db_sync::QueueConnectBroadcastForSlot(slot);     // v120 (L9): the seedDelta(h) join seed (blob-instant snapshot vs live)
     coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // v70 in-flight catch replay (identity half; kind=2 state-seed since v116)
     coop::laptop_sync::QueueConnectBroadcastForSlot(slot);        // v116: PC power/slot state + content + live disc rows (ground truth)
     coop::dish_sync::QueueConnectBroadcastForSlot(slot);          // v113 (L4): dish snapshot + (if armed) the DishArm row -- AFTER the desk rows + the kind=0 catch row (same ordered lane)
@@ -420,6 +423,7 @@ DisconnectStats DisconnectAll() {
     coop::player_inventory_sync::OnDisconnect();  // v73: host flush all inventories; client clear send-dedup
     coop::email_sync::OnDisconnect();
     coop::signal_sync::OnDisconnect();
+    coop::meadow_db_sync::OnDisconnect(); // v120 (L9): shadow + pending + tombstones + seed snapshots
     coop::comp_sync::OnDisconnect();
     coop::voice_chat::OnDisconnect();
     coop::window_sync::OnDisconnect();
@@ -481,6 +485,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); }         // v119 (L5): barrier drain + 1 Hz drive-chain sweeps
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }          // v64 inc 2: email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }         // v65: saved-signals shadow poll (same shape on gamemode.savedSignals_0)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }        // v120 (L9): meadow-DB pre-gated multiset poll + tombstone/pending retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }           // v65: decode-pane simulator stream + comp_data edges + client world-up unlatch
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:voice"}; coop::voice_chat::Tick(); }          // v66: voice frame pump (mic drain -> send; inbox -> jitter; positions; state edges)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:order"}; coop::order_sync::Tick(); }           // v49 drone economy: client polls+forwards orders / host commits assembled orders

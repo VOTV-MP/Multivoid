@@ -1,8 +1,30 @@
-# Hands-on runbook — v112..v116 + v117 L6 DECK + v118 L8 PHYSMODS + v119 L5 DRIVES (batched), take 4
+# Hands-on runbook — v112..v116 + v117 L6 + v118 L8 + v119 L5 + v120 L9 MEADOW (batched), take 4
 
-DEPLOYED: `votv-coop.dll 2bb5f2a256adde7a...` x4, hash-verified 2026-07-18 late.
-kProtocolVersion **118** (v117's PlayDeckEvent + the NEW PhysModsState lane;
-a 117-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS).
+DEPLOYED: `votv-coop.dll 452973c707d9cb8d...` x4, hash-verified 2026-07-19.
+kProtocolVersion **120** (v120's MeadowAppend/Delete/Order lanes; a 119-or-older peer
+HARD-CLOSEs at the gate — RELAUNCH BOTH PEERS). TEN unverified layers v112..v120;
+prefixes attribute.
+
+## What changed in v120 (2026-07-19 — L9 meadow DB) — proto 120, DLL 452973c707d9cb8d x4
+
+The laptop (Meadow OS) signal DATABASE now syncs: saves into it, deletes from it, AND the
+row ORDER (стрелки вверх/вниз — синхронится по твоему rule-1 решению, host-canonical).
+Grep prefixes: `meadow_db:` / `meadow_store:`.
+
+**STEPS (v120):** (a) on ONE peer, at the DECK, select a saved signal and press its
+"save to DB" button — the OTHER peer opens the laptop DATABASE tab and sees the row within
+~1 s (`meadow_db: applied append` + `digest n=+1`); (b) delete a row from the DB on one
+peer (the laptop delete button) — vanishes on the other (`applied delete`); WATCH-FOR: if
+the other peer was PLAYING that or a lower row, its selection may shift / audio stop —
+that is native-parity (same as a local delete), report how it feels; (c) ORDER: move a row
+up/down (sortSignal arrows) on one peer — the OTHER peer's list reorders within ~1-2 s
+(`applied order`); move rows on BOTH peers quickly — both must converge to ONE order (the
+host's arrival order decides; a brief flicker then convergence = correct); (d) double-save
+the SAME deck row twice — TWO identical rows appear on both peers (multiset — native);
+deleting one removes ONE on both. KNOWN RESIDUALS: wire-added rows show a BLANK image
+until the shared bulk-image lane lands (v65-inherited, deck rows have the same); a
+re-added identical row within ~20 s of a cross-peer delete race can be eaten (narrow,
+v65-inherited).
 
 ## What changed in v119 (2026-07-19 night — L5 drive chain) — proto 119, DLL b9b0727e04d38e0e x4
 
@@ -51,7 +73,7 @@ authority) + adds the laptop PC lane + catch -> activity feed.
 log prefixes keep attribution:
 `desk_input:`/`desk_sim:` = v112, `dish_sync:`/`[dish]` = v113, `[reel]`/`[task]` = v114,
 `desk_snd:`/`desk_cursor:` = v115, `FSM-hold`/`ping attribution`/`re-init window` = v115b,
-`signal_catch:`/`laptop_sync:`/`laptop:` = v116, `deck_play:` = v117, `physmods:` = v118, `drive_sync:` = v119.
+`signal_catch:`/`laptop_sync:`/`laptop:` = v116, `deck_play:` = v117, `physmods:` = v118, `drive_sync:` = v119, `meadow_db:` = v120.
 
 ## What changed in v117 (2026-07-18 — L6 deck playback)
 The unit-3 play deck's PLAYBACK now mirrors (it was fully local: a non-occupant heard

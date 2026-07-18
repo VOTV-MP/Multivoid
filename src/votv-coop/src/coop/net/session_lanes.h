@@ -134,6 +134,13 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::DriveSlotState: return Lane::Normal;
     case ReliableKind::DrivePayload:   return Lane::Normal;
     case ReliableKind::RackState:      return Lane::Normal;
+    // v120 (L9): MeadowAppend/MeadowDelete MUST share one lane -- the join
+    // seed's no-reorder proof (qf R11) assumes one FIFO stream per connection
+    // (a seed append must not be overtaken by a post-flip delete or vice
+    // versa). Pinned so a future single-kind lane move can't split the pair.
+    case ReliableKind::MeadowAppend:   return Lane::Normal;
+    case ReliableKind::MeadowDelete:   return Lane::Normal;
+    case ReliableKind::MeadowOrder:    return Lane::Normal;  // v120: same FIFO stream as 112/113 (an order line must not overtake the append it references)
     default:                           return Lane::Normal;
     }
 }
@@ -209,6 +216,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::VoiceState:        // v66: voice mute/disabled display state is PLAYER-SYMMETRIC -- relay a client's edge to the others
     case ReliableKind::DeskLogLine:       // v70: coords-terminal event lines are PRODUCER-SYMMETRIC (the line originates where the action ran) -- relay a client's line to the others
     case ReliableKind::ReelSlot:          // v114 (L7): caddy slot edges are PRESSER-authored (any peer inserts/ejects) -- relay a client's edge to the others
+    case ReliableKind::MeadowAppend:      // v120 (L9): meadow-DB saves are PRESSER-SYMMETRIC (any peer's laptop "save to DB" / physMod#5 auto-upload) -- relay
+    case ReliableKind::MeadowDelete:      // v120 (L9): meadow-DB deletes are PLAYER-SYMMETRIC (any peer's laptop delete button) -- relay
         return true;
     default:
         return false;

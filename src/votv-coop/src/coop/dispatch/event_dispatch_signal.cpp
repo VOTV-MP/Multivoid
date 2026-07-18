@@ -17,6 +17,7 @@
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/laptop_sync.h"      // v116: LaptopState
+#include "coop/interactables/meadow_db_sync.h"   // v120 (L9): MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // v118 (L8): PhysModsState
 #include "coop/interactables/drive_sync.h"       // v119 (L5): DriveSlotState/DrivePayload/RackState
 #include "coop/interactables/signal_catch_sync.h"
@@ -167,6 +168,55 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::drive_sync::OnRackStateChunk(rc, rcslot);
+        break;
+    }
+    case net::ReliableKind::MeadowAppend: {
+        // v120 (L9): chunked meadow-DB row (presser-symmetric, host-relayed).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: MeadowAppend payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload mc{};
+        std::memcpy(&mc, msg.payload, sizeof(mc));
+        const uint8_t mslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::meadow_db_sync::OnAppendChunk(mc, mslot);
+        break;
+    }
+    case net::ReliableKind::MeadowDelete: {
+        // v120 (L9): content-keyed meadow-DB delete (player-symmetric, host-relayed).
+        if (msg.payloadLen < sizeof(net::ContentHashPayload)) {
+            UE_LOGW("event_feed: MeadowDelete payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ContentHashPayload));
+            break;
+        }
+        net::ContentHashPayload mh{};
+        std::memcpy(&mh, msg.payload, sizeof(mh));
+        const uint8_t mdslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::meadow_db_sync::OnDelete(mh, mdslot);
+        break;
+    }
+    case net::ReliableKind::MeadowOrder: {
+        // v120 (L9): chunked order-as-state line (client->host op, host-canonical back;
+        // NOT relayed -- receivers drop non-host authors themselves).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: MeadowOrder payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload oc{};
+        std::memcpy(&oc, msg.payload, sizeof(oc));
+        const uint8_t oslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::meadow_db_sync::OnOrderChunk(oc, oslot);
         break;
     }
     case net::ReliableKind::DishArm: {

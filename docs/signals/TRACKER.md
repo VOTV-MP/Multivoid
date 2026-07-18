@@ -295,11 +295,25 @@ peers on the two devices cannot both hold the claim (qf R7-Q4). Also here: the v
 residual (>4 KB disc content truncates with a WARN) + the mid-session content-loss TTL fallback.
 RE base: `votv-laptop-pc-RE-2026-07-17.md` FD-Q5/§4.
 
-### OPEN-9 · Meadow DATABASE stores
-`saveSlot.savedSignals_0 @0x680` (DATABASE tab) + `savedSignals_comp_0 @0x690` (processed DB) get
-rows from U3 SAVE (`laptop.addSignal`, EX_Local-invisible) and laptop-side delete/move — join
-save-transfer only, no live lane. Same intent-CRDT shape as the shipped
-`SavedSignalAppend/Delete 58/59` (which cover the GAMEMODE list only).
+### OPEN-9 · Meadow DATABASE stores — **BUILT v120 (2026-07-19, NOT hands-on)**
+Design of record: `votv-meadow-db-L9-impl-DESIGN-2026-07-19.md` (15-round /qf "that holds").
+Scope narrowed by measurement: `savedSignals_comp_0 @0x690` = the DECK list's SAVE MIRROR
+(saveObjects) — NO lane; L9 = `saveSlot.savedSignals_0 @0x680` alone. `meadow_db_sync.cpp` +
+`ue_wrap/desk/meadow_store`: content-hash MULTISET shadow (v65's positional walk + pointer
+RowKeys both INVALID here — sortSignal moves deep-copy FStrings), pre-gated 1 Hz poll (count +
+scoped 0x45 marks), id-PRESERVING reflected `ui_laptop.addSignal`/`removeSignal` applies (the
+arch's "never addSignal replay" claim was WRONG — corrected), tombstone counts, symmetric
+per-slot join seed `seedDelta(h)=cur-snap-unmaskedPendingNet` (snapshot at save_transfer
+OnRequest blob instant; closes the [snapshot, world-ready] permanent-loss window), client
+send gate until own ClientWorldReady. MeadowAppend=112/MeadowDelete=113/MeadowOrder=114
+(one FIFO lane; order sends deferred while lines pend), proto 120. ORDER SYNCED
+(mid-build user decision per rule 1): order = state, host-canonical (RackState shape),
+sortSignal = 3rd 0x45 matcher, byte-permute + reflected genSignalList apply, seed ships
+the canonical order. Audits: perf 1 CRIT (60 Hz pre-world FindClass) + order-lane 1 HIGH
+(order overtaking a pending line) — both root-fixed pre-commit. Smoke x2 PASS on
+`452973c707d9cb8d` x4 + e2e selftest digest 0->1->0 proven cross-peer (matching sums;
+the first run also exercised pending+retry through the B2 gate live). NOT synced (user
+pile): image bytes, wire-delete playback-stop.
 
 ---
 

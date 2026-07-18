@@ -705,7 +705,15 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 119; // v119 (2026-07-18, L5 drive chain): NEW
+inline constexpr uint16_t kProtocolVersion = 120; // v120 (2026-07-19, L9 meadow DB): NEW
+                                                  // ReliableKinds MeadowAppend=112 +
+                                                  // MeadowDelete=113 + MeadowOrder=114
+                                                  // (the laptop signal database:
+                                                  // content-hash multiset shadow,
+                                                  // id-preserving addSignal/removeSignal
+                                                  // replay, host-canonical order mirror,
+                                                  // symmetric join seed).
+                                                  // Prior: v119 (2026-07-18, L5 drive chain): NEW
                                                   // ReliableKinds DriveSlotState=109 (idempotent
                                                   // slot-FSM state lines), DrivePayload=110
                                                   // (drive Data_0 rows, blob chunks) and
@@ -2412,6 +2420,38 @@ enum class ReliableKind : uint8_t {
                        //     after every apply; receivers write rows + reflected gen() +
                        //     prime. NOT client-relayed (host-terminal ops, host-authored
                        //     canonical).
+    MeadowAppend = 112, // v120 (meadow_db_sync -- L9): one appended MEADOW-DB row
+                       //     (saveSlot.savedSignals_0), signal_wire codec sans image via
+                       //     BlobChunkPayload. Peer-symmetric author (any peer's laptop
+                       //     "save to DB" / physMod#5 auto-upload), host-relayed.
+                       //     Receivers replay the id-PRESERVING ui_laptop.addSignal
+                       //     (data + widget arrays coherent in one call) and bump their
+                       //     content-hash multiset shadow GT-atomically (echo-proof).
+                       //     SAME lane as MeadowDelete (FIFO ordering is load-bearing:
+                       //     the join seed's no-reorder proof assumes one ordered
+                       //     stream per connection).
+    MeadowDelete = 113, // v120 (meadow_db_sync -- L9): one content-keyed MEADOW-DB
+                       //     delete. Payload: ContentHashPayload. Receivers resolve
+                       //     their index by content at apply -> reflected
+                       //     ui_laptop.removeSignal(idx); unresolved -> tombstone
+                       //     {hash -> outstanding count + deadline, 20 s} with the
+                       //     append-consume rule (delete-beats-append race cover).
+                       //     Peer-symmetric, host-relayed. Same lane as MeadowAppend.
+    MeadowOrder = 114, // v120 (meadow_db_sync -- L9, per-rule-1 user decision): the
+                       //     meadow-DB row ORDER as STATE (mirror-state-not-verb; the
+                       //     sortSignal move is the verb). Blob via BlobChunkPayload:
+                       //     {u16 n + n x u64 content hashes in array order}.
+                       //     HOST-CANONICAL (the RackState shape): a client move
+                       //     applies natively then sends ITS order to the host; the
+                       //     host applies (last-writer-wins at arrival) + broadcasts
+                       //     its canonical; clients apply ONLY host-authored lines --
+                       //     symmetric cross-applies of raw client orders would swap
+                       //     states and diverge. Apply = byte-permute the 0x70 rows
+                       //     (pointers move with their blocks) + reflected
+                       //     genSignalList (the game's own widget rebuild). Unknown
+                       //     hashes (in-flight appends) keep tail order; missing
+                       //     skipped; duplicates byte-identical = any assignment.
+                       //     NOT client-relayed. Same lane as 112/113 (FIFO proof).
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
