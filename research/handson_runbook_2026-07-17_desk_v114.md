@@ -1,7 +1,10 @@
 # Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-DEPLOYED: `votv-coop.dll 32aac4e57168d44d...` x4, hash-verified 2026-07-18 late night
-(= the 06b9e2d2 stack + THREE s23 additions, no proto change:
+DEPLOYED: `votv-coop.dll 667b49c26e11da07...` x4, hash-verified 2026-07-18 late night
+(= the 06b9e2d2 stack + the s23 additions below + the session_streams extraction
+`06921557` -- a pure mechanical refactor, gameplay-invisible: digest+4p-matrix
+equivalence proven vs baseline, incl. a mutant-proof; no dedicated hands-on steps.
+The THREE user-visible s23 changes, no proto change:
  - **env-host checkbox fix** (`2de5ad31`): the scoreboard "Show in server browser"
    checkbox now correctly shows OFF for an env/.bat host (the mirror is seeded);
    check: open the scoreboard on the host -- checkbox unchecked, one click LISTS.
