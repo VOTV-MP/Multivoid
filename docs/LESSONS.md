@@ -112,6 +112,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
+- **A SILENT passive identity mint is a zombie factory: mint only where you ANNOUNCE** — the client
+  census minted keyed Elements "for its own tracking" (broadcasts nothing) and the keyed adopt stacked
+  a mirror over each (~2200 double-rows per join, reverse stolen by RegisterMirror). v122: a passive
+  walk may key-INDEX, never mint; the bind funnel enforces one-actor-one-row by authority. *Look
+  FIRST:* votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md; MarkPropElement's EnrollSource branch;
+  identity_create.cpp A' block. `memory/lesson_silent_passive_identity_mint_zombie_factory.md`
+- **An accidental cure can RIDE the corruption you are fixing** — the 2026-06-10 ghost-twin cure
+  worked host-side ONLY via the mirror-stack + reverse-steal (the fuzzy path even REKEYED the host's
+  actor to the client's key before any bind); a bare reject would have silently re-broken it. Closing
+  a hole and keeping every flow that leaned on the hole are two separate obligations (v122 H handback
+  = enroll + re-express replaces the stolen function). *Look FIRST:* remote_prop_spawn.cpp
+  HostAuthorityHandback_. `memory/lesson_accidental_cure_rides_the_corruption.md`
 - **A client grab/drop of a host-owned keyed prop = a MOVE with TWO same-key halves** (SPAWN author + a
   co-fired grab-hook DESTROY); the DESTROY is usually the killer. *Look FIRST:* the destroy-seam, not the
   spawn author. `memory/lesson_client_keyed_prop_move_two_wire_halves.md`

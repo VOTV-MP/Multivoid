@@ -1,5 +1,15 @@
 # COOP_STABLE_ID — save-loaded identity via a stable ID, not position
 
+> **UPDATE 2026-07-18 (s22) — the KEYED-prop half of the thread is CLOSED: v122 no-passive-mint.**
+> The s21b "one actor / two eids" residual root-caused to the client's passive census minting silent
+> keyed Elements that the keyed adopt then stacked a mirror over (~2200 zombies per join, measured) +
+> a host-side reverse-steal/rekey hole. Fix (B/S/A'/H, 8-round /qf, smoke A/B green: sweep universe
+> 2236→1, rack under ONE host eid, digest circle cross-peer): the client census key-indexes keyed props
+> without minting; the sweep's keyed universe moved to the key index; authority guards at
+> `CreateOrAdoptPropMirror` + the host handback at the OnSpawn resolution points. Design of record:
+> `research/findings/join-identity/votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md`. This doc's
+> KEYLESS families (chipPile ordinal bind, kerfur sidecar) are unchanged by it.
+
 **Status: PUSHED + HANDS-ON VERIFIED, 2026-06-26 (origin/main `eb85ddfb`).** The save-loaded identity bind
 + the whole grab/throw chain are hands-on verified and on origin. Grab/throw: **#3 grab-release E-drop**
 (commit `2db3df27`, hands-on 12:36 -- the morph hand-off arms the client carry-latch) + **LMB hard-throw**

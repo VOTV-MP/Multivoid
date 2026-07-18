@@ -152,7 +152,7 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     // a no-op today; if a BP recook ever made one Init-observable, this latch
     // makes the Init-POST skip (M2 already broadcast it) rather than double-send.
     PT::MarkProcessedInit(actor);
-    PT::MarkPropElement(actor, L"", cls);
+    PT::MarkPropElement(actor, L"", cls, PT::EnrollSource::kExpressSeam);
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
     if (eid == coop::element::kInvalidId) {
         UE_LOGW("host_spawn_watcher: MarkPropElement gave kInvalidId for '%ls' -- "

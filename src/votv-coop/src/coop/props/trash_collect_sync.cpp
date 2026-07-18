@@ -150,7 +150,7 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
             // docs/piles/09 SELF-SEED (moved here from the E-press PRE, ONE owner):
             // an UNTRACKED pile grabbed in the post-blob purge gap mints its eid at
             // the very seam its clump is born (register-only, no broadcast).
-            PT::MarkPropElement(srcObj, L"", R::ClassNameOf(srcObj));
+            PT::MarkPropElement(srcObj, L"", R::ClassNameOf(srcObj), PT::EnrollSource::kExpressSeam);
             E = PT::GetPropElementIdForActor(srcObj);
             if (E != coop::element::kInvalidId)
                 UE_LOGI("[PILE-09] HOST self-seeded UNTRACKED grabbed pile %p -> eid=%u "
@@ -333,7 +333,7 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // Create the Prop Element shadow + dedupe latch so the item's eventual
     // K2_DestroyActor unwinds it through the normal destroy path.
     PT::MarkProcessedInit(heldActor);
-    PT::MarkPropElement(heldActor, keyStr, cls);
+    PT::MarkPropElement(heldActor, keyStr, cls, PT::EnrollSource::kExpressSeam);
 
     coop::net::PropSpawnPayload p{};
     p.className.len = 0;

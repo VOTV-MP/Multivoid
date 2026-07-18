@@ -1,12 +1,19 @@
-# Hands-on runbook — v112..v121 (desk chain + meadow + laptop v2, batched), take 4
+# Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-DEPLOYED: `votv-coop.dll 6431c14382b38437...` x4, hash-verified 2026-07-18 evening
-(= v121 + the rack extraction `73dc9ba1` + LivePropActor `bc14fa33` + [dev] drive_selftest
-`5971cdd7` -- pure refactor, digest-proven behavior-identical, proto 121 unchanged, adds NO
-new test layer; the v121 build was a451fce7cb674d04).
+DEPLOYED: `votv-coop.dll 06b9e2d23c84037f...` x4, hash-verified 2026-07-18 night
+(= v121 + the rack extraction trio + **v122 no-passive-mint stable-ID root fix** — the
+join-identity layer: client census no longer mints keyed Elements (~2200 zombie
+double-rows per join GONE, smoke A/B measured: sweep universe 2236->1, rack under ONE
+host eid, digest circles cross-peer), host authority guards at the bind funnel + the
+OnSpawn handback. Proto 121 unchanged. v122 is a TWELFTH layer but needs no dedicated
+hands-on steps — it verifies as "the join feels identical, nothing duped/vanished";
+its regressions would show as missing/duplicated props after a join or as loud
+`HANDBACK`/`HOST-AUTHORITY` log lines (grep them post-take; expected 0 in normal play,
+each firing is diagnostic evidence, not necessarily a bug).
+Design: votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md).
 kProtocolVersion **121** (v121's LaptopBlob/LaptopQuad/FloppyBoxState lanes + the
 LaptopState struct shrink; a 120-or-older peer HARD-CLOSEs at the gate — RELAUNCH BOTH
-PEERS). ELEVEN unverified layers v112..v121; prefixes attribute.
+PEERS). TWELVE unverified layers v112..v122; prefixes attribute.
 
 ## What changed in v121 (2026-07-18 — OPEN-10 laptop v2) — proto 121, DLL a451fce7cb674d04 x4
 

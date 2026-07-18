@@ -22,6 +22,13 @@ namespace coop::local_streams {
 // found by the audit when this state lived as static-locals).
 void OnSessionStart();
 
+// v122 (A' rebind fanout): the held-prop eid is cached at the held EDGE, so an
+// identity rebind landing MID-carry (the handback dissolve / any fresh mirror
+// bind on the held actor) must refresh the cache here or the stream keeps a
+// stale/invalid eid for the rest of the hold. No-op unless `actor` is the
+// currently-held prop. Game thread (wire applies + the stream tick are GT).
+void NotifyPropEidRebound(void* actor);
+
 // The local player's currently-held actor (grab/hold slot), IsLive-guarded; null
 // when nothing is held. v106: trash_channel::TickCarry's rest-exclusion (a still
 // player holding a clump must not read as "clump at rest un-held"). Game thread.

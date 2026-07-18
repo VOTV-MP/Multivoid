@@ -16,13 +16,16 @@
 #include "coop/element/npc.h"          // CreateOrAdoptNpcMirror
 #include "coop/element/world_actor.h"  // CreateOrAdoptWorldActorMirror
 #include "coop/element/registry.h"
+#include "coop/element/element_deleter.h"          // A' v122: the provisional-dissolve deferred drain
 #include "coop/creatures/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
+#include "coop/player/local_streams.h"             // A' v122: held-eid cache rebind fanout (measured held-EDGE-cached)
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
 #include "coop/element/quiescence_drain.h"      // ArmGhostSweep (v106b: displaced live native -> wholesale adjudication)
 #include "coop/props/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"                    // GetActorLocation (identity logs carry loc -- user rule)
 
 namespace coop::element {
 // The friended gateway to the sealed MirrorManager::Install (Inc C, 2026-06-29).
@@ -148,6 +151,64 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         }
         // else: fall through to Install, which rejects the duplicate eid (HEAD live-conflict guard).
     }
+    // (A') v122 ONE-ACTOR-ONE-ROW invariant (stable-ID root fix,
+    // votv-stable-id-no-passive-mint-DESIGN-2026-07-18). The Install below would happily
+    // stack a SECOND row onto an actor already bound elsewhere and steal the unified
+    // reverse (RegisterMirror overwrites m_byActor) -- the measured zombie/reverse-steal
+    // class. Adjudicate by AUTHORITY before Install:
+    //   HOST + live local row      -> the host's own element is authoritative; REFUSE.
+    //                                 (The corrective -- enroll + re-express under the
+    //                                 host eid -- lives at the OnSpawn resolution seam,
+    //                                 remote_prop_spawn HostAuthorityHandback_; this wall
+    //                                 catches every OTHER path.)
+    //   CLIENT + host word (slot 0) -> the DESIGNED identity handback receiver: the
+    //                                 provisional client-band local dissolves (wire-silent
+    //                                 Take -> ElementDeleter; ~Element's reverse clear is
+    //                                 ownership-gated so the mirror's reverse survives the
+    //                                 deferred dtor) and the host eid becomes the sole
+    //                                 identity. Key index intentionally KEPT (the actor
+    //                                 remains its key's live occupant).
+    //   CLIENT + peer word          -> never let a peer steal a local row; REFUSE.
+    //   prior row is a MIRROR       -> 1:1 conflict (unreachable in 2-peer flows); REFUSE.
+    // Every exit logs LOUD (a firing is evidence, not noise -- dead-guard-logs rule).
+    {
+        const coop::element::ElementId prior = Registry::Get().EidForActor(actor);
+        if (prior != coop::element::kInvalidId && prior != eid) {
+            Element* pe = Registry::Get().Get(prior);
+            if (pe && !pe->IsBeingDeleted() && pe->GetActor() == actor &&
+                R::IsLiveByIndex(actor, pe->GetInternalIdx())) {
+                if (pe->IsMirror()) {
+                    UE_LOGW("sync::CreateOrAdoptPropMirror: eid=%u names actor=%p already MIRRORED under "
+                            "eid=%u key='%ls' cls='%ls' -- 1:1 invariant REFUSES the second row",
+                            eid, actor, static_cast<unsigned>(prior), key.c_str(), cls.c_str());
+                    return;
+                }
+                if (coop::prop_element_tracker::SessionIsHost()) {
+                    UE_LOGW("sync::CreateOrAdoptPropMirror: HOST-AUTHORITY WALL -- refusing mirror eid=%u "
+                            "(senderSlot=%d) over the host's own live local eid=%u actor=%p key='%ls' "
+                            "cls='%ls' (the OnSpawn handback owns the corrective re-express)",
+                            eid, senderSlot, static_cast<unsigned>(prior), actor, key.c_str(), cls.c_str());
+                    return;
+                }
+                if (senderSlot == 0 && coop::prop_element_tracker::SessionIsClient()) {
+                    const ue_wrap::FVector dl = ue_wrap::engine::GetActorLocation(actor);
+                    UE_LOGW("sync::CreateOrAdoptPropMirror: HANDBACK -- dissolving provisional local "
+                            "eid=%u -> adopting host eid=%u actor=%p key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)",
+                            static_cast<unsigned>(prior), eid, actor, key.c_str(), cls.c_str(),
+                            dl.X, dl.Y, dl.Z);
+                    if (auto taken = PropMirrors().Take(prior))
+                        coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
+                    // fall through to Install (the reverse flips to `eid` there; the deferred
+                    // ~Element of `prior` cannot clobber it -- registry ownership gate).
+                } else {
+                    UE_LOGW("sync::CreateOrAdoptPropMirror: eid=%u from peer slot=%d names actor=%p bound "
+                            "to local eid=%u -- peer word never dissolves a local; REFUSED",
+                            eid, senderSlot, actor, static_cast<unsigned>(prior));
+                    return;
+                }
+            }
+        }
+    }
     // Tag with the originating peer slot for per-slot disconnect eviction (D1-7).
     // Out-of-range/unknown -> -1 (untagged; only drained on full teardown).
     const int ownerSlot =
@@ -169,6 +230,11 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         // client + kerfur class (no-op for ordinary props / on the host). The single
         // choke-point every kerfur prop mirror bind funnels through.
         coop::kerfur_entity::NotifyKerfurPropMirrorBound(actor, eid);
+        // (A') v122 rebind fanout: the held-eid cache re-resolves only at the held
+        // EDGE, so an adopt landing MID-carry (incl. the handback dissolve above)
+        // would stream a stale/invalid eid for the rest of the hold. One pointer
+        // compare when not held.
+        coop::local_streams::NotifyPropEidRebound(actor);
     }
     // On false: Install already logged the failure (sentinel id, duplicate, or
     // RegisterMirror failure).

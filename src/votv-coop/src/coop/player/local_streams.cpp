@@ -198,6 +198,19 @@ coop::element::ElementId ResolveHeldPropEid(void* heldActor) {
 
 }  // namespace
 
+void NotifyPropEidRebound(void* actor) {
+    // v122 (A'): refresh the held-eid cache when the held actor's identity rebinds
+    // mid-carry (the cache is otherwise re-resolved only at the held EDGE -- measured).
+    if (!actor || actor != g_lastHeldProp) return;
+    const coop::element::ElementId neweid = ResolveHeldPropEid(actor);
+    if (neweid == g_lastHeldEid) return;
+    UE_LOGI("local_streams: held prop %p eid rebind %u -> %u (identity fanout; carry stream follows the new id)",
+            actor,
+            (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
+            (neweid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(neweid));
+    g_lastHeldEid = neweid;
+}
+
 void* LastHeldActor() {
     // The rest-exclusion read for trash_channel::TickCarry (v106): the local
     // player's currently-held actor, or null. IsLive-guarded so a stale pointer

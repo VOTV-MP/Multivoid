@@ -65,6 +65,12 @@ namespace coop::prop_element_tracker {
 // a live pointer to query.
 void SetSession(coop::net::Session* session);
 
+// Role reads off the cached session for identity-authority decisions (the v122
+// A' funnel wall / H handback / B census branch). No session (SP / boot window)
+// -> both false, so neither authority branch fires.
+bool SessionIsHost();
+bool SessionIsClient();
+
 // ---- ProcessedInit dedupe ------------------------------------------------
 void MarkProcessedInit(void* actor);
 bool HasProcessedInit(void* actor);
@@ -96,7 +102,18 @@ void UnmarkKnownKeyedProp(void* actor);
 // key) with a fresh unique Key before enrolling. Broadcast callers MUST build
 // their wire payload key from the RETURN, not the input (a payload carrying
 // the pre-rekey key would resolve to the incumbent on every receiver).
-std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls);
+//
+// v122 no-passive-mint (stable-ID root, votv-stable-id-no-passive-mint-DESIGN-2026-07-18):
+// every call site names its enrollment SOURCE. An EXPLICIT express seam (Init-POST
+// broadcast, container extract, held-item express, pile self-seed) mints-and-announces
+// on any peer. The PASSIVE census walk (SeedWalk_) on a CLIENT must NOT mint an Element
+// for a KEYED prop -- keyed identity is host-authored by construction (save-loaded props
+// adopt the host eid by key; client-born props mint at their express seam) -- so the
+// passive+client+keyed branch only refreshes the key index and returns. A silent local
+// eid nobody is ever told about was the zombie double-row factory (~2200 per join).
+enum class EnrollSource : uint8_t { kExpressSeam, kPassiveCensus };
+std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls,
+                             EnrollSource src);
 
 // Look up the host-allocated ElementId for `actor`. Returns kInvalidId if
 // not tracked.
@@ -169,6 +186,31 @@ bool ReconcileIndexThrottled();
 // no-op for empty/None keys. Keeps the index hot so a rekeyed held prop's
 // per-grab resolution stays O(1) instead of perpetually falling back to scan.
 void IndexActorKey(void* actor, const std::wstring& key);
+
+// v122 (S): the join sweep's KEYED universe. Under no-passive-mint a client's
+// save-loaded keyed props have NO Element row -- the key index IS their tracked
+// membership -- so the divergence sweep adjudicates them from these entries
+// (element-bound actors are excluded by the caller: the row walk owns them).
+// Leaf-mutex snapshot copy; validate each entry via IsLiveByIndex before use.
+struct KeyIndexEntry {
+    void*        actor       = nullptr;
+    int32_t      internalIdx = -1;
+    std::wstring key;
+};
+void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out);
+
+// v122 (S) doom re-validation companion: erase the index entry for `actor` iff
+// it still maps key<->actor (a recycled-address impostor or an un-reindexed
+// rekey must fall out of the sweep universe instead of dooming a fresh actor;
+// the live actor re-enters at the next census walk's re-index).
+void EvictKeyIndexEntryIfStale(void* actor, const std::wstring& key);
+
+// v122 (audit IMPORTANT-1): drop every index entry whose actor is dead (element-less
+// keyed entries have no Registry row, so the element reaper cannot evict them; a
+// death WITHOUT K2_DestroyActor would otherwise leak the pair for the process
+// lifetime). Cold-path owners: the post-purge world-change re-seed edge + the
+// stale-index self-heal. Returns the number of entries drained. Game thread.
+size_t DrainDeadKeyIndexEntries();
 
 // ---- R2: blob-vs-live divergence baseline (2026-06-17) -------------------
 // Copy the wire-keys of all currently-tracked keyed props (the host's live

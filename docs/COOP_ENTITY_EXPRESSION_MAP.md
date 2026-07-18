@@ -16,6 +16,19 @@
 host-authoritative (`senderPeerSlot != 0` ⇒ drop, except the either-range cases — PropDestroy/PropConvert).
 **[V]** (`kHostRangeSize` literal is in `coop/element/registry.h`).
 
+**v122 NO-PASSIVE-MINT (2026-07-18, `votv-stable-id-no-passive-mint-DESIGN-2026-07-18.md`) — the
+client-identity rule for KEYED props [V smoke A/B]:** a CLIENT's passive census walk key-INDEXES a keyed
+prop but mints **no Element** (keyed identity is host-authored by construction: save-loaded props adopt
+the host eid by key; client births mint at their EXPRESS seams, which broadcast in the same breath).
+Pre-v122 the silent census mint produced ~2200 zombie double-rows per join (local + stacked mirror on
+one actor; the reverse stolen by `RegisterMirror`) — measured, gone (sweep universe 2236→1). Guards at
+the one bind owner (`CreateOrAdoptPropMirror`): host wall-REJECT over a live host local; client
+DISSOLVE of a provisional on host word (the handback receiver); 1:1 actor-row invariant. Host-side, a
+peer PropSpawn resolving onto a host-authoritative actor takes the **H handback** at the OnSpawn
+resolution points (enroll-if-untracked + re-express under the host eid — replaces the old accidental
+stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed universe = the key index
+(element-less half); R2 key-deletes unchanged.
+
 ## The families at a glance
 
 | Family | Spawn dispatch | Caught by | Identity | Module(s) |

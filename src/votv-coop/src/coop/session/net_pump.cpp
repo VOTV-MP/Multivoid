@@ -659,6 +659,12 @@ void Tick(coop::net::Session& session, float displayOffsetX) {
                 // bind into a tracked-but-unbound ghost. Flush the pending deferred-deletes FIRST so the re-seed
                 // sees SETTLED state -- force the precondition, don't race it. [[feedback-snapshot-before-state-ready]]
                 coop::element::ElementDeleter::Get().Flush();
+                // v122: the mass purge that just drained is exactly when element-less keyed
+                // index entries (no Registry row -> invisible to the element reaper) died
+                // en masse -- drain them here before the walk re-indexes the new world.
+                const size_t keyDrained = coop::prop_element_tracker::DrainDeadKeyIndexEntries();
+                if (keyDrained > 0)
+                    UE_LOGI("net_pump: post-purge key-index drain evicted %zu dead element-less keyed entr(ies)", keyDrained);
                 const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
                 UE_LOGI("net_pump: world-change re-seed added %zu live keyed prop(s) (snapshot-completeness)", added);
                 // (b) RE-BIND ON RE-SEED (2026-06-28). A GC-churned save-native re-creates UNBOUND at its save

@@ -274,6 +274,79 @@ static void RunDivergenceSweep_(void* localPlayer) {
         doomedClass.push_back(acls);
         ++doomedByClass[acls];
     }
+    // (S) v122 KEYED INDEX-HALF (no-passive-mint, votv-stable-id-no-passive-mint-DESIGN-
+    // 2026-07-18). Under (B) a client's save-loaded keyed props have NO Element row -- the
+    // key index IS their tracked membership -- so the row walk above can no longer see
+    // them. Adjudicate them here with the SAME semantics: claimed survive (the adopt paths
+    // claim actors, :275/:530 in remote_prop_spawn), per-player skipped, keyed-churn
+    // re-binds spared, the rest doomed under the same per-class floor accounting. Actors
+    // WITH an element row are excluded (the row walk owns them: mirrors auto-exempt,
+    // express-minted locals adjudicated there) -- a clean partition, no double-count.
+    {
+        std::vector<coop::prop_element_tracker::KeyIndexEntry> keyedIdx;
+        coop::prop_element_tracker::CollectKeyIndexEntries(keyedIdx);
+        int idxUniverse = 0, idxClaimed = 0, idxEvicted = 0;
+        for (const auto& ke : keyedIdx) {
+            if (!ke.actor) continue;
+            if (!R::IsLiveByIndex(ke.actor, ke.internalIdx)) {
+                // Dead entry: evict NOW (audit v122 IMPORTANT-1). An element-less keyed
+                // entry has no Registry row, so the element reaper never sees it -- this
+                // sweep + the lookup lazy-evict + DrainDeadKeyIndexEntries (purge-edge /
+                // stale-index self-heal) are its only garbage collectors.
+                coop::prop_element_tracker::EvictKeyIndexEntryIfStale(ke.actor, ke.key);
+                continue;
+            }
+            if (coop::element::Registry::Get().EidForActor(ke.actor) !=
+                coop::element::kInvalidId) continue;                    // element-bound -> row walk's half
+            ++inClass; ++idxUniverse;
+            const std::wstring acls = R::ClassNameOf(ke.actor);
+            if (g_claimedActors.count(ke.actor)) {
+                ++claimedCount; ++claimedByClass[acls]; ++idxClaimed;   // floor numerator keeps its semantics
+                continue;
+            }
+            if (coop::prop_lifecycle::IsPerPlayerPropClass(acls)) continue;
+            // DOOM RE-VALIDATION (qf R5-Q2): a cached (actor, idx) pair can survive a slot
+            // recycle; only the live actor's CURRENT key proves the entry still names it.
+            // Mismatch = impostor or an un-reindexed rekey -> evict the entry, never doom
+            // (the live actor re-enters at the next census walk's re-index). GT-only read,
+            // paid ONLY for would-be-doomed entries (claimed/per-player already skipped).
+            const std::wstring liveKey = ue_wrap::prop::GetInteractableKeyString(ke.actor);
+            if (liveKey != ke.key) {
+                coop::prop_element_tracker::EvictKeyIndexEntryIfStale(ke.actor, ke.key);
+                ++idxEvicted;
+                continue;
+            }
+            // KEYED CHURN RE-BIND parity: this element-less keyed actor may be the re-create
+            // of an already-expressed identity whose mirror row lost its actor -- re-bind,
+            // claim, never doom (same rule as the row-walk branch above).
+            if (!deadKeyedRows.empty()) {
+                auto dr = deadKeyedRows.find(narrowAscii(liveKey));
+                if (dr != deadKeyedRows.end()) {
+                    coop::dev::join_window_pos_trace::NoteRecreateRebind(
+                        liveKey, static_cast<uint32_t>(dr->second), ke.actor);
+                    coop::remote_prop::RegisterPropMirror(dr->second, ke.actor, liveKey, acls,
+                                                          /*senderSlot*/ 0, /*rebindInPlace*/ true);
+                    UE_LOGW("join_membership_sweep: keyed churn RE-BIND (index-half) -- unclaimed '%ls' "
+                            "key='%ls' is the re-create of expressed eid=%u -> row rebound, claimed, NOT doomed",
+                            acls.c_str(), liveKey.c_str(), static_cast<unsigned>(dr->second));
+                    deadKeyedRows.erase(dr);
+                    ++claimedCount;
+                    ++claimedByClass[acls];
+                    continue;
+                }
+            }
+            if (ue_wrap::prop::IsTrashBitsPile(ke.actor)) {
+                coop::trash_pile_sync::NotifyWireDestroy(liveKey);      // v57 CRIT-2 parity
+            }
+            doomed.push_back(ke.actor);
+            doomedClass.push_back(acls);
+            ++doomedByClass[acls];
+        }
+        if (idxUniverse > 0 || idxEvicted > 0) {
+            UE_LOGI("join_membership_sweep: keyed index-half -- %d element-less keyed in universe "
+                    "(%d claimed, %d stale entries evicted)", idxUniverse, idxClaimed, idxEvicted);
+        }
+    }
     // TRIPWIRE (take 2, 2026-07-11): rows still in deadKeyedRows = wire identities whose actor churn-died
     // and NO same-key recreate materialized. Under the JOIN BARRIER (bbf91f39) wire expressions land only
     // in a settled world, so mid-join churn death should not occur at all -- any hit here is a genuine

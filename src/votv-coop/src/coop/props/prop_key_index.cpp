@@ -114,6 +114,58 @@ void IndexActorKey(void* actor, const std::wstring& key) {
     IndexKeyForActor_(actor, key, R::InternalIndexOf(actor));
 }
 
+void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out) {
+    // v122 (S): the sweep's keyed universe under no-passive-mint. Leaf-mutex copy;
+    // liveness/ownership validation is the caller's (IsLiveByIndex + current-key
+    // re-validation before any doom). No engine calls under the lock.
+    std::lock_guard<std::mutex> lk(g_keyIndexMutex);
+    out.reserve(out.size() + g_keyToActor.size());
+    for (const auto& kv : g_keyToActor)
+        out.push_back(KeyIndexEntry{kv.second.actor, kv.second.internalIdx, kv.first});
+}
+
+void EvictKeyIndexEntryIfStale(void* actor, const std::wstring& key) {
+    // v122 (S): drop a sweep-detected stale pairing (recycled slot / un-reindexed
+    // rekey) -- erase only while the maps still hold exactly this key<->actor pair,
+    // so a concurrent re-index of either side is never clobbered.
+    if (!actor || key.empty()) return;
+    std::lock_guard<std::mutex> lk(g_keyIndexMutex);
+    auto kit = g_keyToActor.find(key);
+    if (kit != g_keyToActor.end() && kit->second.actor == actor) g_keyToActor.erase(kit);
+    auto ait = g_actorToKey.find(actor);
+    if (ait != g_actorToKey.end() && ait->second == key) g_actorToKey.erase(ait);
+}
+
+size_t DrainDeadKeyIndexEntries() {
+    // v122 (audit IMPORTANT-1): the garbage collector for ELEMENT-LESS keyed entries.
+    // Under no-passive-mint a client's save-loaded keyed props live ONLY in this index
+    // (no Registry row), so an actor dying WITHOUT K2_DestroyActor (mass purge / engine
+    // teardown) leaves its entry invisible to the element reaper. Owners of this drain:
+    // the post-purge world-change re-seed edge (the mass-death moment) and the
+    // stale-index self-heal (ReconcileIndexThrottled) -- both cold; plus the join
+    // sweep's per-entry evict and the lookup lazy-evict for the steady trickle.
+    // Snapshot under the leaf mutex, validate liveness OUTSIDE it (IsLiveByIndex reads
+    // only the GUObjectArray slot -- no deref of possibly-freed pointers), erase under
+    // the mutex with the same still-maps-this-pair ownership gate as the lazy evict.
+    std::vector<KeyIndexEntry> snap;
+    CollectKeyIndexEntries(snap);
+    size_t drained = 0;
+    for (const auto& ke : snap) {
+        if (!ke.actor) continue;
+        if (R::IsLiveByIndex(ke.actor, ke.internalIdx)) continue;
+        std::lock_guard<std::mutex> lk(g_keyIndexMutex);
+        auto kit = g_keyToActor.find(ke.key);
+        if (kit != g_keyToActor.end() && kit->second.actor == ke.actor &&
+            kit->second.internalIdx == ke.internalIdx) {
+            g_keyToActor.erase(kit);
+            ++drained;
+        }
+        auto ait = g_actorToKey.find(ke.actor);
+        if (ait != g_actorToKey.end() && ait->second == ke.key) g_actorToKey.erase(ait);
+    }
+    return drained;
+}
+
 void* FindLiveActorByKey(const std::wstring& key) {
     if (key.empty() || key == L"None") return nullptr;
     void* actor = nullptr;
@@ -186,6 +238,9 @@ bool ReconcileIndexThrottled() {
         drained += r;
         if (r < 4096) break;  // backlog cleared
     }
+    // v122: also drain dead ELEMENT-LESS keyed entries (no Registry row -> the element
+    // reap above cannot see them). "Index is stale" is precisely this moment.
+    drained += DrainDeadKeyIndexEntries();
     const size_t added = ReSeedKnownKeyedProps();
     UE_LOGI("prop_element_tracker: stale-index self-heal -- drained %zu dead, re-seeded %zu new keyed prop(s) into the key index (snapshot de-dupe now O(1))",
             drained, added);

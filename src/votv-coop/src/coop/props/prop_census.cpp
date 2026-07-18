@@ -177,12 +177,14 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
             // trashBits straggler) are NOT expressible and stay untracked --
             // symmetric with the sweep's universe test.
             if (ue_wrap::prop::IsChipPile(obj)) {
-                MarkPropElement(obj, L"", cls);
+                MarkPropElement(obj, L"", cls, EnrollSource::kPassiveCensus);
                 ++c.keylessPiles;
             }
             continue;
         }
-        MarkPropElement(obj, key, cls);  // idempotent
+        // v122 (B): on a CLIENT this keyed call is index-refresh-only (no Element mint) --
+        // the host expresses keyed identity by key; the express seams own client births.
+        MarkPropElement(obj, key, cls, EnrollSource::kPassiveCensus);  // idempotent
     }
     // Stamp the gameplay world this walk expressed. MUST IsLive-filter
     // (mid-transition the DYING old world sits at a lower GUObjectArray

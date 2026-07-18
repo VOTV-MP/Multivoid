@@ -147,6 +147,16 @@ void SetSession(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
 }
 
+bool SessionIsHost() {
+    auto* s = LoadSession();
+    return s != nullptr && s->role() == coop::net::Role::Host;
+}
+
+bool SessionIsClient() {
+    auto* s = LoadSession();
+    return s != nullptr && s->role() == coop::net::Role::Client;
+}
+
 // ---- ProcessedInit accessors --------------------------------------------
 
 void MarkProcessedInit(void* actor) {
@@ -279,7 +289,8 @@ bool IsBoundMirrorNative(void* actor) {
 // Take it back out of the manager + let the deferred destructor FreeId our eid. (The
 // old g_actorToPropElementIdMutex never actually serialized the check-vs-commit -- it
 // released across AllocAndInstall -- so the double-check was always the real guard.)
-std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls) {
+std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls,
+                             EnrollSource src) {
     if (!actor) return key;
     // Guard: never mint a LOCAL element on an actor already bound as a host-range save-native MIRROR
     // (save_identity_bind). Without this the post-load SeedWalk_ would re-localize every bound native (the
@@ -336,6 +347,22 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     auto* s = LoadSession();
     const bool isHost = (s != nullptr && s->role() == coop::net::Role::Host);
     if (isKerfur && s != nullptr && s->role() == coop::net::Role::Client) return key;  // K-5: no client mint
+    // (B) v122 NO-PASSIVE-MINT (stable-ID root fix, votv-stable-id-no-passive-mint-
+    // DESIGN-2026-07-18). A CLIENT's passive census walk must not mint an Element for a
+    // KEYED prop: keyed identity is host-authored by construction (a save-loaded prop
+    // adopts the host eid by key; a client-born prop mints at its EXPRESS seam, which
+    // broadcasts the identity in the same breath). The old silent census mint produced
+    // ~2200 zombie double-rows per join (local row + stacked mirror row on one actor,
+    // measured 2026-07-18) and doomed-op traffic under eids the host never knew.
+    // Key-INDEX the actor instead (the adopt burst resolves O(1) through the index; the
+    // sweep's keyed universe reads it; the per-walk refresh also re-anchors internalIdx)
+    // and return. Keyless (chipPile) census mints are untouched -- the trash domain
+    // legitimately ships client-band eids. No-session (SP / boot seed) keeps minting.
+    if (src == EnrollSource::kPassiveCensus && s != nullptr &&
+        s->role() == coop::net::Role::Client && !key.empty() && key != L"None") {
+        IndexKeyForActor_(actor, key, R::InternalIndexOf(actor));
+        return key;
+    }
     // KEY-UNIQUENESS AUTHORITY (2026-07-11, take-3 RCA -- research/findings/
     // votv-join-window-placed-prop-RCA-2026-07-11.md). VOTV's own save data ships DUPLICATE
     // interactable Keys: the live host save carried 85 trashBitsPile_C across FOUR keys
@@ -504,7 +531,8 @@ void CollectTrackedPileTransforms(
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
         coop::element::ElementId eid = GetPropElementIdForActor(obj);
         if (eid == coop::element::kInvalidId || eid == 0u) {
-            MarkPropElement(obj, L"", R::ClassNameOf(obj));            // mint now (register-only, idempotent)
+            MarkPropElement(obj, L"", R::ClassNameOf(obj),
+                            EnrollSource::kPassiveCensus);             // mint now (register-only, idempotent; keyless -> census branch inert)
             eid = GetPropElementIdForActor(obj);                      // resolves in-call (minted before return)
             if (eid == coop::element::kInvalidId || eid == 0u)
                 continue;  // mint declined (registry full) -> live-pose fallback for this pile
@@ -541,7 +569,12 @@ void CollectTrackedKerfurTransforms(
         coop::element::ElementId eid = GetPropElementIdForActor(obj);
         if (eid == coop::element::kInvalidId || eid == 0u) {
             const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);  // kerfur off-prop is keyed
-            MarkPropElement(obj, (key == L"None") ? std::wstring() : key, R::ClassNameOf(obj));
+            // Label PASSIVE deliberately (audit v122 MINOR-2): this is a census-time walk,
+            // not the grab-edge self-seed. In practice host-only (the save-time kerfur map
+            // build); on a client the K-5 gate exits BEFORE both the mint and the (B)
+            // branch, so the label is defense-in-depth, not behavior.
+            MarkPropElement(obj, (key == L"None") ? std::wstring() : key, R::ClassNameOf(obj),
+                            EnrollSource::kPassiveCensus);
             eid = GetPropElementIdForActor(obj);  // resolves in-call (minted before return)
             if (eid == coop::element::kInvalidId || eid == 0u)
                 continue;  // mint declined (registry full) -> no save-time key for this kerfur (live-pose fallback)

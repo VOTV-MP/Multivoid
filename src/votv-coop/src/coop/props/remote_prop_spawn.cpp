@@ -31,6 +31,7 @@
 #include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_snapshot.h"      // (H) v122: ExpressIncrementalSpawn -- the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // extraction 2026-07-12: the deferred-spawn materializer
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_wire_parity.h"   // extraction 2026-07-12: shared SP-parity physics/collision helpers
@@ -86,6 +87,46 @@ std::wstring ClassNameToWString(const coop::net::WireClassName& cn) {
     return s;
 }
 
+// (H) v122 host authority gate -- see the block comment at the de-dupe section inside
+// OnSpawn. Returns true when the resolved actor is host-authoritative and the incoming
+// peer PropSpawn was answered with a handback (enroll-if-untracked + re-express under
+// the host identity); the caller must then return WITHOUT claiming/rekeying/converging/
+// binding. false = not host / host's own word / a client-band mirror prior (the normal
+// adopt path proceeds).
+static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
+                                   const std::wstring& classW, int senderSlot,
+                                   const char* how) {
+    if (senderSlot == 0 || !actor) return false;               // the host's own word never conflicts with itself
+    if (!coop::prop_element_tracker::SessionIsHost()) return false;
+    const coop::element::ElementId prior = coop::element::Registry::Get().EidForActor(actor);
+    if (prior != coop::element::kInvalidId) {
+        coop::element::Element* pe = coop::element::Registry::Get().Get(prior);
+        if (pe && pe->IsMirror()) return false;                // client-born prop we mirror -> idempotent adopt path
+    }
+    // Live non-mirror local OR untracked world actor: host-authoritative.
+    if (prior == coop::element::kInvalidId) {
+        const std::wstring ownKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        coop::prop_element_tracker::MarkPropElement(
+            actor, (ownKey == L"None") ? std::wstring() : ownKey, R::ClassNameOf(actor),
+            coop::prop_element_tracker::EnrollSource::kExpressSeam);
+    }
+    const coop::element::ElementId hostEid =
+        coop::prop_element_tracker::GetPropElementIdForActor(actor);
+    const ue_wrap::FVector hl = E::GetActorLocation(actor);
+    UE_LOGW("remote_prop::OnSpawn: HOST-AUTHORITY HANDBACK (%s) -- slot=%d PropSpawn wire-eid names our own "
+            "actor %p (host eid=%u key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)); refusing peer-band rekey/bind, "
+            "re-expressing under the host identity",
+            how, senderSlot, actor,
+            (hostEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(hostEid),
+            keyW.c_str(), classW.c_str(), hl.X, hl.Y, hl.Z);
+    if (coop::kerfur_entity::IsKerfurActor(actor)) {
+        UE_LOGW("remote_prop::OnSpawn: handback target is a KERFUR -- enroll only; KerfurConvert owns "
+                "kerfur delivery (no generic re-express)");
+        return true;
+    }
+    coop::prop_snapshot::ExpressIncrementalSpawn(actor);
+    return true;
+}
 
 void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
              void* localPlayer, bool fromConvert, bool deferKerfur,
@@ -236,6 +277,21 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // corrects mushroom-desync (each peer's spawner placed the same-Key
     // mushroom at a different position; snapshot bootstrap teleports
     // client's to match host's). 2026-05-24.
+    //
+    // (H) v122 HOST AUTHORITY GATE (stable-ID root fix, votv-stable-id-no-passive-mint-
+    // DESIGN-2026-07-18). A PEER PropSpawn (container extract / held-item express-if-
+    // unknown) can resolve -- exact-key OR fuzzy -- onto an actor the HOST already owns:
+    // a live NON-mirror local, or an untracked world actor (the host world IS the
+    // authority). The old flow then REKEYED the actor to the peer's key (fuzzy branch)
+    // and/or stacked a peer-band mirror row over it, stealing the unified reverse --
+    // the host's own identity went unbound (destroy observer silenced, R2 lost it).
+    // Adjudicate BEFORE any claim/rekey/converge/bind: enroll the actor host-side if
+    // untracked (under its OWN current key -- never the wire key) and re-express it
+    // under the HOST identity; the sender then adopts the host eid onto its actor and
+    // its provisional dissolves at the CreateOrAdoptPropMirror handback branch. A
+    // client-band MIRROR prior (a client-born prop the host mirrors) falls through to
+    // the normal idempotent adopt. Kerfurs: enroll only -- KerfurConvert owns kerfur
+    // delivery (ExpressIncrementalSpawn self-skips them); logged either way.
     bool dedupeFellBack = false;
     void* existing = nullptr;
     if (fromConvert) {
@@ -268,6 +324,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         }
     }
     if (existing) {
+        // (H) v122: host authority first -- before the claim, the physics branches,
+        // the converge, and RegisterPropMirror (see the gate comment above).
+        if (HostAuthorityHandback_(existing, keyW, classW, senderSlot, "exact-key")) return;
         // P2 claim: the host snapshot accounts for this pre-existing client
         // actor (exact-key / eid match) -- protect it from the unclaimed-
         // divergent sweep at SnapshotComplete. Covers the drive-skip early
@@ -524,6 +583,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         }
     }
     if (fuzzy) {
+        // (H) v122: host authority BEFORE the fuzzy rekey -- the :577 setKey would
+        // re-key the host's own actor to the peer's key (identity theft the A' wall
+        // cannot undo, since the rekey precedes any Install).
+        if (HostAuthorityHandback_(fuzzy, keyW, classW, senderSlot, "fuzzy")) return;
         // P2 claim: same as the exact-key path -- the fuzzy match binds this
         // pre-existing client actor to the host's prop; protect it from the
         // sweep. Covers the drive-skip early return below too.

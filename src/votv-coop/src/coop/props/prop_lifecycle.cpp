@@ -284,7 +284,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // KEY-UNIQUENESS (2026-07-11): Mark may RE-KEY a duplicate (host key
     // authority) -- the payload below must carry the enrolled key, not the
     // pre-rekey one.
-    keyStr = PT::MarkPropElement(self, keyStr, cls);
+    keyStr = PT::MarkPropElement(self, keyStr, cls, PT::EnrollSource::kExpressSeam);
     p.key.len = 0;
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);
@@ -508,7 +508,7 @@ coop::element::ElementId RegisterHostPropSilent(void* actor) {
                 actor, cls.c_str());
         return coop::element::kInvalidId;
     }
-    PT::MarkPropElement(actor, keyStr, cls);
+    PT::MarkPropElement(actor, keyStr, cls, PT::EnrollSource::kExpressSeam);
     // R1-regression fix (2026-06-18, host turn-on/off kerfur dupe). ALSO mark it KNOWN.
     // Without this the converged kerfur prop is absent from g_knownKeyedProps, so the R1
     // steady-world re-seed's newness test (`g_knownKeyedProps.insert(obj).second`) sees it
