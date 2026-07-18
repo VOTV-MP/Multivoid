@@ -276,6 +276,8 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
     }).detach();
 }
 
+extern std::atomic<bool> g_listedState;  // defined below at SetListed (UI mirror)
+
 void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- env announce skipped"); return; }
     const std::string masterUrl = MasterUrl();
@@ -290,6 +292,9 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
             if (info.ok) {
                 SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
                 Announcer().SetListed(false); // the hide-from-list flag, immediately
+                // seed the UI mirror too (same shape as HostWithSave) -- else the
+                // scoreboard "Show in server browser" checkbox shows ON while hidden
+                g_listedState.store(false, std::memory_order_relaxed);
                 SetHostStatus("Hosting '" + name + "' -- announced (hidden from list)");
                 UE_LOGI("session_manager: env host announced HIDDEN -- lobby=%s world='%s'",
                         info.lobbyId.c_str(), world.c_str());
@@ -303,8 +308,6 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
         g_actionBusy.store(false);
     }).detach();
 }
-
-extern std::atomic<bool> g_listedState;  // defined below at SetListed (UI mirror)
 
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
                   bool directConnection, bool hideFromBrowser) {
