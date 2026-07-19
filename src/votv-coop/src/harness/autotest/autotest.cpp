@@ -29,6 +29,7 @@
 
 #include "harness/autotest.h"
 
+#include "coop/config/config.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
@@ -61,18 +62,12 @@ namespace {
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
-
-// Local copy of harness's ReadEnv. Tiny; not worth crossing modules for.
-std::string ReadEnv(const char* name) {
-    char buf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
-    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
-}
+namespace cfg = coop::config;
 
 }  // namespace
 
 void RunAutonomousGrabTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");  // default Host if unset
     const char* roleStr = isHost ? "host" : "client";
     UE_LOGI("grab_test: starting autonomous routine on %s (waiting 10 s for stabilization)", roleStr);
@@ -133,9 +128,9 @@ void RunAutonomousGrabTest() {
     // Anchor: env VOTVCOOP_GRAB_TEST_ANCHOR_{X,Y,Z} if set, else the local
     // player's world location. The env-anchor lets BOTH peers scan around
     // the SAME world point.
-    const std::string anchXs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_X");
-    const std::string anchYs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Y");
-    const std::string anchZs = ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Z");
+    const std::string anchXs = cfg::ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_X");
+    const std::string anchYs = cfg::ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Y");
+    const std::string anchZs = cfg::ReadEnv("VOTVCOOP_GRAB_TEST_ANCHOR_Z");
     const bool haveAnchor = !anchXs.empty() && !anchYs.empty() && !anchZs.empty();
     const ue_wrap::FVector envAnchor{
         haveAnchor ? static_cast<float>(std::atof(anchXs.c_str())) : 0.f,
@@ -420,7 +415,7 @@ DWORD WINAPI GrabTestThread(LPVOID /*arg*/) {
 // emit ... eid=N". (The synthetic cold-grab clump self-frees after ~1s, so the
 // drive is brief; a real grabbed clump persists -- hands-on for the full visual.)
 void RunAutonomousClumpTest() {
-    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = (cfg::ReadEnv("VOTVCOOP_NET_ROLE") != "client");
     if (!isHost) {
         UE_LOGI("clump_test: CLIENT scan-only -- verify in THIS log: 'remote_prop::OnSpawn "
                 "spawned ... prop_garbageClump_C', 'GRAB-IN ... eid=N ... clump kinematic', "
@@ -650,7 +645,7 @@ DWORD WINAPI WorldRulesProbeThread(LPVOID /*arg*/) {
 //   - session connected (the harness flips state to Connected before this
 //     test fires; the env gate is also after the same Start() call)
 void RunAutonomousFlashlightTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     const char* roleStr = isHost ? "host" : "client";
     UE_LOGI("flashlight_test: starting autonomous routine on %s (waiting 15 s for stabilization)", roleStr);
@@ -766,7 +761,7 @@ DWORD WINAPI FlashlightTestThread(LPVOID /*arg*/) {
 // screenshot capture mid-cycle). Final state = OFF so the next test run
 // starts clean.
 void RunAutonomousWeatherTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     if (!isHost) {
         UE_LOGI("weather_test: not host -- this routine is host-only "
@@ -868,7 +863,7 @@ DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
 // starts clean. 10 s ON dwell gives the visual change ample time to
 // settle + the screenshot window to capture.
 void RunAutonomousRedSkyTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     if (!isHost) {
         UE_LOGI("redsky_test: not host -- this routine is host-only "
