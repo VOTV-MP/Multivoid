@@ -39,11 +39,11 @@
 > | net_pump 915-line Tick -> `props/registry_reaper.cpp` (401) + `player/puppet_drive.cpp` (218); net_pump 1237->744 | DONE, same apparatus + menu-guard audit trace | `de249463` |
 > | console_desk generic component calls -> `ue_wrap/core/component_calls.cpp` (1021->928) | DONE, smoke | `b5c1b911` |
 > | console_desk ui_coordinates_C one-class-per-file split (928 -> 822 + coords_panel 173) | **DONE** (2026-07-19, 2-round /qf; seams = console_desk::AtlasUiCoordsSlot + CallUpdateCoordCoords publics, PlayScanEffects gates on coords_panel::Instance; literal body-diff PASS w/ mutate control, smoke PASS w/ both coords_panel log lines on both peers) | s24 |
-> | console_desk residual 822>800 — next cut = the v70 signal-catch/download-machine surface (~150 LOC: ReadCoordSignal/ResetDownloadMachine/ArmDownloadFromSignal/...) OR the comp pane (~110 LOC) into own ue_wrap/desk file | **PROPOSED** (2026-07-19 audit flag) | — |
+> | console_desk residual 822>800 — comp-pane cut chosen over the v70 catch surface (MEASURED: the DL_* offsets straddle that cut, shared with the staying sim vector; comp is single-consumer). TWO commits: `f74d05dc` retires the positional g_fields table (named offsets, self-binding {name,&var} rows — /qf R1 find: literal-diff AND the compiler are both BLIND to a missed index renumber; correspondence script w/ mutate control) then `f9dfb5d5` moves the surface to NEW ue_wrap/desk/comp_pane (58+212; own g_required latch = 4 field offsets required, rest opportunistic; seams = NEW public console_desk::AtlasWidget() + Instance()). console_desk 822 -> **740, UNDER the cap**. Body-diff 11 regions + mutate PASS; smoke PASS both peers; audit 6/6 PASS 0 findings | **DONE** (2026-07-19 s24b, 6-round /qf) | `f74d05dc`+`f9dfb5d5` |
 > | prop_identity (prop.cpp) / laptop lid axis | **MOOT** — re-measured 799 / 691, both under the soft cap | — |
 >
-> Residue >800 after ledger 3 (upd. 07-19): kerfur_convert 1259, harness 1222, weather_sync 1154, console_desk 822 (coords_panel split DONE; next-cut proposal above)
-> (proposal above). protocol.h exempt (constants header).
+> Residue >800 after ledger 3 (upd. 07-19 s24b): kerfur_convert 1259, harness 1222, weather_sync 1154.
+> console_desk CLOSED at 740 (coords_panel + comp_pane splits DONE). protocol.h exempt (constants header).
 >
 > **(2026-07-07 claim, superseded by ledger 3 above for the >800 queue):** the A-D modularization was COMPLETE at the RULE-1-correct boundary. Every safe/valid extraction
 > shipped (A/D/C-engine_save/B5/B1a/B4). B1b was measured to be mis-scoped (executing it would

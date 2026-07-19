@@ -1,6 +1,6 @@
 # Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-DEPLOYED: `votv-coop.dll 325d31833ab7fe8e...` x4, hash-verified 2026-07-19 (adds the coords_panel extraction `129fb004` on top of net_pump `de249463` + component_calls `b5c1b911` -- all gameplay-invisible refactors, equivalence proven vs baseline; no new hands-on steps)
+DEPLOYED: `votv-coop.dll 0D82CF460B6ADC62...` x4, hash-verified 2026-07-19 (adds the s24b console_desk closure -- `f74d05dc` named-offsets + `f9dfb5d5` comp_pane extraction -- on top of coords_panel `129fb004`, net_pump `de249463`, component_calls `b5c1b911`; all gameplay-invisible refactors, equivalence proven vs baseline; no new hands-on steps)
 (= the 06b9e2d2 stack + the s23 additions below + the session_streams extraction
 `06921557` -- a pure mechanical refactor, gameplay-invisible: digest+4p-matrix
 equivalence proven vs baseline, incl. a mutant-proof; no dedicated hands-on steps.
