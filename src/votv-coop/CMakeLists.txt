@@ -492,7 +492,7 @@ add_library(votv-coop SHARED
     src/coop/moderation/seen_players.cpp
     src/harness/harness.cpp
     src/harness/harness_diag.cpp
-    src/harness/autotest/autotest.cpp
+    src/harness/autotest/autotest_grab.cpp
     src/harness/autotest/autotest_chippile.cpp
     src/harness/autotest/autotest_clump.cpp
     src/harness/autotest/autotest_flashlight.cpp

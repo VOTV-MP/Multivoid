@@ -1,4 +1,4 @@
-// harness/autotest.cpp -- Autonomous grab test (no user E-press required).
+// harness/autotest_grab.cpp -- Autonomous grab test (no user E-press required).
 //
 // Extracted from harness/harness.cpp (2026-05-25 modular refactor).
 // See harness/autotest.h for the public interface.

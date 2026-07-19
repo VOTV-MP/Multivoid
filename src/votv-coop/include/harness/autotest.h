@@ -1,6 +1,9 @@
-// harness/autotest.h -- Autonomous grab test (no user E-press required).
+// harness/autotest.h -- the autotest island's umbrella interface: one decl
+// pair (Run* + *Thread) per autonomous test routine, each implemented in its
+// own one-feature harness/autotest_*.cpp (dispatch table: autotest_dispatch.cpp).
 //
-// Forced-grab routine: find the nearest Aprop_C derivative, teleport it
+// Forced-grab routine (harness/autotest_grab.cpp): find the nearest Aprop_C
+// derivative, teleport it
 // to the player's hand, then drive grabHandle.GrabComponentAtLocation /
 // SetTargetLocation / ReleaseComponent via reflection (these UFunctions
 // are ProcessEvent-dispatched and observable -- so this routine exercises
