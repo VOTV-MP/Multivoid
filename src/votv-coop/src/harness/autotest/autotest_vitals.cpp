@@ -29,6 +29,8 @@
 #include "harness/autotest.h"
 #include "harness/screenshot.h"
 
+#include "coop/config/config.h"
+
 #include "coop/player/puppet_drive.h"
 #include "coop/player/player_damage.h"
 #include "coop/player/players_registry.h"
@@ -54,12 +56,7 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
-
-std::string ReadEnv(const char* name) {
-    char buf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
-    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
-}
+namespace cfg = coop::config;
 
 // Bounded spin-wait on a game-thread task's completion flag. Returns true if
 // the task signalled (set the flag non-zero), false if it never completed
@@ -332,7 +329,7 @@ void DriveOnClient() {
     // of the puppet WHILE it is flopped (proving it falls limp, not rigid).
     int holdMs = 5000;
     {
-        const std::string h = ReadEnv("VOTVCOOP_RAGDOLL_HOLD_MS");
+        const std::string h = cfg::ReadEnv("VOTVCOOP_RAGDOLL_HOLD_MS");
         if (!h.empty()) {
             const int v = std::atoi(h.c_str());
             if (v > 0 && v <= 120000) holdMs = v;
@@ -936,7 +933,7 @@ void IdlePuppetOnClient() {
 }  // namespace
 
 void RunAutonomousRagdollTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");  // default Host if unset
     if (isHost) {
         ObserveOnHost();
@@ -951,7 +948,7 @@ DWORD WINAPI RagdollTestThread(LPVOID) {
 }
 
 void RunAutonomousPuppetFrame() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");  // default Host if unset
     if (isHost) {
         FrameStandingPuppetOnHost();
@@ -966,7 +963,7 @@ DWORD WINAPI PuppetFrameThread(LPVOID) {
 }
 
 void RunAutonomousDamageTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     if (isHost) {
         ObserveDamageOnHost();
@@ -981,7 +978,7 @@ DWORD WINAPI DamageTestThread(LPVOID) {
 }
 
 void RunAutonomousDmgHazardTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     if (isHost) {
         ProbeDamageHazardOnHost();
@@ -996,7 +993,7 @@ DWORD WINAPI DmgHazardTestThread(LPVOID) {
 }
 
 void RunAutonomousPlayerDamageTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
+    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
     const bool isHost = (roleEnv != "client");
     if (isHost) {
         DrivePlayerDamageOnHost();
