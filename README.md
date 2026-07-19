@@ -4,10 +4,6 @@
 > A standalone mod that adds drop-in co-op to a single-player UE4.27 game —
 > **no original game files are modified**.
 
-*Formerly known as `VOTV_MP` — the project rebranded to **Multivoid** in July 2026
-and now lives in the [VOTV-MP organization](https://github.com/VOTV-MP). Internal
-docs and code still use the `votv-coop` working name in places; that's the same thing.*
-
 | | |
 |--|--|
 | **Current build** | `multivoid-0.9.0n-122.dll` — game target **0.9.0n**, build **b122** |
