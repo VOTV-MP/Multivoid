@@ -25,7 +25,8 @@ void RunAutonomousGrabTest();
 // Pass to ::CreateThread as the start routine.
 DWORD WINAPI GrabTestThread(LPVOID arg);
 
-// Autonomous clump-mirror e2e test (env VOTVCOOP_RUN_CLUMP_TEST=1). HOST spawns
+// Autonomous clump-mirror e2e test (env VOTVCOOP_RUN_CLUMP_TEST=1,
+// harness/autotest_clump.cpp). HOST spawns
 // a prop_garbageClump_C, writes it to grabbing_actor so net_pump's held-prop
 // send broadcasts it (trash_collect_sync v3), then sweeps it; CLIENT mirrors it
 // kinematically via the wire. Verifies the non-Aprop_C kinematic path + no crash.
@@ -73,20 +74,22 @@ DWORD WINAPI GrabIntentTestThread(LPVOID arg);
 void RunPileDriftScenario();
 DWORD WINAPI PileDriftScenarioThread(LPVOID arg);
 
-// Clump VISIBILITY probe (env VOTVCOOP_RUN_CLUMPVIS_PROBE=1). Solo. Spawns a bare
+// Clump VISIBILITY probe (env VOTVCOOP_RUN_CLUMPVIS_PROBE=1,
+// harness/autotest_clump.cpp). Solo. Spawns a bare
 // prop_garbageClump_C in front of the player + logs whether its StaticMesh asset is
 // null (empty) or named (visible) -- gates the mannequin-model rework. Launch via mp.py clumpvis.
 void RunClumpVisProbe();
 DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
 
-// World-rules probe (env VOTVCOOP_RUN_WORLDRULES_PROBE=1). BOTH peers. Runs the
+// World-rules probe (env VOTVCOOP_RUN_WORLDRULES_PROBE=1,
+// harness/autotest_worldrules.cpp). BOTH peers. Runs the
 // F1>World>Rules read path (ue_wrap::game_rules::ReadLocal) + logs every rule --
 // exercises the (UI-only) panel code AND measures G1 (diff host vs client
 // `worldrules:` lines: equal set == host's rules reached the client's GI for free).
 void RunWorldRulesProbe();
 DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
 
-// Phase 5F: autonomous flashlight-toggle test. Calls
+// Phase 5F: autonomous flashlight-toggle test (harness/autotest_flashlight.cpp). Calls
 // AmainPlayer_C::`Flashlight Update` via reflection 4 times with 2 s
 // spacing. The POST observer detour catches each call + sends the
 // ItemActivate wire packet. Both peers run this; the OTHER peer's
@@ -97,7 +100,8 @@ DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
 void RunAutonomousFlashlightTest();
 DWORD WINAPI FlashlightTestThread(LPVOID arg);
 
-// Phase 5W: autonomous weather sync test. Host-only. After stabilization,
+// Phase 5W: autonomous weather sync test (harness/autotest_weather.cpp).
+// Host-only. After stabilization,
 // calls weather_rain::DebugForceRain to force rain on / off / on / off
 // at 5-second intervals. The POST observer on setRainProperties catches
 // each call and broadcasts a WeatherState packet. Verification:
@@ -111,7 +115,8 @@ DWORD WINAPI FlashlightTestThread(LPVOID arg);
 void RunAutonomousWeatherTest();
 DWORD WINAPI WeatherTestThread(LPVOID arg);
 
-// Phase 5W Inc-fix-2 (2026-05-27): autonomous RED SKY sync test. Host-
+// Phase 5W Inc-fix-2 (2026-05-27, harness/autotest_weather.cpp): autonomous
+// RED SKY sync test. Host-
 // only sender. After stabilization, host calls
 // weather_redsky::DebugForce(true) to flip the entire scene's sky
 // + ambient color curves to the red set. Host's POST observer on
@@ -143,13 +148,15 @@ DWORD WINAPI SaveBlockTestThread(LPVOID arg);
 void RunAutonomousSaveBtnDisableTest();
 DWORD WINAPI SaveBtnDisableTestThread(LPVOID arg);
 
-// bug2 world-context staleness guard self-test (2026-05-30). Both peers. Forces the cached
+// bug2 world-context staleness guard self-test (2026-05-30,
+// harness/autotest_worldctx.cpp). Both peers. Forces the cached
 // world context stale and verifies engine::EnsureWorldContext recovers (the fix for the host
 // failing to spawn the client puppet). Gated by env VOTVCOOP_RUN_WORLDCTX_TEST="1".
 void RunAutonomousWorldCtxTest();
 DWORD WINAPI WorldCtxTestThread(LPVOID arg);
 
-// Dead-Prop-Element reaper self-test (2026-05-30). Both peers. Constructs a
+// Dead-Prop-Element reaper self-test (2026-05-30,
+// harness/autotest_tracker_selftest.cpp). Both peers. Constructs a
 // synthetic DEAD local Prop Element and verifies prop_element_tracker::
 // ReapDeadLocalPropElements evicts it (the fix for the mass-purge leak: a
 // cave/level transition flags ~2000 props PendingKill without firing
@@ -158,7 +165,8 @@ DWORD WINAPI WorldCtxTestThread(LPVOID arg);
 void RunAutonomousPropReapTest();
 DWORD WINAPI PropReapTestThread(LPVOID arg);
 
-// Re-seed snapshot-completeness PROBE (2026-05-30). Both peers. After a long
+// Re-seed snapshot-completeness PROBE (2026-05-30,
+// harness/autotest_tracker_selftest.cpp). Both peers. After a long
 // settle (25 s -- well past VOTV's boot-time `open untitled_1` level travel),
 // calls prop_element_tracker::ReSeedKnownKeyedProps on the game thread and logs
 // how many NEW live keyed props it adds. A large add proves the bug (the

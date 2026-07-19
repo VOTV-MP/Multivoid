@@ -494,6 +494,12 @@ add_library(votv-coop SHARED
     src/harness/harness_diag.cpp
     src/harness/autotest/autotest.cpp
     src/harness/autotest/autotest_chippile.cpp
+    src/harness/autotest/autotest_clump.cpp
+    src/harness/autotest/autotest_flashlight.cpp
+    src/harness/autotest/autotest_tracker_selftest.cpp
+    src/harness/autotest/autotest_weather.cpp
+    src/harness/autotest/autotest_worldctx.cpp
+    src/harness/autotest/autotest_worldrules.cpp
     src/harness/autotest/autotest_dispatch.cpp
     src/harness/autotest/autotest_vitals.cpp
     src/harness/autotest/autotest_ragdoll_spawn_probe.cpp
