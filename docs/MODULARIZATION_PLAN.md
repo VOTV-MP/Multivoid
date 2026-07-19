@@ -31,7 +31,20 @@
 > | prop_lifecycle takeObj container-extract seam -> `prop_container_extract.cpp` (804 -> 646; PRE/POST pair + `g_takeObjInFlight` defined there, shared via detail hdr; InstallInventory moved) | DONE (eve) | `a7f02f22` |
 > | Dead residue: hand-item empty-streak debounce shell + dropGrabObject diag thunk + shutdown.h `<atomic>` | DONE (eve), filtered-staged around the held [ROCK-DROP] WIP | `fb490e36` |
 >
-> **The modularization is COMPLETE at the RULE-1-correct boundary.** Every safe/valid extraction
+> ## Execution ledger 3 (2026-07-18/19, s21b+s23 — the >800 queue, frozen-instrument recipe) — LOCAL, ask before push
+> | Item | State | Commit |
+> |---|---|---|
+> | drive_sync rack family -> `drive_rack_sync.cpp` (1007->606) | DONE, digest-equivalence proven | `73dc9ba1` |
+> | session.cpp 9 scalar stream channels -> `net/session_streams.cpp` (1208->679+620) | DONE, mutant-proven 4p matrix + literal diff | `06921557` |
+> | net_pump 915-line Tick -> `props/registry_reaper.cpp` (401) + `player/puppet_drive.cpp` (218); net_pump 1237->744 | DONE, same apparatus + menu-guard audit trace | `de249463` |
+> | console_desk generic component calls -> `ue_wrap/core/component_calls.cpp` (1021->928) | DONE, smoke | `b5c1b911` |
+> | console_desk ui_coordinates_C one-class-per-file split (928 -> ~760) | **DESIGNED-DEFERRED** — the seams (WriteDishCommitted desk-verb tail, PlayScanEffects widget gate, desk.Widget->atlas->ui_coordinates walk) form a two-direction dependency; needs its own /qf (anti-smear beats the size rule until it converges) | — |
+> | prop_identity (prop.cpp) / laptop lid axis | **MOOT** — re-measured 799 / 691, both under the soft cap | — |
+>
+> Residue >800 after ledger 3: kerfur_convert 1259, harness 1222, weather_sync 1154, console_desk 928
+> (proposal above). protocol.h exempt (constants header).
+>
+> **(2026-07-07 claim, superseded by ledger 3 above for the >800 queue):** the A-D modularization was COMPLETE at the RULE-1-correct boundary. Every safe/valid extraction
 > shipped (A/D/C-engine_save/B5/B1a/B4). B1b was measured to be mis-scoped (executing it would
 > ADD smears — the current homes are already correct). B2/B3 are genuine multi-subsystem redesigns
 > for modularity-ONLY gain (no bug), reserved for an explicit per-rule-1 window with hands-on.

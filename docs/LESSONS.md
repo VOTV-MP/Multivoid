@@ -196,6 +196,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
+- **Per-UNIT device identity exists ONLY at the AIM seam — 5 of 7 enterable families render ONE
+  shared widget instance** (ui_console_C = ALL SAT consoles; gamemode.laptop = base laptop + every
+  portable PC), so widget→owning-unit is architecturally underivable at any widget-side surface
+  (rising-edge / lost-race denies). Capture the unit's native name at InpActEvt_use PRE
+  (ReadMainPlayerLookAtActor) — the s23 busy-notice memo shape; and note the race LOSER (whose own
+  E-press wrote the memo ~RTT ago) is who gets force-exited, so the memo is fresh by construction.
+  *Look FIRST:* `device_occupancy.cpp` OnUseInputPre memo + `votv-base-computers-RE-2026-06-11.md` §1.1.
+  `memory/lesson_shared_widget_unit_identity_at_aim_seam.md`
 - **A claim-gated intent lane must cover EVERY entry surface of the device.** v111 routed desk knob
   intents over the claimed-occupant lane, but the claim engages only on the intComs `activeInterface`
   edge — the download unit's WORLD-SPACE buttons never raise it, so the lane was structurally dead for
@@ -751,20 +759,34 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 ## 8. Build / deploy / git hygiene
 
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
+- **Filtered tool output HIDES verdicts — twice-bitten:** s22 a grep+tail filter ate a LINK error (a
+  STALE DLL deployed; the SHA-256 build-vs-deployed compare caught it), s23 `smoke | tail -4` cut the
+  `--- VERDICT ---` line on a run that was genuinely ABNORMAL (host log restarted, no verdict printed)
+  — the truncation masked an invalid run. Verdict-bearing commands pipe wide (`tail -40`+) or
+  unfiltered; a MISSING expected verdict/marker = INVALID RUN (rerun), never "probably fine".
+  `memory/lesson_filtered_tool_output_hides_verdicts.md`
 - **A "pure refactor" claim becomes a MEASUREMENT via the three-commit shape: dedups first, then a
   FROZEN standalone instrument (dev TU over public APIs — the refactor commit physically can't touch
   it) + digest BASELINE x2 on the UNSPLIT code, then the move + same scenario → digests byte-equal
   cross-peer AND cross-commit** (+ literal git-diff of moved bodies, symbol-level negative grep, a
   reconnect cycle for the connect/prime/teardown surface). Digest = content-only (proven
-  eid-independent). Born: the rack extraction `73dc9ba1` (2026-07-18); the recipe for the queued
-  session_streams/net_pump/console_atlas extractions. *Look FIRST:*
-  `votv-rack-extraction-DESIGN-2026-07-18.md` §4-5+§8; `coop/dev/drive_selftest.cpp`.
+  eid-independent). Born: the rack extraction `73dc9ba1` (2026-07-18); executed again for
+  session_streams `06921557` + the net_pump decomposition `de249463` (both 2026-07-18/19) with the
+  NONDETERMINISTIC-surface variant: live streams admit no content digest, so the package = literal
+  stripped-line body diff (known-positive script) + a MUTANT-PROVEN live matrix (a routeSlot/peerSlot
+  swap FAILED the 4-peer cross-peer verdict; a 2-peer smoke structurally cannot see relay routing) +
+  the adjacent frozen digest; for a mega-FUNCTION decomposition add the bool-return early-return
+  preservation + shared-local/atomic observation-point enumeration + the caller-sweep single-token
+  verifier. *Look FIRST:* `votv-rack-extraction-DESIGN-2026-07-18.md` §4-5+§8;
+  `votv-session-streams-extraction-DESIGN-2026-07-18.md`;
+  `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `coop/dev/drive_selftest.cpp`.
   `memory/lesson_refactor_equivalence_frozen_digest_instrument.md`
 - **env/.bat host = HIDDEN lobby by design; the scoreboard listed-checkbox mirror LIES on that path**
   (2026-07-17: absence from the server browser after a .bat launch is NOT a bug — v56 rule, test
   lobbies must not pollute the list; but `AnnounceEnvHostHidden` bypasses `session_manager::SetListed`
   so `g_listedState` stays true → the checkbox shows ON while hidden; toggle off+on re-lists.
-  One-line fix on record, deferred by the user). *Look FIRST:* `session_manager.cpp
+  FIX SHIPPED `2de5ad31` 2026-07-18 — the mirror is seeded in AnnounceEnvHostHidden's success path;
+  checkbox visual = a take-4 hands-on item). *Look FIRST:* `session_manager.cpp
   AnnounceEnvHostHidden` vs `HostWithSave`'s mirror seed.
   `memory/lesson_env_host_hidden_listed_mirror.md`
 - **A NEW shared box invalidates the provision script's box-#1 assumptions — verify each service from
