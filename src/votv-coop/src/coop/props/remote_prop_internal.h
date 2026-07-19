@@ -1,5 +1,6 @@
-// coop/props/remote_prop_internal.h -- IMPLEMENTATION-PRIVATE shared seam between
-// remote_prop.cpp and remote_prop_destroy.cpp.
+// coop/props/remote_prop_internal.h -- IMPLEMENTATION-PRIVATE shared seam among the
+// remote_prop TU family (remote_prop.cpp / remote_prop_destroy.cpp / remote_prop_convert.cpp /
+// remote_prop_physics.cpp).
 //
 // NOT a public header (lives under src/, not include/): it declares the two symbols the
 // destroy-path TU (remote_prop_destroy.cpp) and the main receiver TU (remote_prop.cpp)
@@ -23,8 +24,14 @@ void* ResolveLiveActorByEid(uint32_t eid);
 
 // Echo-suppressed local destroy of `actor`: ClearAnyDriveFor -> (if K2_DestroyActor resolved)
 // MarkIncomingDestroy + K2_DestroyActor. Defined in remote_prop_destroy.cpp (it owns the cached
-// destroy UFunction); called by remote_prop.cpp's OnConvert to retire the OLD rendering after a
-// re-skin rebind, without that TU touching the destroy-fn global. No-op on a dead/null actor.
+// destroy UFunction); called by remote_prop_convert.cpp's OnConvert to retire the OLD rendering
+// after a re-skin rebind, without that TU touching the destroy-fn global. No-op on a dead/null actor.
 void DestroyEchoSuppressed(void* actor);
+
+// Fire Aprop_C.thrown(Player) on the prop actor (BP throw sound + particle-trail dispatch).
+// Defined in remote_prop_physics.cpp (s28 cut -- it owns the cached Aprop_C.thrown resolve state);
+// called by remote_prop.cpp's OnRelease on the speed-gated throw edge. Skips silently on a null
+// actor/player or an unresolved fn.
+void DrivePropThrown(void* propActor, void* localPlayer);
 
 }  // namespace coop::remote_prop
