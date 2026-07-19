@@ -31,7 +31,7 @@
 > | prop_lifecycle takeObj container-extract seam -> `prop_container_extract.cpp` (804 -> 646; PRE/POST pair + `g_takeObjInFlight` defined there, shared via detail hdr; InstallInventory moved) | DONE (eve) | `a7f02f22` |
 > | Dead residue: hand-item empty-streak debounce shell + dropGrabObject diag thunk + shutdown.h `<atomic>` | DONE (eve), filtered-staged around the held [ROCK-DROP] WIP | `fb490e36` |
 >
-> ## Execution ledger 3 (2026-07-18/19, s21b+s23 — the >800 queue, frozen-instrument recipe) — LOCAL, ask before push
+> ## Execution ledger 3 (2026-07-18/19..07-19, s21b..s26 — the >800 queue, frozen-instrument recipe) — ALL PUSHED 2026-07-19 (d0c7b9e0..43426e82)
 > | Item | State | Commit |
 > |---|---|---|
 > | drive_sync rack family -> `drive_rack_sync.cpp` (1007->606) | DONE, digest-equivalence proven | `73dc9ba1` |
@@ -332,7 +332,7 @@ The survey found genuine copy-paste with no shared home. Each is a small, safe d
   `ClassNameOf()` output; or a new crisply-named header). **Scope: do class-1 only (safe), leave
   class-3 alone, class-2 optional. This is NOT the "highest-count easy win" the first draft claimed.**
 - **Local-player-pawn lookup: ~9 inline sites** of `R::FindObjectByClass(P::name::MainPlayerClass)`
-  (engine.cpp:379,508; autotest.cpp:97,620; autotest_saveui.cpp:143; join_membership_sweep.cpp:624;
+  (engine.cpp:379,508; autotest_grab.cpp:86 + autotest_flashlight.cpp:76 [ex-autotest.cpp, s26 dissolve]; autotest_saveui.cpp:143; join_membership_sweep.cpp:624;
   remote_player.cpp:67) plus two differently-named local wrappers (`LocalPlayerPawn`,`LocalPawn`).
   **Fix:** one `ue_wrap::engine::GetLocalPlayerPawn()`; replace all sites. (Also unblocks A1's
   injection option — the coop caller can use the Registry, ue_wrap uses this.)

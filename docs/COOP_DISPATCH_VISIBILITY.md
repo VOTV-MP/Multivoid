@@ -159,7 +159,7 @@ grab test): the call logged our `OnPileGrabPre` (`pile_morph: grab armed`) yet s
 never happened. Root cause (RCA workflow): the `_NN` input-event stub is driven by the **engine input
 system** threading the ubergraph to the right node on a live IE_Pressed edge; a synthetic reflection call
 runs the stub but not that gameplay path (and `_41` is the *release* edge — the grab is on `_42`). This is
-GENERAL — the flashlight (`autotest.cpp:667`), `spawn_menu.cpp:81`, and the savebtn test all hit it.
+GENERAL — the flashlight test (`autotest_flashlight.cpp`, ex-autotest.cpp), `spawn_menu.cpp:81`, and the savebtn test all hit it.
 
 - **To OBSERVE the input** (read what it's about to act on): hook `InpActEvt_use` PRE — VISIBLE, works.
 - **To DRIVE the real gameplay from code** (a test/harness): do NOT call the `InpActEvt_*` stub. Call the

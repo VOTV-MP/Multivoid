@@ -798,7 +798,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/lesson_positional_resolve_table_silent_shift.md`
 - **Any env-gated autotest scenario (`VOTVCOOP_RUN_*`) rides a standard mp.py smoke with ZERO tool
   changes** — set the var in the invoking shell (mp.py copies `os.environ` at launch, mp.py:425; the
-  SpawnIf gates live in `harness/autotest/autotest_dispatch.cpp:60-75`; scenarios self-gate by role).
+  SpawnIf gates live in `harness/autotest/autotest_dispatch.cpp` — helper :22-29 + the
+  SpawnEnvGatedTests table; scenarios self-gate by role).
   Gate discipline: import the shipped verifier's LITERAL patterns verbatim (lan-test.ps1 weather verdict
   :440-449), run the gate on a BASELINE run first (pattern counting 0 on baseline = broken instrument),
   min-count FLOORS on periodic diag lines (caught a parallel-audit-shrunk 90s window as 29<30 in s25),

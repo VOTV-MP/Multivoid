@@ -103,7 +103,9 @@ gates (no third cache, no hot-path change when the ini flag is off).
 - Audit (code-reviewer agent): 6/6 PASS, 0 findings >=80 confidence. Informational (~40):
   one g_session atomic load per tick moved out of the ini gate (one mov; below the bar).
   Residue flag: autotest.cpp 1003 LOC (pre-existing >800, touched by the rename only) —
-  queued: split the per-feature autonomous test routines.
+  queued: split the per-feature autonomous test routines. *(Resolved 2026-07-19 s26:
+  dissolved into 6 one-feature TUs + autotest_grab.cpp 393 —
+  votv-autotest-dissolve-DESIGN-2026-07-19.md.)*
 - Ini revert CHECKED (known-positive 1 -> 0, byte-identical to pre-session backups);
   s_1234.sav restored to the pre-session snapshot bytes.
 
