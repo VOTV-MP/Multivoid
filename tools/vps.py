@@ -2,7 +2,7 @@
 
 !!! 2026-07-16: the coop stack MIGRATED to the NEW Cloudzy box 172.86.94.3 !!!
 This tool targets the OLD box (87.121.218.33), which hosts only unrelated services after the
-client cutover to master.votv.mp. For the NEW coop box use plain OpenSSH:
+client cutover to the new box. For the NEW coop box (master.multivoid.dev) use plain OpenSSH:
     ssh -i ~/.ssh/id_rsa root@172.86.94.3
 (creds + survey: reference_coop_vps_cloudzy.md, gitignored). Do NOT run coop
 provisioning/deploys through this tool.

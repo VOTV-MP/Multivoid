@@ -1,7 +1,7 @@
 # Reference: VoidTogether-Server (rival VOTV multiplayer mod) — architecture summary
 
 **Date**: 2026-05-25
-**Source**: `reference/VoidTogether-Server/` (added to repo this session)
+**Source**: `reference/VoidTogether-Server/` (added 2026-05-25; vendored copy REMOVED from the repo 2026-07-19 per user directive; this doc is the surviving record)
 **Author of source**: GatoDeveloper (community VOTV modder)
 **License**: ISC
 **Status of source**: README literally says "**THIS IS UNFINISHED, AND ONLY FOR THE VOIDTOGETHER SANDBOX CONCEPT DEMO**"

@@ -270,8 +270,10 @@ reaper, TURN-cred HMAC match vs the box's coturn secret. Compiled official endpo
 same day the box was apt full-upgraded + rebooted (docker + WireGuard removed) and the whole stack
 re-verified from outside (healthz, latest=111, signaling TCP, STUN).
 
-**Domain: `votv.mp`** (Cloudflare DNS-only zone; NS delegation pending at the .mp registry). Next:
-**Tier B TLS** — Let's Encrypt cert on `master.votv.mp` + rustls in our bins (:443 is another tenant's on this
-box too → TLS on our own ports) + the client https/wss cutover (`net.master=https://master.votv.mp`);
+**Domain: `multivoid.dev`** (LIVE 2026-07-19: root proxied via Cloudflare → 172.86.94.3; `master.multivoid.dev`
+unproxied/grey-cloud → the same box, for direct client traffic on our custom ports. The earlier `votv.mp` zone
+never delegated and is retired). Next:
+**Tier B TLS** — Let's Encrypt cert on `master.multivoid.dev` + rustls in our bins (:443 is another tenant's on this
+box too → TLS on our own ports) + the client https/wss cutover (`net.master=https://master.multivoid.dev`);
 **Tier C (per-session tokens)** after B. The control plane is **cleartext until Tier B ships**. Full
 detail: `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.

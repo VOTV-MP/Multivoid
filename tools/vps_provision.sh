@@ -39,7 +39,7 @@ RELAY_MIN=61000
 RELAY_MAX=61100
 SIG_DIR=/opt/coop-signaling-rs
 MASTER_DIR=/opt/coop-master-rs
-REALM=votv.mp
+REALM=multivoid.dev
 
 LOCAL_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I | awk '{print $1}')"
 # -4: the URIs we hand clients must be IPv4 -- a dual-stack box answers ifconfig.me

@@ -182,6 +182,6 @@ tools/client_model/portable/build/
 # local model workfolders under tools/client_model (third-party assets, underscore convention)
 tools/client_model/_*/
 
-# votv.mp website workspace (user 2026-07-05): ALL site files/info live in site/,
+# multivoid.dev website workspace (user 2026-07-05; domain renamed from votv.mp 2026-07-19): ALL site files/info live in site/,
 # fully untracked -- worked on locally, deployed outside this repo's git history.
 site/

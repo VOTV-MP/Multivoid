@@ -1069,8 +1069,10 @@ inline constexpr uint16_t kDefaultPort = 47621;
 // surfaces (the shipped ini, the connect console, browser status) show the
 // word "DEFAULT" instead of the raw address when the master equals this --
 // no need to advertise the VPS IP in plain sight (user 2026-06-10).
-// 2026-07-16: the Cloudzy box (the old VPS hosts no coop services anymore). Becomes
-// https://master.votv.mp with the Tier B TLS cutover once DNS lands.
+// 2026-07-16: the Cloudzy box (the old VPS hosts no coop services anymore).
+// 2026-07-19: domain LIVE -- multivoid.dev (root proxied) + master.multivoid.dev
+// (unproxied, grey-cloud) -> this box. Becomes https://master.multivoid.dev with
+// the Tier B TLS cutover (the retired votv.mp zone never delegated).
 inline constexpr const char* kOfficialMasterUrl    = "172.86.94.3:10001";
 inline constexpr const char* kOfficialSignalingUrl = "172.86.94.3:10000";
 

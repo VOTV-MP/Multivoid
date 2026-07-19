@@ -1,7 +1,0 @@
-{
-    "name": "VoidTogether",
-    "version_number": "0.0.2",
-    "website_url": "https://github.com/VoidTogether/VoidTogether-Server",
-    "description": "Voices of the Void, Together with Friends. SANDBOX CONCEPT DEMO.",
-    "dependencies": ["Gatohost-VoidMod-2.1.0"]
-}
