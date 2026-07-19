@@ -27,7 +27,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
-#include "coop/creatures/npc_world_enum.h"  // InstallExSpawnCatch (the EX_CallMath spawn catch)
+#include "coop/creatures/npc_world_enum.h"  // ClearPendingExSpawns (OnDisconnect; InstallExSpawnCatch moved to the install TU)
 #include "coop/props/prop_echo_suppress.h"  // InMirrorSpawnScope (census mirror exclusion, F-6)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"

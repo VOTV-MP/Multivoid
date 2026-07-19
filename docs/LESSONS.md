@@ -799,6 +799,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   comment lines across a function boundary, and the instrument's permissive "//"-prefix allowance is
   BLIND to it — verify comment-block ownership at every span edge; the closing audit covers that
   blind spot.
+  INSTRUMENT-BLIND-SPOT variant (s28 puppet `ca12e11d`, mutate-caught): a scaffold WHITELIST catches
+  ADDED lines but is structurally blind to DROPPED lines — the m6 deletion mutate (internal.h decl
+  drop) PASSED it; small seam/generated files get an EXACT-CONTENT sequence compare, and the mutate
+  battery includes a DELETION mutate per checked file (the mutates test the INSTRUMENT, not just the
+  cut). Also: span header-census greps must cover UNQUALIFIED name forms (`Call(` vs `call::` — the
+  qualified-only pattern shipped a missing include the build caught).
   *Look FIRST:* `votv-s27-three-cuts-DESIGN-2026-07-19.md`; `votv-rack-extraction-DESIGN-2026-07-18.md` §4-5+§8;
   `votv-session-streams-extraction-DESIGN-2026-07-18.md`;
   `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `votv-autotest-dissolve-DESIGN-2026-07-19.md`;
