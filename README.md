@@ -131,15 +131,27 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 
 ## Quick start
 
-> No public builds are published yet — for now you build from source.
+### For players
 
-### Requirements
-- Windows 10+
-- Visual Studio 2019 (or 2022) **Build Tools** with the C++ workload
-- CMake 3.20+
-- A legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/` next to the repo
+> No public builds are published yet — installation starts working with the first
+> release on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases).
 
-### Build
+1. Download the release pair: `xinput1_3.dll` + `multivoid-<game>-<build>.dll`.
+2. Drop both files next to the game executable:
+   `<your VOTV install>/WindowsNoEditor/VotV/Binaries/Win64/`.
+3. Check the game version in the DLL name matches your VOTV version
+   (e.g. `multivoid-0.9.0n-122.dll` targets VOTV `0.9.0n`).
+4. Launch the game normally. A **Multiplayer** button appears in the main menu —
+   host a lobby, or join one from the server browser (direct IP works too).
+   No port forwarding needed.
+
+To uninstall, delete the two DLLs. The mod never touches the game's own files.
+
+### For developers
+
+Requirements: Windows 10+, Visual Studio 2019/2022 **Build Tools** (C++ workload),
+CMake 3.20+, and a legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/`
+next to the repo.
 
 ```powershell
 # Configure once:
@@ -149,18 +161,16 @@ cmake -B build/votv-coop -S src/votv-coop -G "Visual Studio 16 2019" -A x64
 cmake --build build/votv-coop --config Release
 ```
 
-### Play co-op
+Dev-only launchers (deploy the fresh build + start the game with a pinned
+role/port — never how players run the mod):
 
 ```powershell
-# On the host's PC (deploys the DLLs, launches the game):
-./mp_host_game.bat                 # default port 47621, nick "Host"
-
-# On the client's PC:
-./mp_client_connect.bat <host-ip>  # or use the in-game server browser
+./mp_host_game.bat                 # host, default port 47621
+./mp_client_connect.bat <host-ip>  # client
 ```
 
 Same-PC testing? Use the sibling `Game_0.9.0n_CLIENT_1/` install — the launchers
-detect it automatically.
+detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 
 ---
 
