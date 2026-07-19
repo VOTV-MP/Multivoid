@@ -777,9 +777,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   swap FAILED the 4-peer cross-peer verdict; a 2-peer smoke structurally cannot see relay routing) +
   the adjacent frozen digest; for a mega-FUNCTION decomposition add the bool-return early-return
   preservation + shared-local/atomic observation-point enumeration + the caller-sweep single-token
-  verifier. *Look FIRST:* `votv-rack-extraction-DESIGN-2026-07-18.md` §4-5+§8;
+  verifier. RENAME-vs-DISSOLVE variant (s26 autotest `f299107c`+`cc4c93c3`): a fused mv+strip lands
+  under git's 50% rename-similarity threshold (grab residual ~41%) → `--follow` history silently
+  severed; extract FIRST (same filename shrinks in place), then a PURE `git mv` as its own commit
+  (99-100% detected) — verify with `git log --follow` before calling it done.
+  *Look FIRST:* `votv-rack-extraction-DESIGN-2026-07-18.md` §4-5+§8;
   `votv-session-streams-extraction-DESIGN-2026-07-18.md`;
-  `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `coop/dev/drive_selftest.cpp`.
+  `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `votv-autotest-dissolve-DESIGN-2026-07-19.md`;
+  `coop/dev/drive_selftest.cpp`.
   `memory/lesson_refactor_equivalence_frozen_digest_instrument.md`
 - **A positional resolve table makes a mid-row removal SILENTLY corrupting — and BOTH the literal-diff
   instrument AND the compiler are blind to a missed index shift** (2026-07-19 comp_pane /qf R1: an
@@ -798,6 +803,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   :440-449), run the gate on a BASELINE run first (pattern counting 0 on baseline = broken instrument),
   min-count FLOORS on periodic diag lines (caught a parallel-audit-shrunk 90s window as 29<30 in s25),
   compare WITHIN-RUN convergence never cross-run absolutes (organic RNG differs; peers move together).
+  COMBINING scenarios in one run needs a ONE-WRITER-PER-AXIS census (s26): two scenarios writing the
+  same game-state axis (grab+clump on the host held-item; clump+clumpvis on the garbage-clump wire
+  lane) give nondeterministic verdicts NOT absorbed by baseline-first — split them across runs; the
+  s26 dissolve exercised all 10 routines via two pairs, 36 verdict keys identical.
   *Look FIRST:* `autotest_dispatch.cpp` for the scenario list; lan-test.ps1 for verdict literals.
   `memory/lesson_smoke_env_passthrough_scenarios.md`
 - **A NEGATIVE existence claim in a design brief ("no ue_wrap file for X exists") is a measurement, not

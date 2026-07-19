@@ -1,6 +1,6 @@
 # Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-DEPLOYED: `votv-coop.dll C2B33B2A4B1E5D3F...` x4, hash-verified 2026-07-19 s25 (adds the weather_sync closure -- `828844b2` weather_rain sub-lane + the weather_probe dev extraction, weather_sync 1154->784 -- on top of the s24b console_desk closure `f74d05dc`+`f9dfb5d5`, coords_panel `129fb004`, net_pump `de249463`, component_calls `b5c1b911`; all gameplay-invisible refactors, equivalence proven vs baseline incl. an in-smoke forced-rain weather test cross-peer; no new hands-on steps)
+DEPLOYED: `votv-coop.dll B62C64263F8075F0...` x4, hash-verified 2026-07-19 s26 (adds the autotest.cpp dissolve -- `89ce6602`+`f299107c`+`cc4c93c3`, dev-test island only, autotest.cpp 1002 -> autotest_grab 393 + 6 one-feature TUs, all ten routines differential-smoke-proven -- on top of the s25 weather_sync closure `828844b2`+`cd59ad13` (1154->784), the s24b console_desk closure `f74d05dc`+`f9dfb5d5`, coords_panel `129fb004`, net_pump `de249463`, component_calls `b5c1b911`; all gameplay-invisible refactors, equivalence proven vs baseline; no new hands-on steps)
 (= the 06b9e2d2 stack + the s23 additions below + the session_streams extraction
 `06921557` -- a pure mechanical refactor, gameplay-invisible: digest+4p-matrix
 equivalence proven vs baseline, incl. a mutant-proof; no dedicated hands-on steps.
