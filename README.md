@@ -35,8 +35,8 @@ game systems still to sync.
 
 ### Multiplayer foundation
 - **LAN and Internet sessions** — one host, up to three clients; direct IP or the
-  built-in **server browser** backed by the official master server at
-  `master.multivoid.dev` (NAT traversal via signaling + TURN)
+  built-in **server browser** backed by the official master server
+  (NAT traversal via signaling + TURN)
 - **Version identity + join gate** — lobbies advertise `game + build`
   (e.g. `0.9.0n b122`); mismatched peers are refused pre-flight with a clear popup
   instead of desyncing mid-game. Old cohorts keep playing together forever —
@@ -74,8 +74,7 @@ desk's audio feedback mirrored to observers at the native audio seam.
 
 ### Infrastructure
 - **Standalone loader** — `xinput1_3.dll` proxy + the versioned
-  `multivoid-<game>-<build>.dll` payload; duplicate/legacy installs are detected
-  at boot with a "MOD INSTALL PROBLEM" dialog
+  `multivoid-<game>-<build>.dll` payload
 - **Official master server** — a static Rust binary on our VPS (lobby list,
   update check, signaling); the update check is informational only, never a gate
 - **Kill switch** in the ini for emergency ship lockdown
@@ -111,13 +110,13 @@ The codebase splits along a strict two-layer principle:
 
 ---
 
-## Versioning — the Paper pair
+## Versioning
 
-Multivoid uses the **PaperMC scheme**: the version identity is the pair
-**(game version, build number)** — there is no separate mod semver.
+The version identity is the pair **(game version, build number)** — there is
+no separate mod semver.
 
 ```
-multivoid-0.9.0n-122.dll   ->   "Paper 26.1.2 Build #74" shape
+multivoid-0.9.0n-122.dll   ->   game target 0.9.0n, build 122
 ```
 
 - **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
@@ -126,8 +125,8 @@ multivoid-0.9.0n-122.dll   ->   "Paper 26.1.2 Build #74" shape
   release and every wire-format change.
 - **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
   0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
-  themselves on their old builds — the Minecraft rule. The server browser shows
-  each lobby's pair and marks mismatches before you click.
+  themselves on their old builds — updates are never forced. The server browser
+  shows each lobby's pair and marks mismatches before you click.
 
 Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 (`VOTVCOOP_GAME_TARGET` + the build number parsed from `protocol.h`).
@@ -174,10 +173,9 @@ detect it automatically.
 | Repo / place | What |
 |--|--|
 | [`VOTV-MP/Multivoid`](https://github.com/VOTV-MP/Multivoid) | **This repo** — the mod itself |
-| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The master server (lobby list, signaling, update check) |
+| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The future dedicated server (long horizon — roadmap phase 8) |
 | [`VOTV-MP/Multivoid-wiki`](https://github.com/VOTV-MP/Multivoid-wiki) | User-facing documentation |
 | [multivoid.dev](https://multivoid.dev) | Project website |
-| `master.multivoid.dev` | The official master server endpoint |
 
 Repository layout:
 
