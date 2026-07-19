@@ -17,7 +17,7 @@
 
 namespace coop::dev::freecam {
 
-// Read votv-coop.ini; if [dev] freecam=1 (and master not killed), start the HOME
+// Read multivoid.ini; if [dev] freecam=1 (and master not killed), start the HOME
 // toggle + movement driver + mouse-wheel hook threads. No-op otherwise. Call once
 // from harness boot. (The menu's SetActive also lazily starts these, so freecam
 // works via the menu even when freecam=0 but devkeys=1.)

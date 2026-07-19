@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Map a faulting RVA (logged by the game_thread Pump firewall's absorbed-fault
-# localization as "ip - modbase") to the enclosing function in votv-coop.map.
+# localization as "ip - modbase") to the enclosing function in the payload .map (multivoid-*.map).
 # Usage: python tools/maprva.py 0x167a0 [0x12610 ...]
 # The diagnostic logs RVA already relative to the module base, and the .map
 # lists each symbol's preferred VA (base 0x180000000 + symbol RVA), so the
@@ -8,7 +8,8 @@
 import sys, re, pathlib
 
 PREF_BASE = 0x180000000
-MAP = pathlib.Path(__file__).resolve().parent.parent / "build" / "votv-coop" / "Release" / "votv-coop.map"
+MAP = max((pathlib.Path(__file__).resolve().parent.parent / "build" / "votv-coop" / "Release").glob("multivoid-*.map"),
+          key=lambda p: p.stat().st_mtime)
 
 def load_syms():
     syms = []

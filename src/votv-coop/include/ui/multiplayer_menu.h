@@ -22,7 +22,7 @@ namespace coop::multiplayer_menu {
 
 // Resolve ui_menu_C + register the Tick observer (idempotent). Safe to call at
 // boot: if the menu BP class is not loaded yet, a bounded retry re-attempts until
-// it resolves. Gated off by [coop] multiplayer_menu=0 in votv-coop.ini.
+// it resolves. Gated off by [coop] multiplayer_menu=0 in multivoid.ini.
 void Init();
 
 // TEST hook: inject the MULTIPLAYER button onto the live ui_menu_C right now,

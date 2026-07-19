@@ -85,7 +85,7 @@ std::array<uint32_t, coop::net::kMaxPeers> g_hostSendSeq{};
 std::array<bool, coop::net::kMaxPeers> g_applySentToSlot{};
 
 // Build <gameDir>/coop_players/<hostSlot>/<guid>.json. Empty path if any piece is missing.
-// User request (2026-06-15): store in the GAME folder (next to votv-coop.dll/.ini/.log), NOT in
+// User request (2026-06-15): store in the GAME folder (next to the payload DLL / multivoid.ini/.log), NOT in
 // AppData -- so the per-player inventory jsons are easy to find + hand-edit. Still keyed per host
 // SAVE SLOT (a subfolder under coop_players) so different worlds keep separate inventories.
 fs::path PlayerFilePath(const std::string& guid) {

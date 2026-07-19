@@ -30,7 +30,7 @@ void NoteViewport(float width, float height);
 // capped at 4.0). Stable within a frame.
 float Ui();
 
-// The user's "UI size" pref (votv-coop.ini ui.scale, default 1.25 -- user
+// The user's "UI size" pref (multivoid.ini ui.scale, default 1.25 -- user
 // 2026-07-04: "все менюшки и тексты ПОБОЛЬШЕ"). Multiplies the resolution
 // factor; the F1 > Cosmetics > Interface slider drives it live.
 float UserScale();

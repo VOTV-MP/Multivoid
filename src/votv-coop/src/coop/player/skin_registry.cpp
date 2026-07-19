@@ -113,12 +113,12 @@ std::string PickRandomStarterSkin() {
 
 std::wstring PakDir() {
     // ModuleDir = <game>/VotV/Binaries/Win64 (the proxy DLL's folder). The model
-    // paks auto-mount from <game>/VotV/Content/Paks/LogicMods/votv-coop.
+    // paks auto-mount from <game>/VotV/Content/Paks/LogicMods/multivoid.
     const std::wstring base = coop::config::ModuleDir();
     if (base.empty()) return {};
     std::error_code ec;
     fs::path p = fs::path(base).parent_path().parent_path()
-                 / L"Content" / L"Paks" / L"LogicMods" / L"votv-coop";
+                 / L"Content" / L"Paks" / L"LogicMods" / L"multivoid";
     if (!fs::is_directory(p, ec)) return {};
     return p.wstring();
 }
@@ -147,7 +147,7 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
     }
 
     if (dirW.empty()) {
-        UE_LOGW("skin_registry: LogicMods/votv-coop pak dir not found -- dr_kel + builtins only");
+        UE_LOGW("skin_registry: LogicMods/multivoid pak dir not found -- dr_kel + builtins only");
         return g_entries;
     }
     for (const auto& de : fs::directory_iterator(dirW, ec)) {

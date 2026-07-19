@@ -1,12 +1,14 @@
-# votv-coop — the mod source
+# multivoid (working name: votv-coop) — the mod source
 
 Standalone coop mod DLL for Voices of the Void (UE4.27). Two binaries:
 
 - **`xinput1_3.dll`** — proxy loader (`src/loader/xinput_proxy.cpp`).
   VOTV imports XInputGetState/SetState; we forward them to System32's
-  xinput1_4.dll and side-load `votv-coop.dll` from `DllMain`. No
+  xinput1_4.dll and side-load the highest-build `multivoid-<game>-<build>.dll`
+  from `DllMain` (a stray legacy `votv-coop.dll` triggers the dup-install
+  warning). No
   injection. No UE4SS at runtime.
-- **`votv-coop.dll`** — the payload. Self-contained reflection +
+- **`multivoid-<game>-<build>.dll`** — the payload (e.g. `multivoid-0.9.0n-122.dll`). Self-contained reflection +
   hooking + transport + replication.
 
 ## Subtrees (principle 7 — see `docs/COOP_METHODOLOGY.md` / `CLAUDE.md`)
@@ -51,7 +53,7 @@ cmake -B build/votv-coop -S src/votv-coop -G "Visual Studio 16 2019" -A x64
 cmake --build build/votv-coop --config Release
 ```
 
-Output: `build/votv-coop/Release/votv-coop.dll` and
+Output: `build/votv-coop/Release/multivoid-<game>-<build>.dll` and
 `build/votv-coop/Release/xinput1_3.dll`.
 
 Deploy: `tools/deploy-loader.ps1 -Standalone -GameWin64 <path>` is

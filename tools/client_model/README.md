@@ -45,7 +45,7 @@ the embedded cook templates + the profile LIBRARY into `portable/dist/`:
 skins-browser preview tile, converted from the model's own `.bmp` thumbnail when present;
 the browser also reads a raw `<name>.bmp` sitting next to the pak). Flags: `--name`,
 `--learn`, `--profile`, `--keep-work`. Since the v93 skins system the pak name IS the
-in-game skin name — drop pak+preview into `LogicMods/votv-coop/` on every peer and pick it
+in-game skin name — drop pak+preview into `LogicMods/multivoid/` on every peer and pick it
 in F1 > Cosmetics > Skins (no fixed-name constraint anymore).
 Repose profile resolution (rvi postmortem 2026-07-02): a manual-pose PSK next to the .mdl
 is auto-detected (exact point/bone correspondence) and its exact profile is LEARNED +

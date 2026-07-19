@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Log-truth assert harness for the chipPile carry/throw/dup coop sync.
-  Reads the HOST + CLIENT votv-coop logs and checks the invariants we otherwise grep
+  Reads the HOST + CLIENT multivoid logs and checks the invariants we otherwise grep
   by hand every test round, emitting one PASS/FAIL line per invariant + an overall
   verdict + exit code (0 = all pass, 1 = any fail). The log is the channel of truth;
   this replaces the manual eye+grep loop so iteration can run without a human tester.
@@ -27,8 +27,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
-    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
+    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log",
+    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log",
     [string]$Scenario  = "",
     [switch]$Quiet
 )

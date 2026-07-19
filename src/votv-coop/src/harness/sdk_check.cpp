@@ -106,7 +106,7 @@ void ReportFooter(int ok, int total, int fail, int failPriority, int skipped) {
 }
 
 // Find the directory containing the mod DLL so the report lands next to it
-// (same convention as votv-coop.log, votv-coop-loaded.txt, scenario.txt).
+// (same convention as multivoid.log, multivoid-loaded.txt, scenario.txt).
 std::wstring ModuleDir() {
     HMODULE self = nullptr;
     ::GetModuleHandleExW(
@@ -120,7 +120,7 @@ std::wstring ModuleDir() {
 }
 
 void WriteReportFile() {
-    const std::wstring path = ModuleDir() + L"\\votv-coop-compat-report.txt";
+    const std::wstring path = ModuleDir() + L"\\multivoid-compat-report.txt";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"w") != 0 || !f) {
         UE_LOGW("sdk-check: failed to open compat report '%ls' for writing", path.c_str());
@@ -417,7 +417,7 @@ int Run() {
                 skipped > 0 ? "; some UFunction checks skipped due to dead owning UClass" : "");
         UE_LOGE("sdk-check: VOTV build likely diverged from target (%s). Re-run UE4SS SDK dump + diff sdk_profile.h.",
                 P::kTargetGameVersion);
-        UE_LOGE("sdk-check: see votv-coop-compat-report.txt next to the mod DLL for the shareable diff.");
+        UE_LOGE("sdk-check: see multivoid-compat-report.txt next to the mod DLL for the shareable diff.");
     }
     ReportFooter(ok, total, fail, failPriority, skipped);
     WriteReportFile();

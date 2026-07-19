@@ -102,7 +102,7 @@ void Render() {
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings)) {
         if (!s.enabled) {
-            ImGui::TextWrapped("Voice chat is turned off (voice.enabled=0 in votv-coop.ini). "
+            ImGui::TextWrapped("Voice chat is turned off (voice.enabled=0 in multivoid.ini). "
                                "Set it to 1 and restart the game to use voice.");
             ImGui::End();
             if (!open) g_open.store(false, std::memory_order_relaxed);
@@ -152,7 +152,7 @@ void Render() {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Hold the key to talk. Change the key via voice.ptt_key\n"
-                              "in votv-coop.ini (single letter or a virtual-key number).");
+                              "in multivoid.ini (single letter or a virtual-key number).");
         if (ImGui::RadioButton("Voice activation", &mode, 1)) {
             coop::config::WriteIniValue("voice.mode", "activation");
             VC::RequestDevicesRestart();

@@ -48,8 +48,8 @@ void Render() {
     const std::string current = coop::local_body::LocalSkinNameCopy();
 
     ImGui::TextWrapped("Your body skin -- what YOU see looking down and what OTHERS see. "
-                       "Saved to votv-coop.ini; restored on rejoin.");
-    ImGui::TextDisabled("A skin = a converter .pak in Content/Paks/LogicMods/votv-coop "
+                       "Saved to multivoid.ini; restored on rejoin.");
+    ImGui::TextDisabled("A skin = a converter .pak in Content/Paks/LogicMods/multivoid "
                         "(preview = <name>.png/.bmp next to it).");
     ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
     if (ImGui::Button("Refresh list")) {

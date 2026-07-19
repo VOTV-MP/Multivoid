@@ -34,7 +34,7 @@ void Announce(uint8_t slot, const std::wstring& action);
 // reduce the deny to a bare click sound). Game thread.
 void AnnounceDirect(uint8_t slot, const std::wstring& action);
 
-// The ui.chat.peer_actions toggle. SetEnabled persists to votv-coop.ini + updates
+// The ui.chat.peer_actions toggle. SetEnabled persists to multivoid.ini + updates
 // the live value; Enabled reads it (lazy-loads the persisted value on first call).
 void SetEnabled(bool on);
 bool Enabled();

@@ -6,7 +6,7 @@
 // responsible.
 //
 // Mechanism: MinHook-detour the CRT malloc/free/realloc/calloc. Our DLL links
-// the STATIC CRT (/MT), so those functions are baked into votv-coop.dll and no
+// the STATIC CRT (/MT), so those functions are baked into the payload DLL (multivoid-*.dll) and no
 // other module calls them -- the detour therefore fires for EXACTLY our-module
 // allocations (the engine has its own allocator). All our C++ heap
 // (std::string/vector/unordered_map + operator new) bottoms out in this malloc.
@@ -15,7 +15,7 @@
 // frames are CRT plumbing and the deeper ones the real caller); free/realloc
 // decrement. Every ~4s a [heap_probe] block logs our total live CRT bytes + the
 // top sites by live bytes, each as a chain of module-relative RVAs -- resolve via
-// build/votv-coop/Release/votv-coop.map (the first non-CRT RVA in a chain is the
+// build/votv-coop/Release/multivoid-*.map (the first non-CRT RVA in a chain is the
 // owning call site).
 //
 // Discriminator:

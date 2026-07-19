@@ -16,7 +16,7 @@
 // toggles puppet.light_R visibility via the existing
 // engine::SetComponentVisible wrapper.
 //
-// [probe] flashlight_log=1 in votv-coop.ini adds extra log lines
+// [probe] flashlight_log=1 in multivoid.ini adds extra log lines
 // before+after every observed toggle so we can verify hands-on that
 // the BP's early-return guard fires when !hasFlashlight, and that
 // light_R.bVisible flips in lockstep with mp.flashlight. Default

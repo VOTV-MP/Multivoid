@@ -64,7 +64,7 @@ README = """VOTV coop — конвертер модели клиента (GoldSr
    из самого .mdl, отдельные .bmp не нужны).
 2. Запустите convert.bat (или convert_model.exe, или: python convert_model.pyz).
 3. В той же папке появится <имя>.pak.
-4. Положите .pak в <игра>\\VotV\\Content\\Paks\\LogicMods\\votv-coop\\ на ВСЕХ пирах.
+4. Положите .pak в <игра>\\VotV\\Content\\Paks\\LogicMods\\multivoid\\ на ВСЕХ пирах.
 
 Имя пака = имя скина в игре. Конвертер также кладёт рядом <имя>.png —
 превью для браузера скинов (берётся из .bmp модели, если он есть; можно

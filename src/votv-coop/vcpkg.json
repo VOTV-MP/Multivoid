@@ -1,5 +1,5 @@
 {
-  "name": "votv-coop",
+  "name": "multivoid",
   "version-string": "0.9.0-n",
   "description": "VOTV coop mod -- vcpkg manifest. Pins protobuf to 3.21.12 (the last pre-abseil release) so GameNetworkingSockets' wire layer does NOT pull a modern vcpkg abseil. That second abseil collides at CMake-configure time with the 2020 abseil that the steamwebrtc/libwebrtc-lite ICE backend requires (USE_STEAMWEBRTC=ON). One abseil = no collision. protobuf 3.21.12 is sufficient for GNS (no version requirement) and webrtc M85.",
   "dependencies": [

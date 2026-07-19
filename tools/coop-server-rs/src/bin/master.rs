@@ -70,7 +70,7 @@ const MAX_GAME: usize = 23; // v122: the host's VOTV game target ("0.9.0n")
 // Paper-pair display tag, e.g. "0.9.0n-b130") per the release checklist.
 const LATEST_PROTO: i64 = 0;
 const LATEST_MOD: &str = "";
-const LATEST_URL: &str = "https://github.com/pelmentor/VOTV_MP/releases";
+const LATEST_URL: &str = "https://github.com/VOTV-MP/Multivoid/releases";
 
 const TRUSTED_PROXY_PEERS: [&str; 2] = ["127.0.0.1", "::1"];
 

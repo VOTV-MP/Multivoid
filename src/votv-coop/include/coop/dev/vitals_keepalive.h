@@ -13,7 +13,7 @@
 // so the idle-death cause adjudicates itself from the drain curve in the log
 // (probe-don't-guess -- the 18-min death cause was never adjudicated).
 //
-// Gated by votv-coop.ini `vitals_keepalive_sec=N` (seconds between refills;
+// Gated by multivoid.ini `vitals_keepalive_sec=N` (seconds between refills;
 // 0/absent = OFF -- the shipping default). Host/solo only via dev_gate (a
 // client refilling vitals in someone else's game is a cheat; the host's
 // broadcast covers connected clients anyway).

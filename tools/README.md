@@ -61,7 +61,7 @@ runs them frequently:
   active. The script is the committed source of truth for the
   dev-substrate setup.
 - **`sdk_diff.py <old.txt> <new.txt>`** — compare two
-  `votv-coop-compat-report.txt` outputs (the boot health-check writes
+  `multivoid-compat-report.txt` outputs (the boot health-check writes
   one per launch); flags offset drift across recooks.
 
 ## Other

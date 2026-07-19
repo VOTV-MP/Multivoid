@@ -34,7 +34,7 @@ std::string MasterUrl();
 // rot nobody bumped): GameTarget() = the VOTV cook this build targets
 // ("0.9.0-n", generated coop/version.h); the BUILD NUMBER = kProtocolVersion
 // (moves exactly when compatibility moves; every release bumps it).
-// DisplayVersion() = the user-facing composite "votv-coop 0.9.0-n b122".
+// DisplayVersion() = the user-facing composite "Multivoid 0.9.0n b122".
 const char* GameTarget();
 std::string DisplayVersion();
 

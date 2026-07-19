@@ -11,7 +11,7 @@
 // inert. The untraced BeginPlay (idx 2498) + init() are a [V]-as-proof gap. PROBE-DON'T-GUESS: excite
 // that exact path. [[feedback-probe-dont-guess-rule]] [[feedback-rule2-exempts-probes-diagnostics-tools]]
 //
-// THE PROBE: gated by votv-coop.ini [dev] native_pile_inert_probe=1. ~8s after the world settles it
+// THE PROBE: gated by multivoid.ini [dev] native_pile_inert_probe=1. ~8s after the world settles it
 // SpawnActor's ONE real actorChipPile_C ~2.5m in front of the player and forces the ACTUAL nativization
 // recipe -- COLLISION-ON (native trace + movement-block), AddToRoot, tick-off, Movable -- then logs
 // `[INERT-PROBE]` IsLive + class once a second for 60s. (NoCollision was already proven inert 39s on

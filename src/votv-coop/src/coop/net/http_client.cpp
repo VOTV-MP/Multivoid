@@ -68,7 +68,7 @@ Response Request(const std::string& hostPort, const std::string& path,
         return out;
     }
 
-    WinHttpHandle session(::WinHttpOpen(L"votv-coop/0.9.0-n",
+    WinHttpHandle session(::WinHttpOpen(L"multivoid/0.9.0n",
                                         WINHTTP_ACCESS_TYPE_NO_PROXY,
                                         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session) return out;

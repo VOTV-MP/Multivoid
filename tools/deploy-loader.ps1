@@ -1,10 +1,10 @@
 # deploy-loader.ps1 -- install the STANDALONE shipping loader into VOTV.
 #
-# Copies the xinput1_3.dll proxy + votv-coop.dll payload next to the shipping
+# Copies the xinput1_3.dll proxy + the multivoid-<game>-<build>.dll payload next to the shipping
 # exe. On game start the proxy is loaded (VOTV imports XInputGetState/SetState
 # from xinput1_3.dll, and the exe directory wins the DLL search order over
 # System32); its two exports are forwarded to System32 xinput1_4.dll, and it
-# loads votv-coop.dll automatically -- no injection, no UE4SS (RULE No.3).
+# loads the payload automatically -- no injection, no UE4SS (RULE No.3).
 #
 # This REPLACES the dev-only inject.ps1 path. UE4SS (dwmapi.dll proxy) is left
 # untouched; it coexists. Use -Standalone to also disable UE4SS for a clean
@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $proxy   = Join-Path $GameWin64 "xinput1_3.dll"
-$marker  = Join-Path $GameWin64 "votv-coop-loaded.txt"
+$marker  = Join-Path $GameWin64 "multivoid-loaded.txt"
 $dwm     = Join-Path $GameWin64 "dwmapi.dll"
 $dwmOff  = Join-Path $GameWin64 "dwmapi.dll.off"
 

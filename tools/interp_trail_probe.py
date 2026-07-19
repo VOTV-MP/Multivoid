@@ -88,11 +88,11 @@ def main() -> None:
             break
         if not any(p["PID"] == host_pid for p in mp.list_votv()):
             mp.log(f"HOST DIED before binding UDP (PID {host_pid} gone)")
-            mp.tail_log(mp.HOST_DIR / "votv-coop.log", 30, "HOST")
+            mp.tail_log(mp.HOST_DIR / "multivoid.log", 30, "HOST")
             sys.exit(1)
     if not bound:
         mp.log(f"FAIL: host did NOT bind UDP within {BOOT_TIMEOUT_S}s")
-        mp.tail_log(mp.HOST_DIR / "votv-coop.log", 30, "HOST")
+        mp.tail_log(mp.HOST_DIR / "multivoid.log", 30, "HOST")
         mp.kill_all()
         sys.exit(1)
 
@@ -116,8 +116,8 @@ def main() -> None:
             kill_reason = f"a peer died (only {len(peers)} alive)"
             break
 
-    host_log = mp.HOST_DIR / "votv-coop.log"
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
 
     # --- gather evidence BEFORE killing ---
     osc_started = grep_count(host_log, "move_osc: base=")

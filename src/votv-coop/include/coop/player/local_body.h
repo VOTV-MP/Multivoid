@@ -4,7 +4,7 @@
 // reflection) must wear the SAME skin the player's puppet wears on other peers
 // (user 2026-07-02: "клиент видит туловище dr kel -- ломает иммерсию"). This
 // module is the single owner of the LOCAL skin choice:
-//   - persisted in votv-coop.ini player_skin= (next to player_guid; default
+//   - persisted in multivoid.ini player_skin= (next to player_guid; default
 //     hl_einstein_v1sc for a new identity),
 //   - announced on the wire by player_handshake (Join field + SkinChange),
 //   - applied to the local pawn here (both body slots via client_model),
@@ -29,7 +29,7 @@ namespace coop::net { class Session; }
 namespace coop::local_body {
 
 // Boot wiring (harness bring-up thread, before the net pump sends a Join):
-// the persisted choice from votv-coop.ini player_skin=.
+// the persisted choice from multivoid.ini player_skin=.
 void SetInitialSkin(const std::string& name);
 
 // The local skin name (game thread -- the Join builder / puppet baseline path).

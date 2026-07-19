@@ -265,7 +265,7 @@ def main(argv=None):
     print(f"\nDONE -> {pak}")
     print(f"  mesh object: /Game/Mods/VOTVCoop/{name}.kerfurOmega_KelSkin")
     print(f"  texture:     /Game/Mods/VOTVCoop/tex_{name}.tex_{name}")
-    print(f"  install:     <Game>\\VotV\\Content\\Paks\\LogicMods\\votv-coop\\{name}.pak")
+    print(f"  install:     <Game>\\VotV\\Content\\Paks\\LogicMods\\multivoid\\{name}.pak")
     print(f"               (+ the preview png/bmp next to it; EVERY peer needs the pak)")
     print(f"  in game:     F1 > Cosmetics > Skins -> pick '{name}'")
     if a.keep_work:

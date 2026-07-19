@@ -69,13 +69,13 @@ bool HasAny();
 // the render thread (the F1 checkbox request path) and the bringup thread
 // (session-start reset via player_handshake::Reset on the TimelineThread).
 
-// Boot-time init from votv-coop.ini nameplate= (harness, before the pump ticks).
+// Boot-time init from multivoid.ini nameplate= (harness, before the pump ticks).
 void SetInitialLocalVisible(bool visible);
 
 // The local pref. Any thread (atomic) -- the F1 checkbox reads it.
 bool LocalVisible();
 
-// UI entry (render thread): persist to votv-coop.ini, apply locally, announce
+// UI entry (render thread): persist to multivoid.ini, apply locally, announce
 // to the session (host: broadcast; client: to host for rebroadcast).
 void RequestLocalVisible(bool visible);
 

@@ -49,7 +49,7 @@ enum class Bucket {
     Count
 };
 
-// True iff [perf_probe]=1 in votv-coop.ini (read once). Init() consults this.
+// True iff [perf_probe]=1 in multivoid.ini (read once). Init() consults this.
 bool Enabled();
 
 // Cached "is the probe armed" flag (set by Init). Callers gate QPC on this so the

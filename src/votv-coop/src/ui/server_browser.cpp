@@ -66,7 +66,7 @@ void Render() {
         sm::Refresh();
         std::snprintf(g_nick, sizeof(g_nick), "%s", sm::Nickname().c_str());
         // Restore the last direct-connect address the user typed (persisted locally
-        // in votv-coop.ini). Falls back to the loopback default on a fresh install.
+        // in multivoid.ini). Falls back to the loopback default on a fresh install.
         std::snprintf(g_directIp, sizeof(g_directIp), "%s",
                       coop::config::ReadIniValue("browser.lastdirect", "127.0.0.1:7777").c_str());
     }
@@ -116,7 +116,7 @@ void Render() {
         ImGui::SetNextItemWidth(S(220.0f));
         if (ImGui::InputText("##nick", g_nick, sizeof(g_nick))) sm::SetNickname(g_nick);
         // Persist the name once the user finishes editing (not per-keystroke) so it
-        // sticks across relaunches via votv-coop.ini's net.nick (the same key boot reads).
+        // sticks across relaunches via multivoid.ini's net.nick (the same key boot reads).
         if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue("net.nick", g_nick);
         ImGui::Spacing();
 
@@ -142,7 +142,7 @@ void Render() {
         // Enter in the address field = Connect (the chat-input lesson 2026-07-04).
         const bool ipEnter = ImGui::InputText("##directip", g_directIp, sizeof(g_directIp),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
-        // Remember the typed address across relaunches (votv-coop.ini browser.lastdirect).
+        // Remember the typed address across relaunches (multivoid.ini browser.lastdirect).
         if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue("browser.lastdirect", g_directIp);
         ImGui::SameLine();
         // Close the browser only if the action was ACCEPTED (good address, not busy) so a

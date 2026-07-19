@@ -11,8 +11,8 @@
 //
 // Persistence: a plain line-based text file (one ban per line:
 //   ip|nick|unixtime|reason
-// ) named votv-coop-banlist.txt, written NEXT TO THE MOD BINARY (the
-// Binaries\Win64 dir that holds votv-coop.dll / votv-coop.ini / votv-coop.log,
+// ) named multivoid-banlist.txt, written NEXT TO THE MOD BINARY (the
+// Binaries\Win64 dir that holds the payload DLL / multivoid.ini / multivoid.log,
 // resolved via our own module handle). Each game copy keeps its own banlist;
 // survives host restarts (the locked decision: BAN is permanent). HOST-ONLY --
 // a client never accepts incoming connections, so the banlist is meaningless

@@ -101,7 +101,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Fix a mirror-identity race WORKING first, generalize only after N>=3.** `memory/feedback_fix_then_generalize_mirror_identity.md`
 - **Every source FOLDER = ONE domain concept; no catch-all names.** `memory/feedback_folder_per_domain_concept_rule.md`
 - **RULE 2 does NOT apply to probes/diagnostics/tools** (they may stay) — but the exemption protects WORKING diagnostics, NOT stubs whose documented capability was already removed (s27 netloopback: doc said loopback verifier, code said stub-since-PR-2 → retired `e6f8576e`). Read the code, not the doc row. `memory/feedback_rule2_exempts_probes_diagnostics_tools.md`
-- **Test/probe flags live in `votv-coop.ini [dev]`, NOT bats/env.** `memory/feedback_test_flags_in_ini_not_bats_or_env.md`
+- **Test/probe flags live in `multivoid.ini [dev]`, NOT bats/env.** `memory/feedback_test_flags_in_ini_not_bats_or_env.md`
 - **`docs/piles/` is the LIVING pile KB** — mark DESIGN vs AS-BUILT vs VERIFIED. `memory/feedback_docs_piles_living_knowledge_base.md`
 - **A diagnostic probe's built-in comparability/quiescent tag is only as good as its DERIVED inputs** —
   validate EACH gate input against the codebase's MEASURED field-behavior before trusting the tag; a wrong
@@ -891,7 +891,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   v109; bumped to 110). *Look FIRST:* any diff touching `protocol.h` enums/payloads or a `Send*` flag.
   `memory/feedback_wire_format_change_bumps_protocol_version.md`
 - **The smoke HOST slot `s_1234` is STATEFUL — restore `coop_backup` FIRST.** `memory/lesson_s1234_host_slot_stateful_coop_backup.md`
-- **`votv-coop.log` is TRUNCATED at boot (no rotation)** — copy a peer's log to the scratchpad BEFORE any
+- **`multivoid.log` is TRUNCATED at boot (no rotation)** — copy a peer's log to the scratchpad BEFORE any
   mid-run relaunch or the previous life's evidence is destroyed (2026-07-10: an 18-min census slice lost).
   **Idle death claims BOTH peers — ROOT = STARVATION, now keepalive-fixed** (2026-07-10 night: harness
   save starts food=24.4, idle drain ~2.3 food/min, measured by the ticker's own pre-refill log;

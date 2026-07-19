@@ -8,7 +8,7 @@
 // the same ping/packets/bytes rows; the sparkline + auto-units are ours.
 //
 // OFF by default. Toggled from F1 > Network > Stats (all players -- not a dev tool);
-// persisted as votv-coop.ini ui.netstats (the ui.scale/ui.font pref shape). Render
+// persisted as multivoid.ini ui.netstats (the ui.scale/ui.font pref shape). Render
 // thread only, no input capture (the chat-window flag set), no per-frame engine reads.
 
 #pragma once
@@ -17,7 +17,7 @@ namespace ui::net_stats_panel {
 
 // The persisted pref (lazy ini read on first call). Render-thread safe.
 bool Enabled();
-void SetEnabled(bool on);  // + persist votv-coop.ini ui.netstats
+void SetEnabled(bool on);  // + persist multivoid.ini ui.netstats
 
 // The passive overlay window (render thread, inside the ImGui frame). No-op unless
 // Enabled(). Driven from imgui_overlay beside ui::hud::Render.

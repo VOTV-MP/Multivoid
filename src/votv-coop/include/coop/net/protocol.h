@@ -912,9 +912,9 @@ inline constexpr uint16_t kProtocolVersion = 122; // v122 (2026-07-19, version i
                                                   // v93: player SKINS -- SkinChange reliable (82) + the skin
                                                   // name appended to Join (after guid) + PlayerJoined (after
                                                   // nick). Every player carries a persisted body-skin choice
-                                                  // (votv-coop.ini player_skin=, default hl_einstein_v1sc);
+                                                  // (multivoid.ini player_skin=, default hl_einstein_v1sc);
                                                   // the F1 Cosmetics>Skins browser picks from the converter
-                                                  // paks in LogicMods/votv-coop/. v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
+                                                  // paks in LogicMods/multivoid/. v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
                                                   // retireOffEid keyed off a save_identity_bind eid that was
                                                   // bound by a LOAD-ORDER CURSOR -- it floated under join-window
                                                   // churn (15:55 regression: retire killed the WRONG kerfur on
@@ -1059,7 +1059,7 @@ inline constexpr uint16_t kProtocolVersion = 122; // v122 (2026-07-19, version i
                                                   // + EntityPoseSnapshot carries kerfur State/face (host-authoritative mirror).
                                                   // v73: Join appends [u8 guidlen][guid] -- per-player inventory identity
 
-// Default LAN port (overridable via votv-coop.ini "net.port=").
+// Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
 
 // The OFFICIAL (built-in) public endpoints -- our VPS. PUBLIC connection
@@ -1070,11 +1070,14 @@ inline constexpr uint16_t kDefaultPort = 47621;
 // word "DEFAULT" instead of the raw address when the master equals this --
 // no need to advertise the VPS IP in plain sight (user 2026-06-10).
 // 2026-07-16: the Cloudzy box (the old VPS hosts no coop services anymore).
-// 2026-07-19: domain LIVE -- multivoid.dev (root proxied) + master.multivoid.dev
-// (unproxied, grey-cloud) -> this box. Becomes https://master.multivoid.dev with
-// the Tier B TLS cutover (the retired votv.mp zone never delegated).
-inline constexpr const char* kOfficialMasterUrl    = "172.86.94.3:10001";
-inline constexpr const char* kOfficialSignalingUrl = "172.86.94.3:10000";
+// 2026-07-19: domain LIVE + CUTOVER -- the constants are the HOSTNAME now:
+// master.multivoid.dev (unproxied/grey-cloud A record -> the box; the root
+// multivoid.dev is Cloudflare-PROXIED and must NEVER be used here -- the proxy
+// does not pass our custom ports). Resolution is native on both consumers
+// (WinHttpConnect for the master HTTP, getaddrinfo in signaling_client).
+// Becomes https://master.multivoid.dev with the Tier B TLS cutover.
+inline constexpr const char* kOfficialMasterUrl    = "master.multivoid.dev:10001";
+inline constexpr const char* kOfficialSignalingUrl = "master.multivoid.dev:10000";
 
 // PR-2 v10 (2026-05-28): GNS owns handshake (Hello), graceful disconnect
 // (Bye), RTT (Ping/Pong), and reliable acks (ReliableAck). Those five
@@ -2101,7 +2104,7 @@ enum class ReliableKind : uint8_t {
                        //     (sent AFTER the gate opens at ClientWorldReady). Payload: PropSnapPosPayload.
                        //     event_dispatch_entity dispatches it -> quiescence_drain::ArmPendingPosCorrection.
     SkinChange = 82,   // 2026-07-02 (v93): a player picked a new body SKIN in the F1 browser (docs/
-                       //     COOP_CLIENT_MODEL.md; skins = converter paks in LogicMods/votv-coop/, name =
+                       //     COOP_CLIENT_MODEL.md; skins = converter paks in LogicMods/multivoid/, name =
                        //     pak stem; "dr_kel" = the native body). Field-by-field payload:
                        //       [u8 slot][u8 namelen][name ASCII]
                        //     CLIENT->HOST: slot MUST equal senderPeerSlot (forgery guard). The host stores

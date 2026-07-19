@@ -13,7 +13,7 @@
 // re-runs it (it clears the atlas first) when the scale or family changes,
 // then invalidates the DX11 device objects so the backend re-bakes.
 //
-// Family is a PER-ROLE user pref: votv-coop.ini ui.font.<menu|chat|net|
+// Family is a PER-ROLE user pref: multivoid.ini ui.font.<menu|chat|net|
 // nameplate|toast> = fixedsys | roboto | jetbrains | cascadia (per-role
 // defaults below; menu/chat/toast = fixedsys -- VOTV's own terminal pixel
 // font, 2026-07-09); switch live in F1 > Cosmetics > Interface. fixedsys is
@@ -46,7 +46,7 @@ inline constexpr float kNameplatePx = 16.f;
 // toast are independent. Menu is baked FIRST -> it is ImGui's default font, so every
 // panel (F1, scoreboard, admin, server browser, loading) follows it with no per-window
 // push; Chat/Net/Nameplate/Toast are pushed by their consumers. Persisted per role as
-// votv-coop.ini ui.font.<menu|chat|net|nameplate|toast>. Per-role DEFAULTS (user
+// multivoid.ini ui.font.<menu|chat|net|nameplate|toast>. Per-role DEFAULTS (user
 // 2026-07-09): menu/chat/toast = Fixedsys (VOTV); nameplate/net = Roboto.
 enum class Role : int { Menu = 0, Chat = 1, Net = 2, Nameplate = 3, Toast = 4 };
 inline constexpr int kRoleCount = 5;

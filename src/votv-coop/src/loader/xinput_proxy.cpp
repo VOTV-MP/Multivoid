@@ -1,4 +1,4 @@
-// votv-coop standalone loader -- xinput1_3.dll proxy.
+// multivoid standalone loader -- xinput1_3.dll proxy.
 //
 // Shipping auto-loader (RULE No.3 -- no UE4SS at runtime). VOTV imports
 // XInputGetState/XInputSetState from xinput1_3.dll, and the Windows loader

@@ -338,7 +338,7 @@ void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
 
 // Peer action notifications: show a chat/feed line when another player does a shared
 // action everyone should see (first: deleting an email). A LOCAL view preference
-// (each peer decides whether IT sees these lines), persisted (votv-coop.ini
+// (each peer decides whether IT sees these lines), persisted (multivoid.ini
 // ui.chat.peer_actions). Rendered locally from the existing wire event -- no extra
 // traffic; see coop::peer_action_feed.
 void RenderChatPref() {
@@ -351,7 +351,7 @@ void RenderChatPref() {
 }
 
 // v94: the local player's plate-visibility pref. SYNCED (live NameplateChange +
-// the Join prefs byte for late joiners) and persisted (votv-coop.ini nameplate=).
+// the Join prefs byte for late joiners) and persisted (multivoid.ini nameplate=).
 void RenderNameplatePref() {
     bool on = coop::nameplate::LocalVisible();
     if (ImGui::Checkbox("Show my nameplate to other players", &on))
@@ -360,7 +360,7 @@ void RenderNameplatePref() {
     ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
 
     // v103 (12f): the local player's nick COLOR pref. SYNCED (live NickColorChange
-    // + the Join color field for late joiners) and persisted (votv-coop.ini
+    // + the Join color field for late joiners) and persisted (multivoid.ini
     // nick_color=). Applied on picker RELEASE, not per drag frame -- each apply
     // persists + announces over the wire.
     ImGui::Spacing();
@@ -418,7 +418,7 @@ void RenderNameplatePref() {
 
 // Overlay fonts -- GRANULAR per surface (2026-07-09, user ask): chat, the net-stats
 // widget, the nameplates and the menu/panels each pick their OWN family. SetRoleFamily
-// persists votv-coop.ini ui.font.<role> + requests the atlas rebuild (next frame).
+// persists multivoid.ini ui.font.<role> + requests the atlas rebuild (next frame).
 void RenderFontPref() {
     namespace F = ui::fonts;
     const char* famItems[F::kFamilyCount];
@@ -435,7 +435,7 @@ void RenderFontPref() {
         ImGui::PopID();
     }
     ImGui::TextDisabled("Each surface picks its own family; applies instantly.");
-    ImGui::TextDisabled("Saved to votv-coop.ini (ui.font.menu/chat/net/nameplate/toast,");
+    ImGui::TextDisabled("Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,");
     ImGui::TextDisabled("each with its own default). Fixedsys (VOTV) = game terminal pixel");
     ImGui::TextDisabled("font; JetBrains/Cascadia monospace; Roboto proportional.");
 
@@ -460,7 +460,7 @@ void RenderFontPref() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
                           "automatic resolution scale. Applies when you release the slider\n"
-                          "(the fonts re-bake). Saved to votv-coop.ini (ui.scale).");
+                          "(the fonts re-bake). Saved to multivoid.ini (ui.scale).");
     ImGui::TextDisabled("Everything scales with the screen automatically; this is your extra zoom.");
 }
 
@@ -622,7 +622,7 @@ void Render() {
                                    "client (host-only).");
             else
                 ImGui::TextWrapped("Developer tools are hidden. Set [dev] devkeys=1 in "
-                                   "votv-coop.ini to show them.");
+                                   "multivoid.ini to show them.");
         }
     }
     ImGui::EndChild();

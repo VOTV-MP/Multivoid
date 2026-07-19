@@ -11,7 +11,7 @@
 // One look then settles the cook verdict: HL-scientist shape = cook WORKS / kel robot = render data
 // is still the template / nothing there = no usable render geometry.
 //
-// Gated by votv-coop.ini [dev] client_model_probe=1 -- set the flag ONLY on the machine that should
+// Gated by multivoid.ini [dev] client_model_probe=1 -- set the flag ONLY on the machine that should
 // spawn the pair (the host folder); no role gate in code, so a solo host run works (cleanest).
 // One-shot; read-only diagnostic (the pair stays until quit -- it IS the display).
 // Game thread. [[feedback-probe-dont-guess-rule]]

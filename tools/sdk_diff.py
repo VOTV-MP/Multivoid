@@ -28,7 +28,7 @@ Adaptation workflow:
     2. Run this script against the new dump vs the dump that the current
        sdk_profile.h targets.
     3. Pipe the output into the GitHub issue with the boot
-       `votv-coop-compat-report.txt`.
+       `multivoid-compat-report.txt`.
     4. Authoring follows: each renamed UFunction => update one constant,
        each shifted property offset => update one constant, etc.
 """

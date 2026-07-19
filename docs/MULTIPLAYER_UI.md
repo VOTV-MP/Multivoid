@@ -13,7 +13,7 @@ gmod-style preview tiles from the LogicMods pak catalog + the v94 builtin
 kerfur bodies, AS-BUILT; see docs/COOP_CLIENT_MODEL.md §3 for the skins
 runtime). F1 > Cosmetics > Nameplate (v94, AS-BUILT 2026-07-02): the "show my
 nameplate to other players" checkbox — a SYNCED per-peer pref (NameplateChange
-+ the Join prefs byte; persists in votv-coop.ini `nameplate=`).
++ the Join prefs byte; persists in multivoid.ini `nameplate=`).
 **Overlay typography + chat (AS-BUILT 2026-07-04, `684f6670`+`1e6c86ea`;
 hands-on = runbook 0j):** vendored TTFs EMBEDDED in the DLL as RCDATA
 (`ui/fonts.cpp`) — Regular 16px is the default font of the WHOLE overlay,
@@ -32,7 +32,7 @@ constant in `ui/` goes through `S()`; a live resize/res change re-bakes on
 the next frame. THREE embedded families — Roboto (default; user verdict
 2026-07-04 after comparing), JetBrains Mono, Cascadia Code (all
 Cyrillic-cmap-verified; OFL/Apache licenses in assets/fonts) — switchable
-live in F1 > Cosmetics > Interface, persisted as votv-coop.ini `ui.font`;
+live in F1 > Cosmetics > Interface, persisted as multivoid.ini `ui.font`;
 plus a user size pref (`ui.scale`, default 1.25x, F1 slider 0.75–1.75x)
 multiplied into the resolution factor. The T-chat input bar matches the
 chat column width; T-chat is available for the whole HOST session (a
@@ -48,7 +48,7 @@ per visible plate on the game thread.
 **F1 > Cosmetics > Nameplate — nickname color (v103, 12f, AS-BUILT 2026-07-05
 `76ce8c58`; hands-on = runbook 0z):** a per-player custom nick color — SYNCED
 (live NickColorChange=88 + a `[has][r][g][b]` field in Join/PlayerJoined for
-late joiners) and persisted (votv-coop.ini `nick_color=RRGGBB`). ONE owner:
+late joiners) and persisted (multivoid.ini `nick_color=RRGGBB`). ONE owner:
 `coop/player/nick_color` (atomic per-slot store; 0 = surface default).
 Consumers: nameplate nick (default white), chat nick prefix (default per-slot
 palette), scoreboard row (default role gold/white — role stays readable via
@@ -69,7 +69,7 @@ too. The on-screen clamp reserves the bubble height (no off-screen-top).
 runbook 0w-b):** HOST-role-gated F1 category (dev_menu Cat/Sub `host` flag on
 `roster::LocalIsHost` — clients/solo never see it): Online (roster rows +
 Teleport/Kick/Ban), Offline (`coop/moderation/seen_players` — the persistent
-GUID-keyed seen-players registry, votv-coop-players.txt `guid|nick|lastSeen|ip`,
+GUID-keyed seen-players registry, multivoid-players.txt `guid|nick|lastSeen|ip`,
 written at the host Join seam + disconnect edge), Banned (ban_list rows now
 with REASON + Unban; file format `ip|nick|unixtime|reason`, lenient back-compat
 parse). Ban modal takes a reason; offline ban uses the last known IP (P2P
@@ -231,9 +231,9 @@ shipped form is a **native UMG `UTextBlock`** injected as the TOP row of the Ver
 own build labels ("Alpha 0.9.0" / "Build a090n"), so the coop line reads as one more native label and
 auto show/hides with the menu — **cyan** (the coop accent, matching the MULTIPLAYER button), amber when
 an update is available. Verdict formats (b122 Paper-pair identity, 2026-07-19; AS-BUILT, label itself
-hands-on-verified 2026-07-16 in the old format): `votv-coop 0.9.0n b122 (latest)` /
+hands-on-verified 2026-07-16 in the old format): `Multivoid 0.9.0n b122 (latest)` /
 `... -- UPDATE <tag> AVAILABLE: <url>` / `... (dev; latest released bN)`; plain
-`votv-coop 0.9.0n b122` (`session_manager::DisplayVersion`) until the check lands — and PERMANENTLY
+`Multivoid 0.9.0n b122` (`session_manager::DisplayVersion`) until the check lands — and PERMANENTLY
 while the master has no released record (`/v1/latest` proto 0 = NO VERDICT, the client stays silent).
 
 Mechanics: `engine::InjectTextRowAbove` (clones `txt_version`'s text style + the row slot layout;
@@ -266,7 +266,7 @@ ufw allows incl. 80/tcp for Let's Encrypt; `curl -4` public-IP fix) and **functi
 outside**: healthz, `/v1/latest`→111, host→join with full ICE, signaling relay A→B, leave + TTL=90
 reaper, TURN-cred HMAC match vs the box's coturn secret. Compiled official endpoints flipped
 (`protocol.h` `kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`, commit `cd6faf81`, DLL
-`AFBF5728` x4) and all four installs' `votv-coop.ini` carry explicit `net.*` fallbacks. Later the
+`AFBF5728` x4) and all four installs' `multivoid.ini` carry explicit `net.*` fallbacks. Later the
 same day the box was apt full-upgraded + rebooted (docker + WireGuard removed) and the whole stack
 re-verified from outside (healthz, latest=111, signaling TCP, STUN).
 

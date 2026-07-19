@@ -39,7 +39,7 @@ since the "saving screenshot" toast is distracting; autonomous only).
 
 ## Common harness env vars
 
-The harness reads env vars BEFORE `votv-coop.ini`, so the launchers
+The harness reads env vars BEFORE `multivoid.ini`, so the launchers
 override per-run config without editing the ini:
 
 - `VOTVCOOP_SCENARIO` — overrides `scenario.txt`.
@@ -80,7 +80,7 @@ Built when the user stepped out of the manual-tester role ("истина в ло
 with NO human, by asserting invariants over the host+client logs. Canonical:
 the auto-memory `[[reference-pile-test-harness]]`.
 
-- **`tools/pile-test-assert.ps1`** — reads the host + client `votv-coop.log`
+- **`tools/pile-test-assert.ps1`** — reads the host + client `multivoid.log`
   and checks **13 log-truth invariants** (ToPile-loc-nonzero, land-commit-reread,
   client-render-matches-host = the proxy lands at the host pose drift<5cm,
   sound x2, dup-destroy, arc, carry-stuck, fps-reseed-rate, no-crash, …),
@@ -135,7 +135,7 @@ the auto-memory `[[reference-pile-test-harness]]`.
 
 ## What the harness logs
 
-Every scenario writes `votv-coop.log` (in the Win64 directory).
+Every scenario writes `multivoid.log` (in the Win64 directory).
 Levelled (`[INFO]`, `[WARN]`, `[ERROR]`), timestamped. Boot health
 check + scenario startup + every UFunction call site that hits an edge
 case logs at least one line.

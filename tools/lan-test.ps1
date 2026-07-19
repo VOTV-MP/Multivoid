@@ -7,7 +7,7 @@
 
 .DESCRIPTION
     Both instances load the SAME mod DLL from the SAME game dir, so they cannot be
-    configured by per-file scenario.txt / votv-coop.ini. Instead each is given its
+    configured by per-file scenario.txt / multivoid.ini. Instead each is given its
     role/peer/port/nickname AND its own log file via ENVIRONMENT VARIABLES the harness
     reads (VOTVCOOP_SCENARIO / _NET_ROLE / _NET_PEER / _NET_PORT / _NET_NICK / _LOG).
 
@@ -94,8 +94,8 @@ $root  = Split-Path -Parent $PSScriptRoot
 # docs/RE_WORKFLOW.md for the 3-copy convention.
 $win64 = Join-Path $root "Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64"
 $exe   = Join-Path $win64 "VotV-Win64-Shipping.exe"
-$hostLogName   = "votv-coop-host.log"
-$clientLogName = "votv-coop-client.log"
+$hostLogName   = "multivoid-host.log"
+$clientLogName = "multivoid-client.log"
 $hostLog   = Join-Path $win64 $hostLogName
 $clientLog = Join-Path $win64 $clientLogName
 

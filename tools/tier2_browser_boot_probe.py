@@ -36,8 +36,8 @@ def grep(path: Path, needle: str) -> int:
 def main() -> None:
     mp.kill_all()
     mp.deploy_all()
-    host_log = mp.HOST_DIR / "votv-coop.log"
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
     code = 2
     try:
         mp.log("--- HOST (env path, LanDirect) ---")

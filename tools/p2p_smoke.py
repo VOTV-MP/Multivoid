@@ -101,8 +101,8 @@ def main() -> None:
     else:
         mp.log(f"using REMOTE signaling at {args.signaling} (no local server)")
 
-    host_log = mp.HOST_DIR / "votv-coop.log"
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
     connected = False
 
     try:

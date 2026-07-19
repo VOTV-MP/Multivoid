@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Log-truth assert harness for the kerfur DELIVERY axis + its OWNER BOUNDARY.
-  Reads the HOST + CLIENT votv-coop logs and asserts the join-window deliver-missing
+  Reads the HOST + CLIENT multivoid logs and asserts the join-window deliver-missing
   invariants we otherwise grep by hand. One PASS/FAIL line per invariant + an overall
   verdict + exit code (0 = all pass, 1 = any CRITICAL fail). The log is the channel of
   truth. Sibling of tools/pile-test-assert.ps1.
@@ -39,8 +39,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
-    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log",
+    [string]$HostLog   = "$PSScriptRoot/../Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log",
+    [string]$ClientLog = "$PSScriptRoot/../Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log",
     [string]$Scenario  = "",
     [switch]$Quiet,
     # Assert that BOTH boundary sides were ACTUALLY exercised this run (refuses a vacuous green): side A

@@ -2,7 +2,7 @@
 
 > Root causes for the two dupes the user hits, from the cooked-pak bytecode RE + the user's
 > REAL hands-on logs (the s31 doom run = `*.failrun-s31.log`; the s32 strip run = the current
-> `votv-coop.log`). Both diagnosed 2026-06-20. Citations are file:line / log markers.
+> `multivoid.log`). Both diagnosed 2026-06-20. Citations are file:line / log markers.
 
 ## Bug 1 — JOIN DUPE (the client ends with 2 of each pile)
 

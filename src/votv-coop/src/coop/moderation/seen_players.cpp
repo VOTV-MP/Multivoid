@@ -41,7 +41,7 @@ std::array<std::string, coop::players::kMaxPeers> g_onlineGuidBySlot{};
 fs::path RegistryPath() {
     const std::wstring dir = coop::config::ModuleDir();
     if (dir.empty()) return {};
-    return fs::path(dir) / L"votv-coop-players.txt";
+    return fs::path(dir) / L"multivoid-players.txt";
 }
 
 // Field sanitizer for the pipe-separated line format: the separators and line

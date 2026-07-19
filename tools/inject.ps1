@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Standard CreateRemoteThread(LoadLibraryW) injector. Used to validate that
-    votv-coop.dll loads + runs inside VotV-Win64-Shipping.exe without UE4SS.
+    the multivoid payload DLL loads + runs inside VotV-Win64-Shipping.exe without UE4SS.
     The shipping loader will be a proxy DLL; this injector is a DEV TOOL.
 
     Run under Windows PowerShell 5.1:

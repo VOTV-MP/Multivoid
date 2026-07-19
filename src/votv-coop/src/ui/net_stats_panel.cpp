@@ -230,7 +230,7 @@ void RenderMenuPref() {
         ImGui::SetTooltip("A compact live panel in the top-right corner: receive/send rate right\n"
                           "now (wire-level, includes protocol overhead), total downloaded/uploaded\n"
                           "this session, packets/s, peers + ping, and a 60 s rate graph.\n"
-                          "Works for host and clients. Saved to votv-coop.ini (ui.netstats).");
+                          "Works for host and clients. Saved to multivoid.ini (ui.netstats).");
     ImGui::TextDisabled("Off by default; persists across sessions.");
 
     // Live readout -- doubles as a preview while the overlay itself is off.

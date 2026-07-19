@@ -45,7 +45,7 @@ def grep(path: Path, needle: str) -> int:
 def main() -> None:
     mp.kill_all()
     mp.deploy_all()
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
     code = 2
     rss_samples: list[float] = []
     try:

@@ -106,7 +106,7 @@ std::string VersionLine(bool* outdated) {
     if (line.empty()) {
         if (outdated) *outdated = false;
         // Plain identity (no update verdict yet / none available): the v122
-        // Paper-shape composite "votv-coop 0.0.1 b122 (VOTV 0.9.0-n)".
+        // Paper-shape composite "Multivoid 0.9.0n b122".
         line = coop::session_manager::DisplayVersion();
     }
     return line;

@@ -1,13 +1,13 @@
 // coop/config/config.h -- env + ini configuration readers.
 //
 // Both the scenario file (scenario.txt) and the user-facing ini
-// (votv-coop.ini) live next to the mod DLL. The LAN test framework
+// (multivoid.ini) live next to the mod DLL. The LAN test framework
 // overrides via environment variables (one DLL location serves two
 // instances, so per-file configs would alias).
 //
 // Precedence (highest first):
 //   1. Environment variable (lan-test framework)
-//   2. votv-coop.ini value
+//   2. multivoid.ini value
 //   3. Hard-coded default
 
 #pragma once
@@ -28,11 +28,11 @@ std::string ReadEnv(const char* name);
 // -> "newgame" default.
 std::string ReadScenario();
 
-// Read a single "key=value" line from votv-coop.ini. Section-agnostic.
+// Read a single "key=value" line from multivoid.ini. Section-agnostic.
 // Returns `def` if the key is absent.
 std::string ReadIniValue(const char* key, const char* def);
 
-// Create/update a single "key=value" line in votv-coop.ini (matches ReadIniValue's
+// Create/update a single "key=value" line in multivoid.ini (matches ReadIniValue's
 // section-agnostic lookup). Persists local server-browser settings -- the player
 // name + the last direct-connect address -- so they survive a relaunch. Best-effort:
 // a read-only dir just means the setting isn't remembered, never a crash (logs +
@@ -62,18 +62,18 @@ coop::net::Config ReadP2PHostFallback();
 std::wstring ReadNickname();
 
 // The local player's durable identity GUID (32 lowercase hex chars) for the host-side
-// per-player inventory file. Read from votv-coop.ini "player_guid="; generated + persisted
+// per-player inventory file. Read from multivoid.ini "player_guid="; generated + persisted
 // on first launch / if absent/malformed. Per-install identity (design 2.3).
 std::string ReadPlayerGuid();
 
 // v93 skins: the persisted body-skin choice, stored next to the guid
-// (votv-coop.ini "player_skin="). Absent/invalid -> the default (the current
+// (multivoid.ini "player_skin="). Absent/invalid -> the default (the current
 // scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
 std::string ReadPlayerSkin();
 
 // ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
 
-// Returns false ONLY if votv-coop.ini contains `enabled=0` (or `enabled=false`)
+// Returns false ONLY if multivoid.ini contains `enabled=0` (or `enabled=false`)
 // -- the [dev] master kill-switch. Missing key or =1 returns true.
 bool MasterEnabled();
 

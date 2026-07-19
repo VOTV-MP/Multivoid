@@ -236,7 +236,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // classes load with the menu/preLoad world -- the checker logs what it
         // can and the per-class consumers all self-retry anyway.)
         Post([] { harness::sdk_check::Run(); });
-        // Coop networking: if votv-coop.ini configures net.role, the puppet is
+        // Coop networking: if multivoid.ini configures net.role, the puppet is
         // network-driven (auto-spawned on the first peer pose) and we send our pose;
         // otherwise the puppet is spawned locally + static (the pre-net behaviour).
         if (netEnabled) {

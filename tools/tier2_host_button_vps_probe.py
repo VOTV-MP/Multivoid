@@ -59,8 +59,8 @@ def main() -> None:
     mp.kill_all()
     mp.deploy_all()
 
-    host_log = mp.HOST_DIR / "votv-coop.log"
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
     lobby_id = None
     host_booted = connected = accepted = False
     code = 2

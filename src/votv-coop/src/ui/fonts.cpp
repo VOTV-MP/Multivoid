@@ -26,7 +26,7 @@ Family  g_roleFamily[kRoleCount] = { Family::Fixedsys, Family::Fixedsys, Family:
 bool    g_rolesRead = false;     // ini read once; SetRoleFamily overrides after
 
 struct FamilyDesc {
-    const char* iniValue;  // votv-coop.ini ui.font token
+    const char* iniValue;  // multivoid.ini ui.font token
     const char* label;     // UI label
     int regularId;         // RCDATA ids
     int boldId;

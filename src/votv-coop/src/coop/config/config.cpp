@@ -82,7 +82,7 @@ static bool ParseIniLine(const std::string& line, std::string& key, std::string&
     return !key.empty();
 }
 
-// One lock for every votv-coop.ini access in this process. Writers come from TWO
+// One lock for every multivoid.ini access in this process. Writers come from TWO
 // threads (render: skins-panel RequestSkin / voice-panel device save; game: boot
 // default-writes) -- an unserialized read-modify-write pair can interleave and one
 // writer rebuilds the file from the other's half-written state. Readers take it too
@@ -91,7 +91,7 @@ static std::mutex g_iniMutex;
 
 std::string ReadIniValue(const char* key, const char* def) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
-    const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
+    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return def;
     std::string result = def;
@@ -106,7 +106,7 @@ std::string ReadIniValue(const char* key, const char* def) {
 
 void WriteIniValue(const char* key, const char* value) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
-    const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
+    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
     // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
     // would split the "key=value" line and corrupt the NEXT key on read-back), then
     // edge-trim. Interior spaces are part of the value (device names) and round-trip
@@ -125,7 +125,7 @@ void WriteIniValue(const char* key, const char* value) {
     //   1. if the ini EXISTS but cannot be opened for read (editor/AV/backup holding a
     //      lock), ABORT the write -- the old code carried on with an EMPTY line list
     //      and truncated the whole file down to the one new key;
-    //   2. the new content goes to votv-coop.ini.new, then MoveFileExW REPLACE_EXISTING
+    //   2. the new content goes to multivoid.ini.new, then MoveFileExW REPLACE_EXISTING
     //      swaps it in ATOMICALLY -- the old truncate-then-write left a window (crash,
     //      kill, power) where the file on disk was empty/partial.
     std::vector<std::string> lines;
@@ -144,7 +144,7 @@ void WriteIniValue(const char* key, const char* value) {
         }
         if ((rc != 0 || !f) &&
             ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            UE_LOGW("config: WriteIniValue('%s') SKIPPED -- votv-coop.ini exists but is "
+            UE_LOGW("config: WriteIniValue('%s') SKIPPED -- multivoid.ini exists but is "
                     "locked for read; refusing to rebuild the file blind", key);
             return;
         }
@@ -173,7 +173,7 @@ void WriteIniValue(const char* key, const char* value) {
     const std::wstring tmp = path + L".new";
     FILE* f = nullptr;
     if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
-        UE_LOGW("config: WriteIniValue('%s') could not open votv-coop.ini.new for write", key);
+        UE_LOGW("config: WriteIniValue('%s') could not open multivoid.ini.new for write", key);
         return;
     }
     // Every write checked BEFORE the swap: a disk-full/IO-error .new must never be
@@ -186,21 +186,21 @@ void WriteIniValue(const char* key, const char* value) {
     if (std::fclose(f) != 0) wrote = false;
     if (!wrote) {
         ::DeleteFileW(tmp.c_str());
-        UE_LOGW("config: WriteIniValue('%s') writing votv-coop.ini.new FAILED (disk?) -- "
+        UE_LOGW("config: WriteIniValue('%s') writing multivoid.ini.new FAILED (disk?) -- "
                 "ini left unchanged", key);
         return;
     }
     if (!::MoveFileExW(tmp.c_str(), path.c_str(),
                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         UE_LOGW("config: WriteIniValue('%s') atomic swap failed (err=%lu) -- ini left "
-                "unchanged, votv-coop.ini.new kept", key, ::GetLastError());
+                "unchanged, multivoid.ini.new kept", key, ::GetLastError());
         return;
     }
     UE_LOGI("config: persisted %s=%s", key, safe.c_str());
 }
 
 // ---- Built-in (hardcoded) public net endpoints -- our VPS -----------------------
-// A fresh install with NO votv-coop.ini reaches these out of the box: the menu server
+// A fresh install with NO multivoid.ini reaches these out of the box: the menu server
 // browser + Host-Game flow hit the real master, which then mints the per-session
 // signaling token + STUN + ephemeral TURN creds. These are PUBLIC connection endpoints
 // (the master IP:port is advertised to every client), NOT secrets -- the signaling
@@ -389,7 +389,7 @@ std::wstring ReadNickname() {
 
 std::string ReadPlayerSkin() {
     // v93 skins: the persisted body-skin choice, stored NEXT TO the player identity
-    // (votv-coop.ini "player_skin=", same file as player_guid -- user 2026-07-02).
+    // (multivoid.ini "player_skin=", same file as player_guid -- user 2026-07-02).
     // v95: a NEW identity (absent/malformed key) rolls a RANDOM starter from the
     // curated converter-skin list (user: "для НОВЫХ пиров случайный скин из списка"),
     // filtered to paks present on this install -- hl_einstein_v1sc when none is.
@@ -399,14 +399,14 @@ std::string ReadPlayerSkin() {
         skin = coop::skins::PickRandomStarterSkin();
         WriteIniValue("player_skin", skin.c_str());
         UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (persisted to "
-                "votv-coop.ini)", skin.c_str());
+                "multivoid.ini)", skin.c_str());
     }
     return skin;
 }
 
 std::string ReadPlayerGuid() {
     // Durable per-INSTALL player identity for the host-side per-player inventory
-    // (coop_players/<guid>.json). Read from votv-coop.ini "player_guid="; generate +
+    // (coop_players/<guid>.json). Read from multivoid.ini "player_guid="; generate +
     // persist on first launch / if absent or malformed. 32 lowercase hex chars (128 bits).
     // Per-install identity is the accepted tradeoff (design 2.3 "go with guid"): a reinstall
     // or a different PC = a fresh inventory unless the player_guid= line is copied over.
@@ -428,7 +428,7 @@ std::string ReadPlayerGuid() {
             for (int n = 28; n >= 0; n -= 4) guid.push_back(kHex[(r >> n) & 0xF]);
         }
         WriteIniValue("player_guid", guid.c_str());
-        UE_LOGI("config: generated new player_guid=%s (persisted to votv-coop.ini)", guid.c_str());
+        UE_LOGI("config: generated new player_guid=%s (persisted to multivoid.ini)", guid.c_str());
     }
     return guid;
 }
@@ -453,9 +453,9 @@ std::string NormalizeFlagLine(const char* line) {
     return s;
 }
 
-// Scan votv-coop.ini for `key=...`:  +1 = true,  0 = absent,  -1 = false.
+// Scan multivoid.ini for `key=...`:  +1 = true,  0 = absent,  -1 = false.
 int LookupTriState(const char* key) {
-    const std::wstring path = ModuleDir() + L"\\votv-coop.ini";
+    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return 0;
     char line[128];

@@ -181,7 +181,7 @@ std::string DisplayVersion() {
     // Function-static: inputs are compile-time constants and the browser header
     // calls this every frame while open (perf audit LOW-2).
     static const std::string kLabel =
-        std::string("votv-coop ") + coop::version::kGameTarget +
+        std::string("Multivoid ") + coop::version::kGameTarget +
         " b" + std::to_string(static_cast<int>(net::kProtocolVersion));
     return kLabel;
 }

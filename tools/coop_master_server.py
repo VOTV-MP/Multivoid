@@ -138,7 +138,7 @@ MAX_GAME = 23  # v122: the host's VOTV game target ("0.9.0-n")
 # "url": "<release page>"}. File absent / unreadable -> proto=0 -> the client
 # treats it as NO VERDICT (silent). This can never gate a join: the per-lobby
 # equality gate is the DLL's, and a stale/absent record only affects the toast.
-LATEST_URL_DEFAULT = "https://github.com/pelmentor/VOTV_MP/releases"
+LATEST_URL_DEFAULT = "https://github.com/VOTV-MP/Multivoid/releases"
 LATEST_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest.json")
 
 

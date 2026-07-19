@@ -26,7 +26,7 @@ import time
 import mp
 
 WATCH_S = 40
-LOG = mp.HOST_DIR / "votv-coop.log"
+LOG = mp.HOST_DIR / "multivoid.log"
 
 
 def main() -> None:

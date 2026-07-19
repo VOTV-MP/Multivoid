@@ -381,7 +381,7 @@ autonomous client DIED in-world at 14:15 (~18-min life, permadeath → menu; pre
 `prop_burgerHallucinate_C` spawning — cause unadjudicated), and the relaunched second client's join
 ABORTED during the save transfer ("Remote player left" hit it mid-transfer — likely the kill of the
 old menu client racing the fresh join on the recycled slot; candidate join-window bug, OPEN). The
-first life's raw log was then TRUNCATED by the relaunch (the DLL truncates votv-coop.log at boot —
+first life's raw log was then TRUNCATED by the relaunch (the DLL truncates multivoid.log at boot —
 [[lesson-copy-peer-log-before-relaunch]]); its evidence survives as the 14:55 analyzer aggregates.
 
 **Adjudication (life-1 aggregates via `tools/rng_census_analyze.py` — the pre-registered

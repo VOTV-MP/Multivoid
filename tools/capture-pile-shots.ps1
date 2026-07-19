@@ -4,14 +4,14 @@
   landed), so the pile sync can be eyeballed on a phone without a human at the PC.
 
 .DESCRIPTION
-  Polls the HOST votv-coop.log for the autotest_chippile phase markers and shoots BOTH
+  Polls the HOST multivoid.log for the autotest_chippile phase markers and shoots BOTH
   windows (by window title -> PID) at each. Writes PNGs to tools/shots/. Run alongside a
   `mp.py smoke --duration 300 VOTVCOOP_RUN_CHIPPILE_TEST=1` background smoke.
 #>
 param([int]$TimeoutS = 280)
 $ErrorActionPreference = 'Continue'
 $root    = Split-Path $PSScriptRoot -Parent
-$hostLog = Join-Path $root 'Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log'
+$hostLog = Join-Path $root 'Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log'
 $shotDir = Join-Path $root 'tools/shots'
 New-Item -ItemType Directory -Force $shotDir | Out-Null
 

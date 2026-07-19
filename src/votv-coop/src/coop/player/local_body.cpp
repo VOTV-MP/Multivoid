@@ -121,7 +121,7 @@ void Tick() {
             // (or Refresh->re-pick) un-latches. The puppet on OTHER peers still
             // wears the skin -- only the local view degrades to kel.
             UE_LOGW("local_body: skin '%s' not loadable locally -- local body stays kel "
-                    "(drop the pak into LogicMods/votv-coop and re-pick)", g_skin.c_str());
+                    "(drop the pak into LogicMods/multivoid and re-pick)", g_skin.c_str());
             g_applied = true;
             g_appliedSkin = g_skin;
         }

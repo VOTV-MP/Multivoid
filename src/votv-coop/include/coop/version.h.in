@@ -10,7 +10,7 @@
 //   build number = coop::net::kProtocolVersion (protocol.h), the wire revision --
 //                  bumped by the standing wire-format rule, and by EVERY release
 //                  (the release checklist), so a released build number uniquely
-//                  names a released DLL. Display shape: "votv-coop 0.9.0-n b122".
+//                  names a released DLL. Display shape: "Multivoid 0.9.0n b122".
 //
 // Compatibility gate = byte-equality on BOTH components (the Minecraft shape:
 // the protocol number gates, the strings phrase the popup).
@@ -25,6 +25,6 @@ inline constexpr const char* kGameTarget = "@VOTVCOOP_GAME_TARGET@";
 // Boot-banner label (the build number is appended at the log site -- protocol.h
 // owns it and this header must stay engine-independent).
 inline constexpr const char* kDisplayLabel =
-    "votv-coop (for VOTV Alpha @VOTVCOOP_GAME_TARGET@)";
+    "Multivoid (for VOTV Alpha @VOTVCOOP_GAME_TARGET@)";
 
 }  // namespace coop::version

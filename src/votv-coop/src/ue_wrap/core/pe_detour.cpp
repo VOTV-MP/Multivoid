@@ -116,7 +116,7 @@ inline void RecordCbBodyNs(void* function, unsigned long long ns) {
 // unpossessed-first-client AV flood -- still can't be pinned without it). These
 // pieces capture the faulting instruction pointer + the access address + the
 // containing module/RVA, so the next absorbed fault names its own site. A
-// votv-coop.dll RVA maps to a function via votv-coop.map (/MAP) +
+// payload-DLL RVA maps to a function via the payload .map (multivoid-*.map, /MAP) +
 // tools/maprva.py; a game-exe hit means the fault is inside a ProcessEvent-
 // dispatched UFunction on a bad object.
 thread_local D::TaskFaultInfo t_lastTaskFault{};
@@ -423,7 +423,7 @@ int RunTaskSEH(const Task& task) {
 // Resolve a faulting IP to "module+0xRVA" for the log. C++ (uses Win32 + a
 // thread-local buffer); called only from C++ bodies (Pump / LogObserverAv),
 // never from the SEH-only Run*SEH frames. The logged RVA is ASLR-independent
-// (ip - runtime base), so it maps directly against votv-coop.map's
+// (ip - runtime base), so it maps directly against the payload .map's
 // preferred-base RVAs.
 const char* FormatModuleRva(void* ip) {
     static thread_local char buf[320];

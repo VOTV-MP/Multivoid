@@ -69,7 +69,7 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[probe] seed FAILED: {e}")
 
-    host_log = mp.HOST_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
     code = 2
     try:
         host_pid = mp.launch_peer("host", mp.DEFAULT_PORT, "Host", peer=None,

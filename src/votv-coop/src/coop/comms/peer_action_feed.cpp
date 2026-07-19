@@ -14,7 +14,7 @@
 namespace coop::peer_action_feed {
 namespace {
 
-// Default ON; the persisted value (votv-coop.ini ui.chat.peer_actions) is loaded on
+// Default ON; the persisted value (multivoid.ini ui.chat.peer_actions) is loaded on
 // first access (Enabled/Announce) via g_loadOnce -- no session-install hook needed.
 std::atomic<bool> g_enabled{true};
 std::once_flag    g_loadOnce;

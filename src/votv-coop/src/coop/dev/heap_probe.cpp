@@ -223,7 +223,7 @@ void Report() {
     const size_t kTop = 12;
     for (size_t i = 0; i < sites.size() && i < kTop; ++i) {
         const Site& s = sites[i].second;
-        // Render the module frames as RVAs: resolve via build/votv-coop/Release/votv-coop.map.
+        // Render the module frames as RVAs: resolve via build/votv-coop/Release/multivoid-*.map.
         char chain[160];
         int off = 0;
         for (int f = 0; f < kFrames && s.frames[f]; ++f) {

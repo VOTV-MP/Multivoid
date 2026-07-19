@@ -204,7 +204,7 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
                             (cfg::ReadEnv("VOTVCOOP_FRESH") == "1") ||
                             (cfg::ReadIniValue("fresh_boot", "0") == "1"));
     // STORY save slot: an explicit override (the v56 coop slot) > env VOTVCOOP_SAVE (the test
-    // launcher pins the HOST's save per run -- mp.py sets it) > votv-coop.ini "save=<slot>" >
+    // launcher pins the HOST's save per run -- mp.py sets it) > multivoid.ini "save=<slot>" >
     // default s_may2026. Coop targets story mode, so we never boot the sandbox map fresh.
     std::wstring slot;
     if (slotOverride) {

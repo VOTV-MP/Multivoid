@@ -1,5 +1,5 @@
-# capture-kerfur-repro.ps1 -- snapshot BOTH peers' live votv-coop.log the moment a kerfur repro
-# symptom is on screen, BEFORE any relaunch clobbers them (votv-coop.log truncates on launch).
+# capture-kerfur-repro.ps1 -- snapshot BOTH peers' live multivoid.log the moment a kerfur repro
+# symptom is on screen, BEFORE any relaunch clobbers them (multivoid.log truncates on launch).
 #
 # Usage (run at the symptom moment, games can still be running):
 #   pwsh -File tools/capture-kerfur-repro.ps1
@@ -13,8 +13,8 @@
 param([string]$Tag = "")
 
 $root = Split-Path -Parent $PSScriptRoot
-$hostLog   = Join-Path $root "Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
-$clientLog = Join-Path $root "Game_0.9.0n_CLIENT_1\WindowsNoEditor\VotV\Binaries\Win64\votv-coop.log"
+$hostLog   = Join-Path $root "Game_0.9.0n_HOST\WindowsNoEditor\VotV\Binaries\Win64\multivoid.log"
+$clientLog = Join-Path $root "Game_0.9.0n_CLIENT_1\WindowsNoEditor\VotV\Binaries\Win64\multivoid.log"
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $name  = if ($Tag) { "kerfur_repro_${stamp}_$Tag" } else { "kerfur_repro_$stamp" }

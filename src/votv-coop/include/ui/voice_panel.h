@@ -5,7 +5,7 @@
 // set); the open state latches until V / the window's X closes it.
 //
 // Setters write atomics (safe from the render thread); device/mode changes
-// rewrite votv-coop.ini then RequestDevicesRestart() -- the reopen happens on
+// rewrite multivoid.ini then RequestDevicesRestart() -- the reopen happens on
 // the next game tick, never here. Render thread only.
 
 #pragma once

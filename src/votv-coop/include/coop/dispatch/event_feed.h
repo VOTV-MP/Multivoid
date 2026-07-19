@@ -20,7 +20,7 @@ namespace net { class Session; }
 
 namespace event_feed {
 
-// The local player's display name (sent in our Join). From votv-coop.ini "net.nick".
+// The local player's display name (sent in our Join). From multivoid.ini "net.nick".
 void SetLocalNickname(const std::wstring& nick);
 
 // Reset per-slot caches before session.Start. File-scope state (Join-sent

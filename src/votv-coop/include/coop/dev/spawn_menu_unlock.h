@@ -10,7 +10,7 @@
 // spawnmenu-open UFunction (ue_wrap::spawn_menu::Open), reproducing a real Q press.
 //
 // DEV feature contract:
-//   - OFF by default (boot force-on only via votv-coop.ini [dev] spawn_menu_unlock=1).
+//   - OFF by default (boot force-on only via multivoid.ini [dev] spawn_menu_unlock=1).
 //   - CLIENT-LOCKED via coop::dev_gate (a joined client can never enable it / its
 //     key watcher auto-disables the instant this peer becomes a client).
 //   - Gated so it never affects normal play: nothing happens unless the toggle is

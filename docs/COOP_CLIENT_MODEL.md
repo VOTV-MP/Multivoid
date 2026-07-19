@@ -118,10 +118,10 @@ OFFLINE (dev machine, tools/client_model/):   [DONE, automated]
    → ue_tex.py        → tex_hl_einstein_v1sc.uasset/.uexp (atlas.png → cooked UTexture2D, §8 rename)
    → repak pack       → hl_einstein_v1sc.pak        (VotV/Content/Mods/VOTVCoop/*, V11, 4 files)
 SHIP: hl_einstein_v1sc.pak deployed to EVERY peer by tools/deploy-all.ps1
-      (Content/Paks/LogicMods/votv-coop/; the pre-rename scientist.pak is auto-removed).
+      (Content/Paks/LogicMods/multivoid/; the pre-rename scientist.pak is auto-removed).
 RUNTIME (mod):   [v93 SKINS, AS-BUILT 2026-07-02 late evening -- REPLACED the role gate (RULE 2)]
-  UE auto-mounts every pak in LogicMods/votv-coop → each PLAYER carries a skin NAME
-  (votv-coop.ini player_skin=, next to player_guid; a NEW identity rolls a RANDOM starter
+  UE auto-mounts every pak in LogicMods/multivoid → each PLAYER carries a skin NAME
+  (multivoid.ini player_skin=, next to player_guid; a NEW identity rolls a RANDOM starter
   from the curated 6-list ∩ present paks -- walter/sci/rvi_scientist/luther/twhl2/twhl3,
   fallback hl_einstein_v1sc; `4570180e` -- persisted once like the guid; picked in
   F1 > Cosmetics > Skins) → the name rides the Join payload (after the guid) + PlayerJoined
@@ -142,7 +142,7 @@ the v1-profile re-cook are AS-BUILT, hands-on pending -- runbook
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
 adding a NEW model is `mdl_extract → repose.py apply → ue_cook → repak` (no Blender) --
 or ONE run of the portable converter (§4). Drop the pak (+ preview png/bmp) into
-LogicMods/votv-coop on EVERY peer and it appears in everyone's F1 browser.
+LogicMods/multivoid on EVERY peer and it appears in everyone's F1 browser.
 
 ---
 
@@ -173,9 +173,9 @@ LogicMods/votv-coop on EVERY peer and it appears in everyone's F1 browser.
 ## 3. RUNTIME: load the pak + apply + TEST  [pak/load/apply mechanics PROVEN 320c0ab4 + 8df26e05; the delivery POLICY is now the v93 SKINS system, AS-BUILT 2026-07-02 late evening]
 
 > **v93 SKINS (the current policy layer, replaced the role gate -- RULE 2):** every player
-> carries a persisted skin NAME (`votv-coop.ini player_skin=`, next to `player_guid=`;
+> carries a persisted skin NAME (`multivoid.ini player_skin=`, next to `player_guid=`;
 > default `hl_einstein_v1sc`; F1 > Cosmetics > Skins to change, gmod-style tiles). Name =
-> pak stem in `LogicMods/votv-coop/` ("dr_kel" = native). Announce: Join field (after
+> pak stem in `LogicMods/multivoid/` ("dr_kel" = native). Announce: Join field (after
 > guid) + PlayerJoined field (after nick) + live `SkinChange` (kind 82, host-relayed,
 > forgery-guarded). Apply: `client_model::ApplySkinToBody` (both body slots + slot-0 MID
 > 'tex'; dr_kel = pristine native mesh from `local_body::NativeBodyMesh()` + material-
@@ -218,7 +218,7 @@ VOTV ships reflection-callable pak plugins (call via the mod's `R::FindClass` /
 - `URyRuntimePakHelpers::MountPakFile(FString path) → bool` — mount from an explicit path.
 - `UPakLoaderLibrary::{MountPakFile, GetPakFileObject, GetPakFileClass}` — 2nd plugin (fallback).
 - **UE4 auto-mounts any `.pak` under `Content/Paks/` at startup.** Simplest deploy:
-  drop `hl_einstein_v1sc.pak` at `…/VotV/Content/Paks/LogicMods/votv-coop/`; it's
+  drop `hl_einstein_v1sc.pak` at `…/VotV/Content/Paks/LogicMods/multivoid/`; it's
   mounted before the mod boots → the mesh is resident → `LoadObject` returns it. Mount
   root `/Game/Mods/VOTVCoop/`.
 - Call context: resolve the plugin CDO/target + `FindFunction` + `ParamFrame` (mirror

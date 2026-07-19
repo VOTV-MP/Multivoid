@@ -8,8 +8,8 @@
 // around CBanManager (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.cpp)
 // -- persistent identity records with nick + timestamps, file-backed.
 //
-// Persistence: votv-coop-players.txt next to the deployed DLL (the ban_list /
-// votv-coop.ini convention) -- one record per line, `guid|nick|lastSeenUnix|ip`.
+// Persistence: multivoid-players.txt next to the deployed DLL (the ban_list /
+// multivoid.ini convention) -- one record per line, `guid|nick|lastSeenUnix|ip`.
 // Only the HOST ever writes it (the touch points are host-role paths); each game
 // copy keeps its own file.
 //

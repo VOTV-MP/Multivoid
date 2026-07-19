@@ -21,7 +21,7 @@ bool g_opened = false;
 std::atomic<Sink> g_sink{nullptr};
 
 // Build "<dir of this DLL>\<logfile>". The filename is VOTVCOOP_LOG if set, else
-// votv-coop.log -- so the two-instance LAN test can give each process its own log
+// multivoid.log -- so the two-instance LAN test can give each process its own log
 // (both instances load the SAME DLL from the SAME dir; without this they would
 // clobber one shared file).
 void LogPath(wchar_t (&out)[MAX_PATH]) {
@@ -42,7 +42,7 @@ void LogPath(wchar_t (&out)[MAX_PATH]) {
     }
     wchar_t name[64] = {};
     if (::GetEnvironmentVariableW(L"VOTVCOOP_LOG", name, 64) == 0 || name[0] == L'\0')
-        wcscpy_s(name, L"votv-coop.log");
+        wcscpy_s(name, L"multivoid.log");
     wcscat_s(out, name);
 }
 
@@ -57,7 +57,7 @@ void EnsureOpen() {
         LogPath(path);
         // Preserve the PREVIOUS session's log before the open below truncates it. Real
         // users hit a problem then often relaunch before sending the log; one level of
-        // history (votv-coop.prev.log) means the bug session survives that relaunch. The
+        // history (multivoid.prev.log) means the bug session survives that relaunch. The
         // prior process has exited (each launch is a fresh process), so the rename is safe.
         {
             wchar_t prev[MAX_PATH] = {};
@@ -94,7 +94,7 @@ void Init() {
     EnsureOpen();
     if (!g_file) return;
     ::EnterCriticalSection(&g_lock);
-    std::fprintf(g_file, "==== votv-coop log ====\n");
+    std::fprintf(g_file, "==== Multivoid log ====\n");
     std::fflush(g_file);
     ::LeaveCriticalSection(&g_lock);
 }

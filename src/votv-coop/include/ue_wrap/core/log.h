@@ -1,6 +1,6 @@
 // ue_wrap/log.h -- minimal levelled logger for the standalone mod.
 //
-// Writes to votv-coop.log next to the mod DLL. The point is fast diagnosis:
+// Writes to multivoid.log next to the mod DLL. The point is fast diagnosis:
 // when the mod is brought up against a new game build and something is wrong,
 // the log says exactly which primitive failed to resolve or validate, instead
 // of a silent crash. Thread-safe; lazy-initialises on first use.

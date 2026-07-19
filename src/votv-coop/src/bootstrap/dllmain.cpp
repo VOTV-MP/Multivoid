@@ -1,4 +1,4 @@
-// votv-coop standalone bootstrap.
+// multivoid standalone bootstrap.
 //
 // Entry point for the STANDALONE mod DLL (RULE No.3 -- no UE4SS at runtime).
 // At this stage it only proves the loader + build pipeline: on load it
@@ -44,7 +44,7 @@ void WriteMarker() {
         const size_t dirLen = static_cast<size_t>(lastSep - dllPath) + 1;
         wcsncpy_s(markerPath, dllPath, dirLen);
     }
-    wcscat_s(markerPath, L"votv-coop-loaded.txt");
+    wcscat_s(markerPath, L"multivoid-loaded.txt");
 
     FILE* f = nullptr;
     if (_wfopen_s(&f, markerPath, L"a") == 0 && f) {
@@ -53,7 +53,7 @@ void WriteMarker() {
         localtime_s(&tm, &now);
         char ts[32] = {};
         std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
-        std::fprintf(f, "[%s] votv-coop standalone bootstrap loaded into PID %lu (no UE4SS)\n",
+        std::fprintf(f, "[%s] multivoid standalone bootstrap loaded into PID %lu (no UE4SS)\n",
                      ts, ::GetCurrentProcessId());
         std::fclose(f);
     }
@@ -63,11 +63,11 @@ DWORD WINAPI BootThread(LPVOID) {
     WriteMarker();
     // Standalone SDK health check (resolves GUObjectArray / FName::ToString /
     // ProcessEvent via AOB, then functionally validates them). Logs a PASS/FAIL
-    // report to votv-coop.log -- our own SDK access, no UE4SS.
+    // report to multivoid.log -- our own SDK access, no UE4SS.
     ue_wrap::log::Init();
     UE_LOGI("==== %s ====", coop::version::kDisplayLabel);
     // The Paper-pair identity line: game target + build number (= kProtocolVersion).
-    UE_LOGI("boot: votv-coop %s b%u", coop::version::kGameTarget,
+    UE_LOGI("boot: Multivoid %s b%u", coop::version::kGameTarget,
             static_cast<unsigned>(coop::net::kProtocolVersion));
     // Build triage line (v122): discriminates same-proto rebuilds in bug reports
     // (banner-only -- never announced, never gated; the DLL hash stays the deploy

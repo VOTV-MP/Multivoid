@@ -11,7 +11,7 @@
 #include "coop/props/pile_spawn_bind.h"
 
 #include "coop/element/quiescence_drain.h"  // ArmPendingSaveTimeTwin (the spawn mechanism CAPTURES into the order owner)
-#include "coop/config/config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (votv-coop.ini [dev], not bats/env)
+#include "coop/config/config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (multivoid.ini [dev], not bats/env)
 #include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
 #include "coop/props/save_time_retire_util.h"  // UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
 #include "coop/props/trash_proxy.h"  // NearestPileProxy (the L1 orphan census)
@@ -61,7 +61,7 @@ int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orp
 
 // [PILE-DELTA]/[PILE-CENSUS] probe gate (L1 orphan histogram), read ONCE + cached. Ships dark (off => zero
 // cost). When on, logs the per-orphan nearest-proxy/native deltas so we can band the host-drift orphans
-// (0-5cm near-miss vs >30cm true drift). HANDS-ON FLAG: votv-coop.ini [dev] `pile_delta_probe=1` (the
+// (0-5cm near-miss vs >30cm true drift). HANDS-ON FLAG: multivoid.ini [dev] `pile_delta_probe=1` (the
 // established probe pattern; the user toggles the ini, NOT the launch bats). The env is the autonomous
 // mp.py-harness override only. [[feedback-test-flags-in-ini-not-bats-or-env]] Used by TryDestroyTwin's
 // delta-log AND LogCensus's verbose mode -- ONE concept, ONE gate, file-local to this module.

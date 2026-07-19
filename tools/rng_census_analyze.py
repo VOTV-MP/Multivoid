@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rng_census_analyze.py -- T1 fork-call adjudication over rng_roll_census logs.
 
-Parses both peers' votv-coop logs for the probe v9 [RNG-CENSUS] records and
+Parses both peers' multivoid logs for the probe v9 [RNG-CENSUS] records and
 produces the PRE-REGISTERED adjudication table (docs/COOP_RNG_AUTHORITY.md,
 "T1 PRE-REGISTRATION"): one row per pre-registered T1-1 shared-world spawner,
 vocabulary live / armed / confirmed-starved / DONE-suppressed / CONDITIONAL,
@@ -176,9 +176,9 @@ def adjudicate(client, allow, ambient):
 
 def main():
     host_log = (sys.argv[1] if len(sys.argv) > 1 else
-                str(ROOT / "Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log"))
+                str(ROOT / "Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log"))
     client_log = (sys.argv[2] if len(sys.argv) > 2 else
-                  str(ROOT / "Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/votv-coop.log"))
+                  str(ROOT / "Game_0.9.0n_CLIENT_1/WindowsNoEditor/VotV/Binaries/Win64/multivoid.log"))
     host, client = parse(host_log), parse(client_log)
     allow, ambient = suppressed_sets()
     rows = adjudicate(client, allow, ambient)

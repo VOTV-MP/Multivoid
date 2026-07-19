@@ -8,7 +8,7 @@ foreach ($f in $folders) {
     if (-not (Test-Path $f)) { Write-Output "MISSING: $f"; continue }
     Write-Output "=== $f ==="
     Get-ChildItem $f -Filter "*.dll" | Where-Object { $_.Name -match 'xinput|multivoid|votv-coop|UE4SS|dwmapi' } | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
-    Get-ChildItem $f -Filter "votv-coop*.log" -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
+    Get-ChildItem $f -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(multivoid|votv-coop).*\.log$' } | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
     $sc = Join-Path $f "scenario.txt"
     if (Test-Path $sc) { Write-Output ("scenario.txt = '" + (Get-Content $sc -Raw) + "' (mtime " + (Get-Item $sc).LastWriteTime + ")") }
     $exe = Join-Path $f "VotV-Win64-Shipping.exe"

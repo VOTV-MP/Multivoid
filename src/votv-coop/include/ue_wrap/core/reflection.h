@@ -304,7 +304,7 @@ void EngineFree(void* enginePtr);
 // allocator matched. Returns nullptr until GMalloc is resolved or on a zero size. Any thread.
 void* EngineAlloc(size_t size, uint32_t align = 0);
 
-// Boot health check (logs to votv-coop.log via ue_wrap::log): detect+log the
+// Boot health check (logs to multivoid.log via ue_wrap::log): detect+log the
 // game/engine version, resolve every primitive, then FUNCTIONALLY validate them
 // (name round-trip, known-class lookups) and print a PASS/FAIL verdict. On a new
 // game build this is the fast path to "what broke" -- it pinpoints the failing

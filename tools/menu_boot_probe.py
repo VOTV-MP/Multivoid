@@ -31,7 +31,7 @@ import time
 import mp
 
 WATCH_S = 35
-LOG = mp.HOST_DIR / "votv-coop.log"
+LOG = mp.HOST_DIR / "multivoid.log"
 GAMEPLAY_MARKERS = [
     "target STORY save",
     "==== PLAY READY ====",

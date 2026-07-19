@@ -50,7 +50,7 @@ Copies the probe into the dev copy's UE4SS `Mods/` and enables it in
 
 - Probes depend on UE4SS at runtime.
 - Probes write to UE4SS's `UE4SS.log` (separate from our
-  `votv-coop.log`).
+  `multivoid.log`).
 - Probes are debug-grade — no robustness against missing classes /
   half-loaded state.
 

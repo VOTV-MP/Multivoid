@@ -74,8 +74,8 @@ def main() -> None:
         print("FATAL: signaling/master exited immediately")
         sys.exit(1)
 
-    host_log = mp.HOST_DIR / "votv-coop.log"
-    client_log = mp.CLIENT_DIR / "votv-coop.log"
+    host_log = mp.HOST_DIR / "multivoid.log"
+    client_log = mp.CLIENT_DIR / "multivoid.log"
     lobby_id = None
     host_booted = world_loaded = connected = accepted = False
     code = 2
