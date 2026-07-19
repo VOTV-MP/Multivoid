@@ -16,7 +16,7 @@
 //   - coop/grab_observer.cpp (grab state reads + PHC release)
 //   - coop/net_pump.cpp (grab state read for held-prop replication)
 //   - coop/remote_prop.cpp (ReleaseMainPlayerGrabIfHolding on destroy)
-//   - harness/autotest.cpp (grab-pair writes + component-ptr reads)
+//   - harness/autotest/autotest_grab.cpp (grab-pair writes + component-ptr reads)
 //
 // Anon-namespace caches in this TU are file-private per the engine_pawn
 // precedent (independent FindClass per TU, no header-level shared cache).

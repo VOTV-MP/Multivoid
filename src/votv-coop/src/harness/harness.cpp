@@ -137,7 +137,7 @@ void TickShutdownHooks() {
     coop::shutdown::UpdateWindowTitle();
 }
 
-// Autonomous grab test moved to harness/autotest.cpp.
+// Autonomous grab test moved to harness/autotest/autotest_grab.cpp.
 
 // NetPumpTick body extracted to coop/net_pump.cpp (PR-4.13). Harness call
 // sites in the timeline tick lambdas dispatch via

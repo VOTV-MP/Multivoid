@@ -112,7 +112,7 @@ uint32_t HashClassName(const wchar_t* utf16);
 
 // Autonomous-test entry point. Flips `mainPlayer.flashlight @0x0838`
 // directly + invokes our send path with the new state. Used by the
-// LAN flashlight test (harness/autotest.cpp) to drive toggles without
+// LAN flashlight test (harness/autotest/autotest_flashlight.cpp) to drive toggles without
 // relying on the BP graph (calling 'Flashlight Update' via reflection
 // runs the graph but doesn't actually toggle the bool -- the BP is
 // gated on input-state we can't fake from reflection). Returns the
