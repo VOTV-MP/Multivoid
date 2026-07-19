@@ -137,7 +137,8 @@ Open: if a trash material has no `impact` row the land is silent (logs `land thu
 ## RULE-2 / cleanup queue (after sound-events)
 - Retire `EidForAimedPileProxy`-for-pile (the camera cone is dead once all resting piles are native).
 - Convert the in-bracket join-window level-pile path from `TryDestroyTwin`-destroy to bind-the-loaded-native.
-- `remote_prop.cpp` is ~1160 LOC (past the 800 soft cap) → extract `OnConvert` into `remote_prop_convert.cpp`.
+- ~~`remote_prop.cpp` is ~1160 LOC (past the 800 soft cap) → extract `OnConvert` into `remote_prop_convert.cpp`.~~
+  **DONE 2026-07-19 s28 `6c910046`** (remote_prop 758 after the +physics cut `d0c7879e`).
 
 ## Git
 `origin/main` `4028c571`; HEAD `fa8bc344` (6 ahead: `f79bbe84`, `530c2f7c`, `abfaaed8`, `dabf84de`, `3b72aba0`,

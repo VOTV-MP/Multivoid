@@ -130,7 +130,7 @@ skeleton commit and never updated as Phase 1 closed each item).
 2. [DONE] `SpawnActor` of a 2nd pawn (mainPlayer_C orphan) spawns + ticks:
    `engine.cpp:526` SpawnActor (commit 79236cb9), wired live via
    `RemotePlayer::Spawn` (remote_player.cpp:157) on join (net_pump.cpp:862);
-   AnimBP forced-tick (puppet.cpp:549), driven per-frame by ApplyToEngine.
+   AnimBP forced-tick (puppet_spawn.cpp:365 SetAnimTickAlways, post-s28), driven per-frame by ApplyToEngine.
    NOTE: the evolved design deliberately spawns an UNPOSSESSED orphan — no 2nd
    PlayerController (engine.cpp:559-575); `GetController()==nullptr` is the
    puppet discriminator (see CLAUDE.md). Visible-2nd-player subsystem shipped

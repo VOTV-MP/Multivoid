@@ -198,7 +198,7 @@ the existing homes, MTA-check the shape, audit after.
 
 - ~~`prop_lifecycle.cpp:379-510`~~ take-obj observers + `InstallInventory` (now `prop_container_extract.cpp`, `a7f02f22`)
 - `trash_collect_sync.cpp` — BeginDeferredSpawn observer + `EnsureHeldItemBroadcast` (line refs shifted by the `fb490e36` thunk retirement)
-- `remote_prop.cpp:814-1071` — `OnConvert` (grab-driven form change)
+- `remote_prop_convert.cpp` — `OnConvert` (grab-driven form change; extracted from remote_prop.cpp s28 `6c910046`)
 The includes already point at an existing intended home: **`coop/props/grab_observer`**.
 **Plan:** consolidate the grab/held-item observers + broadcast into `grab_observer.{h,cpp}`
 as the single owner (CAPTURE the grab edge in one place; other modules subscribe). B1a (above)
@@ -230,7 +230,7 @@ if that keeps the tracker under the soft cap). save_transfer/net_pump keep only 
 call. This is also the single biggest LOC relief for net_pump (1183->~850) and save_transfer.
 
 ### B3. "Conversion / adoption" squats across three files
-- `remote_prop.cpp:814-1071` — `OnConvert` apply
+- `remote_prop_convert.cpp` — `OnConvert` apply (extracted s28 `6c910046`)
 - `kerfur_convert.cpp:398-737` (~340 LOC) — parked-ghost claim/adopt machinery
 - `remote_prop_spawn.cpp:~600-700` — kerfur fuzzy-match + rekey
 Existing homes referenced from net_pump: **`coop/creatures/npc_adoption`** +

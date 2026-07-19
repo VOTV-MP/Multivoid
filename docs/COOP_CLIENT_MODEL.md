@@ -153,7 +153,8 @@ LogicMods/votv-coop on EVERY peer and it appears in everyone's F1 browser.
   pelvis, belly, chest, neck, head, upperarm/forearm/hand L+R + fingers, thigh/lowerLeg/
   foot L+R + IK/FK). VOTV ships many skins on this rig — anthro-skin-swap is native.
 - Puppet spawn: `ue_wrap::puppet::SpawnPuppetMainPlayer()`
-  (`src/votv-coop/src/ue_wrap/puppet.cpp:341-680`); mesh+anim applied at `:525`.
+  (`src/votv-coop/src/ue_wrap/actors/puppet_spawn.cpp` since the s28 cut `ca12e11d`; mesh+anim
+  applied in its body — was puppet.cpp:341-680/:525 pre-s28).
 - Appearance seam: `RemotePlayer::Spawn()`
   (`src/votv-coop/src/coop/player/remote_player.cpp`): `:87` reads local skin
   (`Pup::GetMeshPlayerVisibleAsset`), `:92` AnimBP class
@@ -493,7 +494,7 @@ originally deferred.
 - `tools/client_model/repose.py` + `profiles/` (library; v2 wide = default) — repose automation (§5).
 - `research/findings/architecture-audits/votv-mp-pak-mount-feasibility-2026-05-25.md` — pak plugins, auto-mount,
   the LoadObject POC (basis for §3A).
-- Code seams: `coop/player/remote_player.cpp:87/92/158`, `ue_wrap/puppet.cpp:341-680,525`,
+- Code seams: `coop/player/remote_player.cpp:87/92/158`, `ue_wrap/actors/puppet_spawn.cpp` (SpawnPuppetMainPlayer; s28),
   `ue_wrap/engine_component.cpp:212-222,241-250`.
 - SourceIO (`tools/SourceIO/`) — the Blender addon that imports GoldSrc `.mdl` natively
   (used for the manual example); psk-psa (`reference/psk-psa-v9.1.2/`) — PSK import/export.

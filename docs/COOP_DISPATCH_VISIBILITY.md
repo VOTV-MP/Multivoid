@@ -244,7 +244,7 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
   `16ac153f`, FAILED). **Carry JANK — FIXED [V hands-on]** (shipped `df158728`): the `key.len=4`→keyless theory
   was DISPROVEN by bytecode (BP `GetKey` returns the FName `"None"` for BOTH `prop_garbageClump_C` and
   `actorChipPile_C`, so `key.len=4` is the literal string "None"; the receiver already guards
-  `keyW != "None"`→eid at `remote_prop.cpp:403`, so forcing keyless was a no-op). REAL root (code-proven): an
+  `keyW != "None"`→eid at `remote_prop.cpp:403` then, `:177` post-s28, so forcing keyless was a no-op). REAL root (code-proven): an
   interpolation PHASE-STALL — `BeginLerpToPose` set `lerpStartMs=nowMs`, `AdvanceLerp` sampled the same `nowMs`
   → alpha=0 every new-pose tick at vsync-60. FIX = fixed-delay snapshot interpolation (`remote_prop.cpp`
   ActiveDrive buffers 2 timestamped poses, renders `nowMs-span` behind; MTA `CClientVehicle` shape) — user
