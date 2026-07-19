@@ -283,7 +283,9 @@ player input → `DiscreteDiffer` (console_state_sync.cpp:197-200, the v64-inc2
 broadcast at exactly the poll rate, indefinitely, while idle. The v64
 classification ("the 4 filter knob floats = pure knob state") is right for
 the SPEEDS, wrong for the OFFSETS. Scalars mapping (console_desk.cpp
-g_fields[0]/[1] → `DL_poFilterOffset @0x09F4` / `DL_FrFilterOffset @0x09F8`).
+g_fields[0]/[1] → `DL_poFilterOffset @0x09F4` / `DL_FrFilterOffset @0x09F8`;
+2026-07-19 `f74d05dc`: the positional table is gone — now the named
+`g_offDlPoFilterOffset`/`g_offDlFrFilterOffset` in the same file).
 
 **Fix:** drop the two OFFSET floats from `DiscreteDiffer` (keep speeds +
 active toggles — genuinely input-only); offsets still ride the full payload

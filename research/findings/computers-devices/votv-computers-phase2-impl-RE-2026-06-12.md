@@ -385,7 +385,9 @@ nothing. The two behavioral hazards on a LIVE mirror:
   repaints `widget.RichTextBlock_coordLog` + scrolls `scbox_coordLog2` to end.
 - `coord_coordLogText @0x0A68` — **referenced NOWHERE in the desk bytecode** (legacy dead
   field; always empty).
-- ⇒ **console_desk.cpp BUG (uncommitted impl):** `g_fields[20]` reads the dead
+- ⇒ **console_desk.cpp BUG (uncommitted impl, fixed same day; 2026-07-19
+  `f74d05dc` retired the positional g_fields table entirely — the live-log
+  offset is now the named `g_offCoordCoordLog2Text`):** `g_fields[20]` reads the dead
   `coord_coordLogText` (tail always empty) and `AppendCoordLog` calls the stub
   `writeToCoordLog` (silent no-op). Fix: read `coord_coordLog2Text`; append via
   `writeToCoordLog_2` — note the callee strips nothing but APPENDS `\r\n` per call, so the

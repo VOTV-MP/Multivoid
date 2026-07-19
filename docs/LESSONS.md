@@ -247,7 +247,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **The desk's `active_*` unit toggles are SETTER-EVENT-managed; `powerChanged` is FUSED.** Raw field
   writes leave mirror hums/lights dead (half of bug 3); the only native setter (powerChanged, 5 bools)
   runs EVERY unit's block incl. an UNCONDITIONAL stopSound — replicate each field's effects reflected
-  instead. *Look FIRST:* ue_wrap/console_desk.cpp ApplyActiveToggleEffects + uber [1113-1156].
+  instead. *Look FIRST:* ue_wrap/desk/console_desk.cpp ApplyActiveToggleEffects + uber [1113-1156].
   `memory/lesson_active_toggles_setter_events_powerchanged_fused.md`
 - **Follow MTA architecture when possible** (vendored `reference/mtasa-blue/`). `memory/feedback_follow_mta_architecture.md`
 - **A new `ReliableKind` wires in THREE places** — check the router checklist. `memory/feedback_reliablekind_router_checklist.md`
@@ -781,6 +781,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `votv-session-streams-extraction-DESIGN-2026-07-18.md`;
   `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `coop/dev/drive_selftest.cpp`.
   `memory/lesson_refactor_equivalence_frozen_digest_instrument.md`
+- **A positional resolve table makes a mid-row removal SILENTLY corrupting — and BOTH the literal-diff
+  instrument AND the compiler are blind to a missed index shift** (2026-07-19 comp_pane /qf R1: an
+  unshifted `FieldPtr(d, 7)` line is an exact HEAD match to a set-diff AND still compiles, so it reads
+  the WRONG FIELD with zero signals; a fresh-world smoke doesn't discriminate it either — zeros both
+  ways). Root fix = kill the class before extracting: self-binding `{L"name", &g_offVar}` rows + named
+  derefs in their OWN verified commit (`f74d05dc`), correspondence script w/ --mutate known-positive
+  (a swapped binding is invisible to ANY runtime dump — C++ can't reflect variable identity; the
+  lexical script is the only swap detector). *Look FIRST:*
+  `votv-comp-pane-extraction-DESIGN-2026-07-19.md`; `ue_wrap/desk/console_desk.cpp` FieldSlot rows.
+  `memory/lesson_positional_resolve_table_silent_shift.md`
 - **env/.bat host = HIDDEN lobby by design; the scoreboard listed-checkbox mirror LIES on that path**
   (2026-07-17: absence from the server browser after a .bat launch is NOT a bug — v56 rule, test
   lobbies must not pollute the list; but `AnnounceEnvHostHidden` bypasses `session_manager::SetListed`

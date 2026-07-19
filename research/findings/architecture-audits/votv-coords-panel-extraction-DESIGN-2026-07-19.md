@@ -46,7 +46,9 @@ residue (known-positive: the CP:: hits + the declaration caught).
   `console_desk: ui_coordinates` = 0 (stale-DLL negative); zero non-perf Warn/Error; client
   desk_diag read a live aim through the new path (`aim(sel=3 dir=1 view=5920,2960 ...)`).
 - Audit (code-reviewer agent): 6/6 sections PASS, 0 CRIT / 0 MAJOR. One procedural FLAG:
-  console_desk.cpp residual 822 > 800 — NOT single-concept (6 sub-surfaces); proposed next cut =
+  console_desk.cpp residual 822 > 800 — NOT single-concept (6 sub-surfaces); (RESOLVED same day:
+  the comp-pane cut shipped, `f74d05dc`+`f9dfb5d5` — console_desk 740, see
+  votv-comp-pane-extraction-DESIGN-2026-07-19.md) proposed next cut =
   the v70 signal-catch/download-machine surface (~150 LOC) or the comp pane (~110 LOC). Logged in
   MODULARIZATION_PLAN Ledger 3.
 
