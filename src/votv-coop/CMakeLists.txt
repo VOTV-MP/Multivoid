@@ -254,6 +254,7 @@ add_library(votv-coop SHARED
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
     src/coop/props/remote_prop.cpp
+    src/coop/props/remote_prop_convert.cpp
     src/coop/props/remote_prop_destroy.cpp
     src/coop/save/save_guard.cpp
     src/coop/world/balance_sync.cpp
