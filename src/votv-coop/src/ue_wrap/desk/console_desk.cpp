@@ -24,38 +24,65 @@ void* g_cls = nullptr;
 void* g_instance = nullptr;
 int32_t g_instanceIdx = -1;
 
-// Field offsets, FindPropertyOffset-resolved (recook-robust). Order matches
-// the resolve table below.
-struct FieldSlot { const wchar_t* name; int32_t off; };
+// Field offsets, FindPropertyOffset-resolved (recook-robust). NAMED variables
+// self-bound to their wire name by the resolve rows below (2026-07-19: the
+// positional g_fields table + magic indices were retired -- a removed row
+// could silently shift every later index; a named deref is lexically checked
+// by the correspondence script and cannot shift).
+int32_t g_offDlPoFilterOffset = -1;     // float
+int32_t g_offDlFrFilterOffset = -1;     // float
+int32_t g_offDlPoFilterSpeed = -1;      // float
+int32_t g_offDlFrFilterSpeed = -1;      // float
+int32_t g_offDlDownloading = -1;        // float
+int32_t g_offDlResDetecPercent = -1;    // float
+int32_t g_offCompProgress = -1;         // float
+int32_t g_offCoordCooldown = -1;        // float
+int32_t g_offPlayVolume = -1;           // int32
+int32_t g_offDlPolarityDir = -1;        // int32
+int32_t g_offCompMaxLevel = -1;         // int32
+int32_t g_offPlaySelectIndex = -1;      // int32
+int32_t g_offDlActiveFrFilter = -1;     // bool
+int32_t g_offDlActivePoFilter = -1;     // bool
+int32_t g_offActivePlay = -1;           // bool
+int32_t g_offActiveDownload = -1;       // bool
+int32_t g_offActiveCoords = -1;         // bool
+int32_t g_offActiveComp = -1;           // bool
+int32_t g_offCoordIsPing = -1;          // bool
+// (canDL left the set in v70 -- DERIVED state, see the Scalars header note.)
+int32_t g_offCoordCoordLog2Text = -1;   // FString -- the LIVE log (coord_coordLogText is dead)
+int32_t g_offCompData0 = -1;            // Fstruct_signalDataDynamic (0x70) -- the loaded signal
+int32_t g_offCompDownloading = -1;      // float -- per-tick decode increment (B\s readout)
+int32_t g_offCompIsDecodeActive = -1;   // bool -- the decode latch (mirrors never write true)
+
+struct FieldSlot { const wchar_t* name; int32_t* off; };
 FieldSlot g_fields[] = {
-    { L"DL_poFilterOffset",  -1 },  // [0] float
-    { L"DL_FrFilterOffset",  -1 },  // [1] float
-    { L"DL_poFilterSpeed",   -1 },  // [2] float
-    { L"DL_FrFilterSpeed",   -1 },  // [3] float
-    { L"DL_downloading",     -1 },  // [4] float
-    { L"DL_resDetecPercent", -1 },  // [5] float
-    { L"comp_progress",      -1 },  // [6] float
-    { L"coord_cooldown",     -1 },  // [7] float
-    { L"play_volume",        -1 },  // [8] int32
-    { L"DL_PolarityDir",     -1 },  // [9] int32
-    { L"comp_maxLevel",      -1 },  // [10] int32
-    { L"play_selectIndex",   -1 },  // [11] int32
-    { L"DL_activeFrFilter",  -1 },  // [12] bool
-    { L"DL_activePoFilter",  -1 },  // [13] bool
-    { L"active_play",        -1 },  // [14] bool
-    { L"active_download",    -1 },  // [15] bool
-    { L"active_coords",      -1 },  // [16] bool
-    { L"active_comp",        -1 },  // [17] bool
-    { L"coord_isPing",       -1 },  // [18] bool
-    // (canDL left the table in v70 -- DERIVED state, see the Scalars header note.)
-    { L"coord_coordLog2Text", -1 }, // [19] FString -- the LIVE log (coord_coordLogText is dead)
-    { L"comp_data_0",        -1 },  // [20] Fstruct_signalDataDynamic (0x70) -- the loaded signal
-    { L"comp_downloading",   -1 },  // [21] float -- per-tick decode increment (B\s readout)
-    { L"comp_isDecodeActive", -1 }, // [22] bool -- the decode latch (mirrors never write true)
+    { L"DL_poFilterOffset",   &g_offDlPoFilterOffset },
+    { L"DL_FrFilterOffset",   &g_offDlFrFilterOffset },
+    { L"DL_poFilterSpeed",    &g_offDlPoFilterSpeed },
+    { L"DL_FrFilterSpeed",    &g_offDlFrFilterSpeed },
+    { L"DL_downloading",      &g_offDlDownloading },
+    { L"DL_resDetecPercent",  &g_offDlResDetecPercent },
+    { L"comp_progress",       &g_offCompProgress },
+    { L"coord_cooldown",      &g_offCoordCooldown },
+    { L"play_volume",         &g_offPlayVolume },
+    { L"DL_PolarityDir",      &g_offDlPolarityDir },
+    { L"comp_maxLevel",       &g_offCompMaxLevel },
+    { L"play_selectIndex",    &g_offPlaySelectIndex },
+    { L"DL_activeFrFilter",   &g_offDlActiveFrFilter },
+    { L"DL_activePoFilter",   &g_offDlActivePoFilter },
+    { L"active_play",         &g_offActivePlay },
+    { L"active_download",     &g_offActiveDownload },
+    { L"active_coords",       &g_offActiveCoords },
+    { L"active_comp",         &g_offActiveComp },
+    { L"coord_isPing",        &g_offCoordIsPing },
+    { L"coord_coordLog2Text", &g_offCoordCoordLog2Text },
+    { L"comp_data_0",         &g_offCompData0 },
+    { L"comp_downloading",    &g_offCompDownloading },
+    { L"comp_isDecodeActive", &g_offCompIsDecodeActive },
 };
-// Scalars marshal indices: [6] comp_progress and [10] comp_maxLevel stay in
-// the table; comp_progress moved OFF the DeskState marshal in v65 (it rides
-// CompState from the simulating peer -- see the comp section below).
+// Scalars marshal: comp_progress and comp_maxLevel both resolve here;
+// comp_progress moved OFF the DeskState marshal in v65 (it rides CompState
+// from the simulating peer -- see the comp section below).
 
 // The parameterless screen-refresh verbs WriteScalars runs after the raw
 // writes -- the same upd* family setData's own apply chain uses, so a mirror
@@ -154,8 +181,8 @@ void ResolvePass() {
     if (!g_cls) return;
     bool all = true;
     for (auto& f : g_fields) {
-        if (f.off < 0) f.off = R::FindPropertyOffset(g_cls, f.name);
-        if (f.off < 0) all = false;
+        if (*f.off < 0) *f.off = R::FindPropertyOffset(g_cls, f.name);
+        if (*f.off < 0) all = false;
     }
     for (auto& r : g_refresh) {
         if (!r.fn) r.fn = R::FindFunction(g_cls, r.name);
@@ -233,6 +260,14 @@ void ResolvePass() {
 
     if (all && !g_coreResolved) {
         g_coreResolved = true;
+        // One-shot name:offset dump (conversion acceptance: diffable against
+        // the offsets the previous build logged + the header reference values).
+        char dump[900]; size_t dp = 0; int di = 0;
+        for (auto& f : g_fields) {
+            dp += snprintf(dump + dp, sizeof(dump) - dp, "%ls=0x%X ", f.name, *f.off);
+            if (++di == 12) { UE_LOGI("console_desk: offsets[1/2] -- %s", dump); dp = 0; dump[0] = 0; }
+        }
+        UE_LOGI("console_desk: offsets[2/2] -- %s", dump);
         int fns = 0;
         for (auto& r : g_refresh) if (r.fn) ++fns;
         UE_LOGI("console_desk: resolved -- 23/23 fields, %d/9 refresh verbs (+updComp=%s), "
@@ -253,10 +288,12 @@ void ResolvePass() {
     }
 }
 
+// Typed field deref. NO validity check -- every call site is behind its
+// function's g_coreResolved gate or an explicit off<0 check (R2 census,
+// /qf 2026-07-19).
 template <class T>
-T* FieldPtr(void* obj, int idx) {
-    if (g_fields[idx].off < 0) return nullptr;
-    return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + g_fields[idx].off);
+T* OffPtr(void* obj, int32_t off) {
+    return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
 // Engine FString view: {wchar_t* data; int32 num (incl. NUL); int32 max}.
@@ -288,24 +325,24 @@ void* Instance() {
 bool ReadScalars(Scalars& out) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    out.dlPoFilterOffset  = *FieldPtr<float>(d, 0);
-    out.dlFrFilterOffset  = *FieldPtr<float>(d, 1);
-    out.dlPoFilterSpeed   = *FieldPtr<float>(d, 2);
-    out.dlFrFilterSpeed   = *FieldPtr<float>(d, 3);
-    out.dlDownloading     = *FieldPtr<float>(d, 4);
-    out.dlResDetecPercent = *FieldPtr<float>(d, 5);
-    out.coordCooldown     = *FieldPtr<float>(d, 7);
-    out.playVolume        = *FieldPtr<int32_t>(d, 8);
-    out.dlPolarityDir     = *FieldPtr<int32_t>(d, 9);
-    out.compMaxLevel      = *FieldPtr<int32_t>(d, 10);
-    out.playSelectIndex   = *FieldPtr<int32_t>(d, 11);
-    out.dlActiveFrFilter  = *FieldPtr<bool>(d, 12);
-    out.dlActivePoFilter  = *FieldPtr<bool>(d, 13);
-    out.activePlay        = *FieldPtr<bool>(d, 14);
-    out.activeDownload    = *FieldPtr<bool>(d, 15);
-    out.activeCoords      = *FieldPtr<bool>(d, 16);
-    out.activeComp        = *FieldPtr<bool>(d, 17);
-    out.coordIsPing       = *FieldPtr<bool>(d, 18);
+    out.dlPoFilterOffset  = *OffPtr<float>(d, g_offDlPoFilterOffset);
+    out.dlFrFilterOffset  = *OffPtr<float>(d, g_offDlFrFilterOffset);
+    out.dlPoFilterSpeed   = *OffPtr<float>(d, g_offDlPoFilterSpeed);
+    out.dlFrFilterSpeed   = *OffPtr<float>(d, g_offDlFrFilterSpeed);
+    out.dlDownloading     = *OffPtr<float>(d, g_offDlDownloading);
+    out.dlResDetecPercent = *OffPtr<float>(d, g_offDlResDetecPercent);
+    out.coordCooldown     = *OffPtr<float>(d, g_offCoordCooldown);
+    out.playVolume        = *OffPtr<int32_t>(d, g_offPlayVolume);
+    out.dlPolarityDir     = *OffPtr<int32_t>(d, g_offDlPolarityDir);
+    out.compMaxLevel      = *OffPtr<int32_t>(d, g_offCompMaxLevel);
+    out.playSelectIndex   = *OffPtr<int32_t>(d, g_offPlaySelectIndex);
+    out.dlActiveFrFilter  = *OffPtr<bool>(d, g_offDlActiveFrFilter);
+    out.dlActivePoFilter  = *OffPtr<bool>(d, g_offDlActivePoFilter);
+    out.activePlay        = *OffPtr<bool>(d, g_offActivePlay);
+    out.activeDownload    = *OffPtr<bool>(d, g_offActiveDownload);
+    out.activeCoords      = *OffPtr<bool>(d, g_offActiveCoords);
+    out.activeComp        = *OffPtr<bool>(d, g_offActiveComp);
+    out.coordIsPing       = *OffPtr<bool>(d, g_offCoordIsPing);
     return true;
 }
 
@@ -320,24 +357,24 @@ bool ReadFreqPolData(float& frData, float& poData) {
 bool WriteScalars(const Scalars& in) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    *FieldPtr<float>(d, 0)  = in.dlPoFilterOffset;
-    *FieldPtr<float>(d, 1)  = in.dlFrFilterOffset;
-    *FieldPtr<float>(d, 2)  = in.dlPoFilterSpeed;
-    *FieldPtr<float>(d, 3)  = in.dlFrFilterSpeed;
-    *FieldPtr<float>(d, 4)  = in.dlDownloading;
-    *FieldPtr<float>(d, 5)  = in.dlResDetecPercent;
-    *FieldPtr<float>(d, 7)  = in.coordCooldown;
-    *FieldPtr<int32_t>(d, 8)  = in.playVolume;
-    *FieldPtr<int32_t>(d, 9)  = in.dlPolarityDir;
-    *FieldPtr<int32_t>(d, 10) = in.compMaxLevel;
-    *FieldPtr<int32_t>(d, 11) = in.playSelectIndex;
-    *FieldPtr<bool>(d, 12) = in.dlActiveFrFilter;
-    *FieldPtr<bool>(d, 13) = in.dlActivePoFilter;
-    *FieldPtr<bool>(d, 14) = in.activePlay;
-    *FieldPtr<bool>(d, 15) = in.activeDownload;
-    *FieldPtr<bool>(d, 16) = in.activeCoords;
-    *FieldPtr<bool>(d, 17) = in.activeComp;
-    *FieldPtr<bool>(d, 18) = in.coordIsPing;
+    *OffPtr<float>(d, g_offDlPoFilterOffset)  = in.dlPoFilterOffset;
+    *OffPtr<float>(d, g_offDlFrFilterOffset)  = in.dlFrFilterOffset;
+    *OffPtr<float>(d, g_offDlPoFilterSpeed)   = in.dlPoFilterSpeed;
+    *OffPtr<float>(d, g_offDlFrFilterSpeed)   = in.dlFrFilterSpeed;
+    *OffPtr<float>(d, g_offDlDownloading)     = in.dlDownloading;
+    *OffPtr<float>(d, g_offDlResDetecPercent) = in.dlResDetecPercent;
+    *OffPtr<float>(d, g_offCoordCooldown)     = in.coordCooldown;
+    *OffPtr<int32_t>(d, g_offPlayVolume)      = in.playVolume;
+    *OffPtr<int32_t>(d, g_offDlPolarityDir)   = in.dlPolarityDir;
+    *OffPtr<int32_t>(d, g_offCompMaxLevel)    = in.compMaxLevel;
+    *OffPtr<int32_t>(d, g_offPlaySelectIndex) = in.playSelectIndex;
+    *OffPtr<bool>(d, g_offDlActiveFrFilter) = in.dlActiveFrFilter;
+    *OffPtr<bool>(d, g_offDlActivePoFilter) = in.dlActivePoFilter;
+    *OffPtr<bool>(d, g_offActivePlay)       = in.activePlay;
+    *OffPtr<bool>(d, g_offActiveDownload)   = in.activeDownload;
+    *OffPtr<bool>(d, g_offActiveCoords)     = in.activeCoords;
+    *OffPtr<bool>(d, g_offActiveComp)       = in.activeComp;
+    *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
     // Repaint through the BP's own painters. Each is a cheap widget/material
     // refresh, audited side-effect clean (human-rate call site: wire applies).
     // (The comp-pane repaint -- updComp(hasData) -- moved to the v65 comp
@@ -352,9 +389,9 @@ bool WriteScalars(const Scalars& in) {
 
 std::wstring ReadCoordLogTail(size_t maxChars) {
     void* d = Instance();
-    if (!d || g_fields[19].off < 0) return {};
+    if (!d || g_offCoordCoordLog2Text < 0) return {};
     auto* s = reinterpret_cast<FStringView*>(
-        reinterpret_cast<uint8_t*>(d) + g_fields[19].off);
+        reinterpret_cast<uint8_t*>(d) + g_offCoordCoordLog2Text);
     if (!s->data || s->num <= 1) return {};
     const size_t len = static_cast<size_t>(s->num - 1);  // num includes the NUL
     const size_t take = len > maxChars ? maxChars : len;
@@ -363,9 +400,9 @@ std::wstring ReadCoordLogTail(size_t maxChars) {
 
 bool CoordLogTailEquals(const std::wstring& expected, size_t maxChars) {
     void* d = Instance();
-    if (!d || g_fields[19].off < 0) return expected.empty();
+    if (!d || g_offCoordCoordLog2Text < 0) return expected.empty();
     auto* s = reinterpret_cast<FStringView*>(
-        reinterpret_cast<uint8_t*>(d) + g_fields[19].off);
+        reinterpret_cast<uint8_t*>(d) + g_offCoordCoordLog2Text);
     if (!s->data || s->num <= 1) return expected.empty();
     const size_t len = static_cast<size_t>(s->num - 1);
     const size_t take = len > maxChars ? maxChars : len;
@@ -420,30 +457,30 @@ void* DeskAudioComponent(int32_t off) {
 bool ReadCompScalars(CompScalars& out) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    out.progress = *FieldPtr<float>(d, 6);
-    out.downloading = *FieldPtr<float>(d, 21);
-    out.decodeActive = *FieldPtr<bool>(d, 22);
+    out.progress = *OffPtr<float>(d, g_offCompProgress);
+    out.downloading = *OffPtr<float>(d, g_offCompDownloading);
+    out.decodeActive = *OffPtr<bool>(d, g_offCompIsDecodeActive);
     return true;
 }
 
 bool WriteCompScalars(float progress, float downloading) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    *FieldPtr<float>(d, 6) = progress;
-    *FieldPtr<float>(d, 21) = downloading;
+    *OffPtr<float>(d, g_offCompProgress) = progress;
+    *OffPtr<float>(d, g_offCompDownloading) = downloading;
     return true;
 }
 
 void* CompDataPtr() {
     void* d = Instance();
-    if (!d || g_fields[20].off < 0) return nullptr;
-    return reinterpret_cast<uint8_t*>(d) + g_fields[20].off;
+    if (!d || g_offCompData0 < 0) return nullptr;
+    return reinterpret_cast<uint8_t*>(d) + g_offCompData0;
 }
 
 bool UnlatchDecode() {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    bool* flag = FieldPtr<bool>(d, 22);
+    bool* flag = OffPtr<bool>(d, g_offCompIsDecodeActive);
     if (!*flag) return true;  // not latched: nothing to do
     *flag = false;
     CompCueStop();
@@ -617,7 +654,7 @@ bool ResetDownloadMachine() {
     SigWrite<void*>(row, g_offRowMesh, nullptr);
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = 0.f;
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = 0.f;
-    *FieldPtr<float>(d, 5) = 0.f;  // [5] DL_resDetecPercent (@33982)
+    *OffPtr<float>(d, g_offDlResDetecPercent) = 0.f;  // (@33982)
     // initDownloadSignal({0,0}, 0, -1): with signalName None this is the
     // native @34005 path -- rebuilds DL_SignalDownloadDLData empty (engine-
     // side struct assignment, no leaked FStrings) + downloadTexts repaint.
@@ -686,7 +723,7 @@ bool DownloadMeshValid() {
 bool WriteResDetect(float v) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    *FieldPtr<float>(d, 5) = v;  // [5] DL_resDetecPercent
+    *OffPtr<float>(d, g_offDlResDetecPercent) = v;
     return true;
 }
 
@@ -694,10 +731,10 @@ bool ReadSimOutputs(SimOutputs& out) {
     void* d = Instance();
     if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)
         return false;
-    out.poOffset  = *FieldPtr<float>(d, 0);   // DL_poFilterOffset
-    out.frOffset  = *FieldPtr<float>(d, 1);   // DL_FrFilterOffset
-    out.rate      = *FieldPtr<float>(d, 4);   // DL_downloading
-    out.resDetec  = *FieldPtr<float>(d, 5);   // DL_resDetecPercent
+    out.poOffset  = *OffPtr<float>(d, g_offDlPoFilterOffset);
+    out.frOffset  = *OffPtr<float>(d, g_offDlFrFilterOffset);
+    out.rate      = *OffPtr<float>(d, g_offDlDownloading);
+    out.resDetec  = *OffPtr<float>(d, g_offDlResDetecPercent);
     // (v112: coord_cooldown left the sim vector -- desk_input_sync owns it.)
     out.frData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData);
     out.poData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData);
@@ -710,10 +747,10 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     void* d = Instance();
     if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)
         return false;
-    *FieldPtr<float>(d, 0) = in.poOffset;
-    *FieldPtr<float>(d, 1) = in.frOffset;
-    *FieldPtr<float>(d, 4) = in.rate;
-    *FieldPtr<float>(d, 5) = in.resDetec;
+    *OffPtr<float>(d, g_offDlPoFilterOffset) = in.poOffset;
+    *OffPtr<float>(d, g_offDlFrFilterOffset) = in.frOffset;
+    *OffPtr<float>(d, g_offDlDownloading) = in.rate;
+    *OffPtr<float>(d, g_offDlResDetecPercent) = in.resDetec;
     // (v112: coord_cooldown is NOT written here -- the 10 Hz overwrite erased a
     // client presser's charge (BUGS-v111 bug 1); desk_input_sync owns it.)
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = in.frData;
