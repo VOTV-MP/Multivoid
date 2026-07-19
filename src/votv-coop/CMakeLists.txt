@@ -10,18 +10,32 @@
 # behind ue_wrap/ next.
 
 cmake_minimum_required(VERSION 3.20)
-project(votv_coop VERSION 0.0.1 LANGUAGES CXX C)  # C for the MinHook sources (third_party/minhook)
+project(votv_coop LANGUAGES CXX C)  # C for the MinHook sources (third_party/minhook)
 
-# Build-metadata suffix per SemVer 2.0 (text after `+`). Identifies the VOTV
-# game version this build targets. Reflection offsets and BP field names shift
-# between cooks, so the mod is incompatible across game versions -- the suffix
-# is the canonical "tested-against" marker in tags + filenames + the boot
-# banner. Update on every game-recook adaptation.
-set(VOTVCOOP_GAME_TARGET "0.9.0-n")
+# The VOTV game version this build targets -- ONE half of the mod's version
+# identity (the other half is kProtocolVersion, the build number; see
+# include/coop/version.h.in). Reflection offsets and BP field names shift
+# between cooks, so the mod is incompatible across game versions. Update on
+# every game-recook adaptation. (The old project-VERSION mod semver was
+# retired 2026-07-19 -- Paper-Minecraft pair, user decision.)
+set(VOTVCOOP_GAME_TARGET "0.9.0n")
 
-# Materialize PROJECT_VERSION + VOTVCOOP_GAME_TARGET into a generated header
-# that the DLL includes (boot banner + any future feature gates that depend on
-# the build metadata).
+# The BUILD NUMBER (the identity's other half) is kProtocolVersion -- parsed
+# out of protocol.h so the DLL FILENAME carries the Paper-style pair
+# (multivoid-<game>-<build>.dll, like paper-26.1.2-74.jar). The configure
+# depends on protocol.h so a proto bump re-names the output automatically.
+set(VOTVCOOP_PROTOCOL_H ${CMAKE_CURRENT_SOURCE_DIR}/include/coop/net/protocol.h)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${VOTVCOOP_PROTOCOL_H})
+file(READ ${VOTVCOOP_PROTOCOL_H} _votvcoop_proto_h)
+string(REGEX MATCH "kProtocolVersion = ([0-9]+)" _votvcoop_proto_m "${_votvcoop_proto_h}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR "could not parse kProtocolVersion out of protocol.h")
+endif()
+set(VOTVCOOP_BUILD ${CMAKE_MATCH_1})
+message(STATUS "multivoid identity: game ${VOTVCOOP_GAME_TARGET}, build ${VOTVCOOP_BUILD}")
+
+# Materialize VOTVCOOP_GAME_TARGET into a generated header that the DLL
+# includes (boot banner + the announce/gate identity).
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/coop/version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/coop/version.h
@@ -306,6 +320,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/grime_sync.cpp
     src/coop/session/player_handshake.cpp
     src/coop/session/player_handshake_prefs.cpp
+    src/coop/session/player_handshake_version.cpp
     src/coop/props/grab_observer.cpp
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
@@ -481,6 +496,7 @@ add_library(votv-coop SHARED
     src/ui/world_rules_panel.cpp
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
+    src/ui/boot_warning_dialog.cpp
     src/ui/connect_failed_dialog.cpp
     src/ui/menu_sfx.cpp
     src/ui/host_save_picker.cpp
@@ -532,7 +548,12 @@ add_library(votv-coop SHARED
 )
 
 target_include_directories(votv-coop PRIVATE include ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "votv-coop")
+# Paper-style versioned artifact name (user 2026-07-19): the payload file IS
+# the release identity -- "multivoid-0.9.0n-122.dll". The xinput proxy scans
+# for multivoid-*.dll (loads the highest build; flags duplicates for the
+# in-game popup), so the filename is load-bearing, not cosmetic.
+set_target_properties(votv-coop PROPERTIES
+    OUTPUT_NAME "multivoid-${VOTVCOOP_GAME_TARGET}-${VOTVCOOP_BUILD}")
 # version.lib: read the running exe's file version in the health check.
 # minhook: our inline-hook substrate (game-thread dispatcher).
 # ws2_32: Winsock for the UDP coop transport (src/coop/net).

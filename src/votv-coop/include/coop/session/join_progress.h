@@ -84,6 +84,13 @@ void Reset();                                       // -> Idle (force hide: disc
 //                      abort is harmless).
 void RequestCancel();
 void Fail(const std::string& reason);
+
+// PRE-FLIGHT refusal (v122 version gate): surface `reason` in the connect-failed
+// dialog for a join that was rejected BEFORE BeginConnect ever ran (no cover, no
+// abort to drain -- unlike Fail there is no Active() gate because nothing is in
+// flight). Lifecycle identical to a Fail reason: lives until the user OKs the
+// dialog (ClearFailReason) or the next BeginConnect clears it.
+void RefuseJoin(const std::string& reason);
 bool TakeAbortRequest();  // true once if an abort (cancel OR fail) is pending, then clears
 
 // Connect-failure reason (for ui/connect_failed_dialog). Fail() stashes `reason`

@@ -13,7 +13,6 @@
 #include "ui/input_focus.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
-#include "coop/net/protocol.h"             // kProtocolVersion (version-label fallback)
 #include "ui/server_browser.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -106,7 +105,9 @@ std::string VersionLine(bool* outdated) {
     std::string line = coop::session_manager::LatestVersionLine(outdated);
     if (line.empty()) {
         if (outdated) *outdated = false;
-        line = "VOTV-Coop v" + std::to_string(static_cast<int>(coop::net::kProtocolVersion));
+        // Plain identity (no update verdict yet / none available): the v122
+        // Paper-shape composite "votv-coop 0.0.1 b122 (VOTV 0.9.0-n)".
+        line = coop::session_manager::DisplayVersion();
     }
     return line;
 }

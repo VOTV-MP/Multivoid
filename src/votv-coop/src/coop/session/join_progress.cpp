@@ -173,6 +173,20 @@ void Fail(const std::string& reason) {
     UE_LOGW("join_progress: join FAILED (%s) -- aborting + reopening the browser", reason.c_str());
 }
 
+void RefuseJoin(const std::string& reason) {
+    // Pre-flight rejection (v122 version gate): nothing is in flight -- no cover was
+    // raised, no abort to request -- so unlike Fail there is NO Active() gate. Just
+    // stash the reason; connect_failed_dialog renders on FailPending() alone and the
+    // OK button / the next BeginConnect clears it (the measured bounded lifecycle).
+    if (coop::shutdown::IsShuttingDown()) return;
+    {
+        std::lock_guard<std::mutex> lk(g_failMu);
+        g_failReason = reason;
+        g_failPending.store(true);
+    }
+    UE_LOGW("join_progress: join REFUSED pre-flight (%s)", reason.c_str());
+}
+
 bool TakeAbortRequest() { return g_abortReq.exchange(false, std::memory_order_acq_rel); }
 
 bool PeekFailReason(std::string& out) {

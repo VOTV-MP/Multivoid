@@ -130,22 +130,36 @@ TRUSTED_PROXY_PEERS = {"127.0.0.1", "::1"}
 MAX_NAME = 63
 MAX_WORLD = 39
 MAX_VERSION = 23
+MAX_GAME = 23  # v122: the host's VOTV game target ("0.9.0-n")
 
-# ---- latest released mod (v59: the launch toast + the browser join gate) ----
-# OPERATOR-MAINTAINED: bump on each mod release (part of the VPS deploy step).
-# Served verbatim by GET /v1/latest; hosts also announce their own `proto`
-# (kProtocolVersion) which the browser uses for the reject-on-Join gate.
-LATEST_PROTO = 66
-LATEST_MOD = "0.9.0-n"
-LATEST_URL = "https://github.com/pelmentor/VOTV_MP/releases"
+# ---- latest released mod (v59: the launch toast; INFORMATIONAL ONLY) --------
+# v122: the record lives in latest.json BESIDE this script (the release
+# checklist updates the FILE, not code): {"proto": <int>, "mod": "<semver>",
+# "url": "<release page>"}. File absent / unreadable -> proto=0 -> the client
+# treats it as NO VERDICT (silent). This can never gate a join: the per-lobby
+# equality gate is the DLL's, and a stale/absent record only affects the toast.
+LATEST_URL_DEFAULT = "https://github.com/pelmentor/VOTV_MP/releases"
+LATEST_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest.json")
+
+
+def read_latest() -> dict:
+    try:
+        with open(LATEST_JSON_PATH, "r", encoding="utf-8") as f:
+            j = json.load(f)
+        proto = max(0, min(65535, int(j.get("proto", 0))))
+        mod = str(j.get("mod", ""))[:MAX_VERSION]
+        url = str(j.get("url", LATEST_URL_DEFAULT))[:200]
+        return {"proto": proto, "mod": mod, "url": url}
+    except Exception:
+        return {"proto": 0, "mod": "", "url": LATEST_URL_DEFAULT}
 
 # ---- state ------------------------------------------------------------------
 
 
 class Lobby:
     __slots__ = ("session_id", "lobby_id", "token", "host_identity", "name",
-                 "version", "proto", "world", "locked", "players_cur", "players_max",
-                 "listed", "last_seen", "ip", "conn", "direct_port")
+                 "version", "game", "proto", "world", "locked", "players_cur",
+                 "players_max", "listed", "last_seen", "ip", "conn", "direct_port")
 
     def __init__(self, ip: str):
         self.session_id = secrets.token_hex(16)       # 32 chars, secret
@@ -154,6 +168,7 @@ class Lobby:
         self.host_identity = "h" + secrets.token_hex(8)   # 17 chars (<=31 for GNS)
         self.name = ""
         self.version = ""
+        self.game = ""       # v122: host's VOTV game target ("" = pre-field host)
         self.proto = 0       # host's kProtocolVersion (v59 join gate; 0 = not announced)
         self.world = ""
         self.locked = False
@@ -307,7 +322,11 @@ def h_host(ip: str, body: dict) -> tuple[int, dict]:
 
     lo = Lobby(ip)
     lo.name = clamp_str(body.get("name"), MAX_NAME) or "VOTV Coop"
-    lo.version = clamp_str(body.get("version"), MAX_VERSION) or "0.0.0"
+    # v122 Paper-pair identity: game + proto. `version` is the LEGACY pre-v122
+    # display tag (old hosts sent their game version here); kept pass-through for
+    # old-browser display, no default fabricated.
+    lo.version = clamp_str(body.get("version"), MAX_VERSION)
+    lo.game = clamp_str(body.get("game"), MAX_GAME)  # "" = pre-field host
     try:  # v59: the host's wire-protocol version (the browser join gate)
         lo.proto = max(0, min(65535, int(body.get("proto", 0))))
     except (TypeError, ValueError):
@@ -467,6 +486,7 @@ def _build_rows() -> list:
             "lobbyId": lo.lobby_id,
             "name": lo.name,
             "version": lo.version,
+            "game": lo.game,    # v122: the host's VOTV game target (gate tier 1)
             "proto": lo.proto,  # v59: the browser's reject-on-Join gate key
             "world": lo.world,
             "locked": lo.locked,
@@ -599,11 +619,11 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                     vf = clamp_str(kv[len("version="):], MAX_VERSION)
             write_response(writer, 200, h_lobbies(vf))
         elif method == "GET" and path == "/v1/latest":
-            # v59 launch toast: the latest released mod (operator-maintained
-            # constants). Static + tiny -- no rate class needed beyond the
-            # connection cap (same exposure as /healthz).
-            write_response(writer, 200, json_bytes(
-                {"proto": LATEST_PROTO, "mod": LATEST_MOD, "url": LATEST_URL}))
+            # v59 launch toast, v122 mechanism: served from latest.json beside the
+            # script (release checklist updates the FILE; absent -> proto=0 = the
+            # client shows no verdict). Tiny read per request -- the client
+            # debounces (8s floor) and the connection cap bounds exposure.
+            write_response(writer, 200, json_bytes(read_latest()))
         elif method == "GET" and path == "/healthz":
             write_response(writer, 200, json_bytes({"ok": True, "lobbies": len(lobbies)}))
         elif method == "POST" and path in POST_ROUTES:

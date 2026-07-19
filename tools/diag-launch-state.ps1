@@ -7,7 +7,7 @@ $folders = @(
 foreach ($f in $folders) {
     if (-not (Test-Path $f)) { Write-Output "MISSING: $f"; continue }
     Write-Output "=== $f ==="
-    Get-ChildItem $f -Filter "*.dll" | Where-Object { $_.Name -match 'xinput|votv-coop|UE4SS|dwmapi' } | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
+    Get-ChildItem $f -Filter "*.dll" | Where-Object { $_.Name -match 'xinput|multivoid|votv-coop|UE4SS|dwmapi' } | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
     Get-ChildItem $f -Filter "votv-coop*.log" -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Output
     $sc = Join-Path $f "scenario.txt"
     if (Test-Path $sc) { Write-Output ("scenario.txt = '" + (Get-Content $sc -Raw) + "' (mtime " + (Get-Item $sc).LastWriteTime + ")") }
@@ -24,7 +24,8 @@ foreach ($f in $folders) {
         }
     }
     # Check if any of the dlls are locked (held by a running process)
-    foreach ($dn in @("xinput1_3.dll", "votv-coop.dll")) {
+    $modDlls = @("xinput1_3.dll") + @(Get-ChildItem (Join-Path $f "multivoid-*.dll") -ErrorAction SilentlyContinue | ForEach-Object Name)
+    foreach ($dn in $modDlls) {
         $dp = Join-Path $f $dn
         if (Test-Path $dp) {
             try {

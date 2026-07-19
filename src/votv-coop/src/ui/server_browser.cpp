@@ -106,7 +106,7 @@ void Render() {
         ImGui::TextUnformatted("Server browser");
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("(Voices of the Void  -  Coop %s)", sm::ModVersion());
+        ImGui::TextDisabled("(%s)", sm::DisplayVersion().c_str());
         ImGui::Spacing();
 
         // Your display name -- sent on Join + shown on your nameplate/scoreboard. Applies
@@ -171,7 +171,7 @@ void Render() {
             ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthFixed, S(70.0f));
             ImGui::TableSetupColumn("Age",     ImGuiTableColumnFlags_WidthFixed, S(54.0f));
             ImGui::TableSetupColumn("World",   ImGuiTableColumnFlags_WidthFixed, S(140.0f));
-            ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, S(76.0f));
+            ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, S(96.0f));
             ImGui::TableHeadersRow();
 
             for (int i = 0; i < static_cast<int>(g_rows.size()); ++i) {
@@ -195,7 +195,7 @@ void Render() {
                     g_selected = i;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
-                        else if (sm::JoinLobby(r.lobbyId, r.name, r.proto)) Close();
+                        else if (sm::JoinLobby(r.lobbyId, r.name, r.proto, r.game)) Close();
                     }
                 }
                 if (isOwn) ImGui::PopStyleColor();
@@ -207,17 +207,26 @@ void Render() {
                 ImGui::TableSetColumnIndex(4);
                 ImGui::TextUnformatted(r.world.c_str());
                 ImGui::TableSetColumnIndex(5);
-                // v59: amber Ver + a (!) when the host's announced protocol mismatches
-                // ours ("show normally, reject on Join" -- the click explains in the
-                // footer status). Unknown proto (pre-field host) renders plain.
+                // Version column = the host's PAIR identity "0.9.0-n b122" (game
+                // target + build number, user 2026-07-19 -- the build number shows
+                // everywhere). Amber + (!) when EITHER axis mismatches ours -- the
+                // same tiers the Join gate refuses on, so amber ALWAYS means "join
+                // will be refused with a popup". Unknown fields (pre-field host)
+                // skip their axis; game "" falls back to the legacy version tag
+                // (old hosts announced their game version there).
+                const bool gameMismatch =
+                    !r.game.empty() && r.game != sm::GameTarget();
                 const bool verMismatch =
-                    r.proto > 0 &&
-                    r.proto != static_cast<int>(coop::net::kProtocolVersion);
+                    gameMismatch ||
+                    (r.proto > 0 &&
+                     r.proto != static_cast<int>(coop::net::kProtocolVersion));
+                std::string verCell = !r.game.empty() ? r.game : r.version;
+                if (r.proto > 0) verCell += " b" + std::to_string(r.proto);
                 if (verMismatch)
                     ImGui::TextColored(ImVec4(1.00f, 0.78f, 0.35f, 1.0f), "%s (!)",
-                                       r.version.c_str());
+                                       verCell.c_str());
                 else
-                    ImGui::TextDisabled("%s", r.version.c_str());
+                    ImGui::TextDisabled("%s", verCell.c_str());
 
                 ImGui::PopID();
             }
@@ -232,7 +241,7 @@ void Render() {
         if (!canConnect) ImGui::BeginDisabled();
         if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
             if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name,
-                              g_rows[g_selected].proto)) Close();
+                              g_rows[g_selected].proto, g_rows[g_selected].game)) Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;

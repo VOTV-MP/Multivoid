@@ -8,8 +8,10 @@
 // in later steps, behind ue_wrap/.
 
 #include "coop/session/shutdown.h"
+#include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
 #include "coop/version.h"
 #include "harness/harness.h"
+#include "ui/boot_warning_dialog.h"  // v122: the duplicate-DLL install popup
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -18,6 +20,7 @@
 
 #include <cstdio>
 #include <ctime>
+#include <string>
 
 namespace {
 
@@ -63,7 +66,47 @@ DWORD WINAPI BootThread(LPVOID) {
     // report to votv-coop.log -- our own SDK access, no UE4SS.
     ue_wrap::log::Init();
     UE_LOGI("==== %s ====", coop::version::kDisplayLabel);
-    UE_LOGI("boot: version-full=%s", coop::version::kVersionFull);
+    // The Paper-pair identity line: game target + build number (= kProtocolVersion).
+    UE_LOGI("boot: votv-coop %s b%u", coop::version::kGameTarget,
+            static_cast<unsigned>(coop::net::kProtocolVersion));
+    // Build triage line (v122): discriminates same-proto rebuilds in bug reports
+    // (banner-only -- never announced, never gated; the DLL hash stays the deploy
+    // truth). The exe identity beside kGameTarget makes an install-skew report
+    // (mod built for cook X running on exe Y) one-look diagnosable from the log.
+    UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
+    {
+        char exePath[MAX_PATH] = {};
+        ::GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        WIN32_FILE_ATTRIBUTE_DATA fad{};
+        if (exePath[0] && ::GetFileAttributesExA(exePath, GetFileExInfoStandard, &fad)) {
+            const unsigned long long exeSize =
+                (static_cast<unsigned long long>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+            UE_LOGI("boot: game exe '%s' size=%llu (mod targets VOTV %s)",
+                    exePath, exeSize, coop::version::kGameTarget);
+        }
+    }
+    // Duplicate-install detection (v122 multivoid rename): the xinput proxy scanned
+    // for multivoid-*.dll; if it found MORE than one version file (or a stale legacy
+    // votv-coop.dll), it loaded the highest build and left the leftovers in
+    // MULTIVOID_DUP_FILES. Surface that as an in-game popup (the user asked for a
+    // dialog, not a log line) + a WARN for the log-based triage.
+    {
+        char dup[1024] = {};
+        char loaded[256] = {};
+        const DWORD n = ::GetEnvironmentVariableA("MULTIVOID_DUP_FILES", dup, sizeof(dup));
+        ::GetEnvironmentVariableA("MULTIVOID_LOADED", loaded, sizeof(loaded));
+        if (n > 0 && n < sizeof(dup)) {
+            UE_LOGW("boot: MULTIPLE mod DLL versions found beside the exe -- loaded '%s', "
+                    "leftover(s): %s", loaded, dup);
+            std::string msg =
+                "Several versions of the multivoid mod DLL are installed next to the game.\n\n"
+                "Loaded (newest): " + std::string(loaded[0] ? loaded : "?") + "\n"
+                "Also found: " + std::string(dup) + "\n\n"
+                "Delete the other file(s) from VotV\\Binaries\\Win64 to avoid running "
+                "a mixed install.";
+            ui::boot_warning_dialog::Arm(msg);
+        }
+    }
     ue_wrap::reflection::RunHealthCheck();
 
     // Establish a game-thread execution context: hook ProcessEvent so we have a

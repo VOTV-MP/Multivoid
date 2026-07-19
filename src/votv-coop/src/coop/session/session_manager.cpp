@@ -3,9 +3,10 @@
 #include "coop/session/session_manager.h"
 
 #include "coop/net/lobby_announcer.h"
-#include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask)
+#include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask) + kProtocolVersion (the b<N> build rev)
 #include "coop/session/join_progress.h"
 #include "coop/session/shutdown.h"
+#include "coop/version.h"  // kGameTarget -- the game half of the Paper-pair identity (CMake-generated)
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -25,7 +26,6 @@ namespace {
 namespace net = coop::net;
 namespace lobby = coop::net::lobby;
 
-constexpr const char* kModVersion = "0.9.0-n";
 // Pre-Configure seed only: the harness calls Configure() at boot with
 // cfg::ReadMasterUrl() (the canonical source -> the built-in VPS endpoint or the
 // net.master.custom gate), which overwrites g_masterUrl before any host/join. This
@@ -171,7 +171,20 @@ void SetOwnLobbyId(const std::string& id) {
 }
 }  // namespace
 
-const char* ModVersion() { return kModVersion; }
+const char* GameTarget() { return coop::version::kGameTarget; }
+
+std::string DisplayVersion() {
+    // Paper-Minecraft PAIR (user decision 2026-07-19, "Paper 1.20.4 #496" shape):
+    // the identity is (game target, build number) -- no separate mod semver. The
+    // build number IS kProtocolVersion: it moves exactly when compatibility moves
+    // (the standing wire rule) and every release bumps it (release checklist).
+    // Function-static: inputs are compile-time constants and the browser header
+    // calls this every frame while open (perf audit LOW-2).
+    static const std::string kLabel =
+        std::string("votv-coop ") + coop::version::kGameTarget +
+        " b" + std::to_string(static_cast<int>(net::kProtocolVersion));
+    return kLabel;
+}
 
 namespace {
 // Version-line state: the native main-menu label (coop::multiplayer_menu) polls the line.
@@ -199,21 +212,25 @@ void RefreshLatestVersion() {
         try {
             if (coop::shutdown::IsShuttingDown()) { g_latestInFlight.store(false, std::memory_order_release); return; }
             const lobby::LatestInfo info = lobby::LobbyClient::FetchLatest(masterUrl, 8000);
-            if (info.ok) {  // unreachable / pre-v59 master: keep the last known line
+            // proto<=0 = the master has no released-version record yet (no latest.json;
+            // pre-release world) -- NO VERDICT, keep the plain identity label. Never
+            // fabricate a "latest v0" line from an absent record.
+            if (info.ok && info.proto > 0) {  // unreachable / pre-v59 master: keep the last known line
                 const int ours = static_cast<int>(net::kProtocolVersion);
                 std::string line;
                 bool outdated = false;
                 if (info.proto == ours) {
                     // Current build IS the latest release -> compact "(latest)" tag.
-                    line = "VOTV-Coop v" + std::to_string(ours) + " (latest)";
+                    line = DisplayVersion() + " (latest)";
                 } else if (info.proto > ours) {
                     outdated = true;
-                    line = "VOTV-Coop v" + std::to_string(ours) + " -- UPDATE v" +
-                           std::to_string(info.proto) + " AVAILABLE: " +
+                    line = DisplayVersion() + " -- UPDATE " +
+                           (info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod) +
+                           " AVAILABLE: " +
                            (info.url.empty() ? "github.com/pelmentor/VOTV_MP/releases" : info.url);
                 } else {
                     // We are NEWER than the master's latest (a dev build) -- informational.
-                    line = "VOTV-Coop v" + std::to_string(ours) + " (dev; latest released v" +
+                    line = DisplayVersion() + " (dev; latest released b" +
                            std::to_string(info.proto) + ")";
                 }
                 UE_LOGI("session_manager: version check -- %s", line.c_str());
@@ -250,7 +267,7 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
-                Announcer().Host(masterUrl, name, ModVersion(), world, locked, playersMax, 8000);
+                Announcer().Host(masterUrl, name, world, locked, playersMax, 8000);
             if (info.ok && !coop::shutdown::IsShuttingDown()) {
                 net::Config cfg;
                 cfg.role = net::Role::Host;
@@ -287,7 +304,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
-                Announcer().Host(masterUrl, name, ModVersion(), world,
+                Announcer().Host(masterUrl, name, world,
                                  /*locked=*/false, /*playersMax=*/4, 8000);
             if (info.ok) {
                 SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
@@ -338,7 +355,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             const uint16_t directPort =
                 fallback.port ? fallback.port : net::kDefaultPort;
             const lobby::HostInfo info =
-                Announcer().Host(masterUrl, name, ModVersion(), world, locked, playersMax,
+                Announcer().Host(masterUrl, name, world, locked, playersMax,
                                  8000, directConnection ? static_cast<int>(directPort) : 0);
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
 
@@ -423,7 +440,36 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     return true;  // accepted -- the picker raises the host-boot cover + closes
 }
 
-bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto) {
+namespace {
+
+// The Minecraft-shape mismatch verdict (2026-07-19, user decision: the Paper
+// PAIR -- game target + build number, no mod semver). Per-lobby EQUALITY gate,
+// tier order game -> build; every tier hard-refuses; the popup names the FIRST
+// mismatching axis and WHO updates (build direction is numeric). Empty/0 remote
+// fields (old host / no row context) skip their tier -- the Join wire gate +
+// header backstop cover. Returns empty = compatible.
+std::string VersionMismatchVerdict(const std::string& hostGame, int hostProto) {
+    // Tier 1 -- GAME cook. Reachable with an equal build by construction (a
+    // new-cook adaptation need not change the wire), hence its own hard tier.
+    if (!hostGame.empty() && hostGame != coop::version::kGameTarget) {
+        return std::string("Host plays VOTV ") + hostGame + ", you have VOTV " +
+               coop::version::kGameTarget + " -- game version mismatch.";
+    }
+    // Tier 2 -- BUILD (the wire revision; MC gates on the protocol number).
+    if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion)) {
+        const bool hostNewer = hostProto > static_cast<int>(net::kProtocolVersion);
+        return std::string("Mod build mismatch: host runs b") + std::to_string(hostProto) +
+               ", you run b" + std::to_string(net::kProtocolVersion) + " -- " +
+               (hostNewer ? "update: github.com/pelmentor/VOTV_MP/releases"
+                          : "the host needs to update.");
+    }
+    return {};
+}
+
+}  // namespace
+
+bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto,
+               const std::string& hostGame) {
     // FIX 3 -- never connect to our OWN lobby (the 2026-06-08 repro: the host clicked its
     // own listed server + self-joined). Reject before raising any loading state.
     if (!lobbyId.empty() && lobbyId == OwnLobbyId()) {
@@ -431,25 +477,20 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
         SetHostStatus("That's your own server -- you're already hosting it.");
         return false;
     }
-    // v59 VERSION GATE ("show normally, reject on Join" -- the user-chosen browser
-    // policy): the row carries the host's announced kProtocolVersion. A mismatch
-    // would otherwise only die LATE at the wire layer (session.cpp closes on the
-    // first app packet's header version, reason log-only); reject HERE with a
-    // human message instead. hostProto==0 = the host predates the field (or no
-    // row context) -- not verifiable upfront; the wire-level close stays the
-    // backstop.
-    if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion)) {
-        const bool hostNewer = hostProto > static_cast<int>(net::kProtocolVersion);
-        UE_LOGW("session_manager: JOIN rejected -- host protocol v%d != ours v%u",
-                hostProto, static_cast<unsigned>(net::kProtocolVersion));
-        SetHostStatus(hostNewer
-            ? "Host runs a NEWER mod (protocol v" + std::to_string(hostProto) +
-              " vs your v" + std::to_string(net::kProtocolVersion) +
-              ") -- update: github.com/pelmentor/VOTV_MP/releases"
-            : "Host runs an OLDER mod (protocol v" + std::to_string(hostProto) +
-              " vs your v" + std::to_string(net::kProtocolVersion) +
-              ") -- the host needs to update.");
-        return false;
+    // VERSION GATE (v59 proto-only -> v122 game+build pair, 2026-07-19 Minecraft
+    // shape; "show normally, reject on Join" browser policy). Pre-flight from the
+    // browser row; the Join wire gate re-validates live and the header close stays
+    // the final backstop. Reject via the connect-failed POPUP (RefuseJoin), not
+    // the footer -- the user asked for a dialog that says the version is wrong.
+    {
+        const std::string verdict = VersionMismatchVerdict(hostGame, hostProto);
+        if (!verdict.empty()) {
+            UE_LOGW("session_manager: JOIN rejected -- %s (host game='%s' b%d; ours %s b%u)",
+                    verdict.c_str(), hostGame.c_str(), hostProto,
+                    coop::version::kGameTarget, static_cast<unsigned>(net::kProtocolVersion));
+            coop::join_progress::RefuseJoin(verdict);
+            return false;
+        }
     }
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Join ignored"); return false; }
     // Raise the BROWSER-ONLY loading state NOW (before the master round-trip) so the user

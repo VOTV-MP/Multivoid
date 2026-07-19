@@ -148,9 +148,12 @@ COOP_SIGNALING_TOKEN=$SIG_TOKEN
 COOP_SIGNALING_URL=$PUBLIC_IP:$SIG_PORT
 COOP_STUN_URI=stun:$PUBLIC_IP:$TURN_PORT
 COOP_TURN_URI=turn:$PUBLIC_IP:$TURN_PORT
-# Latest released mod, served by /v1/latest -- bump on each release + restart coop-master
-# (no rebuild; overrides the compiled-in default).
-COOP_LATEST_PROTO=111
+# Latest released mod, served by /v1/latest (INFORMATIONAL only -- never gates a
+# join). Set on each release + restart coop-master (no rebuild): COOP_LATEST_PROTO =
+# the release's build number, COOP_LATEST_MOD = its Paper-pair tag ("0.9.0n-b130").
+# Unset/0 = "no released record yet" -> clients show no verdict (v122; zero
+# releases exist as of 2026-07-19).
+#COOP_LATEST_PROTO=
 EOF
 chmod 600 /etc/coop-master.env
 

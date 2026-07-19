@@ -7,7 +7,8 @@
 # 2026-05-28 PR-4.2+ (4-copy convention -- 3-peer LAN multi-client tests):
 #   Game_0.9.0n_CLIENT_2/ -- CLIENT2 (second hands-on client for 3-peer test)
 #
-# Each gets the same xinput1_3.dll proxy + votv-coop.dll payload. The dev
+# Each gets the same xinput1_3.dll proxy + multivoid-<game>-<build>.dll payload
+# (the Paper-style versioned artifact, 2026-07-19). The dev
 # copy ADDITIONALLY has UE4SS installed via the dwmapi.dll alternate proxy
 # slot (UE4SS coexists with our standalone DLL there; the user-play copies
 # stay UE4SS-free per RULE 3).
@@ -85,8 +86,16 @@ foreach ($t in $targets) {
         # while the HOST was up (2026-07-02). Reads are share-allowed: hash-compare
         # and skip when byte-identical. A genuinely STALE pak under a running game
         # still fails loudly (correct -- a mapped pak cannot be hot-swapped).
+        # Inline .NET SHA256 (NOT Get-FileHash): under mp.py's nested/degraded
+        # PowerShell the Utility module fails to autoload and Get-FileHash aborts
+        # the whole deploy (same rationale as deploy-loader.ps1's helper).
+        function Get-Sha256HexLocal($path) {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try { return [System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($path))).Replace('-', '') }
+            finally { $sha.Dispose() }
+        }
         $same = (Test-Path $pakDest) -and
-                ((Get-FileHash $pakDest -Algorithm SHA256).Hash -eq (Get-FileHash $clientPak -Algorithm SHA256).Hash)
+                ((Get-Sha256HexLocal $pakDest) -eq (Get-Sha256HexLocal $clientPak))
         if ($same) {
             Write-Host "  client pak up-to-date (skip)" -ForegroundColor DarkGray
         } else {

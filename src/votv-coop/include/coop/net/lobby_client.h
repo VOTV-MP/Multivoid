@@ -28,7 +28,8 @@ namespace coop::net::lobby {
 struct LobbyRow {
     std::string lobbyId;
     std::string name;
-    std::string version;
+    std::string version;    // host's mod semver (v122; legacy hosts announced a game-style tag)
+    std::string game;       // host's VOTV game target, e.g. "0.9.0-n" (v122; "" = pre-field host)
     std::string world;
     int  playersCur = 0;
     int  playersMax = 0;

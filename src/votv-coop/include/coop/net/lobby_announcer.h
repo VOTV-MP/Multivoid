@@ -52,8 +52,12 @@ public:
     // records conn="direct" + this LISTEN port and advertises the announce's
     // source ip -- /v1/join then returns {conn,addr} for a plain UDP connect
     // instead of ICE creds. 0 = the normal P2P lobby.
+    // The announce body carries the mod identity itself (the Paper pair: game =
+    // coop::version::kGameTarget, proto = kProtocolVersion the build number) --
+    // single authority, no caller-passed version string (the old param let a
+    // stale duplicate ride).
     HostInfo Host(const std::string& masterUrl, const std::string& name,
-                  const std::string& version, const std::string& world,
+                  const std::string& world,
                   bool locked, int playersMax, int timeoutMs, int directPort = 0);
 
     // The heartbeat publishes a live player count from this callback (host wires it to

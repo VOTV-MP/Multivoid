@@ -31,6 +31,7 @@
 #include "ui/dev_menu.h"
 #include "ui/scoreboard.h"
 #include "ui/server_browser.h"
+#include "ui/boot_warning_dialog.h"
 #include "ui/connect_failed_dialog.h"
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
@@ -121,12 +122,13 @@ inline bool ConsoleOpen() { return ui::console::IsOpen(); }
 inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
 inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
 inline bool ConnectFailedOpen() { return ui::connect_failed_dialog::IsOpen(); }
+inline bool BootWarningOpen()   { return ui::boot_warning_dialog::IsOpen(); }
 // VOTV's native pause/ESC menu is up (render-thread-safe atomic; see multiplayer_menu).
 // Gates the passive coop HUD + chat off so they never draw OVER the modal pause menu.
 inline bool PauseMenuOpen() { return coop::multiplayer_menu::IsPauseMenuOpen(); }
 inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
                                    LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen() ||
-                                   ConnectFailedOpen(); }
+                                   ConnectFailedOpen() || BootWarningOpen(); }
 inline bool CaptureActive() {
     // Interactive surfaces take the cursor + input: the F1 menu, the server browser + Host-
     // Game save picker (Connect / Host / type an IP / pick a save), the loading screen (its
@@ -134,7 +136,7 @@ inline bool CaptureActive() {
     // must reach ImGui, not the game), and the V voice-settings panel (sliders + combos).
     // The host scoreboard is interactive too; the client scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
-           ChatOpen() || VoiceOpen() || ConnectFailedOpen() ||
+           ChatOpen() || VoiceOpen() || ConnectFailedOpen() || BootWarningOpen() ||
            (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
@@ -400,6 +402,9 @@ void RenderFrameGuarded() {
         // The connect-failed modal draws AFTER the browser so it layers on top of the
         // reopened browser (a failed browser join reopens it). No-ops when nothing pending.
         if (ui::connect_failed_dialog::IsOpen()) ui::connect_failed_dialog::Render();
+        // The boot-warning modal (duplicate multivoid-*.dll install problem): layers
+        // over whatever surface is up until acknowledged. No-ops when nothing pending.
+        if (ui::boot_warning_dialog::IsOpen()) ui::boot_warning_dialog::Render();
         if (PickerOpen())  ui::host_save_picker::Render();
         if (ChatOpen() && !PauseMenuOpen()) ui::chat_input::Render();
         // The console (bottom log panel) then the loading screen (centered) draw LAST, so the
@@ -435,6 +440,9 @@ void RenderFrameGuarded() {
         // Same re-fault guard for the connect-failed modal: clear the pending reason so a
         // faulted Render can't re-enter + re-fault every frame (the reason is its open flag).
         coop::join_progress::ClearFailReason();
+        // And for the boot-warning modal (audit 2026-07-19: its pending text IS its open
+        // flag; without this a faulted Render re-enters + re-faults forever).
+        ui::boot_warning_dialog::Clear();
         // CLOSE the picker too: if its Render() faulted, leaving it open re-enters
         // Render() every frame and re-faults forever (audit HIGH-2 re-fault loop).
         ui::host_save_picker::Close();

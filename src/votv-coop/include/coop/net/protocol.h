@@ -705,7 +705,17 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 121; // v121 (2026-07-18, OPEN-10 laptop v2): NEW
+inline constexpr uint16_t kProtocolVersion = 122; // v122 (2026-07-19, version identity): this
+                                                  // number IS the mod's BUILD NUMBER (the
+                                                  // Paper pair "game target + build"; every
+                                                  // release bumps it). Join gains ONE
+                                                  // trailing field [u8 gamelen][game ASCII]
+                                                  // (the sender's VOTV game target); the
+                                                  // receiver byte-equality-validates it at
+                                                  // the top of HandleJoinMessage and refuse-
+                                                  // closes on mismatch (Minecraft-shape
+                                                  // equality gate; covers direct connect).
+                                                  // Prior: v121 (2026-07-18, OPEN-10 laptop v2): NEW
                                                   // ReliableKinds LaptopBlob=115 +
                                                   // LaptopQuad=116 + FloppyBoxState=117;
                                                   // LaptopState SHRUNK (the v116 op=4
@@ -1192,7 +1202,15 @@ enum class ReliableKind : uint8_t {
                       //     UTF-8]. senderElementId is the SENDER's local Player
                       //     Element id (host range from host; peer range from
                       //     client). Receiver calls EstablishMirrorForSlot and
-                      //     SetNickname on the puppet. v14 had a senderContext
+                      //     SetNickname on the puppet. Appended fields (parsed
+                      //     field-by-field): [u8 guidlen][guid] (v73) [u8 skinlen]
+                      //     [skin] (v93) [u8 flags] (v94) [u8 has][r][g][b] (v103)
+                      //     [u8 gamelen][game] (v122 -- the sender's VOTV game
+                      //     target, the identity half the header's protocol
+                      //     version doesn't carry; receiver byte-equality-
+                      //     validates it at handler TOP and refuse-closes on
+                      //     mismatch BEFORE any identity side effects).
+                      //     v14 had a senderContext
                       //     byte before nicklen; v16 PR-FOUNDATION-1b moved the
                       //     stale-generation defense to the packet HEADER
                       //     (senderEpoch), so this byte is gone. ParseHeader

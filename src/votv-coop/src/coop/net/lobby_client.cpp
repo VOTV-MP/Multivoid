@@ -64,6 +64,7 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                     r.lobbyId    = J::StrN(e, "lobbyId", 64);
                     r.name       = J::StrN(e, "name", 64);
                     r.version    = J::StrN(e, "version", 24);
+                    r.game       = J::StrN(e, "game", 24);  // v122 game-target (empty = pre-field host)
                     r.world      = J::StrN(e, "world", 40);
                     r.playersCur = J::IntClamped(e, "players_cur", 0, 64);
                     r.playersMax = J::IntClamped(e, "players_max", 0, 64);

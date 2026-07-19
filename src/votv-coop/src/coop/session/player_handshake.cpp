@@ -16,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/skin_registry.h"
+#include "coop/version.h"                // v122: kGameTarget (the Join game field)
 #include "ue_wrap/core/hot_path_guard.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
@@ -23,6 +24,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <string>
@@ -140,6 +142,9 @@ std::vector<uint8_t> ToUtf8(const std::wstring& w) {
     return out;
 }
 
+}  // namespace [Join-payload builders; FromUtf8/SanitizeNickname below are EXTERNAL --
+   //            shared with player_handshake_version.cpp via player_handshake_detail.h]
+
 std::wstring FromUtf8(const uint8_t* p, int len) {
     if (len <= 0) return {};
     const int n = ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p), len, nullptr, 0);
@@ -180,8 +185,8 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
 // C++ mod; a strict-character sanitizer + length cap is the trust-
 // boundary fix, profanity moderation is a separate moderation feature
 // pending Phase 6+ (per the VT adoption findings ranked shortlist).
-constexpr size_t kMaxNickLen = 20;
 std::wstring SanitizeNickname(const std::wstring& raw) {
+    constexpr size_t kMaxNickLen = 20;
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
@@ -213,8 +218,6 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
     if (start > 0) out.erase(0, start);
     return out.empty() ? std::wstring(L"Player") : out;
 }
-
-}  // namespace
 
 void SetLocalNickname(const std::wstring& nick) {
     // VT-inspired sanitize-on-input (2026-05-25): symmetric defense.
@@ -312,6 +315,18 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         // v103 nick color (12f): [u8 has][u8 r][u8 g][u8 b] after the flags byte --
         // the at-join color announce (nick_color owns the local choice).
         AppendNickColorField(joinPayload, coop::nick_color::LocalPacked());
+        // v122 version identity: [u8 gamelen][game ASCII] after the color field --
+        // the sender's VOTV game target (the OTHER identity half, the build number,
+        // already rides the packet HEADER as the protocol version). The receiver
+        // byte-equality-validates it at the top of HandleJoinMessage (the wire-level
+        // Minecraft-shape gate that also covers direct connect / env boot, where no
+        // browser row pre-flight ran). Constant is compile-time <=23 chars.
+        {
+            const char* game = coop::version::kGameTarget;
+            const size_t gameLen = std::min<size_t>(std::strlen(game), 23);
+            joinPayload.push_back(static_cast<uint8_t>(gameLen));
+            joinPayload.insert(joinPayload.end(), game, game + gameLen);
+        }
         joinPayloadBuilt = true;
     }
     if (session.SendReliableToSlot(slot, net::ReliableKind::Join,
@@ -389,6 +404,16 @@ bool HandleJoinMessage(net::Session& session,
                 static_cast<size_t>(msg.payloadLen), senderSlot);
         return true;
     }
+    // v122 WIRE VERSION GATE -- at the TOP, before ANY identity side effect
+    // (mirror install / guid / skin / prefs / nick store). Owned by
+    // player_handshake_version.cpp: pure pre-pass + byte-equality on the peer's
+    // game target (build number = the header's protocol version, equal by
+    // construction); mismatch or malformed chain -> refuse-close (host Kick +
+    // feed line / client Fail popup). A refused joiner == the already-handled
+    // "connected, never Joined, disconnected" lifecycle. Covers EVERY entry
+    // surface -- browser, direct connect, env boot.
+    if (ValidateJoinVersionOrRefuse(session, senderSlot, msg.payload, msg.payloadLen))
+        return true;
     uint32_t senderElementId = 0;
     std::memcpy(&senderElementId, msg.payload, 4);
     const uint8_t* nickStart = msg.payload + 4;

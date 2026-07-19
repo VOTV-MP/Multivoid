@@ -58,14 +58,18 @@ const RL_MUTATE: (Duration, usize) = (Duration::from_secs(60), 240);
 const MAX_NAME: usize = 63;
 const MAX_WORLD: usize = 39;
 const MAX_VERSION: usize = 23;
+const MAX_GAME: usize = 23; // v122: the host's VOTV game target ("0.9.0n")
 
 // latest released mod, served by /v1/latest. DEPLOY CONFIG, not code: overridable via
 // COOP_LATEST_PROTO / COOP_LATEST_MOD / COOP_LATEST_URL in /etc/coop-master.env, so a
-// release bump is an env edit + `systemctl restart coop-master` -- no rebuild. The
-// constants below are only the compiled-in defaults (2026-07-16: proto 66 had gone
-// stale vs the shipped v111 client because it was compile-time only).
-const LATEST_PROTO: i64 = 111;
-const LATEST_MOD: &str = "0.9.0-n";
+// release bump is an env edit + `systemctl restart coop-master` -- no rebuild.
+// v122 (2026-07-19): the compiled-in default is proto 0 = "no released record" --
+// the client treats proto<=0 as NO VERDICT (silent identity label; it can never
+// fabricate a stale "latest" or an update nag). ZERO releases exist yet; the first
+// real release sets COOP_LATEST_PROTO (its build number) + COOP_LATEST_MOD (the
+// Paper-pair display tag, e.g. "0.9.0n-b130") per the release checklist.
+const LATEST_PROTO: i64 = 0;
+const LATEST_MOD: &str = "";
 const LATEST_URL: &str = "https://github.com/pelmentor/VOTV_MP/releases";
 
 const TRUSTED_PROXY_PEERS: [&str; 2] = ["127.0.0.1", "::1"];
@@ -115,6 +119,7 @@ struct Lobby {
     host_identity: String,
     name: String,
     version: String,
+    game: String, // v122: host's VOTV game target ("" = pre-field host)
     proto: i64,
     world: String,
     locked: bool,
@@ -136,6 +141,7 @@ impl Lobby {
             host_identity: format!("h{}", token_hex(8)),
             name: String::new(),
             version: String::new(),
+            game: String::new(),
             proto: 0,
             world: String::new(),
             locked: false,
@@ -348,8 +354,11 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     let mut lo = Lobby::new(ip);
     let name = clamp_field(body, "name", MAX_NAME);
     lo.name = if name.is_empty() { "VOTV Coop".into() } else { name };
-    let version = clamp_field(body, "version", MAX_VERSION);
-    lo.version = if version.is_empty() { "0.0.0".into() } else { version };
+    // v122 Paper-pair identity: game + proto. `version` is the LEGACY pre-v122
+    // display tag (old hosts sent their game version here) -- pass-through, no
+    // fabricated default.
+    lo.version = clamp_field(body, "version", MAX_VERSION);
+    lo.game = clamp_field(body, "game", MAX_GAME);
     lo.proto = as_int(body, "proto", 0).clamp(0, 65535);
     lo.world = clamp_field(body, "world", MAX_WORLD);
     lo.locked = as_bool(body, "locked", false);
@@ -378,10 +387,11 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     state.lobby_by_public.insert(lobby_id.clone(), session_id.clone());
     state.lobbies.insert(session_id.clone(), lo);
     log(&format!(
-        "host {} '{}' v{} from {} ({} live)",
+        "host {} '{}' game={} b{} from {} ({} live)",
         lobby_id,
         state.lobbies[&session_id].name,
-        state.lobbies[&session_id].version,
+        state.lobbies[&session_id].game,
+        state.lobbies[&session_id].proto,
         ip,
         state.lobbies.len()
     ));
@@ -519,6 +529,7 @@ fn build_rows(state: &MasterState) -> Vec<Value> {
             "lobbyId": lo.lobby_id,
             "name": lo.name,
             "version": lo.version,
+            "game": lo.game,    // v122: the host's VOTV game target (gate tier 1)
             "proto": lo.proto,
             "world": lo.world,
             "locked": lo.locked,

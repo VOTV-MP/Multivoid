@@ -26,10 +26,17 @@ namespace coop::session_manager {
 void Configure(const std::string& masterUrl, const coop::net::Config& fallbackHostCfg);
 
 // The master server URL ("host:port") as set by Configure (or the env/localhost
-// default if Configure was not called -- a direct unit probe). The mod version
-// tag (announce + browser display).
+// default if Configure was not called -- a direct unit probe).
 std::string MasterUrl();
-const char* ModVersion();
+
+// The mod's version identity (2026-07-19, the Paper-Minecraft PAIR -- user
+// decision; no separate mod semver, the old hand-kept semver axis was RULE-2
+// rot nobody bumped): GameTarget() = the VOTV cook this build targets
+// ("0.9.0-n", generated coop/version.h); the BUILD NUMBER = kProtocolVersion
+// (moves exactly when compatibility moves; every release bumps it).
+// DisplayVersion() = the user-facing composite "votv-coop 0.9.0-n b122".
+const char* GameTarget();
+std::string DisplayVersion();
 
 // Last host-action status, for the browser/picker to surface (empty until a
 // Host action runs). Set by HostWithSave's worker / the harness boot path on
@@ -103,11 +110,14 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
 // (join_progress::Fail). Returns true if the action was accepted (the browser should
 // Close); false if it was rejected (another action already in flight) so the browser
 // stays open. (regression A/B/C, 2026-06-06.)
-// `hostProto` (v59) = the row's announced kProtocolVersion: a non-zero mismatch is
-// rejected HERE with an "update your mod" HostStatus message (the user-chosen
-// "show normally, reject on Join" browser policy); 0 = unknown (pre-field host),
-// the wire-level protocol-mismatch close stays the backstop.
-bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto = 0);
+// `hostProto`/`hostGame` = the row's announced identity pair (v59 proto = the
+// build number; v122 game target). The EQUALITY gate (game -> build, Minecraft
+// shape 2026-07-19) rejects HERE with the connect-failed POPUP
+// (join_progress::RefuseJoin) per the "show normally, reject on Join" policy;
+// empty/0 = unknown (old host), that tier is skipped -- the Join wire gate +
+// wire-level close stay the backstop.
+bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto = 0,
+               const std::string& hostGame = {});
 
 // Direct-IP connect (rung 0 / LanDirect; works with the master down). "host" or
 // "host:port". Builds a LanDirect client Config + queues a session start. Raises the

@@ -5,6 +5,7 @@
 #include "coop/net/http_client.h"
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the v59 browser join gate
 #include "coop/session/shutdown.h"
+#include "coop/version.h"  // kGameTarget -- the announced identity pair's game half
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
 #include "ue_wrap/core/log.h"
 
@@ -22,7 +23,7 @@ namespace J = coop::net::jsonu;
 LobbyAnnouncer::~LobbyAnnouncer() { Stop(); }
 
 HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& name,
-                              const std::string& version, const std::string& world,
+                              const std::string& world,
                               bool locked, int playersMax, int timeoutMs, int directPort) {
     HostInfo info;
     Stop();  // retire any prior lobby first (sends /leave, joins) -- on a worker, safe
@@ -32,8 +33,10 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     // replace error handler so invalid-UTF-8 input can't throw out of this worker.
     J::Json b;
     b["name"] = name;
-    b["version"] = version;
-    b["proto"] = static_cast<int>(coop::net::kProtocolVersion);  // v59: the REAL compat key
+    // The Paper-pair identity (2026-07-19): game target + build number (proto).
+    // No "version" field -- the mod-semver axis was retired whole (RULE 2).
+    b["game"] = coop::version::kGameTarget;      // join gate tier 1
+    b["proto"] = static_cast<int>(coop::net::kProtocolVersion);  // the build number (tier 2)
     b["world"] = world;
     b["locked"] = locked;
     b["players_max"] = playersMax;

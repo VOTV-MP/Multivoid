@@ -20,19 +20,30 @@ param(
 
 $ErrorActionPreference = "Stop"
 $proxy   = Join-Path $GameWin64 "xinput1_3.dll"
-$payload = Join-Path $GameWin64 "votv-coop.dll"
 $marker  = Join-Path $GameWin64 "votv-coop-loaded.txt"
 $dwm     = Join-Path $GameWin64 "dwmapi.dll"
 $dwmOff  = Join-Path $GameWin64 "dwmapi.dll.off"
 
 if ($Remove) {
-    Remove-Item $proxy, $payload, $marker -ErrorAction SilentlyContinue
+    Remove-Item $proxy, $marker -ErrorAction SilentlyContinue
+    Get-ChildItem (Join-Path $GameWin64 "multivoid-*.dll") -ErrorAction SilentlyContinue | Remove-Item -Force
+    Remove-Item (Join-Path $GameWin64 "votv-coop.dll") -ErrorAction SilentlyContinue  # legacy name
     if (Test-Path $dwmOff) { Move-Item $dwmOff $dwm -Force }   # re-enable UE4SS
     "loader removed; UE4SS restored if it was disabled."
     return
 }
 
 if (-not (Test-Path "$BuildDir\xinput1_3.dll")) { throw "build first: cmake --build build/votv-coop --config Release" }
+
+# v122 (multivoid rename): the payload is the versioned multivoid-<game>-<build>.dll.
+# Pick the newest one in the build dir (a proto bump renames the output; older
+# artifacts may linger there). In the GAME dir, any OTHER multivoid-*.dll and the
+# legacy votv-coop.dll are STALE VERSION FILES -- exactly what the proxy's
+# duplicate-detector pops the in-game warning about -- so the deploy removes them.
+$payloadSrc = Get-ChildItem (Join-Path $BuildDir "multivoid-*.dll") -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $payloadSrc) { throw "no multivoid-*.dll in $BuildDir -- build first" }
+$payload = Join-Path $GameWin64 $payloadSrc.Name
 
 # Idempotent copy: skip if the destination is already byte-identical to the source
 # (e.g. a VOTV instance is running and holds the file locked, but we did NOT rebuild
@@ -62,11 +73,24 @@ function Copy-IfChanged($src, $dst) {
     Copy-Item $src $dst -Force
 }
 Copy-IfChanged "$BuildDir\xinput1_3.dll" $proxy
-Copy-IfChanged "$BuildDir\votv-coop.dll" $payload
+Copy-IfChanged $payloadSrc.FullName $payload
+# Stale-version hygiene: other multivoid-*.dll files + the legacy votv-coop.dll
+# would trip the proxy's duplicate popup on next boot -- remove them (locked file
+# = a running game; warn, the popup will tell the user too).
+Get-ChildItem (Join-Path $GameWin64 "multivoid-*.dll") -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne $payloadSrc.Name } | ForEach-Object {
+        try { Remove-Item $_.FullName -Force -ErrorAction Stop; Write-Host "  removed STALE $($_.Name)" -ForegroundColor Yellow }
+        catch { Write-Host "  WARN: stale $($_.Name) is LOCKED (game running?) -- delete before next launch" -ForegroundColor Red }
+    }
+$legacy = Join-Path $GameWin64 "votv-coop.dll"
+if (Test-Path $legacy) {
+    try { Remove-Item $legacy -Force -ErrorAction Stop; Write-Host "  removed LEGACY votv-coop.dll" -ForegroundColor Yellow }
+    catch { Write-Host "  WARN: legacy votv-coop.dll is LOCKED (game running?) -- delete before next launch" -ForegroundColor Red }
+}
 Remove-Item $marker -ErrorAction SilentlyContinue
 
 if ($Standalone -and (Test-Path $dwm)) { Move-Item $dwm $dwmOff -Force }  # disable UE4SS
 
 "deployed loader to $GameWin64" + $(if ($Standalone) { " (UE4SS disabled)" } else { " (UE4SS left enabled)" })
-Get-ChildItem $GameWin64 | Where-Object { $_.Name -match 'xinput1_3|votv-coop|dwmapi|UE4SS\.dll' } |
+Get-ChildItem $GameWin64 | Where-Object { $_.Name -match 'xinput1_3|multivoid|votv-coop|dwmapi|UE4SS\.dll' } |
     Select-Object Name, Length | Format-Table -AutoSize
