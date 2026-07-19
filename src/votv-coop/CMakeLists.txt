@@ -239,6 +239,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/desk/meadow_store.cpp
     src/ue_wrap/desk/saved_signals.cpp
     src/ue_wrap/actors/puppet.cpp
+    src/ue_wrap/actors/puppet_spawn.cpp
     src/ue_wrap/actors/kerfur.cpp
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
