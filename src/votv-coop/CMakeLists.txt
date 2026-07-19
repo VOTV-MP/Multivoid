@@ -320,6 +320,7 @@ add_library(votv-coop SHARED
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
     src/coop/creatures/npc_sync.cpp
+    src/coop/creatures/npc_sync_install.cpp
     src/coop/creatures/npc_world_enum.cpp
     src/coop/creatures/piramid_sync.cpp
     src/coop/creatures/roach_sync.cpp
