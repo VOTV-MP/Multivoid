@@ -21,7 +21,10 @@ The mod's version identity is the PAIR `(game target, build number)` — exactly
   announced as the "mod version" — RULE-2 rot). Both deleted whole. The
   "forgot-the-semver-bump" residual class from the /qf pass DISAPPEARED with the axis.
 - Display everywhere (top-left menu label, browser header, boot banner):
-  `votv-coop 0.9.0n b122`. The browser Version column: `0.9.0n b122` per row
+  `votv-coop 0.9.0n b122` (s29d REBRAND `dcc988c7`: prefix is now `Multivoid` — display
+  "Multivoid 0.9.0n b122"; runtime artifacts renamed multivoid.ini/.log/-*.txt; compiled
+  endpoints -> master.multivoid.dev; this doc reads as originally shipped below). The browser
+  Version column: `0.9.0n b122` per row
   (build number shows everywhere — user directive).
 - Artifact name: `multivoid-<game>-<build>.dll` (`multivoid-0.9.0n-122.dll`) — the filename
   IS the release identity; CMake parses the build number out of protocol.h at configure

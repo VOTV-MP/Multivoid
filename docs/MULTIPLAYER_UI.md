@@ -266,7 +266,11 @@ ufw allows incl. 80/tcp for Let's Encrypt; `curl -4` public-IP fix) and **functi
 outside**: healthz, `/v1/latest`→111, host→join with full ICE, signaling relay A→B, leave + TTL=90
 reaper, TURN-cred HMAC match vs the box's coturn secret. Compiled official endpoints flipped
 (`protocol.h` `kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`, commit `cd6faf81`, DLL
-`AFBF5728` x4) and all four installs' `multivoid.ini` carry explicit `net.*` fallbacks. Later the
+`AFBF5728` x4); **2026-07-19 s29d: compiled endpoints CUTOVER to the hostname `master.multivoid.dev`**
+(`dcc988c7`, DLL `9370C1C1` — resolution measured native on both consumers: WinHttpConnect for the
+master HTTP + getaddrinfo in signaling_client; the proxied ROOT `multivoid.dev` must never be used
+for custom-port traffic). All four installs' `multivoid.ini` carry explicit `net.*` fallback rows,
+rewritten to the hostname in the same sweep. Later the
 same day the box was apt full-upgraded + rebooted (docker + WireGuard removed) and the whole stack
 re-verified from outside (healthz, latest=111, signaling TCP, STUN).
 

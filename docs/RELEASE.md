@@ -1,4 +1,4 @@
-# Release checklist — multivoid (votv-coop)
+# Release checklist — Multivoid
 
 > Created 2026-07-19 with the v122 version-identity lane. ZERO releases have shipped yet;
 > this is the mechanism that keeps the identity honest when they start. The identity model
@@ -19,7 +19,7 @@ A RELEASE is: a tagged build whose artifact is `multivoid-<game>-<build>.dll`
 3. **Build Release** — the artifact name self-derives (CMake parses protocol.h). Verify:
    `build/votv-coop/Release/multivoid-<game>-<build>.dll` exists with the expected numbers.
 4. **Publish** the DLL + `xinput1_3.dll` + the artifact's SHA256 on the release page
-   (github.com/pelmentor/VOTV_MP/releases).
+   (github.com/VOTV-MP/Multivoid/releases — the master's /v1/latest default points there since `dcc988c7`).
 5. **Update the master's LATEST record** (informational toast only — it NEVER gates a join;
    forgetting this step's worst case is a missing toast, not a broken join):
    on the coop box edit `/etc/coop-master.env`:

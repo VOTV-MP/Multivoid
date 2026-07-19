@@ -870,6 +870,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   duplicated default literal with a "keep in sync" comment = drift bomb — alias the ONE definition
   (`cd6faf81`). *Look FIRST:* grep the OLD value repo-wide AND check each install for key-ABSENCE;
   flip `protocol.h` constants in the same change. `memory/lesson_endpoint_move_enumerate_config_layers.md`
+- **CF-PROXIED root passes only HTTP(S) — custom-port services need the GREY-CLOUD subdomain; an
+  IP→hostname flip needs a per-consumer RESOLVER check first.** 2026-07-19 s29d: root `multivoid.dev`
+  resolves to Cloudflare proxy IPs (web works, master :10001 / signaling :10000 / STUN :3478 would be
+  dead — "half-alive" failure); the constants use `master.multivoid.dev` (grey cloud → the box). Flip
+  was safe only because both consumers resolve natively (WinHttpConnect http_client.cpp:81; getaddrinfo
+  signaling_client.cpp:234) — an `inet_pton`-only consumer would silently fail on a hostname. *Look
+  FIRST:* the `kOfficialMasterUrl` comment in protocol.h. `memory/lesson_cf_proxied_root_breaks_custom_ports.md`
+- **GitHub org setup is fully scriptable via `gh` EXCEPT repo pins — no API exists** (GraphQL Mutation
+  introspection: only pinIssue/pinEnvironment). Pins = web UI only (Overview → "Customize pins",
+  owner-only; hidden on mobile layout + behind the new-org onboarding block — use Desktop site). Org
+  profile README = the `<org>/.github` repo `profile/README.md`; description/topics/visibility all
+  `gh repo edit`. `memory/lesson_github_org_pins_no_api.md`
 - **Pre-push leak audit (PUBLIC repo) catches ASSOCIATION leaks, not just secrets; a commit REBUILD
   danglees every doc'd SHA.** 2026-07-16 s13b: the migration commits leaked zero credentials but tied
   both VPS IPs to the other tenants' service names — for a proxy stack that IS the payload; scrubbed +

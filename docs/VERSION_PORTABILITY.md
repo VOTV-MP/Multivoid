@@ -34,12 +34,12 @@ version-agnostic and should not need touching.
    size and WARNS when they differ from the build the profile targets
    (`kExpectedExeSize`). First line of triage: "is this even the build we built
    against?"
-5. **Logging.** `ue_wrap/log` writes `votv-coop.log` next to the mod. Levelled,
+5. **Logging.** `ue_wrap/log` writes `multivoid.log` next to the mod. Levelled,
    timestamped. This is the primary diagnosis tool.
 
 ## Boot health check (`reflection::RunHealthCheck`)
 
-Runs on load, writes `votv-coop.log`. Sample (0.9.0-n, PASS):
+Runs on load, writes `multivoid.log` (+ `multivoid-compat-report.txt`). Sample (0.9.0-n, PASS):
 
 ```
 target build: game=Alpha 0.9.0-n engine=UE4.27
