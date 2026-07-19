@@ -208,6 +208,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/desk/device_screen.cpp
     src/ue_wrap/desk/space_renderer.cpp
     src/ue_wrap/desk/console_desk.cpp
+    src/ue_wrap/desk/comp_pane.cpp
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
     src/ue_wrap/desk/tape_caddy.cpp

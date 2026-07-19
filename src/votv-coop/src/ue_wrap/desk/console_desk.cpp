@@ -35,7 +35,6 @@ int32_t g_offDlPoFilterSpeed = -1;      // float
 int32_t g_offDlFrFilterSpeed = -1;      // float
 int32_t g_offDlDownloading = -1;        // float
 int32_t g_offDlResDetecPercent = -1;    // float
-int32_t g_offCompProgress = -1;         // float
 int32_t g_offCoordCooldown = -1;        // float
 int32_t g_offPlayVolume = -1;           // int32
 int32_t g_offDlPolarityDir = -1;        // int32
@@ -48,11 +47,11 @@ int32_t g_offActiveDownload = -1;       // bool
 int32_t g_offActiveCoords = -1;         // bool
 int32_t g_offActiveComp = -1;           // bool
 int32_t g_offCoordIsPing = -1;          // bool
-// (canDL left the set in v70 -- DERIVED state, see the Scalars header note.)
+// (canDL left the set in v70 -- DERIVED state, see the Scalars header note.
+// The comp-pane fields -- comp_progress/comp_data_0/comp_downloading/
+// comp_isDecodeActive -- moved to ue_wrap/desk/comp_pane, 2026-07-19 split;
+// comp_maxLevel stays: it rides the DeskState marshal.)
 int32_t g_offCoordCoordLog2Text = -1;   // FString -- the LIVE log (coord_coordLogText is dead)
-int32_t g_offCompData0 = -1;            // Fstruct_signalDataDynamic (0x70) -- the loaded signal
-int32_t g_offCompDownloading = -1;      // float -- per-tick decode increment (B\s readout)
-int32_t g_offCompIsDecodeActive = -1;   // bool -- the decode latch (mirrors never write true)
 
 struct FieldSlot { const wchar_t* name; int32_t* off; };
 FieldSlot g_fields[] = {
@@ -62,7 +61,6 @@ FieldSlot g_fields[] = {
     { L"DL_FrFilterSpeed",    &g_offDlFrFilterSpeed },
     { L"DL_downloading",      &g_offDlDownloading },
     { L"DL_resDetecPercent",  &g_offDlResDetecPercent },
-    { L"comp_progress",       &g_offCompProgress },
     { L"coord_cooldown",      &g_offCoordCooldown },
     { L"play_volume",         &g_offPlayVolume },
     { L"DL_PolarityDir",      &g_offDlPolarityDir },
@@ -76,13 +74,7 @@ FieldSlot g_fields[] = {
     { L"active_comp",         &g_offActiveComp },
     { L"coord_isPing",        &g_offCoordIsPing },
     { L"coord_coordLog2Text", &g_offCoordCoordLog2Text },
-    { L"comp_data_0",         &g_offCompData0 },
-    { L"comp_downloading",    &g_offCompDownloading },
-    { L"comp_isDecodeActive", &g_offCompIsDecodeActive },
 };
-// Scalars marshal: comp_progress and comp_maxLevel both resolve here;
-// comp_progress moved OFF the DeskState marshal in v65 (it rides CompState
-// from the simulating peer -- see the comp section below).
 
 // The parameterless screen-refresh verbs WriteScalars runs after the raw
 // writes -- the same upd* family setData's own apply chain uses, so a mirror
@@ -101,7 +93,6 @@ RefreshSlot g_refresh[] = {
     { L"updMaxLevelLights",  nullptr },
     { L"updateCoordCoords",  nullptr },
 };
-void* g_updCompFn = nullptr;        // updComp(bool Condition)
 void* g_writeToCoordLogFn = nullptr;  // writeToCoordLog_2 (the LIVE log writer)
 
 // ---- v70 signal-catch consume surface ----
@@ -130,19 +121,13 @@ void* g_formDownloadFn = nullptr;        // formDownload(decoded, polarity)
 void* g_initDownloadSignalFn = nullptr;  // initDownloadSignal(signalLocation, decoded, polarity)
 void* g_playPingSoundFn = nullptr;       // playPingSound(NewSound)
 
-// ---- comp pane substrate (v65) ----
+// ---- the desk.Widget -> atlas chain (desk-half seams) ----
+// (The comp-pane texts/cues/sounds/updComp moved to ue_wrap/desk/comp_pane,
+// 2026-07-19 split. SetText/SetSound/Activate/SetActive/SetVisibility/
+// SetVolumeMultiplier + CallParamless live in ue_wrap/core/component_calls.)
 int32_t g_offWidget = -1;            // desk.Widget (Uui_consolesAtlas_C*)
 void* g_atlasCls = nullptr;
-int32_t g_offTextCompProgress = -1;  // atlas.text_comp_progress (UTextBlock*)
-int32_t g_offTextCompProcess = -1;   // atlas.text_comp_process
 int32_t g_offAtlasUiCoords = -1;     // atlas.ui_coordinates (Uui_coordinates_C* @0x0588)
-int32_t g_offCueWorking = -1;        // desk.computerWorking_Cue (UAudioComponent*)
-int32_t g_offCueProg = -1;           // desk.prog
-int32_t g_offCueDone = -1;           // desk.Done
-// (SetText/SetSound/Activate/SetActive/SetVisibility/SetVolumeMultiplier +
-// CallParamless moved to ue_wrap/core/component_calls, 2026-07-19 promotion.)
-void* g_sndWorking = nullptr;        // SoundCue 'computerWorking_Cue' (the loop)
-void* g_sndWorkingEnd = nullptr;     // SoundCue 'computerWorking_end' (the wind-down)
 
 // (The ui_coordinates coords-panel widget surface moved to
 // ue_wrap/desk/coords_panel, 2026-07-19 one-class-per-file split; the desk
@@ -187,7 +172,6 @@ void ResolvePass() {
     for (auto& r : g_refresh) {
         if (!r.fn) r.fn = R::FindFunction(g_cls, r.name);
     }
-    if (!g_updCompFn) g_updCompFn = R::FindFunction(g_cls, L"updComp");
     if (!g_intComsUnfocusedFn) g_intComsUnfocusedFn = R::FindFunction(g_cls, L"intComs_unfocused");
     if (!g_writeToCoordLogFn) g_writeToCoordLogFn = R::FindFunction(g_cls, L"writeToCoordLog_2");
 
@@ -216,27 +200,10 @@ void ResolvePass() {
     }
 
     if (g_offWidget < 0) g_offWidget = R::FindPropertyOffset(g_cls, L"Widget");
-    if (g_offCueWorking < 0) g_offCueWorking = R::FindPropertyOffset(g_cls, L"computerWorking_Cue");
-    if (g_offCueProg < 0) g_offCueProg = R::FindPropertyOffset(g_cls, L"prog");
-    if (g_offCueDone < 0) g_offCueDone = R::FindPropertyOffset(g_cls, L"Done");
     if (!g_atlasCls) g_atlasCls = R::FindClass(L"ui_consolesAtlas_C");
     if (g_atlasCls) {
-        if (g_offTextCompProgress < 0)
-            g_offTextCompProgress = R::FindPropertyOffset(g_atlasCls, L"text_comp_progress");
-        if (g_offTextCompProcess < 0)
-            g_offTextCompProcess = R::FindPropertyOffset(g_atlasCls, L"text_comp_process");
         if (g_offAtlasUiCoords < 0)
             g_offAtlasUiCoords = R::FindPropertyOffset(g_atlasCls, L"ui_coordinates");
-    }
-    // The cue ASSETS share the component property's leaf name -- class-filter
-    // the lookup so we never grab the component instance by mistake.
-    if (!g_sndWorking) {
-        g_sndWorking = R::FindObject(L"computerWorking_Cue", L"SoundCue");
-        if (!g_sndWorking) g_sndWorking = R::FindObject(L"computerWorking_Cue", L"SoundWave");
-    }
-    if (!g_sndWorkingEnd) {
-        g_sndWorkingEnd = R::FindObject(L"computerWorking_end", L"SoundCue");
-        if (!g_sndWorkingEnd) g_sndWorkingEnd = R::FindObject(L"computerWorking_end", L"SoundWave");
     }
 
     // ---- v112 desk-INPUT apply surface ----
@@ -270,17 +237,13 @@ void ResolvePass() {
         UE_LOGI("console_desk: offsets[2/2] -- %s", dump);
         int fns = 0;
         for (auto& r : g_refresh) if (r.fn) ++fns;
-        UE_LOGI("console_desk: resolved -- 23/23 fields, %d/9 refresh verbs (+updComp=%s), "
-                "writeToCoordLog_2=%s, "
-                "comp widget/texts/cues=%s/%s/%s sounds=%s/%s, "
+        UE_LOGI("console_desk: resolved -- 19/19 fields, %d/9 refresh verbs, "
+                "writeToCoordLog_2=%s, widget=%s, "
                 "catch sig/row/dld=0x%X/0x%X/0x%X rowName/mesh=0x%X/0x%X "
                 "form/init/ping=%s/%s/%s",
-                fns, g_updCompFn ? "yes" : "NO",
+                fns,
                 g_writeToCoordLogFn ? "yes" : "NO",
                 g_offWidget >= 0 ? "yes" : "NO",
-                (g_offTextCompProgress >= 0 && g_offTextCompProcess >= 0) ? "yes" : "NO",
-                (g_offCueWorking >= 0 && g_offCueProg >= 0 && g_offCueDone >= 0) ? "yes" : "NO",
-                g_sndWorking ? "yes" : "NO", g_sndWorkingEnd ? "yes" : "NO",
                 g_offCoordSignalData, g_offDLRow, g_offDLData,
                 g_offRowSignalName, g_offRowMesh,
                 g_formDownloadFn ? "yes" : "NO", g_initDownloadSignalFn ? "yes" : "NO",
@@ -377,8 +340,8 @@ bool WriteScalars(const Scalars& in) {
     *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
     // Repaint through the BP's own painters. Each is a cheap widget/material
     // refresh, audited side-effect clean (human-rate call site: wire applies).
-    // (The comp-pane repaint -- updComp(hasData) -- moved to the v65 comp
-    // section below; v64 passed activeComp here, the wrong condition.)
+    // (The comp-pane repaint -- updComp(hasData) -- lives in ue_wrap/desk/
+    // comp_pane; v64 passed activeComp here, the wrong condition.)
     for (auto& r : g_refresh) {
         if (!r.fn) continue;
         ue_wrap::ParamFrame f(r.fn);
@@ -426,24 +389,11 @@ bool AppendCoordLog(const std::wstring& suffix) {
     return ue_wrap::Call(d, f);
 }
 
-// ---- The refiner (comp) pane (v65) ----
+// ---- the desk.Widget -> atlas chain (desk-half seams) ----
+// (The refiner (comp) pane surface -- CompScalars/paints/cues/UpdComp --
+// moved to ue_wrap/desk/comp_pane, 2026-07-19 split.)
 
 namespace {
-
-// Atlas widget instance (desk.Widget).
-void* AtlasWidget() {
-    void* d = Instance();
-    if (!d || g_offWidget < 0) return nullptr;
-    void* w = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(d) + g_offWidget);
-    return (w && R::IsLive(w)) ? w : nullptr;
-}
-
-void* AtlasTextBlock(int32_t off) {
-    void* atlas = AtlasWidget();
-    if (!atlas || off < 0) return nullptr;
-    void* tb = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(atlas) + off);
-    return (tb && R::IsLive(tb)) ? tb : nullptr;
-}
 
 void* DeskAudioComponent(int32_t off) {
     void* d = Instance();
@@ -454,83 +404,14 @@ void* DeskAudioComponent(int32_t off) {
 
 }  // namespace
 
-bool ReadCompScalars(CompScalars& out) {
+// Atlas widget instance (desk.Widget; atlas IsLive-checked). PUBLIC as the
+// desk-half seam for comp_pane's text-block chain (the AtlasUiCoordsSlot
+// precedent) -- the desk owns its own field chain.
+void* AtlasWidget() {
     void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    out.progress = *OffPtr<float>(d, g_offCompProgress);
-    out.downloading = *OffPtr<float>(d, g_offCompDownloading);
-    out.decodeActive = *OffPtr<bool>(d, g_offCompIsDecodeActive);
-    return true;
-}
-
-bool WriteCompScalars(float progress, float downloading) {
-    void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    *OffPtr<float>(d, g_offCompProgress) = progress;
-    *OffPtr<float>(d, g_offCompDownloading) = downloading;
-    return true;
-}
-
-void* CompDataPtr() {
-    void* d = Instance();
-    if (!d || g_offCompData0 < 0) return nullptr;
-    return reinterpret_cast<uint8_t*>(d) + g_offCompData0;
-}
-
-bool UnlatchDecode() {
-    void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    bool* flag = OffPtr<bool>(d, g_offCompIsDecodeActive);
-    if (!*flag) return true;  // not latched: nothing to do
-    *flag = false;
-    CompCueStop();
-    PaintCompProcess(L"idle");
-    return true;
-}
-
-bool UpdComp(bool hasData) {
-    void* d = Instance();
-    if (!d || !g_updCompFn) return false;
-    ue_wrap::ParamFrame f(g_updCompFn);
-    if (!f.valid()) return false;
-    f.Set<bool>(L"Condition", hasData);
-    return ue_wrap::Call(d, f);
-}
-
-bool PaintCompProgress(float progress) {
-    void* tb = AtlasTextBlock(g_offTextCompProgress);
-    if (!tb) return false;
-    // The native paint: Conv_FloatToText(min 3 integral / 3,3 fractional) + "%".
-    wchar_t buf[24];
-    swprintf(buf, 24, L"%07.3f%%", progress);
-    return ue_wrap::component_calls::SetText(tb, buf);
-}
-
-bool PaintCompProcess(const wchar_t* text) {
-    void* tb = AtlasTextBlock(g_offTextCompProcess);
-    if (!tb) return false;
-    return ue_wrap::component_calls::SetText(tb, text);
-}
-
-bool CompCueStart() {
-    void* c = DeskAudioComponent(g_offCueWorking);
-    if (!c) return false;
-    if (g_sndWorking) ue_wrap::component_calls::SetSound(c, g_sndWorking);
-    return ue_wrap::component_calls::Activate(c);
-}
-
-bool CompCueStop() {
-    void* c = DeskAudioComponent(g_offCueWorking);
-    if (!c) return false;
-    if (!g_sndWorkingEnd) return false;  // never Activate the LOOP as a stop
-    if (!ue_wrap::component_calls::SetSound(c, g_sndWorkingEnd)) return false;
-    return ue_wrap::component_calls::Activate(c);
-}
-
-bool CompBeepDone(bool maxed) {
-    void* c = DeskAudioComponent(maxed ? g_offCueDone : g_offCueProg);
-    if (!c) return false;
-    return ue_wrap::component_calls::Activate(c);
+    if (!d || g_offWidget < 0) return nullptr;
+    void* w = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(d) + g_offWidget);
+    return (w && R::IsLive(w)) ? w : nullptr;
 }
 
 // The desk half of the coords_panel instance chain (2026-07-19 split): the raw
@@ -778,10 +659,6 @@ bool ReadMaxCooldown(float& out) {
     out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offMaxCooldown);
     return true;
 }
-
-namespace {
-
-}  // namespace
 
 bool ApplyActiveToggleEffects(int unit, bool value) {
     void* d = Instance();

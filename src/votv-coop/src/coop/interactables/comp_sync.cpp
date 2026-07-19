@@ -6,6 +6,7 @@
 #include "coop/net/session.h"
 #include "coop/interactables/signal_wire.h"
 
+#include "ue_wrap/desk/comp_pane.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/desk/signal_dynamic.h"
@@ -19,6 +20,7 @@ namespace coop::comp_sync {
 namespace {
 
 namespace CD = ue_wrap::console_desk;
+namespace CMP = ue_wrap::comp_pane;
 namespace SD = ue_wrap::signal_dynamic;
 using Clock = std::chrono::steady_clock;
 
@@ -43,7 +45,7 @@ struct DataKey {
     }
 };
 bool ReadDataKey(DataKey& out) {
-    const uint8_t* p = static_cast<const uint8_t*>(CD::CompDataPtr());
+    const uint8_t* p = static_cast<const uint8_t*>(CMP::CompDataPtr());
     if (!p) return false;
     std::memcpy(&out.namePtr, p + SD::kOff_name, sizeof(out.namePtr));
     std::memcpy(&out.idPtr, p + SD::kOff_id, sizeof(out.idPtr));
@@ -75,7 +77,7 @@ const wchar_t* PhaseText(int phase) {
 int DerivePhase(bool active, float progress) {
     if (active) {
         SD::Row row;
-        const void* p = CD::CompDataPtr();
+        const void* p = CMP::CompDataPtr();
         int32_t level = 0;
         if (p) std::memcpy(&level, static_cast<const uint8_t*>(p) + SD::kOff_level,
                            sizeof(level));
@@ -86,10 +88,10 @@ int DerivePhase(bool active, float progress) {
 
 void PaintPhaseIfChanged(int phase) {
     if (phase == g_lastPaintedPhase) return;
-    if (CD::PaintCompProcess(PhaseText(phase))) g_lastPaintedPhase = phase;
+    if (CMP::PaintCompProcess(PhaseText(phase))) g_lastPaintedPhase = phase;
 }
 
-void SendState(coop::net::Session* s, const CD::CompScalars& cs, uint8_t adopt, int toSlot,
+void SendState(coop::net::Session* s, const CMP::CompScalars& cs, uint8_t adopt, int toSlot,
                uint8_t isFinalLevel = 0) {
     coop::net::CompStatePayload p{};
     p.decodeActive = cs.decodeActive ? 1 : 0;
@@ -104,9 +106,9 @@ void SendState(coop::net::Session* s, const CD::CompScalars& cs, uint8_t adopt, 
 // Audit I-1: the SIMULATOR derives "this completion hit the cap" from its own
 // post-increment level + maxLevel at the falling edge -- the mirror must never
 // derive it (its comp_data is one CompData behind the CompState on the lane).
-uint8_t ComputeFinalLevel(const CD::CompScalars& cs) {
+uint8_t ComputeFinalLevel(const CMP::CompScalars& cs) {
     if (cs.progress < 100.0f) return 0;  // manual stop, not a completion
-    const void* base = CD::CompDataPtr();
+    const void* base = CMP::CompDataPtr();
     if (!base) return 0;
     int32_t level = 0;
     std::memcpy(&level, static_cast<const uint8_t*>(base) + SD::kOff_level, sizeof(level));
@@ -116,7 +118,7 @@ uint8_t ComputeFinalLevel(const CD::CompScalars& cs) {
 }
 
 bool SendData(coop::net::Session* s, bool adopt) {
-    const void* base = CD::CompDataPtr();
+    const void* base = CMP::CompDataPtr();
     if (!base) return false;
     SD::Row row;
     if (!SD::ReadStruct(base, row)) return false;
@@ -134,7 +136,7 @@ void ApplyData(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
         return;
     }
     if (adopt && senderSlot != 0) return;  // adopt is host-only
-    void* base = CD::CompDataPtr();
+    void* base = CMP::CompDataPtr();
     if (!base) return;
     if (!row.hasData) {
         // Eject: the owner zeroed the struct natively; mirror that shape.
@@ -145,7 +147,7 @@ void ApplyData(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot), row.name.c_str());
         return;
     }
-    CD::UpdComp(row.hasData);
+    CMP::UpdComp(row.hasData);
     // Echo guard: prime the edge detector so our own poll doesn't rebroadcast.
     ReadDataKey(g_lastDataKey);
     UE_LOGI("comp_sync: comp_data applied from slot %u ('%ls' lvl %d, hasData=%d)",
@@ -169,8 +171,8 @@ void Tick() {
 
     g_assembler.Sweep(now, kAssemblyTTL);
 
-    CD::CompScalars cs;
-    if (!CD::ReadCompScalars(cs)) {
+    CMP::CompScalars cs;
+    if (!CMP::ReadCompScalars(cs)) {
         if (!g_worldDown) {
             g_worldDown = true;
             g_lastDataKey = {};
@@ -184,7 +186,7 @@ void Tick() {
         // The host keeps its natural latch -- it owns the world's decode.
         g_worldDown = false;
         if (s->role() == coop::net::Role::Client && cs.decodeActive) {
-            CD::UnlatchDecode();
+            CMP::UnlatchDecode();
             cs.decodeActive = false;
             UE_LOGI("comp_sync: client world-up unlatch (save-load auto-decode killed; "
                     "the simulator's stream mirrors it)");
@@ -214,8 +216,8 @@ void Tick() {
 void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     if (!CD::EnsureResolved()) return;
-    CD::CompScalars local;
-    if (!CD::ReadCompScalars(local)) return;
+    CMP::CompScalars local;
+    if (!CMP::ReadCompScalars(local)) return;
     if (p.adopt && senderSlot != 0) return;  // adopt is host-only
     if (local.decodeActive) {
         // WE simulate -- never apply a foreign stream over the local sim.
@@ -227,22 +229,22 @@ void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot) {
         }
         return;
     }
-    CD::WriteCompScalars(p.progress, p.downloading);
+    CMP::WriteCompScalars(p.progress, p.downloading);
     const bool active = p.decodeActive != 0;
     if (active) g_simSlot = senderSlot;
-    if (!g_wireActive && active) CD::CompCueStart();
+    if (!g_wireActive && active) CMP::CompCueStart();
     if (g_wireActive && !active) {
-        CD::CompCueStop();
+        CMP::CompCueStop();
         if (p.progress >= 100.0f) {
             // Completion beep: the SIMULATOR stamped the Done-vs-prog verdict
             // (audit I-1/I-5: the mirror's local level is pre-CompData stale
             // here, and a desk-read fallback guessed maxLevel=0 -- both wrong).
-            CD::CompBeepDone(p.isFinalLevel != 0);
+            CMP::CompBeepDone(p.isFinalLevel != 0);
         }
         g_simSlot = 0xFF;
     }
     g_wireActive = active;
-    if (active || p.progress > 0.0f) CD::PaintCompProgress(p.progress);
+    if (active || p.progress > 0.0f) CMP::PaintCompProgress(p.progress);
     PaintPhaseIfChanged(DerivePhase(active, p.progress));
 }
 
@@ -257,8 +259,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!CD::EnsureResolved()) return;
-    CD::CompScalars cs;
-    if (!CD::ReadCompScalars(cs)) return;
+    CMP::CompScalars cs;
+    if (!CMP::ReadCompScalars(cs)) return;
     // The host's view is current even when a CLIENT simulates (its stream
     // raw-writes the host's fields) -- but the FLAG is only true when the
     // host itself simulates; pass the wire-known active state instead.
@@ -274,7 +276,7 @@ void OnPeerDisconnect(uint8_t slot) {
     g_simSlot = 0xFF;
     if (g_wireActive) {
         g_wireActive = false;
-        CD::CompCueStop();
+        CMP::CompCueStop();
         PaintPhaseIfChanged(4);
         UE_LOGI("comp_sync: simulator (slot %u) left mid-decode -- paused at the "
                 "last mirrored progress", static_cast<unsigned>(slot));
@@ -286,7 +288,7 @@ void OnDisconnect() {
     if (g_wireActive) {
         g_wireActive = false;
         if (CD::EnsureResolved()) {
-            CD::CompCueStop();
+            CMP::CompCueStop();
             PaintPhaseIfChanged(4);
         }
     }

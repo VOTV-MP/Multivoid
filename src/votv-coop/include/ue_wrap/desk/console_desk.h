@@ -97,6 +97,11 @@ bool AppendCoordLog(const std::wstring& suffix);
 // WriteDishCommitted -- moved to ue_wrap/desk/coords_panel, 2026-07-19
 // one-class-per-file split. The two desk-half seams it consumes live below.)
 
+// The atlas widget instance (desk.Widget, IsLive-checked) -- the desk-half
+// seam comp_pane's text-block chain consumes (the desk owns its own field
+// chain). Null while the desk/atlas is not live.
+void* AtlasWidget();
+
 // The raw desk.Widget -> atlas.ui_coordinates slot value (atlas IsLive-checked,
 // the widget pointer UNVALIDATED) -- coords_panel's instance chain does the
 // class-validate + cache half. Null while the desk/atlas is not live.
@@ -252,50 +257,9 @@ void* DeckFinFn();
 // if the atlas/ui_coordinates widget is not live yet.
 bool PlayScanEffects();
 
-// ---- The refiner (comp) pane (v65, coop/comp_sync) ----
-// RE (2026-06-12 comp agent pass): the decode ticker is gated ONLY on
-// active_comp + comp_isDecodeActive -- NO occupancy condition -- so any
-// machine with the flag latched SIMULATES (and completion fires world
-// triggers incl. the level-3 theEvil_C spawn). Mirrors therefore stay
-// passive: raw scalar writes + direct paints + cue edges; the flag is never
-// written true from the wire.
-
-struct CompScalars {
-    float progress = 0;          // comp_progress      @0x0AA8 (0..100)
-    float downloading = 0;       // comp_downloading   @0x0B20 (per-tick inc; the B\s readout)
-    bool  decodeActive = false;  // comp_isDecodeActive @0x0AAC (read side)
-};
-bool ReadCompScalars(CompScalars& out);
-
-// Mirror-side write: progress + downloading ONLY (never the flag).
-bool WriteCompScalars(float progress, float downloading);
-
-// The live comp_data_0 struct base (signal_dynamic I/O target). Null when
-// unresolved / no world.
-void* CompDataPtr();
-
-// CLIENT world-up unlatch: clears comp_isDecodeActive + native wind-down cue
-// + "idle" text. Kills the save-transfer's setData->comp_start auto-resume
-// (a joiner would otherwise simulate the decode in parallel with the host --
-// the pre-existing v56 double-simulation bug). No-op if not latched.
-bool UnlatchDecode();
-
-// updComp(bool hasData): the comp pane repaint. Condition semantics are
-// "has data" (comp_data_0.size > 0) -- the native callers' meaning (the v64
-// DeskState apply passed activeComp here; wrong, moved+fixed in v65).
-bool UpdComp(bool hasData);
-
-// Direct paints for the two texts nothing repaints on a passive mirror
-// (text_comp_progress only repaints inside the decode-active tick chain;
-// text_comp_process only inside comp_start/comp_stop/completion).
-bool PaintCompProgress(float progress);
-bool PaintCompProcess(const wchar_t* text);
-
-// Decode ambience on WIRE edges -- the comp_start/comp_stop cue actions
-// minus the state latch: rising -> the computerWorking_Cue loop; falling ->
-// the computerWorking_end wind-down; completion -> the prog/Done beep.
-bool CompCueStart();
-bool CompCueStop();
-bool CompBeepDone(bool maxed);
+// (The refiner (comp) pane surface -- CompScalars, ReadCompScalars/
+// WriteCompScalars, CompDataPtr, UnlatchDecode, UpdComp, the direct paints
+// and the cue actions -- moved to ue_wrap/desk/comp_pane, 2026-07-19 split.
+// The desk-half seams it consumes are Instance() + AtlasWidget() above.)
 
 }  // namespace ue_wrap::console_desk

@@ -17,6 +17,7 @@
 #include "coop/interactables/device_occupancy.h"
 #include "coop/net/session.h"
 
+#include "ue_wrap/desk/comp_pane.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/dish.h"
@@ -35,6 +36,7 @@ namespace coop::dev::desk_diag {
 namespace {
 
 namespace CD  = ue_wrap::console_desk;
+namespace CMP = ue_wrap::comp_pane;
 namespace CP  = ue_wrap::coords_panel;
 namespace DSH = ue_wrap::dish;
 namespace R   = ue_wrap::reflection;
@@ -196,8 +198,8 @@ void Tick() {
     const bool haveScalars = CD::ReadScalars(sc);
     float frData = 0, poData = 0;
     const bool haveFp = CD::ReadFreqPolData(frData, poData);
-    CD::CompScalars comp{};
-    const bool haveComp = CD::ReadCompScalars(comp);
+    CMP::CompScalars comp{};
+    const bool haveComp = CMP::ReadCompScalars(comp);
     float decoded = 0; int32_t polarity = -1;
     const bool haveDl = CD::ReadDownloadProgress(decoded, polarity);
     const int meshValid = CD::DownloadMeshValid() ? 1 : 0;
