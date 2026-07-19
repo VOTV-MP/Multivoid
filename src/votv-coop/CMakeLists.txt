@@ -503,6 +503,10 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_worldctx.cpp
     src/harness/autotest/autotest_worldrules.cpp
     src/harness/autotest/autotest_dispatch.cpp
+    src/harness/autotest/autotest_damage.cpp
+    src/harness/autotest/autotest_dmghazard.cpp
+    src/harness/autotest/autotest_playerdmg.cpp
+    src/harness/autotest/autotest_puppetframe.cpp
     src/harness/autotest/autotest_vitals.cpp
     src/harness/autotest/autotest_ragdoll_spawn_probe.cpp
     src/harness/autotest/autotest_menutravel_probe.cpp
