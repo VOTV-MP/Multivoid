@@ -545,6 +545,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   misattribution (the arrays are prop_floppyBox_C's). Dump the uber: BeginPlay binds? delegate
   mirrors? Only the remainder needs a lane. LOOK FIRST: the v121 design doc SS0/SS3;
   prop_portablePc.json. `memory/lesson_sibling_device_may_be_remote_terminal_measure_binding.md`
+- **A host eid is NOT a cross-peer-stable identity for a SAVE-LOADED entity.** The Build-3 sidecar bound
+  by a LOAD-ORDER cursor (assuming client load order == save-array ordinal), which diverges under
+  async-load / GC churn. Reconcile by an INTRINSIC key (save Key / save position), never by the bound
+  eid. Born from the 2026-06-29 hands-on regression: a kerfur off->active retire-by-eid destroyed the
+  WRONG kerfur on both peers. *Look FIRST:*
+  `memory/lesson_eid_not_cross_peer_stable_loadorder_bind.md`
 - **Classify engine READS into four kinds before pricing an extraction.** "This module reads the
   engine" hides four unrelated things: *intent production* (read the local player — STAYS forever),
   *handle validation* (is this pointer live — DISAPPEARS, the extracted side holds ids not pointers),
