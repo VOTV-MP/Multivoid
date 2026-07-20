@@ -16,6 +16,7 @@
 use coop_server::common::{
     clamp_str, ct_eq, env_int, env_str, log, token_hex, token_urlsafe, turn_creds,
 };
+use coop_server::tls;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
@@ -23,8 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::time::timeout;
 
 // ---- limits / tunables (mirror the Python constants) ------------------------
@@ -601,7 +602,7 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
-async fn write_response(stream: &mut TcpStream, status: u16, body: &[u8]) {
+async fn write_response<S: AsyncWrite + Unpin>(stream: &mut S, status: u16, body: &[u8]) {
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n",
         status,
@@ -632,7 +633,10 @@ fn find_subsequence(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// Read the header block up to (and consuming) the terminating CRLFCRLF, bounded by
 /// `max`. Returns (head_bytes, leftover_body_bytes_already_read). Mirrors the Python
 /// `readuntil(b"\r\n\r\n")` with the start_server `limit`.
-async fn read_head(stream: &mut TcpStream, max: usize) -> Result<(Vec<u8>, Vec<u8>), HeadErr> {
+async fn read_head<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    max: usize,
+) -> Result<(Vec<u8>, Vec<u8>), HeadErr> {
     let mut buf: Vec<u8> = Vec::with_capacity(2048);
     let mut tmp = [0u8; 4096];
     loop {
@@ -664,7 +668,7 @@ impl Drop for ConnGuard {
     }
 }
 
-async fn handle(mut stream: TcpStream, peer_ip: String) {
+async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, peer_ip: String) {
     // Concurrent-connection admission cap: shed before any read.
     if CONNS.fetch_add(1, Ordering::Relaxed) >= MAX_CONNS {
         CONNS.fetch_sub(1, Ordering::Relaxed);
@@ -828,6 +832,11 @@ async fn main() {
         std::process::exit(1);
     }
 
+    // Resolve the TLS decision BEFORE binding anything: with COOP_REQUIRE_TLS=1
+    // and no cert this exits, and it must do so without having briefly bound a
+    // cleartext port (Restart=always would otherwise flap one open every cycle).
+    let tls_acceptor = tls::acceptor_from_env();
+
     let addr = format!("0.0.0.0:{}", CFG.port);
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => l,
@@ -845,15 +854,71 @@ async fn main() {
 
     tokio::spawn(sweeper());
 
+    // TLS listener on its OWN port, beside the plaintext one (Tier B arc 1).
+    // Parallel ports -- not an in-place flip -- so every client build keeps
+    // working through the cutover window and no intermediate state is knowingly
+    // broken; the plaintext listener is retired in arc 5, gated on the accept
+    // log below showing zero unknown-source plaintext connections.
+    match tls_acceptor {
+        Some(acceptor) => {
+            let tls_port = env_int("COOP_MASTER_TLS_PORT", 10443) as u16;
+            let tls_addr = format!("0.0.0.0:{tls_port}");
+            match TcpListener::bind(&tls_addr).await {
+                Ok(l) => {
+                    log(&format!("master TLS listening on {tls_addr}"));
+                    tokio::spawn(serve_tls(l, acceptor));
+                }
+                Err(e) => {
+                    // A configured TLS listener that cannot bind is FATAL: coming
+                    // up plaintext-only on a box meant to serve TLS is the silent
+                    // downgrade this tier exists to prevent.
+                    log(&format!("FATAL: bind {tls_addr} failed: {e}"));
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => log("TLS not configured (COOP_TLS_CERT/COOP_TLS_KEY unset) -- plaintext only"),
+    }
+
+    serve_plain(listener).await
+}
+
+/// Plaintext accept loop. Logs EVERY accept with the listener tag: this log is
+/// the evidence base for the arc-5 retirement gate ("zero unknown-source
+/// plaintext connections over 24h"). Without it the gate would be a hope -- the
+/// 400 path below never logs, so a stray connection could pass unseen.
+async fn serve_plain(listener: TcpListener) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let peer_ip = addr.ip().to_string();
+                log(&format!("accept [listener=plain] [{peer_ip}]"));
                 tokio::spawn(handle(stream, peer_ip));
             }
-            Err(e) => {
-                log(&format!("accept error: {e}"));
+            Err(e) => log(&format!("accept error: {e}")),
+        }
+    }
+}
+
+/// TLS accept loop. Handshake failures are logged (they are the observable a
+/// client-side cert problem produces); successful accepts are NOT logged per
+/// connection -- the lobby-list poll would make that pure noise, and the arc-5
+/// positive proof comes from the signaling server's per-identity registration
+/// lines instead.
+async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -> ! {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let peer_ip = addr.ip().to_string();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => handle(tls_stream, peer_ip).await,
+                        Err(e) => log(&format!("tls handshake failed [{peer_ip}]: {e}")),
+                    }
+                });
             }
+            Err(e) => log(&format!("tls accept error: {e}")),
         }
     }
 }

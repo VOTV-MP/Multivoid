@@ -34,12 +34,26 @@ set -euo pipefail
 
 SIG_PORT=10000
 MASTER_PORT=10001
+# Tier B TLS listeners run BESIDE the plaintext ones during the cutover (arcs
+# 1-4); the plaintext pair is retired in arc 5. See
+# research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md.
+SIG_TLS_PORT=10442
+MASTER_TLS_PORT=10443
 TURN_PORT=3478
 RELAY_MIN=61000
 RELAY_MAX=61100
 SIG_DIR=/opt/coop-signaling-rs
 MASTER_DIR=/opt/coop-master-rs
 REALM=multivoid.dev
+# The certificate name. MUST be the grey-cloud (unproxied) subdomain: the
+# Cloudflare-proxied root forwards only HTTP(S) ports, and our control plane
+# lives on custom ones.
+COOP_DOMAIN=master.multivoid.dev
+# Optional ACME contact address. Deliberately NOT hardcoded (this repo is public);
+# export it before running if you want one. Let's Encrypt has retired expiry
+# notification emails anyway, so the real staleness alarm is the off-box check in
+# tools/cert_check.py, not a mailbox.
+COOP_LE_EMAIL="${COOP_LE_EMAIL:-}"
 
 LOCAL_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I | awk '{print $1}')"
 # -4: the URIs we hand clients must be IPv4 -- a dual-stack box answers ifconfig.me
@@ -94,7 +108,12 @@ fi
 # sandboxed DynamicUser process, so the token never needs to be world-readable.
 cat > /etc/coop-signaling.env <<EOF
 COOP_SIGNALING_PORT=$SIG_PORT
+COOP_SIGNALING_TLS_PORT=$SIG_TLS_PORT
 COOP_SIGNALING_TOKEN=$SIG_TOKEN
+# Fail CLOSED on the public box: without this, a missing cert would silently
+# bring the service up cleartext-only (which is the correct behaviour for the
+# local differential harness, and a security regression here).
+COOP_REQUIRE_TLS=1
 EOF
 chmod 600 /etc/coop-signaling.env
 
@@ -143,9 +162,18 @@ fi
 # clients where signaling / STUN / TURN live (PUBLIC_IP).
 cat > /etc/coop-master.env <<EOF
 COOP_MASTER_PORT=$MASTER_PORT
+COOP_MASTER_TLS_PORT=$MASTER_TLS_PORT
+COOP_REQUIRE_TLS=1
 COOP_TURN_SECRET=$TURN_SECRET
 COOP_SIGNALING_TOKEN=$SIG_TOKEN
-COOP_SIGNALING_URL=$PUBLIC_IP:$SIG_PORT
+# The signaling endpoint the master hands to EVERY client -- it OVERRIDES the
+# client's own configured URL, so this is the value that actually gets dialled.
+# It must be the HOSTNAME, not \$PUBLIC_IP: a TLS certificate is valid for a name,
+# and an IP target fails hostname validation (this was a bare IP until
+# 2026-07-20, which the rebrand sweep missed because the CLIENT constant looked
+# authoritative). The scheme is added when the client that can parse one ships
+# (arc 3); until then a bare host:port means "as-is".
+COOP_SIGNALING_URL=$COOP_DOMAIN:$SIG_PORT
 COOP_STUN_URI=stun:$PUBLIC_IP:$TURN_PORT
 COOP_TURN_URI=turn:$PUBLIC_IP:$TURN_PORT
 # Latest released mod, served by /v1/latest (INFORMATIONAL only -- never gates a
@@ -268,8 +296,63 @@ if ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow "$TURN_PORT/udp"   comment 'coop coturn stun/turn' >/dev/null
   ufw allow "$RELAY_MIN:$RELAY_MAX/udp" comment 'coop turn relay' >/dev/null
   ufw allow 80/tcp             comment 'coop letsencrypt http-01' >/dev/null
-  echo "ufw: coop ports allowed ($SIG_PORT, $MASTER_PORT, $TURN_PORT, $RELAY_MIN-$RELAY_MAX/udp, 80)"
+  ufw allow "$MASTER_TLS_PORT/tcp" comment 'coop master TLS'    >/dev/null
+  ufw allow "$SIG_TLS_PORT/tcp"    comment 'coop signaling TLS' >/dev/null
+  echo "ufw: coop ports allowed ($SIG_PORT, $MASTER_PORT, $SIG_TLS_PORT, $MASTER_TLS_PORT, $TURN_PORT, $RELAY_MIN-$RELAY_MAX/udp, 80)"
 fi
+
+# --- 4b. Tier B: Let's Encrypt certificate + renewal that actually REACHES the
+# running processes ------------------------------------------------------------
+# The services are DynamicUser=yes + ProtectSystem=strict, so they cannot read
+# /etc/letsencrypt at all; systemd LoadCredential hands them the cert as a
+# START-TIME SNAPSHOT. A renewed file on disk therefore does NOT reach a running
+# process -- hence the deploy hook below. MEASURED 2026-07-20: `certbot renew
+# --dry-run` does NOT execute deploy hooks, so validating renewal with it alone
+# proves nothing about the restart; use `--run-deploy-hooks` to exercise the
+# whole chain.
+apt-get install -y -q certbot >/dev/null 2>&1 || true
+if [ ! -d "/etc/letsencrypt/live/$COOP_DOMAIN" ]; then
+  # HTTP-01 needs :80 free at issuance AND at every renewal.
+  if [ -n "$COOP_LE_EMAIL" ]; then LE_CONTACT="-m $COOP_LE_EMAIL --no-eff-email"
+  else LE_CONTACT="--register-unsafely-without-email"; fi
+  # shellcheck disable=SC2086 -- LE_CONTACT is a deliberate multi-word flag set
+  certbot certonly --standalone -d "$COOP_DOMAIN" --non-interactive --agree-tos \
+    $LE_CONTACT || echo "WARN: certbot failed -- TLS will not come up"
+fi
+
+for S in coop-master coop-signaling; do
+  mkdir -p "/etc/systemd/system/$S.service.d"
+  cat > "/etc/systemd/system/$S.service.d/tls.conf" <<EOF
+[Service]
+LoadCredential=tlscert:/etc/letsencrypt/live/$COOP_DOMAIN/fullchain.pem
+LoadCredential=tlskey:/etc/letsencrypt/live/$COOP_DOMAIN/privkey.pem
+Environment=COOP_TLS_CERT=%d/tlscert
+Environment=COOP_TLS_KEY=%d/tlskey
+EOF
+done
+
+mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+cat > /etc/letsencrypt/renewal-hooks/deploy/coop-restart.sh <<EOF
+#!/bin/sh
+# Restart the coop services so the renewed cert replaces their start-time
+# LoadCredential snapshot. Outage is sub-second per service; the client's
+# reconnect backoff is 5s and GNS TimeoutInitial is 10s, and established P2P
+# data never traverses signaling -- so a live session survives this.
+set -e
+[ "\${RENEWED_LINEAGE:-}" = "/etc/letsencrypt/live/$COOP_DOMAIN" ] || exit 0
+logger -t coop-cert "renewed \$RENEWED_LINEAGE -- restarting coop services"
+systemctl restart coop-signaling.service coop-master.service
+# Fail LOUDLY at the moment of change rather than leaving the box quietly down:
+# certbot records a non-zero deploy hook, and the off-box check
+# (tools/cert_check.py) sees a stale served cert on its next run.
+sleep 2
+for svc in coop-signaling coop-master; do
+  systemctl is-active --quiet "\$svc" || { logger -t coop-cert "FAILED: \$svc not active after restart"; exit 1; }
+done
+logger -t coop-cert "coop services healthy after cert renewal"
+EOF
+chmod 700 /etc/letsencrypt/renewal-hooks/deploy/coop-restart.sh
+systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 
 # Cap journald so neither our logs nor coturn's can fill the small disk and wedge
 # the shared box (which would take the box's other tenants down too). (Audit F1, 2026-06-05.)

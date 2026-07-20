@@ -22,12 +22,12 @@
 //! sender, and memory per destination is bounded by the channel capacity.
 
 use coop_server::common::{ct_eq, env_int, env_str, log};
+use coop_server::tls;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::OwnedReadHalf;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
@@ -58,8 +58,8 @@ static CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 /// Bounded, cancel-safe line reader over the connection's read half. On `select!`
 /// cancellation the in-flight `read` consumes nothing (tokio `read` is cancel-safe),
 /// and already-buffered bytes persist in `buf` for the next call.
-struct LineReader {
-    rh: OwnedReadHalf,
+struct LineReader<S> {
+    rh: ReadHalf<S>,
     buf: Vec<u8>,
     max: usize,
 }
@@ -69,8 +69,8 @@ enum LineErr {
     Closed,
 }
 
-impl LineReader {
-    fn new(rh: OwnedReadHalf, max: usize) -> LineReader {
+impl<S: AsyncRead + Unpin> LineReader<S> {
+    fn new(rh: ReadHalf<S>, max: usize) -> LineReader<S> {
         LineReader { rh, buf: Vec::with_capacity(256), max }
     }
 
@@ -99,7 +99,7 @@ struct Reg {
     conn_id: u64,
 }
 
-async fn handle(stream: TcpStream, ip: String) {
+async fn handle<S: AsyncRead + AsyncWrite + Unpin>(stream: S, ip: String) {
     // Admission into the bounded PRE-AUTH pool (an anonymous flood can fill only this
     // small pool; each conn is dropped after GREETING_TIMEOUT).
     if PENDING.fetch_add(1, Ordering::Relaxed) >= MAX_PENDING {
@@ -138,11 +138,15 @@ async fn handle(stream: TcpStream, ip: String) {
 
 /// Run one connection: greet, promote out of the pre-auth pool on success (filling
 /// `reg_out`), then the relay loop. Returns when the connection ends.
-async fn serve(stream: TcpStream, ip: &str, reg_out: &mut Option<Reg>) {
-    // TCP keepalive so a dead authed peer is reaped without an app idle timeout.
-    set_keepalive(&stream);
-
-    let (rh, mut wh) = stream.into_split();
+async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    ip: &str,
+    reg_out: &mut Option<Reg>,
+) {
+    // NOTE: SO_KEEPALIVE is set on the raw TcpStream at accept time (before any
+    // TLS wrap), since socket options belong to the socket, not to the
+    // record layer -- see serve_plain/serve_tls.
+    let (rh, mut wh) = tokio::io::split(stream);
     let mut lr = LineReader::new(rh, MAX_LINE);
 
     // --- greeting: "<token> <identity>", short timeout (anti-slowloris) ---
@@ -277,6 +281,9 @@ async fn main() {
         log("FATAL: COOP_SIGNALING_TOKEN not set -- refusing to start an open server");
         std::process::exit(1);
     }
+    // TLS decision before any bind -- see the master's equivalent.
+    let tls_acceptor = tls::acceptor_from_env();
+
     let port = env_int("COOP_SIGNALING_PORT", 10000) as u16;
     let addr = format!("0.0.0.0:{port}");
     let listener = match TcpListener::bind(&addr).await {
@@ -288,13 +295,63 @@ async fn main() {
     };
     log(&format!("signaling listening on {addr} (token auth required)"));
 
+    // TLS listener on its OWN port beside the plaintext one (Tier B arc 1) --
+    // see the master's equivalent for why parallel ports rather than a flip.
+    match tls_acceptor {
+        Some(acceptor) => {
+            let tls_port = env_int("COOP_SIGNALING_TLS_PORT", 10442) as u16;
+            let tls_addr = format!("0.0.0.0:{tls_port}");
+            match TcpListener::bind(&tls_addr).await {
+                Ok(l) => {
+                    log(&format!("signaling TLS listening on {tls_addr}"));
+                    tokio::spawn(serve_tls(l, acceptor));
+                }
+                Err(e) => {
+                    log(&format!("FATAL: bind {tls_addr} failed: {e}"));
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => log("TLS not configured (COOP_TLS_CERT/COOP_TLS_KEY unset) -- plaintext only"),
+    }
+
+    serve_plain(listener).await
+}
+
+/// Plaintext accept loop. Every accept is logged with the listener tag -- this
+/// is the evidence base for the arc-5 plaintext-retirement gate.
+async fn serve_plain(listener: TcpListener) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let ip = addr.ip().to_string();
+                log(&format!("accept [listener=plain] [{ip}]"));
+                set_keepalive(&stream);
                 tokio::spawn(handle(stream, ip));
             }
             Err(e) => log(&format!("accept error: {e}")),
+        }
+    }
+}
+
+/// TLS accept loop. The per-identity "registered" line inside serve() is what
+/// gives arc 5 its POSITIVE proof that each install converted, so successful
+/// accepts need no extra line here; handshake failures do get one.
+async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -> ! {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let ip = addr.ip().to_string();
+                set_keepalive(&stream);
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => handle(tls_stream, ip).await,
+                        Err(e) => log(&format!("tls handshake failed [{ip}]: {e}")),
+                    }
+                });
+            }
+            Err(e) => log(&format!("tls accept error: {e}")),
         }
     }
 }
