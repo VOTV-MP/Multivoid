@@ -19,7 +19,7 @@ Read that one for the per-element rules; read this one for the deployment and st
 | **Us** | Clients (forced: VOTV's world logic is cooked UE4 blueprints we cannot rewrite) | To be built — MTA's shape. |
 
 Minecraft's answer to *"what does the server do"* (simulate everything) is unavailable to us: it would
-mean reimplementing VOTV, which `ROADMAP.md:109-111` calls a decade-class trap. MTA's answer is
+mean reimplementing VOTV, which `ROADMAP.md` (the retired-phase-8 note) calls a decade-class trap. MTA's answer is
 available and is the one we take.
 
 **Do not confuse "the server owns state" with "the server simulates".** `[V]`
@@ -95,7 +95,7 @@ The globally latent class splits again, and both halves are freeze-compatible **
   not state anyone returns to inspect.
 
 **Therefore no Wine simulation carrier is required for a zero-player dedicated server**, and a Linux
-VPS runs the arbiter natively. This retires the reasoning in `ROADMAP.md:62-66` — see §8.
+VPS runs the arbiter natively. This retires the reasoning in `ROADMAP.md` phase 6-as-was — see §8.
 
 ---
 
@@ -143,6 +143,49 @@ two scalars on change. The push is more expensive than necessary: `dry` is a fun
 time, so the arbiter stores **one stamp** (when it was poured) and every peer computes locally — with
 all four benefits in §4. **Parking the brain still survives** from the planned fix, otherwise the
 local accumulator fights the computed value.
+
+---
+
+## 5b. Persistence — what a dedicated arbiter actually stores (user question, 2026-07-20)
+
+With zero players nobody has a running game, so the question "where does the world live" becomes
+concrete: **the arbiter stores it.** That splits into two stores, only one of which is new work.
+
+**1. Blob custody — trivial.** The arbiter keeps the save bytes, a version and a hash, and hands them
+to a joiner. It **never parses them**: GVAS is never deserialised outside the engine, or we lose the
+property that makes the arbiter engine-free and cross-platform. This is a file plus a hash, not a
+save system.
+
+**2. Canon persistence — new, but ordinary.** The element records the arbiter owns must survive a
+restart. This is **our own schema**, plain serialisation — nothing to do with Unreal's format.
+
+### This is already today's pipeline, with a new owner
+
+A joining client today loads the host's save and `prop_snapshot` then reconciles by key. So
+**blob-then-overlay already exists**; the arbiter simply becomes the party holding both halves — the
+blob as the INITIAL world, its canon as the DELTA that wins wherever it has coverage.
+
+### The consequence that makes the progress scale measurable
+
+The blob needs re-capturing only to the extent the canon does NOT cover what changed. Coverage is
+small today, so the unsynced remainder drifts and the blob must periodically be re-donated by a live
+peer's game. As lanes move their canon into the arbiter, re-donation matters less; at full coverage,
+never.
+
+> **The blob's re-donation cadence is the inverse of the canon's coverage.**
+
+That is the "phase 8 arrives by accumulation" claim expressed as an observable quantity rather than a
+slogan — and it is the honest way to report progress on this arc.
+
+### A security rule falls straight out
+
+**Whoever donates the blob dictates the entire unsynced remainder.** So donation must be restricted to
+the host/admin, never accepted from any connected peer — otherwise the round-2 custody hole (the
+world's author is whoever left last) simply reappears on the dedicated server. Recorded here because
+the rule is cheap to state now and expensive to retrofit.
+
+`[?]` Not designed: blob versioning/rotation, what happens when a donated blob's canon-overlap
+disagrees with the arbiter's record, and whether re-donation needs a quiescence gate.
 
 ---
 
@@ -204,7 +247,7 @@ both the arbiter concept (2026-07-20) and this session's `CServer.cpp` measureme
 
 - **who simulates:** still the game process, still clients. That half stands.
 - **who arbitrates:** a separate binary from day one. That half is replaced.
-- **the Wine carrier:** no longer required for a zero-player server (§3), so phase 6 shrinks to the
+- **the Wine carrier:** no longer required for a zero-player server (§3), so the dedicated phase (now 7) shrinks to the
   ghost-host question plus a Linux build of the arbiter.
 
 A `/qf` round caught that I had inherited this ROADMAP framing and then cited it back as independent
@@ -242,7 +285,7 @@ confirmation of my own conclusion. Recorded so it is not repeated.
   over-promise.
 - It does not remove the save blob. Bootstrap still ships one; the arbiter's canon covers only what
   crosses the wire. **That boundary is the progress scale:** every new sync lane extends the server's
-  authority, so phase 8 arrives by accumulation rather than by a rewrite event.
+  authority, so the MTA endgame arrives by accumulation rather than by a rewrite event — which is why the old phase 8 was RETIRED as a phase on 2026-07-20.
 - It does not solve the two-representations problem. During migration the engine's state and the
   arbiter's record coexist — the second parallel path RULE 2 dislikes. Tolerable only with an
   explicit end date, and only while the arbiter's record is authoritative and the engine's is a

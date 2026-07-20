@@ -204,13 +204,18 @@ The long-term arc, in order (each phase gates the next — detail in
 | # | Phase | Status |
 |--|--|--|
 | 1 | **Functional co-op** — deep sync of VOTV's systems on the standalone substrate | **in progress (current)** |
-| 2 | **Sandbox mode** — support VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
-| 3 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
-| 4 | **Lua API** — mode rules move to Lua; the C++ core (transport, sync, identity) stays native | planned |
-| 5 | **Resource system** — custom modes and plugins as one mechanism (the MTA shape) | planned |
-| 6 | **Dedicated server** — 24/7 hosting with no live player required | planned |
-| 7 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
-| 8 | **Native standalone server** — the MTA endgame: server holds state + rules, clients simulate | long horizon |
+| 2 | **The arbiter** — per-element authority moves into a separate, engine-free server process; the host's game becomes an ordinary client of it | planned |
+| 3 | **Sandbox mode** — support VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
+| 4 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
+| 5 | **Lua API** — mode rules move to Lua; the C++ core (transport, sync, identity) stays native | planned |
+| 6 | **Resource system** — custom modes and plugins as one mechanism (the MTA shape) | planned |
+| 7 | **Dedicated server** — 24/7 hosting with no live player required; the same server binary phase 2 already ships, launched by hand instead of spawned by the game | planned |
+| 8 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
+
+The old phase 8 ("native standalone server") was **retired as a phase** on 2026-07-20: the server is a
+separate process from phase 2 onward, and its authority grows with every sync lane, so the MTA endgame
+arrives by accumulation rather than as a milestone. See
+[`docs/COOP_SERVER_MODEL.md`](docs/COOP_SERVER_MODEL.md).
 
 ---
 

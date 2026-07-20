@@ -38,98 +38,129 @@ relay topology is still 2-player-shaped; 4-peer LAN smoke missing.
 
 ---
 
-## Project phases — the long-term arc (fixed 2026-07-19, user-approved)
+## Project phases — the long-term arc (RESTRUCTURED 2026-07-20, user-approved)
 
 The MTA/gmod trajectory. Everything below "Phase 0 — Feasibility" in this
 document is the DETAIL of project phase 1. Each later phase gets its own
 phase-gate breakdown when it opens.
 
-1. **votv-coop** ◐ — the current work: functional coop on the standalone
+**Restructured 2026-07-20 (user directive).** The prior 8-phase arc (fixed
+2026-07-19) put the authority work last, as a "native standalone server"
+endgame. Two measurements dissolved that shape — see
+`docs/COOP_SERVER_MODEL.md`:
+
+- the arbiter is a **child process from day one** (measured MTA `CServer.cpp`
+  precedent), so there is nothing to "extract later" and no inversion EVENT;
+- the arbiter's authority **grows monotonically** as each sync lane moves its
+  canon into it, so the endgame is a gradient, not a milestone.
+
+So the old phase 8 is **gone as a phase**, and the authority work moves to
+**phase 2** — it is simultaneously the MTA architecture, the fix for the
+authority-shaped security findings (A3/A4/A5), and what the dedicated server
+needed all along. The user's ordering stands: MTA architecture first,
+security findings after.
+
+**The chain is not strictly linear.** Phase 2 gates phase 7 (dedicated) and
+the authority-shaped security work. Phases 3-6 (sandbox, Lua, resources) are
+independent of it and may interleave.
+
+1. **votv-coop** — the current work: functional coop on the standalone
    substrate (this whole document).
-2. **Sandbox mode** ☐ — support VOTV's sandbox game mode with its own rules
+2. **The arbiter** — **NEW, pulled forward from the old phase 8.** Move
+   per-element authority into an arbiter that runs as a child process and
+   never reads the engine (`docs/COOP_SYNCER_MODEL.md` = who may write what;
+   `docs/COOP_SERVER_MODEL.md` = deployment + state). The host's game becomes
+   an ordinary client of it and loses its privileged in-process authority
+   path. Absorbs the A3/A4/A5 security findings, which are the ABSENCE of
+   this architecture rather than bugs to patch.
+   - **The measured work:** 32 canon-derivation read sites in 9 lanes must be
+     inverted to write-only — today e.g. `meadow_db_sync` builds the
+     "canonical" DB by reading the engine's widget arrays instead of
+     remembering it (`COOP_SERVER_MODEL.md` §7; the figure is an order of
+     magnitude from a name-shape grep, not a verified list).
+   - **What is NOT work:** intent production (reading the local player) stays;
+     handle validation disappears (the arbiter holds ids, not pointers);
+     outcome capture stays (the engine's machines decide, the arbiter records).
+   - **THE RULE:** the arbiter holds values and anchors; the engine holds only
+     what has a world-dependent rate.
+   - Gate: the host's game is a client of the arbiter, and the 9 lanes' canon
+     lives in the arbiter's record rather than in an engine read.
+3. **Sandbox mode** — support VOTV's sandbox game mode with its own rules
    (coop currently targets the story/normal mode). Produces the "rules of a
-   mode" as an explicit, portable layer — the thing phase 4 will port.
-3. **LuaJIT embedding** ☐ — vendor LuaJIT + bindings over the `ue_wrap`/
-   `coop` APIs. The scripting SUBSTRATE only; nothing moves to Lua yet.
-4. **Lua API** ☐ — the C++ core STAYS (transport, sync, identity,
+   mode" as an explicit, portable layer — the thing phase 5 will port.
+4. **LuaJIT embedding** — vendor LuaJIT + bindings over the `ue_wrap`/`coop`
+   APIs. The scripting SUBSTRATE only; nothing moves to Lua yet.
+5. **Lua API** — the C++ core STAYS (transport, sync, identity,
    interpolation — MTA keeps its core native for a reason); the coop and
    sandbox mode RULES move to Lua as the first two reference resources.
    Not a rewrite — an API layer plus two ported rule sets.
-5. **Resource system** ☐ — custom modes AND plugins as ONE mechanism
-   (the MTA shape: manifest, server+client scripts, events, start/stop).
-   A gamemode-resource and a utility-resource live in the same system —
-   no separate "plugin API".
-6. **Dedicated server** ☐ — 24/7 hosting with zero players (the gmod
-   shape: host from in-game OR run dedicated).
-   **PARTLY SUPERSEDED 2026-07-20 — see `docs/COOP_SERVER_MODEL.md` §8.**
-   The commitment below FUSED two questions (who ARBITRATES vs who
-   SIMULATES) and predates both the arbiter concept and the measured MTA
-   `CServer.cpp` precedent. Split: *who simulates* = still the game
-   process, still clients (that half STANDS); *who arbitrates* = a
-   separate child-process binary from day one (that half is REPLACED);
-   *the Wine carrier* = no longer required for a zero-player server (the
-   user's freeze decision + the accumulator/roll split), so this phase
-   shrinks to the ghost-host question plus a Linux build of the arbiter.
-   Original text: Architectural commitment,
-   decided up front: our host-authority = the host's game simulates the
-   world, so dedicated = the HOST GAME RUNNING HEADLESS (no render) driven
-   by our DLL — NOT a from-scratch server binary (MTA's server never runs
-   GTA, but MTA distributes world-sim to clients; we do the opposite).
-   Open questions logged 2026-07-19 (user discussion):
-   - **Ghost host** — the architecture assumes the host is a live player
-     with a pawn; a zero-player host needs its local pawn parked/excluded
-     (not a slot, not an event target). THE phase-6 design question.
-   - **No redistribution** — the server package = our DLL + launcher +
-     config dropped onto the OPERATOR'S OWN game copy (itch.io). No
-     SteamCMD analog; we never ship game files.
-   - **Linux via Wine spike** — no native VOTV Linux build exists and we
-     cannot produce one (no source; rule 1 forbids rebuilding the game).
-     Wine/Proton headless (`-nullrhi`, Xvfb if needed,
-     `WINEDLLOVERRIDES="xinput1_3=n,b"`) is the Linux path; expectation
-     (NOT measured): 0-10% CPU overhead on a CPU-bound headless load with
-     fsync/ntsync, RAM budget better than a same-size Windows box. The
-     spike measures our existing perf-probe metrics + 24h uptime.
+6. **Resource system** — custom modes AND plugins as ONE mechanism (the MTA
+   shape: manifest, server+client scripts, events, start/stop). A
+   gamemode-resource and a utility-resource live in the same system — no
+   separate "plugin API".
+7. **Dedicated server** — 24/7 hosting with zero players (the gmod shape:
+   host from in-game OR run dedicated). **Much smaller than it was**, because
+   phase 2 delivers the binary: hosting from in-game already spawns the same
+   arbiter as a child process, so "dedicated" is that binary launched by hand
+   instead. What remains:
+   - **Ghost host** — the architecture assumes the host is a live player with
+     a pawn; a zero-player host needs its local pawn parked/excluded (not a
+     slot, not an event target). THE design question of this phase.
+   - **A Linux build of the arbiter** — it is engine-free C++, so this is
+     ordinary cross-compilation. Launch-of-child must sit behind an
+     abstraction: MTA's job objects + `CreatePipe` are Windows-only.
+   - **No Wine carrier for a zero-player server** (2026-07-20, superseding
+     the 2026-07-19 commitment): the empty world FREEZES, and the two
+     mechanisms in play are each freeze-compatible on their own — time-linear
+     accumulators are recomputed at unfreeze, gated random rolls simply do
+     not fire. Wine returns ONLY if a world-rate-dependent progression turns
+     up that no anchor can express (`COOP_WORLD_PROP_DIVERGENCE.md` owns that
+     measurement; rule-of-three is NOT met — exactly one accumulator is
+     confirmed).
+   - **No redistribution** — the server package = our DLL + launcher + config
+     dropped onto the OPERATOR'S OWN game copy (itch.io). No SteamCMD analog;
+     we never ship game files.
    - **Native game server binary = only via the devs** (UE4.27 LinuxServer
-     target needs the game project). If that ever lands, our DLL needs its
-     own port (ELF loading, new AOB signatures).
-7. **Resource infrastructure** ☐ — client-side resource download from the
+     target needs the game project). If that ever lands, our DLL needs its own
+     port (ELF loading, new AOB signatures).
+   - Wine spike parameters, if ever needed: `-nullrhi`, Xvfb if required,
+     `WINEDLLOVERRIDES="xinput1_3=n,b"`; expectation NOT measured (0-10% CPU
+     overhead on a CPU-bound headless load with fsync/ntsync).
+8. **Resource infrastructure** — client-side resource download from the
    server (no manual mod-pack installs), Lua sandboxing/security (clients
-   execute untrusted server code — mandatory layer), and the server
-   browser (the VPS signaling service grows into the master list).
+   execute untrusted server code — mandatory layer), and the server browser
+   (the VPS signaling service grows into the master list).
    Trust note (2026-07-19): once servers are public, client-side cheating
-   returns as a threat — MTA's answer is a client AC + server-side
-   validation hooks, NOT authority architecture (MTA is client-simulated
-   with per-element syncers; verified in the vendored source,
+   returns as a threat — MTA's answer is a client AC + server-side validation
+   hooks, NOT authority architecture (MTA is client-simulated with per-element
+   syncers; verified in the vendored source,
    `CUnoccupiedVehicleSync::FindPlayerCloseToVehicle` assigns the nearest
-   player as an element's simulator). In our current model only the HOST
-   is trusted (host == admin, acceptable); a public-server future needs
-   its own AC layer decision here.
-8. **Native standalone server** ☐ — the long-horizon MTA endgame. **UPDATE
-   2026-07-20 (user decision): its authority model is being PULLED FORWARD.**
-   The per-element syncer model is now a near-term architectural workstream
-   (`docs/COOP_SYNCER_MODEL.md`), because it is simultaneously the fix for the
-   A3/A4/A5 security findings and the abstraction phase 8 needs — building it
-   once for security and again for the server would be building it twice. With
-   syncers in place and the HOST running the arbiter, phase 8 shrinks from a
-   rewrite to "move the arbiter out of the game process". Ordering is explicit:
-   MTA architecture first, security findings after. Original text follows —
-   only AFTER 5-7: authority INVERSION to the true MTA shape — the server holds
-   state + Lua rules + arbitration (our C++ core needs no engine), clients
-   simulate the world with per-element syncers (the MTA precedent above).
-   NOT "rewrite VOTV in C++": server-side authoritative physics without
-   the engine is a decade-class trap; the MTA inversion shrinks the job to
-   rules + state machines, which phases 4-5 already produce as Lua
-   resources. The accumulated RE corpus (docs/events/, docs/signals/,
-   docs/items/, COOP_RNG_AUTHORITY, the entity-expression map) IS the
-   rules specification. Research branch: executing the game's own cooked
-   BP bytecode in our VM (we already parse it; native-call stubs are the
-   wall). ~~The phase-6 Wine dedicated stays the workhorse meanwhile.~~
-   **REVISED 2026-07-20** (`COOP_SERVER_MODEL.md` §3): a Wine carrier is no
-   longer required for a ZERO-PLAYER server — the empty world freezes, and
-   the two mechanisms in play (time-linear accumulators, gated random
-   rolls) are each freeze-compatible on their own. A Linux VPS runs the
-   arbiter natively. Wine remains only if a carrier is later needed for a
-   world-rate-dependent progression no anchor can express.
+   player as an element's simulator). In our current model only the HOST is
+   trusted (host == admin, acceptable); a public-server future needs its own
+   AC layer decision here.
+
+### RETIRED as a phase: "Native standalone server" (the old phase 8)
+
+**Not a milestone — a gradient.** The old entry described an authority
+INVERSION performed after phases 5-7: the server would come to hold state +
+Lua rules + arbitration while clients simulate. That destination is unchanged
+and still correct; what was wrong was modelling it as an EVENT.
+
+The arbiter binary exists from phase 2, and the boundary between "the
+arbiter's canon" and "the opaque save blob shipped at bootstrap" is exactly
+what crosses the wire today. **Every new sync lane extends the server's
+authority**, so the MTA shape arrives by accumulation. There is no rewrite
+moment to schedule.
+
+Two things from the old entry survive as standing notes:
+
+- **NOT "rewrite VOTV in C++".** Server-side authoritative physics without the
+  engine is a decade-class trap. The inversion is about rules and state
+  machines, which phases 5-6 already produce as Lua resources. The accumulated
+  RE corpus (`docs/events/`, `docs/signals/`, `docs/items/`,
+  `COOP_RNG_AUTHORITY`, the entity-expression map) IS the rules specification.
+- **Research branch:** executing the game's own cooked BP bytecode in our VM
+  (we already parse it; native-call stubs are the wall).
 
 ---
 

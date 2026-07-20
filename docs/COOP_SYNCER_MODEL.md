@@ -16,14 +16,15 @@ cost calculus:
 | Road | What it needs | 
 |---|---|
 | **Security A3/A4** | Something on the receive path that answers *"is this peer allowed to change this element?"* |
-| **Dedicated server (ROADMAP phase 8)** | *"authority INVERSION to the true MTA shape — the server holds state + rules + arbitration, clients simulate the world with per-element syncers"* |
+| **The arbiter (ROADMAP phase 2 — pulled forward 2026-07-20 from the old phase 8)** | *"authority INVERSION to the true MTA shape — the server holds state + rules + arbitration, clients simulate the world with per-element syncers"* |
 | **The MTA migration** (standing rule 2026-05-28) | The syncer model is MTA's core abstraction; see `docs/security/MTA_PRECEDENT.md` §1-§3 |
 
 **These are the same mechanism.** Building it once for security and again for the dedicated server
 would be building it twice. The syncer model is the abstraction that survives the inversion: today
-the **host process** runs the arbiter; in phase 8 the **standalone server** runs the same arbiter
-against the same element table. Phase 8 stops being a rewrite and becomes *"move the arbiter out of
-the game process"*.
+the **host process** spawns the arbiter as a child; a dedicated box runs the same binary by hand
+against the same element table. The old phase 8 first stopped being a rewrite (it became *"move the
+arbiter out of the game process"*) and then stopped being a PHASE at all — the arbiter is born
+outside the game process, so there is nothing to move. See `COOP_SERVER_MODEL.md` §2.
 
 That is the strongest available argument for doing it now rather than after the release-gate work —
 it is not extra scope, it is the same scope spent once.
@@ -61,8 +62,8 @@ Three deployment modes for **one** arbiter implementation:
 | Mode | Where the arbiter runs | Engine available? |
 |---|---|---|
 | **Embedded** | Inside the host player's game process (listen-server shape) | Yes — and that is the trap |
-| **Headless host** | ROADMAP phase 6 (Wine, the game running headless) | Yes — but **no longer REQUIRED for a zero-player server** as of 2026-07-20; see `COOP_SERVER_MODEL.md` §3 |
-| **Standalone binary** | ROADMAP phase 8 | **No** |
+| **Headless host** | ROADMAP phase 7 (Wine, the game running headless) | Yes — but **no longer REQUIRED for a zero-player server** as of 2026-07-20; see `COOP_SERVER_MODEL.md` §3 |
+| **Standalone binary** | ROADMAP phase 7 (dedicated) | **No** |
 
 **This retires §9 question (f).** Whether the arbiter API is process-agnostic is no longer an open
 question — it is a **requirement**, and it decides the API shape before stage 0.
@@ -96,7 +97,7 @@ checked on every compile, and the embedded mode cannot silently cheat.
 
 This also means the arbiter needs its **own element state mirror** (positions, holders, whatever the
 predicates read) fed by the engine side in embedded mode and by clients in standalone mode. That
-mirror is the real deliverable of stage 0 — bigger than the API, and it is what phase 8 actually
+mirror is the real deliverable of stage 0 — bigger than the API, and it is what a dedicated box actually
 needs to exist.
 
 ## 2. The model
@@ -107,7 +108,7 @@ Three concepts, borrowed wholesale (`MTA_PRECEDENT.md` §1):
 - **Syncer** — the ONE peer currently authorized to author changes for that element. Assigned by the
   arbiter, *pushed* to the peer, never claimed by it.
 - **Arbiter** — the authority that assigns syncers and validates inbound writes. Today: the host
-  process. Phase 8: the standalone server. **The code must not care which.**
+  process (spawned as a child). A dedicated box: the same binary, launched by hand. **The code must not care which.**
 
 The invariant, and everything below is a consequence of it:
 
@@ -317,7 +318,7 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
 5. **Interaction with `PLAN_01` (peer auth).** A syncer assignment is only as trustworthy as the
    peer identity it names. Syncers make authority *consistent*; certificates make identity *real*.
    Neither substitutes for the other — but does stage 4 have any value before P1 lands?
-6. **Phase-8 forward compatibility.** Is the arbiter API genuinely process-agnostic, or does it
+6. **Dedicated-deployment forward compatibility.** Is the arbiter API genuinely process-agnostic, or does it
    quietly assume in-process engine access? If it assumes, the phase-8 payoff evaporates and we
    should know that now.
 
