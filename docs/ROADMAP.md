@@ -94,8 +94,16 @@ phase-gate breakdown when it opens.
    player as an element's simulator). In our current model only the HOST
    is trusted (host == admin, acceptable); a public-server future needs
    its own AC layer decision here.
-8. **Native standalone server** ☐ — the long-horizon MTA endgame, only
-   AFTER 5-7: authority INVERSION to the true MTA shape — the server holds
+8. **Native standalone server** ☐ — the long-horizon MTA endgame. **UPDATE
+   2026-07-20 (user decision): its authority model is being PULLED FORWARD.**
+   The per-element syncer model is now a near-term architectural workstream
+   (`docs/COOP_SYNCER_MODEL.md`), because it is simultaneously the fix for the
+   A3/A4/A5 security findings and the abstraction phase 8 needs — building it
+   once for security and again for the server would be building it twice. With
+   syncers in place and the HOST running the arbiter, phase 8 shrinks from a
+   rewrite to "move the arbiter out of the game process". Ordering is explicit:
+   MTA architecture first, security findings after. Original text follows —
+   only AFTER 5-7: authority INVERSION to the true MTA shape — the server holds
    state + Lua rules + arbitration (our C++ core needs no engine), clients
    simulate the world with per-element syncers (the MTA precedent above).
    NOT "rewrite VOTV in C++": server-side authoritative physics without

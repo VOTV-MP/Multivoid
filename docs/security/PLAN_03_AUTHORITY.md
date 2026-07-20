@@ -1,12 +1,18 @@
-# Plan 03 — authority enforcement (the real work)
+# Plan 03 — authority enforcement (the security framing)
 
 **Closes:** `TRACKER` **A3** (entity commands trust any client) + **A4** (symmetric families accept
-any peer's writes).
-**Status: DESIGN. No code written.** Both rows are `[A]` — re-read before building (Rule S5).
+any peer's writes) + **A5** (unbounded client-authored economy write).
 
-This is the hardest plan in the folder. Not because any single edit is difficult, but because the
-correct fix touches the shape of how coop state is authored, and a careless version breaks
-legitimate play.
+> **THE MECHANISM NOW LIVES IN `docs/COOP_SYNCER_MODEL.md`** (USER DECISION 2026-07-20: adopt the MTA
+> authority model FIRST, then return to security). A3/A4/A5 are not bugs to patch — they are the
+> **absence of that architecture**. Building a security patch here first would create a mechanism the
+> migration then replaces (RULE 2, migration baggage).
+>
+> **This file keeps only the security framing:** what the attack is, what it costs a victim, and what
+> "closed" must mean. For the design, the staging and the Principle-8 answers, read the syncer model.
+
+**Status: the fix is DESIGN in `COOP_SYNCER_MODEL.md`, gated on its `/qf`.** Both rows are `[A]` —
+re-read before building (Rule S5).
 
 ---
 

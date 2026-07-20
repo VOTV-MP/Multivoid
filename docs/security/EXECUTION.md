@@ -7,6 +7,24 @@ Updated: **2026-07-20**, HEAD `cc0d8686`. Deployed DLL `05479190C7C01528` x4, pr
 
 ---
 
+## 0. ORDERING CHANGED 2026-07-20 (user decision) — read this before the waves
+
+> **Adopt the MTA authority model FIRST; return to the security findings after.**
+
+The board below was written assuming security work proceeds finding-by-finding. That is now wrong for
+the **authority-shaped** findings: **A3, A4 and A5 are not bugs to patch — they are the absence of an
+architecture**, and the architecture is `docs/COOP_SYNCER_MODEL.md`. Patching them first builds a
+mechanism the migration then replaces (RULE 2).
+
+**Two things are NOT held behind the migration:**
+
+1. **Parse-layer findings** — **W4**, **W5**, **W6**. They fire *before* "who owns this element?" is
+   ever asked, so the syncer model does not touch them. Cheap, verified sites, no rework.
+2. **P1 / the CA spike** — orthogonal. Syncer assignments are only as trustworthy as the identity
+   they name, so P1 raises the model's ceiling rather than competing with it.
+
+Everything else in waves 3-7 waits.
+
 ## 1. Current state in one line
 
 > **Waves 0 and 1 are BUILT** (`6f0c2bf8`) — the save-transfer one-packet remote kill is closed and
