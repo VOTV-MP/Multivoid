@@ -222,6 +222,60 @@ announcement but to make it **cheap to disprove**.
 
 ---
 
+## 11. Anti-cheat, position validation, anti-dupe (measured 2026-07-20)
+
+The user's forward question — *"what about anti-cheat, position checks, and how does MTA let server
+owners build their own?"* — answered by measurement rather than recollection.
+
+### MTA's anti-cheat is CLIENT-side only
+
+`[V]` `CAntiCheat.cpp` / `CAntiCheatModule.cpp` exist **only** under `Client/mods/deathmatch/logic/`.
+The Server tree contains no anti-cheat at all. What MTA calls its anti-cheat is a client integrity
+module (memory/module verification) — an arms race deliberately kept out of the authority model.
+
+### Server-side position validation is THREE arithmetic checks
+
+`[V]` `CUnoccupiedVehicleSync.cpp:490-492` — the whole spatial rule set:
+
+```cpp
+pVehicle->GetSyncer() != pPlayer
+  && pVehicle->GetTimeSinceLastPush() >= MIN_PUSH_ANTISPAM_RATE
+  && IsPointNearPoint3D(pVehicle->GetPosition(), pPlayer->GetPosition(), iVehicleContactSyncRadius)
+  && pVehicle->GetDimension() == pPlayer->GetDimension()
+```
+
+Proximity **against the server's own records**, a rate limit, and a dimension match.
+`[V]` There is **no plausibility check** — nothing verifies that a reported position was physically
+reachable, no collision test, no speed-hack detection. Fifteen years and thousands of concurrent peers
+run on this.
+
+**Why that matters to us:** all three are pure arithmetic over records the arbiter already holds. An
+**engine-free arbiter can implement MTA's entire spatial validation**. The boundary is honest and
+narrow: it can catch teleports, speed, and out-of-range interaction (distance + rate); it cannot check
+geometry (walls, traversability) because the world lives in the engine — and MTA does not check
+geometry either. VOTV's own interaction range is a free validator of exactly this shape.
+
+### Anti-dupe is architecture, not a detector
+
+Duplication is a **value** problem: two peers each decrement their own counter, or each spawn a copy.
+Once the arbiter owns values and serialises intents, the second spend is simply rejected — there is
+nothing to detect. See the cement-bucket `units` worked example in `COOP_SERVER_MODEL.md` §5. Our own
+dupe history (zombie double-rows, ghost twins, the dupe matrix in `COOP_ENTITY_EXPRESSION_MAP.md`) is
+identity-and-authority failure, not missing detection.
+
+### How owners build their own — the resource event surface, default-deny
+
+`[V]` The server exposes a broad Lua event surface (`onPlayerWasted`, `onVehicleEnter`,
+`onElementModelChange`, `onPlayerWeaponSwitch`, `onElementAttach`, …) so resource authors write their
+own rules. The load-bearing safety property is §5's `bAllowRemoteTrigger` default-deny: an event is
+**not** client-triggerable unless its author opts in.
+
+**Decision recorded (`TRACKER` F2):** build default-deny into the resource system at ROADMAP phase 6,
+not afterwards. It is cheap at the start and near-impossible to retrofit once resources exist that
+assume a permissive model.
+
+---
+
 ## Port priority
 
 | Mechanism | Closes | Portability |
