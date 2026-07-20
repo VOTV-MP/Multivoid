@@ -116,6 +116,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   (`serverStorageComp`/`ELEMENT`/`getAll`/`getServerStorage`, all 0 hits) + a "ship it" for a build
   `git status` showed never existed — caught every time by grep+git, never by reasoning.
   *Look FIRST:* `memory/feedback_verify_handed_down_measurement_before_building.md`
+- **Cite SECTIONS, not line ranges, in a file you are also editing.** Writing a new design doc I cited
+  `ROADMAP.md:62-66` and `COOP_SYNCER_MODEL.md:324-326`, then edited both files later the same session
+  to add supersession notes — the first citation became **circular** (it now pointed at my own
+  supersession note instead of the claim being superseded) and the second landed on a bare `## 10.`
+  header. Line numbers are for source you are NOT touching; a superseded doc gets a section anchor plus
+  a quoted fragment. Re-read every line citation you wrote at the end of a doc sweep — your own edits
+  are the likeliest thing to have broken them. Second instance in two days (the prior sweep found two
+  lessons pointing at lines a fix had moved). *Look FIRST:*
+  `memory/lesson_cite_sections_not_lines_in_files_you_also_edit.md`
+- **A source cannot confirm a belief it planted.** A `/qf` round caught me tagging a conclusion
+  `inferred` while `ROADMAP.md` phase 6 already fixed that same conclusion as an "architectural
+  commitment decided up front" — I had inherited the framing and then cited it back as independent
+  corroboration. Also check the cited entry for FUSION: that one answered *who arbitrates* and *who
+  simulates* at once, and only one half was still true. *Look FIRST:*
+  `memory/feedback_qf_selective_trust_blindspot.md` (2026-07-20 section)
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -526,6 +541,26 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   misattribution (the arrays are prop_floppyBox_C's). Dump the uber: BeginPlay binds? delegate
   mirrors? Only the remainder needs a lane. LOOK FIRST: the v121 design doc SS0/SS3;
   prop_portablePc.json. `memory/lesson_sibling_device_may_be_remote_terminal_measure_binding.md`
+- **Classify engine READS into four kinds before pricing an extraction.** "This module reads the
+  engine" hides four unrelated things: *intent production* (read the local player — STAYS forever),
+  *handle validation* (is this pointer live — DISAPPEARS, the extracted side holds ids not pointers),
+  *outcome capture* (what did the engine machine decide — STAYS, you record it), and *canon derivation*
+  (read the engine to BUILD the authoritative state — the ONLY work, invert to write-only). Measured
+  2026-07-20: `device_occupancy` 9/9 intent, `drive_sync` ~12/15 handle-validation, `signal_catch_sync`
+  5/6 outcome-capture — so the heaviest-reading lane was the cheapest to move and read COUNT is
+  uncorrelated with migration cost. Canon derivation totalled **32 sites in 9 lanes** (a name-shape
+  grep = order of magnitude, NOT a verified list — keep that caveat beside the table).
+  LOOK FIRST: `docs/COOP_SERVER_MODEL.md` §6-§7.
+  `memory/lesson_classify_engine_reads_before_pricing_extraction.md`
+- **Anchor an accumulator; never stream it.** A value that is a function of elapsed time
+  (`dryTimer += DeltaSeconds`) should not get a sync channel — store ONE start stamp and let each peer
+  compute it. Buys, for free: no stream, impossible divergence, **late join solved** (the joiner gets a
+  stamp and is instantly correct — no snapshot cadence, no mid-activity window), and an empty server
+  can FREEZE. Precedent measured: MTA's `CClock.cpp` is 58 LOC of pure formula with **no tick**. Valid
+  ONLY if the RATE is constant — so measure the input set of the RATE, not the value; a rain/indoor/
+  temperature gate sends the element back to a syncer. Park the brain regardless, or the local
+  accumulator fights the computed value. LOOK FIRST: `docs/COOP_WORLD_PROP_DIVERGENCE.md` (2026-07-20
+  section) + `docs/COOP_SERVER_MODEL.md` §4. `memory/lesson_anchor_the_accumulator_dont_stream_it.md`
 
 ## 4. Dispatch, hooks & input seams
 

@@ -60,7 +60,17 @@ phase-gate breakdown when it opens.
    A gamemode-resource and a utility-resource live in the same system —
    no separate "plugin API".
 6. **Dedicated server** ☐ — 24/7 hosting with zero players (the gmod
-   shape: host from in-game OR run dedicated). Architectural commitment,
+   shape: host from in-game OR run dedicated).
+   **PARTLY SUPERSEDED 2026-07-20 — see `docs/COOP_SERVER_MODEL.md` §8.**
+   The commitment below FUSED two questions (who ARBITRATES vs who
+   SIMULATES) and predates both the arbiter concept and the measured MTA
+   `CServer.cpp` precedent. Split: *who simulates* = still the game
+   process, still clients (that half STANDS); *who arbitrates* = a
+   separate child-process binary from day one (that half is REPLACED);
+   *the Wine carrier* = no longer required for a zero-player server (the
+   user's freeze decision + the accumulator/roll split), so this phase
+   shrinks to the ghost-host question plus a Linux build of the arbiter.
+   Original text: Architectural commitment,
    decided up front: our host-authority = the host's game simulates the
    world, so dedicated = the HOST GAME RUNNING HEADLESS (no render) driven
    by our DLL — NOT a from-scratch server binary (MTA's server never runs
@@ -113,7 +123,13 @@ phase-gate breakdown when it opens.
    docs/items/, COOP_RNG_AUTHORITY, the entity-expression map) IS the
    rules specification. Research branch: executing the game's own cooked
    BP bytecode in our VM (we already parse it; native-call stubs are the
-   wall). The phase-6 Wine dedicated stays the workhorse meanwhile.
+   wall). ~~The phase-6 Wine dedicated stays the workhorse meanwhile.~~
+   **REVISED 2026-07-20** (`COOP_SERVER_MODEL.md` §3): a Wine carrier is no
+   longer required for a ZERO-PLAYER server — the empty world freezes, and
+   the two mechanisms in play (time-linear accumulators, gated random
+   rolls) are each freeze-compatible on their own. A Linux VPS runs the
+   arbiter natively. Wine remains only if a carrier is later needed for a
+   world-rate-dependent progression no anchor can express.
 
 ---
 

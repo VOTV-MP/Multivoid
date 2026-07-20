@@ -179,7 +179,7 @@ detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 | Repo / place | What |
 |--|--|
 | [`VOTV-MP/Multivoid`](https://github.com/VOTV-MP/Multivoid) | **This repo** — the mod itself |
-| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The future dedicated server (long horizon — roadmap phase 8) |
+| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The dedicated server (see roadmap phases 6 and 8) |
 | [`VOTV-MP/Multivoid-wiki`](https://github.com/VOTV-MP/Multivoid-wiki) | User-facing documentation |
 | [multivoid.dev](https://multivoid.dev) | Project website |
 
@@ -208,7 +208,7 @@ The long-term arc, in order (each phase gates the next — detail in
 | 3 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
 | 4 | **Lua API** — mode rules move to Lua; the C++ core (transport, sync, identity) stays native | planned |
 | 5 | **Resource system** — custom modes and plugins as one mechanism (the MTA shape) | planned |
-| 6 | **Dedicated server** — 24/7 hosting: the host game running headless, no live player required | planned |
+| 6 | **Dedicated server** — 24/7 hosting with no live player required | planned |
 | 7 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
 | 8 | **Native standalone server** — the MTA endgame: server holds state + rules, clients simulate | long horizon |
 

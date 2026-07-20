@@ -107,3 +107,31 @@ use-intent) + a 2-scalar curated on-change push (`units`→stage mesh, `dry`→m
 - Whether a periodic save-transfer re-sync papers over steady-state drift (only active co-present
   mutation would then matter).
 - Per candidate prop: local-accumulator vs synced-clock-derived (decides if it's even in the class).
+
+## 2026-07-20 — the ANCHOR alternative, and the two measurements it now gates
+
+`docs/COOP_SERVER_MODEL.md` §4-§5 proposes a cheaper answer than the curated on-change push for the
+accumulator half: **an accumulator is never streamed, it is ANCHORED.** Store the start stamp once
+(when the bucket was poured) and let every peer compute `dry` locally. Precedent: `[V]` MTA's
+`CClock.cpp` is 58 LOC of pure formula from a stamp, with no tick at all.
+
+It buys, for free: no stream, no possible divergence (one formula, one anchor), **late join solved**
+(principle 8 — the joiner gets one stamp and is instantly correct, no snapshot cadence), and the
+empty-server **freeze** (store elapsed at pause, re-anchor on resume). Parking the brain still
+survives from the planned fix — otherwise the local accumulator fights the computed value.
+
+**It is valid only if the accumulator's RATE is constant.** Hence the two measurements this document
+now owns, in priority order:
+
+1. **Is `dryTimer += DeltaSeconds` unconditional or gated?** Readable from bytecode; the cheapest
+   measurement in the thread. If drying is slower in rain / faster indoors / temperature-coupled,
+   anchoring fails and concreteBucket returns to a syncer whole. Generalises to a rule: **for every
+   accumulator, measure the input set of its RATE, not just the value.** See
+   `[[lesson-converges-for-free-needs-complete-input-readset]]`.
+2. **Census of self-simulating props and the SHAPE of each mutation** (accumulator vs stateful
+   machine). Exactly **one** accumulator is confirmed (concreteBucket); rule-of-three is not met, so
+   "accumulators are anchorable" currently rests on a single instance. A stateful, non-linear
+   progression would be the first member of a class anchoring cannot serve.
+
+Measurement 1 decides whether the anchor scheme generalises beyond one example, and is cheaper than
+everything else outstanding.

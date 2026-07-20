@@ -61,7 +61,7 @@ Three deployment modes for **one** arbiter implementation:
 | Mode | Where the arbiter runs | Engine available? |
 |---|---|---|
 | **Embedded** | Inside the host player's game process (listen-server shape) | Yes — and that is the trap |
-| **Headless host** | ROADMAP phase 6 (Wine, the game running headless) | Yes |
+| **Headless host** | ROADMAP phase 6 (Wine, the game running headless) | Yes — but **no longer REQUIRED for a zero-player server** as of 2026-07-20; see `COOP_SERVER_MODEL.md` §3 |
 | **Standalone binary** | ROADMAP phase 8 | **No** |
 
 **This retires §9 question (f).** Whether the arbiter API is process-agnostic is no longer an open
@@ -82,6 +82,13 @@ is one call away and always correct *in that mode* — so the portability breaks
 compile error and no failing test, and is discovered only when the standalone binary is attempted.
 
 ### Make it a build invariant, not a discipline
+
+**SUPERSEDED 2026-07-20 — see `docs/COOP_SERVER_MODEL.md` §2.** `[V]` MTA's "host from in-game"
+spawns the REAL server binary as a CHILD PROCESS (`Client/mods/deathmatch/logic/CServer.cpp:126-131`),
+so there is no embedded build to keep honest: the arbiter is in a different process and *cannot* read
+the engine. The invariant below was designed to make the embedded cheat DETECTABLE; a separate
+process makes it IMPOSSIBLE. Keep the subtree rule only as belt-and-braces if it is free. Original
+proposal follows.
 
 Proposed, and cheap: the arbiter lives in a subtree that **cannot include `ue_wrap/`**, enforced by
 the build — not by review. Then "the arbiter is engine-free" is a mechanical, falsifiable property
