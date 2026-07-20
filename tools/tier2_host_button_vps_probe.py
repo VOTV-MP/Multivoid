@@ -23,7 +23,6 @@ Run: python tools/tier2_host_button_vps_probe.py
 from __future__ import annotations
 
 import json
-import re
 import sys
 import time
 import urllib.request
@@ -31,27 +30,40 @@ from pathlib import Path
 
 import mp
 
-CREDS = mp.ROOT / "reference_master_server_vps.md"
+
+def _https_ctx():
+    """TLS context with FULL verification, but against certifi's roots.
+
+    Measured 2026-07-20: Python on this box rejects Let's Encrypt's ECDSA chain
+    ("certificate has expired") out of the stale Windows store, while schannel --
+    what the MOD itself uses via WinHTTP -- and openssl both verify it fine. This
+    is a Python-tooling artifact; do not read it as a server fault.
+    """
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except ImportError:
+        pass
+    return ctx
+
 HOST_BOOT_S = 40
 WATCH_S = 80
 
 
-def vps_ip() -> str:
-    m = re.search(r"IP:\s*`([^`]+)`", CREDS.read_text(encoding="utf-8"))
-    if not m:
-        sys.exit("FATAL: could not read VPS IP from the gitignored creds file")
-    return m.group(1).strip()
-
-
 def main() -> None:
-    ip = vps_ip()
-    master_url = f"{ip}:10001"
-    lobbies_url = f"http://{master_url}/v1/lobbies"
+    # Tier B: the master is TLS-only from the client's point of view, and a
+    # certificate is valid for a NAME -- dialling the bare IP this probe used to
+    # build would fail hostname validation. Schemeless = secure, matching the
+    # mod's own URL grammar, so this is what the game is handed too.
+    master_url = "master.multivoid.dev:10443"
+    lobbies_url = f"https://{master_url}/v1/lobbies"
     mp.log(f"--- VPS host-button probe (master={master_url}) ---")
 
     # sanity: the VPS master must answer before we launch heavy game instances
     try:
-        with urllib.request.urlopen(f"http://{master_url}/healthz", timeout=8) as r:
+        with urllib.request.urlopen(f"https://{master_url}/healthz", timeout=8, context=_https_ctx()) as r:
             mp.log(f"master /healthz: {r.read().decode('utf-8', 'replace').strip()}")
     except Exception as e:  # noqa: BLE001
         sys.exit(f"FATAL: VPS master unreachable at {master_url}: {e}")
@@ -76,7 +88,7 @@ def main() -> None:
         while time.time() - t0 < HOST_BOOT_S:
             time.sleep(2)
             try:
-                with urllib.request.urlopen(lobbies_url, timeout=8) as r:
+                with urllib.request.urlopen(lobbies_url, timeout=8, context=_https_ctx()) as r:
                     rows = json.loads(r.read() or b"{}").get("lobbies", [])
             except Exception:  # noqa: BLE001
                 rows = []

@@ -85,7 +85,7 @@ def main() -> None:
                                   res_x=1280, res_y=720, monitor=1, center=True,
                                   set_net_role=False,
                                   set_scenario=None,  # MENU mode: the host loads SLOT from the menu (not pre-loaded)
-                                  extra_env={"VOTVCOOP_MASTER_URL": f"127.0.0.1:{MPORT}",
+                                  extra_env={"VOTVCOOP_MASTER_URL": f"http://127.0.0.1:{MPORT}",
                                              "VOTVCOOP_TEST_HOST_SAVE": SLOT})
         mp.log(f"waiting up to {HOST_BOOT_S}s for the host to announce + LOAD '{SLOT}' + boot P2P...")
         t0 = time.time()
@@ -113,7 +113,7 @@ def main() -> None:
             client_pid = mp.launch_peer("client", mp.DEFAULT_PORT, "Client", peer=None,
                                         res_x=1280, res_y=720, monitor=2, tile_index=0,
                                         set_net_role=False,
-                                        extra_env={"VOTVCOOP_MASTER_URL": f"127.0.0.1:{MPORT}",
+                                        extra_env={"VOTVCOOP_MASTER_URL": f"http://127.0.0.1:{MPORT}",
                                                    "VOTVCOOP_TEST_JOIN_LOBBY": lobby_id})
             mp.log(f"--- watching {WATCH_S}s for the P2P connect ---")
             t0 = time.time()

@@ -1075,8 +1075,15 @@ inline constexpr uint16_t kDefaultPort = 47621;
 // multivoid.dev is Cloudflare-PROXIED and must NEVER be used here -- the proxy
 // does not pass our custom ports). Resolution is native on both consumers
 // (WinHttpConnect for the master HTTP, getaddrinfo in signaling_client).
-// Becomes https://master.multivoid.dev with the Tier B TLS cutover.
-inline constexpr const char* kOfficialMasterUrl    = "master.multivoid.dev:10001";
+// 2026-07-20 (Tier B arc 2): the master moves to its TLS listener. The URL grammar
+// is SCHEMELESS = SECURE -- a bare host:port means TLS, and only an explicit
+// "http://" / "tcp://" opts a self-hoster down to cleartext. Keeping these bare
+// therefore both selects TLS and leaves the "DEFAULT" display mask (an exact
+// string compare in session_manager + config) working unchanged.
+// The signaling constant still names the PLAINTEXT port: it only seeds the
+// master-down fallback, and the master's own response (which overrides it) is
+// what real sessions dial. It moves in arc 3b together with the server env.
+inline constexpr const char* kOfficialMasterUrl    = "master.multivoid.dev:10443";
 inline constexpr const char* kOfficialSignalingUrl = "master.multivoid.dev:10000";
 
 // PR-2 v10 (2026-05-28): GNS owns handshake (Hello), graceful disconnect

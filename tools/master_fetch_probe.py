@@ -74,7 +74,7 @@ def main() -> None:
     try:
         host_pid = mp.launch_peer("host", mp.DEFAULT_PORT, "Host", peer=None,
                                   res_x=1280, res_y=720, monitor=1, center=True,
-                                  extra_env={"VOTVCOOP_MASTER_URL": f"127.0.0.1:{PORT}",
+                                  extra_env={"VOTVCOOP_MASTER_URL": f"http://127.0.0.1:{PORT}",
                                              "VOTVCOOP_BROWSER_OPEN": "1"})
         print(f"[probe] watching the DLL log up to {WATCH_S}s for the fetch ...")
         seen_master = seen_open = seen_refresh = False
