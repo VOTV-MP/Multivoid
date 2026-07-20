@@ -10,6 +10,11 @@
 
 namespace coop::blob_chunks {
 
+// W4 anti-flood: concurrent half-assemblies allowed from ONE sender, per Assembler instance.
+// Legitimate use is one blob at a time per lane (the sender chunks a blob and finishes it before
+// starting the next), so 4 is generous; the TTL sweep reclaims anything abandoned.
+constexpr size_t kMaxAssembliesPerSender = 4;
+
 namespace {
 // Shared chunker for SendBlob / SendBlobToSlot. `sendOne(p)` does the per-chunk transport
 // (broadcast vs slot-targeted); everything else (chunk count, 255-cap, all-or-nothing) is
@@ -70,6 +75,25 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
 
     const auto now = std::chrono::steady_clock::now();
     const auto key = std::make_pair(senderSlot, p.blobSeq);
+    // SECURITY (W4, docs/security/TRACKER.md): blobSeq is ATTACKER-CHOSEN, and `map_[key]` below
+    // default-inserts, so before this cap one 228-byte packet bought a fresh assembly that reserved
+    // chunks * 220 = up to ~56 KB -- ~246x amplification, on 8 lanes, reachable client->host with no
+    // join or role gate. Only the size of ONE assembly was bounded (chunks is u8); their NUMBER was
+    // not. order_sync.cpp:270 already caps its table -- this is the same guard at the shared
+    // primitive, so all lanes get it at once rather than eight bespoke patches.
+    // PER-SENDER, not global (unlike order_sync): a global table would let one flooding peer starve
+    // every other peer's assemblies, which is finding W10's shape and not worth importing here.
+    if (map_.find(key) == map_.end()) {
+        size_t fromSender = 0;
+        for (const auto& kv : map_)
+            if (kv.first.first == senderSlot) ++fromSender;
+        if (fromSender >= kMaxAssembliesPerSender) {
+            UE_LOGW("blob_chunks: sender %u has %zu concurrent assemblies (cap %zu) -- dropping new "
+                    "blobSeq=%u", static_cast<unsigned>(senderSlot), fromSender,
+                    kMaxAssembliesPerSender, p.blobSeq);
+            return false;
+        }
+    }
     auto& a = map_[key];
     if (a.expectChunks == 0) {
         a.expectChunks = p.chunks;

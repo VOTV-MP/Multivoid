@@ -98,6 +98,9 @@ uint32_t Key(int slot, uint16_t seq) {
     return (static_cast<uint32_t>(slot) << 16) | seq;
 }
 
+// Inverse of Key's slot half -- used by the W5 receive-side per-sender mirror cap.
+int SlotOfKey(uint32_t key) { return static_cast<int>(key >> 16); }
+
 float YawOfQuat(float qx, float qy, float qz, float qw) {
     constexpr float kRadToDeg = 57.29577951308232f;
     return std::atan2(2.f * (qw * qz + qx * qy), 1.f - 2.f * (qy * qy + qz * qz)) * kRadToDeg;
@@ -293,6 +296,22 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
             return;
         }
         g_mirrors.erase(it);   // dead mirror (engine reclaim) -- respawn below
+    }
+    // SECURITY (W5, docs/security/TRACKER.md): kMaxOwned bounds the SEND side (g_owned at :129) --
+    // it constrains OUR sender, not a hostile peer's. The receive path spawned a REAL actor for
+    // every unseen (slot, seq), so one peer could walk seq and force 65 536 spawns; and this kind is
+    // on the relay whitelist, so it froze every client too. Enforce the same intent where the actor
+    // is actually created. Counted from the map rather than a side counter: g_mirrors is erased on
+    // several paths, and a parallel counter would drift out of step with it.
+    {
+        size_t fromSender = 0;
+        for (const auto& kv : g_mirrors)
+            if (SlotOfKey(kv.first) == senderPeerSlot) ++fromSender;
+        if (fromSender >= kMaxOwned) {
+            UE_LOGW("owner_entity: slot %d already has %zu mirrors (cap %zu) -- refusing spawn "
+                    "seq=%u", senderPeerSlot, fromSender, kMaxOwned, p.seq);
+            return;
+        }
     }
     void* cls = g_classes[p.classId];
     if (!cls) return;  // classes unresolved: the keepalive re-delivers post-resolve
