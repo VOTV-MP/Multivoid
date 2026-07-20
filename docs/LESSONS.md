@@ -967,9 +967,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
-Canonical home: **`docs/security/`** — `README.md` is the threat model + measured substrate,
-`TRACKER.md` is the ranked findings list. Read those before any security, transport, authority-boundary
-or website work. Everything below is the durable *lesson*; the status lives in the tracker.
+Canonical home: **`docs/security/`** — `README.md` is navigation, `THREAT_MODEL.md` + `SUBSTRATE.md`
+are the facts, `TRACKER.md` is the ranked findings list, `EXECUTION.md` is the board, `RULES.md` is
+S1-S6, and `PLAN_01..05` are the fix plans. Read those before any security, transport,
+authority-boundary or website work. Everything below is the durable *lesson*; status lives in the
+tracker.
 
 - **Write the THREAT MODEL before designing any security mechanism.** Tier B/C ran **26 `/qf` rounds**
   across two sessions and shipped two arcs without anyone asking what adversary, with what access,
@@ -988,11 +990,28 @@ or website work. Everything below is the durable *lesson*; the status lives in t
   every client, so protecting it in flight is theatre — and a shared bearer cannot authenticate anyone,
   which is how a stranger with `nc` can register someone's host identity and evict them. Ask "who
   receives this?" before "how do we protect it?". `memory/lesson_shared_secret_handed_to_every_user_is_not_a_secret.md`
-- **A FALSE security comment is worse than no comment.** Two found in one day (`master.rs:498-499`
-  asserts a join-secret challenge that exists nowhere; `session_trashcarry.cpp:61-62` claims float
-  validation its apply path does not do), and in both cases the comment is *why* the gap survived — a
-  reassurance is never grepped. Name your own gap instead, as `event_dispatch_entity.cpp:259-264` does.
+- **A FALSE security comment is worse than no comment — and a HALF-true one is worse still.** Two
+  found in one day (`master.rs:498-499` asserted a join-secret challenge that exists nowhere;
+  `session_trashcarry.cpp:61-62` claimed float validation its apply path does not do), and in both
+  cases the comment is *why* the gap survived — a reassurance is never grepped. The trashcarry one is
+  a **fused claim**: its ctx-freshness half is TRUE, so spot-checking confirms the whole sentence. One
+  claim per comment sentence; verify every conjunct separately. Both comments corrected in `6f0c2bf8`.
+  Name your own gap instead, as `event_dispatch_entity.cpp:259-264` does.
   `memory/lesson_false_security_comment_worse_than_none.md`
+- **Before CAPPING an allocation driven by a wire value, ask whether the allocation is needed at
+  all.** `save_transfer.cpp:857` reserved from an unvalidated wire `u32` (one packet → 4 GiB →
+  process death). The planned fix was a `kMaxSaveBlobBytes` cap; a use census showed the `reserve()`
+  was a **pure allocation hint** and deleting it removed the bug with no number to get wrong. A cap is
+  a *policy limit* that can silently reject an honest, grown save — a guard around an unnecessary
+  primitive is worse than not having the primitive. Ask: needed at all → bounded by something already
+  known → only then invent a limit, and describe what happens to the honest user who exceeds it.
+  `memory/lesson_delete_the_allocation_dont_cap_the_wire_value.md`
+- **Census a field's WRITERS, not just its USES.** A use census answers "what depends on this"; only a
+  writer census answers "**who can move it, and from which thread**". The second question found W1b —
+  `OnBegin` had no guard against a *second* `Begin`, letting a hostile host move the completion
+  denominator and CRC out from under an in-flight transfer. Two audit agents and two `/qf` rounds
+  missed it while the field sat in the brief, described by its readers. Announce-then-stream lanes owe
+  an "announced exactly once per arm" invariant. `memory/lesson_census_writers_not_just_uses.md`
 - **Send-side caps are not caps — validate on APPLY.** The classic bug classes are largely absent in
   this tree (lengths checked, strings clamped, paths allow-listed, zero non-literal format strings);
   the real exposure is every "the peer is a well-behaved copy of this build" assumption. Peers come

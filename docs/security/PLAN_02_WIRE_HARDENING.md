@@ -19,25 +19,42 @@ establishing the pattern guarantees an eleventh.
 
 ---
 
-## 2. Wave 1 — remote process kill (CRITICAL, cheap, do first)
+## 2. Wave 1 — remote process kill (CRITICAL) — **BUILT `6f0c2bf8`**
 
-Each is a small apply-side cap and each currently lets **one packet kill a joining client**.
+**Only W1 was ever a one-packet kill.** `[V]` W2 needs a complete CRC-valid transfer
+(`DeserializeSidecar` runs at `save_transfer.cpp:313`, after the CRC gate at `:292-297`) and W3 is a
+grind. The earlier text here said "all three kill with one packet" — that was wrong.
 
-### W1 — `OnBegin` reserves from an uncapped `uint32_t` `[V]`
+### W1 — `OnBegin` reserved from an uncapped `uint32_t` `[V]` — **BUILT**
 
-- **Site:** `save_transfer.cpp:857` — `g_cliBuf.reserve(p.totalBytes)`. The only guard above it is
+- **Site:** `save_transfer.cpp:857` — `g_cliBuf.reserve(p.totalBytes)`. The only guard above it was
   `p.totalBytes == 0` (`:845`).
 - **Attack:** hostile host sends `totalBytes = 0xFFFFFFFF` → 4 GiB reserve → uncaught `bad_alloc`.
-  There is no try/catch around the reliable drain, so the process **terminates**.
-- **Correction to the earlier tracker text:** it proposed capping against `kMaxSaveBlobBytes`.
-  `[V]` **that constant does not exist anywhere in the tree.** The fix must define it.
-- **Fix:** define `kMaxSaveBlobBytes` in `protocol.h` next to the other wire caps. Real saves are
-  ~17 MB; set the cap with headroom (proposed **64 MB**) and reject `Begin` above it with a logged,
-  user-visible failure — not a silent drop, since a legitimate oversized save must be diagnosable.
-- **Acceptance:** a crafted `Begin` with `totalBytes = 0xFFFFFFFF` leaves the client alive, logs one
-  `[Error]`, and puts the transfer in `Failed`.
+  No try/catch around the reliable drain, so the process **terminates**.
+- **The fix is a DELETION, not a cap** — and this reframe is the most useful thing in the plan. A
+  `/qf` round asked whether the reserve was a pure allocation hint. `[V]` A full use census of
+  `g_cliTotal` says yes: its only other uses are the completion compare (`:284`), the overflow bound
+  (`:285`) and the progress readback (`:871`). Removing the reserve removes the allocation entirely
+  and costs ~9 vector doublings across a multi-second download.
+- **Why capping would have been worse:** a cap is a *policy limit* that can reject a legitimately
+  grown world and drop that player into the fresh-world fallback. The bug it prevents is a crash;
+  the bug it introduces is a silent degradation for honest users. Deleting the primitive has neither.
+- **Evidence:** smoke transferred **20 990 211 B / 367 chunks**, CRC ok, slot written, after removal.
+- **NOT verified:** no crafted `Begin` was ever sent. The rejection path is untested (see §7).
 
-### W2 — `DeserializeSidecar` reserves from an unvalidated count `[V]`
+### W1b — no guard against a SECOND `Begin` `[V]` — **BUILT** (new; neither audit found it)
+
+- **Site:** `save_transfer.cpp:842-859`. `g_cliTotal`, `g_cliChunkCount`, `g_cliCrc` and
+  `g_cliSidecarBytes` were reassigned mid-`Receiving` by any later host packet — moving the
+  completion denominator and the CRC out from under a stream already in flight.
+- **Why it is always a violation:** `[V]` `g_cliHaveBegin` is cleared **only** by `ClientArm`
+  (`:821`) and the teardown (`:901`), so within one arm a second `Begin` can never be legitimate.
+  Fail loudly rather than ignore — ignoring would leave the denominator describing a stream that no
+  longer exists.
+- **How it was found:** by censusing the **writers** of `g_cli*` after twice censusing only the
+  **uses**. That "uses, not writers" habit is the actual defect; see §5.
+
+### W2 — `DeserializeSidecar` reserved from an unvalidated count `[V]` — **BUILT**
 
 - **Site:** `save_identity_map.cpp:266` — `outMap.reserve(count)` where `count` is read straight from
   the wire at `:262`.
@@ -51,21 +68,33 @@ Each is a small apply-side cap and each currently lets **one packet kill a joini
 - **Acceptance:** a sidecar with `count = 0xFFFFFFFF` and a 40-byte body returns `false` without
   allocating.
 
-### W3 — chunks accepted before `Begin`, with no cap `[V]`
+### W3 — chunks accepted before `Begin`, with no cap `[V]` — **STILL OPEN, deliberately**
 
 - **Site:** `save_transfer.cpp:363-379` (`BulkSink_`). In `WaitingBegin` the sink transitions to
   `Receiving` and appends; `MaybeFinishLocked_` returns immediately at `:283` because
   `!g_cliHaveBegin`, so the `size() > g_cliTotal` overflow check at `:285` **never runs**.
-- **Attack:** a host streams chunks and never sends `Begin` → `g_cliBuf` grows without limit.
-- **Refinement over the `[A]` text:** there **is** a sequential index check at `:367-372`, so the
-  attacker must send chunks in order — trivially satisfiable, so severity is unchanged, but the
-  exploit is not "spray arbitrary chunks".
-- **Fix:** cap `g_cliBuf` in the sink itself against `kMaxSaveBlobBytes` (the W1 constant),
-  regardless of state. One shared cap for one buffer.
-- **Acceptance:** a peer streaming endless in-order chunks with no `Begin` is cut off at the cap and
-  the transfer fails cleanly.
-
-**Wave 1 is three edits, two files, one new constant.** It should be one commit.
+- **Post-Begin is already bounded** `[V]`: with `haveBegin` set, every append calls
+  `MaybeFinishLocked_` (`:378`), which fails the transfer the moment `size > g_cliTotal`. So the
+  **only** unbounded path is bytes with no announced denominator.
+- **The pre-Begin window is LEGITIMATE, and this killed the obvious fix** `[V]`: it is not wire
+  reordering — chunks and `Begin` ride the *same* in-order reliable lane (`:543` vs `:200`). It is
+  **cross-thread lag**: `OnBegin` runs on the game thread (`save_transfer.h:151-152`) while
+  `BulkSink_` runs on the net thread (`:361`), both under `g_cliMu`. "Refuse chunks before Begin"
+  would break real joins.
+- **Why nothing was shipped:** the remaining options were a *sized* pre-Begin window — a number I
+  cannot measure and would be keeping only so the finding has a fix attached — or the root fix.
+  Shipping the number would be a crutch (RULE 1).
+- **The root fix (next commit): latch `Begin`'s four scalars on the NET thread under `g_cliMu` at
+  arrival**, leaving the game thread its user-visible work. That makes `WaitingBegin`-with-bytes
+  *structurally impossible* and deletes the window instead of sizing it — no constant at all.
+  `[V]` The seam exists: `session.cpp:414-416` already diverts `SaveTransferChunk` to a net-thread
+  sink; `SaveTransferBegin` currently goes to the inbox → `event_feed.cpp:164` → game thread.
+- **Why it is its own commit:** it touches the session router on the **join critical path**, which
+  is hands-on-tested territory. Bundling a router change into "three tiny checks" is how a join
+  path breaks. W3 is a grind, not a one-packet kill, so the sequencing cost is low.
+- **Also owed with it** `[V]`: `BulkSink_:370` never checks `len` against `kSaveChunkBytes`
+  (`protocol.h:3253` = 56 KB) while the receive side allows up to a u16 `payloadLen`. That check is
+  exact and constant-free — the constant already exists.
 
 ---
 
@@ -123,9 +152,14 @@ Each is a small apply-side cap and each currently lets **one packet kill a joini
 
 After Wave 1, before Wave 3:
 
+0. **Census WRITERS, not just USES.** W2 and W1b are the same defect twice: a field's *readers* were
+   enumerated and its *writers* were not, so nobody asked "who else can move this, and when?"
+   `[V]` A writer census of `g_cli*` found W1b in minutes after two rounds of use-censuses missed
+   it. For any wire-fed state field, list every assignment site and every thread that reaches it.
 1. **Write the receive-side checklist** into `docs/COOP_SYNC_MAP.md` where new lanes are designed:
    *every `reserve`/`resize` from a wire value needs a cap; every float needs `isfinite`; every lane
-   needs an explicit role gate; every per-sender map needs a bound.*
+   needs an explicit role gate; every per-sender map needs a bound; every announce-then-stream lane
+   needs a "announced once" invariant.*
 2. **Audit the existing lanes against it once**, as a sweep rather than per-finding — the ten rows
    here came from two agents looking at part of the surface.
 3. **Add it to the audit prompt template** (`reference/agency-agents/audit-prompt-perf-template.md`
@@ -146,6 +180,26 @@ changes. Confirm per-edit — if any fix changes a field's meaning, the standing
 
 **Smoke requirement:** W6 and W4 touch live streams. Per the pre-deploy checklist, both need a 30 s
 two-peer smoke with clean logs before handoff, not just a build.
+
+---
+
+## 7. The hostile-host drill (owed — this is what BUILT is missing to become VERIFIED)
+
+Wave 1 shipped **rejection paths that have never rejected anything.** The smoke proves the honest
+path still works; it proves nothing about the guard. Per `EXECUTION.md` §2 requirement 3, an
+attempted exploit must be shown failing.
+
+**The technique already exists in this project:** the version-gate work drilled its refusal path
+with a deliberately-wrong build (the "NOVAL" build). The same shape applies here — a host build that
+sends a crafted `Begin`.
+
+| Drill | Crafted value | Expected |
+|---|---|---|
+| **W1** | `totalBytes = 0xFFFFFFFF` | Client alive; transfer `Failed`; one `[Error]`; falls back to fresh world and still joins |
+| **W1b** | A valid `Begin`, then a second `Begin` mid-stream | `"second Begin during an active transfer"` logged; `Failed` |
+| **W2** | `sidecarBytes` framing with `count = 0xFFFFFFFF` in a small body | `DeserializeSidecar` returns false without allocating; the "identity sidecar parse failed" branch runs; the `.sav` still writes |
+
+Until this runs, W1/W1b/W2 stay **BUILT**, never **VERIFIED**.
 
 ---
 

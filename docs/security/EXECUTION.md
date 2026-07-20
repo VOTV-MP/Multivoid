@@ -9,8 +9,12 @@ Updated: **2026-07-20**, HEAD `cc0d8686`. Deployed DLL `05479190C7C01528` x4, pr
 
 ## 1. Current state in one line
 
-> **Nothing has been fixed.** All 20 findings are OPEN. The only security code that exists is TLS
-> arcs 1-2, which close none of them. The next action is the **CA spike** (`PLAN_01` §2).
+> **Waves 0 and 1 are BUILT** (`6f0c2bf8`) — the save-transfer one-packet remote kill is closed and
+> both false security comments are gone. 18 findings remain OPEN, **W3 deliberately among them**
+> (its root fix is a router change; sizing the window instead would be a crutch). The next actions
+> are **W3's net-thread Begin latch** and the **CA spike** (`PLAN_01` §2).
+
+**Deployed:** DLL `F782AD6E9A846ADA` x4, proto 122 (unchanged — rejection paths, no wire change).
 
 ---
 
@@ -37,27 +41,37 @@ attack it stops is an untested rejection path — historically where the bugs ar
 
 Ordered by *cost now vs cost later*, not strictly by severity.
 
-### Wave 0 — free, unblocked, ship immediately
+### Wave 0 — free, unblocked — **DONE `6f0c2bf8`**
 
-| Item | Plan | Cost | Status |
-|---|---|---|---|
-| **A2 Action 1** — delete the false join-secret comment | `PLAN_04` §1 | Minutes | **OPEN** |
-| **W6 comment** — correct the false float-validation claim (with the fix, or before it) | `PLAN_02` §3 | Minutes | **OPEN** |
-| **A8** — write the render rules into the site spec | `PLAN_05` | Zero — already written | **OPEN** (waiting on the site) |
+| Item | Plan | Status |
+|---|---|---|
+| **A2 Action 1** — delete the false join-secret comment | `PLAN_04` §1 | **DONE** — replaced with an honest statement that no admission gate exists |
+| **W6 comment** — correct the false float-validation claim | `PLAN_02` §3 | **DONE** — recorded as a *fused* claim (half true), which is the nastier shape |
+| **A8** — write the render rules into the site spec | `PLAN_05` | **OPEN** — waiting on the site to exist |
 
 Wave 0 is documentation-truth, not defence. It stops the next reader trusting a control that is not
 there.
 
-### Wave 1 — remote process kill (CRITICAL, cheap, verified)
+### Wave 1 — remote process kill (CRITICAL) — **BUILT `6f0c2bf8`**
 
-| Item | Plan | Cost | Status |
-|---|---|---|---|
-| **W1** — cap `OnBegin` reserve; define `kMaxSaveBlobBytes` | `PLAN_02` §2 | Small | **OPEN** |
-| **W2** — validate sidecar `count` against remaining bytes | `PLAN_02` §2 | Small | **OPEN** |
-| **W3** — cap `g_cliBuf` in the sink | `PLAN_02` §2 | Small | **OPEN** |
+| Item | Plan | Status |
+|---|---|---|
+| **W1** — the uncapped `OnBegin` reserve | `PLAN_02` §2 | **BUILT** — reserve **DELETED**, not capped |
+| **W1b** — no guard against a second `Begin` (**new**) | `PLAN_02` §2 | **BUILT** — fails loudly |
+| **W2** — sidecar `count` ceiling | `PLAN_02` §2 | **BUILT** — mirrors the `keyLen` precedent |
+| **W3** — pre-Begin accumulation | `PLAN_02` §2 | **OPEN by decision** — root fix is a net-thread `Begin` latch, own commit |
 
-All three are `[V]`. Three edits, two files, one new constant — **one commit.** This is the highest
-value-per-hour work in the folder.
+**Evidence:** Release build clean; deploy x4; LAN smoke PASS with the save path genuinely exercised
+(20 990 211 B / 367 chunks / 873 sidecar entries, CRC ok, `join_progress: Complete 3105/3106`).
+
+**Not VERIFIED:** the rejection paths have never rejected anything. The hostile-host drill is
+specified in `PLAN_02` §7 and is owed before any of these three may be called VERIFIED.
+
+### Wave 1b — W3's root fix (next)
+
+Latch `Begin`'s four scalars on the net thread so `WaitingBegin`-with-bytes becomes structurally
+impossible, plus the missing `len` vs `kSaveChunkBytes` check in `BulkSink_`. Touches the session
+router on the join critical path — **own commit, own smoke.**
 
 ### Wave 2 — the CA spike (the architectural gate)
 
@@ -134,6 +148,7 @@ Append one row per session that touches security. **Never edit a past row.**
 | 2026-07-20 | s30 | TLS arcs 1-2 built and deployed (`7aff6b73`, `87e66bce`) | None — closes no finding |
 | 2026-07-20 | s30b | Threat model written; 2 audits ran; `docs/security/` created (`d95683cc`, `cc0d8686`); arcs 3-5 held; Tier C dissolved; `net.master.insecure` dropped | 20 findings opened |
 | 2026-07-20 | s30c | Folder expanded to plans + this board; **A2, W1, W2, W3, W6 personally verified `[A]` → `[V]`**; three corrections found (see below) | 0 fixed, 5 upgraded |
+| 2026-07-20 | s30d | Waves 0+1 built (`6f0c2bf8`) after a 3-round `/qf` that reframed the fix twice. **W1's fix became a deletion, not a cap. W1b found — neither audit had it.** W3 held back rather than shipping a sized window | **3 BUILT** (W1, W1b, W2), 2 false comments deleted |
 
 ### Corrections produced by verification (s30c)
 
@@ -146,6 +161,22 @@ Evidence that Rule S5 is not ceremony — verifying five rows changed three fixe
 - **W6** — the false comment is a **fused** claim: the ctx-freshness half is true
   (`trash_clump_pose_stream.cpp:49`), the float-validation half is false. A spot-check of the true
   half would have confirmed the whole comment.
+
+### What the s30d `/qf` produced (3 rounds, each one overturned something)
+
+Recorded because the value was not in the questions being clever — it was in each one exposing a
+cheap measurement I had skipped.
+
+- **R1: "is the reserve deletable?"** → it was. The entire "what cap value, 64 MB, what if a save
+  grows past it" debate was **a fork I invented by choosing to keep a primitive I did not need.**
+- **R1: "which of the three is actually one-packet?"** → only W1. My own plan text had overstated it.
+- **R1: "your principle-8 claim rests on a comment"** → it did, violating **my own rule S1** written
+  the same day. Re-derived from `session_runtime.cpp:336-355`.
+- **R2: "collapse W1+W3 into one invariant"** → **REJECTED on measurement.** The pre-Begin window is
+  legitimate cross-thread lag, not wire reordering; the tidier invariant would have broken real joins.
+  A critic's cleaner idea is still a hypothesis.
+- **R2: "you censused the USES, not the WRITERS"** → found **W1b**, which neither audit agent had.
+- **R3: "why size the window instead of closing it?"** → the sized window was dropped entirely.
 
 ---
 
