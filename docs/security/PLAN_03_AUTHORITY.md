@@ -86,6 +86,27 @@ not hold the claim is rejected.
 (L4-L9 plus the desk); patching them individually guarantees a missed one and creates nine places to
 keep in sync. This is the invariant-not-a-site-list discipline.
 
+### MTA already solved this shape — port it rather than inventing
+
+`[A]` `MTA_PRECEDENT.md` §1-§3, §5. Four things land directly here:
+
+1. **Authority is host-assigned, never client-claimed.** MTA's server picks a syncer, *pushes* the
+   assignment, and checks `GetSyncer() == pPlayer` on receive (`CUnoccupiedVehicleSync.cpp:285`,
+   `CPedSync.cpp:243`, `CObjectSync.cpp:214`). Our `device_occupancy` is the same data structure —
+   theirs is merely host-owned and read on the receive path.
+2. **A generation counter beside the check.** `CanUpdateSync(ucTimeContext)` is bumped whenever the
+   server itself changes the element, so a stale/replayed but otherwise-authorized packet is rejected.
+   Cheap; port it with the predicate, not after.
+3. **A default-deny per-kind flag is the cheapest broad win.** `CGame.cpp:2663-2710` — a client-sent
+   action runs only if its kind was registered `bAllowRemoteTrigger`, internal kinds register `false`,
+   and the offender gets an event fired **at them** (rate-limited, `:2696`). A per-kind
+   `bAllowClientAuthored` defaulting to false, checked **once** in our dispatch switch, collapses much
+   of A3+A4 into one enforcement point instead of ~30 handler audits. Our `session_lanes.h:181-185`
+   relay whitelist is this idea applied to forwarding; it is missing for *applying*.
+4. **Do NOT cite MTA for our relay ordering.** `[A]` `CUnoccupiedVehicleSync.cpp:472` broadcasts even
+   when every entity failed the syncer check — the same relay-before-validate shape as our A3, and
+   arguably a bug there too. Rule S2 stands on its own reasoning.
+
 ### The Principle-8 problem (Rule S6) — this is what makes it hard
 
 CLAUDE.md principle 8: mid-activity join is always handled. A naive enforcing claim table produces
@@ -100,6 +121,17 @@ CLAUDE.md principle 8: mid-activity join is always handled. A naive enforcing cl
 
 **Each row above must be implemented, not just acknowledged.** A validation that locks out a
 legitimate player is an availability bug wearing a security fix's clothes.
+
+**MTA's answer to the takeover row, which was our open question** `[A]`
+(`CUnoccupiedVehicleSync.cpp:476-510`): a non-holder may **request** takeover, and the server grants it
+only after four checks it evaluates itself — not already the holder, a **cooldown**
+(`MIN_PUSH_ANTISPAM_RATE` = 1500 ms), **host-side proximity** against the host's own copy of both
+positions, and same-dimension. Only then `OverrideSyncer()`.
+
+So a claim transfer is **a rate-limited request validated against host state**, never a client
+assertion. That plus a TTL covers every row in the table above. And `CGame.cpp:3042` adds the piece we
+lack: on refusal MTA sends an explicit **failure reply** so the client can roll back its local
+prediction — we drop silently, which desyncs the requester.
 
 ### Sequencing within A4
 

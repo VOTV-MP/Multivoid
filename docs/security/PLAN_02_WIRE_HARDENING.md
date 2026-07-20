@@ -152,7 +152,15 @@ grind. The earlier text here said "all three kill with one packet" — that was 
 
 After Wave 1, before Wave 3:
 
-0. **Census WRITERS, not just USES.** W2 and W1b are the same defect twice: a field's *readers* were
+0. **Adopt MTA's `CanReadNumberOfBytes` as the invariant form.** `[A]` `MTA_PRECEDENT.md` §4:
+   *a length read off the wire is validated against the bytes actually remaining in the datagram
+   before it sizes an allocation* (`bitstream.h:219`, used at `:292` before the `resize` at `:296`),
+   generalized to counts as *count x min-encoded-size <= remaining* (`CLuaArguments.cpp:543-549`).
+   **Our W1/W2 fixes are correct but site-by-site; this is the shape that removes the class.** W4 and
+   W5 should be built in this form rather than as two more bespoke caps. MTA also separates parse from
+   apply entirely (`CPacketTranslator.cpp:250-256`) — a failed `Read()` destroys the packet before any
+   handler sees it, which is why their handlers do not carry validation the way ours do.
+0b. **Census WRITERS, not just USES.** W2 and W1b are the same defect twice: a field's *readers* were
    enumerated and its *writers* were not, so nobody asked "who else can move this, and when?"
    `[V]` A writer census of `g_cli*` found W1b in minutes after two rounds of use-censuses missed
    it. For any wire-fed state field, list every assignment site and every thread that reaches it.

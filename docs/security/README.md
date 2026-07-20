@@ -21,6 +21,7 @@ restated here (RULE 2 — one home per fact).
 | 4 | **`EXECUTION.md`** | The board: waves, order, dependency graph, session log, definition of done | To find out **what to work on next** |
 | 5 | **`RULES.md`** | Six standing rules (S1-S6), each born from a specific failure | Before writing a validation, a comment about a control, or a cap |
 | 6 | **`DECISIONS.md`** | What was decided, and the **positions retracted** with the measurement that killed each | Before proposing a security mechanism — your idea may already be in the retracted table |
+| 7 | **`MTA_PRECEDENT.md`** | What MTA:SA actually shipped for 15 years against a hostile player base, with citations — and where it has **no** answer for us | Before designing any authority, flood-protection, identity or wire-parsing mechanism (standing rule 2026-05-28) |
 
 ## The fix plans
 

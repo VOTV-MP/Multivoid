@@ -85,6 +85,19 @@ a fix, and it should be labelled as mitigation in the code comment (Rule S1).
   (`master.rs:45-46,308-324,350-352`). 8 per /64 × 125 /64s — trivial with a routed /48.
 - **Fix:** at the cap, **refuse** new `/v1/host` with 429. Eviction should be reserved for TTL-stale
   rows, which `sweeper()` already handles correctly.
+- **MTA reframes this finding** `[A]` (`MTA_PRECEDENT.md` §9). Their announce is an **unauthenticated
+  HTTP GET** — no signature, token or nonce. What makes that survivable is on the *client*:
+  `CServerList.cpp:490-570` requires every listed entry to answer a **direct probe** before it is
+  usable, escalating and then culling within seconds. **The list is a hint, not an assertion.** So the
+  stronger fix is to make listing *retention* conditional on liveness the master can verify — today
+  `evict_if_full` treats a never-probed fake and a real lobby identically, which is exactly what makes
+  the /64 flood work. Do not try to authenticate announcements; make them **cheap to disprove**.
+- **Reusable primitive for A6 + A7 + W9 + W10** `[A]`: `CConnectHistory.cpp` is a 195-line
+  dependency-free sliding-window flood protector, instantiated three times at different budgets. Its
+  `RemoveExpired()` **erases a host's entry entirely when its history empties** (`:138-139`), so
+  attacker-chosen keys cannot grow the table — that is our **W9** pattern. `ASE.cpp` adds bounded
+  work per tick (`:176`), response caching (`:247`), and the subtle one: the per-IP table
+  **self-disables above 100 entries** (`:183`) so the mitigation cannot become the memory sink.
 - **The principle:** a full table must not let a new arrival displace an established one. Refusing
   the newcomer degrades discovery for the attacker; evicting the incumbent degrades it for a real
   player.
@@ -109,6 +122,14 @@ a fix, and it should be labelled as mitigation in the code comment (Rule S1).
 **If confirmed:** key bans on the GUID — `moderation.cpp:104-118` already does exactly this for
 offline bans, so the mechanism exists — and **refuse to store a ban equal to the TURN host address**
 as a guard against the outage case.
+
+**MTA has no answer here** `[A]` (`MTA_PRECEDENT.md` §10) — it is direct-UDP only and
+`CBanManager.cpp:86-102` records the address naively. But its *indirect* mitigation is the lesson:
+because identity (the serial) is transport-bound and address-independent, MTA's bans never **depend**
+on IP being meaningful. If our peer identity were a real cryptographic key (`PLAN_01`), S2 would
+degrade from "the ban is broken" to "the ban is IP-blind but identity-correct". Steal the two write
+guards regardless: `IsValidIP()` and `!IsSpecificallyBanned()` before insert — the second is precisely
+what would stop us writing our own TURN address into the banlist.
 
 ---
 

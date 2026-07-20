@@ -120,6 +120,26 @@ decided.
 
 ---
 
+## 3b. The MTA shape that applies here
+
+`[A]` `MTA_PRECEDENT.md` §8. MTA never reads the sender from a packet field: the serial is fetched
+from the **network layer keyed by the connection** (`CGame.cpp:1829-1842`), and
+`CPacketTranslator.cpp:228-249` resolves the source player from the **socket**, destroying any packet
+that declares `RequiresSourcePlayer()` before parsing if no player maps to it.
+
+> **That is A1's fix in one sentence:** `hostIdentity` and peer slot must come from the transport
+> (GNS) identity, never from the signaling greeting or a payload body.
+
+**Important negative — do not model our peer auth on MTA's.** How the serial is *derived and attested*
+is not in the repo: `GetClientSerialAndVersion` is a pure virtual
+(`Server/sdk/net/CNetServer.h:149`) forwarded into the closed-source `net.dll`. Only the *shape*
+ports; the load-bearing part is unpublished. Our certificate plan is strictly better than what MTA can
+show us here.
+
+Worth remembering for §5: `CAccountManager.cpp:566-583` is a TOFU pattern — for privileged accounts a
+correct password is **not sufficient**, the serial must be pre-authorized, and an unknown one is
+recorded as *pending* with an out-of-band approval step rather than allowed or silently refused.
+
 ## 4. What this plan explicitly does NOT do
 
 - It does not authenticate *people*, only connections. A stranger who joins your public lobby is
