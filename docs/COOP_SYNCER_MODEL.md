@@ -51,6 +51,47 @@ sites, and nothing here rebuilds them.
 names, so P1 raises this model's ceiling — but the model is worth building before P1 lands, because
 it is the architecture either way. See §9 question 5.
 
+## 1c. DEPLOYMENT REQUIREMENT (USER 2026-07-20) — the arbiter must be engine-free
+
+> *"хочу чтобы в будущем хост мог создать лобби и dedicated server у него был встроен, и еще
+> отдельный dedicated server был как бинарь"*
+
+Three deployment modes for **one** arbiter implementation:
+
+| Mode | Where the arbiter runs | Engine available? |
+|---|---|---|
+| **Embedded** | Inside the host player's game process (listen-server shape) | Yes — and that is the trap |
+| **Headless host** | ROADMAP phase 6 (Wine, the game running headless) | Yes |
+| **Standalone binary** | ROADMAP phase 8 | **No** |
+
+**This retires §9 question (f).** Whether the arbiter API is process-agnostic is no longer an open
+question — it is a **requirement**, and it decides the API shape before stage 0.
+
+### The consequence, and it is severe
+
+> **The arbiter NEVER reads engine state. It holds its own authoritative copy of everything it
+> arbitrates on.**
+
+MTA's proximity check works precisely because the server owns its own positions
+(`[V]` `CUnoccupiedVehicleSync.cpp:490-492` compares `pVehicle->GetPosition()` against
+`pPlayer->GetPosition()` — both server-side records, never a client's claim and never a render
+transform). Every authority predicate we write must be answerable the same way.
+
+**The embedded mode is where this dies quietly.** With the engine right there, reading a live actor
+is one call away and always correct *in that mode* — so the portability breaks silently, with no
+compile error and no failing test, and is discovered only when the standalone binary is attempted.
+
+### Make it a build invariant, not a discipline
+
+Proposed, and cheap: the arbiter lives in a subtree that **cannot include `ue_wrap/`**, enforced by
+the build — not by review. Then "the arbiter is engine-free" is a mechanical, falsifiable property
+checked on every compile, and the embedded mode cannot silently cheat.
+
+This also means the arbiter needs its **own element state mirror** (positions, holders, whatever the
+predicates read) fed by the engine side in embedded mode and by clients in standalone mode. That
+mirror is the real deliverable of stage 0 — bigger than the API, and it is what phase 8 actually
+needs to exist.
+
 ## 2. The model
 
 Three concepts, borrowed wholesale (`MTA_PRECEDENT.md` §1):
@@ -114,6 +155,72 @@ not discovered during: either devices become elements, or the arbiter owns two k
 predicate over both. **Open question — see §9.**
 
 ---
+
+## 4b. `/qf` R1-R2 REFRAMED THIS DOC THREE TIMES — read before §5-§8
+
+§5 and §8 below are **superseded in shape** by what two critic rounds measured. Kept for the
+reasoning trail; the corrected direction is here.
+
+### R1 — the syncer is not the claim (a retirement I nearly reverted)
+
+`[V]` v116 RETIRED the claim-gated receive check as a RULE-1 root fix:
+`[[lesson-claim-anchored-gate-races-its-own-release]]`. Measured live 17:04:46/47 — the client's
+successful ping wrote `coord_signalData`, the *same* success dropped `coord_isPing`, so both the
+catch detector and the host validator `holder==sender` raced a release **the detected event itself
+triggers**, and the baseline roll-forward made the loss permanent.
+
+`[V]` I then verified the two MTA citations personally (my own Rule S5 debt):
+`CUnoccupiedVehicleSync.cpp:285` and `:490-492`, both verbatim as reported. **MTA's syncer is a
+LONG-LIVED ASSIGNMENT, not released by the events it syncs** — takeover is a separate rate-limited
+path. Our `device_occupancy` is a per-interaction claim whose lifetime is event-coupled.
+
+**Building syncers on the claim table would inherit that lifetime and revive the v116 race at 68x
+scale.** Hence three concepts, never aliased: `m_ownerSlot` (birth authorship, drives teardown) ·
+**claim** (occupancy, event-coupled, UI/coordination) · **syncer** (write authority,
+arbiter-assigned, event-DECOUPLED).
+
+### R2a — assigned authority fits streams, not discrete verbs
+
+MTA's model self-heals because the traffic is a continuous position stream: a rejected packet is
+replaced 50 ms later. **Our discrete state writes do not self-heal — a rejection is a lost player
+action.** So one syncer check across all 68 kinds is wrong on its face.
+
+### R2b — the per-kind authority taxonomy ALREADY EXISTS, in comments
+
+`[V]` `session_lanes.h:179` `IsClientRelayableReliableKind` is already a per-kind, receive-side
+table, and its comments encode an authority model per kind:
+
+| Model in the tree | Example kinds |
+|---|---|
+| `PRESSER-authored` | `DeskInput`, `DeskSndFx`, `PlayDeckEvent` |
+| `CLAIM-OWNER-authoritative` | `DishAimState` — **the exact shape v116 retired** |
+| `OCCUPANT-OR-GRABBER-authoritative` | `AtvState` |
+| `ANY-PEER-announced idempotent state` | `DriveSlotState` — **authority is not needed at all; idempotent lines converge** |
+| `WRITER-authored` | `DrivePayload` |
+| `SYMMETRIC` | doors, lights, containers, garage, appliance, locker, power — **this is finding A4** |
+
+**~6 authority models already live here.** The syncer would be a seventh. And a new per-kind table
+at stage 3 would be a **second parallel table** beside this one — RULE 2.
+
+### The corrected direction
+
+1. **Promote the existing taxonomy from comments into the type** — each kind declares its authority
+   model explicitly, beside the relay flag, in **one** table.
+2. **Make it enforced on receive, one MODEL at a time** — not one handler at a time out of 68.
+3. **Introduce the syncer only where a peer genuinely SIMULATES what the arbiter cannot compute.**
+   MTA needs syncers because the client simulates an unoccupied vehicle and the server does not.
+   Where our host already computes the truth, "syncer" would be a mere permission label — a simpler
+   thing, and it should stay simpler.
+4. **`SYMMETRIC` is not a model, it is the absence of one.** Those 13 kinds are A4. That is where
+   the work actually is.
+
+### Still unanswered (carried into R3+)
+
+- **Which of the 68 kinds have peer-local simulation the arbiter cannot run?** Decides where syncers
+  are real vs a label.
+- **Can a discrete lane accept rejection + retry at all?** Or must the invariant be that a
+  reassignment can *never* invalidate an in-flight write? Must be read from a real discrete lane
+  before stage 0 shapes the API around the wrong answer.
 
 ## 5. The enforcement point
 
