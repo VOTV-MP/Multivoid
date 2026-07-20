@@ -44,6 +44,20 @@ The MTA/gmod trajectory. Everything below "Phase 0 — Feasibility" in this
 document is the DETAIL of project phase 1. Each later phase gets its own
 phase-gate breakdown when it opens.
 
+> **TWO numbering systems exist in this tree — do not conflate them.**
+> **Project phases** = the arc in THIS section (1-8: coop, arbiter, sandbox,
+> Lua, resources, dedicated, resource infra). **Methodology phases** = the
+> work phases in `docs/COOP_METHODOLOGY.md` (0-5: feasibility, engine
+> archaeology, foundation, transport, replication, validation), which are
+> also the "Phase 0/1/2..." headings further down THIS file — all of them
+> detail of project phase 1.
+>
+> **Never write a numbered FORWARD reference to a project phase** ("deferred
+> to Phase 7+"). The arc renumbers — it did on 2026-07-20 — and every such
+> reference silently shifts by one. Name the phase instead ("deferred to the
+> public-server phase"). Eight such references were repaired on 2026-07-20;
+> see `[[lesson-cite-sections-not-lines-in-files-you-also-edit]]`.
+
 **Restructured 2026-07-20 (user directive).** The prior 8-phase arc (fixed
 2026-07-19) put the authority work last, as a "native standalone server"
 endgame. Two measurements dissolved that shape — see

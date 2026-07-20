@@ -319,7 +319,7 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
    peer identity it names. Syncers make authority *consistent*; certificates make identity *real*.
    Neither substitutes for the other — but does stage 4 have any value before P1 lands?
 6. **Dedicated-deployment forward compatibility.** Is the arbiter API genuinely process-agnostic, or does it
-   quietly assume in-process engine access? If it assumes, the phase-8 payoff evaporates and we
+   quietly assume in-process engine access? If it assumes, the dedicated-deployment payoff evaporates and we
    should know that now.
 
 ---
@@ -329,13 +329,13 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
 - It does not authenticate *who* a peer is (`docs/security/PLAN_01_PEER_AUTH.md`).
 - It does not protect a client from a hostile **host** — the host is the arbiter. The save-blob trust
   surface (`TRACKER` **S1**) is untouched and remains the hardest open problem.
-- It does not make the host's simulation authoritative over physics. Per ROADMAP phase 8, server-side
+- It does not make the host's simulation authoritative over physics. Per the retired-phase-8 note in ROADMAP, server-side
   authoritative physics without the engine is *"a decade-class trap"*; the inversion is about **rules
   and state machines**, not simulation.
 
 ---
 
 Related: `docs/security/MTA_PRECEDENT.md` (the citations) · `docs/security/PLAN_03_AUTHORITY.md`
-(the security framing of the same work) · `docs/ROADMAP.md` phase 8 ·
+(the security framing of the same work) · `docs/ROADMAP.md` phase 2 (the arbiter) ·
 `docs/COOP_ENTITY_EXPRESSION_MAP.md` (identity per entity) · `docs/COOP_SYNC_MAP.md` (which file owns
 a lane).

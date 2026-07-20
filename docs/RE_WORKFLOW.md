@@ -90,7 +90,7 @@ The porting workflow:
 ## What we don't borrow
 
 - UE4SS's runtime mod loader — we have our own (proxy DLL → `multivoid-*.dll`).
-- UE4SS's BPModLoader pak-mounting — Phase 7+ revisit only (see `docs/MULTIPLAYER_UI.md` + the 3 architecture findings docs from 2026-05-25).
+- UE4SS's BPModLoader pak-mounting — the public-server phase revisit only (see `docs/MULTIPLAYER_UI.md` + the 3 architecture findings docs from 2026-05-25).
 - UE4SS's Lua VM — we don't need scripting in production; if we ever need it for chat commands etc., a tiny embedded interpreter (e.g., MyJS or a custom DSL) keeps the standalone DLL self-contained.
 - UE4SS's UI framework (Dear ImGui via UE4SS) — useful for the future MP menu debug overlay (CLAUDE.md "Mod menu / debug overlay: Dear ImGui (UE4SS ships an ImGui integration)") but that integration is via OUR linked ImGui, not via UE4SS at runtime.
 

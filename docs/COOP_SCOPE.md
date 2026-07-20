@@ -102,8 +102,8 @@ items.
   row that works with the master down) + the master-up flow overriding the
   signaling URL/token per session (`coop/config/config.cpp` (moved from harness/ 2026-07-10); env/ini overrides =
   the dev framework).
-  Methodology phase: this is a WAN concern (Phase 7+ per COOP_METHODOLOGY 3.1
-  "LAN first ... WAN is a Phase 7+ concern"); the LAN direct-IP path ships
+  Methodology phase: this is a WAN concern (the public-server phase per COOP_METHODOLOGY 3.1
+  "LAN first ... WAN is a the public-server phase concern"); the LAN direct-IP path ships
   first. Privacy: opt-in only (default OFF); no host is listed without the
   explicit checkbox. The server-browser UI is the already-in-scope multiplayer
   menu's "server browser (future)" element, now given a backing source.
@@ -302,7 +302,7 @@ Template for an entry:
 
 - **Pak-mounted custom content** — NOT in scope for the coop sync work.
   All shipping behaviour rides through the standalone DLL; no asset
-  edits, no pak overlays. Revisit Phase 7+ ONLY for the multiplayer
+  edits, no pak overlays. Revisit the public-server phase ONLY for the multiplayer
   menu polish if needed. See the 3 architecture-decision findings docs
   from 2026-05-25 (votv-mp-pak-mount-feasibility).
   Decided 2026-05-25 (user, after hybrid-pak survey).
@@ -438,7 +438,7 @@ Design implications (do NOT build yet; record so the architecture serves it):
 - 2026-05-23 — Added nameplate ping readout (`Player 2 (42 ms)`, per-machine RTT)
   to In scope; user. Depends on a session RTT measurement.
 - 2026-05-23 — Added master server + opt-in public server browser to In scope;
-  user. Opt-in only (default OFF), WAN/Phase 7+ (LAN direct-IP ships first);
+  user. Opt-in only (default OFF), WAN/the public-server phase (LAN direct-IP ships first);
   backs the multiplayer menu's "server browser" element.
 - 2026-05-23 — Added coop chat + session event log (joins/disconnects/errors) to
   In scope; user. Needs a RELIABLE ordered channel (ack+retransmit) over the

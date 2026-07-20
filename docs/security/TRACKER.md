@@ -70,6 +70,19 @@ hands-on) · **VERIFIED** (hands-on or matching live log — say which) · **DIS
 
 ---
 
+## Forward-looking rules (not findings — record them before the code exists)
+
+| id | rule | why | source |
+|---|---|---|---|
+| **F1** | **Only the host/admin may DONATE the world blob to a dedicated arbiter.** Never accept a save blob from an arbitrary connected peer | An engine-free arbiter cannot parse GVAS, so it holds the blob **opaquely** — it cannot validate what it stores. **Whoever donates it dictates the entire unsynced remainder** of the world. On a dedicated server this reproduces the "world's author is whoever left last" hole at server scale. Cheap to state now, expensive to retrofit once donation paths exist | `COOP_SERVER_MODEL.md` §5b (2026-07-20) |
+
+**Note on S1's future shape:** the blob's re-donation cadence is the **inverse of the arbiter's canon
+coverage** — as sync lanes move their canon into the arbiter, the blob is re-captured less often, and
+at full coverage never. So S1's exposure window shrinks as project phase 2 progresses, without S1
+itself being "fixed". Do not record that as a mitigation; record it as a trend.
+
+---
+
 ## Checked and clean — do not re-audit
 
 Recorded so a future pass does not spend effort here. All `[A]`.

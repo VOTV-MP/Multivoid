@@ -882,7 +882,7 @@ suppressions installed.
 - Host-authoritative (one side owns the truth). The client receives
   state and sends input + commands. NEVER the reverse.
 - LAN first (low latency, simple, no NAT, no internet topology). WAN
-  is a Phase 7+ concern.
+  is a the public-server phase concern.
 
 ### 3.2 Sessions, not connections
 

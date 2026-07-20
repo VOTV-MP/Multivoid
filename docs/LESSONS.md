@@ -123,8 +123,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   header. Line numbers are for source you are NOT touching; a superseded doc gets a section anchor plus
   a quoted fragment. Re-read every line citation you wrote at the end of a doc sweep — your own edits
   are the likeliest thing to have broken them. Second instance in two days (the prior sweep found two
-  lessons pointing at lines a fix had moved). *Look FIRST:*
-  `memory/lesson_cite_sections_not_lines_in_files_you_also_edit.md`
+  lessons pointing at lines a fix had moved). **Same failure at tree scale:** renumbering the project
+  phase arc shifted **24 "Phase 7+" forward-references across 6 docs** by one — and the tree carries
+  TWO unrelated phase numberings (the project arc 1-8 vs `COOP_METHODOLOGY`'s work phases 0-5, which
+  are also the `## Phase N` headings inside ROADMAP). A number is a citation into an ordered list, and
+  ordered lists renumber: **name the target** ("the public-server phase") and it cannot rot.
+  *Look FIRST:* `memory/lesson_cite_sections_not_lines_in_files_you_also_edit.md`
 - **A source cannot confirm a belief it planted.** A `/qf` round caught me tagging a conclusion
   `inferred` while `ROADMAP.md` phase 6 already fixed that same conclusion as an "architectural
   commitment decided up front" — I had inherited the framing and then cited it back as independent
@@ -561,6 +565,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   temperature gate sends the element back to a syncer. Park the brain regardless, or the local
   accumulator fights the computed value. LOOK FIRST: `docs/COOP_WORLD_PROP_DIVERGENCE.md` (2026-07-20
   section) + `docs/COOP_SERVER_MODEL.md` §4. `memory/lesson_anchor_the_accumulator_dont_stream_it.md`
+- **Storing state you cannot parse: the DONOR owns everything your canon doesn't cover.** An
+  engine-free arbiter holds the world save opaquely (bytes + hash; GVAS is never deserialised outside
+  the engine). Two consequences the storage decision itself never mentions: (1) whoever DONATES the
+  blob silently authors the entire unsynced remainder — so donation must be host/admin-only, recorded
+  as `docs/security/TRACKER.md` **F1** before any donation path exists; (2) **the blob's re-donation
+  cadence is the INVERSE of canon coverage** — which converts "the server's authority grows with every
+  sync lane" from a slogan into an observable metric, and its complement is the trust exposure. The
+  trap: blob-then-overlay already exists in the tree (joiner loads the host save, `prop_snapshot`
+  reconciles by key), and that familiarity hides the new authority question. LOOK FIRST:
+  `docs/COOP_SERVER_MODEL.md` §5b. `memory/lesson_opaque_blob_custody_donor_dictates_the_remainder.md`
 
 ## 4. Dispatch, hooks & input seams
 

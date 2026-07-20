@@ -5,6 +5,12 @@
 **Prior RE doc:** `research/findings/network/voidtogether-server-RE-2026-05-25.md` (architecture summary + per-file map)
 **User directive:** "from that voidtogether mod we can take CHAT, PERMISSIONS other stuff (ask agents)"
 
+> **Phase-number note (added 2026-07-20).** This doc is a POINT-IN-TIME record and its 13 "Phase 7+"
+> references are from the pre-2026-07-20 project arc, which has since been renumbered (the arbiter
+> became phase 2; the old phase 8 was retired as a phase). Read every "Phase 7+" here as **"the
+> public-server phase"** — the numbers are off by one against the current `docs/ROADMAP.md`. Left
+> unrenumbered on purpose: this is a dated record, not a live plan.
+
 This doc takes each candidate feature from VoidTogether's ops/moderation
 layer, scores it against VOTV_MP's coop story scope, lists the concrete
 build cost (files + function-level outline + estimated LOC + deps), and
