@@ -1,18 +1,30 @@
 # Hands-on runbook — v112..v122 (desk chain + meadow + laptop v2 + join identity), take 4
 
-> **RE-PINNED 2026-07-20 — the deployed bytes changed.** The DLL now on all four installs is
-> **`multivoid-0.9.0n-122.dll 05479190C7C01528`** (hash-verified x4), which adds **Tier B TLS
-> arcs 1-2** on top of the build described below: the mod now reaches the master over **TLS**
-> (`master.multivoid.dev:10443`, real Let's Encrypt chain, WinHTTP default validation) instead
-> of cleartext :10001. **proto 122 is UNCHANGED** — nothing in the P2P wire moved, so every
-> take-4 scenario below still applies verbatim.
-> What to watch for that is NEW: the server browser / Host button must work exactly as before
-> (they now ride TLS). If the master ever looks unreachable, check the log for a line naming a
-> TLS validation failure — that is a certificate problem, not a dead server. Signaling is still
-> cleartext (arc 3 is ON HOLD since 2026-07-20 — see `docs/security/`), so nothing else changes.
-> Verified on these bytes: LAN smoke PASS; the master logged a real `host` + `join` from the game
-> over the TLS listener. NOT hands-on — that is what take 4 is for.
-> Detail: `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
+> **RE-PINNED 2026-07-20 (second time today) — the deployed bytes changed again.** The DLL on all
+> four installs is now **`multivoid-0.9.0n-122.dll 3C856F22530B7F5B`** (hash-verified x4).
+> **proto 122 is UNCHANGED** — nothing in the P2P wire moved, so every take-4 scenario below still
+> applies verbatim.
+>
+> On top of the Tier B TLS arcs 1-2 (the mod reaches the master over TLS at
+> `master.multivoid.dev:10443` instead of cleartext :10001), this build adds **seven security fixes
+> to the receive paths** — all of them REJECTION paths that a well-behaved peer never triggers:
+> W1/W1b/W2 (save-transfer announce), W3 (the announce is now handled on the net thread beside its
+> chunks), W4/W5/W6 (blob assembly, owner-entity spawns, trash-carry poses).
+>
+> **What to watch for that is NEW.** The save download at join is the most-touched path — it must
+> work exactly as before (a ~21 MB / 367-chunk transfer, CRC ok, then the world loads). If a join
+> ever fails, grep the client log for `save_transfer:` — a line naming a refused Begin, a second
+> Begin, or a chunk with no Begin would mean one of the new guards fired on legitimate traffic,
+> which is a bug in the guard, not in your test. Same for `blob_chunks:`, `owner_entity: slot` and
+> `trashcarry:` — **none of these should ever appear during honest play.**
+>
+> Also NEW and worth a deliberate try: **grab and carry a trash pile as the client.** That lane
+> (W6) received a role gate + a NaN check and is the ONE change no automated smoke exercises.
+>
+> Verified on these bytes: LAN smoke PASS, both peers stable, save transfer completed, and none of
+> the new guards logged. NOT hands-on — that is what take 4 is for. Signaling is still cleartext
+> (arc 3 ON HOLD since 2026-07-20 — see `docs/security/`).
+> Detail: `docs/security/EXECUTION.md` + `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
 
 DEPLOYED (superseded hash, kept for the build-history chain): **`multivoid-0.9.0n-122.dll 9370C1C1C7690B21...`** x4 (HOST/CLIENT_1/CLIENT_2/CLIENT_3), hash-verified 2026-07-19 s29b (the REBRAND build: in-game label "Multivoid 0.9.0n b122", runtime files renamed multivoid.ini/multivoid.log/multivoid-*.txt + LogicMods/multivoid, compiled master endpoint = master.multivoid.dev — smoke PASS on these exact bytes; supersedes 4C994D0E) — NOTE the DLL was RENAMED (the multivoid Paper-pair artifact; the legacy votv-coop.dll files were deleted by deploy; proto 121->122, so BOTH peers must relaunch on this build). Adds the b122 version-identity lane (see the b122 section below) on top of s28 `1626B6E093CD07C7` (adds the s28 three cuts -- remote_prop 1180->758 `6c910046`+`d0c7879e` (convert + physics TUs), npc_sync 989->709 `fd7c7409` (install TU + internal.h seam), puppet 972->491 `ca12e11d` (spawn TU + head-gate hook moved whole) + the audit-cosmetic include comment; all equivalence-proven verbatim moves (body-diff instruments + 18 must-FAIL mutate controls total) + 2 clean audits (correctness CLEAN, perf PASS x5, 0 findings >=80); NO runtime smoke this session per user directive -- equivalence rests on the instruments + audits; gameplay-invisible, no new hands-on steps; previously s27: `61F56942EE1DE659...` (adds the s27 three cuts -- kerfur_convert 1259->633+client+host `bcd7b44b`+`bd82c596`, autotest_vitals dissolved into 5 TUs `ba317803`..`d7899730`, harness 1223->526+session_runtime `8a9c509c`+`e6f8576e`+`a48b21d8` incl. the RULE-2 netloopback retire, audit fixes `de304643`; all equivalence-proven verbatim moves + 2 clean audits, ONE gameplay deviation: DISABLED-state kerfur requests now drop fail-closed, unreachable on this build; kt-baseline kerfurtoggle PASS, the full runtime differential batch was user-cancelled -- re-runnable from scratchpad/s27; no new hands-on steps; previously s26: `votv-coop.dll B62C64263F8075F0...` -- the autotest.cpp dissolve -- `89ce6602`+`f299107c`+`cc4c93c3`, dev-test island only, autotest.cpp 1002 -> autotest_grab 393 + 6 one-feature TUs, all ten routines differential-smoke-proven -- on top of the s25 weather_sync closure `828844b2`+`cd59ad13` (1154->784), the s24b console_desk closure `f74d05dc`+`f9dfb5d5`, coords_panel `129fb004`, net_pump `de249463`, component_calls `b5c1b911`; all gameplay-invisible refactors, equivalence proven vs baseline; no new hands-on steps)
 (= the 06b9e2d2 stack + the s23 additions below + the session_streams extraction

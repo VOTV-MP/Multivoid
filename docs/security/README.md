@@ -28,8 +28,8 @@ restated here (RULE 2 — one home per fact).
 | Plan | Covers | Status |
 |---|---|---|
 | **`PLAN_01_PEER_AUTH.md`** | **P1**, **A1** — peer certificates from our own CA. The root fix | DESIGN — **gated on a spike** |
-| **`PLAN_02_WIRE_HARDENING.md`** | **W1-W10** — apply-side caps and validation | DESIGN — Wave 1 ready to build |
-| **`PLAN_03_AUTHORITY.md`** | **A3**, **A4** — make the existing claim/holder tables enforcing on receive | DESIGN — highest regression risk |
+| **`PLAN_02_WIRE_HARDENING.md`** | **W1-W10** — apply-side caps and validation | **W1-W6 BUILT**; W7-W10 open |
+| **`PLAN_03_AUTHORITY.md`** | **A3**, **A4**, **A5** — the security framing only | **Mechanism moved to `docs/COOP_SYNCER_MODEL.md`** |
 | **`PLAN_04_CONTROL_PLANE.md`** | **A2**, **A5**, **A6**, **A7**, **A9**, **S2** — master + moderation | DESIGN — mostly small deletions |
 | **`PLAN_05_WEBSITE.md`** | **A8** — render rules written before the site exists | DESIGN — done until the site is written |
 
@@ -37,9 +37,15 @@ restated here (RULE 2 — one home per fact).
 
 ## Where things stand
 
-> **Nothing has been fixed. All 20 findings are OPEN.** The only security code that exists is TLS
-> arcs 1-2, which close none of them (`DECISIONS.md` §1). The next action is the **CA spike**
-> (`PLAN_01` §2).
+> **7 findings BUILT, 14 OPEN** (2026-07-20). Closed: the save-transfer one-packet remote kill
+> (W1/W1b/W2), W3's pre-Begin window, and the three parse-layer floods (W4/W5/W6) — plus both false
+> security comments. **Nothing is VERIFIED:** no hostile-peer drill has ever run, and W6 is not even
+> runtime-exercised.
+>
+> **The authority-shaped findings (A3/A4/A5) are now downstream of
+> `docs/COOP_SYNCER_MODEL.md`** — a user decision to adopt the MTA authority model first. TLS arcs
+> 1-2 remain defence-in-depth and close nothing (`DECISIONS.md` §1). Next actions: the **CA spike**
+> (`PLAN_01` §2) and the syncer model's own `/qf`.
 
 Current detail, including the session log and what is unblocked right now: **`EXECUTION.md`**.
 

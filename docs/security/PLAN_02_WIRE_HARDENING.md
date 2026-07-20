@@ -1,8 +1,9 @@
 # Plan 02 — wire hardening (apply-side caps and validation)
 
 **Closes:** `TRACKER` **W1, W2, W3, W4, W5, W6, W7, W8, W9, W10**.
-**Status: DESIGN. No code written.** W1/W2/W3/W6 are `[V]` personally verified; W4/W5/W7-W10 remain
-`[A]` and must be re-read before their fix (Rule S5).
+**Status: W1, W1b, W2, W3, W4, W5, W6 BUILT** (`6f0c2bf8`, `8eb7f1a1`, `0fcd2003`) — none VERIFIED,
+no hostile drill has run (§7), and W6 is not runtime-exercised. **W7-W10 remain OPEN and `[A]`** —
+re-read those sites before fixing (Rule S5); doing so for W1-W6 corrected five of them.
 
 ---
 
@@ -68,7 +69,7 @@ grind. The earlier text here said "all three kill with one packet" — that was 
 - **Acceptance:** a sidecar with `count = 0xFFFFFFFF` and a 40-byte body returns `false` without
   allocating.
 
-### W3 — chunks accepted before `Begin`, with no cap `[V]` — **STILL OPEN, deliberately**
+### W3 — chunks accepted before `Begin`, with no cap `[V]` — **BUILT `8eb7f1a1`**
 
 - **Site:** `save_transfer.cpp:363-379` (`BulkSink_`). In `WaitingBegin` the sink transitions to
   `Receiving` and appends; `MaybeFinishLocked_` returns immediately at `:283` because
@@ -81,11 +82,9 @@ grind. The earlier text here said "all three kill with one packet" — that was 
   **cross-thread lag**: `OnBegin` runs on the game thread (`save_transfer.h:151-152`) while
   `BulkSink_` runs on the net thread (`:361`), both under `g_cliMu`. "Refuse chunks before Begin"
   would break real joins.
-- **Why nothing was shipped:** the remaining options were a *sized* pre-Begin window — a number I
-  cannot measure and would be keeping only so the finding has a fix attached — or the root fix.
-  Shipping the number would be a crutch (RULE 1).
-- **The root fix (next commit): latch `Begin`'s four scalars on the NET thread under `g_cliMu` at
-  arrival**, leaving the game thread its user-visible work. That makes `WaitingBegin`-with-bytes
+- **No sized window was ever shipped:** that number was unmeasurable and would have been kept only
+  so the finding had a fix attached — a crutch (RULE 1).
+- **What shipped instead: `Begin` is latched on the NET thread**, leaving the game thread its user-visible work. That makes `WaitingBegin`-with-bytes
   *structurally impossible* and deletes the window instead of sizing it — no constant at all.
   `[V]` The seam exists: `session.cpp:414-416` already diverts `SaveTransferChunk` to a net-thread
   sink; `SaveTransferBegin` currently goes to the inbox → `event_feed.cpp:164` → game thread.
@@ -98,9 +97,13 @@ grind. The earlier text here said "all three kill with one packet" — that was 
 
 ---
 
-## 3. Wave 2 — amplification and cross-peer corruption (HIGH)
+## 3. Wave 2 — amplification and cross-peer corruption (HIGH) — **BUILT `0fcd2003`**
 
-### W4 — `blob_chunks::Assembler` amplification `[A]`
+All three sites were re-read personally before the fix (Rule S5), and that **changed two of them** —
+see the per-finding notes. W6 is **not runtime-exercised**: the join smoke never touches the
+trash-carry lane.
+
+### W4 — `blob_chunks::Assembler` amplification `[V]` — **BUILT**
 
 - **Claimed:** `blobSeq` is attacker-chosen and default-inserts a map node, then reserves
   `chunks * 220` — one 228-byte packet costs ~56 KB (**~246x**). Reachable client→host with **no join
@@ -108,29 +111,40 @@ grind. The earlier text here said "all three kill with one packet" — that was 
   a menu never reclaims.
 - **Precedent in-tree:** `order_sync.cpp:268` already caps its table — which is what makes this an
   oversight rather than a design position.
-- **Fix:** per-sender assembly cap in `blob_chunks` itself, mirroring `order_sync`'s `kMaxAssembly`.
-  Fixing it at the shared primitive covers all 8 lanes at once — **do not patch the lanes.**
-- **Verify first:** the amplification ratio and the 8 lane list.
+- **Shipped:** a **per-SENDER** assembly cap in `blob_chunks` itself (`kMaxAssembliesPerSender = 4`),
+  so all 8 lanes are covered at once rather than 8 bespoke patches.
+- **Deliberate deviation from the `order_sync` precedent:** that one is **global**, which would let a
+  single flooding peer starve every other peer's assemblies — finding **W10**'s shape, not worth
+  importing.
+- **NOT the W1 treatment:** here the `reserve` is legitimate and bounded (`chunks` is `u8`), so
+  deleting it would be wrong. Same finding family, different root.
 
-### W5 — `owner_entity_sync` spawns 65 536 actors per peer `[A]`
+### W5 — `owner_entity_sync` spawns 65 536 actors per peer `[V]` — **BUILT**
 
 - **Claimed:** `kMaxOwned = 8` is **send-side only** (`owner_entity_sync.cpp:350`); the receive path
   spawns for every unseen `(slot, seq)`. On the relay whitelist, so it reaches every client.
-- **Fix:** receive-side `g_mirrors` cap per sender, at the same value as the send-side intent.
-- **Note:** this is Rule S3 in its purest form — the constant already exists and expresses the right
-  intent; it is simply enforced on the wrong side.
+- **Shipped:** receive-side per-sender cap at the same value the send side already intends, enforced
+  where the actor is actually created. Counted from `g_mirrors` rather than a side counter — the map
+  is erased on several paths and a parallel counter would drift out of step with it.
+- **Note:** this is Rule S3 in its purest form — the constant already existed and expressed the right
+  intent; it was simply enforced on the wrong side.
 
-### W6 — `TrashCarryPose`: no role gate, no finite check `[V]`
+### W6 — `TrashCarryPose`: no role gate, no finite check `[V]` — **BUILT**
 
 - **Site:** `session_trashcarry.cpp:58-70`. `[V]` the file contains **zero** occurrences of
   `IsHost`, `senderPeerSlot`, `isfinite`, `ValidatePose`, or `FiniteVec`.
 - **The asymmetry is the proof:** `[V]` its five siblings in `session_streams.cpp` all validate —
   `:198` `ValidatePose`, `:222`, `:260`, `:297`, `:324` `isfinite`. This one lane was missed.
+- **CORRECTION made while fixing** `[V]`: it is **worse** than recorded — neither the store *nor* the
+  game-thread apply had a role check, so a client could send this **host-originated** kind *to* the
+  host and drive its props. And the "unlike its five siblings" framing was imprecise: the sibling this
+  file was cloned from (`session_worldactor.cpp`) has no role gate either. The real asymmetry is the
+  finite check.
 - **The false comment:** `:61-62` claims "Per-entry float validation + the ctx-freshness gate happen
   at the game-thread apply". `[V]` **Half true.** The ctx gate is real
   (`trash_clump_pose_stream.cpp:49`); the float validation exists nowhere on the path — the values go
   from `:60` straight into `BeginLerpToPose`. NaN reaches `SetActorLocation`.
-- **Fix:** role gate (host-originated only, matching the comment's own claim at `:58-60`) + finite
+- **Shipped:** role gate (host-originated only, matching the comment's own claim at `:58-60`) + finite
   check, matching `npc_mirror.cpp:638`. **And correct the comment** (Rule S1).
 - **Acceptance:** a client-sent `TrashCarryPose` is dropped by role; a NaN-bearing host batch is
   dropped by the finite check.
@@ -179,8 +193,8 @@ After Wave 1, before Wave 3:
 
 | Wave | Items | Risk | Gate |
 |---|---|---|---|
-| 1 | W1, W2, W3 | **Low** — pure rejection paths on failure branches | None. Do it next |
-| 2 | W4, W5, W6 | **Medium** — W4 touches a shared primitive used by 8 lanes; W6 changes an active stream | Verify W4/W5 sites first (Rule S5); smoke both peers |
+| 1 | W1, W1b, W2, W3 | Low | **DONE** `6f0c2bf8` + `8eb7f1a1`; smoke PASS with a real 21 MB transfer |
+| 2 | W4, W5, W6 | Medium | **DONE** `0fcd2003`; smoke PASS, no guard fired. **W6 untested at runtime** — needs an interaction smoke |
 | 3 | W7-W10 | Low-medium — W7 could reject legitimate names if the charset is too tight | Needs a real-name census before choosing the charset |
 
 **A protocol version bump is not required** for Wave 1-3: these are rejection paths, not format

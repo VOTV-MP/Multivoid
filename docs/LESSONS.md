@@ -1006,6 +1006,23 @@ tracker.
   primitive is worse than not having the primitive. Ask: needed at all → bounded by something already
   known → only then invent a limit, and describe what happens to the honest user who exceeds it.
   `memory/lesson_delete_the_allocation_dont_cap_the_wire_value.md`
+- **An ANNOUNCE and its PAYLOAD must be handled on the SAME thread.** `save_transfer` announced a
+  blob on the game thread while its chunks landed on the net thread, so bytes could legitimately
+  arrive with no announced size — an unbounded buffer. The wire order was already guaranteed (one
+  in-order lane), which is exactly why the pre-announce branch *looked* like dead defensive code: **a
+  per-lane ordering guarantee says nothing about processing order across threads.** Sizing that
+  window would have been a guessed constant; refusing early bytes would have broken real joins. The
+  fix is CO-LOCATION — divert the announce to the payload's thread and retire the old handler (RULE
+  2) — after which "refuse bytes with no announce" is correct and no constant exists.
+  `memory/lesson_announce_and_payload_must_share_a_thread.md`
+- **Before generalizing a pattern to N sites, grep whether it was RETIRED at one site — and why.** A
+  syncer design proposed a `holder == sender` receive check across 68 kinds; that exact shape had been
+  retired three days earlier as a RULE-1 root fix (v116: a validator anchored on a claim the validated
+  event itself releases loses by construction). The abstraction is what hides the match — a retirement
+  reads as local cleanup, so nothing connects "the general shape" to "the instance someone deleted".
+  Resolution was a distinction, not abandonment: MTA's syncer is a long-lived ASSIGNMENT, our
+  `device_occupancy` is a per-interaction CLAIM. Mirror image of "never retire a fix on theory".
+  `memory/lesson_check_whether_the_pattern_you_are_generalizing_was_retired.md`
 - **Census a field's WRITERS, not just its USES.** A use census answers "what depends on this"; only a
   writer census answers "**who can move it, and from which thread**". The second question found W1b —
   `OnBegin` had no guard against a *second* `Begin`, letting a hostile host move the completion
