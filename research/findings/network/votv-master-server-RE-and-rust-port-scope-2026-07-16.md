@@ -110,9 +110,10 @@ Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (ser
   master traffic runs over TLS (`87e66bce`). The shape guessed here was wrong in two ways: no :443
   front is possible (that port is a foreign tenant's) and there is **no pinned self-signed cert** —
   it is a real Let's Encrypt chain validated to the system root store.
-  **STILL OPEN:** the **signaling** channel is cleartext until arc 3 (client schannel) + arc 3b (the
-  server-env flip), and **Tier C per-session tokens** are arc 4 — the static shared bearer is still
-  in force, so identity hijack is NOT yet closed.
+  **STILL OPEN:** the **signaling** channel is cleartext, and the static shared bearer is still in
+  force, so identity hijack is NOT closed. **The arcs that were to close it (3 / 3b / 4 / 5) are ON
+  HOLD as of 2026-07-20** — a threat model was written and reordered the work; identity is now to be
+  closed by GNS **peer certificates**, not by per-session tokens. See `docs/security/`.
 
 ## MIGRATED to the new coop VPS (2026-07-16 evening, user decision)
 
@@ -154,10 +155,11 @@ names in a PUBLIC repo — wording neutralized across 6 files and the three unpu
 - RULE-2 finalization: provision script is Rust-native (`d56a4f69`) and the old box is wiped — DONE.
   REMAINING: the retired Python impls (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`)
   still have live consumers — MEASURED 2026-07-20: `master_smoke.py` spins the Python **master** and
-  `p2p_smoke.py` spins the Python **signaling** server. Tier B/C **arc 4** moves both harnesses onto
-  the Rust bins, which retires the pair as a consequence rather than as a standing question.
+  `p2p_smoke.py` spins the Python **signaling** server. Moving both harnesses onto the Rust bins was
+  to retire the pair as a consequence of arc 4 — **arc 4 is now ON HOLD**, so the Python pair stays
+  alive until whatever replaces that arc lands (see `docs/security/`).
   `tools/vps.py`'s fate is still open (it targets the old, now coop-free box; banner added meanwhile).
-- **Tier B/C: arcs 1-2 SHIPPED 2026-07-20**, arcs 3/3b/4/5 remain. Current status, the full arc plan and
+- **Tier B/C: arcs 1-2 SHIPPED 2026-07-20**, arcs 3/3b/4/5 **ON HOLD** (see `docs/security/`). Status, the as-built record and
   every drill live in `votv-tls-tier-b-c-DESIGN-2026-07-20.md` — read that, not this file, for TLS state.
   (Note the guesses in this doc that the work falsified: no :443 front is available, no pinned
   self-signed cert, and the client URL grammar is **schemeless = secure**, NOT an `https://` prefix.)

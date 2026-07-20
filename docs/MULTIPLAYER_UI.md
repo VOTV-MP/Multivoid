@@ -287,8 +287,13 @@ ports **10443 (master) / 10442 (signaling)**, running beside the plaintext pair 
 (`87e66bce`). The client URL grammar is **SCHEMELESS = SECURE** — a bare `host:port` means TLS, so
 `net.master` needs **no** `https://` prefix (an explicit `http://` is the deliberate downgrade for a
 self-hoster without a certificate).
-**Still cleartext:** the **signaling** channel, until arc 3 (client schannel layer) + arc 3b (the
-server-env flip). **Tier C per-session tokens** (which close identity hijack) are arc 4; the static
-shared bearer is still in force until then.
-Status + the whole arc plan + every drill: `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`
-(the older `votv-master-server-RE-and-rust-port-scope-2026-07-16.md` remains the server RE/port scope).
+**Still cleartext:** the **signaling** channel. **Arcs 3 / 3b / 4 / 5 are ON HOLD as of 2026-07-20
+(same day)** — a threat model was written and reordered the work: GNS is encrypted but
+**peer-UNAUTHENTICATED**, so the real gap is peer identity rather than transport encryption, and
+**Tier C dissolves into peer certificates** instead of shipping as per-session tokens. The
+`net.master.insecure` flag discussed in that window was **never built and should not be**; the
+`http://` downgrade grammar above is still what ships today, but it is queued for RULE-2 retirement.
+**Read `docs/security/` (README = threat model, TRACKER = 20 OPEN findings) before touching any of
+this.** The arc-1/2 as-built record + drills stay in
+`research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md` (superseded as a *plan*); the older
+`votv-master-server-RE-and-rust-port-scope-2026-07-16.md` remains the server RE/port scope.

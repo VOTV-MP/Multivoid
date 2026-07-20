@@ -962,3 +962,45 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   as "not recognized" (Get-FileHash, 2026-07-17 smoke deploy). Run mp.py/deploys from the BASH env.
   `memory/lesson_pwsh_nested_powershell_psmodulepath.md`
 - **AUTONOMOUS pile test loop harness** (reference). `memory/reference_pile_test_harness.md`
+
+---
+
+## 9. Security (threat model, trust boundaries, peer identity)
+
+Canonical home: **`docs/security/`** — `README.md` is the threat model + measured substrate,
+`TRACKER.md` is the ranked findings list. Read those before any security, transport, authority-boundary
+or website work. Everything below is the durable *lesson*; the status lives in the tracker.
+
+- **Write the THREAT MODEL before designing any security mechanism.** Tier B/C ran **26 `/qf` rounds**
+  across two sessions and shipped two arcs without anyone asking what adversary, with what access,
+  gains what. Writing the model took under an hour and showed the lobby list is public, the token is a
+  shared secret, and the real gap was peer authentication — which TLS does not touch. A converged
+  design pass proves the design is coherent, **not** that the goal is right; critics escalate *within*
+  the frame you hand them. `memory/feedback_threat_model_before_security_mechanism.md`
+- **GNS encrypts (AES-256-GCM) but does NOT authenticate peers.** The opensource build defaults
+  `IP_AllowWithoutAuth = 2` ("don't attempt authentication") with the warning deliberately suppressed
+  (`csteamnetworkingsockets.cpp:88-91`), and we never override it. So passive eavesdropping already
+  fails but an ACTIVE attacker at the rendezvous can sit in the middle — and **the control plane is the
+  only place peer identity can be established.** GNS ships the whole CA (certstore + certtool +
+  `SetCertificate`); Ed25519 sign/verify already links into our process.
+  `memory/lesson_gns_encrypted_but_peer_unauthenticated.md`
+- **A secret handed to every user is not a secret.** `signalingToken` is one static value returned to
+  every client, so protecting it in flight is theatre — and a shared bearer cannot authenticate anyone,
+  which is how a stranger with `nc` can register someone's host identity and evict them. Ask "who
+  receives this?" before "how do we protect it?". `memory/lesson_shared_secret_handed_to_every_user_is_not_a_secret.md`
+- **A FALSE security comment is worse than no comment.** Two found in one day (`master.rs:498-499`
+  asserts a join-secret challenge that exists nowhere; `session_trashcarry.cpp:61-62` claims float
+  validation its apply path does not do), and in both cases the comment is *why* the gap survived — a
+  reassurance is never grepped. Name your own gap instead, as `event_dispatch_entity.cpp:259-264` does.
+  `memory/lesson_false_security_comment_worse_than_none.md`
+- **Send-side caps are not caps — validate on APPLY.** The classic bug classes are largely absent in
+  this tree (lengths checked, strings clamped, paths allow-listed, zero non-literal format strings);
+  the real exposure is every "the peer is a well-behaved copy of this build" assumption. Peers come
+  from a public lobby list — they are strangers. Never `reserve()` from a wire integer, and diff a new
+  lane against its siblings (a missing role gate shows up as an asymmetry).
+  `memory/lesson_send_side_caps_are_not_caps.md`
+- **Split fused options before comparing architectures.** A "TLS vs GNS vs response-signing" trilemma
+  dissolved once "control plane over GNS" (expensive) was separated from "our own CA for peer certs"
+  (cheap, transport-untouched) — only the second was ever needed, and the preferred third option turned
+  out to patch one vector rather than close the class. An option named after its most striking feature
+  carries that feature's whole cost bundle. `memory/lesson_split_fused_options_before_comparing_architectures.md`

@@ -9,7 +9,7 @@
 > What to watch for that is NEW: the server browser / Host button must work exactly as before
 > (they now ride TLS). If the master ever looks unreachable, check the log for a line naming a
 > TLS validation failure — that is a certificate problem, not a dead server. Signaling is still
-> cleartext (arc 3 pending), so nothing else changes.
+> cleartext (arc 3 is ON HOLD since 2026-07-20 — see `docs/security/`), so nothing else changes.
 > Verified on these bytes: LAN smoke PASS; the master logged a real `host` + `join` from the game
 > over the TLS listener. NOT hands-on — that is what take 4 is for.
 > Detail: `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
