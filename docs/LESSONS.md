@@ -886,7 +886,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   very blindness it guards). `memory/lesson_certbot_dry_run_skips_deploy_hooks.md`
 - **CF-PROXIED root passes only HTTP(S) — custom-port services need the GREY-CLOUD subdomain; an
   IP→hostname flip needs a per-consumer RESOLVER check first.** 2026-07-19 s29d: root `multivoid.dev`
-  resolves to Cloudflare proxy IPs (web works, master :10001 / signaling :10000 / STUN :3478 would be
+  resolves to Cloudflare proxy IPs (web works, master :10001/:10443 / signaling :10000/:10442 / STUN :3478 would be
   dead — "half-alive" failure); the constants use `master.multivoid.dev` (grey cloud → the box). Flip
   was safe only because both consumers resolve natively (WinHttpConnect http_client.cpp:81; getaddrinfo
   signaling_client.cpp:234) — an `inet_pton`-only consumer would silently fail on a hostname. *Look

@@ -406,10 +406,18 @@ Each item below is a feature increment series. Cross-referenced in
          compiled endpoints flipped `cd6faf81`; box upgraded +
          rebooted, docker/WG removed, re-verified outside). Domain: `multivoid.dev` LIVE
          2026-07-19 (root proxied; `master.multivoid.dev` unproxied/grey-cloud -> the box;
-         the never-delegated `votv.mp` zone retired). NEXT: Tier B TLS
-         (`master.multivoid.dev` + rustls + client https cutover), then Tier C
-         per-session tokens. Control plane cleartext until then.
+         the never-delegated `votv.mp` zone retired).
          See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+       - 2026-07-20: **Tier B TLS arcs 1-2 BUILT + LIVE.** A Let's Encrypt cert on
+         `master.multivoid.dev` terminated by `tokio-rustls` inside our own bins on new
+         ports 10443/10442, beside the plaintext pair for the cutover (`7aff6b73`); the
+         client's master traffic moved to TLS, grammar **schemeless = secure** (`87e66bce`).
+         Renewal is hardened (deploy hook restarts the services, since `LoadCredential` is a
+         start-time snapshot) with the staleness alarm OFF the box (`tools/cert_check.py`).
+         STILL OPEN: signaling is cleartext until arc 3 (client schannel) + arc 3b (server-env
+         flip); **Tier C per-session tokens** = arc 4 (closes identity hijack, bumps the build
+         number); arc 5 retires the plaintext listeners.
+         Design of record: `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
 
 ### Open / future
 - ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose

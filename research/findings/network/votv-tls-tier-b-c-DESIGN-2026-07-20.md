@@ -1,11 +1,15 @@
 # Tier B (TLS on the control plane) + Tier C (per-session signaling tokens) — DESIGN
 
-**Type:** DESIGN (converged; NOT built as of this file's creation). 19-round `/qf` pass,
-critic verdict "that holds" at R19. Supersedes the "NEXT: Tier B TLS" line in
-`votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+**Type:** DESIGN for the whole plan (converged: 20-round `/qf`, critic verdict "that holds" at R19,
+R20 aimed at auto-renewal) — **now MIXED status**: **arcs 1-2 are AS-BUILT + LIVE** (see §5b for the
+as-built record and its drills), arcs 3 / 3b / 4 / 5 remain DESIGN. Nothing here is VERIFIED in the
+hands-on sense: the evidence so far is drills + a LAN smoke + real server-side logs, not a play session.
+Supersedes the "NEXT: Tier B TLS" line in `votv-master-server-RE-and-rust-port-scope-2026-07-16.md`
+(which now points here for status).
 
-**Root being fixed** (security audit 2026-07-16, the one UNFIXED item): the coop control
-plane is **cleartext** — master HTTP :10001 + signaling TCP :10000. The signaling bearer
+**Root being fixed** (security audit 2026-07-16, the one UNFIXED item) — stated as it was BEFORE
+this work; as of 2026-07-20 the master half is TLS and the signaling half is not yet: the coop control
+plane was **cleartext** — master HTTP :10001 + signaling TCP :10000. The signaling bearer
 token and the TURN credentials are sniffable on the wire, which buys an on-path attacker
 signaling MITM, relay theft, and — because the signaling server binds no identity to the
 token — **identity hijack** (any token holder may register ANY identity and evict the

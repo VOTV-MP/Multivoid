@@ -272,12 +272,23 @@ master HTTP + getaddrinfo in signaling_client; the proxied ROOT `multivoid.dev` 
 for custom-port traffic). All four installs' `multivoid.ini` carry explicit `net.*` fallback rows,
 rewritten to the hostname in the same sweep. Later the
 same day the box was apt full-upgraded + rebooted (docker + WireGuard removed) and the whole stack
-re-verified from outside (healthz, latest=111, signaling TCP, STUN).
+re-verified from outside (healthz, `/v1/latest`, signaling TCP, STUN). (`/v1/latest` answered proto 111
+at that time; since v122 the compiled default is **0** = "no released record" and the env override is
+left unset — zero releases exist, and a client treats proto<=0 as no verdict.)
 
 **Domain: `multivoid.dev`** (LIVE 2026-07-19: root proxied via Cloudflare → 172.86.94.3; `master.multivoid.dev`
 unproxied/grey-cloud → the same box, for direct client traffic on our custom ports. The earlier `votv.mp` zone
-never delegated and is retired). Next:
-**Tier B TLS** — Let's Encrypt cert on `master.multivoid.dev` + rustls in our bins (:443 is another tenant's on this
-box too → TLS on our own ports) + the client https/wss cutover (`net.master=https://master.multivoid.dev`);
-**Tier C (per-session tokens)** after B. The control plane is **cleartext until Tier B ships**. Full
-detail: `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
+never delegated and is retired).
+
+**Tier B TLS — arcs 1-2 AS-BUILT + LIVE (2026-07-20), arcs 3-5 open.** A real Let's Encrypt certificate
+on `master.multivoid.dev` (HTTP-01 via :80) terminated by `tokio-rustls` **inside our own bins** on NEW
+ports **10443 (master) / 10442 (signaling)**, running beside the plaintext pair through the cutover
+(`7aff6b73`); the client's master traffic moved to TLS with WinHTTP's default chain+hostname validation
+(`87e66bce`). The client URL grammar is **SCHEMELESS = SECURE** — a bare `host:port` means TLS, so
+`net.master` needs **no** `https://` prefix (an explicit `http://` is the deliberate downgrade for a
+self-hoster without a certificate).
+**Still cleartext:** the **signaling** channel, until arc 3 (client schannel layer) + arc 3b (the
+server-env flip). **Tier C per-session tokens** (which close identity hijack) are arc 4; the static
+shared bearer is still in force until then.
+Status + the whole arc plan + every drill: `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`
+(the older `votv-master-server-RE-and-rust-port-scope-2026-07-16.md` remains the server RE/port scope).

@@ -100,11 +100,19 @@ Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (ser
   `clamp_str` bidi/zero-width/PUA strip. client: L4/L5/L6 (clamp/cap/comma-reject).
 - coturn (live-applied): `user-quota`, aggregate `bps-capacity`, CGNAT `100.64/10` + v4-mapped-IPv6
   denies; provisioner prints secret FINGERPRINTS not raw values.
-- **ROOT (UNFIXED):** the control plane is **cleartext** (master HTTP :10001 + signaling TCP :10000) —
-  the `signalingToken` (static shared bearer) + TURN creds are sniffable → signaling MITM / relay theft.
-  **Tier B = TLS front** (a :443 front+domain OR standalone stunnel/nginx + client-pinned self-signed cert;
-  needs a client https/wss cutover). **Tier C = per-session signaling tokens** (retire the shared
-  bearer / identity-hijack). Both await a USER decision.
+- **ROOT — PARTLY FIXED 2026-07-20; see the design of record**
+  `votv-tls-tier-b-c-DESIGN-2026-07-20.md` (this section is the historical statement of the problem;
+  that file is the current status).
+  The control plane was **cleartext** (master HTTP :10001 + signaling TCP :10000), so the
+  `signalingToken` (static shared bearer) + TURN creds were sniffable → signaling MITM / relay theft.
+  As of 2026-07-20: **Tier B arcs 1-2 are BUILT + LIVE** — TLS terminates *in our own bins* via
+  `tokio-rustls` on new ports 10443/10442 beside the plaintext pair (`7aff6b73`), and the client's
+  master traffic runs over TLS (`87e66bce`). The shape guessed here was wrong in two ways: no :443
+  front is possible (that port is a foreign tenant's) and there is **no pinned self-signed cert** —
+  it is a real Let's Encrypt chain validated to the system root store.
+  **STILL OPEN:** the **signaling** channel is cleartext until arc 3 (client schannel) + arc 3b (the
+  server-env flip), and **Tier C per-session tokens** are arc 4 — the static shared bearer is still
+  in force, so identity hijack is NOT yet closed.
 
 ## MIGRATED to the new coop VPS (2026-07-16 evening, user decision)
 
@@ -139,12 +147,17 @@ names in a PUBLIC repo — wording neutralized across 6 files and the three unpu
 - Master/signaling: **RUST, LIVE on `172.86.94.3`** (migrated 2026-07-16; see "## MIGRATED").
   Same binaries byte-exact as the audited deploy (master `ad9844b6`, signaling `930b6173`).
 - Ghost-lobby TTL: **DONE** — `LOBBY_TTL = 90s` (commit `6d640679`); reaper verified on the new box.
-- `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`; compiled default 111;
-  provisioner writes `COOP_LATEST_PROTO=111`). Live-verified on the new box -> proto 111.
+- `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`). CORRECTED 2026-07-20
+  (this line still claimed 111): the compiled default is **0** = "no released record" since v122
+  (`master.rs` `LATEST_PROTO`), the live env leaves `COOP_LATEST_PROTO` **commented out**, and a
+  client treats proto<=0 as NO VERDICT. Zero releases exist; the first one sets it per `docs/RELEASE.md`.
 - RULE-2 finalization: provision script is Rust-native (`d56a4f69`) and the old box is wiped — DONE.
-  REMAINING (user-gated): delete the retired Python reference impls from the REPO
-  (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`) + `tools/vps.py`'s fate (it
-  targets the old box, now coop-free; banner added meanwhile).
-- NEXT: **Tier B TLS** on the new box once DNS lands (LE cert `master.votv.mp` via :80 + rustls in
-  our bins — :443 is another tenant's there too + client https/wss cutover, `net.master=https://master.votv.mp`),
-  then **Tier C per-session signaling tokens**. Control plane is cleartext until Tier B.
+  REMAINING: the retired Python impls (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`)
+  still have live consumers — MEASURED 2026-07-20: `master_smoke.py` spins the Python **master** and
+  `p2p_smoke.py` spins the Python **signaling** server. Tier B/C **arc 4** moves both harnesses onto
+  the Rust bins, which retires the pair as a consequence rather than as a standing question.
+  `tools/vps.py`'s fate is still open (it targets the old, now coop-free box; banner added meanwhile).
+- **Tier B/C: arcs 1-2 SHIPPED 2026-07-20**, arcs 3/3b/4/5 remain. Current status, the full arc plan and
+  every drill live in `votv-tls-tier-b-c-DESIGN-2026-07-20.md` — read that, not this file, for TLS state.
+  (Note the guesses in this doc that the work falsified: no :443 front is available, no pinned
+  self-signed cert, and the client URL grammar is **schemeless = secure**, NOT an `https://` prefix.)
