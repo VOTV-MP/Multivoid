@@ -161,15 +161,12 @@ void Update(net::Session& session, void* localPlayer) {
             }
             break;
         }
-        case net::ReliableKind::SaveTransferBegin: {
-            // v56: the blob header (client side). Chunks bypass this inbox
-            // entirely (the session bulk sink).
-            if (msg.payloadLen < sizeof(net::SaveTransferBeginPayload)) break;
-            net::SaveTransferBeginPayload p{};
-            std::memcpy(&p, msg.payload, sizeof(p));
-            coop::save_transfer::OnBegin(p);
-            break;
-        }
+        // SaveTransferBegin is NOT handled here. W3 (docs/security/PLAN_02_WIRE_HARDENING.md) moved
+        // it to the net thread beside the chunks it announces (session.cpp's divert ->
+        // save_transfer's BeginSink_), because draining the announce on the GAME thread while its
+        // payload landed on the net thread is what let a hostile host accumulate bytes with no
+        // announced size. This case was retired with the move rather than left as a second path
+        // (RULE 2) -- the two paths were the bug.
         case net::ReliableKind::ClientWorldReady: {
             // v56: the joiner's world is up + registry-coherent -- open the
             // world-ready send gate and run the connect replay NOW (this

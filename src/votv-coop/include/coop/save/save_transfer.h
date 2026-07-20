@@ -148,7 +148,11 @@ bool ClientArmed();
 // armed. Idempotent.
 void ClientNoteConnected();
 
-// SaveTransferBegin arrived (event_feed, game thread).
+// SaveTransferBegin arrived. NET THREAD (W3): diverted by the session receive path to
+// save_transfer's BeginSink_, deliberately the same thread as the chunk sink -- an announce
+// processed on a different thread from its payload is what created the unbounded pre-Begin window.
+// Everything this can reach (including MaybeFinishLocked_'s CRC + slot write) already ran on the
+// net thread in the common case, where the final chunk completes the transfer.
 void OnBegin(const coop::net::SaveTransferBeginPayload& p);
 
 // Poll the state machine (harness timeline thread drives the join on it).

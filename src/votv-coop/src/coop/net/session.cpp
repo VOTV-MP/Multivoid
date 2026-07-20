@@ -422,6 +422,19 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
+        // W3 (docs/security/PLAN_02_WIRE_HARDENING.md): divert the save-blob ANNOUNCE to the net
+        // thread too, so it lands on the same thread and in the same lane order as the chunks above.
+        // It is small enough for the inbox -- it is diverted for ORDERING, not for size, and both
+        // length guards above still applied. This is the sole Begin path (the event_feed game-thread
+        // case was retired with it, RULE 2): two paths for one message is what created the window.
+        if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferBegin) {
+            if (BulkSinkFn sink = saveBeginSink_.load(std::memory_order_acquire)) {
+                sink(peerSlot,
+                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+                     payloadLen);
+            }
+            return;
+        }
         {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
             // Cap the inbox so a flooding peer can't grow it unboundedly on

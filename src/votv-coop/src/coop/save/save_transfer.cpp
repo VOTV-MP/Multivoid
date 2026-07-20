@@ -355,11 +355,27 @@ void MaybeFinishLocked_() {
 void BulkSink_(int senderPeerSlot, const uint8_t* data, int len) {
     if (senderPeerSlot != 0) return;  // host-originated only
     if (len < 4) return;
+    // SECURITY (W3): a chunk can never legitimately exceed the sender's own chunk size. The receive
+    // path bounds this only by the u16 payloadLen, so without this a hostile host got ~65 KB per
+    // packet instead of 56 KB. The constant already exists -- no new limit is being invented.
+    if (len > static_cast<int>(4 + coop::net::kSaveChunkBytes)) return;
     uint32_t idx = 0;
     std::memcpy(&idx, data, 4);
     std::lock_guard<std::mutex> lk(g_cliMu);
     if (g_cliState != ClientState::WaitingBegin && g_cliState != ClientState::Receiving) return;
-    if (g_cliState == ClientState::WaitingBegin) g_cliState = ClientState::Receiving;
+    // SECURITY (W3): REFUSE bytes we have no announced size for. This is safe only because Begin is
+    // now latched on THIS thread (session.cpp's SaveTransferBegin divert): announce and payload ride
+    // one in-order reliable lane processed by the single net thread, and the host queues Begin before
+    // the chunk pump can run (:200 precedes the blobReady gate at :188), so Begin is always processed
+    // first. Previously Begin was drained on the GAME thread, so this branch was legitimately
+    // reachable by thread lag and the buffer had to accept unannounced bytes -- which is exactly the
+    // unbounded growth. Closing the window structurally beats sizing it: no cap constant exists here.
+    if (!g_cliHaveBegin) {
+        UE_LOGE("save_transfer: chunk with no Begin (idx=%u, %d B) -- refusing (no announced size)",
+                idx, len);
+        g_cliState = ClientState::Failed;
+        return;
+    }
     if (idx != g_cliChunksSeen) {
         UE_LOGE("save_transfer: chunk out of order (idx=%u expected=%u) -- failing",
                 idx, g_cliChunksSeen);
@@ -369,6 +385,17 @@ void BulkSink_(int senderPeerSlot, const uint8_t* data, int len) {
     ++g_cliChunksSeen;
     g_cliBuf.insert(g_cliBuf.end(), data + 4, data + len);
     MaybeFinishLocked_();
+}
+
+// NET THREAD: registered as the session's SaveTransferBegin sink (W3). Deliberately the same thread
+// as BulkSink_ -- that co-location is the fix, not an implementation detail. Length is validated
+// here because the sink contract hands over raw payload bytes.
+void BeginSink_(int senderPeerSlot, const uint8_t* data, int len) {
+    if (senderPeerSlot != 0) return;  // host-originated only
+    if (len < static_cast<int>(sizeof(coop::net::SaveTransferBeginPayload))) return;
+    coop::net::SaveTransferBeginPayload p{};
+    std::memcpy(&p, data, sizeof(p));
+    OnBegin(p);
 }
 
 void DeleteFileLogged_(const fs::path& p) {
@@ -385,6 +412,8 @@ const std::wstring& HostSlot() { return g_hostSlot; }
 void Install(coop::net::Session* session) {
     g_session = session;
     session->SetBulkSink(&BulkSink_);
+    // W3: the announce must land on the SAME thread as the payload it announces (see BulkSink_).
+    session->SetSaveBeginSink(&BeginSink_);
 }
 
 // ---- HOST ----------------------------------------------------------------------

@@ -279,6 +279,16 @@ public:
     using BulkSinkFn = void (*)(int senderPeerSlot, const uint8_t* data, int len);
     void SetBulkSink(BulkSinkFn sink) { bulkSink_.store(sink, std::memory_order_release); }
 
+    // SECURITY (W3, docs/security/PLAN_02_WIRE_HARDENING.md): SaveTransferBegin is diverted to the
+    // net thread for the SAME reason as the chunks, and it must be the SAME thread as the chunks.
+    // Begin fits the inbox, so it used to be drained on the GAME thread while chunks landed on the
+    // net thread -- and that lag, not any wire reordering, is what let bytes accumulate with no
+    // announced size. Latching it here puts announce and payload on one in-order lane on one thread,
+    // so Begin is always processed before chunk 0 and "chunks with no Begin" becomes rejectable
+    // outright instead of needing a guessed pre-Begin buffer cap. Same contract as the bulk sink:
+    // thread-safe, never touches the engine.
+    void SetSaveBeginSink(BulkSinkFn sink) { saveBeginSink_.store(sink, std::memory_order_release); }
+
     // v56 per-slot world-ready send gate (host side): until event_feed marks a
     // joining slot world-ready (ClientWorldReady), the send paths will drop
     // world-mutating kinds to it (IsPreWorldSendableKind allowlist in
@@ -690,6 +700,9 @@ private:
     // v56 bulk-chunk diversion target (see SetBulkSink). Written once at install
     // (game thread), read per-message on the net thread.
     std::atomic<BulkSinkFn> bulkSink_{nullptr};
+    // W3: SaveTransferBegin diversion target (see SetSaveBeginSink). Same write-once-at-install
+    // lifetime as bulkSink_.
+    std::atomic<BulkSinkFn> saveBeginSink_{nullptr};
 
     // v56 per-slot world-ready flags (see MarkSlotWorldReady).
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
