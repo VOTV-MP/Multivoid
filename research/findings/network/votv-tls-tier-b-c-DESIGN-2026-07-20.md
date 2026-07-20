@@ -1,5 +1,14 @@
 # Tier B (TLS on the control plane) + Tier C (per-session signaling tokens) — DESIGN
 
+> **SUPERSEDED AS A PLAN, 2026-07-20 (same day).** Read **`docs/security/README.md` FIRST** — it holds
+> the threat model this document never had, and the measured facts that reordered the work. In short:
+> `IP_AllowWithoutAuth = 2` means **GNS does not authenticate peers**, so the real gap is peer
+> identity, not transport encryption; and `signalingToken` is a shared secret every mod user already
+> holds, so **Tier C dissolves into peer certificates** rather than being built as designed.
+> **Arcs 1-2 remain accurate as an AS-BUILT record** (§5b) and stay shipped. **Arcs 3 / 3b / 4 / 5 are
+> ON HOLD** pending the CA spike in `docs/security/README.md` §4. The `net.master.insecure` flag
+> discussed in later sessions was **never built and should not be** — see the retraction table there.
+
 **Type:** DESIGN for the whole plan (converged: 20-round `/qf`, critic verdict "that holds" at R19,
 R20 aimed at auto-renewal) — **now MIXED status**: **arcs 1-2 are AS-BUILT + LIVE** (see §5b for the
 as-built record and its drills), arcs 3 / 3b / 4 / 5 remain DESIGN. Nothing here is VERIFIED in the
