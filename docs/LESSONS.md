@@ -869,7 +869,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   value-grep found only CLIENT_1/2 and would have left half the installs on the dead box. Also: a
   duplicated default literal with a "keep in sync" comment = drift bomb — alias the ONE definition
   (`cd6faf81`). *Look FIRST:* grep the OLD value repo-wide AND check each install for key-ABSENCE;
-  flip `protocol.h` constants in the same change. `memory/lesson_endpoint_move_enumerate_config_layers.md`
+  flip `protocol.h` constants in the same change. **Sharpened 2026-07-20 (Tier B arc 1): THE REMOTE
+  SERVICE'S OWN ENV IS A CONFIG LAYER.** The s29d sweep still left the master's `COOP_SIGNALING_URL`
+  a bare IP, and that value is handed to every client and **overrides** their configured signaling
+  URL — so the compiled hostname only served the master-down path while real sessions dialled the IP
+  (which can never pass TLS hostname validation). If a field arrives in a response, the *sender's*
+  config is one of your layers. `memory/lesson_endpoint_move_enumerate_config_layers.md`
+- **A green `certbot renew --dry-run` proves NOTHING about the renewal landing — it skips deploy
+  hooks; and `LoadCredential=` is a START-TIME SNAPSHOT.** 2026-07-20: the first dry-run said "all
+  simulated renewals succeeded" while the hook never ran (no syslog line, `ActiveEnterTimestamp`
+  unmoved); `--run-deploy-hooks` moved it 10:05:10→10:19:43 with all 4 listeners back. Sandboxed
+  (`DynamicUser`+`ProtectSystem=strict`) services get the cert copied into `/run/credentials/` at
+  START, so a renewed file on disk never reaches a running process without a restart. *Look FIRST:*
+  `tools/cert_check.py` — the alarm lives OFF the box and reads the cert the listener actually
+  SERVES, which proves renewal+hook+restart+snapshot in one handshake (an on-box log reproduces the
+  very blindness it guards). `memory/lesson_certbot_dry_run_skips_deploy_hooks.md`
 - **CF-PROXIED root passes only HTTP(S) — custom-port services need the GREY-CLOUD subdomain; an
   IP→hostname flip needs a per-consumer RESOLVER check first.** 2026-07-19 s29d: root `multivoid.dev`
   resolves to Cloudflare proxy IPs (web works, master :10001 / signaling :10000 / STUN :3478 would be
