@@ -495,8 +495,12 @@ fn h_join(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
         Some(lo) => lo,
         None => return (404, json!({"error": "lobby not found"})),
     };
-    // lo.locked is a browser UI hint only; the real admission gate is the game-layer
-    // post-Connected join-secret challenge (a secret the master never sees).
+    // lo.locked is a browser UI hint ONLY, and there is currently NO admission gate behind it: a
+    // "locked" lobby is enterable by anyone (docs/security/TRACKER.md A2). This comment used to
+    // claim a "game-layer post-Connected join-secret challenge" -- that challenge does not exist
+    // anywhere in the tree; session.h correctly describes it as future work. The false comment is
+    // why the gap survived, so it is stated plainly here until the challenge is actually built
+    // (docs/security/PLAN_04_CONTROL_PLANE.md section 1).
     if lo.conn == "direct" && lo.direct_port != 0 {
         log(&format!(
             "join {} DIRECT -> {}:{} from {}",

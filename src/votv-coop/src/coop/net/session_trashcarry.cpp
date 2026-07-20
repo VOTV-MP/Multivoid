@@ -58,8 +58,14 @@ int Session::SerializeLocalTrashCarryBatch(uint8_t* buf) {
 void Session::StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq) {
     // HOST->client trash-clump carry batch. The host ORIGINATES it (never relays/receives it), so this
     // lands only on clients. Parse + store the LATEST into the carry-batch slot the game thread drains
-    // (trash_clump_pose_stream::TickApplyAndDrive); newest-wins via seq. Per-entry float validation +
-    // the ctx-freshness gate happen at the game-thread apply (a NaN / stale pose can't reach the proxy).
+    // (trash_clump_pose_stream::TickApplyAndDrive); newest-wins via seq.
+    // SECURITY (W6, docs/security/TRACKER.md): this comment used to claim "per-entry float validation
+    // + the ctx-freshness gate happen at the game-thread apply". Only the SECOND half is true
+    // (trash_clump_pose_stream.cpp, the IsInboundStreamCtxFresh gate). There is NO float validation on
+    // this path -- the values go straight into BeginLerpToPose, so a NaN reaches SetActorLocation --
+    // and there is no role gate either, unlike all five siblings in session_streams.cpp. A half-true
+    // comment is worse than a false one: spot-checking the true half confirms the whole claim.
+    // Fix (role gate + FiniteVec) is PLAN_02 wave 2; the comment is corrected now so nobody trusts it.
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));

@@ -263,6 +263,14 @@ bool DeserializeSidecar(const uint8_t* data, size_t len, IdMap& outMap, size_t& 
     if (ver != kSidecarVersion) return false;
     // sidecar v3: entries are VARIABLE-length (the trailing key) -- walk + bounds-check each, never trust a
     // fixed stride. Any field/key that would read past `len` aborts the whole parse (caller treats as no map).
+    // SECURITY (W2, docs/security/TRACKER.md): `count` is an unvalidated wire u32 and this reserve
+    // ran BEFORE the (correct) bounds-checked walk below -- a hostile host announced 0xFFFFFFFF in a
+    // 40-byte sidecar and OOM-killed the joining client on the net thread. Entries are
+    // VARIABLE-length (fixed part + trailing key), so the satisfiable entry count has a hard CEILING
+    // of the remaining bytes over the FIXED part; anything above it cannot be honoured by any body.
+    // Same shape the walk already uses for keyLen at the `end - p` check further down.
+    const size_t maxEntries = (len - kSidecarHeaderBytes) / kSidecarFixedEntryBytes;
+    if (count > maxEntries) return false;  // unsatisfiable count -- malformed or hostile
     outMap.reserve(count);
     const uint8_t* p   = data + kSidecarHeaderBytes;
     const uint8_t* end = data + len;

@@ -847,6 +847,16 @@ void OnBegin(const coop::net::SaveTransferBeginPayload& p) {
         UE_LOGW("save_transfer: host reports no save available -- falling back to a fresh world");
         return;
     }
+    // SECURITY (W1b, docs/security/TRACKER.md): Begin is once per arm. g_cliHaveBegin is cleared
+    // ONLY by ClientArm and the teardown, so a second Begin inside one arm is always a protocol
+    // violation -- and it used to silently reassign the four scalars below MID-TRANSFER, moving the
+    // completion denominator and the CRC out from under a stream already in flight. Fail loudly.
+    if (g_cliHaveBegin) {
+        UE_LOGE("save_transfer: second Begin during an active transfer (have total=%u, got %u) "
+                "-- protocol violation, failing", g_cliTotal, p.totalBytes);
+        g_cliState = ClientState::Failed;
+        return;
+    }
     g_cliHaveBegin = true;
     g_cliTotal = p.totalBytes;
     g_cliChunkCount = p.chunkCount;
@@ -854,7 +864,13 @@ void OnBegin(const coop::net::SaveTransferBeginPayload& p) {
     g_cliGameMode = p.gameMode;
     g_cliSidecarBytes = p.sidecarBytes;  // Phase 2: leading framed-identity-map bytes (0 = no sidecar)
     if (g_cliState == ClientState::WaitingBegin) g_cliState = ClientState::Receiving;
-    g_cliBuf.reserve(p.totalBytes);
+    // SECURITY (W1): NO reserve() here. p.totalBytes is an unvalidated wire u32, so reserving it let
+    // a hostile host announce 0xFFFFFFFF and kill this process with one 16-byte packet (4 GiB ->
+    // bad_alloc, and nothing try/catches the reliable drain). The reserve was a pure allocation hint:
+    // g_cliTotal's only other uses are the completion compare, the overflow bound and the progress
+    // readback, so dropping it costs ~9 vector doublings across a 17 MB / 301-chunk download that
+    // takes ~5 s on the wire -- unmeasurable -- and removes the primitive instead of guarding it.
+    // Capping it instead would have been a policy limit that could reject a legitimately grown world.
     UE_LOGI("save_transfer: Begin -- %u bytes in %u chunks (crc=0x%08X mode=%u sidecar=%u B)",
             p.totalBytes, p.chunkCount, p.crc32, p.gameMode, p.sidecarBytes);
     MaybeFinishLocked_();
