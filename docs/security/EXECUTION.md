@@ -3,7 +3,7 @@
 `TRACKER.md` says **what is broken**. The `PLAN_*` files say **how to fix it**. This file says
 **where the work stands right now.**
 
-Updated: **2026-07-20**, HEAD `cc0d8686`. Deployed DLL `05479190C7C01528` x4, proto 122.
+Updated: **2026-07-20**, HEAD `0fcd2003`. Deployed DLL `3C856F22530B7F5B` x4, proto 122.
 
 ---
 
@@ -27,12 +27,14 @@ Everything else in waves 3-7 waits.
 
 ## 1. Current state in one line
 
-> **Waves 0 and 1 are BUILT** (`6f0c2bf8`) — the save-transfer one-packet remote kill is closed and
-> both false security comments are gone. 18 findings remain OPEN, **W3 deliberately among them**
-> (its root fix is a router change; sizing the window instead would be a crutch). The next actions
-> are **W3's net-thread Begin latch** and the **CA spike** (`PLAN_01` §2).
+> **Six findings BUILT today** — the save-transfer one-packet remote kill (W1/W1b/W2, `6f0c2bf8`),
+> W3's structural fix (`8eb7f1a1`), and the three parse-layer floods (W4/W5/W6, `0fcd2003`). Both
+> false security comments are gone. **15 remain OPEN**, and the authority-shaped ones (A3/A4/A5) are
+> now downstream of `docs/COOP_SYNCER_MODEL.md` per §0.
+>
+> **Nothing is VERIFIED.** No hostile-peer drill has ever run, and W6 is not even runtime-exercised.
 
-**Deployed:** DLL `F782AD6E9A846ADA` x4, proto 122 (unchanged — rejection paths, no wire change).
+**Deployed:** DLL `3C856F22530B7F5B` x4, proto 122 (unchanged — rejection paths, no wire change).
 
 ---
 
@@ -111,13 +113,23 @@ proceeds until §7 of that file has real output in it.
 
 Mostly deletions. Can ship as one control-plane commit.
 
-### Wave 4 — amplification and streams
+### Wave 4 — amplification and streams — **BUILT `0fcd2003`**
 
-| Item | Plan | Cost | Status |
-|---|---|---|---|
-| **W4** — per-sender assembly cap in `blob_chunks` | `PLAN_02` §3 | Medium | **OPEN** — verify site first |
-| **W5** — receive-side `g_mirrors` cap | `PLAN_02` §3 | Small | **OPEN** — verify site first |
-| **W6** — role gate + finite check | `PLAN_02` §3 | Small | **OPEN** |
+| Item | Plan | Status |
+|---|---|---|
+| **W4** — per-sender assembly cap in `blob_chunks` | `PLAN_02` §3 | **BUILT** — capped at the shared primitive, so all 8 lanes at once |
+| **W5** — receive-side `g_mirrors` cap | `PLAN_02` §3 | **BUILT** |
+| **W6** — role gate + finite check | `PLAN_02` §3 | **BUILT** — but **not runtime-exercised**, see below |
+
+All three sites were re-read personally first (Rule S5), and that changed two of them: W4 is
+per-SENDER rather than global (a global table is finding W10's shape), and W6 turned out **worse
+than recorded** — neither the store nor the game-thread apply had any role check, so a client could
+send this host-originated kind *to* the host.
+
+**Coverage gap, stated plainly:** the join smoke exercises W4's lanes and W5, but **not W6** — the
+trash-carry stream only runs when a client grabs a pile, which needs an interaction smoke
+(`[[feedback-interaction-smoke-not-join-smoke]]`). W6 ships as pure rejection paths on a lane the
+host never legitimately receives, so the risk is bounded, but it is untested at runtime.
 
 ### Wave 5 — peer auth implementation
 
@@ -166,6 +178,7 @@ Append one row per session that touches security. **Never edit a past row.**
 | 2026-07-20 | s30 | TLS arcs 1-2 built and deployed (`7aff6b73`, `87e66bce`) | None — closes no finding |
 | 2026-07-20 | s30b | Threat model written; 2 audits ran; `docs/security/` created (`d95683cc`, `cc0d8686`); arcs 3-5 held; Tier C dissolved; `net.master.insecure` dropped | 20 findings opened |
 | 2026-07-20 | s30c | Folder expanded to plans + this board; **A2, W1, W2, W3, W6 personally verified `[A]` → `[V]`**; three corrections found (see below) | 0 fixed, 5 upgraded |
+| 2026-07-20 | s30e | W3 root fix (`8eb7f1a1`, net-thread Begin latch — window closed structurally, no constant) + wave 2 W4/W5/W6 (`0fcd2003`). MTA precedent researched (`a96b620e`); syncer model adopted as architecture (`5eb92c11`, `379f252c`) | **3 more BUILT** (W4, W5, W6) |
 | 2026-07-20 | s30d | Waves 0+1 built (`6f0c2bf8`) after a 3-round `/qf` that reframed the fix twice. **W1's fix became a deletion, not a cap. W1b found — neither audit had it.** W3 held back rather than shipping a sized window | **3 BUILT** (W1, W1b, W2), 2 false comments deleted |
 
 ### Corrections produced by verification (s30c)
