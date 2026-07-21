@@ -353,6 +353,13 @@ pile): image bytes, wire-delete playback-stop.
   DRIVE-DISC data-loss cluster (R14/15/16: `prop_drive_C` content not bound to birth + identity churns per
   interaction). CONFIG: `vitals_keepalive_sec` was left at 180 in the deployed host ini -> set 0 (needs a
   restart). Each root gets its own `/qf` next; NO fixes shipped this session.
+  - **2026-07-21 UPDATE — R14/15/16 `/qf` CONVERGED (8 rounds), DESIGN written+committed `d14b6644`, NOT
+    built.** `votv-drive-disc-content-birth-DESIGN-2026-07-21.md`: a client drop is a genuine
+    inventory->world birth; `PropDropIntent` carried a `savedScalar` FLOAT not the disc's signal content ->
+    host born empty. Fix generalizes the birth channel float -> per-class content trailer (reuse
+    `DC::ReadDriveRow`/`WriteDriveRow` + `signal_wire`), retiring `savedScalar` + `NoteLocalDriveBirth`,
+    KEEPING `drive_sync`'s steady-state `DrivePayload` lane (mutation-in-rack != birth). Two design
+    reframes retracted on measurement (custody-actor = double-write; whole-SaveRecord = no base loss).
 
 - **2026-07-18 (v121, OPEN-10 laptop v2)** — buffer quad + portable-PC lid + floppyBox built
   per an 11-round /qf (design `votv-laptop-v2-OPEN10-impl-DESIGN-2026-07-18.md`). TRACKER's

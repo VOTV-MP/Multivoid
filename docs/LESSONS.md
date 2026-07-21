@@ -351,12 +351,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A save-scalar birth channel must be filled at EVERY birth/author path** (live express + join
   snapshot + container extract + BOTH client intent kinds) via ONE shared per-class reader —
   missing one path = a CDO-default mirror re-broadcast as truth (the L7 correctness CRITICAL:
-  pocket→place respawned a blank tape). **CONFIRMED live data-loss (2026-07-21 take-4 R14-16):** the
-  predicted L5-drive gap is REAL — `prop_drive_C` disc content rides a LATE DrivePayload lane (not a
-  birth channel) AND the disc respawns+re-eids on every client grab/drop → ANY client grab of a green
-  disc wipes the content ON THE HOST (host owns the save). *Look FIRST:* prop.h savedScalar block;
-  grep `ReadSavedScalarForClass`; the take-4 findings doc.
+  pocket→place respawned a blank tape). **R14-16 `/qf` CONVERGED 2026-07-21 → DESIGN `d14b6644`
+  (NOT built):** generalize the birth carrier from a `savedScalar` FLOAT to a per-class CONTENT trailer
+  (reel→Progress; drive→`DC::ReadDriveRow`+`signal_wire`), inline, RETIRING savedScalar; a client drop
+  is a genuine inventory→world birth (`PropDropIntent` carried only the float). **Birth-state ≠
+  steady-state** — KEEP `drive_sync`'s `DrivePayload` (a disc mutating in a rack is not a birth). *Look
+  FIRST:* prop.h savedScalar block; grep `ReadSavedScalarForClass`;
+  `votv-drive-disc-content-birth-DESIGN-2026-07-21.md`.
   `memory/lesson_saved_scalar_birth_channel_covers_every_birth_path.md`
+- **A held/collected keyed prop is PER-PLAYER INVENTORY data, not a world actor** — a `SaveRecord` in
+  `saveSlot.hold[]`/`inventory[]`, streamed+persisted per-GUID by `player_inventory_sync` SEPARATELY
+  from the world save. So a client pickup CORRECTLY destroys the world actor (it went into inventory);
+  a host-side world custody-actor for it DOUBLE-WRITES → two props on reload. Before designing any
+  "keep the prop alive / custody across a client pickup," check `mainPlayer.hpp playerTryToCollect` —
+  if collectible, custody IS the inventory blob; a pickup is an inventory↔world BIRTH to sync, not an
+  actor to keep. *Look FIRST:* `player_inventory_sync.cpp`; `inventory.h SaveRecord`.
+  `memory/lesson_held_collected_prop_is_per_player_inventory_not_a_world_actor.md`
 - **When the prop's own refresh verb re-applies `SetActorTickEnabled`, a client-tick PARK is
   un-holdable — ship the host exact-snap CORRECTOR instead** (valid only for RNG-free,
   deterministic, clamped sims; sawtooth ≤ 1 native increment). Pick rule + instance table in

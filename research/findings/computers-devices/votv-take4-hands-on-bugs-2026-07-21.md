@@ -52,12 +52,18 @@ Measured evidence (client + host logs 13:49-13:56), disc key `3DO0UBQxDorLHVTYxr
   grab/hold (R-Hold)/drop of a content disc**, not only drop. Since the HOST OWNS THE SAVE, the signal is
   lost on persist -> the worst data-loss facet.
 
-**Load-bearing fix (rule 1, for the /qf):** the disc keeps ONE stable identity across grab/hold/pickup/
-drop/pocket (no respawn-or-empty-readopt per interaction), and its content rides the BIRTH channel
-(savedScalar-birth shape, v114 PropSpawn `_pad2` + flag `0x40`) so any (re)spawn/adopt is born WITH its
-content -- never born-empty-then-maybe-refilled via a late DrivePayload. Ties to the stable-ID thread
-(eid=0 = passive/unenrolled, s22 no-passive-mint territory) + the destroy/spawn seam + L5 drive + hotbar
-possession + `trash_collect` churn.
+**Load-bearing fix (rule 1) -- /qf CONVERGED 2026-07-21 (8 rounds), design of record
+`votv-drive-disc-content-birth-DESIGN-2026-07-21.md` (committed `d14b6644`, NOT built).** The converged
+root is NARROWER than this section first proposed. The "keep ONE stable identity / no respawn per
+interaction" (custody) idea was RETRACTED on measurement: a held/collected disc is per-player INVENTORY
+data custodied SEPARATELY from the world save, so the pickup-destroy is CORRECT and a hidden host world
+custody-actor would DOUBLE-WRITE (see `[[lesson-held-collected-prop-is-per-player-inventory-not-a-world-actor]]`).
+A client drop is a genuine inventory->world BIRTH; `PropDropIntent` carried only a `savedScalar` FLOAT,
+not the disc's signal content -> host born empty. Fix: generalize the birth channel float -> a per-class
+CONTENT trailer (inline; reuse `DC::ReadDriveRow`/`WriteDriveRow` + `signal_wire`), retiring `savedScalar`
++ the drive birth-emission `NoteLocalDriveBirth`, KEEPING `drive_sync`'s steady-state lane (a disc
+mutating in a rack != birth-state). Retirement is a PRECONDITION gated on hands-on reel+disc green. OPEN
+residual: the churn adopt->destroy re-fire is UNEXPLAINED -> post-fix re-measure (design section 7).
 
 ### R9 -- garage DOOR (big shutter `garageDoor`) client-open DROPPED on host  [V]
 Symptom #12. HARD divergence -- the door stays CLOSED on the host permanently.
