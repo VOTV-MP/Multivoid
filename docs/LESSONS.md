@@ -351,9 +351,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A save-scalar birth channel must be filled at EVERY birth/author path** (live express + join
   snapshot + container extract + BOTH client intent kinds) via ONE shared per-class reader —
   missing one path = a CDO-default mirror re-broadcast as truth (the L7 correctness CRITICAL:
-  pocket→place respawned a blank tape). NEXT class with per-prop save state = the L5 drive
-  payload. *Look FIRST:* prop.h savedScalar block; grep `ReadSavedScalarForClass` for the fill
-  set. `memory/lesson_saved_scalar_birth_channel_covers_every_birth_path.md`
+  pocket→place respawned a blank tape). **CONFIRMED live data-loss (2026-07-21 take-4 R14-16):** the
+  predicted L5-drive gap is REAL — `prop_drive_C` disc content rides a LATE DrivePayload lane (not a
+  birth channel) AND the disc respawns+re-eids on every client grab/drop → ANY client grab of a green
+  disc wipes the content ON THE HOST (host owns the save). *Look FIRST:* prop.h savedScalar block;
+  grep `ReadSavedScalarForClass`; the take-4 findings doc.
+  `memory/lesson_saved_scalar_birth_channel_covers_every_birth_path.md`
 - **When the prop's own refresh verb re-applies `SetActorTickEnabled`, a client-tick PARK is
   un-holdable — ship the host exact-snap CORRECTOR instead** (valid only for RNG-free,
   deterministic, clamped sims; sawtooth ≤ 1 native increment). Pick rule + instance table in
@@ -584,6 +587,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 4. Dispatch, hooks & input seams
 
+- **A net-delta array-diff POLL is the wrong tool for a DISCRETE user event** — it (a) LAGS the
+  mirror by up to the poll interval and (b) SILENTLY DROPS any change that returns to the baseline
+  within one window (fast spam nets to zero → never sent). Measured 2026-07-21 take-4: `desk_input`
+  250 ms net-delta lost a spam polarity toggle (R2); `signal_sync`/`comp_sync` 1000 ms lagged the
+  export/import list (R17); `laptop_sync` 250 ms power poll = slow PC-on (R7). Invisible in steady
+  state → slips smoke; only fast input exposes it. Fix = capture at the native VERB edge (PE/Func
+  hook), not "poll faster". Distinct from the transient-predicate poll lesson. *Look FIRST:* any Tick
+  with a `kPoll*` interval + a `g_baseline` scalar/array diff; the take-4 findings doc.
+  `memory/lesson_netdelta_poll_aliases_and_lags_discrete_events.md`
 - **Presser-local SOUNDS/effects mirror at the NATIVE effect seam, never by classifying inputs** —
   Func-patch `AudioComponent:Play` + `ActorComponent:SetActive/Activate` and pointer-whitelist the
   target COMPONENTS (the whitelist doubles as the owner filter: the laptop's same-named comps
