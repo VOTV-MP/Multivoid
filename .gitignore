@@ -121,6 +121,10 @@ vps_id_ed25519
 vps_id_ed25519.pub
 vps_known_hosts
 
+# VPS ops helper -- references infra IPs; keep local only (was tracked; untracked
+# 2026-07-21 via `git rm --cached`. NOTE: the file + its IPs remain in git history).
+/tools/vps.py
+
 # ===== Allow-list (override broad bans for our own outputs) =====
 !src/**/*.dll
 !tools/**/*.exe
