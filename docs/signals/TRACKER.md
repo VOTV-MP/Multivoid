@@ -148,6 +148,11 @@ the walk itself (mirror Tick loop) is the remaining named suspect, smoke-env-con
 set for take 4: host [perf] frames + desk_diag 1 Hz pacing + desk_cursor ema.**
 
 ### OPEN-3 · Upgrade-level sync (NOT a desk detail — its own surface; surfaced by OPEN-0 gate 2)
+> **RE'd + design in `docs/upgrades/SIGNAL_UPGRADES.md` (2026-07-21).** The upgrade domain now has its
+> own home `docs/upgrades/`. Measured: the levels are ONE persistent struct `Fstruct_upgrades` (18 int32),
+> 20 laptop-shop `uicomp_upgradeSlot_C` slots, parametrizing the download/ping/coord/comp/radar/detector
+> sims. Design of record: mirror `Fstruct_upgrades` host->client; buying = client intent -> host validates
+> research points -> broadcasts. The exact purchase path (is it `EX_Local*`?) is still the [?] to read.
 The freq/pol download formula reads upgrade fields (`upg_scanner`, `upg_downloadSpd`, filter-size) and
 **there is NO live upgrade-sync lane in coop** (grep-confirmed 2026-07-15) — upgrades ride only the join
 save-transfer (seeded once). So a mid-session filter-upgrade purchase diverges silently. The desk build
@@ -331,6 +336,23 @@ pile): image bytes, wire-delete playback-stop.
 ---
 
 ## CHANGELOG
+
+- **2026-07-21 (TAKE-4 HANDS-ON RAN — many "awaiting hands-on" rows now have results, and they have
+  BUGS)** — the batched take-4 hands-on (proto 122, DLL `96719c4230d531ba`) exercised the whole
+  workstation. Full triage: `research/findings/computers-devices/votv-take4-hands-on-bugs-2026-07-21.md`
+  (21 symptoms -> 16 roots). Rows whose "awaiting hands-on" status is now SUPERSEDED by measured bugs:
+  **Dish rotation** (R1: pose is a 4 Hz `K2_SetRelativeRotation` HARD SNAP, no interp -> ~5 fps stepping,
+  `dish_sync.cpp:145`); **Freq/pol + download / DeskInput** (R2 250 ms net-delta poll aliases fast
+  toggles; R4 SYNCHRONIZED 2 Hz client flicker of GUI + unit-2 lamps = suspected DeskInput ping-pong echo;
+  R13 client SAVE SIGNAL does nothing — saveable state host-authored); **Desk AUDIO** (R5 no sound on a
+  client polarity toggle); **Saved signals / comp** (R17 export/import list lags — `signal_sync.cpp:27`
+  + `comp_sync.cpp:29` poll at 1000 ms); **DishAimState** (R3 triangulation not visible on host — H);
+  **Stationary PC** (R7 power syncs very slowly — 250 ms poll + converge-by-toggle; R8 RT-screen TAB
+  switching has NO lane at all). Non-signal roots in the same run: garage `garageDoor` client-open dropped
+  as expired (R9), drone red light not synced (R10) + delivery sack contents empty on client (R11), the
+  DRIVE-DISC data-loss cluster (R14/15/16: `prop_drive_C` content not bound to birth + identity churns per
+  interaction). CONFIG: `vitals_keepalive_sec` was left at 180 in the deployed host ini -> set 0 (needs a
+  restart). Each root gets its own `/qf` next; NO fixes shipped this session.
 
 - **2026-07-18 (v121, OPEN-10 laptop v2)** — buffer quad + portable-PC lid + floppyBox built
   per an 11-round /qf (design `votv-laptop-v2-OPEN10-impl-DESIGN-2026-07-18.md`). TRACKER's
