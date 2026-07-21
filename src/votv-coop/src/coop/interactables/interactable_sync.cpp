@@ -106,15 +106,20 @@ const Adapter g_containerAdapter = {
 };
 // Garage door (Agarage_C). SYMMETRIC like lights/containers: it has NO sensor / autoclose
 // (no auto-revert), so a symmetric poll never oscillates and the door HostAuth machinery is
-// unnecessary (RULE 1 -- don't carry door complexity the garage doesn't need). Key =
-// AtriggerBase_C::Key; state = Open; apply = settime(open) snap-to-state. The wall button
-// just toggles Open, which the poll catches -- we never observe the button.
-// RE: research/findings/computers-devices/votv-garage-door-button-sync-RE-2026-06-08.md.
+// unnecessary (RULE 1 -- don't carry door complexity the garage doesn't need). Identity =
+// the level-export FName (GetNameKey), NOT the save Key: the gamemode's one-shot sublevel-
+// gated keying (loadObjects) can leave the garage Key=None during the host's menu->save world
+// transition -> the None-key filter drops it forever (take-4 R9; host garage index 1->0, never
+// recovered, while door_box's FName identity survived the SAME reload 20/20 byte-identical
+// cross-peer). State = Open; the wall button just toggles Open, which the poll catches -- we
+// never observe the button.
+// RE: research/findings/computers-devices/votv-garage-door-button-sync-RE-2026-06-08.md;
+//     R9 fix (FName identity): votv-take4-hands-on-bugs-2026-07-21.md.
 const Adapter g_garageAdapter = {
     "garage", coop::net::ReliableKind::GarageDoorState,
     &ue_wrap::garage::EnsureResolved,
     &ue_wrap::garage::IsGarage,
-    &ue_wrap::garage::GetKeyString,
+    &ue_wrap::garage::GetNameKey,
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)

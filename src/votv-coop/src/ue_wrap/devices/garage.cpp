@@ -19,14 +19,14 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 
 void*   g_garageCls = nullptr;  // garage_C UClass
-int32_t g_keyOff    = -1;       // AtriggerBase_C::Key (Alpha 0.9.0-n: 0x0260)
 int32_t g_openOff   = -1;       // Agarage_C::Open     (0x02E8)
 void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (montage from 0 @0.5x + the
                                 // move timeline over its full duration). NOT settime: settime SNAPS
                                 // (move.SetNewTime(endpoint) + montage @StartingPosition=100) = the
                                 // "too fast" the user saw. Bytecode-verified 2026-06-09.
+// NOTE: no Key offset -- identity is the level-export FName (GetNameKey), not the save Key
+// (RULE 2: the AtriggerBase_C::Key resolution was retired with the R9 fix, see garage.h).
 
-constexpr int32_t kKeyOffFallback  = 0x0260;
 constexpr int32_t kOpenOffFallback = 0x02E8;
 
 }  // namespace
@@ -37,17 +37,6 @@ bool EnsureResolved() {
     void* cls = R::FindClass(L"garage_C");
     if (!cls) return false;
 
-    // Key lives on the AtriggerBase_C base; FindPropertyOffset does NOT climb to the
-    // super, so resolve it against triggerBase_C directly (same gotcha door/lightswitch
-    // handle).
-    int32_t keyOff = -1;
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) {
-        keyOff = R::FindPropertyOffset(trigCls, L"Key");
-    }
-    if (keyOff < 0) {
-        UE_LOGW("garage: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
-    }
     int32_t openOff = R::FindPropertyOffset(cls, L"Open");
     if (openOff < 0) {
         UE_LOGW("garage: reflected Open offset not found -- using fallback 0x%04X", kOpenOffFallback);
@@ -60,12 +49,11 @@ bool EnsureResolved() {
     }
 
     g_garageCls = cls;
-    g_keyOff    = keyOff;
     g_openOff   = openOff;
     g_acivaeFn  = acivaeFn;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("garage: resolved garage_C=%p Key@0x%04X Open@0x%04X acivae=%p",
-            cls, keyOff, openOff, acivaeFn);
+    UE_LOGI("garage: resolved garage_C=%p Open@0x%04X acivae=%p (identity=level-export FName)",
+            cls, openOff, acivaeFn);
     return true;
 }
 
@@ -77,11 +65,12 @@ bool IsGarage(void* obj) {
     return R::IsDescendantOfAny(cls, bases, 1);
 }
 
-std::wstring GetKeyString(void* g) {
-    if (!g || g_keyOff < 0) return std::wstring();
-    const R::FName& key = *reinterpret_cast<const R::FName*>(
-        reinterpret_cast<const char*>(g) + g_keyOff);
-    return R::ToString(key);
+std::wstring GetNameKey(void* g) {
+    // Identity = the garage's level-export FName (baked into the cooked package -> deterministic +
+    // cross-peer stable), NOT the save Key. Mirrors ue_wrap::door_box::GetNameKey (the proven author
+    // for keyless placed actors). See garage.h for why the save Key is unreliable (R9).
+    if (!g) return std::wstring();
+    return R::ToString(R::NameOf(g));
 }
 
 bool TryReadOpen(void* g, bool& open) {

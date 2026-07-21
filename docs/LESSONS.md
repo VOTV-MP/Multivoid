@@ -94,6 +94,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Ask in PLAIN TEXT, never the AskUserQuestion UI.** `memory/feedback_ask_in_text_not_question_ui.md`
 - **Never assert a VOTV game-domain fact from assumption** — verify vs SDK/bp_reflect/wiki FIRST. `memory/feedback_verify_game_domain_facts.md`
 - **RE all related blueprints STATICALLY before any runtime probe.** `memory/feedback_re_blueprints_before_probes.md`
+- **Read the cooked umap + BP bytecode before concluding a fact "needs a live probe."** `kismet-analyzer`
+  (`research/pak_re/tools/ka/`) `to-json` on a cooked `.umap`/`.uasset` reads a PLACED actor's baked
+  export name + its sublevel (cross-peer stable by construction — both peers load the identical file) AND
+  a BP function's real dispatch (Kismet bytecode: makeKeys/BeginPlay are ubergraph stubs; `loadObjects`
+  shows `GetAllActorsWithInterface`). `bp_reflection/*.json` are SIGNATURE-ONLY; the bytecode is in the
+  extracted `.uexp` under `research/pak_re/extracted/`. Often a sibling subsystem in the two logs is an
+  empirical control (door_box FName keysHash host==client through the reload that broke garage Key). take-4
+  R9: I twice wrongly said "needs a live probe"; the user pushed back and the static tools closed it.
+  `memory/lesson_read_cooked_umap_and_bytecode_before_concluding_live_probe.md`
 - **Commit autonomously at verified checkpoints; still ASK before PUSH.** `memory/feedback_commit_autonomously.md`
 - **Never retire a load-bearing fix on an unverified theory.** `memory/feedback_verify_before_retiring_a_fix.md`
 - **SAME bug after 2+ targeted fixes = the patch LEVEL is wrong; the root is architectural** — stop patching, re-root. `memory/feedback_recurring_bug_is_architectural.md`
@@ -769,6 +778,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 5. Engine / UE4 facts
 
+- **A PLACED actor's cross-peer identity = its BAKED level-export FName, NOT a gamemode-assigned save
+  Key.** VOTV keys `AtriggerBase_C` descendants (doors/garage) via a ONE-SHOT, sublevel-gated gamemode
+  pass (`mainGamemode::loadObjects` → `GetAllActorsWithInterface` + `loadTriggers`, gated by
+  `isSublevelAllowed` — kismet-analyzer bytecode); an actor mid-recycle at that instant stays `Key=None`
+  and is dropped by any None-key filter FOREVER. The export FName is serialized in the cooked package →
+  identical on both peers by construction + present regardless of keying. take-4 R9: host garage index
+  1→0 (unkeyed) through a menu→save reload while 50 same-keyed doors survived; `door_box` FName identity
+  (same `untitled_1` package) came through the SAME reload byte-identical cross-peer. Fix (v123): mirror
+  `door_box::GetNameKey`, delete the Key path (RULE 2). Look FIRST: `ue_wrap::garage::GetNameKey` vs
+  `ue_wrap::door_box::GetNameKey`; do NOT broadly migrate working Key channels (principle 4).
+  `memory/lesson_placed_actor_identity_use_baked_fname_not_gamemode_key.md`
 - **NEVER raw-write a UE field the game sets via a setter UFunction** — call the setter. `memory/feedback_no_raw_write_of_setter_managed_fields.md`
 - **UE `TArray<struct>` stride = 16-ALIGNED size, NOT the raw `Size:`.** `memory/feedback_tarray_stride_aligned_not_raw_size.md`
 - **plain `IsLive` passes a RECYCLED slot** — cached instances need `IsLiveByIndex`. A written lesson is NOT

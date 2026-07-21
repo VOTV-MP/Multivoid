@@ -1,5 +1,16 @@
 # VOTV garage-door + button: RE + coop-sync design (2026-06-08)
 
+> **SUPERSEDED IN PART (2026-07-21, take-4 R9):** the identity decision below -- "key the garage by its
+> save-persistent `AtriggerBase_C::Key`" -- was WRONG in practice and is RETIRED. The belt-and-suspenders
+> note in section 3 ("if a Key ever came back None... a non-None Key is expected") is the exact case that
+> bit us: the gamemode's keying (`mainGamemode::loadObjects` -> `GetAllActorsWithInterface` + `loadTriggers`,
+> **one-shot + sublevel-gated** -- kismet-analyzer bytecode 2026-07-21) leaves the garage `Key=None` on the
+> host when its tile is mid-recycle during the menu->save world transition, so the None-key filter drops it
+> forever (host garage index 1->0, never recovered). **v123 keys the garage by its LEVEL-EXPORT FName**
+> (`ue_wrap::garage::GetNameKey`, the `door_box` pattern) -- baked into the cooked package, cross-peer
+> stable, race-free. Everything else in this doc (the Open field, acivae animate-vs-snap, SYMMETRIC mode,
+> the button->Open poll) still holds. See `votv-take4-hands-on-bugs-2026-07-21.md` (R9).
+
 **Bug (user hands-on, 2026-06-08):** "The button to OPEN the GARAGE doors isn't
 synced or mirrored at all." When one peer presses the garage-door button, the
 other peer's garage door doesn't move.
@@ -13,9 +24,11 @@ channel**: a new `ue_wrap::garage` wrapper + a `g_garageAdapter` + a `Channel
 g_garage` in `coop/interactable_sync` + a new `ReliableKind::GarageDoorState`.
 Because the garage has **no auto-revert** (no sensor / autoclose / ReceiveTick),
 it goes in **SYMMETRIC mode** (like lights/containers), NOT the doors' HostAuth
-single-syncer — that complexity is unnecessary here. No new identity scheme is
+single-syncer — that complexity is unnecessary here. ~~No new identity scheme is
 needed: the garage carries the same save-persistent `AtriggerBase_C::Key` FName
-(0x0260) the door channel already keys on.
+(0x0260) the door channel already keys on.~~ **[RETIRED v123 -- the save Key comes
+back None on the host after a menu->save reload; identity is now the level-export
+FName. See the banner above + R9.]**
 
 All evidence below is from the standalone SDK CXX header dump
 (`Game_0.9.0n/.../CXXHeaderDump/`, RULE 3) and the cooked-BP kismet disassembly
@@ -340,7 +353,9 @@ GarageDoorState = 32,  // v44: garage door open/close (Agarage_C::Open @0x02E8, 
      UFunction (and optionally `acivae`). Fallback constants from this dump:
      `Key 0x0260`, `Open 0x02E8`, `mov 0x02E9`.
    - `bool IsGarage(void* obj);` — `garage_C`-or-subclass check.
-   - `std::wstring GetKeyString(void* g);` — read `Key` (0x0260).
+   - ~~`std::wstring GetKeyString(void* g);` — read `Key` (0x0260).~~ **[v123: replaced by
+     `std::wstring GetNameKey(void* g);` = `R::ToString(R::NameOf(g))`, the level-export FName
+     -- the save Key is unreliable, see the banner. GetKeyString/g_keyOff are deleted (RULE 2).]**
    - `bool TryReadOpen(void* g, bool& open);` — read `Open` (0x02E8).
    - `bool ApplyOpen(void* g, bool open);` — idempotent (skip if `Open==open` or
      `mov` is mid-animation toward `open`); else `settime(open)` via a ParamFrame

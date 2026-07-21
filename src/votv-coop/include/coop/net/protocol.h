@@ -705,7 +705,15 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 122; // v122 (2026-07-19, version identity): this
+inline constexpr uint16_t kProtocolVersion = 123; // v123 (2026-07-21, R9 garage FName identity):
+                                                  // GarageDoorState now carries the garage's
+                                                  // LEVEL-EXPORT FName as its WireKey, not the
+                                                  // save Key -- a cross-peer identity-SEMANTIC
+                                                  // change (payload struct unchanged). Bumped so
+                                                  // the per-lobby equality gate refuses an old
+                                                  // Key-based peer joining a new name-based host
+                                                  // (they'd silently mis-resolve the one garage).
+                                                  // Prior: v122 (2026-07-19, version identity): this
                                                   // number IS the mod's BUILD NUMBER (the
                                                   // Paper pair "game target + build"; every
                                                   // release bumps it). Join gains ONE
@@ -1583,7 +1591,11 @@ enum class ReliableKind : uint8_t {
     // Slot 32 stays RESERVED for the deferred GrimeDestroy (the grime decal final-removal --
     // see GrimeState above); the next two kinds take 33/34 to avoid any future collision.
     GarageDoorState = 33, // 2026-06-08 (v44): base GARAGE door open/close (Agarage_C::Open
-                       //     @0x02E8, keyed by AtriggerBase_C::Key @0x0260). SYMMETRIC keyed-
+                       //     @0x02E8). Keyed by the garage's LEVEL-EXPORT FName since v123
+                       //     (2026-07-21, R9): the save Key (AtriggerBase_C::Key @0x0260) is
+                       //     assigned by the gamemode's one-shot sublevel-gated pass and can be
+                       //     None on the host after a menu->save reload -> dropped forever; the
+                       //     baked export FName is race-free + cross-peer stable. SYMMETRIC keyed-
                        //     interactable -- the garage has NO sensor/autoclose (never auto-
                        //     reverts), so a symmetric poll never oscillates and it needs none of
                        //     the door HostAuth machinery (RULE 1). Same generic Channel +

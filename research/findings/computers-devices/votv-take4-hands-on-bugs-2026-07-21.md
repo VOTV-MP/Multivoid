@@ -71,9 +71,42 @@ Symptom #12. HARD divergence -- the door stays CLOSED on the host permanently.
 - HOST 13:37:17 `garage: retry tick -- applied 0 deferred, dropped 1 expired, 0 still pending`.
 - Distinct from the `door:` lane (interior doors): CLIENT `basedoor_garage` 13:36:48 DID apply on the host
   (`door: host opened+held key='basedoor_garage' slot=1`). Two subsystems; only the big shutter failed.
-- Root direction: the host couldn't apply `garageDoor` at receive (actor not resolved/keyed on the host?),
-  queued for retry, DROPPED it as EXPIRED ~26 s later. Owner: `coop/interactables/interactable_sync.cpp`
-  (`garage:` lines). A reliable "door is OPEN" state that can silently expire is itself a rule-1 crutch.
+
+**ROOT (converged 2026-07-21 via `/qf` + kismet-analyzer bytecode + asset dig; NOT "key mismatch at
+receive"):** the host garage is present but **UNKEYED** (`Key=None`). The garage is keyed by the
+gamemode's **one-shot, sublevel-gated** pass (`mainGamemode::loadObjects` -> `GetAllActorsWithInterface`
++ `loadTriggers`, gated by `isSublevelAllowed`/`getCurrentLevelFromGamemode` -- kismet-analyzer bytecode).
+A garage instance mid-recycle during the host's menu->save world transition (host garage index 1->0 at
+13:15:35) is not in that snapshot and never gets keyed; `Channel::RebuildIndex` skips None-key instances
+-> the host index has 0 garages FOREVER -> the client's OPEN edge defers into an empty index and expires
+at `kPendingTTL=25s`. Sibling controls (SAME reload): 50 doors keyed on the host (same `triggerBase`
+keying code, same 0x0260 Key) -> makeKeys ran; only the garage's tile was absent at that instant. B3
+(actor absent) refuted: the host renders a CLOSED shutter + the menu garage was present+keyed.
+
+**FIX (BUILT + smoke-verified, `multivoid-0.9.0n-123.dll` md5 `94b15d35...`, proto 122->123, NOT
+hands-on):** key the garage by its **level-export FName** (`ue_wrap::garage::GetNameKey`, the
+`door_box::GetNameKey` pattern) instead of the fragile save Key. The export FName is baked into the
+cooked `untitled_1.umap` package -> deterministic + cross-peer stable BY CONSTRUCTION (both peers load
+the identical package), and independent of the race-prone keying. The old Key path (GetKeyString,
+g_keyOff, kKeyOffFallback, the triggerBase_C Key resolution) is DELETED (RULE 2). **Smoke proof
+(2026-07-21 17:38, menu->save reload present = doors 19->50):** host garage index = **1, never 0**
+(one state, name-hash `0x7414DA7199178EA1`), host==client keysHash identical, `garage: connect-snapshot
+-- sent 1 full state(s) (of 1 indexed)` (take-4 sent 0-of-0). The identity/index layer -- the whole R9
+root -- is fixed; the physical client-open -> host-apply is the hands-on take (never broken by anything
+but the missing index). Empirical control: `door_box`'s name-based keysHash was byte-identical host vs
+client through the SAME take-4 reload that broke the garage's Key identity.
+
+**DEFERRED (Part 2, no take-4 repro -- its own pass):** even with a perfect identity, the SYMMETRIC
+channel loses a live edge to an actor UNLOADED at edge-time (host player away from the garage's
+proximity-streamed tile -> pending expires at 25s, no re-assert). A reliable "shutter is OPEN" that can
+silently expire is a rule-1 crutch. Repro to build against: host walks away from the garage -> client
+opens it -> host returns -> does the OPEN survive? Fix-shape: pending never TTL-expires while the class
+is resolvable-but-absent (apply on stream-in), or the sender re-asserts. Whole keyed-interactable class,
+not garage-only. Design of record: the `/qf` thread + this section. Owner: `interactable_channel.h`.
+**LATENT class exposure (documented, principle 4 -- don't broadly migrate blind):** doors/lights/
+containers are also save-Key-based and could hit the same one-shot sublevel-gated miss; they came
+through THIS reload keyed+working, so they stay Key-based. If one ever exhibits the miss, it gets the
+same targeted FName treatment (the FName is strictly more race-proof for a placed actor).
 
 ### R11 -- drone delivery SACK contents empty on client, full on host  [H]
 Symptom #14. Screenshots: host sack = MRE/Zip drive/Drive/Data tape A/B/case ~686 vol; client = 0.0.
