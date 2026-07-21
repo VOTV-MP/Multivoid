@@ -87,6 +87,25 @@ If you hand someone your lobby address and they join, they are inside your world
 decision. We defend the **integrity of the shared world against unilateral destruction** (A3/A4) —
 we do not attempt to make a joined peer harmless.
 
+### A determined cheater on a public server (until the public-server phase)
+
+Today every host is the admin and the only trusted party, and lobbies are shared by invitation — so a
+peer who cheats is a peer you chose to let in, covered by the item above. **A determined cheater on an
+open, publicly-listed server is a different adversary, and we do not defend against them yet.**
+
+What we DO commit to, from project phase 2 onward, is **correctness under a lying peer** — the
+authority model (an arbiter that owns values and serialises intents) means a peer cannot dupe an item,
+wipe a stranger's world, or diverge the shared state, no matter what it sends. That is not anti-cheat;
+it is the integrity guarantee above, made structural.
+
+What we do NOT commit to is **anti-cheat** in the arms-race sense: a client that lies *within* its own
+authority (aimbot-equivalent inputs, a modified client reporting legal-but-false state) is out of
+scope. `[V]` This mirrors MTA, whose anti-cheat is a **client-side integrity module only**
+(`CAntiCheat.cpp` under `Client/`; the server has none) — a losing arms race deliberately kept out of
+the authority model. When public servers arrive (the public-server phase), that phase makes its own
+anti-cheat decision; it is **not** a gap in the current model, it is a scope line the current model
+draws on purpose. See `TRACKER` F3-F5 and `MTA_PRECEDENT.md` §11.
+
 ---
 
 ## 4. The one-sentence version
