@@ -1095,3 +1095,13 @@ tracker.
   (cheap, transport-untouched) — only the second was ever needed, and the preferred third option turned
   out to patch one vector rather than close the class. An option named after its most striking feature
   carries that feature's whole cost bundle. `memory/lesson_split_fused_options_before_comparing_architectures.md`
+- **Anti-cheat is a SEPARATE layer from the authority model — do not fuse them.** Measured from MTA
+  2026-07-20: its anti-cheat is CLIENT-side only (`CAntiCheat.cpp` under `Client/` only; the Server
+  tree has none); server position validation is THREE arithmetic checks (proximity vs the server's own
+  records + rate + dimension, `CUnoccupiedVehicleSync.cpp:490-492`) with **no plausibility/geometry
+  check at all**. So (a) an engine-free arbiter can do MTA's entire spatial validation — distance+rate
+  yes, geometry no, and MTA skips geometry too; (b) anti-dupe is architecture (own the values,
+  serialise intents -> second spend rejected), not a detector; (c) "make it secure" = TWO layers of
+  different size — correctness/authority (phase 2, where dupes die) vs anti-cheat (a tunable, optional,
+  losing arms race). Separate them before scoping. Rules: `TRACKER` F2-F6. LOOK FIRST:
+  `docs/security/MTA_PRECEDENT.md` §11. `memory/lesson_anticheat_is_a_separate_layer_from_authority.md`

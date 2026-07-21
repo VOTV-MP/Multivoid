@@ -46,6 +46,13 @@ restated here (RULE 2 — one home per fact).
 > `docs/COOP_SYNCER_MODEL.md`** — a user decision to adopt the MTA authority model first. TLS arcs
 > 1-2 remain defence-in-depth and close nothing (`DECISIONS.md` §1). Next actions: the **CA spike**
 > (`PLAN_01` §2) and the syncer model's own `/qf`.
+>
+> **Forward-looking RULES (F1-F6)** now live in `TRACKER.md` — decisions about the future dedicated
+> server and anti-cheat that are cheap to state now and expensive to retrofit: blob-donation is
+> host/admin-only (F1); the resource system ships `bAllowRemoteTrigger` default-deny (F2); validate by
+> distance+rate never geometry (F3); anti-dupe is the authority model not a detector (F4); no
+> client-side anti-cheat (F5); the validation toggle is a per-check list in one config, never over the
+> authority model (F6). Measured against MTA — see `MTA_PRECEDENT.md` §11.
 
 Current detail, including the session log and what is unblocked right now: **`EXECUTION.md`**.
 
