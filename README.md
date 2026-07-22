@@ -53,7 +53,7 @@ plainly:
   directions are real; we could not find a machine rule that separates them, so
   we report the number with its error rather than a narrower number with a
   hidden judgment.
-- **14** — very few systems have a status written anywhere. That gap is the
+- **12** — very few systems have a status written anywhere. That gap is the
   honest state of the documentation, not of the code.
 - **2** — a human played it and said it worked, each citing a dated artifact in
   [`tools/verified_takes.tsv`](tools/verified_takes.tsv). Parsing the docs for
