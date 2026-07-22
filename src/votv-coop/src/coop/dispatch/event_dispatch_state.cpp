@@ -22,6 +22,7 @@
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/interactables/power_sync.h"
+#include "coop/props/container_contents_sync.h"  // v124 (R11): the GObjStack slice lane
 #include "coop/props/trash_pile_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/window_sync.h"
@@ -419,6 +420,23 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::player_inventory_sync::OnReliable(ip, islot);
+        break;
+    }
+    case net::ReliableKind::ContainerContents: {
+        // v124 (take-4 R11): a world container's GObjStack slice, host-authored. The module
+        // enforces senderSlot==0 and the world-vs-PERSONAL boundary.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: ContainerContents payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload cc{};
+        std::memcpy(&cc, msg.payload, sizeof(cc));
+        const uint8_t ccslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::props::container_contents_sync::OnContentsChunk(cc, ccslot);
         break;
     }
     case net::ReliableKind::EmailDelete: {

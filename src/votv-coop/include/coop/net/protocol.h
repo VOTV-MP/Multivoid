@@ -705,7 +705,15 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 123; // v123 (2026-07-21, R9 garage FName identity):
+inline constexpr uint16_t kProtocolVersion = 124; // v124 (2026-07-22, R11 container contents):
+                                                  // NEW ReliableKind ContainerContents = 118 --
+                                                  // a world container's GObjStack slice as
+                                                  // host-authored state. New kind = new wire
+                                                  // grammar, so the per-lobby equality gate must
+                                                  // refuse a v123 peer (it would drop 118 as an
+                                                  // unknown kind and silently keep the frozen
+                                                  // join-snapshot contents -- the exact R11 bug).
+                                                  // Prior: v123 (2026-07-21, R9 garage FName identity):
                                                   // GarageDoorState now carries the garage's
                                                   // LEVEL-EXPORT FName as its WireKey, not the
                                                   // save Key -- a cross-peer identity-SEMANTIC
@@ -2530,6 +2538,30 @@ enum class ReliableKind : uint8_t {
                        //     skips if consumed) / 3 = canonical arrays (host->clients,
                        //     senderSlot==0 only, after every op + on organic change).
                        //     The RackState shape verbatim. Never refanned. Lane::Normal.
+    ContainerContents = 118, // v124 (container_contents_sync -- take-4 R11): a WORLD
+                       //     container's contents as STATE, eid-addressed. The contents
+                       //     do NOT live on the container: they are a slice of ONE global
+                       //     saveSlot.GObjStack, addressed by propInventory_C.index
+                       //     (votv-container-contents-gobjstack-RE-2026-07-22). Every
+                       //     mutating verb (addObject/addLoot/takeObj) dispatches
+                       //     EX_LocalVirtualFunction, so no shipped observer saw them and
+                       //     the client's copy froze at its join snapshot -- the drone
+                       //     delivery landed full on the host and 0.0 on the client.
+                       //     BlobChunkPayload; blob = [u8 op=0][u32 eid][u16 n] then n x
+                       //     the save_record_wire per-record grammar (the SAME grammar the
+                       //     player inventory ships -- classes/FNames as strings, signals
+                       //     via signal_wire). HOST-AUTHORED ONLY: world containers are
+                       //     host-owned (the client's drone brain is parked by drone_sync),
+                       //     so receivers accept senderSlot==0 only and clients never send.
+                       //     A container whose propInventory.Player is true is PERSONAL
+                       //     inventory (mainPlayer / ui_playerInventory share the same
+                       //     GObjStack) and is SKIPPED fail-closed -- that half is
+                       //     per-player-owned and is NOT this lane's business.
+                       //     A nested container's record ships WITHOUT its contents (its
+                       //     ints[] index points into the SENDER's GObjStack and is
+                       //     meaningless on the receiver) -- it arrives empty, not broken;
+                       //     the transitive walk is increment 2. Never refanned.
+                       //     Lane::Normal.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not

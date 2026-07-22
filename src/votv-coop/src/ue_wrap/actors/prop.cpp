@@ -126,6 +126,11 @@ inline void* TrashBitsPileCls() { return g_trashBitsPileCls.load(std::memory_ord
 inline void* GarbageClumpCls()  { return g_garbageClumpCls.load(std::memory_order_acquire); }
 inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_order_acquire); }
 
+}  // namespace
+
+// Promoted out of the anonymous namespace 2026-07-22 (declared in prop.h) so
+// coop/props/container_contents_sync can test prop_container_C descent -- RULE 2, one
+// SuperStruct walk in the tree. Body unchanged.
 bool WalksToBase(void* cls, void* base) {
     if (!cls || !base) return false;
     for (int hops = 0; hops < 16 && cls; ++hops) {
@@ -135,7 +140,6 @@ bool WalksToBase(void* cls, void* base) {
     }
     return false;
 }
-}  // namespace
 
 bool IsClassKeyedInteractable(void* cls) {
     if (!cls) return false;

@@ -45,6 +45,13 @@ bool IsDescendantOfProp(void* obj);
 // pass to FindFunction. Returns false for null inputs.
 bool IsClassDescendantOfProp(void* cls);
 
+// The generic SuperStruct-chain descent test the two helpers above are built on: does
+// `cls` reach `base` within 16 hops? Promoted from prop.cpp's anonymous namespace
+// 2026-07-22 (RULE 2: one implementation) when coop/props/container_contents_sync needed
+// prop_container_C descent to detect a NESTED container. Both pointers are UClass* as you
+// would pass to FindFunction -- NOT a metaclass check. False for either null.
+bool WalksToBase(void* cls, void* base);
+
 // True if `obj`'s UClass is one of the "prop-shaped" interactable lineages:
 // Aprop_C (the canonical prop family) OR one of the non-Aprop garbage/trash
 // families that expose the SAME BP interaction protocol (GetKey,

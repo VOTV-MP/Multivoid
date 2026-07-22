@@ -150,6 +150,10 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::LaptopBlob:     return Lane::Normal;
     case ReliableKind::LaptopQuad:     return Lane::Normal;
     case ReliableKind::FloppyBoxState: return Lane::Normal;
+    // v124 (R11): the container-contents slice must stay behind the entity lifecycle it
+    // references -- a contents blob for an eid whose PropSpawn has not landed parks and retries,
+    // so keeping it in the one Normal FIFO makes the park the rare case, not the norm.
+    case ReliableKind::ContainerContents: return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
