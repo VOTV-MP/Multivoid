@@ -33,6 +33,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **String presence in a cooked asset is NOT a structural fact** — a grep hit inside a `.uasset`/`.uexp`
+  proves only that the string is in the package NameMap (UE bakes a shared string pool: a parent's member
+  names and imported type names land in any asset that references them). Measured 2026-07-22:
+  `grep -la propInventory_GEN_VARIABLE objects/*.uasset` → **168** classes incl. `candle`, `rug`, `poster`,
+  `wisp_*`; the structural check (an **export** whose `ClassIndex` resolves to `propInventory`) → ~10, all
+  real containers. The bad instrument manufactured a killer counterexample (`prop_toolbox`) that nearly
+  forced a whole SCS-walk/CDO-probe predicate for an invariant that was correct all along — **it invented
+  work**. Third instance of one family in a single session ("census" label; "append-order" from one
+  `Array_Add` without reading the guard; this). *Look FIRST:* parse with `kismet-analyzer to-json` and read
+  `Exports[].ClassIndex` / `.SuperIndex` / `LoadedProperties` through the `Imports` table; use `grep` to
+  LOCATE candidates, never to CONCLUDE. `memory/lesson_string_presence_in_cooked_asset_is_not_a_structural_fact.md`
 - **Run `/qf` (up to 15 rounds) BEFORE any non-trivial implementation + when planning new changes** —
   default to it; the adversarial pass is where crutches/wrong-layer/un-measured-assumption get caught
   before cementing. `memory/feedback_qf_before_implementation.md`
@@ -294,7 +305,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   instead. *Look FIRST:* ue_wrap/desk/console_desk.cpp ApplyActiveToggleEffects + uber [1113-1156].
   `memory/lesson_active_toggles_setter_events_powerchanged_fused.md`
 - **Follow MTA architecture when possible** (vendored `reference/mtasa-blue/`). `memory/feedback_follow_mta_architecture.md`
-- **A new `ReliableKind` wires in THREE places** — check the router checklist. `memory/feedback_reliablekind_router_checklist.md`
+- **A new `ReliableKind` wires in SEVERAL places and a miss is SILENT** — SITE LIST CORRECTED 2026-07-22:
+  the old "third place" (`event_feed.cpp`'s family case list) was DISSOLVED 2026-06-28 (SyncRouter
+  consolidation, verified at `event_feed.cpp:499-517` — each `Handle*Event` returns true iff the kind is
+  in its family, so the FAMILY switch is the single membership declaration). **Do not touch
+  `event_feed.cpp` for a new kind.** Current: `protocol.h` (enum+payload+static_assert+version bump) →
+  `event_dispatch_<family>.cpp` → `session_lanes.h` (relay whitelist + lane) → `subsystems.cpp` wiring.
+  Event-driven kinds still need real wire proof (an idle smoke never fires them).
+  `memory/feedback_reliablekind_router_checklist.md`
 - **Host TRACKING/enroll gates on HOSTING, never `connected()`.** `memory/lesson_tracking_gates_on_hosting_not_connected.md`
 - **EVERY session-end path runs the FULL teardown fanout** — AND session-scoped UI (chat feed/input/
   bubbles/nameplate/voice_panel) dies at the FLEE funnel (`FleeToMainMenu`), NOT `DisconnectAll` (which
@@ -777,6 +795,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/lesson_bp_delegate_unbind_unproven_capability.md`
 
 ## 5. Engine / UE4 facts
+
+- **Container CONTENTS live in ONE global `saveSlot_C::GObjStack`, never on the container** — every
+  container in the game (world props, backpacks, the drone delivery container, AND `mainPlayer`'s personal
+  inventory) reads its contents from that single `TArray<struct_mObject>`, addressed by
+  `propInventory_C.index` (an `Array_Add` append position, guarded by `index >= 0`, persisted via the
+  owner's `struct_save.ints[]`). `struct_mObject = {obj: TArray<struct_save>}`; each entry is a FULL
+  generic save-record (`class`/`transform`/`key` + 10 uniform jagged primitive arrays + `signals[]`), so a
+  wire codec is ONE generic serializer + the existing `coop::signal_wire` — no per-class codec. Three traps:
+  (1) **asymmetric authority** — the player's personal inventory shares the array, discriminator is
+  `propInventory_C.player`; a blind host-authored write wipes client inventories; (2) **dispatch** — every
+  mutating verb (`addObject`/`takeObj`/`addLoot`) is `EX_LocalVirtualFunction`, invisible to BOTH the
+  ProcessEvent detour and the Func patch → `vm_dispatch` 0x45 is the only seam; (3) **nesting by
+  indirection** — a nested container's record carries a `GObjStack` INDEX, so a flat copy ships a pointer
+  into the sender's array (silent corruption, not an honest empty); detect via
+  `WalksToBase(cls, prop_container_C)` `[RD]`. *Look FIRST:*
+  `research/findings/inventory-items/votv-container-contents-gobjstack-RE-2026-07-22.md` §8 + §10.
+  `memory/lesson_container_contents_live_in_one_global_gobjstack.md`
 
 - **A PLACED actor's cross-peer identity = its BAKED level-export FName, NOT a gamemode-assigned save
   Key.** VOTV keys `AtriggerBase_C` descendants (doors/garage) via a ONE-SHOT, sublevel-gated gamemode

@@ -108,12 +108,45 @@ containers are also save-Key-based and could hit the same one-shot sublevel-gate
 through THIS reload keyed+working, so they stay Key-based. If one ever exhibits the miss, it gets the
 same targeted FName treatment (the FName is strictly more race-proof for a placed actor).
 
-### R11 -- drone delivery SACK contents empty on client, full on host  [H]
-Symptom #14. Screenshots: host sack = MRE/Zip drive/Drive/Data tape A/B/case ~686 vol; client = 0.0.
-- The sack prop exists on both peers; its container CONTENTS diverge. Candidate roots: (a) the daily FREE
-  delivery is a HOST loot-RNG spawn (COOP_RNG_AUTHORITY) never spawned on the client; (b) items exist but
-  the container INVENTORY isn't synced. `order_sync.cpp` handles player ORDERS (OrderData/items) but the
-  daily free delivery may bypass it; `prop_container_extract.cpp` exists.
+### R11 -- drone delivery container contents empty on client, full on host  [ROOT MEASURED 2026-07-22]
+Symptom #14. Screenshots: host = MRE/Zip drive/Drive/Data tape A/B/case ~686 vol; client = 0.0.
+
+**BOTH original candidates are SUPERSEDED** by the 2026-07-22 RE
+(`research/findings/inventory-items/votv-container-contents-gobjstack-RE-2026-07-22.md`):
+~~(a) host loot-RNG spawn never spawned on the client~~ -- there is no loot RNG in the drone; contents
+are built from the ORDER'S ITEMS. ~~(b) "items exist but the container inventory isn't synced"~~ -- right
+half, wrong mechanism: the contents are not ON the container at all.
+
+**ROOT (measured, static):** contents live in ONE global `saveSlot_C::GObjStack : TArray<struct_mObject>`,
+addressed by `propInventory_C.index`. The container ACTOR is already synced
+(`CreateOrAdoptPropMirror eid=6941 key='drone_InventoryContainer'`, adopted at join 13:16:26); the
+delivery's `addObject` ran host-side at **13:35:33** (`drone: FX mirror -- arrival cue ... canTakeOff
+rising edge`), **~19 minutes AFTER** the container's birth-sync reached the client. So this is a
+**STEADY-STATE MUTATION, not a birth** -- the R14/15/16 birth trailer (`d14b6644`) structurally cannot
+carry it, and **R11 does not fold into that design**. Authority is already CORRECT (`drone_sync.cpp:1-6`
+parks the client's drone brain), so this is a missing-LANE defect only. No lane carries contents at any
+layer: the `container:` channel is LID state (swinger) only.
+
+**Design CONVERGED (`/qf` "that holds", 2026-07-22), NOT BUILT, no code written.** Increment 1 (flat
+delivery): `vm_dispatch` 0x45 verb on `addObject` -> reflected native apply (not raw-write:
+`currVol`/`recalculateNames` are setter-managed) -> ONE generic codec over the 11 uniform jagged
+primitive arrays + existing `signal_wire` for `signals[]` -> **skip payload when
+`WalksToBase(cls, prop_container_C)`** (nested containers arrive EMPTY, never with a broken index) ->
+protocol (kind **118**, bump 123->124, `event_dispatch_signal.cpp` + `session_lanes.h`; `event_feed.cpp`
+NOT touched). Increment 2 (deferred): transitive nested walk + receiver-side visited-set/depth/size caps.
+
+**Audit-plan preconditions (from the /qf):** (1) the 0x45 verb catches ALL `addObject` callers --
+enumerate + classify each (`addLoot` x4 loot-roll, `putObjectIn_overlap`, ubergraph) REAL-EVENT vs churn
+before shipping; (2) the callback MUST discriminate world vs PERSONAL inventory on `propInventory_C.player`
+(fail closed) or it wipes client inventories -- `mainPlayer`/`ui_playerInventory` share `GObjStack`.
+
+**NOT VERIFIED until hands-on both peers:** flat delivery green AND a nested container confirmed arriving
+EMPTY not BROKEN. Live `[RD]` remainders: the many-objects box class, the actual `obj[]` payload (the host
+save `s_1234.sav` is dated 2026-07-19 and never captured take-4), and the container invariant itself
+(structural sample ~20 classes, not an exhaustive sweep).
+
+**Split off, NOT part of R11 (clean hooks):** the `takeObj` extraction half (not reproduced; `POST`=0 in
+take-4) and the player-inventory authority half.
 
 ---
 
