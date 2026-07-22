@@ -423,8 +423,13 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ContainerContents: {
-        // v124 (take-4 R11): a world container's GObjStack slice, host-authored. The module
-        // enforces senderSlot==0 and the world-vs-PERSONAL boundary.
+        // v125 (take-4 R11/R11b): a world container's GObjStack slice. BIDIRECTIONAL since v125 --
+        // the peer whose 0x45 addObject/takeObj verb fired authors it, and the HOST arbitrates
+        // (baseHash compare-and-swap) before applying and relaying to the others excluding the
+        // author. So the senderSlot rule is ASYMMETRIC and the module owns it: a client accepts
+        // slot 0 only, the host accepts slot != 0 only. Do NOT read this as "host-authored" -- that
+        // was v124, and the client's every extraction was silently dropped under it (the R11b dupe).
+        // The module also owns the world-vs-PERSONAL boundary. See container_contents_sync.h.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: ContainerContents payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));

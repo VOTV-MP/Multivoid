@@ -472,43 +472,59 @@ void RederiveManagedState(void* owner, void* inv) {
     if (inv   && g_fnRecalcName) ue_wrap::component_calls::CallParamless(inv,   g_fnRecalcName);
 }
 
-// True if applied; false if the eid could not be resolved (caller parks the blob).
-bool ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64_t blobHash) {
+// What an inbound blob actually DID to this peer. A bare bool cannot express it: "handled" and
+// "changed something" are different facts, and the relay decision needs the second one.
+//
+// The audit caught this as a CRITICAL: OnContentsChunk gated RelayToOthers on a bool that was true
+// for BOTH "the host accepted and applied a client write" AND "the host REFUSED it as stale". A
+// refused write was therefore relayed to every other client -- arriving stamped as slot 0, i.e. as
+// HOST TRUTH, at peers that run no CAS of their own (the arbitration branch is host-only) and so
+// applied it unconditionally. The compare-and-swap protected the author and the host and nobody
+// else.
+enum class Ingest {
+    Park,      // the eid does not resolve yet (birth skew / mid-join) -- park and retry
+    Handled,   // dealt with and deliberately NOT applied: refused, malformed, non-container,
+               // BOUNDARY 1, or a no-op duplicate. NEVER relayed.
+    Applied,   // this peer's state actually changed. The only outcome the host may pass on.
+};
+
+// Applied / Handled / Park -- see Ingest.
+Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64_t blobHash) {
     void* actor = LivePropActor(eid);
-    if (!actor) return false;
+    if (!actor) return Ingest::Park;
     // The wire eid must name a CONTAINER before we read a cached component offset off it.
     if (!IsContainerActor(actor)) {
         UE_LOGW("container_contents: eid=%u does not resolve to a container -- refusing", eid);
-        return true;
+        return Ingest::Handled;
     }
     void* inv = InventoryOf(actor);
-    if (!inv || !IsInventoryComponent(inv)) return false;
+    if (!inv || !IsInventoryComponent(inv)) return Ingest::Park;
     {   // Identical contents -> do nothing. The raw-write orphans the previous arrays, so a
         // no-op apply must not allocate at all (that is what bounds the leak).
         auto it = g_appliedHash.find(eid);
-        if (it != g_appliedHash.end() && it->second == blobHash) return true;
+        if (it != g_appliedHash.end() && it->second == blobHash) return Ingest::Handled;
     }
     if (!IsWorldContainerInventory(inv)) {           // BOUNDARY 1 (fail-closed)
         UE_LOGW("container_contents: eid=%u resolves to a PERSONAL inventory (or an unresolvable "
                 "Player flag) -- refusing to apply", eid);
-        return true;                                  // resolved; deliberately not applied
+        return Ingest::Handled;                       // resolved; deliberately not applied
     }
     uint8_t* slot = GObjStackSlot(inv);
-    if (!slot) return false;
+    if (!slot) return Ingest::Park;
 
     // GMalloc pre-flight: without it we would silently write an EMPTY array over real contents.
     if (void* probe = R::EngineAlloc(16)) {
         R::EngineFree(probe);
     } else {
         UE_LOGW("container_contents: eid=%u -- EngineAlloc unavailable; refusing to write", eid);
-        return true;
+        return Ingest::Handled;
     }
 
     const int32_t n = static_cast<int32_t>(recs.size());
     void* buf = SR::AllocZeroed(static_cast<size_t>(n), static_cast<size_t>(SR::kSaveStride));
     if (!buf && n > 0) {
         UE_LOGW("container_contents: eid=%u -- alloc of %d records failed; leaving contents", eid, n);
-        return true;
+        return Ingest::Handled;
     }
     for (int32_t i = 0; i < n; ++i)
         SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
@@ -529,7 +545,7 @@ bool ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64
     if (!IsHost()) g_baseHash[eid] = blobHash;
     RederiveManagedState(OwnerOf(inv), inv);
     UE_LOGI("container_contents: eid=%u applied %d records", eid, n);
-    return true;
+    return Ingest::Applied;
 }
 
 // HOST: may this client-authored slice be applied? The compare-and-swap that keeps a stale author
@@ -569,13 +585,13 @@ bool HostAcceptsClientWrite(uint32_t eid, uint64_t baseHash, uint8_t authorSlot)
     return false;
 }
 
-bool ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot) {
+Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot) {
     size_t o = 0;
     uint8_t op = 0;
-    if (!W::RdU8(blob, o, op) || op != kOpContents) return true;  // unknown op -- ignore, not park
-    if (!W::RdU32(blob, o, outEid)) return true;
+    if (!W::RdU8(blob, o, op) || op != kOpContents) return Ingest::Handled;  // unknown op
+    if (!W::RdU32(blob, o, outEid)) return Ingest::Handled;
     uint64_t baseHash = 0;
-    if (!RdU64(blob, o, baseHash)) return true;
+    if (!RdU64(blob, o, baseHash)) return Ingest::Handled;
     // HOST arbitration: a client-authored slice is validated BEFORE it touches anything. A refusal
     // is not silent -- the host immediately re-publishes its own truth so the refused author
     // converges instead of sitting on a divergent view.
@@ -586,30 +602,31 @@ bool ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t s
         if (s && inv && IsWorldContainerInventory(inv)) {
             BroadcastContainer(s, outEid, inv, static_cast<int>(senderSlot), /*force=*/true);
         }
-        return true;  // handled (deliberately not applied) -- never park a refused write
+        // Handled, NOT Applied: this must never be relayed onward. Third peers run no CAS.
+        return Ingest::Handled;
     }
-    if (o + 2 > blob.size()) return true;
+    if (o + 2 > blob.size()) return Ingest::Handled;
     const uint16_t n = static_cast<uint16_t>(blob[o] | (blob[o + 1] << 8));
     o += 2;
     if (n > kMaxRecordsPerContainer || !W::Feasible(n, blob, o)) {
         UE_LOGW("container_contents: eid=%u declares %u records -- rejected", outEid, n);
-        return true;
+        return Ingest::Handled;
     }
     std::vector<SR::SaveRecord> recs(n);
     for (auto& r : recs) {
         if (!W::DeSave(blob, o, r)) {
             UE_LOGW("container_contents: eid=%u malformed record stream -- dropped", outEid);
-            return true;
+            return Ingest::Handled;
         }
     }
     const uint64_t contentHash = ContentHash(outEid, recs);
-    const bool applied = ApplyContents(outEid, recs, contentHash);
+    const Ingest outcome = ApplyContents(outEid, recs, contentHash);
     // HOST, client-authored + ACCEPTED: this content is now the host's published truth. Recording
     // it here (not at the chunk seam) is what keeps the host's own drain from re-broadcasting the
     // identical slice back out to everyone -- which would reach the author the long way round and
     // stomp whatever it had done since.
-    if (applied && IsHost() && senderSlot != 0) g_sentHash[outEid] = contentHash;
-    return applied;
+    if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) g_sentHash[outEid] = contentHash;
+    return outcome;
 }
 
 void SweepParked() {
@@ -620,7 +637,7 @@ void SweepParked() {
         // A parked blob is always one a RECEIVER could not resolve yet; the host never parks a
         // client write (a refused one is answered immediately, an accepted one applies at once),
         // so slot 0 is the correct author for every replay here.
-        if (ParseAndApply(it->second.blob, eid, /*senderSlot=*/0)) {
+        if (ParseAndApply(it->second.blob, eid, /*senderSlot=*/0) != Ingest::Park) {
             it = g_parked.erase(it);
         } else if (now - it->second.at > std::chrono::seconds(kParkTtlSec)) {
             UE_LOGW("container_contents: parked eid=%u expired after %ds unresolved -- dropped",
@@ -746,16 +763,20 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (!g_asm.OnChunk(p, senderSlot, blob)) return;  // incomplete
 
     uint32_t eid = 0;
-    if (!ParseAndApply(blob, eid, senderSlot)) {
+    const Ingest outcome = ParseAndApply(blob, eid, senderSlot);
+    if (outcome == Ingest::Park) {
         // Birth skew / mid-activity join: the container's element is not bound yet. Park it
         // (latest wins per eid) and let the sweep retry until the TTL.
         g_parked[eid] = Parked{std::move(blob), std::chrono::steady_clock::now()};
         UE_LOGI("container_contents: eid=%u not resolvable yet -- parked (TTL %ds)", eid, kParkTtlSec);
         return;
     }
-    // ACCEPTED on the host: pass it to the other peers, never back to the author. (The published
-    // truth was recorded inside ParseAndApply, where the parsed records are in hand.)
-    if (IsHost() && senderSlot != 0) RelayToOthers(s, senderSlot, blob);
+    // Relay ONLY what the host genuinely applied. `Handled` covers a CAS-refused write, a malformed
+    // one, a non-container eid, a BOUNDARY 1 refusal and a no-op duplicate -- passing any of those
+    // on would hand other peers a blob this host has already judged unfit, and they cannot judge it
+    // themselves: the arbitration branch is host-only, and a relayed blob reaches them stamped
+    // slot 0, i.e. indistinguishable from host truth. Never back to the author (eaten-scroll).
+    if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) RelayToOthers(s, senderSlot, blob);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
