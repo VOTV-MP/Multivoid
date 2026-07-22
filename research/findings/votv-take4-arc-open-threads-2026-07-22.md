@@ -21,8 +21,8 @@ or a hands-on run only the user can supply. `gate:none` = ready to work when pic
 | **`:279` birth-emission** -- a client's fresh unparked keyed `Aprop_C` birth is dropped unless its class is whitelisted (reel/module/drive). A container-extracted item is neither parked nor whitelisted. | OPEN, root confirmed by code-reading | **gate:me** -- the firing set of a widened `freshBirth` (who newly passes) AND the physics axis (`freshBirth` also sets `kSleep`; correct for a reel, likely wrong for an extracted item). Counting probe, not reasoning. | `prop_drop_intent.cpp:279` |
 | **d14b6644 (R14/15/16) drive-disc birth content** | CONVERGED (8 rounds), NOT built | **gate:user** -- the `savedScalar` RETIRE is gated on a reel+disc hands-on green (design 4.4: "the add ships, the deletion does not"). The ADD is not blocked. | design commit `d14b6644` |
 | **Relationship between the two above** | measured: ONE design, TWO axes | -- | `:279` (who passes) -> `:293` `ReadSavedScalarForClass` (what the passer carries) -> `:307` `NoteLocalDriveBirth` (same whitelist). A funnel, not a stack: a burger never reaches the content stage. |
-| **Q-STACK: the v125 client->host container decrement** | **VERIFIED GREEN 2026-07-22** -- hands-on, measured on BOTH logs | closed | see the take record below |
-| **Q-PROP / C5: does the extracted item reach the host's world** | **RED 2026-07-22** -- client extracted, authored zero intents | folds into `:279` (gate:me) | see the take record below |
+| **Q-STACK: the v125 client->host container decrement** | **GREEN 2026-07-22 -- SEQUENTIAL ONLY.** Hands-on, measured on both logs. **CONCURRENT (`CONFLICT>0`) UNMEASURED** -- the take had `CONFLICT=0` on both peers, so the CAS never ran once. | sequential half closed; concurrent half **gate:user** (needs a run that PRODUCES a conflict) | see the take record below |
+| **Q-PROP / C5: does the extracted item reach the host's world** | **RED 2026-07-22.** Root `:279` is `[RD]`, **not `[V]`** -- the log cannot separate "dropped at `:279`" from "never enqueued"; both are silence. | **gate:user** -- the discriminator run below, BEFORE gate:me | see the take record below |
 | **The CAS refusal path leaves the item with the refused client** | OPEN | none -- **do NOT build separately**; it is a sub-case of `:279` and dissolves with it | `container_contents_sync.cpp:598-607` |
 | **"R11b: a client's extraction"** as its own item | DISSOLVED into `:279` | -- | superseded framing; see below |
 | **`updateVolumesAndMass` never re-derives on extraction** | OPEN -- measured: records 7->6 while `currVol` stayed 28579.0 on BOTH peers | gate:none -- narrow fix at the call site | co-requisite of R11b |
@@ -58,7 +58,14 @@ Both peers on b125, run 20:47-20:54. Container `eid=2139`, taken down 3 -> 0 by 
 | 20:53:16 | host | `shipped 0 records` | host took the last |
 | 20:53:16 | client | `applied 0 records` | client received |
 
-**Q-STACK GREEN.** Counters agree at every step, in both directions. This is the first hands-on
+**Q-STACK GREEN -- FOR THE SEQUENTIAL CASE ONLY.** Both peers took in TURN, and `CONFLICT` was **0 on
+both peers** for the whole run: the compare-and-swap never executed once. So this take says nothing
+about a CONCURRENT edit, which is precisely where the overwrite risk lives. A run aiming at that must
+be built to PRODUCE `CONFLICT>0` -- both peers on the SAME slot in the SAME window -- or it will come
+back `CONFLICT=0` again and read as "the CAS held" when the CAS simply never ran. The CAS is only
+tested by a non-zero conflict, exactly as a positive control is only tested by a known-positive.
+
+With that boundary stated: counters agree at every step, in both directions. This is the first hands-on
 confirmation of the v125 client->host half, and it closes the user's original b124 symptom
 ("3 burgers from an order of 2").
 
@@ -68,10 +75,23 @@ the module was live and would have logged an authoring. Consistent with `:279` d
 (not parked, not a whitelisted class).
 
 **Strength of the Q-PROP verdict -- one notch below airtight.** The log cannot discriminate "dropped
-at `:279`" from "never enqueued at all"; both produce silence. The discriminator is cheap and is owed
-on the NEXT run: **have the client pick up any prop and place it back down** -- that is a parked
-place, so `PROP-DROP` MUST fire. Its presence proves the authoring path works and isolates the
-failure to `:279`; its absence moves the root upstream to the enqueue.
+at `:279`" from "never enqueued at all"; both produce silence. Root stays `[RD]` until a discriminator
+runs.
+
+**The discriminator, and why the target must be CHOSEN, not convenient.** Have the client pick up a
+prop and place it back down: a parked place takes the `parked == true` branch at `:279`, so
+`PROP-DROP` MUST fire. Its presence proves the whole authoring path downstream of the gate works,
+which isolates the burger's failure to admission; its absence moves the root upstream to the enqueue.
+
+**Pick the prop by the property that makes the stimulus valid, not by "any prop".** The park is only
+inserted when the client's pickup-DESTROY actually crossed to the host, so the target must be a
+**pre-existing world prop that both peers can see** -- not something the client itself just extracted
+(that one is exactly the unparked case under test, and would prove nothing). If the chosen prop
+happens to be reel / module / drive class it can also pass via `freshBirth`, which still proves
+downstream works but no longer tells you WHICH branch admitted it -- so prefer an ordinary prop, and
+note the class in the report either way. This is the same trap that made the R11b instrument fire on
+empty containers and report nothing: a causing probe must pick its target by what makes the stimulus
+VALID. See `[[feedback-probe-must-count-not-confirm]]`.
 
 **Instrument defect found and fixed in the same take.** The runbook told the user to grep
 `PROP-DROP|SPAWN broadcast` as the HOST-side positive control. Both are wrong channels for the host
