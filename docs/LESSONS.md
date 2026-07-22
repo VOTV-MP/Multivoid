@@ -44,6 +44,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `Array_Add` without reading the guard; this). *Look FIRST:* parse with `kismet-analyzer to-json` and read
   `Exports[].ClassIndex` / `.SuperIndex` / `LoadedProperties` through the `Imports` table; use `grep` to
   LOCATE candidates, never to CONCLUDE. `memory/lesson_string_presence_in_cooked_asset_is_not_a_structural_fact.md`
+- **SAVE-EXCLUDED is not RUNTIME-ABSENT, and our logs cannot prove absence.** `prop_dronesack_C::
+  ignoreSave -> EX_True` was read as "does not exist at runtime"; it means the SAVE SYSTEM skips it.
+  `Aprop_dronesack_C : Aprop_C` is a real actor with its own `container@0x0380`. The corroborating
+  `grep -ci sack <log>` = 1 was equally worthless: an actor with no save Key is never enrolled as an
+  Element, so it can never print — **the log was silent about a thing it is structurally incapable of
+  reporting.** The false conclusion then RETRACTED a whole line of investigation for a session and a
+  half. Same family as the string-presence row with the sign flipped: there PRESENCE was read as
+  structure, here ABSENCE was read as non-existence; both are "the instrument does not measure what I
+  claimed". *Look FIRST:* ask what would have to be true for our logs to mention it (enrolment? save
+  key? class filter?) — if any of those excludes it, enumerate live objects
+  (`FindObjectsByClass`), do not grep. Read `ignoreSave`/`Transient`/`bNetLoadOnClient` as a
+  SUBSYSTEM's treatment, never as existence. `memory/lesson_save_excluded_is_not_runtime_absent.md`
 - **Run `/qf` (up to 15 rounds) BEFORE any non-trivial implementation + when planning new changes** —
   default to it; the adversarial pass is where crutches/wrong-layer/un-measured-assumption get caught
   before cementing. `memory/feedback_qf_before_implementation.md`
@@ -135,7 +147,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   STRONGER red flag, not weaker.** Born 2026-07-15: four consecutive fabricated nouns
   (`serverStorageComp`/`ELEMENT`/`getAll`/`getServerStorage`, all 0 hits) + a "ship it" for a build
   `git status` showed never existed — caught every time by grep+git, never by reasoning.
+  **SHARPENED 2026-07-22: verifying the CITED FACT is not verifying the CONCLUSION.** An agent's
+  facts were all TRUE by grep ("`droneContainer` occurs in one asset", "`getObjectFromKey` is an
+  exact `Array_Find`") but its LEAP ("therefore the drone spawns its own container") was never
+  tested; it became the central result of a 733-line RE doc and a counting probe killed it on the
+  first sample. Two levels: are the facts real (grep), AND does the conclusion follow / what would
+  falsify it? "X can never happen, therefore Y" is a RUNTIME prediction — tag `[RD]`, settle with a
+  count before building.
   *Look FIRST:* `memory/feedback_verify_handed_down_measurement_before_building.md`
+- **A probe must COUNT, not CONFIRM — and must never resolve through the mechanism under suspicion.**
+  A probe written to confirm "the drone spawns its own container" would have looked the container up
+  BY KEY — the very operation suspected of being broken — and agreed. Written instead to enumerate
+  `FindObjectsByClass` and print every row, it answered `containers=1` (the saved one, and it IS
+  `drone.container`) on sample #1 and killed the conclusion. Second instance in the same probe: a
+  recorded "mystery" (contents 2->0 in 8 s, a sack transfer theorised) dissolved once EVERY
+  `GObjStack` slot was read instead of one — `[1] 2->1` paired with `[0] 3->4` is just a player
+  taking an item. Watching one row invents mysteries the neighbouring rows explain.
+  *Look FIRST:* `memory/feedback_probe_must_count_not_confirm.md`
 - **Cite SECTIONS, not line ranges, in a file you are also editing.** Writing a new design doc I cited
   `ROADMAP.md:62-66` and `COOP_SYNCER_MODEL.md:324-326`, then edited both files later the same session
   to add supersession notes — the first citation became **circular** (it now pointed at my own
@@ -793,6 +821,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   delegate handler", PROVE the unbind (layout RE + probe); it's a BUILD GATE. Prefer the proven
   caller-neutralization (disable a ticker / zero an array) or host-authoritative state.
   `memory/lesson_bp_delegate_unbind_unproven_capability.md`
+- **A completion latch makes every LATE registrant a SILENT no-op.** `vm_dispatch`'s
+  `TickResolvePending` opened with `if (g_allResolved) return;` — read as "stop re-trying", it was a
+  PROCESS-lifetime latch, so a verb registered after the first "all N resolved" moment was never
+  FName-resolved and its callback never fired. Every signal said success: registration returned
+  `true`, the consumer's own banner printed, the verb even appeared in the log with a slot number.
+  Cost TWO RED hands-on takes, both mis-attributed (first to entity identity, then to a whole
+  delivery-pipeline RE with a wrong root) because the lane's code was never reached. The trigger was
+  ORDERING: it was the tree's first consumer to register from `Tick()` instead of install time.
+  Fixed `3027aeed` (registration clears the latch — per-PASS, not per-process).
+  *Look FIRST:* a callback that "is registered" but never fires — prove it ENTERED before
+  re-deriving any domain root; compare the timestamp of the substrate's "all N resolved / ARMED"
+  line against your own "registered" line. Any `if (allDone) return;` in a subsystem that accepts
+  dynamic registration is this bug waiting for its first late registrant.
+  `memory/lesson_late_registrant_inert_after_all_resolved_latch.md`
 
 ## 5. Engine / UE4 facts
 

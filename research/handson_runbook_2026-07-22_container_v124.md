@@ -1,5 +1,14 @@
 # Hands-on runbook -- R11 container contents (v124), 2026-07-22
 
+> **OUTCOME (same day): R11 is VERIFIED GREEN.** This runbook is kept as the point-in-time record
+> of the take. Two takes came back RED first; the cause was NOT the design but
+> `vm_dispatch`'s `g_allResolved` permanent latch, which left this lane's verbs unresolved and
+> its callback silently dead (fixed `3027aeed`). After the fix the client saw the delivered
+> burgers and both peers' logs matched: `shipped 2/1/0 records` <-> `applied 2/1/0 records`.
+> The proof table below is updated to what the take actually established.
+> Still open and NOT closed by this take: **R11b** (a client's extraction has no upstream lane --
+> the dupe was reproduced live, 3 burgers from an order of 2).
+
 **Deployed:** `multivoid-0.9.0n-124.dll`, md5 `A07DC35FC6104417`, on all 4 installs
 (HOST / CLIENT_1 / CLIENT_2 / DEV).
 **Protocol:** 124 (was 123). **RELAUNCH BOTH PEERS** -- the join gate is byte-EQUALITY on the
@@ -55,9 +64,9 @@ Taking things out as the HOST is fine.
 |---|---|
 | read GObjStack -> serialize -> wire -> deserialize -> apply | **PROVEN cross-peer** in the LAN smoke: host shipped 284 containers / 241 non-empty / 1718 records; client applied 241 MATCH, 0 MISMATCH, 0 MISSING (largest 43 records) |
 | the connect-seed path (join) | **PROVEN** (same run); 292 parks all resolved by retry, 0 expired |
-| the 0x45 `addObject` EDGE (a live delivery) | **NOT PROVEN** -- no delivery ran in the smoke. Step 4 is its first test |
-| `updateVolumesAndMass` re-deriving `currVol` | **NOT PROVEN visually** -- step 5's volume comparison is its first test |
-| a NESTED container (a "case" inside the delivery) | **NOT PROVEN.** By design it arrives EMPTY, not broken (its own contents are increment 2). If the take-4 order included a case, expect the case to be present but empty on both peers |
+| the 0x45 `addObject` EDGE (a live delivery) | **PROVEN 2026-07-22** -- host `shipped 2 records` at 17:29:23, client `applied 2 records` same second. Also proven for REMOVE: `shipped 1` / `shipped 0` -> `applied 1` / `applied 0` |
+| `updateVolumesAndMass` re-deriving `currVol` | **PARTIAL** -- the host's own `currVol` tracks (2991.4 -> 1495.7 -> 0.0, census). The CLIENT's mirrored `currVol` was measured STALE at the last sample (`contents=0 vol=1495.7`), so the re-derive on the apply path is NOT confirmed. Own follow-up |
+| a NESTED container (a "case" inside the delivery) | **STILL NOT PROVEN** -- the take ordered burgers, no nested container was involved. By design it arrives EMPTY, not broken (its own contents are increment 2). If the take-4 order included a case, expect the case to be present but empty on both peers |
 
 ## What to read in the log if it is RED
 

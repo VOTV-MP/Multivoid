@@ -15,6 +15,48 @@ the `ScriptBytecode` array of that export. Both are reproducible from those two 
 
 ---
 
+## RETRACTION (2026-07-22, later the same day) — READ THIS BEFORE ANY SECTION BELOW
+
+**This document's CENTRAL CONCLUSION is REFUTED by runtime measurement. The drone does NOT spawn
+its own container.** A counting probe (`coop/dev/delivery_census_probe`, ini `delivery_census=1`)
+enumerated the delivery-path actors BY CLASS on both peers, across a real delivery:
+
+```
+[delivery_census] #3 HOST -- containers=1 sacks=0 drone.container=00000215097D64E0
+  actor=00000215097D64E0 cls='prop_inventoryContainer_drone_C' key='drone_InventoryContainer'
+  eid=920 idx=1 contents=2 vol=2991.4  <== drone.container (compileOrder writes HERE)
+```
+
+Measured `[V]`, every sample, both peers: **containers = 1**, its key IS
+`drone_InventoryContainer` (the world-placed saved one), it IS `drone.container` (what
+`compileOrder` writes through), and it DID receive the delivery (contents 0 -> 2).
+
+**What is refuted is the INFERENCE, not the facts it was built from.** These remain measured and
+true: `droneContainer` occurs in exactly one cooked asset (`drone.uasset` itself); the container
+CDO key is `drone_InventoryContainer`; `getObjectFromKey` is an exact `Array_Find` over
+`keyObj_key` whose only writer is `lib_C::assignKey`. The step that does NOT hold is the leap
+"therefore the lookup always misses, therefore the drone spawns its own container at BeginPlay".
+
+**By what mechanism `drone.container` ends up being the saved actor is NOT established** — it
+could be a resolution path this static trace did not cover, an assignment from the sack (which
+looks the container up by the CORRECT key), or a `loadData` restore. Do not guess it; measure it
+if a design ever depends on it. It did not turn out to matter for R11.
+
+**Consequences for the rest of this file:** §5 and the "not the same actor" conclusion near the
+end are WRONG as written. The dispatch-visibility table, the two-fire-paths result, the sack
+lifecycle, the `compileOrder` addObject-destination finding, and the AnimBP sack-dangle root are
+UNAFFECTED — they were measured independently.
+
+**What actually caused the RED hands-on** was neither entity identity nor the lane design: it was
+`ue_wrap/core/vm_dispatch`'s `g_allResolved` permanent latch, which left this lane's Tick-time
+verb registration unresolved forever and its callback silently dead (fixed `3027aeed`). With that
+fixed, R11 is VERIFIED GREEN on the very container this document said was the wrong one. See
+`research/findings/computers-devices/votv-take4-hands-on-bugs-2026-07-21.md` -> R11.
+
+Lesson written: `[[lesson-verify-the-conclusion-not-just-its-cited-facts]]`.
+
+---
+
 ## 0. TL;DR — the three corrections
 
 1. **`prop_dronesack_C` absolutely exists at runtime.** It is `Aprop_dronesack_C : Aprop_C`
