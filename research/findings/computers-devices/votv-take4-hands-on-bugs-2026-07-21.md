@@ -152,7 +152,32 @@ take-4) and the player-inventory authority half.
 
 ## Severity 2 -- HIGH (degrades every interaction / very visible)
 
-### R11b -- client extraction from a world container DUPES  [PRE-EXISTING ROOT, measured 2026-07-22; NOT introduced by v124]
+### R11 -- VERIFIED GREEN 2026-07-22 (hands-on + both logs)
+
+The receive half works, in BOTH directions of a host-authored change:
+
+```
+HOST                                        CLIENT
+17:29:23 eid=920 shipped 2 records          17:29:23 eid=920 applied 2 records
+17:29:39 eid=920 shipped 1 record           17:29:39 eid=920 applied 1 record
+17:29:40 eid=920 shipped 0 records          17:29:40 eid=920 applied 0 records
+```
+
+The user confirmed visually: the client opened the delivery container and saw the burgers.
+An add (delivery) and a remove (host extraction) both propagate. This is VERIFIED by a real
+hands-on plus a matching log on both peers -- not by a smoke.
+
+What made the first two takes RED was NOT the design: `vm_dispatch`'s `g_allResolved` was a
+permanent process-lifetime latch, so this lane's verbs -- registered from its Tick, i.e. later
+than every install-time consumer -- were never FName-resolved and the callback never fired,
+silently. Fixed at the root in `3027aeed`.
+
+The earlier "contents vanish from the container 8 s after delivery" mystery is dissolved and was
+mundane: the whole-GObjStack slot-delta reading shows `[1] 2->1` paired with `[0] 3->4` -- a
+player taking a burger moves it from the container's slot into that peer's OWN player-inventory
+slot 0. Nothing exotic; no hidden sack transfer.
+
+### R11b -- client extraction from a world container DUPES  [CONFIRMED LIVE 2026-07-22; PRE-EXISTING, NOT introduced by v124]
 
 **Not a take-4 hands-on symptom** -- surfaced by the adversarial audit of the R11 lane (v124) and then
 measured against the v123 BASELINE, because "does the new lane create this or merely expose it?" decides
@@ -182,6 +207,31 @@ NOT folded into the R11 increment.
 `addObject` on a client). Its shape is dirtier -- the host's canonical would erase a record whose world
 prop the client's own `addObject` already consumed -- but no baseline measurement was taken, so nothing
 is claimed about it.
+
+**CONFIRMED LIVE 2026-07-22 -- the dupe reproduced, measured on both peers.** Sequence, with the
+census slot deltas:
+
+```
+17:29:31 CLIENT [0] 3->4  [1] 2->1   client takes a burger: container -> its OWN inventory
+17:29:32 CLIENT hand_item: local hand -> 'prop_food_C' burger   (then to hand; [0] 4->3 is the
+                                                                 hand transfer, NOT a loss)
+17:29:39 HOST   [0] 3->4  [1] 2->1   the host STILL had 2 and takes one itself
+17:29:41 HOST   [0] 4->5  [1] 1->0   ...and the second
+```
+
+The client's take never reached the host (no `shipped` line at 17:29:31; the host's slot stayed
+at 2 for 8 s until its own extraction). So one burger existed simultaneously in the client's hand
+AND in the host's container: **3 burgers out of an order of 2.**
+
+Two things this measurement RULES OUT, so a design does not chase them:
+1. **Not an item LOSS.** No GObjStack slot loses a record; the client keeps its burger.
+2. **Not the lane overwriting client ownership.** The client's burger lives in client slot [0]
+   (personal inventory) while the apply writes only slot [1] (the container's Index) -- and the
+   client's [0] change precedes the host's first post-take broadcast by six seconds. The
+   blast-radius concern raised during the v124 audit does not materialise on this path.
+
+The root is exactly as filed: the container slot is mutated by BOTH peers, and only host->client
+is carried. The missing half is a client->host intent for extraction.
 
 **Consequence for the R11 hands-on:** R11's verdict is pure RECEIVE ("client opens the delivery container
 and sees the records instead of 0.0"); it does not require an extraction. So the take can run and be
