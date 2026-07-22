@@ -17,45 +17,25 @@
 
 #pragma once
 
-#include "ue_wrap/desk/signal_dynamic.h"  // Row -- the 0x70 signal sub-element (reused, not reinvented)
+#include "ue_wrap/actors/save_record.h"  // SaveRecord + its engine codec (the shared Fstruct_save home)
 
-#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace ue_wrap::inventory {
 
-// One Fstruct_save record as engine-agnostic POD (the wire layer serializes this).
-struct SaveRecord {
-    std::wstring className;          // TSubclassOf<AActor> leaf name; empty = null class
-    std::array<float, 10> xform{};   // FTransform: quat(x,y,z,w) + loc(x,y,z) + scale(x,y,z)
-    std::wstring key;                // FName
-    // Value groups: TArray<Fstruct_mX> (each Fstruct_mX = TArray<X>) -> vector<vector<X>>.
-    std::vector<std::vector<uint8_t>>               bools;
-    std::vector<std::vector<float>>                 floats;
-    std::vector<std::vector<int32_t>>               ints;
-    std::vector<std::vector<std::wstring>>          strings;
-    std::vector<ue_wrap::signal_dynamic::Row>       signals;  // TArray<signal> directly (flat)
-    std::vector<std::vector<std::wstring>>          classes;  // TSubclassOf leaf names
-    std::vector<std::vector<std::array<float, 3>>>  vectors;  // FVector
-    std::vector<std::vector<std::array<float, 3>>>  rotators; // FRotator (pitch,yaw,roll)
-    std::vector<std::vector<std::array<float, 10>>> transforms; // FTransform packed
-    std::vector<std::vector<uint8_t>>               bytes;
-    std::vector<std::vector<std::wstring>>          names;    // FName
-};
-
 // One Fstruct_equipment record (a propDynamic id + an embedded Fstruct_save + a tag).
 struct EquipRecord {
     std::wstring propName;  // Fstruct_propDynamic.name FName
     std::wstring propKey;   // Fstruct_propDynamic.key FName
-    SaveRecord   data;      // embedded Fstruct_save (occupies a 0x100 slot)
+    ue_wrap::save_record::SaveRecord data;  // embedded Fstruct_save (occupies a 0x100 slot)
     std::wstring tag;       // FName
 };
 
 // The full player-scoped inventory snapshot.
 struct PlayerInventory {
-    std::vector<SaveRecord>  inventory;  // saveSlot.inventoryData
+    std::vector<ue_wrap::save_record::SaveRecord> inventory;  // saveSlot.inventoryData
     std::vector<EquipRecord> equipment;  // saveSlot.equipment (worn)
     std::vector<EquipRecord> hold;       // saveSlot.hold (hands)
 };
