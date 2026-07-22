@@ -62,8 +62,14 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
   (`SeedKnownKeyedProps`/`ReSeedKnownKeyedProps`), NOT the Init-POST observer **[V/RD]**; spawner-spawned
   props DO fire the **Init-POST observer** (`GrabObserver_Aprop_Init_POST_Body`) **[V]**; Q-menu/toolgun
   BeginDeferred spawns are caught at **`FinishSpawningActor` POST** (their `init()` is BP-internal →
-  Init-POST never fires) **[V]**; container `takeObj` is caught at **takeObj POST** (the nested Init defers
-  via `g_takeObjInFlight`) **[V]**.
+  Init-POST never fires) **[V]**; container `takeObj` was documented as caught at **takeObj POST** —
+  **CORRECTED 2026-07-22, this was never true [V]:** `takeObj` is `EX_LocalVirtualFunction` (0x45), so
+  the ProcessEvent observer in `prop_container_extract.cpp` has fired **ZERO times across full sessions
+  on both peers** while confirmed registered. Host-side container extracts are, and always were,
+  broadcast by `host_spawn_watcher`'s `FinishSpawningActor` seam instead. The file's own header comment
+  still calls its observer "the canonical broadcaster for container extracts"; that comment is FALSE.
+  Retirement of the observer is NOT free — it also maintains the `g_takeObjInFlight` bracket — so it
+  needs its own check ([[feedback-verify-before-retiring-a-fix]]).
 - **Identity:** the **BP save Key string** is the cross-peer id (the game mints it via `NewGuid`; we READ it,
   and on a receiver write the host's Key via `setKey` before FinishSpawningActor) **[V/RD]**; a host eid
   rides alongside.
@@ -73,6 +79,21 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
   (a client caddy/reelbox EJECT births a reel in-hand; the unparked reel-class client FinishSpawn in the
   F2 drain sends the intent; the host `HostSpawnPlacedProp`s it born-ASLEEP, class-whitelisted to the
   `Aprop_reel_C` lineage — NOT a general client-spawn door) **[AS-BUILT, smoke]**.
+- **THE CONSEQUENCE OF "NOT A GENERAL DOOR" — a client's ordinary fresh birth is SILENTLY LOST.**
+  `prop_drop_intent.cpp:279` reads `if (!parked && !freshBirth) continue;`, where `parked` means the
+  key's pickup-DESTROY already crossed to the host and `freshBirth` is a CLASS WHITELIST (reel v114 →
+  module v118 → drive v119, widened three times). **Any other client-born keyed `Aprop_C` is dropped
+  with no log and never reaches the host.** The measured instance: a client extracting an ordinary item
+  from a world container spawns a real world actor via `takeObj`, and the host is never told — the
+  container decrement crosses (v125) while the ITEM exists on the extractor only. Contrast the host,
+  whose `host_spawn_watcher` broadcaster has **no park check and no whitelist** — so the same player
+  action is expressed on one peer and dropped on the other purely by role. **[RD 2026-07-22** — the gate
+  is code-certain, but the runtime discriminator that separates "dropped at `:279`" from "never
+  enqueued" has not been run; see the ledger
+  `research/findings/votv-take4-arc-open-threads-2026-07-22.md`**]**. Widening the gate is NOT a
+  one-liner: `freshBirth` also sets `pf::kSleep` (born-asleep is right for a reel handed to the pose
+  stream, likely wrong for an extracted item), so the firing set AND the physics axis must be measured
+  before any fix.
 - **Save-scalar at birth (v114):** per-prop save state (`struct_save.mFloat[0]`-class — the reel's
   `Progress @0x364`) rides `PropSpawnPayload.savedScalar` (+flag 0x40) on EVERY birth path — live express,
   join snapshot, container extract, BOTH intent kinds — via ONE shared reader

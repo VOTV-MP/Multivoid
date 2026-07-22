@@ -442,7 +442,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   is a genuine inventory→world birth (`PropDropIntent` carried only the float). **Birth-state ≠
   steady-state** — KEEP `drive_sync`'s `DrivePayload` (a disc mutating in a rack is not a birth). *Look
   FIRST:* prop.h savedScalar block; grep `ReadSavedScalarForClass`;
-  `votv-drive-disc-content-birth-DESIGN-2026-07-21.md`.
+  `votv-drive-disc-content-birth-DESIGN-2026-07-21.md`. **EMISSION SITS ABOVE CONTENT (measured
+  2026-07-22):** `prop_drop_intent.cpp` is ONE funnel — `:279` `if (!parked && !freshBirth) continue;`
+  decides WHO is announced, `:293` decides WHAT the survivor carries (this lesson's axis), `:307` is
+  gated by the same whitelist. `freshBirth` is a CLASS whitelist (reel v114 → module v118 → drive
+  v119), so `d14b6644` works for drives but any non-whitelisted class (an ordinary item a client
+  extracts from a container) is discarded at `:279` and the content channel is never called. **One
+  design, two axes, not a stack.** Widening `:279` is not a one-liner: `freshBirth` also sets
+  `pf::kSleep`. *Look FIRST:* check `:279` before designing what a client birth carries — if the class
+  cannot pass the gate, the payload question is moot.
   `memory/lesson_saved_scalar_birth_channel_covers_every_birth_path.md`
 - **A held/collected keyed prop is PER-PLAYER INVENTORY data, not a world actor** — a `SaveRecord` in
   `saveSlot.hold[]`/`inventory[]`, streamed+persisted per-GUID by `player_inventory_sync` SEPARATELY
@@ -1054,6 +1062,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `votv-session-streams-extraction-DESIGN-2026-07-18.md`;
   `votv-netpump-decomposition-DESIGN-2026-07-18.md`; `votv-autotest-dissolve-DESIGN-2026-07-19.md`;
   `coop/dev/drive_selftest.cpp`.
+  **THE TIMING HALF (2026-07-22): equivalence proves "after == before", NEVER "before was correct."**
+  The whole recipe is silent on whether the behaviour was worth preserving — and that silence is
+  dangerous precisely because the instruments come back GREEN. Measured: `container_contents_sync.cpp`
+  at 853 LOC (soft cap 800) looked like ideal no-PC extraction work, but its arbitration compares the
+  hash of the WHOLE container, and the already-approved fix for that rewrites `HostAcceptsClientWrite`,
+  `g_publishedHash`, `g_baseHash` and the blob format together. Extracting first would freeze an interim
+  shape and rewrite the new file wholesale a step later, while a byte-equal body-diff certified the move
+  as faithful — faithful to a shape about to die. **Rule:** before extracting, check whether an OPEN
+  measurement or an approved change targets the code being moved; if so the extraction WAITS. Over the
+  soft cap is an audit flag, not a blocker (soft 800, hard 1500). *Look FIRST:* the open-thread ledger's
+  gate column — if a still-open row names the code you are moving, the shape is provisional.
   `memory/lesson_refactor_equivalence_frozen_digest_instrument.md`
 - **A positional resolve table makes a mid-row removal SILENTLY corrupting — and BOTH the literal-diff
   instrument AND the compiler are blind to a missed index shift** (2026-07-19 comp_pane /qf R1: an
