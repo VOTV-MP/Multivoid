@@ -889,9 +889,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   **"a LEAF class resolving a BASE-declared function, however that class was obtained"**. It is never
   invoked, so nothing breaks; the damage is an instrument printing `setTick=0000000000000000`
   unremarked. Eight cached-BP-class shipping sites re-checked on the corrected predicate: all SAFE.
-  Latent: `save_browser.cpp:188`, `spawn_menu.cpp:130`/`:165` are SILENT on null — safe today, would go
-  dead wordlessly after a recook, and the spawn_menu pair gates the "LOAD-BEARING UN-STICK" input
-  restore. **Look here FIRST:** the ownership authority is
+  Latent, and NOT one item — split by consequence, not mechanism: **`spawn_menu.cpp:130`/`:165` are
+  LOAD-BEARING** (they gate the input-mode restore the file itself calls "THE LOAD-BEARING UN-STICK";
+  a wordless death after a recook traps the player's input in `GameAndUI`), while
+  `save_browser.cpp:188` is a deliberate fail-open whose worst case is a mis-listed save name.
+  **The audit closed the RESOLVE axis only — that a call LANDS (ParamFrame, param names,
+  `EX_*`-invisible dispatch) was never checked.** **Look here FIRST:** the ownership authority is
   `Game_0.9.0n_HOST/.../Win64/CXXHeaderDump/*.hpp` (2645 files, each block = only that class's OWN
   functions). Check which class DECLARES the function before writing any `FindFunction`, filter on
   leaf-vs-base rather than on the call shape, and always LOG a failed resolve.

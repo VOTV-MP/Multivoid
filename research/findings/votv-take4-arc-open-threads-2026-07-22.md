@@ -106,7 +106,9 @@ channel is worse than none: it manufactures a false negative out of a good run. 
 
 | Thread | Status | Gate | Note |
 |---|---|---|---|
-| **`reflection.cpp` `FindFunction` does not walk the superclass chain** | **AUDITED 2026-07-22 -- CLOSED, no RED found.** 19 `ClassOf(instance)` sites + the wider leaf-class sweep: 1 dead resolve (`door_probe.cpp:81`), never invoked, zero gameplay effect. No verified lane is affected. | closed; 3 latent silent-on-null sites carried forward below | see the audit record in section 2b |
+| **`reflection.cpp` `FindFunction` does not walk the superclass chain** | **AUDITED 2026-07-22 -- no RED found.** 19 `ClassOf(instance)` sites + the wider leaf-class sweep: 1 dead resolve (`door_probe.cpp:81`), never invoked, zero gameplay effect. **CLOSED FOR ONE AXIS ONLY: the audit proves each resolve returns NON-NULL. It does NOT prove the call LANDS** -- `ParamFrame` validity, parameter-name spelling and `EX_*`-invisible dispatch were never checked and remain open. | resolve axis closed; dispatch axis **UNAUDITED** | see the audit record in section 2b |
+| **`spawn_menu.cpp:130` + `:165` -- silent on a null resolve, and LOAD-BEARING** | SAFE today; would go dead **wordlessly** after a game recook that moves/renames `SetInputMode_GameAndUIEx` / `SetInputMode_GameOnly` | gate:none -- **highest-priority latent item on this page** | The pair gates the input-mode restore the file's own comment at `:158` calls "THE LOAD-BEARING UN-STICK". A silent no-op leaves the player's input trapped in `GameAndUI` -- i.e. the player loses control of the game. Not the same weight as the row below. |
+| **`save_browser.cpp:188` -- silent on a null resolve** | SAFE today; deliberate fail-open ("list rather than hide") | gate:none -- low priority | Worst case is a mis-listed save name. Grouped with the row above ONLY by mechanism; the consequences are not comparable and they must not be deferred as one item. |
 | **SACK-PHYS** -- our `SuppressTick` silences the AnimBP feed | OPEN | gate:none -- own fix | from take-4 |
 | **KERFUR-BLUE** | NOT RE'd | gate:none -- own approach | from take-4 |
 | **droneConsole** -- a client pressing E to send the drone back is a no-op | NOT RE'd | gate:none -- own hook | from take-4 |
@@ -146,11 +148,19 @@ cached-BP-class shipping sites were checked against the dump and are SAFE --
 `trigger_eventer_C::runEvent`/`runSpecialEvent`, `mainGamemode_C::wakeup`,
 `analogDScreenTest_C::updComp`, each declared on its own class.
 
-**Carried forward (latent, not live): three shipping sites are SILENT on a null resolve.**
-`save_browser.cpp:188` (deliberate fail-open), `spawn_menu.cpp:130` and `:165`. All three are SAFE
-today. They would go dead without a word after a game recook that moves or renames those functions --
-and the spawn_menu pair gates the input-mode restore that the file's own comment at `:158` calls
-"THE LOAD-BEARING UN-STICK". A silent no-op there leaves input trapped in `GameAndUI`.
+**Carried forward (latent, not live): three shipping sites are SILENT on a null resolve -- but they are
+NOT one item.** Same mechanism, incomparable consequences, so they are split into two ledger rows and
+must not be deferred together:
+
+- **`spawn_menu.cpp:130` + `:165` -- LOAD-BEARING.** They gate the input-mode restore the file's own
+  comment at `:158` calls "THE LOAD-BEARING UN-STICK". A silent no-op there leaves the player's input
+  trapped in `GameAndUI` -- the player loses control of the game. This is the highest-priority latent
+  item produced by the audit.
+- **`save_browser.cpp:188` -- low priority.** Deliberate fail-open ("list rather than hide"); worst
+  case is a mis-listed save name.
+
+Grouping them by "silent on null" would let a future session read "three latent, safe today" and
+shelve all three at the same weight. Split by CONSEQUENCE OF A RECOOK, not by mechanism.
 
 **Scope of this audit, stated so it is not over-read:** it verifies DECLARATION, i.e. that the resolve
 returns non-null. It does NOT verify that the call lands -- `ParamFrame` validity, parameter-name
