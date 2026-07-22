@@ -47,7 +47,9 @@ import sys
 
 DUMP = ("Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/"
         "CXXHeaderDump")
-SRC = "src/votv-coop/src"
+SRC = "src/votv-coop"   # NOT src/ alone: headers live in include/, and the
+                       # first version scanned only src/ and undercounted by 43
+                       # classes (161 -> 204). Scope the scan at the module root.
 TAKES = "tools/verified_takes.tsv"
 
 # The walk stops here. Every BP class reaches these, so continuing past them
