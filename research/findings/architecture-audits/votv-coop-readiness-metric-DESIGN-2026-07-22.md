@@ -283,3 +283,28 @@ must occupy a row, and under a verb unit it does not
 
 **Do NOT build the container profile before the unit settles.** Container is the right first system
 precisely because its red facet is the one a class-or-verb profile cannot see.
+
+### 9.5 The lane spine inherits the same blindness unless it EXPANDS — the `/qf`'s first question
+
+§9.3 leaves "the spine may be the LANE" as the opening position. It carries a trap that must be
+tested BEFORE it is adopted, by this document's own rule (unit against the known red, before any
+denominator).
+
+One lane, `container_contents_sync`, carries facets of **different** status:
+
+| facet | status |
+|---|---|
+| `addObject` receive (burgers) | VERIFIED |
+| `takeObj` upward, v125 client->host | VERIFIED hands-on |
+| **simultaneous grab** | **RED — `CONFLICT=0`, the CAS never ran once** |
+| nested container-in-container | deferred by design |
+
+So "the lane is synced" is the same lie at a coarser granule that "the container is synced" and "44
+classes are green" already were. **A lane spine is honest ONLY if a lane row EXPANDS into facets
+(verb / field-invariant / race) — never if it carries one status.**
+
+The `/qf` therefore opens on: **is the lane a UNIT OF ACCOUNT (one row, one status) or a CONTAINER OF
+ROWS (lane -> its facets)?** If a unit, the simultaneous-grab red is invisible under a green lane and
+the spine is wrong in exactly the way class and verb were. If a container, this IS the per-system
+profile already named, with the lane as key instead of the class. Calibrate against
+`container_contents_sync`'s `CONFLICT=0` before adopting either.
