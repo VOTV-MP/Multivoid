@@ -137,11 +137,12 @@ readiness* — otherwise the profile launders a DESIGN claim as a measurement on
 exactly the defect the ladder was adopted to kill. AS-BUILT must not become a soft green between the
 structural floor and hands-on.
 
-## 8. Where to look FIRST next time
+## 7b. Where to look FIRST next time
 
 Before proposing ANY dump-derived metric: §3 of this doc. A syntactic marker set over the CXX dump
 cannot express "coop-relevant", and its false-positive side is structurally uncalibratable. The dump's
-honest contributions are the exhaustive enumeration (2305) and the zero-behaviour floor (838).
+honest contributions are the exhaustive enumeration (2291, corrected — see §8.1) and the
+zero-behaviour floor (838).
 
 [[lesson-negative-grep-verify-against-known-positive]]
 [[lesson-string-presence-in-cooked-asset-is-not-a-structural-fact]]
@@ -201,5 +202,84 @@ Second scope bug, found while looking for the `vm_dispatch` API: the literal sca
 bugs shared a shape — the error was in what the tool considered its own territory, so the tool agreed
 with itself and nothing internal could surface it.
 
-`README.md` carries `1453 / 175 / 14 / 2` with percentages as a share of the line ABOVE, never of the
-whole, and each limit stated in the README itself.
+`README.md` carries `1453 / 175 / 12 / 2` with percentages as a share of the line ABOVE, never of the
+whole, and each limit stated in the README itself. (The written-status column was `14` while the
+README claimed the numbers were generated; moving it INTO the tool made it disagree — a shell heredoc
+had turned `\b` into a literal BACKSPACE in two regexes, and the column had been reading 0, which
+looked entirely plausible as a finding about the docs. Fourth instrument bug, same shape as the other
+three.)
+
+---
+
+## 9. The per-system PROFILE brief (2026-07-22, for its own `/qf` — NOT built)
+
+The user proposed a chain: **granule -> domain -> synced? -> in work? -> table**, and asked the one
+question that decides whether it is a measurement or a rubrication: **which arrows are machine and
+which are judgment.** Two arrows had no named anchor. Both were measured before writing this brief,
+because a chain is honest exactly as far as its weakest link.
+
+### 9.1 Link 2 (domain): a super-anchor EXISTS, and it partitions the wrong thing
+
+Machine and parameter-free — the domain is the subtree of a named ancestor, no threshold:
+
+| anchor | subtree |
+|---|---|
+| `Aprop_container_C` | 60 |
+| `Aprop_food_C` | 149 |
+| `Aprop_corded_C` | 83 |
+| `AkerfurOmega_C` | 23 |
+
+So the container — the first system we would profile — HAS a machine domain. But the systems carrying
+the hardest sync work do not:
+
+| system | measured |
+|---|---|
+| weather | **1 class**, no parent, no subtree |
+| meadow | **0 classes** — the domain lives entirely in a save struct |
+| desk | 4 classes under THREE unrelated parents (`3dPrinterAnim_C`, `container_C`, `corded_C`) |
+| laptop / console | under `Aactor_save_C`, a generic 180-class root, not a domain |
+
+And there is no middle tier for most classes: **361 of `Aprop_C`'s 456 direct children are leaves**,
+so "domain = subtree" degenerates either to the class itself or to `Aprop_C` (1236).
+
+**Finding: the super-anchor partitions the GAME'S OBJECT TAXONOMY, not our SYSTEMS.** It is the same
+shape as the verb result in §8.3 — the machine unit expresses object-ness, while a large share of our
+work is field-shaped, save-shaped, or console-shaped and has no taxonomic existence at all.
+
+### 9.2 Link 4 (in work): the registry is machine, but it is keyed on the FILE
+
+`research/findings/votv-take4-arc-open-threads-2026-07-22.md` carries a real parseable vocabulary —
+`gate:none` x10, `gate:user` x5, `gate:me` x3 — so "in work" need never be read from memory.
+
+But across its 199 lines it cites **9 `.cpp` files and 9 class tokens**, several of the latter
+incidental (`cockroachMaster_C`, `door_C`, from a probe). **A thread->class join does not exist; a
+thread->file join does.** And file->domain is precisely the path heuristic that answered BACKWARDS on
+known positives (§8.3's rejected candidate) — so routing link 4 through the class re-imports a
+rejected instrument.
+
+### 9.3 What the two measurements jointly say
+
+The only two anchors that exist are keyed on things that are **not the class**: the registry on the
+LANE (a file of our code), the taxonomy on the SUBTREE (a family of the game's objects). The class is
+the intersection where neither lives whole. That the profile's spine may therefore be the LANE rather
+than the class or the verb is a POSITION, not a measurement — it is the `/qf`'s opening question, not
+a conclusion of this document.
+
+### 9.4 The brief, link by link
+
+| link | anchor | verdict |
+|---|---|---|
+| 1. granule | dump (class), bytecode (verb), lane (field), hands-on (race) | MACHINE for class+verb; races are hands-on-sourced, so enumeration is **not single-source** |
+| 2. domain | ancestor subtree | MACHINE **where a taxonomy exists**; absent for weather/meadow/desk/laptop. Not universal -> cannot be a column for every row |
+| 3. synced? | the 3-rung ladder (floor / literal-named / cited take) | MACHINE, limits already named in `tools/coverage.py` |
+| 4. in work? | the thread registry's `gate:` token | MACHINE **only if keyed by FILE**; via class it needs the rejected path heuristic |
+| 5. table | — | output, honest iff 1-4 are |
+
+**Rules the `/qf` inherits, not re-litigates:** any link without a machine anchor ships as an explicit
+`[judgment]` column and is never presented as measured; and the unit is tested against the KNOWN RED
+before any denominator is fixed — the container's simultaneous grab (`CONFLICT=0`, the CAS never ran)
+must occupy a row, and under a verb unit it does not
+(`[[lesson-a-unit-of-measure-must-express-the-known-red-case]]`).
+
+**Do NOT build the container profile before the unit settles.** Container is the right first system
+precisely because its red facet is the one a class-or-verb profile cannot see.
