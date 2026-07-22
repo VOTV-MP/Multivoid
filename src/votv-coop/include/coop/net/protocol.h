@@ -705,7 +705,18 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 124; // v124 (2026-07-22, R11 container contents):
+inline constexpr uint16_t kProtocolVersion = 125; // v125 (2026-07-22, R11b container extraction):
+                                                  // ContainerContents becomes BIDIRECTIONAL and its
+                                                  // blob gains a baseHash. A client now AUTHORS the
+                                                  // world container it mutated (presser-authored
+                                                  // state -- the verb has already run locally, so an
+                                                  // intent that could be denied cannot exist); the
+                                                  // host applies, then RELAYS excluding the author.
+                                                  // Both halves are wire-visible changes: a v124 peer
+                                                  // would reject the longer blob AND never author its
+                                                  // own take -- the R11b dupe (client took 1 of 2, the
+                                                  // host still saw 2, 3 burgers from an order of 2).
+                                                  // Prior: v124 (2026-07-22, R11 container contents):
                                                   // NEW ReliableKind ContainerContents = 118 --
                                                   // a world container's GObjStack slice as
                                                   // host-authored state. New kind = new wire
@@ -2547,12 +2558,27 @@ enum class ReliableKind : uint8_t {
                        //     EX_LocalVirtualFunction, so no shipped observer saw them and
                        //     the client's copy froze at its join snapshot -- the drone
                        //     delivery landed full on the host and 0.0 on the client.
-                       //     BlobChunkPayload; blob = [u8 op=0][u32 eid][u16 n] then n x
-                       //     the save_record_wire per-record grammar (the SAME grammar the
-                       //     player inventory ships -- classes/FNames as strings, signals
-                       //     via signal_wire). HOST-AUTHORED ONLY: world containers are
-                       //     host-owned (the client's drone brain is parked by drone_sync),
-                       //     so receivers accept senderSlot==0 only and clients never send.
+                       //     BlobChunkPayload; blob = [u8 op=0][u32 eid][u64 baseHash]
+                       //     [u16 n] then n x the save_record_wire per-record grammar (the
+                       //     SAME grammar the player inventory ships -- classes/FNames as
+                       //     strings, signals via signal_wire).
+                       //     v125 (R11b) -- BIDIRECTIONAL, presser-authored. The peer whose
+                       //     0x45 addObject/takeObj edge fired authors the slice; the host
+                       //     applies it and RELAYS to every other peer EXCLUDING the author
+                       //     (an echo to the author reverts its newer local value and primes
+                       //     the baseline over it -- the eaten-scroll race,
+                       //     [[lesson-presser-authored-state-not-intent-for-invisible-verbs]]).
+                       //     There is no intent/deny shape available: takeObj is
+                       //     EX_LocalVirtualFunction, so the item has ALREADY materialized on
+                       //     the presser before any seam of ours can see it.
+                       //     baseHash = the last host truth the author had applied. The host
+                       //     accepts only if it still equals what the host last published for
+                       //     that eid AND no host-side change is pending; otherwise the write
+                       //     is REJECTED, the host re-publishes its own truth to the author,
+                       //     and a CONFLICT line is logged. That counter is the instrument
+                       //     that decides whether a rollback shape is ever needed -- without
+                       //     the compare, a stale full-slice write would silently erase a
+                       //     host addition the author had not yet seen (a NEW loss class).
                        //     A container whose propInventory.Player is true is PERSONAL
                        //     inventory (mainPlayer / ui_playerInventory share the same
                        //     GObjStack) and is SKIPPED fail-closed -- that half is

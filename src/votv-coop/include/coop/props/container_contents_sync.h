@@ -23,8 +23,19 @@
 //             (drone::compileOrder x2, propInventory::addLoot x4, prop_container::
 //             putObjectIn_overlap, the prop_container ubergraph, lib::findInventoryObject,
 //             prop_container::{extract,getObject}, checkObjectsVolume).
-//   send   -- HOST ONLY, on the sweep after the verb: read the container's GObjStack slice and
-//             broadcast it whole. Clients never send; world containers are host-owned.
+//   send   -- v125 (R11b): THE PEER WHOSE VERB FIRED authors, on the sweep after the edge. There
+//             is no intent/deny shape available -- takeObj is EX_LocalVirtualFunction, so the item
+//             has ALREADY moved on the presser before any seam of ours exists; a request the host
+//             could refuse cannot be built ([[lesson-presser-authored-state-not-intent-for-
+//             invisible-verbs]]). The host ARBITRATES a client slice (baseHash compare-and-swap:
+//             accept only if the author edited the truth the host last published and no host-side
+//             change is in flight), applies it, and RELAYS to every other peer EXCLUDING the
+//             author -- echoing a peer's own state back reverts its newer local value and primes
+//             the baseline over it (the eaten-scroll race). A refused write is answered with the
+//             host re-publishing its truth to that author, and counted: that counter is the
+//             evidence that decides whether a rollback shape is ever needed. Before v125 the
+//             callback returned at IsHost() and a client's every extraction was dropped -- the
+//             client took 1 of 2 burgers, the host still saw 2, and the world gained a burger.
 //   apply  -- raw-write the receiver's own GObjStack slot, then re-derive the SETTER-MANAGED
 //             state through the engine's own verbs: Aprop_container_C::updateVolumesAndMass()
 //             (currVol + Mass) and propInventory_C::recalculateNames() (display). We never
@@ -77,5 +88,26 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 void OnDisconnect();
+
+// ---- dev-instrument seams (coop/dev/container_selftest) --------------------------------------
+//
+// These exist so the instrument REUSES this module's measured world-vs-personal boundary instead
+// of reimplementing it. A probe that re-derives BOUNDARY 1 for itself would be free to get it
+// wrong in a way the shipped lane is not, and then the instrument would be testing a different
+// rule than the one that ships.
+
+struct WorldContainer {
+    uint32_t eid;
+    void* actor;
+    void* inv;    // the propInventory_C component
+};
+
+// Fill `out` with up to `want` live WORLD containers (BOUNDARY 1 applied). Host or client.
+size_t SnapshotWorldContainers(WorldContainer* out, size_t want);
+
+// The observable digest for one container: how many records its GObjStack slice holds and what
+// currVol the engine currently reports. Both peers print it; the smoke compares the NUMBERS.
+// False if the eid does not resolve to a live world container on this peer.
+bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol);
 
 }  // namespace coop::props::container_contents_sync
