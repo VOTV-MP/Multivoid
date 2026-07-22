@@ -175,7 +175,25 @@ spelling, and `EX_*`-invisible dispatch are all separate questions.
 - **Held WIP, never to be committed** (explicit paths only, never `git add -A`):
   `tools/mp.py`, `src/votv-coop/src/coop/props/trash_collect_sync.cpp`,
   `research/puppet_shots/host_puppet_nameplate.png`.
-- `container_contents_sync.cpp` is **853 LOC**, over the 800 soft cap. Extraction proposal on record:
-  move host arbitration (`HostAcceptsClientWrite`, the host branch, `RelayToOthers`, `g_publishedHash`,
-  `g_localChangeMs`, `g_conflictRejects`) into `container_contents_authority.cpp/.h`.
+- `container_contents_sync.cpp` is **853 LOC**, over the 800 soft cap (hard cap 1500). Extraction
+  proposal on record: move host arbitration (`HostAcceptsClientWrite`, the host branch,
+  `RelayToOthers`, `g_publishedHash`, `g_localChangeMs`, `g_conflictRejects`) into
+  `container_contents_authority.cpp/.h`.
+
+  **DELIBERATELY DEFERRED 2026-07-22 -- do NOT extract yet, and this is not procrastination.** The
+  arbitration's SHAPE is already slated to change: the CAS compare unit today is the hash of the WHOLE
+  container, so two peers editing DIFFERENT stacks in the SAME container conflict spuriously. That is
+  approved item 2 ("CAS granularity down to the record/slot"), and it rewrites exactly the functions
+  the extraction would move -- `HostAcceptsClientWrite`, `g_publishedHash`, `g_baseHash`, and the blob
+  format together.
+
+  Extracting first would freeze an interim shape and then rewrite the new file wholesale one step
+  later. Worse, the equivalence instruments would pass honestly while doing it: a body-diff proves
+  "after == before", never "before was correct". A green digest on a moved-but-provisional arbitration
+  reads as validation and is not.
+
+  **Correct order:** (1) the Q-PROP discriminator, (2) a run that produces `CONFLICT>0` -- which is
+  what fixes the arbitration's shape, (3) item 2 if that run shows the compare unit is too coarse,
+  (4) the extraction, once the shape has stopped moving. Being over the soft cap is an audit flag,
+  not a blocker.
 - Pre-push discipline: leak-audit the WHOLE unpushed stack, not just the newest commit.
