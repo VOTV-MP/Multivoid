@@ -34,8 +34,8 @@ dump — not hand-counted, and deliberately not summed into a single percentage.
 |---|---|---|
 | Game classes that can diverge between peers | **1453** | 63% of all 2291 |
 | Classes our code names by name | **175** | **12%** |
-| ...of those, carrying a written status | **14** | 8% |
-| Verified hands-on by a player | **2** | 14% |
+| ...of those, carrying a written status | **12** | 7% |
+| Verified hands-on by a player | **2** | 17% |
 
 Read the percentages down the column, not across: each one is a share of the
 line directly above it, and none of them is "the project is N% done". The

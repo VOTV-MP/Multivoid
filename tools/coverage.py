@@ -51,6 +51,10 @@ SRC = "src/votv-coop"   # NOT src/ alone: headers live in include/, and the
                        # first version scanned only src/ and undercounted by 43
                        # classes (161 -> 204). Scope the scan at the module root.
 TAKES = "tools/verified_takes.tsv"
+TRACKERS = ["docs/COOP_SYNC_MAP.md", "docs/signals/TRACKER.md",
+            "docs/COOP_ENTITY_EXPRESSION_MAP.md", "docs/COOP_RNG_AUTHORITY.md"]
+RUNG_RE = re.compile(r"\b(VERIFIED|AS-BUILT|DESIGN|OPEN|PARTIAL)\b", re.I)
+CLASS_TOK_RE = re.compile(r"\b([A-Za-z0-9_]+_C)\b")
 
 # The walk stops here. Every BP class reaches these, so continuing past them
 # makes "is an ancestor covered?" trivially true for everything.
@@ -157,6 +161,29 @@ def coverage_of(cls, lits, parent):
     return "none", None
 
 
+def read_doc_status(classes):
+    """Classes carrying a rung token on a tracker line that names them.
+
+    This is the DOCUMENTATION's coverage, not the code's -- the gap between it
+    and the literal-named set is the register's most useful product: our code
+    handles the class, nobody wrote down where it stands.
+    """
+    bare = {c[1:]: c for c in classes}
+    graded = set()
+    for path in TRACKERS:
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not RUNG_RE.search(line):
+                    continue
+                for tok in set(CLASS_TOK_RE.findall(line)):
+                    c = tok if tok in classes else bare.get(tok)
+                    if c:
+                        graded.add(c)
+    return graded
+
+
 def read_verified(path):
     """Hand-curated, but every row must CITE an artifact. A row without a
     citation is refused, not silently counted -- the whole point of this rung
@@ -203,6 +230,9 @@ def main():
     floor = {c for c, n in own.items() if n == 0}
     live = [c for c in own if c not in floor]
 
+    lit_named = {c for c in live if names_class(lits, c)}
+    graded = len(read_doc_status(set(own)) & lit_named)
+
     cov = {}
     via = {}
     for c in live:
@@ -227,6 +257,9 @@ def main():
         print("    via %-26s %4d" % (anc, n))
     if len(by_anc) > 10:
         print("    (+%d more ancestors)" % (len(by_anc) - 10))
+    print()
+    print("  ...of those, a written status   : %d   "
+          "<- a rung token in a tracker doc" % graded)
     print()
     print("  VERIFIED hands-on (cited takes) : %d   "
           "<- re-counted from %s, never parsed from a doc tail"
