@@ -21,8 +21,8 @@ or a hands-on run only the user can supply. `gate:none` = ready to work when pic
 | **`:279` birth-emission** -- a client's fresh unparked keyed `Aprop_C` birth is dropped unless its class is whitelisted (reel/module/drive). A container-extracted item is neither parked nor whitelisted. | OPEN, root confirmed by code-reading | **gate:me** -- the firing set of a widened `freshBirth` (who newly passes) AND the physics axis (`freshBirth` also sets `kSleep`; correct for a reel, likely wrong for an extracted item). Counting probe, not reasoning. | `prop_drop_intent.cpp:279` |
 | **d14b6644 (R14/15/16) drive-disc birth content** | CONVERGED (8 rounds), NOT built | **gate:user** -- the `savedScalar` RETIRE is gated on a reel+disc hands-on green (design 4.4: "the add ships, the deletion does not"). The ADD is not blocked. | design commit `d14b6644` |
 | **Relationship between the two above** | measured: ONE design, TWO axes | -- | `:279` (who passes) -> `:293` `ReadSavedScalarForClass` (what the passer carries) -> `:307` `NoteLocalDriveBirth` (same whitelist). A funnel, not a stack: a burger never reaches the content stage. |
-| **Q-STACK: the v125 client->host container decrement** | BUILT (proto 125) | **gate:user** -- runbook step (c) | `container_contents_sync.cpp` |
-| **Q-PROP / C5: does the extracted item reach the host's world** | code says NO; runtime UNCONFIRMED | **gate:user** -- runbook steps (a)+(b), positive control first | runbook `handson_runbook_2026-07-22_container_v125.md` |
+| **Q-STACK: the v125 client->host container decrement** | **VERIFIED GREEN 2026-07-22** -- hands-on, measured on BOTH logs | closed | see the take record below |
+| **Q-PROP / C5: does the extracted item reach the host's world** | **RED 2026-07-22** -- client extracted, authored zero intents | folds into `:279` (gate:me) | see the take record below |
 | **The CAS refusal path leaves the item with the refused client** | OPEN | none -- **do NOT build separately**; it is a sub-case of `:279` and dissolves with it | `container_contents_sync.cpp:598-607` |
 | **"R11b: a client's extraction"** as its own item | DISSOLVED into `:279` | -- | superseded framing; see below |
 | **`updateVolumesAndMass` never re-derives on extraction** | OPEN -- measured: records 7->6 while `currVol` stayed 28579.0 on BOTH peers | gate:none -- narrow fix at the call site | co-requisite of R11b |
@@ -40,6 +40,45 @@ FinishSpawningActor`, RE doc section 4). Every design built on the inventory-rec
 canonical broadcaster for container extracts". It fired ZERO times on both peers -- `takeObj` is
 `EX_LocalVirtualFunction` (0x45), invisible to ProcessEvent. Host-side extracts have always been
 broadcast by `host_spawn_watcher`'s `FinishSpawningActor` hook instead. The comment is false.
+
+---
+
+## 1b. The 2026-07-22 20:47 take -- the record
+
+Both peers on b125, run 20:47-20:54. Container `eid=2139`, taken down 3 -> 0 by both peers in turn:
+
+| time | peer | line | reading |
+|---|---|---|---|
+| 20:52:49 | host | `shipped 3 records` | host authored 3 |
+| 20:52:49 | client | `applied 3 records` | client received |
+| 20:53:04 | host | `shipped 2 records` | host took one |
+| 20:53:04 | client | `applied 2 records` | client received |
+| 20:53:10 | **client** | `shipped 1 records [client-authored]` | **the client took one** |
+| 20:53:10 | **host** | `applied 1 records` | **the host accepted it** |
+| 20:53:16 | host | `shipped 0 records` | host took the last |
+| 20:53:16 | client | `applied 0 records` | client received |
+
+**Q-STACK GREEN.** Counters agree at every step, in both directions. This is the first hands-on
+confirmation of the v125 client->host half, and it closes the user's original b124 symptom
+("3 burgers from an order of 2").
+
+**Q-PROP RED.** The client extracted a real prop at 20:53:10 and authored **zero** `PROP-DROP`
+intents in the whole run, while `prop_drop_intent: FinishSpawningActor post-hook installed` confirms
+the module was live and would have logged an authoring. Consistent with `:279` dropping the birth
+(not parked, not a whitelisted class).
+
+**Strength of the Q-PROP verdict -- one notch below airtight.** The log cannot discriminate "dropped
+at `:279`" from "never enqueued at all"; both produce silence. The discriminator is cheap and is owed
+on the NEXT run: **have the client pick up any prop and place it back down** -- that is a parked
+place, so `PROP-DROP` MUST fire. Its presence proves the authoring path works and isolates the
+failure to `:279`; its absence moves the root upstream to the enqueue.
+
+**Instrument defect found and fixed in the same take.** The runbook told the user to grep
+`PROP-DROP|SPAWN broadcast` as the HOST-side positive control. Both are wrong channels for the host
+(`PROP-DROP` is client-only; `SPAWN broadcast` is the never-firing `takeObj` POST observer), so the
+control returned 0 on a healthy run and the take briefly read as void. The host's real broadcast line
+is `host_spawn_watcher: spawn-seam adopted` -- 5 of them in this run. A control naming the wrong
+channel is worse than none: it manufactures a false negative out of a good run. Runbook corrected.
 
 ---
 

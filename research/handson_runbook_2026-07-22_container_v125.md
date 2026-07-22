@@ -36,8 +36,17 @@ Walk to any world container with contents. **As the HOST**, take one item out.
 **A line of the prop-birth channel MUST appear in the host log:**
 
 ```
-grep -E "PROP-DROP|SPAWN broadcast" <host>/multivoid.log
+grep -E "spawn-seam adopted|MIRROR ambient spawn" <host>/multivoid.log
 ```
+
+**CORRECTED 2026-07-22 after the take.** This file originally said to grep
+`PROP-DROP|SPAWN broadcast`. Both strings are wrong for the HOST: `PROP-DROP` belongs to
+`prop_drop_intent`, which is CLIENT-only, and `SPAWN broadcast` belongs to the `takeObj` POST
+observer in `prop_container_extract.cpp`, which has never fired once (it is 0x45-invisible). Grepping
+them on the host returns 0 for a perfectly healthy run -- the control read as failed when it had
+actually passed under a different name (`host_spawn_watcher: spawn-seam adopted`, 5 lines in the
+2026-07-22 take). A control that names the wrong channel is worse than no control: it manufactures a
+void verdict out of a good run.
 
 **If NO line appears, STOP -- the run is void** and steps (b)/(c) prove nothing about Q-PROP.
 
