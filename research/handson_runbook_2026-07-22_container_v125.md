@@ -83,6 +83,38 @@ the client went 7->6), which is evidence the lane runs, not evidence it is right
 
 ---
 
+### (d) THE Q-PROP DISCRIMINATOR -- added after the 2026-07-22 take
+
+The take left Q-PROP RED but its ROOT only `[RD]`: the log cannot separate "dropped at
+`prop_drop_intent.cpp:279`" from "never enqueued at all", because both look like silence. This step
+separates them and costs about thirty seconds.
+
+**As the CLIENT: pick up a prop, then place it back down.** Then grep the CLIENT log:
+
+```
+grep "PROP-DROP" <client>/multivoid.log
+```
+
+- **A line appears** -> the authoring path downstream of the gate works, so the burger's failure is
+  admission at `:279`. Root moves `[RD]` -> `[V]` and gate A (the firing-set probe) may start.
+- **No line** -> the root is UPSTREAM of `:279`, in the enqueue. Gate A must NOT start; it would probe
+  a line that is not on the path.
+
+**Choose the prop by the property that makes the stimulus valid -- not "any prop".**
+
+- It must be a **pre-existing world prop both peers can see**. NOT one the client just extracted from
+  a container: that is precisely the unparked case under test, and it would prove nothing.
+- **Record the prop's class in the report.** If it happens to be a reel / module / drive, it can pass
+  via the `freshBirth` whitelist instead of the parked branch. That still proves the path is alive,
+  but it no longer tells you WHICH branch admitted it -- so a `freshBirth`-class prop leaves the
+  `:279` branch undifferentiated. Prefer an ordinary prop; if you used a whitelisted one, say so, and
+  do not read the result as having isolated the branch.
+
+Same trap as the R11b instrument firing on empty containers and reporting nothing: a causing probe
+must pick its target by what makes the stimulus VALID.
+
+---
+
 ## What to read in the logs
 
 Host log, `Game_0.9.0n_HOST/.../multivoid.log`:
