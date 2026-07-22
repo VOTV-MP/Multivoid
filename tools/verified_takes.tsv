@@ -1,0 +1,26 @@
+# VERIFIED = hands-on. One row per class. TAB separated.
+# class <TAB> date <TAB> artifact-path <TAB> verdict
+#
+# A row is REFUSED by tools/coverage.py if the artifact path does not exist.
+# This rung is deliberately NOT derived: measured 2026-07-22, parsing the
+# doc tails scored 6 on a set where the re-count found 2-3, and it erred in
+# BOTH directions (4 invented, 1 missed). A syntactic proxy is not admissible
+# on the only rung that means "works for the player".
+#
+# Adding a row is a claim that a HUMAN played it and said so. An autonomous
+# smoke, an e2e selftest, or a harness run NEVER earns a row here -- those are
+# the AS-BUILT sub-partition, parsed from the doc tail, and they stay there.
+#
+# EXCLUDED, with the reason, so the absence is not read as an oversight:
+#
+#   Aeyer_C -- COOP_RNG_AUTHORITY.md:68 reads "the row goes VERIFIED only on a
+#     live owner_entity: OWN 'eyer_C' spawned locally from a NATURAL/night
+#     roll". That is a pre-registered CONDITION, not a verdict. The 2026-07-22
+#     pass counted this row as one of "3 hands-on VERIFIED" by reading the
+#     token; re-reading the sentence shows it says the opposite. The lane is
+#     DONE-OWNER-ENTITY awaiting its natural-roll take.
+#     research/handson_runbook_2026-07-10_eve_v108.md exercised it via the F1
+#     dev spawn, which is explicitly NOT the registered condition.
+
+AactorChipPile_C	2026-06-22	research/handson_runbook_2026-06-22_throw_rotation_sound.md	take-30: rotation + sound fixed, user-confirmed on the live throw
+UpropInventory_C	2026-07-22	research/handson_runbook_2026-07-22_container_v125.md	R11 container lane: shipped 2/1/0 matched applied 2/1/0, user saw the burgers
