@@ -1,7 +1,16 @@
 # Coop-readiness metric — can a percentage be GENERATED? (2026-07-22)
 
-**Status: QUESTION pass CONVERGED. No code, no register built.** The unit-of-account question is
-settled; the status-schema question is explicitly NOT and owes its own `/qf`.
+**Status: SUPERSEDED IN PART, same day (2026-07-22 night).** This document records the DENOMINATOR
+pass. Two of its statements were true when written and are no longer:
+
+- "No code, no register built" — the register IS built: `tools/coverage.py` +
+  `tools/verified_takes.tsv` (`ca73073f`, `0337d4c1`, `9f9aad5a`), and `README.md` carries generated
+  numbers (`48f96238`).
+- "§7 owes its own `/qf`" — that pass RAN the same night. Its outcome, and what it changed here, is
+  recorded in §8 below. Read §8 BEFORE trusting any figure in §3-§5.
+
+**Two figures in this document are WRONG and are corrected in §8:** the class total (2305) does not
+reproduce, and the hands-on VERIFIED count (3) included a row that states a CONDITION, not a verdict.
 
 **The ask (user, verbatim):** "можем ли мы для фазы 1 из roadmap и корня readme сделать процент
 готовности типа как-то считать что мы уже сделали из votv систем coop friendly" — then the
@@ -136,3 +145,61 @@ honest contributions are the exhaustive enumeration (2305) and the zero-behaviou
 
 [[lesson-negative-grep-verify-against-known-positive]]
 [[lesson-string-presence-in-cooked-asset-is-not-a-structural-fact]]
+
+---
+
+## 8. What the STATUS-SCHEMA pass changed here (2026-07-22 night, same day)
+
+The `/qf` §7 asked for ran. It did not refine this document's answers; it **corrected two of its
+measurements and replaced its central recommendation's unit twice.**
+
+### 8.1 Two figures in §3-§5 are wrong
+
+| §3-§5 says | measured 2026-07-22 night | why the earlier figure was wrong |
+|---|---|---|
+| **2305** BP classes | **2291** | Does not reproduce. Two independently written patterns (a bare `class X_C` token scan and a header-only scan requiring `:` or `{`) BOTH now yield 2291, and the set of referenced-but-never-defined classes is EMPTY. The 2305 came from a script that no longer exists; it is not defended, it is retired. |
+| **3** hands-on VERIFIED | **2** | `Aeyer_C` was counted by reading a token. `COOP_RNG_AUTHORITY.md:68` states *"the row goes VERIFIED only on a live `owner_entity: OWN 'eyer_C' spawned locally` from a NATURAL/night roll"* — a pre-registered CONDITION, not a verdict. The calibration TRUTH this document leans on was itself partly tail-derived. |
+
+The second correction **strengthens** §4's argument rather than weakening it: tail-parsing scored 6
+against a re-count of 2, so the divergence is threefold, not twofold.
+
+### 8.2 The floor survived, for a reason worth recording
+
+838 is confirmed — but the first re-implementation produced **1170**, and that was a bug, not a rival
+rule. `re.split` on a bare `class X_C` cuts a class body at its own MEMBER declarations
+(`class Aprop_fireExt_C* fireExt;` matches identically), re-attributing every following function to
+the member's TYPE. `AfireExtHolder_C` reported 0 own functions; it has 4. Caught by reading four
+bodies the rule called empty. See `[[lesson-class-member-declaration-looks-like-a-class-header]]`.
+
+### 8.3 The unit moved twice more, and the second move is the durable finding
+
+§6 recommended a per-class ladder. The schema pass tested finer units and both failed the same test:
+
+- **verb** — genuinely finer, and its anchor is genuinely STRONGER (a `vm_dispatch` registration is
+  functional where a class-name literal is referential). Verb surface is **20711** (class,verb)
+  pairs, machine, no free parameter. But `FindFunction`-with-a-literal anchors the CALL, not the
+  sync (`Concat_StrStr`, `GetGlobalTimeDilation` scored as anchored; `ReceiveBeginPlay` alone spans
+  621 classes), interception is only ~29 verbs, and **a large share of our sync mirrors FIELDS**
+  (pose, `DeskInput`, weather) with no verb shape at all. A verb denominator asserts the mechanism.
+- **the test that killed it** — the container's known red facet (simultaneous grab, `CONFLICT=0`) is
+  a race on the slot FIELD. Under a verb unit, `addObject` and `takeObj` both read VERIFIED and the
+  container shows GREEN. See `[[lesson-a-unit-of-measure-must-express-the-known-red-case]]`.
+
+**Settled: a verb is the right unit for DIAGNOSIS and the wrong unit for a PERCENTAGE.** The next
+unit candidate is a FACET (verb OR field-invariant OR race), and it is NOT built — its enumeration is
+not single-source (verbs from the dump, fields from the lane, races from hands-on reds), so it opens
+the per-system-profile `/qf` rather than closing this one.
+
+### 8.4 As-built, and one more instrument bug
+
+`tools/coverage.py` + `tools/verified_takes.tsv`. Every column one machine source with a named limit;
+base-walk coverage is reported PER COVERING ANCESTOR and never summed (`Aprop_C` alone accounts for
+443, so an aggregate reads as reach the generic lane does not have).
+
+Second scope bug, found while looking for the `vm_dispatch` API: the literal scan covered only
+`src/votv-coop/src`, missing `include/`. **161 -> 175** over the can-diverge set. Both instrument
+bugs shared a shape — the error was in what the tool considered its own territory, so the tool agreed
+with itself and nothing internal could surface it.
+
+`README.md` carries `1453 / 175 / 14 / 2` with percentages as a share of the line ABOVE, never of the
+whole, and each limit stated in the README itself.
