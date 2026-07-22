@@ -68,6 +68,14 @@ uint64_t NowMs() {
 
 uint64_t g_nextSample = 0;
 uint64_t g_lastHash = 0;
+
+// Per-GObjStack-slot occupancy from the previous sample. The census answered Q-A/Q-B but
+// exposed a NEW fact it could not explain: on the host the delivery landed (slot count 0 -> 2)
+// and then the SAME slot went back to 0 within 8 seconds, while the player-facing sack was
+// never observed as an actor at all. So the contents LEAVE the container we sync. This tracks
+// EVERY slot's count and reports the deltas, which turns "where did the burgers go" into a
+// direct reading (one slot loses N, another gains N) instead of another inference.
+std::vector<int32_t> g_prevSlots;
 bool     g_first = true;
 int      g_sampleNo = 0;
 
@@ -193,6 +201,39 @@ void Tick(bool isHost) {
         r.isDroneContainer = (a == droneContainer);
         for (void* sc : sackContainers) if (sc == a) r.isSackContainer = true;
         rows.push_back(std::move(r));
+    }
+
+    // --- whole-GObjStack slot delta (the "where did it go" reading) ---
+    {
+        std::vector<int32_t> cur;
+        if (void* save = ue_wrap::inventory::ResolveSaveSlot()) {
+            const int32_t offStack = Off(R::ClassOf(save), L"GObjStack");
+            if (offStack >= 0) {
+                const SR::Arr stack = SR::ReadArr(save, offStack);
+                cur.reserve(static_cast<size_t>(stack.num));
+                for (int32_t i = 0; i < stack.num; ++i)
+                    cur.push_back(SR::ReadArr(stack.data + static_cast<size_t>(i) * SR::kMxStride, 0).num);
+            }
+        }
+        if (!g_prevSlots.empty() || !cur.empty()) {
+            std::wstring deltas;
+            const size_t n = cur.size() > g_prevSlots.size() ? cur.size() : g_prevSlots.size();
+            int changed = 0;
+            for (size_t i = 0; i < n; ++i) {
+                const int32_t a = i < g_prevSlots.size() ? g_prevSlots[i] : -1;
+                const int32_t b = i < cur.size() ? cur[i] : -1;
+                if (a == b) continue;
+                ++changed;
+                if (changed <= 24) {
+                    deltas += L" [" + std::to_wstring(i) + L"] " + std::to_wstring(a)
+                            + L"->" + std::to_wstring(b);
+                }
+            }
+            if (changed)
+                UE_LOGI("[delivery_census] GObjStack slots=%zu changed=%d:%ls",
+                        cur.size(), changed, deltas.c_str());
+        }
+        g_prevSlots.swap(cur);
     }
 
     const uint64_t h = HashRows(rows);
