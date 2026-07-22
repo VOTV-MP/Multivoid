@@ -131,6 +131,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   synced until the census killed it). Look FIRST:
   `research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md` §3.
   `memory/lesson_syntactic_marker_set_cannot_express_semantic_relevance.md`
+- **A class MEMBER declaration is indistinguishable from a class HEADER by a bare regex** — in the CXX
+  dump `class Aprop_fireExt_C* fireExt;` matches `class X_C` exactly as a header does, so splitting on
+  the bare form cuts each body at its own member declarations and credits the functions that follow to
+  the member's TYPE. Measured 2026-07-22: `AfireExtHolder_C` reported 0 own functions while its four
+  went to `Aprop_fireExt_C`, putting the zero-behaviour floor at 1170 where it is 838 — a 332-class
+  error sitting under every ratio, and entirely self-consistent from inside the instrument. Caught only
+  by READING four bodies the rule called empty. Require the inheritance colon or the opening brace.
+  Corollary: "which of these two rules is right" was the wrong question — there was one rule and one
+  broken one; ask whether each counts what it claims before comparing outputs. Look FIRST: the
+  `CLASS_RE` comment in `tools/coverage.py`.
+  `memory/lesson_class_member_declaration_looks_like_a_class_header.md`
+- **Anchor a coverage/status claim to a REGISTRATION, not to a MENTION** — a registration (an entry in a
+  dispatch/handler table) either reaches a callback or it does not; a mention (a name in a string
+  literal, a grep hit) can serve a UI list or an enumeration. Measured 2026-07-22: the class-level
+  literal anchor is false-positive on enumeration literals, and a file-path heuristic to separate them
+  answered BACKWARDS on known positives (narrowed out the real lanes `ApiramidSpawner_C` /
+  `Aticker_base_C`, kept `AATV_C` / `Abed_C`). The verb-level anchor (registration in `vm_dispatch`) has
+  no such failure mode — so the FINER granularity carries the STRONGER anchor, inverting the usual
+  expectation: granularity and anchor strength are independent axes. State the new anchor's own limit
+  before building on it (registration cannot see PE-seam or field-poll lanes; size unmeasured).
+  `memory/lesson_a_registration_is_a_functional_fact_a_mention_is_not.md`
 - **Before changing a FUNCTION's behavior, enumerate ALL its call sites + state what each expects; before
   SUBTRACTING an output at a seam, enumerate every other producer/consumer at that seam** — acting on an
   incomplete map of what you're touching is ONE recurring root with many faces (a "mechanism" that is N
