@@ -33,6 +33,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A CAUSING probe must prove its stimulus LANDED before its verdict means anything** (sharpens
+  "a probe must COUNT, not confirm"). When the probe has to trigger the event it measures, an absent
+  result line is ambiguous: dead lane, or dead trigger? Measured 2026-07-22: the R11b instrument fired
+  `addLoot` on the first two world containers by registry order, both EMPTY, changed nothing — and only
+  avoided reporting a false RED because it also measured its own effect and said
+  `records 0 -> 0 ... the TRIGGER is inert, so an absent 'callback ENTERED' line says nothing about the
+  lane`. Pick the target by the property that makes the stimulus VALID (a container with contents), not
+  by convenience. Once fixed, the same instrument caught two real bugs in the lane it was testing.
+  `memory/feedback_probe_must_count_not_confirm.md`
+
 - **String presence in a cooked asset is NOT a structural fact** — a grep hit inside a `.uasset`/`.uexp`
   proves only that the string is in the package NameMap (UE bakes a shared string pool: a parent's member
   names and imported type names land in any asset that references them). Measured 2026-07-22:
@@ -269,6 +279,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   throttle mass arms. `memory/feedback_identity_logs_carry_key_and_loc.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
+
+- **One cache per QUESTION, not per write-moment** — a hash/state map written at ONE instant but read to
+  answer TWO questions is a latent bug: the answers diverge the moment the peer mutates locally, and
+  nothing about the WRITE reveals it (same line, same value; only the reads differ). The R11b container
+  lane needed **four** maps and each collapse produced a different LIVE failure, one per smoke:
+  `published` fused into `sent` → the targeted connect seed recorded nothing, so the host **refused every
+  client write after a join**; `base` fused into `applied` → clearing on a local edit (right for the
+  no-op gate) made the peer **declare base 0** and be refused again, while NOT clearing made the host's
+  corrective re-publish hash identically to the pre-edit blob and get skipped, so **a refused peer never
+  converged**. **Look here FIRST:** when adding a second reader to an existing cache, ask what event
+  makes the two readers want different values — in a sync lane it is almost always the peer's own local
+  mutation. Split, and NAME each map after its question.
+  `memory/lesson_one_cache_per_question_not_per_write_moment.md`
 
 - **The HOST's Join always reaches the client BEFORE the client's own Join goes out** (the
   client's send waits for its Element allocation post-AssignPeerSlot), so any symmetric per-side
@@ -837,6 +860,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/lesson_late_registrant_inert_after_all_resolved_latch.md`
 
 ## 5. Engine / UE4 facts
+
+- **`R::FindFunction` does NOT walk the superclass chain** — it matches `OuterOf(fn) == owningClass`
+  EXACTLY (`ue_wrap/core/reflection.cpp:427`; no chain-walking variant exists anywhere in
+  `reflection.h`). So `FindFunction(ClassOf(instance), "SomeInheritedFn")` returns **nullptr** whenever
+  the function is declared on a BASE class — the normal case for any BP subclass — and callers that skip
+  a null do nothing, silently, forever. CONFIRMED CASUALTY (measured 2026-07-22): the container lane's
+  `updateVolumesAndMass` re-derive resolved from `ClassOf(owner)` = `Aprop_inventoryContainer_drone_C`
+  while the function is declared only on `Aprop_container_C` (SDK `prop_container.hpp:32`) → the
+  re-derive had **never once run** on any peer, which is the `686`-vs-`0.0` currVol the user
+  photographed. The buggy code carried a CONFIDENT comment reasoning about override-vs-layout hazards —
+  sound about the wrong hazard, and it hid this one. Blast radius is NOT all 414 call sites: the
+  dominant idiom (`FindClass("SceneComponent") -> K2_GetComponentLocation`) is correct by construction;
+  the risk class is the **19 sites passing `ClassOf(instance)`** plus sites naming a BP class for an
+  inherited function (`door_probe.cpp:81` `SetActorTickEnabled` = a second near-certain inert case).
+  **Look here FIRST:** open the SDK CXXHeaderDump and check which class DECLARES the function before
+  writing `FindFunction(ClassOf(x), ...)`; and always LOG a failed resolve.
+  `memory/lesson_findfunction_does_not_walk_the_superclass_chain.md`
 
 - **Container CONTENTS live in ONE global `saveSlot_C::GObjStack`, never on the container** — every
   container in the game (world props, backpacks, the drone delivery container, AND `mainPlayer`'s personal

@@ -177,7 +177,20 @@ mundane: the whole-GObjStack slot-delta reading shows `[1] 2->1` paired with `[0
 player taking a burger moves it from the container's slot into that peer's OWN player-inventory
 slot 0. Nothing exotic; no hidden sack transfer.
 
-### R11b -- client extraction from a world container DUPES  [CONFIRMED LIVE 2026-07-22; PRE-EXISTING, NOT introduced by v124]
+### R11b -- client extraction from a world container DUPES  [BUILT + SMOKE GREEN 2026-07-22 (proto 125, `411743af`); HANDS-ON OWED; PRE-EXISTING, NOT introduced by v124]
+
+> **STATUS 2026-07-22 evening.** BUILT and smoke-proven in BOTH directions; **not VERIFIED** -- that
+> needs the user's own three-step scenario (client takes 1 of 2, host looks in the sack, sees 1).
+> Design of record: `research/findings/inventory-items/votv-container-extraction-R11b-DESIGN-2026-07-22.md`.
+>
+> **One framing below is now RETRACTED.** The section closes with "the missing half is a client->host
+> intent for extraction". That shape **cannot exist** and was killed in the `/qf`: `takeObj` dispatches
+> `EX_LocalVirtualFunction`, so the item has ALREADY materialized on the presser before any seam of
+> ours can see it -- an intent the host could refuse is not buildable
+> ([[lesson-presser-authored-state-not-intent-for-invisible-verbs]]). What shipped is
+> presser-authored STATE with host arbitration: whichever peer's verb fired authors the slice, the
+> host compare-and-swaps it against what it published, applies, and relays EXCLUDING the author.
+> Everything else measured in this section held.
 
 **Not a take-4 hands-on symptom** -- surfaced by the adversarial audit of the R11 lane (v124) and then
 measured against the v123 BASELINE, because "does the new lane create this or merely expose it?" decides
@@ -231,12 +244,42 @@ Two things this measurement RULES OUT, so a design does not chase them:
    blast-radius concern raised during the v124 audit does not materialise on this path.
 
 The root is exactly as filed: the container slot is mutated by BOTH peers, and only host->client
-is carried. The missing half is a client->host intent for extraction.
+is carried. ~~The missing half is a client->host intent for extraction.~~ **RETRACTED** -- see the
+status banner at the top of this section. The missing half is a client-AUTHORED state broadcast; an
+intent is structurally impossible against an `EX_Local*` verb.
 
-**Consequence for the R11 hands-on:** R11's verdict is pure RECEIVE ("client opens the delivery container
-and sees the records instead of 0.0"); it does not require an extraction. So the take can run and be
-honest. The runbook must say explicitly: **look, do not take** -- extracting from a world container as a
-client is a known-open lane, and doing it during the R11 take would confound the verdict.
+**Consequence for the R11 hands-on (HISTORICAL -- that take is done):** R11's verdict was pure RECEIVE
+("client opens the delivery container and sees the records instead of 0.0"), so its runbook said
+**look, do not take**. That instruction is now INVERTED: the v125 take exists precisely to make the
+client TAKE. Do not carry the old wording forward.
+
+**AS-BUILT 2026-07-22 (proto 125, `411743af` lane + `163fc974` instrument).** Both halves, smoke-measured:
+
+```
+HOST   callback ENTERED (role=HOST)      CLIENT callback ENTERED (role=CLIENT)
+       extract 12->11 (eid 4940)  ------>        applied -> records=11
+       applied 6 records (eid 4941) <-----       extract 7->6, shipped [client-authored]
+       final DIGEST 4940: 11 / 7968.3           final DIGEST 4940: 11 / 7968.3
+       final DIGEST 4941:  6 / 28579.0          final DIGEST 4941:  6 / 28579.0
+```
+
+Zero CONFLICT lines; digests identical cross-peer. The 0x45 callback ENTERING on each peer -- the
+precondition the whole design rested on and which no idle smoke could ever show -- is now measured
+on both.
+
+**Two lane bugs the instrument caught before the user could** (both were fused-cache defects; details in
+the design doc and in `[[lesson-one-cache-per-question-not-per-write-moment]]`):
+1. the compare-and-swap baseline was recorded only on a FAN-OUT, so the targeted connect seed published
+   nothing the host remembered -> the host refused EVERY client write that followed a join;
+2. a refused author never converged, because the host's corrective re-publish hashed identically to the
+   blob the client had applied BEFORE it edited, and the no-op gate skipped it.
+
+**Still open on this path, each with its own hook:**
+- **simultaneous grab of the same item** -- window narrowed to milliseconds, class alive. No rollback is
+  built, deliberately; the refusal counter is the evidence that decides whether one is ever warranted.
+- **`putObjectIn_overlap` (the INSERT direction)** -- still UNMEASURED, as stated below.
+- **slot 0 (the player's own container) + the `hold` end + BOUNDARY 1's redesign** -- the SECOND story,
+  deferred with a hook, not part of this increment.
 
 ### R4 -- CLIENT interaction-prompt flicker (GLOBAL) + local desk responsiveness  [H, strong clue]
 Symptoms #3 (ALL client E-prompts flicker ~2 Hz), #7 (own knobs +1/+5/+15 feel like 300 ms ping).
