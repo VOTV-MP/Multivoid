@@ -106,10 +106,55 @@ channel is worse than none: it manufactures a false negative out of a good run. 
 
 | Thread | Status | Gate | Note |
 |---|---|---|---|
-| **`reflection.cpp` `FindFunction` does not walk the superclass chain** | 1 confirmed dead call (ours, fixed); 19 `ClassOf(instance)` sites NOT audited; `door_probe.cpp:81` a second candidate | gate:none -- **own audit** | Possible RED inside lanes currently labelled verified. `reflection.cpp:427` -- `if (OuterOf(obj) != owningClass) continue;` |
+| **`reflection.cpp` `FindFunction` does not walk the superclass chain** | **AUDITED 2026-07-22 -- CLOSED, no RED found.** 19 `ClassOf(instance)` sites + the wider leaf-class sweep: 1 dead resolve (`door_probe.cpp:81`), never invoked, zero gameplay effect. No verified lane is affected. | closed; 3 latent silent-on-null sites carried forward below | see the audit record in section 2b |
 | **SACK-PHYS** -- our `SuppressTick` silences the AnimBP feed | OPEN | gate:none -- own fix | from take-4 |
 | **KERFUR-BLUE** | NOT RE'd | gate:none -- own approach | from take-4 |
 | **droneConsole** -- a client pressing E to send the drone back is a no-op | NOT RE'd | gate:none -- own hook | from take-4 |
+
+---
+
+## 2b. The `FindFunction` audit, 2026-07-22 -- CLOSED
+
+Ran because the thread was flagged "possible RED inside lanes currently labelled verified". **It is
+not.** Result: of the 19 `ClassOf(instance)` sites, **zero** are dead. Every one either resolves a
+library CDO and calls that library's own function (safe by construction: `asset_load`,
+`save_browser` x2, `spawn_menu` x2) or resolves the instance via `FindObjectByClass` / a typed field
+whose class is exactly the class declaring the verb.
+
+**Evidence base, recorded because finding it cost time:** the SDK ownership authority is
+`Game_0.9.0n_HOST/WindowsNoEditor/VotV/Binaries/Win64/CXXHeaderDump/*.hpp` -- **2645 files**, one per
+package, each block listing ONLY the functions that class itself declares. That is precisely the
+exact-owner relation `FindFunction` tests, so it is the correct instrument. Cross-check:
+`research/bp_reflection/*.functions.txt`.
+
+**The one dead resolve:** `coop/dev/door_probe.cpp:81` --
+`FindFunction(g_doorCls, L"SetActorTickEnabled")`. `SetActorTickEnabled` is declared on `AActor`
+(`Engine.hpp:6754`), not on `Adoor_C`, so the resolve is permanently null. **Verified independently:**
+`g_setTickFn` has exactly three references in the file -- the declaration (:40), the resolve (:81),
+and a log (:84). **It is never invoked.** Nothing in the game breaks. What is damaged is the
+instrument's credibility: the install line has been printing `setTick=0000000000000000` next to a
+genuinely-resolved `moveFinish=<ptr>`, unremarked, in ini-gated dev diagnostics.
+
+**The finding that actually matters -- the search predicate was WRONG.** The thread was scoped as "the
+19 sites passing `ClassOf(instance)`". But the single confirmed corpse in this batch passes
+`FindClass(L"door_C")`, not `ClassOf(instance)`, so a sweep filtered on `ClassOf(` alone would have
+MISSED it. The real risk predicate is **"a LEAF class resolving a BASE-declared function, however that
+class was obtained"**. Re-swept on the corrected predicate: sites passing a base class name
+(`Actor`, `PrimitiveComponent`, `SkeletalMeshComponent`) are correct by construction, and all eight
+cached-BP-class shipping sites were checked against the dump and are SAFE --
+`cockroachMaster_C::addRoach`/`deleteRoach`, `serverBox_C::check`, `trigger_alarm_C::runTrigger`,
+`trigger_eventer_C::runEvent`/`runSpecialEvent`, `mainGamemode_C::wakeup`,
+`analogDScreenTest_C::updComp`, each declared on its own class.
+
+**Carried forward (latent, not live): three shipping sites are SILENT on a null resolve.**
+`save_browser.cpp:188` (deliberate fail-open), `spawn_menu.cpp:130` and `:165`. All three are SAFE
+today. They would go dead without a word after a game recook that moves or renames those functions --
+and the spawn_menu pair gates the input-mode restore that the file's own comment at `:158` calls
+"THE LOAD-BEARING UN-STICK". A silent no-op there leaves input trapped in `GameAndUI`.
+
+**Scope of this audit, stated so it is not over-read:** it verifies DECLARATION, i.e. that the resolve
+returns non-null. It does NOT verify that the call lands -- `ParamFrame` validity, parameter-name
+spelling, and `EX_*`-invisible dispatch are all separate questions.
 
 ---
 

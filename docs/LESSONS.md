@@ -881,8 +881,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   dominant idiom (`FindClass("SceneComponent") -> K2_GetComponentLocation`) is correct by construction;
   the risk class is the **19 sites passing `ClassOf(instance)`** plus sites naming a BP class for an
   inherited function (`door_probe.cpp:81` `SetActorTickEnabled` = a second near-certain inert case).
-  **Look here FIRST:** open the SDK CXXHeaderDump and check which class DECLARES the function before
-  writing `FindFunction(ClassOf(x), ...)`; and always LOG a failed resolve.
+  **AUDITED 2026-07-22 -- the risk class was swept and is CLEAN, but the PREDICATE was wrong.** All 19
+  `ClassOf(instance)` sites are SAFE (library CDOs calling their own function, or instances whose exact
+  class declares the verb). The one dead resolve in the batch — `coop/dev/door_probe.cpp:81`
+  `SetActorTickEnabled` on `door_C`, declared on `AActor` — passes `FindClass(L"door_C")`, **not**
+  `ClassOf(instance)`, so the `ClassOf(` filter would have missed the only corpse. The real predicate is
+  **"a LEAF class resolving a BASE-declared function, however that class was obtained"**. It is never
+  invoked, so nothing breaks; the damage is an instrument printing `setTick=0000000000000000`
+  unremarked. Eight cached-BP-class shipping sites re-checked on the corrected predicate: all SAFE.
+  Latent: `save_browser.cpp:188`, `spawn_menu.cpp:130`/`:165` are SILENT on null — safe today, would go
+  dead wordlessly after a recook, and the spawn_menu pair gates the "LOAD-BEARING UN-STICK" input
+  restore. **Look here FIRST:** the ownership authority is
+  `Game_0.9.0n_HOST/.../Win64/CXXHeaderDump/*.hpp` (2645 files, each block = only that class's OWN
+  functions). Check which class DECLARES the function before writing any `FindFunction`, filter on
+  leaf-vs-base rather than on the call shape, and always LOG a failed resolve.
   `memory/lesson_findfunction_does_not_walk_the_superclass_chain.md`
 
 - **Container CONTENTS live in ONE global `saveSlot_C::GObjStack`, never on the container** — every
