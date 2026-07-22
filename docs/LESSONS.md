@@ -152,6 +152,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   expectation: granularity and anchor strength are independent axes. State the new anchor's own limit
   before building on it (registration cannot see PE-seam or field-poll lanes; size unmeasured).
   `memory/lesson_a_registration_is_a_functional_fact_a_mention_is_not.md`
+- **A unit of measure must be able to EXPRESS the case you already know is red** — before adopting a
+  unit for any coverage/readiness metric, take a failure you have already SEEN and ask what row it
+  occupies. If it has none, the metric reports GREEN over it with the authority of a generated number.
+  Measured 2026-07-22: the unit changed three times in one session and the same test killed each —
+  class hid that the container's simultaneous grab is unexercised; VERB would have scored
+  `addObject`/`takeObj` VERIFIED and shown the container green, because the red facet is a race on the
+  slot FIELD and has no verb shape at all. The trap is that each new unit looked strictly better
+  (finer + a stronger anchor), and "can it represent the known failure" is not a question about
+  precision, so it never gets asked. Corollary: a unit is a claim about the MECHANISM, not just
+  granularity — "verb" asserts behaviour is intercepted, but much of our sync mirrors FIELDS (pose,
+  DeskInput, weather) and is invisible to a verb denominator on both sides. Look FIRST: run the
+  known-red test BEFORE fixing the denominator, which is where a unit gets locked in.
+  `memory/lesson_a_unit_of_measure_must_express_the_known_red_case.md`
 - **Before changing a FUNCTION's behavior, enumerate ALL its call sites + state what each expects; before
   SUBTRACTING an output at a seam, enumerate every other producer/consumer at that seam** — acting on an
   incomplete map of what you're touching is ONE recurring root with many faces (a "mechanism" that is N
