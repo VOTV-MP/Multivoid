@@ -60,7 +60,15 @@ ENGINE_ROOTS = {
     "UAnimInstance", "UBlueprintFunctionLibrary", "UInterface",
 }
 
-CLASS_RE = re.compile(r"\bclass\s+([AU][A-Za-z0-9_]+_C)\b")
+# A class HEADER, not a member declaration. `class Aprop_fireExt_C* fireExt;`
+# is a member whose TYPE is a class, and it matches a bare `class X_C` pattern
+# exactly as a header does. Splitting on the bare form cut class bodies at
+# their own member declarations and re-attributed the functions that followed
+# to the member's type: measured 2026-07-22, AfireExtHolder_C reported 0 own
+# functions while its four (ReceiveBeginPlay, two BndEvt__, ExecuteUbergraph_)
+# were credited to Aprop_fireExt_C. That single bug is what put the floor at
+# 1170. Requiring the inheritance colon or the opening brace separates them.
+CLASS_RE = re.compile(r"\bclass\s+([AU][A-Za-z0-9_]+_C)\s*(?=:|\{|\n\{)")
 # `class Aprop_drive_C : public Aprop_C` -- the dump's single-inheritance form.
 INHERIT_RE = re.compile(
     r"\bclass\s+([AU][A-Za-z0-9_]+_C)\s*:\s*public\s+([AU][A-Za-z0-9_]+)")
