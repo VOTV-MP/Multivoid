@@ -217,8 +217,11 @@ cheap measurement I had skipped.
 - **Do not batch a security fix into an unrelated commit** — these need to be revertible alone.
 - **A fix that changes a lane's behavior needs a two-peer smoke**, per the pre-deploy checklist. A
   clean build is not evidence.
-- **Unrelated but pending:** take 4 hands-on (DLL `05479190C7C01528`, proto 122, relaunch both
-  peers) — not a security item, but it holds the same test slot.
+- **Unrelated, NO LONGER pending (reconciled 2026-07-22):** take 4 hands-on RAN 2026-07-21 and
+  produced 21 symptoms -> 16 roots (`research/findings/computers-devices/votv-take4-hands-on-bugs-2026-07-21.md`).
+  The DLL/proto named here (`05479190C7C01528`, proto 122) are superseded — current is
+  `multivoid-0.9.0n-125.dll`, proto 125 (`protocol.h:708`). It no longer holds the test slot; the
+  live gates are the Q-PROP discriminator and a `CONFLICT>0` run.
 
 ---
 

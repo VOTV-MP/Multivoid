@@ -250,7 +250,14 @@ Since 2026-07-19 (b122) the compiled default AND the box env are proto 0 = "no r
 informational line stays silent until the FIRST real release sets the env (a stale record can never
 fake "(latest)": equality required; the old stale-66 bug class is closed by the 0-default + the
 client's proto<=0 no-verdict guard). USER hands-on confirmed (2026-07-16, pre-b122 format): cyan,
-above the game labels, correct "(latest)" verdict. b122 format rides take 4.
+above the game labels, correct "(latest)" verdict.
+
+**Paper-pair format status, reconciled 2026-07-22 — still NOT verified.** "The b122 format rides take
+4" was stale-open: take 4 ran 2026-07-21. But it does NOT promote this row. The version label was not
+among the 21 reported symptoms, and *absence from a bug report about the workstation/disc/drone is not
+evidence the label rendered correctly* — nobody was looking at it. The format stays **AS-BUILT,
+drill-verified, NOT hands-on**; promoting it on silence is exactly the unnamed-boundary green the
+ladder forbids. (The build number in these examples is b122 as shipped then; current is b125.)
 
 ## Master / signaling server — Rust, on the NEW coop VPS `172.86.94.3` (migrated 2026-07-16)
 

@@ -109,6 +109,28 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   -iname '*master*'` — blind, because it's a FILE `tools/coop_master_server.py` (679 LOC stdlib) a dir
   search can't match. Search by the artifact's real shape (`glob **/*.py`, a signature string like
   `/v1/host`), not a guessed folder. `memory/lesson_negative_grep_verify_against_known_positive.md`
+- **A SYNTACTIC marker set over the class dump CANNOT express a SEMANTIC property** ("is this coop-relevant
+  / can it diverge between peers"), and the reason is an ERROR ASYMMETRY, not a tuning problem: the
+  false-NEGATIVE side is measurable, the false-POSITIVE side is uncalibratable in principle (there is no
+  ground truth for "should have been counted"), so over-inclusion can never be bounded. Measured 2026-07-22
+  while trying to GENERATE a coop-readiness % with the denominator taken from the game: a filter
+  (`ReceiveTick` | `getData`+`loadData` | interaction verbs) over 2305 BP classes yielded 686 and threw 16
+  of 45 already-synced classes (**36%**) into "inert content" — including `UsaveSlot_C` (32 own fns), where
+  `GObjStack` lives. The set is Actor-shaped + player-interaction-shaped, structurally blind to non-Actor
+  carriers (`USaveGame`/`UActorComponent`/`UUserWidget`) and to spawner/ticker/event behaviour. Two
+  instrument defects on the way, both plausible-looking: ancestor-walking to engine roots returned "100%
+  covered" (every class reaches `AActor`), and exact-name grep scored `Anpc_krampus_C` + all 11 `Awisp_*_C`
+  as never-touched while our code matches them by SUBSTRING at runtime. **The dump ENUMERATES (2305 classes;
+  838 with zero own functions are a structural floor that cannot diverge by construction) — it does not
+  CLASSIFY.** Corollary that decided the status column, measured the same day: of 44 doc-named classes only
+  **3** are hands-on VERIFIED, 11 AS-BUILT, 30 carry no status token at all — a boolean "coop-correct"
+  column filled from doc claims would have scored ~44 green, a **14x** overstatement on the only rung that
+  means "works for the player". Hence a LADDER (structural floor / AS-BUILT grepped / VERIFIED hands-on),
+  each rung measured by its own source, reported as a profile not one number — and the AS-BUILT rung must
+  never read as "works" (Q-STACK was green as a lane yet sequential-only, `CONFLICT=0`; R11 counted as
+  synced until the census killed it). Look FIRST:
+  `research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md` §3.
+  `memory/lesson_syntactic_marker_set_cannot_express_semantic_relevance.md`
 - **Before changing a FUNCTION's behavior, enumerate ALL its call sites + state what each expects; before
   SUBTRACTING an output at a seam, enumerate every other producer/consumer at that seam** — acting on an
   incomplete map of what you're touching is ONE recurring root with many faces (a "mechanism" that is N
