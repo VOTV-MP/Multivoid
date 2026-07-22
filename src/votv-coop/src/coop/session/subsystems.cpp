@@ -48,6 +48,7 @@
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/rng_roll_census.h"  // [dev] T1 probe v9
 #include "coop/dev/desk_diag.h"        // [dev] desk/console divergence census
+#include "coop/dev/container_selftest.h" // [dev] R11b container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"   // [dev] rack-lane e2e circles (extraction digest instrument)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/world/spawn_authority.h"  // T1 Inc-1: client shared-world spawner park/cancel (absorbed ambient_spawner_suppress)
@@ -186,6 +187,7 @@ void Install(coop::net::Session& session) {
     coop::spawn_authority::Install(&session);  // T1 Inc-1: t3 cancels + t1 park-class resolve (host results stream via the mirrors)
     coop::dev::rng_roll_census::Install(&session);  // [dev] T1 probe v9: driver/QuitGame interceptors (no-op unless rng_roll_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
+    coop::dev::container_selftest::Install(&session);  // [dev] R11b e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1; the extraction's digest instrument)
     coop::host_spawn_watcher::Install(&session);  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
     coop::prop_drop_intent::Install(&session);    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
@@ -424,6 +426,7 @@ DisconnectStats DisconnectAll() {
     coop::laptop_buffer_sync::OnDisconnect(); // v121: quad shadow + assembler + selftest
     coop::floppybox_sync::OnDisconnect();     // v121: box shadows + taken-ring + pendings
     coop::props::container_contents_sync::OnDisconnect();  // v124: dirty set + retry + parked + assembler
+    coop::dev::container_selftest::OnDisconnect();         // [dev] re-arm the R11b circle on reconnect
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
     coop::dish_sync::OnDisconnect();           // v113 (L4): wire-residue sweep + ticker restores (the suppression loan)
@@ -486,6 +489,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }        // v108 owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     coop::dev::rng_roll_census::Tick();      // [dev] T1 probe v9 censuses (single bool read when off/idle)
     coop::dev::desk_diag::Tick();            // [dev] desk divergence census (single bool read when off; self-throttled)
+    coop::dev::container_selftest::Tick();   // [dev] R11b e2e circle (single bool read when off)
     coop::dev::drive_selftest::Tick();       // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
