@@ -118,6 +118,16 @@ be a ladder.
 verdict?). Running that in the same thread would harden a frame that just moved twice. It is a
 different surface and gets a fresh brief.
 
+**The trap that pass must aim at (marked 2026-07-22):** the schema will INHERIT the
+AS-BUILT-vs-VERIFIED gap this session paid for. "AS-BUILT is grepped from `COOP_SYNC_MAP`" is only
+honest if the rung cannot be READ as "works" — it means *a lane exists in code*, nothing more. This
+session measured both failure modes directly: Q-STACK was green as a lane yet SEQUENTIAL-ONLY
+(`CONFLICT=0`, the CAS never ran), and R11 counted as synced until the census killed it. So the pass
+must settle not only *what earns AS-BUILT* but *what stops the AS-BUILT count from reading as
+readiness* — otherwise the profile launders a DESIGN claim as a measurement one rung higher, which is
+exactly the defect the ladder was adopted to kill. AS-BUILT must not become a soft green between the
+structural floor and hands-on.
+
 ## 8. Where to look FIRST next time
 
 Before proposing ANY dump-derived metric: §3 of this doc. A syntactic marker set over the CXX dump
