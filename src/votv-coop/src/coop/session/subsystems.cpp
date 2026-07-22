@@ -42,6 +42,7 @@
 #include "coop/dev/sleep_probe.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/dev/drone_probe.h"
+#include "coop/dev/delivery_census_probe.h"  // O-1 gate: COUNT the delivery-path actors
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
 #include "coop/dev/pinecone_probe.h"
@@ -548,7 +549,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       //  the re-pile is caught deterministically at its BeginDeferred via the UFunction::Func thunk.)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
-    coop::dev::drone_probe::Tick(isConnected, isHost);  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
+    coop::dev::drone_probe::Tick(isConnected, isHost);
+    coop::dev::delivery_census::Tick(isHost);  // ini delivery_census=1; edges only  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
     coop::dev::native_pile_inert_probe::Install();  // GO/NO-GO gate for nativizing the trash mirror (ini native_pile_inert_probe=1)
     coop::dev::native_pile_inert_probe::Tick(isConnected, isHost);  // spawns 1 rooted runtime chipPile, logs [INERT-PROBE] IsLive/class 60s -> does a live-ubergraph native stay inert?
     coop::dev::client_model_probe::Install();  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
