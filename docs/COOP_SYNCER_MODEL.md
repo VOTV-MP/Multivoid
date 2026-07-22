@@ -132,7 +132,29 @@ Encouraging: most of the primitives exist. This is a promotion, not a green fiel
 | A correct receive-side check, at ONE site | `trash_grab_intent.cpp:298-302` | **Built** — this is the pattern to generalize |
 | Sender identity bound to transport | `VerifySenderEidRange`, `HandleAssignPeerSlot` | **Built** (per the audit's "checked and clean") |
 
+| A receive-side ARBITER on a real lane | `container_contents_sync.cpp` `HostAcceptsClientWrite` | **Built 2026-07-22 (v125, `411743af`)** — see the note below |
+
 **What is missing is not the data. It is the enforcement point and a coherent notion of who assigns.**
+
+### 3b. The first shipped arbiter (2026-07-22, R11b) — what it teaches this design
+
+The container-contents lane is now the first place where a peer's write is VALIDATED ON RECEIVE
+rather than trusted. Three things it measured are inputs to §5:
+
+1. **Intent lanes are not available for `EX_Local*` verbs.** `takeObj` has already run on the presser
+   before any seam of ours exists, so "client asks, host decides" cannot be built. The arbiter's real
+   shape here is **validate-on-receive of presser-authored state**, not request/grant. Any §5 enforcement
+   point that assumes it can DENY BEFORE the actor changes is wrong for this whole class of verb.
+2. **A validated-write lane needs a base, and the base is a separate fact from every other hash it
+   looks like.** The lane needed FOUR maps (published / sent / applied / base) and each collapse produced
+   a live failure ([[lesson-one-cache-per-question-not-per-write-moment]]).
+3. **A refusal is only half an answer, and the missing half is where the OBJECT went.** Measured
+   consequence (reasoned 2026-07-22, not yet reproduced): refusing a client's container write restores
+   the container but leaves the extracted item in that peer's own inventory — the refusal re-creates the
+   duplication it exists to prevent. **§6 (claim transfer) and §5 must therefore treat "revert the
+   loser's local effect" as part of the enforcement point, not a later nicety.** This is the concrete
+   form of the rollback question, and the user's 2026-07-22 ruling is: inventory becomes canon, the
+   rollback is built only once the refusal counter shows conflicts actually occur.
 
 ---
 

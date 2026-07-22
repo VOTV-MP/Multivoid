@@ -1,5 +1,11 @@
 # Hands-on runbook -- R11 container contents (v124), 2026-07-22
 
+> **SUPERSEDED for RUNNING purposes by `research/handson_runbook_2026-07-22_container_v125.md`.**
+> Do not execute the steps below as they stand: this take's instruction was **"look, do not take"**
+> (a client extraction was a known-open lane and would have confounded the RECEIVE verdict), and the
+> v125 take INVERTS it -- taking is the whole point there. Kept as the point-in-time record of the
+> R11 take, which it accurately describes.
+>
 > **OUTCOME (same day): R11 is VERIFIED GREEN.** This runbook is kept as the point-in-time record
 > of the take. Two takes came back RED first; the cause was NOT the design but
 > `vm_dispatch`'s `g_allResolved` permanent latch, which left this lane's verbs unresolved and
