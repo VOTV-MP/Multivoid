@@ -260,6 +260,16 @@ bool RegisterVirtualVerb(const wchar_t* verbName, int verbId, EntryFn cb) {
     e.cmpIdx.store(0, std::memory_order_relaxed);
     e.number.store(0, std::memory_order_relaxed);
     g_verbCount.store(n + 1, std::memory_order_release);
+    // A NEW unresolved verb re-opens the resolve pass. Without this, TickResolvePending's
+    // g_allResolved fast-out is a PERMANENT latch: every verb registered after the first
+    // "all N resolved" moment stays pending FOREVER, its callback never fires, and nothing
+    // says so -- registration returns true and the consumer's own success banner prints.
+    // Measured 2026-07-22: container_contents registers from its Tick (i.e. after session
+    // start, later than the install-time consumers), so it landed in slots 8/9 immediately
+    // AFTER "all 8 verb(s) resolved -- ARMED" and was inert for two whole hands-on takes --
+    // the R11 RED. Registration is dynamic by contract ("Any thread", "installs on the FIRST
+    // successful registration"), so the latch must be per-pass, not per-process.
+    g_allResolved.store(false, std::memory_order_relaxed);
     UE_LOGI("[vm_dispatch] registered verb %ls id=%d (slot %d) -- pending GT FName resolve",
             verbName, verbId, n);
 
