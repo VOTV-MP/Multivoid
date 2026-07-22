@@ -41,6 +41,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `records 0 -> 0 ... the TRIGGER is inert, so an absent 'callback ENTERED' line says nothing about the
   lane`. Pick the target by the property that makes the stimulus VALID (a container with contents), not
   by convenience. Once fixed, the same instrument caught two real bugs in the lane it was testing.
+  **Sharpened 2026-07-22: a positive control must name the SAME CHANNEL the test reads.** A runbook's
+  host-side control grepped `PROP-DROP|SPAWN broadcast`; both are the wrong channel for the host
+  (`PROP-DROP` is client-only, `SPAWN broadcast` is the `takeObj` POST observer that has never fired),
+  so it returned 0 on a healthy run and the take read as VOID when it had passed — the host's real line
+  is `host_spawn_watcher: spawn-seam adopted`. A mis-named control is WORSE than none: it manufactures
+  a false negative and discards a real measurement. *Look FIRST:* grep the source for the exact log
+  string, and confirm its emitter runs in the ROLE the step is performed as.
   `memory/feedback_probe_must_count_not_confirm.md`
 
 - **String presence in a cooked asset is NOT a structural fact** — a grep hit inside a `.uasset`/`.uexp`
