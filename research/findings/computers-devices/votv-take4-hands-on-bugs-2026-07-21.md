@@ -152,6 +152,42 @@ take-4) and the player-inventory authority half.
 
 ## Severity 2 -- HIGH (degrades every interaction / very visible)
 
+### R11b -- client extraction from a world container DUPES  [PRE-EXISTING ROOT, measured 2026-07-22; NOT introduced by v124]
+
+**Not a take-4 hands-on symptom** -- surfaced by the adversarial audit of the R11 lane (v124) and then
+measured against the v123 BASELINE, because "does the new lane create this or merely expose it?" decides
+whether it blocks the R11 hands-on. It does not block it.
+
+**Measured on baseline `8e689273` (proto 123, BEFORE any GObjStack lane existed):**
+1. `src/votv-coop/src/coop/props/prop_container_extract.cpp:170` -- `s->SendPropSpawn(p)` carries **no
+   role gate whatsoever** (grep `role()|Role::Host|IsHost` over that file at 123 = 0 hits). So a CLIENT
+   extracting from a container broadcasts the extracted prop into the world on both peers.
+2. No `GObjStack` lane existed at all (`grep -rn GObjStack src/votv-coop` = 0 hits -- RE doc SS9b).
+
+=> At proto 123 a client extraction already leaves the HOST's slice still holding the record. The host
+player then opens the container, sees the item, extracts it, and a SECOND `PropSpawn` is emitted from the
+same record: **two world props from one record. The dupe root predates v124.**
+
+**What v124 changes is REACHABILITY, not existence.** At 123 the dupe needs the host to also extract; at
+124 the host's canonical broadcast re-shows the item on the client, so a client alone can repeat it.
+
+**The root, stated once:** there is no upstream (client -> host) lane for a client's container mutation.
+`takeObj` runs locally on every peer; the host is never told. This is the ARBITER question
+(`docs/COOP_SYNCER_MODEL.md` -- authority assigned, not asserted), and it is a SEPARATE investigation
+from R11 with its own hook: R11 is the RECEIVE half (a missing downstream lane), R11b is the SEND half (a
+missing upstream lane). Same seam, different cause -- they must not share a fix, and the takeObj half is
+NOT folded into the R11 increment.
+
+**UNMEASURED, do not assume symmetry:** the INSERT direction (`prop_container::putObjectIn_overlap` ->
+`addObject` on a client). Its shape is dirtier -- the host's canonical would erase a record whose world
+prop the client's own `addObject` already consumed -- but no baseline measurement was taken, so nothing
+is claimed about it.
+
+**Consequence for the R11 hands-on:** R11's verdict is pure RECEIVE ("client opens the delivery container
+and sees the records instead of 0.0"); it does not require an extraction. So the take can run and be
+honest. The runbook must say explicitly: **look, do not take** -- extracting from a world container as a
+client is a known-open lane, and doing it during the R11 take would confound the verdict.
+
 ### R4 -- CLIENT interaction-prompt flicker (GLOBAL) + local desk responsiveness  [H, strong clue]
 Symptoms #3 (ALL client E-prompts flicker ~2 Hz), #7 (own knobs +1/+5/+15 feel like 300 ms ping).
 - CRITICAL CLUE (user): the flicker is SYNCHRONIZED -- at the SAME instant BOTH the E-interaction GUI
