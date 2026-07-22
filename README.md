@@ -6,7 +6,7 @@
 
 | | |
 |--|--|
-| **Current build** | `multivoid-0.9.0n-122.dll` — game target **0.9.0n**, build **b122** |
+| **Current build** | `multivoid-0.9.0n-125.dll` — game target **0.9.0n**, build **b125** |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha, pre-release — playable in development, no public builds yet |
 | **Players** | up to **4** (host + 3) |
@@ -34,7 +34,7 @@ game systems still to sync.
   built-in **server browser** backed by the official master server
   (NAT traversal via signaling + TURN)
 - **Version identity + join gate** — lobbies advertise `game + build`
-  (e.g. `0.9.0n b122`); mismatched peers are refused pre-flight with a clear popup
+  (e.g. `0.9.0n b125`); mismatched peers are refused pre-flight with a clear popup
   instead of desyncing mid-game. Old cohorts keep playing together forever —
   updates are never forced
 - **Visible remote players** — full body, legs, IK feet, per-player skins,
@@ -83,7 +83,7 @@ VOTV runs on Unreal Engine 4.27. The mod is a single DLL pair:
 
 ```
 xinput1_3.dll                  -- thin proxy loader (Windows auto-loads it next to the .exe)
-multivoid-0.9.0n-122.dll       -- the mod payload (versioned filename; highest build wins)
+multivoid-0.9.0n-125.dll       -- the mod payload (versioned filename; highest build wins)
 ```
 
 The payload resolves engine primitives (`GUObjectArray` / `GNames` /
@@ -112,12 +112,12 @@ The version identity is the pair **(game version, build number)** — there is
 no separate mod semver.
 
 ```
-multivoid-0.9.0n-122.dll   ->   game target 0.9.0n, build 122
+multivoid-0.9.0n-125.dll   ->   game target 0.9.0n, build 125
 ```
 
 - **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
   (reflection offsets and BP layouts shift between game versions).
-- **Build number** (`b122`) is the wire-protocol revision — it bumps with every
+- **Build number** (`b125`) is the wire-protocol revision — it bumps with every
   release and every wire-format change.
 - **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
   0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
@@ -140,7 +140,7 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 2. Drop both files next to the game executable:
    `<your VOTV install>/WindowsNoEditor/VotV/Binaries/Win64/`.
 3. Check the game version in the DLL name matches your VOTV version
-   (e.g. `multivoid-0.9.0n-122.dll` targets VOTV `0.9.0n`).
+   (e.g. `multivoid-0.9.0n-125.dll` targets VOTV `0.9.0n`).
 4. Launch the game normally. A **Multiplayer** button appears in the main menu —
    host a lobby, or join one from the server browser (direct IP works too).
    No port forwarding needed.
