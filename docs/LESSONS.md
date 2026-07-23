@@ -83,6 +83,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   a false negative and discards a real measurement. *Look FIRST:* grep the source for the exact log
   string, and confirm its emitter runs in the ROLE the step is performed as.
   `memory/feedback_probe_must_count_not_confirm.md`
+- **A cross-source SUM instrument needs a positive control PER SOURCE, not one direction.** When a
+  verifier's verdict is a SUM across multiple stores/peers, the positive control must be run so EACH
+  source is, in at least one run, the known-positive that holds the target — else the un-exercised
+  source's read is unproven and a real defect there reads as ABSENT. Measured 2026-07-23: the
+  container-race no-dup verifier passed a `taker=host` control (`host 1 + client 0 = 1`), which proved
+  the client sees the CONTAINER but NOT that the client's OWN personal-store walk finds X — exactly where
+  a losing client's optimistic dup lives; a blind client-personal walk would make a real race dup read
+  `sum==1` = false "no dup". Fix: the MIRROR control (`taker=client`, host idle) → `0 + 1 = 1` with the
+  client copy at its own `idx=0`. A sum hides which source contributed (`1+0` vs `0+1` are the same
+  total), so print WHERE each match was found (per-source slice id). *Look FIRST:* enumerate the sources
+  of any aggregate-count instrument; run the control once per source; keep the matches decomposable.
+  Pairs with `[[feedback-probe-must-count-not-confirm]]`.
+  `memory/lesson_multi_source_count_needs_per_source_positive_control.md`
 
 - **String presence in a cooked asset is NOT a structural fact** — a grep hit inside a `.uasset`/`.uexp`
   proves only that the string is in the package NameMap (UE bakes a shared string pool: a parent's member

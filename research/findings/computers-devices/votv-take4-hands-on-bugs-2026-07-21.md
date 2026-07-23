@@ -191,6 +191,18 @@ slot 0. Nothing exotic; no hidden sack transfer.
 > presser-authored STATE with host arbitration: whichever peer's verb fired authors the slice, the
 > host compare-and-swaps it against what it published, applies, and relays EXCLUDING the author.
 > Everything else measured in this section held.
+>
+> **UPDATE 2026-07-23 -- the CONCURRENT case is now MEASURED, and it found a RESIDUAL.** The v125 lane
+> fixed the ORIGINAL R11b (a client extraction dropped at the `IsHost()` early-return). But the
+> REFUSED-write path ships WITHOUT a rollback (`container_contents_sync.cpp:111-112`), so when two peers
+> take the SAME item concurrently, the host CAS refuses the loser's stale write yet never rolls back the
+> loser's optimistic PERSONAL take -> a **refusal-dup**. This was reasoned, not proven. The autonomous
+> bot-director CONFIRMED it 2026-07-23: `mp.py ctakerace --mode race` -> `sum=2`, both copies at
+> `GObjStack[idx=0]` (each peer's personal slice); two-direction sum-controls (`--taker host|client`)
+> each `sum=1` prove the instrument is not blind, and the personal-slice location proves it is a
+> personal-store dup, NOT an un-rolled-back container mirror. **The rollback fix is OWED**; the director
+> is its reproducer + acceptance criterion (`sum 2 -> 1` after the fix). Full account:
+> `research/findings/tooling/votv-baritone-analog-autonomous-director-DESIGN-2026-07-23.md` §6c.
 
 **Not a take-4 hands-on symptom** -- surfaced by the adversarial audit of the R11 lane (v124) and then
 measured against the v123 BASELINE, because "does the new lane create this or merely expose it?" decides
