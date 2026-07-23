@@ -499,12 +499,15 @@ void RunContainerRace() {
     const std::string mode = EnvStr("VOTVCOOP_RACE_MODE");    // "race" | "control"
     const std::string role = EnvStr("VOTVCOOP_RACE_ROLE");    // "host" | "client"
     const std::string goFile = EnvStr("VOTVCOOP_RACE_GO_FILE");
-    const bool isHost = (role == "host");
-    // control mode: only the HOST takes (client walks+arrives+counts but does NOT press) -> the solo sum
-    // across peers MUST be 1 (X at host=1, client=0) before the summation is trusted on a real race.
-    const bool shouldTake = (mode == "race") || (mode == "control" && isHost);
-    UE_LOGI("director/ctake-race: START mode=%s role=%s shouldTake=%d goFile=%s",
-            mode.c_str(), role.c_str(), shouldTake ? 1 : 0, goFile.c_str());
+    std::string taker = EnvStr("VOTVCOOP_RACE_TAKER");        // control mode: which SINGLE peer takes
+    if (taker.empty()) taker = "host";
+    // control mode: only ONE peer takes -> the solo sum across peers MUST be 1. Run it BOTH directions
+    // (taker=host AND taker=client): host-takes proves the client sees the CONTAINER; client-takes proves
+    // the client's OWN PERSONAL store walk finds X (where a losing client's optimistic dup copy lives) --
+    // otherwise a real race dup on the client would read 0 -> sum 1 -> a FALSE "no dup" (invisible copy).
+    const bool shouldTake = (mode == "race") || (mode == "control" && role == taker);
+    UE_LOGI("director/ctake-race: START mode=%s role=%s taker=%s shouldTake=%d goFile=%s",
+            mode.c_str(), role.c_str(), taker.c_str(), shouldTake ? 1 : 0, goFile.c_str());
 
     ::Sleep(20000);   // settle for the world to load
 

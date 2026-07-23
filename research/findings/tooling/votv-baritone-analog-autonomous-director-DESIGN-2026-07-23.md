@@ -457,10 +457,37 @@ built.** REMAINING (a USER go/no-go — a real multi-piece build, ordered):
   both peers picked the SAME key `-xeod_VpMZyEA9Wf8pPXww`, `host localCount 1→1 + client 1→0 = sum 1
   CORRECT` → the cross-peer summation is validated (the client walk is not blind; `sum==1` means correct,
   not blind). FULL matrix: sum **1 = correct, 2 = DUP (R11b), 0 = X VANISHED (loss bug), >2 = worse**.
-- **(3) the race itself — READY (not yet run)** — both bots hover+press the SAME container slot (the
-  shared save-key target) simultaneously at the `GO` barrier (`mp.py ctakerace --mode race`); the sum
-  over the full matrix is the verdict, read by (1)+(2). The take-exactly-X (formerly a REMAINING item) is
-  DONE (`pressDelta=1`); the summation control is DONE (`sum=1`). What remains is the single race run.
+- **(3) the race itself — RUN 2026-07-23: R11b REFUSAL-DUP CONFIRMED.** Both bots hover+press the SAME
+  container slot (shared save-key `-xeod_VpMZyEA9Wf8pPXww`) simultaneously at the `GO` barrier
+  (`mp.py ctakerace --mode race`). Result: `host localCount 1→1 + client 1→1 = SUM 2 → DUP`. Both peers
+  took the same item X (`prop_C key=eGT0erVLpnLjxW63gOheIA`); the host CAS should have refused one, but
+  the loser optimistically took X into its OWN local GObjStack and it was never rolled back → X exists on
+  BOTH peers. The **control→race delta isolates it cleanly**: control (only host takes) = sum 1 CORRECT;
+  race (both take) = sum 2 DUP — so sum 2 is a REAL dup, not a blind instrument (the positive control is
+  what earns that claim). **This CONFIRMS R11b's reasoned-but-unproven refusal-dup residual by
+  measurement** (`container_contents_sync.cpp:111-112` — "the design deliberately ships WITHOUT a
+  rollback shape"). The autonomous director delivered its raison d'être: it staged the concurrent
+  multi-peer container take ("два пира … ОДНОВРЕМЕННО берут X") that two humans cannot reliably produce,
+  and the no-dup verifier caught the bug.
+
+**RIGOR — two-direction control + the copy LOCATION (both user-demanded, both closed):**
+- **Simultaneity mechanism:** the GO barrier writes a wall-clock instant ~1.5 s in the future; both bots
+  busy-wait (`Sleep(1)`) to it on the SAME machine's `GetSystemTimeAsFileTime` clock → they fire
+  `pressButton` within ~1-2 ms of each other, far inside the ~1.5 s CAS window (not hand-timed).
+- **Symmetric summation control:** the single-peer control was run BOTH directions. `taker=host`:
+  `1 + 0 = 1` (proves the client sees the CONTAINER). `taker=client` (the MIRROR control): `0 + 1 = 1`
+  with the client's copy at `GObjStack[idx=0]` = the client's OWN PERSONAL slice — the known-positive
+  that proves the client-personal walk finds X THERE (where a losing client's optimistic dup lives). So
+  the summation is proven to see X in EITHER peer's personal store; `sum==1` on a race means correct,
+  not blind, in both directions.
+- **The dup is a PERSONAL-store dup, not a mirror-desync:** in the race both copies printed
+  `MATCH GObjStack[idx=0][slot=0]` — each at its OWN peer's personal slice (idx=0), NOT a container slice
+  (idx~145). So `sum=2` is specifically R11b (each peer kept a copy in its personal inventory), not "the
+  client's container mirror failed to roll back" (a different bug that would show a container-slice idx).
+
+**FEEDS BACK TO THE CONTAINER SYNC (separate fix, not this session):** R11b's refused-write path needs a
+rollback of the loser's optimistic local PERSONAL take (the design shipped without one). The director +
+this verifier are now the reproduction + regression instrument for that fix.
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
