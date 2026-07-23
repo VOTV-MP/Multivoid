@@ -128,6 +128,45 @@ One compact table per system (the master table's source). Citations are (file, S
 lines carry the user's "что НЕ синхроним" half. Verdict discipline per §3: `code`-only ⇒ `U` (unobserved),
 a take-4 bug that a later unverified fix addressed stays at its last-measured `B`.
 
+### World / interactables — small systems (`coop/world/`, `coop/interactables/`, `coop/items/order_sync`)
+| System | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| Sky | sky rot + moon phase | U | code | HA | `sky_sync::ApplySky` | snapshot |
+| Time-of-day | clock steady-state | U | code | HA | `time_sync::ApplyClockSnapshot` | seed (connect-edge) |
+| Time-of-day | clock connect-edge | U | code | HA | `time_sync::OnReliable` | THIS is the seed |
+| Time-of-day | sleep-accelerate toggle | U | code | CO | `SetSleepAccelerate` | none (sleep lane) |
+| Alarm | klaxon `active` on/off | U | code | CO | `alarm_sync::Apply` | snapshot incl active=0 |
+| Balance | canonical Points total | U | code | HA | `balance_sync::ApplyFromHost` | connect-replay |
+| Balance | credit delta request | U | code | ARB | `OnDeltaRequest` (only host applies) | none (transient) |
+| Daily-task | taskNew (arrays + scalars) | U | code | HA | `OnTaskNewState` | baseline-first-sight (save transfer) |
+| Email | row append (chunked) | U | code | HA | `email_sync::CompleteAssembly` | save transfer + shadow prime |
+| Email | row delete (content-hash) | U | code | CA | `ApplyDeleteByHash` | episode gate |
+| Doors | base door open/close (auto-revert) | U | code | HA | `interactable_sync::SmartApply` | snapshot |
+| Doors | client door open intent | U | code | ARB | `OnDoorOpenRequest` (host runs guards) | none |
+| Doors | garage door (no auto-revert) | W | HO | CO | `g_garageAdapter` **[take-4 R9 FName-id]** | snapshot (level-export FName) |
+| Doors | locker/console door | U | code | CO | `g_doorBoxAdapter` | snapshot |
+| Keypads | digit buffer (input replication) | W | HO | CO | `keypad_sync::ApplyState` **[06-12 echo-storm]** | snapshot |
+| Keypads | active / door power + LED | W | HO | HA | `keypad_sync::ApplyState` **[06-17 keypads-dead]** | snapshot |
+| Keypads | Accept/Deny submit event | W | HO | CO | `keypad_sync::ApplyIncoming` **[07-04 red-button]** | snapshot (None) |
+| Lights | switch on/off | U | code | CO | `g_lightAdapter::CallUse` | snapshot |
+| Turbine | 6 driver floats | U | code | HA | `turbine_sync::ApplyState` | snapshot + pending |
+| Power panel | 5 breaker bools (mask) | U | code | CO | `power_sync::ApplyMask` | snapshot + pending |
+| Grime | process wipe (min-wins) | U | code | CO | `grime_sync::ApplyResolved` | snapshot adopt=1 |
+| Grime | one-shot destroy (super-sponge) | U | code | CO | `grime_sync::ApplyResolved` (value=0) | wiped-keys in snapshot |
+| Window-cleaning | clean wipe (min-wins) | W | ST | CO | `window_sync::ApplyResolved` (+[dev] `window_synth`) | snapshot adopt=1 |
+| Garbage-chute | tick/pickup AV suppress | U | code | PP | `garbage_sync::IsGarbageInstance` (crash-fix) | none |
+| Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
+| ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
+| ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
+| ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
+| ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
+| Shop-order | new order forward | U | code | ARB | `order_sync::CommitOrder` (host commits) | watermark-prime |
+| Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
+| Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
+
+NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task/email lean on save-transfer for JOIN state (no connect snapshot); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
+
+
 ### Physics props — `coop/props/`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
@@ -498,44 +537,6 @@ NOT SYNCED: local hazard EFFECTS (screen shake, coffeePower); "stamina" is `slee
 | 4 | puppet head-look bone | U | code | recv-local | `ApplyToEngine` (head block) | rides pose |
 
 NOT SYNCED: puppet CMC integration (parked; owned by our drive); sit/stand posture (OPEN backlog).
-
-### World / interactables — small systems (`coop/world/`, `coop/interactables/`, `coop/items/order_sync`)
-| System | facet | V | E | Auth | cite | mid-join |
-|---|---|---|---|---|---|---|
-| Sky | sky rot + moon phase | U | code | HA | `sky_sync::ApplySky` | snapshot |
-| Time-of-day | clock steady-state | U | code | HA | `time_sync::ApplyClockSnapshot` | seed (connect-edge) |
-| Time-of-day | clock connect-edge | U | code | HA | `time_sync::OnReliable` | THIS is the seed |
-| Time-of-day | sleep-accelerate toggle | U | code | CO | `SetSleepAccelerate` | none (sleep lane) |
-| Alarm | klaxon `active` on/off | U | code | CO | `alarm_sync::Apply` | snapshot incl active=0 |
-| Balance | canonical Points total | U | code | HA | `balance_sync::ApplyFromHost` | connect-replay |
-| Balance | credit delta request | U | code | ARB | `OnDeltaRequest` (only host applies) | none (transient) |
-| Daily-task | taskNew (arrays + scalars) | U | code | HA | `OnTaskNewState` | baseline-first-sight (save transfer) |
-| Email | row append (chunked) | U | code | HA | `email_sync::CompleteAssembly` | save transfer + shadow prime |
-| Email | row delete (content-hash) | U | code | CA | `ApplyDeleteByHash` | episode gate |
-| Doors | base door open/close (auto-revert) | U | code | HA | `interactable_sync::SmartApply` | snapshot |
-| Doors | client door open intent | U | code | ARB | `OnDoorOpenRequest` (host runs guards) | none |
-| Doors | garage door (no auto-revert) | W | HO | CO | `g_garageAdapter` **[take-4 R9 FName-id]** | snapshot (level-export FName) |
-| Doors | locker/console door | U | code | CO | `g_doorBoxAdapter` | snapshot |
-| Keypads | digit buffer (input replication) | W | HO | CO | `keypad_sync::ApplyState` **[06-12 echo-storm]** | snapshot |
-| Keypads | active / door power + LED | W | HO | HA | `keypad_sync::ApplyState` **[06-17 keypads-dead]** | snapshot |
-| Keypads | Accept/Deny submit event | W | HO | CO | `keypad_sync::ApplyIncoming` **[07-04 red-button]** | snapshot (None) |
-| Lights | switch on/off | U | code | CO | `g_lightAdapter::CallUse` | snapshot |
-| Turbine | 6 driver floats | U | code | HA | `turbine_sync::ApplyState` | snapshot + pending |
-| Power panel | 5 breaker bools (mask) | U | code | CO | `power_sync::ApplyMask` | snapshot + pending |
-| Grime | process wipe (min-wins) | U | code | CO | `grime_sync::ApplyResolved` | snapshot adopt=1 |
-| Grime | one-shot destroy (super-sponge) | U | code | CO | `grime_sync::ApplyResolved` (value=0) | wiped-keys in snapshot |
-| Window-cleaning | clean wipe (min-wins) | W | ST | CO | `window_sync::ApplyResolved` (+[dev] `window_synth`) | snapshot adopt=1 |
-| Garbage-chute | tick/pickup AV suppress | U | code | PP | `garbage_sync::IsGarbageInstance` (crash-fix) | none |
-| Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
-| ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
-| ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
-| ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
-| ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
-| Shop-order | new order forward | U | code | ARB | `order_sync::CommitOrder` (host commits) | watermark-prime |
-| Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
-| Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
-
-NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task/email lean on save-transfer for JOIN state (no connect snapshot); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
 
 ### World-events — `coop/world/event_fire_sync`, `event_cue_sync`, `event_active_sync`
 | # | facet | V | E | Auth | cite | mid-join |

@@ -45,11 +45,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   red maps in with no leftover; completeness is asserted, never proven, so it ships OPEN with the
   falsification test as the standing gate. SEPARATELY: surviving N critique rounds proves the FORM is
   coherent, NOT that the DATA is right — two cell VALUES were wrong (authority mislabeled) and both were
-  caught by READING THE CODE, not by the form holding; of 18 filled cells only 2 were code-verified, and
-  the doc must SAY so or the next reader takes convergence for verification. *Look FIRST:*
-  `docs/COOP_SYNC_PROFILES.md` §0+§4 (the axis set + the convergence call) and
+  caught by READING THE CODE, not by the form holding; the doc must SAY so or the next reader takes
+  convergence for verification. Confirmed at scale 2026-07-23: a full ~67-system / ~200-facet sweep
+  added a THIRD value (`peer-owned`) and still ZERO new axes, and the honest ceiling is WIRE-complete
+  (provable: 113 kinds + 13 streams all accounted) but FACET-complete NEVER. *Look FIRST:*
+  `docs/COOP_SYNC_PROFILES.md` §3+§8 (the axis set + the convergence call) and
   `[[lesson-converge-a-taxonomy-by-new-axis-not-a-null-control]]`.
   `memory/lesson_converge_a_taxonomy_by_new_axis_not_a_null_control.md`
+- **A WIRE-LANE / enum census is BLIND to no-wire systems; completeness is WIRE-provable but
+  FACET-never.** Filling the sync profiles to the whole tree (2026-07-23), a sweep keyed on wire lanes
+  produced ~58 systems and MISSED six — three of which carry NO ReliableKind at all (moderation =
+  GNS-close + host files; save-suppression = client-local hooks; spawn-authority = client-local park):
+  "coordination by construction" the host wins by being the only peer not running the local suppressor,
+  invisible to any lane census. Only a system-by-system source read finds them. The honest completeness
+  ceiling splits in two: WIRE-complete IS provable (enumerate all 113 ReliableKinds → each has a router
+  case → each maps to a system; all 13 unreliable MsgType streams cross-checked to a facet — no lane
+  outside the catalog), FACET-complete is NEVER (a race is not a lane; a HUD/sound/guard has nothing to
+  census). Also: the self-audit's `ReliableKind::\b` grep agreed with itself (word-boundary matched
+  nothing → ~66 false MISSING); the reliable signal was the file-stem cross-check, hand-triaged.
+  *Look FIRST:* `docs/COOP_SYNC_PROFILES.md` §9 (residual + dig) and
+  `[[lesson-wire-census-blind-facet-completeness-ceiling]]`.
+  `memory/lesson_wire_census_blind_facet_completeness_ceiling.md`
 
 - **A CAUSING probe must prove its stimulus LANDED before its verdict means anything** (sharpens
   "a probe must COUNT, not confirm"). When the probe has to trigger the event it measures, an absent

@@ -213,11 +213,14 @@ three.)
 
 ## 9. The per-system PROFILE brief (2026-07-22, for its own `/qf`)
 
-> **BUILT 2026-07-23** — this brief's `/qf` ran (11 rounds, converged) and produced the deliverable
-> `docs/COOP_SYNC_PROFILES.md`: three filled profiles on a five-axis falsifiable status model. The
-> "spine may be the LANE" position below was TESTED and REJECTED — the spine is the SYSTEM, hand-named,
-> because a system's facets cross files. Read the profiles doc for the as-built; the brief below is
-> the point-in-time reasoning that led into it.
+> **BUILT + FILLED TO COMPLETION 2026-07-23** — this brief's `/qf` ran (11 rounds, converged) and
+> produced `docs/COOP_SYNC_PROFILES.md`. It started as three worked profiles on a five-axis falsifiable
+> status model and was then FILLED to the whole tree: a master summary table (now §1) of ~67 co-op
+> systems / ~215 facets + a per-system catalog (§2). The "spine may be the LANE" position below was
+> TESTED and REJECTED — the spine is the SYSTEM, hand-named, because a system's facets cross files.
+> The value set grew to THREE (selftest / co-authored / peer-owned) with ZERO new axes across the full
+> sweep; the honest ceiling is WIRE-complete (113 kinds + 13 streams all accounted) but FACET-complete
+> never. Read the profiles doc for the as-built; the brief below is the point-in-time reasoning.
 
 The user proposed a chain: **granule -> domain -> synced? -> in work? -> table**, and asked the one
 question that decides whether it is a measurement or a rubrication: **which arrows are machine and
