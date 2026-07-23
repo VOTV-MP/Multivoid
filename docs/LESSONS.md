@@ -800,6 +800,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   desk; +20 s from connected landed). *Look FIRST:*
   `memory/lesson_audio_effect_mirror_func_patch_native_seam.md` + `desk_snd_fx.cpp` (v115 `c5ff11a4`).
 
+- **A test/automation bot drives at the human-INPUT seam, NEVER the effect seam** (2026-07-23, the
+  Baritone-analog director DESIGN). Issue actions at the UFunctions a human's input hits
+  (`AddMovementInput`, `InpActEvt_use`, forced `lookAtActor`), never the downstream mutator
+  (`propInventory_C::takeObj` etc.). Driving INPUT makes the bot authority-equivalent to a human client,
+  so the scenario runs the REAL detection->broadcast->authority path; driving the EFFECT mutates state
+  locally and tests nothing (or fakes a bug). `take`/`grab`/`press` = "aim + input-verb" composition.
+  Scope: callable input-seam UFunctions only (out: EX_Local-only/widget/analog-held/drag; resolve on the
+  DECLARING class per the FindFunction trap). Anchor: `autotest_chippile` drives real InpActEvt_use through
+  the real wire (v85 PASS). *Look FIRST:*
+  `memory/lesson_drive_test_bot_at_input_seam_not_effect_seam.md` + the director DESIGN §B4.
+- **An engine with a baked NavMesh collapses a movement-bot's whole pathfinder** (2026-07-23). VOTV levels
+  ship RecastNavMesh/NavMeshBoundsVolume as cooked-umap exports + NPCs pathfind via AIMoveTo, so a
+  Baritone port DELETES A*+Moves+Movement+ActionCosts+chunk-cache and uses one engine call:
+  `FindPathToLocationSynchronously` (controller-agnostic `UNavigationPath`) + per-tick `AddMovementInput`
+  steering on the possessed player (NOT AIController MoveTo — that needs an AIController; mainPlayer_C =
+  AddMovementInput x7 + CharacterMovement x82, AIMoveTo=0). Trap: navmesh ACTORS authored (umap export =
+  measured) != navmesh BUILT+traversable (runtime HALT probe). *Look FIRST:*
+  `memory/lesson_engine_navmesh_collapses_movement_bot_pathfinder.md` + the director DESIGN §A2/§B2.
 - **SET-state syncs as VALUE-ops + a host-canonical container, never slot deltas** (v118 L8,
   2026-07-18). A native uniqueness gate (the plug dup-check) makes the positional-looking array a SET:
   slot-keyed deltas lose an element permanently on a concurrent same-slot race and diverge index-read

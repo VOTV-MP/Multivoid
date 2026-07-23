@@ -45,6 +45,7 @@ state** — each file is a snapshot from its date.
 | `weather-wind/` | weather subsystem REs (scheduler/rendering/mainGamemode/IDA), wind, sky/celestial |
 | `world-systems/` | mushrooms, dirt/window cleaning, fireflies, sleep/nightmare, RNG authority, email, gamerules, notifications, ambient anchors |
 | `vehicles/` | ATV/quadbike arc, delivery drone |
+| `tooling/` | dev-tool designs: the Baritone-analog autonomous bot-director (autonomous-testing driver) |
 | `_archive/` | definitively superseded/abandoned approaches (see below) |
 
 Grep tip: filenames were NOT renamed — a bare-filename citation (code comments cite findings by name)
