@@ -400,28 +400,39 @@ world container (the brain: `AddWalkToProcesses` = ClearHand>Goto>Reach), then d
 `openContainer → pressButton → em_take` and MEASURE the container's GObjStack item-count delta;
 `extract(0)` is a NON-FAITHFUL diagnostic fallback. It NEVER infers "callable ⇒ ran".
 
-**Result (host log `director/ctake: VERDICT DRIVABLE-EFFECT-SEAM-ONLY`):**
+**Result (final: host log `director/ctake: VERDICT DRIVABLE-FAITHFUL`):**
 - Walk-to-container WORKS (file cabinet `prop_container_fileCabs_C`, 2 items, 6787cm route, 2 doors).
 - `openContainer` call=1 → the real container UI opened (`containerSlot=1`, the true signal). DRIVABLE.
-- `pressButton` press=1, `selected`→1 (selection set); `em_take` executed — BUT the container count
-  stayed 2 (`em_take` took nothing from the container: a selection last-mile — `selected` likely
-  indexes the PLAYER list; player/container lists are separate `playerListIds`/`amounts_cont`).
-- `extract(0)` → count **2→1**: the container take IS reflection-drivable. `container_contents`
-  "0x45 addObject/takeObj edge LIVE" fired during the interaction.
-- **A bug this probe caught (mine):** run 1 resolved `openContainer`/`extract` on the LEAF class
-  (`prop_container_fileCabs_C`) → `FindFunction` NOT FOUND (exact-owner, no superclass walk —
-  `[[lesson-findfunction-does-not-walk-the-superclass-chain]]`). Fixed: resolve on the DECLARING base
-  `prop_container_C`. The recorded baked FName (`prop_container_fileCabs_C_2147472500`) is the later
-  2-peer shared-target key.
+- **The FAITHFUL take is drivable at the INPUT seam** (measured, not inferred): the container-slot CLICK
+  handler is `uicomp_playerInvContainerSlot::pressButton`, and its bytecode (kismet-analyzer on
+  `uicomp_playerInvContainerSlot.uexp`) calls `setHoverContainerSlot(self)` on its Owner UI + references
+  `IsHovered` — so the take is keyed on WHICH slot the UI considers HOVERED, and the slot must be the
+  UI's OWN bound slot (`ui.slots_prop[i]`), not a stray live instance. Driving the human sequence
+  `ui.setHoverContainerSlot(ui.slots_prop[0]) → slot.pressButton()` took from the container (count
+  **2→0**). No `extract`, no effect-seam, no B4 deviation.
+- Two intermediate false results, each instructive:
+  - Run 1 `NOT-DRIVABLE`: `openContainer`/`extract` resolved on the LEAF class
+    `prop_container_fileCabs_C` → `FindFunction` NOT FOUND (exact-owner, no superclass walk,
+    `[[lesson-findfunction-does-not-walk-the-superclass-chain]]`; containers are a CLASS FAMILY, the
+    verbs live on the base `prop_container_C`). Fixed: resolve on the declaring base.
+  - Run 2 `DRIVABLE-EFFECT-SEAM-ONLY`: a STRAY slot + NO hover → `pressButton`/`em_take` no-op'd
+    (count stayed 2); only the diagnostic `extract(0)` moved an item. This is the UMG analog of the
+    input-inert trap: a slot click handler gated on `IsHovered`/hover-state no-ops when the hover was
+    never set — the fix is `setHoverContainerSlot` on the UI's BOUND slot, not `extract`.
+- `em_take` is player-side (its bytecode works `playerListIds`/`slots_player`), NOT the container-take
+  verb — the container take is the slot's own `pressButton` under the correct hover. The recorded baked
+  FName (`prop_container_fileCabs_C_2147472500`) is the later 2-peer shared-target key.
 
-**VERDICT → the container concurrent-take race IS BUILDABLE** on the reflected-verb model (`extract`
-removes the item + the 0x45 CAS lane is live). REMAINING (a USER go/no-go — a real multi-piece
-investment): (1) the faithful `em_take`-from-container-slot selection semantics, OR accept `extract`
-(same 0x45 lane ⇒ likely authority-equivalent for the container CAS, a B4-fidelity call); (2) the
-barrier harness (client-side director + shared-FName target + ARRIVED log token + a GO sentinel file
-the director polls — no proto bump, per §B5); (3) the ONE genuinely-new instrument — a whole-GObjStack
-no-dup verifier (`CONFLICT` fired AND global-instance-count(X)==1; the `CONFLICT` line alone is a
-whole-container CAS logging the author PEER slot, insufficient — it can hide a personal-inventory dup).
+**VERDICT → the container concurrent-take race IS BUILDABLE at the FAITHFUL human-input seam**
+(`openContainer → setHoverContainerSlot(bound slot) → pressButton`; measured, `extract` retired to a
+diagnostic). **STATUS: only the SOLO take is VERIFIED (this run); the two-peer RACE is DESIGN, not
+built.** REMAINING (a USER go/no-go — a real multi-piece build): (1) isolate `pressButton`-alone as the
+single-item take (the run also fired the secondary `em_take`, so the 2→0 is not yet attributed to one
+verb — a build-time refinement to take exactly item X); (2) the barrier harness (client-side director +
+shared-FName target + `ARRIVED` log token + a `GO` sentinel file the director polls — no proto bump,
+per §B5); (3) the ONE genuinely-new instrument — a whole-GObjStack no-dup verifier (`CONFLICT` fired AND
+global-instance-count(X)==1; the `CONFLICT` line alone is a whole-container CAS logging the author PEER
+slot, insufficient — it can hide a personal-inventory dup, which is R11b's reasoned-but-unproven residual).
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 

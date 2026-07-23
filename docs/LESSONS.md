@@ -1005,6 +1005,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   line against your own "registered" line. Any `if (allDone) return;` in a subsystem that accepts
   dynamic registration is this bug waiting for its first late registrant.
   `memory/lesson_late_registrant_inert_after_all_resolved_latch.md`
+- **A UMG click handler gated on HOVER state no-ops via a bare reflected call — set the hover + drive
+  the BOUND slot, don't fall back to the effect seam.** `uicomp_playerInvContainerSlot::pressButton`
+  (the container-slot click handler) has bytecode that calls `setHoverContainerSlot(self)` on its Owner
+  UI + references `IsHovered`, so the take is keyed on which slot the UI considers HOVERED. A reflected
+  `CallFunction` moves no mouse → `pressButton` returned `true` and took NOTHING (count unchanged) when
+  driven on a stray `uicomp_playerInvContainerSlot_C` with no hover set. Fix (measured, count 2→0):
+  drive `ui.slots_prop[i]` (the UI's OWN bound slot) after `ui.setHoverContainerSlot(slot)` — NOT the
+  effect-seam `prop_container::extract(Index)` (which drives a seam a human never touches, breaking
+  authority-equivalence). `em_take`/`makeSelected` are PLAYER-side, not the container take. The UMG
+  analog of the input-inert trap; verify by the state DELTA, never the call's return.
+  *Look FIRST:* driving any VOTV UMG widget action by reflection — read its click-handler bytecode
+  (kismet-analyzer `to-json` on the `.uexp`) for an `IsHovered`/hover/selection gate, satisfy that
+  state, drive the parent's bound child (`slots_*`), not a stray instance. Pairs with
+  `[[lesson-discrete-input-action-verbs-inert-via-reflection]]` +
+  `[[lesson-findfunction-does-not-walk-the-superclass-chain]]` (containers are a class family; the
+  verbs live on the base `prop_container_C`). `memory/lesson_umg_click_handler_gated_on_hover_state.md`
 
 ## 5. Engine / UE4 facts
 

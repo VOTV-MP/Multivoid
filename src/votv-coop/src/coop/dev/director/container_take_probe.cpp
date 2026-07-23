@@ -292,17 +292,31 @@ void RunContainerTakeProbe() {
     UE_LOGI("director/ctake: RUNG2 container UI: ui_playerInventory=%d containerSlot=%d",
             pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0);
 
-    // RUNG 3+4: the FAITHFUL take -- press a container slot to set the selection, then em_take.
+    // RUNG 3+4: the FAITHFUL take. The container-slot CLICK handler is pressButton on the slot; the
+    // slot's ubergraph (kismet-analyzer 2026-07-23) calls setHoverContainerSlot(self) on its Owner UI
+    // and references IsHovered -- so the take is keyed on WHICH slot the UI considers hovered, and it
+    // must be the UI's OWN bound slot (ui.slots_prop[i], ID+Owner set), not a stray live instance.
+    // Faithful sequence a human's click produces: ui.setHoverContainerSlot(slot) -> slot.pressButton().
+    // em_take is player-side (its bytecode works playerListIds/slots_player), kept only for the record.
     RunGT([&goal, pb](std::atomic<int>& d) {
-        void* ui   = FirstLiveOfClass(L"ui_playerInventory_C");
-        void* slot = FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C");
-        pb->slotFound = (slot != nullptr);
-        if (slot) {
-            pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");
-            pb->selectedAfterPress = ui ? ReadInt32Field(ui, L"selected") : -0x7fffffff;
+        void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
+        void* slot = nullptr;
+        if (ui) {   // ui.slots_prop[0] -- the container slot the UI actually built (bound to the container)
+            const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"slots_prop");
+            if (off >= 0) {
+                const SR::Arr arr = SR::ReadArr(ui, off);   // TArray<slot*>: data = array of 8-byte ptrs
+                if (arr.num > 0 && arr.data) std::memcpy(&slot, arr.data, sizeof(slot));
+            }
         }
-        if (ui) pb->takeCalled = CallNoArg(ui, R::ClassOf(ui), L"em_take");
-        UE_LOGI("director/ctake: RUNG3/4 ui=%p slot=%p press=%d selected=%d em_take=%d",
+        pb->slotFound = (slot != nullptr && R::IsLive(slot));
+        if (ui && pb->slotFound) {
+            void* hoverFn = R::FindFunction(R::ClassOf(ui), L"setHoverContainerSlot");
+            if (hoverFn) { ue_wrap::ParamFrame pf(hoverFn); pf.Set<void*>(L"containerSlot", slot); ue_wrap::Call(ui, pf); }
+            pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");
+            pb->selectedAfterPress = ReadInt32Field(ui, L"selected");
+        }
+        if (ui) pb->takeCalled = CallNoArg(ui, R::ClassOf(ui), L"em_take");   // secondary (player-side)
+        UE_LOGI("director/ctake: RUNG3/4 ui=%p boundSlot=%p hover+press=%d selected=%d em_take=%d",
                 ui, slot, pb->pressCalled ? 1 : 0, pb->selectedAfterPress, pb->takeCalled ? 1 : 0);
         d.store(1);
     });
