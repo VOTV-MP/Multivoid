@@ -77,6 +77,14 @@ cannot answer "which facets does a dedicated-server migration touch?"
 |---|---|
 | **AUTHORITY** — who owns the write | `host-authored` (client mirrors) · `client-authored` (host validates) · `arbiter` (host CAS over contested writes) · `peer-private` (never shared) · `none` (convergent local, no owner) |
 
+`none` does NOT mean "independent / safe": a convergent-local facet is only correct while its INPUT is
+identical on both peers. That input can be a deterministic shared value (the lamp post's day/night
+clock — identical by construction) OR a wire-synced facet from THIS same table (container #6 derives
+its volume from the host-authored content #1). So a `none` facet INHERITS a dependency on the facet it
+derives from — readable as a relationship between two rows, not a split of the `none` value (round 10
+checked: two `none` facets, lamp #1 `WORKS/code` and container #6 `BROKEN/log`, differ on verdict and
+evidence, so the falsification test yields no sub-axis). Read `none` + its input row together.
+
 ---
 
 ## 1. Container (`Aprop_container_C` — 60 classes in the subtree)
@@ -91,7 +99,7 @@ addressed by `propInventory.index` (`[[lesson-container-contents-live-in-one-glo
 | 3 | simultaneous grab by two peers (the CAS) | **UNKNOWN** | `log` | `arbiter` | `HostAcceptsClientWrite()` in `container_contents_sync.cpp`. `CONFLICT=0` on BOTH peers in the 07-22 take: the arbitration never executed once. Unexercised, not proven and not broken |
 | 4 | the extracted item reaching the host's world | **BROKEN** | `inference` | `client-authored` | the `freshBirth` guard in `prop_drop_intent.cpp` (`if (!parked && !freshBirth) continue;`). `[RD]` not `[V]`: the log cannot separate "dropped at the guard" from "never enqueued" — both are silence |
 | 5 | nested container-in-container | **NOT BUILT** | `code` | `arbiter` (intended) | the `BOUNDARY 2` comment block in `container_contents_sync.cpp` — a nested container's `ints[0][0]` is a sender-side slot index, meaningless on the receiver. Receiver-side bounds needed first |
-| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `host-authored` (intended) | `updateVolumesAndMass` never re-derives: records went 7 -> 6 while `currVol` stayed 28579.0 on BOTH peers, 07-22 take |
+| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `none` | **NOT host-authored** — `container_contents_sync.cpp:429-441` states "we never raw-write currVol / Mass"; each peer RE-DERIVES the volume LOCALLY from the already-synced content via the engine verb `updateVolumesAndMass`. Convergent-local like the lamp post, no owner. The BROKEN root is that the local re-derive did not RUN (the verb resolved null off the instance class — `FindFunction` doesn't walk the superclass chain, `reflection.cpp:427`), NOT that a host stream was missing. A declaring-class fix exists (`411743af`); its effect on this facet is UNVERIFIED against the 07-22 stale-`currVol` take, so the verdict stays at the last MEASURED state |
 | 7 | slot 0 — the player's personal container | **NOT BUILT** | `code` | `peer-private` | `IsWorldContainerInventory`, fail-closed today. A privacy/product fork and a BOUNDARY 1 redesign; gate:user |
 | 8 | the INSERT direction (`putObjectIn_overlap`) | **UNKNOWN** | `none` | `client-authored` (intended) | nobody has looked; no claim either way |
 | — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **3 of 8 facets (#3, #4, #6) were found by RUNNING**, not by reading source — so the majority of what is wrong here was invisible to code reading. (b) **Concurrency WAS exercised** (the 07-22 take produced `CONFLICT=0`), so this system's incompleteness signal is meaningful — but the ONE interleaving that ran did not trigger the CAS, so even here (b) is "run once, not run adversarially" |
