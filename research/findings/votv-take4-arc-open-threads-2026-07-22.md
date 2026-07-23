@@ -117,6 +117,7 @@ channel is worse than none: it manufactures a false negative out of a good run. 
 | **SACK-PHYS** -- our `SuppressTick` silences the AnimBP feed | OPEN | gate:none -- own fix | from take-4 |
 | **KERFUR-BLUE** | NOT RE'd | gate:none -- own approach | from take-4 |
 | **droneConsole** -- a client pressing E to send the drone back is a no-op | NOT RE'd | gate:none -- own hook | from take-4 |
+| **GRAB-RACE** -- two+ peers grab the SAME world prop on E: no arbiter, contested pose (tug-of-war) | OPEN, inferred from code 2026-07-23 | gate:user (a run staging the race) -- see 2c | `grab_observer.cpp` diagnostic-only; `remote_prop.cpp:54,270` |
 
 ---
 
@@ -170,6 +171,62 @@ shelve all three at the same weight. Split by CONSEQUENCE OF A RECOOK, not by me
 **Scope of this audit, stated so it is not over-read:** it verifies DECLARATION, i.e. that the resolve
 returns non-null. It does NOT verify that the call lands -- `ParamFrame` validity, parameter-name
 spelling, and `EX_*`-invisible dispatch are all separate questions.
+
+---
+
+## 2c. Concurrent-access races -- recorded 2026-07-23 (INFERRED from code, NOT hands-on)
+
+Two race bugs the user asked about directly. Both are reasoned from the current code; neither is
+measured in play. Both are gated on a run STAGED to produce the race -- the container one is exactly
+what runbook `handson_runbook_2026-07-23_container_measurements.md` M1 measures; the grab one has no
+probe yet.
+
+### GRAB-RACE -- two+ peers grab the SAME world prop on E
+
+**Symptom (predicted):** the prop's mirrored position is torn between the two holders -- a tug-of-war /
+jitter, not a clean single-holder pose. No duplication (the eid is shared).
+
+**Root:** there is **no grab arbiter for world props at all.**
+- `grab_observer.cpp` is diagnostic-only -- every observer just `UE_LOGI`s (`:46-201`); it establishes
+  no ownership and refuses nobody.
+- The held pose is streamed by `PropPose` **per slot** (per peer): "each client drives its own held
+  prop independently" (`remote_prop.cpp:54`, `:270`). A world prop is a plain physics actor each peer
+  simulates locally, so both peers' games let them grab it -- neither knows the other "holds" it.
+- Unlike workstation UNITS (which have `interactables/device_occupancy.cpp` as a holder/claim), world
+  props have **no claim table**. When two slots stream `PropPose` for the same eid, the receiver drives
+  the one local actor from both in the same frame -> last-writer-wins -> contested pose. The code is
+  already aware of the two-slots-one-prop hazard for re-grab attribution (`remote_prop.cpp:366`) but
+  does not arbitrate a genuine simultaneous hold.
+
+**Status:** OPEN, `inferred`. **Gate:** a staged run (two peers grab one prop, watch the pose). No
+probe exists; could be added as M3 to the 2026-07-23 runbook. **Fix direction (not built):** the MTA
+shape is a per-element SYNCER -- the same authority model `docs/COOP_SYNCER_MODEL.md` already slates
+for world elements. A world-prop grab is a claim on that element; second grabber is denied or the
+element's syncer arbitrates. Do NOT bolt a one-off prop-holder latch -- that is the syncer model's job.
+
+### STACK-RACE -- two peers take the SAME container item concurrently ("3 from 2")
+
+**Symptom (predicted, matches the real b124 report):** a container of 2, both peers take 1 at once ->
+the container's canonical count ends at **1** (not 0), while BOTH peers hold one each -> **3 items from
+an order of 2** -- one duplicated.
+
+**Root -- two layers, and the dup lives in the gap between them:**
+- The container COUNT is protected: `HostAcceptsClientWrite` (`container_contents_sync.cpp:553-586`) is
+  a real compare-and-swap. Both decrements race; the first is applied (2->1), the second's base is now
+  stale -> `CONFLICT`, refused, host re-publishes its truth. Canon converges to 1.
+- But the refused client **already did its local take** (native, before the refusal crossed the wire),
+  and where that item WENT is not covered by the container lane: either a client-born world actor
+  (governed by the still-open `:279` birth-drop) or the player's personal inventory (slot 0, excluded
+  from canon fail-closed by BOUNDARY 1, `IsWorldContainerInventory` -- not synced at all). Either way
+  the refused client keeps the item -> the "leaves the item with the refused client" open sub-case
+  (`:598-607`, the §1 row). The CAS protects the container; it does not claw back the phantom copy.
+
+**Status:** OPEN, `inferred`. **Gate:** runbook M1 (`CONFLICT>0`) -- its convergence check ("both peers
+show host contents" vs "diverged/dup with per-peer counts") is precisely the measurement of whether
+this dup is real and how big. **Relationship:** this is NOT a new bug to fix separately -- it is the
+confluence of the CAS-refusal row (§1) with whichever downstream owns the refused client's copy
+(`:279` or slot-0). The measurement decides which. Fix is again the syncer/arbiter model, not a patch
+here.
 
 ---
 
