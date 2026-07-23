@@ -1,5 +1,12 @@
 # Hands-on runbook -- container v125 (proto 125), take 2026-07-22
 
+> **SUPERSEDED for the two OPEN measurements (2026-07-23).** The sequential half of THIS take is DONE
+> (Q-STACK green in turn). The two things it deliberately avoided/deferred -- a PRODUCED conflict
+> (`CONFLICT>0`) and the Q-PROP discriminator (step d, never run) -- now live in
+> `handson_runbook_2026-07-23_container_measurements.md` with the exact choreography + log strings.
+> Run THAT for the remaining work; this file is the record of the conflict-free take.
+
+
 **Deployed:** `multivoid-0.9.0n-125.dll`, SHA-256 `05aff7799a707858`, MATCH x4 (HOST / CLIENT_1 /
 CLIENT_2 / DEV) -- verified this session. (An earlier revision of this file cited
 `f79eb2ce86cdc46e`; that predated the audit-fix commit `79534796` and was stale.)

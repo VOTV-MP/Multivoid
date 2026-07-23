@@ -31,6 +31,11 @@ or a hands-on run only the user can supply. `gate:none` = ready to work when pic
 | **Slot 0 -- the player's personal container into canon** | OPEN, "the second story" | **gate:user** -- a privacy/product fork; also a BOUNDARY 1 redesign | `IsWorldContainerInventory` fail-closed |
 | **The `hold` end of the chain** | NOT measured (+187 B in `hold` vs `equipment`) | gate:none | -- |
 
+**GROUND PREPARED (2026-07-23).** Both `gate:user` measurements above -- `CONFLICT>0` (Q-STACK
+concurrent half) and the Q-PROP discriminator -- now have an executable runbook with the exact
+choreography, grep strings, and verdict table: `research/handson_runbook_2026-07-23_container_measurements.md`.
+DLL unchanged (`05aff7799a707858`, proto 125); the user runs it, no further prep owed.
+
 **RETRACTED framing, recorded so it is not re-derived:** "the extracted item lands in the client's
 slot 0 and the refusal must reclaim it from their inventory." `takeObj` does NOT write an inventory
 record -- it SPAWNS A WORLD ACTOR (`BeginDeferredActorSpawnFromClass -> loadData ->
