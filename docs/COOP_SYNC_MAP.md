@@ -4,6 +4,13 @@ Born 2026-06-28 (after the sync-consolidation refactor). Answers "where is the c
 sync, and which layer does it belong to?" without grepping 95 files. The organizing
 principle is **what each thing replicates**, NOT the word "sync":
 
+> **Sibling doc (2026-07-23): `docs/COOP_SYNC_PROFILES.md`** — this map answers WHERE a sync lives;
+> that one answers, per game SYSTEM, WHAT WORKS AND WHAT DOESN'T inside it, facet by facet, on a
+> five-axis falsifiable status model (verdict × evidence × remainder × sync-lane × authority). Three
+> profiles filled (container / weather / lamp posts). The FORM converged (11 `/qf` rounds); the CELL
+> VALUES are code-verified for only 2 of 18 rows — read the rest as AS-BUILT, not verified. Go there
+> for "is X actually synced correctly?"; stay here for "where is X's code?".
+
 - **Identity / mirror-entity lifecycle** — an eid↔actor mapping with create / adopt /
   morph / destroy. This is the only thing the `coop/element/` module consolidates (it was
   built to kill the mirror-identity-race class, D1/D2). MTA analogue: `CElementIDs` +

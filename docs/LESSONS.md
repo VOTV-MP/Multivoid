@@ -33,6 +33,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **Converging a QUALITATIVE STATUS TAXONOMY: the test is "new VALUE vs new AXIS", never "a control
+  that changes nothing" — and a converged FORM is not verified DATA.** Building the per-system sync
+  profiles (2026-07-23, 11 `/qf` rounds), every control moved the status model (verdict×evidence /
+  two-field remainder / sync-lane trichotomy / authority), and "keep profiling until one changes
+  nothing" was declared as the convergence bar — WRONG: a qualitative vocabulary meets new facet shapes
+  forever, so a change-nothing control is unachievable and the bar is unfalsifiable. The right bar:
+  does a new instance add a new VALUE to an existing axis (normal, expected) or a whole new AXIS (the
+  model was incomplete)? Each axis must be EARNED by a falsification instance — two rows that collapse
+  (become indistinguishable) without it — and the vocabulary is complete only when every KNOWN measured-
+  red maps in with no leftover; completeness is asserted, never proven, so it ships OPEN with the
+  falsification test as the standing gate. SEPARATELY: surviving N critique rounds proves the FORM is
+  coherent, NOT that the DATA is right — two cell VALUES were wrong (authority mislabeled) and both were
+  caught by READING THE CODE, not by the form holding; of 18 filled cells only 2 were code-verified, and
+  the doc must SAY so or the next reader takes convergence for verification. *Look FIRST:*
+  `docs/COOP_SYNC_PROFILES.md` §0+§4 (the axis set + the convergence call) and
+  `[[lesson-converge-a-taxonomy-by-new-axis-not-a-null-control]]`.
+  `memory/lesson_converge_a_taxonomy_by_new_axis_not_a_null_control.md`
+
 - **A CAUSING probe must prove its stimulus LANDED before its verdict means anything** (sharpens
   "a probe must COUNT, not confirm"). When the probe has to trigger the event it measures, an absent
   result line is ambiguous: dead lane, or dead trigger? Measured 2026-07-22: the R11b instrument fired
