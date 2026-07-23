@@ -54,7 +54,10 @@ plainly:
   we report the number with its error rather than a narrower number with a
   hidden judgment.
 - **12** — very few systems have a status written anywhere. That gap is the
-  honest state of the documentation, not of the code.
+  honest state of the documentation, not of the code. And "has a status" is not
+  "works": of the 12, **9 read AS-BUILT (a lane exists, nobody wrote whether it
+  behaves), 2 VERIFIED, 1 OPEN**. A written status records that a lane exists; it
+  does not record a verdict. Read this row as "documented", never as "covered".
 - **2** — a human played it and said it worked, each citing a dated artifact in
   [`tools/verified_takes.tsv`](tools/verified_takes.tsv). Parsing the docs for
   the same answer returned 6; the parse was wrong in both directions, so this
