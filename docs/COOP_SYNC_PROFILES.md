@@ -24,12 +24,16 @@ drops the item a client extracted from a container — a CONTAINER facet living 
 
 **Three consequences, each load-bearing:**
 
-1. **Every system carries a mandatory `remainder` row.** A facet nobody thought of is ABSENT, and an
-   absent row reads as "nothing wrong there" exactly the way a green does. That is the same error
-   asymmetry that killed the syntactic marker filter
-   (`[[lesson-syntactic-marker-set-cannot-express-semantic-relevance]]`). The remainder row states,
-   per system, that the list is open — and records how many facets were found only by RUNNING, which
-   is the one measurable signal about how much the list is still missing.
+1. **Every system carries a mandatory `remainder` row — with TWO fields, never one.** A facet nobody
+   thought of is ABSENT, and an absent row reads as "nothing wrong there" exactly the way a green
+   does — the same error asymmetry that killed the syntactic marker filter
+   (`[[lesson-syntactic-marker-set-cannot-express-semantic-relevance]]`). The naive remainder
+   ("N facets found by RUNNING") has that asymmetry inside IT: a remainder of 0 means either "we ran
+   interleavings and found nothing more" or "nobody ever ran one", and reading the second as the
+   first is the filter's exact false-negative. So the remainder carries **(a) how many facets were
+   found by RUNNING, AND (b) whether this system was EVER exercised under concurrency / a live probe
+   at all.** A `0-found / never-run` remainder is `UNKNOWN completeness`, NOT `complete` — the
+   incompleteness signal is only meaningful once (b) is yes.
 2. **Citations anchor to a SYMBOL or a SECTION, never a bare line** — and a checker that only asks
    "does the citation resolve?" catches a DELETED line while missing a REWRITTEN one, silently
    preserving a VERIFIED over changed semantics
@@ -77,7 +81,7 @@ addressed by `propInventory.index` (`[[lesson-container-contents-live-in-one-glo
 | 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `updateVolumesAndMass` never re-derives: records went 7 -> 6 while `currVol` stayed 28579.0 on BOTH peers, 07-22 take |
 | 7 | slot 0 — the player's personal container | **NOT BUILT** | `code` | `IsWorldContainerInventory`, fail-closed today. A privacy/product fork and a BOUNDARY 1 redesign; gate:user |
 | 8 | the INSERT direction (`putObjectIn_overlap`) | **UNKNOWN** | `none` | nobody has looked; no claim either way |
-| — | **remainder — the list is open** | **UNKNOWN** | — | **3 of the 8 facets above (#3, #4, #6) were found by RUNNING, not by reading source.** That ratio is the only measurable signal about what a read-only sweep of this system still misses — and it says the majority of what is wrong here was invisible to code reading |
+| — | **remainder — the list is open** | **UNKNOWN** | — | (a) **3 of 8 facets (#3, #4, #6) were found by RUNNING**, not by reading source — so the majority of what is wrong here was invisible to code reading. (b) **Concurrency WAS exercised** (the 07-22 take produced `CONFLICT=0`), so this system's incompleteness signal is meaningful — but the ONE interleaving that ran did not trigger the CAS, so even here (b) is "run once, not run adversarially" |
 
 **Count, not percentage:** 8 facets — 2 `WORKS`, 2 `BROKEN`, 2 `NOT BUILT`, 2 `UNKNOWN`; by evidence,
 2 `hands-on`, 2 `log`, 2 `code`, 1 `inference`, 1 `none`.
@@ -107,7 +111,7 @@ would have flattened to one green.
 | 3 | lightning strike | **UNKNOWN** | `code` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
 | 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §0 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
 | 5 | wind | **BROKEN** | `log` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
-| — | **remainder — the list is open** | **UNKNOWN** | — | weather's RNG (knob jitter, `COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, not a user-visible facet — so it is deliberately not a row. No facet here was found by a concurrent interleaving; the wind bug came from a live single-flow probe |
+| — | **remainder — the list is open** | **UNKNOWN** | — | (a) **0 facets found by RUNNING** — but (b) **weather was NEVER exercised under concurrency**; the wind bug came from a live SINGLE-flow probe, not an interleaving. So this 0 is `UNKNOWN completeness`, NOT "nothing missed" — reading it as complete would be the marker-filter's false-negative. weather's RNG knob jitter (`COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, deliberately not a row |
 
 **Count:** 5 facets — **1 `WORKS`, 1 `BROKEN`, 3 `UNKNOWN`**; by evidence, **0 `hands-on`, 2 `log`,
 3 `code`**.
@@ -130,7 +134,59 @@ is a behaviour, and a behaviour needs no class to exist.
 
 ---
 
-## 3. Systems not yet profiled
+## 3. Lamp posts — the WE-SYNC-ZERO control (the other half of the ask)
+
+The user asked for "что синхроним И что НЕ синхроним". The first two controls are systems we DO sync.
+This third is the untested half: a VOTV system we sync **zero** facets of, chosen because a
+fully-unsynced system exercises two things neither prior control did — (a) does the form MOVE on a
+third, different-shaped control (round-5 Q1: convergence is a control that changes nothing), and
+(b) can the form even EXPRESS "we sync nothing here, and that is correct"?
+
+`AlampPost_C` — outdoor lamp posts, `NOT synced` per `COOP_SCOPE.md` (§ Out of scope): the game's
+day/night cycle (`mainGamemode` tracks `allLampPosts`) runs identically on both peers, so lamps
+toggle in lockstep with no wire traffic. RE-confirmed in the Phase 5D doors+lights pass 2026-05-25.
+
+| # | facet | verdict | evidence | citation (symbol / section) |
+|---|---|---|---|---|
+| 1 | day/night lamp toggle | **WORKS** | `code` | `AlampPost_C` driven by `mainGamemode`'s `allLampPosts` day/night cycle; RE pass 2026-05-25. Convergent local computation on both peers — correct WITHOUT a wire lane |
+| — | **sync lane** | **NONE — and correct** | — | zero facets carry a wire lane, BY DESIGN, not by omission. The reason is convergent local compute, not a deferred gap — see the form note below |
+| — | **remainder — the list is open** | **UNKNOWN** | — | (a) 0 facets found by running; (b) never exercised under concurrency. But here the completeness question is narrower: the only risk is that the two local cycles DESYNC (a clock drift), which no run has checked |
+
+**THE FORM MOVED — a third time, and this is the round-6 finding.** The lamp post exposed that the
+verdict `NOT BUILT` was fusing two states the way the single status column fused verdict and evidence:
+
+- `NOT BUILT / gap` — we should sync it and have not (container facets 5, 7: nested, slot 0).
+- `NOT BUILT / needs none` — we will NEVER sync it because it is correct by construction (lamp posts).
+
+A reader seeing `NOT BUILT` on both cannot tell an owed lane from a lane that must never exist.
+So the **SYNC-LANE** state is split: `present` / `none-by-design (correct)` / `none-but-owed (gap)`.
+This is a genuine form change, not a data fix — which means the running rate is now **3 controls, 3
+form changes** (split axis / two-field remainder / sync-lane trichotomy). **The form is NOT
+converged**: every control profiled so far has moved it. Convergence is a control that moves nothing,
+and I do not yet have one. See §4.
+
+---
+
+## 4. Convergence state — NOT reached (honest, round 6)
+
+**Rate: 3/3.** Container forced the verdict×evidence split; weather forced the two-field remainder;
+lamp posts forced the sync-lane trichotomy. Zero controls have left the form unchanged. Per the
+project's rule-of-three (`OPUS_48_DISCIPLINE.md` §11) a pattern is not general on N=2, and here even
+N=3 has not stabilized it — it has produced a third change. The form is maturing, not converged.
+
+**What a convergence control would look like:** a fourth system profiled whose facets fit the EXISTING
+vocabulary (verdict×evidence, two-field remainder, sync-lane trichotomy) with NO new field or value.
+Until one exists, "the form is done" is unproven. The next system should be chosen to STRESS the
+current form (a pure timing/order system, or a mixed-ownership system where one facet is host-auth and
+another is peer-private), not to confirm it.
+
+**What IS settled** (did not move across three controls): spine = the SYSTEM; rows = FACETS,
+hand-named, set not machine-enumerable; citations = (file, symbol) pair; no percentage at this granule.
+Those four are the converged core; the STATUS MODEL is still taking shape.
+
+---
+
+## 5. Systems not yet profiled
 
 Adding a system means authoring its facets by hand, with a citation each and a remainder row — see
 §0. Do not seed rows from a grep; the prior pass measured that a syntactic proxy for "is this synced"
