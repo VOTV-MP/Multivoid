@@ -90,8 +90,50 @@ it exists to perform has never once run. Neither row is expressible in a class, 
 
 ---
 
-## 2. Systems not yet profiled
+## 2. Weather — the FORM-AGAINST-A-VERB-LESS-SYSTEM control
 
-Deliberately empty. Adding a system means authoring its facets by hand, with a citation each and a
-remainder row — see §0. Do not seed rows from a grep; the prior pass measured that a syntactic
-proxy for "is this synced" errs on both sides and only the false-negative side is measurable.
+Chosen as the second control precisely because it is the OPPOSITE shape from the container: almost no
+verb interception, sync is field-state + reliable messages, and the system spans **five files**
+(`weather_sync.cpp` orchestrator + `weather_rain` / `weather_fog` / `weather_lightning` /
+`weather_redsky`). If the split axis fills here, the form is not container-shaped; if a verb-less
+system would not fill at all, the form names its own limit. It filled — and the EVIDENCE axis
+immediately did work: it separated a MAP `[V]` from a player `hands-on`, which a single status column
+would have flattened to one green.
+
+| # | facet | verdict | evidence | citation (symbol / section) |
+|---|---|---|---|---|
+| 1 | rain / snow scalar mirror | **WORKS** | `log` | client apply line `weather: applied flags 0x1D -> 0x1C ... rain-tx=1 scalars-changed=1` in `docs/piles/test-evidence/handson-s31-doom-CLIENT.log`. This is a REAL matching log, NOT the map `[V]` — see the correction note below |
+| 2 | red sky | **UNKNOWN** | `code` | `ReliableKind::RedSky` in `weather_redsky.cpp` — the lane exists. NO apply/receive line in any test-evidence CLIENT log (grepped). `COOP_SYNC_MAP.md`'s `[V]` is a MAP verdict, and the readiness pass discredited doc-status parsing (6 vs 2, both directions) — it is not admissible as evidence here |
+| 3 | lightning strike | **UNKNOWN** | `code` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
+| 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §0 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
+| 5 | wind | **BROKEN** | `log` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
+| — | **remainder — the list is open** | **UNKNOWN** | — | weather's RNG (knob jitter, `COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, not a user-visible facet — so it is deliberately not a row. No facet here was found by a concurrent interleaving; the wind bug came from a live single-flow probe |
+
+**Count:** 5 facets — **1 `WORKS`, 1 `BROKEN`, 3 `UNKNOWN`**; by evidence, **0 `hands-on`, 2 `log`,
+3 `code`**.
+
+**THE CORRECTION IS THE FINDING (round 4).** The first draft of this table read "4 `WORKS`, 1
+`BROKEN`" — I had assigned `WORKS/log` to facets 1-4 from `COOP_SYNC_MAP.md`'s `[V]` markers, which
+are MAP verdicts, exactly the doc-status source the readiness pass measured as unreliable in both
+directions. Applying the EVIDENCE axis STRICTLY — demand a real matching log line, not a map marker —
+collapsed THREE false greens: only facet 1 has an actual client apply line; redsky/lightning/fog have
+a lane in code and no observed behaviour. This is the two-axis form doing precisely the job it exists
+for, on its author: **a map `[V]` is `code`-tier at best, never `log`, and never `WORKS` on its own.**
+The spine being the SYSTEM (not the file) is re-confirmed: no file-keyed row could name "wind" as one
+facet, since its logic is split across the interceptor and the orchestrator's stream.
+
+**Meadow probe (Q4, cheap read, not a full profile):** "facet" DOES resolve for a 0-class save-CRDT.
+`meadow_db_sync.cpp` (884 LOC) exists; the "0 classes" was the CXX-dump CLASS count, but the system
+lives as a save-struct CRDT and its facets are OPERATIONS (append / delete / order), not classes.
+That a 0-class system still yields facets further confirms rows = facets, spine = system — the facet
+is a behaviour, and a behaviour needs no class to exist.
+
+---
+
+## 3. Systems not yet profiled
+
+Adding a system means authoring its facets by hand, with a citation each and a remainder row — see
+§0. Do not seed rows from a grep; the prior pass measured that a syntactic proxy for "is this synced"
+errs on both sides and only the false-negative side is measurable. Next candidates by contrast value:
+a save-CRDT system (meadow) — 0 classes, the domain is entirely a save struct, so it stresses the
+"facet" definition hardest.
