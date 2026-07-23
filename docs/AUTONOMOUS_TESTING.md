@@ -15,6 +15,22 @@ Per methodology WP8: an autonomous pass validates ONE process's code
 paths — NOT coop-correctness, performance under load, or hands-on
 behaviour. Autonomous pass = ship to live test, not to production.
 
+## Future direction — an autonomous bot-director (DESIGN, not built)
+
+The current harness (below) TELEPORTS a player to a standoff and injects a
+single `InpActEvt_use` E-press; every feature test is bespoke C++. A
+converged design (12-round `/qf`, 2026-07-23) exists for a **Baritone-analog
+autonomous director** that instead WALKS the possessed player over VOTV's
+baked NavMesh (`FindPathToLocationSynchronously` + per-tick
+`AddMovementInput`) and lets Claude compose ANY scenario as a data
+script — above all the concurrent multi-peer races (the container
+`CONFLICT>0`, the world-grab pose-contention) that two humans cannot reliably
+stage. It reuses THIS log-truth layer as its verifier. **Nothing is built**;
+it is HALT-gated on two Phase-0 probes (does `FindPath` return a path; does
+reflected `AddMovementInput` move the possessed body). Full design + the
+Baritone port analysis + the honest measured/inferred/open ledger:
+`research/findings/tooling/votv-baritone-analog-autonomous-director-DESIGN-2026-07-23.md`.
+
 ## Architecture
 
 The harness is **part of the shipping DLL** (`src/votv-coop/src/harness/`).
