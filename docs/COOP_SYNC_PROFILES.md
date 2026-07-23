@@ -7,14 +7,27 @@ question the class register cannot: *inside this thing, what works and what does
 limits are structural, and a profile read as a measurement is worse than no profile.
 
 **The one boundary that must not be lost: the FORM is converged (11 `/qf` rounds, five falsifiable
-axes); the CELL VALUES are not all verified.** Of the 18 facet rows, exactly TWO had a label checked
-against the source code — container #6 (`authority=none`, read from `container_contents_sync.cpp`) and
-weather #5 (`host-authored`, read from `weather_sync.cpp`) — and BOTH of those checks were prompted by
-a critic catching a wrong label, one of them a real error I had written. The other 16 labels are
-author fill, not code-verified. Read a filled profile as "the form holds and these are the author's
-best labels", NEVER as "these labels are proven". Verifying a cell means reading the code that owns the
-facet; until then a cell is a claim of the same kind the class register's `AS-BUILT` is — documented,
-not measured.
+axes); the CELL VALUES are not all verified.** There are **14 facet rows** across the three profiles
+(8 container + 5 weather + 1 lamp; the doc's "18" is every table row, counting the remainder/lane
+rows). Their evidence now stands:
+
+- **8 code-verified** — the owning code was read and the label matches: container #3 (`HostAcceptsClientWrite`,
+  arbiter), #4 (the `freshBirth` guard, `prop_drop_intent.cpp:278`), #5 (`BOUNDARY 2`), #6
+  (`ResolveRederiveFns`, `authority=none`), #7 (`IsWorldContainerInventory`, fail-closed), weather #2
+  (`ReliableKind::RedSky` send+receive), #3 (`ReliableKind::LightningStrike` send+receive), #4
+  (`weather_fog.cpp` exists), lamp #1 (verified by ABSENCE — zero `AlampPost`/`allLampPosts` refs in
+  our tree, which is exactly the "we sync zero facets" claim).
+- **3 log-backed** — container #6 also, weather #1, weather #5: each cites a real matching log line.
+- **2 hands-on** — container #1, #2: the cited runbook, a human played it.
+- **1 unlooked** — container #8 (`putObjectIn_overlap`): `evidence=none` is honest; no owning code found.
+
+So **only container #8 has no evidence beside it**; the other 13 are code-read, real-log, or hands-on.
+This is the LABOR pass §4 named. TWO caveats stand: (1) code-verifying a label confirms it *matches the
+code* — for a `UNKNOWN/code` weather row that means "the lane exists, behaviour unobserved", NOT that it
+behaves; the VERDICT axis still needs a run. (2) The two ORIGINAL verified cells (container #6, weather
+#5) were both *wrong-label catches*; this pass found no wrong label, only a citation line-rot (currVol,
+fixed to a symbol anchor). Read a filled profile as "the form holds and these labels now match the code
+they cite", NEVER as "the behaviour is proven".
 
 ---
 
@@ -109,7 +122,7 @@ addressed by `propInventory.index` (`[[lesson-container-contents-live-in-one-glo
 | 3 | simultaneous grab by two peers (the CAS) | **UNKNOWN** | `log` | `arbiter` | `HostAcceptsClientWrite()` in `container_contents_sync.cpp`. `CONFLICT=0` on BOTH peers in the 07-22 take: the arbitration never executed once. Unexercised, not proven and not broken |
 | 4 | the extracted item reaching the host's world | **BROKEN** | `inference` | `client-authored` | the `freshBirth` guard in `prop_drop_intent.cpp` (`if (!parked && !freshBirth) continue;`). `[RD]` not `[V]`: the log cannot separate "dropped at the guard" from "never enqueued" — both are silence |
 | 5 | nested container-in-container | **NOT BUILT** | `code` | `arbiter` (intended) | the `BOUNDARY 2` comment block in `container_contents_sync.cpp` — a nested container's `ints[0][0]` is a sender-side slot index, meaningless on the receiver. Receiver-side bounds needed first |
-| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `none` | **NOT host-authored** — `container_contents_sync.cpp:429-441` states "we never raw-write currVol / Mass"; each peer RE-DERIVES the volume LOCALLY from the already-synced content via the engine verb `updateVolumesAndMass`. Convergent-local like the lamp post, no owner. The BROKEN root is that the local re-derive did not RUN (the verb resolved null off the instance class — `FindFunction` doesn't walk the superclass chain, `reflection.cpp:427`), NOT that a host stream was missing. A declaring-class fix exists (`411743af`); its effect on this facet is UNVERIFIED against the 07-22 stale-`currVol` take, so the verdict stays at the last MEASURED state |
+| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `none` | **NOT host-authored** — `container_contents_sync.cpp` `ResolveRederiveFns` (the "we never raw-write currVol / Mass" comment, ~:430) states each peer RE-DERIVES the volume LOCALLY from the already-synced content via the engine verb `updateVolumesAndMass`. Convergent-local like the lamp post, no owner. The BROKEN root is that the local re-derive did not RUN (the verb resolved null off the instance class — `FindFunction` doesn't walk the superclass chain, `reflection.cpp:427`), NOT that a host stream was missing. A declaring-class fix exists (`411743af`); its effect on this facet is UNVERIFIED against the 07-22 stale-`currVol` take, so the verdict stays at the last MEASURED state |
 | 7 | slot 0 — the player's personal container | **NOT BUILT** | `code` | `peer-private` | `IsWorldContainerInventory`, fail-closed today. A privacy/product fork and a BOUNDARY 1 redesign; gate:user |
 | 8 | the INSERT direction (`putObjectIn_overlap`) | **UNKNOWN** | `none` | `client-authored` (intended) | nobody has looked; no claim either way |
 | — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **3 of 8 facets (#3, #4, #6) were found by RUNNING**, not by reading source — so the majority of what is wrong here was invisible to code reading. (b) **Concurrency WAS exercised** (the 07-22 take produced `CONFLICT=0`), so this system's incompleteness signal is meaningful — but the ONE interleaving that ran did not trigger the CAS, so even here (b) is "run once, not run adversarially" |
