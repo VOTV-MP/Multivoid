@@ -170,11 +170,10 @@ struct Probe {
     int32_t  countBefore  = -1;
     bool     openCalled   = false;
     bool     uiOpened     = false;   // a live ui_playerInventory_C appeared after openContainer
-    bool     slotFound    = false;   // a live uicomp_playerInvContainerSlot_C to press
+    bool     slotFound    = false;   // ui.slots_prop[0] -- the UI's OWN bound container slot
+    int32_t  slotId       = -1;      // the bound slot's ID (its container index -> which item)
     bool     pressCalled  = false;
-    int32_t  selectedAfterPress = -0x7fffffff;
-    bool     takeCalled   = false;
-    int32_t  countAfterFaithful = -1;
+    int32_t  countAfterPress = -1;   // count after ONLY the faithful pressButton (attribution-clean)
     bool     extractCalled = false;
     int32_t  countAfterExtract = -1;
 };
@@ -292,12 +291,15 @@ void RunContainerTakeProbe() {
     UE_LOGI("director/ctake: RUNG2 container UI: ui_playerInventory=%d containerSlot=%d",
             pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0);
 
-    // RUNG 3+4: the FAITHFUL take. The container-slot CLICK handler is pressButton on the slot; the
-    // slot's ubergraph (kismet-analyzer 2026-07-23) calls setHoverContainerSlot(self) on its Owner UI
-    // and references IsHovered -- so the take is keyed on WHICH slot the UI considers hovered, and it
-    // must be the UI's OWN bound slot (ui.slots_prop[i], ID+Owner set), not a stray live instance.
-    // Faithful sequence a human's click produces: ui.setHoverContainerSlot(slot) -> slot.pressButton().
-    // em_take is player-side (its bytecode works playerListIds/slots_player), kept only for the record.
+    // RUNG 3: the FAITHFUL take, ISOLATED to pressButton so the delta is ATTRIBUTED. The container-slot
+    // CLICK handler is pressButton on the slot; its bytecode (kismet-analyzer 2026-07-23) calls
+    // setHoverContainerSlot(self) on its Owner UI + references IsHovered -- so the take is keyed on WHICH
+    // slot the UI considers HOVERED, and it must be the UI's OWN bound slot (ui.slots_prop[i], ID+Owner
+    // set), not a stray live instance. Faithful sequence a human's click produces:
+    // ui.setHoverContainerSlot(slot) -> slot.pressButton(). We drive ONLY this (NO em_take) and measure
+    // the count delta: a clean 2->1 proves pressButton takes EXACTLY ONE item (the hovered one) -- the
+    // "take exactly X" the race is built on ("both take X"). em_take is player-side (its bytecode works
+    // playerListIds/slots_player) and would confound the attribution, so it is dropped from the take path.
     RunGT([&goal, pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
@@ -309,26 +311,33 @@ void RunContainerTakeProbe() {
             }
         }
         pb->slotFound = (slot != nullptr && R::IsLive(slot));
+        if (slot) pb->slotId = ReadInt32Field(slot, L"ID");   // which container index this slot maps to
         if (ui && pb->slotFound) {
             void* hoverFn = R::FindFunction(R::ClassOf(ui), L"setHoverContainerSlot");
             if (hoverFn) { ue_wrap::ParamFrame pf(hoverFn); pf.Set<void*>(L"containerSlot", slot); ue_wrap::Call(ui, pf); }
-            pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");
-            pb->selectedAfterPress = ReadInt32Field(ui, L"selected");
+            pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");   // the take -- NO em_take
         }
-        if (ui) pb->takeCalled = CallNoArg(ui, R::ClassOf(ui), L"em_take");   // secondary (player-side)
-        UE_LOGI("director/ctake: RUNG3/4 ui=%p boundSlot=%p hover+press=%d selected=%d em_take=%d",
-                ui, slot, pb->pressCalled ? 1 : 0, pb->selectedAfterPress, pb->takeCalled ? 1 : 0);
+        UE_LOGI("director/ctake: RUNG3 faithful boundSlot=%p slotID=%d hover+press=%d (NO em_take -- isolated)",
+                slot, pb->slotId, pb->pressCalled ? 1 : 0);
         d.store(1);
     });
     ::Sleep(200);   // let the take + the container_contents 0x45 edge settle
-    RunGT([pb](std::atomic<int>& d) { pb->countAfterFaithful = ContainerItemCount(pb->container); d.store(1); });
+    RunGT([pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
+    const int pressDelta = (pb->countBefore >= 0 && pb->countAfterPress >= 0) ? (pb->countBefore - pb->countAfterPress) : -1;
+    UE_LOGI("director/ctake: RUNG3 pressButton delta = %d (before=%d after=%d) -- %s",
+            pressDelta, pb->countBefore, pb->countAfterPress,
+            pressDelta == 1 ? "EXACTLY ONE (take-exactly-X proven)"
+                            : pressDelta > 1 ? "MORE THAN ONE (pressButton took multiple -- not single-item)"
+                                             : "ZERO (pressButton did not take)");
 
-    const bool faithfulWorked = (pb->countBefore > 0 && pb->countAfterFaithful >= 0 &&
-                                 pb->countAfterFaithful < pb->countBefore);
+    // faithful == pressButton ALONE took exactly one item (the race needs take-exactly-X, not just "<before").
+    const bool faithfulWorked = (pressDelta == 1);
 
-    // RUNG 5 (DIAGNOSTIC, NON-FAITHFUL): only if the faithful path did not remove an item, prove the
-    // mechanism CAN be driven at the effect seam -- extract(0) on the container actor. Flagged.
-    if (!faithfulWorked) {
+    // RUNG 5 (DIAGNOSTIC, NON-FAITHFUL): only if the faithful pressButton took NOTHING (pressDelta<=0),
+    // prove the mechanism CAN be driven at the effect seam -- extract(0) on the container actor. Flagged.
+    // A pressDelta>1 (took multiple) is NOT a drivability failure -- it drove, just not single-item -- so
+    // extract is not run for that case.
+    if (pressDelta <= 0) {
         RunGT([pb](std::atomic<int>& d) {
             // extract is declared on the base prop_container_C -- resolve on the declaring class, not the
             // leaf (the same findfunction-superclass trap as openContainer above).
@@ -346,16 +355,20 @@ void RunContainerTakeProbe() {
     const bool extractWorked = (pb->extractCalled && pb->countBefore > 0 && pb->countAfterExtract >= 0 &&
                                 pb->countAfterExtract < pb->countBefore);
 
-    const char* verdict = faithfulWorked ? "DRIVABLE-FAITHFUL"
-                        : extractWorked  ? "DRIVABLE-EFFECT-SEAM-ONLY"
-                                         : "NOT-DRIVABLE";
+    // The race needs TAKE-EXACTLY-ONE-X. Only pressDelta==1 (pressButton ALONE removed exactly one item,
+    // NO em_take) proves it. pressDelta>1 = drivable-but-multi (needs a single-item mechanism);
+    // pressDelta<=0 falls through to the extract diagnostic (effect-seam-only, not race-usable).
+    const char* verdict = (pressDelta == 1) ? "DRIVABLE-FAITHFUL-SINGLE (take-exactly-X)"
+                        : (pressDelta > 1)  ? "DRIVABLE-FAITHFUL-MULTI (took >1 -- not single-item)"
+                        : extractWorked     ? "DRIVABLE-EFFECT-SEAM-ONLY (extract; not race-faithful)"
+                                            : "NOT-DRIVABLE";
     UE_LOGI("director/ctake: VERDICT %s | container=%ls itemsBefore=%d "
-            "| open=%d uiOpened=%d slot=%d press=%d selected=%d em_take=%d faithfulAfter=%d "
-            "| extract=%d extractAfter=%d "
+            "| open=%d uiOpened=%d boundSlot=%d slotID=%d hover+press=%d pressDelta=%d(after=%d) "
+            "| [diag] extract=%d extractAfter=%d "
             "| (cross-check the container_contents 0x45 edge line in the log for the same eid)",
             verdict, pb->fname.c_str(), pb->countBefore,
-            pb->openCalled ? 1 : 0, pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0, pb->pressCalled ? 1 : 0,
-            pb->selectedAfterPress, pb->takeCalled ? 1 : 0, pb->countAfterFaithful,
+            pb->openCalled ? 1 : 0, pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0, pb->slotId,
+            pb->pressCalled ? 1 : 0, pressDelta, pb->countAfterPress,
             pb->extractCalled ? 1 : 0, pb->countAfterExtract);
 }
 

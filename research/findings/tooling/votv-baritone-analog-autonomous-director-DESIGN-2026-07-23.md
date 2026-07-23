@@ -423,16 +423,24 @@ world container (the brain: `AddWalkToProcesses` = ClearHand>Goto>Reach), then d
   verb — the container take is the slot's own `pressButton` under the correct hover. The recorded baked
   FName (`prop_container_fileCabs_C_2147472500`) is the later 2-peer shared-target key.
 
-**VERDICT → the container concurrent-take race IS BUILDABLE at the FAITHFUL human-input seam**
-(`openContainer → setHoverContainerSlot(bound slot) → pressButton`; measured, `extract` retired to a
-diagnostic). **STATUS: only the SOLO take is VERIFIED (this run); the two-peer RACE is DESIGN, not
-built.** REMAINING (a USER go/no-go — a real multi-piece build): (1) isolate `pressButton`-alone as the
-single-item take (the run also fired the secondary `em_take`, so the 2→0 is not yet attributed to one
-verb — a build-time refinement to take exactly item X); (2) the barrier harness (client-side director +
-shared-FName target + `ARRIVED` log token + a `GO` sentinel file the director polls — no proto bump,
-per §B5); (3) the ONE genuinely-new instrument — a whole-GObjStack no-dup verifier (`CONFLICT` fired AND
-global-instance-count(X)==1; the `CONFLICT` line alone is a whole-container CAS logging the author PEER
-slot, insufficient — it can hide a personal-inventory dup, which is R11b's reasoned-but-unproven residual).
+**VERDICT → the container concurrent-take race IS BUILDABLE at the FAITHFUL human-input seam, with
+TAKE-EXACTLY-X proven.** Final run: `VERDICT DRIVABLE-FAITHFUL-SINGLE (take-exactly-X)` — `pressButton`
+ALONE (NO `em_take`) on the UI's bound slot `slotID=0` with the hover set removed **exactly one** item
+(count **2→1, pressDelta=1**). This closes the attribution gap: the earlier `2→0` was `pressButton`
+*plus* the secondary `em_take` both firing; isolated `pressButton` is a clean single-item take — the
+"take exactly X" the race ("both take X") is built on. `extract` retired to a diagnostic (`extract=0`,
+not even run). **STATUS: only the SOLO take is VERIFIED (this run); the two-peer RACE is DESIGN, not
+built.** REMAINING (a USER go/no-go — a real multi-piece build, ordered):
+- **(1) the whole-GObjStack no-dup VERIFIER** — the ONE genuinely-new instrument, and the only thing
+  that can READ the staged race: `CONFLICT` fired AND global-instance-count(X)==1. The `CONFLICT` line
+  alone is a whole-container CAS logging the author PEER slot, insufficient — it can hide a
+  personal-inventory dup, which is R11b's reasoned-but-unproven residual. Build/verify this FIRST — a
+  barrier without a reader stages a race nothing can score.
+- **(2) the barrier harness** — client-side director + shared-FName target + `ARRIVED` log token + a
+  `GO` sentinel file the director polls (no proto bump, per §B5).
+- **(3) the race itself** — both bots hover+press the SAME container slot (the shared FName target)
+  under the barrier; verify with (1).
+The take-exactly-X refinement (formerly a REMAINING item) is DONE — proven `pressDelta=1` this run.
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
