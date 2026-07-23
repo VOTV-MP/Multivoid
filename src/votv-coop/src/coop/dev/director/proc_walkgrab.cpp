@@ -24,6 +24,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <cmath>
@@ -36,6 +37,7 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace P = ue_wrap::profile;
+namespace D = ue_wrap::door;
 
 float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y;
@@ -55,9 +57,13 @@ ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& t
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
                                           // the next waypoint stays on the walkable navmesh segment (a wide
                                           // radius cuts corners into walls -- the door-pin bug, 2026-07-23)
-constexpr float kStuckImproveCm = 5.f;
-constexpr int   kStuckTicks     = 100;   // ~2 s of no progress => stuck
-constexpr int   kMaxRepaths     = 3;     // re-path from the current pos before giving up (thread the door)
+constexpr float kStuckImproveCm = 2.f;   // accept SLOW progress: shoving physics boxes out of the path
+                                         // creeps forward a few cm at a time ("almost slid through" -- keep
+                                         // pushing, don't quit). A real wall makes zero progress -> still stuck.
+constexpr int   kStuckTicks     = 200;   // ~0.8 s of ZERO progress before an unstick attempt (patient)
+constexpr float kDoorReachCm    = 320.f; // a closed door within this of the stuck bot is the blocker -> open it
+constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed (never-give-up rule)
+constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
 constexpr int   kVerifyTicks    = 90;    // ~1.8 s polling for the held clump
 constexpr int   kDropMeasureTicks = 20;  // ~0.4 s to MEASURE if the input-seam drop cleared the hand
@@ -73,9 +79,15 @@ bool g_clearHandUsedEffectFallback = false;   // read by the scenario verdict (d
 
 class ClearHandProcess : public IProcess {
 public:
+    explicit ClearHandProcess(DirectorGoal& goal) : goal_(goal) {}
     const char* Name() const override { return "ClearHand"; }
     int Priority() const override { return 100; }
-    bool IsActive(const PlayerContext& ctx) const override { return ctx.HandFull(); }
+    bool IsActive(const PlayerContext& ctx) const override {
+        // Clear a PRE-EXISTING held item ONLY while walking to the target (out of grab range). Once in
+        // range the held item is (or becomes) the GOAL grab -- clearing it there undid a successful grab
+        // (measured 2026-07-23: the grabbed clump landed in grabbing_actor, ClearHand woke and dropped it).
+        return ctx.HandFull() && !goal_.grabbed && HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
+    }
     ProcStatus OnTick(const PlayerContext& ctx) override {
         ++ticks_;
         if (ticks_ == 1) {   // input seam ONLY -- the key a human presses to drop (measure it first)
@@ -123,6 +135,7 @@ public:
                     ticks_, g_clearHandUsedEffectFallback ? 0 : 1);
     }
 private:
+    DirectorGoal& goal_;
     int  ticks_ = 0;
     bool measured_ = false;
 };
@@ -156,42 +169,81 @@ public:
         if (toPile < bestPile_ - kStuckImproveCm) { bestPile_ = toPile; progressed = true; }
         if (progressed) sinceProgress_ = 0;
         else if (++sinceProgress_ >= kStuckTicks) {
-            // Stuck (pinned against a wall / caught on a door frame). RE-PATH from the CURRENT position:
-            // a fresh navmesh route from where the bot actually IS threads the open door (the engine's own
-            // path knows the door is passable) -- the manual equivalent of an AIController re-plan.
-            if (repaths_ < kMaxRepaths) {
-                ++repaths_;
-                UE_LOGW("director/Goto: stuck (toPile=%.0f toWp=%.0f wp=%zu/%zu) -- RE-PATH #%d from current pos",
-                        toPile, toWp, wp_, waypoints_.size(), repaths_);
-                pathed_ = false; waypoints_.clear();
-                wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
-                return ProcStatus::Working;   // next tick recomputes the route from here
+            sinceProgress_ = 0;
+            // FIRST: a CLOSED door? Open it like a player pressing E (the door's own verb -- InpActEvt_use
+            // is inert via reflection) and keep walking through.
+            if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
+            // NEVER GIVE UP (USER RULE 2026-07-23): grind past physics boxes/clutter. Alternate a sideways
+            // JUKE to slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
+            // engine problem -- reaching the pile (IsActive->false, Grab takes over) or the run DEADLINE
+            // (>= 30 s of grinding) are the terminators, not an early stuck-count.
+            ++stuckEpisodes_;
+            if (stuckEpisodes_ % 4 == 0) {   // periodic fresh route from where we actually are
+                pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
+                UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- RE-PATH (episode %d, never give up)", toPile, stuckEpisodes_);
+                return ProcStatus::Working;
             }
-            UE_LOGW("director/Goto: STUCK after %d re-paths -- failing (toPile=%.0f)", repaths_, toPile);
-            return ProcStatus::Failed;
+            jukeSign_ = -jukeSign_;            // try the other side each time
+            unstickTicks_ = kUnstickTicks;
+            UE_LOGW("director/Goto: stuck (toPile=%.0f) -- UNSTICK juke (episode %d, grinding, never give up)", toPile, stuckEpisodes_);
         }
-        // Steer toward the current waypoint (horizontal), and FACE that direction: the character turns to
-        // its heading (natural, and threads doorways head-on instead of catching the frame sideways). This
-        // also drives the camera, which a human's walk does -- the bot was sliding without turning.
+        // Steer toward the current waypoint (horizontal) + FACE that direction (turns the body/camera, threads
+        // doorways head-on). While UNSTICKING, add a sideways component to slide off a box instead of pinning.
         const ue_wrap::FVector wp = waypoints_[wp_];
         ue_wrap::FVector dir{ wp.X - ctx.pos.X, wp.Y - ctx.pos.Y, 0.f };
-        const float h = std::sqrt(dir.X * dir.X + dir.Y * dir.Y);
+        float h = std::sqrt(dir.X * dir.X + dir.Y * dir.Y);
         if (h > 1.f) { dir.X /= h; dir.Y /= h; }
+        if (unstickTicks_ > 0) {
+            --unstickTicks_;
+            const ue_wrap::FVector perp{ -dir.Y, dir.X, 0.f };   // horizontal perpendicular
+            dir.X += perp.X * jukeSign_ * 0.9f; dir.Y += perp.Y * jukeSign_ * 0.9f;
+            h = std::sqrt(dir.X * dir.X + dir.Y * dir.Y);
+            if (h > 1.f) { dir.X /= h; dir.Y /= h; }
+        }
         ue_wrap::FRotator face{};
         face.Yaw = std::atan2(dir.Y, dir.X) * (180.f / 3.14159265358979323846f);
         if (void* ctrl = E::GetController(ctx.player)) E::SetControlRotation(ctrl, face);
         E::AddMovementInput(ctx.player, dir, 1.0f, true);
         if ((++logTick_ % 60) == 0)
-            UE_LOGI("director/Goto: toPile=%.0f toWp=%.0f wp=%zu/%zu repaths=%d", toPile, toWp, wp_, waypoints_.size(), repaths_);
+            UE_LOGI("director/Goto: toPile=%.0f toWp=%.0f wp=%zu/%zu ep=%d", toPile, toWp, wp_, waypoints_.size(), stuckEpisodes_);
         return ProcStatus::Working;
     }
 private:
+    // Find the nearest CLOSED, openable door within reach of the stuck bot and open it (the native swing,
+    // bypass=true -- the same thing the door's own use does when a player presses E; InpActEvt_use's body
+    // is inert via reflection). One-shot GUObjectArray scan, only on STUCK (not per frame -- perf rule).
+    bool TryOpenBlockingDoor(const PlayerContext& ctx) {
+        if (!D::EnsureResolved()) return false;
+        void* best = nullptr; float bestDist = 1e9f;
+        const int32_t n = R::NumObjects();
+        for (int32_t i = 0; i < n; ++i) {
+            void* o = R::ObjectAt(i);
+            if (!o || !R::IsLive(o) || !D::IsDoor(o)) continue;
+            if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+            const float d = HorizDist(E::GetActorLocation(o), ctx.pos);
+            if (d < bestDist) { bestDist = d; best = o; }
+        }
+        if (!best || bestDist > kDoorReachCm) return false;
+        bool open = false;
+        if (D::TryReadOpen(best, open) && open) return false;   // already open -> not the blocker
+        if (!D::CanOpen(best)) {
+            UE_LOGW("director/Goto: blocking door %p (%.0fcm) is LOCKED/jammed (CanOpen=false)", best, bestDist);
+            return false;
+        }
+        D::CallDoorOpen(best, /*bypass=*/true);
+        UE_LOGI("director/Goto: opened a closed door %p at %.0fcm (native swing, like pressing E) -- walking through",
+                best, bestDist);
+        return true;
+    }
+
     DirectorGoal& goal_;
     bool   pathed_ = false;
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
     float  bestWp_ = 1e9f, bestPile_ = 1e9f;
-    int    sinceProgress_ = 0, logTick_ = 0, repaths_ = 0;
+    int    sinceProgress_ = 0, logTick_ = 0, doorOpens_ = 0;
+    int    stuckEpisodes_ = 0, unstickTicks_ = 0;
+    float  jukeSign_ = 1.f;
 };
 
 // ---- GrabProcess -----------------------------------------------------------------------
@@ -259,7 +311,7 @@ private:
 
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
-    mgr.Add(std::make_unique<ClearHandProcess>());
+    mgr.Add(std::make_unique<ClearHandProcess>(goal));
     mgr.Add(std::make_unique<GotoProcess>(goal));
     mgr.Add(std::make_unique<GrabProcess>(goal));
 }

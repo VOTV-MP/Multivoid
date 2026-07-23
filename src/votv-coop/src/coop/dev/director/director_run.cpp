@@ -99,17 +99,22 @@ void RunWalkGrabDirector() {
             float bestLen = 1e30f; int bestPts = -1;
             for (const Cand& c : cands) {
                 std::vector<ue_wrap::FVector> p;
-                if (!E::FindNavPath(rsv->player, at, c.pos, p)) continue;   // unreachable only
+                if (!E::FindNavPath(rsv->player, at, c.pos, p)) continue;   // unreachable
+                // GRAB-REACHABILITY: the route must END within grab distance of the pile. A pile up on a
+                // desk/shelf sits far off the navmesh -- the bot reaches the route-end but never the pile
+                // (measured 2026-07-23: a pile 833cm out whose route ended 500cm short -> ungrabbable).
+                if (HorizDist(p.back(), c.pos) > 160.f) continue;
                 float len = 0.f;
                 for (size_t i = 1; i < p.size(); ++i) len += HorizDist(p[i - 1], p[i]);
-                // Prefer the SHORTEST actual walk. A route that winds through a door is legitimate (the
-                // navmesh threads it) -- NOT rejected; Goto follows it + re-paths through the door.
+                // Among grab-reachable piles, prefer the SHORTEST actual walk (doors are fine -- Goto opens
+                // them + re-paths through).
                 if (len < bestLen) { bestLen = len; bestPts = static_cast<int>(p.size());
                                      goal.targetActor = c.pile; goal.targetPos = c.pos; }
             }
-            if (!goal.targetActor) {   // nothing reachable -- fall back to nearest so we still ATTEMPT
-                goal.targetActor = cands.front().pile; goal.targetPos = cands.front().pos;
-                UE_LOGW("director: no chipPile returned a navmesh route -- attempting the nearest anyway");
+            if (!goal.targetActor) {   // no grab-reachable pile -- honest: this save has none in the open
+                UE_LOGW("director: NO grab-reachable chipPile (all sit off the navmesh / behind locked doors) "
+                        "-- aborting; needs a pile in open reachable space (spawn one / cleaner save)");
+                d.store(2); return;
             }
             UE_LOGI("director: goal pile=%p pos=(%.0f,%.0f,%.0f) straight=%.0fcm routeLen=%.0fcm routePts=%d",
                     goal.targetActor, goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z,
@@ -120,7 +125,7 @@ void RunWalkGrabDirector() {
     // Build the brain + run it.
     ControlManager mgr;
     AddWalkGrabProcesses(mgr, goal);
-    const bool ok = mgr.Run(goal, /*maxSeconds=*/40);
+    const bool ok = mgr.Run(goal, /*maxSeconds=*/60);   // never-give-up: grind the boxes for the full window
     UE_LOGI("director: VERDICT walkgrab grabbed=%d (%s) reason=%s | drop-input-seam-faithful=%d",
             goal.grabbed ? 1 : 0, ok ? "DONE" : "FAILED", goal.grabbed ? "grabbed" : goal.failReason,
             DidClearHandUseEffectFallback() ? 0 : 1);
