@@ -327,6 +327,36 @@ walked-lands-in-range reliability (checkable via read-model distance).
 
 ---
 
+## 6b. 2026-07-23 build log — Phase-0 PASS, then a USER-DIRECTED brain-first pivot
+
+This supersedes the bottom-up sequencing in §B7. Recorded here so a later session reads it as
+INTENT, not drift.
+
+- **Phase-0 probe RAN + PASSED** (both gates) — see §6. Verdict rung0. BUT the first walked-grab
+  attempt (a procedural monolith) FROZE: the save's player was holding a disc in R-hold placement
+  mode, and `AddMovementInput` cannot walk a hand-locked character (measured: moved/tick ≈ 0). This
+  also showed Gate B's aggregate position-delta conflated *walking* with *any displacement* (a
+  kill-volume respawn) — the per-tick `moved` is the honest signal; **Gate B's capability claim needs
+  re-validating on a walkable player** (a controlled sustained walk, not an aggregate).
+- **The root was architectural, not a save bug** (user, 2026-07-23): a procedural script has no
+  read-model, so it can't know its hand is full. The fix is the BRAIN — `PlayerContext` (IPlayerContext
+  analog) + priority-arbitrated processes (`ClearHand ⊳ Goto ⊳ Grab`, IBaritoneProcess analog) +
+  `ControlManager` tick loop. The held disc is then a high-priority `ClearHandProcess` that preempts
+  `Goto` until the hand clears — state-awareness, structural, not a bolted-on step.
+- **Sequencing deviation, stated honestly:** §B7 said abstract the brain at **N=3 scenarios RUN**. As of
+  this note there are **0 director runs, 1 scenario** — so N=3 is NOT met. Building the brain now is a
+  **user-directed** deviation, justified by (a) the primitives being de-risked by the Phase-0 probe and
+  (b) the held-disc failure proving monolith-patching is the wrong shape. "Primitives de-risked" is a
+  DIFFERENT criterion than N=3; the deviation is a deliberate call, not a claim that N=3 was satisfied.
+- **Status: the brain SKELETON is built, layered `ue_wrap/engine/engine_nav` + `coop/dev/director/`
+  (director.h, player_context, control_manager, proc_walkgrab, director_run). It has the FORM (read-model,
+  emergent activation, thin executor, input-override) but is NOT yet proven by a green run.** The monolith
+  was retired (RULE 2). Open honesty items carried in the code: ClearHand MEASURES whether the input-seam
+  `InpActEvt_drop` works and only falls back to the effect-seam release with a LABEL + a verdict flag
+  (`drop-input-seam-faithful=0/1`) — because the reflection input stub may not run the drop body (the
+  chippile `InpActEvt_use`-body-inert precedent); if inert, that is a substrate HALT-fact about
+  input-ACTION verbs, recorded, not masked.
+
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
 | Baritone | Tag | VOTV analog |

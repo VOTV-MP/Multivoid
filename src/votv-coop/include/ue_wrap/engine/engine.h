@@ -1071,4 +1071,28 @@ void PlaySoundAtLocation(void* worldContext, void* sound, const FVector& locatio
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
                    float& qx, float& qy, float& qz, float& qw);
 
+// ---- Navigation + locomotion (engine_nav.cpp) ---------------------------------------
+// Baked-NavMesh path query + pawn movement input. Proven at runtime by the Phase-0 HALT
+// probe (harness/autotest_navprobe, 2026-07-23). The foundation the bot-director drives
+// the possessed player with. Game thread only.
+
+// A point GUARANTEED reachable within `radiusCm` of `origin` over the baked NavMesh
+// (UNavigationSystemV1::K2_GetRandomReachablePointInRadius, static -> CDO). Returns false
+// if the navmesh has no reachable poly there (also a navmesh-not-built signal). `out`
+// untouched on false. `worldContext` = any live actor (the possessed player works).
+bool RandomReachablePoint(void* worldContext, const FVector& origin, float radiusCm, FVector& out);
+
+// Compute a traversable route from `start` to `end` over the baked NavMesh
+// (UNavigationSystemV1::FindPathToLocationSynchronously, static -> CDO), reading the
+// resulting UNavigationPath::PathPoints. Returns true + fills `outPts` (>=2 points) on a
+// real route; false on no-route / call-failure / a bad points read (`outPts` cleared).
+bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
+                 std::vector<FVector>& outPts);
+
+// APawn::AddMovementInput on `pawn` (resolved on the Pawn declaring class, not the leaf).
+// Accumulates ControlInputVector; the CharacterMovementComponent consumes + clears it on
+// its own tick, so this must be re-issued each frame to sustain movement. `force`=true
+// applies even when input is nominally disabled. No-op on null / unresolved.
+void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool force);
+
 }  // namespace ue_wrap::engine

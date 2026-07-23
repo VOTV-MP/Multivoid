@@ -4,6 +4,7 @@
 
 #include "harness/autotest.h"
 #include "coop/config/config.h"
+#include "coop/dev/director/director.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -168,6 +169,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // (reflected AddMovementInput -- resolved on the Pawn declaring class -- moves the possessed body).
     // The verdict picks the director's fallback rung; nothing of the director is built until this runs.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
+
+    // The autonomous bot-director's walked-grab scenario (2026-07-23): the BRAIN (PlayerContext read-model
+    // + priority-arbitrated processes ClearHand>Goto>Grab + tick loop) drives the possessed player to pick
+    // an open chipPile over the NavMesh and grab it -- state-aware (clears a full hand first). SOLO-runnable.
+    SpawnIf("VOTVCOOP_RUN_DIRECTOR_WALKGRAB", "bot-director walked grab", &coop::director::WalkGrabDirectorThread, role);
 }
 
 }  // namespace harness::autotest

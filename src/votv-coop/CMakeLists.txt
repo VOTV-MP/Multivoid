@@ -240,6 +240,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
     src/ue_wrap/engine/engine_pawn.cpp
+    src/ue_wrap/engine/engine_nav.cpp
     src/ue_wrap/engine/engine_widget.cpp
     src/ue_wrap/engine/save_browser.cpp
     src/ue_wrap/engine/gvas_meta.cpp
@@ -479,6 +480,10 @@ add_library(votv-coop SHARED
     src/coop/dev/door_probe.cpp
     src/coop/dev/save_probe.cpp
     src/coop/dev/dev_gate.cpp
+    src/coop/dev/director/player_context.cpp
+    src/coop/dev/director/control_manager.cpp
+    src/coop/dev/director/proc_walkgrab.cpp
+    src/coop/dev/director/director_run.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/weather_probe.cpp
     src/coop/dev/freecam.cpp
