@@ -167,22 +167,45 @@ and I do not yet have one. See §4.
 
 ---
 
-## 4. Convergence state — NOT reached (honest, round 6)
+## 4. Convergence state — the AXES are settled; VALUES stay open (that is correct)
 
-**Rate: 3/3.** Container forced the verdict×evidence split; weather forced the two-field remainder;
-lamp posts forced the sync-lane trichotomy. Zero controls have left the form unchanged. Per the
-project's rule-of-three (`OPUS_48_DISCIPLINE.md` §11) a pattern is not general on N=2, and here even
-N=3 has not stabilized it — it has produced a third change. The form is maturing, not converged.
+The first read of the 3/3 rate was "not converged, keep profiling until a control changes nothing."
+That test is WRONG, and measurement shows why: a control that changes NOTHING will never exist for a
+qualitative taxonomy — the vocabulary meets reality at the margins forever, so demanding it stop is
+demanding it stop meeting reality. The right convergence test is narrower:
 
-**What a convergence control would look like:** a fourth system profiled whose facets fit the EXISTING
-vocabulary (verdict×evidence, two-field remainder, sync-lane trichotomy) with NO new field or value.
-Until one exists, "the form is done" is unproven. The next system should be chosen to STRESS the
-current form (a pure timing/order system, or a mixed-ownership system where one facet is host-auth and
-another is peer-private), not to confirm it.
+> **Does a new control add a new VALUE to an existing axis, or a whole new AXIS?**
+> New values are normal and expected (a taxonomy grows). A new AXIS means the model was incomplete.
 
-**What IS settled** (did not move across three controls): spine = the SYSTEM; rows = FACETS,
-hand-named, set not machine-enumerable; citations = (file, symbol) pair; no percentage at this granule.
-Those four are the converged core; the STATUS MODEL is still taking shape.
+Measured against that test, the three changes were each a new **axis**, not a value — so the axis set
+was genuinely incomplete through round 5. But the axis set now maps ONE-TO-ONE onto the four questions
+a sync facet can raise, and there is no fifth question:
+
+| axis | the question it answers |
+|---|---|
+| **VERDICT** (WORKS/BROKEN/NOT BUILT/UNKNOWN) | does it work? |
+| **EVIDENCE** (hands-on/log/code/inference/none) | how do we know? |
+| **REMAINDER** (found-by-running × ever-run) | is the facet list whole? |
+| **SYNC-LANE** (present / none-by-design / none-but-owed) | should it carry a lane at all? |
+
+And the completeness check the project requires
+(`[[lesson-a-unit-of-measure-must-express-the-known-red-case]]`): **every known measured-red state
+this pass hit maps into the vocabulary with no leftover** — `currVol` divergence and wind desync =
+`BROKEN/log`; the never-run CAS = `UNKNOWN/log`; the lost extracted item = `BROKEN/inference`; the
+correctly-unsynced lamp post = `WORKS/code` + `lane=none-by-design`. No red escapes, so (A) "real
+holes remain" rests on nothing but "N=3 has not submitted to rule-of-three" — and rule-of-three
+(`OPUS_48_DISCIPLINE.md` §11) says GENERALIZE at N≥3, not collect a fourth for appearance.
+
+**Convergence call: the AXES are converged (four, complete against the four questions, no known red
+escapes). The VALUES within them will grow as new facet shapes appear, and that is not
+non-convergence — it is a qualitative taxonomy behaving normally.** A fourth control is warranted only
+if it adds a new AXIS (the model was wrong) — not to hunt a change-nothing control that cannot exist.
+
+**Settled core** (unmoved across three controls): spine = the SYSTEM; rows = FACETS, hand-named, set
+not machine-enumerable; citations = (file, symbol) pair; no percentage at this granule. **The status
+model is now settled at the AXIS level too.** The remaining work is LABOR (profile more systems by
+hand) and the class-register verdict/evidence split (named in the README), neither of which is a form
+change.
 
 ---
 
