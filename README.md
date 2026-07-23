@@ -27,18 +27,26 @@ game systems still to sync.
 
 ### How far along is that
 
-We deliberately don't publish a single "N% done" figure — a co-op mod is
+The honest, granular answer — **what we sync and what we don't, system by
+system** — is the main coverage document:
+**[`docs/COOP_SYNC_PROFILES.md`](docs/COOP_SYNC_PROFILES.md)**. It opens with a
+master table of ~67 co-op systems (~215 facets), each carrying a verdict
+(works / broken / unknown / not-built), an evidence tier, and who owns the
+write, followed by a per-system catalog with a "what we do NOT sync" line for
+each. Start there. Every wire lane in the game is accounted for in it (113
+reliable message kinds + 13 pose/state streams, all cross-checked); facet-level
+completeness is deliberately never claimed — the honest output is a count with a
+named residual, not a checkmark.
+
+We also deliberately don't publish a single "N% done" figure — a co-op mod is
 finished system by system, not on one bar, and any summed percentage would hide
 which systems are solid and which are untouched. The one honest headline count,
 generated from the game's own class dump by
 [`tools/coverage.py`](tools/coverage.py): of **2291** game classes, **1453** can
-actually diverge between peers, and our code names **175** of them. The deeper
-breakdown — how much of that is documented, how much is player-verified, the
+actually diverge between peers, and our code names **175** of them. The
 measurement error on each rung, and why a finer verb-level percentage isn't yet
-honest — lives in the
-[readiness-metric doc](research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md);
-the facet-by-facet "what we sync and what we don't" per system lives in
-[`docs/COOP_SYNC_PROFILES.md`](docs/COOP_SYNC_PROFILES.md).
+honest, lives in the
+[readiness-metric doc](research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md).
 
 ---
 
