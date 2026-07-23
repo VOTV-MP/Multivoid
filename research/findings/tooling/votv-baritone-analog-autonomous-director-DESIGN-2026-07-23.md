@@ -1,9 +1,15 @@
 # Baritone analysis + a VOTV autonomous bot-director — DESIGN (2026-07-23)
 
-**Status: DESIGN, not built.** Deliverable of a 12-round `/qf` design pass (thread:
-`scratchpad/qf_thread.md`) + 4 parallel fact-gatherer maps of `reference/baritone/`. Nothing here is
-built; every load-bearing inference is tagged and gated behind a HALT probe. Read the
-measured/inferred/open ledger (§6) before trusting any capability claim.
+**Status: BUILT + AS-BUILT through §6c (2026-07-23).** Parts A + B below are the original 12-round `/qf`
+design (thread `scratchpad/qf_thread.md`); everything from §6b onward is the AS-BUILT record. What SHIPPED
++ was verified by real (autonomous, cross-peer) logs: the brain + walked-grab (GREEN, §6b), the
+container-take input probe (DRIVABLE-FAITHFUL-SINGLE, §6c), the no-dup verifier (control PASSED, §6c), the
+two-peer barrier harness (both sum-controls PASSED, §6c), and THE RACE (`sum=2` → **R11b refusal-dup
+CONFIRMED**, §6c). Commits `22f7b14f..19071ac6` (Phase-2, on `985ec3ff..99160286` for Phase-0/1); DLL
+`multivoid-0.9.0n-125`; `mp.py` orchestration is held-WIP. Read §6b + §6c (the AS-BUILT + the race result +
+the R11b acceptance criterion + honest boundary) before the DESIGN prose below, which is now history.
+NOT built: the director generalization (B7 Phase-3 extraction) and the R11b rollback FIX (separate thread;
+this director is its reproducer).
 
 **What the user asked for (verbatim, with a mid-thread reframe):**
 - Original: "полный разбор баритона … документация полная того что нам надо, чтобы создать аналог для
