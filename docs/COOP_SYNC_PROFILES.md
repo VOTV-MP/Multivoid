@@ -31,6 +31,13 @@ axis still needs a run. (2) The two ORIGINAL verified cells (container #6, weath
 a symbol anchor). Read a filled profile as "the form holds and these labels now match the code they
 cite", NEVER as "the behaviour is proven".
 
+**Beyond these four DETAILED worked examples, §6–§7 hold the FULL CATALOG** — a 2026-07-23 sweep of the
+whole `coop/` tree (8 read-only fact-gatherers), ~58 systems and ~200 facets at a compact tier. That
+catalog is looser: its `HO` means "observed in hands-on play" (weaker than the README's auditable
+`verified_takes.tsv` "2"), and the large majority of mechanic facets sit at `U/code` — a lane exists,
+never observed. The §6 master table is the scannable overview; the four profiles here remain the place
+where each label's rationale is spelled out.
+
 ---
 
 ## 0. The rules this document is built on (measured 2026-07-22/23, do not re-litigate)
@@ -103,7 +110,7 @@ cannot answer "which facets does a dedicated-server migration touch?"
 
 | axis | values |
 |---|---|
-| **AUTHORITY** — who owns the write | `host-authored` (client mirrors) · `client-authored` (host validates) · `arbiter` (host CAS over contested writes) · `co-authored` (either peer authors via the wire, a CRDT merge converges, no owner and no arbiter) · `peer-private` (never shared) · `none` (convergent local, no owner) |
+| **AUTHORITY** — who owns the write | `host-authored` (client mirrors) · `client-authored` (host validates) · `arbiter` (host CAS over contested writes) · `co-authored` (either peer authors via the wire, a CRDT merge converges, no owner and no arbiter) · `peer-owned` (each peer authors its OWN disjoint slice — its body, its entity, its mic — streamed to all, no contention and no arbiter) · `peer-private` (never shared) · `none` (convergent local, no owner) |
 
 `none` does NOT mean "independent / safe": a convergent-local facet is only correct while its INPUT is
 identical on both peers. That input can be a deterministic shared value (the lamp post's day/night
@@ -286,11 +293,12 @@ at FIVE, mapping onto five distinct questions a sync facet raises:
 | **EVIDENCE** (hands-on/log/selftest/code/inference/none) | how do we know? |
 | **REMAINDER** (found-by-running × ever-run) | is the facet list whole? |
 | **SYNC-LANE** (present / none-by-design / none-but-owed) | should it carry a lane at all? |
-| **AUTHORITY** (host-authored/client-authored/arbiter/co-authored/peer-private/none) | who owns the write? |
+| **AUTHORITY** (host-authored/client-authored/arbiter/co-authored/peer-owned/peer-private/none) | who owns the write? |
 
 Two of those values — `selftest` (EVIDENCE) and `co-authored` (AUTHORITY) — were added by the FOURTH
-control (meadow, §4), each earned by a two-collapsed-rows falsification. They are new VALUES, not new
-axes: meadow is the first control to leave the axis SET at five.
+control (meadow, §4), each earned by a two-collapsed-rows falsification. A third — `peer-owned`
+(AUTHORITY) — came from the full-catalog sweep (§6–§7). All three are new VALUES, not new axes: the axis
+SET has stood at five across four worked shapes AND an exhaustive ~58-system sweep.
 
 The completeness check the project requires
 (`[[lesson-a-unit-of-measure-must-express-the-known-red-case]]`): every known measured-red this pass
@@ -317,6 +325,18 @@ completeness CLAIM — one non-adding control is not proof, and the two-collapse
 a sixth — but the axis set surviving its hardest structural case (no class, no verb) is the strongest
 evidence the frame is right.
 
+**Update after the FULL-CATALOG sweep (§6–§7, ~58 systems, ~200 facets): ONE new VALUE, still NO new
+axis.** The whole-codebase sweep produced exactly one value the four worked examples never needed —
+`peer-owned` on the AUTHORITY axis (each peer authors its OWN disjoint slice — body, entity, mic —
+streamed to all, no contention, no arbiter; distinct from `peer-private`=never-shared and
+`co-authored`=shared-contested, and it surfaced a real mislabel: streamed body pose had been filed
+`peer-private`, which §0 defines as "never shared"). Every one of ~200 facets otherwise mapped onto the
+five existing questions with a value already in the vocabulary. So across four deliberately-different
+shapes AND an exhaustive sweep, the AXIS count has held at five while the VALUE set grew by three total
+(`selftest`, `co-authored`, `peer-owned`) — exactly the "taxonomy grows at its margins, the questions do
+not" pattern §5's test predicts for a converged frame. Completeness is STILL not claimed (the gate stays
+open), but a full sweep adding no axis is the strongest evidence yet obtainable short of a proof.
+
 **Why this is a ship-able deliverable, not an open loop:** the SETTLED CORE never moved across any
 round — spine = the SYSTEM; rows = FACETS, hand-named, set not machine-enumerable; citations =
 (file, symbol); no percentage at this granule. The AXES are a growing-but-falsifiable vocabulary with
@@ -334,17 +354,566 @@ closure-hunt round 7 named.
 
 ---
 
-## 6. Systems not yet profiled
+## 6. Master summary table — every synced system, one row
 
-Adding a system means authoring its facets by hand, with a citation each and a remainder row — see
-§0. Do not seed rows from a grep; the prior pass measured that a syntactic proxy for "is this synced"
-errs on both sides and only the false-negative side is measurable. Four shapes are now covered —
-verb-driven (container), field-state (weather), convergent-local (lamp), and a class-less CRDT
-(meadow). Next candidates by CONTRAST value (each should stress a different axis, not repeat a shape):
+Derived from the full facet catalog in §7 (2026-07-23 sweep: 8 read-only fact-gatherers over the whole
+`coop/` tree, verdicts authored here). **This is a COUNT view, never a percentage** — the facet
+denominator is unenumerable (§0). Read a row as "this system has N facets in these states", not "N% done".
 
-- **A held/per-player-inventory system** — to stress the `peer-private` authority value with a real
-  profile rather than a single container facet (#7). `[[lesson-held-collected-prop-is-per-player-inventory-not-a-world-actor]]`.
-- **A host-simulated NPC** (kerfur pose stream) — a continuous host-authored stream, to test whether a
-  rate/timing axis finally earns its falsification instance (the one §5 dropped for lack of a case).
-- **An event lane** (`docs/events/`) — the late-join answer table is per-lane; a profile would test
-  whether "mid-join answer" is a sixth axis or a facet of every system's remainder.
+**Legend.** Verdict `W`=WORKS · `B`=BROKEN · `U`=UNKNOWN (lane exists, behaviour unobserved) · `NB`=NOT
+BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` · `–`. Authority `HA`=host-authored ·
+`CA`=client-authored · `ARB`=arbiter · `CO`=co-authored · `PO`=peer-owned (own disjoint slice, streamed) · `PP`=peer-private (never shared) · `∅`=none/convergent-local. `recv-local` in a catalog cite = a receiver-side derivation of a `PO` stream (authority `∅`, inherits its input row).
+
+> **The evidence bar in this catalog is DELIBERATELY LOOSER than the README's `verified_takes.tsv` "2".**
+> `HO` here means "observed working in hands-on play" — for the visible foundation (remote bodies, chat,
+> voice, join) that is everyday-observed, and for a mechanic it is a dated runbook where one exists. The
+> README's "2 verified" counts ONLY formally-logged takes and is the stricter, auditable number. When a
+> take-4 (2026-07-21) hands-on showed a BUG and a fix shipped after but was NOT re-played, the verdict
+> stays at the last MEASURED state (`B/HO`) with the fix noted — the same "last measured" rule as
+> container #6. Most mechanic-specific facets have no observation at all and sit at `U/code` — that
+> majority IS the honest state, and it is what a class-level percentage hides.
+
+| System | shape | facets | verdict mix | best evid | authority | mid-join |
+|---|---|---|---:|---|---|---|
+| **Physics props** | prop pipeline | 11 | 6W · 5U | HO | HA/CA/CO/PP/ARB | snapshot |
+| **Container** (§1) | verb-shaped | 8 | 2W · 2B · 2NB · 2U | HO | mixed | snapshot |
+| **Chip-pile / clump** (grab-carry-throw) | prop+intent | 12 | 10W · 2U | HO | HA/ARB | snapshot + bind |
+| **Trash-bits pile** (counter) | int-pair channel | 5 | 1W · 4U | code | CO/HA/∅ | snapshot |
+| **Kerfur** (NPC⇄prop convert + skins) | host-sim + verb | 9 | 4W · 5U | HO | HA/PP | snapshot + adopt |
+| **NPC host-sim** (generic creatures) | host-sim stream | 5 | 4W · 1U | HO | HA | snapshot |
+| **Owner-entity** (eyer) | per-peer mirror | 3 | 3U | code | **PO** | keepalive |
+| **Roach** | paged snapshot | 2 | 2U | code | HA/ARB | snapshot |
+| **Wisp** (killer) | host-sim + event | 8 | 2W · 6U | HO | HA | none (transient) |
+| **Pyramid** | host-sim + event | 4 | 3W · 1U | HO | HA | world-actor snap + replay |
+| **Firefly** | cosmetic spawn | 1 | 1U | code | PO | none |
+| **Drone** (delivery) | host singleton | 3 | 3U | code | HA | snapshot |
+| **Desk-input / console** | field-delta + streams | 10 | 5B · 5U | HO | CO/HA/CA/PP | seed (adopt) |
+| **Dish** | host theater + arm | 5 | 1B · 4U | HO | HA/CO/PP | snapshot |
+| **Comp-processing** | single-sim | 3 | 1B · 2U | HO | CO/PP | adopt |
+| **Device-occupancy** | claim table | 3 | 1W · 2U | HO | **ARB** | snapshot (table) |
+| **Signal-catch** | intent → host replay | 4 | 4U | log | CO/HA | seed (kind=2) |
+| **Playback-deck** | edge + gen-guard | 3 | 2W · 1U | ST | CO/PP | none |
+| **Drive-chain** (drives) | slot + payload | 3 | 3U | code | HA/CO/CA | seed |
+| **Drive-rack** | 16-slot CAS | 3 | 3U | code | **ARB**/HA | seed canonical |
+| **Phys-mods** | array CAS | 3 | 3U | code | **ARB**/HA | seed canonical |
+| **Tape-caddy** | slot + corrector | 3 | 3U | code | CO/HA | seed = save |
+| **Laptop** (power/floppy/disc) | op-lane + blob | 5 | 5U | code | CO/HA | seed |
+| **Laptop-buffer-quad** | edit-script CAS | 1 | 1W | ST | **ARB** | seed canonical |
+| **Floppybox** | LIFO CAS | 2 | 2U | code | **ARB** | seed canonical |
+| **Serverbox** | one-way mirror | 2 | 2U | code | HA/PP | snapshot |
+| **Meadow-DB** (§4) | save-CRDT | 5 | 2W · 3U | ST | CO/ARB/HA | seed |
+| **Remote-player body/ragdoll** | pose stream | 8 | 4W · 4U | HO | **PO** | spawn = seed |
+| **Nameplate + nick-color** | composite + pref | 3 | 1W · 2U | HO | ∅/CO | recompute / at-join |
+| **Skins** | name-carried | 5 | 3W · 2U | HO | PO/CO | at-join |
+| **Hand-item / item-activate** | identity + pose | 6 | 3W · 3U | HO | CO/PO/CA | replay |
+| **Player-inventory** | per-peer persist | 3 | 1W · 2U | ST | **PP**/HA | seed pre-world |
+| **Sleep** | tally arbiter | 4 | 4U | code | ARB/HA | join-awake |
+| **Player-damage / hazards** | edge + vitals | 4 | 2W · 2U | HO | HA/PO | none |
+| **Puppet** (orphan drive) | receiver drive | 4 | 2W · 2U | HO | ∅/HA | world-ready gate |
+| **Sky** (day-night) | host mirror | 1 | 1U | code | HA | snapshot |
+| **Time-of-day** | host clock | 3 | 3U | code | HA/CO | seed |
+| **Alarm** (klaxon) | 1-bit channel | 1 | 1U | code | CO | snapshot |
+| **Balance** (money) | host + delta | 2 | 2U | code | HA/ARB | connect-replay |
+| **Daily-task** | host state | 1 | 1U | code | HA | baseline-first-sight |
+| **Email** | append + delete | 2 | 2U | code | HA/CA | save-transfer + prime |
+| **Doors / keypads / locks** | channel family | 7 | 4W · 3U | HO | HA/CO/ARB | snapshot |
+| **Lights** | switch channel | 1 | 1U | code | CO | snapshot |
+| **Turbine** | float channel | 1 | 1U | code | HA | snapshot |
+| **Power panel** | mask channel | 1 | 1U | code | CO | snapshot |
+| **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
+| **Window-cleaning** | decrease-only min | 1 | 1W | ST | CO | snapshot |
+| **Garbage-chute** | client suppress | 2 | 2U | code | PP/HA | none |
+| **ATV** | occupant pose | 4 | 4U | code | CA/HA | snapshot |
+| **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
+| **Appliance** | 1-bit channel | 1 | 1U | code | CO | snapshot |
+| **Weather** (§2) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
+| **Lamp posts** (§3) | not-synced | 1 | 1W | code | ∅ | none (by design) |
+| **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
+| **Chat** | line relay | 3 | 3W | HO | CA/HA/PP | none (ephemeral) |
+| **Peer-action feed** | derived render | 2 | 1W · 1U | HO | ∅/PP | none |
+| **Voice** | frame stream | 3 | 2W · 1U | HO | PO | replay (state) |
+| **Save-transfer / join** | blob + snapshot | 8 | 6W · 2U | HO | HA | this IS the join |
+| **Teleport-client** | host push | 2 | 1W · 1U | HO | HA | seed = join placement |
+
+**What the table shows at a glance (counts, not a score):**
+- **~58 systems, ~200 facets.** The single largest evidence bucket is `code` (a lane exists, never
+  observed) — the honest majority §0 predicts a class-percentage would hide.
+- **The verified core is the VISIBLE loop:** remote bodies, chat, voice, join/save-transfer, the
+  grab-carry-throw prop economy, keypads, kerfur/NPC, wisp/pyramid — each carries `HO`. The workstation
+  SIGNAL pipeline is the opposite: mostly `U/code` or `B/HO` (take-4 caught real bugs; fixes shipped
+  unverified).
+- **True arbiters are RARE and enumerable:** device-occupancy, drive-rack, phys-mods, floppybox,
+  laptop-buffer-quad, shop-order, sleep-tally, container-CAS. Everywhere else authority is host-authored
+  one-way or co-authored + host-relay — NOT the syncer-model arbiter (`docs/COOP_SYNCER_MODEL.md` is
+  DESIGN, unbuilt). This table is the concrete input to "which facets a dedicated-server migration touches".
+- **The sweep grew the AUTHORITY axis by ONE value — `peer-owned` — and added NO new axis.** Body pose,
+  own skin, hand pose, voice frames, the eyer, fireflies: each peer authors its OWN disjoint slice and
+  streams it, no contention and no arbiter. That is neither `peer-private` (§0 defines it "never shared",
+  and these ARE shared) nor `co-authored` (no shared contested state — the slices are disjoint). It is the
+  player/creature-mirror pattern the four §1–4 controls never hit, and it is a whole authority class the
+  class register cannot see. `peer-private` proper stays for the genuinely-unshared: player-inventory,
+  the garbage crash-fix, coord_isPing, the local sim-teardowns.
+
+---
+
+## 7. The full facet catalog
+
+One compact table per system (the master table's source). Citations are (file, SYMBOL); `NOT SYNCED`
+lines carry the user's "что НЕ синхроним" half. Verdict discipline per §0: `code`-only ⇒ `U` (unobserved),
+a take-4 bug that a later unverified fix addressed stays at its last-measured `B`.
+
+### Physics props — `coop/props/`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | spawn host-born keyed | W | HO | HA | `GrabObserver_Aprop_Init_POST_Body` | snapshot (`prop_snapshot`) |
+| 2 | spawn client-placed (drop) | U | code | CA | `OnPropDropIntent` | park-FIFO + episode gate |
+| 3 | spawn client fresh-birth (reel/module/drive) | U | code | CA | `OnReelEjectIntent` | edge |
+| 4 | grab / drag held-pose | W | HO | PP | `remote_prop::Tick` | mirror via snapshot |
+| 5 | drop / throw release velocity | W | HO | PP | `remote_prop::OnRelease` | none (edge) |
+| 6 | destroy | U | code | CO | `remote_prop::OnDestroy` **[trust gap: no arbiter]** | park / replay |
+| 7 | stick-to-surface | U | code | CO | `OnStickState` | snapshot (physFlags) |
+| 8 | convert pile⇄clump | W | HO | HA | `remote_prop::OnConvert` | PropSnapPos reconcile |
+| 9 | chip-pile grab/throw request | W | HO | ARB | `trash_channel::OnGrabIntent` | staged |
+| 10 | join-window position correction | W | log | HA | `event_dispatch_entity::PropSnapPos` (F1 probe) | THIS is the correction |
+| 11 | identity stability (save/rejoin) | U | code | HA | `CreateOrAdoptPropMirror` / `MarkPropElement` | seed + sweep |
+
+NOT SYNCED: local fall/free-sim physics (intentional SP-parity); pose while NOT held (divergence tolerated); a purely client-placed Aprop never picked up (`[ROCK-DROP]` host won't see); growing classes (mushroom7, host-auth); destroy anti-tamper (security A3/A4); mid-flight thrown prop for a joiner.
+
+### Chip-pile / clump (grab-carry-throw) — `coop/props/trash_*`, `native_pile_mirror`, `pile_spawn_bind`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | host grab → clump | W | HO | HA | `trash_channel::NoteClumpBorn` | snapshot |
+| 2 | client grab request | W | HO | ARB | `trash_channel::OnGrabIntent` | none |
+| 3 | carry pose (hand-follow) | W | HO | HA | `puppet_carry_drive::Tick` | freeze-on-gap |
+| 4 | client throw | W | HO | ARB | `trash_grab_intent::OnThrowIntent` | none |
+| 5 | re-pile (land → chipPile) | W | HO | HA | `trash_channel::OnHostConvert` | key reconcile |
+| 6 | carry termination (consumed/rest) | W | HO | HA | `trash_channel::TickCarry` | n/a |
+| 7 | ctx ordering (stale-convert guard) | W | HO | HA | `trash_channel::AdoptInboundConvertCtx` | sentinel |
+| 8 | client proxy render | W | HO | HA | `trash_proxy::SkinProxy` | on inbound spawn |
+| 9 | save-loaded pile bind | W | HO | HA | `pile_spawn_bind::FindAndConsumeAdoptCandidate` | THIS is the reconcile |
+| 10 | native pile materialize | U | code | HA | `native_pile_mirror::Materialize` | bind-or-materialize |
+| 11 | client authority suppression | W | HO | HA | `trash_collect_sync::EnsureHeldItemBroadcast` | join-window gate |
+| 12 | grab-holder disconnect | U | code | HA | `trash_grab_intent::OnGrabHolderLeft` | per-slot retire |
+
+NOT SYNCED: `PileResyncRequest` reserved, NO handler (STAGED); a client-THROWN ground pile stays client-local (phase-2 gap, benign); proxy occlusion / walk-through (regression); an unbound-native ghost is made non-interactable; ambiguous 1 cm native cluster (`TryDestroyTwin` skips).
+
+### Trash-bits pile (dispenser counter) — `coop/props/trash_pile_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | counter decrement | U | code | CO | `ApplyToLive` (MIN merge, no arbiter) | snapshot |
+| 2 | host adopt-snapshot | U | code | HA | `OnReliable` (adopt gated slot 0) | snapshot |
+| 3 | deferred apply (pile not streamed) | U | code | CO | `Tick` (pending 25 s TTL) | park |
+| 4 | depletion → destroy | U | code | CO | `Tick` death-watch → `PropDestroy` | replay (`g_depletedKeys`) |
+| 5 | pile index identity | W | code | ∅ | `RebuildIndex` (keysHash) | rebuild (convergent-local, correct) |
+
+NOT SYNCED: the dispensed `Aprop` item (rides the generic prop pipeline); counter INCREASE / re-roll; far depletion (>800 cm, treated as stream-out).
+
+### Kerfur — `coop/creatures/kerfur_*`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | NPC-form pose / lookAt / command / face | W | HO | HA | `npc_pose_host::TickPoseStream` | snapshot + adopt |
+| 2 | convert request (client→host) | W | HO | HA | `kerfur_convert_host::OnConvertRequest` | replay |
+| 3 | convert transition broadcast (sole signal) | W | HO | HA | `kerfur_convert_client::OnKerfurConvert` | anchor eids on EntitySpawn |
+| 4 | convert reject (sentient/kill guard) | U | code | HA | `kerfur_entity::BroadcastConvertRejected` | none |
+| 5 | stable identity (KerfurId) | U | code | HA | `kerfur_entity::AllocKerfurId` | seed (retireOffEid) |
+| 6 | radial menu commands | U | code | HA | `kerfur_command::OnCommandRequest` | none |
+| 7 | successor-B disambiguation | U | code | HA | `kerfur_form_assembler::ConsumeCapturedForm` | n/a (per-process) |
+| 8 | client conversion-ghost custody | W | HO | PP | `kerfur_convert_client::ClaimConversionGhosts` | n/a |
+| 9 | dropped floppy byproduct | U | code | HA | `kerfur_convert_host::ExpressConversionFloppies` | generic snapshot |
+
+NOT SYNCED: kerfur HP as its own lane; carried contents beyond floppy; mirror AI timers (neutralized); the `kill` bool (host-checked, not streamed); pat/take/equip verbs (return Invalid). (`kerfur_reconcile` / `kerfur_prop_adoption` not fully read — off→active retire + prop-form save adoption are UNKNOWN.)
+
+### NPC host-sim (generic creatures) — `coop/creatures/npc_*`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | NPC spawn (class + xform + save flags) | W | HO | HA | `npc_mirror::OnEntitySpawn` | snapshot (all live) |
+| 2 | NPC pose (fair-share batch stream) | W | HO | HA | `npc_pose_host::TickPoseStream` | current-pose in spawn |
+| 3 | NPC destroy | U | code | HA | `npc_mirror::OnEntityDestroy` | n/a |
+| 4 | client ghost reconciliation | W | HO | HA | `npc_mirror::DestroyUntrackedClientNpcs` | snapshot-gated sweep |
+| 5 | save-persisted NPC adoption | W | HO | HA | `npc_adoption::ResolvePending` | adopt (THIS is it) |
+
+NOT SYNCED: per-limb HP; AnimBP montages/timers (mirror CMC parked); non-allowlisted classes; wisp keeps its own actor tick (cosmetic).
+
+### Owner-entity (eyer, per-peer) — `coop/creatures/owner_entity_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | owner entity spawn | U | code | PO | `OnSpawnMsg` (per-sender cap) | 10 s keepalive |
+| 2 | owner entity pose | U | code | PO | `OnPoseMsg` | keepalive |
+| 3 | owner entity destroy / leaver teardown | U | code | PO | `OnDestroyMsg` (host speaks for leaver) | n/a |
+
+NOT SYNCED: the eyer's own AI/anger/dash (mirror brain PARKED); state beyond pos+yaw+classId; only `eyer_C` in the class table.
+
+### Roach — `coop/creatures/roach_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | infestation snapshot (paged 12/datagram) | U | code | HA | `SendSnapshot` | full paged snapshot |
+| 2 | local consumption (eat/stomp) | U | code | ARB | `OnConsumedIntent` (nearest 200 cm) | replay |
+
+NOT SYNCED: per-roach stable identity (ordinal only); roach AI; consumption attribution (host picks nearest).
+
+### Wisp (killer) — `coop/creatures/wisp_*`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | existence + pose / landing | U | code | HA | `npc_pose_drive::ApplyToEngine` (rides NPC lane) | NPC snapshot |
+| 2 | aggro target selection | U | code | HA | `wisp_attack_sync::Tick` (random+sticky) | n/a (host-local) |
+| 3 | grab of a victim | W | HO | HA | `wisp_tear_mirror::OnWispGrab` | none (transient) |
+| 4 | tear / fatality mirror | W | HO | HA | `wisp_tear_mirror::OnWispTear` | none |
+| 5 | victim puppet socket-hold | U | code | HA | `wisp_grab_hold::Tick` | n/a |
+| 6 | window lift + despawn | U | code | HA | `DischargePendingDestroys` | n/a |
+| 7 | wisp-killed NPC death mirror | U | code | HA | `DischargeNpcKillWatch` | n/a |
+| 8 | host false-grab protection | U | code | HA | `AddPlayerDamage_PreCancel` | n/a |
+
+NOT SYNCED: wisp AI beyond pose (host owns Target locally); victim death is a scheduled local ragdoll (not HP-sync); a joiner mid-grab misses the transient.
+
+### Pyramid — `coop/creatures/piramid_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | existence + pose + facing + head | W | HO | HA | `piramid_sync::ApplyMirrorHeadingYaw` (rides world_actor) | world-actor snapshot |
+| 2 | client mirror brain suppression | U | code | HA | `BrainSuppress_Interceptor` | n/a |
+| 3 | wisp gather COMMIT | W | HO | HA | `CheckIfReached_POST` / `OnPyramidGather` | replay in-flight |
+| 4 | gathered wisp freeze/suck | W | HO | HA | `TryReplayPendingGather` | via gather re-send |
+
+NOT SYNCED: pyramid RNG walk-target (host-only); montage timing (per-peer native branch); a gather whose wisp already retired at join (joiner misses the beam tail).
+
+### Firefly — `coop/world/firefly_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | ambient firefly spawn position | U | code | PO | `OnFireflyTickPost` / `OnReliable` (each peer runs own spawner, cosmetic) | none (transient) |
+
+NOT SYNCED: firefly lifetime/despawn; count/density (each peer runs its own spawner); no trust gate (cosmetic).
+
+### Drone (delivery) — `coop/interactables/drone_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | body transform (singleton pose) | U | code | HA | `drone_sync::OnReliable` | snapshot (adopt=1) |
+| 2 | FX (dust/cue/light/gates) | U | code | HA | `drone_sync::FillPayload` | via snapshot |
+| 3 | cargo container repoint | U | code | HA | `drone_sync::RepointContainer` | prop snapshot |
+
+NOT SYNCED: drone flight AI/pathing (client tick suppressed); the order economy (separate); singleton (no multi-drone identity).
+
+### Desk-input / console — `coop/interactables/desk_input_sync`, `desk_cursor_sync`, `desk_sim_sync`, `desk_snd_fx`, `console_state_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | desk INPUT field deltas | B | HO | CO | `OnDeskInput` **[take-4 R2 poll-alias; v112 fix unverified]** | seed via DeskState |
+| 2 | SHIFT quick-scan event | U | code | CO | `OnDeskScan` | none |
+| 3 | coord_isPing run-flag | U | log | PP | `PatchScalar` (bookkeeping only) **[v115b]** | not adopted |
+| 4 | desk log lines | U | code | CO | `ProduceLogLines` | none (joiner empty) |
+| 5 | desk scalar ADOPT snapshot | U | code | HA | `OnDeskState` | THIS is the seed |
+| 6 | desk unit-1 AUDIO fx | B | HO | CO | `OnDeskSndFx` (+[dev] `desk_snd_selftest`) **[take-4 R5; v115 fix unverified]** | loops re-asserted |
+| 7 | download-SIM 7ch outputs | B | HO | HA | `desk_sim_sync::Tick` **[take-4 OPEN-0; v112 fix unverified]** | stream re-primes |
+| 8 | live coords cursor | B | HO | CA | `desk_cursor_sync::Tick` **[take-4 OPEN-1 jerk, unresolved]** | stream re-primes |
+| 9 | dish committed-aim locks | B | HO | CA | `console_state_sync::OnDishAim` **[take-4 R3 invisible on host]** | connect snapshot |
+| 10 | sky-signal SET | U | code | HA | `OnSkySignalState` | point-to-point snapshot |
+
+NOT SYNCED: CDOWN animated log family (filtered, regenerable); U2 gauge/detector sounds (BUG-3); SARV/spectrum remap (display-local); ping-FSM stage visuals on observers.
+
+### Dish — `coop/interactables/dish_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | dish POSE (24 dishes) | B | HO | HA | `ApplyDishRow` **[take-4 R1 4 Hz hard-snap stepping]** | DishSnapshot |
+| 2 | download ARM/DISARM | U | code | HA | `OnDishArm` (v113 AS-BUILT) | connect ARM row |
+| 3 | dish calibration | U | code | CO | `OnDishCalib` (symmetric, host relay = total order) | in snapshot |
+| 4 | dish full-state snapshot | U | code | HA | `OnDishSnapshot` | THIS is the seed |
+| 5 | own-ping local slew kill | U | code | PP | `KillOwnPingSlews` | n/a |
+
+NOT SYNCED: rest pose (per-peer RNG at BeginPlay, never saved); ambient ticker timing (client tickers PARKED).
+
+### Comp-processing — `coop/interactables/comp_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | comp decode scalars | B | HO | CO | `OnState` **[take-4 R17 list lags 1 s poll]** | adopt=1 |
+| 2 | comp_data_0 content (signal row) | U | code | CO | `ApplyData` | adopt blob |
+| 3 | simulator-left teardown | U | code | PP | `OnPeerDisconnect` | n/a |
+
+NOT SYNCED: comp RNG rate (local sim); level-up ID re-mint per-peer (OPEN-5).
+
+### Device-occupancy — `coop/interactables/device_occupancy`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | device claim / release (8 screens) | W | HO | **ARB** | `OnReliable` (host busy-table CAS) | full table snapshot |
+| 2 | busy-deny gate (E → no-op + chat line) | U | code | PP | `OnUseInputPre` (local of arbiter table) | n/a |
+| 3 | desk FSM-hold (pinger keeps claim) | U | log | ARB | `ReconcileDeskFsmHold` **[v116 log]** | rides table |
+
+NOT SYNCED: which specific unit within a shared widget (aim-seam memo, cosmetic).
+
+### Signal-catch — `coop/interactables/signal_catch_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | signal CATCH (ping → coord identity) | U | log | CO | `OnReliable` **[07-17 lost-catch; v116 fix, effect unverified]** | seed kind=2 (feed-silent) |
+| 2 | signal DELETE / cleared | U | code | CO | `ApplyReplay` (kind=1, not gated) | none |
+| 3 | host dish-theater slew fan-out | U | code | HA | `ApplyReplay` (host replays StartMovingAll) | catch seed carries slew |
+| 4 | catch-vs-snapshot race + feed | U | code | CO | `NoteIncomingSnapshot` (recent-TTL dedup) | recent-catch filter |
+
+NOT SYNCED: kind=2 seed deliberately feed-SILENT; no holder/claim validation on receive (RULE-2 retired v116, transport-trusted).
+
+### Playback-deck — `coop/interactables/deck_play_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | play edge (start track) | W | ST | CO | `OnPlayDeck` (+[dev] `deck_selftest`) | none (no in-progress snapshot) |
+| 2 | stop edge (end/manual) | W | ST | CO | `OnPlayDeck` (gen-guard) | none |
+| 3 | natural `fin()` end | U | code | PP | `OnFinPre` (each peer self-stops) | n/a |
+
+NOT SYNCED: playback position/scrubbing; deck volume; a joiner mid-track sees no deck audio until the next edge.
+
+### Drive-chain (drives) — `coop/interactables/drive_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | slot occupancy (insert/eject, 3 roles) | U | code | HA/CO | `OnSlotLine` (host canonical on conflict) | seed 3 slot lines |
+| 2 | drive data row payload | U | code | CO | `ApplyPayloadBlob` (host reaps denied) | seed non-default rows |
+| 3 | drive birth attribution | U | code | CA | `NoteLocalDriveBirth` | prime-only for save-loaded |
+
+NOT SYNCED: drive world pose (generic prop lane); the signal image/spectrogram bytes (`adopt=false`, "sans image").
+
+### Drive-rack — `coop/interactables/drive_rack_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | rack slot set (16 slots) | U | code | **ARB** | `HostApplyRackOp` (host CAS on `.has`) | seed one canonical/rack |
+| 2 | take-race deny + reap | U | code | ARB | `HostApplyRackOp` (op2 deny) | n/a |
+| 3 | set-race refund | U | code | HA | `HostApplyRackOp` (re-spawn drive) | n/a |
+
+NOT SYNCED: rack world pose; per-row image bytes (same `adopt=false`).
+
+### Phys-mods — `coop/interactables/physmods_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | module array (plug/unplug) | U | code | **ARB** | `OnPhysMods` (host sole canonical) | seed canonical |
+| 2 | plug-dup race refund | U | code | HA | `OnPhysMods` (op0 dup → re-spawn) | n/a |
+| 3 | unplug-race deny + ghost sweep | U | code | ARB | `ClientHandleDeny` / `HostShouldReapModuleBirth` | n/a |
+
+NOT SYNCED: module actor ↔ byte mapping cosmetic/pose beyond `ClassForByte`.
+
+### Tape-caddy — `coop/interactables/tape_caddy_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | reel slot insert/eject | U | code | CO | `OnReelSlot` (host wins occupied tiebreak) | seed = the save (prime-first-sight) |
+| 2 | reel accrual / progress | U | code | HA | `Tick` corrector (host-only 1 Hz) | corrector-bounded |
+| 3 | reel PROP birth on client eject | U | code | HA | `HostSpawnPlacedProp` | rides prop birth + savedScalar |
+
+NOT SYNCED: wallunit power (separate `ApplianceState`); which tape content (rides the reel prop's savedScalar birth).
+
+### Laptop (power/floppy/disc) — `coop/interactables/laptop_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | power lid open/close | U | code | CO | `ApplyPowerTarget` | seed op=3 |
+| 2 | floppy slot insert (+content) | U | code | CO | `ApplyAssembledContent` (kind=0) | seed op=3 + content |
+| 3 | floppy slot eject | U | code | CO | `OnLaptopState` (op=2) | n/a |
+| 4 | post-eject disc content | U | code | HA | `DriveEjectContentWatch` (kind=1) | seed live content rows |
+| 5 | portable-PC lid | U | code | CO | `LidSweep` (op=6, host re-fans) | seed current lid |
+
+NOT SYNCED: portable-PC as remote terminal binding; disc physical pose (generic lane); screen UI state beyond the buffer quad.
+
+### Laptop-buffer-quad — `coop/interactables/laptop_buffer_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | buffer quad (floppyData/buffer/uids/readWrites) | W | ST | **ARB** | `HostApplyBatch` (+[dev] `laptop_selftest` 0→1→0) | seed connect canonical |
+
+NOT SYNCED: cursor/scroll position; per-row UID beyond `bufferUids`; no ORDER-move op (remove+re-append only).
+
+### Floppybox — `coop/interactables/floppybox_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | box disc stack (LIFO) | U | code | **ARB** | `OnBoxChunk` (host CAS on pop content-hash) | seed one canonical/box |
+| 2 | pop-race deny + held-disc reap | U | code | ARB | `ReapDeniedPop` | n/a |
+
+NOT SYNCED: box world-prop pose; box open/closed lid.
+
+### Serverbox — `coop/interactables/serverbox_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | server broken mask + efficiency | U | code | HA | `ApplyState` (one-directional; verbs EX_LocalVirtual → state mirror) | snapshot |
+| 2 | client autonomous breaker neutralize | U | code | PP | `KillLocalBreaker` | re-kill after apply |
+
+NOT SYNCED: per-server repair-minigame progress; break/fix attribution; the break/fix VERBS (invisible dispatch).
+
+### Remote-player body / locomotion / ragdoll — `coop/player/`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | body pose (loc/yaw/pitch/speed/state) | W | HO | PO | `RemotePlayer::SetTargetPose` | puppet spawns on first pose |
+| 2 | puppet spawn / destroy lifecycle | W | HO | recv-local | `puppet_drive::DriveTick` | spawn IS the seed |
+| 3 | locomotion drive (velocity/CMC/footsteps) | W | HO | PO | `RemotePlayer::ApplyToEngine` | rides pose |
+| 4 | head-look / aim direction | W | HO | PO | `GetSyncedAimDirection` | rides pose |
+| 5 | body-yaw presentation (turn-in-place) | U | code | ∅ | `RemotePlayer::Tick` | n/a |
+| 6 | ragdoll DISPLAY flag | U | code | PO | `remote_player_ragdoll::OnWireBit` | pose bit current on first packet |
+| 7 | ragdoll PHYSICS (pelvis velocity) | U | code | PO | `remote_player_ragdoll::SetPose` | stream resumes on edge |
+| 8 | hurt-flash (nameplate + material) | U | code | ∅ | `SetVitals` | first-hit gate |
+
+NOT SYNCED: crouch (Phase-2 wire bump); streamed ragdoll pelvis ROTATION (on-wire but unused).
+
+### Nameplate + nick-color — `coop/player/nameplate`, `nick_color`, `session/player_handshake_prefs`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | nameplate render (nick/health/ping/voice) | W | HO | ∅ | `nameplate::Update` (composite of synced inputs) | recompute each tick |
+| 2 | per-player plate visibility pref | U | code | CO | `HandleNameplateChange` | at-join via Join payload |
+| 3 | nick color (packed RGB) | U | code | CO | `nick_color::StoreForSlot` | at-join via Join |
+
+NOT SYNCED: health-bar/ping/voice-icon values are computed locally from their own sources; distance fade/occlusion are viewer-local.
+
+### Skins — `coop/player/skin_registry`, `skin_effects`, `client_model`, `local_body`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | local skin selection / persistence | W | HO | PO | `local_body::RequestSkin` | ini reloaded at boot |
+| 2 | skin change (mid-session) | U | code | CO | `HandleSkinChange` | at-join via Join field |
+| 3 | skin → mesh/texture apply | W | HO | recv-local | `client_model::ApplySkinToBody` | at puppet spawn |
+| 4 | skin EFFECT rig (RT face, step FX) | U | code | recv-local | `skin_effects::Apply` | rebuilt on apply |
+| 5 | skin catalog (pak scan) | W | code | PP | `skin_registry::Entries` | starter roll |
+
+NOT SYNCED: pak asset BYTES (each machine must have the pak; missing → local view degrades to kel).
+
+### Hand-item / item-activate — `coop/player/hand_item`, `item_activate`, `flashlight_click_sound`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | hotbar hand-item identity (class+transform) | W | HO | CO | `HandleHandItem` | replay to joiner |
+| 2 | hand live pose (swing) | U | code | PO | `hand_item::TickMirrors` | announce-rel covers pre-stream |
+| 3 | hand mirror actor (display) | W | HO | recv-local | `hand_item::SpawnMirror` | on puppet+state |
+| 4 | released-hand-actor → world prop | U | code | CA | `ExpressReleasedHandActor` | n/a (edge) |
+| 5 | flashlight activation (on/mode/cone) | W | HO | PO | `item_activate::ApplyToPuppet` | replay (ON-only) |
+| 6 | flashlight click sound | U | code | recv-local | `flashlight_click_sound::PlayIfStateChanged` | per-peer last-state |
+
+NOT SYNCED: crank-lantern variant (deferred); non-flashlight item ACTIONS (only the display mirror + flashlight state).
+
+### Player-inventory — `coop/items/player_inventory_sync`, `inventory_wire`, `inventory_pickup_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | client live inventory → host persistence | W | ST | **PP** | `ClientStreamTick` (+[dev] `inventory_selftest`) | host-terminal, never relayed |
+| 2 | host → joiner per-player inventory | U | code | HA | `OnSaveObjectReady` | seed pre-world (first-join starter kit / else empty) |
+| 3 | inventory-collect blip (2D cue) | U | code | PP | `inventory_pickup_sync::OnReliable` | none (edge) |
+
+NOT SYNCED: the personal inventory is **peer-private by design** — never merged or relayed to other peers; only streamed to host for per-`<guid>.json` persistence.
+
+### Sleep — `coop/player/sleep_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | in-bed report (peer→host) | U | code | **ARB** | `ReportLocalEdge` / `HostRetally` (host tally) | joiner arrives awake |
+| 2 | tally / accelerate / end phase | U | code | HA | `HostRetally` / `ApplyAccelerateLocal` | phase re-derives on join |
+| 3 | time-dilation / WAITING enforcement | U | code | HA | `Tick` (WAITING block) | edge-latched |
+| 4 | nightmare (dreamProbability) policy | U | code | HA | `ApplyDreamProbPolicy` (single roller) | re-applied on connect |
+
+NOT SYNCED: per-peer sleepCam view; individual dream CONTENT (only the roll authority is gated).
+
+### Player-damage / hazards — `coop/player/player_damage`, `local_streams`, `dev/restore_vitals`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | enemy damage to a peer's player | U | code | HA | `player_damage::OnWireDamage` | none (edge) |
+| 2 | vitals (health/food/sleep fractions) | W | HO | PO | `remote_player::SetVitals` (display-only, never saveWrite) | current on first pose |
+| 3 | restore vitals (F3 dev refill) | U | code | HA | `restore_vitals::ApplyLocally` | none |
+| 4 | killer-wisp fatal grab/tear | W | HO | HA | (wisp lane, cross-ref) | none |
+
+NOT SYNCED: local hazard EFFECTS (screen shake, coffeePower); "stamina" is `sleep` (local-only).
+
+### Puppet (unpossessed-orphan drive) — `coop/player/puppet_drive`, `puppet_carry_drive`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | puppet locomotion/pose drive | W | HO | recv-local | `puppet_drive::DriveTick` | world-ready gate |
+| 2 | puppet carry of trash-clump | W | HO | HA | `puppet_carry_drive::Tick` | carry latch |
+| 3 | puppet flashlight cone (lag_fl) | U | code | recv-local | `ApplyToEngine` (lag_fl block) | rides pose |
+| 4 | puppet head-look bone | U | code | recv-local | `ApplyToEngine` (head block) | rides pose |
+
+NOT SYNCED: puppet CMC integration (parked; owned by our drive); sit/stand posture (OPEN backlog).
+
+### World / interactables — small systems (`coop/world/`, `coop/interactables/`, `coop/items/order_sync`)
+| System | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| Sky | sky rot + moon phase | U | code | HA | `sky_sync::ApplySky` | snapshot |
+| Time-of-day | clock steady-state | U | code | HA | `time_sync::ApplyClockSnapshot` | seed (connect-edge) |
+| Time-of-day | clock connect-edge | U | code | HA | `time_sync::OnReliable` | THIS is the seed |
+| Time-of-day | sleep-accelerate toggle | U | code | CO | `SetSleepAccelerate` | none (sleep lane) |
+| Alarm | klaxon `active` on/off | U | code | CO | `alarm_sync::Apply` | snapshot incl active=0 |
+| Balance | canonical Points total | U | code | HA | `balance_sync::ApplyFromHost` | connect-replay |
+| Balance | credit delta request | U | code | ARB | `OnDeltaRequest` (only host applies) | none (transient) |
+| Daily-task | taskNew (arrays + scalars) | U | code | HA | `OnTaskNewState` | baseline-first-sight (save transfer) |
+| Email | row append (chunked) | U | code | HA | `email_sync::CompleteAssembly` | save transfer + shadow prime |
+| Email | row delete (content-hash) | U | code | CA | `ApplyDeleteByHash` | episode gate |
+| Doors | base door open/close (auto-revert) | U | code | HA | `interactable_sync::SmartApply` | snapshot |
+| Doors | client door open intent | U | code | ARB | `OnDoorOpenRequest` (host runs guards) | none |
+| Doors | garage door (no auto-revert) | W | HO | CO | `g_garageAdapter` **[take-4 R9 FName-id]** | snapshot (level-export FName) |
+| Doors | locker/console door | U | code | CO | `g_doorBoxAdapter` | snapshot |
+| Keypads | digit buffer (input replication) | W | HO | CO | `keypad_sync::ApplyState` **[06-12 echo-storm]** | snapshot |
+| Keypads | active / door power + LED | W | HO | HA | `keypad_sync::ApplyState` **[06-17 keypads-dead]** | snapshot |
+| Keypads | Accept/Deny submit event | W | HO | CO | `keypad_sync::ApplyIncoming` **[07-04 red-button]** | snapshot (None) |
+| Lights | switch on/off | U | code | CO | `g_lightAdapter::CallUse` | snapshot |
+| Turbine | 6 driver floats | U | code | HA | `turbine_sync::ApplyState` | snapshot + pending |
+| Power panel | 5 breaker bools (mask) | U | code | CO | `power_sync::ApplyMask` | snapshot + pending |
+| Grime | process wipe (min-wins) | U | code | CO | `grime_sync::ApplyResolved` | snapshot adopt=1 |
+| Grime | one-shot destroy (super-sponge) | U | code | CO | `grime_sync::ApplyResolved` (value=0) | wiped-keys in snapshot |
+| Window-cleaning | clean wipe (min-wins) | W | ST | CO | `window_sync::ApplyResolved` (+[dev] `window_synth`) | snapshot adopt=1 |
+| Garbage-chute | tick/pickup AV suppress | U | code | PP | `garbage_sync::IsGarbageInstance` (crash-fix) | none |
+| Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
+| ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
+| ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
+| ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
+| ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
+| Shop-order | new order forward | U | code | ARB | `order_sync::CommitOrder` (host commits) | watermark-prime |
+| Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
+
+NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task/email lean on save-transfer for JOIN state (no connect snapshot); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
+
+### World-events — `coop/world/event_fire_sync`, `event_cue_sync`, `event_active_sync`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | scheduler row fire | U | code | HA | `event_fire_sync::ReplayVerdict` | replay (pre-world queued + dedupe) |
+| 2 | in-flight event (join) | U | code | HA | `event_active_sync::SendJoinSnapshotForSlot` | snapshot (per-lane late-join) |
+| 3 | cosmetic emitter cue (starRain) | U | code | HA | `event_cue_sync::Tick` | seed (already-broadcast cues) |
+
+NOT SYNCED: `special`/`ariralPrank` RNG (replayed None); verdict 0/-1 rows (creature/prank/pyramid/arirShip/agrav — host-local); unmapped `kClassRowMap` classes (logged LOUD, not replayed); sub-second cues (1 Hz poll caveat).
+
+### Chat — `coop/comms/chat_sync`, `chat_feed`, `chat_bubbles`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | text line | W | HO | CA | `chat_sync::OnReliable` (identity = transport slot) | none (TTL-ephemeral, no backlog) |
+| 2 | nickname prefix / color | W | HO | HA | `chat_sync::OnReliable` (from handshake roster) | own handshake replay |
+| 3 | overhead speech bubble | W | HO | PP | `chat_bubbles::OnChatLine` | none (expires in place) |
+
+NOT SYNCED: chat history/scrollback (fading HUD); own line never received back (local echo only).
+
+### Peer-action feed — `coop/comms/peer_action_feed`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | action line ("&lt;nick&gt; did X") | W | HO | ∅ | `peer_action_feed::Announce` (derived; driving lane owns authority) | none (each driving lane owns its join) |
+| 2 | enable toggle (local pref) | U | code | PP | `SetEnabled` | none |
+
+NOT SYNCED: the feed carries no packet (formatting layer); subject is ALWAYS a nickname, never "You".
+
+### Voice — `coop/voice/voice_chat`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | Opus audio frames (3D positional) | W | HO | PO | `voice_chat::Tick` (own mic, host-relayed) | none (realtime, jitter-buffered) |
+| 2 | mute / voice-disabled state | U | code | PO | `OnVoiceState` | replay (`ReplayPeerStatesToSlot`) |
+| 3 | spatial listener/speaker position | W | HO | ∅ | `voice_chat::Tick` (derived from pose stream) | none (derived) |
+
+NOT SYNCED: device config (mic/output/gain/PTT, local ini); talking indicator (derived locally).
+
+### Save-transfer / join snapshot — `coop/save/save_transfer`, `session/subsystems`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | request world save | W | HO | CA→HA | `ClientNoteConnected` / `OnRequest` | THIS is the join mechanism |
+| 2 | blob announce | W | HO | HA | `save_transfer::OnBegin` | net-thread co-located |
+| 3 | blob chunks (CRC, paced) | W | HO | HA | `BulkSink_` | live-capture at request |
+| 4 | identity sidecar (index→eid) | U | code | HA | `DeserializeSidecar` (dev-gated) | in the CRC'd stream |
+| 5 | snapshot bracket (spawn burst) | W | HO | HA | `ConnectReplayForSlot` | THIS is the join snapshot |
+| 6 | blob-vs-live divergence deletes | U | code | HA | `SendBlobDivergenceDeletes` | seed (removes before adds) |
+| 7 | in-window save-pos corrections | W | log | HA | `FlushDivergedSavePositionsForSlot_` (F1 probe) | seed / late-arm |
+| 8 | meadow-DB join seed | W | ST | HA | `CaptureJoinSnapshot` (+meadow selftest) | seed |
+
+NOT SYNCED: host's canonical slot never sent (scratch only); `gameMode` hard-coded 0 (story only); no `reserve()` cap on the receive buffer (by design).
+
+### Teleport-client — `coop/session/teleport_client`
+| # | facet | V | E | Auth | cite | mid-join |
+|---|---|---|---|---|---|---|
+| 1 | teleport all clients to host | U | code | HA | `TeleportClientsToHost` (slot0 + NaN + AABB 1e6) | n/a (action) |
+| 2 | teleport one slot to host | W | HO | HA | `TeleportSlotToHost` | seed = JOIN placement |
+
+NOT SYNCED: no client→host teleport request path (host-only trigger).
+
+---
+
+## 8. Systems still unprofiled / partial
+
+- **Kerfur reconcile + prop-adoption** (`kerfur_reconcile`, `kerfur_prop_adoption`) — the off→active retire
+  arming and prop-form save-kerfur adoption were referenced by callers but not fully read; their mid-join
+  facets are UNKNOWN pending a read.
+- **Infra, not game facets** (deliberately excluded): `element/` (identity registry), `net/`,
+  `session/` plumbing, `save/save_guard`, `moderation/`, `dev/` — these are the substrate, not synced
+  game systems.
+- **Adding a system:** author its facets by hand with a citation each and a two-field remainder row (§0).
+  Do NOT seed rows from a grep — a syntactic proxy for "is this synced" errs both ways and only the
+  false-negative side is measurable.
