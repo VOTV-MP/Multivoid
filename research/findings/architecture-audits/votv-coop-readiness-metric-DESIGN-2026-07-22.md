@@ -211,7 +211,13 @@ three.)
 
 ---
 
-## 9. The per-system PROFILE brief (2026-07-22, for its own `/qf` — NOT built)
+## 9. The per-system PROFILE brief (2026-07-22, for its own `/qf`)
+
+> **BUILT 2026-07-23** — this brief's `/qf` ran (11 rounds, converged) and produced the deliverable
+> `docs/COOP_SYNC_PROFILES.md`: three filled profiles on a five-axis falsifiable status model. The
+> "spine may be the LANE" position below was TESTED and REJECTED — the spine is the SYSTEM, hand-named,
+> because a system's facets cross files. Read the profiles doc for the as-built; the brief below is
+> the point-in-time reasoning that led into it.
 
 The user proposed a chain: **granule -> domain -> synced? -> in work? -> table**, and asked the one
 question that decides whether it is a measurement or a rubrication: **which arrows are machine and
