@@ -486,8 +486,21 @@ built.** REMAINING (a USER go/no-go — a real multi-piece build, ordered):
   client's container mirror failed to roll back" (a different bug that would show a container-slice idx).
 
 **FEEDS BACK TO THE CONTAINER SYNC (separate fix, not this session):** R11b's refused-write path needs a
-rollback of the loser's optimistic local PERSONAL take (the design shipped without one). The director +
-this verifier are now the reproduction + regression instrument for that fix.
+rollback of the loser's optimistic local PERSONAL take (the design shipped without one).
+
+- **R11b now has a REPRODUCER — this is value separate from the finding.** `mp.py ctakerace --mode race`
+  gives `sum=2` BEFORE the fix and MUST give `sum=1` AFTER. That is R11b's fix **ACCEPTANCE CRITERION**:
+  the regression is checked by a RUN, not by reasoning, and it must be written into the fix's own doc as
+  such (not left implicit). The two-direction controls (`--mode control --taker host|client`, each
+  `sum=1`) are the standing instrument-not-blind guard the fix run must also keep passing.
+- **HONEST BOUNDARY (what is NOT yet measured):** proven = the LOSER keeps a personal copy (both race
+  copies at `idx=0`). NOT proven = WHOSE copy is the authority-"extra" one, i.e. WHOM to roll back. The
+  host DOES know whom it refused (`container_contents_sync.cpp:577` `CONFLICT … slot %u` carries the
+  AUTHOR peer slot), so the information exists — but the link "refused author slot → which peer's personal
+  inventory to clean" was not exercised in this run. That mapping is FIX-PHASE work, not part of the
+  finding.
+
+The director + this verifier are the reproduction + regression instrument for that fix.
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
