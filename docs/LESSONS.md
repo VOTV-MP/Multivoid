@@ -808,8 +808,32 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   locally and tests nothing (or fakes a bug). `take`/`grab`/`press` = "aim + input-verb" composition.
   Scope: callable input-seam UFunctions only (out: EX_Local-only/widget/analog-held/drag; resolve on the
   DECLARING class per the FindFunction trap). Anchor: `autotest_chippile` drives real InpActEvt_use through
-  the real wire (v85 PASS). *Look FIRST:*
+  the real wire (v85 PASS). **REFINED 2026-07-23:** the "input seam only" ideal is fully achievable only for
+  MOVEMENT; discrete input-ACTION verbs are inert via reflection (next row). *Look FIRST:*
   `memory/lesson_drive_test_bot_at_input_seam_not_effect_seam.md` + the director DESIGN §B4.
+- **Discrete input-ACTION verbs are INERT via reflection; only movement input is input-seam-faithful**
+  (2026-07-23, director green run). A `CallFunction` on a `mainPlayer_C` `InpActEvt_*` discrete verb
+  (`InpActEvt_drop`, `InpActEvt_use`) fires the ProcessEvent OBSERVERS but does NOT run the BP body -- the
+  engine drives the ubergraph from the real key press-edge, not the reflected stub (measured: hand still
+  full 20 ticks after `InpActEvt_drop`; chippile found the same for the grab body). So a driving bot must
+  "arm the observer (`InpActEvt_*`) + call the EFFECT verb" (`throwHoldingProp` / `door_C::doorOpen` /
+  `playerGrabbed`), and say so honestly (`drop-input-seam-faithful=0`). ONLY `AddMovementInput` is a pure
+  input-seam drive. *Look FIRST:*
+  `memory/lesson_discrete_input_action_verbs_inert_via_reflection.md` + the director DESIGN §6b.
+- **A driven Character's movement input must land EVERY FRAME or friction brakes it to a crawl**
+  (2026-07-23, director). `CharacterMovement` consumes+clears `ControlInputVector` per frame, so a
+  worker-loop `AddMovementInput` at a 20ms tick (game ~9ms/frame) leaves most frames zero-input and VOTV's
+  ground friction decelerates the body between pushes -> ~5cm/s "turtle"; `kTickMs=4` (2-3 inputs/frame) =
+  full speed. `GT::Post` runs on the PE detour (~2050/fr) so the round-trip is sub-ms -- the Sleep was the
+  bottleneck. Measure per-TICK displacement, not aggregate (a shove/respawn inflates the aggregate). *Look
+  FIRST:* `memory/lesson_movement_input_must_land_per_frame.md` + the director DESIGN §6b.
+- **A high-priority CLEANUP process must EXCLUDE the goal state from its activation** (2026-07-23,
+  director). In a priority-arbitrated process system, a cleanup process on a raw predicate (ClearHand active
+  when the hand is full) preempts + undoes a lower-priority goal process if the goal's SUCCESS satisfies the
+  predicate: Grab put the grabbed clump in `grabbing_actor` -> ClearHand woke + dropped the goal clump. Gate
+  the cleanup to exclude the goal-completion region (ClearHand active only out-of-range + `!grabbed`); give
+  it the goal/blackboard so it can. *Look FIRST:*
+  `memory/lesson_cleanup_process_must_exclude_the_goal_state.md` + the director DESIGN §6b.
 - **An engine with a baked NavMesh collapses a movement-bot's whole pathfinder** (2026-07-23). VOTV levels
   ship RecastNavMesh/NavMeshBoundsVolume as cooked-umap exports + NPCs pathfind via AIMoveTo, so a
   Baritone port DELETES A*+Moves+Movement+ActionCosts+chunk-cache and uses one engine call:

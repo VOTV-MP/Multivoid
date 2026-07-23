@@ -348,14 +348,39 @@ INTENT, not drift.
   **user-directed** deviation, justified by (a) the primitives being de-risked by the Phase-0 probe and
   (b) the held-disc failure proving monolith-patching is the wrong shape. "Primitives de-risked" is a
   DIFFERENT criterion than N=3; the deviation is a deliberate call, not a claim that N=3 was satisfied.
-- **Status: the brain SKELETON is built, layered `ue_wrap/engine/engine_nav` + `coop/dev/director/`
-  (director.h, player_context, control_manager, proc_walkgrab, director_run). It has the FORM (read-model,
-  emergent activation, thin executor, input-override) but is NOT yet proven by a green run.** The monolith
-  was retired (RULE 2). Open honesty items carried in the code: ClearHand MEASURES whether the input-seam
-  `InpActEvt_drop` works and only falls back to the effect-seam release with a LABEL + a verdict flag
-  (`drop-input-seam-faithful=0/1`) — because the reflection input stub may not run the drop body (the
-  chippile `InpActEvt_use`-body-inert precedent); if inert, that is a substrate HALT-fact about
-  input-ACTION verbs, recorded, not masked.
+- **Status: BUILT + GREEN end-to-end (2026-07-23, commits `e2085678` probe / `b3a5874b` brain skeleton /
+  `299f1572` green).** DLL `multivoid-0.9.0n-125`; solo host log `director: VERDICT walkgrab grabbed=1
+  (DONE) reason=grabbed`. The brain drives the possessed player to: clear a pre-existing held item, walk
+  the NavMesh across the base, **open closed doors + walk through** (`door_C::doorOpen(bypass=true)` — the
+  native swing a player's E triggers), **juke-grind past physics boxes** (never-give-up), reach the pile,
+  and **grab it** (`playerGrabbed` VERIFIED, clump in hand). Layered `ue_wrap/engine/engine_nav` +
+  `coop/dev/director/`. Monolith retired (RULE 2). NOT hands-on-with-a-human (it IS the autonomous run);
+  NOT pushed.
+
+### What the green run taught (each cost a dig; see the lessons)
+- **Discrete input-ACTION verbs are INERT via reflection** (`InpActEvt_drop`, `InpActEvt_use` body):
+  the reflection stub fires observers but not the BP body. So the bot drives discrete actions at the
+  EFFECT seam (arm observer + call the effect verb: `throwHoldingProp` / `doorOpen` / `playerGrabbed`);
+  ONLY movement input (`AddMovementInput`) is pure input-seam. The verdict flags this honestly
+  (`drop-input-seam-faithful=0`). Generalizes the chippile precedent →
+  `[[lesson-discrete-input-action-verbs-inert-via-reflection]]`.
+- **Movement input must land EVERY FRAME** or CharacterMovement's per-frame consume+clear + VOTV's hard
+  ground friction brake it to a crawl (a 20 ms tick → ~5 cm/s "turtle"; 4 ms → full speed) →
+  `[[lesson-movement-input-must-land-per-frame]]`.
+- **The held item is in `holding_actor`, not `grabbing_actor`** (cleared by `throwHoldingProp`).
+- **Straight-line-to-waypoint cannot thread doors/corners** (pins on the frame/wall); needs facing the
+  heading + hug-the-path advance + open-the-door + never-give-up juke past dynamic boxes the navmesh
+  (baked before them) routes into.
+- **A high-priority cleanup process must EXCLUDE the goal state** — ClearHand woke on the grabbed clump
+  (now in `grabbing_actor`) and undid the grab; gate it on out-of-range + `!grabbed` →
+  `[[lesson-cleanup-process-must-exclude-the-goal-state]]`.
+
+### NEXT (director)
+- Re-validate Gate B's "AddMovementInput walks" as a sustained CONTROLLED walk (the green run is that
+  evidence; the probe's aggregate delta was confounded).
+- N=2/N=3 scenarios (world-grab race, container take) then extract `ue_wrap/nav` + `ue_wrap/input` +
+  the command channel (design B7 Phase 3). Pure-pursuit path-following would beat the juke for hard routes.
+- The cross-agent barrier (mp.py) for the concurrent-race scenarios (the original killer example).
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
