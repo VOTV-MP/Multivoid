@@ -29,14 +29,13 @@ game systems still to sync.
 
 We deliberately don't publish a single "N% done" figure — a co-op mod is
 finished system by system, not on one bar, and any summed percentage would hide
-which systems are solid and which are untouched. The honest counts, generated
-from the game's own class dump by [`tools/coverage.py`](tools/coverage.py): of
-**2291** game classes, **1453** can actually diverge between peers, our code
-names **175** of them, **12** carry a written status, and **2** are verified
-hands-on by a player. Read those as a ladder, not a fraction — the last number
-is the one that means "works for a player", and it is deliberately small. The
-full derivation, the measurement error on each rung, and why a finer verb-level
-percentage isn't yet honest live in the
+which systems are solid and which are untouched. The one honest headline count,
+generated from the game's own class dump by
+[`tools/coverage.py`](tools/coverage.py): of **2291** game classes, **1453** can
+actually diverge between peers, and our code names **175** of them. The deeper
+breakdown — how much of that is documented, how much is player-verified, the
+measurement error on each rung, and why a finer verb-level percentage isn't yet
+honest — lives in the
 [readiness-metric doc](research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md);
 the facet-by-facet "what we sync and what we don't" per system lives in
 [`docs/COOP_SYNC_PROFILES.md`](docs/COOP_SYNC_PROFILES.md).
