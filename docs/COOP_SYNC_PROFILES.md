@@ -84,17 +84,17 @@ cannot answer "which facets does a dedicated-server migration touch?"
 Lane: `container_contents_sync.cpp` (853 LOC). Contents live in ONE global `saveSlot.GObjStack`,
 addressed by `propInventory.index` (`[[lesson-container-contents-live-in-one-global-gobjstack]]`).
 
-| # | facet | verdict | evidence | citation (symbol / section) |
-|---|---|---|---|---|
-| 1 | host -> client contents mirror (`addObject` receive) | **WORKS** | `hands-on` | `research/handson_runbook_2026-07-22_container_v125.md` — the user saw the burgers |
-| 2 | client -> host extraction, upward (`takeObj`) | **WORKS** | `hands-on` | same runbook — shipped 2/1/0 matched applied 2/1/0 on both peer logs |
-| 3 | simultaneous grab by two peers (the CAS) | **UNKNOWN** | `log` | `HostAcceptsClientWrite()` in `container_contents_sync.cpp`. `CONFLICT=0` on BOTH peers in the 07-22 take: the arbitration never executed once. Unexercised, not proven and not broken |
-| 4 | the extracted item reaching the host's world | **BROKEN** | `inference` | the `freshBirth` guard in `prop_drop_intent.cpp` (`if (!parked && !freshBirth) continue;`). `[RD]` not `[V]`: the log cannot separate "dropped at the guard" from "never enqueued" — both are silence |
-| 5 | nested container-in-container | **NOT BUILT** | `code` | the `BOUNDARY 2` comment block in `container_contents_sync.cpp` — a nested container's `ints[0][0]` is a sender-side slot index, meaningless on the receiver. Receiver-side bounds needed first |
-| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `updateVolumesAndMass` never re-derives: records went 7 -> 6 while `currVol` stayed 28579.0 on BOTH peers, 07-22 take |
-| 7 | slot 0 — the player's personal container | **NOT BUILT** | `code` | `IsWorldContainerInventory`, fail-closed today. A privacy/product fork and a BOUNDARY 1 redesign; gate:user |
-| 8 | the INSERT direction (`putObjectIn_overlap`) | **UNKNOWN** | `none` | nobody has looked; no claim either way |
-| — | **remainder — the list is open** | **UNKNOWN** | — | (a) **3 of 8 facets (#3, #4, #6) were found by RUNNING**, not by reading source — so the majority of what is wrong here was invisible to code reading. (b) **Concurrency WAS exercised** (the 07-22 take produced `CONFLICT=0`), so this system's incompleteness signal is meaningful — but the ONE interleaving that ran did not trigger the CAS, so even here (b) is "run once, not run adversarially" |
+| # | facet | verdict | evidence | authority | citation (symbol / section) |
+|---|---|---|---|---|---|
+| 1 | host -> client contents mirror (`addObject` receive) | **WORKS** | `hands-on` | `host-authored` | `research/handson_runbook_2026-07-22_container_v125.md` — the user saw the burgers |
+| 2 | client -> host extraction, upward (`takeObj`) | **WORKS** | `hands-on` | `client-authored` | same runbook — shipped 2/1/0 matched applied 2/1/0 on both peer logs |
+| 3 | simultaneous grab by two peers (the CAS) | **UNKNOWN** | `log` | `arbiter` | `HostAcceptsClientWrite()` in `container_contents_sync.cpp`. `CONFLICT=0` on BOTH peers in the 07-22 take: the arbitration never executed once. Unexercised, not proven and not broken |
+| 4 | the extracted item reaching the host's world | **BROKEN** | `inference` | `client-authored` | the `freshBirth` guard in `prop_drop_intent.cpp` (`if (!parked && !freshBirth) continue;`). `[RD]` not `[V]`: the log cannot separate "dropped at the guard" from "never enqueued" — both are silence |
+| 5 | nested container-in-container | **NOT BUILT** | `code` | `arbiter` (intended) | the `BOUNDARY 2` comment block in `container_contents_sync.cpp` — a nested container's `ints[0][0]` is a sender-side slot index, meaningless on the receiver. Receiver-side bounds needed first |
+| 6 | volume/mass re-derivation on extraction | **BROKEN** | `log` | `host-authored` (intended) | `updateVolumesAndMass` never re-derives: records went 7 -> 6 while `currVol` stayed 28579.0 on BOTH peers, 07-22 take |
+| 7 | slot 0 — the player's personal container | **NOT BUILT** | `code` | `peer-private` | `IsWorldContainerInventory`, fail-closed today. A privacy/product fork and a BOUNDARY 1 redesign; gate:user |
+| 8 | the INSERT direction (`putObjectIn_overlap`) | **UNKNOWN** | `none` | `client-authored` (intended) | nobody has looked; no claim either way |
+| — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **3 of 8 facets (#3, #4, #6) were found by RUNNING**, not by reading source — so the majority of what is wrong here was invisible to code reading. (b) **Concurrency WAS exercised** (the 07-22 take produced `CONFLICT=0`), so this system's incompleteness signal is meaningful — but the ONE interleaving that ran did not trigger the CAS, so even here (b) is "run once, not run adversarially" |
 
 **Count, not percentage:** 8 facets — 2 `WORKS`, 2 `BROKEN`, 2 `NOT BUILT`, 2 `UNKNOWN`; by evidence,
 2 `hands-on`, 2 `log`, 2 `code`, 1 `inference`, 1 `none`.
@@ -117,14 +117,14 @@ system would not fill at all, the form names its own limit. It filled — and th
 immediately did work: it separated a MAP `[V]` from a player `hands-on`, which a single status column
 would have flattened to one green.
 
-| # | facet | verdict | evidence | citation (symbol / section) |
-|---|---|---|---|---|
-| 1 | rain / snow scalar mirror | **WORKS** | `log` | client apply line `weather: applied flags 0x1D -> 0x1C ... rain-tx=1 scalars-changed=1` in `docs/piles/test-evidence/handson-s31-doom-CLIENT.log`. This is a REAL matching log, NOT the map `[V]` — see the correction note below |
-| 2 | red sky | **UNKNOWN** | `code` | `ReliableKind::RedSky` in `weather_redsky.cpp` — the lane exists. NO apply/receive line in any test-evidence CLIENT log (grepped). `COOP_SYNC_MAP.md`'s `[V]` is a MAP verdict, and the readiness pass discredited doc-status parsing (6 vs 2, both directions) — it is not admissible as evidence here |
-| 3 | lightning strike | **UNKNOWN** | `code` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
-| 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §0 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
-| 5 | wind | **BROKEN** | `log` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
-| — | **remainder — the list is open** | **UNKNOWN** | — | (a) **0 facets found by RUNNING** — but (b) **weather was NEVER exercised under concurrency**; the wind bug came from a live SINGLE-flow probe, not an interleaving. So this 0 is `UNKNOWN completeness`, NOT "nothing missed" — reading it as complete would be the marker-filter's false-negative. weather's RNG knob jitter (`COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, deliberately not a row |
+| # | facet | verdict | evidence | authority | citation (symbol / section) |
+|---|---|---|---|---|---|
+| 1 | rain / snow scalar mirror | **WORKS** | `log` | `host-authored` | client apply line `weather: applied flags 0x1D -> 0x1C ... rain-tx=1 scalars-changed=1` in `docs/piles/test-evidence/handson-s31-doom-CLIENT.log`. This is a REAL matching log, NOT the map `[V]` — see the correction note below |
+| 2 | red sky | **UNKNOWN** | `code` | `host-authored` | `ReliableKind::RedSky` in `weather_redsky.cpp` — the lane exists. NO apply/receive line in any test-evidence CLIENT log (grepped). `COOP_SYNC_MAP.md`'s `[V]` is a MAP verdict, and the readiness pass discredited doc-status parsing (6 vs 2, both directions) — it is not admissible as evidence here |
+| 3 | lightning strike | **UNKNOWN** | `code` | `host-authored` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
+| 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `host-authored` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §0 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
+| 5 | wind | **BROKEN** | `log` | `host-authored` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
+| — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **0 facets found by RUNNING** — but (b) **weather was NEVER exercised under concurrency**; the wind bug came from a live SINGLE-flow probe, not an interleaving. So this 0 is `UNKNOWN completeness`, NOT "nothing missed" — reading it as complete would be the marker-filter's false-negative. weather's RNG knob jitter (`COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, deliberately not a row |
 
 **Count:** 5 facets — **1 `WORKS`, 1 `BROKEN`, 3 `UNKNOWN`**; by evidence, **0 `hands-on`, 2 `log`,
 3 `code`**.
@@ -159,11 +159,11 @@ third, different-shaped control (round-5 Q1: convergence is a control that chang
 day/night cycle (`mainGamemode` tracks `allLampPosts`) runs identically on both peers, so lamps
 toggle in lockstep with no wire traffic. RE-confirmed in the Phase 5D doors+lights pass 2026-05-25.
 
-| # | facet | verdict | evidence | citation (symbol / section) |
-|---|---|---|---|---|
-| 1 | day/night lamp toggle | **WORKS** | `code` | `AlampPost_C` driven by `mainGamemode`'s `allLampPosts` day/night cycle; RE pass 2026-05-25. Convergent local computation on both peers — correct WITHOUT a wire lane |
-| — | **sync lane** | **NONE — and correct** | — | zero facets carry a wire lane, BY DESIGN, not by omission. The reason is convergent local compute, not a deferred gap — see the form note below |
-| — | **remainder — the list is open** | **UNKNOWN** | — | (a) 0 facets found by running; (b) never exercised under concurrency. But here the completeness question is narrower: the only risk is that the two local cycles DESYNC (a clock drift), which no run has checked |
+| # | facet | verdict | evidence | authority | citation (symbol / section) |
+|---|---|---|---|---|---|
+| 1 | day/night lamp toggle | **WORKS** | `code` | `none` | `AlampPost_C` driven by `mainGamemode`'s `allLampPosts` day/night cycle; RE pass 2026-05-25. Convergent local computation on both peers — correct WITHOUT a wire lane. Authority `none`: no peer owns the write, both compute it |
+| — | **sync lane** | **NONE — and correct** | — | — | zero facets carry a wire lane, BY DESIGN, not by omission. The reason is convergent local compute, not a deferred gap — see the form note below |
+| — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) 0 facets found by running; (b) never exercised under concurrency. But here the completeness question is narrower: the only risk is that the two local cycles DESYNC (a clock drift), which no run has checked |
 
 **THE FORM MOVED — a third time, and this is the round-6 finding.** The lamp post exposed that the
 verdict `NOT BUILT` was fusing two states the way the single status column fused verdict and evidence:
@@ -217,17 +217,20 @@ identical on all five axes but distinct in kind reveals a sixth. That the axes w
 round's scrutiny is the reason to ship the model as OPEN, not to keep hunting a closure the taxonomy
 may not have.
 
-**Why this is still a ship-able deliverable, not an open loop:** the SETTLED CORE never moved across
-any round — spine = the SYSTEM; rows = FACETS, hand-named, set not machine-enumerable; citations =
+**Why this is a ship-able deliverable, not an open loop:** the SETTLED CORE never moved across any
+round — spine = the SYSTEM; rows = FACETS, hand-named, set not machine-enumerable; citations =
 (file, symbol); no percentage at this granule. The AXES are a growing-but-falsifiable vocabulary with
 a named test, not a guess. The user asked to NAME what we sync and don't, per system — three profiles
-now do that. The remaining work is LABOR (more systems; each also back-fills the authority column on
-the three existing profiles) and the class-register verdict/evidence split (named in the README).
-Neither is blocked; both are hand-off-able.
+now do that, each internally complete on all five axes (the authority column was back-filled the same
+round it was found, not deferred: a doc declaring five axes while showing four would be the very
+"unnamed boundary reads as green" trap this document codifies in §0). The remaining work is LABOR
+(more systems) and the class-register verdict/evidence split (named in the README). Neither is
+blocked; both are hand-off-able.
 
-**Honest residual:** the three profiles predate the authority axis, so their per-facet authority
-column is owed (labor). The falsification instance is recorded (container #1 host-authored vs #2
-client-authored); the rest is back-fill.
+**No sixth axis is proposed.** A timing/rate axis was considered and DROPPED: the standing gate
+requires a falsification instance (two facets identical on all five axes, distinct only in the
+candidate dimension) and none exists for timing. Proposing an axis without it would be the
+closure-hunt round 7 named.
 
 ---
 
