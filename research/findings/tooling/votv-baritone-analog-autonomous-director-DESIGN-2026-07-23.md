@@ -303,11 +303,23 @@ bespoke per-feature C++ scenarios: Claude writes a DATA script; the director exe
 - `takeObj` is `propInventory_C::takeObj` behind `EX_LocalVirtualFunction` dispatch; `takeObj POST` = 0 in
   take-4 (PE-visibility uncertain). The world-prop grab has NO arbiter.
 
-**[inferred, P0-gated]:**
-- Gate A: the navmesh is BUILT + traversable & `FindPath` returns a real path (strong: 136 modifiers +
-  NPC reachable-point verbs — but not runtime-confirmed).
-- Gate B: reflected `AddMovementInput` moves the possessed body (dispatch-visibility).
+**[measured, Phase-0 HALT probe RAN 2026-07-23 — `harness/autotest_navprobe.cpp`, solo, DLL
+`multivoid-0.9.0n-125`, host log `nav_probe: VERDICT`]:**
+- **Gate A PASS** — `FindPathToLocationSynchronously` (static, on the `NavigationSystemV1` CDO) returned a
+  valid traversable path (`IsValid=1 points=2 len=583cm`) to a `K2_GetRandomReachablePointInRadius`-chosen
+  endpoint (`reachOk=1`). So the baked NavMesh is **BUILT + queryable + FindPath works** at runtime — the
+  navmesh-built inference is now measured, not inferred.
+- **Gate B PASS** — reflected `AddMovementInput` (resolved on the DECLARING class `Pawn`, not the leaf —
+  the findfunction-superclass trap held) MOVES the possessed body: `dir(-1,0)=527cm` ≈ a clean ~4 m/s walk
+  over ~1.3 s. (`dir(+1,0)=78696cm` is a start-on-a-high-ledge artifact — Z=6420, +X fell into a
+  kill-volume respawn; the player was restored to the exact start afterward, and the outlier argues FOR
+  FindPath-guided steering, which stays on-mesh, over naive directional push.)
+- **VERDICT: both gates PASS → rung0 (real walk) → the Phase-1 walked-grab flagship is UNBLOCKED.**
+
+**[inferred, still-gated]:**
 - `invoke` generalizes beyond grab (bounded by a callable-vs-observe-only UFunction census; N=3 gate).
+- Closed-loop convergence (steer → arrive within grabRange) — proven only by the Phase-1 flagship RUN
+  (gates A&B are necessary-not-sufficient; they gated the ATTEMPT, which is now green).
 
 **[open, milestone-gated]:** the container-take input mechanism (in-scope verb vs widget); the world-grab
 pose-contention verifier; cross-box clock skew for tight windows; the callable-UFunction census;

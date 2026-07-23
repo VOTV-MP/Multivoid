@@ -162,6 +162,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the
     // other peer's `pose-diag[slot N] ... trail=`. Role-agnostic. Never ships.
     SpawnIf("VOTVCOOP_RUN_MOVE_OSC", "move oscillator (interp verify)", &MoveOscThread, role);
+
+    // Phase-0 HALT probe for the autonomous bot-director (2026-07-23): SOLO, role-agnostic. Measures
+    // Gate A (FindPathToLocationSynchronously returns a traversable path over the baked NavMesh) + Gate B
+    // (reflected AddMovementInput -- resolved on the Pawn declaring class -- moves the possessed body).
+    // The verdict picks the director's fallback rung; nothing of the director is built until this runs.
+    SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
 }
 
 }  // namespace harness::autotest

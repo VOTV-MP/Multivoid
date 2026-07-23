@@ -343,4 +343,21 @@ DWORD WINAPI PauseGuardTestThread(LPVOID arg);
 void RunAutonomousPiramidForceTest();
 DWORD WINAPI PiramidForceTestThread(LPVOID arg);
 
+// Phase-0 HALT probe for the autonomous bot-director (2026-07-23,
+// harness/autotest_navprobe.cpp). SOLO, role-agnostic. Settles the TWO must-measure-
+// before-build gates the director design (research/findings/tooling/votv-baritone-
+// analog-autonomous-director-DESIGN-2026-07-23.md B7) is halt-gated on:
+//   GATE A -- UNavigationSystemV1::FindPathToLocationSynchronously returns a
+//     traversable path (>1 point, IsValid) over VOTV's baked NavMesh, to a
+//     K2_GetRandomReachablePointInRadius-chosen (guaranteed-reachable) endpoint.
+//     Discriminated: call-failed vs no-route vs traversable.
+//   GATE B -- a reflected APawn::AddMovementInput (resolved on the DECLARING class
+//     Pawn, not the leaf mainPlayer_C) actually MOVES the possessed body -- swept
+//     over 4 world directions, horizontal displacement only. Non-destructive
+//     (restores the start location). The verdict picks the director's fallback rung
+//     (A&B->rung0 real walk; A-only->rung1 swept SetActorLocation; A-fail->rung2).
+//     Greppable "nav_probe: VERDICT". Gated by env VOTVCOOP_RUN_NAV_PROBE="1".
+void RunNavHaltProbe();
+DWORD WINAPI NavHaltProbeThread(LPVOID arg);
+
 }  // namespace harness::autotest

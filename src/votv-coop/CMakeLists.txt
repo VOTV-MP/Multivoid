@@ -543,6 +543,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_alarmforce.cpp
     src/harness/autotest/autotest_piramidforce.cpp
     src/harness/autotest/autotest_wisplane.cpp
+    src/harness/autotest/autotest_navprobe.cpp
     src/harness/autotest/autotest_kwisp_probe.cpp
     src/harness/autotest/autotest_pauseguard.cpp
     src/harness/autotest/autotest_move_osc.cpp
