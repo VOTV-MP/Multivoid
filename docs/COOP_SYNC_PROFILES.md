@@ -1036,16 +1036,29 @@ answer to "did you profile everything?" is still, honestly, "not provably":
 - ✅ **`prop_sound`** — the grab/drop native-parity sound; a presentation facet of physics props (now #12).
 - ✅ **`pause-guard`** — the local un-pause guard (no true MP pause); a no-wire system (now in §7).
 
-**The residual, stated honestly (no 100% claim):** a file-by-file audit of all 229 `coop/*.cpp` leaves
-~100 files not cited by stem. Verified breakdown: ~45 are `dev/` probes/selftests (tools, not systems);
-~28 are `net/`+`dispatch/`+`element/` infra (transport, routers, identity registry, the `session_*`
-send-side plumbing for systems already profiled); the rest are IMPLEMENTATION files of systems that ARE
-profiled (e.g. `remote_prop_spawn`/`prop_lifecycle` under Physics props, `voice_capture` under Voice,
-`npc_sync` under NPC host-sim — cited by their main symbol, not their filename). The likely remaining
-misses are more PRESENTATION facets of the kind just found (a sound, a HUD like `net_stats`, a local
-guard) — low-severity, and the catalog does not claim to have them all. **This is the §0 discipline
-applied to the catalog itself: "converged/swept" is not "complete", and the honest output is a count
-with a named residual, never a checkmark.**
+**The DIG result (2026-07-23, third pass, "копай") — WIRE-complete, provably; FACET-complete, never.**
+The residual was dug to the bottom, and the honest split is now sharp:
+
+- **Every WIRE-CARRIED lane IS profiled — this is verifiable, not asserted.** There are **113 distinct
+  `ReliableKind`s** referenced in the tree; a script confirmed EVERY one has a dispatch-router case, and
+  each maps to a system in §6. There are **13 unreliable `MsgType` pose/stream kinds** (ClockPose,
+  DeskCursorPose, DeskSimPose, DishPose, EntityPose, HandPose, PoseSnapshot, PropPose, RagdollPose,
+  ReelPose, TrashCarryPose, VoiceFrame, WorldActorPose) and all 13 were cross-checked to a specific facet
+  (e.g. PropPose → Physics props #4, WorldActorPose → World-actor #3, ReelPose → Tape-caddy #2). **No
+  wire lane, reliable or unreliable, is outside the catalog.**
+- **The ~100 uncited `coop/*.cpp` files carry no new SYSTEM.** Triaged by whether each does wire/hook
+  work: `dev/` probes (~45, tools), `net/`+`dispatch/`+`element/` infra (~28: transport, the four
+  routers that list every kind, the identity registry, the `session_*` send-side plumbing), and
+  IMPLEMENTATION files of profiled systems (`remote_prop_*`/`prop_lifecycle` → Physics props,
+  `voice_playback` → Voice, `npc_sync`/`npc_world_enum` → NPC, `world_load_episode` → the session
+  barrier). Each was checked; none is a hidden game system.
+- **What CANNOT be proven complete — and §0 says so.** The facet set is not machine-enumerable: a RACE
+  is not a wire lane (the container CAS lives only in an interleaving), and non-wire local behaviors
+  (`net_stats` HUD, a grab sound, a local guard) have no lane to census. The dig found the main non-wire
+  systems (moderation, save-suppression, spawn-authority, pause-guard) and the main presentation facets
+  (prop_sound); more presentation trivia may exist, but there is no wire lane and no game system left
+  unaccounted. **So the honest ceiling is: wire coverage is complete and checkable; facet coverage is
+  bounded below by that and open above — a count with a named residual, never a checkmark.**
 
 **Genuinely infra, not game-facet systems** (correctly excluded): `element/` (identity registry),
 `net/` (transport), the `dispatch/` routers, `config/`, `dev/`, `session/net_pump` + `subsystems`
