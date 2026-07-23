@@ -6,6 +6,16 @@ question the class register cannot: *inside this thing, what works and what does
 **What this is NOT.** Not a percentage, and not derivable. Read §0 before adding a system — the
 limits are structural, and a profile read as a measurement is worse than no profile.
 
+**The one boundary that must not be lost: the FORM is converged (11 `/qf` rounds, five falsifiable
+axes); the CELL VALUES are not all verified.** Of the 18 facet rows, exactly TWO had a label checked
+against the source code — container #6 (`authority=none`, read from `container_contents_sync.cpp`) and
+weather #5 (`host-authored`, read from `weather_sync.cpp`) — and BOTH of those checks were prompted by
+a critic catching a wrong label, one of them a real error I had written. The other 16 labels are
+author fill, not code-verified. Read a filled profile as "the form holds and these are the author's
+best labels", NEVER as "these labels are proven". Verifying a cell means reading the code that owns the
+facet; until then a cell is a claim of the same kind the class register's `AS-BUILT` is — documented,
+not measured.
+
 ---
 
 ## 0. The rules this document is built on (measured 2026-07-22/23, do not re-litigate)
