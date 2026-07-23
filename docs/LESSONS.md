@@ -1084,6 +1084,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `door_box::GetNameKey`, delete the Key path (RULE 2). Look FIRST: `ue_wrap::garage::GetNameKey` vs
   `ue_wrap::door_box::GetNameKey`; do NOT broadly migrate working Key channels (principle 4).
   `memory/lesson_placed_actor_identity_use_baked_fname_not_gamemode_key.md`
+- **A SAVE-LOADED prop's runtime FName is NOT cross-peer stable — key it by its persistent SAVE KEY.**
+  The baked-FName rule above covers LEVEL sublevel exports (`door_box`, serialized into the cooked
+  `.umap`, identical on every peer). A **save-loaded** prop (a container, an item — spawned at world-load
+  by `loadObjects`, NOT baked into the level) gets its FName *Number* from **spawn ORDER at load**, which
+  differs between the host's load and a joining client's save-transfer load: measured 2026-07-23, the same
+  file cabinet was `prop_container_..._2147472736` (host) vs `..._2147471758` (client). Selecting a
+  shared/synced target by FName thus picks DIFFERENT actors per peer. The stable-by-construction key is the
+  prop's **persistent SAVE KEY** (the FName the game writes into the save), via
+  `coop::prop_element_tracker::CollectKeyIndexEntries → {actor, key}`; post-s22 its keyed eid is
+  host-authoritative. This **overturned /qf R11-Q3** ("shared target by baked FName" — its premise was
+  false for containers). The fallback of keying by WORLD POSITION is the `RULE-1 hope` /qf R2-Q2 rejected
+  (a property of the current save's geometry, not an invariant); nav-reachability is a test-feasibility
+  filter, not the identity. Validated: two peers picked the SAME container by save-key + the cross-peer
+  count summed to 1. *Look FIRST:* level-baked (baked FName ok) vs save-loaded (use the save KEY) before
+  keying any cross-peer decision on a prop. `memory/lesson_save_loaded_prop_fname_unstable_use_save_key.md`
 - **NEVER raw-write a UE field the game sets via a setter UFunction** — call the setter. `memory/feedback_no_raw_write_of_setter_managed_fields.md`
 - **UE `TArray<struct>` stride = 16-ALIGNED size, NOT the raw `Size:`.** `memory/feedback_tarray_stride_aligned_not_raw_size.md`
 - **plain `IsLive` passes a RECYCLED slot** — cached instances need `IsLiveByIndex`. A written lesson is NOT

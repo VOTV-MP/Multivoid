@@ -31,7 +31,9 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/dup_verifier.h"   // the no-dup verifier + its positive control
 
+#include "coop/config/config.h"               // ReadEnv (the codebase's env reader)
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_element_tracker.h"  // CollectKeyIndexEntries -- the stable save-key index
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
 #include "ue_wrap/actors/save_record.h"    // ReadArr, kMxStride
@@ -46,9 +48,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <windows.h>
 
 namespace coop::director {
 namespace {
@@ -58,6 +63,7 @@ namespace GT  = ue_wrap::game_thread;
 namespace SR  = ue_wrap::save_record;
 namespace INV = ue_wrap::inventory;
 namespace PR  = ue_wrap::prop;
+namespace PT  = coop::prop_element_tracker;
 
 template <class Fn>
 int RunGT(Fn&& body) {   // bounded: a stalled game thread returns 0 instead of hanging forever
@@ -184,6 +190,7 @@ struct Probe {
     ItemSig  xSig;
     int32_t  phaseA = -1;
     int32_t  phaseB = -1;
+    std::wstring targetKey;   // the shared container's stable SAVE KEY (the by-construction race key)
 };
 
 }  // namespace
@@ -404,6 +411,192 @@ void RunContainerTakeProbe() {
 
 DWORD WINAPI ContainerTakeProbeThread(LPVOID /*arg*/) {
     RunContainerTakeProbe();
+    return 0;
+}
+
+// ============================================================================================
+// The two-peer CONTAINER concurrent-take RACE (the director's raison d'etre).
+// ============================================================================================
+namespace {
+
+std::string EnvStr(const char* k) { return coop::config::ReadEnv(k); }
+
+uint64_t NowUnixMs() {   // system wall-clock (shared across peers on one box) as Unix ms
+    FILETIME ft; ::GetSystemTimeAsFileTime(&ft);
+    uint64_t t = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;  // 100ns since 1601
+    return (t - 116444736000000000ULL) / 10000ULL;   // -> Unix ms
+}
+
+// Deterministic SHARED target: among placed NON-EMPTY containers, the one CLOSEST to world origin --
+// identical on BOTH peers (same host world), independent of each peer's own position (so both choose
+// the SAME actor; nav-reachability is a feasibility check AFTER, not a selection input -- otherwise the
+// two peers' different candidate sets could diverge). Closest-to-origin favors the BASE (its furniture
+// sits near origin ~6400cm; sandbox/far-storage boxes are tens of thousands of cm out and unreachable --
+// measured 2026-07-23: "smallest X" picked a prop_container_sbox at -61856 that neither peer could walk
+// to). Keyed by world position (stable for a static placed container), NOT eid (join-window unstable,
+// LESSONS §2) and NOT the runtime FName (its numeric suffix differs cross-peer -- measured this run).
+void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& outPos, std::wstring& outKey) {
+    // STABLE-BY-CONSTRUCTION shared key = the persistent SAVE KEY (the FName the game itself writes into
+    // the save to identify the object across save/load): identical on every peer (same save), unchanged
+    // by spawn order or geometry, via the mod's keyed-element index (CollectKeyIndexEntries). This is NOT
+    // position (a RULE-1 hope -- a property of THIS save's geometry, rejected in /qf R2-Q2) and NOT the
+    // runtime FName: for a SAVE-LOADED prop the FName Number is assigned by spawn order at load and
+    // DIVERGES cross-peer (measured 2026-07-23: 2147472736 vs 2147471758). The baked-FName lesson
+    // (placed_actor_identity_use_baked_fname) covers LEVEL sublevel exports (door_box), NOT save-loaded
+    // props -- so R11-Q3 ("shared target by baked FName") did not apply to containers. Post-s22 the keyed
+    // eid this maps to is host-authoritative (what R2-Q2 lacked). Pick the lexicographically SMALLEST key
+    // among non-empty keyed containers (deterministic cross-peer). Nav-reachability is a DEMOTED
+    // TEST-FEASIBILITY filter (so the walk can finish) -- NOT the identity; the orchestrator validates
+    // both peers picked the SAME key.
+    std::vector<PT::KeyIndexEntry> keyed;
+    PT::CollectKeyIndexEntries(keyed);
+    struct Cand { void* o; ue_wrap::FVector p; int32_t cnt; std::wstring key; };
+    std::vector<Cand> cs;
+    for (const auto& ke : keyed) {
+        if (!ke.actor || ke.key.empty() || !R::IsLiveByIndex(ke.actor, ke.internalIdx)) continue;
+        if (!IsPlacedContainer(ke.actor)) continue;
+        const int32_t cnt = ContainerItemCount(ke.actor);
+        if (cnt <= 0) continue;
+        cs.push_back({ ke.actor, E::GetActorLocation(ke.actor), cnt, ke.key });
+    }
+    std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
+    const ue_wrap::FVector at = E::GetActorLocation(player);
+    for (const Cand& c : cs) {
+        std::vector<ue_wrap::FVector> path;
+        if (!E::FindNavPath(player, at, c.p, path)) continue;                  // feasibility: reachable
+        if (path.empty() || HorizDist(path.back(), c.p) > kReachCm) continue;
+        outCount = c.cnt; outPos = c.p; outKey = c.key; return c.o;            // smallest-key reachable
+    }
+    outCount = 0; outPos = {}; outKey.clear();
+    return nullptr;
+}
+
+// Wait on the orchestrator GO sentinel: mp.py writes a FUTURE Unix-ms into `goFile` once BOTH peers have
+// logged ARRIVED; each bot busy-waits to that instant -> sub-ms simultaneity on one box (shared clock,
+// /qf R2 / §B5). Returns true when the GO instant is reached; false on timeout (never hang).
+bool WaitForGo(const std::string& goFile, uint64_t timeoutMs) {
+    const uint64_t start = NowUnixMs();
+    uint64_t targetMs = 0;
+    while (NowUnixMs() - start < timeoutMs) {
+        if (targetMs == 0) {
+            std::ifstream f(goFile, std::ios::binary);
+            if (f) { unsigned long long v = 0; if (f >> v && v > 0) targetMs = v; }
+        }
+        if (targetMs != 0) {
+            if (NowUnixMs() >= targetMs) return true;   // GO instant reached
+            ::Sleep(1);   // tight spin to the future timestamp
+        } else {
+            ::Sleep(20);  // poll for the sentinel to appear
+        }
+    }
+    UE_LOGW("director/ctake-race: GO sentinel timed out (%llums) file=%s", (unsigned long long)timeoutMs, goFile.c_str());
+    return false;
+}
+
+}  // namespace
+
+void RunContainerRace() {
+    const std::string mode = EnvStr("VOTVCOOP_RACE_MODE");    // "race" | "control"
+    const std::string role = EnvStr("VOTVCOOP_RACE_ROLE");    // "host" | "client"
+    const std::string goFile = EnvStr("VOTVCOOP_RACE_GO_FILE");
+    const bool isHost = (role == "host");
+    // control mode: only the HOST takes (client walks+arrives+counts but does NOT press) -> the solo sum
+    // across peers MUST be 1 (X at host=1, client=0) before the summation is trusted on a real race.
+    const bool shouldTake = (mode == "race") || (mode == "control" && isHost);
+    UE_LOGI("director/ctake-race: START mode=%s role=%s shouldTake=%d goFile=%s",
+            mode.c_str(), role.c_str(), shouldTake ? 1 : 0, goFile.c_str());
+
+    ::Sleep(20000);   // settle for the world to load
+
+    auto rsv = std::make_shared<void*>(nullptr);
+    for (int waited = 0; waited < 60 && !*rsv; ++waited) {
+        const int r = RunGT([rsv](std::atomic<int>& d) {
+            void* p = coop::players::Registry::Get().Local();
+            if (p && R::IsLive(p) && E::GetController(p)) { *rsv = p; d.store(1); } else d.store(2);
+        });
+        if (r == 1) break; ::Sleep(1000);
+    }
+    if (!*rsv) { UE_LOGW("director/ctake-race: VERDICT no possessed local player -- ABORT (role=%s)", role.c_str()); return; }
+
+    // Deterministic SHARED target + capture X (both peers read the SAME container slice[0] -> same X sig).
+    // RETRY until a shared container with contents is resolvable: on a client the joined world + the
+    // container-contents sync land AFTER the player is possessed, so an early pick sees an empty/absent
+    // world (measured 2026-07-23: client "could not pick" while the host had already picked).
+    DirectorGoal goal; goal.reachCm = kReachCm;
+    auto pb = std::make_shared<Probe>();
+    bool picked = false;
+    for (int tries = 0; tries < 40 && !picked; ++tries) {
+        const int r = RunGT([rsv, &goal, pb](std::atomic<int>& d) {
+            ue_wrap::FVector pos{}; int32_t cnt = 0; std::wstring key;
+            void* c = PickSharedContainer(*rsv, cnt, pos, key);
+            if (!c) { d.store(2); return; }
+            goal.targetActor = c; goal.targetPos = pos; pb->container = c; pb->countBefore = cnt;
+            pb->fname = R::ToString(R::NameOf(c)); pb->targetKey = key; pb->slotId = 0;
+            pb->xSig = CaptureContainerSlotSig(c, pb->slotId);
+            UE_LOGI("director/ctake-race: SHARED target key=%ls pos=(%.0f,%.0f,%.0f) items=%d slotID=%d "
+                    "X(cls=%ls key=%ls) -- both peers must pick the SAME save-key (by construction)",
+                    key.c_str(), pos.X, pos.Y, pos.Z, cnt, pb->slotId,
+                    pb->xSig.className.c_str(), pb->xSig.key.c_str());
+            d.store(1);
+        });
+        if (r == 1) picked = true; else ::Sleep(2000);   // world/contents not ready yet -- wait + retry
+    }
+    if (!picked) { UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none reachable) -- ABORT (role=%s)", role.c_str()); return; }
+
+    // Count X BEFORE (each peer): the pre-race per-peer count. Control's solo sum before/after both == 1.
+    RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });
+    UE_LOGI("director/ctake-race: PRECOUNT role=%s localCountBefore=%d", role.c_str(), pb->phaseA);
+
+    // Walk to the shared container (generous deadline: the smallest-key container may be a longer route
+    // than a nearest pick, and the client's route can be harder than the host's -- never-give-up grinds).
+    { ControlManager mgr; AddWalkToProcesses(mgr, goal); mgr.Run(goal, /*maxSeconds=*/120);
+      if (!goal.reached) { UE_LOGW("director/ctake-race: VERDICT did NOT reach shared container (role=%s reason=%s) -- ABORT", role.c_str(), goal.failReason); return; } }
+
+    // Open + resolve the bound slot, then log ARRIVED (the orchestrator waits for BOTH before GO).
+    RunGT([rsv, pb](std::atomic<int>& d) {
+        E::WriteMainPlayerLookAtActor(*rsv, pb->container);
+        pb->openCalled = CallNoArg(pb->container, ContainerClass(), L"openContainer");
+        d.store(1);
+    });
+    for (int i = 0; i < kUiWaitTicks && !pb->slotFound; ++i) {
+        RunGT([pb](std::atomic<int>& d) { pb->slotFound = (FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C") != nullptr); d.store(1); });
+        if (!pb->slotFound) ::Sleep(30);
+    }
+    UE_LOGI("director/ctake-race: ARRIVED role=%s key=%ls open=%d slot=%d -- waiting for GO",
+            role.c_str(), pb->targetKey.c_str(), pb->openCalled ? 1 : 0, pb->slotFound ? 1 : 0);
+
+    // Barrier: wait on the orchestrator GO (future-timestamp), then fire the faithful take AT the GO instant.
+    const bool go = goFile.empty() ? true : WaitForGo(goFile, /*timeoutMs=*/60000);
+    if (go && shouldTake) {
+        RunGT([pb](std::atomic<int>& d) {
+            void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
+            void* slot = nullptr;
+            if (ui) { const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"slots_prop");
+                      if (off >= 0) { const SR::Arr arr = SR::ReadArr(ui, off); if (arr.num > 0 && arr.data) std::memcpy(&slot, arr.data, sizeof(slot)); } }
+            if (ui && slot && R::IsLive(slot)) {
+                void* hoverFn = R::FindFunction(R::ClassOf(ui), L"setHoverContainerSlot");
+                if (hoverFn) { ue_wrap::ParamFrame pf(hoverFn); pf.Set<void*>(L"containerSlot", slot); ue_wrap::Call(ui, pf); }
+                pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");
+            }
+            UE_LOGI("director/ctake-race: FIRED take press=%d (GO reached)", pb->pressCalled ? 1 : 0);
+            d.store(1);
+        });
+    } else {
+        UE_LOGI("director/ctake-race: role=%s did NOT take (go=%d shouldTake=%d)", role.c_str(), go ? 1 : 0, shouldTake ? 1 : 0);
+    }
+
+    ::Sleep(1500);   // let the take + the host CAS + any re-publish settle across peers
+    RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+    // The per-peer RESULT. mp.py sums localCountAfter across peers -> FULL matrix (1 correct / 2 dup /
+    // 0 vanished / >2 worse). A single peer's count is NOT the verdict -- the CROSS-PEER sum is.
+    UE_LOGI("director/ctake-race: RESULT role=%s mode=%s took=%d localCountBefore=%d localCountAfter=%d "
+            "| X(cls=%ls key=%ls) | mp.py sums across peers: 1=correct 2=DUP(R11b) 0=VANISHED >2=worse",
+            role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB,
+            pb->xSig.className.c_str(), pb->xSig.key.c_str());
+}
+
+DWORD WINAPI ContainerRaceThread(LPVOID /*arg*/) {
+    RunContainerRace();
     return 0;
 }
 

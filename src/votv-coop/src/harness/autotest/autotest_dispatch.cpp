@@ -180,6 +180,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // em_take), and MEASURES whether the take executed (GObjStack item-count decrement). Its verdict
     // decides whether the container concurrent-take race is buildable on the reflected-verb model.
     SpawnIf("VOTVCOOP_RUN_CTAKE_PROBE", "container-take input probe (director Phase-2)", &coop::director::ContainerTakeProbeThread, role);
+
+    // Director Phase-2 the RACE: two peers walk to the SAME container + take the SAME item at a GO barrier.
+    // Both peers run this; each counts X locally after; mp.py sums cross-peer (1=correct/2=dup/0=vanished).
+    SpawnIf("VOTVCOOP_RUN_CTAKE_RACE", "container concurrent-take race (director Phase-2)", &coop::director::ContainerRaceThread, role);
 }
 
 }  // namespace harness::autotest

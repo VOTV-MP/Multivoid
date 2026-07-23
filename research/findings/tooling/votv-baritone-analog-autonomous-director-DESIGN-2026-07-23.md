@@ -444,11 +444,23 @@ built.** REMAINING (a USER go/no-go — a real multi-piece build, ordered):
   Race-ready: on a real race X==2 is a dup (R11b's reasoned residual CONFIRMED), X==1 is no dup. The
   `CONFLICT` line stays a SECONDARY signal (it is a whole-container CAS logging the author PEER slot; it
   can hide a personal-inventory dup, which is exactly what this instance-count catches).
-- **(2) the barrier harness** — client-side director + shared-FName target + `ARRIVED` log token + a
-  `GO` sentinel file the director polls (no proto bump, per §B5).
-- **(3) the race itself** — both bots hover+press the SAME container slot (the shared FName target)
-  under the barrier; verify with (1).
-The take-exactly-X refinement (formerly a REMAINING item) is DONE — proven `pressDelta=1` this run.
+- **(2) the barrier harness — BUILT + SUM-CONTROL PASSED (2026-07-23).** `container_race.cpp`
+  (`RunContainerRace`) + `mp.py cmd_ctakerace`: both peers walk to the SAME container, open, log
+  `ARRIVED`, wait on a `GO` sentinel file (future Unix-ms → sub-ms simultaneity, no proto bump, §B5),
+  then fire the faithful take; each counts X locally after; `mp.py` sums cross-peer. **SHARED-TARGET KEY
+  CORRECTION (measured):** the runtime FName is NOT cross-peer stable for a save-loaded prop (host
+  `..._2147472736` vs client `..._2147471758` — spawn-order Number); position is the /qf R2-Q2 `RULE-1
+  hope`. The stable-by-construction key is the persistent **SAVE KEY** (`CollectKeyIndexEntries`);
+  nav-reachability is demoted to a test-feasibility filter. This overturned R11-Q3 ("shared target by
+  baked FName" — false for save-loaded containers); new lesson
+  `[[lesson-save-loaded-prop-fname-unstable-use-save-key]]`. **SUM CONTROL** (solo, only host takes):
+  both peers picked the SAME key `-xeod_VpMZyEA9Wf8pPXww`, `host localCount 1→1 + client 1→0 = sum 1
+  CORRECT` → the cross-peer summation is validated (the client walk is not blind; `sum==1` means correct,
+  not blind). FULL matrix: sum **1 = correct, 2 = DUP (R11b), 0 = X VANISHED (loss bug), >2 = worse**.
+- **(3) the race itself — READY (not yet run)** — both bots hover+press the SAME container slot (the
+  shared save-key target) simultaneously at the `GO` barrier (`mp.py ctakerace --mode race`); the sum
+  over the full matrix is the verdict, read by (1)+(2). The take-exactly-X (formerly a REMAINING item) is
+  DONE (`pressDelta=1`); the summation control is DONE (`sum=1`). What remains is the single race run.
 
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 

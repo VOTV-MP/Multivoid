@@ -114,4 +114,15 @@ DWORD WINAPI WalkGrabDirectorThread(LPVOID arg);
 void RunContainerTakeProbe();
 DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
 
+// The two-peer CONTAINER concurrent-take RACE (container_race.cpp) -- the director's raison d'etre.
+// Both peers walk to the SAME container (deterministic shared target), open it, log ARRIVED, wait on
+// an orchestrator GO sentinel (a future-timestamp file, sub-ms simultaneity on one box -- /qf R2/§B5),
+// then fire the faithful take (openContainer->setHoverContainerSlot(bound slot)->pressButton) at once.
+// Each peer counts X locally after; mp.py sums across peers -- FULL matrix: sum 1 = correct, 2 = dup
+// (R11b confirmed), 0 = X vanished (loss bug), >2 = worse. Modes: "race" (both take) / "control"
+// (only host takes; solo sum MUST be 1 before the summation is trusted). Env: VOTVCOOP_RUN_CTAKE_RACE=1,
+// VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE. Greppable "director/ctake-race:".
+void RunContainerRace();
+DWORD WINAPI ContainerRaceThread(LPVOID arg);
+
 }  // namespace coop::director
