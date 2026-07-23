@@ -382,6 +382,47 @@ INTENT, not drift.
   the command channel (design B7 Phase 3). Pure-pursuit path-following would beat the juke for hard routes.
 - The cross-agent barrier (mp.py) for the concurrent-race scenarios (the original killer example).
 
+## 6c. 2026-07-23 Phase-2 — the CONTAINER-take input probe (BUILT + RAN)
+
+Phase-2 = the concurrent races. A 5-round `/qf` (thread `scratchpad/qf_thread_phase2.md`) reframed the
+naive "world-grab race" plan TWICE by measurement:
+- The user's LITERAL ask is the **container concurrent-take race** ("два пира … ОДНОВРЕМЕННО берут X"),
+  not the world-grab substitute. It tests a REAL arbiter (R11b host `baseHash`-CAS) + a reasoned-but-
+  unproven refusal-dup residual — strictly higher value than the un-arbitrated generic grab.
+- `takeObj` is 0x45-interception-only (NOT callable), BUT the take is drivable one layer up by CALLABLE
+  BP verbs (CXXHeaderDump): `prop_container::openContainer()` / `extract(int32 Index)`,
+  `uicomp_playerInvContainerSlot::pressButton()`, `ui_playerInventory::em_take()` — the `BndEvt__…`
+  twins are the inert delegates. Same reflected-verb model as `door_C::doorOpen`.
+
+**The probe (BUILT, `container_take_probe.cpp`; RAN solo, DLL `multivoid-0.9.0n-125`, env
+`VOTVCOOP_RUN_CTAKE_PROBE=1`, `mp.py ctakeprobe`).** An honest LADDER: walk to a placed non-empty
+world container (the brain: `AddWalkToProcesses` = ClearHand>Goto>Reach), then drive
+`openContainer → pressButton → em_take` and MEASURE the container's GObjStack item-count delta;
+`extract(0)` is a NON-FAITHFUL diagnostic fallback. It NEVER infers "callable ⇒ ran".
+
+**Result (host log `director/ctake: VERDICT DRIVABLE-EFFECT-SEAM-ONLY`):**
+- Walk-to-container WORKS (file cabinet `prop_container_fileCabs_C`, 2 items, 6787cm route, 2 doors).
+- `openContainer` call=1 → the real container UI opened (`containerSlot=1`, the true signal). DRIVABLE.
+- `pressButton` press=1, `selected`→1 (selection set); `em_take` executed — BUT the container count
+  stayed 2 (`em_take` took nothing from the container: a selection last-mile — `selected` likely
+  indexes the PLAYER list; player/container lists are separate `playerListIds`/`amounts_cont`).
+- `extract(0)` → count **2→1**: the container take IS reflection-drivable. `container_contents`
+  "0x45 addObject/takeObj edge LIVE" fired during the interaction.
+- **A bug this probe caught (mine):** run 1 resolved `openContainer`/`extract` on the LEAF class
+  (`prop_container_fileCabs_C`) → `FindFunction` NOT FOUND (exact-owner, no superclass walk —
+  `[[lesson-findfunction-does-not-walk-the-superclass-chain]]`). Fixed: resolve on the DECLARING base
+  `prop_container_C`. The recorded baked FName (`prop_container_fileCabs_C_2147472500`) is the later
+  2-peer shared-target key.
+
+**VERDICT → the container concurrent-take race IS BUILDABLE** on the reflected-verb model (`extract`
+removes the item + the 0x45 CAS lane is live). REMAINING (a USER go/no-go — a real multi-piece
+investment): (1) the faithful `em_take`-from-container-slot selection semantics, OR accept `extract`
+(same 0x45 lane ⇒ likely authority-equivalent for the container CAS, a B4-fidelity call); (2) the
+barrier harness (client-side director + shared-FName target + ARRIVED log token + a GO sentinel file
+the director polls — no proto bump, per §B5); (3) the ONE genuinely-new instrument — a whole-GObjStack
+no-dup verifier (`CONFLICT` fired AND global-instance-count(X)==1; the `CONFLICT` line alone is a
+whole-container CAS logging the author PEER slot, insufficient — it can hide a personal-inventory dup).
+
 ## 7. Baritone → VOTV port table (what maps, what's replaced)
 
 | Baritone | Tag | VOTV analog |

@@ -76,6 +76,7 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
         }
         stall = 0;
         if (goal.grabbed) { UE_LOGI("director: GOAL REACHED -- run DONE (tick=%d)", tick); return true; }
+        if (goal.reached) { UE_LOGI("director: TARGET REACHED (walk-to) -- run DONE (tick=%d)", tick); return true; }
         if (goal.failed)  { UE_LOGW("director: run FAILED reason=%s (tick=%d)", goal.failReason, tick); return false; }
         ::Sleep(kTickMs);
     }

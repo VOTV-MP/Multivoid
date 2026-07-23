@@ -49,6 +49,7 @@ struct DirectorGoal {
     ue_wrap::FVector  targetPos{};
     float             reachCm     = 170.f;    // the interaction verb's OWN reach, not a nav constant
     bool              grabbed     = false;    // set by GrabProcess on success -> terminates the run
+    bool              reached     = false;    // set by ReachProcess (walk-to, no grab) -> terminates the run
     bool              failed      = false;    // set by any process on a hard failure
     const char*       failReason  = "";
 };
@@ -86,6 +87,12 @@ private:
 // (ClearHand prio 100 > Goto prio 50 > Grab prio 40). In proc_walkgrab.cpp.
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal);
 
+// Build the walk-TO process set (no grab): ClearHand prio 100 > Goto prio 50 > Reach prio 40.
+// Reach sets goal.reached (terminating the run) after a brief settle once within goal.reachCm.
+// Used by scenarios that walk to a target and then do their OWN interaction (the container
+// probe). In proc_walkgrab.cpp.
+void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal);
+
 // True iff the last run's ClearHand had to use the effect-seam release because the input-seam
 // drop was MEASURED inert -- i.e. the drop was NOT input-seam-faithful (surfaced in the verdict).
 bool DidClearHandUseEffectFallback();
@@ -96,5 +103,15 @@ void RunWalkGrabDirector();
 
 // Worker-thread wrapper for the harness dispatch. Pass to ::CreateThread / SpawnIf.
 DWORD WINAPI WalkGrabDirectorThread(LPVOID arg);
+
+// The container-take INPUT PROBE (container_take_probe.cpp): resolve a placed, non-empty,
+// nav-reachable world container, walk to it (the brain), then drive the FAITHFUL human take
+// chain (openContainer -> slot pressButton -> em_take) and MEASURE whether the take executed
+// (the container's GObjStack item count decremented). extract(Index) is a NON-FAITHFUL
+// diagnostic fallback. Records the container's baked FName + a positive/negative control.
+// A HALT-style drivability probe: its verdict decides whether the container concurrent-take
+// race is buildable on the reflected-verb model. Env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1), solo.
+void RunContainerTakeProbe();
+DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
 
 }  // namespace coop::director

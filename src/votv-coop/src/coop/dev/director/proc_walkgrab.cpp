@@ -307,6 +307,30 @@ private:
     bool grabIssued_ = false;
 };
 
+// ---- ReachProcess ----------------------------------------------------------------------
+// The walk-TO terminal (no grab): once within reach, settle briefly (kill residual momentum so
+// a later interaction is from a stationary body, mirroring the grab's SETTLE gate), then set
+// goal.reached to terminate the run. The scenario does its OWN interaction after Run returns.
+class ReachProcess : public IProcess {
+public:
+    explicit ReachProcess(DirectorGoal& goal) : goal_(goal) {}
+    const char* Name() const override { return "Reach"; }
+    int Priority() const override { return 40; }
+    bool IsActive(const PlayerContext& ctx) const override {
+        return !goal_.reached && HorizDist(ctx.pos, goal_.targetPos) <= goal_.reachCm;
+    }
+    ProcStatus OnTick(const PlayerContext& ctx) override {
+        if (++ticks_ < kSettleTicks) return ProcStatus::Working;   // brake (no input) before yielding
+        goal_.reached = true;
+        UE_LOGI("director/Reach: within %.0fcm (dist=%.0f) + settled -- TARGET REACHED, yielding to the scenario",
+                goal_.reachCm, HorizDist(ctx.pos, goal_.targetPos));
+        return ProcStatus::Done;
+    }
+private:
+    DirectorGoal& goal_;
+    int ticks_ = 0;
+};
+
 }  // namespace
 
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
@@ -314,6 +338,13 @@ void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
     mgr.Add(std::make_unique<ClearHandProcess>(goal));
     mgr.Add(std::make_unique<GotoProcess>(goal));
     mgr.Add(std::make_unique<GrabProcess>(goal));
+}
+
+void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal) {
+    g_clearHandUsedEffectFallback = false;   // reset per run
+    mgr.Add(std::make_unique<ClearHandProcess>(goal));
+    mgr.Add(std::make_unique<GotoProcess>(goal));
+    mgr.Add(std::make_unique<ReachProcess>(goal));
 }
 
 // Honesty accessor for the verdict: did ClearHand have to fall back to the effect seam because

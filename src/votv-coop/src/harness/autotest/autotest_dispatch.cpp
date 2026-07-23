@@ -174,6 +174,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // + priority-arbitrated processes ClearHand>Goto>Grab + tick loop) drives the possessed player to pick
     // an open chipPile over the NavMesh and grab it -- state-aware (clears a full hand first). SOLO-runnable.
     SpawnIf("VOTVCOOP_RUN_DIRECTOR_WALKGRAB", "bot-director walked grab", &coop::director::WalkGrabDirectorThread, role);
+
+    // Director Phase-2 HALT gate (2026-07-23): the CONTAINER-TAKE input probe. SOLO. Walks to a placed
+    // non-empty world container, drives the faithful human take chain (openContainer -> pressButton ->
+    // em_take), and MEASURES whether the take executed (GObjStack item-count decrement). Its verdict
+    // decides whether the container concurrent-take race is buildable on the reflected-verb model.
+    SpawnIf("VOTVCOOP_RUN_CTAKE_PROBE", "container-take input probe (director Phase-2)", &coop::director::ContainerTakeProbeThread, role);
 }
 
 }  // namespace harness::autotest
