@@ -431,11 +431,19 @@ ALONE (NO `em_take`) on the UI's bound slot `slotID=0` with the hover set remove
 "take exactly X" the race ("both take X") is built on. `extract` retired to a diagnostic (`extract=0`,
 not even run). **STATUS: only the SOLO take is VERIFIED (this run); the two-peer RACE is DESIGN, not
 built.** REMAINING (a USER go/no-go — a real multi-piece build, ordered):
-- **(1) the whole-GObjStack no-dup VERIFIER** — the ONE genuinely-new instrument, and the only thing
-  that can READ the staged race: `CONFLICT` fired AND global-instance-count(X)==1. The `CONFLICT` line
-  alone is a whole-container CAS logging the author PEER slot, insufficient — it can hide a
-  personal-inventory dup, which is R11b's reasoned-but-unproven residual. Build/verify this FIRST — a
-  barrier without a reader stages a race nothing can score.
+- **(1) the whole-GObjStack no-dup VERIFIER — BUILT + POSITIVE-CONTROL PASSED (2026-07-23).**
+  `dup_verifier.{h,cpp}`: a self-contained instrument that walks the WHOLE `saveSlot.GObjStack` (every
+  propInventory index) + the player stores, matches the raced item X by CONTENT signature (class + key +
+  a value-group hash) read straight off the engine save — NOT via `container_contents_sync` (the
+  subsystem it measures) and NOT by eid/key. It COUNTS and prints every matching row. Positive control
+  (folded into the ctake probe): a solo take of `X=prop_drive_C key=xeeLNWhu7Wr6YVas92Gu2g` counted
+  **1 before** (GObjStack[idx=145] = the cabinet) and **1 after** (GObjStack[idx=0] = the player slice)
+  — X moved, never duplicated; `DUP-VERIFIER CONTROL PASS`. MEASURED bonus: the separate `inventoryData`
+  read found X **zero** times → the player inventory IS a GObjStack slice (idx=0), so the GObjStack-only
+  walk is COMPLETE (no double-count) — confirms `[[lesson-container-contents-live-in-one-global-gobjstack]]`.
+  Race-ready: on a real race X==2 is a dup (R11b's reasoned residual CONFIRMED), X==1 is no dup. The
+  `CONFLICT` line stays a SECONDARY signal (it is a whole-container CAS logging the author PEER slot; it
+  can hide a personal-inventory dup, which is exactly what this instance-count catches).
 - **(2) the barrier harness** — client-side director + shared-FName target + `ARRIVED` log token + a
   `GO` sentinel file the director polls (no proto bump, per §B5).
 - **(3) the race itself** — both bots hover+press the SAME container slot (the shared FName target)

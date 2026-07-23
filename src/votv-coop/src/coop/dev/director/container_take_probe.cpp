@@ -29,6 +29,7 @@
 // container-race vs generic-prop-race go/no-go. Greppable "director/ctake: VERDICT".
 
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/dup_verifier.h"   // the no-dup verifier + its positive control
 
 #include "coop/player/players_registry.h"
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
@@ -176,6 +177,13 @@ struct Probe {
     int32_t  countAfterPress = -1;   // count after ONLY the faithful pressButton (attribution-clean)
     bool     extractCalled = false;
     int32_t  countAfterExtract = -1;
+    // The no-dup verifier's POSITIVE CONTROL: X captured from the taken slot, its global instance count
+    // BEFORE the take (phaseA, X in the container) and AFTER a solo take (phaseB, X moved to the player).
+    // A dup is impossible in a solo run, so both MUST be 1 -- else count==1 on a real race is ambiguous
+    // (no-dup vs instrument-blind). This run IS the verifier's control.
+    ItemSig  xSig;
+    int32_t  phaseA = -1;
+    int32_t  phaseB = -1;
 };
 
 }  // namespace
@@ -300,7 +308,9 @@ void RunContainerTakeProbe() {
     // the count delta: a clean 2->1 proves pressButton takes EXACTLY ONE item (the hovered one) -- the
     // "take exactly X" the race is built on ("both take X"). em_take is player-side (its bytecode works
     // playerListIds/slots_player) and would confound the attribution, so it is dropped from the take path.
-    RunGT([&goal, pb](std::atomic<int>& d) {
+    // (3a) Resolve the UI's bound slot + which item X it maps to, and CAPTURE X's signature while it is
+    // still in the container. Then count X globally = the verifier's POSITIVE CONTROL phase A (expect 1).
+    RunGT([pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
         if (ui) {   // ui.slots_prop[0] -- the container slot the UI actually built (bound to the container)
@@ -311,8 +321,21 @@ void RunContainerTakeProbe() {
             }
         }
         pb->slotFound = (slot != nullptr && R::IsLive(slot));
-        if (slot) pb->slotId = ReadInt32Field(slot, L"ID");   // which container index this slot maps to
-        if (ui && pb->slotFound) {
+        if (slot) pb->slotId = ReadInt32Field(slot, L"ID");   // which container-slice index this slot maps to
+        pb->xSig = CaptureContainerSlotSig(pb->container, pb->slotId);   // X, before the take
+        d.store(1);
+    });
+    RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+
+    // (3b) The faithful take: re-resolve the bound slot, set the hover, fire pressButton (NO em_take).
+    RunGT([pb](std::atomic<int>& d) {
+        void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
+        void* slot = nullptr;
+        if (ui) {
+            const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"slots_prop");
+            if (off >= 0) { const SR::Arr arr = SR::ReadArr(ui, off); if (arr.num > 0 && arr.data) std::memcpy(&slot, arr.data, sizeof(slot)); }
+        }
+        if (ui && slot && R::IsLive(slot)) {
             void* hoverFn = R::FindFunction(R::ClassOf(ui), L"setHoverContainerSlot");
             if (hoverFn) { ue_wrap::ParamFrame pf(hoverFn); pf.Set<void*>(L"containerSlot", slot); ue_wrap::Call(ui, pf); }
             pb->pressCalled = CallNoArg(slot, R::ClassOf(slot), L"pressButton");   // the take -- NO em_take
@@ -323,15 +346,16 @@ void RunContainerTakeProbe() {
     });
     ::Sleep(200);   // let the take + the container_contents 0x45 edge settle
     RunGT([pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
+    // (3c) Count X again AFTER the solo take = the verifier's POSITIVE CONTROL phase B (expect 1: X moved
+    // to the player, NOT duplicated). phaseA==1 && phaseB==1 validates the instrument sees X in the
+    // source AND destination store, counts each once, and X is unique -- so count==2 on a race == a dup.
+    RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
     const int pressDelta = (pb->countBefore >= 0 && pb->countAfterPress >= 0) ? (pb->countBefore - pb->countAfterPress) : -1;
     UE_LOGI("director/ctake: RUNG3 pressButton delta = %d (before=%d after=%d) -- %s",
             pressDelta, pb->countBefore, pb->countAfterPress,
             pressDelta == 1 ? "EXACTLY ONE (take-exactly-X proven)"
                             : pressDelta > 1 ? "MORE THAN ONE (pressButton took multiple -- not single-item)"
                                              : "ZERO (pressButton did not take)");
-
-    // faithful == pressButton ALONE took exactly one item (the race needs take-exactly-X, not just "<before").
-    const bool faithfulWorked = (pressDelta == 1);
 
     // RUNG 5 (DIAGNOSTIC, NON-FAITHFUL): only if the faithful pressButton took NOTHING (pressDelta<=0),
     // prove the mechanism CAN be driven at the effect seam -- extract(0) on the container actor. Flagged.
@@ -362,6 +386,8 @@ void RunContainerTakeProbe() {
                         : (pressDelta > 1)  ? "DRIVABLE-FAITHFUL-MULTI (took >1 -- not single-item)"
                         : extractWorked     ? "DRIVABLE-EFFECT-SEAM-ONLY (extract; not race-faithful)"
                                             : "NOT-DRIVABLE";
+    // The no-dup verifier's POSITIVE CONTROL: a solo take cannot dup, so X must count 1 before AND after.
+    const bool controlPass = (pb->phaseA == 1 && pb->phaseB == 1);
     UE_LOGI("director/ctake: VERDICT %s | container=%ls itemsBefore=%d "
             "| open=%d uiOpened=%d boundSlot=%d slotID=%d hover+press=%d pressDelta=%d(after=%d) "
             "| [diag] extract=%d extractAfter=%d "
@@ -370,6 +396,10 @@ void RunContainerTakeProbe() {
             pb->openCalled ? 1 : 0, pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0, pb->slotId,
             pb->pressCalled ? 1 : 0, pressDelta, pb->countAfterPress,
             pb->extractCalled ? 1 : 0, pb->countAfterExtract);
+    UE_LOGI("director/ctake: DUP-VERIFIER CONTROL %s | X(cls=%ls key=%ls) phaseA(before)=%d phaseB(after)=%d "
+            "| control needs 1 & 1 (solo cannot dup); if either != 1 the instrument is NOT race-ready "
+            "(blind / double-counting / X not unique) -- FIX before staging the race",
+            controlPass ? "PASS" : "FAIL", pb->xSig.className.c_str(), pb->xSig.key.c_str(), pb->phaseA, pb->phaseB);
 }
 
 DWORD WINAPI ContainerTakeProbeThread(LPVOID /*arg*/) {
