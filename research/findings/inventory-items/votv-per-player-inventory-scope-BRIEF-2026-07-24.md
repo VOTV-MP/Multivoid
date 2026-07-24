@@ -197,7 +197,22 @@ This is a product decision because it decides what the game promises about objec
 code is arranged. It also gates the duplication work: the fix shape differs completely between the
 two, and neither can be designed before it is answered.
 
-#### Q4 STATUS 2026-07-24: a HYPOTHESIS under measurement — do not build on it
+#### Q4 — ANSWERED 2026-07-24 (user), on the measurement below and not on the retracted framing
+
+**Answer: the name holds WITHIN a session; position across session boundaries. The duplication is
+prevented by serialising the transfer on the SOURCE RECORD's key. Cross-session custody is not
+built, because there is no requirement for it.**
+
+The user first gave this answer from a premise the primary had mis-generalised, then explicitly
+DOWNGRADED it to a hypothesis and required the load-bearing half to be verified separately rather
+than inherited. It was, statically (RE §3.2b): the source record and its key sit in the container's
+`GObjStack` slot **before any spawn happens**, so two peers contending over a take are contending
+over an entity that already carries a stable name; the freshly-minted carrier key is downstream of
+the contention, not part of it. Q4 was then closed on that measurement.
+
+The retracted reasoning is kept below so it is not re-derived.
+
+#### The measurement trail behind it (both of the primary's over-claims withdrawn)
 
 The user gave an answer (intra-session name, position across session boundaries) and then explicitly
 DOWNGRADED it to a hypothesis when the observation it rested on turned out to be mis-generalised by
@@ -264,6 +279,24 @@ The earlier phrasing of this brief merged the two into one line; that merge is w
 lane" look like a candidate fix when it is not one.
 
 ---
+
+## 4b. HOOK — the fidelity axis, deferred behind arc 1 (user decision 2026-07-24)
+
+**Not "deferred because it is hard" — NOT ESTABLISHED.** The claim that a container -> inventory
+take loses the item's saved payload was predicted from call ordering and then **falsified**: the
+taken record printed `{b5,f3,nm2}`, not empty (RE §3.2b). The weaker form — do the saved VALUES
+survive, as opposed to the class-shaped slots — is still open, and the readout cannot answer it,
+because group counts are a class fingerprint.
+
+- **The instrument that would settle it** (real, not a log line): read the SOURCE container slot too
+  and compare a record's values before vs after a take. Best subject: **`prop_drive_C`**, the one
+  class whose saved payload carries something a fresh spawn should not have (`sig1`).
+- **Why it sits behind arc 1:** it blocks neither the transfer transaction nor the lane split, and
+  the rule-1 question it would raise — replicate the vanilla defect faithfully, or correct it —
+  **does not arise until a defect is established**.
+- **If it turns out real**, it is its own axis, not arc 1's: serialising the transfer fixes the
+  COUNT (two peers, one winner) and would leave the CONTENT wrong (a winner holding an emptied
+  item). Arc 1 must not be widened to cover it on speculation.
 
 ## 5. What is deliberately NOT in this brief
 
