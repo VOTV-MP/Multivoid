@@ -197,13 +197,29 @@ and every move materializes a REAL transient actor and then destroys it:
 - Reorder within a panel: `moveIndex` [uicomp_playerInvSlot uber census].
 
 The player backpack itself is `prop_inventoryContainer_player_C` — a real (invisible) container
-actor whose propInventory rides the same GObjStack machinery; its `getData`/`loadData`/`ignoreSave`/
-`skipPreDelete` overrides are EMPTY bodies [prop_inventoryContainer_player.json — all four have no
-statements], i.e. it never persists as a world prop. How GObjStack[playerContainer.Index] relates to
-the separately-saved `saveSlot.inventoryData @0x2E0` (which our player_inventory_sync reads/writes)
-— copy-on-save? two views of one thing? — is **[?] unmeasured** (mainGamemode-side; the mod's
-inventory blob path works against inventoryData/equipment/hold and is live-verified, see
-ue_wrap/inventory.h).
+actor whose propInventory rides the same GObjStack machinery. Its `loadData` / `ignoreSave` /
+`skipPreDelete` overrides are no-op bodies and `getData` returns a **default-constructed empty
+`struct_save`** [all four exports are 3 statements; `getData`'s single statement writes the empty
+struct], i.e. it never persists as a world prop.
+
+**[V] MEASURED 2026-07-24 — the GObjStack-vs-`inventoryData` relation is COPY-ON-SAVE, one way.**
+This block previously asked "copy-on-save? two views of one thing?" and marked it `[?] unmeasured`.
+Answered: `mainGamemode::saveObjects` statements [7]-[8] do
+`Array_Get(saveSlot.GObjStack, playerContainer.propInventory.index)` and assign the result into
+`saveSlot.inventoryData` — a wholesale overwrite at save time, and the **only live writer** of that
+field. Going the other way, **nothing in the cooked game reads `inventoryData` back**: a census over
+all 3050 packages finds it named in three (writers `saveObjects` + the dead `putObjectInventory`,
+clears `saveSlot::reset_*`, and one reader — `ui_saveSlots::regenSave`, the save-slot menu's repair
+routine). The player's slot is `GObjStack[0]`, baked by the class's component template
+(`index=0, player=True`), which is why the `loadData` override can be a no-op — the slot is born,
+not restored.
+
+Consequence for our lane: `player_inventory_sync` polls the **projection**, so its `equipment`/`hold`
+thirds address fields the game genuinely reads while its `inventory` third addresses one it never
+reads back. (The earlier "live-verified" phrasing for the blob path was over-stated: the evidence is
+two samples with zero variation between them, i.e. the lane *carries* those arrays — not that it
+tracks a change.) Full RE:
+`research/findings/inventory-items/votv-player-inventory-two-layer-RE-2026-07-24.md`.
 
 ### 1.5 prop_openContainer — the OTHER contents model (live actors)
 

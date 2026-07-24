@@ -82,6 +82,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   is `host_spawn_watcher: spawn-seam adopted`. A mis-named control is WORSE than none: it manufactures
   a false negative and discards a real measurement. *Look FIRST:* grep the source for the exact log
   string, and confirm its emitter runs in the ROLE the step is performed as.
+  **A SHAPE is not a COUNT of the disputed thing (2026-07-24)** — a readout was extended to print each
+  inventory record's payload SHAPE (elements per value group) to test "a taken item lands empty". It
+  FALSIFIED that (the taken record printed `{b5,f3,nm2}`) and still could not settle the weaker
+  question, because the shapes differ BY CLASS (crowbar `{b5,f1,nm2}` / food `{b6,f4,i1,nm2}` / drive
+  `+sig1`): the group slots are a **class fingerprint** present regardless of the VALUES in them, so a
+  spawn-default record and a restored one of the same class print IDENTICALLY. *The general tell:* if
+  the output would look the SAME under both hypotheses, it is a confirmation instrument, not a
+  measurement — even when it just falsified something. Ask which VALUE differs between the two worlds
+  (here: a `sig1` a fresh spawn cannot have) and whether your output contains it.
   `memory/feedback_probe_must_count_not_confirm.md`
 - **A cross-source SUM instrument needs a positive control PER SOURCE, not one direction.** When a
   verifier's verdict is a SUM across multiple stores/peers, the positive control must be run so EACH
@@ -1159,6 +1168,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `WalksToBase(cls, prop_container_C)` `[RD]`. *Look FIRST:*
   `research/findings/inventory-items/votv-container-contents-gobjstack-RE-2026-07-22.md` §8 + §10.
   `memory/lesson_container_contents_live_in_one_global_gobjstack.md`
+- **A container take RE-CREATES the record — identity does NOT survive the transfer** (2026-07-24,
+  33-statement decode + 2-run live confirm). `Aprop_container_C::extract`: `takeObj` yields the source
+  record → `BeginDeferredActorSpawnFromClass` takes **only its CLASS** (the deferred window applies NO
+  properties — it is all pawn-transform math) → `FinishSpawningActor` → `putObjectInventory2` →
+  `addObject` → **`getData` CAPTURES the freshly-spawned carrier** → `K2_DestroyActor` → and only THEN
+  `loadData(takeObj_Output)`. **Mint at spawn, captured at add.** Live: across two runs of one save the
+  four save-loaded items kept byte-identical keys while the one taken item got a new key each run
+  (matching the destroy-seam line for the carrier). **DIRECTION-SPECIFIC** — the player-container
+  override is the same function minus exactly two statements (`putObjectInventory2` +
+  `K2_DestroyActor`), so its `loadData` DOES restore a live actor; never state this about `extract` in
+  general. *Consequence:* any custody/anti-dup design must contend over the **SOURCE record's key**,
+  which exists in the container's `GObjStack` slot before any spawn — the destination key is downstream
+  of the contention. *Does NOT mean the item lands empty* (predicted, then FALSIFIED: `{b5,f3,nm2}`);
+  whether the saved VALUES survive is still OPEN. *Look FIRST:*
+  `research/findings/inventory-items/votv-player-inventory-two-layer-RE-2026-07-24.md` §3.2a/§3.2b.
+  `memory/lesson_container_take_recreates_the_record.md`
 
 - **A PLACED actor's cross-peer identity = its BAKED level-export FName, NOT a gamemode-assigned save
   Key.** VOTV keys `AtriggerBase_C` descendants (doors/garage) via a ONE-SHOT, sublevel-gated gamemode
@@ -1502,6 +1527,16 @@ tracker.
   a **fused claim**: its ctx-freshness half is TRUE, so spot-checking confirms the whole sentence. One
   claim per comment sentence; verify every conjunct separately. Both comments corrected in `6f0c2bf8`.
   Name your own gap instead, as `event_dispatch_entity.cpp:259-264` does.
+  **3rd instance 2026-07-24 — `.gitignore`, and it left a private key exposed for four days.** The rule
+  `tools/coop-server-rs/*.pem` sat under a comment reading "tlstest/ is ignored above"; `grep -n tlstest
+  .gitignore` returns EXACTLY that comment and no rule, so `tools/coop-server-rs/tlstest/key.pem` was
+  untracked-but-NOT-ignored, one `git add -A` from a public commit. `git check-ignore -v` answers in a
+  second — nobody ran it *because the comment said not to bother*. That is the mechanism: a false
+  assurance suppresses the cheap check. NOT an incident (verified: nothing ever committed, material was
+  expired self-signed `CN=localhost`). **Second takeaway: a path-scoped rule for a KIND of artifact
+  grows a new gap every time a directory appears** — scope by what the thing IS, not where it lives
+  (now `*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.jks`/`id_rsa`/`id_ed25519`, global, `3f1a4e4a`). *Look FIRST:*
+  for any ignore/allow/deny rule, verify with the tool, not the comment beside it.
   `memory/lesson_false_security_comment_worse_than_none.md`
 - **Before CAPPING an allocation driven by a wire value, ask whether the allocation is needed at
   all.** `save_transfer.cpp:857` reserved from an unvalidated wire `u32` (one packet → 4 GiB →

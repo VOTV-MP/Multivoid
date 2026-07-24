@@ -502,11 +502,29 @@ NOT SYNCED: crank-lantern variant (deferred); non-flashlight item ACTIONS (only 
 ### Player-inventory — `coop/items/player_inventory_sync`, `inventory_wire`, `inventory_pickup_sync`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
-| 1 | client live inventory → host persistence | W | ST | **PP** | `ClientStreamTick` (+[dev] `inventory_selftest`) | host-terminal, never relayed |
+| 1 | client **projection** (`inventoryData`) → host persistence | W | ST | **PP** | `ClientStreamTick` (+[dev] `inventory_selftest`) | host-terminal, never relayed |
+| 1b | client **live carried items** (`GObjStack[0]`) → host persistence | **N** | code | — | not built — the lane does not read the live store | — |
 | 2 | host → joiner per-player inventory | U | code | HA | `OnSaveObjectReady` | seed pre-world (first-join starter kit / else empty) |
 | 3 | inventory-collect blip (2D cue) | U | code | PP | `inventory_pickup_sync::OnReliable` | none (edge) |
+| 4 | live-store READ + gap observability (`GObjStack[0]` vs projection, by content) | W | ST | — | `ue_wrap::inventory::ReadLivePersonalStore`, `coop/dev/live_store_readout` (ini-gated, read-only) | n/a (dev instrument) |
 
 NOT SYNCED: the personal inventory is **peer-private by design** — never merged or relayed to other peers; only streamed to host for per-`<guid>.json` persistence.
+
+**FACET 1 IS NARROWER THAN ITS OLD NAME (corrected 2026-07-24, measured).** It used to read "client
+live inventory → host persistence". The lane reads `saveSlot.inventoryData`, which is a save-side
+**projection** written only by `mainGamemode::saveObjects` — and on a CLIENT that never runs, because
+`save_block` holds `gamemode.disableSave=true` and `saveSlot_C::save` gates the gather at op03. So a
+client's projection stays at its join-time contents for the whole session, and what gets persisted is
+join-time state, not what the player picked up. Measured live: client `GObjStack[0] live=4 proj=0`,
+host `live=4 proj=4`. Hence the new row 1b — the live half is **not built**, deliberately: what to do
+below reading is gated on `votv-per-player-inventory-scope-BRIEF-2026-07-24.md` (Q1-Q4 answered
+2026-07-24; the transfer transaction and the lane split are the queued arcs).
+
+Also measured: `inventoryData` has **no gameplay reader anywhere in the cooked game** (census over
+3050 packages; the sole reader is the save-slot menu's repair routine). So facet 1 transports a field
+the game only ever writes, while the sibling `equipment`/`hold` arrays it carries alongside DO have
+live gameplay readers — one lane, two different kinds of field. RE:
+`votv-player-inventory-two-layer-RE-2026-07-24.md` §4.1.
 
 ### Sleep — `coop/player/sleep_sync`
 | # | facet | V | E | Auth | cite | mid-join |
