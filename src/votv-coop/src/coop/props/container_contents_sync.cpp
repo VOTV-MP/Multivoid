@@ -183,6 +183,32 @@ void* OwnerOf(void* inv) {
 // `Player` true = personal inventory (mainPlayer / ui_playerInventory share the SAME global
 // GObjStack) -- authoring it from the host would WIPE that peer's inventory. An UNRESOLVABLE
 // offset is treated exactly like Player==true: we refuse rather than guess.
+//
+// WHAT IS BEHIND THE REFUSAL -- now measured, 2026-07-24. This guard was written to fence off
+// something whose contents nobody had characterised; the refusal was correct then and is
+// UNCHANGED now, but the far side is no longer unknown:
+//   GObjStack[0] IS the local player's inventory, by construction. Aprop_inventoryContainer_player_C
+//   carries a component template `propInventory_GEN_VARIABLE` serializing index=0, player=True,
+//   customVolume=50000 (the base prop_container_C's template has NO overrides), so the personal
+//   slot is baked at construction rather than restored -- which is also why that class's loadData
+//   override is an empty stub. Both live write paths land there: the world pickup
+//   (mainPlayer::putObjectInventory2 -> playerContainer.propInventory.addObject) and the container
+//   slot press. Full RE: votv-player-inventory-two-layer-RE-2026-07-24.md SS4.2/SS5.4.
+//
+// So `Player != 0` now serves TWO lanes from opposite sides of one boundary, and that is
+// deliberate, not an inconsistency:
+//   - HERE it is a REFUSAL   -- this lane authors world containers and must never author a peer's
+//                               personal store (the wipe above);
+//   - in ue_wrap::inventory::ReadLivePersonalStore it is the ADDRESS ASSERTION -- that reader must
+//     read the personal store and nothing else, and refuses when the flag is 0.
+// Both are fail-closed in their own direction. This lane's behaviour is untouched by that reader,
+// which is READ-ONLY: nothing wires, persists or applies the live store (gated on the open scope
+// questions in votv-per-player-inventory-scope-BRIEF-2026-07-24.md).
+//
+// KNOWN DUPLICATION, deliberately NOT resolved here (single-axis discipline): GObjStackSlot() below
+// and that reader each resolve GObjStack/Index themselves. Folding them into one ue_wrap primitive
+// is a behaviour-preserving refactor of a SHIPPED lane and belongs in its own arc with its own
+// equivalence proof -- not bundled into a read-path change.
 bool IsWorldContainerInventory(void* inv) {
     if (!inv) return false;
     if (CachedOffset(g_offInvPlayer, R::ClassOf(inv), L"Player") < 0) return false;

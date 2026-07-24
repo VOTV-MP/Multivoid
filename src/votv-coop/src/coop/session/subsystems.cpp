@@ -39,6 +39,7 @@
 #include "coop/session/pause_guard.h"          // 2026-07-04: coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // v73 per-player inventory (host file scaffold)
 #include "coop/dev/inventory_probe.h"    // v73 Inc4: SP self-test for the apply (engine write) path
+#include "coop/dev/live_store_readout.h" // 2026-07-24: READ-ONLY live personal store observability
 #include "coop/dev/sleep_probe.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/dev/drone_probe.h"
@@ -539,6 +540,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // v72: discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // v73: inventory read-verify self-test (Inc2; no-op unless inventory_selftest=1)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_probe"}; coop::dev::inventory_probe::Tick(); }  // v73 Inc4: SP apply round-trip self-test (no-op unless inventory_probe=1)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // 2026-07-24: READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) + the by-content gap vs the projection (no-op unless live_store_readout=1)
     // v57: trashBitsPile collect-counter poll + depletion death-watch. (The chipPile mirror-PILE
     // death-watch that used to run here was RETIRED 2026-06-17 -- a chipPile re-grab now fires from
     // the InpActEvt_use PRE observer that trash_collect_sync::Install registers, not a per-tick

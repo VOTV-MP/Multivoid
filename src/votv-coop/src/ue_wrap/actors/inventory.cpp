@@ -39,6 +39,31 @@ constexpr int32_t kEquipStride     = 0x120;
 void*   g_gm      = nullptr;
 int32_t g_offSave = -1;
 
+// ---- live personal store: reflected offsets (resolved once; -1 = looked and failed) -----------
+// -2 = not looked at yet. Never guessed: an unresolvable offset makes the reader inert, it does
+// not fall back to a hardcoded number (the SDK values are recorded here as DOCUMENTATION only --
+// mainGamemode.playerContainer@0x0780, propInventory.Index@0x00B0, propInventory.Player@0x00F9).
+int32_t g_offPlayerContainer  = -2;  // mainGamemode_C.playerContainer  -> Aprop_inventoryContainer_player_C*
+int32_t g_offContainerPropInv = -2;  // prop_container_C.propInventory  -> UpropInventory_C*
+int32_t g_offInvPlayer        = -2;  // propInventory_C.Player          -> the personal discriminator
+int32_t g_offInvIndex         = -2;  // propInventory_C.Index           -> the GObjStack slot
+int32_t g_offGObjStack        = -2;  // saveSlot_C.GObjStack
+
+int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
+    if (slot == -2) {
+        slot = cls ? R::FindPropertyOffset(cls, name) : -1;
+        if (slot < 0)
+            UE_LOGW("inventory: could not resolve %ls -- the live-store reader is inert", name);
+    }
+    return slot;
+}
+
+template <class T> T ReadAt(const void* base, int32_t off) {
+    T v{};
+    std::memcpy(&v, reinterpret_cast<const uint8_t*>(base) + off, sizeof(T));
+    return v;
+}
+
 void ReadEquipRecord(const void* base, EquipRecord& rec) {
     rec.propName = SR::ReadFNameAt(base, kEquip_propName);
     rec.propKey  = SR::ReadFNameAt(base, kEquip_propKey);
@@ -106,6 +131,55 @@ bool ReadAll(PlayerInventory& out) {
         EquipRecord r;
         ReadEquipRecord(hd.data + static_cast<size_t>(i) * kEquipStride, r);
         out.hold.push_back(std::move(r));
+    }
+    return true;
+}
+
+bool ReadLivePersonalStore(LivePersonalStore& out) {
+    out.slotIndex = -1;
+    out.records.clear();
+
+    void* save = ResolveSaveSlot();   // also refreshes g_gm (and revalidates it via IsLive)
+    if (!save || !g_gm) return false;
+
+    if (CachedOffset(g_offPlayerContainer, R::ClassOf(g_gm), L"playerContainer") < 0) return false;
+    void* pc = ReadAt<void*>(g_gm, g_offPlayerContainer);
+    if (!pc || !SR::PlausibleObjPtr(pc) || !R::IsLive(pc)) return false;
+
+    if (CachedOffset(g_offContainerPropInv, R::ClassOf(pc), L"propInventory") < 0) return false;
+    void* inv = ReadAt<void*>(pc, g_offContainerPropInv);
+    if (!inv || !SR::PlausibleObjPtr(inv) || !R::IsLive(inv)) return false;
+
+    // ADDRESS ASSERTION (fail-closed): this must be the PERSONAL store and nothing else. Same flag
+    // that container_contents_sync's BOUNDARY 1 refuses on -- opposite sides of one boundary.
+    if (CachedOffset(g_offInvPlayer, R::ClassOf(inv), L"Player") < 0) return false;
+    if (ReadAt<uint8_t>(inv, g_offInvPlayer) == 0) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("inventory: playerContainer.propInventory is NOT flagged personal (Player==0) "
+                    "-- refusing to read it as the live personal store. Expected player=True from "
+                    "the class's component template; something resolved to the wrong container.");
+        }
+        return false;
+    }
+
+    if (CachedOffset(g_offInvIndex, R::ClassOf(inv), L"Index") < 0) return false;
+    const int32_t idx = ReadAt<int32_t>(inv, g_offInvIndex);
+    if (idx < 0) return false;  // -1 = never initialised
+
+    if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return false;
+    const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
+    if (idx >= stack.num) return false;
+
+    // The struct_mObject element's single field is the contents TArray<Fstruct_save> at +0.
+    const SR::Arr contents = SR::ReadArr(stack.data + static_cast<size_t>(idx) * SR::kMxStride, 0);
+    out.slotIndex = idx;
+    out.records.reserve(static_cast<size_t>(contents.num));
+    for (int32_t i = 0; i < contents.num; ++i) {
+        SR::SaveRecord r;
+        SR::ReadSaveRecord(contents.data + static_cast<size_t>(i) * SR::kSaveStride, r);
+        out.records.push_back(std::move(r));
     }
     return true;
 }

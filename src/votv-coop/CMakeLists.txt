@@ -467,6 +467,7 @@ add_library(votv-coop SHARED
     src/coop/dev/leak_probe.cpp
     src/coop/dev/heap_probe.cpp
     src/coop/dev/inventory_probe.cpp
+    src/coop/dev/live_store_readout.cpp
     src/coop/dev/drone_probe.cpp
     src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
