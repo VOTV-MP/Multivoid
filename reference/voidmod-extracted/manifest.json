@@ -1,7 +1,0 @@
-{
-    "name": "VoidMod",
-    "version_number": "2.2.0",
-    "website_url": "https://votvmodding.github.io/",
-    "description": "VoidMod is a Blueprint Framework and Handler for Modding Voices of the Void",
-    "dependencies": ["Thunderstore-unreal_shimloader-1.0.6", "NynrahGhost-Fusion-0.8108.2"]
-}

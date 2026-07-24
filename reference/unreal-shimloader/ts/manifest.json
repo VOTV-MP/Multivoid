@@ -1,8 +1,0 @@
-{
-    "name": "unreal_shimloader",
-    "author": "Thunderstore",
-    "version_number": "1.1.3",
-    "website_url": "https://github.com/thunderstore-io/unreal-shimloader",
-    "description": "EXPERIMENTAL Thunderstore Mod Manager and r2modmanPlus support for RE-UE4SS and UE games.",
-    "dependencies": []
-}

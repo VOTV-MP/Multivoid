@@ -179,6 +179,17 @@ tools/unrealpak/
 tools/kismet-analyzer/
 reference/psk-psa-v9.1.2/
 
+# third-party reference clones/drops under reference/ (same policy as VoiceChatMC above --
+# heavy third-party source we READ for precedent, never build or ship; not collaborative source):
+# baritone = the Minecraft pathing bot we took the director architecture from (33 MB clone),
+# voidmod-extracted = an extracted third-party VOTV mod package (Thunderstore drop),
+# unreal-shimloader = Thunderstore's UE mod-loader shim (Rust source + a UE4SS runtime drop).
+# The latter two were tracked; `git rm --cached` runs in the same commit that adds these rules
+# (their bytes remain in git history).
+reference/baritone/
+reference/voidmod-extracted/
+reference/unreal-shimloader/
+
 # portable client-model converter build output (game-derived template bytes + binaries)
 tools/client_model/portable/dist/
 tools/client_model/portable/build/
