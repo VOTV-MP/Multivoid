@@ -360,6 +360,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   corroboration. Also check the cited entry for FUSION: that one answered *who arbitrates* and *who
   simulates* at once, and only one half was still true. *Look FIRST:*
   `memory/feedback_qf_selective_trust_blindspot.md` (2026-07-20 section)
+- **Your own tool can manufacture a false outage.** Python reported `certificate has expired` against
+  the production master; the SERVER cert had 86 days left and `curl` verified the chain fine — the stale
+  CA bundle was local. A ready-made causal story (snapshot cert + a documented renewal hazard) made the
+  error read as confirmation rather than data. **Reproduce with a second, independently-trusted client
+  before escalating**; for TLS read the served cert's own dates, which are a fact about the server, not
+  the verify verdict, which is a fact about you. *Look FIRST:*
+  `memory/lesson_your_own_tool_can_be_the_false_outage.md`
+- **Classify a repeated literal by the QUESTION each site answers, not its syntactic role.** The
+  `"Player"` nick literal sits at 7 sites that look like one group and are two — and the axis is **MY
+  NAME vs SOMEONE ELSE'S**, not default-vs-fallback. `SanitizeNickname`'s empty fallback
+  (`player_handshake.cpp:219`) reads as a fallback but decides *my* displayed name; changing too few
+  ships two different defaults, changing too many labels a nameless remote peer with your name.
+  *Look FIRST:* `memory/lesson_nick_default_axis_is_mine_vs_theirs.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -1492,6 +1505,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   as "not recognized" (Get-FileHash, 2026-07-17 smoke deploy). Run mp.py/deploys from the BASH env.
   `memory/lesson_pwsh_nested_powershell_psmodulepath.md`
 - **AUTONOMOUS pile test loop harness** (reference). `memory/reference_pile_test_harness.md`
+- **A gitlink with no `.gitmodules` entry breaks EVERY fresh clone, and only fresh clones.**
+  `third_party/opus` was committed as mode 160000 with no registration, so `--recursive` skipped it
+  silently and CMake died far away on an empty directory; a Discord user hit it, we never could —
+  the maintainer's working copy already had the checkout. Cross-check
+  `git ls-files -s | awk '$1=="160000"{print $4}'` against `git config -f .gitmodules --get-regexp path`.
+  General: **when a newcomer reports a failure you cannot reproduce, suspect your own working copy
+  first.** *Look FIRST:* `memory/lesson_gitlink_without_gitmodules_entry_is_silently_skipped.md`
+- **A seeded config value OVERRIDES the code default — a "documentation" seeder is a drift bomb.**
+  `ReadIniValue` returns `def` only when the key is **ABSENT** (`config.cpp:96-104`), so writing
+  `key=value` into a user's ini pins that value for that install forever. Proof it is not theoretical: a
+  hand-written ten-line sketch got **4 of 10 defaults wrong** (port 7777 vs 47621, ui.scale 1.0 vs 1.25,
+  net.master empty vs its `DEFAULT` sentinel, one font key vs five roles). Config files carry user
+  STATE; a catalog of defaults belongs in a generated `*.example` that is never read as config, emitted
+  commented. *Look FIRST:* `memory/lesson_seeded_config_value_overrides_the_code_default.md`
+- **One file format, ONE parse primitive.** `multivoid.ini` is parsed by three different fixed buffers —
+  `char[128]` (`LookupTriState`), `char[256]` (reader), `char[512]` (writer) — and a 380-char line
+  already mints a **live phantom key in 2 of 4 real inis** (fgets splits it, the tail contains `=`). The
+  reader's split is ephemeral; the **writer's would be persisted**, i.e. the 2026-07-02 data-loss class.
+  Raising the number moves the wall; use an unbounded read, and for a local file the user owns, log an
+  over-long line — never drop it. *Look FIRST:*
+  `memory/lesson_one_file_format_needs_one_parse_primitive.md`
 
 ---
 
