@@ -177,6 +177,28 @@ defect follows from that depends entirely on §5.2, which is unmeasured.
 *(Deliberately not stated as a persistence gap. Several stronger phrasings were drafted and withdrawn
 during this investigation; the measured facts support the sentence above and no more.)*
 
+### 6.1 AUTHOR-REPORTED, **NOT MEASURED** (2026-07-24)
+
+Kept as its own sub-item so that reported and measured do not merge into one paragraph. The
+paragraph above is unchanged and still states only what §3-§4 measured.
+
+The project author states, verbatim:
+
+> личные инвентари и персист в `<guid>.json` толком не работают и строились наспех
+
+**Status: author report. Not a measurement, and not treated as one.** It is recorded because it
+removes the possibility §6 was hedging against ("perhaps nothing is wrong"), not because it
+establishes a mechanism. No paraphrase of this sentence should be promoted into a measured claim —
+during the investigation that produced this document, restating someone else's formulation as the
+primary's own thesis happened twice and had to be withdrawn both times.
+
+What the measured chain would predict, IF the report's cause is the topology in this document
+(§3 live store, §4 `saveObjects` as the only measured live→save writer, `save_block.cpp` blocking
+client world-saves at `SaveGameToSlot`): a client's `inventoryData` stays at its load-time contents
+for the whole session, so the lane streams the join-time state and nothing acquired during play is
+persisted. That prediction is **coherent but not confirmed** — the open link is §5.2, and note it
+governs only the SIZE of the effect, not whether one exists.
+
 ---
 
 ## 7. Provenance / reproduce
