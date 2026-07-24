@@ -12,6 +12,7 @@
 | **Players** | up to **4** (host + 3) |
 | **Platform** | Windows · UE4.27 · LAN + Internet |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
+| **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — chat about the project, ask questions, report bugs |
 
 ---
 
@@ -197,6 +198,17 @@ detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 
 ---
 
+## Community
+
+**Chat about the project, ask questions, or get in touch:
+[discord.gg/bA6tGBvGMN](https://discord.gg/bA6tGBvGMN)** — the *Pelmentor's server* Discord.
+
+It's the fastest way to reach the author, follow development as it happens, and find
+people to test co-op with. Bug reports and feedback are welcome there or in
+[GitHub issues](https://github.com/VOTV-MP/Multivoid/issues).
+
+---
+
 ## Ecosystem
 
 | Repo / place | What |
@@ -205,6 +217,7 @@ detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 | [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The dedicated server (see roadmap phases 6 and 8) |
 | [`VOTV-MP/Multivoid-wiki`](https://github.com/VOTV-MP/Multivoid-wiki) | User-facing documentation |
 | [multivoid.dev](https://multivoid.dev) | Project website |
+| [Discord](https://discord.gg/bA6tGBvGMN) | Community + project chat |
 
 Repository layout:
 
