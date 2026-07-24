@@ -44,6 +44,7 @@
 #include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -195,7 +196,196 @@ struct Probe {
 
 }  // namespace
 
+// The dup-verifier's KNOWN-POSITIVE for its BLIND branch, fired BEFORE the world settle.
+//
+// `player=<n> READ-OK` vs `player=BLIND(READ-FAILED)` only became distinguishable on 2026-07-24; before
+// that a failed INV::ReadAll left the counter at 0 and read identically to "read fine, found nothing".
+// A branch that has never fired is indistinguishable from one that CANNOT fire, so the fixed instrument
+// is not evidence in either direction until BLIND is observed once on purpose.
+//
+// The control is free: ue_wrap::inventory::ReadAll returns false whenever ResolveSaveSlot() is null --
+// no live mainGamemode_C, unresolvable saveSlot offset, or a dead pointer (inventory.cpp ResolveSaveSlot).
+// At scenario-thread start the world has not loaded, so that is exactly the state. If the world IS
+// already up when this runs, the control did NOT get its chance -- which is reported as INCONCLUSIVE
+// rather than quietly counted as a pass.
+void RunVerifierBlindControl() {
+    // The signature must be VALID but UNMATCHABLE. An invalid one is refused by CountItemInstances'
+    // own entry guard, so the walk never runs and the BLIND branch is never reached -- measured
+    // 2026-07-24, first attempt: the control printed "called with an INVALID signature -- refusing"
+    // and proved nothing. A control that trips a different guard than the one under test is not a
+    // control ([[feedback-probe-must-count-not-confirm]]).
+    ItemSig dummy{};
+    dummy.className   = L"__blind_control_no_such_class__";
+    dummy.key         = L"__blind_control_no_such_key__";
+    dummy.contentHash = 0;
+    dummy.valid       = true;   // valid so the walk RUNS; unmatchable so it can never find a row
+    auto ran = std::make_shared<std::atomic<int>>(0);
+    RunGT([ran, dummy](std::atomic<int>& d) {
+        UE_LOGI("dup_verifier[BLIND-CONTROL]: counting BEFORE world load -- expecting "
+                "'GObjStack count is BLIND' + 'player=BLIND(READ-FAILED)'");
+        const int n = CountItemInstances(dummy, /*print=*/true);
+        ran->store(n < 0 ? 1 : 2);
+        d.store(1);
+    });
+    UE_LOGI("director/ctake: BLIND-CONTROL fired (saveSlot %s at scenario start) -- read the two "
+            "dup_verifier lines above; BLIND on both = the instrument's failure branch is OBSERVABLE, "
+            "READ-OK = INCONCLUSIVE (world already up, control never got its chance)",
+            ran->load() == 1 ? "UNRESOLVABLE" : "resolvable");
+}
+
+// Does `saveObjects` refresh the save-side projection (`saveSlot.inventoryData`) on a peer whose
+// world-save is blocked at the SaveGameToSlot seam?
+//
+// The naive design -- "watch for a `player_inventory[client]: streamed inventory blob` line after a
+// `save_block: BLOCKED client world-save` line" -- is ABSENCE-based and fuses two causes: "the
+// projection never refreshed" and "it refreshed but this record does not go there". That pair already
+// defeated one round of reasoning, so this samples POSITIVELY instead.
+//
+// Each sample counts the rows of inventoryData/equipment/hold and hashes their class+key content, so a
+// refresh shows up as a CHANGED sample, not as a missing log line. Run on BOTH peers, it carries its own
+// per-source control ([[lesson-multi-source-count-needs-per-source-positive-control]]):
+//   HOST   = the KNOWN-POSITIVE. Host saves are NOT blocked, so its projection MUST change across a
+//            save cycle. If it does not, `saveObjects` does not propagate this record at all and the
+//            client arm is uncalibrated -- the run says nothing and must be reported as such.
+//   CLIENT = the test. Interpretable ONLY once the host arm has moved.
+// One sample of the save-side projection: row counts + a class+key content hash over
+// inventoryData/equipment/hold. Returns {inv, eq, hold, hash}; hash = ~0 if the read failed.
+std::array<uint64_t, 4> SampleProjection() {
+    auto st = std::make_shared<std::array<uint64_t, 4>>();
+    (*st)[3] = ~0ull;
+    RunGT([st](std::atomic<int>& d) {
+        INV::PlayerInventory pinv;
+        if (!INV::ReadAll(pinv)) { d.store(1); return; }
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&h](const std::wstring& s) {
+            for (wchar_t c : s) { h ^= static_cast<uint64_t>(c); h *= 1099511628211ull; }
+            h ^= '|'; h *= 1099511628211ull;
+        };
+        for (const auto& r : pinv.inventory) { mix(r.className); mix(r.key); }
+        for (const auto& e : pinv.equipment) { mix(e.data.className); mix(e.data.key); }
+        for (const auto& e : pinv.hold)      { mix(e.data.className); mix(e.data.key); }
+        (*st)[0] = pinv.inventory.size(); (*st)[1] = pinv.equipment.size();
+        (*st)[2] = pinv.hold.size();      (*st)[3] = h;
+        d.store(1);
+    });
+    return *st;
+}
+
+// Does `mainGamemode::saveObjects` refresh the save-side projection (`saveSlot.inventoryData`) from
+// the LIVE store (`propInventory` / `GObjStack`)?
+//
+// TWO different questions were fused in the first version of this instrument, and separating them is
+// what makes it deterministic:
+//   (a) does saveObjects PROPAGATE live -> projection?      <- what this measures
+//   (b) does the game CALL saveObjects on a client whose world-save is blocked at SaveGameToSlot?
+// (b) needs a real autosave and only becomes meaningful once (a) is known; a first attempt waited ~7
+// minutes for an autosave that never fired, leaving the known-positive arm flat and the whole run
+// uncalibrated (2026-07-24). So this CALLS the verb directly: `saveObjects(bool quicksave)` is a plain
+// BP UFunction on mainGamemode_C (CXXHeaderDump mainGamemode.hpp), and calling it does NOT reach
+// SaveGameToSlot -- so there is no disk write and no save-file mutation.
+//
+// Per-source control ([[lesson-multi-source-count-needs-per-source-positive-control]]): BOTH peers run
+// it after taking an item, so each peer is its own known-positive -- it just moved a record into its
+// live store, so a working saveObjects MUST change that peer's projection hash.
+// Rows in the LIVE player slice (GObjStack[0]) -- the store a container take actually writes.
+// Sampled beside the projection so the GAP (live - projection) is visible per sample. -1 = unresolvable.
+int32_t SampleLivePlayerSliceRows() {
+    auto n = std::make_shared<std::atomic<int>>(-1);
+    RunGT([n](std::atomic<int>& d) {
+        void* save = INV::ResolveSaveSlot();
+        if (!save) { d.store(1); return; }
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(save), L"GObjStack");
+        if (off < 0) { d.store(1); return; }
+        const SR::Arr outer = SR::ReadArr(save, off);
+        if (outer.num <= 0) { d.store(1); return; }
+        n->store(SR::ReadArr(outer.data, 0).num);   // slice 0 = where a container take lands (measured)
+        d.store(1);
+    });
+    return n->load();
+}
+
+void RunProjectionWatch(const std::string& role) {
+    // PASSIVE by default (2026-07-24). Sampling only -- it must not change what it measures.
+    //
+    // Q2 (does the HOST refresh organically, and how often?) and Q3 (does the live-vs-projection gap
+    // GROW, or was it there from t=0?) are both answered by watching, and watching must not perturb.
+    constexpr int kSamples    = 16;
+    constexpr int kIntervalMs = 20000;   // ~5 min -- long enough to span an organic autosave if one fires
+    UE_LOGI("director/projwatch: role=%s PASSIVE watch -- %d samples every %d s. Each line pairs the "
+            "save-side projection with the LIVE player slice (GObjStack[0]); gap = live - projection. "
+            "A projection change with NO forced call = the game ran saveObjects organically (Q2). A gap "
+            "that is constant = an ORIGIN mismatch, not accumulation (Q3).",
+            role.c_str(), kSamples, kIntervalMs / 1000);
+    for (int i = 0; i < kSamples; ++i) {
+        const auto p = SampleProjection();
+        const int32_t live = SampleLivePlayerSliceRows();
+        UE_LOGI("director/projwatch: role=%s sample=%02d proj_inv=%llu eq=%llu hold=%llu hash=%016llx "
+                "| live_slice0=%d | gap=%lld",
+                role.c_str(), i, static_cast<unsigned long long>(p[0]), static_cast<unsigned long long>(p[1]),
+                static_cast<unsigned long long>(p[2]), static_cast<unsigned long long>(p[3]), live,
+                static_cast<long long>(live) - static_cast<long long>(p[0]));
+        if (i + 1 < kSamples) ::Sleep(kIntervalMs);
+    }
+
+    // ---- the PERTURBING half: opt-in only -------------------------------------------------------
+    //
+    // WARNING, measured 2026-07-24 -- calling saveObjects is NOT read-only, and not only because of the
+    // engine. It refreshes saveSlot.inventoryData; player_inventory_sync polls that array at ~1 Hz and
+    // streams on a HASH CHANGE; the host then persists the blob to coop_players/<guid>.json. So ONE call
+    // here produced a real disk write of client inventory state that an organic run never produces
+    // (client "streamed inventory blob (2375 bytes, 6 items)" -> host "flushed ... to disk", the JSON
+    // going 2204 -> 4848 bytes; it had to be restored from .bak). The earlier claim that skipping
+    // SaveGameToSlot meant "no disk write" was reasoning about ONE disk path and asserting about all of
+    // them. Anyone enabling this must expect the per-player JSON to be rewritten.
+    if (!coop::config::ReadEnv("VOTVCOOP_PROJWATCH_FORCE").empty()) {
+        UE_LOGW("director/projwatch: role=%s FORCE enabled -- calling saveObjects; this WILL rewrite "
+                "coop_players/<guid>.json via the inventory lane's stream+persist. Not read-only.",
+                role.c_str());
+    } else {
+        UE_LOGI("director/projwatch: role=%s DONE (passive; set VOTVCOOP_PROJWATCH_FORCE=1 for the "
+                "perturbing saveObjects call -- it rewrites the per-player JSON)", role.c_str());
+        return;
+    }
+
+    const auto pre = SampleProjection();
+    UE_LOGI("director/projwatch: role=%s PRE  inv=%llu eq=%llu hold=%llu contentHash=%016llx",
+            role.c_str(), static_cast<unsigned long long>(pre[0]), static_cast<unsigned long long>(pre[1]),
+            static_cast<unsigned long long>(pre[2]), static_cast<unsigned long long>(pre[3]));
+
+    auto called = std::make_shared<std::atomic<int>>(0);
+    RunGT([called](std::atomic<int>& d) {
+        void* gm = R::FindObjectByClass(L"mainGamemode_C");
+        void* fn = gm ? R::FindFunction(R::ClassOf(gm), L"saveObjects") : nullptr;
+        if (!gm || !fn) { called->store(0); d.store(1); return; }
+        ue_wrap::ParamFrame pf(fn);
+        if (!pf.valid()) { called->store(0); d.store(1); return; }
+        pf.Set<bool>(L"quicksave", false);
+        called->store(ue_wrap::Call(gm, pf) ? 1 : 0);
+        d.store(1);
+    });
+    UE_LOGI("director/projwatch: role=%s called mainGamemode::saveObjects(quicksave=false) -> %s "
+            "(no SaveGameToSlot, so no disk write)",
+            role.c_str(), called->load() ? "OK" : "FAILED/NOT-RESOLVED");
+
+    ::Sleep(1500);   // let the verb's own work settle before re-reading
+    const auto post = SampleProjection();
+    UE_LOGI("director/projwatch: role=%s POST inv=%llu eq=%llu hold=%llu contentHash=%016llx",
+            role.c_str(), static_cast<unsigned long long>(post[0]), static_cast<unsigned long long>(post[1]),
+            static_cast<unsigned long long>(post[2]), static_cast<unsigned long long>(post[3]));
+
+    const bool moved = (pre != post);
+    UE_LOGI("director/projwatch: role=%s VERDICT saveObjects %s the projection (call=%s) -- this peer "
+            "had JUST taken an item into its live store, so it is its OWN known-positive: CHANGED = the "
+            "projection tracks the live store when the verb runs; UNCHANGED with call=OK = it does NOT, "
+            "and the lane's poll of inventoryData cannot see a container take at all",
+            role.c_str(), moved ? "CHANGED" : "did NOT change", called->load() ? "OK" : "FAILED");
+    UE_LOGI("director/projwatch: role=%s DONE", role.c_str());
+}
+
 void RunContainerTakeProbe() {
+    // FIRST, before any settle: the instrument's own known-positive (see above).
+    RunVerifierBlindControl();
+
     UE_LOGI("director/ctake: container-take input probe -- +20 s settle for the world to load");
     ::Sleep(20000);
 
@@ -596,6 +786,8 @@ void RunContainerRace() {
             "| X(cls=%ls key=%ls) | mp.py sums across peers: 1=correct 2=DUP(R11b) 0=VANISHED >2=worse",
             role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB,
             pb->xSig.className.c_str(), pb->xSig.key.c_str());
+
+    RunProjectionWatch(role);
 }
 
 DWORD WINAPI ContainerRaceThread(LPVOID /*arg*/) {
