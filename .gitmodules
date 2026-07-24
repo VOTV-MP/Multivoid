@@ -13,3 +13,6 @@
 [submodule "src/votv-coop/third_party/imgui"]
 	path = src/votv-coop/third_party/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "src/votv-coop/third_party/opus"]
+	path = src/votv-coop/third_party/opus
+	url = https://github.com/xiph/opus.git
