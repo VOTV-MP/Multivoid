@@ -155,7 +155,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   inventory. 2nd instance 2026-07-16: asserted "the master server isn't in the repo" from a `find -type d
   -iname '*master*'` — blind, because it's a FILE `tools/coop_master_server.py` (679 LOC stdlib) a dir
   search can't match. Search by the artifact's real shape (`glob **/*.py`, a signature string like
-  `/v1/host`), not a guessed folder. `memory/lesson_negative_grep_verify_against_known_positive.md`
+  `/v1/host`), not a guessed folder. **3rd + 4th instances 2026-07-24, both in ONE session and both the
+  "convenient" way:** (a) wrong LEVEL — `loadObjects` showed 0 name-refs to `inventoryData`, read as "the
+  load path doesn't touch it"; resolving CALLS shows `EX_LocalVirtualFunction loadData` x3 (it dispatches,
+  like `loadTriggers`), and calls live as `StackNode` INDICES not names; (b) wrong SCOPE — grepped
+  `save_block.cpp`, found no `saveObjects`, asserted "an undocumented second consequence" into a MEASURED
+  doc; the contract is in `save_block.h` Part 3, which names `saveObjects` explicitly under a user mandate
+  3 weeks older. **The tell both share: a zero was accepted because it made the story better.** A negative
+  that FLATTERS the hypothesis needs the known-positive check MORE, not less. Also: `save_block: BLOCKED`
+  = 0 across every log EVER (no known-positive anywhere — the detour has never fired), so its silence
+  proved nothing. `memory/lesson_negative_grep_verify_against_known_positive.md`
+- **A failure branch that shares a resolver with the success path is UNREACHABLE — and that dissolves the
+  ambiguity without a run** (2026-07-24). `dup_verifier`'s `player=0` looked like it fused "read failed"
+  with "found nothing", and two rounds were spent hedging + designing a control to force the failure.
+  Structural answer, in the same file: `CountItemInstances` returns -1 at its own `!save` guard BEFORE any
+  COUNT prints, and `INV::ReadAll` has exactly TWO returns (censused) — the SAME `ResolveSaveSlot()`, and
+  `return true` (its offsets are compile-time constants, no post-resolve failure path), both in ONE GT
+  task. So every historical `player=0` beside a scan summary already meant "read OK, found zero". *Look
+  FIRST:* when a line looks fused, census the reader's return paths and check whether caller and reader
+  gate on the SAME guard — reachability is a read, not a run. And when a control fails, read WHICH guard
+  it hit: a control tripping a different guard than the one under test is a finding about guard ORDER.
+  `memory/lesson_fused_failure_branch_sharing_a_resolver_is_unreachable.md`
 - **A SYNTACTIC marker set over the class dump CANNOT express a SEMANTIC property** ("is this coop-relevant
   / can it diverge between peers"), and the reason is an ERROR ASYMMETRY, not a tuning problem: the
   false-NEGATIVE side is measurable, the false-POSITIVE side is uncalibratable in principle (there is no
@@ -389,6 +409,32 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   throttle mass arms. `memory/feedback_identity_logs_carry_key_and_loc.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
+
+- **The player inventory is TWO stores, and our lane polls the wrong-shaped one** (2026-07-24, bytecode +
+  runtime). LIVE = `UpropInventory_C` → `saveSlot.GObjStack[propInventory.Index]` (what play mutates; the
+  player's own inventory IS a container, `Aprop_inventoryContainer_player_C : Aprop_container_C`).
+  SAVE-SIDE PROJECTION = `saveSlot.inventoryData`, a *different field* (0x02E0 vs GObjStack 0x0198),
+  written by `mainGamemode::saveObjects`. A container slot press = `getObject → addObject →
+  K2_DestroyActor` and touches `inventoryData` **zero** times — zero refs across `prop_container`,
+  `prop_inventoryContainer_player`, `uicomp_playerInvContainerSlot`, `ui_playerInventory`. Our
+  `player_inventory_sync` reads ONLY `inventoryData`/`equipment`/`hold`. On a CLIENT the projection never
+  refreshes: `save_block` holds `gamemode.disableSave=true` and `saveSlot_C::save` checks it at op03
+  BEFORE `saveObjects` (op12) and `saveToSlot` (op19) — a deliberate 2026-07-04 mandate documented in
+  `save_block.h` Part 3. Measured gaps were CONSTANT (client 0-vs-6, host 4-vs-5) = an ORIGIN mismatch,
+  not accumulation; and host vs client projections have DIFFERENT AUTHORS (game save/load vs our
+  join-apply), so "refresh it more often" cannot be one fix for both. *Look FIRST:*
+  `research/findings/inventory-items/votv-player-inventory-two-layer-RE-2026-07-24.md` + its scope brief.
+  `memory/lesson_player_inventory_is_two_layers_live_and_projection.md`
+- **A probe's side effects travel through OUR OWN lanes, not just the engine's** (2026-07-24). A dev probe
+  called `mainGamemode::saveObjects` and was declared read-only because it skips
+  `saveToSlot`/`SaveGameToSlot` — true about the engine's disk path, false about the system: the refresh
+  changed `inventoryData`, `player_inventory_sync` polls that at ~1 Hz and ships on a HASH CHANGE, the host
+  persisted it, and `coop_players/<guid>.json` went 2204 → 4848 bytes holding a state no organic run
+  produces (restored from `.bak`; the next run would otherwise have started from an impossible state).
+  *Look FIRST:* before a probe calls a game verb, census EVERY consumer of the state that verb touches —
+  grep our own lanes for polls/hooks on those fields — not only the engine path you deliberately avoided.
+  Any change-detecting poll downstream means the probe is not read-only.
+  `memory/lesson_probe_side_effects_travel_through_our_own_lanes.md`
 
 - **One cache per QUESTION, not per write-moment** — a hash/state map written at ONE instant but read to
   answer TWO questions is a latent bug: the answers diverge the moment the peer mutates locally, and
