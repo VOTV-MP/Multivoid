@@ -164,7 +164,35 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   3 weeks older. **The tell both share: a zero was accepted because it made the story better.** A negative
   that FLATTERS the hypothesis needs the known-positive check MORE, not less. Also: `save_block: BLOCKED`
   = 0 across every log EVER (no known-positive anywhere — the detour has never fired), so its silence
-  proved nothing. `memory/lesson_negative_grep_verify_against_known_positive.md`
+  proved nothing. **5th instance 2026-07-24, in the very turn that wrote the near-twin lesson: wrong
+  CASE.** Searched `"Player"` (the SDK header's spelling, `propInventory.hpp: bool Player`) for who sets
+  the personal-inventory flag, got 0 everywhere, and wrote into a MEASURED doc that the setter was "not
+  visible in any bytecode — native or a defaults blob, not our toolchain". The serialized BP property is
+  **`player`**, lowercase, sitting in that same asset's component template
+  (`propInventory_GEN_VARIABLE`: `index=0 player=True customVolume=50000`) — which answered the question
+  outright and explained why the container's `loadData` override is an empty stub (the slot is baked at
+  construction). Two spellings of ONE field. *The free tell:* 0 in EVERY package, including ones that
+  must use it, is a blindness signal, not a finding — grep both the reflected and serialized spellings,
+  or case-insensitively. `memory/lesson_negative_grep_verify_against_known_positive.md`
+- **A near-twin name (`X` vs `X2`) lets a DEAD function impersonate the live one — the discriminator is the
+  CALLER COUNT, not the body** (2026-07-24). `mainGamemode::putObjectInventory` writes
+  `saveSlot.inventoryData` x6, calls `getData`/`noRespawn`/`K2_DestroyActor`, plays `inventory_Cue` — it
+  reads end-to-end like THE pickup path, and it has **zero callers game-wide**. All 24 apparent references
+  are substring hits on `mainPlayer::putObjectInventory2`, a different function on a different class writing
+  the OTHER store (`GObjStack`). Both grep polarities fail in opposite directions and neither is flagged: a
+  substring grep says "24 callers" (all false); an exact grep says "0 calls here" — literally TRUE and
+  substantively misleading, because the behaviour IS present via the `2` variant. Cost: `inventoryData`
+  looked like it had a live pickup writer, when its only live writer is `saveObjects`' projection copy and
+  gameplay never reads it back. **It had already bitten twice:** `COOP_DISPATCH_VISIBILITY.md` glossed
+  `putObjectInventory` as "=R-pickup", and `votv-inventory-drop-spawn-RE-2026-05-24.md` listed it as a live
+  helper with no note that nothing calls it — the stale row is the likely reason the 2026-07-24 pass started
+  out treating it as live. Both corrected. *Look FIRST:* before building on "X does Y", grep **who calls X**
+  with the BARE name and again as a substring, and compare the counts — a difference means a near-twin
+  exists. In UE4 BPs a `2`/`_new`/`_old` suffix is the usual shape of a refactor that left the original
+  compiled in. **And give the count its own known-positive** — "zero callers" is itself a negative grep:
+  here the bare-name query still returned `mainGamemode` (the definition) and the substring query
+  returned 24, proving the method reaches the corpus. Strip those and "0 callers" is indistinguishable
+  from a blind pattern. `memory/lesson_near_twin_function_name_hides_a_dead_original.md`
 - **A failure branch that shares a resolver with the success path is UNREACHABLE — and that dissolves the
   ambiguity without a run** (2026-07-24). `dup_verifier`'s `player=0` looked like it fused "read failed"
   with "found nothing", and two rounds were spent hedging + designing a control to force the failure.

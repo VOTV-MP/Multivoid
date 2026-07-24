@@ -300,7 +300,7 @@ PropPose can arrive.
 | AmainGamemode_C | RemoveEquipment | `(int32 Index, bool Drop, bool& return)` | BP bytecode | Path C — equipment slot drop |
 | AmainGamemode_C | AddEquipment | `(Fstruct_save Data, bool& return)` | BP bytecode | Inverse — equipment slot fill |
 | AmainGamemode_C | spawnPropThroughGamemode | `(FName prop, FTransform InputPin, int32 Amount, AActor*& actor)` | BP bytecode | Direct-spawn helper (cheat / world gen — NOT wire-relevant) |
-| AmainGamemode_C | putObjectInventory | `(AActor* Actor, bool& return)` | BP bytecode | Helper for moving a world actor INTO the player inventory |
+| AmainGamemode_C | putObjectInventory | `(AActor* Actor, bool& return)` | BP bytecode | ~~Helper for moving a world actor INTO the player inventory~~ **DEAD CODE — measured 2026-07-24: zero callers game-wide.** Its body does do this (into `saveSlot.inventoryData`), which is why the row reads as a live path, but the live pickup verb is `mainPlayer::putObjectInventory2` → `GObjStack`. See `votv-player-inventory-two-layer-RE-2026-07-24.md` §4.1/§4.2 |
 | AmainGamemode_C | getObjectFromKey | `(const FName ItemToFind, AActor*& Output)` | BP bytecode | Key → AActor* lookup over keyObj_key/keyObj_obj |
 | Aprop_container_C | extract | `(int32 Index)` | BP bytecode | Path D — container extract |
 | Aprop_container_C | getObject | `(int32 Index, bool customLoc, FVector Loc, AActor*& OutputPin)` | BP bytecode | Programmatic extract-with-location (spawns world actor + returns it) |
