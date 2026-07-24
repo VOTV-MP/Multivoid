@@ -1529,6 +1529,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ---
 
+- **A public hostname is not a public origin IP — know which one you are redacting.** The service
+  hostname is compiled into a DLL we distribute (`protocol.h:1113`), so hiding it is theatre; the ORIGIN
+  IP behind the root domain's Cloudflare proxying is a different asset, and publishing it in four tracked
+  docs defeated that proxying outright (origin bypass) plus named the host. Ask *which of the two* and
+  *from whom* before redacting. Also: "not a secret" and "fine to publish" are different judgements —
+  casual discoverability is a real axis; say which one you are buying. `docs/security/TRACKER.md` **A11**,
+  `b2c4b3ef`. *Look FIRST:* `memory/lesson_public_hostname_is_not_a_public_origin_ip.md`
+
 ## 9. Security (threat model, trust boundaries, peer identity)
 
 Canonical home: **`docs/security/`** — `README.md` is navigation, `THREAT_MODEL.md` + `SUBSTRATE.md`
