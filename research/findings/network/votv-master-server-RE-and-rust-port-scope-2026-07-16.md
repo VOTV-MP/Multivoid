@@ -1,7 +1,7 @@
 # Master/lobby + signaling server — RE + Rust-port scope (2026-07-16)
 
 **Type:** point-in-time RE + DESIGN scope → **now AS-BUILT + LIVE** (written, wire-verified,
-deployed, security-hardened AND migrated to the new coop VPS `172.86.94.3` — all 2026-07-16; see
+deployed, security-hardened AND migrated to the new coop VPS `<coop-vps>` — all 2026-07-16; see
 "## Status" + "## MIGRATED" below). The Rust project lives at `tools/coop-server-rs/` (its README
 is the operator guide).
 
@@ -117,7 +117,7 @@ Consolidated + fixed per RULE 1; **Tier A is BUILT + DEPLOYED + committed** (ser
 
 ## MIGRATED to the new coop VPS (2026-07-16 evening, user decision)
 
-The whole stack moved to the **new Cloudzy box `172.86.94.3`**; the old box now hosts **only unrelated services**
+The whole stack moved to the **new Cloudzy box `<coop-vps>`**; the old box now hosts **only unrelated services**
 (coop services stopped/removed there per RULE 2, verified: no coop listeners, master dead, the box's other tenants
 untouched). The new box was provisioned by the REWORKED `tools/vps_provision.sh` (commit `d56a4f69`):
 Rust ExecStart directly (no Python ever landed), stop-before-replace binary install, `curl -4`
@@ -128,7 +128,7 @@ measured), ufw allows (10000/10001/3478/61000-61100/udp + **80/tcp for Let's Enc
 `/v1/latest`→111, host→join full ICE, signaling relay A→B, leave (+ the 5s `/v1/lobbies` cache),
 TTL=90 reaper (`expired ... stale 98s`), TURN-cred HMAC recomputed on-box = MATCH.
 Client side (commit `cd6faf81`, DLL `AFBF5728` x4 hash-verified): `protocol.h`
-`kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`; `session_manager.cpp` `kDefaultMaster`
+`kOfficialMasterUrl/kOfficialSignalingUrl` → `<coop-vps>`; `session_manager.cpp` `kDefaultMaster`
 duplicate literal retired (aliases protocol.h); all 4 installs' inis carry explicit `net.*`
 (HOST had NO `[net]` block — rode the compiled default; CLIENT_3 had no ini at all — created).
 Domain `votv.mp`: Cloudflare DNS-only zone, NS delegation pending at the .mp registry (~24h;
@@ -145,7 +145,7 @@ names in a PUBLIC repo — wording neutralized across 6 files and the three unpu
 
 ## Status
 
-- Master/signaling: **RUST, LIVE on `172.86.94.3`** (migrated 2026-07-16; see "## MIGRATED").
+- Master/signaling: **RUST, LIVE on `<coop-vps>`** (migrated 2026-07-16; see "## MIGRATED").
   Same binaries byte-exact as the audited deploy (master `ad9844b6`, signaling `930b6173`).
 - Ghost-lobby TTL: **DONE** — `LOBBY_TTL = 90s` (commit `6d640679`); reaper verified on the new box.
 - `/v1/latest` release info: **env-overridable** (`COOP_LATEST_PROTO/MOD/URL`). CORRECTED 2026-07-20

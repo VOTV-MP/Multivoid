@@ -259,20 +259,20 @@ evidence the label rendered correctly* — nobody was looking at it. The format 
 drill-verified, NOT hands-on**; promoting it on silence is exactly the unnamed-boundary green the
 ladder forbids. (The build number in these examples is b122 as shipped then; current is b125.)
 
-## Master / signaling server — Rust, on the NEW coop VPS `172.86.94.3` (migrated 2026-07-16)
+## Master / signaling server — Rust, on the NEW coop VPS `<coop-vps>` (migrated 2026-07-16)
 
 The master + signaling servers are **Rust** (`tools/coop-server-rs/`, static musl), wire-compatible
 with the retired Python (byte-exact TURN cred), with the 4-agent security audit's Tier A hardening
 built in (relay-OOM cap, atomic admission, IPv6 /64 rate-keying, panic-isolation, coturn
 quotas/denies; client JSON-depth crash-fix + parse clamps).
 
-**2026-07-16 (evening): the whole stack MIGRATED to a new VPS** (`172.86.94.3`; the old box is
+**2026-07-16 (evening): the whole stack MIGRATED to a new VPS** (`<coop-vps>`; the old box is
 repurposed for unrelated services, its coop stack wiped per RULE 2 and verified dead). The new box was provisioned
 Rust-native by the reworked `tools/vps_provision.sh` (Rust ExecStart — no Python ever landed there;
 ufw allows incl. 80/tcp for Let's Encrypt; `curl -4` public-IP fix) and **functionally verified from
 outside**: healthz, `/v1/latest`→111, host→join with full ICE, signaling relay A→B, leave + TTL=90
 reaper, TURN-cred HMAC match vs the box's coturn secret. Compiled official endpoints flipped
-(`protocol.h` `kOfficialMasterUrl/kOfficialSignalingUrl` → `172.86.94.3`, commit `cd6faf81`, DLL
+(`protocol.h` `kOfficialMasterUrl/kOfficialSignalingUrl` → `<coop-vps>`, commit `cd6faf81`, DLL
 `AFBF5728` x4); **2026-07-19 s29d: compiled endpoints CUTOVER to the hostname `master.multivoid.dev`**
 (`dcc988c7`, DLL `9370C1C1` — resolution measured native on both consumers: WinHttpConnect for the
 master HTTP + getaddrinfo in signaling_client; the proxied ROOT `multivoid.dev` must never be used
@@ -283,7 +283,7 @@ re-verified from outside (healthz, `/v1/latest`, signaling TCP, STUN). (`/v1/lat
 at that time; since v122 the compiled default is **0** = "no released record" and the env override is
 left unset — zero releases exist, and a client treats proto<=0 as no verdict.)
 
-**Domain: `multivoid.dev`** (LIVE 2026-07-19: root proxied via Cloudflare → 172.86.94.3; `master.multivoid.dev`
+**Domain: `multivoid.dev`** (LIVE 2026-07-19: root proxied via Cloudflare → <coop-vps>; `master.multivoid.dev`
 unproxied/grey-cloud → the same box, for direct client traffic on our custom ports. The earlier `votv.mp` zone
 never delegated and is retired).
 
