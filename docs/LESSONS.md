@@ -182,7 +182,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   outright and explained why the container's `loadData` override is an empty stub (the slot is baked at
   construction). Two spellings of ONE field. *The free tell:* 0 in EVERY package, including ones that
   must use it, is a blindness signal, not a finding — grep both the reflected and serialized spellings,
-  or case-insensitively. `memory/lesson_negative_grep_verify_against_known_positive.md`
+  or case-insensitively. **6th + 7th instances 2026-07-24 (the ini `/qf`):** (6) to prove a config token
+  had "never been documented" I grepped `docs/` + `README.md` — and missed `release/votv-coop.ini`, a
+  user-facing example ini in the repo that documents the token AND seeds the exact layout under design;
+  the search space for "never documented" is *every artifact a user could receive*. (7) NEW SUB-SPECIES —
+  **the CORPUS was blind, not the pattern**: a differential old-vs-new run over the 4 real inis reported
+  ZERO verdict flips, but those files have no duplicate keys, no `yes|on|true` flag values, and the key
+  filter excluded the one live phantom key, so the sample could not exhibit ANY change class. A clean
+  corpus measures the corpus. Fixture with INJECTED positives, shared by every instrument, and a run that
+  reports zero must first prove it can report non-zero.
+  `memory/lesson_negative_grep_verify_against_known_positive.md`
 - **A near-twin name (`X` vs `X2`) lets a DEAD function impersonate the live one — the discriminator is the
   CALLER COUNT, not the body** (2026-07-24). `mainGamemode::putObjectInventory` writes
   `saveSlot.inventoryData` x6, calls `getData`/`noRespawn`/`K2_DestroyActor`, plays `inventory_Cue` — it
@@ -1518,7 +1527,41 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   hand-written ten-line sketch got **4 of 10 defaults wrong** (port 7777 vs 47621, ui.scale 1.0 vs 1.25,
   net.master empty vs its `DEFAULT` sentinel, one font key vs five roles). Config files carry user
   STATE; a catalog of defaults belongs in a generated `*.example` that is never read as config, emitted
-  commented. *Look FIRST:* `memory/lesson_seeded_config_value_overrides_the_code_default.md`
+  commented. **And the bomb was already assembled (2026-07-24):** `release/votv-coop.ini` sat in the repo
+  carrying `Pelmentor` / `net.master=DEFAULT` / `net.port=47621` as ACTIVE values — nothing deployed it,
+  no `RELEASE.md` line mentioned it, untouched since 2026-06-23 (pre-rebrand name). An artifact nothing
+  references does not become harmless, it becomes *unmaintained while still readable*; on a public repo
+  that is worse. Deleted by user ruling (RULE 2). *Look FIRST:*
+  `memory/lesson_seeded_config_value_overrides_the_code_default.md`
+- **"First match wins" is a property of the READER, not of the file format.** `multivoid.ini` has two
+  readers with two different rules: `ReadIniValue` breaks on the first matching **KEY** whatever its value
+  (`config.cpp:96-104`), `LookupTriState` on the first **RECOGNIZED VALUE**, skipping `key=garbage` above
+  `key=1` (`:457-473`) — plus opposite case-sensitivity, opposite comment handling, and no mutex (so the
+  file's own "Readers take it too" comment is FALSE). A design doc had stated the rule once, for "the
+  file", and three separate decisions leaned on it — including "insertion is a MOVE, never an ADD", which
+  is **not** behaviour-preserving: moving one occurrence past another inverts a flag verdict. Count the
+  readers before writing any "how the file is read" fact; collapse duplicates BEFORE reordering. *Look
+  FIRST:* `memory/lesson_first_match_is_a_reader_property_not_a_format_property.md`
+- **When N incompatible readers already ship, no unification preserves them all — CHOOSE, then
+  ENUMERATE.** Four truthiness readers coexist in `multivoid.ini` (`1|true|0|false` whole-line; `!= "0"`
+  where *anything* is true; `== "1"` strict where `true` reads FALSE; a 4-token chain), so
+  `nameplate=true` works today and `ui.netstats=true` silently does not. Two `/qf` rounds were burned
+  engineering a preserving vocabulary (narrow → breaks `net.master.custom=yes`; union → the `!= "0"`
+  readers accept every string, so any shared vocabulary narrows them). Write *"no behaviour-preserving
+  option exists"* down first, choose on merits (obey what the user literally wrote), enumerate every
+  moved verdict — then check each against "does the new reading match what they wrote?". That check
+  **dissolved an entire subsystem** here (a meaning-change report, its persisted state, its deferral, four
+  legacy predicates): a mechanism that exists only to apologize for a change usually means the change was
+  described wrong. *Look FIRST:*
+  `memory/lesson_choose_and_enumerate_when_no_behaviour_preserving_option_exists.md`
+- **Never host a report about X behind a gate that X controls.** The config-review panel for
+  `multivoid.ini` was placed in `dev_menu`, which is gated on `MasterEnabled() && IsIniKeyTrue("devkeys")`
+  (`dev_menu.cpp:539`) — i.e. the user must hand-edit the very file he is asking for help with. The two
+  other candidates failed the same test differently: `multivoid.log` has **no owner-reader** ("reported"
+  with no reader is a fiction), and the loader's boot dialog is a different severity whose `Arm` is
+  single-slot (a second message silently drops the first, `boot_warning_dialog.cpp:29-35`). Before picking
+  a surface, ask what turns it ON and whether the audience already looks there. *Look FIRST:*
+  `memory/lesson_diagnostic_surface_gated_by_what_it_diagnoses.md`
 - **One file format, ONE parse primitive.** `multivoid.ini` is parsed by three different fixed buffers —
   `char[128]` (`LookupTriState`), `char[256]` (reader), `char[512]` (writer) — and a 380-char line
   already mints a **live phantom key in 2 of 4 real inis** (fgets splits it, the tail contains `=`). The

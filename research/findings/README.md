@@ -45,7 +45,7 @@ state** — each file is a snapshot from its date.
 | `weather-wind/` | weather subsystem REs (scheduler/rendering/mainGamemode/IDA), wind, sky/celestial |
 | `world-systems/` | mushrooms, dirt/window cleaning, fireflies, sleep/nightmare, RNG authority, email, gamerules, notifications, ambient anchors |
 | `vehicles/` | ATV/quadbike arc, delivery drone |
-| `tooling/` | dev-tool + infrastructure designs: the Baritone-analog autonomous bot-director (autonomous-testing driver); the `multivoid.ini` seeder / config-registry / validation / catalog design (`votv-ini-config-registry-DESIGN-2026-07-24.md` — DESIGN, `/qf` did NOT converge, read its §9 before building) |
+| `tooling/` | dev-tool + infrastructure designs: the Baritone-analog autonomous bot-director (autonomous-testing driver); the `multivoid.ini` seeder / config-registry / validation / catalog design (`votv-ini-config-registry-DESIGN-2026-07-24.md` — DESIGN, **TWO `/qf` passes, NEITHER converged** (16 + 15 rounds); the doc was REWRITTEN after pass 2 and now carries F24-F35 + §8's list of mechanisms the pass dissolved. Read §2 and §9 before building; full scope is user-authorized but nothing is certified) |
 | `_archive/` | definitively superseded/abandoned approaches (see below) |
 
 Grep tip: filenames were NOT renamed — a bare-filename citation (code comments cite findings by name)
