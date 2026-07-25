@@ -112,5 +112,6 @@ IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key);
 int SelftestFlagTriState(const std::wstring& path, const char* key);
 int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
 int SelftestScanWithFailure(int failAfterLines);
+bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);
 
 }  // namespace coop::config

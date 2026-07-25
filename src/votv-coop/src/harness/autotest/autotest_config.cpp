@@ -20,6 +20,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,99 @@ void RunConfigSelftest() {
             UE_LOGI("config-selftest: absent-file check ok (scan=1)");
         }
     }
+    // ---- T3 writer drills (design section 5, T3 row) -- on a COPY of the
+    // corpus inject file, never the live ini.
+    if (!dirA.empty()) {
+        const std::wstring dir(dirA.begin(), dirA.end());
+        const std::wstring src = dir + L"\\inject.ini";
+        const std::wstring wrk = dir + L"\\__write_drill__.ini";
+        if (::CopyFileW(src.c_str(), wrk.c_str(), FALSE)) {
+            std::vector<std::string> pre;
+            cfg::SelftestListLines(src, pre);
+            auto countCi = [&](const char* key) {
+                std::vector<std::string> ls;
+                cfg::SelftestListLines(wrk, ls);
+                int n = 0;
+                for (const auto& l : ls) {
+                    const std::string k = EnumKeyOf(l);
+                    if (!k.empty() && _stricmp(k.c_str(), key) == 0) ++n;
+                }
+                return n;
+            };
+            auto expect = [&](const char* what, bool ok) {
+                if (ok) UE_LOGI("config-selftest: T3 %s ok", what);
+                else { UE_LOGW("config-selftest: T3 FAIL %s", what); ++fail; }
+            };
+            // Drill 1: ci-targeting + normalize. inject.ini has Player_Guid=...
+            // ABOVE player_guid=...; writing 'player_guid' must edit the FIRST
+            // (case-variant) line in place with canonical spelling -- count
+            // stays 2, read-back returns the new value from line 1.
+            const char* newGuid = "22222222222222222222222222222222";
+            expect("write player_guid returns true",
+                   cfg::SelftestWriteValue(wrk, "player_guid", newGuid));
+            expect("ci occurrence count still 2", countCi("player_guid") == 2);
+            {
+                std::vector<std::string> ls;
+                cfg::SelftestListLines(wrk, ls);
+                bool firstEdited = false;
+                for (const auto& l : ls) {
+                    const std::string k = EnumKeyOf(l);
+                    if (!k.empty() && _stricmp(k.c_str(), "player_guid") == 0) {
+                        firstEdited = (k == "player_guid") &&
+                                      (l.find(newGuid) != std::string::npos);
+                        break;  // the FIRST ci occurrence is the one under test
+                    }
+                }
+                expect("authoritative line edited in place, canonical spelling", firstEdited);
+                const cfg::IniSelftestRead rb = cfg::SelftestReadValue(wrk, "player_guid");
+                expect("write-then-read same-line equality",
+                       rb.found && rb.value == newGuid);
+            }
+            // Drill 2: N>1 duplicate -- edit-first, never move, count preserved.
+            expect("write dup.diff returns true", cfg::SelftestWriteValue(wrk, "dup.diff", "third"));
+            expect("dup.diff count still 2", countCi("dup.diff") == 2);
+            {
+                std::vector<std::string> ls;
+                cfg::SelftestListLines(wrk, ls);
+                int seen = 0;
+                bool firstIsThird = false, secondIsSecond = false;
+                for (const auto& l : ls) {
+                    const std::string k = EnumKeyOf(l);
+                    if (!k.empty() && _stricmp(k.c_str(), "dup.diff") == 0) {
+                        ++seen;
+                        if (seen == 1) firstIsThird = l.find("third") != std::string::npos;
+                        if (seen == 2) secondIsSecond = l.find("second") != std::string::npos;
+                    }
+                }
+                expect("dup.diff first=third second=untouched", firstIsThird && secondIsSecond);
+            }
+            // Drill 3: untouched long line survives byte-identical (the old
+            // 512-chunk writer could splice it; design F31).
+            {
+                std::vector<std::string> post;
+                cfg::SelftestListLines(wrk, post);
+                bool longSurvived = false;
+                for (const auto& l : pre)
+                    if (l.rfind("longline=", 0) == 0)
+                        for (const auto& p : post)
+                            if (p == l) { longSurvived = true; break; }
+                expect("380-char line byte-identical after writes", longSurvived);
+            }
+            // Drill 4: new key appends at EOF (arc-1 MOVE is inert by design).
+            expect("write brand.new returns true", cfg::SelftestWriteValue(wrk, "brand.new", "1"));
+            {
+                std::vector<std::string> ls;
+                cfg::SelftestListLines(wrk, ls);
+                expect("brand.new appended as the last line",
+                       !ls.empty() && ls.back().rfind("brand.new=1", 0) == 0);
+            }
+            ::DeleteFileW(wrk.c_str());
+        } else {
+            UE_LOGW("config-selftest: T3 drills skipped -- inject.ini copy failed");
+            ++fail;
+        }
+    }
+
     // Fault injection (design T4 must-FAIL control): a mid-stream error must
     // yield Unreadable(2) -- with lines already delivered and with none.
     for (const int n : {2, 0}) {

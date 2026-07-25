@@ -239,9 +239,9 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
-bool WriteIniValue(const char* key, const char* value) {
-    std::lock_guard<std::mutex> lk(g_iniMutex);
-    const std::wstring path = IniPath();
+// Path-parameterized writer core (no lock -- the public wrapper holds it; the
+// selftest drives COPIES of corpus files, never the live ini).
+static bool WriteIniValueAt(const std::wstring& path, const char* key, const char* value) {
     // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
     // would split the "key=value" line and corrupt the NEXT key on read-back), then
     // edge-trim. Interior spaces are part of the value (device names) and round-trip
@@ -356,6 +356,11 @@ bool WriteIniValue(const char* key, const char* value) {
     }
     UE_LOGI("config: persisted %s=%s", key, safe.c_str());
     return true;
+}
+
+bool WriteIniValue(const char* key, const char* value) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    return WriteIniValueAt(IniPath(), key, value);
 }
 
 // ---- Built-in (hardcoded) public net endpoints -- our VPS -----------------------
@@ -672,6 +677,10 @@ IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key) {
 
 int SelftestFlagTriState(const std::wstring& path, const char* key) {
     return LookupTriStateAt(path, key);
+}
+
+bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value) {
+    return WriteIniValueAt(path, key, value);
 }
 
 int SelftestListLines(const std::wstring& path, std::vector<std::string>& out) {
