@@ -382,6 +382,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   (`player_handshake.cpp:219`) reads as a fallback but decides *my* displayed name; changing too few
   ships two different defaults, changing too many labels a nameless remote peer with your name.
   *Look FIRST:* `memory/lesson_nick_default_axis_is_mine_vs_theirs.md`
+- **A destructive UI action correlates by CONTENT, never by a snapshot-time index.** A
+  persistent-until-dismissed report ages while it sits on screen; any unrelated write shifts line
+  numbers/row ids, and a stale index deletes the WRONG target — or BOTH copies of a duplicate
+  identity key (`player_guid` → orphaned inventory), with `removed==0` guards blind to
+  "matched-but-wrong". Carry the VALUE the user clicked, re-validate it exists at act time, refuse +
+  re-sweep on a vanish (arc-2 audit CRIT-2, fixed `7f1765ea`; drill G). *Look FIRST:*
+  `config_ini_write.cpp RemoveDuplicateKeyLinesAt` — the pattern; grep destructive ops taking
+  index/lineNo params. `memory/lesson_correlate_destructive_ui_actions_by_content_not_index.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -1368,8 +1376,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   with RepositoryRole-admin bypass_mode=always, `git push` prints "Bypassed rule violations" and
   sails; `gh pr merge` refuses ("base branch policy prohibits the merge") until `--admin`. So the
   robot-blocking push restriction costs the daily direct-push flow NOTHING; budget `--admin` per rare
-  PR. Measured live on ruleset 19728708. *Look FIRST:* `docs/RELEASE.md` invariants + CI design D7.
+  PR. Measured live on ruleset 19728708. 2nd surface (2026-07-25, the b126-dev push): the v-tags
+  creation restriction prints "Cannot create ref due to creations being restricted" yet the SAME
+  push output shows `* [new tag]` — the scary prose is the rule-evaluation notice; trust the
+  ref-update lines. *Look FIRST:* `docs/RELEASE.md` invariants + CI design D7.
   `memory/lesson_ruleset_update_restriction_pushes_bypass_merges_need_admin.md`
+- **PS comma binds TIGHTER than `+`: a concat inside an array literal silently array-appends** —
+  `@("a", "b" + $c, "d")` parses as `(("a","b") + $c), "d"`: the intended one string becomes TWO
+  elements, and a fixture writer emits a silently split line (bit the arc-2 ini corpus builder,
+  2026-07-25; minimal repro same day). Parenthesize `("b" + $c)` or interpolate `"b$c"`.
+  *Look FIRST:* any `.ps1` building a line list with `+` inside `@( )`.
+  `memory/lesson_ps_comma_binds_tighter_than_plus_in_array_literals.md`
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
 - **Filtered tool output HIDES verdicts — twice-bitten:** s22 a grep+tail filter ate a LINK error (a
   STALE DLL deployed; the SHA-256 build-vs-deployed compare caught it), s23 `smoke | tail -4` cut the
