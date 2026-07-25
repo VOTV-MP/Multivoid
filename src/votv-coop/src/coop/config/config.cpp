@@ -159,11 +159,45 @@ static IniScan ScanIniFileAt(const std::wstring& path, Fn&& cb) {
 
 static std::wstring IniPath() { return ModuleDir() + L"\\multivoid.ini"; }
 
+// ---- the unified occurrence rule + the two value layers (arc 2, T4/T5) ------
+// The authoritative line of key K = the FIRST occurrence of K by
+// CASE-INSENSITIVE key equality. ONE rule shared by the string layer, the
+// flag layer, the writer and the T10 sweep; the layers differ ONLY in value
+// vocabulary, never in line selection. The old pair -- case-sensitive
+// first-KEY (string) vs first-RECOGNIZED-VALUE (flag, the F25 legacy that
+// silently swallowed garbage) -- is dead. Safety measured: F40 (zero ci
+// collisions between distinct keys, zero case twins in the rig).
+
+// T5: inline-comment stripping lives here, in the lexer's value layer.
+// String layer: cut at the first ';' PRECEDED by whitespace (F18 narrowing --
+// an interior ';' with no space before it stays part of the value: device
+// names round-trip verbatim). Flag layer: unconditional cut (flag lines carry
+// inline `; comments` pervasively and never a legitimate ';').
+static std::string StripInlineComment(const std::string& v, bool wsPrecededOnly) {
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] != ';') continue;
+        if (!wsPrecededOnly || i == 0 || v[i - 1] == ' ' || v[i - 1] == '\t')
+            return TrimEdges(v.substr(0, i));
+    }
+    return v;
+}
+
+// The ONE truthiness vocabulary (T6): 1|true|yes|on / 0|false|no|off, ci.
+// Anything else -- including present-but-empty (F33) -- is garbage: 0, and the
+// caller's default applies in memory ("значение говно и несуразица -> ставится
+// дефолт"); the T10 sweep reports it, nothing rewrites the file.
+static int FlagVerdictFromValue(const std::string& raw) {
+    std::string v = StripInlineComment(raw, /*wsPrecededOnly=*/false);
+    for (char& c : v) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+    if (v == "1" || v == "true" || v == "yes" || v == "on") return 1;
+    if (v == "0" || v == "false" || v == "no" || v == "off") return -1;
+    return 0;
+}
+
 // Path-parameterized reader core (no lock -- public wrappers hold it; the
-// selftest feeds corpus files). Match semantics UNCHANGED in arc 1: first
-// case-SENSITIVE key occurrence (the unified ci rule lands with the arc-2
-// layer flip). On Absent/Unreadable the caller still receives `def` -- the
-// tri-state reaches discriminating callers (seeder, arc-2 mint gate) via out.
+// selftest feeds corpus files). On Absent/Unreadable the caller still
+// receives `def` -- the tri-state reaches discriminating callers (seeder,
+// mint gate, sweep) via scanOut.
 static std::string ReadIniValueAt(const std::wstring& path, const char* key,
                                   const char* def, IniScan* scanOut) {
     std::string result = def;
@@ -171,7 +205,10 @@ static std::string ReadIniValueAt(const std::wstring& path, const char* key,
     const IniScan st = ScanIniFileAt(path, [&](const std::string& line) {
         if (found) return;
         std::string k, v;
-        if (ParseIniLine(line, k, v) && k == key) { result = v; found = true; }
+        if (ParseIniLine(line, k, v) && _stricmp(k.c_str(), key) == 0) {
+            result = StripInlineComment(v, /*wsPrecededOnly=*/true);
+            found = true;
+        }
     });
     if (scanOut) *scanOut = st;
     return result;
@@ -603,40 +640,28 @@ std::string ReadPlayerGuid() {
 }
 
 // ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
-// Case/space/inline-comment tolerant `key=1`/`key=true` matching -- distinct from
-// ReadIniValue's edge-trimmed exact parse because flag lines carry inline `; comments`
-// pervasively (`garbage_pickup_probe=1   ; v81 morph...`) and the flags predate the
-// generic reader. First match wins.
+// Since arc 2 (T4) the flag layer shares the unified occurrence rule with the
+// string layer: the FIRST case-insensitive key occurrence is authoritative,
+// and only the value VOCABULARY differs (FlagVerdictFromValue). The old
+// first-RECOGNIZED-value scan (F25) -- which skipped garbage lines and could
+// flip a flag when a line MOVED past a duplicate (F32) -- is retired.
 
 namespace {
 
-// Strip an inline `; comment`, then ALL whitespace, then lowercase. A `;` never
-// appears in a real flag value, so cutting at the first `;` is safe.
-std::string NormalizeFlagLine(const char* line) {
-    std::string s(line);
-    if (const size_t c = s.find(';'); c != std::string::npos) s.erase(c);
-    s.erase(std::remove_if(s.begin(), s.end(),
-                           [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }),
-            s.end());
-    for (auto& c : s) c = static_cast<char>(::tolower(c));
-    return s;
-}
-
-// Scan an ini for `key=...`:  +1 = true,  0 = absent,  -1 = false. Match
-// semantics UNCHANGED in arc 1 (first RECOGNIZED value, ci, comment-stripped --
-// the F25 legacy rule; it dies with the arc-2 layer flip). Lines are unbounded
-// via the primitive; no lock here -- public wrappers hold g_iniMutex.
+// Scan an ini for `key=...`:  +1 = true,  -1 = false,  0 = absent OR garbage
+// value (callers' defaults apply; the T10 sweep reports the garbage). Lines
+// are unbounded via the primitive; no lock here -- public wrappers hold
+// g_iniMutex.
 int LookupTriStateAt(const std::wstring& path, const char* key) {
-    const std::string trueForm  = std::string(key) + "=1";
-    const std::string trueAlt   = std::string(key) + "=true";
-    const std::string falseForm = std::string(key) + "=0";
-    const std::string falseAlt  = std::string(key) + "=false";
     int verdict = 0;
+    bool found = false;
     ScanIniFileAt(path, [&](const std::string& line) {
-        if (verdict != 0) return;
-        const std::string s = NormalizeFlagLine(line.c_str());
-        if (s == trueForm || s == trueAlt) { verdict = 1; return; }
-        if (s == falseForm || s == falseAlt) { verdict = -1; }
+        if (found) return;
+        std::string k, v;
+        if (ParseIniLine(line, k, v) && _stricmp(k.c_str(), key) == 0) {
+            found = true;
+            verdict = FlagVerdictFromValue(v);
+        }
     });
     return verdict;
 }
