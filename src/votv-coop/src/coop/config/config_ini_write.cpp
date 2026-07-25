@@ -50,7 +50,13 @@ bool AtomicWriteLines(const std::wstring& path, const std::vector<std::string>& 
                       const char* what) {
     const std::wstring tmp = path + L".new";
     FILE* f = nullptr;
-    if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
+    // BINARY mode (arc-4 audit): the primitive writes EXACTLY the bytes given.
+    // Text mode silently translated every '\n' to CRLF on disk, which made the
+    // catalog's byte compare-first ("identical -> skip") permanently false --
+    // every boot re-swapped and logged "regenerated". Enumerated consequence:
+    // ini rebuilds now emit LF endings (the lexer reads both; the text-mode
+    // scan already normalized CRLF away, so scanned content is unchanged).
+    if (_wfopen_s(&f, tmp.c_str(), L"wb") != 0 || !f) {
         UE_LOGW("config: %s could not open multivoid.ini.new for write", what);
         return false;
     }
