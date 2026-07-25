@@ -90,9 +90,12 @@ jobs:
         run: |
           pwsh -File tools/release/judge.ps1 -TagName '${{ steps.resolve.outputs.tag-name }}' -TagShaEvidence '${{ steps.resolve.outputs.tag-sha }}'
           $code = $LASTEXITCODE
+          # Explicit exits: without them the step ends with the child's
+          # $LASTEXITCODE (10) and the no-op verdict turned the job RED --
+          # caught live by the drill matrix's double-dispatch drill.
           switch ($code) {
-            0  { 'verdict=publish'           | Out-File -Append $env:GITHUB_OUTPUT }
-            10 { 'verdict=already_published' | Out-File -Append $env:GITHUB_OUTPUT }
+            0  { 'verdict=publish'           | Out-File -Append $env:GITHUB_OUTPUT; exit 0 }
+            10 { 'verdict=already_published' | Out-File -Append $env:GITHUB_OUTPUT; exit 0 }
             default { exit 1 }
           }
 
