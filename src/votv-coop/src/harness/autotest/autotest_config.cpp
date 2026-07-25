@@ -208,6 +208,88 @@ void RunConfigSelftest() {
         }
     }
 
+    // ---- arc-2 T3b/T4 drills: section placement, validation refusal, the
+    // unified vocabulary -- on a synthetic HEADERED file (the skeleton shape).
+    if (!dirA.empty()) {
+        const std::wstring dir(dirA.begin(), dirA.end());
+        const std::wstring wrk = dir + L"\\__headered_drill__.ini";
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("; banner\n\n[net]\nnet.nick=Pelmentor\n\n[player]\n\n[ui]\n"
+                           "\n[voice]\n\n[dev]\ndevkeys=1\nNAMEPLATE=0\n", f);
+                std::fclose(f);
+            }
+        }
+        auto expect = [&](const char* what, bool ok) {
+            if (ok) UE_LOGI("config-selftest: arc2 %s ok", what);
+            else { UE_LOGW("config-selftest: arc2 FAIL %s", what); ++fail; }
+        };
+        auto lineIndexOf = [&](const char* prefix) {
+            std::vector<std::string> ls;
+            cfg::SelftestListLines(wrk, ls);
+            for (size_t i = 0; i < ls.size(); ++i)
+                if (ls[i].rfind(prefix, 0) == 0) return static_cast<int>(i);
+            return -1;
+        };
+        // Drill A: NEW key inserts at its section end, not EOF ([ui] block).
+        expect("write ui.netstats=1 returns true",
+               cfg::SelftestWriteValue(wrk, "ui.netstats", "1"));
+        {
+            const int ui = lineIndexOf("[ui]");
+            const int k = lineIndexOf("ui.netstats=1");
+            const int voice = lineIndexOf("[voice]");
+            expect("ui.netstats landed inside [ui]", ui >= 0 && k > ui && k < voice);
+        }
+        // Drill B: the MOVE -- NAMEPLATE=0 sits in [dev] (wrong section, N==1);
+        // writing nameplate relocates the rewritten line under [player] with
+        // canonical spelling.
+        expect("write nameplate=1 returns true",
+               cfg::SelftestWriteValue(wrk, "nameplate", "1"));
+        {
+            const int player = lineIndexOf("[player]");
+            const int k = lineIndexOf("nameplate=1");
+            const int ui = lineIndexOf("[ui]");
+            expect("nameplate MOVED under [player], canonical spelling",
+                   player >= 0 && k > player && k < ui && lineIndexOf("NAMEPLATE") < 0);
+        }
+        // Drill C: T3b refusal -- garbage on a typed row is never persisted.
+        {
+            std::vector<std::string> before;
+            cfg::SelftestListLines(wrk, before);
+            expect("write ui.netstats=banana REFUSED",
+                   !cfg::SelftestWriteValue(wrk, "ui.netstats", "banana"));
+            std::vector<std::string> after;
+            cfg::SelftestListLines(wrk, after);
+            expect("file unchanged after refusal", before == after);
+            expect("write desk_diag_ms=99999999 (out of range) REFUSED",
+                   !cfg::SelftestWriteValue(wrk, "desk_diag_ms", "99999999"));
+        }
+        // Drill D: the unified vocabulary + occurrence rule on the flag layer.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("yes_key=yes\non_key=on\nno_key=no\nempty_key=\ngarbage_key=2\n"
+                           "MIXED_case=1\ndup_gav=banana\ndup_gav=1\n", f);
+                std::fclose(f);
+            }
+            expect("=yes -> true", cfg::SelftestFlagTriState(wrk, "yes_key") == 1);
+            expect("=on -> true", cfg::SelftestFlagTriState(wrk, "on_key") == 1);
+            expect("=no -> false", cfg::SelftestFlagTriState(wrk, "no_key") == -1);
+            expect("present-but-empty -> garbage(0)",
+                   cfg::SelftestFlagTriState(wrk, "empty_key") == 0);
+            expect("=2 -> garbage(0)", cfg::SelftestFlagTriState(wrk, "garbage_key") == 0);
+            expect("wrong-case key visible to the flag layer (ci occurrence)",
+                   cfg::SelftestFlagTriState(wrk, "mixed_case") == 1);
+            const cfg::IniSelftestRead cs = cfg::SelftestReadValue(wrk, "mixed_case");
+            expect("wrong-case key visible to the string layer too",
+                   cs.found && cs.value == "1");
+            expect("garbage-above-valid dup: authoritative line wins -> garbage(0)",
+                   cfg::SelftestFlagTriState(wrk, "dup_gav") == 0);
+        }
+        ::DeleteFileW(wrk.c_str());
+    }
+
     // Fault injection (design T4 must-FAIL control): a mid-stream error must
     // yield Unreadable(2) -- with lines already delivered and with none.
     for (const int n : {2, 0}) {
