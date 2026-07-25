@@ -536,6 +536,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_weather.cpp
     src/harness/autotest/autotest_worldctx.cpp
     src/harness/autotest/autotest_worldrules.cpp
+    src/harness/autotest/autotest_config.cpp
     src/harness/autotest/autotest_dispatch.cpp
     src/harness/autotest/autotest_damage.cpp
     src/harness/autotest/autotest_dmghazard.cpp

@@ -103,6 +103,15 @@ DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
 void RunAutonomousFlashlightTest();
 DWORD WINAPI FlashlightTestThread(LPVOID arg);
 
+// Config-corpus selftest (ini rework arc 1, harness/autotest_config.cpp).
+// SOLO, role-agnostic, no session/settle (pure file ops). Runs the REAL ini
+// lexer over VOTVCOOP_CONFIG_CORPUS_DIR corpus files (both value layers, one
+// verdict line per file+key) + the tri-state controls (ENOENT -> Absent;
+// injected mid-stream failure -> Unreadable). The AFTER half of the design's
+// T4 instrument. Gated by env VOTVCOOP_RUN_CONFIG_SELFTEST="1".
+void RunConfigSelftest();
+DWORD WINAPI ConfigSelftestThread(LPVOID arg);
+
 // Phase 5W: autonomous weather sync test (harness/autotest_weather.cpp).
 // Host-only. After stabilization,
 // calls weather_rain::DebugForceRain to force rain on / off / on / off

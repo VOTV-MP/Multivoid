@@ -67,6 +67,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
     // peer's puppet should reflect it via the ItemActivate wire path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);
+    // Config-corpus selftest (ini rework arc 1): solo, role-agnostic; runs the real
+    // ini lexer over a corpus dir + the tri-state fault-injection controls.
+    SpawnIf("VOTVCOOP_RUN_CONFIG_SELFTEST", "config-corpus selftest", &ConfigSelftestThread, role);
     // Phase 5W weather: host-only; forces rain ON/OFF cycles, client applies via wire.
     SpawnIf("VOTVCOOP_RUN_WEATHER_TEST", "weather test", &WeatherTestThread, role);
     // Phase 5W Inc-fix-2 red sky: host-only; visually unambiguous variant.

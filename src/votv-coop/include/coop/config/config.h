@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 
 #include <string>
+#include <vector>
 
 namespace coop::config {
 
@@ -81,5 +82,22 @@ bool MasterEnabled();
 // tolerant. Returns false if the file is missing, the key is absent, or the
 // key is set to 0/false.
 bool IsIniKeyTrue(const char* key);
+
+// ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----
+// Path-parameterized twins of the two readers + the raw line list + a failing-
+// source scan: the env-gated autotest (VOTVCOOP_RUN_CONFIG_SELFTEST) runs the
+// REAL lexer over corpus ini files and proves the tri-state branches. Not for
+// product use -- product code reads only the module-dir ini via the API above.
+// `scan` codes: 0 = Ok (clean end of stream), 1 = Absent (ENOENT),
+// 2 = Unreadable (open failure other than ENOENT, or mid-stream read error).
+struct IniSelftestRead {
+    int scan = 0;
+    bool found = false;
+    std::string value;
+};
+IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key);
+int SelftestFlagTriState(const std::wstring& path, const char* key);
+int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
+int SelftestScanWithFailure(int failAfterLines);
 
 }  // namespace coop::config

@@ -86,27 +86,104 @@ static bool ParseIniLine(const std::string& line, std::string& key, std::string&
 // threads (render: skins-panel RequestSkin / voice-panel device save; game: boot
 // default-writes) -- an unserialized read-modify-write pair can interleave and one
 // writer rebuilds the file from the other's half-written state. Readers take it too
-// so a read never observes the (pre-atomic-rename) transition.
+// so a read never observes the (pre-atomic-rename) transition. (Until 2026-07-25
+// the FLAG reader did NOT take it -- this comment was false; the arc-1 primitive
+// funnels every consumer through the lock-holding public API.)
 static std::mutex g_iniMutex;
+
+// ---- the ONE ini line primitive (config rework arc 1, 2026-07-25) ------------
+// THREE fixed line buffers used to ship for one file format (128 flag / 256
+// reader / 512 writer chunk). A line longer than its consumer's buffer SPLIT,
+// and a tail chunk whose bytes parsed as "key=..." became a PHANTOM KEY (live
+// in 2 of the 4 dev-rig inis; design F8/F31). One UNBOUNDED reader retires the
+// class: every consumer sees whole lines, verbatim (trailing newline kept).
+//
+// The scan verdict is a TRI-STATE (design F37/F38):
+//   Ok         -- clean end of stream (feof, no ferror): a caller's ABSENT
+//                 verdict is authoritative;
+//   Absent     -- the file does not exist (ENOENT at open);
+//   Unreadable -- open failed for any OTHER reason (share lock, perms), or a
+//                 MID-STREAM read error. fgets' NULL conflates EOF with stream
+//                 error; before this, a mid-stream failure read as "absent" for
+//                 every key past it, and the writer rebuilt the file from the
+//                 truncated prefix (the 2026-07-02 loss class, one layer deeper).
+enum class IniScan { Ok = 0, Absent = 1, Unreadable = 2 };
+
+// One line, unbounded: accumulate fgets chunks until the newline arrives.
+// True = a line is delivered (verbatim, incl. '\n' when the file carries one).
+static bool ReadOneLine(FILE* f, std::string& out) {
+    out.clear();
+    char buf[512];
+    while (std::fgets(buf, sizeof(buf), f)) {
+        out += buf;
+        if (!out.empty() && out.back() == '\n') return true;
+    }
+    return !out.empty();  // final line without a trailing newline
+}
+
+// The line SOURCE seam: +1 = line delivered, 0 = clean end, -1 = stream error.
+// Production wraps FILE*; the config selftest injects a failing source to prove
+// the ferror branch returns Unreadable, never Absent (design T4 fault injection).
+struct LineSource {
+    int (*next)(void* ctx, std::string& out);
+    void* ctx;
+};
+
+static int FileLineSourceNext(void* ctx, std::string& out) {
+    FILE* f = static_cast<FILE*>(ctx);
+    if (ReadOneLine(f, out)) return 1;
+    return std::ferror(f) ? -1 : 0;
+}
+
+template <typename Fn>
+static IniScan ScanLineSource(LineSource src, Fn&& cb) {
+    std::string line;
+    for (;;) {
+        const int r = src.next(src.ctx, line);
+        if (r < 0) return IniScan::Unreadable;
+        if (r == 0) return IniScan::Ok;
+        cb(line);
+    }
+}
+
+template <typename Fn>
+static IniScan ScanIniFileAt(const std::wstring& path, Fn&& cb) {
+    FILE* f = nullptr;
+    const errno_t rc = _wfopen_s(&f, path.c_str(), L"r");
+    if (rc != 0 || !f) return rc == ENOENT ? IniScan::Absent : IniScan::Unreadable;
+    const IniScan st = ScanLineSource(LineSource{&FileLineSourceNext, f}, cb);
+    std::fclose(f);
+    return st;
+}
+
+static std::wstring IniPath() { return ModuleDir() + L"\\multivoid.ini"; }
+
+// Path-parameterized reader core (no lock -- public wrappers hold it; the
+// selftest feeds corpus files). Match semantics UNCHANGED in arc 1: first
+// case-SENSITIVE key occurrence (the unified ci rule lands with the arc-2
+// layer flip). On Absent/Unreadable the caller still receives `def` -- the
+// tri-state reaches discriminating callers (seeder, arc-2 mint gate) via out.
+static std::string ReadIniValueAt(const std::wstring& path, const char* key,
+                                  const char* def, IniScan* scanOut) {
+    std::string result = def;
+    bool found = false;
+    const IniScan st = ScanIniFileAt(path, [&](const std::string& line) {
+        if (found) return;
+        std::string k, v;
+        if (ParseIniLine(line, k, v) && k == key) { result = v; found = true; }
+    });
+    if (scanOut) *scanOut = st;
+    return result;
+}
 
 std::string ReadIniValue(const char* key, const char* def) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
-    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return def;
-    std::string result = def;
-    char line[256];
-    while (std::fgets(line, sizeof(line), f)) {
-        std::string k, v;
-        if (ParseIniLine(line, k, v) && k == key) { result = v; break; }
-    }
-    std::fclose(f);
-    return result;
+    return ReadIniValueAt(IniPath(), key, def, nullptr);
 }
 
 void WriteIniValue(const char* key, const char* value) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
-    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
+    const std::wstring path = IniPath();
     // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
     // would split the "key=value" line and corrupt the NEXT key on read-back), then
     // edge-trim. Interior spaces are part of the value (device names) and round-trip
@@ -149,18 +226,28 @@ void WriteIniValue(const char* key, const char* value) {
             return;
         }
         if (rc == 0 && f) {
-            char line[512];
-            while (std::fgets(line, sizeof(line), f)) {
-                std::string s(line);
-                std::string k, v;
-                if (!found && ParseIniLine(s, k, v) && k == key) {
-                    lines.push_back(newLine);
-                    found = true;
-                } else {
-                    lines.push_back(s);
-                }
-            }
+            // Whole lines via the arc-1 primitive: the old 512-byte chunk loop
+            // ran ParseIniLine per CHUNK, so a long line whose tail parsed as
+            // the key under write got spliced (design F31). Dead class now.
+            const IniScan st =
+                ScanLineSource(LineSource{&FileLineSourceNext, f}, [&](const std::string& s) {
+                    std::string k, v;
+                    if (!found && ParseIniLine(s, k, v) && k == key) {
+                        lines.push_back(newLine);
+                        found = true;
+                    } else {
+                        lines.push_back(s);
+                    }
+                });
             std::fclose(f);
+            if (st == IniScan::Unreadable) {
+                // Mid-stream read error: the collected prefix is TRUNCATED.
+                // Rebuilding from it is the 2026-07-02 loss shape one layer
+                // deeper (fgets NULL == silent EOF before this primitive).
+                UE_LOGW("config: WriteIniValue('%s') SKIPPED -- read error mid-file; "
+                        "refusing to rebuild the ini from a truncated prefix", key);
+                return;
+            }
         }
     }
     if (!found) {
@@ -453,24 +540,28 @@ std::string NormalizeFlagLine(const char* line) {
     return s;
 }
 
-// Scan multivoid.ini for `key=...`:  +1 = true,  0 = absent,  -1 = false.
-int LookupTriState(const char* key) {
-    const std::wstring path = ModuleDir() + L"\\multivoid.ini";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return 0;
-    char line[128];
-    std::string trueForm  = std::string(key) + "=1";
-    std::string trueAlt   = std::string(key) + "=true";
-    std::string falseForm = std::string(key) + "=0";
-    std::string falseAlt  = std::string(key) + "=false";
+// Scan an ini for `key=...`:  +1 = true,  0 = absent,  -1 = false. Match
+// semantics UNCHANGED in arc 1 (first RECOGNIZED value, ci, comment-stripped --
+// the F25 legacy rule; it dies with the arc-2 layer flip). Lines are unbounded
+// via the primitive; no lock here -- public wrappers hold g_iniMutex.
+int LookupTriStateAt(const std::wstring& path, const char* key) {
+    const std::string trueForm  = std::string(key) + "=1";
+    const std::string trueAlt   = std::string(key) + "=true";
+    const std::string falseForm = std::string(key) + "=0";
+    const std::string falseAlt  = std::string(key) + "=false";
     int verdict = 0;
-    while (std::fgets(line, sizeof(line), f)) {
-        const std::string s = NormalizeFlagLine(line);
-        if (s == trueForm || s == trueAlt) { verdict =  1; break; }
-        if (s == falseForm || s == falseAlt) { verdict = -1; break; }
-    }
-    std::fclose(f);
+    ScanIniFileAt(path, [&](const std::string& line) {
+        if (verdict != 0) return;
+        const std::string s = NormalizeFlagLine(line.c_str());
+        if (s == trueForm || s == trueAlt) { verdict = 1; return; }
+        if (s == falseForm || s == falseAlt) { verdict = -1; }
+    });
     return verdict;
+}
+
+int LookupTriState(const char* key) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    return LookupTriStateAt(IniPath(), key);
 }
 
 }  // namespace
@@ -483,6 +574,52 @@ bool MasterEnabled() {
 
 bool IsIniKeyTrue(const char* key) {
     return LookupTriState(key) == 1;
+}
+
+// ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----
+// Path-parameterized twins of the two readers + the raw line list + a failing-
+// source scan, so the env-gated autotest (autotest_config.cpp) can run the REAL
+// lexer over a corpus of ini files and prove the tri-state branches. Not for
+// product use: product code reads only the module-dir ini via the public API.
+
+IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key) {
+    IniScan st = IniScan::Ok;
+    IniSelftestRead r;
+    const std::string sentinel = "\x01<absent>";
+    r.value = ReadIniValueAt(path, key, sentinel.c_str(), &st);
+    r.found = (r.value != sentinel);
+    if (!r.found) r.value.clear();
+    r.scan = static_cast<int>(st);
+    return r;
+}
+
+int SelftestFlagTriState(const std::wstring& path, const char* key) {
+    return LookupTriStateAt(path, key);
+}
+
+int SelftestListLines(const std::wstring& path, std::vector<std::string>& out) {
+    const IniScan st = ScanIniFileAt(path, [&](const std::string& line) { out.push_back(line); });
+    return static_cast<int>(st);
+}
+
+namespace {
+struct FailingSourceCtx { int remaining; };
+int FailingSourceNext(void* ctx, std::string& out) {
+    auto* c = static_cast<FailingSourceCtx*>(ctx);
+    if (c->remaining <= 0) return -1;   // injected mid-stream error
+    --c->remaining;
+    out = "injected_key=1\n";
+    return 1;
+}
+}  // namespace
+
+int SelftestScanWithFailure(int failAfterLines) {
+    FailingSourceCtx ctx{failAfterLines};
+    const IniScan st =
+        ScanLineSource(LineSource{&FailingSourceNext, &ctx}, [](const std::string&) {});
+    // The branch under test: a mid-stream error must yield Unreadable (2),
+    // never a clean Ok that would read as ABSENT downstream (design F38).
+    return static_cast<int>(st);
 }
 
 }  // namespace coop::config
