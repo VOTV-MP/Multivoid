@@ -183,9 +183,11 @@ bool PanelOpen() {
 
 void Dismiss() { g_dismissed.store(true, std::memory_order_relaxed); }
 
-bool KeepDuplicateLine(const std::string& key, int keepLineNo) {
-    const bool ok = coop::config::RemoveDuplicateKeyLines(key.c_str(), keepLineNo);
-    if (ok) RunBootSweep();
+bool KeepDuplicateLine(const std::string& key, const std::string& keepValue) {
+    const bool ok = coop::config::RemoveDuplicateKeyLines(key.c_str(), keepValue.c_str());
+    // Re-sweep on BOTH outcomes: success shows the resolved state; a refusal
+    // means the file changed under the panel and the rows are stale.
+    RunBootSweep();
     return ok;
 }
 

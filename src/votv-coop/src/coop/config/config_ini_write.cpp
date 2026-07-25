@@ -74,6 +74,19 @@ bool AtomicWriteLines(const std::wstring& path, const std::vector<std::string>& 
     return true;
 }
 
+// The ini section a key belongs to, for write placement and the reformat: a
+// literal row's section, or "ui" for the composed ui.font.<role> family
+// (audit IMP-3: the writer and the reformat MUST share this resolution --
+// FindRow alone is blind to composed keys, so a font write on a headered file
+// fell back to EOF-append while the reformat placed the same key under [ui]).
+// nullptr = unknown key (never placed; today's append behavior).
+const char* SectionForKey(const char* key) {
+    if (const config_registry::Row* row = config_registry::FindRow(key))
+        return row->section;
+    if (config_registry::IsKnownKey(key)) return "ui";  // composed = fonts
+    return nullptr;
+}
+
 // Path-parameterized writer core (no lock -- the public wrapper holds it; the
 // selftest drives COPIES of corpus files, never the live ini).
 bool WriteIniValueAt(const std::wstring& path, const char* key, const char* value) {
@@ -85,7 +98,7 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
     for (const char* p = value; *p; ++p)
         if (*p != '\n' && *p != '\r') safe.push_back(*p);
     safe = internal::TrimEdgesStr(safe);
-    const config_registry::Row* row = config_registry::FindRow(key);
+    const char* wantSec = SectionForKey(key);
     if (!ValueValidForKey(key, safe, nullptr)) {
         UE_LOGW("config: WriteIniValue('%s'='%s') REFUSED -- the value would be rejected "
                 "on read (registry kind/range/tokens); not persisting garbage (T3b)",
@@ -128,7 +141,7 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
             std::string hdr;
             if (IsSectionHeader(s, hdr)) {
                 curSection = hdr;
-                inWantSection = row && _stricmp(hdr.c_str(), row->section) == 0;
+                inWantSection = wantSec && _stricmp(hdr.c_str(), wantSec) == 0;
                 if (inWantSection) sectionEndIdx = static_cast<int>(lines.size());
             } else if (inWantSection && !internal::TrimEdgesStr(s).empty()) {
                 sectionEndIdx = static_cast<int>(lines.size());
@@ -157,6 +170,14 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
                 "mid-read; refusing to rebuild the file from a partial view", key);
         return false;
     }
+    // Only the file's LAST line can lack a trailing newline; EVERY insertion
+    // below lands after an existing line, so normalize once HERE -- an insert
+    // after a newline-less final line would splice two lines into one
+    // ("[dev]devkeys=1"), breaking both on the next parse (audit CRIT-1; the
+    // old fix lived only in the EOF-append branch and missed the section
+    // inserts). Parse-neutral: '\n' at EOF changes no verdict.
+    if (!lines.empty() && !lines.back().empty() && lines.back().back() != '\n')
+        lines.back() += "\n";
     if (found) {
         // The MOVE: only at N==1 and only when the line sits OUTSIDE its
         // section in a headered file (e.g. pasted at EOF). The rewritten line
@@ -173,25 +194,11 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
         // instead of the EOF append.
         lines.insert(lines.begin() + (sectionEndIdx + 1), newLine);
     } else {
-        // Make sure the appended key sits on its own line even if the file's
-        // last line had no trailing newline.
-        if (!lines.empty() && !lines.back().empty() && lines.back().back() != '\n')
-            lines.back() += "\n";
-        lines.push_back(newLine);
+        lines.push_back(newLine);  // headerless/unknown key: today's EOF append
     }
     if (!AtomicWriteLines(path, lines, "WriteIniValue")) return false;
     UE_LOGI("config: persisted %s=%s", key, safe.c_str());
     return true;
-}
-
-// The ini section a key belongs to, for the reformat's placement: a literal
-// row's section, or "ui" for the composed ui.font.<role> family. nullptr =
-// unknown key (never placed; stays in the residue).
-const char* SectionForKey(const std::string& key) {
-    if (const config_registry::Row* row = config_registry::FindRow(key.c_str()))
-        return row->section;
-    if (config_registry::IsKnownKey(key.c_str())) return "ui";  // composed = fonts
-    return nullptr;
 }
 
 }  // namespace
@@ -262,32 +269,72 @@ bool WriteIniValue(const char* key, const char* value) {
     return WriteIniValueAt(internal::LiveIniPath(), key, value);
 }
 
-bool RemoveDuplicateKeyLines(const char* key, int keepLineNo) {
-    std::lock_guard<std::mutex> lk(internal::IniMutex());
-    const std::wstring path = internal::LiveIniPath();
+// Correlates by VALUE, never by line number (audit CRIT-2): the panel's
+// snapshot ages while it sits on screen, and an unrelated write elsewhere
+// shifts every line index -- a stale index could delete BOTH copies of a
+// duplicate identity key. The kept line = the FIRST ci-key line whose
+// comment-stripped value equals what the user clicked; if NO current line
+// carries that value the file changed underneath -> refuse, the caller
+// re-sweeps and the panel shows fresh state.
+static bool RemoveDuplicateKeyLinesAt(const std::wstring& path, const char* key,
+                                      const char* keepValue) {
     std::vector<std::string> lines;
     if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); }) !=
         IniScan::Ok) {
         UE_LOGW("config: keep-line for '%s' SKIPPED -- ini unreadable; nothing deleted", key);
         return false;
     }
+    auto displayValue = [](const std::string& v) {
+        return internal::StripInlineCommentStr(internal::TrimEdgesStr(v), true);
+    };
+    // Pass 1: does the clicked value still exist for this key?
+    bool valuePresent = false;
+    for (const auto& l : lines) {
+        std::string k, v;
+        if (internal::ParseIniKeyValue(l, k, v) && _stricmp(k.c_str(), key) == 0 &&
+            displayValue(v) == keepValue) {
+            valuePresent = true;
+            break;
+        }
+    }
+    if (!valuePresent) {
+        UE_LOGW("config: keep-line for '%s' REFUSED -- no current line carries the chosen "
+                "value (the file changed since the report); re-sweeping instead", key);
+        return false;
+    }
+    // Pass 2: keep the FIRST line with the chosen value; drop every other
+    // ci-occurrence of the key.
     std::vector<std::string> out;
     out.reserve(lines.size());
     int removed = 0;
-    for (size_t i = 0; i < lines.size(); ++i) {
+    bool kept = false;
+    for (const auto& l : lines) {
         std::string k, v;
-        if (internal::ParseIniKeyValue(lines[i], k, v) && _stricmp(k.c_str(), key) == 0 &&
-            static_cast<int>(i + 1) != keepLineNo) {
-            ++removed;
+        if (internal::ParseIniKeyValue(l, k, v) && _stricmp(k.c_str(), key) == 0) {
+            if (!kept && displayValue(v) == keepValue) {
+                kept = true;
+                out.push_back(l);
+            } else {
+                ++removed;
+            }
             continue;
         }
-        out.push_back(lines[i]);
+        out.push_back(l);
     }
-    if (removed == 0) return false;  // stale panel state (file changed underneath)
+    if (removed == 0) return false;  // nothing to delete (already resolved)
     if (!AtomicWriteLines(path, out, "keep-line dedup")) return false;
-    UE_LOGI("config: duplicate resolution for '%s' -- kept line %d, removed %d line(s) "
-            "(owner action from the config review)", key, keepLineNo, removed);
+    UE_LOGI("config: duplicate resolution for '%s' -- kept value '%s', removed %d line(s) "
+            "(owner action from the config review)", key, keepValue, removed);
     return true;
+}
+
+bool RemoveDuplicateKeyLines(const char* key, const char* keepValue) {
+    std::lock_guard<std::mutex> lk(internal::IniMutex());
+    return RemoveDuplicateKeyLinesAt(internal::LiveIniPath(), key, keepValue);
+}
+
+bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const char* keepValue) {
+    return RemoveDuplicateKeyLinesAt(path, key, keepValue);
 }
 
 bool ReformatLiveIni(ReformatStats& stats) {
@@ -393,7 +440,7 @@ bool ReformatLiveIni(ReformatStats& stats) {
             if (g.second.size() != 1) continue;  // frozen differing pair: never repositioned
             const size_t i = g.second[0];
             if (consumed[i] || deleted[i]) continue;
-            const char* keySec = SectionForKey(g.first);
+            const char* keySec = SectionForKey(g.first.c_str());
             if (!keySec || _stricmp(keySec, sec) != 0) continue;
             emitKeyLine(out, i);
             ++stats.placed;

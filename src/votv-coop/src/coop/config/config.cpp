@@ -171,6 +171,8 @@ static IniScan ScanIniFileAt(const std::wstring& path, Fn&& cb) {
 
 static std::wstring IniPath() { return ModuleDir() + L"\\multivoid.ini"; }
 
+static std::string StripInlineComment(const std::string& v, bool wsPrecededOnly);
+
 // ---- the TU-private seams for the write TU (config_internal.h) --------------
 namespace internal {
 std::mutex& IniMutex() { return g_iniMutex; }
@@ -182,6 +184,9 @@ IniScan ScanIniFile(const std::wstring& path,
 std::string TrimEdgesStr(const std::string& s) { return TrimEdges(s); }
 bool ParseIniKeyValue(const std::string& line, std::string& key, std::string& value) {
     return ParseIniLine(line, key, value);
+}
+std::string StripInlineCommentStr(const std::string& v, bool wsPrecededOnly) {
+    return StripInlineComment(v, wsPrecededOnly);
 }
 }  // namespace internal
 

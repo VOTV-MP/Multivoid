@@ -51,8 +51,10 @@ void GetSnapshot(std::vector<Row>& out);
 bool PanelOpen();       // rows exist AND not dismissed this session
 void Dismiss();         // session-local; a fresh launch re-arms by re-sweeping
 
-// Owner actions (panel buttons). Both re-run the sweep on success.
-bool KeepDuplicateLine(const std::string& key, int keepLineNo);
+// Owner actions (panel buttons). Both re-run the sweep on success; the keep
+// action also re-sweeps on REFUSAL (a stale snapshot means the panel must
+// show fresh state). Correlated by VALUE (audit CRIT-2), never line number.
+bool KeepDuplicateLine(const std::string& key, const std::string& keepValue);
 struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0; };
 ReformatOutcome ReformatNow();
 

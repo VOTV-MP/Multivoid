@@ -34,8 +34,10 @@ IniScan ScanIniFile(const std::wstring& path,
                     const std::function<void(const std::string&)>& cb);
 
 // The shared lexer pieces: edge-trim; split "key=value" (edge-trimmed key,
-// interior-verbatim value; false for '='-less lines / empty keys).
+// interior-verbatim value; false for '='-less lines / empty keys); the T5
+// inline-comment strip (wsPrecededOnly = the string layer's narrowing).
 std::string TrimEdgesStr(const std::string& s);
 bool ParseIniKeyValue(const std::string& line, std::string& key, std::string& value);
+std::string StripInlineCommentStr(const std::string& v, bool wsPrecededOnly);
 
 }  // namespace coop::config::internal

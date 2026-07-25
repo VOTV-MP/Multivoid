@@ -23,8 +23,15 @@ constexpr float kCombinedMax = 4.0f;
 
 // The user-pref clamp range is OWNED by the ui.scale registry row (arc 2) --
 // the slider (dev_menu) and this clamp read the same [lo, hi]; no local twin.
-float UserMin() { return static_cast<float>(coop::config_registry::FindRow("ui.scale")->lo); }
-float UserMax() { return static_cast<float>(coop::config_registry::FindRow("ui.scale")->hi); }
+// Row pointer latched once (perf audit note: these run per frame while the F1
+// menu is open, on the render thread -- a table typo must degrade to the
+// defaults, never null-deref).
+const coop::config_registry::Row* UiScaleRow() {
+    static const coop::config_registry::Row* s = coop::config_registry::FindRow("ui.scale");
+    return s;
+}
+float UserMin() { const auto* r = UiScaleRow(); return r ? static_cast<float>(r->lo) : 0.75f; }
+float UserMax() { const auto* r = UiScaleRow(); return r ? static_cast<float>(r->hi) : 1.75f; }
 
 // All render-thread only (the Present detour thread), like the rest of ui/.
 float g_res = 1.0f;      // quantized resolution factor (height / 1080)

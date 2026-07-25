@@ -265,6 +265,64 @@ void RunConfigSelftest() {
             expect("write desk_diag_ms=99999999 (out of range) REFUSED",
                    !cfg::SelftestWriteValue(wrk, "desk_diag_ms", "99999999"));
         }
+        // Drill E (audit CRIT-1): a headered file whose LAST line has NO
+        // trailing newline; a section insert into that last section must not
+        // splice two lines into one.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("[net]\nnet.nick=Pelmentor\n\n[dev]\ndevkeys=1", f);  // no final \n
+                std::fclose(f);
+            }
+            expect("write freecam=1 into newline-less [dev] returns true",
+                   cfg::SelftestWriteValue(wrk, "freecam", "1"));
+            const cfg::IniSelftestRead fc = cfg::SelftestReadValue(wrk, "freecam");
+            const cfg::IniSelftestRead dk = cfg::SelftestReadValue(wrk, "devkeys");
+            expect("no line splice: freecam=1 readable AND devkeys=1 intact",
+                   fc.found && fc.value == "1" && dk.found && dk.value == "1");
+        }
+        // Drill F (audit IMP-3): a COMPOSED key (ui.font.chat) gets section
+        // placement too -- same SectionForKey as the reformat.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("[ui]\n\n[dev]\ndevkeys=1\n", f);
+                std::fclose(f);
+            }
+            expect("write ui.font.chat=roboto returns true",
+                   cfg::SelftestWriteValue(wrk, "ui.font.chat", "roboto"));
+            const int ui = lineIndexOf("[ui]");
+            const int k = lineIndexOf("ui.font.chat=roboto");
+            const int dev = lineIndexOf("[dev]");
+            expect("composed key landed inside [ui]", ui >= 0 && k > ui && k < dev);
+        }
+        // Drill G (audit CRIT-2): keep-duplicate correlates by VALUE; a stale
+        // value refuses and deletes nothing.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("aaa=1\ndup.key=stale\nbbb=2\ndup.key=live\nccc=3\n", f);
+                std::fclose(f);
+            }
+            std::vector<std::string> before;
+            cfg::SelftestListLines(wrk, before);
+            expect("keep-dup with a VANISHED value REFUSED",
+                   !cfg::SelftestRemoveDuplicates(wrk, "dup.key", "never-existed"));
+            std::vector<std::string> mid;
+            cfg::SelftestListLines(wrk, mid);
+            expect("file unchanged after the refusal", before == mid);
+            expect("keep-dup 'live' returns true",
+                   cfg::SelftestRemoveDuplicates(wrk, "dup.key", "live"));
+            const cfg::IniSelftestRead kd = cfg::SelftestReadValue(wrk, "dup.key");
+            std::vector<std::string> post;
+            cfg::SelftestListLines(wrk, post);
+            int occ = 0;
+            for (const auto& l : post)
+                if (l.rfind("dup.key=", 0) == 0) ++occ;
+            expect("exactly the 'live' line survives; neighbors intact",
+                   kd.found && kd.value == "live" && occ == 1 &&
+                   post.size() == before.size() - 1);
+        }
         // Drill D: the unified vocabulary + occurrence rule on the flag layer.
         {
             FILE* f = nullptr;

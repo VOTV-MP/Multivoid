@@ -116,11 +116,14 @@ int ListLiveIniLines(std::vector<std::string>& out);
 // validation, never two.
 bool ValueValidForKey(const char* key, const std::string& rawValue, std::string* reasonOut);
 
-// T1b owner action (review panel "keep line N" button): drop every line whose
-// key ci-equals `key` EXCEPT the 1-based line number `keepLineNo`. The
-// automatic write path never deletes; this is the owner-triggered resolution
-// of a differing-duplicate report. Atomic swap, same destruction guards.
-bool RemoveDuplicateKeyLines(const char* key, int keepLineNo);
+// T1b owner action (review panel "keep line" button): keep the FIRST line of
+// `key` whose comment-stripped value equals `keepValue`; drop every other
+// ci-occurrence. Correlated by VALUE, never by line number -- the panel's
+// snapshot ages, and a stale index could delete the wrong (or every) copy of
+// an identity key; refuses when no current line carries the chosen value.
+// The automatic write path never deletes; this is the owner-triggered
+// resolution of a differing-duplicate report. Atomic swap, same guards.
+bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 
 // T1b owner opt-in reformat (review panel button; NEVER automatic):
 //   - collapses value-identical duplicate key lines (keep the first);
@@ -171,5 +174,6 @@ int SelftestFlagTriState(const std::wstring& path, const char* key);
 int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
 int SelftestScanWithFailure(int failAfterLines);
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);
+bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const char* keepValue);
 
 }  // namespace coop::config
