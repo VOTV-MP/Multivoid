@@ -13,6 +13,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -92,6 +93,13 @@ static bool ParseIniLine(const std::string& line, std::string& key, std::string&
 // the FLAG reader did NOT take it -- this comment was false; the arc-1 primitive
 // funnels every consumer through the lock-holding public API.)
 static std::mutex g_iniMutex;
+
+// T10 state: did any LIVE-ini access hit UNREADABLE this launch, and is the
+// minted identity session-only (mint gate / failed persist)? Set only for the
+// module-dir ini -- selftest corpus paths never touch these. The boot sweep
+// reads them for the "identity not durable" / "ini unreadable" panel rows.
+static std::atomic<bool> g_iniUnreadableSeen{false};
+static std::atomic<bool> g_identityNotDurable{false};
 
 // ---- the ONE ini line primitive (config rework arc 1, 2026-07-25) ------------
 // THREE fixed line buffers used to ship for one file format (128 flag / 256
@@ -217,7 +225,10 @@ static std::string ReadIniValueAt(const std::wstring& path, const char* key,
 
 std::string ReadIniValue(const char* key, const char* def) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
-    return ReadIniValueAt(IniPath(), key, def, nullptr);
+    IniScan st = IniScan::Ok;
+    std::string v = ReadIniValueAt(IniPath(), key, def, &st);
+    if (st == IniScan::Unreadable) g_iniUnreadableSeen.store(true, std::memory_order_relaxed);
+    return v;
 }
 
 bool EnsureIniSkeleton() {
@@ -685,6 +696,22 @@ std::wstring ReadNickname() {
     return std::wstring(nick.begin(), nick.end());
 }
 
+// MINT GATE (arc 2, T6/F43): both computed identities mint-and-persist ONLY
+// when the ini's answer is AUTHORITATIVE (a clean scan said absent/malformed,
+// or the file itself is absent). On UNREADABLE (share lock, mid-stream read
+// error) the identity is SESSION-ONLY and WriteIniValue is never called --
+// the old path read a locked file as "absent", minted, and OVERWROTE the real
+// ini the moment the lock released (the lock-release overwrite race).
+// The T10 panel shows the "identity not durable" row for either outcome.
+
+// Reads a key from the LIVE ini with its scan verdict (locked wrapper).
+static std::string ReadLiveIniWithScan(const char* key, IniScan& st) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    std::string v = ReadIniValueAt(IniPath(), key, "", &st);
+    if (st == IniScan::Unreadable) g_iniUnreadableSeen.store(true, std::memory_order_relaxed);
+    return v;
+}
+
 std::string ReadPlayerSkin() {
     // v93 skins: the persisted body-skin choice, stored NEXT TO the player identity
     // (multivoid.ini "player_skin=", same file as player_guid -- user 2026-07-02).
@@ -692,14 +719,24 @@ std::string ReadPlayerSkin() {
     // curated converter-skin list (user: "для НОВЫХ пиров случайный скин из списка"),
     // filtered to paks present on this install -- hl_einstein_v1sc when none is.
     // Persisted immediately (like the guid), so the roll happens ONCE per identity.
-    std::string skin = ReadIniValue("player_skin", "");
+    IniScan st = IniScan::Ok;
+    std::string skin = ReadLiveIniWithScan("player_skin", st);
     if (!coop::skins::IsValidSkinName(skin)) {
         skin = coop::skins::PickRandomStarterSkin();
-        // Truthful persist log (F43 fix): the old line said "persisted"
-        // unconditionally -- false on a locked file.
-        const bool persisted = WriteIniValue("player_skin", skin.c_str());
-        UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (%s)", skin.c_str(),
-                persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
+        if (st == IniScan::Unreadable) {
+            g_identityNotDurable.store(true, std::memory_order_relaxed);
+            UE_LOGW("config: player_skin unreadable (ini locked/failing) -> '%s' "
+                    "SESSION-ONLY; mint gate refuses to write over an unreadable ini",
+                    skin.c_str());
+        } else {
+            // Truthful persist log (F43 fix): the old line said "persisted"
+            // unconditionally -- false on a locked file.
+            const bool persisted = WriteIniValue("player_skin", skin.c_str());
+            if (!persisted) g_identityNotDurable.store(true, std::memory_order_relaxed);
+            UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (%s)",
+                    skin.c_str(),
+                    persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
+        }
     }
     return skin;
 }
@@ -710,7 +747,8 @@ std::string ReadPlayerGuid() {
     // persist on first launch / if absent or malformed. 32 lowercase hex chars (128 bits).
     // Per-install identity is the accepted tradeoff (design 2.3 "go with guid"): a reinstall
     // or a different PC = a fresh inventory unless the player_guid= line is copied over.
-    std::string guid = ReadIniValue("player_guid", "");
+    IniScan st = IniScan::Ok;
+    std::string guid = ReadLiveIniWithScan("player_guid", st);
     bool ok = guid.size() == 32;
     if (ok) {
         for (char c : guid)
@@ -727,12 +765,24 @@ std::string ReadPlayerGuid() {
             const uint32_t r = rd();
             for (int n = 28; n >= 0; n -= 4) guid.push_back(kHex[(r >> n) & 0xF]);
         }
-        const bool persisted = WriteIniValue("player_guid", guid.c_str());
-        UE_LOGI("config: generated new player_guid=%s (%s)", guid.c_str(),
-                persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
+        if (st == IniScan::Unreadable) {
+            g_identityNotDurable.store(true, std::memory_order_relaxed);
+            UE_LOGW("config: player_guid unreadable (ini locked/failing) -> temp guid %s "
+                    "SESSION-ONLY; mint gate refuses to write over an unreadable ini "
+                    "(host-side coop_players/<guid>.json from this launch recovers on the "
+                    "first durable persist -- jsons are never deleted)", guid.c_str());
+        } else {
+            const bool persisted = WriteIniValue("player_guid", guid.c_str());
+            if (!persisted) g_identityNotDurable.store(true, std::memory_order_relaxed);
+            UE_LOGI("config: generated new player_guid=%s (%s)", guid.c_str(),
+                    persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
+        }
     }
     return guid;
 }
+
+bool IdentityNotDurable() { return g_identityNotDurable.load(std::memory_order_relaxed); }
+bool IniUnreadableSeen()  { return g_iniUnreadableSeen.load(std::memory_order_relaxed); }
 
 // ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
 // Since arc 2 (T4) the flag layer shares the unified occurrence rule with the
@@ -750,7 +800,7 @@ namespace {
 int LookupTriStateAt(const std::wstring& path, const char* key) {
     int verdict = 0;
     bool found = false;
-    ScanIniFileAt(path, [&](const std::string& line) {
+    const IniScan st = ScanIniFileAt(path, [&](const std::string& line) {
         if (found) return;
         std::string k, v;
         if (ParseIniLine(line, k, v) && _stricmp(k.c_str(), key) == 0) {
@@ -758,6 +808,8 @@ int LookupTriStateAt(const std::wstring& path, const char* key) {
             verdict = FlagVerdictFromValue(v);
         }
     });
+    if (st == IniScan::Unreadable && path == IniPath())
+        g_iniUnreadableSeen.store(true, std::memory_order_relaxed);
     return verdict;
 }
 

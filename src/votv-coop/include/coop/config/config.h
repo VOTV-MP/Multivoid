@@ -102,6 +102,15 @@ std::string ReadPlayerGuid();
 // scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
 std::string ReadPlayerSkin();
 
+// ---- T10 identity/durability state (set during the boot mints) --------------
+// True when this launch's guid/skin is SESSION-ONLY: the ini was UNREADABLE at
+// the mint (the gate refused to write over it -- the lock-release overwrite
+// race) or the mint's persist failed. / True when ANY live-ini access hit
+// UNREADABLE this launch (the ini layer dropped out for that read; the launch
+// runs on env+defaults there). Both feed the config review panel's rows.
+bool IdentityNotDurable();
+bool IniUnreadableSeen();
+
 // ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
 
 // Returns false ONLY if multivoid.ini contains `enabled=0` (or `enabled=false`)
