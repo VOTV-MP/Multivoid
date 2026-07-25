@@ -179,7 +179,9 @@ void Update(net::Session& session, void* localPlayer) {
                 // The test drops piles BEFORE this marker appears in the host log.
                 UE_LOGI("[PILE-1C] slot %d world-ready -- JOIN-WINDOW CLOSED (in-window host pile moves are "
                         "now save-time-key reconciled by the connect replay)", msg.senderPeerSlot);
-                if (coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe))
+                static const bool s_pileProbe =
+                    coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
+                if (s_pileProbe)
                     coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)");
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);

@@ -232,7 +232,9 @@ void SetReceivedMap(const MAP::IdMap& map) {
     // native finds no key-match (== untracked-on-host). Hole-tolerance verify: that kerfur stays unbound, every
     // OTHER kerfur binds correctly, no other native steals its eid (checked in EmitBindSummary).
     g_holeInjected = false; g_holeKey.clear(); g_holeEid = 0;
-    if (coop::config::ResolveFlag(::coop::config_registry::rows::force_kerfur_unmap) && !g_kerfurEntries.empty()) {
+    static const bool s_forceUnmap =
+        coop::config::ResolveFlag(::coop::config_registry::rows::force_kerfur_unmap);
+    if (s_forceUnmap && !g_kerfurEntries.empty()) {
         const MAP::IdEntry dropped = g_kerfurEntries.back();
         g_kerfurEntries.pop_back();
         g_holeInjected = true; g_holeKey = dropped.key; g_holeEid = dropped.eid;
