@@ -1,0 +1,6 @@
+{
+  "msvc_toolset": "14.51.36231",
+  "windows_sdk": "10.0.26100.0",
+  "build_core_sha256": "45c1ac9c8ebfcd903c782ac65c8fb2538b53b1c7604834631ba506d3e867b1c5",
+  "image_version": "20260714.173.1"
+}
