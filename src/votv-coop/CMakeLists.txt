@@ -382,6 +382,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_rain.cpp
     src/coop/world/weather_redsky.cpp
     src/coop/config/config.cpp
+    src/coop/config/config_registry.cpp
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp

@@ -3,6 +3,7 @@
 #include "ui/fonts.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
@@ -25,39 +26,56 @@ Family  g_roleFamily[kRoleCount] = { Family::Fixedsys, Family::Fixedsys, Family:
                                      Family::Roboto,   Family::Fixedsys };
 bool    g_rolesRead = false;     // ini read once; SetRoleFamily overrides after
 
+// The ini TOKEN spelling per family lives in the config registry
+// (config_registry::kFontFamilyTokens, same Family order) -- the registry owns
+// every key/value spelling (T2, arc 2); this table keeps the UI-only columns.
 struct FamilyDesc {
-    const char* iniValue;  // multivoid.ini ui.font token
     const char* label;     // UI label
     int regularId;         // RCDATA ids
     int boldId;
 };
 constexpr FamilyDesc kFamilies[kFamilyCount] = {
-    { "jetbrains", "JetBrains Mono", IDR_FONT_JBMONO_REGULAR,   IDR_FONT_JBMONO_BOLD },
-    { "roboto",    "Roboto",         IDR_FONT_ROBOTO_REGULAR,   IDR_FONT_ROBOTO_BOLD },
-    { "cascadia",  "Cascadia Code",  IDR_FONT_CASCADIA_REGULAR, IDR_FONT_CASCADIA_BOLD },
+    { "JetBrains Mono", IDR_FONT_JBMONO_REGULAR,   IDR_FONT_JBMONO_BOLD },
+    { "Roboto",         IDR_FONT_ROBOTO_REGULAR,   IDR_FONT_ROBOTO_BOLD },
+    { "Cascadia Code",  IDR_FONT_CASCADIA_REGULAR, IDR_FONT_CASCADIA_BOLD },
     // VOTV's own terminal pixel font (FSEX300 -> font_terminal). Single weight,
     // so the chat "bold" face reuses Regular. Covers Cyrillic (cmap-verified, 5992 cp).
-    { "fixedsys",  "Fixedsys (VOTV)", IDR_FONT_FIXEDSYS_REGULAR, IDR_FONT_FIXEDSYS_REGULAR },
+    { "Fixedsys (VOTV)", IDR_FONT_FIXEDSYS_REGULAR, IDR_FONT_FIXEDSYS_REGULAR },
 };
+static_assert(coop::config_registry::kFontFamilyCount ==
+                  static_cast<size_t>(kFamilyCount),
+              "Family enum and config_registry::kFontFamilyTokens must stay in lockstep");
+inline const char* FamilyToken(int fi) {
+    return coop::config_registry::kFontFamilyTokens[fi];
+}
 
+// The ini key SUFFIX per role lives in the config registry
+// (config_registry::kFontRoleKeys, same Role order) -- the composed key family
+// "ui.font.<role>" is enumerated there by reference (T2/F41); this table keeps
+// the UI-only columns.
 struct RoleDesc {
-    const char* iniKey;      // ui.font.<iniKey>
     const char* label;       // UI label
     float  basePx;           // 1080p base size (baked at basePx * ui::scale)
     bool   bold;             // use the family's Bold face
     Family defaultFam;       // per-role default when ui.font.<role> is unset (user 2026-07-09)
 };
 constexpr RoleDesc kRoles[kRoleCount] = {
-    { "menu",      "Menu / panels", kUiPx,        false, Family::Fixedsys },  // Role::Menu (== ImGui default)
-    { "chat",      "Chat",          kChatPx,      true,  Family::Fixedsys },  // Role::Chat
-    { "net",       "Net stats",     kUiPx,        false, Family::Roboto   },  // Role::Net
-    { "nameplate", "Nameplates",    kNameplatePx, false, Family::Roboto   },  // Role::Nameplate
-    { "toast",     "Release toast", kUiPx,        false, Family::Fixedsys },  // Role::Toast (our update/version toast)
+    { "Menu / panels", kUiPx,        false, Family::Fixedsys },  // Role::Menu (== ImGui default)
+    { "Chat",          kChatPx,      true,  Family::Fixedsys },  // Role::Chat
+    { "Net stats",     kUiPx,        false, Family::Roboto   },  // Role::Net
+    { "Nameplates",    kNameplatePx, false, Family::Roboto   },  // Role::Nameplate
+    { "Release toast", kUiPx,        false, Family::Fixedsys },  // Role::Toast (our update/version toast)
 };
+static_assert(coop::config_registry::kFontRoleCount == static_cast<size_t>(kRoleCount),
+              "Role enum and config_registry::kFontRoleKeys must stay in lockstep");
+
+std::string RoleIniKey(int r) {
+    return std::string("ui.font.") + coop::config_registry::kFontRoleKeys[r];
+}
 
 Family FamilyFromToken(const std::string& v, Family fallback) {
     for (int i = 0; i < kFamilyCount; ++i)
-        if (v == kFamilies[i].iniValue) return static_cast<Family>(i);
+        if (v == FamilyToken(i)) return static_cast<Family>(i);
     return fallback;
 }
 
@@ -67,9 +85,8 @@ Family FamilyFromToken(const std::string& v, Family fallback) {
 void ReadRoleFamiliesOnce() {
     if (g_rolesRead) return;
     for (int r = 0; r < kRoleCount; ++r) {
-        const std::string key   = std::string("ui.font.") + kRoles[r].iniKey;
-        const char* dfltToken   = kFamilies[static_cast<int>(kRoles[r].defaultFam)].iniValue;
-        const std::string v     = coop::config::ReadIniValue(key.c_str(), dfltToken);
+        const char* dfltToken = FamilyToken(static_cast<int>(kRoles[r].defaultFam));
+        const std::string v   = coop::config::ReadIniValue(RoleIniKey(r).c_str(), dfltToken);
         g_roleFamily[r] = FamilyFromToken(v, kRoles[r].defaultFam);
     }
     g_rolesRead = true;
@@ -248,8 +265,7 @@ void SetRoleFamily(Role r, Family f) {
     if (g_roleFamily[ri] == f) return;
     g_roleFamily[ri] = f;
     g_rolesRead = true;  // the user's live choice wins over the ini read
-    const std::string key = std::string("ui.font.") + kRoles[ri].iniKey;
-    coop::config::WriteIniValue(key.c_str(), kFamilies[fi].iniValue);
+    coop::config::WriteIniValue(RoleIniKey(ri).c_str(), FamilyToken(fi));
     ui::scale::RequestRebuild();  // atlas re-bakes before the next frame
 }
 
