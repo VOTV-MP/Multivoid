@@ -102,6 +102,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // A native launch has no env, so this is where the deployed ini's net.master (->
     // the VPS) takes effect. Cheap env/ini reads; harmless for every scenario.
     coop::session_manager::Configure(cfg::ReadMasterUrl(), cfg::ReadP2PHostFallback());
+    // Fresh install: seed the multivoid.ini SKELETON before anything reads or
+    // writes the file this launch ([net] first + the visible net.nick line +
+    // [dev] last; absent-only, atomic -- ini rework arc 1, T1).
+    cfg::EnsureIniSkeleton();
     // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
     // the registry my-name default)
     // so the server browser shows the current name; the user can overwrite it there, and the

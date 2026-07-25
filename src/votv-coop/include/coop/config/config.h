@@ -33,6 +33,15 @@ std::string ReadScenario();
 // Returns `def` if the key is absent.
 std::string ReadIniValue(const char* key, const char* def);
 
+// Seed a fresh multivoid.ini SKELETON (ordered section headers from the
+// registry, [net] first / [dev] last, plus the one user-ruled seeded-active
+// line net.nick=<my-name default>). Runs ONLY when the ini is authoritatively
+// ABSENT (ENOENT); an existing file -- readable or not -- is never touched.
+// Atomic create; loses a concurrent-create race gracefully. Returns true if
+// the skeleton was created. Call BEFORE the first ini write of a launch
+// (harness boot, ahead of the guid/skin mints).
+bool EnsureIniSkeleton();
+
 // Create/update a single "key=value" line in multivoid.ini (matches ReadIniValue's
 // section-agnostic lookup). Persists local server-browser settings -- the player
 // name + the last direct-connect address -- so they survive a relaunch. Best-effort:

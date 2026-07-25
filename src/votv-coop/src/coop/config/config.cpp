@@ -182,6 +182,63 @@ std::string ReadIniValue(const char* key, const char* def) {
     return ReadIniValueAt(IniPath(), key, def, nullptr);
 }
 
+bool EnsureIniSkeleton() {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    const std::wstring path = IniPath();
+    // Seed ONLY on authoritative ABSENT (ENOENT). An existing file -- readable
+    // or not -- is never touched: seeding over a locked-but-present ini is the
+    // same destruction class the F7 writer guards close (design T1/F37).
+    {
+        FILE* probe = nullptr;
+        const errno_t rc = _wfopen_s(&probe, path.c_str(), L"r");
+        if (rc == 0 && probe) { std::fclose(probe); return false; }  // exists
+        if (rc != ENOENT) {
+            UE_LOGW("config: skeleton seeder skipped -- multivoid.ini unreadable (errno=%d), "
+                    "not absent; refusing to seed over it", static_cast<int>(rc));
+            return false;
+        }
+    }
+    // The skeleton: ordered section headers from the registry ([net] first,
+    // [dev] last) and ZERO default values (F4: a seeded key silently OVERRIDES
+    // the code default) -- with exactly ONE user-ruled exception: a visible,
+    // deliberately-editable net.nick line (the joke is meant to be SEEN and
+    // replaced; design T1 "seeded-active").
+    std::string content = "; multivoid.ini -- Multivoid configuration. Created on first launch.\n";
+    for (size_t i = 0; i < coop::config_registry::kSectionCount; ++i) {
+        const char* sec = coop::config_registry::kSectionOrder[i];
+        content += "\n[";
+        content += sec;
+        content += "]\n";
+        if (std::string(sec) == "net")
+            content += std::string("net.nick=") + coop::config_registry::kMyNameDefault + "\n";
+    }
+    // Atomic create: .new then MoveFileExW WITHOUT REPLACE_EXISTING -- if the
+    // file appeared concurrently the seeder loses the race gracefully.
+    const std::wstring tmp = path + L".new";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
+        UE_LOGW("config: skeleton seeder could not open multivoid.ini.new for write");
+        return false;
+    }
+    bool wrote = std::fputs(content.c_str(), f) != EOF;
+    if (std::ferror(f)) wrote = false;
+    if (std::fclose(f) != 0) wrote = false;
+    if (!wrote) {
+        ::DeleteFileW(tmp.c_str());
+        UE_LOGW("config: skeleton seeder write FAILED (disk?) -- no ini created");
+        return false;
+    }
+    if (!::MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        ::DeleteFileW(tmp.c_str());
+        UE_LOGW("config: skeleton seeder lost the create race (err=%lu) -- existing ini kept",
+                ::GetLastError());
+        return false;
+    }
+    UE_LOGI("config: seeded fresh multivoid.ini skeleton ([net] first, net.nick=%s, [dev] last)",
+            coop::config_registry::kMyNameDefault);
+    return true;
+}
+
 void WriteIniValue(const char* key, const char* value) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
     const std::wstring path = IniPath();
