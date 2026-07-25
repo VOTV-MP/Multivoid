@@ -69,7 +69,7 @@ void Render() {
         // Restore the last direct-connect address the user typed (persisted locally
         // in multivoid.ini). Falls back to the loopback default on a fresh install.
         std::snprintf(g_directIp, sizeof(g_directIp), "%s",
-                      coop::config::ReadIniValue("browser.lastdirect", "127.0.0.1:7777").c_str());
+                      coop::config::ResolveString(coop::config_registry::rows::browser_lastdirect).c_str());
     }
     // Pull the latest fetched rows (cheap copy of a small list; render thread only).
     sm::CopyRows(g_rows);

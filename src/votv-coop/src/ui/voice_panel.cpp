@@ -41,11 +41,11 @@ void RefreshDevices() {
     g_micDevices = coop::voice::Capture::EnumerateDevices();
     g_outDevices = coop::voice::Playback::EnumerateDevices();
     std::snprintf(g_micCurrent, sizeof(g_micCurrent), "%s",
-                  coop::config::ReadIniValue("voice.mic_device", "").c_str());
+                  coop::config::ResolveString(coop::config_registry::rows::voice_mic_device).c_str());
     std::snprintf(g_outCurrent, sizeof(g_outCurrent), "%s",
-                  coop::config::ReadIniValue("voice.output_device", "").c_str());
+                  coop::config::ResolveString(coop::config_registry::rows::voice_output_device).c_str());
     std::snprintf(g_pttKey, sizeof(g_pttKey), "%s",
-                  coop::config::ReadIniValue("voice.ptt_key", "G").c_str());
+                  coop::config::ResolveString(coop::config_registry::rows::voice_ptt_key).c_str());
     g_devicesFresh = true;
 }
 

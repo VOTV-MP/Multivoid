@@ -25,7 +25,7 @@ long long PeriodMs() {
     static const long long s = [] {
         // Registry-typed read (arc 2); the 30 s floor for a non-zero period is
         // SITE intent (a mistyped 1 s must not become wire spam), not a range.
-        const long sec = coop::config::ResolveInt("vitals_keepalive_sec", 0);
+        const long sec = coop::config::ResolveInt(coop::config_registry::rows::vitals_keepalive_sec);
         if (sec <= 0) return 0LL;
         return static_cast<long long>(sec < 30 ? 30 : sec) * 1000LL;
     }();

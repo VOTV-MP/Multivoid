@@ -201,7 +201,8 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
     // every run -- mp.py sets it per role), OR the `fresh_boot=1` ini test gate.
     // fresh_boot rides the registry row (env twin VOTVCOOP_FRESH inside
     // ResolveFlag; mp.py only ever sets it to "1").
-    const bool freshBoot = !slotOverride && (forceFresh || cfg::ResolveFlag("fresh_boot", false));
+    const bool freshBoot =
+        !slotOverride && (forceFresh || cfg::ResolveFlag(coop::config_registry::rows::fresh_boot));
     // STORY save slot: an explicit override (the v56 coop slot) > env VOTVCOOP_SAVE (the test
     // launcher pins the HOST's save per run -- mp.py sets it) > multivoid.ini "save=<slot>" >
     // default s_may2026. Coop targets story mode, so we never boot the sandbox map fresh.
@@ -209,8 +210,8 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
     if (slotOverride) {
         slot = slotOverride;
     } else {
-        std::string slotA = cfg::ReadEnv("VOTVCOOP_SAVE");
-        if (slotA.empty()) slotA = cfg::ReadIniValue("save", "s_may2026");
+        // env VOTVCOOP_SAVE rides the row inside ResolveString (same var; arc 3).
+        std::string slotA = cfg::ResolveString(coop::config_registry::rows::save);
         slot.assign(slotA.begin(), slotA.end());  // ASCII slot name
     }
     UE_LOGI("harness: target %s '%ls'", freshBoot ? "FRESH New Game (blank save)" : "STORY save", slot.c_str());

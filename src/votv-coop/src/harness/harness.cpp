@@ -125,11 +125,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // the current scientist). local_body owns it; the Join payload reads it from there.
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
     // v94: the persisted nameplate pref (absent = visible). The Join prefs byte reads it.
-    coop::nameplate::SetInitialLocalVisible(cfg::ResolveFlag("nameplate", true));
+    coop::nameplate::SetInitialLocalVisible(cfg::ResolveFlag(coop::config_registry::rows::nameplate));
     // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex). The Join
     // color field reads it; nick_color owns the parse + the absent/empty
     // semantics (s27 Tier-C move).
-    coop::nick_color::SetInitialLocalFromIniHex(cfg::ReadIniValue("nick_color", "unset"));
+    coop::nick_color::SetInitialLocalFromIniHex(cfg::ResolveString(coop::config_registry::rows::nick_color));
     // T10 (ini rework arc 2): the boot file-vs-schema sweep, AFTER the mints
     // above so the post-mint file state is what gets reviewed. Arms the
     // settings-check panel (overlay root -- draws at the main menu) when
@@ -323,8 +323,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                     // game, HIDDEN from the public list (heartbeat live; joiners
                     // direct-connect by IP; the .bat/test lobby never pollutes the
                     // browser). Best-effort -- master down changes nothing.
-                    std::string w = cfg::ReadEnv("VOTVCOOP_SAVE");
-                    if (w.empty()) w = cfg::ReadIniValue("save", "s_may2026");
+                    std::string w = cfg::ResolveString(coop::config_registry::rows::save);
                     coop::session_manager::AnnounceEnvHostHidden(
                         coop::session_manager::Nickname() + "'s game", w);
                 }

@@ -22,8 +22,11 @@ namespace {
 // FIRST so its font is ImGui's default (every un-pushed panel follows it).
 ImFont* g_roleFont[kRoleCount]   = {};
 float   g_rolePx[kRoleCount]     = {};
-Family  g_roleFamily[kRoleCount] = { Family::Fixedsys, Family::Fixedsys, Family::Roboto,
-                                     Family::Roboto,   Family::Fixedsys };
+// Filled by ReadRoleFamiliesOnce (every consumer path calls it first); the
+// per-role DEFAULT assignment lives ONLY in the registry row list (arc 3 --
+// config_registry::kFontRoleDefaultFamily; the old triple-copy here + in
+// RoleDesc.defaultFam is retired).
+Family  g_roleFamily[kRoleCount] = {};
 bool    g_rolesRead = false;     // ini read once; SetRoleFamily overrides after
 
 // The ini TOKEN spelling per family lives in the config registry
@@ -57,15 +60,19 @@ struct RoleDesc {
     const char* label;       // UI label
     float  basePx;           // 1080p base size (baked at basePx * ui::scale)
     bool   bold;             // use the family's Bold face
-    Family defaultFam;       // per-role default when ui.font.<role> is unset (user 2026-07-09)
 };
 constexpr RoleDesc kRoles[kRoleCount] = {
-    { "Menu / panels", kUiPx,        false, Family::Fixedsys },  // Role::Menu (== ImGui default)
-    { "Chat",          kChatPx,      true,  Family::Fixedsys },  // Role::Chat
-    { "Net stats",     kUiPx,        false, Family::Roboto   },  // Role::Net
-    { "Nameplates",    kNameplatePx, false, Family::Roboto   },  // Role::Nameplate
-    { "Release toast", kUiPx,        false, Family::Fixedsys },  // Role::Toast (our update/version toast)
+    { "Menu / panels", kUiPx,        false },  // Role::Menu (== ImGui default)
+    { "Chat",          kChatPx,      true  },  // Role::Chat
+    { "Net stats",     kUiPx,        false },  // Role::Net
+    { "Nameplates",    kNameplatePx, false },  // Role::Nameplate
+    { "Release toast", kUiPx,        false },  // Role::Toast (our update/version toast)
 };
+// Per-role default family: the user-2026-07-09 assignment, owned by the
+// registry row list since arc 3 (menu/chat/toast=fixedsys, net/nameplate=roboto).
+inline Family RoleDefaultFam(int r) {
+    return static_cast<Family>(coop::config_registry::kFontRoleDefaultFamily[r]);
+}
 static_assert(coop::config_registry::kFontRoleCount == static_cast<size_t>(kRoleCount),
               "Role enum and config_registry::kFontRoleKeys must stay in lockstep");
 
@@ -85,9 +92,12 @@ Family FamilyFromToken(const std::string& v, Family fallback) {
 void ReadRoleFamiliesOnce() {
     if (g_rolesRead) return;
     for (int r = 0; r < kRoleCount; ++r) {
-        const char* dfltToken = FamilyToken(static_cast<int>(kRoles[r].defaultFam));
-        const std::string v   = coop::config::ReadIniValue(RoleIniKey(r).c_str(), dfltToken);
-        g_roleFamily[r] = FamilyFromToken(v, kRoles[r].defaultFam);
+        // The per-role Enum ROW (arc 3): ResolveEnum returns the canonical
+        // family token, or the role's own default token on absent/garbage --
+        // the same fallback FamilyFromToken applied before, now sweep-visible.
+        const std::string v =
+            coop::config::ResolveEnum(coop::config_registry::FontRoleRow(static_cast<size_t>(r)));
+        g_roleFamily[r] = FamilyFromToken(v, RoleDefaultFam(r));
     }
     g_rolesRead = true;
 }

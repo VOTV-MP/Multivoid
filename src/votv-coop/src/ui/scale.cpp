@@ -21,17 +21,16 @@ constexpr float kResMin = 0.5f;
 constexpr float kResMax = 3.0f;
 constexpr float kCombinedMax = 4.0f;
 
-// The user-pref clamp range is OWNED by the ui.scale registry row (arc 2) --
-// the slider (dev_menu) and this clamp read the same [lo, hi]; no local twin.
-// Row pointer latched once (perf audit note: these run per frame while the F1
-// menu is open, on the render thread -- a table typo must degrade to the
-// defaults, never null-deref).
-const coop::config_registry::Row* UiScaleRow() {
-    static const coop::config_registry::Row* s = coop::config_registry::FindRow("ui.scale");
-    return s;
+// The user-pref clamp range is OWNED by the ui.scale registry row -- the
+// slider (dev_menu) and this clamp read the same [lo, hi]; no local twin.
+// Arc 3: the TYPED HANDLE replaces the latched FindRow lookup (compile-bound,
+// never null -- the fallback literals retire with the lookup).
+float UserMin() {
+    return static_cast<float>(coop::config_registry::rows::ui_scale.row->lo);
 }
-float UserMin() { const auto* r = UiScaleRow(); return r ? static_cast<float>(r->lo) : 0.75f; }
-float UserMax() { const auto* r = UiScaleRow(); return r ? static_cast<float>(r->hi) : 1.75f; }
+float UserMax() {
+    return static_cast<float>(coop::config_registry::rows::ui_scale.row->hi);
+}
 
 // All render-thread only (the Present detour thread), like the rest of ui/.
 float g_res = 1.0f;      // quantized resolution factor (height / 1080)
@@ -87,7 +86,7 @@ void LoadUserPrefOnce() {
     // Typed registry read (arc 2): garbage OR out-of-[row lo,hi] -> the 1.25
     // default ("побольше") + a T10 sweep row. (The old atof path fed 99 into
     // the clamp -> silently 1.75; out-of-range is garbage now, user ruling.)
-    SetUserScale(coop::config::ResolveFloat("ui.scale", 1.25f));
+    SetUserScale(coop::config::ResolveFloat(coop::config_registry::rows::ui_scale));
 }
 
 void RequestRebuild() { g_rebuild = true; }

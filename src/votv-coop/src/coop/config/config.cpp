@@ -338,9 +338,10 @@ std::string ReadIniValue(const char* key, const char* def) {
 // strictly required for the normal flow). The `net.master.custom=1` ini gate opts OUT
 // of these and uses the ini's own net.master / net.signaling (run-your-own-master).
 // The constants live in coop/net/protocol.h (kOfficial*Url) -- shared with the UI
-// display mask that prints "DEFAULT" instead of the raw VPS address.
-static constexpr const char* kBuiltinMasterUrl    = coop::net::kOfficialMasterUrl;
-static constexpr const char* kBuiltinSignalingUrl = coop::net::kOfficialSignalingUrl;
+// display mask that prints "DEFAULT" instead of the raw VPS address. (Arc 3: the
+// old file-static kBuiltin* alias copies are DELETED -- the registry rows for
+// net.master / net.signaling alias the SAME owning constants, and this TU uses
+// them directly.)
 
 // The custom-master gate. net.master.custom = 1/true/yes/on opts out of the hardcoded
 // VPS endpoints and uses the ini's net.master / net.signaling instead. Default OFF ->
@@ -349,7 +350,7 @@ static constexpr const char* kBuiltinSignalingUrl = coop::net::kOfficialSignalin
 // override (VOTVCOOP_MASTER_URL / VOTVCOOP_NET_SIGNALING) always takes precedence over
 // both (the dev / LAN-test framework).
 static bool UseCustomNetMaster() {
-    return ResolveFlag("net.master.custom", false);
+    return ResolveFlag(config_registry::rows::net_master_custom);
 }
 
 // Fill the P2P (rungs 1-3) transport fields of `c` from env -> ini -> default.
@@ -364,18 +365,17 @@ static void FillP2PFields(coop::net::Config& c) {
     // session, so this default only seeds the master-down fallback.)
     std::string sig = ReadEnv("VOTVCOOP_NET_SIGNALING");
     if (sig.empty())
-        sig = UseCustomNetMaster() ? ReadIniValue("net.signaling", kBuiltinSignalingUrl)
-                                   : std::string(kBuiltinSignalingUrl);
+        sig = UseCustomNetMaster()
+                  ? ResolveString(config_registry::rows::net_signaling)
+                  : std::string(coop::net::kOfficialSignalingUrl);
     c.signalingUrl = sig;
-    std::string sigtok = ReadEnv("VOTVCOOP_NET_SIGNALING_TOKEN");
-    c.signalingToken = sigtok.empty() ? ReadIniValue("net.signaling_token", "") : sigtok;
+    c.signalingToken = ResolveString(config_registry::rows::net_signaling_token);
 
     // This peer's own signaling identity. Defaults give a working 2-peer
     // test out of the box (host="votvhost", client="votvclient"); a real
     // lobby with multiple clients MUST issue each client a UNIQUE identity
     // (the signaling server registers one connection per identity string).
-    std::string ident = ReadEnv("VOTVCOOP_NET_IDENTITY");
-    if (ident.empty()) ident = ReadIniValue("net.identity", "");
+    std::string ident = ResolveString(config_registry::rows::net_identity);
     if (ident.empty()) {
         if (c.role == coop::net::Role::Host) {
             ident = "votvhost";
@@ -397,8 +397,7 @@ static void FillP2PFields(coop::net::Config& c) {
     c.localIdentity = ident;
 
     // The host identity a client dials (must equal the host's localIdentity).
-    std::string hostId = ReadEnv("VOTVCOOP_NET_HOST_IDENTITY");
-    if (hostId.empty()) hostId = ReadIniValue("net.host_identity", "");
+    std::string hostId = ResolveString(config_registry::rows::net_host_identity);
     if (hostId.empty()) hostId = "votvhost";
     c.hostIdentity = hostId;
 
@@ -406,21 +405,17 @@ static void FillP2PFields(coop::net::Config& c) {
     // real cross-NAT test works; for a same-machine test ICE also connects
     // via host/LAN candidates regardless. TURN (rung 3) is off by default
     // (the master mints ephemeral REST creds; static ini creds are dev-only).
-    std::string stun = ReadEnv("VOTVCOOP_NET_STUN");
-    c.stunList = stun.empty() ? ReadIniValue("net.stun", "stun.l.google.com:19302") : stun;
-    std::string turn = ReadEnv("VOTVCOOP_NET_TURN");
-    c.turnList = turn.empty() ? ReadIniValue("net.turn", "") : turn;
-    std::string turnUser = ReadEnv("VOTVCOOP_NET_TURN_USER");
-    c.turnUser = turnUser.empty() ? ReadIniValue("net.turn_user", "") : turnUser;
-    std::string turnPass = ReadEnv("VOTVCOOP_NET_TURN_PASS");
-    c.turnPass = turnPass.empty() ? ReadIniValue("net.turn_pass", "") : turnPass;
+    c.stunList = ResolveString(config_registry::rows::net_stun);
+    c.turnList = ResolveString(config_registry::rows::net_turn);
+    c.turnUser = ResolveString(config_registry::rows::net_turn_user);
+    c.turnPass = ResolveString(config_registry::rows::net_turn_pass);
 
     // ICE candidate policy: "" / "all" (default) / "relay" / "disable" /
     // "default". "relay" forces the TURN relay path (privacy, or to validate
     // coturn end-to-end). Mapped to IceEnable in Session::StartP2P. Enum row
     // (arc 2): env rides the row; an unknown token is garbage -> "" (default
     // policy) + a T10 sweep row.
-    c.iceMode = ResolveEnum("net.ice", "");
+    c.iceMode = ResolveEnum(config_registry::rows::net_ice);
 
     // Console-visible diagnostic: any endpoint on the OFFICIAL VPS host prints
     // as "DEFAULT" -- the connect console must not advertise the raw address
@@ -441,21 +436,20 @@ coop::net::Config ReadNetConfig(bool& enabled) {
     coop::net::Config c;
     // Typed reads (arc 2): env rides the registry row (VOTVCOOP_NET_ROLE /
     // _PORT / _TOPOLOGY); garbage -> the default + a T10 sweep row.
-    const std::string role = ResolveEnum("net.role", "");
+    const std::string role = ResolveEnum(config_registry::rows::net_role);
     enabled = (role == "host" || role == "client");
     c.role = (role == "client") ? coop::net::Role::Client : coop::net::Role::Host;
 
-    std::string peer = ReadEnv("VOTVCOOP_NET_PEER");
-    c.peerIp = peer.empty() ? ReadIniValue("net.peer", "127.0.0.1") : peer;
+    c.peerIp = ResolveString(config_registry::rows::net_peer);
 
     // Range [1,65535] lives on the registry row; out-of-range or a partial
     // parse is garbage -> the compiled default stays (the old strtoul-wrap
     // hazard is structurally gone: a rejected value never reaches the cast).
-    c.port = static_cast<uint16_t>(ResolveInt("net.port", c.port));
+    c.port = static_cast<uint16_t>(ResolveInt(config_registry::rows::net_port));
 
     // --- P2P (zero-open-ports) topology --------------------------------------
     // net.topology = "lan" (default, rung 0/1 IP) or "p2p" (rungs 1-3 ICE).
-    c.topology = ResolveEnum("net.topology", "lan") == "p2p"
+    c.topology = ResolveEnum(config_registry::rows::net_topology) == "p2p"
                      ? coop::net::Topology::P2P
                      : coop::net::Topology::LanDirect;
 
@@ -473,16 +467,16 @@ std::string ReadMasterUrl() {
     std::string m = ReadEnv("VOTVCOOP_MASTER_URL");
     if (!m.empty()) return m;
     if (UseCustomNetMaster()) {
-        std::string v = ReadIniValue("net.master", kBuiltinMasterUrl);
+        std::string v = ResolveString(config_registry::rows::net_master);
         // "DEFAULT" sentinel (the shipped release ini): resolves to the official
         // server even under the custom gate -- the ini never needs the raw VPS
         // address spelled out.
         std::string lower = v;
         for (char& c : lower) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        if (v.empty() || lower == "default") return kBuiltinMasterUrl;
+        if (v.empty() || lower == "default") return coop::net::kOfficialMasterUrl;
         return v;
     }
-    return kBuiltinMasterUrl;
+    return coop::net::kOfficialMasterUrl;
 }
 
 coop::net::Config ReadP2PHostFallback() {
@@ -500,10 +494,9 @@ coop::net::Config ReadP2PHostFallback() {
 }
 
 std::wstring ReadNickname() {
-    std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
-    // T7 (ini rework): the MY-NAME default is the shared registry constant --
-    // never a per-site literal (the 4-of-10-defaults-wrong sketch, design F19).
-    if (nick.empty()) nick = ReadIniValue("net.nick", coop::config_registry::kMyNameDefault);
+    // T7 (ini rework): the MY-NAME default is the registry row's (env rides the
+    // row's VOTVCOOP_NET_NICK; never a per-site literal -- design F19/T2-migrate).
+    std::string nick = ResolveString(config_registry::rows::net_nick);
     // Config reaches the wire: the Join payload's nicklen is uint8 (F14), so
     // the nick caps at 255 bytes here at the resolve -- never mid-send.
     if (nick.size() > 255) nick.resize(255);
@@ -660,15 +653,15 @@ namespace {
 
 // The layered raw-value pick: SET env wins (valid or not -- garbage env
 // SHADOWS the ini, T6); else the ini's authoritative line; else absent.
-// Returns true + `raw` when a layer supplied a value.
-bool PickRawLayered(const char* key, std::string& raw) {
-    const config_registry::Row* row = config_registry::FindRow(key);
-    if (row && row->envVar) {
+// Returns true + `raw` when a layer supplied a value. Arc 3: the row comes
+// from the caller's typed handle -- no lookup, no unregistered keys.
+bool PickRawLayered(const config_registry::Row* row, std::string& raw) {
+    if (row->envVar) {
         const std::string e = ReadEnv(row->envVar);
         if (!e.empty()) { raw = e; return true; }
     }
     static const char* kAbsent = "\x01<absent>";
-    const std::string v = ReadIniValue(key, kAbsent);
+    const std::string v = ReadIniValue(row->key, kAbsent);
     if (v == kAbsent) return false;
     raw = v;
     return true;
@@ -676,45 +669,50 @@ bool PickRawLayered(const char* key, std::string& raw) {
 
 }  // namespace
 
-bool ResolveFlag(const char* key, bool def) {
+bool ResolveFlag(const config_registry::FlagRow& h) {
+    const config_registry::Row* row = h.row;
     std::string raw;
-    if (!PickRawLayered(key, raw)) return def;
+    if (!PickRawLayered(row, raw)) return row->defB;
     const int v = FlagVerdictFromValue(raw);
-    return v == 0 ? def : v > 0;
+    return v == 0 ? row->defB : v > 0;
 }
 
-long ResolveInt(const char* key, long def) {
+long ResolveInt(const config_registry::IntRow& h) {
+    const config_registry::Row* row = h.row;
     std::string raw;
-    if (!PickRawLayered(key, raw)) return def;
+    if (!PickRawLayered(row, raw)) return row->defI;
     long v = 0;
-    if (!ParseWholeLong(StripInlineComment(raw, false), v)) return def;
-    const config_registry::Row* row = config_registry::FindRow(key);
-    if (row && row->kind == config_registry::Kind::Int &&
-        (v < static_cast<long>(row->lo) || v > static_cast<long>(row->hi)))
-        return def;  // out of range = garbage -> default (user ruling), sweep reports
+    if (!ParseWholeLong(StripInlineComment(raw, false), v)) return row->defI;
+    if (v < static_cast<long>(row->lo) || v > static_cast<long>(row->hi))
+        return row->defI;  // out of range = garbage -> default (user ruling), sweep reports
     return v;
 }
 
-float ResolveFloat(const char* key, float def) {
+float ResolveFloat(const config_registry::FloatRow& h) {
+    const config_registry::Row* row = h.row;
     std::string raw;
-    if (!PickRawLayered(key, raw)) return def;
+    if (!PickRawLayered(row, raw)) return row->defF;
     double v = 0;
-    if (!ParseWholeDouble(StripInlineComment(raw, false), v)) return def;
-    const config_registry::Row* row = config_registry::FindRow(key);
-    if (row && row->kind == config_registry::Kind::Float &&
-        (v < row->lo || v > row->hi))
-        return def;
+    if (!ParseWholeDouble(StripInlineComment(raw, false), v)) return row->defF;
+    if (v < row->lo || v > row->hi) return row->defF;
     return static_cast<float>(v);
 }
 
-std::string ResolveEnum(const char* key, const char* def) {
+std::string ResolveEnum(const config_registry::EnumRow& h) {
+    const config_registry::Row* row = h.row;
     std::string raw;
-    if (!PickRawLayered(key, raw)) return def;
+    if (!PickRawLayered(row, raw)) return row->defS;
     std::string canonical;
-    if (EnumTokenMatch(config_registry::FindRow(key),
-                       StripInlineComment(raw, false), canonical))
+    if (EnumTokenMatch(row, StripInlineComment(raw, false), canonical))
         return canonical;
-    return def;
+    return row->defS;
+}
+
+std::string ResolveString(const config_registry::StringRow& h) {
+    const config_registry::Row* row = h.row;
+    std::string raw;
+    if (!PickRawLayered(row, raw)) return row->defS;
+    return raw;
 }
 
 

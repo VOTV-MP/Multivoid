@@ -51,7 +51,7 @@ std::chrono::milliseconds Interval() {
     static const std::chrono::milliseconds s = [] {
         // Registry-typed read (arc 2): range [100, 60000] lives on the row
         // (never busier than 10 Hz); garbage/out-of-range -> the 1000 default.
-        return std::chrono::milliseconds(coop::config::ResolveInt("desk_diag_ms", 1000));
+        return std::chrono::milliseconds(coop::config::ResolveInt(coop::config_registry::rows::desk_diag_ms));
     }();
     return s;
 }

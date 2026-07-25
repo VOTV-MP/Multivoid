@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 
 #include <string>
@@ -29,9 +30,9 @@ std::string ReadEnv(const char* name);
 // -> "newgame" default.
 std::string ReadScenario();
 
-// Read a single "key=value" line from multivoid.ini. Section-agnostic.
-// Returns `def` if the key is absent.
-std::string ReadIniValue(const char* key, const char* def);
+// (arc 3: the string-keyed ReadIniValue is INTERNAL now -- product reads go
+// through the typed handle Resolve* APIs below; the schema's own machinery
+// reads file-discovered keys via the config-internal twins.)
 
 // Seed a fresh multivoid.ini SKELETON (ordered section headers from the
 // registry, [net] first / [dev] last, plus the one user-ruled seeded-active
@@ -52,22 +53,24 @@ bool EnsureIniSkeleton();
 // (gitignored). ASCII values.
 bool WriteIniValue(const char* key, const char* value);
 
-// ---- typed layered reads (ini rework arc 2, T6) -----------------------------
-// Resolve(key) = env -> ini -> `def`, validated against the key's registry row
-// (kind + range/tokens; config_registry.h). One vocabulary for flags
-// (1|true|yes|on / 0|false|no|off, ci); numbers must whole-parse AND land in
-// the row's [lo, hi]; enums must ci-match a row token (the canonical token is
-// returned). Anything else -- including present-but-empty (F33) -- is garbage:
-// the DEFAULT applies in memory (user ruling "дефолт ставить"), the T10 boot
-// sweep reports it, nothing is written back. A SET env var that fails
-// validation SHADOWS a valid ini value (the operator overrode the ini on
-// purpose; falling through would honor exactly what they overrode); an EMPTY
-// env var is unset and falls through (F44). The env var name comes from the
-// registry row -- sites never name it.
-bool        ResolveFlag(const char* key, bool def);
-long        ResolveInt(const char* key, long def);
-float       ResolveFloat(const char* key, float def);
-std::string ResolveEnum(const char* key, const char* def);
+// ---- typed layered reads (arc 2 T6; arc 3 = the const Row& ratchet) ---------
+// Resolve(row) = env -> ini -> the ROW's default (T2-migrate: defaults live in
+// the registry, sites pass no literals). Validation against the row's kind +
+// range/tokens: one vocabulary for flags (1|true|yes|on / 0|false|no|off, ci);
+// numbers must whole-parse AND land in [lo, hi]; enums must ci-match a token
+// (the canonical token is returned). Anything else -- including
+// present-but-empty (F33) -- is garbage: the row DEFAULT applies in memory
+// (user ruling "дефолт ставить"), the T10 boot sweep reports it, nothing is
+// written back. A SET env var that fails validation SHADOWS a valid ini value;
+// an EMPTY env var is unset and falls through (F44). The env var name comes
+// from the row. Handles are registry-minted only (config_registry.h): an
+// unregistered key cannot be read -- the compiler is the gate.
+bool        ResolveFlag(const config_registry::FlagRow& row);
+long        ResolveInt(const config_registry::IntRow& row);
+float       ResolveFloat(const config_registry::FloatRow& row);
+std::string ResolveEnum(const config_registry::EnumRow& row);
+// Free strings: env -> ini -> row default, no value validation (arc 3).
+std::string ResolveString(const config_registry::StringRow& row);
 
 // Build the net Config from env + ini. Sets `enabled` to true iff a
 // host/client role is configured (otherwise hands-on play stays

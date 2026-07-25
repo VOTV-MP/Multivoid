@@ -96,24 +96,24 @@ void StartDevices() {
     // Typed registry reads (arc 2): the env twins (VOTVCOOP_VOICE_MODE /
     // _THRESHOLD_DB / _TEST_TONE / _LOOPBACK -- the autonomous tone smoke's
     // overrides) ride the registry rows inside Resolve*.
-    cc.activationMode = CFG::ResolveEnum("voice.mode", "ptt") == "activation";
+    cc.activationMode = CFG::ResolveEnum(coop::config_registry::rows::voice_mode) == "activation";
     // Default PTT 'G' (user 2026-06-12; was X -- clashed with VOTV binds). An
     // explicit voice.ptt_key in the ini still wins.
-    cc.pttVk = ParseKey(CFG::ReadIniValue("voice.ptt_key", "G"), 'G');
-    cc.whisperVk = ParseKey(CFG::ReadIniValue("voice.whisper_key", ""), 0);
-    cc.thresholdDb = CFG::ResolveFloat("voice.threshold_db", -50.0f);
-    cc.gainDb = CFG::ResolveFloat("voice.mic_gain_db", 0.0f);
-    cc.device = CFG::ReadIniValue("voice.mic_device", "");
-    cc.testTone = CFG::ResolveFlag("voice.test_tone", false);
-    g_muteVk = ParseKey(CFG::ReadIniValue("voice.mute_key", ""), 0);
-    g_loopback = CFG::ResolveFlag("voice.loopback", false);
+    cc.pttVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_ptt_key), 'G');
+    cc.whisperVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_whisper_key), 0);
+    cc.thresholdDb = CFG::ResolveFloat(coop::config_registry::rows::voice_threshold_db);
+    cc.gainDb = CFG::ResolveFloat(coop::config_registry::rows::voice_mic_gain_db);
+    cc.device = CFG::ResolveString(coop::config_registry::rows::voice_mic_device);
+    cc.testTone = CFG::ResolveFlag(coop::config_registry::rows::voice_test_tone);
+    g_muteVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_mute_key), 0);
+    g_loopback = CFG::ResolveFlag(coop::config_registry::rows::voice_loopback);
 
     coop::voice::PlaybackConfig pc;
-    pc.device = CFG::ReadIniValue("voice.output_device", "");
-    pc.volume = CFG::ResolveFloat("voice.volume", 1.0f);
-    pc.distanceCm = CFG::ResolveFloat("voice.distance_cm", 4800.0f);
-    pc.jitterThreshold = static_cast<int>(CFG::ResolveInt("voice.jitter_threshold", 3));
-    pc.prebufferFrames = static_cast<int>(CFG::ResolveInt("voice.prebuffer_frames", 5));
+    pc.device = CFG::ResolveString(coop::config_registry::rows::voice_output_device);
+    pc.volume = CFG::ResolveFloat(coop::config_registry::rows::voice_volume);
+    pc.distanceCm = CFG::ResolveFloat(coop::config_registry::rows::voice_distance_cm);
+    pc.jitterThreshold = static_cast<int>(CFG::ResolveInt(coop::config_registry::rows::voice_jitter_threshold));
+    pc.prebufferFrames = static_cast<int>(CFG::ResolveInt(coop::config_registry::rows::voice_prebuffer_frames));
 
     g_playbackOk = g_playback.Start(pc);
     g_captureOk = g_capture.Start(cc);
@@ -154,7 +154,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_started) return;  // idempotent per session (Install is the session-start edge)
 
-    g_enabled = CFG::ResolveFlag("voice.enabled", true);
+    g_enabled = CFG::ResolveFlag(coop::config_registry::rows::voice_enabled);
     g_installAt = Clock::now();
     for (auto& st : g_peerState) st = WireState{};
     g_sendSeq = 0;
