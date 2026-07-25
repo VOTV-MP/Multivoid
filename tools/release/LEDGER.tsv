@@ -13,3 +13,5 @@
 # TERMINAL rows are PUSH-IMMEDIATE; the published row may ride the next
 # leak-audited push. An empty ledger is a valid start.
 consume	125	0.9.0n	v0.9.0n-b125-dev	b4af7329dbf7a64d9eb4656cfe252be8376d5deb	2026-07-25
+published	125	0.9.0n	v0.9.0n-b125-dev	b4af7329dbf7a64d9eb4656cfe252be8376d5deb	2026-07-25
+retracted	125	0.9.0n	v0.9.0n-b125-dev	b4af7329dbf7a64d9eb4656cfe252be8376d5deb	2026-07-25
