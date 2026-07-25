@@ -2,6 +2,7 @@
 
 #include "coop/session/session_manager.h"
 
+#include "coop/config/config_registry.h"  // T7: the my-name default constant
 #include "coop/net/lobby_announcer.h"
 #include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask) + kProtocolVersion (the b<N> build rev)
 #include "coop/session/join_progress.h"
@@ -58,7 +59,8 @@ bool g_configured = false;
 net::Config g_fallbackHostCfg;
 std::string g_hostStatus;
 std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
-std::string g_nickname = "Player";  // local display nickname (seeded from config; browser overwrites)
+// T7 (ini rework): MY-NAME default from the shared registry constant.
+std::string g_nickname = coop::config_registry::kMyNameDefault;  // local display nickname (seeded from config; browser overwrites)
 
 // One queued session start (last action wins until the harness consumes it).
 std::mutex g_pendMu;

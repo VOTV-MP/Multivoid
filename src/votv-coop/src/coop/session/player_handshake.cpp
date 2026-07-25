@@ -4,6 +4,7 @@
 
 #include "player_handshake_detail.h"  // co-located private header (src tree, not include/)
 
+#include "coop/config/config_registry.h"  // T7: the my-name default constant
 #include "coop/moderation/seen_players.h"
 
 #include "coop/element/player.h"
@@ -34,7 +35,11 @@ namespace coop::player_handshake {
 
 namespace {
 
-std::wstring g_localNick = L"Player";
+// T7 (ini rework): MY-NAME default from the shared registry constant. NOTE:
+// SanitizeNickname's empty-result fallback below deliberately STAYS "Player" --
+// that function runs on inbound REMOTE nicks too (symmetric defense), and a
+// garbage remote nick must not render as our my-name default.
+std::wstring g_localNick = coop::config_registry::MyNameDefaultW();
 // Per-slot nickname + per-slot Join-sent latch. Single-peer scalars
 // would let two clients' Joins overwrite each other and a reconnect
 // would skip the re-announce.

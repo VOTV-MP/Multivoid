@@ -102,7 +102,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // A native launch has no env, so this is where the deployed ini's net.master (->
     // the VPS) takes effect. Cheap env/ini reads; harmless for every scenario.
     coop::session_manager::Configure(cfg::ReadMasterUrl(), cfg::ReadP2PHostFallback());
-    // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick / "Player")
+    // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
+    // the registry my-name default)
     // so the server browser shows the current name; the user can overwrite it there, and the
     // browser value wins at StartCoopSession. ASCII narrow (explicit, non-ASCII -> '?').
     {

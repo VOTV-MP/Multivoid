@@ -59,7 +59,8 @@ std::string ReadMasterUrl();
 // net.role (it must never trigger the play-path auto-start).
 coop::net::Config ReadP2PHostFallback();
 
-// The local player's display nickname. Env first, then ini, then "Player".
+// The local player's display nickname. Env first, then ini, then the registry
+// my-name default (config_registry::kMyNameDefault).
 std::wstring ReadNickname();
 
 // The local player's durable identity GUID (32 lowercase hex chars) for the host-side

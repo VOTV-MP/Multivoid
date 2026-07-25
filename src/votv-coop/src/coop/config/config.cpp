@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/skin_registry.h"  // IsValidSkinName + kDefaultSkinName (v93 player_skin=)
@@ -470,7 +471,9 @@ coop::net::Config ReadP2PHostFallback() {
 
 std::wstring ReadNickname() {
     std::string nick = ReadEnv("VOTVCOOP_NET_NICK");
-    if (nick.empty()) nick = ReadIniValue("net.nick", "Player");
+    // T7 (ini rework): the MY-NAME default is the shared registry constant --
+    // never a per-site literal (the 4-of-10-defaults-wrong sketch, design F19).
+    if (nick.empty()) nick = ReadIniValue("net.nick", coop::config_registry::kMyNameDefault);
     return std::wstring(nick.begin(), nick.end());
 }
 

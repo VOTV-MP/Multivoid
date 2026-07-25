@@ -43,7 +43,8 @@ std::vector<Row> g_rows;
 int  g_selected = -1;
 char g_directIp[64] = "127.0.0.1:7777";
 char g_hostName[64] = "My VOTV Server";
-char g_nick[64] = "Player";   // local display name; loaded from session_manager on open
+char g_nick[64] = {};   // local display name; ALWAYS loaded from session_manager on open
+                        // (the old "Player" initial was dead -- T7 keeps my-name single-source)
 bool g_hostLocked = false;
 
 }  // namespace
