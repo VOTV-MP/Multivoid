@@ -51,7 +51,19 @@ bool EnsureIniSkeleton();
 // a read-only dir just means the setting isn't remembered, never a crash (logs
 // + returns false; true = the atomic swap landed). The ini is LOCAL-ONLY
 // (gitignored). ASCII values.
-bool WriteIniValue(const char* key, const char* value);
+//
+// KEYED BY TYPED HANDLE (arc 3 C3b -- the write half of the ratchet): product
+// code cannot persist an unregistered key. The VALUE stays a string: it is
+// user-shaped UI output, refused by ValueValidForKey behind this door exactly
+// as the reader would refuse it (T3b -- never persist garbage). The
+// string-keyed machinery (reformat / keep-line / skeleton / selftests below)
+// stays string-keyed by nature: it operates on keys discovered IN the file.
+bool WriteIniValue(const config_registry::FlagRow& row, const char* value);
+bool WriteIniValue(const config_registry::IntRow& row, const char* value);
+bool WriteIniValue(const config_registry::FloatRow& row, const char* value);
+bool WriteIniValue(const config_registry::EnumRow& row, const char* value);
+bool WriteIniValue(const config_registry::StringRow& row, const char* value);
+bool WriteIniValue(const config_registry::IdentityRow& row, const char* value);
 
 // ---- typed layered reads (arc 2 T6; arc 3 = the const Row& ratchet) ---------
 // Resolve(row) = env -> ini -> the ROW's default (T2-migrate: defaults live in

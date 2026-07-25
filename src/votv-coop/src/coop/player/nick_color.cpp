@@ -32,12 +32,12 @@ void PersistLocal(uint32_t packed) {
     // WriteIniValue is thread-safe (atomic swap) -- callable from the render
     // thread, same as the nameplate pref. Empty value = "no custom color".
     if (!IsCustom(packed)) {
-        coop::config::WriteIniValue("nick_color", "");
+        coop::config::WriteIniValue(coop::config_registry::rows::nick_color, "");
         return;
     }
     char v[8];
     std::snprintf(v, sizeof(v), "%02X%02X%02X", R(packed), G(packed), B(packed));
-    coop::config::WriteIniValue("nick_color", v);
+    coop::config::WriteIniValue(coop::config_registry::rows::nick_color, v);
 }
 
 }  // namespace

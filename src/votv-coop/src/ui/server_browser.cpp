@@ -118,7 +118,7 @@ void Render() {
         if (ImGui::InputText("##nick", g_nick, sizeof(g_nick))) sm::SetNickname(g_nick);
         // Persist the name once the user finishes editing (not per-keystroke) so it
         // sticks across relaunches via multivoid.ini's net.nick (the same key boot reads).
-        if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue("net.nick", g_nick);
+        if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue(coop::config_registry::rows::net_nick, g_nick);
         ImGui::Spacing();
 
         // Host controls row.
@@ -144,7 +144,7 @@ void Render() {
         const bool ipEnter = ImGui::InputText("##directip", g_directIp, sizeof(g_directIp),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         // Remember the typed address across relaunches (multivoid.ini browser.lastdirect).
-        if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue("browser.lastdirect", g_directIp);
+        if (ImGui::IsItemDeactivatedAfterEdit()) coop::config::WriteIniValue(coop::config_registry::rows::browser_lastdirect, g_directIp);
         ImGui::SameLine();
         // Close the browser only if the action was ACCEPTED (good address, not busy) so a
         // rejected click leaves the browser open instead of stranding the user on a clean

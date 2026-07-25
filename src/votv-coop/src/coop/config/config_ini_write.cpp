@@ -264,9 +264,30 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
-bool WriteIniValue(const char* key, const char* value) {
+// The one locked live-ini write behind every typed overload (C3b): the handle
+// carries the canonical key; everything below it is the string engine.
+static bool WriteIniValueRow(const config_registry::Row* row, const char* value) {
     std::lock_guard<std::mutex> lk(internal::IniMutex());
-    return WriteIniValueAt(internal::LiveIniPath(), key, value);
+    return WriteIniValueAt(internal::LiveIniPath(), row->key, value);
+}
+
+bool WriteIniValue(const config_registry::FlagRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
+}
+bool WriteIniValue(const config_registry::IntRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
+}
+bool WriteIniValue(const config_registry::FloatRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
+}
+bool WriteIniValue(const config_registry::EnumRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
+}
+bool WriteIniValue(const config_registry::StringRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
+}
+bool WriteIniValue(const config_registry::IdentityRow& row, const char* value) {
+    return WriteIniValueRow(row.row, value);
 }
 
 // Correlates by VALUE, never by line number (audit CRIT-2): the panel's

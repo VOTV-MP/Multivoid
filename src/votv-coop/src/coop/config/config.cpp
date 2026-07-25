@@ -538,7 +538,7 @@ std::string ReadPlayerSkin() {
         } else {
             // Truthful persist log (F43 fix): the old line said "persisted"
             // unconditionally -- false on a locked file.
-            const bool persisted = WriteIniValue("player_skin", skin.c_str());
+            const bool persisted = WriteIniValue(config_registry::rows::player_skin, skin.c_str());
             if (!persisted) g_identityNotDurable.store(true, std::memory_order_relaxed);
             UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (%s)",
                     skin.c_str(),
@@ -579,7 +579,7 @@ std::string ReadPlayerGuid() {
                     "(host-side coop_players/<guid>.json from this launch recovers on the "
                     "first durable persist -- jsons are never deleted)", guid.c_str());
         } else {
-            const bool persisted = WriteIniValue("player_guid", guid.c_str());
+            const bool persisted = WriteIniValue(config_registry::rows::player_guid, guid.c_str());
             if (!persisted) g_identityNotDurable.store(true, std::memory_order_relaxed);
             UE_LOGI("config: generated new player_guid=%s (%s)", guid.c_str(),
                     persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");

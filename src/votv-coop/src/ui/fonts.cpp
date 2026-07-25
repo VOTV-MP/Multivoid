@@ -76,10 +76,6 @@ inline Family RoleDefaultFam(int r) {
 static_assert(coop::config_registry::kFontRoleCount == static_cast<size_t>(kRoleCount),
               "Role enum and config_registry::kFontRoleKeys must stay in lockstep");
 
-std::string RoleIniKey(int r) {
-    return std::string("ui.font.") + coop::config_registry::kFontRoleKeys[r];
-}
-
 Family FamilyFromToken(const std::string& v, Family fallback) {
     for (int i = 0; i < kFamilyCount; ++i)
         if (v == FamilyToken(i)) return static_cast<Family>(i);
@@ -275,7 +271,8 @@ void SetRoleFamily(Role r, Family f) {
     if (g_roleFamily[ri] == f) return;
     g_roleFamily[ri] = f;
     g_rolesRead = true;  // the user's live choice wins over the ini read
-    coop::config::WriteIniValue(RoleIniKey(ri).c_str(), FamilyToken(fi));
+    coop::config::WriteIniValue(coop::config_registry::FontRoleRow(static_cast<size_t>(ri)),
+                                FamilyToken(fi));
     ui::scale::RequestRebuild();  // atlas re-bakes before the next frame
 }
 

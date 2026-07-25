@@ -152,7 +152,7 @@ bool Enabled() {
 void SetEnabled(bool on) {
     LoadPrefOnce();
     g_enabled.store(on, std::memory_order_relaxed);
-    coop::config::WriteIniValue("ui.netstats", on ? "1" : "0");
+    coop::config::WriteIniValue(coop::config_registry::rows::ui_netstats, on ? "1" : "0");
 }
 
 void Render() {

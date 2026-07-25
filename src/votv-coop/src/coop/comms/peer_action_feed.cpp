@@ -33,7 +33,8 @@ void EnsureLoaded() {
 void SetEnabled(bool on) {
     EnsureLoaded();
     g_enabled.store(on, std::memory_order_relaxed);
-    coop::config::WriteIniValue("ui.chat.peer_actions", on ? "1" : "0");
+    coop::config::WriteIniValue(coop::config_registry::rows::ui_chat_peer_actions,
+                                on ? "1" : "0");
 }
 
 bool Enabled() {

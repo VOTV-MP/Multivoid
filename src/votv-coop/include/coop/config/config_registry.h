@@ -139,6 +139,14 @@ struct StringRow {
     const Row* row;
     constexpr StringRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
 };
+// Identity rows have NO read handle (the mint machinery reads them internally,
+// config.cpp) -- this handle exists for the WRITE door only (C3b): the mint
+// persist + the skin picker go through the same typed WriteIniValue as every
+// other product write.
+struct IdentityRow {
+    const Row* row;
+    constexpr IdentityRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
+};
 
 // The named handles, one per row, generated from config_registry_rows.inc
 // (definitions in config_registry.cpp). Reference these QUALIFIED
@@ -151,7 +159,7 @@ namespace rows {
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar) extern const FloatRow ident;
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar) extern const EnumRow ident;
 #define CFG_STRING(ident, key, section, defS, envVar, seeded) extern const StringRow ident;
-#define CFG_IDENTITY(ident, key, section)
+#define CFG_IDENTITY(ident, key, section) extern const IdentityRow ident;
 #define CFG_FONTROLE(ident, key, suffix, defFam) extern const EnumRow ident;
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG

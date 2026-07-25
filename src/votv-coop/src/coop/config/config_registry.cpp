@@ -193,7 +193,8 @@ namespace rows {
     const EnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #define CFG_STRING(ident, key, section, defS, envVar, seeded) \
     const StringRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_IDENTITY(ident, key, section)
+#define CFG_IDENTITY(ident, key, section) \
+    const IdentityRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #define CFG_FONTROLE(ident, key, suffix, defFam) \
     const EnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #include "coop/config/config_registry_rows.inc"

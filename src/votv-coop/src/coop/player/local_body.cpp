@@ -73,7 +73,7 @@ void RequestSkin(const std::string& name) {
         return;
     }
     // Persist NOW (file IO is fine off the game thread; same ini as player_guid).
-    coop::config::WriteIniValue("player_skin", name.c_str());
+    coop::config::WriteIniValue(coop::config_registry::rows::player_skin, name.c_str());
     ue_wrap::game_thread::Post([name] {
         SetSkinInternal(name);
         g_applied = false;  // Tick re-applies to the local pawn (also un-latches a pak-missing skip)
