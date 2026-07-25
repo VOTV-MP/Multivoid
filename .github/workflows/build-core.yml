@@ -81,6 +81,16 @@ jobs:
             git clone --depth 1 -b v1.5.2 https://github.com/xiph/opus.git $opus
           } else { Write-Host 'opus present, ok' }
 
+      - name: Config registry gate (arc 3 C5 -- dead rows / write-only / alias / ratchet surface)
+        # Standing gate with fixture-injected must-fire controls each run; the
+        # script exits explicitly (pwsh last-child-code lesson). Cheap text
+        # scan -- runs before the expensive toolchain steps so a violation
+        # fails fast on both the CI and release lanes.
+        shell: pwsh
+        run: |
+          pwsh -File tools/config/registry_gate.ps1
+          exit $LASTEXITCODE
+
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
         id: baseline
         shell: pwsh
