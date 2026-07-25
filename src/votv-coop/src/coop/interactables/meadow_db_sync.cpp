@@ -505,7 +505,7 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 // discriminates its axis on an empty store (design R14).
 
 bool SelftestEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("meadow_selftest");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::meadow_selftest);
     return s;
 }
 

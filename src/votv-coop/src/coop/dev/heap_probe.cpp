@@ -91,7 +91,7 @@ Clock::time_point g_next{};
 constexpr auto kInterval = std::chrono::seconds(4);
 
 bool Armed() {
-    if (g_armed < 0) g_armed = coop::config::IsIniKeyTrue("heap_probe") ? 1 : 0;
+    if (g_armed < 0) g_armed = coop::config::ResolveFlag(::coop::config_registry::rows::heap_probe) ? 1 : 0;
     return g_armed == 1;
 }
 

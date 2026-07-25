@@ -638,13 +638,11 @@ int LookupTriState(const char* key) {
 }  // namespace
 
 bool MasterEnabled() {
-    // ABSENT defaults to enabled (= granular switches decide). Only an explicit
-    // `enabled=0` forces all dev features off.
-    return LookupTriState("enabled") != -1;
-}
-
-bool IsIniKeyTrue(const char* key) {
-    return LookupTriState(key) == 1;
+    // ABSENT/garbage defaults to enabled (= granular switches decide) -- the
+    // row's def=true carries the old `LookupTriState != -1` semantics exactly
+    // (measured outcome tables, arc-3 impl design R2). Only an explicit falsy
+    // forces all dev features off.
+    return ResolveFlag(config_registry::rows::enabled);
 }
 
 // ---- typed layered reads (arc 2, T6 -- see config.h) ------------------------

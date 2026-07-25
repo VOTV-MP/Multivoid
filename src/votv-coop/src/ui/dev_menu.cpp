@@ -538,7 +538,7 @@ void Init() {
     // [dev] enabled=0 forces every dev feature off (this replaces the per-module
     // MasterEnabled() checks the migrated dev modules used to do in their Init).
     g_devMode = ::coop::config::MasterEnabled() &&
-                ::coop::config::IsIniKeyTrue("devkeys");
+                ::coop::config::ResolveFlag(::coop::config_registry::rows::devkeys);
 }
 
 bool DevMode() {

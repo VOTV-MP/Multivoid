@@ -9,7 +9,7 @@ namespace coop::dev::force_overdestroy_test {
 
 bool HostSkipChipPileExpression() {
     static const bool s = [] {
-        const bool on = coop::config::IsIniKeyTrue("force_chippile_unclaim");
+        const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::force_chippile_unclaim);
         if (on) {
             UE_LOGW("force_overdestroy_test: ARMED -- HOST will SKIP expressing ALL chipPiles this "
                     "session (injecting the docs/piles/10 over-destroy to PROVE the Phase 0 floor). "
@@ -23,7 +23,7 @@ bool HostSkipChipPileExpression() {
 
 bool FloorDisabledForTest() {
     static const bool s = [] {
-        const bool on = coop::config::IsIniKeyTrue("disable_completeness_floor");
+        const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::disable_completeness_floor);
         if (on) {
             UE_LOGW("force_overdestroy_test: completeness FLOOR DISABLED for test -- the claim sweep "
                     "will behave like a no-floor baseline (the BEFORE half). With force_chippile_unclaim "

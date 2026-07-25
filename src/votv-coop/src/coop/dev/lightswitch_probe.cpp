@@ -21,7 +21,7 @@ namespace GT = ue_wrap::game_thread;
 namespace LS = ue_wrap::lightswitch;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::config::IsIniKeyTrue("lightswitch_probe");
+    static const bool s_enabled = coop::config::ResolveFlag(::coop::config_registry::rows::lightswitch_probe);
     return s_enabled;
 }
 

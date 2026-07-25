@@ -22,7 +22,7 @@ using Clock = std::chrono::steady_clock;
 // Armed-state latch (read the ini once -- the key never changes mid-run).
 int  g_armed = -1;  // -1 = unresolved, 0 = off, 1 = on
 bool Armed() {
-    if (g_armed < 0) g_armed = coop::config::IsIniKeyTrue("leak_probe") ? 1 : 0;
+    if (g_armed < 0) g_armed = coop::config::ResolveFlag(::coop::config_registry::rows::leak_probe) ? 1 : 0;
     return g_armed == 1;
 }
 

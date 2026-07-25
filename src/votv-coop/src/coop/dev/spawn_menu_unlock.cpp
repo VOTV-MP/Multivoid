@@ -131,7 +131,7 @@ void Init() {
             UE_LOGI("spawn_menu_unlock: file-trigger ENABLED (VOTVCOOP_SPAWNMENU_TRIGGER) -- OpenNow on file");
         }
     }
-    if (!::coop::config::IsIniKeyTrue("spawn_menu_unlock")) {
+    if (!::coop::config::ResolveFlag(::coop::config_registry::rows::spawn_menu_unlock)) {
         UE_LOGI("spawn_menu_unlock: off at boot (set [dev] spawn_menu_unlock=1 to "
                 "force-enable; the F1 menu toggles it under [dev] devkeys)");
         return;

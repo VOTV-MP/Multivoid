@@ -450,9 +450,9 @@ void DumperThread() {
 void Init() {
     static std::atomic<bool> s_done{false};
     if (s_done.exchange(true)) return;
-    if (!coop::config::IsIniKeyTrue("gnatives_probe")) return;
+    if (!coop::config::ResolveFlag(::coop::config_registry::rows::gnatives_probe)) return;
 
-    g_enabled = !coop::config::IsIniKeyTrue("gnatives_probe_disabled");
+    g_enabled = !coop::config::ResolveFlag(::coop::config_registry::rows::gnatives_probe_disabled);
 
     g_gnatives = ResolveGNatives();
     if (!g_gnatives) {

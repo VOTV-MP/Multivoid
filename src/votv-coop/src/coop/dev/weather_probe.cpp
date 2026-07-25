@@ -54,7 +54,7 @@ void Tick(coop::net::Session* session) {
     // (a) is rain particle active on host but not client (Activate-vs-param), and
     // (b) which fog the thick fog is (enable_fog vs enable_superfog). Gated off by
     // default; cheap when off (one bool load).
-    static const bool sProbe = ::coop::config::IsIniKeyTrue("weather_probe");
+    static const bool sProbe = ::coop::config::ResolveFlag(::coop::config_registry::rows::weather_probe);
     if (sProbe) {
         static uint32_t sN = 0;
         if ((sN++ % 125) == 0) {

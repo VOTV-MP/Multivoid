@@ -343,7 +343,7 @@ void Tick() {
     }
 
     // INCREMENT 2 read-verify self-test (ini inventory_selftest=1). One-shot; dev diagnostic.
-    static const bool s_selftest = ::coop::config::IsIniKeyTrue("inventory_selftest");
+    static const bool s_selftest = ::coop::config::ResolveFlag(::coop::config_registry::rows::inventory_selftest);
     if (!s_selftest) return;
     static bool s_done = false;
     if (s_done) return;
@@ -381,7 +381,7 @@ void Tick() {
     // game's OWN AddEquipment (begin_equipment::GiveFromClass) + re-read, confirming the canonical
     // equip path adds the items BEFORE it's wired to the first-join edge. One-shot (rides this
     // one-shot selftest). Removed once first-join uses it.
-    if (::coop::config::IsIniKeyTrue("starterkit_test")) {
+    if (::coop::config::ResolveFlag(::coop::config_registry::rows::starterkit_test)) {
         for (const wchar_t* c : {L"prop_equipment_flashlight_C", L"prop_equipment_glasses_C",
                                  L"prop_equipment_compass_C"})
             ue_wrap::begin_equipment::GiveFromClass(c);

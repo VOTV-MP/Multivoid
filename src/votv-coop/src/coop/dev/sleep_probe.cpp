@@ -41,7 +41,7 @@ void Install() {
     if (g_checked) return;
     g_checked = true;
     g_enabled = ::coop::config::MasterEnabled() &&
-                ::coop::config::IsIniKeyTrue("sleep_probe");
+                ::coop::config::ResolveFlag(::coop::config_registry::rows::sleep_probe);
     if (g_enabled)
         UE_LOGI("sleep_probe: ARMED (ini sleep_probe=1) -- client sleeps T+15s, host sleeps "
                 "T+25s (expect ACCELERATE), host wakeup T+40s (expect END natural=0)");

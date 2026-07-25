@@ -388,7 +388,7 @@ void DeriveAndSendLocal(coop::net::Session* s) {
 // client-inject (derivation->batch->canonical circle), each 0->1->0, digests
 // logged for the smoke comparison. ----
 bool SelftestEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("laptop_selftest");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::laptop_selftest);
     return s;
 }
 

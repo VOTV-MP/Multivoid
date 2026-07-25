@@ -307,7 +307,7 @@ void Init() {
     // Opt-out kill switch (default ON -- this is a shipping feature, not a dev one,
     // so it is NOT gated by the [dev] master switch). `[coop] multiplayer_menu_off=1`
     // disables it.
-    if (coop::config::IsIniKeyTrue("multiplayer_menu_off")) {
+    if (coop::config::ResolveFlag(::coop::config_registry::rows::multiplayer_menu_off)) {
         UE_LOGI("multiplayer_menu: disabled via [coop] multiplayer_menu_off=1");
         return;
     }

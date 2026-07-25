@@ -31,7 +31,7 @@ uint32_t g_periodicCtr = 0;        // [dev] kerfur_census=1 periodic throttle (p
 constexpr uint32_t kPeriodicEveryCalls = 600;  // ~10s at 60 fps (the tick fires per frame)
 
 bool PeriodicEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("kerfur_census");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::kerfur_census);
     return s;
 }
 

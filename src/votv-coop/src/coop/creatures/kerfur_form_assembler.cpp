@@ -168,7 +168,7 @@ std::atomic<int> g_logged{0};
 // T11 (ini rework arc 2): latched -- the old per-call read opened + scanned
 // the ini file on EVERY verbose-log check (F34, a hot ProcessEvent path).
 bool LogVerbose() {
-    static const bool s = coop::config::IsIniKeyTrue("vm_dispatch_log");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::vm_dispatch_log);
     return s;
 }
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }

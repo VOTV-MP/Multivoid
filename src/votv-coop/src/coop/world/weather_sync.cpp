@@ -232,7 +232,7 @@ uint64_t SignaturePayload(const coop::net::WeatherStatePayload& p) {
 void OnSchedulerPost(void* self, void* function, void* /*params*/) {
     // Diag flag -- read once per process. Used to trace observer firing
     // when broadcasts go missing. Off by default (ini-only gate).
-    static const bool sLog = ::coop::config::IsIniKeyTrue("weather_observer_log");
+    static const bool sLog = ::coop::config::ResolveFlag(::coop::config_registry::rows::weather_observer_log);
     if (sLog) {
         UE_LOGI("weather: OnSchedulerPost ENTRY (self=%p function=%p)", self, function);
     }

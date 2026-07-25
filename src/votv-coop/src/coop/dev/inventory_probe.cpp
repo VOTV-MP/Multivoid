@@ -13,7 +13,7 @@
 namespace coop::dev::inventory_probe {
 
 void Tick() {
-    static const bool s_on = ::coop::config::IsIniKeyTrue("inventory_probe");
+    static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::inventory_probe);
     if (!s_on) return;
     static bool s_done = false;
     if (s_done) return;

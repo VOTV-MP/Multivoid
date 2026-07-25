@@ -201,7 +201,7 @@ void Tick() {
     // after its transport connects (measured smoke 2026-07-17: fx at +5 s was
     // dropped at the client's still-unresolved desk), so the probe must
     // outwait the peer's world load to be a valid e2e proof.
-    static const bool s_selftest = coop::config::IsIniKeyTrue("desk_snd_selftest");
+    static const bool s_selftest = coop::config::ResolveFlag(::coop::config_registry::rows::desk_snd_selftest);
     if (s_selftest && !g_selfTestDone && g_selfTestDue == Clock::time_point{} &&
         s->role() == coop::net::Role::Host && s->connected())
         g_selfTestDue = Clock::now() + std::chrono::seconds(20);

@@ -159,7 +159,7 @@ uint64_t HashRows(const std::vector<Row>& rows) {
 }  // namespace
 
 void Tick(bool isHost) {
-    static const bool s_enabled = coop::config::IsIniKeyTrue("delivery_census");
+    static const bool s_enabled = coop::config::ResolveFlag(::coop::config_registry::rows::delivery_census);
     if (!s_enabled) return;
     const uint64_t nowMs = NowMs();
     if (nowMs < g_nextSample) return;

@@ -377,7 +377,7 @@ void Init() {
         UE_LOGI("freecam: disabled by master switch ([dev] enabled=0)");
         return;
     }
-    if (!::coop::config::IsIniKeyTrue("freecam")) {
+    if (!::coop::config::ResolveFlag(::coop::config_registry::rows::freecam)) {
         UE_LOGI("freecam: HOME toggle off at boot (set [dev] freecam=1 to enable it; the "
                 "F1 menu still toggles freecam under [dev] devkeys)");
         return;

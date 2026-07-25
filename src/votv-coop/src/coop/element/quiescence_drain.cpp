@@ -66,7 +66,7 @@ constexpr uint8_t kAnyChipType = 0xFF;
 // predicted GC-pointer-reuse tail). Read-only per-twin diagnostic that distinguishes the three -- so we PROBE
 // the residual before touching the VERIFIED owner. [[feedback-probe-dont-guess-rule]]
 bool DupProbeOn() {
-    static const bool s_on = coop::config::IsIniKeyTrue("pile_dup_probe");
+    static const bool s_on = coop::config::ResolveFlag(::coop::config_registry::rows::pile_dup_probe);
     return s_on;
 }
 // A twin retires when its eid is CONFIRMED moved @new: E's currently-bound native lives farther than this

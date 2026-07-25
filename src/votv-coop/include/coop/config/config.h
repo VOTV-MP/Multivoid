@@ -149,16 +149,14 @@ bool ReformatLiveIni(ReformatStats& out);
 bool IdentityNotDurable();
 bool IniUnreadableSeen();
 
-// ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
+// ---- boolean ini flags ------------------------------------------------------
 
-// Returns false ONLY if multivoid.ini contains `enabled=0` (or `enabled=false`)
-// -- the [dev] master kill-switch. Missing key or =1 returns true.
+// Returns false ONLY if multivoid.ini (or the env twin) holds an explicit
+// falsy `enabled` -- the [dev] master kill-switch. Absent/garbage = true
+// (granular switches decide). Arc 3: rides rows::enabled (def=true); the
+// string-keyed IsIniKeyTrue is GONE -- flag reads go through
+// ResolveFlag(rows::<flag>).
 bool MasterEnabled();
-
-// Read a `key=1` / `key=true` style flag line. Case/space/inline-comment
-// tolerant. Returns false if the file is missing, the key is absent, or the
-// key is set to 0/false.
-bool IsIniKeyTrue(const char* key);
 
 // ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----
 // Path-parameterized twins of the two readers + the raw line list + a failing-

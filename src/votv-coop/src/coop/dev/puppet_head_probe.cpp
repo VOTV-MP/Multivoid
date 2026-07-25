@@ -45,7 +45,7 @@ void Tick(void* puppetActor, float bodyYawDeg, float desiredLookYawDeg, float de
     const auto now = SteadyClock::now();
     ActorState& st = g_state[puppetActor];
     if (st.nextLog != SteadyClock::time_point{} && now < st.nextLog) return;
-    if (!coop::config::IsIniKeyTrue("puppet_head_probe")) {
+    if (!coop::config::ResolveFlag(::coop::config_registry::rows::puppet_head_probe)) {
         st.nextLog = now + std::chrono::seconds(2);  // back off while disabled
         return;
     }

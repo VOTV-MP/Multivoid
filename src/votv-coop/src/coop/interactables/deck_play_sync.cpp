@@ -205,7 +205,7 @@ void Tick() {
 
     // Dev self-test (host, once per session, 25 s past connect -- outwaits
     // the peer's world load, the desk_snd measured bound).
-    static const bool s_selftest = coop::config::IsIniKeyTrue("deck_selftest");
+    static const bool s_selftest = coop::config::ResolveFlag(::coop::config_registry::rows::deck_selftest);
     if (s_selftest && s->role() == coop::net::Role::Host && s->connected()) {
         const auto now = Clock::now();
         if (g_selfTestStage == 0) {

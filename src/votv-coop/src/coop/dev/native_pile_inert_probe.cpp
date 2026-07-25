@@ -54,7 +54,7 @@ void Cleanup() {
 void Install() { /* no boot work -- the probe drives entirely from Tick's state machine */ }
 
 void Tick(bool connected, bool isHost) {
-    static const bool enabled = coop::config::IsIniKeyTrue("native_pile_inert_probe");
+    static const bool enabled = coop::config::ResolveFlag(::coop::config_registry::rows::native_pile_inert_probe);
     if (!enabled) return;
     UE_ASSERT_GAME_THREAD("native_pile_inert_probe::Tick");
 

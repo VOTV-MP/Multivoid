@@ -85,7 +85,7 @@ constexpr float kWipeProximityCm  = 800.0f;
 constexpr float kWipeProximityCm2 = kWipeProximityCm * kWipeProximityCm;
 
 bool ProbeLog() {
-    static const bool s_enabled = ::coop::config::IsIniKeyTrue("grime_log");
+    static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_log);
     return s_enabled;
 }
 

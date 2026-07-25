@@ -27,7 +27,7 @@ namespace R = ue_wrap::reflection;
 namespace D = ue_wrap::door;
 
 bool ProbeEnabled() {
-    static const bool s_enabled = coop::config::IsIniKeyTrue("door_probe");
+    static const bool s_enabled = coop::config::ResolveFlag(::coop::config_registry::rows::door_probe);
     return s_enabled;
 }
 

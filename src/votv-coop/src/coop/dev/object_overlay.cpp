@@ -431,7 +431,7 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
 
 void InitFromIni() {
     if (::coop::config::MasterEnabled() &&
-        ::coop::config::IsIniKeyTrue("object_overlay")) {
+        ::coop::config::ResolveFlag(::coop::config_registry::rows::object_overlay)) {
         g_enabled.store(true, std::memory_order_release);
         UE_LOGI("object_overlay: force-enabled via ini (names=%d net=%d phys=%d r=%.0fm)",
                 g_layerNames.load() ? 1 : 0, g_layerNet.load() ? 1 : 0,

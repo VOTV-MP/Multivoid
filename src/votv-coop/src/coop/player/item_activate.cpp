@@ -145,7 +145,7 @@ bool ProbeLogEnabled() {
     // Read once; ini parsing is cheap but the observer is hot. Static
     // initialization means we resolve this ONCE per process lifetime,
     // which is acceptable for a dev-only flag (restart to flip it).
-    static const bool s_enabled = ::coop::config::IsIniKeyTrue("flashlight_log");
+    static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::flashlight_log);
     return s_enabled;
 }
 

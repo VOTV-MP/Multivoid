@@ -24,7 +24,7 @@ constexpr size_t kCap = 16384;  // probe backstop
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("eid_lifetime_trace");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::eid_lifetime_trace);
     return s;
 }
 

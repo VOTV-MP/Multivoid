@@ -62,7 +62,7 @@ inline constexpr auto kPendingTTL = std::chrono::seconds(25);
 inline constexpr auto kDoorSettleBridge = std::chrono::milliseconds(1500);
 
 inline bool ProbeLog() {
-    static const bool s_enabled = ::coop::config::IsIniKeyTrue("interactable_log");
+    static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::interactable_log);
     return s_enabled;
 }
 

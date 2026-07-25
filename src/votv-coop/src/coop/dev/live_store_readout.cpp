@@ -125,7 +125,7 @@ std::string StateKey(int32_t idx, const Bag& live, const Bag& proj) {
 }  // namespace
 
 void Tick() {
-    static const bool s_on = ::coop::config::IsIniKeyTrue("live_store_readout");
+    static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::live_store_readout);
     if (!s_on) return;
     static int s_ticks = 0;
     if (++s_ticks < kPollTicks) return;

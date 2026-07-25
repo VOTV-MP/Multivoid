@@ -569,7 +569,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         // CallFunction route) from an unrelated teardown.
         // T11 (arc 2): latched -- this sits on the kerfur-prop destroy edge; the
         // old per-call read re-opened the ini every time (F34).
-        static const bool s_vmLog = coop::config::IsIniKeyTrue("vm_dispatch_log");
+        static const bool s_vmLog = coop::config::ResolveFlag(::coop::config_registry::rows::vm_dispatch_log);
         if (s_vmLog) {
             const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
             const coop::element::ElementId reqEid = coop::kerfur_convert_host::ActiveRequestVerbEid();

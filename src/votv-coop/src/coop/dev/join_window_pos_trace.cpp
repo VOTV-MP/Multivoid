@@ -45,7 +45,7 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("join_window_pos_trace");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::join_window_pos_trace);
     return s;
 }
 

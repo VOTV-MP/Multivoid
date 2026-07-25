@@ -275,7 +275,7 @@ void RunCensuses() {
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("rng_roll_census");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::rng_roll_census);
     return s;
 }
 

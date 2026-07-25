@@ -65,7 +65,7 @@ std::array<unsigned long long, static_cast<size_t>(Bucket::Count)> g_lastBuckets
 }  // namespace
 
 bool Enabled() {
-    static const bool s = coop::config::IsIniKeyTrue("perf_probe");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe);
     return s;
 }
 
@@ -95,7 +95,7 @@ void Init() {
     g_initDone = true;
     if (!Enabled()) return;
     g_armed = true;
-    g_selfTime = coop::config::IsIniKeyTrue("perf_probe_selftime");
+    g_selfTime = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_selftime);
     GT::SetPerfCounting(true, g_selfTime);
     UE_LOGW("[perf] probe ARMED (perf_probe=1, selftime=%d) -- 1 Hz frame-cost report follows; "
             "this adds per-dispatch counting overhead, turn OFF for real play", g_selfTime ? 1 : 0);

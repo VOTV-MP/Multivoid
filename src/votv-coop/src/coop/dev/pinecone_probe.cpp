@@ -114,7 +114,7 @@ void Install() {
     if (g_checked) return;
     g_checked = true;
     g_enabled = ::coop::config::MasterEnabled() &&
-                ::coop::config::IsIniKeyTrue("pinecone_probe");
+                ::coop::config::ResolveFlag(::coop::config_registry::rows::pinecone_probe);
     if (g_enabled) UE_LOGI("pinecone_probe: ARMED (ini pinecone_probe=1) -- host force-spawns a KEYLESS pinecone + a KEYED prop_C ~45s after a client connects (tests both host_spawn_watcher seams)");
 }
 

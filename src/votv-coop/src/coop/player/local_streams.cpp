@@ -299,7 +299,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     // clump. Only fires while something is held, throttled ~4 Hz; gated off
     // by default so steady-state cost is one atomic-bool load.
     static const bool sProbeGarbage =
-        ::coop::config::IsIniKeyTrue("garbage_pickup_probe");
+        ::coop::config::ResolveFlag(::coop::config_registry::rows::garbage_pickup_probe);
     if (sProbeGarbage && (gs.grabbingActor || gs.holdingActor)) {
         static uint32_t sN = 0;
         if ((sN++ % 30) == 0) {

@@ -24,7 +24,7 @@ using Clock = std::chrono::steady_clock;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 bool Enabled() {
-    static const bool s = coop::config::IsIniKeyTrue("container_selftest");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::container_selftest);
     return s;
 }
 

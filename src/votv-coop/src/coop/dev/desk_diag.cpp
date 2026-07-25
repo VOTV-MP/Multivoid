@@ -129,7 +129,7 @@ char RoleChar(coop::net::Session* s) {
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("desk_diag");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::desk_diag);
     return s;
 }
 

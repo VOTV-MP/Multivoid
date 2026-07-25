@@ -38,7 +38,7 @@ const char* FamilyName(Family f) { return f == Family::ChipPile ? "chipPile" : "
 }  // namespace
 
 bool IsEnabled() {
-    static const bool s = coop::config::IsIniKeyTrue("spawn_order_probe");
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::spawn_order_probe);
     return s;
 }
 

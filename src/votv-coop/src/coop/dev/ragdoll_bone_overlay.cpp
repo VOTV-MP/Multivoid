@@ -83,7 +83,7 @@ void AppendMeshSkeleton_(void* pc, void* mesh, uint8_t kind, Snapshot& snap,
 
 void InitFromIni() {
     if (::coop::config::MasterEnabled() &&
-        ::coop::config::IsIniKeyTrue("ragdoll_bone_overlay")) {
+        ::coop::config::ResolveFlag(::coop::config_registry::rows::ragdoll_bone_overlay)) {
         g_enabled.store(true, std::memory_order_release);
         UE_LOGI("ragdoll_bone_overlay: force-enabled via ini");
     }
