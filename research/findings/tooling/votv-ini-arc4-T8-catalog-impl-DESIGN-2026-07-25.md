@@ -1,10 +1,23 @@
-# ini rework ARC 4 — impl design: the T8 `multivoid.ini.example` catalog (DESIGN, /qf-converged)
+# ini rework ARC 4 — impl design: the T8 `multivoid.ini.example` catalog (AS-BUILT)
 
-**Date:** 2026-07-25 · **Status:** DESIGN converged (/qf 12 rounds, genuine "that holds" at R12;
-core stable since v5, R6-R12 = instrument hardening) · **Parent:** the certified
-`votv-ini-config-registry-DESIGN-2026-07-24.md` (T8 spec :210-214, instrument row :264, §9d :339;
-arc-4 row) · **Prereq:** arc 3 AS-BUILT (typed row defaults — the "no placeholder" DONE criterion
-is reachable; `votv-ini-arc3-impl-DESIGN-2026-07-25.md`).
+**Date:** 2026-07-25 · **Status:** **AS-BUILT 2026-07-25 night** — commits `fd3481cd` (catalog:
+desc/gatedBy columns + generator + drill; 108 keys) + `0bbc0525` (F34 latch sweep ×4 sites) +
+`42fabf77` (audit fix: AtomicWriteLines goes BINARY — text mode CRLF'd every '\n' so the byte
+compare-first never hit "identical→skip"; enumerated consequence: ini rebuilds emit LF).
+**Evidence:** smoke with the drill green — catalog regenerated (108 keys), verify green on the
+LIVE boot bytes, all NINE doctored controls fire, locale canary ok, `config-selftest: DONE
+fail=0` machine-asserted by the smoke verdict; the CI RED drill ran the REAL lane (run
+30168118925: failure exactly at the "Config registry gate" step, all prior steps green; drill
+branch deleted); audit (perf+correctness agent): 2 IMPORTANT — the CRLF bug (fixed `42fabf77`)
+and save_transfer.cpp 974 LOC over the soft cap touched by the F34 sweep (extraction proposal
+recorded below; the file sits on the standing >800 queue since s28). NOT hands-on.
+**save_transfer extraction proposal (soft-cap rule):** the identity-sidecar block
+(BuildHostMap/serialize + the client strip/apply) → its own `coop/save/` TU by the
+frozen-instrument recipe; alternative cut = the HostStream/ClientStream chunk halves. Executes
+from the standing >800 queue, not this arc.
+· **Parent:** the certified `votv-ini-config-registry-DESIGN-2026-07-24.md` (T8 spec :210-214,
+instrument row :264, §9d :339; arc-4 row) · **Prereq:** arc 3 AS-BUILT
+(`votv-ini-arc3-impl-DESIGN-2026-07-25.md`). /qf: 12 rounds, genuine "that holds" at R12.
 
 ## What it is
 
