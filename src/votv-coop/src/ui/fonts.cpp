@@ -24,8 +24,8 @@ ImFont* g_roleFont[kRoleCount]   = {};
 float   g_rolePx[kRoleCount]     = {};
 // Filled by ReadRoleFamiliesOnce (every consumer path calls it first); the
 // per-role DEFAULT assignment lives ONLY in the registry row list (arc 3 --
-// config_registry::kFontRoleDefaultFamily; the old triple-copy here + in
-// RoleDesc.defaultFam is retired).
+// config_registry::kFontRoleDefaultFamily; the old per-role default-family
+// column of the local RoleDesc table is retired).
 Family  g_roleFamily[kRoleCount] = {};
 bool    g_rolesRead = false;     // ini read once; SetRoleFamily overrides after
 

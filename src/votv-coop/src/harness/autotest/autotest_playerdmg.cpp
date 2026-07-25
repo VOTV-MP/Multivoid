@@ -138,8 +138,7 @@ void IdlePlayerDamageOnClient() {
 }  // namespace
 
 void RunAutonomousPlayerDamageTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (isHost) {
         DrivePlayerDamageOnHost();
     } else {

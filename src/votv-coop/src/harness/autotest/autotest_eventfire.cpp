@@ -49,8 +49,7 @@ bool FireWithRetry(efs::FireKind kind, const wchar_t* name, const char* label) {
 }  // namespace
 
 void RunAutonomousEventFireTest() {
-    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
-    if (roleEnv == "client") {
+    if (IsClientRole()) {
         UE_LOGI("eventfire_test: not host -- this routine is host-only (client observes via wire)");
         return;
     }

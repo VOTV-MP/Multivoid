@@ -59,8 +59,7 @@ namespace cfg = coop::config;
 }  // namespace
 
 void RunAutonomousGrabTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");  // default Host if unset
+    const bool isHost = !IsClientRole();  // default Host if unset
     const char* roleStr = isHost ? "host" : "client";
     UE_LOGI("grab_test: starting autonomous routine on %s (waiting 10 s for stabilization)", roleStr);
     ::Sleep(10000);

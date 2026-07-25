@@ -218,8 +218,7 @@ void DriveDamageOnClient() {
 }  // namespace
 
 void RunAutonomousDamageTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (isHost) {
         ObserveDamageOnHost();
     } else {

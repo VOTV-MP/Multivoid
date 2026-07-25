@@ -155,8 +155,7 @@ void IdlePuppetOnClient() {
 }  // namespace
 
 void RunAutonomousPuppetFrame() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");  // default Host if unset
+    const bool isHost = !IsClientRole();  // default Host if unset
     if (isHost) {
         FrameStandingPuppetOnHost();
     } else {

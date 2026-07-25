@@ -115,7 +115,7 @@ coop::element::ElementId EidOf(void* pile) {
 }  // namespace
 
 void RunAutonomousChipPileTest() {
-    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         if (ReadEnv("VOTVCOOP_PILE_SHOWCASE") != "1") {
             UE_LOGI("chippile_test: CLIENT scan-only -- verify in THIS log: 'remote_prop::OnConvert: "
@@ -493,7 +493,7 @@ void RunAutonomousChipPileTest() {
 //              suppressed -> verdict B-fallback: Increment 2 must drive SetTargetLocationAndRotation on the
 //              puppet each tick from the synced remote aim (the data the mod already streams).
 void RunPuppetGrabProbe() {
-    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         UE_LOGI("puppet_grab_probe: CLIENT -- nothing to drive (the HOST executes the grab on the puppet). "
                 "Just stand so the slot-1 puppet exists on the host.");
@@ -643,7 +643,7 @@ void RunPuppetGrabProbe() {
 //   CLIENT log: the PropConvert{ToClump} echo applied to the proxy (remote_prop OnConvert / GRAB-IN).
 // The CLIENT drives; the HOST is the authority that executes + broadcasts.
 void RunGrabIntentTest() {
-    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = !IsClientRole();
     if (isHost) {
         UE_LOGI("grab_intent_test: HOST -- the authority. Watch THIS log for the grab-intent RECEIVED/EXEC/"
                 "SUCCESS + puppet-drive markers when the client sends its synthetic grab.");
@@ -776,7 +776,7 @@ void RunGrabIntentTest() {
 // host log that the drift preceded the snapshot. For a real HANDS-ON the user creates the same divergence
 // by playing (collecting/moving piles as host) before the client joins -- this scenario only automates it.
 void RunPileDriftScenario() {
-    const bool isHost = (ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         UE_LOGI("pile_drift: CLIENT -- nothing to do (the HOST drifts its world pre-connect). The orphan census "
                 "runs on THIS client at the join sweep -- watch for '[PILE-CENSUS]' lines.");

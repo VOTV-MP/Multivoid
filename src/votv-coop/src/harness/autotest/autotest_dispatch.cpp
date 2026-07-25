@@ -31,6 +31,15 @@ void SpawnIf(const char* envKey, const char* label,
 
 }  // namespace
 
+bool IsClientRole() {
+    // Latched (one file scan per process): the routines call this from their
+    // worker threads after boot; the role cannot change within a launch. Magic
+    // statics make the first concurrent call safe.
+    static const bool isClient =
+        cfg::ResolveEnum(coop::config_registry::rows::net_role) == "client";
+    return isClient;
+}
+
 void SpawnEnvGatedTests(coop::net::Role role) {
     // Autonomous grab test: both peers (host drives grab/move/release via native
     // PhysicsHandle UFunctions; client scan-only for cross-peer FName stability).

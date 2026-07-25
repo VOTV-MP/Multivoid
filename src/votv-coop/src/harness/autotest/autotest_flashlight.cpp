@@ -57,8 +57,7 @@ namespace cfg = coop::config;
 //   - session connected (the harness flips state to Connected before this
 //     test fires; the env gate is also after the same Start() call)
 void RunAutonomousFlashlightTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     const char* roleStr = isHost ? "host" : "client";
     UE_LOGI("flashlight_test: starting autonomous routine on %s (waiting 15 s for stabilization)", roleStr);
     // 15 s is the same settle window grab_test uses; lets both peers

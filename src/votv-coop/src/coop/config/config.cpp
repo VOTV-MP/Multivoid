@@ -362,8 +362,11 @@ static void FillP2PFields(coop::net::Config& c) {
     // Precedence mirrors the master: env -> custom-master gate (ini net.signaling) ->
     // the built-in VPS signaling. (The signaling TOKEN stays ini/master-minted -- never
     // hardcoded; in the normal master-up flow the master overrides this URL+token per
-    // session, so this default only seeds the master-down fallback.)
-    std::string sig = ReadEnv("VOTVCOOP_NET_SIGNALING");
+    // session, so this default only seeds the master-down fallback.) The gate makes
+    // this chain bespoke (env always wins, ini only under the gate -- ResolveString
+    // cannot express the skipped middle layer), but the env NAME rides the row (arc 3
+    // T2b: no site-owned "VOTVCOOP_NET_SIGNALING" literal twin).
+    std::string sig = ReadEnv(config_registry::rows::net_signaling.row->envVar);
     if (sig.empty())
         sig = UseCustomNetMaster()
                   ? ResolveString(config_registry::rows::net_signaling)
@@ -464,7 +467,10 @@ std::string ReadMasterUrl() {
     // endpoint. A native launch has no env and (by default) no custom gate, so it hits
     // the hardcoded VPS master, which drives the menu server browser + Host-Game flow
     // and mints the per-session signaling/STUN/TURN creds.
-    std::string m = ReadEnv("VOTVCOOP_MASTER_URL");
+    // Env name from the row (arc 3 T2b) -- the gate makes the chain bespoke
+    // (env beats both layers; ini counts only under the gate), the literal
+    // does not duplicate.
+    std::string m = ReadEnv(config_registry::rows::net_master.row->envVar);
     if (!m.empty()) return m;
     if (UseCustomNetMaster()) {
         std::string v = ResolveString(config_registry::rows::net_master);

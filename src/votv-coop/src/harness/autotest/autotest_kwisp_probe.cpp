@@ -77,8 +77,7 @@ float Dist(void* a, void* b) {
 }  // namespace
 
 void RunAutonomousKwispProbe() {
-    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
-    if (roleEnv == "client") {
+    if (IsClientRole()) {
         UE_LOGI("kwisp_probe: not host -- client just stands (its puppet is the bait); verify in "
                 "THIS log: wisp_tear/WispGrab lines IF the relay fires");
         return;

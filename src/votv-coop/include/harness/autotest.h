@@ -19,6 +19,16 @@
 
 namespace harness::autotest {
 
+// The ONE role predicate for every autotest routine's host/client branch
+// (arc 3 T2b): rides the registry resolve of net.role (env twin -> ini ->
+// unset sentinel "") THROUGH coop::config::ResolveEnum -- the raw per-routine
+// env reads of the role variable were a SECOND role resolver that could
+// diverge from the product's own (config.cpp ReadNetConfig).
+// "client" = client; anything else (host / unset) = the host side -- exactly
+// the retired sites' `roleEnv != "client"` outcome table. LATCHED: one
+// resolve per process (the T11 idiom; routines poll from worker threads).
+bool IsClientRole();
+
 // Run the full autonomous grab test routine. Blocks the calling thread
 // for ~20 seconds (waits + screenshot captures + multiple drive ticks).
 // Designed to be called from a worker thread (see GrabTestThread).

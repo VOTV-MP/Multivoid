@@ -14,8 +14,9 @@ namespace harness::autotest {
 
 // Spawn each autonomous-test worker thread whose VOTVCOOP_RUN_*_TEST env flag is
 // "1". `role` only feeds the per-spawn log line -- every test routine self-gates
-// on VOTVCOOP_NET_ROLE internally (host-only / client-only / both). Call once
-// from the play-ready path after the session has started.
+// via autotest::IsClientRole() internally (host-only / client-only / both; the
+// registry net.role resolve, arc 3 T2b). Call once from the play-ready path
+// after the session has started.
 void SpawnEnvGatedTests(coop::net::Role role);
 
 }  // namespace harness::autotest

@@ -39,8 +39,7 @@ EF::BoxStatus SnapshotOnce(const char* eventName) {
 }  // namespace
 
 void RunAutonomousEventForceTest() {
-    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
-    if (roleEnv == "client") {
+    if (IsClientRole()) {
         UE_LOGI("eventforce_test: not host -- this routine is host-only (client observes via wire)");
         return;
     }

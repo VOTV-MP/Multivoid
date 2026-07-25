@@ -33,8 +33,7 @@
 namespace harness::autotest {
 
 void RunAutonomousWispLaneTest() {
-    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
-    if (roleEnv == "client") {
+    if (IsClientRole()) {
         UE_LOGI("wisplane_test: not host -- this routine is host-only (client observes via wire)");
         return;
     }

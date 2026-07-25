@@ -54,8 +54,7 @@ std::string ReadEnv(const char* name) {
 // installs the hook, so its log shows no save_block line at all -- its save path is
 // byte-for-byte untouched. Gated by env VOTVCOOP_RUN_SAVEBLOCK_TEST="1".
 void RunAutonomousSaveBlockTest() {
-    const std::string roleEnv = ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (isHost) {
         UE_LOGI("saveblock_test: not client -- this routine is client-only (the host "
                 "installs no save hook; its save path is untouched). Returning.");
@@ -127,7 +126,7 @@ DWORD WINAPI SaveBlockTestThread(LPVOID /*arg*/) {
 // grey + that the ESC menu still OPENS need one human glance (hands-on play).
 // Gated by env VOTVCOOP_RUN_SAVEBTN_TEST="1".
 void RunAutonomousSaveBtnDisableTest() {
-    if (ReadEnv("VOTVCOOP_NET_ROLE") == "client") {
+    if (IsClientRole()) {
         UE_LOGI("savebtn_test: starting on client (waiting 18 s: connect + possession + "
                 "ui_menu_C loaded + the save_button_disable observers installed)");
     } else {

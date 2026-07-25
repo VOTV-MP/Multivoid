@@ -44,7 +44,7 @@ namespace cfg = coop::config;
 // emit ... eid=N". (The synthetic cold-grab clump self-frees after ~1s, so the
 // drive is brief; a real grabbed clump persists -- hands-on for the full visual.)
 void RunAutonomousClumpTest() {
-    const bool isHost = (cfg::ReadEnv("VOTVCOOP_NET_ROLE") != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         UE_LOGI("clump_test: CLIENT scan-only -- verify in THIS log: 'remote_prop::OnSpawn "
                 "spawned ... prop_garbageClump_C', 'GRAB-IN ... eid=N ... clump kinematic', "

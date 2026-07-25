@@ -35,11 +35,6 @@ namespace lobby = coop::net::lobby;
 // duplicated string literal with a "keep in sync" comment -- retired 2026-07-16).
 constexpr const char* kDefaultMaster = coop::net::kOfficialMasterUrl;
 
-std::string ReadEnvA(const char* name) {
-    char buf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
-    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
-}
 
 // LEAKED process-lifetime singletons (never destroyed): (a) no thread-join runs at
 // static destruction / DLL unload -- the project forbids join-from-teardown (loader-
@@ -55,7 +50,6 @@ lobby::LobbyAnnouncer& Announcer() { static auto* a = new lobby::LobbyAnnouncer(
 // a boot write, then occasional worker-set / UI-read).
 std::mutex g_cfgMu;
 std::string g_masterUrl = kDefaultMaster;  // overwritten by Configure
-bool g_configured = false;
 net::Config g_fallbackHostCfg;
 std::string g_hostStatus;
 std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
@@ -117,7 +111,6 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
         std::lock_guard<std::mutex> lk(g_cfgMu);
         g_masterUrl = masterUrl.empty() ? std::string(kDefaultMaster) : masterUrl;
         g_fallbackHostCfg = fallbackHostCfg;
-        g_configured = true;
         UE_LOGI("session_manager: configured -- master='%s' fallback(signaling-set=%d identity='%s')",
                 DisplayMaster(g_masterUrl).c_str(),
                 g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1,
@@ -131,13 +124,13 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
 }
 
 std::string MasterUrl() {
+    // All 6 callers are internal post-boot actions (host/join/refresh workers)
+    // and the harness Configure()s at boot before any of them can run; the
+    // static init already aliases the official endpoint, so a hypothetical
+    // pre-Configure read still reaches the right place. The old !configured
+    // env-fallback branch was a SECOND resolver of VOTVCOOP_MASTER_URL beside
+    // config.cpp's registry row -- the F21 duplicate class (arc 3 T2b).
     std::lock_guard<std::mutex> lk(g_cfgMu);
-    if (!g_configured) {
-        // Not yet Configure()'d (e.g. a direct unit probe) -- fall back to the
-        // env var / localhost default so the value is still sane.
-        const std::string m = ReadEnvA("VOTVCOOP_MASTER_URL");
-        return m.empty() ? std::string(kDefaultMaster) : m;
-    }
     return g_masterUrl;
 }
 

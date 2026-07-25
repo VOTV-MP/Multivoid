@@ -45,7 +45,7 @@ int RunGT(Fn&& body) {
 }  // namespace
 
 void RunAutonomousPauseGuardTest() {
-    if (coop::config::ReadEnv("VOTVCOOP_NET_ROLE") != "client") {
+    if (!IsClientRole()) {
         UE_LOGI("pause_test: not client -- this routine is client-only (the reported freeze "
                 "is the CLIENT pausing). Returning.");
         return;

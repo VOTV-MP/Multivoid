@@ -89,11 +89,12 @@ std::string ResolveString(const config_registry::StringRow& row);
 // single-machine).
 coop::net::Config ReadNetConfig(bool& enabled);
 
-// The master/lobby server URL ("host:port"). Precedence: env VOTVCOOP_MASTER_URL ->
-// the custom-master gate (net.master.custom=1 -> ini net.master) -> the BUILT-IN VPS
-// endpoint hardcoded in config.cpp (kBuiltinMasterUrl). Pushed into session_manager at
-// boot so a native (no-env, no-ini) launch points the browser/host flow at the VPS out
-// of the box; set net.master.custom=1 + net.master=... to run your own master.
+// The master/lobby server URL ("host:port"). Precedence: env (the net.master row's
+// env twin) -> the custom-master gate (net.master.custom=1 -> ini net.master) -> the
+// official endpoint (coop::net::kOfficialMasterUrl, which is also the row default).
+// Pushed into session_manager at boot so a native (no-env, no-ini) launch points the
+// browser/host flow at the VPS out of the box; set net.master.custom=1 +
+// net.master=... to run your own master.
 std::string ReadMasterUrl();
 
 // A forced P2P-host transport Config (signaling/identity/stun from the same

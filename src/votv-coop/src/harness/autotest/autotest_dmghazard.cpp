@@ -232,8 +232,7 @@ void IdleDmgHazardOnClient() {
 }  // namespace
 
 void RunAutonomousDmgHazardTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (isHost) {
         ProbeDamageHazardOnHost();
     } else {

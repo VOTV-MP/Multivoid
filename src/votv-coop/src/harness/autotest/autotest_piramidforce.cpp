@@ -90,8 +90,7 @@ void RepinWispsAroundPyramid() {
 }  // namespace
 
 void RunAutonomousPiramidForceTest() {
-    const std::string roleEnv = coop::config::ReadEnv("VOTVCOOP_NET_ROLE");
-    if (roleEnv == "client") {
+    if (IsClientRole()) {
         UE_LOGI("piramidforce_test: not host -- host-only (client asserts via its own log lines)");
         return;
     }

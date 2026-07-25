@@ -46,8 +46,7 @@ namespace cfg = coop::config;
 // screenshot capture mid-cycle). Final state = OFF so the next test run
 // starts clean.
 void RunAutonomousWeatherTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         UE_LOGI("weather_test: not host -- this routine is host-only "
                 "(client observes via wire). Returning.");
@@ -148,8 +147,7 @@ DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
 // starts clean. 10 s ON dwell gives the visual change ample time to
 // settle + the screenshot window to capture.
 void RunAutonomousRedSkyTest() {
-    const std::string roleEnv = cfg::ReadEnv("VOTVCOOP_NET_ROLE");
-    const bool isHost = (roleEnv != "client");
+    const bool isHost = !IsClientRole();
     if (!isHost) {
         UE_LOGI("redsky_test: not host -- this routine is host-only "
                 "(client observes via wire). Returning.");
