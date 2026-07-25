@@ -421,6 +421,28 @@ R29 critic's independent predicate walk -> **that holds**.
 
 ## 7. Status
 
-**CONVERGED 2026-07-25 (pass 1: R1-15 capped; confirmation pass: R16-29, "that holds" at R29).**
-NEXT = build per §5. Nothing built yet; no DLL/proto change; PR #2 untouched (no reply posted yet —
-the thanks + plan reply goes out when the rework starts, per D8).
+**BUILT + DRILLED 2026-07-25 (session 3, same day as convergence).** §5 steps 1-5 are LIVE on main:
+D9 `kReleasesUrl` (`49f10515`); the release lane (`47b88116`: tools/release/ scripts + LEDGER.tsv +
+trampoline/release-core/build-core, actions SHA-pinned); D8 probe PASSED first try (rework
+`4a980ecf` onto the fork; PR #2 reply posted, MERGED `ac729ca1` — merge diff = build.yml only);
+rulesets 19728696/19728697/19728708 (PR merges need `--admin`; direct pushes auto-bypass — daily
+flow intact; robot pushes/tags blocked); RELEASE.md rewritten (`fb3c39bc`); cacheless acceptance
+run 30153795340 GREEN → CI-bytes LAN smoke PASS → fingerprint committed (`97cc02e1`:
+MSVC 14.51.36231 / SDK 10.0.26100.0 / build-core 45c1ac9c).
+
+**§4 drill matrix: EVERY row ran and PASSED** (b125 consumed→published→retracted for it; ledger =
+3 rows; campaign cleanup verified zero v-tags/releases/drill-branches on origin). Highlights:
+wrong-proto + no-consume refusals on their NAMED lines (the old-commit tag push fired NOTHING —
+the event-YAML fact live); fingerprint-poison refused PRE-BUILD after a genuine PUBLISH verdict;
+robot tag → GH013 ruleset rejection WITH explicit contents:write (D10 limit measured); sanitize
+mirror = zero runs + workflows==main with the positive control FIRED first; advisory lint on a
+corrupted-ledger mirror read origin/main's rows (i2/i6 self-check evidence in the same run);
+publish drill: stale-draft deletion, sha256 re-download verify, prerelease read-back, labeled
+LATEST_404, DRILL-marked body, retraction + push-immediate terminal row, terminal refusal ×2
+(recovery AND trampoline). **The matrix caught one real bug live**: the ALREADY_PUBLISHED no-op
+left the judge step red (child exit code fell through) — fixed `e4c5e503`, re-drilled green.
+verify_latest pre/post stays DEFERRED to the first stable ritual (R22, by design).
+
+**Remaining: §5 step 6 — the first REAL dev release; USER DECISION 2026-07-25: after the
+ini/config work (arcs 1+2) is finished.** Proto is now 126 (the drill consume); the next release
+consumes 126+.
