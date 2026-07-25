@@ -705,7 +705,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 126; // v126 (2026-07-25, consume b125: the drill-matrix dev release, retracted after). Prior: v125 (2026-07-22, R11b container extraction):
+inline constexpr uint16_t kProtocolVersion = 127; // v127 (2026-07-25, consume b126: the first REAL dev release -- ini arcs 1+2). Prior: v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
                                                   // ContainerContents becomes BIDIRECTIONAL and its
                                                   // blob gains a baseHash. A client now AUTHORS the
                                                   // world container it mutated (presser-authored
