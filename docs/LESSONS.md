@@ -1661,6 +1661,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   over-long line — never drop it. *Look FIRST:*
   `memory/lesson_one_file_format_needs_one_parse_primitive.md`
 
+- **A Windows text-mode writer defeats any byte compare-first; a both-outcomes-tolerant assert
+  cannot see the dead branch.** `AtomicWriteLines` opened `L"w"` — the CRT translated every `\n` to
+  CRLF on disk, so the T8 catalog's `existing == fresh` (binary read vs LF-built string) was
+  PERMANENTLY false: the "identical→skip" branch was dead, every boot logged "regenerated" — and the
+  drill stayed green because its assert accepted BOTH `Regenerated|UpToDate`. Fix `42fabf77` (writer
+  → `wb`); revival proven by TWO consecutive boots (run 2 logs "up-to-date"). Check BOTH fopen modes
+  of any write/read byte-compare pair; give every compare branch a scenario that forces it. *Look
+  FIRST:* `memory/lesson_text_mode_write_defeats_byte_compare.md`
+- **Editing `build-core.yml` = do the fingerprint re-commit ritual in the SAME workstream.** The
+  release judge pins `build_core_sha256`; the b127-dev run refused pre-build (`FINGERPRINT: FAIL`,
+  run 30168572721) because `ad15ae7c` added the registry-gate step without re-smoking. The refusal
+  is designed — but the recovery (cacheless build ~40 min + local smoke of the CI bytes + commit
+  `fingerprint-dump.json` + re-run) costs ~1.5 h AT RELEASE TIME. Dispatch the cacheless build right
+  after the build-core edit lands, not when the judge refuses. *Look FIRST:*
+  `memory/lesson_build_core_edit_requires_fingerprint_recommit.md`
+
 ---
 
 - **A public hostname is not a public origin IP — know which one you are redacting.** The service
