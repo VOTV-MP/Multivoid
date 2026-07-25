@@ -42,12 +42,15 @@ std::string ReadIniValue(const char* key, const char* def);
 // (harness boot, ahead of the guid/skin mints).
 bool EnsureIniSkeleton();
 
-// Create/update a single "key=value" line in multivoid.ini (matches ReadIniValue's
-// section-agnostic lookup). Persists local server-browser settings -- the player
-// name + the last direct-connect address -- so they survive a relaunch. Best-effort:
-// a read-only dir just means the setting isn't remembered, never a crash (logs +
-// returns). The ini is LOCAL-ONLY (gitignored). ASCII values.
-void WriteIniValue(const char* key, const char* value);
+// Create/update a single "key=value" line in multivoid.ini. TARGETING = the
+// unified occurrence rule (ini rework T3): the authoritative line is the FIRST
+// case-insensitive key occurrence, edited in place with canonical spelling; at
+// N>1 duplicates only that line is edited; other bytes verbatim; the rewritten
+// line's inline comment is deleted (it described the old value). Best-effort:
+// a read-only dir just means the setting isn't remembered, never a crash (logs
+// + returns false; true = the atomic swap landed). The ini is LOCAL-ONLY
+// (gitignored). ASCII values.
+bool WriteIniValue(const char* key, const char* value);
 
 // Build the net Config from env + ini. Sets `enabled` to true iff a
 // host/client role is configured (otherwise hands-on play stays

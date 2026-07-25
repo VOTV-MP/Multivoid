@@ -239,7 +239,7 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
-void WriteIniValue(const char* key, const char* value) {
+bool WriteIniValue(const char* key, const char* value) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
     const std::wstring path = IniPath();
     // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
@@ -281,16 +281,29 @@ void WriteIniValue(const char* key, const char* value) {
             ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
             UE_LOGW("config: WriteIniValue('%s') SKIPPED -- multivoid.ini exists but is "
                     "locked for read; refusing to rebuild the file blind", key);
-            return;
+            return false;
         }
         if (rc == 0 && f) {
             // Whole lines via the arc-1 primitive: the old 512-byte chunk loop
             // ran ParseIniLine per CHUNK, so a long line whose tail parsed as
             // the key under write got spliced (design F31). Dead class now.
+            //
+            // TARGETING = the unified occurrence rule (T3): the authoritative
+            // line is the FIRST case-INSENSITIVE key occurrence, edited in
+            // place with the canonical spelling (newLine carries the caller's
+            // key -- safe: zero ci collisions between distinct keys, F40). The
+            // old case-sensitive writer MISSED `Enabled=1` when writing
+            // `enabled`, appended a second occurrence, and the two readers
+            // then disagreed from one write. At N>1 only the authoritative
+            // line is edited -- moving past a duplicate would hand victory to
+            // the un-written line. All other bytes verbatim; the rewritten
+            // line's inline comment is deleted (today's behavior, F36 -- it
+            // described the old value). Section MOVE placement waits on the
+            // arc-2 per-key section column (inert here: new keys append at EOF).
             const IniScan st =
                 ScanLineSource(LineSource{&FileLineSourceNext, f}, [&](const std::string& s) {
                     std::string k, v;
-                    if (!found && ParseIniLine(s, k, v) && k == key) {
+                    if (!found && ParseIniLine(s, k, v) && _stricmp(k.c_str(), key) == 0) {
                         lines.push_back(newLine);
                         found = true;
                     } else {
@@ -304,7 +317,7 @@ void WriteIniValue(const char* key, const char* value) {
                 // deeper (fgets NULL == silent EOF before this primitive).
                 UE_LOGW("config: WriteIniValue('%s') SKIPPED -- read error mid-file; "
                         "refusing to rebuild the ini from a truncated prefix", key);
-                return;
+                return false;
             }
         }
     }
@@ -319,7 +332,7 @@ void WriteIniValue(const char* key, const char* value) {
     FILE* f = nullptr;
     if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
         UE_LOGW("config: WriteIniValue('%s') could not open multivoid.ini.new for write", key);
-        return;
+        return false;
     }
     // Every write checked BEFORE the swap: a disk-full/IO-error .new must never be
     // atomically installed over the good ini (that would be the one data-loss path
@@ -333,15 +346,16 @@ void WriteIniValue(const char* key, const char* value) {
         ::DeleteFileW(tmp.c_str());
         UE_LOGW("config: WriteIniValue('%s') writing multivoid.ini.new FAILED (disk?) -- "
                 "ini left unchanged", key);
-        return;
+        return false;
     }
     if (!::MoveFileExW(tmp.c_str(), path.c_str(),
                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         UE_LOGW("config: WriteIniValue('%s') atomic swap failed (err=%lu) -- ini left "
                 "unchanged, multivoid.ini.new kept", key, ::GetLastError());
-        return;
+        return false;
     }
     UE_LOGI("config: persisted %s=%s", key, safe.c_str());
+    return true;
 }
 
 // ---- Built-in (hardcoded) public net endpoints -- our VPS -----------------------
@@ -544,9 +558,11 @@ std::string ReadPlayerSkin() {
     std::string skin = ReadIniValue("player_skin", "");
     if (!coop::skins::IsValidSkinName(skin)) {
         skin = coop::skins::PickRandomStarterSkin();
-        WriteIniValue("player_skin", skin.c_str());
-        UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (persisted to "
-                "multivoid.ini)", skin.c_str());
+        // Truthful persist log (F43 fix): the old line said "persisted"
+        // unconditionally -- false on a locked file.
+        const bool persisted = WriteIniValue("player_skin", skin.c_str());
+        UE_LOGI("config: player_skin absent/invalid -> random starter '%s' (%s)", skin.c_str(),
+                persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
     }
     return skin;
 }
@@ -574,8 +590,9 @@ std::string ReadPlayerGuid() {
             const uint32_t r = rd();
             for (int n = 28; n >= 0; n -= 4) guid.push_back(kHex[(r >> n) & 0xF]);
         }
-        WriteIniValue("player_guid", guid.c_str());
-        UE_LOGI("config: generated new player_guid=%s (persisted to multivoid.ini)", guid.c_str());
+        const bool persisted = WriteIniValue("player_guid", guid.c_str());
+        UE_LOGI("config: generated new player_guid=%s (%s)", guid.c_str(),
+                persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
     }
     return guid;
 }
