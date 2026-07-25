@@ -6,9 +6,9 @@
 
 | | |
 |--|--|
-| **Current build** | `multivoid-0.9.0n-125.dll` — game target **0.9.0n**, build **b125** |
+| **Current build** | the newest `multivoid-<game>-<N>.dll` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the DLL filename carries the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
-| **Status** | Alpha, pre-release — playable in development, no public builds yet |
+| **Status** | Alpha — dev prereleases published for testing; no stable release yet |
 | **Players** | up to **4** (host + 3) |
 | **Platform** | Windows · UE4.27 · LAN + Internet |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
@@ -157,8 +157,10 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 
 ### For players
 
-> No public builds are published yet — installation starts working with the first
-> release on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases).
+> **Dev prereleases** are published on the
+> [Releases page](https://github.com/VOTV-MP/Multivoid/releases) — early builds
+> for testing, not yet a supported stable release. Expect rough edges; bug
+> reports welcome on [Discord](https://discord.gg/bA6tGBvGMN).
 
 1. Download the release pair: `xinput1_3.dll` + `multivoid-<game>-<build>.dll`.
 2. Drop both files next to the game executable:
@@ -172,6 +174,10 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 To uninstall, delete the two DLLs. The mod never touches the game's own files.
 
 ### For developers
+
+Full guide: [BUILDING.md](BUILDING.md) — local toolchain setup, troubleshooting,
+and **building via GitHub Actions** (no local toolchain needed: fork, dispatch
+the `build` workflow, download the DLL artifact).
 
 Requirements: Windows 10+, Visual Studio 2019/2022 **Build Tools** (C++ workload),
 CMake 3.20+, and a legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/`

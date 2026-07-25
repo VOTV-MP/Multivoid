@@ -17,6 +17,36 @@ build number parsed out of `kProtocolVersion` in
 artifact**, and the configure re-runs automatically when `protocol.h`
 changes.
 
+## Building via GitHub Actions (no local toolchain)
+
+The repo carries a CI build lane, so you can get a DLL without installing
+Visual Studio, CMake, or vcpkg at all:
+
+1. **Fork** the repo and **enable Actions** on your fork (GitHub disables
+   workflows on fresh forks until you press the button on the Actions tab).
+2. Actions → **build** → **Run workflow** on the branch you want. The lane is
+   manual-only by design (`workflow_dispatch`) — pushing alone builds nothing.
+3. When the run goes green, download the **`multivoid-ci-<sha12>`** artifact
+   from the run page. It contains the versioned payload DLL, `xinput1_3.dll`,
+   and `build-info.txt` with the exact source commit.
+4. Install/deploy those two DLLs exactly like a release pair (see the README
+   quick start, or `tools/deploy-all.ps1` on a dev rig).
+
+Notes:
+
+- **The first run is slow** (cold vcpkg + GameNetworkingSockets + webrtc can
+  take hours on a hosted runner). Later runs reuse the vcpkg caches and are
+  much faster. The `cacheless` input forces a from-scratch build — that is the
+  release-path smoke, not something you normally want.
+- The build implementation lives in `build-core.yml` and is referenced in the
+  remote form (`VOTV-MP/Multivoid/.github/workflows/build-core.yml@main`), so
+  a fork's dispatch builds *your* commit with the *upstream* build recipe.
+- **CI artifacts are build evidence, not a distribution channel.** Official
+  bytes come from the [Releases page](https://github.com/VOTV-MP/Multivoid/releases)
+  only — release builds are cacheless rebuilds of the tagged source, published
+  with SHA256 by the release lane (maintainers: the ritual is
+  [docs/RELEASE.md](docs/RELEASE.md)).
+
 ## Prerequisites
 
 - **Windows 10 / 11** (build target is x64).
