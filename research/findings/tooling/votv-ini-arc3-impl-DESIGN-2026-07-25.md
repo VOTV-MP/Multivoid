@@ -1,6 +1,6 @@
 # ini rework ARC 3 — impl design: T2-migrate + T2b + the const Row& ratchet (DESIGN, /qf-converged)
 
-**Date:** 2026-07-25 · **Status:** DESIGN converged — /qf 16 rounds, genuine "that holds" at R16
+**Date:** 2026-07-25 · **Status:** **C1-C3a BUILT 2026-07-25 eve** (C1 `f88a78cf` registry .inc + typed handles + ValidateRows; C2 `faa0289d` typed Resolve/ResolveString + all string/Resolve sites + fonts ENUM rows; C3a `3b9aba38` 62-site flag sweep + MasterEnabled on rows::enabled + IsIniKeyTrue DELETED — the READ ratchet is closed, product-code IsIniKeyTrue hits = 0, each commit Release-built clean; NOT smoked, instruments beyond the BEFORE harvest not yet run). REMAINING: C3b write door + enum_check retire (blocking inheritor gate), C4 T2b, C5 registry_gate.ps1 + CI + drills, AFTER-compare + corpus re-run + audits + smoke + b127-dev. DESIGN: /qf 16 rounds, genuine "that holds" at R16
 ("the plan's remaining risk is execution fidelity, not design") · **Parent:** the certified
 `votv-ini-config-registry-DESIGN-2026-07-24.md` (arc-3 row: T2-migrate ~106 literal sites + T2b +
 ratchet; enum_check.ps1 retires) · **Fact base:** measured THIS session on post-arc-2 HEAD

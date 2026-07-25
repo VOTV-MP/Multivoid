@@ -1387,6 +1387,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   2026-07-25; minimal repro same day). Parenthesize `("b" + $c)` or interpolate `"b$c"`.
   *Look FIRST:* any `.ps1` building a line list with `+` inside `@( )`.
   `memory/lesson_ps_comma_binds_tighter_than_plus_in_array_literals.md`
+- **An aborted batch-edit script has ALREADY mutated the tree; its re-run's "0 changes" lies** — a
+  mid-walk crash (non-utf8 third_party header) left the arc-3 C3a sweep FULLY applied while the
+  hardened re-run printed `files: 0`, reading as "never ran" (2026-07-25). The runner's counters
+  describe THE RUN, not the tree. Exclude vendored dirs up front; verify by residual-grep of the OLD
+  pattern + opening one known site; treat "0 changes" after an aborted run as suspicious.
+  *Look FIRST:* any os.walk/-Recurse mutator over src/ — its dir-exclusion list, then `git diff --stat`.
+  `memory/lesson_aborted_batch_edit_already_mutated_verify_by_site.md`
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
 - **Filtered tool output HIDES verdicts — twice-bitten:** s22 a grep+tail filter ate a LINK error (a
   STALE DLL deployed; the SHA-256 build-vs-deployed compare caught it), s23 `smoke | tail -4` cut the
@@ -1625,7 +1632,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   described wrong. *Look FIRST:*
   `memory/lesson_choose_and_enumerate_when_no_behaviour_preserving_option_exists.md`
 - **Never host a report about X behind a gate that X controls.** The config-review panel for
-  `multivoid.ini` was placed in `dev_menu`, which is gated on `MasterEnabled() && IsIniKeyTrue("devkeys")`
+  `multivoid.ini` was placed in `dev_menu`, which is gated on `MasterEnabled() && devkeys` (post-arc-3: `ResolveFlag(rows::devkeys)`)
   (`dev_menu.cpp:539`) — i.e. the user must hand-edit the very file he is asking for help with. The two
   other candidates failed the same test differently: `multivoid.log` has **no owner-reader** ("reported"
   with no reader is a fiction), and the loader's boot dialog is a different severity whose `Arm` is
