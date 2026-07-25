@@ -124,7 +124,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // the current scientist). local_body owns it; the Join payload reads it from there.
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
     // v94: the persisted nameplate pref (absent = visible). The Join prefs byte reads it.
-    coop::nameplate::SetInitialLocalVisible(cfg::ReadIniValue("nameplate", "1") != "0");
+    coop::nameplate::SetInitialLocalVisible(cfg::ResolveFlag("nameplate", true));
     // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex). The Join
     // color field reads it; nick_color owns the parse + the absent/empty
     // semantics (s27 Tier-C move).

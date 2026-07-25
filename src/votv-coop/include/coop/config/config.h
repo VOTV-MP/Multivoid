@@ -52,6 +52,23 @@ bool EnsureIniSkeleton();
 // (gitignored). ASCII values.
 bool WriteIniValue(const char* key, const char* value);
 
+// ---- typed layered reads (ini rework arc 2, T6) -----------------------------
+// Resolve(key) = env -> ini -> `def`, validated against the key's registry row
+// (kind + range/tokens; config_registry.h). One vocabulary for flags
+// (1|true|yes|on / 0|false|no|off, ci); numbers must whole-parse AND land in
+// the row's [lo, hi]; enums must ci-match a row token (the canonical token is
+// returned). Anything else -- including present-but-empty (F33) -- is garbage:
+// the DEFAULT applies in memory (user ruling "дефолт ставить"), the T10 boot
+// sweep reports it, nothing is written back. A SET env var that fails
+// validation SHADOWS a valid ini value (the operator overrode the ini on
+// purpose; falling through would honor exactly what they overrode); an EMPTY
+// env var is unset and falls through (F44). The env var name comes from the
+// registry row -- sites never name it.
+bool        ResolveFlag(const char* key, bool def);
+long        ResolveInt(const char* key, long def);
+float       ResolveFloat(const char* key, float def);
+std::string ResolveEnum(const char* key, const char* def);
+
 // Build the net Config from env + ini. Sets `enabled` to true iff a
 // host/client role is configured (otherwise hands-on play stays
 // single-machine).

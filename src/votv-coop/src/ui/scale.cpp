@@ -3,6 +3,7 @@
 #include "ui/scale.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 
 #include <cmath>
 #include <cstdio>
@@ -18,9 +19,12 @@ constexpr float kRefHeight = 1080.f;
 // a max size pref can't explode the atlas (glyph area grows quadratically).
 constexpr float kResMin = 0.5f;
 constexpr float kResMax = 3.0f;
-constexpr float kUserMin = 0.75f;
-constexpr float kUserMax = 1.75f;
 constexpr float kCombinedMax = 4.0f;
+
+// The user-pref clamp range is OWNED by the ui.scale registry row (arc 2) --
+// the slider (dev_menu) and this clamp read the same [lo, hi]; no local twin.
+float UserMin() { return static_cast<float>(coop::config_registry::FindRow("ui.scale")->lo); }
+float UserMax() { return static_cast<float>(coop::config_registry::FindRow("ui.scale")->hi); }
 
 // All render-thread only (the Present detour thread), like the rest of ui/.
 float g_res = 1.0f;      // quantized resolution factor (height / 1080)
@@ -59,9 +63,12 @@ float Ui() { return g_scale; }
 
 float UserScale() { return g_user; }
 
+float UserScaleMin() { return UserMin(); }
+float UserScaleMax() { return UserMax(); }
+
 void SetUserScale(float s) {
-    if (s < kUserMin) s = kUserMin;
-    if (s > kUserMax) s = kUserMax;
+    if (s < UserMin()) s = UserMin();
+    if (s > UserMax()) s = UserMax();
     if (s == g_user) return;
     g_user = s;
     Recombine();
@@ -70,10 +77,10 @@ void SetUserScale(float s) {
 void LoadUserPrefOnce() {
     if (g_prefLoaded) return;
     g_prefLoaded = true;
-    const std::string v = coop::config::ReadIniValue("ui.scale", "1.25");
-    const float s = static_cast<float>(std::atof(v.c_str()));
-    if (s > 0.f) SetUserScale(s);
-    else Recombine();  // malformed ini value: publish the default combination
+    // Typed registry read (arc 2): garbage OR out-of-[row lo,hi] -> the 1.25
+    // default ("побольше") + a T10 sweep row. (The old atof path fed 99 into
+    // the clamp -> silently 1.75; out-of-range is garbage now, user ruling.)
+    SetUserScale(coop::config::ResolveFloat("ui.scale", 1.25f));
 }
 
 void RequestRebuild() { g_rebuild = true; }

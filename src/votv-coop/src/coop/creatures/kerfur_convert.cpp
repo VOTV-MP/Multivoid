@@ -567,7 +567,10 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         // log THAT case loud, with destroy provenance, so it can never hide silently. provenance{}
         // distinguishes the conversion verb's own self-destroy (vmActive+ctxSelf, or reqEid on the
         // CallFunction route) from an unrelated teardown.
-        if (coop::config::IsIniKeyTrue("vm_dispatch_log")) {
+        // T11 (arc 2): latched -- this sits on the kerfur-prop destroy edge; the
+        // old per-call read re-opened the ini every time (F34).
+        static const bool s_vmLog = coop::config::IsIniKeyTrue("vm_dispatch_log");
+        if (s_vmLog) {
             const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
             const coop::element::ElementId reqEid = coop::kerfur_convert_host::ActiveRequestVerbEid();
             if (av.active || reqEid != coop::element::kInvalidId)

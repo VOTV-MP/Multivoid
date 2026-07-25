@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -241,13 +242,19 @@ bool EnsureIniSkeleton() {
     // deliberately-editable net.nick line (the joke is meant to be SEEN and
     // replaced; design T1 "seeded-active").
     std::string content = "; multivoid.ini -- Multivoid configuration. Created on first launch.\n";
+    size_t rowCount = 0;
+    const config_registry::Row* rows = config_registry::Rows(rowCount);
     for (size_t i = 0; i < coop::config_registry::kSectionCount; ++i) {
         const char* sec = coop::config_registry::kSectionOrder[i];
         content += "\n[";
         content += sec;
         content += "]\n";
-        if (std::string(sec) == "net")
-            content += std::string("net.nick=") + coop::config_registry::kMyNameDefault + "\n";
+        // seeded-active rows (T2 column; today exactly net.nick, user-ruled):
+        // the seeded value is the my-name default -- meant to be SEEN + replaced.
+        for (size_t r = 0; r < rowCount; ++r)
+            if (rows[r].seededActive && _stricmp(rows[r].section, sec) == 0)
+                content += std::string(rows[r].key) + "=" +
+                           coop::config_registry::kMyNameDefault + "\n";
     }
     // Atomic create: .new then MoveFileExW WITHOUT REPLACE_EXISTING -- if the
     // file appeared concurrently the seeder loses the race gracefully.
@@ -276,6 +283,53 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
+// Is `line` the section header `[name]` (edge-trimmed, ci)? Sections are
+// decorative to the PARSER (F3) but drive the T3 write PLACEMENT in a file
+// that carries our headers (a fresh skeleton, or one the owner reformatted).
+static bool IsSectionHeader(const std::string& line, std::string& nameOut) {
+    const std::string t = TrimEdges(line);
+    if (t.size() < 2 || t.front() != '[' || t.back() != ']') return false;
+    nameOut = t.substr(1, t.size() - 2);
+    return true;
+}
+
+// T3b: never persist a value the read would reject. Typed registry rows
+// validate with the SAME vocabulary/rules the readers use; String/Identity
+// rows and unregistered (dev/selftest) keys pass through.
+static bool ValueValidForRow(const config_registry::Row* row, const std::string& safe) {
+    if (!row) return true;
+    using config_registry::Kind;
+    switch (row->kind) {
+        case Kind::Flag:
+            return FlagVerdictFromValue(safe) != 0;
+        case Kind::Int: {
+            char* end = nullptr;
+            const long v = std::strtol(safe.c_str(), &end, 10);
+            return !safe.empty() && end && *end == '\0' &&
+                   v >= static_cast<long>(row->lo) && v <= static_cast<long>(row->hi);
+        }
+        case Kind::Float: {
+            char* end = nullptr;
+            const double v = std::strtod(safe.c_str(), &end);
+            return !safe.empty() && end && *end == '\0' && v >= row->lo && v <= row->hi;
+        }
+        case Kind::Enum: {
+            if (!row->tokens) return false;
+            const char* t = row->tokens;
+            while (*t) {
+                const char* bar = std::strchr(t, '|');
+                const size_t len = bar ? static_cast<size_t>(bar - t) : std::strlen(t);
+                if (safe.size() == len && _strnicmp(safe.c_str(), t, len) == 0) return true;
+                if (!bar) break;
+                t = bar + 1;
+            }
+            return false;
+        }
+        default:
+            return true;
+    }
+}
+
 // Path-parameterized writer core (no lock -- the public wrapper holds it; the
 // selftest drives COPIES of corpus files, never the live ini).
 static bool WriteIniValueAt(const std::wstring& path, const char* key, const char* value) {
@@ -287,6 +341,13 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
     for (const char* p = value; *p; ++p)
         if (*p != '\n' && *p != '\r') safe.push_back(*p);
     safe = TrimEdges(safe);
+    const config_registry::Row* row = config_registry::FindRow(key);
+    if (!ValueValidForRow(row, safe)) {
+        UE_LOGW("config: WriteIniValue('%s'='%s') REFUSED -- the value would be rejected "
+                "on read (registry kind/range/tokens); not persisting garbage (T3b)",
+                key, safe.c_str());
+        return false;
+    }
     const std::string newLine = std::string(key) + "=" + safe + "\n";
     // Read existing lines, replacing the key's line IN PLACE if present (so we keep
     // the rest of the ini -- sections, comments, other keys -- untouched).
@@ -302,6 +363,10 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
     //      kill, power) where the file on disk was empty/partial.
     std::vector<std::string> lines;
     bool found = false;
+    int foundIdx = -1;          // index of the rewritten authoritative line
+    int occurrences = 0;        // ci occurrence count of `key`
+    bool foundInSection = false;  // authoritative line already under its header
+    int sectionEndIdx = -1;     // last content line of the key's section (-1 = no header)
     {
         FILE* f = nullptr;
         errno_t rc = 1;
@@ -335,17 +400,38 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
             // line is edited -- moving past a duplicate would hand victory to
             // the un-written line. All other bytes verbatim; the rewritten
             // line's inline comment is deleted (today's behavior, F36 -- it
-            // described the old value). Section MOVE placement waits on the
-            // arc-2 per-key section column (inert here: new keys append at EOF).
+            // described the old value).
+            //
+            // PLACEMENT (T3b, arc 2): tracked while scanning -- a MOVE exists
+            // only in a file that CARRIES the key's registry section header;
+            // headerless files keep today's behavior (append at EOF, no
+            // relocation).
+            std::string curSection;
+            bool inWantSection = false;
             const IniScan st =
                 ScanLineSource(LineSource{&FileLineSourceNext, f}, [&](const std::string& s) {
-                    std::string k, v;
-                    if (!found && ParseIniLine(s, k, v) && _stricmp(k.c_str(), key) == 0) {
-                        lines.push_back(newLine);
-                        found = true;
-                    } else {
-                        lines.push_back(s);
+                    std::string hdr;
+                    if (IsSectionHeader(s, hdr)) {
+                        curSection = hdr;
+                        inWantSection =
+                            row && _stricmp(hdr.c_str(), row->section) == 0;
+                        if (inWantSection)
+                            sectionEndIdx = static_cast<int>(lines.size());
+                    } else if (inWantSection && !TrimEdges(s).empty()) {
+                        sectionEndIdx = static_cast<int>(lines.size());
                     }
+                    std::string k, v;
+                    if (ParseIniLine(s, k, v) && _stricmp(k.c_str(), key) == 0) {
+                        ++occurrences;
+                        if (!found) {
+                            found = true;
+                            foundIdx = static_cast<int>(lines.size());
+                            foundInSection = inWantSection;
+                            lines.push_back(newLine);
+                            return;
+                        }
+                    }
+                    lines.push_back(s);
                 });
             std::fclose(f);
             if (st == IniScan::Unreadable) {
@@ -358,7 +444,24 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
             }
         }
     }
-    if (!found) {
+    if (found) {
+        // The MOVE: only at N==1 (at N>1 the edit stays where the authoritative
+        // line is -- relocating past a duplicate would hand victory to the
+        // un-written line) and only when the file carries the section header and
+        // the line sits OUTSIDE its section (e.g. pasted at EOF). The rewritten
+        // line relocates to the END of its section block.
+        if (occurrences == 1 && sectionEndIdx >= 0 && !foundInSection) {
+            const std::string moved = lines[static_cast<size_t>(foundIdx)];
+            lines.erase(lines.begin() + foundIdx);
+            int ins = sectionEndIdx;
+            if (foundIdx <= sectionEndIdx) --ins;  // erase shifted the target up
+            lines.insert(lines.begin() + (ins + 1), moved);
+        }
+    } else if (sectionEndIdx >= 0) {
+        // New key in a headered file: insert at the end of its section block
+        // instead of the EOF append.
+        lines.insert(lines.begin() + (sectionEndIdx + 1), newLine);
+    } else {
         // Make sure the appended key sits on its own line even if the file's last
         // line had no trailing newline.
         if (!lines.empty() && !lines.back().empty() && lines.back().back() != '\n')
@@ -421,9 +524,7 @@ static constexpr const char* kBuiltinSignalingUrl = coop::net::kOfficialSignalin
 // override (VOTVCOOP_MASTER_URL / VOTVCOOP_NET_SIGNALING) always takes precedence over
 // both (the dev / LAN-test framework).
 static bool UseCustomNetMaster() {
-    std::string g = ReadIniValue("net.master.custom", "0");
-    for (char& c : g) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');  // case-insensitive
-    return g == "1" || g == "true" || g == "yes" || g == "on";
+    return ResolveFlag("net.master.custom", false);
 }
 
 // Fill the P2P (rungs 1-3) transport fields of `c` from env -> ini -> default.
@@ -491,9 +592,10 @@ static void FillP2PFields(coop::net::Config& c) {
 
     // ICE candidate policy: "" / "all" (default) / "relay" / "disable" /
     // "default". "relay" forces the TURN relay path (privacy, or to validate
-    // coturn end-to-end). Mapped to IceEnable in Session::StartP2P.
-    std::string ice = ReadEnv("VOTVCOOP_NET_ICE");
-    c.iceMode = ice.empty() ? ReadIniValue("net.ice", "") : ice;
+    // coturn end-to-end). Mapped to IceEnable in Session::StartP2P. Enum row
+    // (arc 2): env rides the row; an unknown token is garbage -> "" (default
+    // policy) + a T10 sweep row.
+    c.iceMode = ResolveEnum("net.ice", "");
 
     // Console-visible diagnostic: any endpoint on the OFFICIAL VPS host prints
     // as "DEFAULT" -- the connect console must not advertise the raw address
@@ -512,33 +614,23 @@ static void FillP2PFields(coop::net::Config& c) {
 
 coop::net::Config ReadNetConfig(bool& enabled) {
     coop::net::Config c;
-    std::string role = ReadEnv("VOTVCOOP_NET_ROLE");
-    if (role.empty()) role = ReadIniValue("net.role", "");
+    // Typed reads (arc 2): env rides the registry row (VOTVCOOP_NET_ROLE /
+    // _PORT / _TOPOLOGY); garbage -> the default + a T10 sweep row.
+    const std::string role = ResolveEnum("net.role", "");
     enabled = (role == "host" || role == "client");
     c.role = (role == "client") ? coop::net::Role::Client : coop::net::Role::Host;
 
     std::string peer = ReadEnv("VOTVCOOP_NET_PEER");
     c.peerIp = peer.empty() ? ReadIniValue("net.peer", "127.0.0.1") : peer;
 
-    std::string port = ReadEnv("VOTVCOOP_NET_PORT");
-    if (port.empty()) port = ReadIniValue("net.port", "");
-    if (!port.empty()) {
-        // strtoul returns unsigned long; a cast to uint16_t silently wraps
-        // values >65535 to the wrong port. Range-check before commit.
-        const unsigned long raw = std::strtoul(port.c_str(), nullptr, 10);
-        if (raw == 0 || raw > 65535) {
-            UE_LOGW("config: VOTVCOOP_NET_PORT/net.port='%s' out of [1,65535] -- "
-                    "ignoring (keeping default %u)", port.c_str(), c.port);
-        } else {
-            c.port = static_cast<uint16_t>(raw);
-        }
-    }
+    // Range [1,65535] lives on the registry row; out-of-range or a partial
+    // parse is garbage -> the compiled default stays (the old strtoul-wrap
+    // hazard is structurally gone: a rejected value never reaches the cast).
+    c.port = static_cast<uint16_t>(ResolveInt("net.port", c.port));
 
     // --- P2P (zero-open-ports) topology --------------------------------------
     // net.topology = "lan" (default, rung 0/1 IP) or "p2p" (rungs 1-3 ICE).
-    std::string topo = ReadEnv("VOTVCOOP_NET_TOPOLOGY");
-    if (topo.empty()) topo = ReadIniValue("net.topology", "lan");
-    c.topology = (topo == "p2p" || topo == "P2P")
+    c.topology = ResolveEnum("net.topology", "lan") == "p2p"
                      ? coop::net::Topology::P2P
                      : coop::net::Topology::LanDirect;
 
@@ -587,6 +679,9 @@ std::wstring ReadNickname() {
     // T7 (ini rework): the MY-NAME default is the shared registry constant --
     // never a per-site literal (the 4-of-10-defaults-wrong sketch, design F19).
     if (nick.empty()) nick = ReadIniValue("net.nick", coop::config_registry::kMyNameDefault);
+    // Config reaches the wire: the Join payload's nicklen is uint8 (F14), so
+    // the nick caps at 255 bytes here at the resolve -- never mid-send.
+    if (nick.size() > 255) nick.resize(255);
     return std::wstring(nick.begin(), nick.end());
 }
 
@@ -681,6 +776,102 @@ bool MasterEnabled() {
 
 bool IsIniKeyTrue(const char* key) {
     return LookupTriState(key) == 1;
+}
+
+// ---- typed layered reads (arc 2, T6 -- see config.h) ------------------------
+
+namespace {
+
+// Whole-string numeric parses: "1.25abc" and "" are garbage, not 1.25/0.
+// (The old per-site atof/strtol accepted any prefix and silently produced 0
+// from pure garbage -- voice.volume=abc used to mean SILENCE.)
+bool ParseWholeLong(const std::string& s, long& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtol(s.c_str(), &end, 10);
+    return end && *end == '\0';
+}
+bool ParseWholeDouble(const std::string& s, double& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end && *end == '\0';
+}
+
+bool EnumTokenMatch(const config_registry::Row* row, const std::string& v,
+                    std::string& canonical) {
+    if (!row || !row->tokens) return false;
+    const char* t = row->tokens;
+    while (*t) {
+        const char* bar = std::strchr(t, '|');
+        const size_t len = bar ? static_cast<size_t>(bar - t) : std::strlen(t);
+        if (v.size() == len && _strnicmp(v.c_str(), t, len) == 0) {
+            canonical.assign(t, len);  // registry spelling wins (all-lowercase)
+            return true;
+        }
+        if (!bar) break;
+        t = bar + 1;
+    }
+    return false;
+}
+
+// The layered raw-value pick: SET env wins (valid or not -- garbage env
+// SHADOWS the ini, T6); else the ini's authoritative line; else absent.
+// Returns true + `raw` when a layer supplied a value.
+bool PickRawLayered(const char* key, std::string& raw) {
+    const config_registry::Row* row = config_registry::FindRow(key);
+    if (row && row->envVar) {
+        const std::string e = ReadEnv(row->envVar);
+        if (!e.empty()) { raw = e; return true; }
+    }
+    static const char* kAbsent = "\x01<absent>";
+    const std::string v = ReadIniValue(key, kAbsent);
+    if (v == kAbsent) return false;
+    raw = v;
+    return true;
+}
+
+}  // namespace
+
+bool ResolveFlag(const char* key, bool def) {
+    std::string raw;
+    if (!PickRawLayered(key, raw)) return def;
+    const int v = FlagVerdictFromValue(raw);
+    return v == 0 ? def : v > 0;
+}
+
+long ResolveInt(const char* key, long def) {
+    std::string raw;
+    if (!PickRawLayered(key, raw)) return def;
+    long v = 0;
+    if (!ParseWholeLong(StripInlineComment(raw, false), v)) return def;
+    const config_registry::Row* row = config_registry::FindRow(key);
+    if (row && row->kind == config_registry::Kind::Int &&
+        (v < static_cast<long>(row->lo) || v > static_cast<long>(row->hi)))
+        return def;  // out of range = garbage -> default (user ruling), sweep reports
+    return v;
+}
+
+float ResolveFloat(const char* key, float def) {
+    std::string raw;
+    if (!PickRawLayered(key, raw)) return def;
+    double v = 0;
+    if (!ParseWholeDouble(StripInlineComment(raw, false), v)) return def;
+    const config_registry::Row* row = config_registry::FindRow(key);
+    if (row && row->kind == config_registry::Kind::Float &&
+        (v < row->lo || v > row->hi))
+        return def;
+    return static_cast<float>(v);
+}
+
+std::string ResolveEnum(const char* key, const char* def) {
+    std::string raw;
+    if (!PickRawLayered(key, raw)) return def;
+    std::string canonical;
+    if (EnumTokenMatch(config_registry::FindRow(key),
+                       StripInlineComment(raw, false), canonical))
+        return canonical;
+    return def;
 }
 
 // ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----

@@ -26,7 +26,7 @@ std::once_flag g_prefOnce;
 
 void LoadPrefOnce() {
     std::call_once(g_prefOnce, [] {
-        g_enabled.store(coop::config::ReadIniValue("ui.netstats", "0") == "1",
+        g_enabled.store(coop::config::ResolveFlag("ui.netstats", false),
                         std::memory_order_relaxed);
     });
 }

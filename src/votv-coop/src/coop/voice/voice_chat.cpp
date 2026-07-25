@@ -74,17 +74,10 @@ int ParseKey(const std::string& s, int def) {
     return static_cast<int>(std::strtol(s.c_str(), nullptr, 0));
 }
 
-float ParseF(const std::string& s, float def) {
-    if (s.empty()) return def;
-    return static_cast<float>(std::atof(s.c_str()));
-}
-
-bool EnvOrIniBool(const char* env, const char* iniKey, bool def) {
-    const std::string e = CFG::ReadEnv(env);
-    if (!e.empty()) return e != "0";
-    const std::string v = CFG::ReadIniValue(iniKey, def ? "1" : "0");
-    return v != "0";
-}
+// (EnvOrIniBool + ParseF retired 2026-07-25, ini rework arc 2: the typed
+// registry reads own the env twin + the garbage->default rule. The old pair
+// accepted any non-"0" env as true and atof'd garbage to 0.0 -- voice.volume=abc
+// literally meant SILENCE.)
 
 void SendLocalState(coop::net::Session* s) {
     coop::net::VoiceStatePayload p{};
@@ -100,34 +93,27 @@ void SendLocalState(coop::net::Session* s) {
 // only -- Install + the panel-requested restart path.
 void StartDevices() {
     coop::voice::CaptureConfig cc;
-    // Mode + threshold take env overrides like the other voice keys (the
-    // autonomous tone smoke must force activation mode + a permissive
-    // threshold regardless of what the user's ini currently holds).
-    std::string mode = CFG::ReadEnv("VOTVCOOP_VOICE_MODE");
-    if (mode.empty()) mode = CFG::ReadIniValue("voice.mode", "ptt");
-    cc.activationMode = mode == "activation";
+    // Typed registry reads (arc 2): the env twins (VOTVCOOP_VOICE_MODE /
+    // _THRESHOLD_DB / _TEST_TONE / _LOOPBACK -- the autonomous tone smoke's
+    // overrides) ride the registry rows inside Resolve*.
+    cc.activationMode = CFG::ResolveEnum("voice.mode", "ptt") == "activation";
     // Default PTT 'G' (user 2026-06-12; was X -- clashed with VOTV binds). An
     // explicit voice.ptt_key in the ini still wins.
     cc.pttVk = ParseKey(CFG::ReadIniValue("voice.ptt_key", "G"), 'G');
     cc.whisperVk = ParseKey(CFG::ReadIniValue("voice.whisper_key", ""), 0);
-    const std::string thrEnv = CFG::ReadEnv("VOTVCOOP_VOICE_THRESHOLD_DB");
-    cc.thresholdDb = ParseF(!thrEnv.empty() ? thrEnv
-                                            : CFG::ReadIniValue("voice.threshold_db", "-50"),
-                            -50.0f);
-    cc.gainDb = ParseF(CFG::ReadIniValue("voice.mic_gain_db", "0"), 0.0f);
+    cc.thresholdDb = CFG::ResolveFloat("voice.threshold_db", -50.0f);
+    cc.gainDb = CFG::ResolveFloat("voice.mic_gain_db", 0.0f);
     cc.device = CFG::ReadIniValue("voice.mic_device", "");
-    cc.testTone = EnvOrIniBool("VOTVCOOP_VOICE_TEST_TONE", "voice.test_tone", false);
+    cc.testTone = CFG::ResolveFlag("voice.test_tone", false);
     g_muteVk = ParseKey(CFG::ReadIniValue("voice.mute_key", ""), 0);
-    g_loopback = EnvOrIniBool("VOTVCOOP_VOICE_LOOPBACK", "voice.loopback", false);
+    g_loopback = CFG::ResolveFlag("voice.loopback", false);
 
     coop::voice::PlaybackConfig pc;
     pc.device = CFG::ReadIniValue("voice.output_device", "");
-    pc.volume = ParseF(CFG::ReadIniValue("voice.volume", "1.0"), 1.0f);
-    pc.distanceCm = ParseF(CFG::ReadIniValue("voice.distance_cm", "4800"), 4800.0f);
-    pc.jitterThreshold =
-        static_cast<int>(ParseF(CFG::ReadIniValue("voice.jitter_threshold", "3"), 3.0f));
-    pc.prebufferFrames =
-        static_cast<int>(ParseF(CFG::ReadIniValue("voice.prebuffer_frames", "5"), 5.0f));
+    pc.volume = CFG::ResolveFloat("voice.volume", 1.0f);
+    pc.distanceCm = CFG::ResolveFloat("voice.distance_cm", 4800.0f);
+    pc.jitterThreshold = static_cast<int>(CFG::ResolveInt("voice.jitter_threshold", 3));
+    pc.prebufferFrames = static_cast<int>(CFG::ResolveInt("voice.prebuffer_frames", 5));
 
     g_playbackOk = g_playback.Start(pc);
     g_captureOk = g_capture.Start(cc);
@@ -168,7 +154,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_started) return;  // idempotent per session (Install is the session-start edge)
 
-    g_enabled = EnvOrIniBool("VOTVCOOP_VOICE_ENABLED", "voice.enabled", true);
+    g_enabled = CFG::ResolveFlag("voice.enabled", true);
     g_installAt = Clock::now();
     for (auto& st : g_peerState) st = WireState{};
     g_sendSeq = 0;

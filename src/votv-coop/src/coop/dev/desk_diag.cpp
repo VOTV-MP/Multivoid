@@ -49,11 +49,9 @@ const wchar_t* const kDeskClaim = L"desk";
 
 std::chrono::milliseconds Interval() {
     static const std::chrono::milliseconds s = [] {
-        const std::string v = coop::config::ReadIniValue("desk_diag_ms", "1000");
-        long ms = std::strtol(v.c_str(), nullptr, 10);
-        if (ms < 100) ms = 100;        // never busier than 10 Hz
-        if (ms > 60000) ms = 60000;
-        return std::chrono::milliseconds(ms);
+        // Registry-typed read (arc 2): range [100, 60000] lives on the row
+        // (never busier than 10 Hz); garbage/out-of-range -> the 1000 default.
+        return std::chrono::milliseconds(coop::config::ResolveInt("desk_diag_ms", 1000));
     }();
     return s;
 }

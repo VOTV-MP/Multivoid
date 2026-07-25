@@ -199,10 +199,9 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
     // host's connect-snapshot mirrors onto. Driven by `forceFresh` (the menu-mode client join,
     // 2026-06-06), the env override VOTVCOOP_FRESH=1 (the test launcher forces the CLIENT fresh
     // every run -- mp.py sets it per role), OR the `fresh_boot=1` ini test gate.
-    const bool freshBoot = !slotOverride &&
-                           (forceFresh ||
-                            (cfg::ReadEnv("VOTVCOOP_FRESH") == "1") ||
-                            (cfg::ReadIniValue("fresh_boot", "0") == "1"));
+    // fresh_boot rides the registry row (env twin VOTVCOOP_FRESH inside
+    // ResolveFlag; mp.py only ever sets it to "1").
+    const bool freshBoot = !slotOverride && (forceFresh || cfg::ResolveFlag("fresh_boot", false));
     // STORY save slot: an explicit override (the v56 coop slot) > env VOTVCOOP_SAVE (the test
     // launcher pins the HOST's save per run -- mp.py sets it) > multivoid.ini "save=<slot>" >
     // default s_may2026. Coop targets story mode, so we never boot the sandbox map fresh.

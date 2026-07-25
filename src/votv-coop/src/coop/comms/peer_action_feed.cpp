@@ -21,8 +21,8 @@ std::once_flag    g_loadOnce;
 
 void EnsureLoaded() {
     std::call_once(g_loadOnce, [] {
-        const std::string v = coop::config::ReadIniValue("ui.chat.peer_actions", "1");
-        g_enabled.store(v != "0", std::memory_order_relaxed);
+        g_enabled.store(coop::config::ResolveFlag("ui.chat.peer_actions", true),
+                        std::memory_order_relaxed);
     });
 }
 

@@ -165,7 +165,12 @@ thread_local std::chrono::steady_clock::time_point tls_capturedAt{};  // capture
 constexpr int kLogCap = 128;
 std::atomic<int> g_logged{0};
 
-bool LogVerbose() { return coop::config::IsIniKeyTrue("vm_dispatch_log"); }
+// T11 (ini rework arc 2): latched -- the old per-call read opened + scanned
+// the ini file on EVERY verbose-log check (F34, a hot ProcessEvent path).
+bool LogVerbose() {
+    static const bool s = coop::config::IsIniKeyTrue("vm_dispatch_log");
+    return s;
+}
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
 const char* RoleTag() { return IsHostRole() ? "HOST" : "CLIENT"; }
 

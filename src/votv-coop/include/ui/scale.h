@@ -34,8 +34,12 @@ float Ui();
 // 2026-07-04: "все менюшки и тексты ПОБОЛЬШЕ"). Multiplies the resolution
 // factor; the F1 > Cosmetics > Interface slider drives it live.
 float UserScale();
-void  SetUserScale(float s);   // clamps to [0.75, 1.75]; requests the rebuild
+void  SetUserScale(float s);   // clamps to the ui.scale registry row's [lo, hi]
 void  LoadUserPrefOnce();      // read ui.scale from the ini (bring-up, latched)
+// The pref clamp range -- owned by the ui.scale registry row (arc 2); the F1
+// slider consumes these so the slider and the clamp can never diverge.
+float UserScaleMin();
+float UserScaleMax();
 
 // Scale a 1080p-authored pixel constant to the live resolution.
 inline float S(float px) { return px * Ui(); }

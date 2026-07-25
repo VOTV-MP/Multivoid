@@ -447,7 +447,8 @@ void RenderFontPref() {
     static float sPending = -1.f;   // -1 = mirror the live value
     if (sPending < 0.f) sPending = ui::scale::UserScale();
     ImGui::SetNextItemWidth(S(260.f));
-    ImGui::SliderFloat("##uiscale", &sPending, 0.75f, 1.75f, "%.2fx");
+    ImGui::SliderFloat("##uiscale", &sPending, ui::scale::UserScaleMin(),
+                       ui::scale::UserScaleMax(), "%.2fx");
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         ui::scale::SetUserScale(sPending);
         char v[16];

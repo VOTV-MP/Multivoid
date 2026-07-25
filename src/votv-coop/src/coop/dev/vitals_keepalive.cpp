@@ -23,8 +23,9 @@ namespace {
 // refill broadcast into wire spam.
 long long PeriodMs() {
     static const long long s = [] {
-        const int sec = std::atoi(
-            coop::config::ReadIniValue("vitals_keepalive_sec", "0").c_str());
+        // Registry-typed read (arc 2); the 30 s floor for a non-zero period is
+        // SITE intent (a mistyped 1 s must not become wire spam), not a range.
+        const long sec = coop::config::ResolveInt("vitals_keepalive_sec", 0);
         if (sec <= 0) return 0LL;
         return static_cast<long long>(sec < 30 ? 30 : sec) * 1000LL;
     }();
