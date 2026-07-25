@@ -348,6 +348,94 @@ void RunConfigSelftest() {
         ::DeleteFileW(wrk.c_str());
     }
 
+    // ---- arc-3 C5 typed-resolver drills: absent path -> row DEFAULT, the
+    // net.role sentinel triple, range-garbage -> default, and the env-layer
+    // control on the live resolver (design class 5).
+    if (!dirA.empty()) {
+        const std::wstring dir(dirA.begin(), dirA.end());
+        const std::wstring absent = dir + L"\\__no_such_typed__.ini";
+        const std::wstring wrk = dir + L"\\__typed_drill__.ini";
+        namespace reg = coop::config_registry;
+        auto expect = [&](const char* what, bool ok) {
+            if (ok) UE_LOGI("config-selftest: arc3 %s ok", what);
+            else { UE_LOGW("config-selftest: arc3 FAIL %s", what); ++fail; }
+        };
+        // Absent path: every kind falls to ITS ROW's default (env-free rows on
+        // purpose -- the smoke rig sets net/voice env twins).
+        expect("flag absent -> def false [devkeys]",
+               cfg::SelftestResolveFlagAt(absent, reg::rows::devkeys) == false);
+        expect("flag absent -> def true [enabled = MasterEnabled twin]",
+               cfg::SelftestResolveFlagAt(absent, reg::rows::enabled) == true);
+        expect("int absent -> def 1000 [desk_diag_ms]",
+               cfg::SelftestResolveIntAt(absent, reg::rows::desk_diag_ms) == 1000);
+        {
+            const float v = cfg::SelftestResolveFloatAt(absent, reg::rows::ui_scale);
+            expect("float absent -> def 1.25 [ui.scale]", v > 1.2499f && v < 1.2501f);
+        }
+        expect("enum absent -> def fixedsys [ui.font.menu]",
+               cfg::SelftestResolveEnumAt(absent, reg::FontRoleRow(0)) == "fixedsys");
+        expect("string absent -> def G [voice.ptt_key]",
+               cfg::SelftestResolveStringAt(absent, reg::rows::voice_ptt_key) == "G");
+        // The net.role empty-sentinel TRIPLE: absent SILENT / present-but-empty
+        // LOUD / garbage LOUD -- all resolve to the "" unset sentinel in
+        // memory; LOUD = the value fails the sweep's own ValueValidForKey
+        // (raw fopen: the T3b writer would rightly REFUSE these values).
+        expect("net.role absent -> \"\" (silent)",
+               cfg::SelftestResolveEnumAt(absent, reg::rows::net_role).empty());
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("net.role=\n", f);
+                std::fclose(f);
+            }
+            expect("net.role present-empty -> \"\" in memory",
+                   cfg::SelftestResolveEnumAt(wrk, reg::rows::net_role).empty());
+            expect("net.role present-empty is LOUD (sweep-invalid)",
+                   !cfg::ValueValidForKey("net.role", "", nullptr));
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("net.role=banana\n", f);
+                std::fclose(f);
+            }
+            expect("net.role garbage -> \"\" in memory",
+                   cfg::SelftestResolveEnumAt(wrk, reg::rows::net_role).empty());
+            expect("net.role garbage is LOUD (sweep-invalid)",
+                   !cfg::ValueValidForKey("net.role", "banana", nullptr));
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("net.role=HOST\n", f);
+                std::fclose(f);
+            }
+            expect("net.role valid ci token -> canonical 'host' (silent)",
+                   cfg::SelftestResolveEnumAt(wrk, reg::rows::net_role) == "host" &&
+                       cfg::ValueValidForKey("net.role", "HOST", nullptr));
+            // Range-garbage on a numeric row -> the row default, not a clamp.
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("desk_diag_ms=99999999\n", f);
+                std::fclose(f);
+            }
+            expect("int out-of-range -> def 1000 [desk_diag_ms]",
+                   cfg::SelftestResolveIntAt(wrk, reg::rows::desk_diag_ms) == 1000);
+            ::DeleteFileW(wrk.c_str());
+        }
+        // ENV layer control on the LIVE resolver, dedicated env-twinned row
+        // (voice.loopback def=false; voice booted long before this thread, so
+        // the brief window cannot re-latch anything). Set -> wins over def;
+        // garbage env -> the default applies (garbage never truthy); restored
+        // to the exact prior state after.
+        {
+            char old[256] = {};
+            const DWORD oldLen =
+                ::GetEnvironmentVariableA("VOTVCOOP_VOICE_LOOPBACK", old, sizeof(old));
+            ::SetEnvironmentVariableA("VOTVCOOP_VOICE_LOOPBACK", "1");
+            expect("env set -> wins over def [voice.loopback]",
+                   cfg::ResolveFlag(reg::rows::voice_loopback) == true);
+            ::SetEnvironmentVariableA("VOTVCOOP_VOICE_LOOPBACK", "banana");
+            expect("env garbage -> row def false [voice.loopback]",
+                   cfg::ResolveFlag(reg::rows::voice_loopback) == false);
+            ::SetEnvironmentVariableA("VOTVCOOP_VOICE_LOOPBACK",
+                                      (oldLen > 0 && oldLen < sizeof(old)) ? old : nullptr);
+        }
+    }
+
     // Fault injection (design T4 must-FAIL control): a mid-stream error must
     // yield Unreadable(2) -- with lines already delivered and with none.
     for (const int n : {2, 0}) {

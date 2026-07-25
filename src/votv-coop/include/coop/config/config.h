@@ -185,6 +185,17 @@ struct IniSelftestRead {
 };
 IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key);
 int SelftestFlagTriState(const std::wstring& path, const char* key);
+// Typed-resolver twins (arc 3 C5): the INI + DEFAULT halves of the layered
+// resolve over `path` -- same per-kind validate/default cores as the live
+// Resolve* by construction (shared *FromRaw functions), NO env layer. The env
+// layer is drilled by its own control on the LIVE resolver (a dedicated
+// env-twinned row via SetEnvironmentVariableA); the live resolve's absent
+// path is untestable directly (the module ini exists on a rig).
+bool        SelftestResolveFlagAt(const std::wstring& path, const config_registry::FlagRow& row);
+long        SelftestResolveIntAt(const std::wstring& path, const config_registry::IntRow& row);
+float       SelftestResolveFloatAt(const std::wstring& path, const config_registry::FloatRow& row);
+std::string SelftestResolveEnumAt(const std::wstring& path, const config_registry::EnumRow& row);
+std::string SelftestResolveStringAt(const std::wstring& path, const config_registry::StringRow& row);
 int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
 int SelftestScanWithFailure(int failAfterLines);
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);

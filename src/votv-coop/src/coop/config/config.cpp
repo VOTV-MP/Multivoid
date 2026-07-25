@@ -671,51 +671,104 @@ bool PickRawLayered(const config_registry::Row* row, std::string& raw) {
     return true;
 }
 
-}  // namespace
-
-bool ResolveFlag(const config_registry::FlagRow& h) {
-    const config_registry::Row* row = h.row;
-    std::string raw;
-    if (!PickRawLayered(row, raw)) return row->defB;
+// The per-kind validate+default cores, shared by the live resolvers and the
+// path-parameterized selftest twins (C5: ONE semantics, never two).
+bool FlagFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {
+    if (!have) return row->defB;
     const int v = FlagVerdictFromValue(raw);
     return v == 0 ? row->defB : v > 0;
 }
-
-long ResolveInt(const config_registry::IntRow& h) {
-    const config_registry::Row* row = h.row;
-    std::string raw;
-    if (!PickRawLayered(row, raw)) return row->defI;
+long IntFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {
+    if (!have) return row->defI;
     long v = 0;
     if (!ParseWholeLong(StripInlineComment(raw, false), v)) return row->defI;
     if (v < static_cast<long>(row->lo) || v > static_cast<long>(row->hi))
         return row->defI;  // out of range = garbage -> default (user ruling), sweep reports
     return v;
 }
-
-float ResolveFloat(const config_registry::FloatRow& h) {
-    const config_registry::Row* row = h.row;
-    std::string raw;
-    if (!PickRawLayered(row, raw)) return row->defF;
+float FloatFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {
+    if (!have) return row->defF;
     double v = 0;
     if (!ParseWholeDouble(StripInlineComment(raw, false), v)) return row->defF;
     if (v < row->lo || v > row->hi) return row->defF;
     return static_cast<float>(v);
 }
-
-std::string ResolveEnum(const config_registry::EnumRow& h) {
-    const config_registry::Row* row = h.row;
-    std::string raw;
-    if (!PickRawLayered(row, raw)) return row->defS;
+std::string EnumFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {
+    if (!have) return row->defS;
     std::string canonical;
-    if (EnumTokenMatch(row, StripInlineComment(raw, false), canonical))
-        return canonical;
+    if (EnumTokenMatch(row, StripInlineComment(raw, false), canonical)) return canonical;
     return row->defS;
 }
 
-std::string ResolveString(const config_registry::StringRow& h) {
-    const config_registry::Row* row = h.row;
+// The selftest twins' ini pick: same authoritative-line read as the live
+// layer, over `path` instead of the module ini; NO env layer (the env layer
+// is drilled by its own live-resolver control -- see config.h).
+bool PickIniAt(const std::wstring& path, const config_registry::Row* row, std::string& raw) {
+    static const char* kAbsent = "\x01<absent>";
+    IniScan st = IniScan::Ok;
+    const std::string v = ReadIniValueAt(path, row->key, kAbsent, &st);
+    if (v == kAbsent) return false;
+    raw = v;
+    return true;
+}
+
+}  // namespace
+
+bool ResolveFlag(const config_registry::FlagRow& h) {
     std::string raw;
-    if (!PickRawLayered(row, raw)) return row->defS;
+    const bool have = PickRawLayered(h.row, raw);
+    return FlagFromRaw(h.row, have, raw);
+}
+
+long ResolveInt(const config_registry::IntRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return IntFromRaw(h.row, have, raw);
+}
+
+float ResolveFloat(const config_registry::FloatRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return FloatFromRaw(h.row, have, raw);
+}
+
+std::string ResolveEnum(const config_registry::EnumRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return EnumFromRaw(h.row, have, raw);
+}
+
+std::string ResolveString(const config_registry::StringRow& h) {
+    std::string raw;
+    if (!PickRawLayered(h.row, raw)) return h.row->defS;
+    return raw;
+}
+
+// ---- typed-resolver selftest twins (arc 3 C5; see config.h) -----------------
+
+bool SelftestResolveFlagAt(const std::wstring& path, const config_registry::FlagRow& h) {
+    std::string raw;
+    const bool have = PickIniAt(path, h.row, raw);
+    return FlagFromRaw(h.row, have, raw);
+}
+long SelftestResolveIntAt(const std::wstring& path, const config_registry::IntRow& h) {
+    std::string raw;
+    const bool have = PickIniAt(path, h.row, raw);
+    return IntFromRaw(h.row, have, raw);
+}
+float SelftestResolveFloatAt(const std::wstring& path, const config_registry::FloatRow& h) {
+    std::string raw;
+    const bool have = PickIniAt(path, h.row, raw);
+    return FloatFromRaw(h.row, have, raw);
+}
+std::string SelftestResolveEnumAt(const std::wstring& path, const config_registry::EnumRow& h) {
+    std::string raw;
+    const bool have = PickIniAt(path, h.row, raw);
+    return EnumFromRaw(h.row, have, raw);
+}
+std::string SelftestResolveStringAt(const std::wstring& path, const config_registry::StringRow& h) {
+    std::string raw;
+    if (!PickIniAt(path, h.row, raw)) return h.row->defS;
     return raw;
 }
 
