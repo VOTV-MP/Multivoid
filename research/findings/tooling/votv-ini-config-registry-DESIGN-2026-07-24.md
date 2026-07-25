@@ -1,6 +1,7 @@
 # multivoid.ini — seeder, config registry, validation, catalog (DESIGN)
 
-**Date:** 2026-07-24 (pass 3: 2026-07-25) · **Status:** DESIGN, not built · **Passes:** `/qf` pass 1 = 16
+**Date:** 2026-07-24 (pass 3: 2026-07-25) · **Status:** **ARC 1 BUILT 2026-07-25 (see §6 as-built
+notes); arcs 2-4 DESIGN** · **Passes:** `/qf` pass 1 = 16
 rounds (did NOT converge); pass 2 = 15 rounds against this document (did NOT converge; four primary answers
 withdrawn); **pass 3 = rounds E1-E15 against the pass-2 rewrite + confirmations E16-E19 against THIS text —
 CONVERGED: genuine "that holds" at E19 (§9); the design is certified and arcs 1+2 (one release) are cleared
@@ -272,8 +273,8 @@ state exist only in the dev tree, never in shipped bytes.
 
 | arc | contents | size |
 |---|---|---|
-| **1** | the unbounded tri-state line-primitive (first commit; 3 parsers → 1) + registry TU born with the section-order table + T7 constant + T1 skeleton + T3 writer | ~a day |
-| **2** | T4 layer flip + T2-enum + typed reads (all product typed twin-layer keys + six F26 conversions) + T3b (writers through the registry — needs the kind/clamp rows born here) + T10 boot-sweep + panel + T1b reorder + T11 latches | 1-2 days |
+| **1** | **BUILT 2026-07-25** (commits `16c8a448` primitive+selftest TU, `96f68f5a` registry TU+T7, `938bbac9` T1 seeder, `41712605` T3 writer+bool, `9b6982a6` T3 write drills). Instrument PASS via the REAL in-game lexer over 4 rig inis + inject corpus: exactly 4 verdict moves, all the enumerated F8 buffer-split class (longline/longcarrier/join_window_pos_trace×2 whole now); only-in-before 0; T3 drills 11/11; ferror fault-injection Unreadable-not-Absent proven; `config-selftest: DONE fail=0`. **AS-BUILT DEVIATION from F19/T7 (user guard, mid-build): `player_handshake.cpp` SanitizeNickname's empty fallback KEEPS `"Player"`** — measured symmetric (it sanitizes inbound REMOTE nicks too); a garbage remote nick must not render as the my-name default. 4 of the 5 F19 sites consume the constant; the browser literal was DEAD (always loaded on open) and became `{}`. Writer gained a NEW guard beyond the design text: mid-stream read error ABORTS the rebuild (the 2026-07-02 loss class one layer deeper). | done |
+| **2** | T4 layer flip + T2-enum + typed reads (all product typed twin-layer keys + six F26 conversions) + T3b (writers through the registry — needs the kind/clamp rows born here) + T10 boot-sweep + panel + T1b reorder + T11 latches + the guid/skin MINT GATE (T6; absent-only mint, UNREADABLE = session-only). **NOTHING SHIPS until arc 2 lands (one release).** | 1-2 days |
 | **3** | T2-migrate (default ownership, ~106 literal sites) + T2b (both F21 duplicates retire IN this arc) + the `const Row&` ratchet (the enum instrument retires AT this point) | ~a week |
 | **4** | T8 catalog — DONE criterion requires arc 3 | ~a day |
 

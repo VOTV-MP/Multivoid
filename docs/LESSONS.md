@@ -1347,8 +1347,29 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   a NO-short-circuit labeled verdict vector (each drill asserts its NAMED line; a fused guard makes
   a drill indiscriminate — the robot-tag drill had to declare contents:write to reach the ruleset
   under test) + stated-and-CHECKED preconditions + a positive control for zero-assertions + a
-  cleanup step whose misses fail closed. Look FIRST: the CI design doc §4 + §3 D3.
-  `memory/lesson_drills_must_run_the_real_gate_on_real_identifiers.md`
+  cleanup step whose misses fail closed. Look FIRST: the CI design doc §4 + §3 D3. (Validated
+  2026-07-25: the executed matrix caught a REAL workflow bug on its first campaign — the no-op
+  exit-code fall-through below.) `memory/lesson_drills_must_run_the_real_gate_on_real_identifiers.md`
+- **A GH Actions pwsh step exits with the last CHILD's `$LASTEXITCODE`** — even after your script
+  HANDLED that code in a switch and fell through to script end (the Actions shell wrapper propagates
+  it). A special-exit-code protocol (judge exit 10 = ALREADY_PUBLISHED no-op) needs an EXPLICIT
+  `exit 0` on every mapped branch, else the designed-green path runs red and every `needs:`-dependent
+  job silently skips. Caught live by the double-dispatch drill; fixed `e4c5e503`. *Look FIRST:*
+  `.github/workflows/release-core.yml` judge step.
+  `memory/lesson_gha_pwsh_step_exits_with_last_child_code.md`
+- **PowerShell defaults are case-INSENSITIVE everywhere** (`-match`, `-eq`, `-contains`,
+  `-notcontains`, AND hashtable keys) — three separate instruments bitten in one day (2026-07-25):
+  the tag fixture caught `-DEV` matching; the verdict-diff `@{}` collapsed `Player_Guid`/`player_guid`
+  into a FALSE product alarm; `-notcontains` dropped case-twin keys. Instruments over case-sensitive
+  artifacts use `-cmatch`/`-cnotmatch`/`-ceq` + `Dictionary(StringComparer.Ordinal)`. *Look FIRST:*
+  `tools/release/tag_regex_selftest.ps1` (the fixture shape that catches it cheaply).
+  `memory/lesson_powershell_defaults_are_case_insensitive_everywhere.md`
+- **Ruleset `update` restriction on main: direct pushes AUTO-bypass, PR merges need `--admin`** —
+  with RepositoryRole-admin bypass_mode=always, `git push` prints "Bypassed rule violations" and
+  sails; `gh pr merge` refuses ("base branch policy prohibits the merge") until `--admin`. So the
+  robot-blocking push restriction costs the daily direct-push flow NOTHING; budget `--admin` per rare
+  PR. Measured live on ruleset 19728708. *Look FIRST:* `docs/RELEASE.md` invariants + CI design D7.
+  `memory/lesson_ruleset_update_restriction_pushes_bypass_merges_need_admin.md`
 - **`deploy-all.ps1` deploys Release** → ALWAYS build Release + hash-verify. `memory/lesson_deploy_sources_release_config_not_relwithdebinfo.md`
 - **Filtered tool output HIDES verdicts — twice-bitten:** s22 a grep+tail filter ate a LINK error (a
   STALE DLL deployed; the SHA-256 build-vs-deployed compare caught it), s23 `smoke | tail -4` cut the
