@@ -1,0 +1,35 @@
+# build.yml -- the CI lane's entry (design D1/D2/D11). Based on PR #2 by
+# huoyan1231 (thanks!) -- the vcpkg/CMake build steps he authored now live in
+# build-core.yml, which this file dispatches; his authorship stays in this
+# PR's history. Reworked per the maintainers' design: MANUAL-ONLY
+# (workflow_dispatch; the nightly cron was deliberately dropped -- builds are
+# human-paced), and a THIN entry so the CI lane and the release lane share ONE
+# build implementation (build-core@main, remote form on purpose -- a
+# local-path uses: would resolve from the triggering branch).
+# Artifacts are CI evidence, NOT distribution -- releases are the supported
+# install channel.
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      cacheless:
+        description: build without caches (the release-path smoke)
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@main
+    with:
+      ref: ${{ github.sha }}
+      source-sha: ${{ github.sha }}
+      use-cache: ${{ !inputs.cacheless }}
