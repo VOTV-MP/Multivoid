@@ -203,6 +203,81 @@ static int FlagVerdictFromValue(const std::string& raw) {
     return 0;
 }
 
+// Whole-string numeric parses: "1.25abc" and "" are garbage, not 1.25/0.
+// (The old per-site atof/strtol accepted any prefix and silently produced 0
+// from pure garbage -- voice.volume=abc used to mean SILENCE.)
+static bool ParseWholeLong(const std::string& s, long& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtol(s.c_str(), &end, 10);
+    return end && *end == '\0';
+}
+static bool ParseWholeDouble(const std::string& s, double& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end && *end == '\0';
+}
+
+static bool EnumTokenMatch(const config_registry::Row* row, const std::string& v,
+                           std::string& canonical) {
+    if (!row || !row->tokens) return false;
+    const char* t = row->tokens;
+    while (*t) {
+        const char* bar = std::strchr(t, '|');
+        const size_t len = bar ? static_cast<size_t>(bar - t) : std::strlen(t);
+        if (v.size() == len && _strnicmp(v.c_str(), t, len) == 0) {
+            canonical.assign(t, len);  // registry spelling wins (all-lowercase)
+            return true;
+        }
+        if (!bar) break;
+        t = bar + 1;
+    }
+    return false;
+}
+
+// The ONE reader-equivalent validation (see config.h). Shared by the T3b
+// writer refusal and the T10 sweep -- a value the sweep flags is exactly a
+// value the read rejects, by construction.
+bool ValueValidForKey(const char* key, const std::string& rawValue, std::string* reasonOut) {
+    const config_registry::Row* row = config_registry::FindRow(key);
+    if (!row) return true;
+    using config_registry::Kind;
+    const std::string v = StripInlineComment(rawValue, /*wsPrecededOnly=*/false);
+    char buf[128];
+    switch (row->kind) {
+        case Kind::Flag:
+            if (FlagVerdictFromValue(v) != 0) return true;
+            if (reasonOut) *reasonOut = "not 1/true/yes/on or 0/false/no/off";
+            return false;
+        case Kind::Int: {
+            long n = 0;
+            if (ParseWholeLong(v, n) && n >= static_cast<long>(row->lo) &&
+                n <= static_cast<long>(row->hi))
+                return true;
+            std::snprintf(buf, sizeof(buf), "not a whole number in [%ld, %ld]",
+                          static_cast<long>(row->lo), static_cast<long>(row->hi));
+            if (reasonOut) *reasonOut = buf;
+            return false;
+        }
+        case Kind::Float: {
+            double d = 0;
+            if (ParseWholeDouble(v, d) && d >= row->lo && d <= row->hi) return true;
+            std::snprintf(buf, sizeof(buf), "not a number in [%g, %g]", row->lo, row->hi);
+            if (reasonOut) *reasonOut = buf;
+            return false;
+        }
+        case Kind::Enum: {
+            std::string canonical;
+            if (EnumTokenMatch(row, v, canonical)) return true;
+            if (reasonOut) *reasonOut = std::string("not one of: ") + row->tokens;
+            return false;
+        }
+        default:
+            return true;
+    }
+}
+
 // Path-parameterized reader core (no lock -- public wrappers hold it; the
 // selftest feeds corpus files). On Absent/Unreadable the caller still
 // receives `def` -- the tri-state reaches discriminating callers (seeder,
@@ -304,41 +379,36 @@ static bool IsSectionHeader(const std::string& line, std::string& nameOut) {
     return true;
 }
 
-// T3b: never persist a value the read would reject. Typed registry rows
-// validate with the SAME vocabulary/rules the readers use; String/Identity
-// rows and unregistered (dev/selftest) keys pass through.
-static bool ValueValidForRow(const config_registry::Row* row, const std::string& safe) {
-    if (!row) return true;
-    using config_registry::Kind;
-    switch (row->kind) {
-        case Kind::Flag:
-            return FlagVerdictFromValue(safe) != 0;
-        case Kind::Int: {
-            char* end = nullptr;
-            const long v = std::strtol(safe.c_str(), &end, 10);
-            return !safe.empty() && end && *end == '\0' &&
-                   v >= static_cast<long>(row->lo) && v <= static_cast<long>(row->hi);
-        }
-        case Kind::Float: {
-            char* end = nullptr;
-            const double v = std::strtod(safe.c_str(), &end);
-            return !safe.empty() && end && *end == '\0' && v >= row->lo && v <= row->hi;
-        }
-        case Kind::Enum: {
-            if (!row->tokens) return false;
-            const char* t = row->tokens;
-            while (*t) {
-                const char* bar = std::strchr(t, '|');
-                const size_t len = bar ? static_cast<size_t>(bar - t) : std::strlen(t);
-                if (safe.size() == len && _strnicmp(safe.c_str(), t, len) == 0) return true;
-                if (!bar) break;
-                t = bar + 1;
-            }
-            return false;
-        }
-        default:
-            return true;
+// The checked ".new then atomic swap" tail shared by every file rebuild
+// (single-key write, T1b reformat, keep-line dedup). Every write is checked
+// BEFORE the swap: a disk-full .new must never replace the good ini (the one
+// data-loss path this exists to close -- audit 2026-07-02).
+static bool AtomicWriteLines(const std::wstring& path, const std::vector<std::string>& lines,
+                             const char* what) {
+    const std::wstring tmp = path + L".new";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
+        UE_LOGW("config: %s could not open multivoid.ini.new for write", what);
+        return false;
     }
+    bool wrote = true;
+    for (const auto& l : lines)
+        if (std::fputs(l.c_str(), f) == EOF) { wrote = false; break; }
+    if (std::ferror(f)) wrote = false;
+    if (std::fclose(f) != 0) wrote = false;
+    if (!wrote) {
+        ::DeleteFileW(tmp.c_str());
+        UE_LOGW("config: %s writing multivoid.ini.new FAILED (disk?) -- ini left unchanged",
+                what);
+        return false;
+    }
+    if (!::MoveFileExW(tmp.c_str(), path.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        UE_LOGW("config: %s atomic swap failed (err=%lu) -- ini left unchanged, "
+                "multivoid.ini.new kept", what, ::GetLastError());
+        return false;
+    }
+    return true;
 }
 
 // Path-parameterized writer core (no lock -- the public wrapper holds it; the
@@ -353,7 +423,7 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
         if (*p != '\n' && *p != '\r') safe.push_back(*p);
     safe = TrimEdges(safe);
     const config_registry::Row* row = config_registry::FindRow(key);
-    if (!ValueValidForRow(row, safe)) {
+    if (!ValueValidForKey(key, safe, nullptr)) {
         UE_LOGW("config: WriteIniValue('%s'='%s') REFUSED -- the value would be rejected "
                 "on read (registry kind/range/tokens); not persisting garbage (T3b)",
                 key, safe.c_str());
@@ -479,32 +549,7 @@ static bool WriteIniValueAt(const std::wstring& path, const char* key, const cha
             lines.back() += "\n";
         lines.push_back(newLine);
     }
-    const std::wstring tmp = path + L".new";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
-        UE_LOGW("config: WriteIniValue('%s') could not open multivoid.ini.new for write", key);
-        return false;
-    }
-    // Every write checked BEFORE the swap: a disk-full/IO-error .new must never be
-    // atomically installed over the good ini (that would be the one data-loss path
-    // this whole function exists to close -- audit 2026-07-02).
-    bool wrote = true;
-    for (const auto& l : lines)
-        if (std::fputs(l.c_str(), f) == EOF) { wrote = false; break; }
-    if (std::ferror(f)) wrote = false;
-    if (std::fclose(f) != 0) wrote = false;
-    if (!wrote) {
-        ::DeleteFileW(tmp.c_str());
-        UE_LOGW("config: WriteIniValue('%s') writing multivoid.ini.new FAILED (disk?) -- "
-                "ini left unchanged", key);
-        return false;
-    }
-    if (!::MoveFileExW(tmp.c_str(), path.c_str(),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        UE_LOGW("config: WriteIniValue('%s') atomic swap failed (err=%lu) -- ini left "
-                "unchanged, multivoid.ini.new kept", key, ::GetLastError());
-        return false;
-    }
+    if (!AtomicWriteLines(path, lines, "WriteIniValue")) return false;
     UE_LOGI("config: persisted %s=%s", key, safe.c_str());
     return true;
 }
@@ -784,6 +829,186 @@ std::string ReadPlayerGuid() {
 bool IdentityNotDurable() { return g_identityNotDurable.load(std::memory_order_relaxed); }
 bool IniUnreadableSeen()  { return g_iniUnreadableSeen.load(std::memory_order_relaxed); }
 
+// ---- T10 sweep / T1b owner-reformat file operations (arc 2) -----------------
+
+int ListLiveIniLines(std::vector<std::string>& out) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    const IniScan st =
+        ScanIniFileAt(IniPath(), [&](const std::string& line) { out.push_back(line); });
+    if (st == IniScan::Unreadable) g_iniUnreadableSeen.store(true, std::memory_order_relaxed);
+    return static_cast<int>(st);
+}
+
+bool RemoveDuplicateKeyLines(const char* key, int keepLineNo) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    const std::wstring path = IniPath();
+    std::vector<std::string> lines;
+    if (ScanIniFileAt(path, [&](const std::string& l) { lines.push_back(l); }) != IniScan::Ok) {
+        UE_LOGW("config: keep-line for '%s' SKIPPED -- ini unreadable; nothing deleted", key);
+        return false;
+    }
+    std::vector<std::string> out;
+    out.reserve(lines.size());
+    int removed = 0;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::string k, v;
+        if (ParseIniLine(lines[i], k, v) && _stricmp(k.c_str(), key) == 0 &&
+            static_cast<int>(i + 1) != keepLineNo) {
+            ++removed;
+            continue;
+        }
+        out.push_back(lines[i]);
+    }
+    if (removed == 0) return false;  // stale panel state (file changed underneath)
+    if (!AtomicWriteLines(path, out, "keep-line dedup")) return false;
+    UE_LOGI("config: duplicate resolution for '%s' -- kept line %d, removed %d line(s) "
+            "(owner action from the config review)", key, keepLineNo, removed);
+    return true;
+}
+
+// The ini section a key belongs to, for the reformat's placement: a literal
+// row's section, or "ui" for the composed ui.font.<role> family. nullptr =
+// unknown key (never placed; stays in the residue).
+static const char* SectionForKey(const std::string& key) {
+    if (const config_registry::Row* row = config_registry::FindRow(key.c_str()))
+        return row->section;
+    if (config_registry::IsKnownKey(key.c_str())) return "ui";  // composed = fonts
+    return nullptr;
+}
+
+bool ReformatLiveIni(ReformatStats& stats) {
+    std::lock_guard<std::mutex> lk(g_iniMutex);
+    const std::wstring path = IniPath();
+    std::vector<std::string> lines;
+    if (ScanIniFileAt(path, [&](const std::string& l) { lines.push_back(l); }) != IniScan::Ok) {
+        UE_LOGW("config: reformat SKIPPED -- ini unreadable; file untouched");
+        return false;
+    }
+    const size_t n = lines.size();
+    // Classify.
+    struct Cls {
+        bool isKey = false, isHeader = false, isComment = false, isBlank = false;
+        std::string keyLower, value;
+    };
+    std::vector<Cls> cls(n);
+    for (size_t i = 0; i < n; ++i) {
+        const std::string t = TrimEdges(lines[i]);
+        std::string hdr, k, v;
+        if (t.empty()) { cls[i].isBlank = true; continue; }
+        if (t[0] == ';' || t[0] == '#') { cls[i].isComment = true; continue; }
+        if (IsSectionHeader(lines[i], hdr)) { cls[i].isHeader = true; continue; }
+        if (ParseIniLine(lines[i], k, v)) {
+            cls[i].isKey = true;
+            for (char& c : k) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+            cls[i].keyLower = k;
+            cls[i].value = TrimEdges(v);
+        } else {
+            cls[i].isComment = true;  // '='-less junk line: keep verbatim in the residue
+        }
+    }
+    // ci occurrence groups.
+    std::vector<std::pair<std::string, std::vector<size_t>>> groups;
+    for (size_t i = 0; i < n; ++i) {
+        if (!cls[i].isKey) continue;
+        bool foundGroup = false;
+        for (auto& g : groups)
+            if (g.first == cls[i].keyLower) { g.second.push_back(i); foundGroup = true; break; }
+        if (!foundGroup) groups.push_back({cls[i].keyLower, {i}});
+    }
+    // Collapse value-identical duplicates (keep the FIRST line -- behavior-
+    // preserving under the unified occurrence rule); differing groups FREEZE.
+    std::vector<char> deleted(n, 0);
+    for (auto& g : groups) {
+        if (g.second.size() < 2) continue;
+        bool identical = true;
+        for (size_t j = 1; j < g.second.size(); ++j)
+            if (cls[g.second[j]].value != cls[g.second[0]].value) { identical = false; break; }
+        if (identical) {
+            for (size_t j = 1; j < g.second.size(); ++j) {
+                deleted[g.second[j]] = 1;
+                ++stats.collapsed;
+            }
+            g.second.resize(1);
+        } else {
+            ++stats.frozen;
+        }
+    }
+    // Attach a contiguous comment run directly above a key line to that line
+    // (the user's annotation travels with its key). A blank or header breaks
+    // the run; the file-leading banner stays a banner by that rule.
+    std::vector<int> attachedTo(n, -1);
+    {
+        std::vector<size_t> pending;
+        for (size_t i = 0; i < n; ++i) {
+            if (cls[i].isComment) { pending.push_back(i); continue; }
+            if (cls[i].isKey && !deleted[i])
+                for (size_t c : pending) attachedTo[c] = static_cast<int>(i);
+            pending.clear();
+        }
+    }
+    // Emit. A moved/emitted line is normalized to end with '\n' (the original
+    // last line may not); all bytes otherwise verbatim.
+    auto withNl = [](std::string s) {
+        if (s.empty() || s.back() != '\n') s += "\n";
+        return s;
+    };
+    std::vector<char> consumed(n, 0);
+    std::vector<std::string> out;
+    // Banner: everything before the first header/keyline that isn't an
+    // attached comment.
+    for (size_t i = 0; i < n; ++i) {
+        if (cls[i].isHeader || cls[i].isKey) break;
+        if (attachedTo[i] >= 0) break;
+        out.push_back(withNl(lines[i]));
+        consumed[i] = 1;
+    }
+    auto emitKeyLine = [&](std::vector<std::string>& dst, size_t i) {
+        for (size_t c = 0; c < n; ++c)
+            if (attachedTo[c] == static_cast<int>(i) && !consumed[c]) {
+                dst.push_back(withNl(lines[c]));
+                consumed[c] = 1;
+            }
+        dst.push_back(withNl(lines[i]));
+        consumed[i] = 1;
+    };
+    for (size_t s = 0; s < config_registry::kSectionCount; ++s) {
+        const char* sec = config_registry::kSectionOrder[s];
+        out.push_back(std::string("\n[") + sec + "]\n");
+        for (const auto& g : groups) {
+            if (g.second.size() != 1) continue;  // frozen differing pair: never repositioned
+            const size_t i = g.second[0];
+            if (consumed[i] || deleted[i]) continue;
+            const char* keySec = SectionForKey(g.first);
+            if (!keySec || _stricmp(keySec, sec) != 0) continue;
+            emitKeyLine(out, i);
+            ++stats.placed;
+        }
+    }
+    // Residue: whatever remains, in ORIGINAL order -- frozen differing
+    // duplicates ("never repositioned, never adjudicated"; relative order of
+    // an un-collapsed pair is invariant), unknown keys, loose mid-file
+    // comments. Old section header lines and collapsed duplicates are dropped
+    // (the canonical headers above replace them); blank separators of moved
+    // content are dropped too.
+    std::vector<std::string> residue;
+    for (size_t i = 0; i < n; ++i) {
+        if (consumed[i] || deleted[i] || cls[i].isHeader || cls[i].isBlank) continue;
+        if (cls[i].isComment && attachedTo[i] >= 0) continue;  // travels with its key line
+        if (cls[i].isKey) { emitKeyLine(residue, i); continue; }
+        residue.push_back(withNl(lines[i]));
+        consumed[i] = 1;
+    }
+    if (!residue.empty()) {
+        out.push_back("\n; --- kept as-is by the reformat (loose lines) ---\n");
+        for (auto& r : residue) out.push_back(std::move(r));
+    }
+    if (!AtomicWriteLines(path, out, "reformat")) return false;
+    UE_LOGI("config: reformat done -- %d duplicate line(s) collapsed, %d key(s) placed "
+            "under their sections, %d differing-duplicate key(s) left for the review panel",
+            stats.collapsed, stats.placed, stats.frozen);
+    return true;
+}
+
 // ---- boolean ini flags (merged from coop/session/ini_config, 2026-07-10) ----
 // Since arc 2 (T4) the flag layer shares the unified occurrence rule with the
 // string layer: the FIRST case-insensitive key occurrence is authoritative,
@@ -833,39 +1058,6 @@ bool IsIniKeyTrue(const char* key) {
 // ---- typed layered reads (arc 2, T6 -- see config.h) ------------------------
 
 namespace {
-
-// Whole-string numeric parses: "1.25abc" and "" are garbage, not 1.25/0.
-// (The old per-site atof/strtol accepted any prefix and silently produced 0
-// from pure garbage -- voice.volume=abc used to mean SILENCE.)
-bool ParseWholeLong(const std::string& s, long& out) {
-    if (s.empty()) return false;
-    char* end = nullptr;
-    out = std::strtol(s.c_str(), &end, 10);
-    return end && *end == '\0';
-}
-bool ParseWholeDouble(const std::string& s, double& out) {
-    if (s.empty()) return false;
-    char* end = nullptr;
-    out = std::strtod(s.c_str(), &end);
-    return end && *end == '\0';
-}
-
-bool EnumTokenMatch(const config_registry::Row* row, const std::string& v,
-                    std::string& canonical) {
-    if (!row || !row->tokens) return false;
-    const char* t = row->tokens;
-    while (*t) {
-        const char* bar = std::strchr(t, '|');
-        const size_t len = bar ? static_cast<size_t>(bar - t) : std::strlen(t);
-        if (v.size() == len && _strnicmp(v.c_str(), t, len) == 0) {
-            canonical.assign(t, len);  // registry spelling wins (all-lowercase)
-            return true;
-        }
-        if (!bar) break;
-        t = bar + 1;
-    }
-    return false;
-}
 
 // The layered raw-value pick: SET env wins (valid or not -- garbage env
 // SHADOWS the ini, T6); else the ini's authoritative line; else absent.

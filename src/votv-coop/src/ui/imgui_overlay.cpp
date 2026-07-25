@@ -32,6 +32,7 @@
 #include "ui/scoreboard.h"
 #include "ui/server_browser.h"
 #include "ui/boot_warning_dialog.h"
+#include "ui/config_review_panel.h"
 #include "ui/connect_failed_dialog.h"
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
@@ -123,12 +124,13 @@ inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
 inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
 inline bool ConnectFailedOpen() { return ui::connect_failed_dialog::IsOpen(); }
 inline bool BootWarningOpen()   { return ui::boot_warning_dialog::IsOpen(); }
+inline bool ConfigReviewOpen()  { return ui::config_review_panel::IsOpen(); }
 // VOTV's native pause/ESC menu is up (render-thread-safe atomic; see multiplayer_menu).
 // Gates the passive coop HUD + chat off so they never draw OVER the modal pause menu.
 inline bool PauseMenuOpen() { return coop::multiplayer_menu::IsPauseMenuOpen(); }
 inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
                                    LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen() ||
-                                   ConnectFailedOpen() || BootWarningOpen(); }
+                                   ConnectFailedOpen() || BootWarningOpen() || ConfigReviewOpen(); }
 inline bool CaptureActive() {
     // Interactive surfaces take the cursor + input: the F1 menu, the server browser + Host-
     // Game save picker (Connect / Host / type an IP / pick a save), the loading screen (its
@@ -137,7 +139,7 @@ inline bool CaptureActive() {
     // The host scoreboard is interactive too; the client scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
            ChatOpen() || VoiceOpen() || ConnectFailedOpen() || BootWarningOpen() ||
-           (ScoreOpen() && ui::scoreboard::LocalIsHost());
+           ConfigReviewOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
 void CreateRTV(IDXGISwapChain* sc) {
@@ -402,6 +404,10 @@ void RenderFrameGuarded() {
         // The connect-failed modal draws AFTER the browser so it layers on top of the
         // reopened browser (a failed browser join reopens it). No-ops when nothing pending.
         if (ui::connect_failed_dialog::IsOpen()) ui::connect_failed_dialog::Render();
+        // The T10 config review (settings check): persistent-until-dismissed;
+        // draws under the boot-warning modal (an install problem outranks a
+        // settings report) and over the regular surfaces.
+        if (ConfigReviewOpen()) ui::config_review_panel::Render();
         // The boot-warning modal (duplicate multivoid-*.dll install problem): layers
         // over whatever surface is up until acknowledged. No-ops when nothing pending.
         if (ui::boot_warning_dialog::IsOpen()) ui::boot_warning_dialog::Render();

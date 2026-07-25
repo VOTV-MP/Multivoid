@@ -102,6 +102,38 @@ std::string ReadPlayerGuid();
 // scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
 std::string ReadPlayerSkin();
 
+// ---- T10 sweep / T1b owner-reformat file operations (arc 2) -----------------
+
+// All lines of the live multivoid.ini, verbatim (trailing newlines kept).
+// Returns the scan code: 0 = Ok, 1 = Absent (ENOENT), 2 = Unreadable.
+int ListLiveIniLines(std::vector<std::string>& out);
+
+// Reader-equivalent validation of a raw ini value for `key` against its
+// registry row (kind + range/tokens, comment-stripped exactly like the
+// readers). True for String/Identity rows and unregistered keys. On false,
+// `reasonOut` (optional) gets the panel-facing reason ("not a whole number in
+// [1, 65535]", ...). Shared by the T3b writer and the T10 sweep -- ONE
+// validation, never two.
+bool ValueValidForKey(const char* key, const std::string& rawValue, std::string* reasonOut);
+
+// T1b owner action (review panel "keep line N" button): drop every line whose
+// key ci-equals `key` EXCEPT the 1-based line number `keepLineNo`. The
+// automatic write path never deletes; this is the owner-triggered resolution
+// of a differing-duplicate report. Atomic swap, same destruction guards.
+bool RemoveDuplicateKeyLines(const char* key, int keepLineNo);
+
+// T1b owner opt-in reformat (review panel button; NEVER automatic):
+//   - collapses value-identical duplicate key lines (keep the first);
+//   - emits the registry sections in canonical order ([net] first, [dev]
+//     last) and places each N==1 known key under its section header, its
+//     immediately-attached comment block traveling with it;
+//   - a key with N>1 DIFFERING values is never repositioned and never
+//     adjudicated (stays in the residue, relative order kept -- resolve via
+//     the keep-line buttons); unknown keys and loose comments keep original
+//     order in the residue tail.
+struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; };
+bool ReformatLiveIni(ReformatStats& out);
+
 // ---- T10 identity/durability state (set during the boot mints) --------------
 // True when this launch's guid/skin is SESSION-ONLY: the ini was UNREADABLE at
 // the mint (the gate refused to write over it -- the lock-release overwrite

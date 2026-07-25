@@ -19,6 +19,7 @@
 #include "coop/session/teleport_client.h"
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
+#include "coop/config/config_review.h"      // RunBootSweep (T10 settings check, arc 2)
 #include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
 #include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
 #include "coop/session/session_manager.h"
@@ -129,6 +130,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // color field reads it; nick_color owns the parse + the absent/empty
     // semantics (s27 Tier-C move).
     coop::nick_color::SetInitialLocalFromIniHex(cfg::ReadIniValue("nick_color", "unset"));
+    // T10 (ini rework arc 2): the boot file-vs-schema sweep, AFTER the mints
+    // above so the post-mint file state is what gets reviewed. Arms the
+    // settings-check panel (overlay root -- draws at the main menu) when
+    // anything is off; reports only, never rewrites.
+    coop::config_review::RunBootSweep();
 
     // The OMEGA WARNING is on screen during the FIRST few seconds (the intro/menu
     // world), BEFORE we `open` gameplay. Sample widgets across that window so the

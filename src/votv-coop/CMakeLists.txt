@@ -383,6 +383,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_redsky.cpp
     src/coop/config/config.cpp
     src/coop/config/config_registry.cpp
+    src/coop/config/config_review.cpp
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
@@ -511,6 +512,7 @@ add_library(votv-coop SHARED
     src/ui/scoreboard.cpp
     src/ui/server_browser.cpp
     src/ui/boot_warning_dialog.cpp
+    src/ui/config_review_panel.cpp
     src/ui/connect_failed_dialog.cpp
     src/ui/menu_sfx.cpp
     src/ui/host_save_picker.cpp
