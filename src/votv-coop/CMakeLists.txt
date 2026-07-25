@@ -384,6 +384,7 @@ add_library(votv-coop SHARED
     src/coop/config/config.cpp
     src/coop/config/config_ini_write.cpp
     src/coop/config/config_registry.cpp
+    src/coop/config/config_selftest.cpp
     src/coop/config/config_review.cpp
     src/coop/element/element.cpp
     src/coop/element/element_deleter.cpp

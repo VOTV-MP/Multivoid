@@ -13,6 +13,8 @@
 #include <mutex>
 #include <string>
 
+namespace coop::config_registry { struct Row; }
+
 namespace coop::config::internal {
 
 // The tri-state scan verdict of the ONE line primitive (design F37/F38):
@@ -39,5 +41,18 @@ IniScan ScanIniFile(const std::wstring& path,
 std::string TrimEdgesStr(const std::string& s);
 bool ParseIniKeyValue(const std::string& line, std::string& key, std::string& value);
 std::string StripInlineCommentStr(const std::string& v, bool wsPrecededOnly);
+
+// ---- seams for the selftest TU (config_selftest.cpp; arc-3 soft-cap cut) ----
+// The path-parameterized reader cores (no lock -- corpus paths only) + the
+// injected-failure scan + the per-kind validate/default cores shared with the
+// live Resolve* (ONE semantics for product and instrument, by construction).
+std::string ReadIniValueAtPath(const std::wstring& path, const char* key, const char* def,
+                               IniScan* scanOut);
+int LookupTriStateAtPath(const std::wstring& path, const char* key);
+int ScanWithInjectedFailure(int failAfterLines);
+bool FlagFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
+long IntFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
+float FloatFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
+std::string EnumFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
 
 }  // namespace coop::config::internal

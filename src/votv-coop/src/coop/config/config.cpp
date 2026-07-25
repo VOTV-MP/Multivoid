@@ -671,8 +671,14 @@ bool PickRawLayered(const config_registry::Row* row, std::string& raw) {
     return true;
 }
 
-// The per-kind validate+default cores, shared by the live resolvers and the
-// path-parameterized selftest twins (C5: ONE semantics, never two).
+}  // namespace
+
+// ---- the per-kind validate+default cores + the selftest-TU seams ------------
+// internal:: so the selftest TU (config_selftest.cpp, the arc-3 soft-cap cut)
+// shares the EXACT product semantics -- ONE core for live resolve and
+// instrument twin, never two (C5).
+namespace internal {
+
 bool FlagFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {
     if (!have) return row->defB;
     const int v = FlagVerdictFromValue(raw);
@@ -700,103 +706,13 @@ std::string EnumFromRaw(const config_registry::Row* row, bool have, const std::s
     return row->defS;
 }
 
-// The selftest twins' ini pick: same authoritative-line read as the live
-// layer, over `path` instead of the module ini; NO env layer (the env layer
-// is drilled by its own live-resolver control -- see config.h).
-bool PickIniAt(const std::wstring& path, const config_registry::Row* row, std::string& raw) {
-    static const char* kAbsent = "\x01<absent>";
-    IniScan st = IniScan::Ok;
-    const std::string v = ReadIniValueAt(path, row->key, kAbsent, &st);
-    if (v == kAbsent) return false;
-    raw = v;
-    return true;
+std::string ReadIniValueAtPath(const std::wstring& path, const char* key, const char* def,
+                               IniScan* scanOut) {
+    return ReadIniValueAt(path, key, def, scanOut);
 }
 
-}  // namespace
-
-bool ResolveFlag(const config_registry::FlagRow& h) {
-    std::string raw;
-    const bool have = PickRawLayered(h.row, raw);
-    return FlagFromRaw(h.row, have, raw);
-}
-
-long ResolveInt(const config_registry::IntRow& h) {
-    std::string raw;
-    const bool have = PickRawLayered(h.row, raw);
-    return IntFromRaw(h.row, have, raw);
-}
-
-float ResolveFloat(const config_registry::FloatRow& h) {
-    std::string raw;
-    const bool have = PickRawLayered(h.row, raw);
-    return FloatFromRaw(h.row, have, raw);
-}
-
-std::string ResolveEnum(const config_registry::EnumRow& h) {
-    std::string raw;
-    const bool have = PickRawLayered(h.row, raw);
-    return EnumFromRaw(h.row, have, raw);
-}
-
-std::string ResolveString(const config_registry::StringRow& h) {
-    std::string raw;
-    if (!PickRawLayered(h.row, raw)) return h.row->defS;
-    return raw;
-}
-
-// ---- typed-resolver selftest twins (arc 3 C5; see config.h) -----------------
-
-bool SelftestResolveFlagAt(const std::wstring& path, const config_registry::FlagRow& h) {
-    std::string raw;
-    const bool have = PickIniAt(path, h.row, raw);
-    return FlagFromRaw(h.row, have, raw);
-}
-long SelftestResolveIntAt(const std::wstring& path, const config_registry::IntRow& h) {
-    std::string raw;
-    const bool have = PickIniAt(path, h.row, raw);
-    return IntFromRaw(h.row, have, raw);
-}
-float SelftestResolveFloatAt(const std::wstring& path, const config_registry::FloatRow& h) {
-    std::string raw;
-    const bool have = PickIniAt(path, h.row, raw);
-    return FloatFromRaw(h.row, have, raw);
-}
-std::string SelftestResolveEnumAt(const std::wstring& path, const config_registry::EnumRow& h) {
-    std::string raw;
-    const bool have = PickIniAt(path, h.row, raw);
-    return EnumFromRaw(h.row, have, raw);
-}
-std::string SelftestResolveStringAt(const std::wstring& path, const config_registry::StringRow& h) {
-    std::string raw;
-    if (!PickIniAt(path, h.row, raw)) return h.row->defS;
-    return raw;
-}
-
-
-// ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----
-// Path-parameterized twins of the two readers + the raw line list + a failing-
-// source scan, so the env-gated autotest (autotest_config.cpp) can run the REAL
-// lexer over a corpus of ini files and prove the tri-state branches. Not for
-// product use: product code reads only the module-dir ini via the public API.
-
-IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key) {
-    IniScan st = IniScan::Ok;
-    IniSelftestRead r;
-    const std::string sentinel = "\x01<absent>";
-    r.value = ReadIniValueAt(path, key, sentinel.c_str(), &st);
-    r.found = (r.value != sentinel);
-    if (!r.found) r.value.clear();
-    r.scan = static_cast<int>(st);
-    return r;
-}
-
-int SelftestFlagTriState(const std::wstring& path, const char* key) {
+int LookupTriStateAtPath(const std::wstring& path, const char* key) {
     return LookupTriStateAt(path, key);
-}
-
-int SelftestListLines(const std::wstring& path, std::vector<std::string>& out) {
-    const IniScan st = ScanIniFileAt(path, [&](const std::string& line) { out.push_back(line); });
-    return static_cast<int>(st);
 }
 
 namespace {
@@ -810,13 +726,45 @@ int FailingSourceNext(void* ctx, std::string& out) {
 }
 }  // namespace
 
-int SelftestScanWithFailure(int failAfterLines) {
+int ScanWithInjectedFailure(int failAfterLines) {
     FailingSourceCtx ctx{failAfterLines};
     const IniScan st =
         ScanLineSource(LineSource{&FailingSourceNext, &ctx}, [](const std::string&) {});
     // The branch under test: a mid-stream error must yield Unreadable (2),
     // never a clean Ok that would read as ABSENT downstream (design F38).
     return static_cast<int>(st);
+}
+
+}  // namespace internal
+
+bool ResolveFlag(const config_registry::FlagRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return internal::FlagFromRaw(h.row, have, raw);
+}
+
+long ResolveInt(const config_registry::IntRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return internal::IntFromRaw(h.row, have, raw);
+}
+
+float ResolveFloat(const config_registry::FloatRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return internal::FloatFromRaw(h.row, have, raw);
+}
+
+std::string ResolveEnum(const config_registry::EnumRow& h) {
+    std::string raw;
+    const bool have = PickRawLayered(h.row, raw);
+    return internal::EnumFromRaw(h.row, have, raw);
+}
+
+std::string ResolveString(const config_registry::StringRow& h) {
+    std::string raw;
+    if (!PickRawLayered(h.row, raw)) return h.row->defS;
+    return raw;
 }
 
 }  // namespace coop::config
