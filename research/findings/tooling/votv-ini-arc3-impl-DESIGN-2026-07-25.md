@@ -1,6 +1,22 @@
-# ini rework ARC 3 — impl design: T2-migrate + T2b + the const Row& ratchet (DESIGN, /qf-converged)
+# ini rework ARC 3 — impl design: T2-migrate + T2b + the const Row& ratchet (AS-BUILT)
 
-**Date:** 2026-07-25 · **Status:** **C1-C3a BUILT 2026-07-25 eve** (C1 `f88a78cf` registry .inc + typed handles + ValidateRows; C2 `faa0289d` typed Resolve/ResolveString + all string/Resolve sites + fonts ENUM rows; C3a `3b9aba38` 62-site flag sweep + MasterEnabled on rows::enabled + IsIniKeyTrue DELETED — the READ ratchet is closed, product-code IsIniKeyTrue hits = 0, each commit Release-built clean; NOT smoked, instruments beyond the BEFORE harvest not yet run). REMAINING: C3b write door + enum_check retire (blocking inheritor gate), C4 T2b, C5 registry_gate.ps1 + CI + drills, AFTER-compare + corpus re-run + audits + smoke + b127-dev. DESIGN: /qf 16 rounds, genuine "that holds" at R16
+**Date:** 2026-07-25 · **Status:** **ARC 3 BUILT WHOLE + verify package GREEN 2026-07-25 night.**
+Commits: C1 `f88a78cf` (registry .inc + typed handles + ValidateRows) · C2 `faa0289d` (typed
+Resolve/ResolveString + all string/Resolve sites + fonts ENUM rows) · C3a `3b9aba38` (62-site flag
+sweep; IsIniKeyTrue DELETED) · C3b `1a7c70fb` (WRITE door re-keyed onto typed handles, 15 sites;
+IdentityRow write-only handle; RoleIniKey retired) · C4 `beb73208` (T2b: session_manager
+g_configured/env-fallback + ReadEnvA deleted; 24 autotest role-env reads → ONE latched
+harness::autotest::IsClientRole(); ReadMasterUrl/FillP2PFields env literals ride row->envVar) ·
+C5 `ad15ae7c` (registry_gate.ps1 + build-core.yml wiring; **enum_check.ps1 RETIRED** behind the
+verified inheritor map) + `ce035619` (typed-resolver selftest twins + drills) · soft-cap cut
+`fed851cb` (config_selftest.cpp; config.cpp 822→770).
+**Verify (all green, evidence in §Verify below):** compile-proof C2664/C2665 recorded ·
+registry_gate drills RED×5 on real identifiers + green control · AFTER-compare 100/100 defaults
+equal + fonts column [3,3,1,1,3] migrated + must-FAIL control · deletion asserts must-ZERO with
+positive controls on `db4d4790` · corpus gate **AFTER==NEWSIM on all 248** · arc-3 selftest
+drills 15/15 ok, DONE fail=0 · smoke ×2 PASS (DLL `2ba9014653033cd5` ×4, proto 127 in tree) ·
+perf audit PASS 0 CRIT/0 WARN · LOC caps clean. NOT hands-on (rides the next take).
+DESIGN: /qf 16 rounds, genuine "that holds" at R16
 ("the plan's remaining risk is execution fidelity, not design") · **Parent:** the certified
 `votv-ini-config-registry-DESIGN-2026-07-24.md` (arc-3 row: T2-migrate ~106 literal sites + T2b +
 ratchet; enum_check.ps1 retires) · **Fact base:** measured THIS session on post-arc-2 HEAD
@@ -127,6 +143,63 @@ arc-2 "built-in default is used" wording — never "using ''".
 config_internal.h seam exists) + the pre-handoff checklist. Ships as the next dev release (b127)
 via the RELEASE.md ritual; b126's frozen assets = the arc-2 baseline for bisecting any future panel
 finding (attribution stays structural).
+
+## Verify (as-run, 2026-07-25 night)
+
+- **Compile-proof (must-FAIL, recorded then reverted):** `ResolveFlag("bogus")` → C2664;
+  `WriteIniValue("bogus","1")` → C2665 (config.cpp temp edit; scratchpad arc3/compile_proof.md).
+  This is the enum_check must-FAIL inheritor.
+- **registry_gate drills (real gate, real identifiers):** drill A = injected .inc dead row +
+  using-directive in peer_action_feed.cpp + string decl in config.h → 3 violations, exit 1;
+  drill B = player_guid dropped from allowlist + ghost entry → 2 violations, exit 1; reverted,
+  green control run PASS (103+5 rows, allowlist=2). Fixture must-fire controls run EVERY
+  invocation (dead/write-only/alias×3/ratchet).
+- **AFTER-compare (proof class 1):** scratchpad arc3/after_compare.ps1 — BEFORE multimap
+  (100 keys/108 sites/0 conflicts) vs the .inc dump: 100/100 default-equal (aliases matched by
+  canonical symbol); expected-no-BEFORE = enabled (semantics-measured R2) + 2 identity rows;
+  fonts pre-arc-3 RoleDesc column [3,3,1,1,3] == kFontRoleDefaultFamily. Must-FAIL control
+  (999 perturbation) fired.
+- **Deletion asserts (class 3):** ReadEnvA("VOTVCOOP / raw ReadEnv("VOTVCOOP_NET_ /
+  ReadEnv("VOTVCOOP_MASTER / kBuiltin* / fonts defaultFam == 0 now; positive controls >0 on
+  pre-arc-3 `db4d4790`.
+- **Corpus gate (class 4):** smoke-1 host log → arc2_verdicts.ps1: **GATE PASS: AFTER == NEWSIM
+  on all 248 verdicts** (read semantics unchanged through arc 3).
+- **Absent-path/sentinel/env drills (class 5):** 15/15 `config-selftest: arc3 ... ok`,
+  `DONE fail=0` (smoke-1 host log 22:39:22).
+- **Grep-asserts (class 6):** net.nick = ONE read (config.cpp:505 ReadNickname, MINE axis) +
+  ONE write (server_browser edit-edge); SanitizeNickname "Player" THEIRS-fallback intact
+  (player_handshake.cpp:39). envVar-flag ∩ IsIniKeyTrue = moot (API deleted).
+- **Smoke ×2 PASS** on final bytes (DLL `2ba9014653033cd5` ×4): run 1 with selftest+corpus,
+  run 2 plain; both "both peers stable, client connected, host puppet spawned, no RAM breach";
+  log diff clean (all WARNs pre-existing known classes, none config-domain).
+- **Perf audit:** PASS, 0 CRITICAL / 0 WARN — all 20 write conversions edge-gated,
+  IsClientRole one-shot magic static, C5 instrument zero product cost, MasterUrl strictly
+  cheaper. Standing note: PickRawLayered = one file scan per Resolve* call — safe ONLY while
+  every caller is latched/event-driven; keep in the audit prompt.
+
+## WRITE∩LATCH census (class 7, as-built)
+
+Every written key: write surface → the ONE boot/latch read → the live in-memory authority
+(ini = persistence only; writes are edge-gated user actions — perf table confirms).
+
+| key | write surface | boot/latch read | live authority |
+|---|---|---|---|
+| voice.mode | panel radio ×2 | voice_chat.cpp:99 init | VC activation state (devices restart re-reads) |
+| voice.threshold_db | slider edit-edge | voice_chat.cpp:104 | VC::SetThresholdDb |
+| voice.mic_gain_db | slider edit-edge | voice_chat.cpp:105 | VC::SetGainDb |
+| voice.volume | slider edit-edge | voice_chat.cpp:113 | VC::SetMasterVolume |
+| voice.mic_device | DeviceCombo click | voice_chat.cpp:106 (+ panel cache :44) | VC device (restart) |
+| voice.output_device | DeviceCombo click | voice_chat.cpp:112 (+ :46) | VC device (restart) |
+| net.nick | browser edit-edge | config.cpp:505 ReadNickname | g_nick buffer / session nick |
+| browser.lastdirect | browser edit-edge | server_browser.cpp:72 latch | g_directIp buffer |
+| ui.netstats | checkbox | net_stats_panel.cpp:29 latch | g_enabled atomic |
+| ui.scale | slider edit-edge | scale.cpp:89 boot | SetUserScale in-memory |
+| ui.font.<role> | family combo (SetRoleFamily) | ReadRoleFamiliesOnce | g_roleFamily + g_rolesRead |
+| nick_color | picker ×2 | harness.cpp:132 | nick_color live state |
+| nameplate | F1 checkbox | harness.cpp:128 | nameplate visibility |
+| player_skin | mint + skin picker | config.cpp mint (internal read) | applied skin (local_body) |
+| player_guid | mint once | config.cpp mint (internal read) | per-launch guid |
+| ui.chat.peer_actions | checkbox | peer_action_feed.cpp:24 latch | g_enabled atomic |
 
 ## /qf rounds ledger (16 rounds, R16 = "that holds")
 
