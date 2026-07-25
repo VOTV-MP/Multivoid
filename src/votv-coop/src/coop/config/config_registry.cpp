@@ -33,19 +33,21 @@ constexpr const char* kFontFamilyTokensJoined = "jetbrains|roboto|cascadia|fixed
 
 // ---- expansion 1: row indices (table positions, .inc order) -----------------
 enum RowIndex : size_t {
-#define CFG_FLAG(ident, key, section, defB, envVar) RowIndex_##ident,
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar) RowIndex_##ident,
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar) RowIndex_##ident,
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar) RowIndex_##ident,
-#define CFG_STRING(ident, key, section, defS, envVar, seeded) RowIndex_##ident,
-#define CFG_IDENTITY(ident, key, section) RowIndex_##ident,
-#define CFG_FONTROLE(ident, key, suffix, defFam) RowIndex_##ident,
+#define CFG_FLAG(ident, key, section, defB, envVar, desc) RowIndex_##ident,
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) RowIndex_##ident,
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) RowIndex_##ident,
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) RowIndex_##ident,
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) RowIndex_##ident,
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc) RowIndex_##ident,
+#define CFG_IDENTITY(ident, key, section, desc) RowIndex_##ident,
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) RowIndex_##ident,
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
     kRowCountIndex
@@ -53,27 +55,30 @@ enum RowIndex : size_t {
 
 // ---- expansion 2: the Row table ---------------------------------------------
 constexpr Row kRows[] = {
-#define CFG_FLAG(ident, key, section, defB, envVar) \
-    Row{key, section, Kind::Flag, kNoRange, kNoRange, nullptr, envVar, false, defB, 0, 0.0f, nullptr},
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar) \
-    Row{key, section, Kind::Int, lo, hi, nullptr, envVar, false, false, static_cast<long>(defI), 0.0f, nullptr},
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar) \
-    Row{key, section, Kind::Float, lo, hi, nullptr, envVar, false, false, 0, defF, nullptr},
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar) \
-    Row{key, section, Kind::Enum, kNoRange, kNoRange, tokens, envVar, false, false, 0, 0.0f, defS},
-#define CFG_STRING(ident, key, section, defS, envVar, seeded) \
-    Row{key, section, Kind::String, kNoRange, kNoRange, nullptr, envVar, seeded, false, 0, 0.0f, defS},
-#define CFG_IDENTITY(ident, key, section) \
-    Row{key, section, Kind::Identity, kNoRange, kNoRange, nullptr, nullptr, false, false, 0, 0.0f, nullptr},
-#define CFG_FONTROLE(ident, key, suffix, defFam) \
+#define CFG_FLAG(ident, key, section, defB, envVar, desc) \
+    Row{key, section, Kind::Flag, kNoRange, kNoRange, nullptr, envVar, false, defB, 0, 0.0f, nullptr, nullptr, desc},
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) \
+    Row{key, section, Kind::Int, lo, hi, nullptr, envVar, false, false, static_cast<long>(defI), 0.0f, nullptr, nullptr, desc},
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) \
+    Row{key, section, Kind::Float, lo, hi, nullptr, envVar, false, false, 0, defF, nullptr, nullptr, desc},
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) \
+    Row{key, section, Kind::Enum, kNoRange, kNoRange, tokens, envVar, false, false, 0, 0.0f, defS, nullptr, desc},
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) \
+    Row{key, section, Kind::String, kNoRange, kNoRange, nullptr, envVar, seeded, false, 0, 0.0f, defS, nullptr, desc},
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc) \
+    Row{key, section, Kind::String, kNoRange, kNoRange, nullptr, envVar, seeded, false, 0, 0.0f, defS, gatedBy, desc},
+#define CFG_IDENTITY(ident, key, section, desc) \
+    Row{key, section, Kind::Identity, kNoRange, kNoRange, nullptr, nullptr, false, false, 0, 0.0f, nullptr, nullptr, desc},
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) \
     Row{key, "ui", Kind::Enum, kNoRange, kNoRange, kFontFamilyTokensJoined, nullptr, false, false, 0, 0.0f, \
-        kFontFamilyTokens[defFam]},
+        kFontFamilyTokens[defFam], nullptr, desc},
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 };
@@ -113,29 +118,59 @@ constexpr bool SectionKnown(const char* sec) {
 
 // Font-role row indices, .inc order (expansion for the coherence check).
 constexpr size_t kFontRoleRowIndex[] = {
-#define CFG_FLAG(ident, key, section, defB, envVar)
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar)
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar)
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar)
-#define CFG_STRING(ident, key, section, defS, envVar, seeded)
-#define CFG_IDENTITY(ident, key, section)
-#define CFG_FONTROLE(ident, key, suffix, defFam) RowIndex_##ident,
+#define CFG_FLAG(ident, key, section, defB, envVar, desc)
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
+#define CFG_IDENTITY(ident, key, section, desc)
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) RowIndex_##ident,
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 };
 static_assert(sizeof(kFontRoleRowIndex) / sizeof(kFontRoleRowIndex[0]) == kFontRoleCount,
               "font-role rows and kFontRoleKeys must stay in lockstep");
 
+// The defS catalog-safety guard (arc 4): no ';' anywhere (the inline-comment
+// strip could truncate the value on read-back), no edge whitespace (the lexer
+// edge-trims -- the stored default would not round-trip), no CR/LF.
+constexpr bool DefSCatalogSafe(const char* s) {
+    if (!s || !*s) return true;  // empty defaults are legal (round-trip as present-empty)
+    const char* p = s;
+    if (*p == ' ' || *p == '\t') return false;
+    const char* last = p;
+    while (*p) {
+        if (*p == ';' || *p == '\r' || *p == '\n') return false;
+        last = p;
+        ++p;
+    }
+    return !(*last == ' ' || *last == '\t');
+}
+
 constexpr bool ValidateRows() {
     for (size_t i = 0; i < kRowCount; ++i) {
         const Row& r = kRows[i];
         if (!r.key || !*r.key || !SectionKnown(r.section)) return false;
+        // T8 catalog columns (arc 4): every row carries human text; a gated
+        // row's gate key must exist and be a Flag row (a renamed/deleted gate
+        // breaks the BUILD, never rots into false prose).
+        if (!r.desc || !*r.desc) return false;
+        if (r.gatedBy) {
+            bool gateOk = false;
+            for (size_t g = 0; g < kRowCount; ++g)
+                if (CEq(kRows[g].key, r.gatedBy) && kRows[g].kind == Kind::Flag) { gateOk = true; break; }
+            if (!gateOk) return false;
+        }
+        if ((r.kind == Kind::String || r.kind == Kind::Enum) && !DefSCatalogSafe(r.defS))
+            return false;
         switch (r.kind) {
             case Kind::Int:
                 if (static_cast<double>(r.defI) < r.lo || static_cast<double>(r.defI) > r.hi)
@@ -183,19 +218,21 @@ static_assert(ValidateRows(), "config registry row table is incoherent (default/
 
 // ---- expansion 3: the typed handle definitions ------------------------------
 namespace rows {
-#define CFG_FLAG(ident, key, section, defB, envVar) \
+#define CFG_FLAG(ident, key, section, defB, envVar, desc) \
     const FlagRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar) \
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) \
     const IntRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar) \
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) \
     const FloatRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar) \
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) \
     const EnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_STRING(ident, key, section, defS, envVar, seeded) \
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) \
     const StringRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_IDENTITY(ident, key, section) \
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc) \
+    const StringRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
+#define CFG_IDENTITY(ident, key, section, desc) \
     const IdentityRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
-#define CFG_FONTROLE(ident, key, suffix, defFam) \
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) \
     const EnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
@@ -203,6 +240,7 @@ namespace rows {
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 }  // namespace rows
@@ -210,19 +248,21 @@ namespace rows {
 namespace {
 // The per-role Enum handles in Role order (FontRoleRow's backing).
 const EnumRow* const kFontRoleRows[] = {
-#define CFG_FLAG(ident, key, section, defB, envVar)
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar)
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar)
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar)
-#define CFG_STRING(ident, key, section, defS, envVar, seeded)
-#define CFG_IDENTITY(ident, key, section)
-#define CFG_FONTROLE(ident, key, suffix, defFam) &rows::ident,
+#define CFG_FLAG(ident, key, section, defB, envVar, desc)
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
+#define CFG_IDENTITY(ident, key, section, desc)
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) &rows::ident,
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 };

@@ -153,6 +153,39 @@ bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; };
 bool ReformatLiveIni(ReformatStats& out);
 
+// ---- the T8 catalog: multivoid.ini.example (arc 4) --------------------------
+
+// Per-boot outcome of the catalog generation (the drill's FIRST assert -- a
+// failed boot write must fail the drill regardless of surviving old bytes).
+enum class ExampleGen : unsigned char {
+    NotRun = 0,         // GenerateExampleCatalog never ran this boot
+    Regenerated,        // bytes differed (or file absent) -> atomic swap landed
+    UpToDate,           // existing bytes identical -> no write
+    FailedWrite,        // the swap failed (disk/perms) -- WARN logged, non-fatal
+    SkippedUnreadable,  // existing file present but unreadable -- no doomed swap
+};
+
+// Generate multivoid.ini.example beside the DLL: every registry row as wrapped
+// `;; ` description prose (+ generator-emitted allowed-tokens/range/env-twin
+// lines from the row columns) and a copyable `; key=default` line, under bare
+// [section] headers. Deterministic bytes (no timestamp; numeric emission
+// pinned to the C locale); tri-state compare-first; the ONE atomic-swap
+// primitive; fail-soft (the mod NEVER reads this file back). Call once at
+// harness boot after EnsureIniSkeleton.
+void GenerateExampleCatalog();
+
+// This boot's generation outcome (+ the emitted key count when green).
+ExampleGen ExampleGenStatus(int* keyCountOut);
+
+// Selftest verify of a generated catalog file (the arc-4 drill; probes are
+// RULE-2-exempt): runs the six detectors (grammar/wrap/tri-directional
+// exactly-once/env-only/orphan/section-placement) and the round-trip
+// (strip the leading "; " from every copyable line -> `scratchPath` -> the
+// ONE lexer -> FOUND + typed-equal vs the row defaults via the product
+// cores). Returns the failure count (0 = green); each failure logs one
+// "config-selftest: catalog FAIL ..." line.
+int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& scratchPath);
+
 // ---- T10 identity/durability state (set during the boot mints) --------------
 // True when this launch's guid/skin is SESSION-ONLY: the ini was UNREADABLE at
 // the mint (the gate refused to write over it -- the lock-release overwrite

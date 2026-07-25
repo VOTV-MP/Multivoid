@@ -1,153 +1,273 @@
 // coop/config/config_registry_rows.inc -- THE one registry row list (ini rework
-// arc 3, T2-migrate). X-macro'd: config_registry.h expands it into the typed
-// handle DECLARATIONS (rows::<ident>), config_registry.cpp expands it three
-// times (index enum / Row table / handle definitions) -- ONE list, every
-// artifact, no transcription (the drift class T2 exists to kill).
+// arc 3, T2-migrate; arc 4 adds the desc/gatedBy columns for the T8 catalog).
+// X-macro'd: config_registry.h expands it into the typed handle DECLARATIONS
+// (rows::<ident>), config_registry.cpp expands it three times (index enum /
+// Row table / handle definitions) -- ONE list, every artifact, no
+// transcription (the drift class T2 exists to kill).
 //
-// Entry forms (ident = the C++ handle name; key = canonical ini spelling):
-//   CFG_FLAG    (ident, key, section, defB, envVar)
-//   CFG_INT     (ident, key, section, defI, lo, hi, envVar)
-//   CFG_FLOAT   (ident, key, section, defF, lo, hi, envVar)
-//   CFG_ENUM    (ident, key, section, defS, tokens, envVar)   // defS "" = the
-//               // unset sentinel, allowed ONLY for net.role / net.ice
-//               // (ValidateRows allowlist)
-//   CFG_STRING  (ident, key, section, defS, envVar, seeded)
-//   CFG_IDENTITY(ident, key, section)                          // minted, no def
-//   CFG_FONTROLE(ident, key, roleSuffix, defFamilyIndex)       // Enum-kind row,
-//               // tokens = the family list; ValidateRows pins key ==
-//               // "ui.font." + roleSuffix AND roleSuffix == kFontRoleKeys[i]
-//               // in order AND defS == kFontFamilyTokens[defFamilyIndex]
+// Entry forms (ident = the C++ handle name; key = canonical ini spelling;
+// desc = the T8 catalog's human text -- SEMANTICS ONLY: allowed tokens,
+// ranges and the env twin are generator-emitted from the columns, never
+// written into desc):
+//   CFG_FLAG    (ident, key, section, defB, envVar, desc)
+//   CFG_INT     (ident, key, section, defI, lo, hi, envVar, desc)
+//   CFG_FLOAT   (ident, key, section, defF, lo, hi, envVar, desc)
+//   CFG_ENUM    (ident, key, section, defS, tokens, envVar, desc) // defS "" =
+//               // unset sentinel, ONLY net.role / net.ice (ValidateRows)
+//   CFG_STRING  (ident, key, section, defS, envVar, seeded, desc)
+//   CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
+//               // gatedBy = the Flag row key that gates the INI read
+//               // (ValidateRows: must exist + be a Flag row)
+//   CFG_IDENTITY(ident, key, section, desc)                // minted, no def
+//   CFG_FONTROLE(ident, key, roleSuffix, defFamilyIndex, desc)
 //
-// DEFAULTS carry the arc-3 migration: each value here is the literal that lived
-// at the call site through arc 2 (BEFORE harvest 2026-07-25: 100 keys, 108
-// sites, ZERO same-key conflicts), or an ALIAS of the one owning constant
-// (kDefaultPort / kOfficialMasterUrl / kOfficialSignalingUrl / kMyNameDefault)
-// -- never a second copy of an owned value.
+// DEFAULTS carry the arc-3 migration (BEFORE harvest 2026-07-25: 100 keys,
+// 108 sites, ZERO same-key conflicts) or ALIAS the one owning constant
+// (kDefaultPort / kOfficialMasterUrl / kOfficialSignalingUrl / kMyNameDefault).
 
 // ---- [net] ------------------------------------------------------------------
-CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", true)
-CFG_ENUM(net_role, "net.role", "net", "", "host|client", "VOTVCOOP_NET_ROLE")
-CFG_STRING(net_peer, "net.peer", "net", "127.0.0.1", "VOTVCOOP_NET_PEER", false)
-CFG_INT(net_port, "net.port", "net", ::coop::net::kDefaultPort, 1, 65535, "VOTVCOOP_NET_PORT")
-CFG_ENUM(net_topology, "net.topology", "net", "lan", "lan|p2p", "VOTVCOOP_NET_TOPOLOGY")
-CFG_STRING(net_master, "net.master", "net", ::coop::net::kOfficialMasterUrl, "VOTVCOOP_MASTER_URL", false)
-CFG_FLAG(net_master_custom, "net.master.custom", "net", false, nullptr)
-CFG_STRING(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSignalingUrl, "VOTVCOOP_NET_SIGNALING", false)
-CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false)
-CFG_STRING(net_identity, "net.identity", "net", "", "VOTVCOOP_NET_IDENTITY", false)
-CFG_STRING(net_host_identity, "net.host_identity", "net", "", "VOTVCOOP_NET_HOST_IDENTITY", false)
-CFG_STRING(net_stun, "net.stun", "net", "stun.l.google.com:19302", "VOTVCOOP_NET_STUN", false)
-CFG_STRING(net_turn, "net.turn", "net", "", "VOTVCOOP_NET_TURN", false)
-CFG_STRING(net_turn_user, "net.turn_user", "net", "", "VOTVCOOP_NET_TURN_USER", false)
-CFG_STRING(net_turn_pass, "net.turn_pass", "net", "", "VOTVCOOP_NET_TURN_PASS", false)
-CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay|disable|default", "VOTVCOOP_NET_ICE")
+CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", true,
+    "Your display name, shown to other players (nameplates, chat, the scoreboard).")
+CFG_ENUM(net_role, "net.role", "net", "", "host|client", "VOTVCOOP_NET_ROLE",
+    "Auto-start role for the LAN test framework. Leave unset for normal play -- the in-game "
+    "Multiplayer menu handles hosting and joining.")
+CFG_STRING(net_peer, "net.peer", "net", "127.0.0.1", "VOTVCOOP_NET_PEER", false,
+    "Test framework: the host address a client connects to at auto-start (lan topology).")
+CFG_INT(net_port, "net.port", "net", ::coop::net::kDefaultPort, 1, 65535, "VOTVCOOP_NET_PORT",
+    "UDP port the host listens on (lan topology).")
+CFG_ENUM(net_topology, "net.topology", "net", "lan", "lan|p2p", "VOTVCOOP_NET_TOPOLOGY",
+    "Transport shape: lan = direct UDP, p2p = internet session via the signaling server "
+    "(NAT traversal, no port forwarding needed).")
+CFG_STRING_GATED(net_master, "net.master", "net", ::coop::net::kOfficialMasterUrl,
+    "VOTVCOOP_MASTER_URL", false, "net.master.custom",
+    "Master (lobby list) server, host:port. The special value DEFAULT also means the official "
+    "server.")
+CFG_FLAG(net_master_custom, "net.master.custom", "net", false, nullptr,
+    "Set to 1 to use your own master/signaling servers from net.master / net.signaling instead "
+    "of the official ones (run-your-own-master).")
+CFG_STRING_GATED(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSignalingUrl,
+    "VOTVCOOP_NET_SIGNALING", false, "net.master.custom",
+    "Signaling (rendezvous) server for internet sessions.")
+CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false,
+    "Access token for a self-hosted signaling server. The official flow mints per-session "
+    "tokens automatically -- leave empty.")
+CFG_STRING(net_identity, "net.identity", "net", "", "VOTVCOOP_NET_IDENTITY", false,
+    "This peer's signaling identity. Leave empty: unique defaults are generated and the "
+    "master issues real per-session identities.")
+CFG_STRING(net_host_identity, "net.host_identity", "net", "", "VOTVCOOP_NET_HOST_IDENTITY", false,
+    "The host identity a client dials over signaling. Leave empty for the default.")
+CFG_STRING(net_stun, "net.stun", "net", "stun.l.google.com:19302", "VOTVCOOP_NET_STUN", false,
+    "STUN server list for NAT discovery (host:port, comma-separated).")
+CFG_STRING(net_turn, "net.turn", "net", "", "VOTVCOOP_NET_TURN", false,
+    "Static TURN relay server list. Empty = none; the master mints ephemeral TURN "
+    "credentials when a session needs a relay.")
+CFG_STRING(net_turn_user, "net.turn_user", "net", "", "VOTVCOOP_NET_TURN_USER", false,
+    "Static TURN username (dev / self-hosted relays only).")
+CFG_STRING(net_turn_pass, "net.turn_pass", "net", "", "VOTVCOOP_NET_TURN_PASS", false,
+    "Static TURN password (dev / self-hosted relays only).")
+CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay|disable|default", "VOTVCOOP_NET_ICE",
+    "ICE candidate policy for p2p sessions. Unset/all = every path; relay = force the TURN "
+    "relay; disable/default = engine defaults.")
 
 // ---- [player] ---------------------------------------------------------------
-CFG_IDENTITY(player_guid, "player_guid", "player")
-CFG_IDENTITY(player_skin, "player_skin", "player")
-CFG_FLAG(nameplate, "nameplate", "player", true, nullptr)
-CFG_STRING(nick_color, "nick_color", "player", "unset", nullptr, false)
+CFG_IDENTITY(player_guid, "player_guid", "player",
+    "Durable per-install player identity (32 hex chars), minted automatically on first "
+    "launch. Copy this line to another install to carry your host-side inventory identity.")
+CFG_IDENTITY(player_skin, "player_skin", "player",
+    "Persisted body-skin choice, rolled from the starter list on first launch. Change it "
+    "in-game (F1 menu > skins).")
+CFG_FLAG(nameplate, "nameplate", "player", true, nullptr,
+    "Show nameplates over other players (also toggleable in the F1 menu).")
+CFG_STRING(nick_color, "nick_color", "player", "unset", nullptr, false,
+    "Your nickname color as RRGGBB hex, or unset. Pick it in-game (F1 menu color picker).")
 
 // ---- [ui] -------------------------------------------------------------------
 // ui.scale range = the user-pref clamp; scale.cpp consumes THIS row's range AND
-// (since arc 3) THIS row's default -- single source.
-CFG_FLOAT(ui_scale, "ui.scale", "ui", 1.25f, 0.75, 1.75, nullptr)
-CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr)
-CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr)
-CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", "127.0.0.1:7777", nullptr, false)
-CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr)
-// The composed ui.font.<role> family, per-role rows (arc 3: born Enum-kind so
-// the T10 sweep loud-reports garbage; the in-memory fallback is unchanged).
-// Default family per role = the user-2026-07-09 decision (fonts.cpp's retired
-// RoleDesc.defaultFam column): menu/chat/toast = fixedsys(3), net/nameplate =
-// roboto(1). Family index order = kFontFamilyTokens.
-CFG_FONTROLE(ui_font_menu, "ui.font.menu", "menu", 3)
-CFG_FONTROLE(ui_font_chat, "ui.font.chat", "chat", 3)
-CFG_FONTROLE(ui_font_net, "ui.font.net", "net", 1)
-CFG_FONTROLE(ui_font_nameplate, "ui.font.nameplate", "nameplate", 1)
-CFG_FONTROLE(ui_font_toast, "ui.font.toast", "toast", 3)
+// default -- single source.
+CFG_FLOAT(ui_scale, "ui.scale", "ui", 1.25f, 0.75, 1.75, nullptr,
+    "Scale multiplier for the mod's UI panels.")
+CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
+    "Show the network statistics overlay.")
+CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
+    "Show peer action lines (joins, pickups, device use) in the chat feed.")
+CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", "127.0.0.1:7777", nullptr, false,
+    "The last address typed into the server browser's direct-connect box (remembered "
+    "automatically).")
+CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
+    "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
+// The composed ui.font.<role> family, per-role Enum rows. Default family per
+// role = the user-2026-07-09 decision: menu/chat/toast = fixedsys(3),
+// net/nameplate = roboto(1). Family index order = kFontFamilyTokens.
+CFG_FONTROLE(ui_font_menu, "ui.font.menu", "menu", 3,
+    "Font family for the mod's menus and panels.")
+CFG_FONTROLE(ui_font_chat, "ui.font.chat", "chat", 3,
+    "Font family for the chat feed.")
+CFG_FONTROLE(ui_font_net, "ui.font.net", "net", 1,
+    "Font family for the net-stats overlay.")
+CFG_FONTROLE(ui_font_nameplate, "ui.font.nameplate", "nameplate", 1,
+    "Font family for player nameplates.")
+CFG_FONTROLE(ui_font_toast, "ui.font.toast", "toast", 3,
+    "Font family for the update/version toast.")
 
 // ---- [voice] ----------------------------------------------------------------
-CFG_FLAG(voice_enabled, "voice.enabled", "voice", true, "VOTVCOOP_VOICE_ENABLED")
-CFG_ENUM(voice_mode, "voice.mode", "voice", "ptt", "ptt|activation", "VOTVCOOP_VOICE_MODE")
-CFG_STRING(voice_ptt_key, "voice.ptt_key", "voice", "G", nullptr, false)
-CFG_STRING(voice_whisper_key, "voice.whisper_key", "voice", "", nullptr, false)
-CFG_STRING(voice_mute_key, "voice.mute_key", "voice", "", nullptr, false)
-CFG_FLOAT(voice_threshold_db, "voice.threshold_db", "voice", -50.0f, -120, 20, "VOTVCOOP_VOICE_THRESHOLD_DB")
-CFG_FLOAT(voice_mic_gain_db, "voice.mic_gain_db", "voice", 0.0f, -60, 60, nullptr)
-CFG_STRING(voice_mic_device, "voice.mic_device", "voice", "", nullptr, false)
-CFG_STRING(voice_output_device, "voice.output_device", "voice", "", nullptr, false)
-CFG_FLOAT(voice_volume, "voice.volume", "voice", 1.0f, 0, 10, nullptr)
-CFG_FLOAT(voice_distance_cm, "voice.distance_cm", "voice", 4800.0f, 100, 1000000, nullptr)
-CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr)
-CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr)
-CFG_FLAG(voice_test_tone, "voice.test_tone", "voice", false, "VOTVCOOP_VOICE_TEST_TONE")
-CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPBACK")
+CFG_FLAG(voice_enabled, "voice.enabled", "voice", true, "VOTVCOOP_VOICE_ENABLED",
+    "Master switch for voice chat (restart the game after changing).")
+CFG_ENUM(voice_mode, "voice.mode", "voice", "ptt", "ptt|activation", "VOTVCOOP_VOICE_MODE",
+    "Voice transmit mode: ptt = push-to-talk, activation = voice-activated.")
+CFG_STRING(voice_ptt_key, "voice.ptt_key", "voice", "G", nullptr, false,
+    "Push-to-talk key: a single letter, or a virtual-key number.")
+CFG_STRING(voice_whisper_key, "voice.whisper_key", "voice", "", nullptr, false,
+    "Whisper key (reduced voice range while held). Empty = disabled.")
+CFG_STRING(voice_mute_key, "voice.mute_key", "voice", "", nullptr, false,
+    "Microphone mute toggle key. Empty = disabled.")
+CFG_FLOAT(voice_threshold_db, "voice.threshold_db", "voice", -50.0f, -120, 20, "VOTVCOOP_VOICE_THRESHOLD_DB",
+    "Voice-activation threshold in dB: speech louder than this transmits (activation mode).")
+CFG_FLOAT(voice_mic_gain_db, "voice.mic_gain_db", "voice", 0.0f, -60, 60, nullptr,
+    "Microphone gain in dB applied before sending.")
+CFG_STRING(voice_mic_device, "voice.mic_device", "voice", "", nullptr, false,
+    "Capture device name; empty = system default. Pick it via the in-game voice panel.")
+CFG_STRING(voice_output_device, "voice.output_device", "voice", "", nullptr, false,
+    "Playback device name; empty = system default. Pick it via the in-game voice panel.")
+CFG_FLOAT(voice_volume, "voice.volume", "voice", 1.0f, 0, 10, nullptr,
+    "Master playback volume multiplier for incoming voice.")
+CFG_FLOAT(voice_distance_cm, "voice.distance_cm", "voice", 4800.0f, 100, 1000000, nullptr,
+    "Maximum voice audibility distance in centimeters (4800 = 48 m).")
+CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
+    "Jitter buffer: late-packet tolerance in frames before a reset.")
+CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,
+    "Jitter buffer: frames buffered before playback starts.")
+CFG_FLAG(voice_test_tone, "voice.test_tone", "voice", false, "VOTVCOOP_VOICE_TEST_TONE",
+    "Dev: replace the microphone with a generated test tone.")
+CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPBACK",
+    "Dev: play your own transmitted voice back locally.")
 
 // ---- [dev] ------------------------------------------------------------------
 // enabled: the master kill-switch -- ABSENT/garbage default TRUE (= granular
-// switches decide); only an explicit falsy forces dev features off
-// (MasterEnabled()'s measured arc-2 semantics, preserved by def=true).
-CFG_FLAG(enabled, "enabled", "dev", true, nullptr)
-CFG_FLAG(devkeys, "devkeys", "dev", false, nullptr)
-CFG_STRING(save, "save", "dev", "s_may2026", "VOTVCOOP_SAVE", false)
-CFG_FLAG(fresh_boot, "fresh_boot", "dev", false, "VOTVCOOP_FRESH")
-CFG_FLAG(static_2nd_player, "static_2nd_player", "dev", false, nullptr)
-CFG_FLAG(freecam, "freecam", "dev", false, nullptr)
-CFG_FLAG(spawn_menu_unlock, "spawn_menu_unlock", "dev", false, nullptr)
-CFG_FLAG(desk_diag, "desk_diag", "dev", false, nullptr)
-CFG_INT(desk_diag_ms, "desk_diag_ms", "dev", 1000, 100, 60000, nullptr)
-CFG_INT(vitals_keepalive_sec, "vitals_keepalive_sec", "dev", 0, 0, 86400, nullptr)
-CFG_FLAG(window_log, "window_log", "dev", false, nullptr)
-CFG_FLAG(window_synth, "window_synth", "dev", false, nullptr)
-CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr)
-CFG_FLAG(weather_probe, "weather_probe", "dev", false, nullptr)
-CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, nullptr)
-CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, nullptr)
-CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr)
-CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, nullptr)
-CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr)
-CFG_FLAG(container_selftest, "container_selftest", "dev", false, nullptr)
-CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr)
-CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr)
-CFG_FLAG(reseed_orphan_selftest, "reseed_orphan_selftest", "dev", false, nullptr)
-CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr)
-CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr)
-CFG_FLAG(grime_log, "grime_log", "dev", false, nullptr)
-CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr)
-CFG_FLAG(client_model_probe, "client_model_probe", "dev", false, nullptr)
-CFG_FLAG(delivery_census, "delivery_census", "dev", false, nullptr)
-CFG_FLAG(flashlight_log, "flashlight_log", "dev", false, nullptr)
-CFG_FLAG(kerfur_census, "kerfur_census", "dev", false, nullptr)
-CFG_FLAG(object_overlay, "object_overlay", "dev", false, nullptr)
-CFG_FLAG(ragdoll_bone_overlay, "ragdoll_bone_overlay", "dev", false, nullptr)
-CFG_FLAG(join_window_pos_trace, "join_window_pos_trace", "dev", false, nullptr)
-CFG_FLAG(puppet_head_probe, "puppet_head_probe", "dev", false, nullptr)
-CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullptr)
-CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr)
-CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr)
-CFG_FLAG(eid_lifetime_trace, "eid_lifetime_trace", "dev", false, nullptr)
-CFG_FLAG(pinecone_probe, "pinecone_probe", "dev", false, nullptr)
-CFG_FLAG(live_store_readout, "live_store_readout", "dev", false, nullptr)
-CFG_FLAG(heap_probe, "heap_probe", "dev", false, nullptr)
-CFG_FLAG(drone_probe, "drone_probe", "dev", false, nullptr)
-CFG_FLAG(drone_probe_drive, "drone_probe_drive", "dev", false, nullptr)
-CFG_FLAG(pile_dup_probe, "pile_dup_probe", "dev", false, nullptr)
-CFG_FLAG(perf_probe, "perf_probe", "dev", false, nullptr)
-CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr)
-CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr)
-CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr)
-CFG_FLAG(lightswitch_probe, "lightswitch_probe", "dev", false, nullptr)
-CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr)
-CFG_FLAG(vm_dispatch_log, "vm_dispatch_log", "dev", false, nullptr)
-CFG_FLAG(door_probe, "door_probe", "dev", false, nullptr)
-CFG_FLAG(rng_roll_census, "rng_roll_census", "dev", false, nullptr)
-CFG_FLAG(leak_probe, "leak_probe", "dev", false, nullptr)
-CFG_FLAG(force_chippile_unclaim, "force_chippile_unclaim", "dev", false, nullptr)
-CFG_FLAG(disable_completeness_floor, "disable_completeness_floor", "dev", false, nullptr)
-CFG_FLAG(keypad_probe, "keypad_probe", "dev", false, nullptr)
-CFG_FLAG(keypad_synth, "keypad_synth", "dev", false, nullptr)
-CFG_FLAG(save_identity_map_log, "save_identity_map_log", "dev", false, nullptr)
-CFG_FLAG(save_identity_bind, "save_identity_bind", "dev", false, nullptr)
-CFG_FLAG(force_kerfur_unmap, "force_kerfur_unmap", "dev", false, nullptr)
-CFG_FLAG(force_save_churn, "force_save_churn", "dev", false, nullptr)
+// switches decide); only an explicit falsy forces dev features off.
+CFG_FLAG(enabled, "enabled", "dev", true, nullptr,
+    "Master switch for ALL dev/test features below: an explicit 0 disables them; absent or "
+    "1 lets the granular switches decide.")
+CFG_FLAG(devkeys, "devkeys", "dev", false, nullptr,
+    "Enable the developer hotkeys.")
+CFG_STRING(save, "save", "dev", "s_may2026", "VOTVCOOP_SAVE", false,
+    "Test framework: the save slot name loaded at auto-start.")
+CFG_FLAG(fresh_boot, "fresh_boot", "dev", false, "VOTVCOOP_FRESH",
+    "Test framework: boot to a fresh new-game state instead of loading a save.")
+CFG_FLAG(static_2nd_player, "static_2nd_player", "dev", false, nullptr,
+    "Spawn a static second-player puppet for camera/pose testing.")
+CFG_FLAG(freecam, "freecam", "dev", false, nullptr,
+    "Enable the freecam toggle.")
+CFG_FLAG(spawn_menu_unlock, "spawn_menu_unlock", "dev", false, nullptr,
+    "Unlock the native spawn menu while in a coop session.")
+CFG_FLAG(desk_diag, "desk_diag", "dev", false, nullptr,
+    "Diagnostic: periodically log the signal-desk state.")
+CFG_INT(desk_diag_ms, "desk_diag_ms", "dev", 1000, 100, 60000, nullptr,
+    "Interval in milliseconds for the desk_diag log.")
+CFG_INT(vitals_keepalive_sec, "vitals_keepalive_sec", "dev", 0, 0, 86400, nullptr,
+    "Reset player vitals every N seconds (0 = off; long unattended test runs).")
+CFG_FLAG(window_log, "window_log", "dev", false, nullptr,
+    "Diagnostic logging for window sync.")
+CFG_FLAG(window_synth, "window_synth", "dev", false, nullptr,
+    "Test driver: synthesize window interactions.")
+CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr,
+    "Diagnostic logging for the weather sync observers.")
+CFG_FLAG(weather_probe, "weather_probe", "dev", false, nullptr,
+    "Diagnostic probe block for the weather subsystem.")
+CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, nullptr,
+    "Autonomous selftest: meadow signal database sync.")
+CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, nullptr,
+    "Autonomous selftest: laptop buffer sync.")
+CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr,
+    "Autonomous selftest: tape deck playback sync.")
+CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, nullptr,
+    "Autonomous selftest: drive rack digest instrument.")
+CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
+    "Autonomous selftest: desk sound mirror.")
+CFG_FLAG(container_selftest, "container_selftest", "dev", false, nullptr,
+    "Autonomous selftest: container contents sync.")
+CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
+    "Autonomous selftest: player inventory sync.")
+CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
+    "Autonomous selftest: starter kit issuance.")
+CFG_FLAG(reseed_orphan_selftest, "reseed_orphan_selftest", "dev", false, nullptr,
+    "Autonomous selftest: save-identity reseed/orphan handling.")
+CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr,
+    "Diagnostic probe: trash pile delta events.")
+CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,
+    "Diagnostic probe: garbage pickup path.")
+CFG_FLAG(grime_log, "grime_log", "dev", false, nullptr,
+    "Diagnostic logging for grime/cleaning sync.")
+CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr,
+    "Diagnostic logging for the interactable channel.")
+CFG_FLAG(client_model_probe, "client_model_probe", "dev", false, nullptr,
+    "Diagnostic probe: client-side model/skin state.")
+CFG_FLAG(delivery_census, "delivery_census", "dev", false, nullptr,
+    "Diagnostic census: delivery spawn events.")
+CFG_FLAG(flashlight_log, "flashlight_log", "dev", false, nullptr,
+    "Diagnostic logging for flashlight/item-activate sync.")
+CFG_FLAG(kerfur_census, "kerfur_census", "dev", false, nullptr,
+    "Diagnostic census: kerfur units and their identity records.")
+CFG_FLAG(object_overlay, "object_overlay", "dev", false, nullptr,
+    "Debug overlay: object/entity markers.")
+CFG_FLAG(ragdoll_bone_overlay, "ragdoll_bone_overlay", "dev", false, nullptr,
+    "Debug overlay: ragdoll bone positions.")
+CFG_FLAG(join_window_pos_trace, "join_window_pos_trace", "dev", false, nullptr,
+    "Diagnostic trace: entity positions during the join window.")
+CFG_FLAG(puppet_head_probe, "puppet_head_probe", "dev", false, nullptr,
+    "Diagnostic probe: puppet head/aim pose.")
+CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullptr,
+    "Diagnostic probe: native pile inertness on clients.")
+CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,
+    "Diagnostic probe: inventory store contents.")
+CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
+    "Diagnostic probe: actor spawn ordering.")
+CFG_FLAG(eid_lifetime_trace, "eid_lifetime_trace", "dev", false, nullptr,
+    "Diagnostic trace: entity-id lifetimes (mint/adopt/destroy).")
+CFG_FLAG(pinecone_probe, "pinecone_probe", "dev", false, nullptr,
+    "Diagnostic probe: pinecone prop behavior.")
+CFG_FLAG(live_store_readout, "live_store_readout", "dev", false, nullptr,
+    "Diagnostic readout: the live GObjStack container store.")
+CFG_FLAG(heap_probe, "heap_probe", "dev", false, nullptr,
+    "Diagnostic probe: process heap usage.")
+CFG_FLAG(drone_probe, "drone_probe", "dev", false, nullptr,
+    "Diagnostic probe: delivery drone state.")
+CFG_FLAG(drone_probe_drive, "drone_probe_drive", "dev", false, nullptr,
+    "Diagnostic probe: drive the delivery drone (test driver).")
+CFG_FLAG(pile_dup_probe, "pile_dup_probe", "dev", false, nullptr,
+    "Diagnostic probe: pile duplicate/identity mismatches.")
+CFG_FLAG(perf_probe, "perf_probe", "dev", false, nullptr,
+    "Performance probe: per-frame subsystem timing lines.")
+CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr,
+    "Performance probe: self-time breakdown variant.")
+CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr,
+    "Diagnostic probe: GNatives verb dispatch measurement.")
+CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr,
+    "Variant of gnatives_probe with interception disabled (control run).")
+CFG_FLAG(lightswitch_probe, "lightswitch_probe", "dev", false, nullptr,
+    "Diagnostic probe: light switch interactions.")
+CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr,
+    "Diagnostic probe: sleep/wake cycle.")
+CFG_FLAG(vm_dispatch_log, "vm_dispatch_log", "dev", false, nullptr,
+    "Diagnostic logging for the BP-VM verb dispatch layer.")
+CFG_FLAG(door_probe, "door_probe", "dev", false, nullptr,
+    "Diagnostic probe: door state and suppression.")
+CFG_FLAG(rng_roll_census, "rng_roll_census", "dev", false, nullptr,
+    "Diagnostic census: RNG roll sites.")
+CFG_FLAG(leak_probe, "leak_probe", "dev", false, nullptr,
+    "Diagnostic probe: object/memory leak counters.")
+CFG_FLAG(force_chippile_unclaim, "force_chippile_unclaim", "dev", false, nullptr,
+    "Test driver: force chip-pile unclaim paths.")
+CFG_FLAG(disable_completeness_floor, "disable_completeness_floor", "dev", false, nullptr,
+    "Test driver: disable the per-class completeness floor (join sweep).")
+CFG_FLAG(keypad_probe, "keypad_probe", "dev", false, nullptr,
+    "Diagnostic probe: keypad state.")
+CFG_FLAG(keypad_synth, "keypad_synth", "dev", false, nullptr,
+    "Test driver: synthesize keypad presses (disruptive).")
+CFG_FLAG(save_identity_map_log, "save_identity_map_log", "dev", false, nullptr,
+    "Diagnostic logging for the save-identity map.")
+CFG_FLAG(save_identity_bind, "save_identity_bind", "dev", false, nullptr,
+    "Diagnostic: save-identity bind instrumentation.")
+CFG_FLAG(force_kerfur_unmap, "force_kerfur_unmap", "dev", false, nullptr,
+    "Test driver: force kerfur identity unmap paths.")
+CFG_FLAG(force_save_churn, "force_save_churn", "dev", false, nullptr,
+    "Test driver: force save churn (identity stress).")

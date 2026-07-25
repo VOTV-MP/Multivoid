@@ -23,6 +23,11 @@ consumes numbers.
 0. **Human gate** (dev included): the standing local pre-handoff checklist has
    passed on the commit being released (build + smoke discipline — a dev tag is
    not a way around it). For a stable: hands-on verified.
+   **Named requirement (ini arc 4):** at least one smoke ran with
+   `VOTVCOOP_RUN_CONFIG_SELFTEST=1` and its host log carries
+   `config-selftest: DONE fail=0` — mp.py's smoke verdict machine-asserts this
+   line whenever the env gate is set (a config/catalog regression fails the
+   smoke itself, exit 8).
 1. **Tag HEAD** (its `kProtocolVersion` IS the number N being released):
    `git tag v<game>-b<N>[-dev]`. Game = `VOTVCOOP_GAME_TARGET` in
    `src/votv-coop/CMakeLists.txt`, no dashes ("0.9.0n" style).

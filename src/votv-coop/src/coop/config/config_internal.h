@@ -12,6 +12,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace coop::config_registry { struct Row; }
 
@@ -54,5 +55,11 @@ bool FlagFromRaw(const config_registry::Row* row, bool have, const std::string& 
 long IntFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
 float FloatFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
 std::string EnumFromRaw(const config_registry::Row* row, bool have, const std::string& raw);
+
+// The ONE atomic-swap file writer (.new + checked writes + MoveFileExW),
+// shared with the T8 catalog generator (config_example.cpp; arc 4) -- never a
+// second swap implementation. Defined in config_ini_write.cpp.
+bool AtomicWriteAllLines(const std::wstring& path, const std::vector<std::string>& lines,
+                         const char* what);
 
 }  // namespace coop::config::internal

@@ -107,6 +107,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // writes the file this launch ([net] first + the visible net.nick line +
     // [dev] last; absent-only, atomic -- ini rework arc 1, T1).
     cfg::EnsureIniSkeleton();
+    // T8 catalog (arc 4): regenerate multivoid.ini.example beside the DLL --
+    // every key with its description, default and env twin; deterministic,
+    // compare-first, fail-soft (the mod never reads it back).
+    cfg::GenerateExampleCatalog();
     // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
     // the registry my-name default)
     // so the server browser shows the current name; the user can overwrite it there, and the

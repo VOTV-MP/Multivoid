@@ -68,7 +68,7 @@ if (-not (Test-Path $incPath)) { Write-Host "registry_gate: FAIL -- missing $inc
 $rowIdents = New-Object System.Collections.Generic.List[string]
 $fontRoleIdents = New-Object System.Collections.Generic.List[string]
 foreach ($line in Get-Content $incPath) {
-    if ($line -cmatch '^\s*CFG_(?<kind>FLAG|INT|FLOAT|ENUM|STRING|IDENTITY|FONTROLE)\(\s*(?<ident>[A-Za-z0-9_]+)\s*,') {
+    if ($line -cmatch '^\s*CFG_(?<kind>FLAG|INT|FLOAT|ENUM|STRING_GATED|STRING|IDENTITY|FONTROLE)\(\s*(?<ident>[A-Za-z0-9_]+)\s*,') {
         if ($Matches['kind'] -ceq 'FONTROLE') { $fontRoleIdents.Add($Matches['ident']) }
         else { $rowIdents.Add($Matches['ident']) }
     }

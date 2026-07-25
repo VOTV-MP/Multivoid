@@ -87,6 +87,11 @@ struct Row {
     float defF;
     const char* defS;     // Enum: the default token ("" = unset sentinel);
                           // String: the default value. nullptr for other kinds.
+    // ---- the T8 catalog columns (arc 4) -------------------------------------
+    const char* gatedBy;  // key of the Flag row gating the INI read (nullptr =
+                          // ungated; ValidateRows: must exist + be a Flag row)
+    const char* desc;     // human catalog text -- SEMANTICS ONLY (tokens/range/
+                          // env twin are generator-emitted from the columns)
 };
 
 // The row list. Completeness vs the call-site universe is enforced by the
@@ -154,19 +159,22 @@ struct IdentityRow {
 // namespace are forbidden and CI-asserted (registry_gate.ps1), which is what
 // makes the gate's reference census exact.
 namespace rows {
-#define CFG_FLAG(ident, key, section, defB, envVar) extern const FlagRow ident;
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar) extern const IntRow ident;
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar) extern const FloatRow ident;
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar) extern const EnumRow ident;
-#define CFG_STRING(ident, key, section, defS, envVar, seeded) extern const StringRow ident;
-#define CFG_IDENTITY(ident, key, section) extern const IdentityRow ident;
-#define CFG_FONTROLE(ident, key, suffix, defFam) extern const EnumRow ident;
+#define CFG_FLAG(ident, key, section, defB, envVar, desc) extern const FlagRow ident;
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) extern const IntRow ident;
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) extern const FloatRow ident;
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) extern const EnumRow ident;
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) extern const StringRow ident;
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc) \
+    extern const StringRow ident;
+#define CFG_IDENTITY(ident, key, section, desc) extern const IdentityRow ident;
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) extern const EnumRow ident;
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 }  // namespace rows
@@ -193,19 +201,21 @@ inline constexpr size_t kFontFamilyCount =
 // SAME .inc rows (arc 3; replaces fonts.cpp's RoleDesc.defaultFam column --
 // the user-2026-07-09 per-role assignment now lives in the row list only).
 inline constexpr int kFontRoleDefaultFamily[] = {
-#define CFG_FLAG(ident, key, section, defB, envVar)
-#define CFG_INT(ident, key, section, defI, lo, hi, envVar)
-#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar)
-#define CFG_ENUM(ident, key, section, defS, tokens, envVar)
-#define CFG_STRING(ident, key, section, defS, envVar, seeded)
-#define CFG_IDENTITY(ident, key, section)
-#define CFG_FONTROLE(ident, key, suffix, defFam) defFam,
+#define CFG_FLAG(ident, key, section, defB, envVar, desc)
+#define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
+#define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
+#define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
+#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
+#define CFG_IDENTITY(ident, key, section, desc)
+#define CFG_FONTROLE(ident, key, suffix, defFam, desc) defFam,
 #include "coop/config/config_registry_rows.inc"
 #undef CFG_FLAG
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
+#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 };

@@ -264,6 +264,16 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
+// The internal seam for the T8 catalog generator (arc 4): the SAME atomic-swap
+// primitive every ini rebuild uses, path-parameterized (the .example is never
+// the live ini; no lock needed -- single writer at boot).
+namespace internal {
+bool AtomicWriteAllLines(const std::wstring& path, const std::vector<std::string>& lines,
+                         const char* what) {
+    return AtomicWriteLines(path, lines, what);
+}
+}  // namespace internal
+
 // The one locked live-ini write behind every typed overload (C3b): the handle
 // carries the canonical key; everything below it is the string engine.
 static bool WriteIniValueRow(const config_registry::Row* row, const char* value) {
