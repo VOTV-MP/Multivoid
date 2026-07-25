@@ -1,0 +1,9 @@
+name: contrib-evil-sim
+on: push
+jobs:
+  echo:
+    runs-on: windows-latest
+    steps:
+      - name: benign echo standing in for untrusted contributor CI
+        shell: pwsh
+        run: Write-Host "this must NEVER fire from a mirror push"
