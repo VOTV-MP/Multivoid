@@ -54,7 +54,11 @@ void Render() {
     ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
     if (ImGui::Button("Refresh list")) {
         coop::skins::Entries(true);
-        g_previews.clear();  // SRVs stay device-owned; a rescan re-creates as needed
+        // Release the cached preview textures before dropping the map -- clearing
+        // alone leaked one texture+SRV per preview per refresh (fixed 2026-07-26).
+        for (auto& [name, pv] : g_previews)
+            ui::overlay_backend::DestroyTexture(pv.srv);
+        g_previews.clear();
     }
     ImGui::SameLine();
     ImGui::TextDisabled("current: %s", current.c_str());

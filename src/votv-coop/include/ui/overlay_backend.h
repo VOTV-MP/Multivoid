@@ -53,8 +53,14 @@ void OnResizeRelease();
 void OnResizeRecreate(IDXGISwapChain* sc);
 
 // Decode an image file (PNG/BMP/JPG via WIC) into a device texture usable as
-// an ImTextureID. Render thread only. The caller caches the result.
+// an ImTextureID. Render thread only. The caller caches the result and MUST
+// return it through DestroyTexture when done (a dropped id leaks the texture).
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH);
+
+// Release a texture returned by CreateTextureFromImageFile. Render thread
+// only. DX11: releases the SRV (the texture rides its refcount). null is a
+// no-op.
+void DestroyTexture(void* id);
 
 // Tear down everything this backend owns. rendererWasLive mirrors the
 // overlay's g_imguiReady latch (renderer-backend Shutdown only if Init ran).

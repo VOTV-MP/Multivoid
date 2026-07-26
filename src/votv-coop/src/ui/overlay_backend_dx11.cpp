@@ -166,6 +166,10 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     return srv;
 }
 
+void DestroyTexture(void* id) {
+    if (id) static_cast<ID3D11ShaderResourceView*>(id)->Release();
+}
+
 void Shutdown(bool rendererWasLive) {
     if (rendererWasLive) ImGui_ImplDX11_Shutdown();
     g_live = false;
