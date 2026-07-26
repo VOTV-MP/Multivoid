@@ -1,6 +1,54 @@
 # ImGui overlay DX12 render path + RHI indicator — design of record (2026-07-26)
 
-**Status: DESIGN (qf-converged) -> implementation staged behind measurement gates.**
+**Status: AS-BUILT + VERIFIED-BY-DRILL (not hands-on). Commits `f5018ff8` (DX11
+extraction), `4c325ea5` (texture-leak fix), `63693526` (capture gate),
+`e3a53fe1` (renderer + RHI indicator), `027a2110` (both audits folded).**
+
+## AS-BUILT (2026-07-26)
+
+**The user's ask is answered:** launching with `-dx12` brings the overlay up and
+draws it; the old "menu will not draw" WARN is gone (RULE 2).
+
+**Gate results (rig CLIENT_3, real `-dx12` run) -- every inferred pillar measured:**
+- P1 `GetDevice(ID3D12Device)` hr=0 TRUE; P3 `QI(IDXGISwapChain3)` hr=0 TRUE.
+- swapchain: 3 buffers, FLIP_DISCARD, **format 24 = R10G10B10A2_UNORM** -- the RTV
+  format MUST come from the desc; an RGBA8 literal would have been wrong.
+- queues: ONE DIRECT device-matched queue (2999 ECL calls, last-before-Present
+  600/600 = 100%); one COPY queue (5 calls) = the known-positive proving the
+  instrument sees foreign traffic. No ambiguity, no HALT.
+- **creation probe armed but NEVER fired** -> our boot does NOT precede the game's
+  swapchain creation, so the factory-hook route (zero-ambiguity IF preceding) is
+  NOT available; the ECL capture is what ships, exactly as the data-picks-the-
+  mechanism rule required. `hook::Enable` is used by the recreation re-arm.
+- confirmation window as shipped: 30 presents, >=90% agreement (anchored on the
+  measured 100%).
+
+**Drills:** `-dx12` -> "queue CONFIRMED 30/30" -> "renderer up (3 buffers,
+rtvFormat=24)" -> "first frame rendered (794 verts, 3 draw lists)"; PrintWindow
+screenshot shows the full F1 menu incl. the "Graphics API: DX12" line; TWO live
+window resizes -> "render target rebuilt on DX12" x2 with no timeout/SEH/disable
+lines; process alive after the drill. DX11 regression: LAN smoke PASS,
+"DX11 bring-up OK" unchanged. NOT hands-on (no human has played on DX12 yet).
+
+**Audits (both agents, post-ship):** 3 CRITICAL + 5 IMPORTANT + 5 minor, ALL fixed
+in `027a2110` -- texture-slot recycling under an in-flight draw, null frame-context
+allocator when the buffer count grows, unlatched confirmation re-baking the font
+atlas per frame, InitRenderer leaking on every failure path, the recreation branch
+missing the desc-change re-init AND the queue re-arm (its "stale frame, not UB"
+comment was false), a silent capture-arming failure, `WaitFence` reporting success
+when it could not wait, and a QueueSlot payload published before it was written.
+
+**Known residuals (named, not hidden):** the mid-detour teardown window during the
+capture/confirmation seconds and each re-arm window (same pre-existing class as the
+Present detour); `imgui_overlay::Shutdown()` has no caller today, so the ordered
+teardown path is code-complete but unexercised; DX11 `EnsureTarget` still has no
+swapchain-identity check (pre-existing, unchanged by this arc); DX12 texture uploads
+serialize one GPU round-trip each when many previews decode in one frame (batching
+is the follow-up).
+
+---
+
+**Original design (kept for the record):**
 12-round /qf, "that holds" at R12 (spine unchanged across R10-R12). User ask (verbatim):
 "imgui in our MOD doesn't support DX12... menu will not draw. DX11 is working properly.
 CAN WE FIX AND MAKE IT WORK WITH DX12 PER RULE 1?" + "new dev feature - overlay telling
