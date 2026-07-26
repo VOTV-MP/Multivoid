@@ -1861,3 +1861,10 @@ tracker.
   (`SUPERSEDED <date> -> <rule/commit>` + why); sweep for the retired approach's vocabulary every
   `/documentize`. LOOK FIRST: grep the doc tree for the old approach's name, check each hit against the
   current rules. `memory/lesson_stale_planning_docs_are_public_ammunition.md`
+- **2026-07-26 — `find | xargs wc -l | tail -1` reports only the LAST batch.** It undercounted the
+  tree by 23% (113,045 vs the real 146,347) and the wrong number was minutes from going into a public
+  technical argument where the other side had already counted ~144k. `find A B -name x -o -name y`
+  without `\( \)` is a second, compounding trap. Count with `find -print0 | xargs -0 cat | wc -l`,
+  always run a **parts-sum check** (the pieces must add to the whole — that is what exposed it), and
+  quote a file count next to the line count. LOOK FIRST: any size/LOC claim that leaves the repo.
+  `memory/lesson_xargs_wc_tail_truncates_the_total.md`
