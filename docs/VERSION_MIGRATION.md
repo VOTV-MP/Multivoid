@@ -406,5 +406,10 @@ for outsiders" leg was overclaimed; UEPseudo access is Epic-linkage-gated
 (self-service), per UE4SS's own README/docs/issue #577. The blocker demotes to
 the structural leg (EULA-gated dependency = non-vendorable, kills public-clone
 reproducibility). wire-a still watches the repo going fully PUBLIC (that would
-remove the structural leg too). F1 re-confirmation on the corrected fact base:
-asked of the user same day.
+remove the structural leg too). F1 RE-CONFIRMED by the user the same day on the
+corrected fact base, after probing the F2 cost themselves (verbatim: "Я Только
+за F1") — the enumerated price: two-component install with CRT/ABI
+version-matching (CppUserModBase.hpp:29), public-clone reproducibility lost for
+every contributor, dependence on a revocable third-party access grant, a
+2,404-LOC rewrite that still would not cover GNatives interception, DX12, or
+the recook-fragile game half.
