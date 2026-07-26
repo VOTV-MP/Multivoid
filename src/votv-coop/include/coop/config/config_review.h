@@ -55,7 +55,7 @@ void Dismiss();         // session-local; a fresh launch re-arms by re-sweeping
 // action also re-sweeps on REFUSAL (a stale snapshot means the panel must
 // show fresh state). Correlated by VALUE (audit CRIT-2), never line number.
 bool KeepDuplicateLine(const std::string& key, const std::string& keepValue);
-struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0; };
+struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0, retired = 0; };
 ReformatOutcome ReformatNow();
 
 }  // namespace coop::config_review

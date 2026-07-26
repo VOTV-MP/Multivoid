@@ -374,9 +374,7 @@ bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const c
     return RemoveDuplicateKeyLinesAt(path, key, keepValue);
 }
 
-bool ReformatLiveIni(ReformatStats& stats) {
-    std::lock_guard<std::mutex> lk(internal::IniMutex());
-    const std::wstring path = internal::LiveIniPath();
+static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
     std::vector<std::string> lines;
     if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); }) !=
         IniScan::Ok) {
@@ -387,7 +385,7 @@ bool ReformatLiveIni(ReformatStats& stats) {
     // Classify.
     struct Cls {
         bool isKey = false, isHeader = false, isComment = false, isBlank = false;
-        std::string keyLower, value;
+        std::string keyLower, keySpelling, value;
     };
     std::vector<Cls> cls(n);
     for (size_t i = 0; i < n; ++i) {
@@ -398,6 +396,7 @@ bool ReformatLiveIni(ReformatStats& stats) {
         if (IsSectionHeader(lines[i], hdr)) { cls[i].isHeader = true; continue; }
         if (internal::ParseIniKeyValue(lines[i], k, v)) {
             cls[i].isKey = true;
+            cls[i].keySpelling = k;
             for (char& c : k) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
             cls[i].keyLower = k;
             cls[i].value = internal::TrimEdgesStr(v);
@@ -406,13 +405,50 @@ bool ReformatLiveIni(ReformatStats& stats) {
         }
     }
     // ci occurrence groups.
+    auto buildGroups = [&](std::vector<std::pair<std::string, std::vector<size_t>>>& out2) {
+        out2.clear();
+        for (size_t i = 0; i < n; ++i) {
+            if (!cls[i].isKey) continue;
+            bool foundGroup = false;
+            for (auto& g : out2)
+                if (g.first == cls[i].keyLower) { g.second.push_back(i); foundGroup = true; break; }
+            if (!foundGroup) out2.push_back({cls[i].keyLower, {i}});
+        }
+    };
     std::vector<std::pair<std::string, std::vector<size_t>>> groups;
-    for (size_t i = 0; i < n; ++i) {
-        if (!cls[i].isKey) continue;
-        bool foundGroup = false;
-        for (auto& g : groups)
-            if (g.first == cls[i].keyLower) { g.second.push_back(i); foundGroup = true; break; }
-        if (!foundGroup) groups.push_back({cls[i].keyLower, {i}});
+    buildGroups(groups);
+    // RETIRE the review panel's fixable complaints (2026-07-26): an unknown key
+    // (every occurrence) and a SINGLE-occurrence known key whose authoritative
+    // value fails typed validation become comments -- the data stays readable
+    // in the file, the next sweep sees no live line, the complaint resolves.
+    // The classifiers are the sweep's own authorities (config_registry::
+    // IsKnownKey + ValueValidForKey), never a second opinion. Differing
+    // duplicate groups are untouched here (keep-line buttons adjudicate them;
+    // commenting their first line would silently flip the winner).
+    {
+        bool anyRetired = false;
+        for (const auto& g : groups) {
+            const bool known = config_registry::IsKnownKey(cls[g.second[0]].keySpelling.c_str());
+            if (known && g.second.size() > 1) continue;  // dup group: panel buttons own it
+            const char* tag = nullptr;
+            if (!known) {
+                tag = "; unknown key (tidy): ";
+            } else {
+                std::string reason;
+                if (!ValueValidForKey(cls[g.second[0]].keySpelling.c_str(),
+                                      cls[g.second[0]].value, &reason))
+                    tag = "; invalid value (tidy): ";
+            }
+            if (!tag) continue;
+            for (size_t idx : g.second) {
+                lines[idx] = tag + internal::TrimEdgesStr(lines[idx]);
+                cls[idx].isKey = false;
+                cls[idx].isComment = true;
+                ++stats.retired;
+                anyRetired = true;
+            }
+        }
+        if (anyRetired) buildGroups(groups);  // the retired lines left the key universe
     }
     // Collapse value-identical duplicates (keep the FIRST line -- behavior-
     // preserving under the unified occurrence rule); differing groups FREEZE.
@@ -503,9 +539,19 @@ bool ReformatLiveIni(ReformatStats& stats) {
     }
     if (!AtomicWriteLines(path, out, "reformat")) return false;
     UE_LOGI("config: reformat done -- %d duplicate line(s) collapsed, %d key(s) placed "
-            "under their sections, %d differing-duplicate key(s) left for the review panel",
-            stats.collapsed, stats.placed, stats.frozen);
+            "under their sections, %d unknown/invalid line(s) retired to comments, "
+            "%d differing-duplicate key(s) left for the review panel",
+            stats.collapsed, stats.placed, stats.retired, stats.frozen);
     return true;
+}
+
+bool ReformatLiveIni(ReformatStats& stats) {
+    std::lock_guard<std::mutex> lk(internal::IniMutex());
+    return ReformatIniAt(internal::LiveIniPath(), stats);
+}
+
+bool SelftestReformat(const std::wstring& path, ReformatStats& stats) {
+    return ReformatIniAt(path, stats);
 }
 
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value) {

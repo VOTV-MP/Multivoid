@@ -345,6 +345,35 @@ void RunConfigSelftest() {
             expect("garbage-above-valid dup: authoritative line wins -> garbage(0)",
                    cfg::SelftestFlagTriState(wrk, "dup_gav") == 0);
         }
+        // Drill H (tidy fix 2026-07-26): the reformat RETIRES the review
+        // panel's fixable complaints -- an unknown key (posinfo: the user's
+        // real case) and an invalid known value become comments; exact dups
+        // still collapse; healthy keys survive. Before this fix, Tidy moved
+        // layout only, the panel's rows survived every press, and the button
+        // looked dead.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
+                std::fputs("[net]\nnet.nick=Pelmentor\n\n[dev]\nposinfo=1\nfreecam=banana\n"
+                           "devkeys=1\ndevkeys=1\n", f);
+                std::fclose(f);
+            }
+            cfg::ReformatStats st;
+            expect("tidy reformat returns true", cfg::SelftestReformat(wrk, st));
+            expect("tidy retired exactly the unknown + the invalid line",
+                   st.retired == 2 && st.collapsed == 1);
+            expect("unknown key no longer a live line",
+                   !cfg::SelftestReadValue(wrk, "posinfo").found);
+            expect("invalid-valued key no longer a live line",
+                   !cfg::SelftestReadValue(wrk, "freecam").found);
+            expect("retired lines kept as tagged comments",
+                   lineIndexOf("; unknown key (tidy): posinfo=1") >= 0 &&
+                   lineIndexOf("; invalid value (tidy): freecam=banana") >= 0);
+            const cfg::IniSelftestRead nick = cfg::SelftestReadValue(wrk, "net.nick");
+            const cfg::IniSelftestRead dk = cfg::SelftestReadValue(wrk, "devkeys");
+            expect("healthy keys survive the tidy",
+                   nick.found && nick.value == "Pelmentor" && dk.found && dk.value == "1");
+        }
         ::DeleteFileW(wrk.c_str());
     }
 

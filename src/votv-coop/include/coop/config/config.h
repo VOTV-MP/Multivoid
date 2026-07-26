@@ -150,7 +150,13 @@ bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 //     adjudicated (stays in the residue, relative order kept -- resolve via
 //     the keep-line buttons); unknown keys and loose comments keep original
 //     order in the residue tail.
-struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; };
+//   - an UNKNOWN key line (nothing in the registry reads it) and a single-
+//     occurrence known key whose value FAILS typed validation are RETIRED to
+//     comments ("; unknown key (tidy): ..." / "; invalid value (tidy): ...")
+//     -- the review panel's complaint is resolved while the user's data stays
+//     readable in the file (fix 2026-07-26: Tidy used to move layout only, so
+//     the panel's rows survived every press and it looked dead).
+struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; int retired = 0; };
 bool ReformatLiveIni(ReformatStats& out);
 
 // ---- the T8 catalog: multivoid.ini.example (arc 4) --------------------------
@@ -233,5 +239,6 @@ int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
 int SelftestScanWithFailure(int failAfterLines);
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);
 bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const char* keepValue);
+bool SelftestReformat(const std::wstring& path, ReformatStats& stats);
 
 }  // namespace coop::config

@@ -198,6 +198,7 @@ ReformatOutcome ReformatNow() {
     o.collapsed = st.collapsed;
     o.placed = st.placed;
     o.frozen = st.frozen;
+    o.retired = st.retired;
     if (o.ok) RunBootSweep();
     return o;
 }

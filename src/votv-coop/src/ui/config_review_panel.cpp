@@ -20,6 +20,12 @@ namespace {
 
 namespace CR = coop::config_review;
 
+// Last Tidy-press outcome, rendered as a status line so the button is never
+// silent (user 2026-07-26: pressing it looked dead -- the old reformat moved
+// layout only, so the panel's rows survived every press with zero feedback).
+bool               g_tidyPressed = false;
+CR::ReformatOutcome g_tidyOutcome;
+
 const char* TypeHeading(CR::Row::Type t) {
     switch (t) {
         case CR::Row::Type::Rejected:          return "Ignored values (using the default instead)";
@@ -143,7 +149,8 @@ void Render() {
         ImGui::Spacing();
         if (ui::menu_sfx::Button("Tidy up multivoid.ini###cfgrev_reformat",
                                  ImVec2(S(220.f), S(30.f)))) {
-            CR::ReformatNow();
+            g_tidyOutcome = CR::ReformatNow();
+            g_tidyPressed = true;
         }
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
@@ -151,11 +158,32 @@ void Render() {
             ImGui::SetTooltip(
                 "Rewrites multivoid.ini in the standard layout: [net] first, [dev]\n"
                 "last, each setting under its section, exact-duplicate lines merged.\n"
+                "Unknown settings and invalid values are commented out (kept in the\n"
+                "file, just disabled) -- that resolves their warnings above.\n"
                 "Conflicting duplicates are NEVER auto-resolved -- use the keep-line\n"
                 "buttons above. Your comments travel with their settings.");
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Dismiss###cfgrev_dismiss", ImVec2(S(120.f), S(30.f))))
             CR::Dismiss();
+        if (g_tidyPressed) {
+            ImGui::Spacing();
+            if (!g_tidyOutcome.ok) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
+                ImGui::TextWrapped("Could not rewrite multivoid.ini (locked or unreadable) -- "
+                                   "nothing was changed. Close whatever holds the file and "
+                                   "press Tidy up again.");
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.9f, 0.55f, 1.0f));
+                ImGui::TextWrapped("Tidied: %d duplicate line(s) merged, %d setting(s) placed "
+                                   "under their sections, %d unknown/invalid line(s) commented "
+                                   "out. Anything still listed above needs a choice or can't "
+                                   "be fixed from the file.",
+                                   g_tidyOutcome.collapsed, g_tidyOutcome.placed,
+                                   g_tidyOutcome.retired);
+                ImGui::PopStyleColor();
+            }
+        }
     }
     ImGui::End();
 
