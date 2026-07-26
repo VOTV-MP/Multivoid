@@ -3,9 +3,10 @@
 // The ONE ImGui integration point for the whole mod (RULE: dev features live in a
 // categorized ImGui menu; future: a main-menu MP server browser on this same host).
 // It hooks IDXGISwapChain::Present (via our MinHook substrate) + ResizeBuffers + the
-// window's WndProc, auto-detects the RHI at the swapchain (DX11 today; DX12 detected
-// + logged, not yet drawn), runs the ImGui frame, and calls the active UI surface's
-// Render(). F1 toggles visibility. Input is captured only while visible.
+// window's WndProc, auto-detects the RHI at the swapchain (DX11 and DX12 both
+// draw -- the per-RHI half lives behind ui/overlay_backend.h), runs the ImGui
+// frame, and calls the active UI surface's Render(). F1 toggles visibility.
+// Input is captured only while visible.
 //
 // Principle 7: pure engine substrate + presentation -- NO gameplay/network logic.
 // The UI surfaces (ui::dev_menu, future server browser) own their content; the

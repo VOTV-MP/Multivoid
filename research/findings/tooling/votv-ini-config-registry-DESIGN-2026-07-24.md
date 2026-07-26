@@ -144,6 +144,18 @@ never re-formatted/re-ordered automatically (single-key writes rewrite the file 
 have — that is `WriteIniValue`'s job, not a reformat). Seeder runs before `harness.cpp:117` (F23).
 
 **T1b — the owner's opt-in reformat** (button on T10's panel — NOT `dev_menu`, F35/F42). Rules:
+- **AS-BUILT AMENDMENT 2026-07-26 (`a05b14e5`), user bug report: layout-only was a DEAD BUTTON.**
+  Pressing "Tidy up" moved lines around but left the panel's own complaints (unknown keys, invalid
+  values) as LIVE lines, so the post-press re-sweep reproduced identical rows, the panel never closed,
+  and it returned every launch — with zero feedback either way. The reformat now RETIRES the fixable
+  classes: an unknown key (every occurrence) and a single-occurrence known key whose value fails typed
+  validation become tagged comments (`; unknown key (tidy): ...` / `; invalid value (tidy): ...`) —
+  data stays readable, the complaint dissolves. Classification uses the sweep's OWN authorities
+  (`config_registry::IsKnownKey` + `config::ValueValidForKey`), never a second opinion; differing
+  duplicates stay untouched (commenting their first line would silently flip the winner). The panel
+  now prints the outcome (counts, or a red locked-file line) and closes itself when the re-sweep comes
+  back empty. Covered by config-selftest Drill H (6/6, the user's literal `posinfo=1` case);
+  `ReformatLiveIni` split to a path-parameterized core + `SelftestReformat` twin, the house pattern.
 - collapses ONLY value-identical duplicates (behavior-preserving under any semantics);
 - a key with ci-occurrence count N>1 and differing values is **never repositioned and never adjudicated** —
   reported instead ("resolve by hand", both values shown, winner named), with per-row owner buttons

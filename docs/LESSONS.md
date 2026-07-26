@@ -1828,3 +1828,36 @@ tracker.
   different size — correctness/authority (phase 2, where dupes die) vs anti-cheat (a tunable, optional,
   losing arms race). Separate them before scoping. Rules: `TRACKER` F2-F6. LOOK FIRST:
   `docs/security/MTA_PRECEDENT.md` §11. `memory/lesson_anticheat_is_a_separate_layer_from_authority.md`
+
+- **2026-07-26 — INFO log lines are BUFFERED; a killed process loses them.** `log.cpp:152` flushes only
+  on WARN/ERROR (a deliberate 2026-05-27 perf fix), so an INFO gate line written just before a
+  force-kill/idle period is simply absent — which reads as "execution stopped here" and cost a build
+  cycle re-architecting the code that follows it on a deadlock theory that never happened. Any line a
+  gate or drill asserts must call `ue_wrap::log::Flush()`. A log that stops growing in an idle process
+  is NOT evidence of a freeze. LOOK FIRST: the level of the missing line.
+  `memory/lesson_info_log_lines_are_buffered_until_a_warn.md`
+- **2026-07-26 — D3D12 gives you the device off the swapchain, but NEVER the presenting QUEUE.**
+  Measured on the rig: `GetDevice(ID3D12Device)` hr=0 and `QI(IDXGISwapChain3)` hr=0, but no API says
+  which `ID3D12CommandQueue` presents -> capture it by hooking `ExecuteCommandLists` (vtable[10]) and
+  scoring the last DIRECT same-device submit before each Present (600/600 on one queue; a COPY queue's
+  5 calls = the known-positive). `CreateSwapChain`'s `pDevice` IS that queue, but only if our boot
+  PRECEDES creation — probe armed, never fired, so that route is unavailable. Also: the rig presents
+  **R10G10B10A2**, so take the RTV format from the desc, never a literal; never create a D3D12 device
+  inside the Present detour; retire a capture hook with Disable-without-Remove. LOOK FIRST:
+  `src/votv-coop/src/ui/overlay_backend_dx12_capture.cpp` header +
+  `research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md`.
+  `memory/lesson_d3d12_has_no_api_for_the_presenting_queue.md`
+- **2026-07-26 — a branch that only logs on FAILURE cannot be drilled.** The DX12 resize drill produced
+  a correct-looking screenshot and ZERO log lines, because `ResizeBuffers` logged only its failure
+  branch — so "did the rebuild path run?" stayed unmeasured (ImGui's layout follows GetClientRect
+  independently of our render target, so the visual proves nothing). One success line turned the same
+  drill into a measurement. Rare-event branches (resize/recreate/reconnect/migrate) get a success log.
+  LOOK FIRST: grep the branch for a success-path log BEFORE running the drill.
+  `memory/lesson_a_success_path_that_never_logs_is_undrillable.md`
+- **2026-07-26 — in a PUBLIC repo, an un-annotated superseded decision is ammunition.** A critic quoted
+  `docs/FEASIBILITY.md:25` in a public thread; five lines below sat "Chosen approach: UE4SS +
+  reflection" — reversed the NEXT DAY by RULE 3 (standalone) but never annotated, and §0.3 still said
+  "we do not hand-roll a present hook" months after we did. Annotate the ORIGINAL line in place
+  (`SUPERSEDED <date> -> <rule/commit>` + why); sweep for the retired approach's vocabulary every
+  `/documentize`. LOOK FIRST: grep the doc tree for the old approach's name, check each hit against the
+  current rules. `memory/lesson_stale_planning_docs_are_public_ammunition.md`

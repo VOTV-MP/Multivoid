@@ -28,6 +28,14 @@ requiring blind binary RE. VOTV is UE4.27, a fully documented engine with:
   "Spawn the orphan" = `UWorld::SpawnActor` of the player pawn class.
 
 **Chosen approach** (user decision, 2026-05-21): **UE4SS + reflection.**
+**SUPERSEDED ONE DAY LATER (user constraint, 2026-05-22 -> CLAUDE.md RULE No.3):
+the shipping mod is STANDALONE** — its own proxy-DLL loader, its own
+AOB-resolved reflection (`GUObjectArray`/`GNames`/`ProcessEvent`), its own
+MinHook-based UFunction/native hooking, its own ImGui overlay. UE4SS is a
+DEVELOPMENT TOOL ONLY (the CXX header dump = our SDK reference, the Blueprint
+dumps in `research/bp_reflection/`, occasional Lua/Live-View probing) and never
+loads at runtime. Kept here because this line is what the doc actually decided
+on day one; the reversal is the standing rule.
 Custom UDP transport for game state. NOT the engine's built-in
 replication (VOTV blueprints are SP-authored — no replicated props/RPCs —
 and adding them would mean editing assets, anti-pattern A6).
@@ -44,11 +52,17 @@ games as a matter of course.
 ## 0.3 Rendering API — D3D11 / D3D12 / Vulkan (user-selectable)
 
 YeetPatch (the official launcher) exposes a render-API switcher
-(Vulkan / DX11 / DX12). The overlay strategy is **UE4SS's built-in ImGui
-integration**, which hooks the active swapchain regardless of API — we do
-not hand-roll a present hook. **Not a blocker.** Pin a known render API
-(DX11) for development to keep the overlay path stable. **(verify)** which
-API UE4SS's ImGui hook is most stable on for this build.
+(Vulkan / DX11 / DX12). **AS-BUILT 2026-07-26: we hand-roll the present
+hook** — the mod's own vendored ImGui over a MinHook detour on
+`IDXGISwapChain::Present`, with a per-RHI render backend behind
+`ui/overlay_backend.h`. **DX11 and DX12 both draw** (DX12 renderer +
+presenting-queue capture: commits `e3a53fe1`/`63693526`/`027a2110`; design of
+record `research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md`).
+The RHI in use is visible in-game: F1 menu > "Graphics API: DX11/DX12", plus a
+bring-up log line. Vulkan is NOT covered (no DXGI swapchain to hook) — an
+overlay there would need its own backend, unbuilt and unscheduled.
+The old "UE4SS's built-in ImGui integration" strategy is RETIRED (RULE 3: no
+UE4SS at runtime).
 
 ## 0.4 Input API — UE4 enhanced/legacy input + WndProc
 
@@ -152,8 +166,14 @@ skeleton commit and never updated as Phase 1 closed each item).
    fine on one machine. Same-box two-instance LAN testing is the standard
    harness (`tools/lan-test.ps1`; commit 31726747; ROADMAP Phase 3 confirmed).
    No bypass code needed (none exists in src/).
-6. [RESOLVED] Overlay render API = hook `IDXGISwapChain::Present` (DXGI), DX11
-   backend (ImGui_ImplDX11 + ImGui_ImplWin32); DX12 detected + logged, not yet
-   drawn. Implemented in `src/votv-coop/src/ui/imgui_overlay.cpp` (commit
-   5dc7aa67), wired live at `harness.cpp:469` (Start; s27 renumber). NOTE: uses the mod's own
-   vendored ImGui, NOT UE4SS (RULE 3) — the "UE4SS overlay" framing is retired.
+6. [RESOLVED] Overlay render API = hook `IDXGISwapChain::Present` (DXGI).
+   `src/votv-coop/src/ui/imgui_overlay.cpp` owns the hooks/WndProc/surfaces
+   (commit 5dc7aa67), wired live at `harness.cpp:469` (Start; s27 renumber);
+   the render backends live behind `ui/overlay_backend.h` —
+   `overlay_backend_dx11.cpp` (ImGui_ImplDX11) and, since 2026-07-26,
+   `overlay_backend_dx12.cpp` + `overlay_backend_dx12_capture.cpp`
+   (ImGui_ImplDX12 + the presenting-queue capture D3D12 gives no API for).
+   **BOTH RHIs draw as of `027a2110`** — measured on the rig with `-dx12`
+   (queue confirmed 30/30, first frame 794 verts, menu screenshot, two live
+   resizes rebuilt the render target); NOT hands-on. Vulkan: unbuilt.
+   Uses the mod's own vendored ImGui, NOT UE4SS (RULE 3).
