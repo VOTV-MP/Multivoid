@@ -4,7 +4,7 @@
 
 #include "coop/player/local_body.h"
 #include "coop/player/skin_registry.h"
-#include "ui/imgui_overlay.h"
+#include "ui/overlay_backend.h"
 #include "ui/scale.h"
 
 #include <map>
@@ -32,7 +32,7 @@ const Preview& PreviewFor(const coop::skins::SkinEntry& e) {
     if (!p.tried) {
         p.tried = true;
         if (!e.previewPath.empty())
-            p.srv = ui::imgui_overlay::CreateTextureFromImageFile(e.previewPath.c_str(), &p.w, &p.h);
+            p.srv = ui::overlay_backend::CreateTextureFromImageFile(e.previewPath.c_str(), &p.w, &p.h);
     }
     return p;
 }

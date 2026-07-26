@@ -32,12 +32,8 @@ bool IsVisible();
 // Force visibility (e.g. a future main-menu button opening the server browser).
 void SetVisible(bool visible);
 
-// Decode a PNG/BMP file into a D3D11 shader-resource-view usable as an
-// ImTextureID (ImGui::Image). RENDER THREAD ONLY (a surface's Render() -- the
-// device lives on the Present detour thread). Returns null on any failure;
-// on success fills outW/outH. One-shot per file -- the CALLER caches the
-// result (the skins browser's preview tiles); textures die with the device.
-void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH);
+// Image-file -> ImTextureID decoding lives in ui/overlay_backend.h
+// (overlay_backend::CreateTextureFromImageFile) -- it is RHI-specific.
 
 // Disable + remove the hooks and tear down ImGui. Safe at shutdown.
 void Shutdown();

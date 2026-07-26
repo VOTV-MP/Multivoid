@@ -6,8 +6,11 @@
 //      ResizeBuffers (vtable[13]). The vtable is shared by every swapchain, so
 //      hooking the dummy's entry hooks the game's real swapchain too.
 //   2. PresentDetour: on the FIRST real present, the game's device + window already
-//      exist -- capture them, bring up ImGui + the DX11 backend + a WndProc hook,
-//      then each frame run the ImGui pass and draw the active UI surface.
+//      exist -- capture them, bring up ImGui + the RHI render backend + a WndProc
+//      hook, then each frame run the ImGui pass and draw the active UI surface.
+//      Everything that touches a concrete D3D device lives behind
+//      ui/overlay_backend.h (overlay_backend_dx11.cpp today); this file owns the
+//      hooks, the WndProc, and surface compositing only.
 //   3. WndProcDetour: F1 toggles; while visible, route input to ImGui + swallow it
 //      so the game doesn't also act on it (we still eat WM_INPUT so UE4's raw-input
 //      mouselook can't spin the camera behind the menu). CURSOR model: ImGui draws
@@ -27,6 +30,8 @@
 // DX12 is detected (GetDevice for ID3D11Device fails) and logged but not yet drawn.
 
 #include "ui/imgui_overlay.h"
+
+#include "ui/overlay_backend.h"
 
 #include "ui/dev_menu.h"
 #include "ui/scoreboard.h"
@@ -55,19 +60,13 @@
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
-#include <d3d11.h>
+#include <d3d11.h>  // the throwaway device/swapchain used ONLY to read the DXGI vtable
 #include <dxgi.h>
-#include <wincodec.h>  // WIC: the skins-browser preview decode (PNG/BMP -> BGRA)
 
 #include <atomic>
 #include <cstdint>
-#include <vector>
-
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "windowscodecs.lib")
 
 #include "imgui.h"
-#include "backends/imgui_impl_dx11.h"
 #include "backends/imgui_impl_win32.h"
 
 // ImGui's Win32 backend message handler (defined in imgui_impl_win32.cpp).
@@ -94,15 +93,11 @@ using SetCursorPosFn = BOOL(WINAPI*)(int, int);
 SetCursorPosFn  g_origSetCursorPos  = nullptr;
 void*           g_setCursorPosTarget = nullptr;
 
-ID3D11Device*           g_device  = nullptr;
-ID3D11DeviceContext*    g_context = nullptr;
-ID3D11RenderTargetView* g_rtv     = nullptr;
-HWND                    g_hwnd    = nullptr;
-WNDPROC                 g_origWndProc = nullptr;
+HWND    g_hwnd    = nullptr;
+WNDPROC g_origWndProc = nullptr;
 
 std::atomic<bool> g_installed{false};   // hooks installed
-std::atomic<bool> g_imguiReady{false};  // first-present init done (DX11)
-std::atomic<bool> g_dx12Logged{false};  // logged the DX12-unsupported notice once
+std::atomic<bool> g_imguiReady{false};  // first-present init done (backend live)
 std::atomic<bool> g_visible{false};        // F1 dev menu shown
 std::atomic<bool> g_scoreboard{false};     // player-list scoreboard shown (real tilde key)
 std::atomic<bool> g_scoreboardForced{false};  // VOTVCOOP_SCOREBOARD_OPEN test override (survives focus reset)
@@ -140,22 +135,6 @@ inline bool CaptureActive() {
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
            ChatOpen() || VoiceOpen() || ConnectFailedOpen() || BootWarningOpen() ||
            ConfigReviewOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
-}
-
-void CreateRTV(IDXGISwapChain* sc) {
-    if (g_rtv || !g_device) return;
-    ID3D11Texture2D* back = nullptr;
-    if (SUCCEEDED(sc->GetBuffer(0, IID_PPV_ARGS(&back))) && back) {
-        const HRESULT hr = g_device->CreateRenderTargetView(back, nullptr, &g_rtv);
-        if (FAILED(hr)) UE_LOGE("imgui_overlay: CreateRenderTargetView failed (hr=0x%08lX) -- menu won't draw", hr);
-        back->Release();
-    } else {
-        UE_LOGW("imgui_overlay: swapchain GetBuffer(0) failed -- no RTV this resize");
-    }
-}
-
-void ReleaseRTV() {
-    if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
 }
 
 // While an interactive surface owns input, swallow UE4's per-tick cursor recenter
@@ -275,23 +254,14 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     return ::CallWindowProcW(g_origWndProc, hwnd, msg, wParam, lParam);
 }
 
-// First-present bring-up. Returns true once ImGui+DX11 are live. On ANY failure it
-// releases whatever it acquired this call (no leak across retries).
-bool BringUpDX11(IDXGISwapChain* sc) {
+// First-present bring-up. Returns true once ImGui + the RHI render backend are
+// live. On ANY failure it releases whatever it acquired this call (no leak across
+// retries). RHI-specific steps live behind ui/overlay_backend.h.
+bool BringUp(IDXGISwapChain* sc) {
     DXGI_SWAP_CHAIN_DESC desc{};
     if (FAILED(sc->GetDesc(&desc)) || !desc.OutputWindow) return false;
 
-    ID3D11Device* dev = nullptr;
-    if (FAILED(sc->GetDevice(IID_PPV_ARGS(&dev))) || !dev) {
-        if (dev) dev->Release();
-        if (!g_dx12Logged.exchange(true)) {
-            UE_LOGW("imgui_overlay: swapchain is NOT DX11 (likely DX12) -- overlay "
-                    "rendering not yet implemented for this RHI; menu will not draw.");
-        }
-        return false;
-    }
-    ID3D11DeviceContext* ctx = nullptr;
-    dev->GetImmediateContext(&ctx);
+    if (!overlay_backend::CaptureDevice(sc)) return false;
 
     bool ctxCreated = false;
     if (!ImGui::GetCurrentContext()) { ImGui::CreateContext(); ctxCreated = true; }
@@ -327,26 +297,21 @@ bool BringUpDX11(IDXGISwapChain* sc) {
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
-        if (ctx) ctx->Release();
-        dev->Release();
+        overlay_backend::AbandonCapture();
         return false;
     }
-    if (!ImGui_ImplDX11_Init(dev, ctx)) {
-        UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
+    if (!overlay_backend::InitRenderer(sc)) {
         ImGui_ImplWin32_Shutdown();
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
-        if (ctx) ctx->Release();
-        dev->Release();
+        overlay_backend::AbandonCapture();
         return false;
     }
 
-    // Commit the captured handles only after everything succeeded.
-    g_device = dev; g_context = ctx; g_hwnd = desc.OutputWindow;
-    CreateRTV(sc);
+    g_hwnd = desc.OutputWindow;
     g_origWndProc = reinterpret_cast<WNDPROC>(
         ::SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&WndProcDetour)));
-    UE_LOGI("imgui_overlay: DX11 bring-up OK (hwnd=%p device=%p) -- F1 toggles the menu",
-            g_hwnd, g_device);
+    UE_LOGI("imgui_overlay: %s bring-up OK (hwnd=%p) -- F1 toggles the menu",
+            overlay_backend::Kind(), g_hwnd);
     return true;
 }
 
@@ -363,7 +328,7 @@ void MaybeRescale() {
                                 static_cast<float>(rc.bottom - rc.top));
     if (!ui::scale::ConsumeRebuild()) return;
     ui::fonts::Load();  // clears + re-bakes the atlas at the new px/family
-    ImGui_ImplDX11_InvalidateDeviceObjects();
+    overlay_backend::InvalidateDeviceObjects();
     ImGuiStyle& st = ImGui::GetStyle();
     st = ImGuiStyle();
     ImGui::StyleColorsDark();
@@ -374,10 +339,10 @@ void MaybeRescale() {
 
 // SEH-guarded per-frame ImGui pass (render thread). A fault here must NOT take down
 // the game's render thread -- swallow it and leave the menu hidden.
-void RenderFrameGuarded() {
+void RenderFrameGuarded(IDXGISwapChain* sc) {
     __try {
         MaybeRescale();
-        ImGui_ImplDX11_NewFrame();
+        overlay_backend::NewFrame();
         ImGui_ImplWin32_NewFrame();  // sets io.MousePos from the real OS cursor (WM_MOUSEMOVE / GetCursorPos)
         // Draw the ImGui software cursor only for interactive surfaces (F1 menu, or
         // the host scoreboard). The passive client scoreboard shows no cursor.
@@ -433,10 +398,7 @@ void RenderFrameGuarded() {
             ImGui::GetIO().WantTextInput || ui::chat_input::IsOpen());
 
         ImGui::Render();
-        if (g_rtv) {
-            g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        }
+        overlay_backend::RenderDrawData(sc);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         UE_LOGE("imgui_overlay: SEH in render frame -- hiding surfaces to protect the render thread");
         g_visible.store(false, std::memory_order_relaxed);
@@ -468,7 +430,7 @@ void RenderFrameGuarded() {
 
 // SEH-guarded first-present bring-up (also on the render thread).
 bool BringUpGuarded(IDXGISwapChain* sc) {
-    __try { return BringUpDX11(sc); }
+    __try { return BringUp(sc); }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         UE_LOGE("imgui_overlay: SEH during ImGui bring-up -- overlay disabled this run");
         return false;
@@ -495,8 +457,8 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
     if (g_imguiReady.load(std::memory_order_acquire) &&
         (AnyOpen() || ui::hud::IsActive() || coop::join_curtain::IsActive())) {
         g_inFrame.store(true, std::memory_order_release);
-        if (!g_rtv) CreateRTV(sc);  // recreate after a resize
-        RenderFrameGuarded();
+        overlay_backend::EnsureTarget(sc);  // recreate the render target after a resize
+        RenderFrameGuarded(sc);
         g_inFrame.store(false, std::memory_order_release);
     }
     return g_origPresent(sc, sync, flags);
@@ -504,9 +466,9 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
 
 HRESULT STDMETHODCALLTYPE ResizeBuffersDetour(IDXGISwapChain* sc, UINT bufCount, UINT w,
                                               UINT h, DXGI_FORMAT fmt, UINT flags) {
-    ReleaseRTV();  // the backbuffer is about to be recreated
+    overlay_backend::OnResizeRelease();  // the backbuffer is about to be recreated
     const HRESULT hr = g_origResize(sc, bufCount, w, h, fmt, flags);
-    if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) CreateRTV(sc);
+    if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) overlay_backend::OnResizeRecreate(sc);
     else if (FAILED(hr)) UE_LOGW("imgui_overlay: ResizeBuffers failed (hr=0x%08lX) -- RTV left null", hr);
     return hr;
 }
@@ -679,65 +641,6 @@ bool Init() {
 bool IsVisible() { return g_visible.load(std::memory_order_relaxed); }
 void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relaxed); }
 
-void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
-    // RENDER THREAD ONLY (call from a surface's Render() -- the Present detour
-    // thread that owns g_device). WIC decode (PNG/BMP/JPG) -> 32bpp BGRA ->
-    // immutable D3D11 texture + SRV. The returned SRV is the ImTextureID; the
-    // caller caches it (this is a per-file one-shot, not a per-frame path).
-    if (!g_device || !path) return nullptr;
-    static bool s_comTried = false;
-    if (!s_comTried) {
-        s_comTried = true;
-        // S_FALSE (already init) and RPC_E_CHANGED_MODE (STA already active on
-        // this thread) both leave COM usable for CoCreateInstance below.
-        ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    }
-    IWICImagingFactory* fac = nullptr;
-    if (FAILED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&fac))) || !fac)
-        return nullptr;
-    IWICBitmapDecoder* dec = nullptr;
-    IWICBitmapFrameDecode* frame = nullptr;
-    IWICFormatConverter* conv = nullptr;
-    ID3D11Texture2D* tex = nullptr;
-    ID3D11ShaderResourceView* srv = nullptr;
-    UINT w = 0, h = 0;
-    do {
-        if (FAILED(fac->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
-                                                  WICDecodeMetadataCacheOnDemand, &dec)) || !dec)
-            break;
-        if (FAILED(dec->GetFrame(0, &frame)) || !frame) break;
-        if (FAILED(fac->CreateFormatConverter(&conv)) || !conv) break;
-        if (FAILED(conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA,
-                                    WICBitmapDitherTypeNone, nullptr, 0.0,
-                                    WICBitmapPaletteTypeCustom)))
-            break;
-        if (FAILED(conv->GetSize(&w, &h)) || !w || !h || w > 4096 || h > 4096) break;
-        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
-        if (FAILED(conv->CopyPixels(nullptr, w * 4, static_cast<UINT>(px.size()), px.data())))
-            break;
-        D3D11_TEXTURE2D_DESC td{};
-        td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_IMMUTABLE;
-        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA sd{px.data(), w * 4u, 0};
-        if (FAILED(g_device->CreateTexture2D(&td, &sd, &tex)) || !tex) break;
-        g_device->CreateShaderResourceView(tex, nullptr, &srv);
-    } while (false);
-    if (tex) tex->Release();  // the SRV holds its own reference
-    if (conv) conv->Release();
-    if (frame) frame->Release();
-    if (dec) dec->Release();
-    fac->Release();
-    if (srv) {
-        if (outW) *outW = static_cast<int>(w);
-        if (outH) *outH = static_cast<int>(h);
-    }
-    return srv;
-}
-
 void Shutdown() {
     if (!g_installed.exchange(false)) return;
     // Stop new ImGui work + remove the hooks so no new Present/WndProc routes to us.
@@ -757,16 +660,17 @@ void Shutdown() {
     // Wait out any render-thread frame in flight before tearing down the context
     // (MinHook re-arms the original but does not join in-flight detour calls).
     for (int i = 0; i < 200 && g_inFrame.load(std::memory_order_acquire); ++i) ::Sleep(1);
+    if (wasReady && g_hwnd && g_origWndProc)
+        ::SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_origWndProc));
+    // Backend teardown (renderer-backend Shutdown + render target + device refs),
+    // then the platform half. Deviation vs pre-extraction order: the RTV/device
+    // are now released BEFORE DestroyContext instead of after -- independent
+    // objects, no ordering dependency.
+    overlay_backend::Shutdown(wasReady);
     if (wasReady) {
-        if (g_hwnd && g_origWndProc)
-            ::SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_origWndProc));
-        ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
     }
-    ReleaseRTV();
-    if (g_context) { g_context->Release(); g_context = nullptr; }
-    if (g_device)  { g_device->Release();  g_device = nullptr; }
 }
 
 }  // namespace ui::imgui_overlay
