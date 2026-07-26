@@ -7,10 +7,12 @@ first time a new game version ships, this doc gets rewritten with what the work
 ACTUALLY cost, and the estimates get replaced by facts. Until then, treat every
 duration as unknown, not as small.
 
-**PENDING ADVERSARIAL REVIEW (user, 2026-07-26): this doc has NOT been through a
-`/qf` pass.** It was written in one pass from measurement; nobody has yet tried
-to break it. Candidate blind spots to aim that pass at are listed in §9 — read
-them before trusting any claim here as complete.
+**PENDING ADVERSARIAL REVIEW (user, 2026-07-26): the PLAYBOOK half of this doc
+(§1-§6, §10) has NOT been through a `/qf` pass.** It was written in one pass from
+measurement; nobody has yet tried to break it. Candidate blind spots are listed
+in §9 — read them before trusting any claim here as complete. (**Exception:** the
+UE4SS-switch decision, §11, DID go through a 26-round /qf that converged
+2026-07-26 — that section is the audited part.)
 
 Why it exists: "what happens when the game updates" is the single most common
 and most legitimate question about a hook-based mod. Answering it with a shrug is

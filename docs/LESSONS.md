@@ -1901,9 +1901,24 @@ tracker.
   failure, which is indistinguishable from a missing key. The publishable measurement is anonymous
   HTTPS + the REST API (`ls-remote` -> "Repository not found", `gh api` -> 404) run against a
   KNOWN-PUBLIC repo on the same transport as the control — plus a date, because availability varies
-  with time. Second independent leg: the release channel's dev asset ships zero headers/libs. LOOK
+  with time. Second independent leg: the release channel's dev asset ships zero headers/libs.
+  Sharpened same day: also test BOTH confusingly-similar org spellings (`UE4SS-RE` vs `Re-UE4SS`) and
+  the fork network (`gh search repos` -> zero mirrors GitHub-wide); the vendored gitlink dir EXISTS
+  but is EMPTY — say that precisely. Now machine-re-verified per release (tripwires.ps1 wire-a). LOOK
   FIRST: any "X is missing/broken/unavailable" claim that will leave the repo.
   `memory/lesson_a_private_dependency_core_is_measurable_with_a_positive_control.md`
+- **2026-07-26 — a "we'll revisit if X changes" wire is wallpaper unless it has five properties.** Built
+  as `tools/release/tripwires.ps1` + VERSION_MIGRATION §11 (the UE4SS-switch record), each property
+  extracted by a /qf round: (1) a ritual host that already runs (RELEASE.md step 0, output in the
+  written handoff — an unattached check "fires only if a human remembers"); (2) tri-state
+  QUIET/FIRED/CHECK-UNREACHABLE so network-down never reads as not-fired (positive transport control);
+  (3) the baseline is a frozen DECISION constant, not the live toolchain fact; (4) re-quiet = a dated
+  `TRIPWIRE-DECISION <wire> <date>:` line + the constant update in the SAME commit (the anchor carries
+  the wire name so a routine doc edit cannot clear it); (5) a mechanical overdue detector (committed
+  state file + ledger grep -> OVERDUE-DECISION). All verdict shapes force-drilled incl. the
+  must-NOT-clear control; monitor-less doors named honestly instead of pretending a boot WARN is one.
+  LOOK FIRST: copy the shape from `tools/release/tripwires.ps1` for ANY watch-this-condition artifact.
+  `memory/lesson_decision_tripwires_need_tristate_and_overdue_detection.md`
 - **2026-07-26 — price a build-vs-adopt question by REPAIR HISTORY, not by line count, and classify the
   diffs.** "Should the substrate move onto UE4SS?" was being argued on LOC share (1.6%), which answers
   "how big", not the actual claim ("cheaper because someone else maintains it"). Git history answers it:
