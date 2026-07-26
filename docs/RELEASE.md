@@ -39,6 +39,13 @@ consumes numbers.
    `config-selftest: DONE fail=0` — mp.py's smoke verdict machine-asserts this
    line whenever the env gate is set (a config/catalog regression fails the
    smoke itself, exit 8).
+   **Trip-wires (2026-07-26):** run `tools/release/tripwires.ps1` and paste its
+   output into the handoff. ADVISORY — a FIRED wire re-opens the UE4SS-switch
+   DECISION per `docs/VERSION_MIGRATION.md` §11 (the decision ledger), it never
+   blocks the release. On FIRED or a 2nd consecutive CHECK-UNREACHABLE: append
+   the dated `TRIPWIRE-DECISION` line + re-freeze in the same commit (§11's
+   no-wallpaper rule; the script detects an overdue disposition mechanically).
+   Commit the refreshed `tripwires_state.json` with the release flow.
 0.5. **Author the changelog + show it to the user** (2026-07-26): write
    `tools/release/notes/b<N>.md` (format rules in `tools/release/notes/README.md`:
    plain bullets, no heading, verbs are status claims anchored to the consume

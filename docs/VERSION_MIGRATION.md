@@ -284,3 +284,106 @@ Besides the boot health check, two artifacts ease cross-version porting:
 - **`tools/sdk_diff.py <old.txt> <new.txt>`** — diffs two compat reports (or two
   SDK dumps) and reports what moved, annotated with the `sdk_profile.h` constant
   each change corresponds to. This is §4 step 3's instrument.
+
+## 11. The UE4SS-switch decision record (DECIDED 2026-07-26: F1, keep RULE 3)
+
+A public critique (§7) argued the substrate should move onto UE4SS's C++ API. The
+question went through a 26-round adversarial /qf pass (fact base:
+`research/findings/tooling/votv-ue4ss-switch-decision-QF-WIP-2026-07-26.md` §3+§5,
+which remain the cited measurements; its §4 draft conclusion and §6 residual plan
+are superseded by THIS section. Coexistence fact base:
+`votv-ue4ss-coexistence-FACTS-2026-07-26.md`). **The user took F1 on 2026-07-26.**
+
+**The decision, one sentence:** the substrate stays standalone (RULE 3) — the
+"99% of what you're doing" is measurably a **1.6% pillar** (2,404 of 146,347 LOC)
+whose lifetime cost was **5 repair commits in 1,282** (2 of which UE4SS's API
+would have absorbed), whose framework value targets engine-version churn this
+game has never had (UE4.27 its whole life, zero recooks), and whose C++ path is
+**blocked for outsiders today** — while the migration playbook above is untested
+and the game has never been re-cooked in the mod's life.
+
+**Why F2 (their API) and F3 (vendor their engine source) both die on ONE
+measurement:** UE4SS's C++ engine core (UEPseudo) is a private repo. Verified
+2026-07-26 three independent ways: `git ls-remote https://github.com/Re-UE4SS/UEPseudo`
+→ 404 while the same transport against `UE4SS-RE/RE-UE4SS` returns refs (positive
+control); `gh search repos UEPseudo` → **zero** public repos on all of GitHub (no
+mirror, no fork); the release channel's `zDEV-UE4SS_v3.0.1.zip` (166 entries)
+ships **zero** `.h/.hpp`, zero `.lib`. Our vendored `reference/RE-UE4SS` carries
+the `deps/first/Unreal` gitlink (→ `d72d2f38`) present but **empty/unresolvable**.
+There is nothing to build against and nothing to vendor.
+
+**What switching would NOT buy** (each measured):
+- *Mod compatibility:* the incompatibility with other mods is SEMANTIC (a
+  world-mutating mod on one peer is adopted+amplified / fought / drifts — the
+  coexistence FACTS doc), identical under both substrates; UE4SS has no
+  multiplayer. Mechanically the standalone mod already coexists (no filename
+  collision; the PE detour stacks).
+- *The overlay:* as measured 2026-07-26, UE4SS's GUI is its own OS window
+  (D3D11/OpenGL swapchain, **no DX12 backend**, never hooks the game's Present);
+  our in-game DX11+DX12 overlay stays ours under any fork.
+- *The recook work:* the game half (5 AOBs + 29 BP offsets + 235 content names +
+  the 1,141 name-anchors) is ours under any substrate — it is the part that
+  actually breaks (§1), and no framework covers it.
+
+**Honest residuals the decision does NOT fix:** the untested playbook (F4: no old
+VOTV build is on disk, so the migration drill cannot run — an ACCEPTED RISK; the
+pre-named threshold is **>3 working days back to a green smoke after a recook =
+unbearable**, which re-opens this record); the bus-factor question (measured half:
+a fresh `--recursive` clone resolves and CI fresh-builds every push; unmeasured
+half: a successor carrying the game half — this doc is the mitigation); our own
+`FindFunction` superclass-chain gap (`reflection.cpp:427`) — queued fix, home =
+the auto-memory backlog, precondition: call-site census.
+
+### The trip-wires (each one re-opens this decision, or it does not belong)
+
+`tools/release/tripwires.ps1` — run from the RELEASE.md step-0 bullet; output is
+pasted into the written release handoff. ADVISORY (always exit 0): a FIRED wire
+re-opens the DECISION, never blocks a release. Detection latency = the release
+cadence (rare, end-of-session by standing policy) — acceptable for a months-scale
+decision, and stated here rather than implied. Verdicts per wire: QUIET / FIRED /
+CHECK-UNREACHABLE (+ OVERDUE-DECISION, the mechanical no-wallpaper detector
+backed by the committed `tripwires_state.json`).
+
+- **wire-a (machine):** `git ls-remote https://github.com/Re-UE4SS/UEPseudo`
+  SUCCEEDS → the F2/F3 blocker fell; re-open both forks.
+- **wire-b (machine):** a non-prerelease UE4SS release newer than the frozen
+  decision baseline **v3.0.1** exists → the "stable is 2.5 years old" leg fell.
+  The check enumerates + filters `prerelease==false` and prints the newest
+  SKIPPED prerelease each run (the live feed carries `experimental-latest`,
+  2024-12-29, newer-dated than the stable — a standing positive control of the
+  filter) plus a repo-health line (`archived`, `pushed_at`).
+- **wire-c (monitor-less, by design):** the game leaves UE4.27 / gets re-cooked.
+  No monitor exists or is pretended: a recook breaks the mod LOUDLY (boot health
+  check, §3), and the forced migration-playbook run is where this fork re-opens.
+- **Human-carried doors (named, not machine-watched):** the zDEV release asset
+  starts shipping headers/libs (a C++ SDK — needs asset inspection, not a cheap
+  probe); a successor fork becomes the community's live line (the API follows
+  renames, and an archived repo serves its old releases green forever).
+
+**Re-quiet / no-wallpaper rule:** a FIRED (or twice-consecutive UNREACHABLE)
+wire's disposition is a dated `TRIPWIRE-DECISION <wire> <YYYY-MM-DD>: <text>`
+line appended to the ledger below PLUS the matching constant update in
+`tripwires.ps1`, in the SAME commit. The script detects a repeat-FIRED with no
+newer decision line mechanically (OVERDUE-DECISION); only the disposition stays
+human.
+
+**Drill evidence (run on commit day, 2026-07-26, against the committed bytes;
+pass criterion = verdict matches measured reality that day):**
+
+```
+DRILL fired-shape:  PASS -- control repo produces the FIRED shape
+DRILL stable-floor: PASS -- floor 2.0.0 fires on the real feed
+                    (newest stable v3.0.1 2024-02-14; newest SKIPPED prerelease
+                     experimental-latest 2024-12-29; archived=False)
+DRILL offline:      PASS -- .invalid targets -> CHECK-UNREACHABLE on both wires
+                    (network-down never reads as not-fired)
+DRILL overdue:      PASS -- seeded prior-FIRED + unrelated dated line stays
+                    OVERDUE; a matching TRIPWIRE-DECISION line clears it
+REAL RUN:           wire-a QUIET (404-class, control answers);
+                    wire-b QUIET (v3.0.1 == baseline); state file written
+```
+
+### TRIPWIRE-DECISION ledger (append-only; the grep anchor is the line format)
+
+TRIPWIRE-DECISION wire-b 2026-07-26: baseline frozen at v3.0.1 — the newest
+stable at decision time; F1 taken, record created.

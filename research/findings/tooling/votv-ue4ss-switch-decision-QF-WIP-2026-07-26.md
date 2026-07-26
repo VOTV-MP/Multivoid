@@ -1,9 +1,16 @@
 # Should we switch the substrate to UE4SS's C++ API? — /qf decision base (WIP)
 
-**STATUS: 15 /qf rounds run 2026-07-26, NOT converged — the critic still returned
-material questions at R15. The decision is the USER's and has NOT been taken.
-Nothing in this file has been landed into the living docs yet.** Resume here next
-session; the residual actions are listed in §6.
+**STATUS (SECTION-SCOPED SUPERSEDE, 2026-07-26): the /qf converged at R26 ("that
+holds") and the USER TOOK F1 (keep RULE 3) the same day. §4's draft conclusion
+and §6's residual plan are SUPERSEDED by the decision record —
+`docs/VERSION_MIGRATION.md` §11 (conclusion, trip-wires, drill evidence, the
+TRIPWIRE-DECISION ledger). §3's measured table and §5's wire definitions REMAIN
+the fact base that record cites.** Rounds 16-26 (the residual-action design +
+the user's own three probes: ImGui/DX12, DLL-shape, mod-compat semantics) live
+in the session transcript and are summarized in §11 itself. One correction to
+R21's phrasing: the vendored `deps/first/Unreal` gitlink is PRESENT but EMPTY
+(unresolvable → `Re-UE4SS/UEPseudo`, 404 under both org spellings, zero public
+forks/mirrors GitHub-wide).
 
 Companion fact base (already committed): `votv-ue4ss-coexistence-FACTS-2026-07-26.md`.
 

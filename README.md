@@ -276,6 +276,8 @@ Three "no-compromise" rules govern day-to-day work:
 - **RULE 1** — No crutches, no quick fixes. Root cause every time.
 - **RULE 2** — No migration baggage. Old code goes when replaced.
 - **RULE 3** — Standalone mod. UE4SS is a dev tool only; not loaded at runtime.
+  ("Why not just build on UE4SS?" was measured and decided, with re-open
+  trip-wires: [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).)
 
 ---
 
