@@ -62,6 +62,12 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH);
 // no-op.
 void DestroyTexture(void* id);
 
+// Install the swapchain-creation timing probe (the DX12 stage-1 measurement:
+// does our boot precede the game's swapchain creation, and what queue arrives
+// as CreateSwapChain*'s pDevice). Called once from imgui_overlay::Init;
+// log-only, no behavior change on any RHI.
+void InstallCreationProbe();
+
 // Tear down everything this backend owns. rendererWasLive mirrors the
 // overlay's g_imguiReady latch (renderer-backend Shutdown only if Init ran).
 void Shutdown(bool rendererWasLive);

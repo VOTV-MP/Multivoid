@@ -64,6 +64,28 @@ bool Uninstall(void* target) {
     return ok;
 }
 
+bool Disable(void* target) {
+    if (!g_initialized || !target) return false;
+    const MH_STATUS s = MH_DisableHook(target);
+    if (s != MH_OK) {
+        UE_LOGW("hook: MH_DisableHook(%p) (%s)", target, StatusName(s));
+        return false;
+    }
+    UE_LOGI("hook: disabled %p (trampoline slot retained on purpose)", target);
+    return true;
+}
+
+bool Enable(void* target) {
+    if (!g_initialized || !target) return false;
+    const MH_STATUS s = MH_EnableHook(target);
+    if (s != MH_OK) {
+        UE_LOGW("hook: MH_EnableHook(%p) re-arm (%s)", target, StatusName(s));
+        return false;
+    }
+    UE_LOGI("hook: re-enabled %p", target);
+    return true;
+}
+
 void Shutdown() {
     if (!g_initialized) return;
     MH_DisableHook(MH_ALL_HOOKS);

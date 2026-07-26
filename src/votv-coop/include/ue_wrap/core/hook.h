@@ -29,6 +29,18 @@ bool Install(void* target, void* detour, void** original);
 // Disable + remove the hook on `target`. Returns true on success.
 bool Uninstall(void* target);
 
+// Disable the hook on `target` WITHOUT removing it: the patch is lifted (the
+// detour stops firing) but the trampoline slot stays allocated, so a thread
+// preempted inside the detour body still returns through live memory. Pair
+// with Enable to re-arm later. This is the ONLY safe retirement for a detour
+// other threads may be entering concurrently (an inflight counter cannot
+// prove absence -- a thread can be preempted between the patched jump and the
+// counter increment; see the DX12 overlay design 2026-07-26).
+bool Disable(void* target);
+
+// Re-enable a previously Disabled hook on `target`.
+bool Enable(void* target);
+
 // Disable + remove all hooks and uninitialize. Safe to call once at shutdown.
 void Shutdown();
 

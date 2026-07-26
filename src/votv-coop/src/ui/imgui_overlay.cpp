@@ -551,6 +551,10 @@ bool Init() {
             g_setCursorPosTarget = nullptr;
         }
     }
+    // DX12 stage-1: the swapchain-creation timing probe (log-only; measures
+    // whether our boot precedes the game's swapchain creation -- see the DX12
+    // overlay design of record). No behavior change on any RHI.
+    ui::overlay_backend::InstallCreationProbe();
     g_installed.store(true, std::memory_order_release);
     // Autonomous screenshot test: VOTVCOOP_MENU_OPEN=1 starts the menu visible (the
     // smoke can't press F1). Win32 env read (no CRT getenv -- /W4-clean in a DLL).

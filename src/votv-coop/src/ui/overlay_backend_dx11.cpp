@@ -10,6 +10,7 @@
 
 #include "ui/overlay_backend.h"
 
+#include "overlay_backend_internal.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -27,14 +28,13 @@
 #include "imgui.h"
 #include "backends/imgui_impl_dx11.h"
 
-namespace ui::overlay_backend {
+namespace ui::overlay_backend::dx11 {
 namespace {
 
 ID3D11Device*           g_device  = nullptr;
 ID3D11DeviceContext*    g_context = nullptr;
 ID3D11RenderTargetView* g_rtv     = nullptr;
 bool                    g_live    = false;   // InitRenderer committed
-std::atomic<bool> g_dx12Logged{false};  // logged the DX12-unsupported notice once
 
 void CreateRTV(IDXGISwapChain* sc) {
     if (g_rtv || !g_device) return;
@@ -54,16 +54,15 @@ void ReleaseRTV() {
 
 }  // namespace
 
-const char* Kind() { return g_live ? "DX11" : nullptr; }
+bool Live() { return g_live; }
 
 bool CaptureDevice(IDXGISwapChain* sc) {
+    // Silent on a non-DX11 swapchain: the DISPATCHER owns the RHI verdict and
+    // the DX12 path's own logging (the old one-shot "NOT DX11" WARN moved
+    // there, replaced by the stage-1 detection lines -- RULE 2).
     ID3D11Device* dev = nullptr;
     if (FAILED(sc->GetDevice(IID_PPV_ARGS(&dev))) || !dev) {
         if (dev) dev->Release();
-        if (!g_dx12Logged.exchange(true)) {
-            UE_LOGW("imgui_overlay: swapchain is NOT DX11 (likely DX12) -- overlay "
-                    "rendering not yet implemented for this RHI; menu will not draw.");
-        }
         return false;
     }
     ID3D11DeviceContext* ctx = nullptr;
@@ -178,4 +177,4 @@ void Shutdown(bool rendererWasLive) {
     if (g_device)  { g_device->Release();  g_device = nullptr; }
 }
 
-}  // namespace ui::overlay_backend
+}  // namespace ui::overlay_backend::dx11
