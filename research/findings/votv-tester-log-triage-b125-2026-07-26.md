@@ -155,9 +155,12 @@ normally -> R-B excluded, re-open as a pose-lane bug.
 8. **R-H/R-J** close with tester follow-up + client logs
 
 ## Needs from outside (explicit)
-- gediao's client log; SirWilliam's client log + his build number
+- ~~gediao's client log; SirWilliam's client log + his build number~~ **UNOBTAINABLE (user,
+  2026-07-26: "Больше клиентских логов не получить")** — every "needs client log" row resolves
+  instead via the mp.py 2-peer repro (the client side of the rig IS a client log source) + the
+  named instrument fixes (eid+key on enqueue rejection; adopt-line logging).
 - Tester answers: when/where the cabinet appeared late; when the reel was noticed missing
-- mp.py 2-peer repro run for R-F
+- mp.py 2-peer repro run for R-F (and for R-B/R-C/R-D client-side outcomes)
 - Code read for R-D (flip criterion in-row)
 
 ## /qf ledger (8 rounds, fresh critic each; "that holds" at R8)
