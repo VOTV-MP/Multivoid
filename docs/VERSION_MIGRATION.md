@@ -192,6 +192,8 @@ loader. That is a deliberate trade — it costs us that 5% and buys install
 simplicity and independence from another project's release cadence. UE4SS remains
 a development dependency we actively use (SDK dumps, Blueprint dumps, ground-truth
 addresses for signature work) — the refusal is about the RUNTIME, not the tool.
+(This claim later went through a full 26-round adversarial pass and became a
+recorded decision with re-open trip-wires — see §11.)
 
 **Claim: "VoidTogether deserves credit."** Agreed and done (README Credits + the
 site Q&A), stated accurately: no VoidTogether code is in Multivoid — it is a JS
