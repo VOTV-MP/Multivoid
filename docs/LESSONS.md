@@ -1868,3 +1868,48 @@ tracker.
   always run a **parts-sum check** (the pieces must add to the whole — that is what exposed it), and
   quote a file count next to the line count. LOOK FIRST: any size/LOC claim that leaves the repo.
   `memory/lesson_xargs_wc_tail_truncates_the_total.md`
+- **2026-07-26 — unequal per-asset download counts are UPDATERS, not broken installs.** A release page
+  showing payload 11 / loader 7 reads as "users install only half the mod" and argued for bundling both
+  DLLs into one zip asset (changing the publish step's asset invariant + every install instruction).
+  Measuring ALL releases killed it: the first public release split 13/12 (every downloader a fresh
+  install), and the later gap is exactly the updater population — the loader DLL does not change
+  between builds, so a correct update fetches the payload only. LOOK FIRST: before designing anything
+  from a download asymmetry, pull the counts for EVERY release and ask which assets change per build.
+  `memory/lesson_unequal_asset_downloads_are_updaters_not_broken_installs.md`
+- **2026-07-26 — a staleness ban must match the VARIABLE half, or it kills the placeholder.** The
+  install-doc lint had to reject `multivoid-0.9.0n-128.dll` while accepting
+  `multivoid-0.9.0n-<N>.dll`; the natural regex `multivoid-\d` rejects BOTH, because the game target
+  `0.9.0n` starts with a digit. Anchor on the variable half with the target interpolated as a literal
+  (`multivoid-<escaped target>-\d+\.dll`) and ship a must-PASS placeholder fixture beside the
+  must-FAIL literal — a FAIL-only fixture set passes while the gate rejects every valid doc. LOOK
+  FIRST: any lint separating "a template" from "a concrete instance".
+  `memory/lesson_placeholder_bans_must_target_the_variable_half.md`
+- **2026-07-26 — GitHub's releases LIST endpoint intermittently serves a STALE body (corrected same
+  day).** A content lint comparing each live release's `## What's new` section against its notes file
+  FAILED on the just-published release — and again HOURS later — while `releases/tags/<tag>`, a manual
+  replication of the same loop (845 chars, `equal=True`) and two immediate re-runs all agreed. So it is
+  not "a brief post-flip window": the paginated list endpoint is eventually-consistent and can serve a
+  stale body at any time. That makes any content gate built on it FLAKY — and this one runs ENFORCING on
+  the release lane, where a cached read would refuse a legitimate release. Root fix (not a retry, not a
+  suppression): on mismatch, re-read THAT release from the single-release endpoint and only FAIL if the
+  confirm-read also disagrees; an unreachable confirm-read is a labeled WARN, never a silent pass.
+  Drilled clean -> poisoned-notes FAIL ("confirmed on the per-tag endpoint") -> restored clean.
+  LOOK FIRST: an intermittent content check against a platform LIST endpoint.
+  `memory/lesson_release_body_list_endpoint_lags_the_flip.md`
+- **2026-07-26 — "that dependency is unavailable" needs a positive control before you publish it.** The
+  claim "we cannot build against UE4SS's C++ core" was first observed as an SSH submodule clone
+  failure, which is indistinguishable from a missing key. The publishable measurement is anonymous
+  HTTPS + the REST API (`ls-remote` -> "Repository not found", `gh api` -> 404) run against a
+  KNOWN-PUBLIC repo on the same transport as the control — plus a date, because availability varies
+  with time. Second independent leg: the release channel's dev asset ships zero headers/libs. LOOK
+  FIRST: any "X is missing/broken/unavailable" claim that will leave the repo.
+  `memory/lesson_a_private_dependency_core_is_measurable_with_a_positive_control.md`
+- **2026-07-26 — price a build-vs-adopt question by REPAIR HISTORY, not by line count, and classify the
+  diffs.** "Should the substrate move onto UE4SS?" was being argued on LOC share (1.6%), which answers
+  "how big", not the actual claim ("cheaper because someone else maintains it"). Git history answers it:
+  5 repair commits in 1,282, the AOB constants edited once at creation. Then reading and classifying all
+  26 `reflection.cpp` diffs found the concession — **2 of the 5 repairs WOULD have come free** with the
+  dependency's API (`GetPropertyByNameInChain` walks the SuperStruct chain); the first draft said "none"
+  and was wrong. LOOK FIRST: `git log --follow` + a hand classification (repair / growth / refactor) +
+  a check of whether the candidate's API absorbs each repair. Publish the concessions.
+  `memory/lesson_price_a_dependency_by_repair_history_not_by_line_count.md`

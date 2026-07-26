@@ -79,14 +79,13 @@ forced-FAIL drilled. A fail-open CI WARN nobody is obliged to read was DROPPED.
 1. **Sweep FEASIBILITY.md 71 / 86 / 94 / 126** — they still read "via UE4SS" as
    the current runtime mechanism in the exact public doc the critic quoted
    (line 30 is already annotated). Classifier known-positive-validated.
-2. **RULE 2 on the version docs**: `VERSION_PORTABILITY.md` (107 lines) is the
-   older, narrower predecessor of `VERSION_MIGRATION.md` (243). Its two unique
-   sections ("Design rules that make porting fast", "Adaptation toolchain") must
-   be MIGRATED into the survivor FIRST (plus the post-rebrand fix: the artifact is
-   `multivoid-compat-report.txt`, not `votv-coop-*`), then PORTABILITY -> `_archive/`
-   with a pointer. Archiving before migrating would be a silent content deletion.
-3. **Land the record** as VERSION_MIGRATION §10 and fix the section order in the
-   same commit (§9 currently prints before §8).
+2. ~~**RULE 2 on the version docs**~~ **DONE 2026-07-26 (documentize):**
+   `VERSION_PORTABILITY.md`'s two unique sections were migrated into
+   `VERSION_MIGRATION.md` §10 (with the `multivoid-compat-report.txt` rename
+   fixed), then the file moved to `docs/_archive/` with a pointer banner.
+   The §9-before-§8 print order was fixed in the same pass.
+3. **Land the record** — the /qf conclusion still needs a home in
+   `VERSION_MIGRATION.md` (now as §11, since §10 is taken) once the user decides.
 4. **Reachability**: one-line pointers from RULE 3 (CLAUDE.md), README and the
    site Q&A — the critic arrived from a public surface, so the record must be
    reachable from the surface he reads. Same commit as the record.

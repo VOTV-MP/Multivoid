@@ -114,17 +114,41 @@ if ($SkipApi) {
                         # section absent / notes file missing / content mismatch --
                         # never a silent pass. This is also the mechanical
                         # enforcement of notes write-once-after-publish.
-                        $whatsNew = Get-ReleaseBodyWhatsNew $rel.body
+                        # CONFIRM-READ (2026-07-26, measured): the paginated
+                        # releases LIST endpoint intermittently serves a STALE
+                        # body -- observed both seconds after a draft->live flip
+                        # and hours later, while releases/tags/<tag> and a re-run
+                        # were byte-identical to the notes file. An enforcing gate
+                        # must not refuse a legitimate release on a cached read,
+                        # so a mismatch is re-read from the authoritative
+                        # single-release endpoint before it can FAIL.
                         $notesPath = Get-ReleaseNotesPath -N $tag.N
-                        if ($null -eq $whatsNew) {
-                            Fail "NOTES_DRIFT: live release '$($rel.tag_name)' body has no '## What's new' section (NOTES_SECTION_ABSENT)"
-                        } elseif (-not (Test-Path -LiteralPath $notesPath)) {
+                        $whatsNew = Get-ReleaseBodyWhatsNew $rel.body
+                        if (-not (Test-Path -LiteralPath $notesPath)) {
                             Fail "NOTES_DRIFT: live release '$($rel.tag_name)' but tools/release/notes/b$($tag.N).md is missing"
                         } else {
                             $fileNorm = Get-NormalizedProse (Get-Content -LiteralPath $notesPath -Raw)
-                            $bodyNorm = Get-NormalizedProse $whatsNew
-                            if (-not [string]::Equals($fileNorm, $bodyNorm, [System.StringComparison]::Ordinal)) {
-                                Fail "NOTES_DRIFT: live release '$($rel.tag_name)' What's-new section != notes/b$($tag.N).md (edit BOTH: fix the file, regenerate the body)"
+                            $agrees = ($null -ne $whatsNew) -and
+                                      [string]::Equals($fileNorm, (Get-NormalizedProse $whatsNew), [System.StringComparison]::Ordinal)
+                            if (-not $agrees) {
+                                # authoritative re-read of THIS release only
+                                $confirmBody = $null
+                                try {
+                                    $confirmRaw = gh api "repos/$Repo/releases/tags/$($rel.tag_name)" 2>$null
+                                    if ($LASTEXITCODE -eq 0 -and $confirmRaw) { $confirmBody = ($confirmRaw | ConvertFrom-Json).body }
+                                } catch { $confirmBody = $null }
+                                if ($null -eq $confirmBody) {
+                                    Warn "NOTES_DRIFT: '$($rel.tag_name)' mismatched on the list endpoint and the confirm-read was UNREACHABLE -- not judged this pass (labeled)"
+                                } else {
+                                    $confirmSection = Get-ReleaseBodyWhatsNew $confirmBody
+                                    if ($null -eq $confirmSection) {
+                                        Fail "NOTES_DRIFT: live release '$($rel.tag_name)' body has no '## What's new' section (NOTES_SECTION_ABSENT, confirmed)"
+                                    } elseif (-not [string]::Equals($fileNorm, (Get-NormalizedProse $confirmSection), [System.StringComparison]::Ordinal)) {
+                                        Fail "NOTES_DRIFT: live release '$($rel.tag_name)' What's-new section != notes/b$($tag.N).md (confirmed on the per-tag endpoint; edit BOTH: fix the file, regenerate the body)"
+                                    } else {
+                                        Write-Host "LINT NOTE: '$($rel.tag_name)' list-endpoint body was stale; confirm-read agrees with notes/b$($tag.N).md"
+                                    }
+                                }
                             }
                         }
                     }

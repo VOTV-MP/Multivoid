@@ -204,17 +204,24 @@ described the overlay as riding "UE4SS's built-in ImGui" months after the mod
 hand-rolled its own DXGI present hook. Hostile review is cheap QA; treat it that
 way. See `memory/lesson_stale_planning_docs_are_public_ammunition.md`.
 
+## 8. Migration history
+
+| Game version | Date | Health check before | What moved | What it cost | Note |
+|---|---|---|---|---|---|
+| `0.9.0-n` | 2026-05-21 → present | n/a (bootstrap) | n/a | n/a | The build everything was derived against |
+| _(next)_ | — | — | — | — | Fill this row from §4 step 7. Replace the estimates in §1 with what actually happened. |
+
 ## 9. Known-unknowns for the pending /qf pass
 
 Seeded 2026-07-26 while the measurements were fresh. These are the places the
 author already suspects are thin — the review should NOT stop at them:
 
-- **Is the surface really only those two files?** The 5/41/29/235 counts came
-  from `sdk_profile.h` + `sdk_profile_names.h`. Nothing verified that no OTHER
-  file hardcodes a game-version fact — an earlier grep found ~136 `+ 0x..`
-  occurrences across `coop/` + `ue_wrap/`, and it is unknown how many are engine
-  layout, how many are local struct math, and how many are a third copy of a
-  game offset that this doc claims lives in one place.
+- ~~**Is the surface really only those two files?**~~ **ANSWERED 2026-07-26
+  (measured):** the "~136 `+ 0x..`" figure was wrong. The real census is **26
+  occurrences in `coop/` + 8 in `ue_wrap/`**, and they are wire-struct / protocol
+  byte math (e.g. `coop/creatures/npc_sync.cpp:357-364` parses our own packet
+  layout; `coop/net/signaling_client.cpp:37-38`), not a third copy of a game
+  offset. The premise "game offsets live in the two `sdk_profile` files" HOLDS.
 - **The 1,141 "survive by name" lookups are asserted, not tested.** A renamed
   class/function fails at runtime, not at compile time. Is there any gate that
   would catch a name that vanished, short of the feature silently dying?
@@ -232,12 +239,48 @@ author already suspects are thin — the review should NOT stop at them:
 - **The "mechanical" claim for the 29 game offsets.** It rests on each constant's
   comment citing an `*.hpp:line`. Spot-checked, not audited: if some of those
   comments are stale or absent, part of that work is RE, not transcription.
-- **Nothing about mods coexisting** (other VOTV mods, a different loader present)
-  or about a game update that changes the RHI/engine build mid-line.
+- ~~**Nothing about mods coexisting**~~ **PARTLY ANSWERED 2026-07-26:** the
+  coexistence question (UE4SS + UE4SS mods beside Multivoid) now has a measured
+  fact base — `research/findings/tooling/votv-ue4ss-coexistence-FACTS-2026-07-26.md`
+  (no proxy-filename collision on any current channel; one ProcessEvent
+  double-detour surface for the UE4SS 3.0.1 cohort; the dominant risk is semantic,
+  not mechanical). Still unexamined here: OTHER VOTV mods (non-UE4SS), and a game
+  update that changes the RHI or engine build mid-line.
 
-## 8. Migration history
+## 10. Design rules that make this survivable (absorbed from VERSION_PORTABILITY.md, 2026-07-26)
 
-| Game version | Date | Health check before | What moved | What it cost | Note |
-|---|---|---|---|---|---|
-| `0.9.0-n` | 2026-05-21 → present | n/a (bootstrap) | n/a | n/a | The build everything was derived against |
-| _(next)_ | — | — | — | — | Fill this row from §4 step 7. Replace the estimates in §1 with what actually happened. |
+These are the standing invariants that keep a migration to one file instead of a
+codebase sweep. They predate this doc (written 2026-05-25) and are why §1's
+surface is as small as it is.
+
+1. **One porting surface.** All version-specific knowledge lives in
+   `sdk_profile.h` + `sdk_profile_names.h`, nowhere else. Porting = review/
+   re-derive those files. Logic files reference them via `profile::...`; no
+   version constant may leak into logic (the `ue_wrap` / `coop` split,
+   principle 7). VERIFIED 2026-07-26: the only raw `+ 0x..` literals outside them
+   are 26 in `coop/` + 8 in `ue_wrap/`, all wire-struct/protocol byte math.
+2. **Fail loud, never silent.** Every resolve is checked and logged; nothing
+   reads an offset off an unresolved pointer.
+3. **Functional validation, not just "matched".** The health check proves each
+   primitive *works* (round-trips a known name, finds known classes) — this
+   catches an AOB that matched the WRONG site, the nastiest silent failure.
+4. **Detect + announce the build.** The health check logs the exe FileVersion +
+   size and WARNs when they differ from `kExpectedExeSize`. First line of triage:
+   "is this even the build we built against?"
+5. **Logging.** `ue_wrap/log` writes `multivoid.log` next to the mod — levelled,
+   timestamped, the primary diagnosis tool. (INFO lines are buffered until a WARN;
+   a killed process loses them — see `docs/LESSONS.md`.)
+
+### The adaptation toolchain (shipped 2026-05-25)
+
+Besides the boot health check, two artifacts ease cross-version porting:
+
+- **`multivoid-compat-report.txt`** — written next to the DLL on every boot by
+  `harness::sdk_check::Run` (`src/harness/sdk_check.cpp:123`). Captures the exe
+  FileVersion + size, every resolved AOB address with its computed displacement,
+  every reflection-resolved class / UFunction / property offset, and the
+  PASS/FAIL verdict per primitive: a snapshot of "what the mod sees right now".
+  (Renamed from `votv-coop-compat-report.txt` at the 2026-07-19 rebrand.)
+- **`tools/sdk_diff.py <old.txt> <new.txt>`** — diffs two compat reports (or two
+  SDK dumps) and reports what moved, annotated with the `sdk_profile.h` constant
+  each change corresponds to. This is §4 step 3's instrument.

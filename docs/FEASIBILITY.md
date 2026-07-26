@@ -68,8 +68,12 @@ UE4SS at runtime).
 
 UE4 reads input through its own `UPlayerInput` / `UInputComponent`
 pipeline, ultimately fed by the OS message pump. For mod-menu hotkeys and
-synthetic test input we use UE4SS's input handlers / `GetAsyncKeyState`
-(WP15/WP16 — do not gate mod input on engine focus). For replicating P2,
+synthetic test input we use ~~UE4SS's input handlers~~ / `GetAsyncKeyState`
+(WP15/WP16 — do not gate mod input on engine focus).
+**AS-BUILT (annotated 2026-07-26, RULE 3): no UE4SS input handler ships.** Mod
+input is our own `SetWindowLongPtrW` WndProc subclass
+(`src/ui/imgui_overlay.cpp:312`, restored at `:679`) plus `GetAsyncKeyState`
+(`src/ui/multiplayer_menu.cpp:242`). For replicating P2,
 we inject into UE's input/movement at the `APlayerController` /
 `UCharacterMovementComponent` level, not at the OS layer. **Not a
 blocker.**
@@ -83,16 +87,26 @@ blocker.**
   VOTV pawn/controller class names via reflection in Phase 1.2.
 - **Can we spawn a second player-class entity?** Architecturally yes —
   this is what listen servers / split-screen do. The cheapest derisk
-  (methodology 0.5) is: via UE4SS, `SpawnActor` the VOTV pawn class +
+  (methodology 0.5) is: via ~~UE4SS~~, `SpawnActor` the VOTV pawn class +
   create a 2nd `APlayerController`, confirm it ticks. **This is the first
   concrete Phase 2 experiment.** **(verify)**
+  **AS-BUILT (annotated 2026-07-26): DONE long ago, and not via UE4SS** — the
+  puppet is spawned by our own reflection-driven deferred spawn
+  (`src/ue_wrap/actors/puppet_spawn.cpp`); an unpossessed `mainPlayer_C` orphan
+  with AutoPossess/AIController disabled (see CLAUDE.md's UE4 adaptation notes).
 
 ## 0.6 Script VM — Blueprint VM (UE's `UFunction` bytecode)
 
 VOTV is heavily Blueprint-driven (typical for this game). The "script VM"
 is UE's Blueprint VM; "script commands" are `UFunction`s. We hook
-Blueprint events / functions via UE4SS rather than parsing a custom script
-format. Host runs gameplay logic; client receives state. NPC/AI logic
+Blueprint events / functions via ~~UE4SS~~ rather than parsing a custom script
+format.
+**AS-BUILT (annotated 2026-07-26, RULE 3): our own hooks, no UE4SS at runtime** —
+a MinHook detour on `ProcessEvent` (`src/ue_wrap/core/pe_detour.cpp`), per-UFunction
+`Func`-pointer patches (`src/ue_wrap/core/ufunction_hook.cpp`), and a `GNatives[0x45]`
+swap for the BP-internal verbs ProcessEvent cannot see
+(`src/ue_wrap/core/vm_dispatch.cpp`).
+Host runs gameplay logic; client receives state. NPC/AI logic
 lives in blueprints + engine — host-authoritative replication applies.
 **RESOLVED:** VOTV gameplay is heavily Blueprint-VM-driven; the full
 dispatch-path split (BP-VM `EX_*` INVISIBLE vs native ProcessEvent VISIBLE) is
@@ -123,7 +137,8 @@ harness in active use; cross-machine LAN is unaffected.
 
 ## Blockers
 
-**None identified.** UE4.27 + no anti-tamper + UE4SS + native multi-pawn
+**None identified.** UE4.27 + no anti-tamper + a hookable engine + native
+multi-pawn
 support make VOTV a **good fit** per the methodology's fit criteria
 (single-player 3D game, protagonist + AI NPCs, hookable engine, a story/
 world to share). The main risk is not feasibility but **scope** — VOTV is

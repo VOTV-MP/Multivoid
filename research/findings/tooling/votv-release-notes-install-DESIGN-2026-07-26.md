@@ -82,13 +82,13 @@ bundle; the asset shape is unchanged. Revisit only on real field reports.
 
 ## As-built deviations (from the /qf letter)
 
-- R9 said NOTES_DRIFT fetch-fail = FAIL in enforcing mode. As built it rides the lane's
-  existing labeled-WARN "API unreachable" branch (ledger_lint has no mode axis; advisory
-  vs enforcing is continue-on-error at the workflow layer). Faithful to the intent — no
-  silent green — and in the release lane an unreachable API already kills the run at the
-  judge's own API-dependent checks; a transient lint-then-judge API flap can skip one
-  NOTES_DRIFT pass for OLD releases only (labeled WARN), never the new release's own
-  backstops.
+- R9 said NOTES_DRIFT fetch-fail = FAIL in enforcing mode. As built it is labeled, never silent,
+  but not a hard FAIL: an unreachable releases API rides the lane's existing labeled-WARN branch
+  (ledger_lint has no mode axis; advisory vs enforcing is continue-on-error at the workflow layer),
+  and an unreachable CONFIRM-read on a mismatched release is its own labeled WARN
+  ("not judged this pass"). Justification: in the release lane an unreachable API already kills the
+  run at the judge's own API-dependent checks, so the only reachable effect is skipping the drift
+  judgement for OLD releases — never the new release's own backstops.
 - b126's note describes the whole mod ("first public development build"), not the b126
   git range — the range (ini arcs 1+2) is meaningless to a first-time downloader.
 
@@ -96,13 +96,15 @@ bundle; the asset shape is unchanged. Revisit only on real field reports.
 
 - The b128 release run (30204651189) went green first try: NOTES_OK PASS in-lane,
   publish produced the designed body shape, read-back clean.
-- **Transient NOTES_DRIFT right after a publish**: a manual `ledger_lint` run
-  seconds after the draft->live flip FAILed NOTES_DRIFT on the brand-new release —
-  the paginated releases LIST endpoint briefly served a pre-flip body while the
-  per-tag endpoint already had the final one; a re-run a minute later was clean
-  (0 FAIL). Harmless in the lane (the enforcing lint runs BEFORE publish, in the
-  judge job); if a post-publish manual lint fails ONLY on the just-published
-  release, re-run before diagnosing.
+- **NOTES_DRIFT was FLAKY on the list endpoint — fixed the same day.** A manual lint run seconds
+  after the b128 flip FAILed NOTES_DRIFT on the new release; a later run hours after publish FAILed
+  again, while `releases/tags/<tag>`, a manual replication of the lint's own loop (845 chars,
+  `equal=True`) and two immediate re-runs all agreed. The paginated releases LIST endpoint serves a
+  stale body intermittently, not just in a post-flip window. Since NOTES_DRIFT runs ENFORCING on the
+  release lane, a cached read could have refused a legitimate release. Root fix: on mismatch the check
+  re-reads THAT release from the single-release endpoint and only FAILs if the confirm-read also
+  disagrees; an unreachable confirm-read is a labeled WARN. Drilled: clean -> poisoned notes file still
+  FAILs ("confirmed on the per-tag endpoint") -> restored clean.
 
 ## Sequencing / residuals
 

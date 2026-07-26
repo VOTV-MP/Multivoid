@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-07-26 (RULE 2).** Superseded by `docs/VERSION_MIGRATION.md`,
+> which carries the measured version surface, the runbook, the failure-mode table
+> and the migration history. This file's two unique sections ("Design rules that
+> make porting fast", "Adaptation toolchain") were MIGRATED into that doc's §10
+> before archiving — nothing here is current. One correction made during the
+> migration: the compat report is `multivoid-compat-report.txt` (renamed at the
+> 2026-07-19 rebrand), not `votv-coop-compat-report.txt` as written below.
+
 # Version portability — adapting the mod across game versions
 
 The mod is tagged to mirror the game version (currently `0.9.0-n`; versioning
