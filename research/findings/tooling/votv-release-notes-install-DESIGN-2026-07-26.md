@@ -92,6 +92,18 @@ bundle; the asset shape is unchanged. Revisit only on real field reports.
 - b126's note describes the whole mod ("first public development build"), not the b126
   git range — the range (ini arcs 1+2) is meaningless to a first-time downloader.
 
+## Operational notes (post-ship)
+
+- The b128 release run (30204651189) went green first try: NOTES_OK PASS in-lane,
+  publish produced the designed body shape, read-back clean.
+- **Transient NOTES_DRIFT right after a publish**: a manual `ledger_lint` run
+  seconds after the draft->live flip FAILed NOTES_DRIFT on the brand-new release —
+  the paginated releases LIST endpoint briefly served a pre-flip body while the
+  per-tag endpoint already had the final one; a re-run a minute later was clean
+  (0 FAIL). Harmless in the lane (the enforcing lint runs BEFORE publish, in the
+  judge job); if a post-publish manual lint fails ONLY on the just-published
+  release, re-run before diagnosing.
+
 ## Sequencing / residuals
 
 - Public acts (retro `gh release edit` x2, tag push) are behind ONE user green light,
