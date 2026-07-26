@@ -84,6 +84,11 @@ ID3D12CommandQueue* TryConfirmQueue(IDXGISwapChain* sc);
 // mechanism and the factory route was never built into prod.
 void InstallCreationProbe();
 
+// Re-arm after a swapchain recreation: the "this queue presents that chain"
+// fact no longer holds, so require a fresh confirmation (the previously
+// confirmed queue is seeded as the candidate).
+void Rearm();
+
 // Disarm the capture hooks + release the device ref.
 void Shutdown();
 

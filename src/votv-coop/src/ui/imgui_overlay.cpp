@@ -468,8 +468,19 @@ HRESULT STDMETHODCALLTYPE ResizeBuffersDetour(IDXGISwapChain* sc, UINT bufCount,
                                               UINT h, DXGI_FORMAT fmt, UINT flags) {
     overlay_backend::OnResizeRelease();  // the backbuffer is about to be recreated
     const HRESULT hr = g_origResize(sc, bufCount, w, h, fmt, flags);
-    if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) overlay_backend::OnResizeRecreate(sc);
-    else if (FAILED(hr)) UE_LOGW("imgui_overlay: ResizeBuffers failed (hr=0x%08lX) -- RTV left null", hr);
+    if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) {
+        overlay_backend::OnResizeRecreate(sc);
+        // Resizes are rare (a window/resolution/fullscreen change), so one line
+        // each is not spam -- and without it a drill cannot tell whether this
+        // path ran at all (2026-07-26: the DX12 resize drill was unmeasurable
+        // because only the FAILURE branch logged).
+        UE_LOGI("imgui_overlay: swapchain resized (%ux%u, %u buffer(s), fmt=%d) -- render "
+                "target rebuilt on %s", w, h, bufCount, static_cast<int>(fmt),
+                overlay_backend::Kind() ? overlay_backend::Kind() : "?");
+        ue_wrap::log::Flush();
+    } else if (FAILED(hr)) {
+        UE_LOGW("imgui_overlay: ResizeBuffers failed (hr=0x%08lX) -- RTV left null", hr);
+    }
     return hr;
 }
 

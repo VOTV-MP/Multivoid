@@ -52,6 +52,10 @@ ID3D12Device* g_device = nullptr;          // AddRef'd at detection; the device-
 std::atomic<bool> g_detectLogged{false};   // one-shot detection block
 std::atomic<bool> g_eclHookInstalled{false};  // published by the worker, read by the render thread
 bool g_halted = false;                     // ambiguity cap reached (render-thread owned)
+std::atomic<bool> g_armFailed{false};      // worker could not arm the hook (terminal)
+ID3D12CommandQueue* g_confirmed = nullptr; // the confirmed queue, latched (render-thread owned)
+ID3D12CommandQueue* g_prevConfirmed = nullptr;  // seeds the candidate after a re-arm
+bool g_reseed = false;
 int  g_presents = 0;
 
 using EclFn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
@@ -90,18 +94,31 @@ QueueSlot* FindOrRegister(ID3D12CommandQueue* q) {
     for (int i = 0; i < n; ++i)
         if (g_queues[i].q.load(std::memory_order_relaxed) == q) return &g_queues[i];
     // First sight of this queue: claim a slot (rare path).
+    // Payload FIRST, publish SECOND: another thread's detour reads desc/
+    // deviceMatch as soon as it sees a non-null q, and a half-written slot
+    // would classify a COPY queue as DIRECT (type DIRECT == 0 zero-init;
+    // perf audit MED-3, 2026-07-26).
+    const D3D12_COMMAND_QUEUE_DESC desc = q->GetDesc();
+    const DWORD tid = ::GetCurrentThreadId();
+    bool deviceMatch = false;
+    {
+        ID3D12Device* qdev = nullptr;
+        if (SUCCEEDED(q->GetDevice(IID_PPV_ARGS(&qdev))) && qdev) {
+            deviceMatch = (qdev == g_device);
+            qdev->Release();
+        }
+    }
     for (int i = 0; i < kMaxQueues; ++i) {
         ID3D12CommandQueue* expected = nullptr;
         if (g_queues[i].q.load(std::memory_order_relaxed) == q) return &g_queues[i];
+        QueueSlot& sPre = g_queues[i];
+        if (sPre.q.load(std::memory_order_relaxed) == nullptr) {
+            sPre.desc = desc;
+            sPre.firstTid = tid;
+            sPre.deviceMatch = deviceMatch;
+        }
         if (g_queues[i].q.compare_exchange_strong(expected, q, std::memory_order_acq_rel)) {
             QueueSlot& s = g_queues[i];
-            s.desc = q->GetDesc();
-            s.firstTid = ::GetCurrentThreadId();
-            ID3D12Device* qdev = nullptr;
-            if (SUCCEEDED(q->GetDevice(IID_PPV_ARGS(&qdev))) && qdev) {
-                s.deviceMatch = (qdev == g_device);
-                qdev->Release();
-            }
             int cnt = g_queueCount.load(std::memory_order_relaxed);
             while (cnt <= i && !g_queueCount.compare_exchange_weak(cnt, i + 1,
                                                                    std::memory_order_release)) {}
@@ -166,11 +183,13 @@ DWORD WINAPI EclHookThread(LPVOID) {
                                : nullptr;
     if (!create) {
         UE_LOGW("imgui_overlay: dx12 capture: D3D12CreateDevice unavailable -- ECL hook skipped");
+        g_armFailed.store(true, std::memory_order_release);
         return 0;
     }
     ID3D12Device* dummyDev = nullptr;
     if (FAILED(create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dummyDev))) || !dummyDev) {
         UE_LOGW("imgui_overlay: dx12 capture: dummy D3D12 device failed -- ECL hook skipped");
+        g_armFailed.store(true, std::memory_order_release);
         return 0;
     }
     D3D12_COMMAND_QUEUE_DESC qd{};
@@ -187,10 +206,17 @@ DWORD WINAPI EclHookThread(LPVOID) {
             ue_wrap::log::Flush();
         } else {
             g_eclTarget = nullptr;
+            g_armFailed.store(true, std::memory_order_release);
         }
         dummyQ->Release();
+    } else {
+        g_armFailed.store(true, std::memory_order_release);
     }
     dummyDev->Release();
+    if (g_armFailed.load(std::memory_order_acquire))
+        UE_LOGW("imgui_overlay: RHI = DX12: could not arm the presenting-queue capture -- "
+                "the overlay stays down this run.");
+    ue_wrap::log::Flush();
     return 0;
 }
 
@@ -213,7 +239,14 @@ void LogDetectionOnce(IDXGISwapChain* sc) {
     if (sc3) sc3->Release();
     if (dev) g_device = dev;  // keep the AddRef: the device-match anchor
     if (!g_device) return;
-    ::CloseHandle(::CreateThread(nullptr, 0, &EclHookThread, nullptr, 0, nullptr));
+    HANDLE th = ::CreateThread(nullptr, 0, &EclHookThread, nullptr, 0, nullptr);
+    if (th) {
+        ::CloseHandle(th);
+    } else {
+        g_armFailed.store(true, std::memory_order_release);
+        UE_LOGW("imgui_overlay: RHI = DX12: capture worker could not start -- overlay stays down");
+        ue_wrap::log::Flush();
+    }
 }
 
 void FlushSummaryAndDisarm() {
@@ -252,14 +285,27 @@ ID3D12Device* Device() { return g_device; }
 
 ID3D12CommandQueue* TryConfirmQueue(IDXGISwapChain* sc) {
     if (g_halted) return nullptr;
+    // Once confirmed, hand the SAME queue back on every call. Without this
+    // latch a bring-up failure after confirmation re-entered the confirmation
+    // path every present -- re-flushing the whole SUMMARY (n log lines + a
+    // disk flush) and re-baking the ImGui font atlas each frame (perf audit
+    // HIGH-2, 2026-07-26).
+    if (g_confirmed) return g_confirmed;
     LogDetectionOnce(sc);
     if (!g_device) return nullptr;
+    if (g_armFailed.load(std::memory_order_acquire)) { g_halted = true; return nullptr; }
     if (!g_eclHookInstalled.load(std::memory_order_acquire)) return nullptr;  // worker still arming
 
     ID3D12CommandQueue* winner = g_lastDirectSameDev.exchange(nullptr, std::memory_order_relaxed);
     ++g_presents;
     static ID3D12CommandQueue* s_candidate = nullptr;
     static int s_window = 0, s_wins = 0;
+    if (g_reseed) {  // a re-arm starts from the queue we already trusted
+        g_reseed = false;
+        s_candidate = g_prevConfirmed;
+        s_window = 0;
+        s_wins = 0;
+    }
     if (winner) {
         const int n = g_queueCount.load(std::memory_order_acquire);
         for (int i = 0; i < n; ++i)
@@ -273,12 +319,13 @@ ID3D12CommandQueue* TryConfirmQueue(IDXGISwapChain* sc) {
     if (s_candidate) ++s_window;
     if (s_candidate && s_window >= kConfirmPresents) {
         if (s_wins >= kConfirmMinWins) {
-            ID3D12CommandQueue* confirmed = s_candidate;
+            g_confirmed = s_candidate;
+            g_prevConfirmed = s_candidate;
             FlushSummaryAndDisarm();  // the measured record + hook::Disable (patch lifted)
             UE_LOGI("imgui_overlay: dx12: presenting queue CONFIRMED %p (%d/%d frames) -- "
-                    "bringing the renderer up", static_cast<void*>(confirmed), s_wins, s_window);
+                    "bringing the renderer up", static_cast<void*>(g_confirmed), s_wins, s_window);
             ue_wrap::log::Flush();
-            return confirmed;
+            return g_confirmed;
         }
         s_candidate = nullptr; s_window = 0; s_wins = 0;  // re-candidate
     }
@@ -331,6 +378,20 @@ void InstallCreationProbe() {
         g_createScHwndTarget = nullptr;
     UE_LOGI("imgui_overlay: swapchain-creation probe armed (CreateSwapChain=%p ForHwnd=%p)",
             g_createScTarget, g_createScHwndTarget);
+}
+
+void Rearm() {
+    // A swapchain recreation invalidates the "this queue presents that chain"
+    // fact. Re-enable the capture hook and require a fresh confirmation; the
+    // previously confirmed queue is SEEDED as the candidate, so in the normal
+    // case (same queue) this costs one confirmation window and no blink beyond
+    // it. Design of record + correctness audit I-2.
+    if (g_halted || !g_eclTarget) return;
+    g_confirmed = nullptr;
+    g_presents = 0;
+    g_reseed = true;
+    if (ue_wrap::hook::Enable(g_eclTarget))
+        g_eclHookInstalled.store(true, std::memory_order_release);
 }
 
 void Shutdown() {

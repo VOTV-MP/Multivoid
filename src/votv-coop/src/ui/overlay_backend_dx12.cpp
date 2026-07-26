@@ -35,8 +35,6 @@ namespace {
 constexpr UINT kMaxBackBuffers   = 8;
 constexpr UINT kTextureSlots     = 256;   // SRV heap: slot 0 = ImGui font, 1..N = UI textures
 constexpr DWORD kFenceWaitMs     = 2000;  // the house bound (see the design doc)
-constexpr int  kConfirmPresents  = 30;    // queue-confirmation window
-constexpr int  kConfirmMinWins   = 27;    // >=90% agreement (measured on the rig: 100%)
 
 ID3D12CommandQueue* g_queue = nullptr;     // the CONFIRMED presenting queue (AddRef'd)
 IDXGISwapChain*     g_boundSc = nullptr;   // the swapchain our state belongs to (identity only)
@@ -85,27 +83,36 @@ struct Pending {
     UINT64 fenceValue = 0;
 };
 Pending g_pending[64];
+int g_pendingCount = 0;   // non-empty entries in g_pending (skips the per-frame walk)
 
 void QueuePendingRelease(ID3D12Resource* res, UINT slot, UINT64 fenceValue) {
     if (!res && !slot) return;
     for (auto& p : g_pending)
-        if (!p.res && !p.slot) { p.res = res; p.slot = slot; p.fenceValue = fenceValue; return; }
+        if (!p.res && !p.slot) {
+            p.res = res; p.slot = slot; p.fenceValue = fenceValue;
+            ++g_pendingCount;
+            return;
+        }
     // Table full (never seen: 64 entries vs a ~10-preview UI). Release now --
     // and say so, because a silent immediate release is a use-after-free risk.
     UE_LOGW("imgui_overlay: dx12 deferred-release table full -- releasing %p immediately",
             static_cast<void*>(res));
     if (res) res->Release();
-    if (slot && slot <= kTextureSlots) g_tex[slot] = TexSlot{};
+    if (slot && slot <= kTextureSlots && !g_tex[slot].res) g_tex[slot] = TexSlot{};
 }
 
 void ProcessPendingReleases() {
-    if (!g_fence) return;
+    if (!g_fence || g_pendingCount == 0) return;  // the common per-frame case
     const UINT64 done = g_fence->GetCompletedValue();
     for (auto& p : g_pending) {
         if ((!p.res && !p.slot) || p.fenceValue > done) continue;
         if (p.res) p.res->Release();
-        if (p.slot && p.slot <= kTextureSlots) g_tex[p.slot] = TexSlot{};
+        // Only clear a slot that is still the one we deferred (its res is null
+        // and its gpuPtr is the pending marker) -- never stomp a live entry.
+        if (p.slot && p.slot <= kTextureSlots && !g_tex[p.slot].res)
+            g_tex[p.slot] = TexSlot{};
         p = Pending{};
+        --g_pendingCount;
     }
 }
 
@@ -122,9 +129,18 @@ void NoteDeviceRemoved(const char* where) {
 bool WaitFence(UINT64 value, const char* where) {
     if (!g_fence || value == 0) return true;
     if (g_fence->GetCompletedValue() >= value) return true;
-    if (!g_fenceEvent) return true;
-    if (FAILED(g_fence->SetEventOnCompletion(value, g_fenceEvent))) return true;
-    if (::WaitForSingleObject(g_fenceEvent, kFenceWaitMs) == WAIT_OBJECT_0) return true;
+    if (g_fenceEvent && SUCCEEDED(g_fence->SetEventOnCompletion(value, g_fenceEvent))) {
+        if (::WaitForSingleObject(g_fenceEvent, kFenceWaitMs) == WAIT_OBJECT_0) return true;
+        NoteDeviceRemoved(where);
+        return false;
+    }
+    // No event (or it could not be armed): SPIN with the same bound rather than
+    // claiming success -- a false success resets allocators under live GPU work
+    // (audit I-4). ~1 ms granularity; this path is not the steady state.
+    for (DWORD waited = 0; waited < kFenceWaitMs; waited += 1) {
+        if (g_fence->GetCompletedValue() >= value) return true;
+        ::Sleep(1);
+    }
     NoteDeviceRemoved(where);
     return false;
 }
@@ -146,6 +162,9 @@ bool CreateSwapchainDerived(IDXGISwapChain* sc) {
     DXGI_SWAP_CHAIN_DESC desc{};
     if (!g_device || FAILED(sc->GetDesc(&desc))) return false;
     if (FAILED(sc->QueryInterface(IID_PPV_ARGS(&g_sc3))) || !g_sc3) return false;
+    if (desc.BufferCount > kMaxBackBuffers)
+        UE_LOGW("imgui_overlay: dx12: swapchain has %u buffers (cap %u) -- frames beyond the cap "
+                "will not draw", desc.BufferCount, kMaxBackBuffers);
     g_bufferCount = desc.BufferCount > kMaxBackBuffers ? kMaxBackBuffers : desc.BufferCount;
     g_rtvFormat = desc.BufferDesc.Format;
 
@@ -171,7 +190,47 @@ bool CreateSwapchainDerived(IDXGISwapChain* sc) {
 
 }  // namespace
 
-bool Live() { return g_live && !g_disabled; }
+namespace {
+
+// Free every renderer-owned object (NOT the capture-owned device/queue). Used
+// by Shutdown and by every InitRenderer failure path -- imgui_overlay's
+// bring-up contract is "on ANY failure it releases whatever it acquired this
+// call", and the DX12 half was leaking a heap+RTVs+allocators+fence per retry
+// (correctness audit I-1, 2026-07-26).
+void ReleaseRendererState() {
+    ReleaseSwapchainDerived();
+    for (auto& f : g_frames)
+        if (f.allocator) { f.allocator->Release(); f.allocator = nullptr; }
+    if (g_list) { g_list->Release(); g_list = nullptr; }
+    if (g_uploadList) { g_uploadList->Release(); g_uploadList = nullptr; }
+    if (g_uploadAlloc) { g_uploadAlloc->Release(); g_uploadAlloc = nullptr; }
+    if (g_srvHeap) { g_srvHeap->Release(); g_srvHeap = nullptr; }
+    if (g_fence) { g_fence->Release(); g_fence = nullptr; }
+    if (g_fenceEvent) { ::CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
+}
+
+// The backend's PSO bakes the RTV format and the frames-in-flight count at
+// Init, so a real format/count change needs a backend re-init (the ImGui
+// context and the Win32 backend survive). Shared by the resize bracket and the
+// swapchain-recreation branch (audit I-2: only one of them had it).
+void ReinitBackendIfDescChanged(UINT oldCount, DXGI_FORMAT oldFormat) {
+    if (g_bufferCount == oldCount && g_rtvFormat == oldFormat) return;
+    UE_LOGI("imgui_overlay: dx12: swapchain desc changed (buffers %u->%u, format %d->%d) -- "
+            "re-initializing the renderer backend", oldCount, g_bufferCount,
+            static_cast<int>(oldFormat), static_cast<int>(g_rtvFormat));
+    WaitGpuIdle("desc-change");
+    ImGui_ImplDX12_Shutdown();
+    if (!ImGui_ImplDX12_Init(g_device, static_cast<int>(g_bufferCount), g_rtvFormat, g_srvHeap,
+                             g_srvHeap->GetCPUDescriptorHandleForHeapStart(),
+                             g_srvHeap->GetGPUDescriptorHandleForHeapStart())) {
+        UE_LOGE("imgui_overlay: dx12 re-init after a desc change FAILED -- overlay disabled");
+        g_disabled = true;
+    }
+}
+
+}  // namespace
+
+bool Live() { return g_live; }  // "DX12 is the active backend", even if drawing is disabled
 
 bool CaptureDevice(IDXGISwapChain* sc) {
     if (g_live) return true;
@@ -191,6 +250,7 @@ bool InitRenderer(IDXGISwapChain* sc) {
     if (!g_device || !g_queue) return false;
     if (!CreateSwapchainDerived(sc)) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- swapchain-derived state (RTVs)");
+        ReleaseRendererState();
         return false;
     }
     D3D12_DESCRIPTOR_HEAP_DESC sd{};
@@ -199,12 +259,19 @@ bool InitRenderer(IDXGISwapChain* sc) {
     sd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     if (FAILED(g_device->CreateDescriptorHeap(&sd, IID_PPV_ARGS(&g_srvHeap))) || !g_srvHeap) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- SRV heap");
+        ReleaseRendererState();
         return false;
     }
-    for (UINT i = 0; i < g_bufferCount; ++i)
+    // ALL kMaxBackBuffers allocators, not just the current g_bufferCount: a
+    // later swapchain recreation can come back with MORE buffers (up to the
+    // cap) and RenderDrawData indexes g_frames by the CURRENT count. Sizing to
+    // the boot-time count left the extra slots null -> a null deref on the
+    // render thread (perf audit CRIT-1, 2026-07-26). Allocators are cheap.
+    for (UINT i = 0; i < kMaxBackBuffers; ++i)
         if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                     IID_PPV_ARGS(&g_frames[i].allocator)))) {
             UE_LOGE("imgui_overlay: dx12 bring-up failed -- command allocator %u", i);
+            ReleaseRendererState();
             return false;
         }
     if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -213,6 +280,7 @@ bool InitRenderer(IDXGISwapChain* sc) {
                                            nullptr, IID_PPV_ARGS(&g_uploadList))) ||
         FAILED(g_uploadList->Close())) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- upload list");
+        ReleaseRendererState();
         return false;
     }
     if (FAILED(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -220,17 +288,27 @@ bool InitRenderer(IDXGISwapChain* sc) {
                                            IID_PPV_ARGS(&g_list))) ||
         FAILED(g_list->Close())) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- command list");
+        ReleaseRendererState();
         return false;
     }
     if (FAILED(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)))) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- fence");
+        ReleaseRendererState();
         return false;
     }
     g_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!g_fenceEvent) {
+        // Without the event every WaitFence would fake success and we would
+        // Reset allocators under live GPU work (audit I-4).
+        UE_LOGE("imgui_overlay: dx12 bring-up failed -- fence event");
+        ReleaseRendererState();
+        return false;
+    }
     if (!ImGui_ImplDX12_Init(g_device, static_cast<int>(g_bufferCount), g_rtvFormat, g_srvHeap,
                              g_srvHeap->GetCPUDescriptorHandleForHeapStart(),
                              g_srvHeap->GetGPUDescriptorHandleForHeapStart())) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX12_Init failed");
+        ReleaseRendererState();
         return false;
     }
     g_live = true;
@@ -252,33 +330,56 @@ void InvalidateDeviceObjects() {
 }
 
 void EnsureTarget(IDXGISwapChain* sc) {
-    if (!g_live || g_disabled) return;
+    if (!g_live) return;
+    ProcessPendingReleases();  // RenderDrawData may not run for many frames (audit MINOR-7)
+    if (g_disabled) return;
     if (sc != g_boundSc) {
         // A swapchain RECREATION never passes through our ResizeBuffers hook.
-        // Rebuild everything derived from it. The confirmed queue is kept (it
-        // presents the new chain in every measured case; a disagreement shows
-        // up as a stale frame, not as UB).
-        UE_LOGI("imgui_overlay: dx12: swapchain changed (%p -> %p) -- rebuilding targets",
+        // Two things must happen, and the first one is NOT optional: the new
+        // chain may be presented by a DIFFERENT queue, and submitting our list
+        // on the wrong queue is a cross-queue race on the backbuffer -- not "a
+        // stale frame" as an earlier comment claimed (correctness audit I-2).
+        // So: stop drawing, RE-ARM the capture seeded with the queue we know,
+        // and only draw again once it is re-confirmed.
+        UE_LOGI("imgui_overlay: dx12: swapchain changed (%p -> %p) -- rebuilding targets and "
+                "re-confirming the presenting queue",
                 static_cast<void*>(g_boundSc), static_cast<void*>(sc));
         WaitGpuIdle("swapchain-recreate");
         ReleaseSwapchainDerived();
-        CreateSwapchainDerived(sc);
+        const UINT oldCount = g_bufferCount;
+        const DXGI_FORMAT oldFormat = g_rtvFormat;
+        if (!CreateSwapchainDerived(sc)) return;
+        ReinitBackendIfDescChanged(oldCount, oldFormat);
+        if (g_queue) { g_queue->Release(); g_queue = nullptr; }
+        dx12_capture::Rearm();  // seeds the previously confirmed queue as candidate
         return;
     }
     if (!g_rtvHeap) CreateSwapchainDerived(sc);
+    if (!g_queue) {  // re-arm in flight: draw again only once re-confirmed
+        if (ID3D12CommandQueue* q = dx12_capture::TryConfirmQueue(sc)) {
+            g_queue = q;
+            g_queue->AddRef();
+            UE_LOGI("imgui_overlay: dx12: presenting queue re-confirmed after the swapchain "
+                    "change -- drawing resumes");
+        }
+    }
 }
 
 void RenderDrawData(IDXGISwapChain* sc) {
     if (!g_live || g_disabled || !g_rtvHeap || !g_sc3 || !g_queue || sc != g_boundSc) return;
     FrameContext& fc = g_frames[g_frameIndex % g_bufferCount];
     ++g_frameIndex;
+    if (!fc.allocator) return;  // belt to CRIT-1's braces (all slots are created up front)
     if (!WaitFence(fc.fenceValue, "frame-context")) return;
     fc.fenceValue = 0;
     if (FAILED(fc.allocator->Reset())) return;
     if (FAILED(g_list->Reset(fc.allocator, nullptr))) return;
 
     const UINT idx = g_sc3->GetCurrentBackBufferIndex();
-    if (idx >= g_bufferCount || !g_backBuffers[idx]) return;
+    // Past this point the list is RECORDING: every early return must Close it,
+    // or the next frame resets an allocator whose list is still open (invalid
+    // D3D12 usage -- audit LOW-12).
+    if (idx >= g_bufferCount || !g_backBuffers[idx]) { g_list->Close(); return; }
 
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -325,22 +426,7 @@ void OnResizeRecreate(IDXGISwapChain* sc) {
     const UINT oldCount = g_bufferCount;
     const DXGI_FORMAT oldFormat = g_rtvFormat;
     if (!CreateSwapchainDerived(sc)) return;
-    if (g_bufferCount != oldCount || g_rtvFormat != oldFormat) {
-        // The backend's PSO bakes the RTV format and the frames-in-flight count
-        // at Init, so a real format/count change needs a backend re-init (the
-        // ImGui context and the Win32 backend survive).
-        UE_LOGI("imgui_overlay: dx12: swapchain desc changed (buffers %u->%u, format %d->%d) -- "
-                "re-initializing the renderer backend", oldCount, g_bufferCount,
-                static_cast<int>(oldFormat), static_cast<int>(g_rtvFormat));
-        WaitGpuIdle("desc-change");
-        ImGui_ImplDX12_Shutdown();
-        if (!ImGui_ImplDX12_Init(g_device, static_cast<int>(g_bufferCount), g_rtvFormat, g_srvHeap,
-                                 g_srvHeap->GetCPUDescriptorHandleForHeapStart(),
-                                 g_srvHeap->GetGPUDescriptorHandleForHeapStart())) {
-            UE_LOGE("imgui_overlay: dx12 re-init after a desc change FAILED -- overlay disabled");
-            g_disabled = true;
-        }
-    }
+    ReinitBackendIfDescChanged(oldCount, oldFormat);
 }
 
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
@@ -350,8 +436,12 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     if (!detail::DecodeImageFileBgra(path, px, w, h)) return nullptr;
 
     UINT slot = 0;
+    // A slot whose release is still PENDING keeps its gpuPtr: handing it out
+    // again would overwrite a shader-visible SRV descriptor under an in-flight
+    // draw and then get wiped by ProcessPendingReleases (correctness audit
+    // C-1, 2026-07-26). Free == both fields clear.
     for (UINT i = 1; i <= kTextureSlots; ++i)
-        if (!g_tex[i].res) { slot = i; break; }
+        if (!g_tex[i].res && !g_tex[i].gpuPtr) { slot = i; break; }
     if (!slot) {
         UE_LOGW("imgui_overlay: dx12 preview slots exhausted (%u) -- this image renders blank",
                 kTextureSlots);
@@ -475,19 +565,12 @@ void Shutdown(bool rendererWasLive) {
         if (p.res) p.res->Release();
         p = Pending{};
     }
+    g_pendingCount = 0;
     for (UINT i = 1; i <= kTextureSlots; ++i)
         if (g_tex[i].res) { g_tex[i].res->Release(); g_tex[i] = TexSlot{}; }
     if (rendererWasLive && g_live) ImGui_ImplDX12_Shutdown();
     g_live = false;
-    ReleaseSwapchainDerived();
-    for (auto& f : g_frames)
-        if (f.allocator) { f.allocator->Release(); f.allocator = nullptr; }
-    if (g_list) { g_list->Release(); g_list = nullptr; }
-    if (g_uploadList) { g_uploadList->Release(); g_uploadList = nullptr; }
-    if (g_uploadAlloc) { g_uploadAlloc->Release(); g_uploadAlloc = nullptr; }
-    if (g_srvHeap) { g_srvHeap->Release(); g_srvHeap = nullptr; }
-    if (g_fence) { g_fence->Release(); g_fence = nullptr; }
-    if (g_fenceEvent) { ::CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
+    ReleaseRendererState();
     if (g_queue) { g_queue->Release(); g_queue = nullptr; }
     g_device = nullptr;  // owned by dx12_capture
 }
