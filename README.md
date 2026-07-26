@@ -230,6 +230,7 @@ Repository layout:
 | Path | What |
 |--|--|
 | [`docs/`](docs/) | Architecture, roadmap, scope, per-system sync docs, lessons ledger |
+| [`docs/VERSION_MIGRATION.md`](docs/VERSION_MIGRATION.md) | **What happens when VOTV updates** — the measured version surface, the port runbook, the gates |
 | [`research/findings/`](research/findings/) | Append-only dated RE / reflection / design findings |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, MinHook, GNS) |
 | [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader` / `ui`) |
