@@ -282,6 +282,23 @@ Three "no-compromise" rules govern day-to-day work:
 
 ---
 
+## Credits
+
+Multivoid is written by one person (Pelmentor) with heavy use of AI coding
+tools — direction, architecture, testing and every release decision are mine;
+much of the code was written with Claude. The full commit history is public, so
+you can judge the process as well as the result.
+
+Prior art this project learned from, with thanks:
+
+| Project | What it gave Multivoid |
+|--|--|
+| [MTA:SA](https://github.com/multitheftauto/mtasa-blue) (GPLv3, vendored read-only) | The architectural precedent: the parallel class hierarchy, per-element syncers, keysync shape, host-authoritative AI. Multivoid follows MTA's shapes deliberately — no MTA code is copied. |
+| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported (with attribution in the source), and it remains a development tool here — SDK header dumps, Blueprint dumps, live inspection. It does not ship and is not required to play. |
+| [MinHook](https://github.com/TsudaKageyu/minhook) (MIT) | The x64 trampoline hooking engine (vendored). |
+| **VoidTogether** | The first multiplayer attempt for VOTV, and useful to read while designing this one. No VoidTogether code is in Multivoid (it is a JS server; this is a C++ in-process mod), but two things came from studying it and are cited in the source where they are used: the nickname-sanitizer approach ([`player_handshake.cpp`](src/votv-coop/src/coop/session/player_handshake.cpp)) and widget-styling comparisons that shaped the nameplate look ([`engine_widget.cpp`](src/votv-coop/src/ue_wrap/engine/engine_widget.cpp)). |
+| [Dear ImGui](https://github.com/ocornut/imgui) (MIT), [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (BSD), [Opus](https://opus-codec.org/) (BSD), [FreeType](https://freetype.org/) (FTL), [miniaudio](https://miniaud.io/) (MIT/public domain) | Vendored libraries — UI, transport, voice, text rendering, audio. |
+
 ## Legal
 
 This is a **hook-only standalone mod**. It contains **no Voices of the Void
