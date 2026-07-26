@@ -1674,8 +1674,32 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   run 30168572721) because `ad15ae7c` added the registry-gate step without re-smoking. The refusal
   is designed — but the recovery (cacheless build ~40 min + local smoke of the CI bytes + commit
   `fingerprint-dump.json` + re-run) costs ~1.5 h AT RELEASE TIME. Dispatch the cacheless build right
-  after the build-core edit lands, not when the judge refuses. *Look FIRST:*
+  after the build-core edit lands, not when the judge refuses. **CRLF addendum (2026-07-26):** the
+  hash is the RUNNER'S autocrlf (CRLF) view — a local LF checkout hashes differently by design;
+  LF→CRLF conversion reproduces the dump byte-exact. Commit the run's dump VERBATIM, never a
+  locally-computed hash. *Look FIRST:*
   `memory/lesson_build_core_edit_requires_fingerprint_recommit.md`
+- **Dev releases via GitHub Actions are a RARE, END-OF-SESSION act (USER DIRECTIVE 2026-07-26).**
+  The CI cacheless build is ~40 min; the local build ~1 min. Never block a session on the CI lane:
+  fire the release workflows as the session's LAST action and let them finish unattended
+  (published-row bookkeeping rides the next push). Iteration always runs on local builds. *Look
+  FIRST:* `memory/feedback_dev_releases_rare_end_of_session.md`
+- **"Reliable" wire loss happens at ENQUEUE time, silently, in contiguous runs.** GNS ARQ covers
+  only messages that ENTERED the stream; under buffer-full (rc=-25, pendRel ≈ 512KB cap)
+  `bDeleteFailedMessages=true` DELETES the message and 60+ `SendReliableToSlot` callers ignore the
+  false return. Measured (b125 tester log): ALL 164 losses in ONE join second; loss contiguous in
+  the drain's eid-ascending order (`registry.cpp:291`) — the join drain paces by CPU, blind to the
+  link. Same class as the B2 not-ready skip: ONE delivery-guarantee owner. *Look FIRST:*
+  `research/findings/votv-tester-log-triage-b125-2026-07-26.md` §R-A +
+  `memory/lesson_reliable_enqueue_loss_is_silent_and_contiguous.md`
+- **An identity-minting migration must census the wire SENDERS, not only the identity maps.** v122
+  no-passive-mint demoted client keyed minting, but TWO client-reachable express paths
+  (`prop_container_extract.cpp` takeObj-POST — no role gate; `trash_collect_sync.cpp`
+  EnsureHeldItemBroadcast) still stamp `elementId=(eid==kInvalidId)?0:eid` → clients emit 0 → the
+  host range-gate silently drops → client-born items stillborn for 3+ builds (tester's lost
+  hamburger). When changing minting rules: grep every payload-stamp site reachable on the demoted
+  role. *Look FIRST:* `research/findings/votv-tester-log-triage-b125-2026-07-26.md` §R-B +
+  `memory/lesson_identity_mint_migration_must_census_wire_senders.md`
 
 ---
 

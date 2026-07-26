@@ -1,5 +1,11 @@
 # Release checklist — Multivoid (the ledger ritual)
 
+**Cadence policy (USER, 2026-07-26): dev releases through this lane are a RARE, END-OF-SESSION
+act.** The CI cacheless build is ~40 min vs ~1 min locally — never block a session waiting on it.
+Fire the workflows as the session's last action and let them finish unattended; the `published`
+ledger row may ride the next session's first leak-audited push. All iteration (smokes, hands-on)
+runs on LOCAL builds.
+
 > Rewritten 2026-07-25 onto the CI release lane. Design of record:
 > `research/findings/tooling/votv-ci-autobuild-dev-release-DESIGN-2026-07-25.md`.
 > The identity model is the Paper pair (game target + build number); the
