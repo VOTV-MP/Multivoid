@@ -21,6 +21,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/config/config.h"
 #include "ui/fonts.h"
+#include "ui/overlay_backend.h"  // Kind() -- the "Graphics API" line
 #include "coop/player/roster.h"  // LocalIsHost -- the Administration role gate
 #include "ui/admin_panel.h"
 #include "ui/world_rules_panel.h"  // F1 > World > Rules (shown to everyone)
@@ -616,6 +617,14 @@ void Render() {
         if (shown == 0) ImGui::TextDisabled("No tools here yet -- coming soon.");
     } else {
         ImGui::TextDisabled("Select a category on the left.");
+        // Which graphics API this session is running on (the overlay knows
+        // because it renders through it). Answers "why does X look/behave
+        // different for me" without asking the user to dig through logs.
+        {
+            const char* rhi = ui::overlay_backend::Kind();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Graphics API: %s", rhi ? rhi : "starting up");
+        }
         if (!devMode) {
             ImGui::Spacing();
             if (g_devMode && !::coop::dev_gate::Allowed())

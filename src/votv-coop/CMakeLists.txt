@@ -511,6 +511,7 @@ add_library(votv-coop SHARED
     src/ui/overlay_backend.cpp
     src/ui/overlay_backend_dx11.cpp
     src/ui/overlay_backend_dx12.cpp
+    src/ui/overlay_backend_dx12_capture.cpp
     src/ui/dev_menu.cpp
     src/ui/skins_panel.cpp
     src/ui/admin_panel.cpp

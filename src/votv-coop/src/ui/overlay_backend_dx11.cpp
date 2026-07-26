@@ -16,14 +16,9 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
-#include <wincodec.h>  // WIC: the skins-browser preview decode (PNG/BMP -> BGRA)
 
-#include <atomic>
 #include <cstdint>
 #include <vector>
-
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "windowscodecs.lib")
 
 #include "imgui.h"
 #include "backends/imgui_impl_dx11.h"
@@ -108,56 +103,26 @@ void OnResizeRecreate(IDXGISwapChain* sc) { CreateRTV(sc); }
 
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     // RENDER THREAD ONLY (call from a surface's Render() -- the Present detour
-    // thread that owns g_device). WIC decode (PNG/BMP/JPG) -> 32bpp BGRA ->
-    // immutable D3D11 texture + SRV. The returned SRV is the ImTextureID; the
-    // caller caches it (this is a per-file one-shot, not a per-frame path).
+    // thread that owns g_device). The WIC decode is the RHI-agnostic shared
+    // helper (overlay_backend.cpp); this half is the D3D11 upload: an
+    // immutable texture + SRV. The returned SRV is the ImTextureID; the caller
+    // caches it and returns it via DestroyTexture.
     if (!g_device || !path) return nullptr;
-    static bool s_comTried = false;
-    if (!s_comTried) {
-        s_comTried = true;
-        // S_FALSE (already init) and RPC_E_CHANGED_MODE (STA already active on
-        // this thread) both leave COM usable for CoCreateInstance below.
-        ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    }
-    IWICImagingFactory* fac = nullptr;
-    if (FAILED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&fac))) || !fac)
-        return nullptr;
-    IWICBitmapDecoder* dec = nullptr;
-    IWICBitmapFrameDecode* frame = nullptr;
-    IWICFormatConverter* conv = nullptr;
+    std::vector<uint8_t> px;
+    unsigned w = 0, h = 0;
+    if (!detail::DecodeImageFileBgra(path, px, w, h)) return nullptr;
     ID3D11Texture2D* tex = nullptr;
     ID3D11ShaderResourceView* srv = nullptr;
-    UINT w = 0, h = 0;
-    do {
-        if (FAILED(fac->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
-                                                  WICDecodeMetadataCacheOnDemand, &dec)) || !dec)
-            break;
-        if (FAILED(dec->GetFrame(0, &frame)) || !frame) break;
-        if (FAILED(fac->CreateFormatConverter(&conv)) || !conv) break;
-        if (FAILED(conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA,
-                                    WICBitmapDitherTypeNone, nullptr, 0.0,
-                                    WICBitmapPaletteTypeCustom)))
-            break;
-        if (FAILED(conv->GetSize(&w, &h)) || !w || !h || w > 4096 || h > 4096) break;
-        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
-        if (FAILED(conv->CopyPixels(nullptr, w * 4, static_cast<UINT>(px.size()), px.data())))
-            break;
-        D3D11_TEXTURE2D_DESC td{};
-        td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_IMMUTABLE;
-        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA sd{px.data(), w * 4u, 0};
-        if (FAILED(g_device->CreateTexture2D(&td, &sd, &tex)) || !tex) break;
-        g_device->CreateShaderResourceView(tex, nullptr, &srv);
-    } while (false);
-    if (tex) tex->Release();  // the SRV holds its own reference
-    if (conv) conv->Release();
-    if (frame) frame->Release();
-    if (dec) dec->Release();
-    fac->Release();
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{px.data(), w * 4u, 0};
+    if (FAILED(g_device->CreateTexture2D(&td, &sd, &tex)) || !tex) return nullptr;
+    g_device->CreateShaderResourceView(tex, nullptr, &srv);
+    tex->Release();  // the SRV holds its own reference
     if (srv) {
         if (outW) *outW = static_cast<int>(w);
         if (outH) *outH = static_cast<int>(h);
