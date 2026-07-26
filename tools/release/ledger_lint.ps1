@@ -45,6 +45,42 @@ foreach ($n in $allNs) {
     }
 }
 
+# --- Public-doc staleness/consistency gates (local, both lanes) -----------
+# INSTALL_STALENESS: docs/INSTALL.md + README.md carry NO per-build data (no
+# 40/64-hex, no literal multivoid-<target>-<digits>.dll -- placeholders like
+# multivoid-<game>-<build>.dll pass) and any multivoid-<x.y.z?>- filename
+# context names the CURRENT game target (parsed by the one PS-side parser,
+# Get-GameTargetFromCMake, which throws UNREADABLE on parser-miss).
+# INSTALL_CONSISTENT: the release-body template's anchor phrases appear
+# verbatim (ordinal) in docs/INSTALL.md -- the machine diff between the two
+# surfaces that share the install prose.
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$gameTarget = Get-GameTargetFromCMake -CMakePath (Join-Path $repoRoot $script:CMakeListsPath)
+$installPath = Join-Path $repoRoot 'docs/INSTALL.md'
+if (-not (Test-Path -LiteralPath $installPath)) {
+    Fail 'INSTALL: docs/INSTALL.md missing (release bodies link it)'
+} else {
+    $installDoc = Get-Content -LiteralPath $installPath -Raw
+    if (-not $installDoc.Contains($script:InstallFolderAnchor)) { Fail "INSTALL_CONSISTENT: folder anchor '$($script:InstallFolderAnchor)' not found verbatim in docs/INSTALL.md" }
+    if (-not $installDoc.Contains($script:InstallDeleteOldAnchor)) { Fail "INSTALL_CONSISTENT: update-rule anchor '$($script:InstallDeleteOldAnchor)' not found verbatim in docs/INSTALL.md" }
+    if (-not $installDoc.Contains($gameTarget)) { Fail "INSTALL_STALENESS: docs/INSTALL.md does not name the current game target '$gameTarget' (retarget without doc update?)" }
+}
+foreach ($docRel in @('docs/INSTALL.md', 'README.md')) {
+    $p = Join-Path $repoRoot $docRel
+    if (-not (Test-Path -LiteralPath $p)) { continue }   # INSTALL absence already failed above; README always exists
+    $doc = Get-Content -LiteralPath $p -Raw
+    if ([regex]::IsMatch($doc, '\b[0-9a-f]{64}\b')) { Fail "INSTALL_STALENESS: $docRel carries a 64-hex literal (per-release data lives on the release page)" }
+    if ([regex]::IsMatch($doc, '\b[0-9a-f]{40}\b')) { Fail "INSTALL_STALENESS: $docRel carries a 40-hex literal (per-release data lives on the release page)" }
+    if ([regex]::IsMatch($doc, "multivoid-$([regex]::Escape($gameTarget))-\d+\.dll")) {
+        Fail "INSTALL_STALENESS: $docRel carries a literal build filename (use the multivoid-<game>-<build>.dll placeholder)"
+    }
+    foreach ($m in [regex]::Matches($doc, 'multivoid-(\d+\.\d+\.\d+[a-z]?)-')) {
+        if ($m.Groups[1].Value -cne $gameTarget) {
+            Fail "INSTALL_STALENESS: $docRel names game target '$($m.Groups[1].Value)' in a filename context; current target is '$gameTarget'"
+        }
+    }
+}
+
 # --- API cross-checks (drift detection) ----------------------------------
 if ($SkipApi) {
     Write-Host 'LINT SKIP: API cross-checks (offline run)'
@@ -73,6 +109,24 @@ if ($SkipApi) {
                         $bodySha = Get-ReleaseBodySource $rel.body
                         if ($null -eq $bodySha) { Fail "live release '$($rel.tag_name)' body has no parseable 'source:' key (RELEASE_BODY_UNPARSEABLE)" }
                         elseif ($bodySha -ne $st.SourceSha) { Fail "live release '$($rel.tag_name)' body source $bodySha != ledger sha $($st.SourceSha)" }
+                        # NOTES_DRIFT: the git-tracked notes file is the authority;
+                        # the live body is a publish-time copy. Labeled tri-state:
+                        # section absent / notes file missing / content mismatch --
+                        # never a silent pass. This is also the mechanical
+                        # enforcement of notes write-once-after-publish.
+                        $whatsNew = Get-ReleaseBodyWhatsNew $rel.body
+                        $notesPath = Get-ReleaseNotesPath -N $tag.N
+                        if ($null -eq $whatsNew) {
+                            Fail "NOTES_DRIFT: live release '$($rel.tag_name)' body has no '## What's new' section (NOTES_SECTION_ABSENT)"
+                        } elseif (-not (Test-Path -LiteralPath $notesPath)) {
+                            Fail "NOTES_DRIFT: live release '$($rel.tag_name)' but tools/release/notes/b$($tag.N).md is missing"
+                        } else {
+                            $fileNorm = Get-NormalizedProse (Get-Content -LiteralPath $notesPath -Raw)
+                            $bodyNorm = Get-NormalizedProse $whatsNew
+                            if (-not [string]::Equals($fileNorm, $bodyNorm, [System.StringComparison]::Ordinal)) {
+                                Fail "NOTES_DRIFT: live release '$($rel.tag_name)' What's-new section != notes/b$($tag.N).md (edit BOTH: fix the file, regenerate the body)"
+                            }
+                        }
                     }
                 }
             }

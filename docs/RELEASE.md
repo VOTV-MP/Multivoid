@@ -13,8 +13,13 @@ runs on LOCAL builds.
 > `research/findings/architecture-audits/votv-version-identity-v122-DESIGN-2026-07-19.md`.
 
 A RELEASE is: a tag `v<game>-b<N>` (stable) or `v<game>-b<N>-dev` (dev prerelease)
-whose page carries `multivoid-<game>-<N>.dll` + `xinput1_3.dll` + their SHA256
-(machine keys in the body: `source: <sha>` / `sha256: <hash>  <file>`). Bytes are
+whose page carries `multivoid-<game>-<N>.dll` + `xinput1_3.dll` + their SHA256.
+The body (ONE writer: `New-ReleaseBody`, used by publish, retro regeneration,
+and recovery alike) is: dev disclaimer -> `## What's new` (the content of
+`tools/release/notes/b<N>.md` — the changelog authority, see
+`tools/release/notes/README.md`) -> `## Install` (minimal steps + the
+`docs/INSTALL.md` link) -> `## Build provenance` (machine keys:
+`source: <sha>` / `sha256: <hash>  <file>`). Bytes are
 the CI rebuild of the tagged source (cacheless), published by the release lane
 (`release-trampoline.yml` -> `release-core.yml@main` -> `build-core.yml@main`).
 
@@ -34,6 +39,14 @@ consumes numbers.
    `config-selftest: DONE fail=0` — mp.py's smoke verdict machine-asserts this
    line whenever the env gate is set (a config/catalog regression fails the
    smoke itself, exit 8).
+0.5. **Author the changelog + show it to the user** (2026-07-26): write
+   `tools/release/notes/b<N>.md` (format rules in `tools/release/notes/README.md`:
+   plain bullets, no heading, verbs are status claims anchored to the consume
+   comment + the git range) and SHOW its text to the user before the tag push —
+   the judge's NOTES_OK check refuses a tag whose notes file is missing or
+   malformed, but only a human gates the prose's truth. The file is the
+   changelog AUTHORITY; the release page's `## What's new` is a publish-time
+   copy (ledger_lint NOTES_DRIFT keeps them equal forever after).
 1. **Tag HEAD** (its `kProtocolVersion` IS the number N being released):
    `git tag v<game>-b<N>[-dev]`. Game = `VOTVCOOP_GAME_TARGET` in
    `src/votv-coop/CMakeLists.txt`, no dashes ("0.9.0n" style).

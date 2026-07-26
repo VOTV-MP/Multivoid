@@ -68,6 +68,21 @@ if ($tag) {
     else                     { Add-Check 'MAIN_PROTO' 'FAIL' "proto at $Remote/main = $pm, expected > N = $($tag.N) (consume commit not landed?)" }
 } else { Add-Check 'MAIN_PROTO' 'FAIL' 'unevaluable (tag format failed)' }
 
+# 4b. NOTES_OK -- the changelog authority file for N exists on THIS (main)
+#     checkout and passes the format lint (pre-build refusal: no 40-min build
+#     is wasted on a missing/malformed notes file). Semantic truth of the
+#     prose is human-gated at RELEASE.md step 0.5, not judged here.
+if ($tag) {
+    $notesPath = Get-ReleaseNotesPath -N $tag.N
+    if (-not (Test-Path -LiteralPath $notesPath)) {
+        Add-Check 'NOTES_OK' 'FAIL' "notes file missing: tools/release/notes/b$($tag.N).md (write it on main, re-run)"
+    } else {
+        $notesViolations = @(Test-ReleaseNotesFormat -Content (Get-Content -LiteralPath $notesPath -Raw))
+        if ($notesViolations.Count -eq 0) { Add-Check 'NOTES_OK' 'PASS' "notes/b$($tag.N).md present, format clean" }
+        else { Add-Check 'NOTES_OK' 'FAIL' "notes/b$($tag.N).md format: $($notesViolations -join '; ')" }
+    }
+} else { Add-Check 'NOTES_OK' 'FAIL' 'unevaluable (tag format failed)' }
+
 # 5. LEDGER_PARSE + 6. LEDGER_STATE + 7. LEDGER_SHA + 8. LEDGER_GAME
 $ledgerPath = Join-Path $PSScriptRoot 'LEDGER.tsv'
 $state = $null

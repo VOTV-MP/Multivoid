@@ -107,7 +107,7 @@ VOTV runs on Unreal Engine 4.27. The mod is a single DLL pair:
 
 ```
 xinput1_3.dll                  -- thin proxy loader (Windows auto-loads it next to the .exe)
-multivoid-0.9.0n-125.dll       -- the mod payload (versioned filename; highest build wins)
+multivoid-<game>-<build>.dll   -- the mod payload (versioned filename; highest build wins)
 ```
 
 The payload resolves engine primitives (`GUObjectArray` / `GNames` /
@@ -136,12 +136,12 @@ The version identity is the pair **(game version, build number)** — there is
 no separate mod semver.
 
 ```
-multivoid-0.9.0n-125.dll   ->   game target 0.9.0n, build 125
+multivoid-<game>-<build>.dll   ->   e.g. game target 0.9.0n, build <N>
 ```
 
 - **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
   (reflection offsets and BP layouts shift between game versions).
-- **Build number** (`b125`) is the wire-protocol revision — it bumps with every
+- **Build number** (`b<N>`) is the wire-protocol revision — it bumps with every
   release and every wire-format change.
 - **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
   0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
@@ -162,14 +162,10 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 > for testing, not yet a supported stable release. Expect rough edges; bug
 > reports welcome on [Discord](https://discord.gg/bA6tGBvGMN).
 
-1. Download the release pair: `xinput1_3.dll` + `multivoid-<game>-<build>.dll`.
-2. Drop both files next to the game executable:
-   `<your VOTV install>/WindowsNoEditor/VotV/Binaries/Win64/`.
-3. Check the game version in the DLL name matches your VOTV version
-   (e.g. `multivoid-0.9.0n-125.dll` targets VOTV `0.9.0n`).
-4. Launch the game normally. A **Multiplayer** button appears in the main menu —
-   host a lobby, or join one from the server browser (direct IP works too).
-   No port forwarding needed.
+Download **both** files from the release page, drop them next to the game
+executable, launch — a **Multiplayer** button appears in the main menu. No port
+forwarding needed. Full steps, updating, and troubleshooting:
+**[docs/INSTALL.md](docs/INSTALL.md)**.
 
 To uninstall, delete the two DLLs. The mod never touches the game's own files.
 

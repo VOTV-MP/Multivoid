@@ -105,6 +105,9 @@ check until it is all `[ OK ]`.
 `src/votv-coop/CMakeLists.txt`, `kExpectedExeSize` in `sdk_profile.h`, and the
 build number (`kProtocolVersion`). Join compatibility is byte-equality on the
 pair, so an old cohort keeps playing among themselves — see `docs/RELEASE.md`.
+Also update the game-target line in `docs/INSTALL.md` — ledger_lint's
+INSTALL_STALENESS check mechanically fails every CI build and release until the
+doc names the new target.
 
 **Step 6 — run the gates, in this order.** Each one catches a different class:
 - boot health check: all `[ OK ]`;

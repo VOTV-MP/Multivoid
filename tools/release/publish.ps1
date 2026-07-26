@@ -48,9 +48,27 @@ foreach ($rel in $existing) {
     }
 }
 
+# --- Notes (the changelog authority; judge NOTES_OK already gated on this,
+# these are the publish-side backstops) -------------------------------------
+$notesPath = Get-ReleaseNotesPath -N $tag.N
+if (-not (Test-Path -LiteralPath $notesPath)) { throw "notes file missing: $notesPath (the judge should have refused NOTES_OK)" }
+$notes = Get-Content -LiteralPath $notesPath -Raw
+$notesViolations = @(Test-ReleaseNotesFormat -Content $notes)
+if ($notesViolations.Count -gt 0) { throw "notes format violations: $($notesViolations -join '; ')" }
+if (-not (Test-Path -LiteralPath 'docs/INSTALL.md')) { throw 'docs/INSTALL.md missing on the main checkout -- the release body links it' }
+
 # --- Draft-first ----------------------------------------------------------
 $title = "Multivoid $($tag.Game) b$($tag.N)" + $(if ($tag.Dev) { '-dev' } else { '' })
-$body = New-ReleaseBody -SourceSha $TagSha -Sha256ByFile $shaMap -Dev:$tag.Dev -ExtraLines $ExtraBodyLines
+$body = New-ReleaseBody -SourceSha $TagSha -Sha256ByFile $shaMap -NotesContent $notes -Dev:$tag.Dev -ExtraLines $ExtraBodyLines
+
+# Backstop asserts on the FINAL body: the completion parser is first-match, so
+# exactly ONE source:-grammar line may exist; sha256-grammar line count must
+# equal the asset count (a notes/template line matching either grammar is a
+# fail-closed refusal here, before anything goes public).
+$srcMatches = [regex]::Matches($body, $script:SourceLineRegex)
+if ($srcMatches.Count -ne 1) { throw "final body carries $($srcMatches.Count) source:-grammar lines, expected exactly 1" }
+$shaMatches = [regex]::Matches($body, $script:Sha256LineRegex)
+if ($shaMatches.Count -ne $assets.Count) { throw "final body carries $($shaMatches.Count) sha256:-grammar lines, expected $($assets.Count)" }
 $bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "multivoid-relbody-$($tag.N).md"
 Set-Content -LiteralPath $bodyFile -Value $body -Encoding utf8 -NoNewline
 
