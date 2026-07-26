@@ -7,6 +7,11 @@ first time a new game version ships, this doc gets rewritten with what the work
 ACTUALLY cost, and the estimates get replaced by facts. Until then, treat every
 duration as unknown, not as small.
 
+**PENDING ADVERSARIAL REVIEW (user, 2026-07-26): this doc has NOT been through a
+`/qf` pass.** It was written in one pass from measurement; nobody has yet tried
+to break it. Candidate blind spots to aim that pass at are listed in §9 — read
+them before trusting any claim here as complete.
+
 Why it exists: "what happens when the game updates" is the single most common
 and most legitimate question about a hook-based mod. Answering it with a shrug is
 how a project dies quietly. Answering it with a measured surface, a runbook and a
@@ -195,6 +200,37 @@ approach: UE4SS + reflection" (reversed the next day by RULE No.3) and still
 described the overlay as riding "UE4SS's built-in ImGui" months after the mod
 hand-rolled its own DXGI present hook. Hostile review is cheap QA; treat it that
 way. See `memory/lesson_stale_planning_docs_are_public_ammunition.md`.
+
+## 9. Known-unknowns for the pending /qf pass
+
+Seeded 2026-07-26 while the measurements were fresh. These are the places the
+author already suspects are thin — the review should NOT stop at them:
+
+- **Is the surface really only those two files?** The 5/41/29/235 counts came
+  from `sdk_profile.h` + `sdk_profile_names.h`. Nothing verified that no OTHER
+  file hardcodes a game-version fact — an earlier grep found ~136 `+ 0x..`
+  occurrences across `coop/` + `ue_wrap/`, and it is unknown how many are engine
+  layout, how many are local struct math, and how many are a third copy of a
+  game offset that this doc claims lives in one place.
+- **The 1,141 "survive by name" lookups are asserted, not tested.** A renamed
+  class/function fails at runtime, not at compile time. Is there any gate that
+  would catch a name that vanished, short of the feature silently dying?
+- **Blueprint bytecode / dispatch assumptions.** `COOP_DISPATCH_VISIBILITY.md`
+  encodes which verbs are visible to our hooks and which need the VM path. A
+  recook can change dispatch shape (EX_* opcodes, K2Node ordinals) without
+  changing a single name or offset. This doc does not mention that class at all.
+- **The save format.** §2 says "both peers run the same game version anyway" —
+  but save_transfer ships the host's save blob, and an old save loaded by a new
+  game build is the user's normal case. Unexamined.
+- **The gates' coverage.** Step 6 lists health check / config-selftest / smoke /
+  differential scenarios / hands-on. Nobody has asked which failure modes from §2
+  those gates would actually catch, and which would pass all of them and still be
+  broken.
+- **The "mechanical" claim for the 29 game offsets.** It rests on each constant's
+  comment citing an `*.hpp:line`. Spot-checked, not audited: if some of those
+  comments are stale or absent, part of that work is RE, not transcription.
+- **Nothing about mods coexisting** (other VOTV mods, a different loader present)
+  or about a game update that changes the RHI/engine build mid-line.
 
 ## 8. Migration history
 
