@@ -10,9 +10,12 @@ Rules (enforced where noted):
 - **The git-tracked file is the authority; the release page is a publish-time
   copy.** A published body is written once and never machine-rewritten (a re-run
   on a published tag is an ALREADY_PUBLISHED no-op).
-- **Write-once after publish.** Enforced by ledger_lint's NOTES_DRIFT check:
-  every live release's `## What's new` section must equal its notes file, so a
-  post-publish edit of the file fails the next release run. A sanctioned
+- **Write-once after publish.** WATCHED by ledger_lint's NOTES_DRIFT check:
+  every live release's `## What's new` section is compared against its notes
+  file, so a post-publish edit of the file shows up as a labeled WARN on the next
+  lint. It is a DETECTOR, not a refusal — GitHub serves stale release bodies from
+  both its list and per-tag endpoints (measured 2026-07-26), so one pass cannot
+  tell a cached read from real drift. If it warns, RE-RUN first. A sanctioned
   correction edits BOTH: fix the file, then regenerate the live body from it
   (`gh release edit` with a body rebuilt by `New-ReleaseBody`), then run
   `ledger_lint.ps1` locally.

@@ -29,8 +29,9 @@ bundle; the asset shape is unchanged. Revisit only on real field reports.
   subjects REJECTED: commits are internal jargon; a public changelog is a claim surface
   under `lesson_public_claim_surfaces_carry_verdict_discipline`). The git-tracked file is
   the AUTHORITY; the release page's `## What's new` is a publish-time copy, written once
-  (ALREADY_PUBLISHED = never machine-rewritten). Write-once after publish is enforced
-  MECHANICALLY by NOTES_DRIFT (below). Cumulative CHANGELOG.md skipped — GitHub's
+  (ALREADY_PUBLISHED = never machine-rewritten). Write-once after publish is watched by
+  NOTES_DRIFT (below) as a labeled DETECTOR — not mechanically enforced; see the
+  operational note on why a remote-content comparison cannot refuse a build. Cumulative CHANGELOG.md skipped — GitHub's
   /releases page renders every body scrolled, and a third copy drifts (surfaced to the
   user as the primary's call).
 - **ONE body writer** — `New-ReleaseBody` (ledger_lib.ps1) serves publish, retro
@@ -96,15 +97,18 @@ bundle; the asset shape is unchanged. Revisit only on real field reports.
 
 - The b128 release run (30204651189) went green first try: NOTES_OK PASS in-lane,
   publish produced the designed body shape, read-back clean.
-- **NOTES_DRIFT was FLAKY on the list endpoint — fixed the same day.** A manual lint run seconds
-  after the b128 flip FAILed NOTES_DRIFT on the new release; a later run hours after publish FAILed
-  again, while `releases/tags/<tag>`, a manual replication of the lint's own loop (845 chars,
-  `equal=True`) and two immediate re-runs all agreed. The paginated releases LIST endpoint serves a
-  stale body intermittently, not just in a post-flip window. Since NOTES_DRIFT runs ENFORCING on the
-  release lane, a cached read could have refused a legitimate release. Root fix: on mismatch the check
-  re-reads THAT release from the single-release endpoint and only FAILs if the confirm-read also
-  disagrees; an unreachable confirm-read is a labeled WARN. Drilled: clean -> poisoned notes file still
-  FAILs ("confirmed on the per-tag endpoint") -> restored clean.
+- **NOTES_DRIFT is a DETECTOR (WARN), not a refusal — corrected twice, measured.** It failed on b128
+  seconds after the flip, again hours later, and then again THROUGH the confirm-read added to fix it,
+  while a manual per-tag fetch in the same minute was byte-identical (845 chars) and 5/5 consecutive
+  lint runs returned `0 FAIL` with the notes file untouched. Both the paginated list endpoint and
+  `releases/tags/<tag>` serve stale bodies, so one pass cannot tell a cached read from real drift.
+  Demoted to a labeled WARN whose text says "RE-RUN first (both endpoints cache)"; the confirm-read
+  stays (it cuts noise). Every FAIL-carrying gate reads a LOCAL file: judge `NOTES_OK`, the publish
+  backstops, and the `notes/b<N>.md`-missing branch. Drilled: clean -> poisoned notes file = WARN,
+  exit 0 -> deleted notes file = FAIL, exit 1 -> restored clean.
+  **Consequence for the design's claim:** write-once-after-publish is enforced as a visible detector
+  plus the RELEASE.md ritual, NOT mechanically. That is weaker than §3 originally claimed and is stated
+  here rather than left implied.
 
 ## Sequencing / residuals
 

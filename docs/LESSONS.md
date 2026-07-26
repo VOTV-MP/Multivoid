@@ -1884,17 +1884,17 @@ tracker.
   must-FAIL literal — a FAIL-only fixture set passes while the gate rejects every valid doc. LOOK
   FIRST: any lint separating "a template" from "a concrete instance".
   `memory/lesson_placeholder_bans_must_target_the_variable_half.md`
-- **2026-07-26 — GitHub's releases LIST endpoint intermittently serves a STALE body (corrected same
-  day).** A content lint comparing each live release's `## What's new` section against its notes file
-  FAILED on the just-published release — and again HOURS later — while `releases/tags/<tag>`, a manual
-  replication of the same loop (845 chars, `equal=True`) and two immediate re-runs all agreed. So it is
-  not "a brief post-flip window": the paginated list endpoint is eventually-consistent and can serve a
-  stale body at any time. That makes any content gate built on it FLAKY — and this one runs ENFORCING on
-  the release lane, where a cached read would refuse a legitimate release. Root fix (not a retry, not a
-  suppression): on mismatch, re-read THAT release from the single-release endpoint and only FAIL if the
-  confirm-read also disagrees; an unreachable confirm-read is a labeled WARN, never a silent pass.
-  Drilled clean -> poisoned-notes FAIL ("confirmed on the per-tag endpoint") -> restored clean.
-  LOOK FIRST: an intermittent content check against a platform LIST endpoint.
+- **2026-07-26 — a remote page's CONTENT cannot be a build-blocking gate: GitHub serves stale release
+  bodies from BOTH endpoints** (corrected twice in one session). A lint comparing each live release's
+  `## What's new` against its git notes file FAILED seconds after publish ("list endpoint lags a flip"),
+  FAILED again hours later (so: not a flip window), and then FAILED through the confirm-read added to
+  fix it — while a manual per-tag fetch that same minute was byte-identical (845 chars) and **5/5
+  consecutive lint runs returned 0 FAIL with the file untouched**. A single pass cannot distinguish a
+  cached read from real drift, so the check was demoted to a labeled WARN ("RE-RUN first — both
+  endpoints cache"); every FAIL-carrying gate now reads a LOCAL file (judge NOTES_OK, the publish
+  backstops, the notes-file-missing branch). Drilled: clean -> poisoned notes = WARN exit 0 -> deleted
+  notes = FAIL exit 1. LOOK FIRST: before any remote-content comparison may refuse a build, run it 5x
+  and ask what it does with a cached copy.
   `memory/lesson_release_body_list_endpoint_lags_the_flip.md`
 - **2026-07-26 — "that dependency is unavailable" needs a positive control before you publish it.** The
   claim "we cannot build against UE4SS's C++ core" was first observed as an SSH submodule clone
