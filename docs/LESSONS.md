@@ -1904,8 +1904,12 @@ tracker.
   with time. Second independent leg: the release channel's dev asset ships zero headers/libs.
   Sharpened same day: also test BOTH confusingly-similar org spellings (`UE4SS-RE` vs `Re-UE4SS`) and
   the fork network (`gh search repos` -> zero mirrors GitHub-wide); the vendored gitlink dir EXISTS
-  but is EMPTY — say that precisely. Now machine-re-verified per release (tripwires.ps1 wire-a). LOOK
-  FIRST: any "X is missing/broken/unavailable" claim that will leave the repo.
+  but is EMPTY — say that precisely. Now machine-re-verified per release (tripwires.ps1 wire-a).
+  Sharpened AGAIN same day (user probe, post-decision): the transport was right, the CONCLUSION still
+  overclaimed — the project's OWN README (vendored, lines 80-82) + issue #577 document a self-service
+  Epic-linkage access path a transport probe cannot see; the §11 record needed a same-day correction.
+  LOOK FIRST: any "X is missing/broken/unavailable" claim that will leave the repo — anonymous
+  transport + positive control + date + **read the target's own docs for a sanctioned access route**.
   `memory/lesson_a_private_dependency_core_is_measurable_with_a_positive_control.md`
 - **2026-07-26 — a "we'll revisit if X changes" wire is wallpaper unless it has five properties.** Built
   as `tools/release/tripwires.ps1` + VERSION_MIGRATION §11 (the UE4SS-switch record), each property

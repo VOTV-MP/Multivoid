@@ -304,15 +304,27 @@ game has never had (UE4.27 its whole life, zero recooks), and whose C++ path is
 **blocked for outsiders today** — while the migration playbook above is untested
 and the game has never been re-cooked in the mod's life.
 
-**Why F2 (their API) and F3 (vendor their engine source) both die on ONE
-measurement:** UE4SS's C++ engine core (UEPseudo) is a private repo. Verified
-2026-07-26 three independent ways: `git ls-remote https://github.com/Re-UE4SS/UEPseudo`
-→ 404 while the same transport against `UE4SS-RE/RE-UE4SS` returns refs (positive
-control); `gh search repos UEPseudo` → **zero** public repos on all of GitHub (no
-mirror, no fork); the release channel's `zDEV-UE4SS_v3.0.1.zip` (166 entries)
-ships **zero** `.h/.hpp`, zero `.lib`. Our vendored `reference/RE-UE4SS` carries
-the `deps/first/Unreal` gitlink (→ `d72d2f38`) present but **empty/unresolvable**.
-There is nothing to build against and nothing to vendor.
+**Why F2 (their API) and F3 (vendor their engine source) fail — CORRECTED
+2026-07-26, same day (the user asked "check their wiki"):** UE4SS's C++ engine
+core (UEPseudo) is a private, **Epic-access-gated** repo. Anonymous measurement
+(all still true): `git ls-remote https://github.com/Re-UE4SS/UEPseudo` → 404
+under BOTH org spellings while the same transport against `UE4SS-RE/RE-UE4SS`
+returns refs (positive control); `gh search repos UEPseudo` → **zero** public
+mirrors/forks on all of GitHub; the release channel's `zDEV-UE4SS_v3.0.1.zip`
+(166 entries) ships **zero** `.h/.hpp`, zero `.lib`; our vendored
+`deps/first/Unreal` gitlink (→ `d72d2f38`) is present but empty. **However** —
+the first record OVERCLAIMED "un-buildable for outsiders": UE4SS's own README
+(vendored copy, lines 80-82) and docs + issue #577 document a self-service
+access path — link a GitHub account to an Epic Games account (the same free
+gate as Unreal Engine source itself) to pull the submodule. So a C++ mod IS
+buildable by any individual who passes the Epic linkage. **The leg that
+survives, and it is structural, not access:** UEPseudo is Epic-derived code
+behind Epic's source-access terms — it can be neither vendored nor made a
+dependency of a public repo. Under F2/F3, Multivoid would stop building from a
+plain `git clone --recursive` (today it does — a measured bus-factor virtue CI
+re-proves every push), and every contributor would need the Epic linkage. F3
+("vendor it") is dead outright; F2 trades our reproducible public build for an
+EULA-gated one.
 
 **What switching would NOT buy** (each measured):
 - *Mod compatibility:* the incompatibility with other mods is SEMANTIC (a
@@ -389,3 +401,10 @@ REAL RUN:           wire-a QUIET (404-class, control answers);
 
 TRIPWIRE-DECISION wire-b 2026-07-26: baseline frozen at v3.0.1 — the newest
 stable at decision time; F1 taken, record created.
+TRIPWIRE-DECISION wire-a 2026-07-26: same-day correction — the "un-buildable
+for outsiders" leg was overclaimed; UEPseudo access is Epic-linkage-gated
+(self-service), per UE4SS's own README/docs/issue #577. The blocker demotes to
+the structural leg (EULA-gated dependency = non-vendorable, kills public-clone
+reproducibility). wire-a still watches the repo going fully PUBLIC (that would
+remove the structural leg too). F1 re-confirmation on the corrected fact base:
+asked of the user same day.
