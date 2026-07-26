@@ -390,6 +390,28 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   re-sweep on a vanish (arc-2 audit CRIT-2, fixed `7f1765ea`; drill G). *Look FIRST:*
   `config_ini_write.cpp RemoveDuplicateKeyLinesAt` — the pattern; grep destructive ops taking
   index/lineNo params. `memory/lesson_correlate_destructive_ui_actions_by_content_not_index.md`
+- **Public claim surfaces (the website, the README) carry the same verdict-axis discipline as status
+  docs (2026-07-26, the 13-round site /qf).** Every marketing VERB is a status claim ("is played
+  together" over a smoke-only chain = false-PROVEN; "Kerfur works for everyone" survived on its HO
+  row), every NUMBER needs a code anchor ("up to 4" → `kMaxPeers=4`), every image CAPTION must match
+  the pixels (3 of 6 first drafts were false), retracted phrasings resurrect from the copy-SOURCE
+  unless annotated at the phrase, and the surfaces must be diffed against EACH OTHER (site↔README:
+  install path, player count). *Look FIRST:*
+  `memory/lesson_public_claim_surfaces_carry_verdict_discipline.md` + docs/COOP_SYNC_PROFILES.md
+- **Site dev-loop instruments lie in two measured ways (2026-07-26):** `zola serve`'s Windows
+  watcher silently misses external edits (serves STALE memory bytes; `public/` is not refreshed by
+  serve at all — a stale `public/` shipped once) → curl the served asset vs disk, restart zola,
+  always fresh `zola build` before deploy; headless Chrome (legacy AND new) clamps its layout to a
+  ~500px minimum window → a 360px screenshot fakes mobile overflow that no real phone shows; shoot
+  at 500+ or use a device. *Look FIRST:*
+  `memory/lesson_site_dev_instruments_stale_serve_and_chrome_clamp.md`
+- **Ask before changing the user's system/network settings (USER CORRECTION 2026-07-26).** A correct
+  diagnosis (stale upstream DNS cache) is not a license to reconfigure the machine: the elevated
+  DNS-to-1.1.1.1 change got an immediate "верни как было" — the router does local DNS the bypass
+  would break. Read-only probes are free; any write outside the project tree (DNS, services,
+  firewall profiles, registry) = name the change + ask, offer the in-place alternative (here:
+  restarting the router's Unbound, which is what worked). *Look FIRST:*
+  `memory/feedback_ask_before_changing_user_system_settings.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 

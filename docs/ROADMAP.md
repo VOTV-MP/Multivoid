@@ -420,6 +420,10 @@ Each item below is a feature increment series. Cross-referenced in
        `coop/interactable_sync.cpp`; installed at `subsystems.cpp:89`.
 
 ### Dev convenience features ◑ (one-off shipping)
+> NOTE 2026-07-26: the "Ini-gated `[dev] X=1`" lines below describe the ORIGINAL
+> hotkey-era shape. 2026-06-02 `31408685` migrated these into the F1 ImGui menu and
+> RETIRED the granular ini keys (`posinfo` etc. — a live SETTINGS CHECK correctly
+> flags them as unknown in old inis; "Tidy up" removes them). Rows kept for history.
 - ☑ HOME freecam — flying debug camera with WASD/Space/Ctrl + wheel
        speed + MMB teleport. Ini-gated `[dev] freecam=1`. 2026-07-05
        `ee828ff7`: entering freecam FREEZES the pawn (CMC MOVE_None,

@@ -223,3 +223,6 @@ site/
 *.jks
 id_rsa
 id_ed25519
+
+# user-approved site screenshots staging (user 2026-07-26): never commit
+ignore_folder/
