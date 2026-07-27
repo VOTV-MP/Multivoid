@@ -296,6 +296,13 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
         if (!coop::element::Registry::IsAllowedPeerAllocatedEid(describedEid)) {
             UE_LOGW("roster: row slot=%u eid=0x%08x not in peer range -- dropping "
                     "mirror install", static_cast<unsigned>(describedSlot), describedEid);
+        } else if (!coop::players::Registry::Get().GetPlayerElement(describedSlot)) {
+            // Log only on the ACTUAL install, never on a pulse re-assert -- this
+            // line is a smoke signal (mp.py's xpeer_identity counter) and a
+            // per-second repeat would make it worthless as one.
+            coop::players::Registry::Get().EstablishMirrorForSlot(describedSlot, describedEid);
+            UE_LOGI("roster: client installed cross-peer identity slot=%u eid=0x%08x nick='%ls'",
+                    static_cast<unsigned>(describedSlot), describedEid, nick.c_str());
         } else {
             coop::players::Registry::Get().EstablishMirrorForSlot(describedSlot, describedEid);
         }

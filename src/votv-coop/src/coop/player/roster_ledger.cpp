@@ -129,12 +129,28 @@ void ClearAll() {
 }
 
 void Reset() {
-    UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::Reset)");
+    // DELIBERATELY NOT UE_ASSERT_GAME_THREAD, and this is the only accessor
+    // without it. Reset is the SESSION-BRINGUP entry point: it is called from
+    // event_feed::OnSessionStart, which runs on the bringup thread at
+    // harness/session_runtime.cpp:386 -- BEFORE g_session.Start() at :430 spawns
+    // the net thread and before the pump can tick a running session. There is no
+    // concurrent reader by construction, and Start()'s thread creation is the
+    // happens-before edge for everything after. Same discipline the neighbouring
+    // SetLocalNickname writer already documents. (The smoke's HotPathGuard caught
+    // the assert firing here; the ACCESS is fine, the assert was mis-scoped.)
+    //
     // UNCONDITIONAL, unlike ClearAll: a subscriber's clear runs for every slot
     // whether or not the ledger believed it occupied. The difference matters
     // because some per-slot state is written from the wire BEFORE its row exists
     // (a peer's display prefs land with its Join), so an occupancy-gated clear
     // would leave exactly that state behind for the next session to inherit.
+    //
+    // Subscribers are still notified per slot, but every outgoing row here is
+    // EMPTY (the previous session's ClearAll already emptied them at flee time),
+    // and every subscriber early-returns on an unoccupied outgoing row. So no
+    // subscriber BODY -- none of which is bringup-thread-safe -- actually runs.
+    // That invariant is load-bearing; a subscriber that ever drops the
+    // `!outgoing.occupied()` guard would start doing engine work off the GT.
     for (int slot = 0; slot < kMaxSlots; ++slot) {
         const Row outgoing = g_rows[slot];
         g_rows[slot] = Row{};
