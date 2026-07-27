@@ -201,9 +201,43 @@ derivation" holds WITHIN a session.
 >    `PerSlotState<bool>`. (Caught by reasoning through the client path, not by a test.)
 > 3. §3 item 6's "four non-teardown stores" is wrong; see the note on that item.
 >
-> **Remaining before this arc can be called done:** item 6's real fix (drive `DisconnectSlot` from
-> the row transition) with the per-subsystem read T5 requires, then the drill list below, then a
-> smoke, then an audit.
+> **Item 6's real fix LANDED** (`13470f10`) after the T5 read of all 20 fan-out bodies: zero unsafe,
+> the host-authoritative ones self-gate on `Role::Host`, and six are the client-side leak fix.
+> `babf501f` folded two smoke findings (a mis-scoped GT assert on `Reset`, and a log line I dropped
+> that took mp.py's `xpeer_identity` counter with it).
+>
+> ### VERIFIED BY AUTONOMOUS RUN (2026-07-27, `multivoid-0.9.0n-130.dll`)
+>
+> **4-peer smoke, PASS** — host accepted `[1,2,3]`; every client sees the host + both peers via
+> relay; `xpeer=[2,3]/[1,3]/[1,2]`; 0 puppet-spawn failures, 0 malformed drops, 0 stale-gen drops,
+> 0 HotPathGuard violations. Ledger: slot 0 → #1 (role constant), slots 1-3 → #2/#3/#4 (monotonic;
+> the host never draws #1). **IDEMPOTENCY PROVEN**: exactly 4 ledger transitions and exactly 2
+> identity installs per client across the whole run, while the repair pulse re-asserted every 1-5 s
+> throughout — the receiver treats rows as STATE, not events.
+>
+> **DEPARTURE drill, PASS** — the case the smoke does not cover, and the arc's central claim.
+> Instrument: `<scratchpad>/arcA_departure_drill.ps1` (kills ONE client mid-session under a widened
+> `smoke4 --duration`). With four peers up, killing CLIENT_2 produced, on the HOST **and on BOTH
+> SURVIVING CLIENTS**, within the same second:
+> ```
+> feed: "Client2 left the game"
+> net: peer slot 2 (#3) left -- puppet destroyed
+> ledger: slot 2 emptied (was #3 'Client2')
+> ```
+> Exactly ONE emptying per peer (no double-fire under the pulse). **The two client lines are the
+> whole point:** before this arc a client could not learn of a third peer's departure at all —
+> `IsSlotReady(2)` is permanently false there, so no edge ever fired, the frozen puppet stayed in
+> the world for the rest of the session, and the roster row never existed to begin with. CLIENT1's
+> `pose-diag[slot 2] fresh=0/s` from 22:31:42 until the destroy at 22:31:48 is that frozen body,
+> now actually collected.
+>
+> Three instrument bugs were fixed to get this drill honest, each measured rather than guessed: the
+> log is ROTATED per boot (a line-count baseline can never be exceeded); the process name is
+> `VotV-Win64-Shipping`, `VotV` is only the window title; and smoke4's default monitor window
+> expired and killed the peers mid-settle.
+>
+> **Remaining:** the REPLACEMENT drill (a fourth peer taking the departed slot, with the departure
+> row injected-lost) and the successor-ban drill; a perf/correctness audit; hands-on.
 
 
 Own protocol bump. **Zero new wire kinds. Zero new external primitives beyond the net-layer
