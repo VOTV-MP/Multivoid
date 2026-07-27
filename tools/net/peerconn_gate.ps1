@@ -97,44 +97,52 @@ function Get-SiteViolations {
 }
 
 # ---- fixture MUST-FIRE controls (every run) ---------------------------------
-$ctlUnannotated = Test-PeerConnSites -Label 'fixture' -Lines @(
+#
+# Every result below is wrapped in @() before .Count is read. Windows PowerShell
+# 5.1 unrolls a ONE-element returned list into the bare object, and a bare
+# [pscustomobject] has NO .Count there (measured: it yields $null, not 1 -- pwsh 7
+# yields 1). Without the wrap, control 4 -- the only control whose expected result
+# is exactly one SITE object -- reported "the detectors are broken" on 5.1 while
+# the gate was perfectly healthy. A gate that cries wolf under the shell a
+# developer actually types is worse than no gate.
+$ctlUnannotated = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        peerConns_[slot].store(hConn);'
-)
-if ((Get-SiteViolations $ctlUnannotated).Count -ne 1) {
+))
+if (@(Get-SiteViolations $ctlUnannotated).Count -ne 1) {
     $controlFailures.Add('control 1: an unannotated site did NOT fire')
 }
-$ctlUnknown = Test-PeerConnSites -Label 'fixture' -Lines @(
+$ctlUnknown = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        // GEN: maybe',
     '        peerConns_[slot].store(hConn);'
-)
-if ((Get-SiteViolations $ctlUnknown).Count -ne 1) {
+))
+if (@(Get-SiteViolations $ctlUnknown).Count -ne 1) {
     $controlFailures.Add('control 2: an unknown annotation kind did NOT fire')
 }
-$ctlReasonless = Test-PeerConnSites -Label 'fixture' -Lines @(
+$ctlReasonless = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        // GEN: none',
     '        peerConns_[0].store(hConn);'
-)
-if ((Get-SiteViolations $ctlReasonless).Count -ne 1) {
+))
+if (@(Get-SiteViolations $ctlReasonless).Count -ne 1) {
     $controlFailures.Add('control 3: a reasonless `GEN: none` did NOT fire')
 }
-$ctlExchange = Test-PeerConnSites -Label 'fixture' -Lines @(
+$ctlExchange = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        const uint32_t hConn = peerConns_[i].exchange(0);'
-)
+))
 if ($ctlExchange.Count -ne 1) {
     $controlFailures.Add('control 4: the census MISSED an .exchange( site (the verb-blindness this gate exists for)')
 }
-$ctlGreen = Test-PeerConnSites -Label 'fixture' -Lines @(
+$ctlGreen = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        // GEN: none -- a client never mints.',
     '        peerConns_[0].store(hConn);',
     '        // GEN: clear',
     '        peerConns_[1].exchange(0);'
-)
-if ($ctlGreen.Count -ne 2 -or (Get-SiteViolations $ctlGreen).Count -ne 0) {
+))
+if ($ctlGreen.Count -ne 2 -or @(Get-SiteViolations $ctlGreen).Count -ne 0) {
     $controlFailures.Add('control 5: a well-annotated corpus was NOT accepted')
 }
-$ctlComment = Test-PeerConnSites -Label 'fixture' -Lines @(
+$ctlComment = @(Test-PeerConnSites -Label 'fixture' -Lines @(
     '        // peerConns_[slot].store(hConn) is how the accept edge registers.'
-)
+))
 if ($ctlComment.Count -ne 0) {
     $controlFailures.Add('control 6: a commented-out mention was counted as a site')
 }
