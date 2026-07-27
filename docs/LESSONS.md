@@ -379,8 +379,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Classify a repeated literal by the QUESTION each site answers, not its syntactic role.** The
   `"Player"` nick literal sits at 7 sites that look like one group and are two — and the axis is **MY
   NAME vs SOMEONE ELSE'S**, not default-vs-fallback. `SanitizeNickname`'s empty fallback
-  (`player_handshake.cpp:219`) reads as a fallback but decides *my* displayed name; changing too few
-  ships two different defaults, changing too many labels a nameless remote peer with your name.
+  (`player_handshake.cpp:224` — re-cited 2026-07-27, the row had drifted to `:219`) reads as a
+  fallback but decides *my* displayed name; changing too few ships two different defaults, changing
+  too many labels a nameless remote peer with your name. A 2026-07-27 re-census found
+  `peer_action_feed.cpp:53` printing a NAMELESS REMOTE PEER with the MY-NAME literal — the trap, live.
   *Look FIRST:* `memory/lesson_nick_default_axis_is_mine_vs_theirs.md`
 - **A destructive UI action correlates by CONTENT, never by a snapshot-time index.** A
   persistent-until-dismissed report ages while it sits on screen; any unrelated write shifts line
@@ -416,6 +418,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   firewall profiles, registry) = name the change + ask, offer the in-place alternative (here:
   restarting the router's Unbound, which is what worked). *Look FIRST:*
   `memory/feedback_ask_before_changing_user_system_settings.md`
+- **A census of ONE operation KIND reads as a complete census of the path.** Enumerating every
+  *widening* conversion on the nickname path was exhaustive — for widening — and therefore FELT
+  complete, while four raw *truncations* on the same path stayed invisible for fifteen `/qf` rounds
+  (`config.cpp:508` `resize(255)`; `player_handshake.cpp:302` and `:573` `resize(200)` AFTER `ToUtf8`;
+  `SanitizeNickname:212` capping in UTF-16 units). Two of them would have manufactured the ill-formed
+  UTF-8 that the same design's new fail-closed receive boundary rejects — the feature would have broken
+  its own sender's nick and looked like a wire bug. Grep per VERB (`resize`, `substr`, `memcpy`,
+  `snprintf`, `WideCharToMultiByte`), not per concept; and prefer a TYPE owning capacity + truncation
+  over a corrected list of sites. *Look FIRST:*
+  `memory/lesson_census_the_operation_kind_not_only_the_sites.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -458,7 +470,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A host OnSpawn log line != VISIBLE** — check the immediate same-tick OnDestroy (destroy-by-key kills
   the newest). `memory/lesson_onspawn_log_not_proof_check_immediate_destroy.md`
 - **REUSE the proven author (with its gates), don't raw-reimplement** — a raw MarkPropElement broke the
-  E-grab decline. `memory/lesson_reuse_proven_author_not_raw_reimpl.md`
+  E-grab decline. **Extended 2026-07-27:** the same question applies to PRIMITIVES across lanes — a
+  UTF-8 nickname codec was derived from scratch for three `/qf` rounds before a grep found the CHAT lane
+  had shipped it on 2026-07-04 (`chat_sync.cpp` `SanitizeUtf8`/`NickUtf8` with surrogate handling/
+  `TrimAndCap` with character-boundary back-off), with TWO copies already in the tree. Grep the sibling
+  lanes that carry the same payload kind before designing.
+  `memory/lesson_reuse_proven_author_not_raw_reimpl.md`
 - **A join reconcile that DESTROYS local actors needs a quiescence gate + caps.** `memory/feedback_join_reconcile_sweep_safety.md`
 - **An op applied BEFORE the state it reads is ready recurs** — gate/defer (snapshot-before-state-ready). `memory/feedback_snapshot_before_state_ready.md`
 - **chipPiles persist in `primitivesData`; off-kerfurs in `objectsData`** (different save lanes). `memory/lesson_chippile_saved_in_primitivesData_not_objectsData.md`
@@ -1357,6 +1374,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **NEVER strip geometry from a shipped model on geometric heuristics** (need visual proof). `memory/lesson_never_strip_shipped_geometry_without_visual_proof.md`
 - **VOTV's own fonts:** `FSEX300` = Fixedsys Excelsior (font_terminal, pixel); `ShareTechMono` = font_ui
   (subtitles, Latin-only subset). `memory/reference_votv_fonts.md`
+- **"Unsupported text just shows boxes" is FALSE twice.** ImGui returns ONE `FallbackGlyph` for EVERY
+  absent codepoint (`imgui_draw.cpp:3699-3712`, chosen from `{U+FFFD,'?',' '}`), so two DIFFERENT
+  unrenderable strings render IDENTICALLY; and a cmap sweep of our seven embedded TTFs found U+FFFD in
+  `FSEX300` ONLY, so the other six fall through to `'?'` — the ASCII-squash look. *Look FIRST* before
+  designing any graceful-degradation behaviour: `memory/lesson_imgui_missing_glyphs_collapse_to_one_fallback.md`
+- **Astral text (emoji, CJK ext) is gated by a vendored DEFINE, not by fonts.** `imconfig.h:65` keeps
+  `IMGUI_USE_WCHAR32` commented → `ImWchar` 16-bit, `IM_UNICODE_CODEPOINT_MAX 0xFFFF` (`imgui.h:2515`),
+  a glyph range cannot express U+1F300, and `imgui.cpp:1512` DROPS the reassembled astral codepoint on
+  input. Same family of silent capability bounds: `FT_DISABLE_PNG ON` kills CBDT colour-emoji donors,
+  `FT_DISABLE_HARFBUZZ ON` + no ImGui shaping kills ZWJ/skin-tone/FLAG composition. *Look FIRST — read
+  the defines before pricing fonts:* `memory/lesson_imgui_astral_codepoints_need_wchar32.md`
 
 ## 7. Performance
 
