@@ -6,9 +6,18 @@ by design, with a feed line saying so).
 All four installs have it. HEAD `63a488a7`+.
 
 **Why this runbook exists.** Arc A is fully drilled and audited and **no human has touched it**.
-Four autonomous drills passed, but every one of them tests what I thought to test; the things below
-are what only a person at the keyboard can see — whether the TAB list *reads* right, whether a
-departure *looks* clean, and whether anything flickers.
+Four autonomous drills passed, but every one of them tests what I thought to test.
+
+**THIS IS AN AUTO-RUNBOOK (rule, user 2026-07-27).** Where a check needs EYES, the drill takes the
+SCREENSHOT and you give the verdict on the picture — you do not operate the game to produce it.
+Checks that have a capture instrument name it below. Only what a picture genuinely cannot carry (a
+felt hitch, a flicker between frames) is left as a play-it-yourself item, and it is marked as such.
+
+**Two corrections to an earlier draft of this file, both measured:**
+- **The player list is TILDE (`~`, `VK_OEM_3`, the physical key above TAB), not TAB.** An earlier
+  draft said TAB throughout; pressing TAB does nothing. `imgui_overlay.cpp:162-171`.
+- It is **hold-to-peek on a CLIENT** and **toggle on the HOST** (`imgui_overlay.cpp:26-27`) — the
+  client list is a passive peek with no cursor, the host's is the clickable action board.
 
 Design of record: `research/findings/join-identity/votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md`
 (§3 AS-BUILT carries the drill evidence). Model: `include/coop/player/roster_ledger.h`.
@@ -27,10 +36,15 @@ old edge never rose there, so a departed peer's frozen puppet stayed in the worl
 
 ---
 
-## 1. TAB lists everyone, with IDs (the reported feature)
+## 1. The player list shows everyone, with IDs (the reported feature) — AUTOMATED
 
-Four peers. On EACH peer press TAB.
+**Instrument: `tools/net/roster_shot.ps1`.** Brings up four peers, waits until each client is
+in-world (`ClientWorldReady`) AND knows the last row, then PostMessages the real tilde key to each
+window and captures all four. Screens land in `research/roster_shots/`. Your job is the verdict on
+them; re-run it any time.
 
+- **Already answered on CLIENT_1:** `PLAYERS 4 online` with `1 Host / 2 Client1 (you) / 3 Client2 /
+  4 Client3` and the ID column present. Before arc A that list had two rows.
 - **Expect:** four rows on every peer, including on the clients. An **ID column** showing #1 for the
   host and #2/#3/#4 for the clients in join order.
 - **Watch for:** a client showing only two rows (the old bug), a blank or `Remote player` name where
@@ -39,9 +53,11 @@ Four peers. On EACH peer press TAB.
   "VIA HOST" with no RTT. If that reads badly, say so; it is a presentation question nobody has
   looked at with human eyes.
 
-## 2. A third peer leaves (the client-side half that never worked)
+## 2. A third peer leaves (the client-side half that never worked) — AUTOMATED
 
-With four peers up, have CLIENT_3 quit — ALT+F4 or quit to menu, both are interesting.
+**Instrument: `tools/net/departure_drill.ps1`.** Already PASS: host + both survivors logged the
+leave line, the puppet destroy and the row emptying in the same second. What is left for you is only
+whether it LOOKS clean; quit to menu rather than ALT+F4 to see the path the drill does not take.
 
 - **Expect, on the host AND on both surviving clients, within a second:** the chat line
   `<Nick> left the game`, their puppet **gone from the world**, and their TAB row gone.
@@ -49,9 +65,17 @@ With four peers up, have CLIENT_3 quit — ALT+F4 or quit to menu, both are inte
   did not reach that peer), the row lingering, a duplicate leave line, or a leave line appearing on
   the peer that is itself quitting to the menu.
 
-## 3. The seat changes hands (the case the token exists for)
+## 3. The seat changes hands (the case the token exists for) — AUTOMATED, screens included
 
-After step 2, have that same player REJOIN — they will take the freed slot.
+**Instrument: `tools/net/replacement_drill.ps1`.** It captures both observers at TWO moments —
+`client1_before.png` / `client2_before.png` (predecessor alive and embodied) and `*_after.png`
+(successor embodied) — in `research/roster_shots/`. A ghost (both bodies) or an inherited
+skin/colour would be visible in the pair; no log line can show either.
+
+**One thing the drill data already tells you:** the successor's body appears **~8 s after** the
+predecessor's is destroyed (measured 23:42:21 → 23:42:29). That is the joiner's world-load window,
+not a ghost — the risk was two bodies and what you get instead is a gap. Whether a roster entry with
+no body for eight seconds looks broken is a product judgement.
 
 - **Expect:** the old body is gone BEFORE the new one appears; the new player's nickname, skin and
   nameplate colour are THEIRS, not the previous occupant's; one join line, not a leave/join pair
@@ -60,7 +84,14 @@ After step 2, have that same player REJOIN — they will take the freed slot.
   the previous person's skin/colour/nameplate. The drill proved the ordering in the log; whether it
   is invisible on screen is a different question.
 
-## 4. Moderation targets the person, not the seat
+## 4. Moderation targets the person, not the seat — CODE PATH AUTOMATED, the CLICK is yours
+
+**Instrument: `[dev] roster_token_selftest` inside `tools/net/replacement_drill.ps1`.** Already PASS:
+a token captured when the slot was first occupied, held across a real departure, fired at the
+successor → `NEGATIVE(stale gen)=REJECTED POSITIVE(live gen)=ACCEPTED` and the REAL `BanPlayer`
+logged `ABORTED`, banlist byte-identical before and after. What that does NOT cover is the modal's
+own capture-and-pass — the token is in the signature so a tokenless call cannot compile, but only a
+click proves the button hands over the right one.
 
 F1 -> Administration. Open the ban modal on a player, then — WITHOUT closing it — have that player
 leave and someone else join into the freed slot. Now press Ban.
@@ -72,10 +103,12 @@ leave and someone else join into the freed slot. Now press Ban.
 - `multivoid-banlist.txt` in the host's `Win64` folder should be unchanged (it does not exist at all
   unless something has been banned).
 
-## 5. Just play for ten minutes
+## 5. Just play for ten minutes — GENUINELY MANUAL
 
-The roster is re-asserted on a repair pulse (fast for 10 s after any change, then every 5 s). It is
-supposed to be invisible.
+This is the one a picture cannot carry. The roster is re-asserted on a repair pulse (fast for 10 s
+after any change, then every 5 s) and it is supposed to be invisible; a flicker between frames or a
+felt hitch has no screenshot. The counting half IS automated (4 transitions + 2 identity installs per
+client across a full run, 0 HotPathGuard) — what remains is subjective smoothness.
 
 - **Watch for:** a "joined the game" line repeating, nameplates flickering, TAB rows reordering on
   their own, a periodic hitch, or the chat feed filling with roster noise.
@@ -109,3 +142,6 @@ number of pulses.
   is class members; a real extraction needs a mixin refactor of the core net class).
 - The remaining OPEN drills in the design's drill list (successor voice silence, version-gate
   rejection, parked-row ordering, session-end counting) have no instrument yet.
+- The settings-check popup on the smoke's clients reports `posinfo = '1' -- not a known setting`.
+  Unrelated to arc A: a retired key left in the test installs' ini. Cosmetic, but it sits on top of
+  every screenshot.

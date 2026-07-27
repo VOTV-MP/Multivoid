@@ -467,6 +467,36 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   is the pattern, and it extends to every activity lane, not just events.
   `memory/feedback_mid_activity_join_per_rule1.md`
 
+- **AUTO-RUNBOOKS: where a check needs EYES, SCREENSHOT it — don't hand the check back** (USER RULE
+  2026-07-27: *"Where you need eyes you should just screenshot and point to me those screens, thats
+  how we are going to run auto handbooks from now on."*). Writing "whether it LOOKS right is
+  irreducibly human" into a runbook is the wrong output. Drive the scenario autonomously, capture at
+  the DECISION MOMENT, and put the picture in front of the user — their job is the verdict on the
+  picture, not operating the game to produce it. Only what a picture cannot carry (a felt hitch, a
+  between-frames flicker, subjective smoothness over minutes) stays manual, and must be NAMED, never
+  used as a catch-all for "I didn't build the capture". Photograph the peer where the BUG lived, not
+  the convenient one — `mp.py scoreshot` captures the HOST roster, which was never broken.
+  Corollary (same user, same day): **"an autonomous run can't press X" is almost never true — check
+  before adding a dev bypass.** We already drive bots that act in the world; the overlay owns a
+  WndProc hook, so `PostMessage(hwnd, WM_KEYDOWN/KEYUP, vk, 0)` per window drives the real binding
+  with no focus stealing across four peers (`SendInput` cannot). The `VOTVCOOP_SCOREBOARD_OPEN=1`
+  bypass had been hiding two facts a real keypress exposes immediately: the player list is
+  **tilde (`VK_OEM_3`), not TAB** (a runbook handed to the user said TAB throughout), and it is
+  **hold-to-peek on a client, toggle on the host**. *Look FIRST:* `tools/net/roster_shot.ps1`.
+  `memory/feedback_show_screens.md`
+
+- **A readiness ANNOUNCEMENT is not evidence of the VISIBLE state it precedes.** Measured 2026-07-27:
+  BOTH obvious "peer is ready" markers fire while the peer is still on a loading screen —
+  `net_pump: ClientWorldReady announced` means the SYNC layer is satisfied and precedes the level
+  `open` completing; `harness: ==== PLAY READY ====` fires earlier still. A screenshot gated on either
+  caught CLIENT_3 behind the unclickable OMEGA content-warning screen, photographing "PLAYERS
+  offline" — and a COUNT-based drill would have passed it, since the log had all four rows. Gate on an
+  EFFECT that requires the state you need (another peer receiving this peer's pose stream ⇒ a live
+  simulating pawn), preferably logged by a DIFFERENT component than the one you are waiting on. Also:
+  size a hold in FRAMES not milliseconds — 600 ms was ~2 frames on a peer at 4.2 FPS.
+  *Look FIRST:* `tools/net/roster_shot.ps1` preconditions; `coop/dev/menu_proceed.cpp` for why OMEGA
+  cannot be clicked. `memory/lesson_readiness_announcements_precede_visible_state.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`

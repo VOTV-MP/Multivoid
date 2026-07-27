@@ -45,6 +45,8 @@ $dirs = @{
 }
 $banlist = Join-Path $dirs.HOST 'multivoid-banlist.txt'
 $victimSlot = 3
+$shotsDir = Join-Path (Join-Path $root 'research') 'roster_shots'
+New-Item -ItemType Directory -Force -Path $shotsDir | Out-Null
 
 # The game's ini reader is byte-oriented; a BOM in front of a section header is a
 # parse hazard. Windows PowerShell 5.1's `-Encoding UTF8` WRITES a BOM and pwsh 7's
@@ -73,6 +75,23 @@ function Get-PeerProcs {
     param([string]$Dir)
     @(Get-Process VotV-Win64-Shipping -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($Dir, [StringComparison]::OrdinalIgnoreCase) })
+}
+
+# Photograph a peer at a named moment. Auto-runbook rule (USER 2026-07-27): where a
+# check needs EYES, the drill produces the SCREEN and the human gives the verdict on
+# it -- handing the check back as "irreducibly human" is the wrong output. The
+# moments here are chosen so a GHOST (both bodies at once) or an INHERITED skin
+# would be visible in the pair, which no log line can show.
+function Save-PeerShot {
+    param([string]$Dir, [string]$Moment, [string]$Label)
+    $p = @(Get-Process VotV-Win64-Shipping -ErrorAction SilentlyContinue |
+           Where-Object { $_.Path -and $_.Path.StartsWith($Dir, [StringComparison]::OrdinalIgnoreCase) })
+    if ($p.Count -lt 1) { Write-Host "  [shot] $Label/$Moment -- process gone"; return }
+    $out = Join-Path $shotsDir "$Label`_$Moment.png"
+    & powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $root 'tools\capture_window.ps1') -ProcId $p[0].Id -Out $out | Out-Null
+    if (Test-Path $out) { Write-Host ("  [shot] {0} -> {1:N0} B" -f (Split-Path $out -Leaf), (Get-Item $out).Length) }
+    else { Write-Host "  [shot] $Label/$Moment -- capture produced no file" }
 }
 
 # Wait until a peer's log contains at least $Count matches of $Rx. Returns $false
@@ -140,6 +159,10 @@ try {
     }
     Write-Host '[drill] the victim has a body on both observers; 20 s settle, then the kill.'
     Start-Sleep -Seconds 20
+    # MOMENT 1 -- the predecessor alive and embodied. The baseline every later shot
+    # is read against (their skin/colour is what the successor must NOT inherit).
+    Save-PeerShot $dirs.CLIENT1 'before' 'client1'
+    Save-PeerShot $dirs.CLIENT2 'before' 'client2'
 
     $victim = Get-PeerProcs $dirs.CLIENT3
     if ($victim.Count -lt 1) { throw "CLIENT_3 process not found; cannot free slot $victimSlot" }
@@ -186,6 +209,11 @@ try {
     }
     Write-Host '[drill] successor mirrored + embodied on both observers; 20 s settle.'
     Start-Sleep -Seconds 20
+    # MOMENT 2 -- the successor embodied. Against MOMENT 1 this is where a GHOST
+    # (both bodies) or an INHERITED skin/colour/nameplate would be visible.
+    Save-PeerShot $dirs.CLIENT1 'after' 'client1'
+    Save-PeerShot $dirs.CLIENT2 'after' 'client2'
+    Save-PeerShot $dirs.HOST    'after' 'host'
 
     $alive = @(Get-Process VotV-Win64-Shipping -ErrorAction SilentlyContinue).Count
     Write-Host "[drill] harvest time; $alive peer processes alive"
