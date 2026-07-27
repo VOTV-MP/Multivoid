@@ -13,8 +13,10 @@ only the design.
 
 **The four product questions are ANSWERED (user, 2026-07-27) — see §9, now DECISIONS.** Two answers
 changed the scope: the TAB becomes the SA-MP-shaped full-information surface (delta measured: one
-column, the ID) and Cyrillic support became mandatory, which opened **ARC D (§9a) — fact base
-measured, design NOT yet run through `/qf`**. Arcs A and B are unblocked for a build pass.
+column, the ID) and international text became mandatory, which opened **ARC D**. Arc D then ran its
+own 19-round `/qf` and the scope widened twice more (CJK, then colour emoji) — its design of record is
+**§9b**; §9a is retained only as the fact base that pass started from. **Arc D and arc B are ONE
+delivery** (§9b.8): the dependency runs both ways. Arc A is independent and can land first.
 
 ---
 
@@ -432,7 +434,187 @@ font or transport project.** Open design points it must answer, none of them set
 4. **Four ASCII-asserting comments** must be corrected in the same commit (RULE 2 — a false comment
    about an invariant is worse than none: `[[lesson-false-security-comment-worse-than-none]]`).
 
-**Status: DESIGN OPEN.** Arc D has NOT been through `/qf`; the table above is its fact base only.
+The fact base above stands. **§9b supersedes its framing:** a 19-round `/qf` moved the root twice, so
+"one alphabet decision + a buffer audit" is NOT what arc D turned out to be.
+
+---
+
+## 9b. ARC D — international text in names and chat (19-round `/qf`, 2026-07-27)
+
+**STATUS: DESIGN. Not built, not drilled, not hands-on.** The pass ran 19 rounds and the critic was
+still returning material questions at 19 — but by R17 the questions had moved off the design and onto
+the *drill*, so the pass was stopped deliberately rather than declared converged. **This is not a
+"that holds".** Five measurements gate the build (§9b.7).
+
+### 9b.1 What the scope became
+
+The user widened the ask three times mid-pass: Cyrillic → "и еще китайские и японские иероглифы и не
+только" → "эмодзи в никах и в чате… per rule 1". Decisions taken, in order:
+
+| # | Decision | Consequence accepted |
+|---|---|---|
+| D-a | Codec and repertoire ship TOGETHER (no window where a name is accepted but undrawable) | later refined by D-d |
+| D-b | Base tier EMBEDDED, extended tier an optional MTA-style PACK ("не хотелось бы добавлять кучу мб внутрь dll") | ~+2.5-3 MB on a 15.4 MB DLL |
+| D-c | Colour emoji embedded by default; **single-codepoint only** ("одиночных эмодзи достаточно") | no ZWJ families, no skin tones, **no flags** — we have no shaping engine |
+| D-d | **Names accepted strictly within the embedded base tier; the pack extends READING only** | rare CJK is legal in chat, not in a name; refused at input with a visible reason |
+| D-e | Mixed-script rule REJECTED ("двойников разрешаем") | Latin `Anna` and Cyrillic-А `Аnnа` render alike, get no suffix — a knowingly accepted residual |
+| D-f | The pack ships as a **release asset**, not a tracked repo file | a binary in git history is paid by every cloner forever |
+
+D-d was a REVERSAL of an earlier user decision, taken after a measurement (§9b.3) showed the earlier
+one rested on a false picture. That correction is the most important event in the pass.
+
+### 9b.2 The root moved twice
+
+**Move 1 (R1).** The root is NOT that the ASCII allowlist strips Cyrillic — it is that **there is no
+UTF-8 decode at entry at all**. `config.cpp:505-509` reads `net_nick` as `std::string` and does
+`std::wstring(nick.begin(), nick.end())`, a per-BYTE Latin-1 widen; `session_runtime.cpp:380-384`
+repeats the shape; `server_browser.cpp:118` (ImGui `InputText`) emits UTF-8 and `:121` writes those
+bytes to the ini. So a UTF-8 name reaches `SanitizeNickname` as N mojibake wchars and is stripped
+whole. Widening the alphabet without fixing this would legalise mojibake, not support Cyrillic.
+This falsified the doc's earlier claim that "20 Cyrillic chars = 40 bytes fits the wire".
+
+**Move 2 (R3).** The codec being designed **already ships**: `coop/comms/chat_sync.cpp`, in production
+since 2026-07-04, holds `SanitizeUtf8:30-38` (denylist — strip control bytes, keep TAB, pass the
+rest), `NickUtf8:42-68` (UTF-16→UTF-8 **with surrogate-pair handling** `:46-50`) and
+`TrimAndCap:72-84` (byte cap that backs off past continuation bytes to a **character boundary**
+`:79-81`). Arc D is therefore an EXTENSION of a proven primitive to the nick lane, not a new codec —
+`[[lesson-reuse-proven-author-not-raw-reimpl]]`.
+
+### 9b.3 The measurements that decided the design
+
+| Measured | Where | What it decided |
+|---|---|---|
+| **Emoji are blocked by a define, not by fonts** | `imconfig.h:65` keeps `IMGUI_USE_WCHAR32` commented → `ImWchar` is 16-bit (`imgui.h:273`), `IM_UNICODE_CODEPOINT_MAX = 0xFFFF` (`:2515`), and `imgui.cpp:1512` DROPS the reassembled astral codepoint | No glyph range can express U+1F300; **precondition 0**, ahead of every font question |
+| **The missing-glyph path collapses to ONE glyph** | `imgui_draw.cpp:3699-3712` picks `FallbackGlyph` from `{U+FFFD, '?', ' '}` and returns it for every absent codepoint | "Boxes are fine" was false — every missing codepoint looks the same |
+| **Only FSEX300 of our seven TTFs carries U+FFFD** | cmap sweep, 2026-07-27 | Six families fall through to `'?'` — the ASCII squash this arc deletes. **U+FFFD must ride the donor merge.** |
+| **All seven embedded TTFs cover U+0400-04FF; none covers CJK or emoji** | cmap sweep | Cyrillic ships with ZERO new font bytes |
+| **Colour path exists and costs the whole atlas** | `ImGuiFreeTypeBuilderFlags_LoadColor` (`imgui_freetype.h:36`, `.cpp:221,487`) switches the atlas to RGBA32 (`.cpp:668-669`) | 4x VRAM for ALL faces, not just emoji |
+| **`FT_DISABLE_PNG ON`** | `CMakeLists.txt:80` | CBDT/sbix donors (Noto Color Emoji) cannot rasterize — the emoji donor must be **COLR/CPAL** |
+| **No shaping engine** | `FT_DISABLE_HARFBUZZ ON` (`CMakeLists.txt:81`); ImGui does none | ZWJ sequences, skin-tone modifiers and regional-indicator flags cannot compose (accepted, D-c) |
+| **Glyph cost in real CJK fonts** | outline bytes ÷ glyph count: SimSun 411 B, MS YaHei 620 B, Yu Gothic 522 B | ~3k common hanzi ≈ 1.2-1.9 MB; GB2312 (6,763) ≈ 2.8-4.2 MB; full CJK (~21k) ≈ 8.6-13 MB |
+| **Vendored ImGui is 1.91.5** | `imgui.h:31-32` | Before 1.92's dynamic atlas → ranges must be baked up front |
+| **MTA's precedent** | `CGraphics.cpp:1471,1482` registers `unifont.ttf` from `MTA\cgui\` via `AddFontResourceEx(FR_PRIVATE)`, credited `CCredits.cpp:285`; the file is NOT in their repo; `CMessageLoopHook.cpp:53` enables UTF-16 `WM_CHAR` | MTA ships CJK as a loose delivered file, exactly the pack shape — and solved the same entry problem |
+| **We already load fonts from disk** | `fonts.cpp:133-138 AddFromFile` returns nullptr if absent | The pack mechanism is mostly built |
+
+### 9b.4 D1 — the codec
+
+ONE owner, used by the nick lane AND the chat lane, dissolving the **three** encoder copies that
+exist today (`chat_sync.cpp:42-68`, `chat_feed::ToUtf8`, `player_handshake.cpp:139-148`) — RULE 2.
+
+- **Decode UTF-8 at entry**; DELETE both Latin-1 widens (`config.cpp:509`, `session_runtime.cpp:383`).
+- **FOUR truncators replaced in the same commit.** The census had been of *widens* until R16 caught
+  it: `config.cpp:508 resize(255)`; `player_handshake.cpp:302` and `:573` `nickUtf8.resize(200)`
+  AFTER `ToUtf8` — raw byte cuts that manufacture exactly the ill-formed sequences the new receive
+  boundary destroys, i.e. **our own sender's nick would arrive as the placeholder**; and
+  `SanitizeNickname:212`'s cap counted in UTF-16 units, which splits an astral surrogate pair.
+- **Receive boundary establishes well-formedness where it READS**: `MultiByteToWideChar` gains
+  `MB_ERR_INVALID_CHARS` (today `player_handshake.cpp:153-159` passes flags 0 and the ASCII allowlist
+  is the only destroyer of ill-formed bytes) and rejects the whole field to the placeholder — no
+  repair. Entry truncation is a cap on MY machine and guarantees nothing about a stranger's bytes.
+- **Denylist, not allowlist**, keeping exactly the denials `SanitizeNickname:161-186` documents
+  (control chars, U+202E RTL override, leading combining marks, over-long).
+- **Capacity and truncation are TYPE properties**, not hand-edits: a nick type owning its capacity
+  with no raw `resize`/`substr` in the API. The enumerated seven sinks were only the FIRST layer —
+  `hud.cpp:49` recomposes via `snprintf` into `char line[64]`, a wrap row is `memcpy`d into
+  `char buf[224]`, and both on-disk registries `snprintf` into fixed arrays. A list is blind to the
+  next buffer; a type is not (OPUS §8).
+- **Two constants, not one:** `kNickMaxChars` (codepoints — the display policy) and
+  `kNickMaxBytes = kNickMaxChars * 4` (buffers + wire). A single byte cap would hand ASCII 20
+  characters, Cyrillic 10 and CJK 6 — script-unfairness disguised as an invariant.
+- **Width is NOT a truncation rule.** A width cap cuts at a different codepoint per viewer (family and
+  scale are local), which would re-create the viewer-local identity problem. Identity lives in the
+  stored codepoints; overflow is render-side, never changes the name, and any local ellipsis preserves
+  the suffix. Truncation cuts only on a **grapheme boundary** — never before a combining mark, ZWJ or
+  variation selector, never splitting a surrogate pair. Full UAX #29 is not vendored.
+- **NFC has ONE normalizer: the ARBITER.** No normalization exists in the tree today, and
+  `NormalizeString`'s Unicode tables differ across Windows versions, so normalizing on both ends could
+  make two honest peers disagree about one name. ARC B already has the host canonicalize the name and
+  hand it back, so only the host's tables matter. Entry-side normalization is demoted to a local
+  nicety for MY OWN typed name and is explicitly NOT identity.
+
+### 9b.5 D2 — the repertoire
+
+- **BASE tier, embedded:** Latin + Cyrillic (measured present in all seven families) plus
+  donor-supplied common hanzi, kana and single-codepoint COLR emoji, **merged into every
+  (family × role) atlas**. The merge is *why* the tier is a build constant even though the family is a
+  per-role user setting — the families' own cmaps are unequal, the donors' are not. **U+FFFD rides the
+  same merge**, or six of seven families keep falling to `'?'`.
+- **The acceptance predicate derives from the embedded donor blobs**, not from a hand-kept range list
+  and not from the live atlas. A declared list and the real cmap are two owners of one axis; and the
+  live atlas is machine-local in one branch (`fonts.cpp:208-221` falls back to a Windows system font
+  if no RCDATA face bakes), which would silently change which names a machine accepts.
+- **EXTENDED tier:** an optional pack, MTA's shape, delivered as a **release asset** and loaded by the
+  existing `AddFromFile`. **Display-only, never identity** — nothing can own "your pack is the pack",
+  so a truncated or substituted pack must not be able to change who you think someone is.
+- **Two identity owners, two axes:** the version gate owns "peers run the same build"; a **CI
+  staleness detector** owns "a build's identity actually covers its embedded fonts" (without it, a
+  hand-built DLL with swapped fonts keeps its number and the first statement stops implying the
+  second). The font set is NOT a wire axis.
+
+### 9b.6 Rejection paths (out-of-repertoire input is WELL-FORMED, so fail-closed does not cover it)
+
+| Entry point | Answer |
+|---|---|
+| My own name typed in the browser | Refuse in the field with a visible reason — the only place a human can correct it |
+| `multivoid.ini` at boot, no host present | Placeholder + a visible warning; there is nobody to refuse to |
+| A PEER's name off the wire | **Never break the join.** The host, already the canonical namer under ARC B, coerces it into the accepted repertoire at handback and falls back to the numbered placeholder if nothing survives. Kicking someone for their font settings is not a policy. |
+
+### 9b.7 The five measurements that GATE the build
+
+1. **The atlas drill.** Measure the **live** F1 path (`fonts.cpp:174-176` re-bakes the whole atlas on
+   every scale/family change; DX12 tears the texture) over the **resident (family, px, bold) tuple
+   set**, with `IMGUI_USE_WCHAR32` **ON**, and with **pack-present as an axis** (a pack-less drill
+   would pass and then fail at the first user who installs one). Record texture bytes, rebuild ms,
+   and **whether `ImFontAtlas::Build()` returns false / hits the texture-dimension limit** — that
+   failure presents as a fontless UI, i.e. "the mod is broken", not "the atlas did not fit". This
+   drill decides the remaining fork: **(A)** bake the base repertoire and pay the live-path rebuild vs
+   **(B)** upgrade ImGui 1.91.5 → 1.92+ for on-demand glyphs.
+2. **The 1.92 classified diff.** Arm (B) is UNPRICED until someone diffs the upgrade against our
+   145 + 578-line DX11/DX12 overlay halves. Pricing it by category was the
+   `[[lesson-price-a-dependency-by-repair-history-not-by-line-count]]` error, committed in R8 and
+   named in R9.
+3. **The `ImWchar` census.** `IMGUI_USE_WCHAR32` widens the type on every seam it crosses — the
+   `ranges` plumbing, both overlay halves, `imgui_impl_win32`'s `WM_CHAR` path. Vendored struct sizes
+   are not the census.
+4. **The entry ladder.** Rung 1: does default Win32 **clipboard paste** already deliver BMP CJK into
+   the nick field (no clipboard override exists in our tree)? Only if it fails is rung 2 — IME
+   composition over a window whose input we capture — a blocker. Plus `multivoid.ini`'s read encoding
+   and its behaviour on a Notepad-written UTF-8 BOM. Without entry there is no feature: a Japanese
+   player cannot type their own name.
+5. **The donor files.** Name + license + measured bytes for the hanzi subset and the COLR emoji font,
+   and **which hanzi set counts as "common"** — that choice now also defines which NAMES are accepted,
+   so it is a product-visible boundary, not a size preference.
+
+### 9b.8 Ordering — D and B are ONE delivery
+
+The pass started holding that arc D must land before arc B (B's fold key is defined over D's
+alphabet). R19 found the dependency runs BOTH ways: D's single normalizer and its peer-name coercion
+both rest on the host being the canonical namer, which is arc B. **They are two halves of one
+mechanism and ship together.** Arc A (roster state + ID + the TAB ID column) is independent and can
+land first.
+
+### 9b.9 Also owed in the same commit
+
+- The **five ASCII-asserting comments** (`roster.h:22-24`, `roster.cpp:26-27`, `moderation.cpp:42-43`,
+  `player_inventory_sync.cpp:112`, `client_model.cpp:32`) become false at merge; `seen_players.cpp:48`
+  makes it six. Only `SanitizeNickname`'s header is load-bearing (it documents real denials).
+- **Disk migration.** `multivoid-banlist.txt` and `multivoid-players.txt` already hold nicks written
+  THROUGH the Latin-1 widen being deleted. Their `|`-delimited formats are byte-transparent to UTF-8
+  (`ban_list.cpp:65,71` — `CleanField` touches only `|`, `\n`, `\r`), so the format is fine and the
+  stored ROWS are not. A read-side migration is owed, and the current `CleanField` must be read rather
+  than the comment beside it.
+- The `"Player"` fallback census stays split on its MY-NAME vs THEIRS axis; `peer_action_feed.cpp:53`
+  prints a NAMELESS PEER using the MY-NAME literal — a pre-existing axis bug this commit must not
+  cement. (`docs/LESSONS.md` cites `player_handshake.cpp:219` for the fallback; the code is at `:224`
+  — stale citation, fix at the next sweep.)
+
+### 9b.10 Accepted residuals (named, not hidden)
+
+- `Anna` vs `Аnnа` (Cyrillic А) renders alike, is NFC-unequal, and gets no suffix — accepted by the
+  user (D-e). UTS #39 confusable skeletons and peer certificates remain the filed future answer.
+- Composed emoji (ZWJ families, skin tones, **flags**) will not compose — accepted (D-c). Fixing it
+  means vendoring a shaping engine.
+- Rare CJK is not usable in a NAME, only in chat (D-d).
 
 ---
 
