@@ -36,6 +36,7 @@
 
 #include "player_handshake_detail.h"
 
+#include "coop/config/config.h"
 #include "coop/element/player.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -57,6 +58,14 @@ namespace {
 
 // Minimum payload: slot + playerNo + eid + an empty nick length byte.
 constexpr size_t kRosterRowMinLen = 1 + 2 + 4 + 1;
+
+// [dev] roster_drop_empty_rows -- see the use site. Latched: a fault injection
+// that could be switched mid-session would make a failure unattributable.
+bool DropEmptyRowsForTest() {
+    static const bool s =
+        coop::config::ResolveFlag(::coop::config_registry::rows::roster_drop_empty_rows);
+    return s;
+}
 
 // Build a RosterRow payload describing peer `slot`. Wire layout (parsed
 // field-by-field, same discipline as Join):
@@ -267,6 +276,17 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
 
     // --- occupancy, always applied (the host issues it; it is unlearnable else)
     if (playerNo == 0) {
+        // [dev] fault injection: pretend every EMPTYING row was lost on the wire.
+        // The arc's central claim is that a receiver never needs to observe
+        // absence -- it conforms to the current token -- and this flag is the only
+        // way to test it, because the pulse re-asserts the empty row until it
+        // lands. With it on, the departure can reach this peer ONLY as the
+        // successor's row, which must then read as death-then-birth.
+        if (DropEmptyRowsForTest()) {
+            UE_LOGI("roster: [dev] DROPPED the empty row for slot %u (loss injection)",
+                    static_cast<unsigned>(describedSlot));
+            return true;
+        }
         coop::roster_ledger::ClearRow(describedSlot);
         return true;
     }

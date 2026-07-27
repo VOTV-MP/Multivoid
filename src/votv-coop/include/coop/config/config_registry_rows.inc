@@ -191,6 +191,12 @@ CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
     "Autonomous selftest: starter kit issuance.")
 CFG_FLAG(reseed_orphan_selftest, "reseed_orphan_selftest", "dev", false, nullptr,
     "Autonomous selftest: save-identity reseed/orphan handling.")
+CFG_FLAG(roster_token_selftest, "roster_token_selftest", "dev", false, nullptr,
+    "Autonomous selftest (HOST): when a peer slot changes hands, prove a token captured from the "
+    "previous occupant is refused -- the ban that must never land on their successor.")
+CFG_FLAG(roster_drop_empty_rows, "roster_drop_empty_rows", "dev", false, nullptr,
+    "Fault injection (CLIENT): discard every inbound roster row that says a slot is EMPTY, so a "
+    "departure can only be learned from the successor's row. Proves absence is never needed.")
 CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr,
     "Diagnostic probe: trash pile delta events.")
 CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,

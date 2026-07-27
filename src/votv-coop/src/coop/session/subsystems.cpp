@@ -51,6 +51,7 @@
 #include "coop/dev/desk_diag.h"        // [dev] desk/console divergence census
 #include "coop/dev/container_selftest.h" // [dev] R11b container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"   // [dev] rack-lane e2e circles (extraction digest instrument)
+#include "coop/dev/roster_token_selftest.h"  // [dev] arc-A successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/world/spawn_authority.h"  // T1 Inc-1: client shared-world spawner park/cancel (absorbed ambient_spawner_suppress)
 #include "coop/props/host_spawn_watcher.h"  // M2: HOST mirror of those ambient spawner outputs (the pinecone scare)
@@ -190,6 +191,7 @@ void Install(coop::net::Session& session) {
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::container_selftest::Install(&session);  // [dev] R11b e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1; the extraction's digest instrument)
+    coop::dev::roster_token_selftest::Install(&session);  // [dev] arc-A successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
     coop::host_spawn_watcher::Install(&session);  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
     coop::prop_drop_intent::Install(&session);    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
     coop::kerfur_entity::SetSession(&session);  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
