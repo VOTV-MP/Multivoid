@@ -139,23 +139,26 @@ void Reset() {
     // SetLocalNickname writer already documents. (The smoke's HotPathGuard caught
     // the assert firing here; the ACCESS is fine, the assert was mis-scoped.)
     //
-    // UNCONDITIONAL, unlike ClearAll: a subscriber's clear runs for every slot
+    // UNCONDITIONAL per-slot clears, unlike ClearAll: they run for every slot
     // whether or not the ledger believed it occupied. The difference matters
     // because some per-slot state is written from the wire BEFORE its row exists
     // (a peer's display prefs land with its Join), so an occupancy-gated clear
     // would leave exactly that state behind for the next session to inherit.
     //
-    // Subscribers are still notified per slot, but every outgoing row here is
-    // EMPTY (the previous session's ClearAll already emptied them at flee time),
-    // and every subscriber early-returns on an unoccupied outgoing row. So no
-    // subscriber BODY -- none of which is bringup-thread-safe -- actually runs.
-    // That invariant is load-bearing; a subscriber that ever drops the
-    // `!outgoing.occupied()` guard would start doing engine work off the GT.
+    // NO SlotReplacedFn FANOUT HERE, and that is structural rather than a
+    // convention. A SlotReplaced subscriber exists to react to a PERSON changing
+    // seats; at bringup nobody is leaving, and the subscriber bodies do engine
+    // work (`chat_feed::Push`, `puppet_drive::DestroySlot`) that is not legal on
+    // this thread. This loop used to fan out on the theory that every outgoing
+    // row is already empty here and every subscriber early-returns on an
+    // unoccupied outgoing row -- BOTH halves of which were wrong (2026-07-27
+    // audit): `OnSlotReplaced_ArmPulse` carries no such guard and ran every time,
+    // and the emptiness itself is a precondition nothing enforces, so a Stop path
+    // that skipped ClearAll would have run a puppet destroy off the game thread.
+    // Safety is now a property of the code rather than of a comment.
     for (int slot = 0; slot < kMaxSlots; ++slot) {
-        const Row outgoing = g_rows[slot];
         g_rows[slot] = Row{};
         for (const auto& reg : PerSlotRegistry()) reg.fn(reg.self, slot);
-        for (SlotReplacedFn fn : Subscribers()) fn(slot, outgoing, Row{});
     }
     g_nextPlayerNo = kHostPlayerNo + 1;
 }
