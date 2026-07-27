@@ -184,6 +184,9 @@ void Session::HandleConnStatusChanged(void* info) {
         if (hPoll != 0) {
             sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
         }
+        // GEN: mint -- host accept edge. Ordered BEFORE the peerConns_ store so
+        // any observer that can see the connection can also see who owns it.
+        peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
         peerConns_[slot].store(hConn);
         // Only demote to Handshaking if currently Disconnected. If peer-1 is
         // already Connected and peer-2 starts connecting, the aggregate state
@@ -229,6 +232,9 @@ void Session::HandleConnStatusChanged(void* info) {
             if (hPoll != 0) {
                 sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
             }
+            // GEN: mint -- the late-register accept edge (GNS skipped Connecting).
+            // Same authority moment as the normal accept above.
+            peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
             peerConns_[slot].store(hConn);
             UE_LOGI("net: late-registered slot %d (Connecting was skipped, h=0x%08x)",
                     slot, static_cast<unsigned>(hConn));
@@ -301,6 +307,11 @@ void Session::HandleConnStatusChanged(void* info) {
             hostCloseReason_ = cb->m_info.m_szEndDebug;
         }
         if (slot >= 0) {
+            // GEN: clear -- deferred to the END of this close path (below, after
+            // the reliableInbox_ erase). The generation dropping to 0 is what
+            // tells the game-thread ledger the slot emptied, and that tears down
+            // the departed peer's person-state; clearing it here would let a
+            // still-queued reliable from this peer dispatch AFTER the teardown.
             peerConns_[slot].store(0);
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
         }
@@ -325,6 +336,12 @@ void Session::HandleConnStatusChanged(void* info) {
             }
         }
 
+        // GEN: clear -- the LAST write of the close path, release-ordered, and
+        // deliberately AFTER the inbox erase above (which runs under a DIFFERENT
+        // mutex). A reader that observes generation==0 is therefore guaranteed to
+        // observe an inbox already drained of this peer.
+        if (slot >= 0) peerGenBySlot_[slot].store(0, std::memory_order_release);
+
         // Aggregate state: stay Connected if any peer still up; otherwise
         // downgrade and clear everything.
         if (connectedPeerCount() == 0) {
@@ -347,6 +364,10 @@ bool Session::Kick(int peerSlot, const char* reason) {
     // Atomically claim the slot so a concurrent natural ClosedByPeer on the net
     // thread and this kick can't both run the teardown (exchange -> 0 means we
     // own the close; a 0 result means someone already closed it).
+    // GEN: clear -- deferred to the end of the teardown below, exactly as the
+    // ClosedByPeer path does. (This site is an exchange, not a store: a census of
+    // `.store(` alone MISSES it, and missing it would leave a kicked slot holding
+    // a live generation, so the ledger would never see the row empty.)
     const uint32_t hConn = peerConns_[peerSlot].exchange(0);
     if (hConn == 0) return false;
     peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
@@ -375,6 +396,9 @@ bool Session::Kick(int peerSlot, const char* reason) {
           if (it->senderPeerSlot == peerSlot) it = reliableInbox_.erase(it);
           else ++it;
       } }
+    // GEN: clear -- last write of the teardown, after the inbox erase (see the
+    // ClosedByPeer path for why the order is load-bearing).
+    peerGenBySlot_[peerSlot].store(0, std::memory_order_release);
 
     // Aggregate state: stay Connected if any peer remains; otherwise downgrade
     // and clear everything (mirrors the ClosedByPeer branch above).

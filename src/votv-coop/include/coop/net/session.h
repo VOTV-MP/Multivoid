@@ -390,6 +390,26 @@ public:
         return peerLanesConfigured_[peerSlot].load(std::memory_order_acquire);
     }
 
+    // The slot's current OCCUPANCY GENERATION (arc A, T3): a host-minted,
+    // never-reused, non-zero token identifying WHO occupies `peerSlot` right
+    // now. 0 = the slot is empty. A CHANGE between two reads is a REPLACEMENT
+    // (person X left and person Y took the slot), which is the transition a
+    // connected-boolean cannot express -- lowest-free slot reuse means X -> Y
+    // carries no empty moment.
+    //
+    // Only the HOST mints (a client's slots 1..3 are permanently 0; its roster
+    // is entirely wire-driven), so this is host-side authority, never a
+    // client-side occupancy test. The generation NEVER goes on the wire.
+    //
+    // The point of reading it: a destructive slot-addressed action (kick/ban)
+    // validates the token it captured against THIS live value atomically with
+    // resolving the target's address, so a stale capture fails CLOSED instead of
+    // landing on the slot's successor. Any thread.
+    uint32_t peerGenerationForSlot(int peerSlot) const {
+        if (peerSlot < 0 || peerSlot >= kMaxPeers) return 0;
+        return peerGenBySlot_[peerSlot].load(std::memory_order_acquire);
+    }
+
     // --- Phase 2 moderation (host-only host-admin actions) ------------------
 
     // Accept filter: a predicate the host runs against an incoming connection's
@@ -532,6 +552,31 @@ private:
     // Set in the Connected callback after ConfigureLanesForPeer; cleared
     // when peerConns_[slot] is zeroed on disconnect. See IsSlotReady().
     std::array<std::atomic<bool>, kMaxPeers> peerLanesConfigured_{};
+
+    // --- Per-slot OCCUPANCY GENERATION (arc A, T3) --------------------------
+    // The authoritative "who is in this slot right now" token, minted HERE (the
+    // net layer) because slots recycle: FindFreePeerSlotForClient hands out the
+    // lowest free slot, so slot 2 can go from person X to person Y with no empty
+    // moment in between, and a polled boolean edge misses that transition
+    // entirely. A generation CHANGE is a replacement; 0 means the slot is empty.
+    //
+    // Deliberately NOT ownEpoch_: that value is minted in the SENDER's process
+    // (session_start.cpp Start()) and rides the packet header, so it is
+    // peer-DECLARED -- a rejoining peer could re-declare its prior epoch and show
+    // the host no token change at all. Authority must never rest on a value the
+    // peer chooses.
+    //
+    // Ownership: the NET layer is the only writer (mint at accept, clear on
+    // close). The game-thread ledger only READS it. A GT write here would break
+    // that single-writer claim.
+    std::array<std::atomic<uint32_t>, kMaxPeers> peerGenBySlot_{};
+    std::atomic<uint32_t> peerGenCounter_{0};
+    // Mint the next non-zero generation. Net thread (accept paths).
+    uint32_t MintPeerGeneration() {
+        uint32_t g;
+        do { g = peerGenCounter_.fetch_add(1, std::memory_order_relaxed) + 1; } while (g == 0);
+        return g;
+    }
 
     // P2P only (cfg_.topology == Topology::P2P): the signaling-server transport.
     // The out-of-band channel that carries opaque ICE rendezvous blobs between

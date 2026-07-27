@@ -91,6 +91,16 @@ jobs:
           pwsh -File tools/config/registry_gate.ps1
           exit $LASTEXITCODE
 
+      - name: Peer-slot generation gate (arc A T3 -- every peerConns_ write decides occupancy)
+        # Same shape as the config gate: fixture must-fire controls each run,
+        # explicit exit, cheap text scan before the toolchain steps. Censuses by
+        # OPERATION KIND (store AND exchange) because a one-verb census already
+        # missed two clear sites once.
+        shell: pwsh
+        run: |
+          pwsh -File tools/net/peerconn_gate.ps1
+          exit $LASTEXITCODE
+
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
         id: baseline
         shell: pwsh

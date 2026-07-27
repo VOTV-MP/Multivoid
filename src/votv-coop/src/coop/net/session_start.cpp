@@ -112,6 +112,11 @@ bool Session::Start(const Config& cfg) {
     // Clear any stale latches from a previous Start()/Stop() cycle on
     // this same Session instance (test harnesses reuse the object).
     for (int i = 0; i < kMaxPeers; ++i) expectedEpoch_[i] = 0;
+    // Arc A T8: same reasoning for the per-slot occupancy generations -- a reused
+    // Session must not open with slots that look occupied. The counter is NOT
+    // reset: generations stay unique across Start()/Stop() cycles within the
+    // process, so a stale captured token can never alias a fresh occupant.
+    for (int i = 0; i < kMaxPeers; ++i) peerGenBySlot_[i].store(0, std::memory_order_relaxed);
     // Clear stale LOCAL-stream "has published" flags too. The net thread isn't
     // spawned yet (no concurrency here), so no lock needed -- same as the epoch
     // clear above. Without this, a Session reused after a Stop() that happened
@@ -195,6 +200,10 @@ bool Session::StartLanDirect() {
         }
         // Slot 0 = host (per the players::Registry indexing -- on a client,
         // the host occupies slot 0).
+        // GEN: none -- a CLIENT never mints an occupancy generation. The
+        // generation is host-side authority over slot recycling; a client's
+        // roster is entirely wire-driven and its slots stay permanently 0. If a
+        // client minted here, its own reconcile would fight the wire.
         peerConns_[0].store(hConn);
         UE_LOGI("net: client dialed %s:%u (hConn=0x%08x slot=0)",
                 cfg_.peerIp.c_str(), cfg_.port, static_cast<unsigned>(hConn));
@@ -314,6 +323,7 @@ bool Session::StartP2P() {
         }
         // Slot 0 = host (players::Registry indexing -- on a client the host is
         // slot 0), exactly like LanDirect.
+        // GEN: none -- client dial; see the LanDirect site for the reason.
         peerConns_[0].store(hConn);
         UE_LOGI("net: P2P client dialing '%s' via signaling %s (hConn=0x%08x slot=0)",
                 cfg_.hostIdentity.c_str(), cfg_.signalingUrl.c_str(),
@@ -338,7 +348,12 @@ void Session::Stop() {
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {
         for (int i = 0; i < kMaxPeers; ++i) {
+            // GEN: clear -- session teardown empties every slot. (Start() zeroes
+            // the array too, but a Session sits STOPPED between the two; a
+            // generation left live across that window would read as an occupied
+            // slot with no session behind it.)
             const uint32_t hConn = peerConns_[i].exchange(0);
+            peerGenBySlot_[i].store(0, std::memory_order_release);
             if (hConn != 0) {
                 sockets->CloseConnection(hConn, 0, "session stop", true);
             }
