@@ -176,8 +176,8 @@ inline Lane LaneForKind(ReliableKind k) {
 //     or SendReliableToSlot); a client never legitimately sends them (and
 //     event_feed trust-gates them on senderPeerSlot==0). PlayerDamage is
 //     point-to-point host->owner (Inc3-WIRE combat relay), never client-forwarded.
-//   - Join / AssignPeerSlot / PlayerJoined: handshake. Join is point-to-point
-//     host<->client; AssignPeerSlot + PlayerJoined are host-originated (the
+//   - Join / AssignPeerSlot / RosterRow: handshake. Join is point-to-point
+//     host<->client; AssignPeerSlot + RosterRow are host-originated (the
 //     latter IS the cross-peer identity relay from T2-1).
 // PropPose rides the unreliable relay (T2-2), not this path.
 inline bool IsClientRelayableReliableKind(ReliableKind k) {

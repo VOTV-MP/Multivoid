@@ -872,7 +872,7 @@ inline constexpr uint16_t kProtocolVersion = 130; // v130 (2026-07-27, arc A: Pl
                                                   // Prior:
                                                   // v103: per-player NICK COLOR (12f) -- a self-
                                                   // describing [u8 has][u8 r][u8 g][u8 b] field
-                                                  // appended to Join + PlayerJoined (after the v94
+                                                  // appended to Join + RosterRow (after the v94
                                                   // prefs flags byte) + NickColorChange=88 for live
                                                   // changes (the NameplateChange trust shape). The
                                                   // color axis has ONE owner (coop/player/nick_color);
@@ -929,7 +929,7 @@ inline constexpr uint16_t kProtocolVersion = 130; // v130 (2026-07-27, arc A: Pl
                                                   // (host-local RNG). Module: coop/world/event_fire_sync.
                                                   // Prior:
                                                   // v94: per-player DISPLAY PREFS -- a [u8 flags] byte appended
-                                                  // to Join + PlayerJoined (after each skin field); bit0 =
+                                                  // to Join + RosterRow (after each skin field); bit0 =
                                                   // "show my nameplate" (user 2026-07-02: any peer can hide its
                                                   // OWN plate, SYNCED so a late joiner agrees), bits 1..7
                                                   // reserved for future prefs (no proto bump per new bool).
@@ -937,7 +937,7 @@ inline constexpr uint16_t kProtocolVersion = 130; // v130 (2026-07-27, arc A: Pl
                                                   // kerfur-omega skins added to the skin registry (name ->
                                                   // game asset path; same SkinChange wire as pak skins).
                                                   // v93: player SKINS -- SkinChange reliable (82) + the skin
-                                                  // name appended to Join (after guid) + PlayerJoined (after
+                                                  // name appended to Join (after guid) + RosterRow (after
                                                   // nick). Every player carries a persisted body-skin choice
                                                   // (multivoid.ini player_skin=, default hl_einstein_v1sc);
                                                   // the F1 Cosmetics>Skins browser picks from the converter
@@ -2183,12 +2183,12 @@ enum class ReliableKind : uint8_t {
                        //     pak stem; "dr_kel" = the native body). Field-by-field payload:
                        //       [u8 slot][u8 namelen][name ASCII]
                        //     CLIENT->HOST: slot MUST equal senderPeerSlot (forgery guard). The host stores
-                       //     it (player_handshake g_skinBySlot), re-skins that slot's puppet live, and
+                       //     it (the roster ledger's Row::skin), re-skins that slot's puppet live, and
                        //     REBROADCASTS to every other ready client (originator excluded). HOST->ALL:
                        //     the host's own pick goes out with slot=0. Receivers validate the name
                        //     (IsValidSkinName -- it becomes a LoadObject package path component), store,
                        //     and re-skin the described slot's puppet if spawned. The at-join skin rides
-                       //     the Join payload (after the guid field) + PlayerJoined (after the nick), so
+                       //     the Join payload (after the guid field) + RosterRow (after the nick), so
                        //     late joiners get every peer's skin without extra wire. PRE-WORLD-SENDABLE
                        //     (IsPreWorldSendableKind): the receiver is engine-free without a puppet, and
                        //     gating it swallowed a change made during a joiner's load window (audit
@@ -2200,7 +2200,7 @@ enum class ReliableKind : uint8_t {
                        //     hides ITS OWN plate), host stores (coop::nameplate per-slot visibility)
                        //     and REBROADCASTS (originator excluded); HOST->ALL with slot=0 for the
                        //     host's own toggle. The at-join state rides the v94 prefs flags byte in
-                       //     Join/PlayerJoined (bit0), so late joiners agree without extra wire (the
+                       //     Join/RosterRow (bit0), so late joiners agree without extra wire (the
                        //     user's ask: no "ghost plate" for peers who joined after the toggle).
                        //     PRE-WORLD-SENDABLE: receiver is a plain flag store, engine-free -- the
                        //     SkinChange load-window lesson applied from birth. Slot resets to VISIBLE
@@ -2261,7 +2261,7 @@ enum class ReliableKind : uint8_t {
                        //     (coop/player/nick_color -- the color axis' ONE owner) and
                        //     REBROADCASTS (originator excluded); HOST->ALL with slot=0 for the
                        //     host's own pick. The at-join state rides a [u8 has][r][g][b] field
-                       //     appended to Join/PlayerJoined after the v94 prefs flags byte, so
+                       //     appended to Join/RosterRow after the v94 prefs flags byte, so
                        //     late joiners agree without extra wire. Consumers: nameplate nick
                        //     (default white), chat nick prefix (default per-slot palette),
                        //     scoreboard row (default role gold/white -- role stays readable via

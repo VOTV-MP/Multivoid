@@ -1,8 +1,8 @@
 // coop/session/player_handshake_detail.h -- INTERNAL (src-tree) shared header
 // for the player_handshake module's THREE translation units:
-//   player_handshake.cpp         -- the Join/PlayerJoined/AssignPeerSlot identity
-//                                   handshake (owns g_skinBySlot + the nick/guid
-//                                   side-tables)
+//   player_handshake.cpp         -- the Join/RosterRow/AssignPeerSlot identity
+//                                   handshake (the per-slot identity fields live
+//                                   in the roster ledger's Row since arc A)
 //   player_handshake_prefs.cpp   -- the live display-pref change family
 //                                   (SkinChange / NameplateChange / NickColorChange
 //                                   announce + forgery-guarded handle + rebroadcast)
@@ -27,9 +27,9 @@ namespace coop::net { class Session; }
 
 namespace coop::player_handshake {
 
-// Store + live-apply a peer's skin: writes the identity handshake's
-// g_skinBySlot side-table (owned by player_handshake.cpp) and re-skins the
-// slot's puppet if already spawned. Game thread only.
+// Store + live-apply a peer's skin: writes the roster ledger's Row::skin
+// (change-gated) and re-skins the slot's puppet if already spawned.
+// Game thread only.
 void StoreSkinForSlot(int slot, std::string name);
 
 // Parse one [u8 len][ASCII] skin field. Returns bytes consumed (0 =
