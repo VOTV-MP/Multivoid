@@ -104,15 +104,21 @@ void Render() {
         // host-standard admin verbs, no dev gate). A client's board (and the host's
         // own row) is plain text -- the client peek is passive (no input capture).
         const bool host = LocalIsHost();
-        const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
+        // BordersInnerH + a lifted alt-row tint: with RowBg alone the stripes were
+        // invisible over the dark overlay and the rows read as one block (user
+        // 2026-07-27, on the first screenshot of this surface).
+        const ImGuiTableFlags tflags =
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_BordersInnerH;
         const bool voiceOn = vs.enabled != 0 && vs.started != 0;
+        // First attempt used 0.055 / 0.10 alpha and was still unreadable in a
+        // screenshot -- over a dark, busy 3D backdrop a stripe has to be far
+        // stronger than it would need to be on a flat UI. Three cues now, not one:
+        // a visible alternating tint, a real separator line, and vertical breathing
+        // room so the rows are not one block of text.
+        ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ImVec4(1.0f, 1.0f, 1.0f, 0.28f));
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(S(4.0f), S(5.0f)));
         if (ImGui::BeginTable("##roster", voiceOn ? 5 : 4, tflags)) {
-            // ID (arc A): the occupant's session number, host-issued and never
-            // reused within a session. It is NOT the slot -- slots recycle, so a
-            // slot number names a seat, not a person -- and it is deliberately
-            // NOT shown on the nameplate (user 2026-07-27); TAB is where the full
-            // information lives, SA-MP-shaped.
-            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(30.0f));
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
             // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
             // Click = self: toggle mute; remote: per-player volume popup.
@@ -122,6 +128,16 @@ void Render() {
             // "P2P"/"P2P RELAY"; "VIA HOST" for peer clients on a client board).
             ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.0f));
             ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(50.0f));
+            // ID (arc A): the occupant's session number, host-issued and never
+            // reused within a session. It is NOT the slot -- slots recycle, so a
+            // slot number names a seat, not a person -- and it is deliberately
+            // NOT shown on the nameplate (user 2026-07-27); TAB is where the full
+            // information lives, SA-MP-shaped.
+            //
+            // FAR RIGHT (user 2026-07-27). It led the row at first, which put the
+            // least-scanned field where the eye lands and pushed the NAME -- the
+            // thing anyone actually looks for -- off the left edge.
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(34.0f));
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
@@ -141,11 +157,6 @@ void Render() {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(r.slot);
-                if (r.playerNo != coop::roster::kNoPlayerNo)
-                    ImGui::TextDisabled("%u", static_cast<unsigned>(r.playerNo));
-                else
-                    ImGui::TextDisabled("-");   // out of session: no host issued one
-                ImGui::TableSetColumnIndex(1);
                 StatusDot(r.connected);
                 ImGui::SameLine();
 
@@ -202,7 +213,7 @@ void Render() {
                 // Voice column (v66): the per-player mic-state icon. Self row:
                 // click toggles your mute. Remote row: click opens the local
                 // mute/volume popup (SetSlotVolume is render-thread-safe).
-                int col = 2;  // 0 = ID, 1 = Player; the rest follow
+                int col = 1;  // 0 = Player; Mic/Link/Ping/ID follow in that order
                 if (voiceOn) {
                     ImGui::TableSetColumnIndex(col++);
                     const bool self = r.isLocal;
@@ -264,7 +275,7 @@ void Render() {
                 // Ping column: per-peer RTT, right-aligned (remote connected peers only;
                 // you have no self-ping). 0 on a sub-ms LAN shows "<1ms"; -1 (unsampled)
                 // shows "--".
-                ImGui::TableSetColumnIndex(col);
+                ImGui::TableSetColumnIndex(col++);
                 if (!r.isLocal && r.connected) {
                     char pb[16];
                     if (r.ping > 0)       std::snprintf(pb, sizeof(pb), "%dms", r.ping);
@@ -275,10 +286,27 @@ void Render() {
                     if (cw > tw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cw - tw));
                     ImGui::TextDisabled("%s", pb);
                 }
+
+                // ID column, LAST and right-aligned so the numbers form a clean edge
+                // instead of a ragged one against the ping cell.
+                ImGui::TableSetColumnIndex(col);
+                {
+                    char ib[16];
+                    if (r.playerNo != coop::roster::kNoPlayerNo)
+                        std::snprintf(ib, sizeof(ib), "%u", static_cast<unsigned>(r.playerNo));
+                    else
+                        std::snprintf(ib, sizeof(ib), "-");  // out of session: none issued
+                    const float tw = ImGui::CalcTextSize(ib).x;
+                    const float cw = ImGui::GetContentRegionAvail().x;
+                    if (cw > tw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cw - tw));
+                    ImGui::TextDisabled("%s", ib);
+                }
                 ImGui::PopID();
             }
             ImGui::EndTable();
         }
+        ImGui::PopStyleVar();     // CellPadding
+        ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
         if (s.count == 0) ImGui::TextDisabled("No players.");
 
         // Host-only "Hide from server browser" toggle (user 2026-06-11). This is

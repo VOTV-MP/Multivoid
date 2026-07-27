@@ -125,6 +125,16 @@ void Refresh() {
             s->LinkLabelForSlot(slot, r.link, sizeof(r.link));  // a client's real link
         } else if (slot == 0) {
             s->LinkLabelForSlot(0, r.link, sizeof(r.link));     // my own link to the host
+        } else if (rowIsLocal) {
+            // A CLIENT's OWN row. It used to be left blank on the theory that our
+            // link is "already shown on the host row" -- but the board then reads
+            // as three peers with a connection and one broken entry, which is
+            // exactly how the user read it (2026-07-27). Show the transport WE are
+            // attached by: on a client's board every other row already answers
+            // "how is this person reachable from here", and the honest answer for
+            // yourself is your own link, not silence. Mirrors the host's own row,
+            // which likewise describes how the local peer is attached.
+            s->LinkLabelForSlot(0, r.link, sizeof(r.link));
         } else if (!rowIsLocal) {
             std::snprintf(r.link, sizeof(r.link), "VIA HOST");
             // Arc A cosmetic follow-through: these rows are rendered on a CLIENT
