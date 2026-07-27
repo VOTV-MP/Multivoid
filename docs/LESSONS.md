@@ -398,12 +398,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   unless annotated at the phrase, and the surfaces must be diffed against EACH OTHER (site↔README:
   install path, player count). *Look FIRST:*
   `memory/lesson_public_claim_surfaces_carry_verdict_discipline.md` + docs/COOP_SYNC_PROFILES.md
-- **Site dev-loop instruments lie in two measured ways (2026-07-26):** `zola serve`'s Windows
-  watcher silently misses external edits (serves STALE memory bytes; `public/` is not refreshed by
-  serve at all — a stale `public/` shipped once) → curl the served asset vs disk, restart zola,
+- **Site dev-loop instruments lie in THREE measured ways (2026-07-26, +1 on 2026-07-27):**
+  `zola serve`'s Windows watcher silently misses external edits (serves STALE memory bytes;
+  `public/` is not refreshed by serve at all, and a `zola build` run BESIDE a live serve does not
+  change what serve returns — only a restart does) → curl the served asset vs disk, restart zola,
   always fresh `zola build` before deploy; headless Chrome (legacy AND new) clamps its layout to a
-  ~500px minimum window → a 360px screenshot fakes mobile overflow that no real phone shows; shoot
-  at 500+ or use a device. *Look FIRST:*
+  ~500px minimum window → a 360px screenshot fakes mobile overflow that no real phone shows; and
+  **zola MINIFIES the built HTML**, so `grep 'id="qa"' public/index.html` false-negatives on
+  `id=qa` and, since the page is ONE line, `grep -c` caps at 1 — a 2026-07-27 false negative was
+  stated to the user as "the site has no Q&A section" when it had five. Grep the TEMPLATE, or use
+  an attribute-agnostic pattern plus `grep -o | wc -l`. *Look FIRST:*
   `memory/lesson_site_dev_instruments_stale_serve_and_chrome_clamp.md`
 - **Ask before changing the user's system/network settings (USER CORRECTION 2026-07-26).** A correct
   diagnosis (stale upstream DNS cache) is not a license to reconfigure the machine: the elevated
