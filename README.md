@@ -157,10 +157,11 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 
 ### For players
 
-> **Dev prereleases** are published on the
-> [Releases page](https://github.com/VOTV-MP/Multivoid/releases) — early builds
-> for testing, not yet a supported stable release. Expect rough edges; bug
-> reports welcome on [Discord](https://discord.gg/bA6tGBvGMN).
+> **There is no stable release yet — every build on the
+> [Releases page](https://github.com/VOTV-MP/Multivoid/releases) is a dev build,
+> and everyone playing one is a tester.** Expect bugs, and please report them on
+> [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited. Full
+> disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 Download **both** files from the release page, drop them next to the game
 executable, launch — a **Multiplayer** button appears in the main menu. No port

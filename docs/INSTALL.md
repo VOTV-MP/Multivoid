@@ -11,9 +11,24 @@
   - The folder path and the "delete the old multivoid-*.dll" rule are anchor
     phrases shared with the release-body template (tools/release/ledger_lib.ps1);
     the lint asserts they appear here verbatim. Reword them only together.
+  - The dev-build/tester DISCLAIMER below is owned HERE too (user-approved
+    2026-07-27). README and the website Download section carry a one-line
+    pointer, never a copy. It deliberately names no build number or hash, so it
+    stays lint-clean if a release body ever quotes it.
 -->
 
 # Installing Multivoid
+
+> **DISCLAIMER — there is no stable release yet.** Every build is a dev build,
+> and everyone playing one is a tester.
+>
+> Expect bugs. The mod is about two months old: it has cleared a lot of
+> milestones and already does a great deal, but it is far from finished and some
+> game systems are untouched entirely.
+>
+> If something breaks, a report genuinely helps. Say what you were doing, and
+> attach `multivoid.log` from the folder you installed the mod into. Testers who
+> send good reports get credited, permanently.
 
 Multivoid is a co-op mod for **Voices of the Void**. It does not modify any game
 files — it is two DLLs you drop next to the game's executable and delete to
