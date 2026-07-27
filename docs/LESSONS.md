@@ -426,10 +426,50 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   UTF-8 that the same design's new fail-closed receive boundary rejects — the feature would have broken
   its own sender's nick and looked like a wire bug. Grep per VERB (`resize`, `substr`, `memcpy`,
   `snprintf`, `WideCharToMultiByte`), not per concept; and prefer a TYPE owning capacity + truncation
-  over a corrected list of sites. *Look FIRST:*
+  over a corrected list of sites. **SECOND INSTANCE 2026-07-27 (arc A):** the design's census of
+  `peerConns_` write sites listed FIVE; there are SEVEN — it grepped `.store(` and both
+  `.exchange(0)` clears (`Session::Stop`, `Session::Kick`) were invisible. Kick's was load-bearing:
+  without its generation clear a kicked slot keeps a live occupancy token and the ledger never
+  empties the row. The repair was to mechanise the census by OPERATION KIND —
+  `tools/net/peerconn_gate.ps1` requires a `GEN: mint|clear|none -- <why>` annotation at every
+  mutating verb, FAILS on a zero-site census (a gate that finds nothing has gone blind, and green is
+  not evidence), and carries six fixture must-fire controls. It immediately caught the author's OWN
+  eighth site (`KickWithToken`'s compare-exchange) and refused to build. *Look FIRST:*
   `memory/lesson_census_the_operation_kind_not_only_the_sites.md`
+- **An EDGE detector on state a peer cannot observe is silently DEAD, not wrong.**
+  `subsystems::DisconnectSlot` — ~20 per-slot person-state teardowns — hung off a falling edge of
+  `IsSlotReady`. On a CLIENT that latch never RISES for slots 1-3 (a client only fills
+  `peerConns_[0]`), so the whole fan-out never executed there for the life of the project: a
+  departed third peer's voice channel, prop/owner-entity mirrors, trash proxies, flashlight cache and
+  Player Element survived to session end, frozen puppet still standing. A dead handler leaves NO
+  evidence — no wrong value, no warning — and it works perfectly on the host, which is where anyone
+  debugging looks. Ask, PER ROLE, whether the predicate is structurally reachable; transport-derived
+  predicates are asymmetric by construction. The repair shape is always the same: replace the edge
+  with a comparison against a VALUE both peers hold. *Look FIRST:*
+  `memory/lesson_an_edge_that_never_rises_never_fires.md`
+- **Baseline an instrument on something the system does not reset under it.** Three consecutive
+  harness bugs while building the arc-A departure drill, each of which made it test NOTHING while
+  looking like progress: `multivoid.log` is APPENDED across runs (so the previous run's roster
+  matched and the drill fired before any peer existed), then it turned out to be ROTATED at boot
+  (so the line-count baseline fixing that could never be exceeded and the wait hung), and `smoke4`'s
+  default monitor window expired and killed the peers mid-settle. Also `Get-Process VotV` finds
+  nothing — the image is `VotV-Win64-Shipping`, `VotV (Client)` is only the window TITLE. Cue on what
+  you CONTROL (the process set), grade on what you MEASURE (the log); never both on one artifact. A
+  drill that cannot tell "nothing to test" from "passed" is worse than no drill. *Look FIRST:*
+  `memory/lesson_baseline_an_instrument_on_something_the_system_does_not_reset.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
+
+- **Row field vs per-slot state: does it describe the PERSON or the LINK?** The arc-A design put the
+  `joinSent` latch in the roster ledger's row beside nick/guid/skin. It cannot live there: a CLIENT
+  sends its Join to slot 0 BEFORE the host's Join arrives, so row 0 does not exist yet, the
+  occupancy-gated setter drops the write SILENTLY (which is correct for every identity field), and
+  the client re-sends its Join on all 125 ticks per second forever. The tell is direction: an
+  OUTBOUND fact ("we did something to that slot") is link-scoped and exists before anyone is
+  identified; an INBOUND one ("that peer told us who they are") is person-scoped. Link-scoped state
+  still needs replacement-clearing, so it goes in `PerSlotState<T>` (which registers its own clear in
+  its constructor), never a bare array. *Look FIRST:*
+  `memory/lesson_link_scoped_state_cannot_live_in_a_person_row.md`
 
 - **A recycled slot's replacement carries no ABSENCE — detect occupancy, don't observe departure** —
   slots are handed out lowest-free (`session_status.cpp:87-93`) and the close/accept pair runs on the
