@@ -29,6 +29,13 @@ std::vector<coop::ban_list::Entry>        g_bans;
 
 // Pending ban confirmation (render-thread only). Exactly one of slot / guid is
 // set: slot >= 1 = an ONLINE peer ban, guid[0] != 0 = an OFFLINE record ban.
+//
+// g_banToken is the load-bearing capture for the ONLINE case. The modal takes a
+// typed reason, so it stays open for as long as the admin types, and peer slots
+// recycle -- targeting the slot alone let a permanent IP ban land on the
+// successor. The token names the PERSON and is validated against the live
+// net-layer authority when the action finally runs.
+coop::moderation::PlayerToken g_banToken{};
 int  g_banSlot = -1;
 char g_banGuid[33] = {};
 char g_banNick[24] = {};
@@ -60,7 +67,9 @@ void SectionHeader(const char* label) {
     ImGui::Separator();
 }
 
-void OpenBanFor(int slot, const char* guid, const char* nick) {
+void OpenBanFor(int slot, const char* guid, const char* nick,
+                coop::moderation::PlayerToken token = {}) {
+    g_banToken = token;
     g_banSlot = slot;
     std::snprintf(g_banGuid, sizeof(g_banGuid), "%s", guid ? guid : "");
     std::snprintf(g_banNick, sizeof(g_banNick), "%s", nick ? nick : "");
@@ -92,12 +101,16 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             else if (r.ping == 0) ImGui::TextDisabled("<1ms");
             else                  ImGui::TextDisabled("--");
             ImGui::TableSetColumnIndex(3);
-            if (ImGui::SmallButton("Teleport")) coop::moderation::TeleportSlotToMe(r.slot);
+            // Token, not slot -- see g_banToken. Cheap and uniform: every
+            // slot-addressed action captures the person, so no call site has to
+            // remember which ones are destructive.
+            const auto token = coop::moderation::TokenFor(r.slot, r.playerNo, r.generation);
+            if (ImGui::SmallButton("Teleport")) coop::moderation::TeleportPlayerToMe(token);
             ImGui::SameLine();
-            if (ImGui::SmallButton("Kick")) coop::moderation::KickSlot(r.slot);
+            if (ImGui::SmallButton("Kick")) coop::moderation::KickPlayer(token);
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-            if (ImGui::SmallButton("Ban...")) OpenBanFor(r.slot, nullptr, r.nick);
+            if (ImGui::SmallButton("Ban...")) OpenBanFor(r.slot, nullptr, r.nick, token);
             ImGui::PopStyleColor();
             ImGui::PopID();
         }
@@ -206,7 +219,7 @@ void RenderBanModal() {
         ImGui::Spacing();
         if (ImGui::Button("Ban", ImVec2(S(110.f), 0))) {
             const char* reason = g_banReason[0] ? g_banReason : "banned by host";
-            if (g_banSlot >= 1) coop::moderation::BanSlot(g_banSlot, reason);
+            if (g_banSlot >= 1) coop::moderation::BanPlayer(g_banToken, reason);
             else                coop::moderation::BanOffline(g_banGuid, reason);
             g_banSlot = -1;
             g_banGuid[0] = '\0';

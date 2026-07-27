@@ -97,6 +97,7 @@ void Refresh() {
         Row& r = snap.rows[idx];
         r.slot = slot;
         r.playerNo = led.playerNo;
+        r.generation = led.bornGeneration;
         r.isLocal = rowIsLocal;
         r.isHost = (slot == 0);
         r.connected = true;  // an occupied row IS the presence fact now

@@ -433,6 +433,40 @@ public:
     // net thread does). MTA precedent: CGame::QuitPlayer(QUIT_KICK).
     bool Kick(int peerSlot, const char* reason);
 
+    // Kick, but only if `peerSlot` is STILL occupied by the person whose
+    // occupancy generation is `expectedGeneration`. Returns false (doing nothing)
+    // otherwise.
+    //
+    // WHY THIS EXISTS. A slot-addressed destructive action captures its target at
+    // one moment and executes at another -- an admin opens the ban modal, types a
+    // reason, and presses Ban some seconds later. Slots recycle in between. With a
+    // bare slot number, a permanent IP ban can land on the SUCCESSOR: a different
+    // person, banned by name of a seat they merely inherited.
+    //
+    // The check works because it compares a value from the LAGGING MIRROR (the
+    // ledger row, captured when the modal opened) against the LIVE AUTHORITY
+    // (this array), so a stale capture fails CLOSED. Comparing the mirror against
+    // itself would fail OPEN and merely narrow the window to one tick.
+    //
+    // The handle CAS is what makes the claim atomic, and it is sound because of
+    // the accept path's store ORDER: the generation is minted BEFORE peerConns_,
+    // so a successor that got far enough to change the generation also changed the
+    // handle, and the CAS fails. Thread-safe.
+    bool KickWithToken(int peerSlot, uint32_t expectedGeneration, const char* reason);
+
+    // Resolve `peerSlot`'s remote IP, but only while the slot is still occupied by
+    // `expectedGeneration`'s owner. Same reasoning as KickWithToken: the BAN path
+    // must not read the successor's address and write it to the permanent banlist.
+    bool GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
+                                 char* out, int outLen) const;
+
+  private:
+    // Shared teardown for a slot the caller has ALREADY claimed (peerConns_
+    // exchanged/CAS'd to 0). Kick claims blind; KickWithToken claims by handle.
+    bool KickClaimed(int peerSlot, uint32_t hConn, const char* reason);
+
+  public:
+
     // Query the remote IP (dotted-decimal, port excluded) of the connection at
     // peerSlot into `out` (recommend >= 48 bytes, SteamNetworkingIPAddr::
     // k_cchMaxString). Returns false (and out[0]='\0') if the slot isn't

@@ -22,28 +22,69 @@
 // MTA precedent: CStaticFunctionDefinitions::KickPlayer / BanPlayer ->
 // CGame::QuitPlayer (reference/mtasa-blue/Server/.../CStaticFunctionDefinitions
 // .cpp:11876 / :11924). MTA's BanPlayer adds the ban THEN kicks the matching
-// live player -- BanSlot below does the same (capture IP -> add ban -> kick).
+// live player -- BanPlayer below does the same (capture IP -> add ban -> kick).
+
+// THE TOKEN (arc A, 2026-07-27). Every slot-addressed destructive action takes a
+// PlayerToken, not a bare slot, and the token is in the SIGNATURE so a tokenless
+// call does not compile -- the defence cannot be forgotten at a call site.
+//
+// The measured defect it closes: the ban modal captured its target slot when the
+// modal OPENED, then executed after an arbitrary typing delay, while slots
+// recycle (lowest-free). A permanent IP ban could therefore land on the
+// SUCCESSOR -- a different person who merely inherited the seat.
+//
+// A token is (slot, playerNo, generation) read from ONE ledger row. The
+// generation is validated against the LIVE net-layer authority at execution
+// time, so a stale capture fails CLOSED. Validating playerNo against playerNo
+// inside the same mirror would fail OPEN and merely narrow the window to a tick.
 
 #pragma once
+
+#include <cstdint>
 
 namespace coop::net { class Session; }
 
 namespace coop::moderation {
 
-// Cache the Session pointer (used by KickSlot / BanSlot). Called once at host
+// The captured identity of a moderation target. Build it with TokenForSlot at
+// the moment the admin picks the row; carry it, unchanged, to the action.
+struct PlayerToken {
+    int      slot = -1;
+    uint16_t playerNo = 0;   // for the log line + the confirm dialog
+    uint32_t generation = 0; // what the net layer validates against
+    bool valid() const { return slot >= 1 && playerNo != 0 && generation != 0; }
+};
+
+// Build a token from a published roster row. PURE and thread-free on purpose:
+// the scoreboard runs on the RENDER thread and must not read the game-thread
+// ledger, so the capture rides the POD snapshot the game thread already
+// publishes (coop::roster::Row).
+inline PlayerToken TokenFor(int slot, uint16_t playerNo, uint32_t generation) {
+    PlayerToken t;
+    t.slot = slot;
+    t.playerNo = playerNo;
+    t.generation = generation;
+    return t;
+}
+
+// Cache the Session pointer (used by KickPlayer / BanPlayer). Called once at host
 // boot, alongside the other modules' SetSession.
 void SetSession(coop::net::Session* session);
 
-// Disconnect the client at peerSlot (1..kMaxPeers-1). Host-only. Safe to call
-// from the render thread (posts to the game thread).
-void KickSlot(int peerSlot);
+// Disconnect the captured player. Host-only. Safe to call from the render thread
+// (posts to the game thread). No-op if the target has since left or been
+// replaced -- see the token note above.
+void KickPlayer(const PlayerToken& token);
 
-// Permanently ban the client at peerSlot by IP, then kick it. Host-only. The
-// ban survives host restarts (coop::ban_list persists to disk) and rejects that
-// IP on future connects (via the accept filter). `reason` is stored on the ban
-// record for the admin's reference (null/empty ok). Safe to call from the
-// render thread.
-void BanSlot(int peerSlot, const char* reason);
+// Permanently ban the captured player by IP, then kick them. Host-only. The ban
+// survives host restarts (coop::ban_list persists to disk) and rejects that IP on
+// future connects (via the accept filter). `reason` is stored on the ban record
+// for the admin's reference (null/empty ok). Safe to call from the render thread.
+//
+// ABORTS -- writing no ban and kicking nobody -- if the captured player is gone.
+// This is the whole point: a permanent ban is the least reversible thing the host
+// can do, so it must never be applied to whoever happens to hold the seat now.
+void BanPlayer(const PlayerToken& token, const char* reason);
 
 // Permanently ban an OFFLINE player by its seen-players GUID (the F1
 // Administration panel's Offline-section ban). Resolves the player's last known
@@ -57,9 +98,9 @@ void BanOffline(const char* guid, const char* reason);
 // thread-safe); the panel is host-gated upstream. Any thread.
 void Unban(const char* ip);
 
-// Teleport the client at peerSlot to the host's current pose (the dev-gated
-// action -- the scoreboard only offers it under [dev] devkeys). Host-only.
-// Thin pass-through to coop::teleport_client::TeleportSlotToHost.
-void TeleportSlotToMe(int peerSlot);
+// Teleport the captured player to the host's current pose. Host-only. Token-taking
+// like the others: teleporting the wrong person is not destructive, but a
+// consistent rule is what keeps the check from being forgotten where it matters.
+void TeleportPlayerToMe(const PlayerToken& token);
 
 }  // namespace coop::moderation

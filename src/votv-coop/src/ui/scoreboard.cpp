@@ -23,8 +23,14 @@ using ui::scale::S;
 // Pending permanent-ban confirmation (render-thread only). >=0 == a ban is
 // awaiting the modal's confirm; the nick is copied for the prompt text so the
 // modal survives the row's roster snapshot changing under it.
+//
+// The TOKEN is stashed alongside, and it is the load-bearing part: the modal sits
+// open across an arbitrary typing delay, and slots recycle. Aiming the ban at
+// g_banConfirmSlot alone meant a permanent IP ban could land on whoever inherited
+// the seat while the admin was typing.
 int  g_banConfirmSlot = -1;
 char g_banConfirmNick[24] = {};
+coop::moderation::PlayerToken g_banConfirmToken{};
 
 // A small filled status dot drawn inline before a name (green = connected). Uses
 // the window draw list + a Dummy spacer so the following SameLine() name lands
@@ -164,14 +170,25 @@ void Render() {
                         ImGui::Separator();
                         // Host-standard action, NOT dev-gated (user 2026-07-03: the host
                         // should always have it, like Kick/Ban -- it is an admin verb).
+                        // Capture the TOKEN, not the slot. Slots recycle, so a
+                        // slot number stops naming this person the moment they
+                        // leave -- and these actions execute later, on the game
+                        // thread, by which time the seat may have a new occupant.
+                        const auto token =
+                            coop::moderation::TokenFor(r.slot, r.playerNo, r.generation);
                         if (ImGui::MenuItem("Teleport to me"))
-                            coop::moderation::TeleportSlotToMe(r.slot);
+                            coop::moderation::TeleportPlayerToMe(token);
                         if (ImGui::MenuItem("Kick"))
-                            coop::moderation::KickSlot(r.slot);
+                            coop::moderation::KickPlayer(token);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
                         const bool banClicked = ImGui::MenuItem("Ban (permanent)");
                         ImGui::PopStyleColor();
                         if (banClicked) {
+                            // The confirm modal executes after an ARBITRARY typing
+                            // delay, which is exactly the window a slot can change
+                            // hands in. Stash the token so the ban is aimed at the
+                            // person, not at the seat.
+                            g_banConfirmToken = token;
                             g_banConfirmSlot = r.slot;
                             std::snprintf(g_banConfirmNick, sizeof(g_banConfirmNick), "%s", nick);
                         }
@@ -293,7 +310,7 @@ void Render() {
             ImGui::TextDisabled("Disconnected now and blocked by IP on reconnect.");
             ImGui::Spacing();
             if (ImGui::Button("Ban", ImVec2(S(110.f), 0))) {
-                coop::moderation::BanSlot(g_banConfirmSlot, "banned by host");
+                coop::moderation::BanPlayer(g_banConfirmToken, "banned by host");
                 g_banConfirmSlot = -1;
                 ImGui::CloseCurrentPopup();
             }

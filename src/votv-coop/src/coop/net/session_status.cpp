@@ -358,6 +358,42 @@ void Session::HandleConnStatusChanged(void* info) {
     }
 }
 
+bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const char* reason) {
+    if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
+    if (expectedGeneration == 0) return false;  // an empty-slot token can never authorize a kick
+    const uint32_t hConnAtCapture = peerConns_[peerSlot].load();
+    if (hConnAtCapture == 0) return false;
+    // Compare the CAPTURED token against the LIVE authority. Stale -> refuse.
+    const uint32_t liveGen = peerGenBySlot_[peerSlot].load(std::memory_order_acquire);
+    if (liveGen != expectedGeneration) {
+        UE_LOGW("net: kick/ban on slot %d REFUSED -- the captured occupant (gen %u) is gone; "
+                "the slot now holds gen %u", peerSlot,
+                static_cast<unsigned>(expectedGeneration), static_cast<unsigned>(liveGen));
+        return false;
+    }
+    // Claim by HANDLE, not by slot. The generation check above can go stale
+    // between these two instructions (the net thread could close and re-accept),
+    // and a plain exchange(0) would then hand us the SUCCESSOR's connection --
+    // which is precisely the person this whole path exists to protect. The CAS
+    // closes that: a successor's accept stored a different handle, so it fails.
+    uint32_t claimed = hConnAtCapture;
+    if (!peerConns_[peerSlot].compare_exchange_strong(claimed, 0)) {
+        UE_LOGW("net: kick/ban on slot %d REFUSED -- the connection changed under us", peerSlot);
+        return false;
+    }
+    return KickClaimed(peerSlot, hConnAtCapture, reason);
+}
+
+bool Session::GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
+                                      char* out, int outLen) const {
+    if (out && outLen > 0) out[0] = '\0';
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    if (expectedGeneration == 0) return false;
+    if (peerGenBySlot_[peerSlot].load(std::memory_order_acquire) != expectedGeneration)
+        return false;
+    return GetPeerAddress(peerSlot, out, outLen);
+}
+
 bool Session::Kick(int peerSlot, const char* reason) {
     // Slot 0 is the host self -- never kickable. Bounds-reject everything else.
     if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
@@ -370,6 +406,14 @@ bool Session::Kick(int peerSlot, const char* reason) {
     // a live generation, so the ledger would never see the row empty.)
     const uint32_t hConn = peerConns_[peerSlot].exchange(0);
     if (hConn == 0) return false;
+    return KickClaimed(peerSlot, hConn, reason);
+}
+
+// The teardown for a connection whose slot the caller has ALREADY claimed
+// (peerConns_[peerSlot] exchanged/CAS'd to 0). Split out so the token-checked
+// entry point can do a compare-exchange claim instead of a blind exchange and
+// still share one teardown.
+bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
 
     if (auto* sockets = SteamNetworkingSockets()) {

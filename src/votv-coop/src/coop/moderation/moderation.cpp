@@ -6,7 +6,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/session/teleport_client.h"
 #include "coop/net/session.h"
-#include "coop/session/player_handshake.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -56,29 +56,45 @@ void SetSession(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
-void KickSlot(int peerSlot) {
-    if (!ValidClientSlot(peerSlot)) return;
-    GT::Post([peerSlot] {
+void KickPlayer(const PlayerToken& token) {
+    if (!token.valid()) return;
+    GT::Post([token] {
         auto* s = HostSession("kick");
         if (!s) return;
-        if (s->Kick(peerSlot, "kicked by host"))
-            UE_LOGI("moderation: kicked slot %d", peerSlot);
+        if (s->KickWithToken(token.slot, token.generation, "kicked by host"))
+            UE_LOGI("moderation: kicked #%u (slot %d)",
+                    static_cast<unsigned>(token.playerNo), token.slot);
         else
-            UE_LOGW("moderation: kick slot %d failed (not connected?)", peerSlot);
+            UE_LOGW("moderation: kick of #%u (slot %d) did nothing -- they are already "
+                    "gone, or someone else now holds that slot",
+                    static_cast<unsigned>(token.playerNo), token.slot);
     });
 }
 
-void BanSlot(int peerSlot, const char* reason) {
-    if (!ValidClientSlot(peerSlot)) return;
-    GT::Post([peerSlot, reason = std::string(reason ? reason : "")] {
+void BanPlayer(const PlayerToken& token, const char* reason) {
+    if (!token.valid()) return;
+    GT::Post([token, reason = std::string(reason ? reason : "")] {
         auto* s = HostSession("ban");
         if (!s) return;
         // Capture the IP + nick BEFORE the kick -- Kick() zeroes the slot, after
-        // which GetPeerAddress / NicknameForSlot can no longer resolve it.
+        // which the address can no longer be resolved. BOTH reads are token-gated:
+        // reading the successor's address and writing it to the permanent banlist
+        // is exactly the failure this path exists to prevent.
         char ip[64] = {};
-        const bool haveIp = s->GetPeerAddress(peerSlot, ip, sizeof(ip));
+        const bool haveIp = s->GetPeerAddressWithToken(token.slot, token.generation,
+                                                       ip, sizeof(ip));
         char nick[24] = {};
-        NarrowNick(coop::player_handshake::NicknameForSlot(peerSlot), nick);
+        NarrowNick(coop::roster_ledger::Get(token.slot).nick, nick);
+
+        // ABORT before writing anything if the captured player is gone. A ban is
+        // permanent and IP-keyed; applying it to whoever inherited the seat would
+        // be both wrong and effectively irreversible for them.
+        if (coop::roster_ledger::Get(token.slot).playerNo != token.playerNo) {
+            UE_LOGW("moderation: ban of #%u ABORTED -- slot %d now holds #%u",
+                    static_cast<unsigned>(token.playerNo), token.slot,
+                    static_cast<unsigned>(coop::roster_ledger::Get(token.slot).playerNo));
+            return;
+        }
 
         if (haveIp && ip[0]) {
             coop::ban_list::Add(ip, nick, reason.c_str());
@@ -86,13 +102,15 @@ void BanSlot(int peerSlot, const char* reason) {
             // No resolvable IP (already disconnected, or GNS has no remote addr):
             // still kick, but we can't persist a ban. Surface it rather than
             // silently doing a kick-shaped no-ban.
-            UE_LOGW("moderation: ban slot %d -- no resolvable IP, kicking WITHOUT a persistent ban",
-                    peerSlot);
+            UE_LOGW("moderation: ban #%u (slot %d) -- no resolvable IP, kicking WITHOUT "
+                    "a persistent ban", static_cast<unsigned>(token.playerNo), token.slot);
         }
-        if (!s->Kick(peerSlot, "banned by host"))
-            UE_LOGW("moderation: ban slot %d -- kick failed (already gone?)", peerSlot);
+        if (!s->KickWithToken(token.slot, token.generation, "banned by host"))
+            UE_LOGW("moderation: ban #%u -- kick did nothing (already gone?)",
+                    static_cast<unsigned>(token.playerNo));
         else
-            UE_LOGI("moderation: banned + kicked slot %d (ip=%s)", peerSlot, ip[0] ? ip : "?");
+            UE_LOGI("moderation: banned + kicked #%u (slot %d, ip=%s)",
+                    static_cast<unsigned>(token.playerNo), token.slot, ip[0] ? ip : "?");
     });
 }
 
@@ -124,10 +142,19 @@ void Unban(const char* ip) {
         UE_LOGW("moderation: unban %s -- was not banned", ip);
 }
 
-void TeleportSlotToMe(int peerSlot) {
-    if (!ValidClientSlot(peerSlot)) return;
-    // teleport_client self-gates on host + posts to the game thread itself.
-    coop::teleport_client::TeleportSlotToHost(peerSlot);
+void TeleportPlayerToMe(const PlayerToken& token) {
+    if (!token.valid()) return;
+    // teleport_client self-gates on host + posts to the game thread itself. The
+    // token is re-checked there, on the game thread, where the ledger is legal to
+    // read -- a slot whose occupant changed teleports nobody.
+    GT::Post([token] {
+        if (coop::roster_ledger::Get(token.slot).playerNo != token.playerNo) {
+            UE_LOGW("moderation: teleport of #%u skipped -- slot %d changed hands",
+                    static_cast<unsigned>(token.playerNo), token.slot);
+            return;
+        }
+        coop::teleport_client::TeleportSlotToHost(token.slot);
+    });
 }
 
 }  // namespace coop::moderation
