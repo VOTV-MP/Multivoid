@@ -11,7 +11,10 @@ Pelmentor4"; it must be ROBUST; it is needed for future `/commands` that target 
 and by ID; and the TAB player list must show IDs. The fix itself is "в будущем" — this pass owed
 only the design.
 
-**Build green-light NOT given.** Four product questions (§9) are the user's to answer first.
+**The four product questions are ANSWERED (user, 2026-07-27) — see §9, now DECISIONS.** Two answers
+changed the scope: the TAB becomes the SA-MP-shaped full-information surface (delta measured: one
+column, the ID) and Cyrillic support became mandatory, which opened **ARC D (§9a) — fact base
+measured, design NOT yet run through `/qf`**. Arcs A and B are unblocked for a build pass.
 
 ---
 
@@ -355,25 +358,81 @@ stale-person-state class recurs a third time (read-side gating, not a longer che
 
 ---
 
-## 9. PRODUCT QUESTIONS — the user's to answer before any build
+## 9. PRODUCT DECISIONS — ANSWERED by the user 2026-07-27
 
-1. **Literal "(host)" suffix?** The example reads "Pelmentor (host)". The scoreboard already conveys
-   the role by gold nick colour and the Link column ("LAN HOST"/"P2P HOST"). Is a literal suffix
-   wanted, or is the existing role marker enough?
-2. **Name drift.** With no guid reclaim (§4), four friends reconnecting through a long session drift
-   upward ("Pelmentor7" in a lobby of four). Acceptable as cosmetic until peer certificates make a
-   safe reclaim possible?
-3. **Cyrillic.** `SanitizeNickname` STRIPS non-ASCII (`:199-203`), so "Пельментор" collapses to the
-   "Player" fallback — a Russian-speaking lobby becomes Player/Player2/Player3, and arbitration makes
-   that long-standing gap visible. Widen the alphabet? **Measured cost:** `NarrowNick` caps at 23
-   bytes and turns failure into an EMPTY string (`roster.cpp:28-35`), and Cyrillic is 2 bytes/char in
-   UTF-8, so a 12+ character name would render BLANK, not truncated. Widening therefore also
-   requires widening the display buffers and fixing that failure mode — a small separate piece of
-   work with its own drill, not a one-line condition change.
-4. **Suffix vs ID divergence.** They coincide in a fresh lobby (Pelmentor2 = #2) but diverge after
-   churn ("#7 Pelmentor3"). Internally harmless (the suffix is never parsed), but user-visible.
-   Keep as-is (stable ID + short names), or derive the suffix from the ID (they always agree, but
-   names grow)?
+The four questions below were put to the user and answered. Recorded as decisions; two of them
+CHANGE the scope above, and one CORRECTS a measurement this document previously carried.
+
+**D1 — no role in the name. DECIDED.** User: "в нике не должно быть ролей." No "(host)" suffix
+anywhere; the host's role stays expressed by the gold nick colour and the TAB Link column
+("LAN HOST"/"P2P HOST"). §2/§4 already assume this — now it is fixed, not a default.
+
+**D2 — the digit is a DISAMBIGUATOR, nothing else. DECIDED.** User: "Цифра в никнейме вообще никак
+не должна быть связана/привязана с ID игрока. Мы добавляем цифру просто чтобы у всех игроков был
+уникальный Nameplate и они не путались если два Pelmentor гуляют по комнате." So: the suffix
+carries NO identity, is never parsed, and must never be derived from `playerNo` (this re-confirms
+the R10 reversal). Drift across reconnects stays accepted as cosmetic (§4, no guid reclaim).
+**Live tension to resolve in the arc-B build pass:** the §4 high-water rule (`k` starts above the
+base's high-water mark) exists so a name issued this session is never re-pointed at a different
+person — which serves the very confusion the user named — but it is also the sole cause of upward
+drift. Dense-smallest-free gives shorter names and re-points; high-water gives stable names and
+drift. The user's stated GOAL (two Pelmentors in one room must not be confusable) argues for
+high-water; recorded here so the build does not silently pick the other one.
+
+**D3 — the ID never appears on the nameplate; TAB carries everything. DECIDED + SCOPE ADDED.**
+User: "ID не должно быть в никнейме тоже (nameplate я имею в виду). А в tab ВСЯ информация пусть
+будет прям как в SA-MP tab." The in-world nameplate renders the arbitrated NAME ONLY. The
+scoreboard becomes the full-information surface, SA-MP-shaped. **Measured delta** (`ui/scoreboard.cpp:104-112`):
+today the table is `Player | [Mic] | Link | Ping`; SA-MP's is `ID | Name | Score | Ping`. So the
+only missing column is **ID** — which is exactly arc A's `playerNo` — and VOTV has no score
+concept, so that column has no honest analogue and is NOT invented. Mic/Link are ours and stay.
+Divergence between the TAB number and the name's digit ("#7 Pelmentor3") is explicitly accepted
+("Номер ID в TAB разные от текучки это норм").
+
+**D4 — Cyrillic MUST be supported. DECIDED → its own arc (below).** User: "Кириллицу надо
+поддерживать." This makes a previously-optional widening mandatory, and it is NOT a one-line change
+to `SanitizeNickname`.
+
+### 9a. ARC D — Cyrillic nicknames (NEW scope; fact base measured 2026-07-27)
+
+**CORRECTION to the earlier cost note.** This document previously claimed a 12+ character Cyrillic
+name "renders BLANK" and cited `roster.cpp:28-35` for `NarrowNick`. Re-measured: there are THREE
+distinct narrowing sites with THREE different failure modes, and the blank one is not the nameplate.
+
+| Site | Shape | Failure on Cyrillic |
+|---|---|---|
+| `player_handshake.cpp:199-212` `SanitizeNickname` | keeps ASCII alnum + `-_.` + space; 20-wchar cap | every Cyrillic char STRIPPED → empty → `"Player"` fallback (`:224`). This is the root gate. |
+| `coop/player/roster.cpp:28-35` `NarrowNick` (TAB rows) | `WideCharToMultiByte` into **23 bytes**; on insufficient buffer the API returns 0 → `out[0]='\0'` | Cyrillic is 2 bytes/char UTF-8, so a **12+ char** name yields an EMPTY row nick; the scoreboard then prints the `"Remote player"` fallback (`scoreboard.cpp:115`). This is the blank case. |
+| `coop/player/nameplate.cpp:79-86` `CopyNickAscii` | `(c >= 32 && c < 127) ? c : '?'` into `char[24]` | the in-world plate renders `??????????` — mangled, not blank. |
+| `moderation.cpp:44-51` (ban record), `seen_players.cpp:141`, `object_overlay.cpp:106`, `player_inventory_sync.cpp:111-116` | same two shapes (`'?'` substitution / byte cap) | informational surfaces; each asserts the ASCII invariant in a COMMENT, so widening silently falsifies four comments. |
+
+**What is already solved (measured, and it makes this cheaper than feared):**
+- **Rendering is not a blocker.** Our ImGui atlas bakes `io.Fonts->GetGlyphRangesCyrillic()`
+  (`ui/fonts.cpp:188`), and the default family Fixedsys Excelsior covers Cyrillic (cmap-verified
+  5992 cp, `fonts.cpp:44-46`). The nameplate is OUR overlay (there is a dedicated `Role::Nameplate`
+  font), not the game's UMG — so the game's Latin-only `font_ui` never enters this path.
+- **The wire is not a blocker.** The nick field is `[u8 len][UTF-8 bytes]`
+  (`player_handshake.cpp:424-433`, built by `ToUtf8` `:139-148`), so 20 Cyrillic chars = 40 bytes
+  fits in the 255-byte length prefix. **No protocol bump for the alphabet itself.**
+
+**Therefore ARC D is: one alphabet decision + a byte-vs-character audit of the fixed buffers, not a
+font or transport project.** Open design points it must answer, none of them settled here:
+1. **Which alphabet?** Cyrillic-plus-ASCII, or a general Unicode-category rule? The sanitizer's
+   stated job (`:167-181`) is blocking control chars, RTL override, and combining diacritics — a
+   category rule must preserve those defences explicitly, not by accident.
+2. **The cap changes meaning.** 20 is a *character* cap at `:194` but every downstream buffer is a
+   *byte* buffer. Either the buffers grow to `20 chars x 4 bytes + NUL`, or the cap becomes a byte
+   cap and a 20-char Cyrillic name is refused at entry. Truncating UTF-8 mid-sequence must be
+   impossible by construction, and `NarrowNick`'s silent all-or-nothing failure must become a
+   defined truncation.
+3. **The fold key breaks.** §4's fold is "ASCII lowercase ONLY — complete over the sanitizer's
+   alphabet"; widening falsifies that completeness claim, so "пельментор" and "Пельментор" would
+   collide on the nameplate while resolving as two different targets. Cyrillic case-folding
+   (including Ё/ё) becomes load-bearing for arbitration AND for the future `/commands` resolver.
+4. **Four ASCII-asserting comments** must be corrected in the same commit (RULE 2 — a false comment
+   about an invariant is worse than none: `[[lesson-false-security-comment-worse-than-none]]`).
+
+**Status: DESIGN OPEN.** Arc D has NOT been through `/qf`; the table above is its fact base only.
 
 ---
 
