@@ -1,7 +1,17 @@
 # Nickname arbitration + roster identity/ID — DESIGN (2026-07-27)
 
-**STATUS: DESIGN, converged. NOT built, NOT smoked, NOT hands-on.**
-42-round `/qf` pass; the critic returned "that holds" at R42. Round-by-round log:
+**STATUS (2026-07-27 late, per arc):**
+- **ARC A — BUILT, DRILLED, AUDITED. NOT hands-on.** Proto 130, DLL `c4d1d8d4bf1dcd3e`, commits
+  `72805d96`..`63a488a7`. Four drills PASS (departure / replacement-with-loss-injection /
+  successor-ban / idempotency-by-count), two audits at 0 CRITICAL. Evidence and the corrections the
+  build measured against this design are in §3 AS-BUILT; the per-drill RUN/OPEN status is in
+  §3 "Arc A drills". **No human has touched it** — every claim is autonomous.
+- **ARC B (nickname arbitration), ARC C (per-slot receive gate), ARC D (international text) —
+  DESIGN ONLY. Not built, not smoked, not hands-on.** B and D are ONE delivery (§9b.8); the five
+  §9b.7 measurements gate the build.
+
+Arcs A/B/C: 42-round `/qf`, the critic returned "that holds" at R42. Arc D: 19 rounds, NOT
+converged, stopped deliberately once the questions moved onto the drill (§9b). Round-by-round log:
 `<scratchpad>/qf_thread.md` (session-local; the durable content is this document).
 
 **The user's ask (2026-07-26 directive, verbatim intent):** duplicate nicknames must RESOLVE the
@@ -362,21 +372,38 @@ generation.**
    time; they land on `rttMsForSlot() == -1` beside "VIA HOST" and need a deliberate presentation.
 
 ### Arc A drills
-- A client sees all four rows; a departing third peer disappears from a client's TAB.
-- Third peer leaves, fourth takes its slot, the departure row is INJECTED-LOST → the receiver sees
-  the token change, performs death+birth, renders the new person with no ghost frame.
-- The successor has SILENCE on the voice channel and their OWN inventory.
-- A departed peer's bubble / colour / plate / hand state is cleared ON A CLIENT.
-- Steady-state pulse: zero engine calls, no toast.
-- A version-gate-rejected joiner never appears on any client.
-- A doomed never-ready connect emits no toast and creates no row.
-- Join during a save-transfer burst with row loss injected → full roster within the adaptive window.
-- Ban-modal successor drill: open the modal, let the target leave, let a new peer take the slot,
-  press Ban → the action ABORTS and the newcomer is NOT banned.
-- Accept-ordering drill: successor accepted before the GT tick → Ban aborts.
-- Session-end counting drill: three peers → exactly THREE transitions per subscriber, no menu toast,
-  next session starts with all migrated stores empty.
-- A row arriving before the `LocalPeerId` stamp is parked and applied correctly.
+
+Status as of 2026-07-27 late. RUN = an instrument executed it and its verdict is recorded in the
+AS-BUILT block above; OPEN = no instrument exists yet.
+
+- **RUN** A client sees all four rows; a departing third peer disappears from a client's TAB.
+  (`tools/net/departure_drill.ps1`.)
+- **RUN** Third peer leaves, fourth takes its slot, the departure row is INJECTED-LOST → the receiver
+  sees the token change, performs death+birth, renders the new person with no ghost frame.
+  (`tools/net/replacement_drill.ps1` + `[dev] roster_drop_empty_rows`; death/birth graded on the
+  Registry's own `released` → `established MIRROR` ordering.)
+- **RUN** Ban-modal successor drill: a token captured when the slot was first occupied, HELD across
+  the departure, fired at the successor → the action ABORTS and the newcomer is NOT banned.
+  (`[dev] roster_token_selftest`; asserts the PAIR stale=REJECTED + live=ACCEPTED, and the banlist
+  file is compared before/after.)
+- **RUN (subsumed)** Accept-ordering drill: the guard that covers it is the generation check against
+  the LIVE net authority rather than the ledger mirror, which is precisely the NEGATIVE assertion the
+  successor drill makes. A successor accepted before the game thread reconciles is already refused
+  there. No separate instrument needed; recorded so it is not re-derived.
+- **RUN (by count)** Steady-state pulse: zero engine calls, no toast — proven as exactly 4 ledger
+  transitions and 2 identity installs per client across a whole run while the pulse re-asserted every
+  1-5 s.
+- **OPEN** The successor has SILENCE on the voice channel and their OWN inventory.
+- **OPEN** A departed peer's bubble / colour / plate / hand state is cleared ON A CLIENT.
+- **OPEN** A version-gate-rejected joiner never appears on any client.
+- **OPEN** A doomed never-ready connect emits no toast and creates no row.
+- **OPEN** Join during a save-transfer burst with row loss injected → full roster within the adaptive
+  window. (`roster_drop_empty_rows` injects EMPTY-row loss only; this needs loss of OCCUPIED rows,
+  which is a different injection.)
+- **OPEN** Session-end counting drill: three peers → exactly THREE transitions per subscriber, no menu
+  toast, next session starts with all migrated stores empty.
+- **OPEN** A row arriving before the `LocalPeerId` stamp is parked and applied correctly. (The park
+  path exists and is code-reviewed; nothing has forced the race.)
 
 ---
 
