@@ -458,6 +458,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   drill that cannot tell "nothing to test" from "passed" is worse than no drill. *Look FIRST:*
   `memory/lesson_baseline_an_instrument_on_something_the_system_does_not_reset.md`
 
+- **MID-ACTIVITY JOIN is ALWAYS handled, per RULE 1 — it is architectural principle 8** (USER RULE
+  2026-07-19). A peer joining mid-event / mid-decode / mid-download / mid-ping / mid-playback /
+  mid-drive / mid-ANYTHING is never an unsupported edge case. Every sync lane MUST define and
+  implement its late-join answer (snapshot / seed / park / replay / unlatch) AT THE ROOT; "don't join
+  during X", a suppressive filter, or an undefined window is a crutch. A new lane is not DONE until
+  its mid-join row exists. *Look FIRST:* the per-lane answer table in `docs/COOP_EVENT_JOIN.md` — it
+  is the pattern, and it extends to every activity lane, not just events.
+  `memory/feedback_mid_activity_join_per_rule1.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
