@@ -31,7 +31,7 @@ state** — each file is a snapshot from its date.
 | `mta/` | MTA:SA conceptual-precedent REs (keysync, pose interp, entity/NPC sync) + the two MTA-fidelity audits |
 | `network/` | GNS integration, connectivity ladder, master server, voice chat, VoidTogether RE, MP menu/browser |
 | `architecture-audits/` | codebase/architecture audits, refactor PLANs, migration roadmaps, perf RCAs (findclass bomb, L5 hitch) |
-| `join-identity/` | the join-window arc: save transfer, snapshot adoption, purge/quiescence gates, eid/identity binds, the placed-prop 6-root saga RCA |
+| `join-identity/` | the join-window arc: save transfer, snapshot adoption, purge/quiescence gates, eid/identity binds, the placed-prop 6-root saga RCA. **2026-07-27: `votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md` — the nickname-uniqueness + TAB-ID design (42-round /qf, converged, NOT built). Read it before touching the roster, per-slot person-state teardown, or slot-addressed moderation: it measures that a client's TAB lists only itself and the host today, that a recycled slot goes X->Y with no absence in between, and that a ban modal targets a snapshot-time slot index.** |
 | `saves/` | SP save system RE: save path, GVAS picker enumerate/create |
 | `piles-trash/` | chipPile/clump/trashBits: morphs, dispatch/thunk hooks, carry churn, dup RCAs, garbage Inc designs |
 | `props-lifecycle/` | Aprop_C lifecycle, interactables catalog, destroy-seam/host-wipe, crowbar key-divergence, piramid, use-action bindings |
