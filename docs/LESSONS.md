@@ -415,6 +415,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
+- **A recycled slot's replacement carries no ABSENCE — detect occupancy, don't observe departure** —
+  slots are handed out lowest-free (`session_status.cpp:87-93`) and the close/accept pair runs on the
+  NET thread, so a slot can go occupant X -> occupant Y with no empty state between and the polled
+  falling `IsSlotReady` edge (`event_feed.cpp:127-135`) can miss BOTH transitions inside one 8 ms GT
+  tick — routine on loopback, i.e. our own 2-peers-on-one-machine rig. Cure: an occupancy TOKEN read
+  as current state (host-minted generation internally, session-monotonic `playerNo` on the wire) plus
+  a periodic reconcile as its executor, since after a departure with no successor no packet arrives to
+  trigger a "check at use". *Look FIRST:*
+  research/findings/join-identity/votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md T1-T5.
+  `memory/lesson_recycled_slot_replacement_carries_no_absence.md`
+- **Validate WHERE YOU READ, not against a mirror — or staleness fails OPEN** — a destructive action
+  that re-checks its captured token against the game-thread MIRROR only narrows its race: the net
+  thread can clear a slot and accept a successor before the GT runs, so the stale mirror still holds
+  the predecessor's token, the check passes, and the address is resolved from the LIVE connection.
+  Take a value FROM the mirror and compare it against the AUTHORITY you are about to read, atomically
+  with that read ("resolve this slot's address IFF its generation is still G") — then staleness fails
+  CLOSED. Put the token in the API SIGNATURE so a tokenless call cannot compile; a hand-listed call
+  set is not a defence (a manual census missed `scoreboard.cpp:285`; a mechanical grep found eight
+  `moderation::` sites, six slot-addressed). Measured instance: `BanSlot` uses a slot captured when
+  the modal OPENED, across an arbitrary typing delay -> a permanent IP ban can hit the successor.
+  *Look FIRST:* same design doc, T11. `memory/lesson_validate_where_you_read_not_against_a_mirror.md`
 - **A SILENT passive identity mint is a zombie factory: mint only where you ANNOUNCE** — the client
   census minted keyed Elements "for its own tracking" (broadcasts nothing) and the keyed adopt stacked
   a mirror over each (~2200 double-rows per join, reverse stolen by RegisterMirror). v122: a passive
