@@ -19,12 +19,20 @@ namespace coop::net { class Session; }
 
 namespace coop::roster {
 
+// "this row has no ID to show" -- the out-of-session synthetic row, which is not
+// in any session and therefore has no host-issued number.
+inline constexpr unsigned short kNoPlayerNo = 0;
+
 // One roster entry. Plain data only (the render thread reads it) -- the nickname
 // is a fixed UTF-8 buffer (peer nicks are sanitized to ASCII upstream, so 23
 // bytes + NUL is ample).
 struct Row {
     int  slot = -1;
     char nick[24] = {};
+    // The occupant's session ID -- the number TAB shows, minted by the host and
+    // never reused within a session. 0 only out of session (see kNoPlayerNo).
+    // Deliberately NOT the slot: slots recycle, IDs do not.
+    unsigned short playerNo = 0;
     bool isLocal = false;    // this row is YOU
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;

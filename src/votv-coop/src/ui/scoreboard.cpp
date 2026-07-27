@@ -100,7 +100,13 @@ void Render() {
         const bool host = LocalIsHost();
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX;
         const bool voiceOn = vs.enabled != 0 && vs.started != 0;
-        if (ImGui::BeginTable("##roster", voiceOn ? 4 : 3, tflags)) {
+        if (ImGui::BeginTable("##roster", voiceOn ? 5 : 4, tflags)) {
+            // ID (arc A): the occupant's session number, host-issued and never
+            // reused within a session. It is NOT the slot -- slots recycle, so a
+            // slot number names a seat, not a person -- and it is deliberately
+            // NOT shown on the nameplate (user 2026-07-27); TAB is where the full
+            // information lives, SA-MP-shaped.
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(30.0f));
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
             // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
             // Click = self: toggle mute; remote: per-player volume popup.
@@ -129,6 +135,11 @@ void Render() {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(r.slot);
+                if (r.playerNo != coop::roster::kNoPlayerNo)
+                    ImGui::TextDisabled("%u", static_cast<unsigned>(r.playerNo));
+                else
+                    ImGui::TextDisabled("-");   // out of session: no host issued one
+                ImGui::TableSetColumnIndex(1);
                 StatusDot(r.connected);
                 ImGui::SameLine();
 
@@ -174,7 +185,7 @@ void Render() {
                 // Voice column (v66): the per-player mic-state icon. Self row:
                 // click toggles your mute. Remote row: click opens the local
                 // mute/volume popup (SetSlotVolume is render-thread-safe).
-                int col = 1;
+                int col = 2;  // 0 = ID, 1 = Player; the rest follow
                 if (voiceOn) {
                     ImGui::TableSetColumnIndex(col++);
                     const bool self = r.isLocal;

@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"
 
 #include <windows.h>
 
@@ -61,6 +62,10 @@ void Refresh() {
         snap.rows[0].isLocal = true;
         snap.rows[0].isHost = true;
         snap.rows[0].connected = true;
+        // NAMED EXCEPTION (arc A T14): with no session there is no ledger, so
+        // this one row is synthesised from the local request and carries no ID.
+        // "One derivation" holds WITHIN a session.
+        snap.rows[0].playerNo = kNoPlayerNo;
         NarrowNick(coop::player_handshake::LocalNickname(), snap.rows[0].nick);
         {
             std::lock_guard<std::mutex> lk(g_mutex);
@@ -81,19 +86,31 @@ void Refresh() {
 
     int idx = 0;
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
+        // ONE DERIVATION (arc A). Presence comes from the LEDGER, which both
+        // peers agree on, instead of from connection state -- which a client
+        // simply does not have for other clients. That is why a client's board
+        // used to list only itself and the host: IsSlotConnected(2) is false on
+        // a client no matter who is in slot 2.
+        const coop::roster_ledger::Row& led = coop::roster_ledger::Get(slot);
+        if (!led.occupied()) continue;
         const bool rowIsLocal = (slot == localSlot);
-        const bool connected  = rowIsLocal ? true : s->IsSlotConnected(slot);
-        if (!rowIsLocal && !connected) continue;  // empty client slot
         Row& r = snap.rows[idx];
         r.slot = slot;
+        r.playerNo = led.playerNo;
         r.isLocal = rowIsLocal;
         r.isHost = (slot == 0);
-        r.connected = connected;
-        // Per-peer ping for the scoreboard. The local row has no self-ping (-1); a
-        // remote row shows the GNS RTT to that peer (0 on a sub-ms LAN link).
+        r.connected = true;  // an occupied row IS the presence fact now
+        // Per-peer ping for the scoreboard. The local row has no self-ping (-1);
+        // a remote row shows the GNS RTT to that peer (0 on a sub-ms LAN link).
+        // On a CLIENT, only the host link is ours to measure -- another client's
+        // traffic reaches us relayed, so there is no RTT to report and the column
+        // shows a dash beside "VIA HOST" rather than a misleading -1 rendering.
         r.ping = rowIsLocal ? -1 : s->rttMsForSlot(slot);
+        // The display fallback lives in the ledger (ONE copy); the local row
+        // still resolves through LocalNickname because our own name is ours
+        // before any row exists.
         NarrowNick(rowIsLocal ? coop::player_handshake::LocalNickname()
-                              : coop::player_handshake::NicknameForSlot(slot),
+                              : coop::roster_ledger::DisplayName(slot),
                    r.nick);
         // Connection-type column (user 2026-06-10): each board shows what THIS
         // peer truthfully knows. The HOST owns every client conn -> real
@@ -109,6 +126,12 @@ void Refresh() {
             s->LinkLabelForSlot(0, r.link, sizeof(r.link));     // my own link to the host
         } else if (!rowIsLocal) {
             std::snprintf(r.link, sizeof(r.link), "VIA HOST");
+            // Arc A cosmetic follow-through: these rows are rendered on a CLIENT
+            // for the first time (before, they were skipped entirely), and their
+            // ping is structurally unmeasurable from here -- the traffic is
+            // relayed. Say so with a dash rather than letting -1 fall through as
+            // if it were a pending sample.
+            r.ping = -1;
         }
         ++idx;
     }
