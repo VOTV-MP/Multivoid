@@ -97,6 +97,15 @@ void* g_netLocalController = nullptr;
 bool g_wasConnected = false;
 std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
 
+// The Session the pump is currently ticking, valid for the duration of Tick.
+// The ledger's teardown subscriber needs a Session but the subscriber signature
+// deliberately carries only the rows (the ledger knows nothing about transport),
+// and every site that can fire a transition -- the reconcile, the flee-time
+// ClearAll -- runs inside a tick. Set at Tick entry, cleared at exit, so a
+// transition fired from anywhere else finds no session and does nothing rather
+// than dereferencing a stale pointer.
+coop::net::Session* g_tickSession = nullptr;
+
 // Death policy one-shot (2026-06-01, client-death OOM fix). On LOCAL death we
 // SYNCHRONOUSLY tear down ALL coop game-side state (destroy puppet actors + drain
 // Element state) + Stop the session, then FLEE to the main menu with our layer held
@@ -255,7 +264,30 @@ void TearDownCoopStateForSessionEnd(coop::net::Session& session) {
 
 }  // namespace
 
+// The per-person WORLD teardown, driven by the ledger row transition. Both halves
+// of the old falling-edge pair moved here verbatim: destroy the departed peer's
+// puppet, then run the per-slot subsystem fan-out.
+//
+// It fires on a REPLACEMENT as well as a departure, and -- the part that was
+// structurally missing -- it fires ON A CLIENT, where the old edge never could.
+// Every body in subsystems::DisconnectSlot was read before this change (T5): the
+// host-authoritative ones self-gate on Role::Host and become no-ops on a client,
+// and the rest are local-state clears that a client SHOULD have been doing all
+// along. None of them send from a client.
+void OnSlotReplaced_TearDownWorld(int slot, const coop::roster_ledger::Row& outgoing,
+                                  const coop::roster_ledger::Row& /*incoming*/) {
+    if (!outgoing.occupied()) return;
+    if (slot <= 0) return;  // slot 0 is the host; its departure ends the session, not a slot
+    auto* s = g_tickSession;
+    if (!s) return;         // no session context (nothing to tear down against)
+    if (coop::puppet_drive::DestroySlot(slot))
+        UE_LOGI("net: peer slot %d (#%u) left -- puppet destroyed", slot,
+                static_cast<unsigned>(outgoing.playerNo));
+    coop::subsystems::DisconnectSlot(*s, slot);
+}
+
 void OnSessionStart() {
+    coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced_TearDownWorld);  // idempotent
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     g_localDeathHandled = false;
@@ -347,6 +379,12 @@ void Tick(coop::net::Session& session) {
     // ElementDeleter::Flush (the controlled game-thread destruction point).
     // One guard at the top enforces the invariant for everything below it.
     UE_ASSERT_GAME_THREAD("net_pump::Tick (puppet drive + ElementDeleter::Flush)");
+    // Scope the Session for the ledger's teardown subscriber (see g_tickSession).
+    // RAII so an early return anywhere below cannot leave a stale pointer live.
+    struct TickSessionScope {
+        explicit TickSessionScope(coop::net::Session& s) { g_tickSession = &s; }
+        ~TickSessionScope() { g_tickSession = nullptr; }
+    } _tickSessionScope{session};
 
     // ---- L5 HITCH + source probe (2026-06-23, diagnostic, always-on, ~free). The user reports a
     // PERMANENT ~3-4s frame stutter on both peers. The instrumented periodic walks (reseed 20s, *_sync,
@@ -461,15 +499,17 @@ void Tick(coop::net::Session& session) {
         // mapping. The disconnect callback clears both flags atomically so
         // the disconnect-edge also fires correctly off IsSlotReady.
         const bool slotConnected = session.IsSlotReady(slot);
-        if (g_wasConnectedBySlot[slot] && !slotConnected) {
-            // DestroySlot = the old inline pair verbatim (unconditional
-            // UnregisterPuppet -- the N-3 no-puppet-yet case is safe inside --
-            // + destroy-if-live); it returns whether a live puppet died so the
-            // edge keeps its log line exactly.
-            if (coop::puppet_drive::DestroySlot(slot))
-                UE_LOGI("net: peer slot %d disconnected -- puppet destroyed", slot);
-            coop::subsystems::DisconnectSlot(session, slot);
-        }
+        // ARC A: the DISCONNECT half of this edge is GONE. Per-person teardown is
+        // driven by the ledger ROW TRANSITION now (OnSlotReplaced_TearDownWorld
+        // above). The falling edge was wrong in two structural ways:
+        //   - On a CLIENT it never rose for slots 1-3 (a client only ever fills
+        //     peerConns_[0]), so the whole ~20-subsystem fan-out NEVER RAN there:
+        //     a client kept a departed third peer's voice channel, prop mirrors,
+        //     owner-entity mirrors, trash proxies, flashlight cache and Player
+        //     Element for the rest of the session.
+        //   - On the HOST a fast REPLACEMENT skips it entirely -- ready->ready
+        //     across one 8 ms tick, no edge at all, and the successor inherits.
+        // The row transition compares VALUES, so it sees both.
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
             // Per-slot connect edge.
             // - HOST side (slot 1..3): v56 -- the replay no longer fires here. A
