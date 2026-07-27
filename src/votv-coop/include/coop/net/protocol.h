@@ -705,7 +705,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 129; // v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline). Prior: v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
+inline constexpr uint16_t kProtocolVersion = 130; // v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
                                                   // ContainerContents becomes BIDIRECTIONAL and its
                                                   // blob gains a baseHash. A client now AUTHORS the
                                                   // world container it mutated (presser-authored
@@ -1448,34 +1448,65 @@ enum class ReliableKind : uint8_t {
                        //     dropped it (stale-gen defense moved to
                        //     header senderEpoch). Payload:
                        //     AssignPeerSlotPayload (8 bytes, v16).
-    PlayerJoined = 19, // v17 (PR-FOUNDATION Tier 2, host-relay topology):
-                       //     HOST-only send. Carries a THIRD peer's identity
-                       //     to a client so clients learn about each other
-                       //     (not just about the host). MTA shape: mirrors
-                       //     CGame::InitialDataStream's two-way broadcast --
+    RosterRow = 19,    // v17 as PlayerJoined (PR-FOUNDATION Tier 2, host-relay
+                       //     topology); WIDENED + RENAMED in v130 (arc A) into a
+                       //     true SLOT-STATE row. HOST-only send.
+                       //
+                       //     WHY THE RENAME (wire value deliberately unchanged):
+                       //     the old name lied about the semantics. This is not
+                       //     an event announcing an arrival -- it is the host
+                       //     ASSERTING the current occupant of a slot, re-sent by
+                       //     a repair pulse, and it may now describe slot 0 (the
+                       //     host itself) and the RECEIVER'S OWN slot. A receiver
+                       //     that treats it as "someone joined" spams a toast per
+                       //     pulse; a receiver that conforms to it as state does
+                       //     not. See roster_ledger.h for the occupancy model.
+                       //
+                       //     MTA shape (unchanged): mirrors CGame::
+                       //     InitialDataStream's two-way broadcast --
                        //     reference/mtasa-blue/Server/.../CGame.cpp:1422
                        //     (BroadcastOnlyJoined) + :1435 (per-existing-peer
-                       //     send to the joiner). When the host processes
-                       //     client B's Join it (1) sends PlayerJoined{B} to
-                       //     every OTHER connected client, and (2) sends
-                       //     PlayerJoined{X} to B for every already-known
-                       //     client X. Receiver calls EstablishMirrorForSlot
-                       //     (slot, eid) + stores the nick, so when B's
-                       //     relayed pose arrives (T2-2) the puppet spawns
-                       //     into an already-identified slot. Distinct from
-                       //     Join (Join = "I, the sender, am here"; PlayerJoined
-                       //     = "this OTHER peer exists"), so it carries an
-                       //     explicit `slot` field. Variable-length payload
-                       //     (parsed field-by-field, no fixed struct -- same
-                       //     approach as Join):
-                       //       [uint8 slot][uint32 eid][uint8 nicklen][nick UTF-8]
-                       //     slot is the described peer's coop::players slot
-                       //     (1..kMaxPeers-1; never 0 -- the host is delivered
-                       //     via AssignPeerSlot, not PlayerJoined). eid is that
-                       //     peer's local Player Element id (peer range,
-                       //     validated via IsAllowedPeerAllocatedEid on
-                       //     receipt). Stale-gen defense rides the header
-                       //     senderEpoch (v16) like every packet.
+                       //     send to the joiner). When the host processes client
+                       //     B's Join it (1) sends RosterRow{B} to every OTHER
+                       //     connected client, and (2) sends RosterRow{X} to B
+                       //     for every already-known peer X. Receiver calls
+                       //     EstablishMirrorForSlot(slot, eid) + stores the
+                       //     identity, so when B's relayed pose arrives (T2-2)
+                       //     the puppet spawns into an already-identified slot.
+                       //
+                       //     Variable-length payload (parsed field-by-field, no
+                       //     fixed struct -- same approach as Join):
+                       //       [uint8 slot][uint16 playerNo][uint32 eid]
+                       //       [uint8 nicklen][nick UTF-8][uint8 skinlen][skin]
+                       //       [uint8 prefsFlags][u8 hasColor][r][g][b]
+                       //
+                       //     slot   -- the described peer's coop::players slot.
+                       //               0..kMaxPeers-1: v130 ADMITS slot 0 (the
+                       //               host describes itself; its EID still
+                       //               arrives via AssignPeerSlot) and the
+                       //               receiver's own slot (a client cannot
+                       //               otherwise learn its own host-issued ID).
+                       //     playerNo -- the occupant's session-unique ID, the
+                       //               number TAB shows. 0 means the slot is
+                       //               EMPTY and the rest of the row is
+                       //               meaningless -- that is how a departure
+                       //               reaches a client, since a recycled slot
+                       //               goes X->Y with no absence in between and
+                       //               there is no PlayerLeft kind. A CHANGED
+                       //               playerNo is a REPLACEMENT: the receiver
+                       //               drains the outgoing occupant before
+                       //               installing the incoming one.
+                       //     eid    -- that peer's local Player Element id (peer
+                       //               range, validated via
+                       //               IsAllowedPeerAllocatedEid on receipt). 0
+                       //               is the existing "no Element" sentinel and
+                       //               is what rows about slot 0 / the
+                       //               receiver's own slot carry, so the
+                       //               receiver skips mirror install for them.
+                       //
+                       //     Stale-gen defense rides the header senderEpoch
+                       //     (v16) like every packet. The occupancy GENERATION
+                       //     behind playerNo never leaves the host.
     PlayerDamage = 20, // vitals Inc3-WIRE (2026-05-31): host-authoritative combat
                        //     damage relay. HOST-only send: the host detects a host-
                        //     side enemy hitting peer N's PUPPET and sends this to

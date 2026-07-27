@@ -248,7 +248,7 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::Join:
     case ReliableKind::AssignPeerSlot:
-    case ReliableKind::PlayerJoined:        // roster identity -- engine-free on the receiver
+    case ReliableKind::RosterRow:        // roster identity -- engine-free on the receiver
     // v93 skins: SkinChange is the same roster-identity family and its receiver is
     // engine-free with no puppet spawned (StoreSkinForSlot just caches the name; the
     // puppet spawns later reading SkinForSlot). WITHOUT this, a skin changed while a

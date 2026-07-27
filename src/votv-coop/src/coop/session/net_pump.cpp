@@ -35,6 +35,7 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/player/remote_player.h"
@@ -202,6 +203,13 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
     // peer-left toast. Host-stays-on-client-leave never reaches this funnel, so its
     // legitimate departure toast is preserved.
     coop::event_feed::SuppressPeerLeaveEdges();
+    // The ledger clears at session STOP, and it has to be done HERE rather than
+    // left to the next reconcile: the reconcile early-returns once the session
+    // stops running, so the rows would otherwise survive into the menu and into
+    // the next session. Ordered after SuppressPeerLeaveEdges so the four
+    // transitions tear person-state down silently instead of narrating four
+    // departures into the main menu.
+    coop::roster_ledger::ClearAll();
     // Hold the detour dormant over the world teardown, but RESUME the instant the
     // menu's ui_menu_C::Tick first dispatches (menu world up) so MULTIPLAYER is
     // injected on the first menu frame. kDeathMenuBypassMs is only the safety

@@ -83,7 +83,7 @@ void AnnounceLocalSkin(net::Session& session, const std::string& name) {
 
 bool HandleSkinChange(net::Session& session,
                       const net::Session::ReliableMessage& msg) {
-    UE_ASSERT_GAME_THREAD("g_skinBySlot (HandleSkinChange)");
+    UE_ASSERT_GAME_THREAD("ledger row skin (HandleSkinChange)");
     if (msg.payloadLen < 2) {
         UE_LOGW("player_handshake: SkinChange payload %zu B too short -- dropping",
                 static_cast<size_t>(msg.payloadLen));

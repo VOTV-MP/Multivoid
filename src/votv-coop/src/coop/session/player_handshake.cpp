@@ -16,6 +16,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/player/skin_registry.h"
 #include "coop/version.h"                // v122: kGameTarget (the Join game field)
 #include "ue_wrap/core/hot_path_guard.h"
@@ -40,27 +41,31 @@ namespace {
 // that function runs on inbound REMOTE nicks too (symmetric defense), and a
 // garbage remote nick must not render as our my-name default.
 std::wstring g_localNick = coop::config_registry::MyNameDefaultW();
-// Per-slot nickname + per-slot Join-sent latch. Single-peer scalars
-// would let two clients' Joins overwrite each other and a reconnect
-// would skip the re-announce.
-std::array<std::wstring, net::kMaxPeers> g_remoteNickBySlot{
-    L"Remote player", L"Remote player", L"Remote player", L"Remote player"
-};
-std::array<bool, net::kMaxPeers> g_joinSentBySlot{};
-// Once-per-join latch for the "<nick> joined the game" line (fired at the joiner's PUPPET
-// APPEARANCE -- see AnnounceJoinerOnce; the spawn seam and the world-ready seam both funnel
-// through it). Cleared on slot disconnect so a reconnect re-announces.
-std::array<bool, net::kMaxPeers> g_joinAnnouncedBySlot{};
 
-// v73 per-player inventory identity. g_localGuid rides our outbound Join; g_guidBySlot[s]
-// caches the GUID peer `s` sent (HOST-side, keys coop_players/<guid>.json). ASCII 32-hex.
+// v73 per-player inventory identity: OUR guid, which rides our outbound Join.
+// ASCII 32-hex; not displayed.
 std::string g_localGuid;
-std::array<std::string, net::kMaxPeers> g_guidBySlot{};
 
-// v93 skins: the body-skin name each peer announced (Join field / SkinChange).
-// Empty = not yet known -> that slot's puppet spawns native kel and is
-// re-skinned the moment the name lands (StoreSkinForSlot).
-std::array<std::string, net::kMaxPeers> g_skinBySlot{};
+// ARC A / RULE 2: the FIVE per-slot side-tables that used to live here --
+// g_remoteNickBySlot, g_joinSentBySlot, g_joinAnnouncedBySlot, g_guidBySlot,
+// g_skinBySlot -- are GONE. They were five parallel arrays keyed by peer slot,
+// each needing its own line in OnSlotDisconnected to avoid attributing a
+// departed person's state to the next occupant of their slot, and the answer to
+// "did we get them all?" was a checklist.
+//
+// Four are LEDGER ROW FIELDS now (nick / guid / skin / joinAnnounced): they
+// describe the PERSON, so they die with the row.
+//
+// joinSent is the one that is NOT, and the distinction is worth the paragraph:
+// it records whether OUR Join has gone out over a LINK, and a client sends its
+// Join to slot 0 before it has any idea who is on the other end -- row 0 is born
+// later, from the host's own Join. A row field would silently refuse the write
+// (setters ignore unoccupied slots) and the client would re-send its Join every
+// tick forever. So it is per-slot state that must still be cleared when the
+// occupant changes: exactly what PerSlotState exists for. Declaring it through
+// that type IS the whole wiring -- it registers its own clear in its
+// constructor, so it cannot be forgotten the way the five arrays were.
+coop::roster_ledger::PerSlotState<bool> g_joinSent;
 
 }  // namespace
 
@@ -70,10 +75,10 @@ std::array<std::string, net::kMaxPeers> g_skinBySlot{};
 // player_handshake_prefs.cpp; the side-table stays owned HERE.
 void StoreSkinForSlot(int slot, std::string name) {
     if (slot < 0 || slot >= net::kMaxPeers) return;
-    if (g_skinBySlot[slot] == name) return;
-    g_skinBySlot[slot] = std::move(name);
+    if (coop::roster_ledger::Get(slot).skin == name) return;
+    coop::roster_ledger::SetSkin(slot, std::move(name));
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot)))
-        p->ApplySkin(g_skinBySlot[slot]);
+        p->ApplySkin(coop::roster_ledger::Get(slot).skin);
 }
 
 // Parse one [u8 len][ASCII] field. Returns bytes consumed (0 = malformed/absent);
@@ -106,6 +111,9 @@ uint8_t BuildLocalPrefsFlags() {
     return f;
 }
 
+}  // namespace [the LOCAL prefs byte only; everything below is EXTERNAL and
+   //            shared with the sibling TUs via player_handshake_detail.h]
+
 uint8_t PrefsFlagsForSlot(int slot) {
     uint8_t f = 0;
     if (coop::nameplate::VisibleForSlot(slot)) f |= kPrefNameplateVisible;
@@ -117,7 +125,7 @@ void StorePrefsFlagsForSlot(int slot, uint8_t flags) {
 }
 
 // v103 nick color (12f): a self-describing [u8 has][u8 r][u8 g][u8 b] field
-// appended to Join + PlayerJoined after the prefs flags byte. has=0 -> the 3
+// appended to Join + RosterRow after the prefs flags byte. has=0 -> the 3
 // color bytes are present but ignored (fixed 4-byte field, field-by-field
 // parse discipline).
 void AppendNickColorField(std::vector<uint8_t>& out, uint32_t packed) {
@@ -146,9 +154,6 @@ std::vector<uint8_t> ToUtf8(const std::wstring& w) {
                               reinterpret_cast<char*>(out.data()), n, nullptr, nullptr);
     return out;
 }
-
-}  // namespace [Join-payload builders; FromUtf8/SanitizeNickname below are EXTERNAL --
-   //            shared with player_handshake_version.cpp via player_handshake_detail.h]
 
 std::wstring FromUtf8(const uint8_t* p, int len) {
     if (len <= 0) return {};
@@ -238,40 +243,32 @@ const std::wstring& LocalNickname() { return g_localNick; }
 void SetLocalGuid(const std::string& guid) { g_localGuid = guid; }
 
 const std::string& GuidForSlot(int slot) {
-    UE_ASSERT_GAME_THREAD("g_guidBySlot (GuidForSlot)");
-    static const std::string kEmpty;
-    if (slot < 0 || slot >= net::kMaxPeers) return kEmpty;
-    return g_guidBySlot[slot];
+    return coop::roster_ledger::Get(slot).guid;  // GT-asserted inside the ledger
 }
 
 const std::string& SkinForSlot(int slot) {
-    UE_ASSERT_GAME_THREAD("g_skinBySlot (SkinForSlot)");
-    static const std::string kEmpty;
-    if (slot < 0 || slot >= net::kMaxPeers) return kEmpty;
-    return g_skinBySlot[slot];
+    return coop::roster_ledger::Get(slot).skin;  // GT-asserted inside the ledger
 }
 
 void Reset() {
-    for (auto& nick : g_remoteNickBySlot) nick = L"Remote player";
-    for (auto& g : g_guidBySlot) g.clear();
-    for (auto& s : g_skinBySlot) s.clear();
-    coop::nameplate::ResetSlots();  // v94: per-slot plate prefs back to visible
-    coop::nick_color::ResetSlots();  // v103: per-slot nick colors back to default
-    coop::hand_item::Reset();        // v105: destroy hand-item display mirrors + states
-    g_joinSentBySlot.fill(false);
-    g_joinAnnouncedBySlot.fill(false);
+    // The per-slot identity state is the ledger's; clearing a row fires the
+    // transition, which is what drives every registered teardown (the four
+    // display-pref side-tables below among them). Belt-and-braces at session
+    // START -- the load-bearing clear is ClearAll at session STOP.
+    coop::roster_ledger::Reset();
+    coop::hand_item::Reset();  // v105: destroy hand-item display mirrors + states
 }
 
 void MaybeSendJoinToSlot(net::Session& session, int slot,
                          std::vector<uint8_t>& joinPayload,
                          bool& joinPayloadBuilt) {
-    // Reads g_localNick + g_joinSentBySlot (GT-only side-tables, T-8). Called
-    // from the net_pump connect-edge each tick. (The boot-thread WRITER
-    // SetLocalNickname stays unguarded -- it runs once on the bringup thread
-    // before the pump sends any Join.)
-    UE_ASSERT_GAME_THREAD("g_joinSentBySlot/g_localNick (MaybeSendJoinToSlot)");
+    // Reads g_localNick + the ledger row's joinSent latch. Called from the
+    // net_pump connect-edge each tick. (The boot-thread WRITER SetLocalNickname
+    // stays unguarded -- it runs once on the bringup thread before the pump
+    // sends any Join.)
+    UE_ASSERT_GAME_THREAD("g_localNick/g_joinSent (MaybeSendJoinToSlot)");
     if (slot < 0 || slot >= net::kMaxPeers) return;
-    if (g_joinSentBySlot[slot]) return;
+    if (g_joinSent[slot]) return;
     // v13 (A4 2026-05-29): hold off on the FIRST Join until our
     // own Player Element is allocated. Otherwise the Join goes
     // out with senderElementId=0 and the receiver can't install
@@ -337,38 +334,46 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
     if (session.SendReliableToSlot(slot, net::ReliableKind::Join,
                                    joinPayload.data(),
                                    static_cast<int>(joinPayload.size()))) {
-        g_joinSentBySlot[slot] = true;
+        g_joinSent[slot] = true;
     }
     // If send fails (transient), the caller will hit this slot again next tick.
 }
 
-void OnSlotDisconnected(int slot) {
-    // Clears g_joinSentBySlot + g_remoteNickBySlot (T-8); fired from the
-    // net_pump disconnect edge (game thread).
-    UE_ASSERT_GAME_THREAD("g_remoteNickBySlot (OnSlotDisconnected)");
-    if (slot < 0 || slot >= net::kMaxPeers) return;
-    g_joinSentBySlot[slot] = false;
-    g_joinAnnouncedBySlot[slot] = false;  // a reconnect on this slot re-announces "joined" on its next ClientWorldReady
-    // N-5 (2026-05-29 audit): clear the stashed nickname so a subsequent peer
-    // reusing the same slot before its Join arrives doesn't display the
-    // departed peer's name in the HUD toasts. NicknameForSlot falls back to
-    // a placeholder when this is empty.
-    g_remoteNickBySlot[slot].clear();
-    g_guidBySlot[slot].clear();  // v73: drop the departed peer's inventory GUID for this slot
-    g_skinBySlot[slot].clear();  // v93: a reconnect (or a different peer on this slot) re-announces its skin
-    coop::nameplate::OnSlotDisconnected(slot);  // v94: plate pref back to visible for a slot reuse
-    coop::nick_color::OnSlotDisconnected(slot);  // v103: nick color back to default for a slot reuse
-    coop::chat_bubbles::OnSlotDisconnected(slot);  // 12g: a reused slot must not inherit a bubble
+namespace {
+
+// The person-state teardown that used to be OnSlotDisconnected, now driven by
+// the LEDGER ROW TRANSITION instead of by a disconnect callback. Two things
+// changed and both matter:
+//   - It fires on a REPLACEMENT too, not only on a departure. A recycled slot
+//     goes X -> Y with no absence in between, so the old callback could be
+//     skipped entirely and Y would inherit X's skin, colour, plate and bubble.
+//   - It receives SNAPSHOTS, so it no longer depends on running BEFORE the
+//     nickname is cleared. That ordering used to be load-bearing and documented
+//     as such; the "<X> left the game" line had to print first.
+void OnSlotReplaced_TearDownPerson(int slot, const coop::roster_ledger::Row& outgoing,
+                                   const coop::roster_ledger::Row& /*incoming*/) {
+    if (!outgoing.occupied()) return;  // nothing was there; nothing to tear down
+    coop::nameplate::OnSlotDisconnected(slot);   // v94: plate pref back to visible
+    coop::nick_color::OnSlotDisconnected(slot);  // v103: nick color back to default
+    coop::chat_bubbles::OnSlotDisconnected(slot);  // 12g: no inherited bubble
     coop::hand_item::OnSlotDisconnected(static_cast<uint8_t>(slot));  // v105: drop the hand mirror
 }
 
+}  // namespace
+
+void InstallLedgerSubscribers() {
+    // Idempotent inside the ledger (dedupes by function pointer), so a
+    // Stop()/Start() cycle in the same process cannot double-register and
+    // double-fire every teardown.
+    coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced_TearDownPerson);
+    InstallRosterPulseSubscriber();  // player_handshake_roster.cpp
+}
+
 const std::wstring& NicknameForSlot(int slot) {
-    // Reads g_remoteNickBySlot (T-8). Callers (puppet-spawn nameplate labelling
-    // in net_pump, the handshake handlers) are all on the game thread.
-    UE_ASSERT_GAME_THREAD("g_remoteNickBySlot (NicknameForSlot)");
-    static const std::wstring kPlaceholder = L"Remote player";
-    if (slot < 0 || slot >= net::kMaxPeers) return kPlaceholder;
-    return g_remoteNickBySlot[slot];
+    // Thin ledger read (arc A T9): the signature is unchanged on purpose so the
+    // ~14 call sites across 9 files keep compiling untouched. The placeholder
+    // fallback lives in the ledger now -- it is the ONE copy.
+    return coop::roster_ledger::DisplayName(slot);
 }
 
 bool IsValidGuid(const std::string& guid) {
@@ -382,12 +387,12 @@ bool IsValidGuid(const std::string& guid) {
 
 bool HandleJoinMessage(net::Session& session,
                        const net::Session::ReliableMessage& msg) {
-    // Reads + writes g_remoteNickBySlot (T-8). Dispatched from
-    // event_feed::Update on the game thread (net_pump::Tick -> Update).
-    UE_ASSERT_GAME_THREAD("g_remoteNickBySlot (HandleJoinMessage)");
-    // Per-slot nickname keyed on the sender's peer slot. A single
-    // global scalar would let two clients on host clobber each
-    // other's nick on every Join.
+    // Writes the sender's LEDGER ROW. Dispatched from event_feed::Update on the
+    // game thread (net_pump::Tick -> Update), which reconciles the ledger BEFORE
+    // draining reliables -- so on the host the sender's row already exists by the
+    // time its Join lands here (the Join arrives over a configured lane, so the
+    // slot is ready, which is exactly the reconcile's birth condition).
+    UE_ASSERT_GAME_THREAD("ledger row (HandleJoinMessage)");
     const int senderSlot = msg.senderPeerSlot;
     if (senderSlot < 0 || senderSlot >= net::kMaxPeers) {
         UE_LOGW("player_handshake: Join has invalid senderPeerSlot=%d -- dropping",
@@ -419,11 +424,19 @@ bool HandleJoinMessage(net::Session& session,
     // surface -- browser, direct connect, env boot.
     if (ValidateJoinVersionOrRefuse(session, senderSlot, msg.payload, msg.payloadLen))
         return true;
+    // CLIENT: this Join is the HOST introducing itself, and it is where our row 0
+    // is born. The host's player number is a ROLE CONSTANT, so a client knows it
+    // without being told -- no wire field, no ordering dependency on the roster
+    // pulse. (On the host, the sender's row was already born by the reconcile.)
+    if (session.role() == net::Role::Client && senderSlot == 0) {
+        coop::roster_ledger::InstallRow(0, coop::roster_ledger::kHostPlayerNo,
+                                        /*bornGeneration=*/0);
+    }
     uint32_t senderElementId = 0;
     std::memcpy(&senderElementId, msg.payload, 4);
     const uint8_t* nickStart = msg.payload + 4;
     size_t nickRemaining = msg.payloadLen - 4;
-    std::wstring nick = g_remoteNickBySlot[senderSlot];
+    std::wstring nick = coop::roster_ledger::Get(senderSlot).nick;
     size_t nickFieldLen = 0;  // bytes the nick field [u8 len][bytes] occupies (0 if malformed/absent)
     if (nickRemaining > 0) {
         const int len = nickStart[0];
@@ -433,7 +446,7 @@ bool HandleJoinMessage(net::Session& session,
         }
     }
     // v73 per-player inventory: the GUID follows the nick: [u8 guidlen][guid ASCII]. Tolerate
-    // absence (a peer that sent none -> g_guidBySlot stays empty = first-join/empty inventory).
+    // absence (a peer that sent none -> the row's guid stays empty = first-join/empty inventory).
     size_t guidFieldLen = 0;  // bytes the guid field occupies (0 if malformed/absent)
     if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
         const uint8_t* guidStart = nickStart + nickFieldLen;
@@ -448,7 +461,7 @@ bool HandleJoinMessage(net::Session& session,
                 // tampered to send "..\\..\\evil") -- reject -> leave empty -> first-join/empty-inventory
                 // path, no host file written outside coop_players. (Adversarial-verify HIGH, 2026-06-14.)
                 if (IsValidGuid(guid))
-                    g_guidBySlot[senderSlot] = std::move(guid);
+                    coop::roster_ledger::SetGuid(senderSlot, std::move(guid));
                 else
                     UE_LOGW("handshake: slot %d sent a non-hex/oversize GUID (%d bytes) -- rejecting "
                             "(empty-inventory fallback)", senderSlot, glen);
@@ -517,7 +530,7 @@ bool HandleJoinMessage(net::Session& session,
     // the rest of the nameplate. Length-cap to 20 wchars caps
     // the worst-case widget overflow.
     nick = SanitizeNickname(nick);
-    g_remoteNickBySlot[senderSlot] = nick;
+    coop::roster_ledger::SetNick(senderSlot, nick);
     // Label the nameplate of THIS sender's puppet (not all puppets).
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(
             static_cast<uint8_t>(senderSlot))) {
@@ -544,7 +557,7 @@ bool HandleJoinMessage(net::Session& session,
     if (session.role() == net::Role::Host &&
         senderElementId != 0u &&
         senderElementId != coop::element::kInvalidId) {
-        BroadcastPlayerJoinedFromHost(session, senderSlot, senderElementId, nick);
+        BroadcastRosterFromHost(session, senderSlot, senderElementId, nick);
     }
     // Seen-players registry (F1 Administration): record this peer's durable
     // identity (guid + nick + IP + last-seen) on the host. After the guid/nick
@@ -556,195 +569,16 @@ bool HandleJoinMessage(net::Session& session,
 
 namespace {
 
-// Build a PlayerJoined reliable payload describing peer `slot` (its eid +
-// nick + v93 skin + v94 prefs flags + v103 nick color). Wire layout (parsed
-// field-by-field, same as Join):
-//   [uint8 slot][uint32 eid][uint8 nicklen][nick UTF-8][uint8 skinlen][skin ASCII]
-//   [uint8 flags][u8 hasColor][u8 r][u8 g][u8 b]
-std::vector<uint8_t> BuildPlayerJoinedPayload(uint8_t slot, uint32_t eid,
-                                              const std::wstring& nick,
-                                              const std::string& skin,
-                                              uint8_t prefsFlags) {
-    std::vector<uint8_t> out;
-    out.resize(5);
-    out[0] = slot;
-    std::memcpy(out.data() + 1, &eid, 4);
-    std::vector<uint8_t> nickUtf8 = ToUtf8(nick);
-    if (nickUtf8.size() > 200) nickUtf8.resize(200);
-    out.push_back(static_cast<uint8_t>(nickUtf8.size()));
-    out.insert(out.end(), nickUtf8.begin(), nickUtf8.end());
-    const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());
-    out.push_back(skinLen);
-    out.insert(out.end(), skin.begin(), skin.begin() + skinLen);
-    out.push_back(prefsFlags);
-    AppendNickColorField(out, coop::nick_color::PackedForSlot(slot));
-    return out;
-}
-
-}  // namespace
-
-void BroadcastPlayerJoinedFromHost(net::Session& session, int joinerSlot,
-                                   uint32_t joinerEid,
-                                   const std::wstring& joinerNick) {
-    if (session.role() != net::Role::Host) return;
-    if (joinerSlot < 1 || joinerSlot >= net::kMaxPeers) return;
-
-    auto& reg = coop::players::Registry::Get();
-
-    // (1) Announce the joiner to every OTHER connected client. MTA:
-    // CGame.cpp:1422-1426 BroadcastOnlyJoined(PlayerNotice, &Player).
-    {
-        const std::vector<uint8_t> p =
-            BuildPlayerJoinedPayload(static_cast<uint8_t>(joinerSlot),
-                                     joinerEid, joinerNick, SkinForSlot(joinerSlot),
-                                     PrefsFlagsForSlot(joinerSlot));
-        for (int x = 1; x < net::kMaxPeers; ++x) {
-            if (x == joinerSlot) continue;
-            if (!session.IsSlotReady(x)) continue;
-            session.SendReliableToSlot(x, net::ReliableKind::PlayerJoined,
-                                       p.data(), static_cast<int>(p.size()));
-        }
-    }
-
-    // (2) Tell the joiner about every already-known client. MTA:
-    // CGame.cpp:1435-1455 (build a PlayerList of all existing peers, send
-    // to the joiner). "Known" = the host has installed that peer's MIRROR
-    // Player Element (its Join was processed, so the cross-peer eid the
-    // peer minted is authoritative). A connected-but-not-yet-joined peer
-    // is skipped here; when ITS Join lands, step (1) of that Join announces
-    // it to this joiner. Order-independent + symmetric.
-    for (int x = 1; x < net::kMaxPeers; ++x) {
-        if (x == joinerSlot) continue;
-        if (!session.IsSlotReady(x)) continue;
-        coop::element::Player* el = reg.GetPlayerElement(static_cast<uint8_t>(x));
-        if (!el || !el->IsMirror()) continue;  // identity not yet known
-        const std::vector<uint8_t> p =
-            BuildPlayerJoinedPayload(static_cast<uint8_t>(x), el->GetId(),
-                                     NicknameForSlot(x), SkinForSlot(x),
-                                     PrefsFlagsForSlot(x));
-        session.SendReliableToSlot(joinerSlot, net::ReliableKind::PlayerJoined,
-                                   p.data(), static_cast<int>(p.size()));
-    }
-    UE_LOGI("player_handshake: host relayed PlayerJoined cross-peer identity "
-            "for joiner slot %d (eid=0x%08x)", joinerSlot, joinerEid);
-}
-
-bool HandlePlayerJoined(net::Session& session,
-                        const net::Session::ReliableMessage& msg) {
-    // Reads + writes g_remoteNickBySlot (T-8). Dispatched from
-    // event_feed::Update on the game thread (client-side cross-peer identity).
-    UE_ASSERT_GAME_THREAD("g_remoteNickBySlot (HandlePlayerJoined)");
-    // Host originates PlayerJoined; it must never receive one. Reject on
-    // host + require the sender to be the host (senderPeerSlot==0) on the
-    // client -- a client peer crafting PlayerJoined could otherwise inject
-    // a forged peer identity.
-    if (session.role() == net::Role::Host) {
-        UE_LOGW("player_handshake: PlayerJoined received on host -- dropping");
-        return true;
-    }
-    if (msg.senderPeerSlot != 0) {
-        UE_LOGW("player_handshake: PlayerJoined from non-host senderPeerSlot=%d "
-                "-- dropping", msg.senderPeerSlot);
-        return true;
-    }
-    // Layout: [uint8 slot][uint32 eid][uint8 nicklen][nick UTF-8]. Minimum
-    // is 6 bytes (slot + eid + nicklen, empty nick).
-    if (msg.payloadLen < 6) {
-        UE_LOGW("player_handshake: PlayerJoined payload %zu B too short -- dropping",
-                static_cast<size_t>(msg.payloadLen));
-        return true;
-    }
-    const uint8_t describedSlot = msg.payload[0];
-    uint32_t describedEid = 0;
-    std::memcpy(&describedEid, msg.payload + 1, 4);
-    const uint8_t* nickStart = msg.payload + 5;
-    const size_t nickRemaining = msg.payloadLen - 5;
-
-    // The described peer must be a real client slot, and never OUR own slot
-    // (the host should never describe us to ourselves) nor the host slot 0
-    // (the host is delivered via AssignPeerSlot, not PlayerJoined).
-    if (describedSlot < 1 || describedSlot >= net::kMaxPeers) {
-        UE_LOGW("player_handshake: PlayerJoined slot=%u out of range -- dropping",
-                static_cast<unsigned>(describedSlot));
-        return true;
-    }
-    if (describedSlot == coop::players::Registry::Get().LocalPeerId()) {
-        UE_LOGW("player_handshake: PlayerJoined describes our own slot %u "
-                "-- dropping", static_cast<unsigned>(describedSlot));
-        return true;
-    }
-
-    // The described peer is a CLIENT, so its eid must be in the peer range.
-    // (Cross-peer eids are unique per slot thanks to the T2-0 banding.)
-    if (!coop::element::Registry::IsAllowedPeerAllocatedEid(describedEid)) {
-        UE_LOGW("player_handshake: PlayerJoined slot=%u eid=0x%08x not in peer "
-                "range -- dropping mirror install", static_cast<unsigned>(describedSlot),
-                describedEid);
-        return true;
-    }
-
-    // Install the peer's mirror Player Element so a subsequently-relayed
-    // pose/ItemActivate bearing describedEid resolves via Registry::Get.
-    coop::players::Registry::Get().EstablishMirrorForSlot(describedSlot, describedEid);
-
-    // Cache + sanitize the nick. If the puppet for this slot is already
-    // spawned (a relayed pose beat the relayed identity), label it now;
-    // otherwise SetNickname runs when the puppet spawns + the cached nick
-    // is read. Mirrors HandleJoinMessage's nickname handling.
-    std::wstring nick = g_remoteNickBySlot[describedSlot];
-    size_t nickFieldLen = 0;
-    if (nickRemaining > 0) {
-        const int len = nickStart[0];
-        if (1 + len <= static_cast<int>(nickRemaining)) {
-            nickFieldLen = 1 + static_cast<size_t>(len);
-            if (len > 0) nick = FromUtf8(nickStart + 1, len);
-        }
-    }
-    // v93 skins: [u8 skinlen][skin] follows the nick (host-relayed identity).
-    size_t skinFieldLen = 0;
-    if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
-        std::string skin;
-        skinFieldLen = ParseSkinField(nickStart + nickFieldLen,
-                                      nickRemaining - nickFieldLen, &skin);
-        if (skinFieldLen > 0 && !skin.empty()) {
-            StoreSkinForSlot(describedSlot, std::move(skin));
-        }
-    }
-    // v94 display prefs: [u8 flags] follows the skin field.
-    if (skinFieldLen > 0 && nickFieldLen + skinFieldLen < nickRemaining) {
-        StorePrefsFlagsForSlot(describedSlot, nickStart[nickFieldLen + skinFieldLen]);
-        // v103 nick color (12f): [u8 has][r][g][b] follows the flags byte.
-        const size_t colorOff = nickFieldLen + skinFieldLen + 1;
-        if (colorOff < nickRemaining)
-            ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
-                                describedSlot);
-    }
-    nick = SanitizeNickname(nick);
-    g_remoteNickBySlot[describedSlot] = nick;
-    if (RemotePlayer* p = coop::players::Registry::Get().Puppet(describedSlot)) {
-        p->SetNickname(nick);
-    }
-    // Cross-peer: another client is CONNECTING (its puppet spawns later -> AnnouncePeerSpawned
-    // fires the "joined the game" line then).
-    coop::chat_feed::Push(nick + L" is connecting to the game...");
-    UE_LOGI("player_handshake: client installed cross-peer identity slot=%u "
-            "eid=0x%08x nick='%ls'", static_cast<unsigned>(describedSlot),
-            describedEid, nick.c_str());
-    return true;
-}
-
-namespace {
-
 // The single door for "<nick> joined the game" (any viewer role). Latched once
 // per join (cleared on slot disconnect) so the two seams below -- puppet spawn
 // and world-ready -- can both call it in either order without a repeat, and a
 // mid-session puppet respawn stays silent. IMMEDIATE push: the line's whole
 // point (user 2026-07-03) is to coincide with the body actually appearing.
 void AnnounceJoinerOnce(int slot) {
-    UE_ASSERT_GAME_THREAD("g_joinAnnouncedBySlot (AnnounceJoinerOnce)");
+    UE_ASSERT_GAME_THREAD("ledger row joinAnnounced (AnnounceJoinerOnce)");
     if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
-    if (g_joinAnnouncedBySlot[slot]) return;
-    g_joinAnnouncedBySlot[slot] = true;
+    if (coop::roster_ledger::Get(slot).joinAnnounced) return;
+    coop::roster_ledger::SetJoinAnnounced(slot, true);
     coop::chat_feed::Push(NicknameForSlot(static_cast<uint8_t>(slot)) + L" joined the game");
     UE_LOGI("player_handshake: slot %d joined the game (announced at puppet appearance)", slot);
 }
@@ -820,6 +654,10 @@ bool HandleAssignPeerSlot(net::Session& session,
     coop::players::Registry::Get().SetLocalPeerId(p.slot);
     UE_LOGI("player_handshake: host assigned us peer slot %u (Registry::LocalPeerId now %u)",
             p.slot, coop::players::Registry::Get().LocalPeerId());
+    // Any roster row that arrived before this stamp was PARKED -- until now a row
+    // about our own slot was indistinguishable from a row about a remote peer.
+    // Apply them in arrival order now that the ambiguity is gone.
+    OnLocalPeerIdStamped(session);
     // v13 (A4 2026-05-29): if the host included its Player Element
     // id, install a mirror in slot 0 so subsequent wire packets
     // carrying host's senderElementId resolve via Registry::Get on

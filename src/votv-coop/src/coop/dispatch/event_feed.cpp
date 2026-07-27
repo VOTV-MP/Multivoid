@@ -28,6 +28,7 @@
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/snapshot_census.h"  // Phase 0: parse the completeness census tail on SnapshotComplete
@@ -47,20 +48,45 @@ namespace coop::event_feed {
 
 namespace {
 
-// Per-slot READY edge detector. The Join-sent latch and per-slot nicknames
-// live in coop::player_handshake (C5 extraction 2026-05-29); event_feed only
-// needs the prior-READY bit to fire the "<X> left the game" hud message on the
-// present->absent transition.
-//
-// Gate on IsSlotReady (lanes configured, Connected callback), NOT IsSlotConnected
-// (a conn handle, set already in the Connecting callback). A doomed connect to a
-// dead/ghost host stays in Handshaking, never reaches Connected, so IsSlotReady
-// never latches -- gating the LEFT toast on it means a timed-out connect emits no
-// spurious "Remote player left the game" (2026-07-16 repro: it leaked into the
-// menu on a failed browser join). Any peer that was really PRESENT reached
-// Connected+lane-config, so its IsSlotReady WAS true -> no legit toast is lost.
-// This is the same falling edge net_pump.cpp's disconnect edge already uses.
-std::array<bool, net::kMaxPeers> g_lastReadyBySlot{};
+// ARC A / RULE 2: g_lastReadyBySlot is GONE. It was a per-slot READY latch whose
+// only reader was the falling-edge departure detector, and that detector was
+// replaced by the ledger row transition -- which sees a REPLACEMENT too, where
+// no falling edge exists at all (a recycled slot goes X -> Y with no absence in
+// between). Leaving the latch as a write-only array would be exactly the kind of
+// state that later reads as meaningful.
+
+// "WE are the one leaving" -- a different axis from "was that peer present".
+// Set when the local peer flees to the menu, so the Stop()-driven row clears
+// tear person-state down without narrating four departures into the menu.
+bool g_suppressLeaveLines = false;
+
+// The "<X> left the game" line, driven by the LEDGER ROW TRANSITION. It reads
+// the OUTGOING SNAPSHOT, so it no longer has to run before the nickname is
+// cleared -- that ordering used to be load-bearing and documented as such. It
+// also now fires for a REPLACEMENT, which a disconnect edge could not see: a
+// recycled slot goes X -> Y with no absence in between.
+void OnSlotReplaced_LeaveLine(int slot, const coop::roster_ledger::Row& outgoing,
+                              const coop::roster_ledger::Row& /*incoming*/) {
+    if (!outgoing.occupied()) return;
+    if (slot == 0) return;  // the host slot is not a "peer who left"
+    // The suppression flag is about NARRATION only ("WE are the one leaving", so
+    // do not print four departures into the main menu). The bookkeeping below it
+    // -- the last-seen stamp and the door release -- is not narration and runs
+    // either way.
+    if (!g_suppressLeaveLines) {
+        coop::chat_feed::Push(
+            (outgoing.nick.empty() ? std::wstring(L"Remote player") : outgoing.nick) +
+            L" left the game");
+    }
+    coop::seen_players::OnSlotDisconnected(slot);  // stamp last-seen (host registry)
+    // HostAuth doors: release any door this departing peer held open (a door
+    // still held by another peer stays open).
+    coop::interactable_sync::OnPeerLeft(slot);
+}
+
+void InstallLeaveLineSubscriber() {
+    coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced_LeaveLine);
+}
 
 }  // namespace
 
@@ -71,11 +97,11 @@ void SetLocalNickname(const std::wstring& nick) {
 void SuppressPeerLeaveEdges() {
     // See header: the local peer is fleeing to the menu, so the imminent
     // Stop()-driven slot disconnects must NOT be surfaced as "<X> left the game".
-    // This is a DIFFERENT axis from the ready-latch gate below ("was the peer
-    // present" vs "WE are the one leaving"); both are necessary preconditions for
-    // a toast, so this stays even though the ready-latch already silences a
-    // never-present peer (2026-07-16 /qf: the two do not overlap).
-    g_lastReadyBySlot.fill(false);
+    // This is a DIFFERENT axis from the presence gate ("was the peer present" vs
+    // "WE are the one leaving"); both are necessary preconditions for a toast, so
+    // this stays even though a never-present peer is already silenced by never
+    // getting a row at all (2026-07-16 /qf: the two do not overlap).
+    g_suppressLeaveLines = true;
 }
 
 void OnSessionStart() {
@@ -84,7 +110,12 @@ void OnSessionStart() {
     // bit on each Start; we own the corresponding event_feed state and
     // reset it here so a restart of the session sees clean per-slot
     // edge-detector input.
-    g_lastReadyBySlot.fill(false);
+    g_suppressLeaveLines = false;  // a fresh session narrates departures again
+    // Register the ledger's teardown subscribers before anything can occupy a
+    // row. Idempotent (the ledger dedupes), so a Stop()/Start() cycle in the
+    // same process is safe.
+    coop::player_handshake::InstallLedgerSubscribers();
+    InstallLeaveLineSubscriber();
     coop::player_handshake::Reset();
     coop::seen_players::OnSessionStart();  // clear stale online marks (same discipline)
     coop::chat_feed::Reset();  // drop any prior session's lingering event lines
@@ -92,6 +123,20 @@ void OnSessionStart() {
 }
 
 void Update(net::Session& session, void* localPlayer) {
+    // ORDER IS LOAD-BEARING. The reconcile runs BEFORE the reliable drain below,
+    // so a peer's row already exists by the time its Join is dispatched (a Join
+    // arrives over a configured lane, which is exactly the reconcile's birth
+    // condition). Reversed, the first Join's nickname would be written to a slot
+    // the ledger did not yet consider occupied, and silently dropped.
+    // The host's own row is a PRECONDITION, not something the pump is trusted to
+    // have ticked first: everything that needs the host to have an identity
+    // (arbitration, the roster assertion, the ID column) calls through here.
+    // Idempotent and role-gated; it also keeps row 0's name current if the host
+    // renames mid-session.
+    coop::roster_ledger::EnsureRowZeroSeeded(session, coop::player_handshake::LocalNickname());
+    coop::roster_ledger::ReconcileFromSession(session);   // host: conform to the generations
+    coop::player_handshake::PulseRosterRows(session);     // host: re-assert to clients
+
     // Push each peer's OWN RTT to its puppet so the nameplate shows "<nick> (<ping>ms)"
     // and the scoreboard the per-row ping. Session samples per-slot RTT ~1 Hz from GNS
     // m_nPing; rttMsForSlot returns -1 until a slot is sampled (nameplate then shows no
@@ -124,20 +169,14 @@ void Update(net::Session& session, void* localPlayer) {
         //   undermining PR-3's head-of-line isolation for the first reliable
         //   message per peer. N-4 (2026-05-29 audit).
         const bool slotReady = session.IsSlotReady(slot);
-        if (g_lastReadyBySlot[slot] && !slotReady) {
-            coop::chat_feed::Push(
-                coop::player_handshake::NicknameForSlot(slot) + L" left the game");
-            coop::player_handshake::OnSlotDisconnected(slot);
-            coop::seen_players::OnSlotDisconnected(slot);  // stamp last-seen (host registry)
-            // HostAuth doors: release any door this departing peer was holding open (a door
-            // still held by another peer stays open; one whose last holder just left closes).
-            coop::interactable_sync::OnPeerLeft(slot);
-        }
+        // The departure half of this edge is GONE (arc A): a falling
+        // IsSlotReady cannot express a REPLACEMENT, and there is no edge at all
+        // when a slot is refilled between two ticks. Departure is now a ledger
+        // row transition -- see OnSlotReplaced_LeaveLine above.
         if (slotReady) {
             coop::player_handshake::MaybeSendJoinToSlot(
                 session, slot, joinPayload, joinPayloadBuilt);
         }
-        g_lastReadyBySlot[slot] = slotReady;
     }
 
     // Drain delivered reliable messages. The switch handles the inline special
@@ -469,9 +508,11 @@ void Update(net::Session& session, void* localPlayer) {
             coop::player_handshake::HandleAssignPeerSlot(session, msg);
             break;
         }
-        case net::ReliableKind::PlayerJoined: {
-            // PR-FOUNDATION Tier 2 T2-1: host-relayed cross-peer identity.
-            coop::player_handshake::HandlePlayerJoined(session, msg);
+        case net::ReliableKind::RosterRow: {
+            // The host asserting who occupies a slot (arc A). STATE, not an
+            // event: re-sent by the repair pulse, so the handler applies
+            // idempotently.
+            coop::player_handshake::HandleRosterRow(session, msg);
             break;
         }
         case net::ReliableKind::SkinChange: {

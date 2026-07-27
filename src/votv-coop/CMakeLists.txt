@@ -321,6 +321,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/grime_sync.cpp
     src/coop/session/player_handshake.cpp
     src/coop/session/player_handshake_prefs.cpp
+    src/coop/session/player_handshake_roster.cpp
     src/coop/session/player_handshake_version.cpp
     src/coop/props/grab_observer.cpp
     src/coop/player/item_activate.cpp
@@ -532,6 +533,7 @@ add_library(votv-coop SHARED
     src/ui/scale.cpp
     resources/fonts.rc
     src/coop/player/roster.cpp
+    src/coop/player/roster_ledger.cpp
     src/coop/moderation/ban_list.cpp
     src/coop/moderation/moderation.cpp
     src/coop/moderation/seen_players.cpp

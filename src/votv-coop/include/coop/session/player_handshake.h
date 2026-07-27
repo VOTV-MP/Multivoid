@@ -17,14 +17,17 @@
 //   - Result: both peers' element::Registry agree on the same id for
 //     each Player Element.
 //
-// State ownership split with event_feed:
-//   - player_handshake owns: g_localNick, g_remoteNickBySlot, g_joinSentBySlot.
-//   - event_feed owns: g_lastReadyBySlot (per-slot READY edge detector for
-//     the "<X> left the game" feed message; gated on IsSlotReady so a
-//     never-present connect can't emit a false leave).
-//   - On a per-slot disconnect, event_feed calls NicknameForSlot for the
-//     hud message and OnSlotDisconnected to reset our Join-sent latch so
-//     a reconnect re-announces.
+// State ownership (arc A, 2026-07-27):
+//   - The per-slot identity state -- nickname, guid, skin, the join-announced
+//     latch -- lives in the ROSTER LEDGER (coop/player/roster_ledger.h), not
+//     here. This module owns only g_localNick / g_localGuid (ours) and the
+//     per-slot Join-sent latch (a property of the LINK, not of the person, so it
+//     is a PerSlotState rather than a row field).
+//   - Teardown is a ledger ROW TRANSITION, not a disconnect callback: this
+//     module and event_feed each register one subscriber. The previous shape --
+//     event_feed reading the nick for the "<X> left" line and then calling
+//     OnSlotDisconnected to clear it -- made that ORDERING load-bearing, and it
+//     could not fire at all when a slot was refilled between two ticks.
 //
 // Game thread only (it reads/writes UE engine objects via Puppet().SetNickname,
 // chat_feed::Push, players::Registry, and reads our process-local cfg).
@@ -125,16 +128,31 @@ void MaybeSendJoinToSlot(coop::net::Session& session, int slot,
                           std::vector<uint8_t>& joinPayload,
                           bool& joinPayloadBuilt);
 
-// Per-slot disconnect edge: clear the Join-sent latch so a reconnect
-// re-announces. Called from event_feed once it has consumed the
-// nickname for the "<X> left the game" hud message.
-void OnSlotDisconnected(int slot);
+// ARC A / RULE 2: OnSlotDisconnected is GONE. Person-state teardown is driven by
+// the roster ledger's ROW TRANSITION now (roster_ledger::SubscribeSlotReplaced),
+// which fires on a REPLACEMENT as well as a departure -- the case a disconnect
+// callback structurally cannot see, because a recycled slot goes X -> Y with no
+// absence in between. Register the module's subscribers once:
+void InstallLedgerSubscribers();
 
-// Read-only access to the nickname cached for a peer slot. Returns
-// "Remote player" placeholder when no Join has landed for that slot
-// yet. Used by event_feed::Update to build the per-slot disconnect
-// hud message ("<X> left the game").
+// Read-only access to the nickname for a peer slot. Thin read of the ledger row,
+// placeholder fallback applied. Signature deliberately unchanged across arc A so
+// its call sites are untouched.
 const std::wstring& NicknameForSlot(int slot);
+
+// HOST: assert the current roster to every ready client. Adaptive period (~1 s
+// for the first ~10 s after a roster change, ~5 s after), so a row lost in the
+// join-time burst -- the measured window where reliable enqueue drops silently --
+// heals inside the seconds a joiner is actually looking at TAB. Game thread,
+// called once per net-pump tick.
+void PulseRosterRows(coop::net::Session& session);
+
+// HOST: arm the pulse's fast window (a roster change just happened).
+void MarkRosterChanged();
+
+// CLIENT: called the instant AssignPeerSlot stamps our LocalPeerId, to apply any
+// roster rows that arrived before we knew which slot was ours.
+void OnLocalPeerIdStamped(coop::net::Session& session);
 
 // Two-phase join announcement (2026-06-15, seam moved 2026-07-03): the Join handshake announces
 // "<nick> is connecting to the game" (connected, not loaded/spawned yet); net_pump calls THIS the
@@ -183,7 +201,7 @@ bool HandleAssignPeerSlot(coop::net::Session& session,
 // No-op unless this peer is the host. `joinerSlot` is the slot whose
 // Join just arrived; `joinerEid` its Player Element id; `joinerNick`
 // its (already-sanitized) nickname.
-void BroadcastPlayerJoinedFromHost(coop::net::Session& session,
+void BroadcastRosterFromHost(coop::net::Session& session,
                                    int joinerSlot,
                                    uint32_t joinerEid,
                                    const std::wstring& joinerNick);
@@ -195,7 +213,7 @@ void BroadcastPlayerJoinedFromHost(coop::net::Session& session,
 // relayed pose) is born identified. Drops on host side (host originates
 // these; never receives them). Returns true if recognized; false on
 // payload-too-short.
-bool HandlePlayerJoined(coop::net::Session& session,
+bool HandleRosterRow(coop::net::Session& session,
                         const coop::net::Session::ReliableMessage& msg);
 
 }  // namespace coop::player_handshake

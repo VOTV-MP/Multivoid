@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -45,6 +46,20 @@ std::wstring FromUtf8(const uint8_t* p, int len);
 // version gate sanitizes the refused peer's nick for the host feed line).
 std::wstring SanitizeNickname(const std::wstring& raw);
 
+// wide -> UTF-8 (defined in player_handshake.cpp; the roster TU builds the same
+// length-prefixed nick field the Join payload uses).
+std::vector<uint8_t> ToUtf8(const std::wstring& w);
+
+// v94 display prefs: the per-slot flags byte carried by Join + RosterRow (bit0 =
+// nameplate visible). Defined in player_handshake.cpp, which owns the bit layout.
+uint8_t PrefsFlagsForSlot(int slot);
+void StorePrefsFlagsForSlot(int slot, uint8_t flags);
+
+// v103 nick color: the self-describing [u8 has][r][g][b] field appended after
+// the prefs byte. Defined in player_handshake.cpp.
+void AppendNickColorField(std::vector<uint8_t>& out, uint32_t packed);
+size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot);
+
 // The v122 WIRE VERSION GATE (player_handshake_version.cpp). Runs at the TOP of
 // HandleJoinMessage, BEFORE any identity side effect: pure pre-pass over the
 // Join payload chain, byte-equality validation of the peer's game target (the
@@ -55,5 +70,10 @@ std::wstring SanitizeNickname(const std::wstring& raw);
 // lets the host's symmetric gate close the wire. Game thread only.
 bool ValidateJoinVersionOrRefuse(coop::net::Session& session, int senderSlot,
                                  const uint8_t* payload, size_t payloadLen);
+
+// Register the roster TU's own ledger subscriber (arms the repair pulse on any
+// occupancy change). Called from InstallLedgerSubscribers so there is ONE
+// registration door for the whole module.
+void InstallRosterPulseSubscriber();
 
 }  // namespace coop::player_handshake
