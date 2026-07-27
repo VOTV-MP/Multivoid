@@ -376,6 +376,9 @@ bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const cha
     // and a plain exchange(0) would then hand us the SUCCESSOR's connection --
     // which is precisely the person this whole path exists to protect. The CAS
     // closes that: a successor's accept stored a different handle, so it fails.
+    // GEN: clear -- the claim; the generation itself is cleared at the end of
+    // KickClaimed's teardown, after the inbox erase, exactly like the other two
+    // close paths.
     uint32_t claimed = hConnAtCapture;
     if (!peerConns_[peerSlot].compare_exchange_strong(claimed, 0)) {
         UE_LOGW("net: kick/ban on slot %d REFUSED -- the connection changed under us", peerSlot);

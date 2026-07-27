@@ -175,6 +175,37 @@ derivation" holds WITHIN a session.
 
 ## 3. ARC A — roster state + ID (ships first; fixes pre-existing defects)
 
+> **AS-BUILT 2026-07-27 — four of five commits landed; the arc is NOT finished and NOT verified.**
+> Protocol 129 → 130, DLL `multivoid-0.9.0n-130.dll`, Release builds clean. **No smoke, no hands-on,
+> no audit.** Commits:
+> - `72805d96` — the net-layer per-slot occupancy GENERATION + `tools/net/peerconn_gate.ps1` (the
+>   standing gate; wired into `build-core.yml`, so **the release fingerprint is now stale and the
+>   re-commit ritual is owed**).
+> - `b196f595` — `coop/player/roster_ledger.{h,cpp}` (rows, occupancy, `PerSlotState<T>`,
+>   `SubscribeSlotReplaced`, the host reconcile) + the `PlayerJoined → RosterRow` widening + the
+>   repair pulse + the park gate; five per-slot arrays and `g_lastReadyBySlot` deleted (RULE 2);
+>   `player_handshake.cpp` 847 → 684 with `player_handshake_roster.cpp` 353 extracted first.
+> - `431decd9` — `roster::Refresh()` reads the ledger (the client-TAB fix) + the TAB ID column.
+> - `701a1740` — `moderation::PlayerToken` in the API signature + `Session::KickWithToken` /
+>   `GetPeerAddressWithToken` (the ban-hits-the-successor fix).
+>
+> **Three measured corrections to this document**, all found by reading the code during the build:
+> 1. §2 T3's gate rule censused FIVE `peerConns_` write sites; there are **SEVEN**. The census
+>    grepped `.store(` and both `.exchange(0)` clears were invisible to it. `Session::Kick`'s is
+>    load-bearing — without its generation clear a kicked slot keeps a live generation and the ledger
+>    never empties the row. The gate script now censuses by OPERATION KIND for exactly this reason
+>    (`lesson_census_the_operation_kind_not_only_the_sites`).
+> 2. §2 T6 / T9 put `joinSent` in the ledger row. It **cannot** be one: a client sends its Join to
+>    slot 0 before it knows who is there, so the occupancy-gated setter would drop the latch and the
+>    client would re-send its Join every tick forever. It describes the LINK, not the person →
+>    `PerSlotState<bool>`. (Caught by reasoning through the client path, not by a test.)
+> 3. §3 item 6's "four non-teardown stores" is wrong; see the note on that item.
+>
+> **Remaining before this arc can be called done:** item 6's real fix (drive `DisconnectSlot` from
+> the row transition) with the per-subsystem read T5 requires, then the drill list below, then a
+> smoke, then an audit.
+
+
 Own protocol bump. **Zero new wire kinds. Zero new external primitives beyond the net-layer
 generation.**
 
@@ -210,6 +241,30 @@ generation.**
    `OnSlotReplaced` IN THIS ARC. Shipping the mechanism without migrating its consumers would be
    framework-without-consumers. Every EXISTING subscriber body is also reviewed for the client
    firing-set expansion (T5).
+
+   > **MEASURED CORRECTION 2026-07-27 (build pass) — this item is WRONG as written, and the true
+   > shape is bigger.** All four ARE already reached on a departure: `subsystems::DisconnectSlot`
+   > (`subsystems.cpp:343-373`) fans out to ~18 per-slot subsystems including `voice_chat::
+   > OnDisconnectSlot`, `item_activate::OnDisconnectForSlot` and `player_inventory_sync::
+   > OnDisconnectForSlot`, and `puppet_drive::DestroySlot` → `Registry::UnregisterPuppet` →
+   > `DropPlayerElement_` covers `playerBySlot_`. So they are not "non-teardown stores" and there is
+   > nothing to migrate one-by-one.
+   >
+   > The REAL defect is one level up, in what DRIVES that fan-out: `net_pump.cpp:463-472` fires it
+   > off a FALLING EDGE of `IsSlotReady`. Two consequences, both structural:
+   >   - **On a CLIENT the fan-out never runs for slots 1-3 AT ALL** — `IsSlotReady(2)` is
+   >     permanently false there (a client only fills `peerConns_[0]`), so the edge never rises and
+   >     therefore never falls. A client keeps a departed third peer's voice channel, inventory
+   >     bookkeeping, item-activate state and Player Element for the whole session. Same root as the
+   >     TAB defect, and it was invisible because the edge simply never fired rather than firing
+   >     wrongly.
+   >   - **On the HOST a fast REPLACEMENT skips the edge** — ready→ready across one 8 ms tick.
+   >
+   > The fix is therefore ONE change, not four: drive `DisconnectSlot` from the ledger ROW
+   > TRANSITION (which compares values, not edges) instead of from the `IsSlotReady` edge. That is
+   > the invariant rather than a site list. It is NOT BUILT: it expands the firing set on clients to
+   > ~18 subsystem bodies that have never executed there, and T5 already requires each to be READ
+   > rather than assumed benign. That read + a smoke is the remaining arc-A work.
 7. Cosmetic follow-through: after (2) a client renders `ping`/`link` for slots 1-3 for the first
    time; they land on `rttMsForSlot() == -1` beside "VIA HOST" and need a deliberate presentation.
 
