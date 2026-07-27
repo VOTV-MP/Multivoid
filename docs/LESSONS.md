@@ -458,6 +458,46 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   drill that cannot tell "nothing to test" from "passed" is worse than no drill. *Look FIRST:*
   `memory/lesson_baseline_an_instrument_on_something_the_system_does_not_reset.md`
 
+### 1b. Standing working agreements (previously indexed NOWHERE)
+
+Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
+files are paired here (0 missing), but 39 `feedback_*` standing rules were referenced in neither
+this ledger nor `MEMORY.md`** — reachable only through inline `[[...]]` citations in `CLAUDE.md`, so
+in practice unfindable. Several are load-bearing, and one of them
+(`feedback_install_idempotent_o1_steady_state`) describes *exactly* the bug shipped and re-measured
+the same day. Indexed here so the ledger is complete; the full text stays in each `memory/` file.
+
+**Verification / shipping discipline** — `feedback_post_ship_audit` (audit every shipped change with agents) ·
+`feedback_audit_every_time` (immediately, not "next cluster") · `feedback_audit_prompt_hot_path_reentry` (audit prompts
+MUST force per-function pump-reachability enumeration) · `feedback_install_idempotent_o1_steady_state` (any
+`Install`/`Register`/`Setup` reachable from a pump is O(1) in steady state — **the rule today's
+`roster_token_selftest` broke**) · `feedback_codebase_familiarity_before_new_install` (read the sibling
+pattern before writing a new one) · `feedback_no_handoff_without_smoke_test` · `feedback_interaction_smoke_not_join_smoke`
+(a join smoke says NOTHING about grab/throw/convert paths) · `feedback_no_smoke_while_user_on_pc` ·
+`feedback_autonomous_lan_named_windows` · `feedback_always_deploy_after_build` · `feedback_always_use_user_test_poses` ·
+`feedback_show_screens` (READ the captured PNG so the user sees it) · `feedback_modular_file_size_rule` (800 soft /
+1500 hard) · `feedback_clean_rebuild_after_global_move`.
+
+**How to work with the user** — `feedback_no_technical_user_questions` + `feedback_resolve_technical_decisions_via_agents`
+(adjudicate via agents, not by asking) · `feedback_never_rush_research_first` · `feedback_deliver_results_fast` (use
+wait-time productively, never "standing by") · `feedback_commit_and_push_without_asking` (superseded for THIS
+repo by the push-leak-audit rule — commit freely, ask before push) · `feedback_commit_authorship` ·
+`feedback_user_run_requires_root_bat` (one-click `.bat` at the project ROOT) · `feedback_user_prefers_1080_windows` ·
+`feedback_dev_features_in_imgui_menu` (ONE categorized menu, not ad-hoc hotkeys) ·
+`feedback_documentize_manual_status_reconciliation` · `feedback_deep_re_no_iteration` ("Deep RE" forbids
+try-it-and-see) · `feedback_version_tagging`.
+
+**Engine / RE technique** — `feedback_islive_unsafe_on_freed_cached_pointer` (`IsLive` AVs on a GC-purged
+pointer; use `IsLiveByIndex`) · `feedback_processevent_interceptor_misses_bp_internal` (BP→BP goes through
+`ProcessInternal`) · `feedback_crash_firewall_requires_eha` (the SEH firewall MUST be `/EHa`, or an absorbed
+task-AV permanently freezes the host) · `feedback_iskeyed_interactable_resolves_classes` (not cheap; never
+promote above the session gate) · `feedback_registry_register_mirror_pattern` (required reading for any new
+wire-driven receiver) · `feedback_no_direct_memory_write_crutch` · `feedback_re_related_functions` (RE **all** related
+functions, not just the hooked one) · `feedback_granular_per_event_sync_method` (one doc per event) ·
+`feedback_check_mta_and_document` · `feedback_ida_rename_and_save` · `feedback_no_ue4ss_dependency` +
+`feedback_prefer_cpp_probes_over_ue4ss` · `feedback_code_with_agents_and_security` · `feedback_never_winxy_zero_multimonitor`
+(black screen + runaway RAM).
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **Row field vs per-slot state: does it describe the PERSON or the LINK?** The arc-A design put the
@@ -1438,6 +1478,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A periodic FPS hitch by PERIOD COINCIDENCE is not causation** — measure the real source. `memory/lesson_periodic_hitch_not_the_walk_by_period_coincidence.md`
 - **A fixed-capacity hook table + ASYMMETRIC roles = a half-working fix.** `memory/lesson_hook_table_capacity_asymmetric_peers.md`
 - **ImGui COMPOSITE widgets: commit via a DEBOUNCE on value-changed.** `memory/lesson_imgui_composite_commit_debounce.md`
+- **`coop::subsystems::Install` is a per-tick RETRY PUMP, not boot code** — `net_pump.cpp:720` calls it
+  every pump tick (and `session_runtime.cpp:648` when idle in gameplay) so unresolved modules retry;
+  its own comment says "One-shot install ... (idempotent)" but the idempotency is each MODULE's job.
+  A module added without its own latch fires ~57x/SECOND (measured: 14,095 identical "armed" lines in
+  4 minutes, vs exactly 1 for every latched neighbour). A perf-audit agent classified the same call
+  site COLD/boot from its location. *Look FIRST:* `net_pump.cpp:720`; grade a smoke with `grep -c`, not
+  `grep`. `memory/lesson_subsystems_install_is_a_per_tick_retry_pump.md`
 - **The FString PIN doctrine ("mint engine-side, never free") holds ONLY for FRESH buffers** —
   repeated in-place mints on the SAME live object's fields LEAK on receivers (no native reassign ever
   runs there); swap-and-EngineFree instead (v116 perf audit finding 1). *Look FIRST:*
@@ -1487,6 +1534,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   artifacts use `-cmatch`/`-cnotmatch`/`-ceq` + `Dictionary(StringComparer.Ordinal)`. *Look FIRST:*
   `tools/release/tag_regex_selftest.ps1` (the fixture shape that catches it cheaply).
   `memory/lesson_powershell_defaults_are_case_insensitive_everywhere.md`
+- **PowerShell UNWRAPS a one-element result — wrap it in `@()` at the CALL SITE** (the `@()` inside the
+  helper does not survive the return). Bit two instruments in one hour (2026-07-27): on 5.1 a bare
+  `[pscustomobject]` has NO `.Count` (yields `$null`, pwsh 7 yields 1) so `peerconn_gate.ps1` accused
+  its own detectors; and `$a + $b` on two bare `MatchInfo` throws `op_Addition`, which killed
+  `replacement_drill.ps1`'s grading pass AFTER its `finally` had torn down the peers being graded.
+  Corollary: put teardown AFTER grading, or make grading re-runnable off the logs on disk.
+  `memory/lesson_powershell_unwraps_one_element_results.md`
 - **Ruleset `update` restriction on main: direct pushes AUTO-bypass, PR merges need `--admin`** —
   with RepositoryRole-admin bypass_mode=always, `git push` prints "Bypassed rule violations" and
   sails; `gh pr merge` refuses ("base branch policy prohibits the merge") until `--admin`. So the

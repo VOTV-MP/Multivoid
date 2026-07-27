@@ -236,8 +236,67 @@ derivation" holds WITHIN a session.
 > `VotV-Win64-Shipping`, `VotV` is only the window title; and smoke4's default monitor window
 > expired and killed the peers mid-settle.
 >
-> **Remaining:** the REPLACEMENT drill (a fourth peer taking the departed slot, with the departure
-> row injected-lost) and the successor-ban drill; a perf/correctness audit; hands-on.
+> **REPLACEMENT drill + SUCCESSOR-BAN drill, PASS** (2026-07-27 late, DLL `c4d1d8d4bf1dcd3e`).
+> Instrument: `tools/net/replacement_drill.ps1`. Two new `[dev]` flags make the claims observable:
+> `roster_drop_empty_rows` (CLIENT_1 discards every inbound row that says a slot is EMPTY, so a
+> departure can reach it ONLY as the successor's row) and `roster_token_selftest` (the HOST captures
+> a moderation token when a slot is first occupied, HOLDS it across the departure as an open ban
+> modal would, and fires the REAL `moderation::BanPlayer` with it once someone else holds the seat).
+> CLIENT_2 runs without injection as the control; CLIENT_3 is the seat that changes hands.
+>
+> Replacement, on the LOSS-INJECTED peer — ~14 emptying rows discarded over the 38 s gap, absence
+> never observed, and then in one tick:
+> ```
+> 23:42:21  ledger: slot 3 REPLACED -- #4 'Client3' -> #5
+> 23:42:21  net: peer slot 3 (#4) left -- puppet destroyed
+> 23:42:21  players::Registry: released Player Element eid=57344 for peerSlot=3
+> 23:42:29  players::Registry: established MIRROR ... peerSlot=3 (puppet=00007FFE95699DC0)
+> ```
+> Death strictly before birth, from a TOKEN CHANGE ALONE. The control peer took the ordinary
+> `emptied` -> `occupied by #5` path to the same end state.
+>
+> Successor-ban, on the HOST:
+> ```
+> roster_token_selftest: slot 3 changed hands #4 -> #5 --
+>     NEGATIVE(stale gen=3)=REJECTED  POSITIVE(live gen=4)=ACCEPTED
+> roster_token_selftest: PASS (net-layer generation guard)
+> moderation: ban of #4 ABORTED -- slot 3 now holds #5
+> ```
+> The POSITIVE control is what makes the negative mean anything (a check that refused everything
+> would pass a negative-only drill). Banlist ABSENT before and after. HotPathGuard 0 on all four
+> peers.
+>
+> Three instrument corrections were measured on the way, all in the harness rather than the code:
+> PowerShell unwraps a one-element result (the grading pass threw `op_Addition` AFTER `finally` had
+> killed the peers); `installed cross-peer identity` is a deliberately install-only log line, so
+> grading on it reports a false absence — the honest markers are the Registry's own
+> `released`/`established MIRROR` pair; and a fixed settle killed the victim 23 s after it joined,
+> before it had a body on the observers, so the teardown assertions failed against a peer with
+> nothing to tear down. Every wait is now a stated precondition with a named timeout.
+>
+> **AUDITED (2026-07-27): 0 CRITICAL.** Perf agent: every pump-reachable function is O(1)-or-
+> throttled, `Transition` cannot fire per-tick, the render thread never reads the ledger. Correctness
+> agent: the wire parse is bounds-clean, `RosterRow` is absent from `IsClientRelayableReliableKind`
+> so a forged row is never relayed, the token fails CLOSED, and the sampled teardown bodies are
+> role-safe. Findings folded: **IMPORTANT** — `Reset()`'s comment claimed "every subscriber
+> early-returns on an unoccupied outgoing row", which was false (`OnSlotReplaced_ArmPulse` carries no
+> such guard) and rested on an unenforced precondition; `Reset()` no longer fans out to
+> SlotReplaced subscribers at all, so bringup-thread safety is structural. **MINOR** — the stale
+> `PlayerJoined` / `g_skinBySlot` prose in `protocol.h` / `session_lanes.h` /
+> `player_handshake_detail.h` was swept (historical provenance lines kept on purpose).
+> **MINOR, NOT actioned:** `session.h` is 817 LOC, 2% over the soft cap — the arc-A generation API is
+> class MEMBERS, so it cannot move to a sibling header without a mixin refactor of the core net
+> class, and the audit's alternative (pushing `peerGenerationForSlot` out-of-line) would pessimize a
+> per-tick call for a cosmetic gain. Flagged per the file-size rule; extract when the file is next
+> touched for a real reason.
+>
+> A defect the drill caught that the audit did not: `roster_token_selftest::Install` printed its
+> arming line **14,095 times in 4 minutes** — `coop::subsystems::Install` is a per-tick RETRY pump
+> (`net_pump.cpp:720`), not boot code, and the perf agent classified that same call site COLD. Latched;
+> the count is now 1. See `memory/lesson_subsystems_install_is_a_per_tick_retry_pump.md`.
+>
+> **Remaining:** hands-on (never done for arc A); the smaller arc-A drills in the list below
+> (successor voice silence, version-gate-rejected joiner, parked-row ordering, session-end counting).
 
 
 Own protocol bump. **Zero new wire kinds. Zero new external primitives beyond the net-layer
