@@ -1,6 +1,8 @@
 # Hands-on runbook — arc A roster + v131 player list + v132 names (2026-07-27, extended 2026-07-28)
 
-**Deployed:** `multivoid-0.9.0n-132.dll`, sha256 begins `BC0285ADAECBCB12`,
+**Deployed:** `multivoid-0.9.0n-132.dll`, sha256 begins `a028d853c92b7f29`
+(re-deployed 2026-07-28 evening -- the earlier `BC0285ADAECBCB12` is SUPERSEDED and blanks any
+nickname over 23 UTF-8 bytes; do not test that one),
 **proto 132** (RELAUNCH BOTH PEERS; an older peer is refused at the join gate by design, with a feed
 line saying so). All four installs have it. HEAD `9ae83454`.
 
@@ -169,7 +171,8 @@ is **persisted to your `multivoid.ini`**. Separately, names are finally real UTF
 Cyrillic works.
 
 **Autonomous evidence already in hand** (so do not spend your time re-proving these):
-`nickname-arbiter selftest PASS (14/14)` and `utf8-codec selftest PASS (17/17)` on every peer;
+`nickname-arbiter selftest PASS (14/14)` and `utf8-codec selftest PASS (27/27)` on every peer
+(the codec count was 17/17 on the superseded build; ten cases were added for the byte cliff);
 `nick_gate: PASS`; a 4-peer drill where all four peers ask for the same name and the boards photograph
 `Pelmentor / Pelmentor2 / Pelmentor3 / Pelmentor4` and `Пельмень / Пельмень2 / Пельмень3 / Пельмень4`
 (`research/nickarb_shots/`); the four ini files reading the assigned names back; `smoke4 PASS`.
@@ -189,4 +192,21 @@ Cyrillic works.
    That is arc D2 (the donor fonts), designed and measured but not built. Do not report it as a bug;
    report only if it does something WORSE than render a placeholder (crashes, blanks the row, etc.).
 
+5. **Type a LONG Cyrillic name — 12 characters or more** (e.g. `Пельменьмень`). This is the
+   regression the evening of 2026-07-28 fixed and the one the earlier drills could not see, because
+   every drill name was short enough to fit: past **23 UTF-8 bytes** the scoreboard row used to go
+   BLANK and the floating nameplate used to render `????????`. Both must now show the full name.
+   The autonomous drill covers it (`research/nickarb_shots/`, `research/puppet_shots/`), so this is
+   a confirmation pass, not a discovery one.
+6. **Look at the nameplate's alignment.** The NAME should be centred on the health bar, with the
+   `(<1ms)` hanging off to the right. It should NOT drift sideways when the ping changes digits —
+   walk far enough away from a peer that the ping moves, and the name should stay put. (Fixed
+   `eb0bcdf5` after the user spotted it on a drill screenshot; measured 0.0 px, but ping-digit
+   stability was reasoned, not measured live.)
+
 **Known-open, do not report:** CJK/emoji glyphs (item 4). Everything else is fair game.
+
+**Superseded evidence warning:** anything in this file or in the design doc that cites
+`utf8-codec selftest 17/17` or a drill photographing `Пельмень` (8 characters) describes the FIRST
+D1 cut, whose evidence was overstated — the shot is the TAB board and the name is under the byte
+cliff. Current bytes print `27/27` and the drill name is `Пельменьмень`.

@@ -1035,7 +1035,8 @@ two-character literal. Every non-ASCII literal in the tree was machine-dependent
 
 ### 9c.4 Evidence
 
-- `nickname-arbiter selftest: PASS (14/14)` and `utf8-codec selftest: PASS (17/17)`, printed once per
+- `nickname-arbiter selftest: PASS (14/14)` and `utf8-codec selftest: PASS (17/17)` -- **these are the
+  s2 numbers on the SUPERSEDED build; the current bytes print 27/27, see 9c.6** -- printed once per
   process on every peer. They cover what no LAN drill can stage: a suffix displacing stem characters at
   the cap, a variant colliding with a 20-character name a DIFFERENT player holds, the kept-name cases,
   the strict decoder refusing truncated / over-long / lone-continuation sequences, both caps landing on

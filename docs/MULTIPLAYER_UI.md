@@ -281,12 +281,28 @@ side a row about ME writes `g_localNick`, not the ledger row -- that store is wh
 action feed, the nameplate, the Join payload and both of the roster's local-row reads derive from, so
 writing the row alone would have left five surfaces showing the name we asked for.
 
-### Non-ASCII names render (arc D1, AS-BUILT 2026-07-28 `9ae83454`)
+### Non-ASCII names render (arc D1, AS-BUILT 2026-07-28 in TWO parts: `9ae83454` entry, `2c3975d2`+`f19eedac` egress)
 
-`Пельмень / Пельмень2 / Пельмень3 / Пельмень4` renders on the board. The root was never the ASCII
-allowlist everyone blamed -- it was that nothing decoded UTF-8 at entry, so a Cyrillic name arrived at
-the sanitizer as mojibake and was stripped whole. Cyrillic costs **zero new font bytes**: all seven
-embedded families were cmap-measured to cover U+0400-04FF.
+`Пельменьмень / …2 / …3 / …4` renders on the board AND on the floating nameplate AND in chat -- 13
+characters, 26 UTF-8 bytes. The entry root was never the ASCII allowlist everyone blamed: nothing
+decoded UTF-8 at entry, so a Cyrillic name arrived at the sanitizer as mojibake and was stripped
+whole. Cyrillic costs **zero new font bytes** (all seven embedded families were cmap-measured to
+cover U+0400-04FF).
+
+**The first cut fixed only entry, and its evidence overstated the result.** Four EGRESS narrows
+survived it, because a census of widens cannot see a narrow: `WideCharToMultiByte` into the 23-byte
+`char nick[24]` buffers returns **0** on overflow rather than truncating, so the scoreboard row and
+the ban record went BLANK past 12 Cyrillic characters, while the **floating nameplate** -- the
+surface the request literally named -- squashed every non-ASCII character to `'?'`. The drill that
+"proved" Cyrillic used `Пельмень`: 8 characters, 16 bytes, under the cliff, photographed on the
+board with no plate in frame. Now: one egress owner (`coop::text::CopyUtf8ToBuffer`, truncates on a
+codepoint boundary and never blanks) and every `char nick[]` declared with `kNickBufBytes`.
+
+**The plate centres the NAME, not the name+ping composite** (`eb0bcdf5`, user-reported off a drill
+screenshot). Centring `"<nick> (<ping>)"` as one string put the name's centre half the ping suffix's
+width left of the health bar -- and would have slid the name sideways whenever the ping gained a
+digit. The identity is centred on the anchor; the annotation hangs off its right edge and the
+on-screen clamp is asymmetric to match. Measured 0.0 px offset at 8x on shipped bytes.
 
 **CJK and emoji still render as the fallback glyph** -- one glyph for every missing codepoint, not
 boxes (`imgui_draw.cpp` picks a single `FallbackGlyph`). The donor fonts are arc D2, designed and
