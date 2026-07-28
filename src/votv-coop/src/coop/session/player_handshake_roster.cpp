@@ -56,8 +56,14 @@
 namespace coop::player_handshake {
 namespace {
 
-// Minimum payload: slot + playerNo + eid + an empty nick length byte.
-constexpr size_t kRosterRowMinLen = 1 + 2 + 4 + 1;
+// Minimum payload: slot + playerNo + eid + linkKind + pingMs + an empty nick
+// length byte. v131 widened the FIXED PREFIX rather than appending at the tail:
+// the tail's offset arithmetic lives inside `if (applyDeclared)` below, which is
+// false for exactly the host row and the receiver's own row -- the two rows this
+// lane exists to populate -- so a tail-appended field would have been
+// unreachable on precisely them.
+constexpr size_t kRosterRowMinLen = 1 + 2 + 4 + 1 + 2 + 1;
+constexpr size_t kRosterRowPrefixLen = 1 + 2 + 4 + 1 + 2;  // where the nick field starts
 
 // [dev] roster_drop_empty_rows -- see the use site. Latched: a fault injection
 // that could be switched mid-session would make a failure unattributable.
@@ -69,17 +75,21 @@ bool DropEmptyRowsForTest() {
 
 // Build a RosterRow payload describing peer `slot`. Wire layout (parsed
 // field-by-field, same discipline as Join):
-//   [u8 slot][u16 playerNo][u32 eid][u8 nicklen][nick UTF-8]
+//   [u8 slot][u16 playerNo][u32 eid][u8 linkKind][i16 pingMs]
+//   [u8 nicklen][nick UTF-8]
 //   [u8 skinlen][skin ASCII][u8 prefsFlags][u8 hasColor][r][g][b]
 std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint32_t eid,
+                                           coop::net::LinkKind linkKind, int16_t pingMs,
                                            const std::wstring& nick,
                                            const std::string& skin,
                                            uint8_t prefsFlags) {
     std::vector<uint8_t> out;
-    out.resize(7);
+    out.resize(kRosterRowPrefixLen);
     out[0] = slot;
     std::memcpy(out.data() + 1, &playerNo, 2);
     std::memcpy(out.data() + 3, &eid, 4);
+    out[7] = static_cast<uint8_t>(linkKind);
+    std::memcpy(out.data() + 8, &pingMs, 2);
     std::vector<uint8_t> nickUtf8 = ToUtf8(nick);
     if (nickUtf8.size() > 200) nickUtf8.resize(200);
     out.push_back(static_cast<uint8_t>(nickUtf8.size()));
@@ -98,7 +108,8 @@ std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint
 std::vector<uint8_t> BuildRowForSlot(int slot) {
     const coop::roster_ledger::Row& row = coop::roster_ledger::Get(slot);
     if (!row.occupied())
-        return BuildRosterRowPayload(static_cast<uint8_t>(slot), 0, 0, L"", "", 0);
+        return BuildRosterRowPayload(static_cast<uint8_t>(slot), 0, 0,
+                                     coop::net::LinkKind::Unknown, -1, L"", "", 0);
 
     // The eid is the peer's mirror Player Element on the host. Rows about slot 0
     // carry the 0 sentinel: the host's own eid reaches a client via
@@ -111,6 +122,7 @@ std::vector<uint8_t> BuildRowForSlot(int slot) {
         if (el && el->IsMirror()) eid = el->GetId();
     }
     return BuildRosterRowPayload(static_cast<uint8_t>(slot), row.playerNo, eid,
+                                 row.linkKind, row.pingMs,
                                  row.nick, row.skin, PrefsFlagsForSlot(slot));
 }
 
@@ -206,6 +218,14 @@ void PulseRosterRows(net::Session& session) {
     if (g_lastPulseMs != 0 && (now - g_lastPulseMs) < period) return;
     g_lastPulseMs = now;
 
+    // v131: conform the connection facts IMMEDIATELY BEFORE serializing, so the
+    // bytes are exactly fresh and the fill has no clock of its own to drift
+    // against this one. It runs only when a pulse is actually due -- which is
+    // also why the GNS lock it takes is not a hot-path cost. NOTE for anyone
+    // retuning kPulseSlowMs: it now has TWO consumers, roster repair AND the
+    // freshness of every board's ping column.
+    coop::roster_ledger::RefreshLinkFacts(session);
+
     // EVERY slot, INCLUDING empty ones (playerNo 0) and including slot 0 -- the
     // host describes itself. Skipping empties would mean absence never heals.
     for (int to = 1; to < net::kMaxPeers; ++to) {
@@ -221,6 +241,11 @@ void BroadcastRosterFromHost(net::Session& session, int joinerSlot,
     if (session.role() != net::Role::Host) return;
     if (joinerSlot < 1 || joinerSlot >= net::kMaxPeers) return;
     (void)joinerEid; (void)joinerNick;  // read from the ledger row instead (one source)
+
+    // Same rule as the pulse: fill the connection facts immediately before these
+    // rows are serialized, so a joiner's very first roster carries real values
+    // instead of Unknown/-1 waiting on the next pulse.
+    coop::roster_ledger::RefreshLinkFacts(session);
 
     // MTA InitialDataStream, two-way (reference/mtasa-blue/Server/.../CGame.cpp:1422
     // BroadcastOnlyJoined + :1435 the per-existing-peer send to the joiner):
@@ -257,8 +282,11 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
     std::memcpy(&playerNo, payload + 1, 2);
     uint32_t describedEid = 0;
     std::memcpy(&describedEid, payload + 3, 4);
-    const uint8_t* nickStart = payload + 7;
-    const size_t nickRemaining = payloadLen - 7;
+    const coop::net::LinkKind linkKind = coop::net::LinkKindFromWire(payload[7]);
+    int16_t pingMs = -1;
+    std::memcpy(&pingMs, payload + 8, 2);
+    const uint8_t* nickStart = payload + kRosterRowPrefixLen;
+    const size_t nickRemaining = payloadLen - kRosterRowPrefixLen;
 
     if (describedSlot >= net::kMaxPeers) {
         UE_LOGW("roster: row slot=%u out of range -- dropping",
@@ -270,8 +298,20 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
     const bool aboutSelf = (localSlot != coop::players::kPeerIdUnknown &&
                             describedSlot == localSlot);
     const bool aboutHost = (describedSlot == 0);
-    // Declared (peer-authored) fields are relayed by the host, so applying them
-    // to OURSELVES would push the host's cached copy back over our own choice.
+    // THE ROW HAS TWO AUTHORS, and this flag is the line between them:
+    //
+    //   ALWAYS APPLIED -- host-authored or host-ARBITRATED, unlearnable any
+    //     other way: slot, playerNo, eid, linkKind, pingMs, and `nick` (the host
+    //     may rename you for uniqueness, which is why it already sits above this
+    //     gate). These are parsed from the FIXED PREFIX, so they are reachable
+    //     on every row including our own and the host's.
+    //   DECLARED -- peer-authored and merely RELAYED by the host: skin, prefs,
+    //     colour. Applying the host's cached copy of OUR OWN choice back onto us
+    //     is an authority inversion, hence the suppression below.
+    //
+    // Do NOT move a host-authored field into the declared block "for symmetry":
+    // that block is skipped for exactly the host row and our own row, which is
+    // how a client used to see nothing about itself.
     const bool applyDeclared = !aboutSelf && !aboutHost;
 
     // --- occupancy, always applied (the host issues it; it is unlearnable else)
@@ -291,6 +331,12 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
         return true;
     }
     coop::roster_ledger::InstallRow(describedSlot, playerNo, /*bornGeneration=*/0);
+
+    // --- the connection facts (v131), ALWAYS applied. Host-measured for EVERY
+    // player including itself, so a client's board answers "how is this player
+    // connected to the session" identically to every other board -- rather than
+    // synthesising "VIA HOST" for peers whose link it structurally cannot see.
+    coop::roster_ledger::SetLinkFacts(describedSlot, linkKind, pingMs);
 
     // --- the nick
     std::wstring nick = coop::roster_ledger::Get(describedSlot).nick;

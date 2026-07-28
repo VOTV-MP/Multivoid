@@ -6,6 +6,7 @@
 #include "coop/moderation/ban_list.h"
 #include "coop/moderation/moderation.h"
 #include "coop/moderation/seen_players.h"
+#include "ui/link_format.h"
 #include "ui/scale.h"
 
 #include "imgui.h"
@@ -85,6 +86,7 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
         ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.f));
         ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(52.f));
         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, S(220.f));
+        ImGui::TableHeadersRow();  // declared but never drawn until v131
         for (int i = 0; i < rs.count; ++i) {
             const coop::roster::Row& r = rs.rows[i];
             if (r.isLocal || !r.connected || r.slot < 1) continue;
@@ -94,12 +96,17 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             ImGui::TableSetColumnIndex(0);
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(r.nick[0] ? r.nick : "Remote player");
+            // Same renderer as the scoreboard (ui::link_format) -- this panel
+            // used to carry its own copy of the cascade, so the vocabulary could
+            // drift one surface at a time.
             ImGui::TableSetColumnIndex(1);
-            if (r.link[0]) ImGui::TextDisabled("%s", r.link);
+            ImGui::TextDisabled("%s", ui::link_format::LinkLabel(r.linkKind));
             ImGui::TableSetColumnIndex(2);
-            if (r.ping > 0)       ImGui::TextDisabled("%dms", r.ping);
-            else if (r.ping == 0) ImGui::TextDisabled("<1ms");
-            else                  ImGui::TextDisabled("--");
+            {
+                char pb[16];
+                ui::link_format::FormatPing(r.ping, r.linkKind, pb, sizeof(pb));
+                ImGui::TextDisabled("%s", pb);
+            }
             ImGui::TableSetColumnIndex(3);
             // Token, not slot -- see g_banToken. Cheap and uniform: every
             // slot-addressed action captures the person, so no call site has to
@@ -127,6 +134,7 @@ void RenderOfflineSection() {
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Last seen", ImGuiTableColumnFlags_WidthFixed, S(130.f));
         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, S(90.f));
+        ImGui::TableHeadersRow();
         for (const auto& e : g_seen) {
             if (e.online) continue;  // online rows live in the section above
             ++shown;
@@ -173,6 +181,7 @@ void RenderBannedSection() {
         ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthFixed, S(130.f));
         ImGui::TableSetupColumn("Reason", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("##act", ImGuiTableColumnFlags_WidthFixed, S(70.f));
+        ImGui::TableHeadersRow();
         for (const auto& b : g_bans) {
             ImGui::TableNextRow();
             ImGui::PushID(b.ip);

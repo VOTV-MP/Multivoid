@@ -37,6 +37,7 @@
 
 #pragma once
 
+#include "coop/net/link_kind.h"            // how this occupant's traffic reaches the session
 #include "coop/player/players_registry.h"  // kMaxPeers
 
 #include <array>
@@ -63,6 +64,16 @@ struct Row {
     std::string guid;                // v73 per-player inventory identity (host-side)
     std::string skin;                // v93 body-skin name; empty = native kel
     bool        joinAnnounced = false;  // their "joined the game" line already fired
+
+    // v131 -- the two CONNECTION facts, host-measured and host-published (see
+    // RefreshLinkFacts). They live in the Row, not in a PerSlotState, because
+    // the Row is what BuildRowForSlot SERIALIZES: splitting a message's fields
+    // across two containers means serialization reads two places and the next
+    // field's home becomes a coin flip. (The person-vs-transport wording that
+    // used to sit on PerSlotState below was already false against the shipped
+    // `joinSent`; the working rule is stated there.)
+    coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
+    int16_t     pingMs = -1;         // RTT to the SESSION in ms; -1 = not sampled
 
     bool occupied() const { return playerNo != 0; }
 };
@@ -125,6 +136,25 @@ void SetNick(int slot, std::wstring nick);
 void SetGuid(int slot, std::string guid);
 void SetSkin(int slot, std::string skin);
 void SetJoinAnnounced(int slot, bool announced);
+void SetLinkFacts(int slot, coop::net::LinkKind kind, int16_t pingMs);
+
+// HOST-side: conform every occupied row's connection facts to what the net layer
+// currently measures. Row 0 is the host itself -- LinkKind::Local, no ping,
+// because their traffic never crosses a socket and there is no RTT to report;
+// rows 1..3 come from Session::LinkKindForSlot + rttMsForSlot.
+//
+// CADENCE IS THE CALLER'S: call this IMMEDIATELY BEFORE serializing rows (the
+// repair pulse, and the join broadcast), never on a free-running clock and never
+// per tick. Two reasons, both measured: LinkKindForSlot takes a GNS lock via
+// GetConnectionInfo, and a per-tick fill would take it ~375x/s on the GAME
+// thread against a 200 Hz net Poll(); and rttMsBySlot_ itself only updates ~1 Hz
+// (session.cpp, nextRttSample), so a faster fill would re-copy an unchanged
+// value. Filling at send time also means the bytes are exactly fresh and there
+// is no second clock to drift against the pulse.
+//
+// A row born this tick is therefore filled before it is serialized this tick,
+// which is why a joiner never ships a row with Unknown/-1 in it. Game thread.
+void RefreshLinkFacts(coop::net::Session& session);
 
 // --- the transition fanout ---------------------------------------------------
 
@@ -139,13 +169,28 @@ using SlotReplacedFn = void (*)(int slot, const Row& outgoing, const Row& incomi
 // fire in registration order. Game thread.
 void SubscribeSlotReplaced(SlotReplacedFn fn);
 
-// Per-slot person-state that CANNOT be forgotten at teardown: declaring state
-// through this type registers its own clear in the constructor, so coverage is
-// by construction rather than by anyone remembering to add a line to a
-// checklist. Use it for anything keyed by peer slot that describes a PERSON
-// (their preferences, their cached state) rather than the transport.
+// Per-slot state that CANNOT be forgotten at teardown: declaring state through
+// this type registers its own clear in the constructor, so coverage is by
+// construction rather than by anyone remembering to add a line to a checklist.
 //
 //   coop::roster_ledger::PerSlotState<MyState> g_bySlot;   // that is the whole wiring
+//
+// WHICH CONTAINER? This said "use it for what describes a PERSON rather than the
+// transport" until 2026-07-28, and that was already false against the shipped
+// `joinSent` -- a pure LINK fact that lives here because a client sends its Join
+// to slot 0 BEFORE row 0 exists. Category is the wrong test. The working one:
+//
+//   Row            -- a fact the wire row CARRIES, that only has a consumer once
+//                     an occupant is identified, and whose write is RE-ISSUED if
+//                     it is ever dropped (nick, skin, linkKind, pingMs).
+//   PerSlotState   -- a fact that exists BEFORE anyone is identified, OR whose
+//                     write is a one-shot LATCH that nothing retries (joinSent).
+//
+// The failure mode of a DROPPED write is what separates them. Row setters are
+// occupancy-gated, so a write for a slot that is connected but not yet rowed is
+// silently discarded: harmless for a value the next fill re-issues, fatal for a
+// latch -- `joinSent` in a Row meant the client re-sent its Join every tick for
+// the whole session, in silence.
 //
 // T is reset to a value-initialized T when the slot's occupant changes.
 template <typename T>

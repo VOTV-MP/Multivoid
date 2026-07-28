@@ -7,6 +7,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
+#include "ui/link_format.h"
 #include "ui/scale.h"
 #include "ui/voice_icons.h"
 
@@ -123,9 +124,12 @@ void Render() {
             // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
             // Click = self: toggle mute; remote: per-player volume popup.
             if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, S(26.0f));
-            // Connection type (user 2026-06-10): how the game is hosted on the
-            // host row ("LAN HOST"/"P2P HOST") + each link's transport ("LAN"/
-            // "P2P"/"P2P RELAY"; "VIA HOST" for peer clients on a client board).
+            // Connection (v131): how THIS PLAYER reaches the session -- "LAN" /
+            // "DIRECT" / "RELAY", or "n/a" on the host row, whose traffic never
+            // crosses a socket. Host-measured and host-published, so every board
+            // shows the same value for the same player. It used to be derived
+            // per viewer, which put transport on some rows and routing ("VIA
+            // HOST") on others, in one column, side by side.
             ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.0f));
             ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(50.0f));
             // ID (arc A): the occupant's session number, host-issued and never
@@ -138,6 +142,10 @@ void Render() {
             // least-scanned field where the eye lands and pushed the NAME -- the
             // thing anyone actually looks for -- off the left edge.
             ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(34.0f));
+            // The columns had NEVER been named (user 2026-07-27: "the rows are
+            // not even named properly") -- TableSetupColumn only declares them;
+            // without this call the labels are never drawn.
+            ImGui::TableHeadersRow();
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
@@ -208,6 +216,17 @@ void Render() {
                 } else {
                     ImGui::TextColored(nickCol, "%s", nick);
                     if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("(you)"); }
+                    // HOST belongs on the NAME, not in the Link column. It is a
+                    // fact about WHO this player is; the Link column answers how
+                    // their traffic reaches the session, and the old "LAN HOST"
+                    // fused the two. Without this marker the word would vanish
+                    // from the UI entirely -- and it is what explains why the
+                    // host's Link and Ping cells read "n/a". (A host row is never
+                    // `actionable`, so this branch is its only path.)
+                    if (r.isHost) {
+                        ImGui::SameLine(0.0f, S(6.0f));
+                        ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "HOST");
+                    }
                 }
 
                 // Voice column (v66): the per-player mic-state icon. Self row:
@@ -267,20 +286,21 @@ void Render() {
                     }
                 }
 
-                // Link column: the connection-type label (empty on the own client
-                // row -- its link is already shown on the host row).
+                // Link column: how THIS PLAYER reaches the session. One shared
+                // renderer (ui::link_format) across scoreboard / admin panel /
+                // nameplate -- three hand-copied cascades used to drift here.
                 ImGui::TableSetColumnIndex(col++);
-                if (r.link[0]) ImGui::TextDisabled("%s", r.link);
+                ImGui::TextDisabled("%s", ui::link_format::LinkLabel(r.linkKind));
 
-                // Ping column: per-peer RTT, right-aligned (remote connected peers only;
-                // you have no self-ping). 0 on a sub-ms LAN shows "<1ms"; -1 (unsampled)
-                // shows "--".
+                // Ping column, right-aligned. EVERY row renders, including your
+                // own: the host measures your link and publishes it, so your own
+                // ping is a real number and belongs on your row. The old
+                // `!r.isLocal` gate is exactly why the user saw their own row
+                // blank ("the client himself doesn't see anything on himself").
                 ImGui::TableSetColumnIndex(col++);
-                if (!r.isLocal && r.connected) {
+                {
                     char pb[16];
-                    if (r.ping > 0)       std::snprintf(pb, sizeof(pb), "%dms", r.ping);
-                    else if (r.ping == 0) std::snprintf(pb, sizeof(pb), "<1ms");
-                    else                  std::snprintf(pb, sizeof(pb), "--");
+                    ui::link_format::FormatPing(r.ping, r.linkKind, pb, sizeof(pb));
                     const float tw = ImGui::CalcTextSize(pb).x;
                     const float cw = ImGui::GetContentRegionAvail().x;
                     if (cw > tw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cw - tw));

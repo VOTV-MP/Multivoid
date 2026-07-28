@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "coop/net/link_kind.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 
 namespace coop::net { class Session; }
@@ -41,12 +42,13 @@ struct Row {
     bool isLocal = false;    // this row is YOU
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;
-    int  ping = -1;          // RTT ms to this peer (-1 = local/unmeasured, 0 = sub-ms LAN)
-    // Connection-type label ("LAN HOST"/"P2P HOST" on the host's own row;
-    // "LAN"/"P2P"/"P2P RELAY" for links this peer OWNS; "VIA HOST" for other
-    // clients seen from a client board; "" = nothing to show, the own client
-    // row -- its link is already on the host row).
-    char link[12] = {};
+    // BOTH connection facts are the HOST's measurement, republished on RosterRow
+    // and read straight out of the ledger -- identical on every board, for every
+    // row, with no role branching (v131). They answer ONE question: "how is THIS
+    // PLAYER connected to the session". Before v131 they answered "how do I
+    // reach them", which is a different question per viewer.
+    int  ping = -1;   // RTT ms to the SESSION (-1 = not sampled / not applicable, 0 = sub-ms)
+    coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
 };
 
 struct Snapshot {

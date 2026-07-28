@@ -225,15 +225,42 @@ moved to the FAR RIGHT (right-aligned); the rows got a visible zebra + separator
 default `RowBg` stripe is invisible over a dark 3D backdrop, and a first pass at 0.055 alpha was still
 unreadable in the re-shot picture); and a CLIENT's OWN row no longer renders a blank Link cell.
 
-**KNOWN-BAD, diagnosed, NOT fixed** (design item 7 in
-`research/findings/join-identity/votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md`):
-- The **Link column fuses TWO axes** -- the peer's transport to the session (LAN/P2P/relay) and MY
-  route to that peer (`VIA HOST`). They coincide on the host's board and diverge on a client's, so an
-  all-LAN session reads `LAN` on two rows and `VIA HOST` on the others. A client cannot fix it locally
-  (`LinkLabelForSlot` reads `peerConns_[slot]`, owned only for slot 0). The fix is the host PUBLISHING
-  each occupant's link + RTT on `RosterRow` -- a wire change, so it bumps `kProtocolVersion`.
-- **No header row at all**: `TableSetupColumn` names the columns and `TableHeadersRow()` is never
-  called, so ID/Link/Ping are unlabelled.
+### The connection columns: host-measured, host-published (v131, 2026-07-28)
+
+**Every row on every board answers ONE question: "how is THIS PLAYER connected to the session?"**
+The peer that MEASURES a fact publishes it; nobody synthesises a substitute for a fact it cannot see.
+
+Until v131 the Link column was computed per viewer, from *what I can measure about you* -- so it
+answered **transport** on the rows whose connection this peer happened to own and **route**
+(`VIA HOST`) on the rest, two axes in one column, side by side on one board. The user read it
+immediately: *"why it says via host on 2 clients and lan on one client. It should be all the same, no
+special treatment."* The Ping column had the same split (`<1ms` / blank / `--` / `--` down a single
+client board), and so did the world nameplate, where a client's peer plates carried no ms at all.
+
+The fix: the HOST measures every link and publishes `[u8 linkKind][i16 pingMs]` on `RosterRow`
+(fixed prefix -- the tail's offsets live inside the `applyDeclared` block, which is skipped for
+exactly the host row and the receiver's own row). `roster::Refresh` has **no role branching left**.
+
+- **Link** -- `LAN` / `DIRECT` / `RELAY`, or `n/a` on the host's row (their traffic never crosses a
+  socket). Every kind is measured FROM THE CONNECTION -- the GNS `Relayed` flag and the remote
+  address -- never asserted from `cfg_.topology`, which used to label a port-forwarded WAN peer `LAN`.
+  The kinds deliberately do not distinguish LanDirect from P2P: that is how a connection was
+  *established*, not how a player is *connected*.
+- **Ping** -- RTT to the SESSION, rendered on **every** row including your own. `n/a` means there is
+  nothing to measure (the host); `--` means no sample has landed yet. Two distinct tokens on purpose,
+  both ASCII (our fonts fall back to `?` on missing glyphs).
+- **HOST** is a tag beside the NAME, not a word in the Link column. It says who the player is; the
+  Link column says how their traffic arrives. `LAN HOST` fused the two -- and without the tag the word
+  would have vanished from the UI entirely.
+- **Header row**: `TableHeadersRow()` is now called (user: *"the rows are not even named properly"*) --
+  on the scoreboard and on all three admin-panel tables.
+- One renderer for all three surfaces: `ui/link_format.{h,cpp}`. The scoreboard, the admin panel and
+  the nameplate each used to hand-copy the same `>0 / ==0 / else` cascade.
+
+Freshness: the host fills the ledger **immediately before each `RosterRow` send**, never on a clock of
+its own -- so the bytes are exactly fresh and there is no second cadence to drift. End-to-end age on a
+client board is the RTT sampler (<=1 s) + the pulse (<=5 s, `kPulseSlowMs`). **That constant now has
+two consumers** -- roster repair AND every board's ping freshness.
 
 ## Version identity surfaces (b122, AS-BUILT 2026-07-19 `5246844a`, drill-verified NOT hands-on)
 

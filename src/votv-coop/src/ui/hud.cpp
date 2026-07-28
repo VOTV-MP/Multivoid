@@ -9,6 +9,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/fonts.h"
+#include "ui/link_format.h"
 #include "ui/scale.h"
 #include "ui/voice_icons.h"
 
@@ -46,10 +47,20 @@ void TextOutlined(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
 }
 
 void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
+    // A plate has only ONE parenthetical slot, so it cannot say "not applicable"
+    // the way the scoreboard's cell can -- it can only show a number or nothing.
+    // A ping < 0 therefore renders as a bare name, which covers both "not sampled
+    // yet" and the HOST (whose row publishes -1 precisely because there is no RTT
+    // to the session to report -- see roster_ledger::RefreshLinkFacts). The
+    // number itself is formatted by the one shared renderer.
     char line[64];
-    if (p.ping > 0)       std::snprintf(line, sizeof(line), "%s (%dms)", p.nick, p.ping);
-    else if (p.ping == 0) std::snprintf(line, sizeof(line), "%s (<1ms)", p.nick);  // sub-ms LAN
-    else                  std::snprintf(line, sizeof(line), "%s", p.nick);          // -1 = unmeasured
+    if (p.ping >= 0) {
+        char pb[16];
+        ui::link_format::FormatPing(p.ping, coop::net::LinkKind::Unknown, pb, sizeof(pb));
+        std::snprintf(line, sizeof(line), "%s (%s)", p.nick, pb);
+    } else {
+        std::snprintf(line, sizeof(line), "%s", p.nick);
+    }
 
     // Occlusion (minecraft nametag shape; user 2026-07-05 refining 07-04): a peer
     // behind world geometry keeps a readable plate, but the WHOLE unit -- nick AND

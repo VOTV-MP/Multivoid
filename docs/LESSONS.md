@@ -504,12 +504,30 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   host listed peers; arc A made a CLIENT list them and the column then showed transport on two rows
   and routing on two others, on an all-LAN session. The client cannot fix it locally —
   `LinkLabelForSlot` reads `peerConns_[slot]`, which a client owns only for slot 0. Ask of every
-  per-peer column: **is this a property OF that peer, or of MY relationship to them?** If only one
-  role can know it, that role must PUBLISH it (here: on `RosterRow`, so a wire bump) rather than
-  letting the other synthesise a plausible-looking substitute — "VIA HOST" read as information, which
-  is why it survived; a blank would have been caught sooner. *Look FIRST:*
-  `session_status.cpp:484`, and the design's item 7.
+  per-peer column: **is this a property OF that peer, or of MY relationship to them?** "VIA HOST" read
+  as information, which is why it survived; a blank would have been caught sooner.
+  **CORRECTED 2026-07-28 when it was fixed (v131):** the doc's own claim *"a client cannot fix it
+  locally"* was FALSE — `session_status.cpp:491-494` bailed on `hConn == 0` **above** the
+  `cfg_.topology` branch that returns `"LAN"` without needing any connection, so **an ownership
+  bail-out placed above a config-derived answer is what made a shared fact look role-exclusive.**
+  The publish rule still fires, but for the PING (per-connection in every topology, so no client can
+  ever derive another client's) — visible as `--` in the same screenshot. And the `LAN` verdict was
+  never a measurement either: a port-forwarded WAN peer printed `LAN`. **The rule the episode reduces
+  to: publish or drop, never synthesise** — a coarser same-axis value shown everywhere is a scope
+  decision; a different-axis value invented locally is a lie, and so is a plausible value nobody
+  measured (a published host ping of `0` renders as `<1ms`). *Look FIRST:* `coop/net/link_kind.h`,
+  `Session::LinkKindForSlot`, `ui/link_format.{h,cpp}`.
   `memory/lesson_one_column_two_axes_transport_vs_route.md`
+
+- **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
+  Measured 2026-07-28: a 15-round design pass was founded on "only the host can measure a peer's
+  link". False. The accessor returned `"LAN"` from a session-wide CONFIG value that every peer holds;
+  it merely returned early on `hConn == 0` first. The guard was about OWNERSHIP, the answer was about
+  CONFIG, and the ordering made one look like the other. Cost: a wire field justified on the wrong
+  grounds for four rounds. **The tell: a function that "can only be answered by role X" but whose
+  answer body never touches anything role-specific.** *Look FIRST:* read the whole accessor before
+  writing "only X can know this" in a design; and state which measured line makes it exclusive.
+  `memory/lesson_verify_role_exclusivity_before_publishing.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 

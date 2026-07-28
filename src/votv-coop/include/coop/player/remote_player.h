@@ -123,13 +123,6 @@ public:
     void SetNickname(std::wstring name);
     const std::wstring& GetNickname() const { return nickname_; }
 
-    // Current RTT to this player's source, in milliseconds. -1 = unmeasured,
-    // 0 = sub-millisecond LAN. The nameplate appends "(<ping>ms)" (">=1") or
-    // "(<1ms)" (==0) and nothing when -1; event_feed forwards this peer's OWN
-    // per-slot RTT from Session::rttMsForSlot each tick.
-    void SetPing(int ms) { pingMs_ = ms; }
-    int GetPing() const { return pingMs_; }
-
     // v19 vitals (display-only). Each is a [0,1] fraction streamed in every
     // PoseSnapshot (health = source health/maxHealth; food/sleep = source value
     // / kVitalScalarMax). SetVitals is called from SetTargetPose on each new
@@ -275,7 +268,6 @@ private:
     // v93 skins: the skin name currently applied to actor_ (ApplySkin no-ops on
     // a repeat; reset in Destroy with the actor). Empty = native kel.
     std::string appliedSkin_;
-    int pingMs_ = -1;  // per-peer RTT ms (event_feed sets it from Session::rttMsForSlot); -1 = not measured
     // v19 streamed vitals fractions (display-only; see SetVitals). Default full
     // so a freshly-spawned puppet shows a full bar until the first pose lands.
     float health_ = 1.f;

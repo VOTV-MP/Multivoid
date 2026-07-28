@@ -519,6 +519,7 @@ add_library(votv-coop SHARED
     src/ui/admin_panel.cpp
     src/ui/world_rules_panel.cpp
     src/ui/scoreboard.cpp
+    src/ui/link_format.cpp
     src/ui/server_browser.cpp
     src/ui/boot_warning_dialog.cpp
     src/ui/config_review_panel.cpp

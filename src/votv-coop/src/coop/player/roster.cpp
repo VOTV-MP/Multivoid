@@ -101,49 +101,22 @@ void Refresh() {
         r.isLocal = rowIsLocal;
         r.isHost = (slot == 0);
         r.connected = true;  // an occupied row IS the presence fact now
-        // Per-peer ping for the scoreboard. The local row has no self-ping (-1);
-        // a remote row shows the GNS RTT to that peer (0 on a sub-ms LAN link).
-        // On a CLIENT, only the host link is ours to measure -- another client's
-        // traffic reaches us relayed, so there is no RTT to report and the column
-        // shows a dash beside "VIA HOST" rather than a misleading -1 rendering.
-        r.ping = rowIsLocal ? -1 : s->rttMsForSlot(slot);
+        // ONE DERIVATION for the connection facts too (v131). Both come from the
+        // ledger, i.e. from the HOST's measurement, on BOTH roles -- so the same
+        // player reads the same on every board. There is deliberately no role
+        // branch here: the previous five-way cascade asked "what can I measure
+        // about you", which made one column answer transport on some rows and
+        // routing on others, side by side (user: "It should be all the same, no
+        // special treatment"). The local row is NOT special-cased -- your own
+        // ping is a real host-measured number and belongs on your own row.
+        r.ping = led.pingMs;
+        r.linkKind = led.linkKind;
         // The display fallback lives in the ledger (ONE copy); the local row
         // still resolves through LocalNickname because our own name is ours
         // before any row exists.
         NarrowNick(rowIsLocal ? coop::player_handshake::LocalNickname()
                               : coop::roster_ledger::DisplayName(slot),
                    r.nick);
-        // Connection-type column (user 2026-06-10): each board shows what THIS
-        // peer truthfully knows. The HOST owns every client conn -> real
-        // transport per client row + a hosting-mode label on its own row. A
-        // CLIENT owns only its host link -> that label on the host row; other
-        // clients' traffic reaches it relayed by the host -> "VIA HOST".
-        if (rowIsLocal && isHost) {
-            std::snprintf(r.link, sizeof(r.link), "%s",
-                          s->topology() == coop::net::Topology::P2P ? "P2P HOST" : "LAN HOST");
-        } else if (isHost) {
-            s->LinkLabelForSlot(slot, r.link, sizeof(r.link));  // a client's real link
-        } else if (slot == 0) {
-            s->LinkLabelForSlot(0, r.link, sizeof(r.link));     // my own link to the host
-        } else if (rowIsLocal) {
-            // A CLIENT's OWN row. It used to be left blank on the theory that our
-            // link is "already shown on the host row" -- but the board then reads
-            // as three peers with a connection and one broken entry, which is
-            // exactly how the user read it (2026-07-27). Show the transport WE are
-            // attached by: on a client's board every other row already answers
-            // "how is this person reachable from here", and the honest answer for
-            // yourself is your own link, not silence. Mirrors the host's own row,
-            // which likewise describes how the local peer is attached.
-            s->LinkLabelForSlot(0, r.link, sizeof(r.link));
-        } else if (!rowIsLocal) {
-            std::snprintf(r.link, sizeof(r.link), "VIA HOST");
-            // Arc A cosmetic follow-through: these rows are rendered on a CLIENT
-            // for the first time (before, they were skipped entirely), and their
-            // ping is structurally unmeasurable from here -- the traffic is
-            // relayed. Say so with a dash rather than letting -1 fall through as
-            // if it were a pending sample.
-            r.ping = -1;
-        }
         ++idx;
     }
     snap.count = idx;

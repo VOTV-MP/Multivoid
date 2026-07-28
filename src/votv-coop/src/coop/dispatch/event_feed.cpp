@@ -137,14 +137,12 @@ void Update(net::Session& session, void* localPlayer) {
     coop::roster_ledger::ReconcileFromSession(session);   // host: conform to the generations
     coop::player_handshake::PulseRosterRows(session);     // host: re-assert to clients
 
-    // Push each peer's OWN RTT to its puppet so the nameplate shows "<nick> (<ping>ms)"
-    // and the scoreboard the per-row ping. Session samples per-slot RTT ~1 Hz from GNS
-    // m_nPing; rttMsForSlot returns -1 until a slot is sampled (nameplate then shows no
-    // ms suffix) and 0 on a sub-millisecond LAN link (shown as "<1ms").
-    for (int slot = 0; slot < net::kMaxPeers; ++slot) {
-        RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
-        if (p) p->SetPing(session.rttMsForSlot(slot));
-    }
+    // (v131) The per-tick RTT fan-out that used to live here is GONE, with
+    // RemotePlayer::SetPing/GetPing/pingMs_. It pushed session.rttMsForSlot(slot)
+    // into every puppet -- but a client owns only peerConns_[0], so it wrote -1
+    // for every other client and their nameplates showed no ping at all. The host
+    // now measures every link once and publishes it on RosterRow; the nameplate
+    // and the scoreboard both read the ledger. One measured source, one owner.
 
     // Per-slot Join announcement + per-slot "left the game" hud. The
     // Join payload is built lazily on first need: in steady state

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "coop/net/link_kind.h"            // how a player's traffic reaches the session
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
@@ -360,12 +361,17 @@ public:
     // surfaces (the tilde scoreboard's connection column) read it for the
     // local-host "how am I hosting" label.
     Topology topology() const { return cfg_.topology; }
-    // Short human label of the transport carrying `peerSlot`'s LIVE connection:
-    // "LAN" (direct UDP) / "P2P" (ICE direct or STUN-punched) / "P2P RELAY"
-    // (TURN). Returns false (out empty) without a live conn. Display-only (the
-    // tilde scoreboard); relay-vs-direct parses the GNS connection description,
-    // which names the active ICE path. Any thread (GNS API is thread-safe).
-    bool LinkLabelForSlot(int peerSlot, char* out, int outLen) const;
+    // How `peerSlot`'s LIVE connection carries that player's traffic, MEASURED
+    // from the connection itself: the GNS relay flag and the remote address.
+    // Never derived from cfg_.topology -- that is how the connection was
+    // ESTABLISHED, not how the peer is connected, and asserting it labelled a
+    // port-forwarded WAN peer "LAN". LinkKind::Unknown without a live conn.
+    //
+    // The HOST calls this; the answer is published on RosterRow so every board
+    // renders the same value for the same player (v131). Any thread (the GNS API
+    // is thread-safe), but see roster_ledger::RefreshLinkFacts for the cadence --
+    // GetConnectionInfo takes a GNS lock, so this is NOT a per-tick call.
+    LinkKind LinkKindForSlot(int peerSlot) const;
     // Count of currently-connected peers (0..kMaxPeers-1).
     int connectedPeerCount() const;
     // True if the given slot has an active GNS connection (handle set).

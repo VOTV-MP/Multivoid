@@ -131,6 +131,14 @@ bool Session::Start(const Config& cfg) {
 
     if (!EnsureGnsInit()) return false;
 
+    // Machine-assert the link classifier ONCE per process, here rather than at a
+    // module Install: this is the first point GNS is initialised, and the two
+    // kinds it proves (Direct, Relayed) are unreachable by any LAN drill. A
+    // function-local static makes it exactly-once and thread-safe; the smoke
+    // greps its one PASS line.
+    static const bool kLinkClassifyOk = RunLinkClassifySelftest();
+    (void)kLinkClassifyOk;
+
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
         &ConnStatusTrampoline);

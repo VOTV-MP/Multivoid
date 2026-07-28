@@ -5,6 +5,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/session/player_handshake.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/config/config.h"
@@ -157,7 +158,13 @@ void Update() {
         pl.flash = p->IsHurtFlashing();
         const float h = std::clamp(p->GetHealth(), 0.f, 1.f);
         pl.healthPct = static_cast<int>(std::lround(h * 100.f));
-        pl.ping = p->GetPing();
+        // v131: the ledger, not a per-tick fan-out through RemotePlayer. The old
+        // path pushed session.rttMsForSlot(slot) into every puppet each tick --
+        // but a client only owns peerConns_[0], so on a client another client's
+        // plate got -1 and rendered NO ms at all while the host's plate showed a
+        // real one. Same defect as the scoreboard's, one surface over. The host
+        // measures every link and publishes it, so every plate now agrees.
+        pl.ping = coop::roster_ledger::Get(slot).pingMs;
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
         pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble

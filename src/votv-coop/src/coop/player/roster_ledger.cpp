@@ -223,6 +223,35 @@ void SetJoinAnnounced(int slot, bool announced) {
     g_rows[slot].joinAnnounced = announced;
 }
 
+void SetLinkFacts(int slot, coop::net::LinkKind kind, int16_t pingMs) {
+    UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::SetLinkFacts)");
+    if (!ValidSlot(slot) || !g_rows[slot].occupied()) return;
+    g_rows[slot].linkKind = kind;
+    g_rows[slot].pingMs = pingMs;
+}
+
+void RefreshLinkFacts(coop::net::Session& session) {
+    UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::RefreshLinkFacts)");
+    // HOST ONLY: a client's rows carry what the host published, and re-deriving
+    // them locally is exactly the per-viewer answer this whole lane retired.
+    if (session.role() != coop::net::Role::Host) return;
+
+    // Row 0 is the host. Their traffic never crosses a socket, so the honest
+    // answers are Local and "no RTT" -- NOT 0, which the scoreboard renders as
+    // "<1ms", a measured-looking sub-millisecond latency nobody measured.
+    if (g_rows[0].occupied()) SetLinkFacts(0, coop::net::LinkKind::Local, -1);
+
+    for (int slot = 1; slot < kMaxSlots; ++slot) {
+        if (!g_rows[slot].occupied()) continue;
+        const int rtt = session.rttMsForSlot(slot);
+        // Clamp into the wire's int16 before it can wrap. The sampler already
+        // rejects >=60000 (session.cpp), so this only guards the type edge.
+        const int16_t ping = (rtt < 0) ? int16_t{-1}
+                                       : static_cast<int16_t>(rtt > 30000 ? 30000 : rtt);
+        SetLinkFacts(slot, session.LinkKindForSlot(slot), ping);
+    }
+}
+
 void SubscribeSlotReplaced(SlotReplacedFn fn) {
     // IDEMPOTENT by function pointer. Registration sites are per-session install
     // paths that legitimately run more than once in a process (Stop/Start), and
