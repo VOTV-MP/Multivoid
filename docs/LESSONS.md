@@ -519,6 +519,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `Session::LinkKindForSlot`, `ui/link_format.{h,cpp}`.
   `memory/lesson_one_column_two_axes_transport_vs_route.md`
 
+- **AN INSTRUMENT BLIND TO THE PHENOMENON ALWAYS REPORTS "NOT PRESENT".** Measured 2026-07-28
+  chasing the no-cursor bug: `tools/capture-window.ps1` does no `GetCursorInfo`/`DrawIconEx`
+  compositing, so **no screenshot this repo has ever taken can show an OS cursor** — a capture is
+  identical whether the bug exists or not. Stacked on top: ImGui's Win32 backend only updates
+  `io.MousePos` when the window is **FOREGROUND**, so an unattended capture renders no software
+  cursor *by construction* (the first probe run hit exactly this and looked like a clean repro).
+  A negative is evidence **only if the instrument could have produced a positive**. *Look FIRST:*
+  ask what the capture path physically records; pair every visual probe with a known-positive
+  frame; for cursor-shaped questions prefer a state read (`GetCursorInfo` gives `flags` +
+  `ptScreenPos`, which separates hidden from recentered — a photo cannot); and any focus-dependent
+  measurement must `SetForegroundWindow` and ASSERT it took.
+  `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
+
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
   Measured 2026-07-28: a 15-round design pass was founded on "only the host can measure a peer's
   link". False. The accessor returned `"LAN"` from a session-wide CONFIG value that every peer holds;
