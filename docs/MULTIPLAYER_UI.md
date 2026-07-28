@@ -305,8 +305,24 @@ digit. The identity is centred on the anchor; the annotation hangs off its right
 on-screen clamp is asymmetric to match. Measured 0.0 px offset at 8x on shipped bytes.
 
 **CJK and emoji still render as the fallback glyph** -- one glyph for every missing codepoint, not
-boxes (`imgui_draw.cpp` picks a single `FallbackGlyph`). The donor fonts are arc D2, designed and
-measured but NOT BUILT: `research/findings/join-identity/votv-arc-d-gate-measurements-2026-07-28.md`.
+boxes (`imgui_draw.cpp` picks a single `FallbackGlyph`). Arc D2 is DESIGNED, **NOT BUILT**; the
+decision of record is `votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md` **§9d** (15-round
+`/qf`, 2026-07-28), with the fact base in `votv-arc-d-gate-measurements-2026-07-28.md`.
+
+That single `FallbackGlyph` is why arc D2 is not a font question. Two distinct CJK names have
+distinct fold keys, so arc B assigns neither of them a suffix -- and they then draw as **the same
+nameplate**. The originating ask ("просто чтобы у всех был уникальный Nameplate") is therefore false
+on screen for exactly the players the donors were meant to serve, and no donor budget closes it for
+every script. So the design moves uniqueness OUT of the pixels: `FoldKey` maps every out-of-repertoire
+codepoint to one sentinel, the two names collide, and one takes the numeric suffix that already
+ships. Uniqueness becomes font-independent; the donor set becomes a pure legibility knob.
+
+**What will change on screen when it lands:** single emoji render in colour (the only donor embedded,
++905 KB); every family gains U+FFFD so the six that currently fall through to `'?'` stop doing so;
+JetBrains Mono stops missing four Cyrillic letters (U+0400/040D/0450/045D -- a gap live at HEAD for
+anyone who selects it); and CJK / Hangul / Thai names render as the sentinel glyph but are never
+confusable with each other. A LONE such peer keeps a bare name -- the digit appears only when two
+coexist.
 
 ## Version identity surfaces (b122, AS-BUILT 2026-07-19 `5246844a`, drill-verified NOT hands-on)
 

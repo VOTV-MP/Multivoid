@@ -588,7 +588,43 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   before the first pattern (truncate / narrow / widen / copy-into-fixed / declare-a-width), state in the
   header which are NOT covered, and **injection-prove every detector against the exact code you retired**
   — a gate that has only ever been green is an assertion, not a measurement.
+  **SECOND OCCURRENCE 2026-07-28 (same gate, new dimension):** the widened gate still keys on the
+  RECEIVER'S SPELLING (`\bnick[A-Za-z0-9_]*\.`), so `nickname_arbiter.cpp:37`'s `stem.substr(0, keep)`
+  — a UTF-16-unit cut that can split a surrogate pair — is invisible and the gate is green and blind
+  again. **A gate must key on the operation's SUBJECT (what the value IS), never on what the variable
+  is CALLED**; a naming convention is not an invariant. Tell: a domain noun used as an identifier
+  prefix inside a regex that is meant to prove a property.
   `memory/lesson_a_gate_on_one_verb_reads_as_a_gate_on_the_path.md`
+- **A question handed to you to DECIDE can be MALFORMED — check its premise before answering.**
+  Measured 2026-07-28: a design carried an "open product boundary" for days ("which hanzi set counts as
+  common **also decides which NAMES are accepted**"), it survived a 19-round pass, and the user
+  delegated it explicitly. The premise was false against HEAD — `SanitizeNickname` had become a
+  DENYLIST the same day, so every hanzi and emoji was already accepted and the font set decided
+  nothing. Answering it would have produced a converged answer to a question that had stopped
+  mattering. *Look FIRST:* an open boundary inherited across passes is `carried-framing`, not a fact —
+  **re-derive its PREMISE against the code before treating the question as the work.** The tell is a
+  premise phrased as a consequence ("X *also decides* Y"): that clause is a claim about code and it is
+  one grep away. `memory/lesson_a_delegated_question_can_be_malformed.md`
+- **Oscillation on an axis means the axis is not what decided it.** Measured 2026-07-28: a `/qf` pass
+  flipped FOUR times on demand-vs-eager font baking (R8 delete, R9 restore, R10 kill, R11 restore),
+  every flip backed by a real fresh measurement and none of them converging. R12 found the actual
+  contradiction, which was not on that axis: the thing demand existed to afford (CJK) had been rejected
+  on **NEED**, and every later round re-argued **MECHANISM** — so re-admitting it on *affordability* was
+  smuggling. *Look FIRST:* treat the **second** reversal on one axis as a stop signal, then stop arguing
+  the axis and write side by side (a) the ground the dependent decision was originally rejected on and
+  (b) the axis you are now arguing. Different words = you cannot converge, only smuggle. State the
+  original ground in the next brief so the critic can test it. And **disclose the oscillation in the
+  write-up** — the record of what was deleted and why is what stops the next session re-deriving all
+  four positions. `memory/lesson_oscillation_means_the_axis_is_not_what_decided_it.md`
+- **Derive a probe's WORST CASE from the dedup key, never from a hand-written row.** Measured
+  2026-07-28: `atlas_probe`'s `kWorstFamilyForRole = {0,1,2,3,0}` reads as "every role a different
+  family" but hands Toast the same family as Menu, producing **4** faces where the ceiling is **5**
+  (four roles share `(16 px, regular)` so four families give four faces; Chat is `(18 px, BOLD)` and can
+  never dedup with them). A committed measurements doc then recorded 4 as the ceiling, understating
+  every worst-case cell **2x in VRAM and 1.75x in time** — while the default cells stayed correct, which
+  is why nothing looked wrong. *Look FIRST:* any instrument row labelled worst / max / ceiling / bound is
+  a CLAIM; derive it from the dedup key and assert the probe reaches it (`faces == expected`).
+  `memory/lesson_derive_a_probes_worst_case_from_the_dedup_key.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
@@ -1617,8 +1653,29 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `IMGUI_USE_WCHAR32` commented → `ImWchar` 16-bit, `IM_UNICODE_CODEPOINT_MAX 0xFFFF` (`imgui.h:2515`),
   a glyph range cannot express U+1F300, and `imgui.cpp:1512` DROPS the reassembled astral codepoint on
   input. Same family of silent capability bounds: `FT_DISABLE_PNG ON` kills CBDT colour-emoji donors,
-  `FT_DISABLE_HARFBUZZ ON` + no ImGui shaping kills ZWJ/skin-tone/FLAG composition. *Look FIRST — read
-  the defines before pricing fonts:* `memory/lesson_imgui_astral_codepoints_need_wchar32.md`
+  `FT_DISABLE_HARFBUZZ ON` + no ImGui shaping kills ZWJ/skin-tone/FLAG composition. **And you cannot
+  edit the file you just read** (2026-07-28): `third_party/imgui` is a git SUBMODULE, so the switch must
+  ride a `PUBLIC` compile definition on the `imgui` target as `IMGUI_ENABLE_FREETYPE` does
+  (`CMakeLists.txt:106`). It is **not optional for emoji** — 1,232 of Twemoji's 1,418 codepoints are
+  astral, so a BMP-only build has no U+1F600 — and it costs **2.94-4.90 MB of permanent host RAM** once
+  ONE astral glyph is baked (`GrowIndex(max_codepoint+1)`, `imgui_draw.cpp:3669`; per-PRESENCE, and the
+  merged font's cmap ceiling does not leak into it). *Look FIRST — read the defines before pricing
+  fonts:* `memory/lesson_imgui_astral_codepoints_need_wchar32.md`
+- **Uniqueness enforced on STRINGS is not uniqueness on SCREEN.** Measured 2026-07-28: the nickname
+  arbiter suffixes on fold-key equality over `std::wstring`, while `ImFont::FindGlyph`
+  (`imgui_draw.cpp:3830-3838`) returns ONE `FallbackGlyph` for EVERY absent codepoint. So 张伟 and 李明
+  have distinct keys, get **no suffix**, and draw as the **same nameplate** — the user's literal ask
+  ("everyone has a unique nameplate") was false on screen for exactly the players the feature was being
+  extended to serve, while every selftest and log reported success. Buying glyphs shrinks the broken set
+  but can never close it (Hangul, Thai, rare hanzi always sit outside any budget), so a coverage-based
+  guarantee is **budget-shaped**. The fix is a LAYER choice: fold every out-of-repertoire codepoint to
+  ONE sentinel in the AUTHORITY, so names that render alike collide and take the suffix that already
+  ships — uniqueness becomes font-independent and the donor set demotes to a legibility knob. Also
+  recorded there: escaping per codepoint just moves distinctness into the LAYOUT, and folding against
+  the live atlas would make one machine's font install the authority for everyone's name. *Look FIRST:*
+  when a guarantee is about what a HUMAN PERCEIVES, ask "what renders identically that my key treats as
+  different?" and name the layer that can make it TOTAL.
+  `memory/lesson_uniqueness_on_strings_is_not_uniqueness_on_screen.md`
 
 ## 7. Performance
 
