@@ -1480,6 +1480,11 @@ announcement.
 
 ### 9f.4 What the `/qf` has to decide (the brief, pre-written)
 
+> **SUPERSEDED 2026-07-28 by §9g.** The `/qf` ran (15 rounds, converged). Every decision below was
+> either answered or DISSOLVED — the readiness gate turned out not to be a thing, the retry question
+> went with it, scope became an encoding-boundary census, and "where it runs" became a user question
+> about the harness as a whole. Read §9g; this list is kept only as the brief that produced it.
+
 - **The readiness gate.** What observable says "this peer will accept a keystroke"? Candidates: a
   new log line when `chat_input::Open()` succeeds; polling until `chat: sent` appears and retrying;
   gating on the peer having spawned every other puppet.
@@ -1493,3 +1498,129 @@ announcement.
 - **What else only shows up multi-script.** The player-list Player column already clips a
   twenty-emoji name (§9e.5); a CJK name is wider per codepoint than Latin. Nameplate width, chat
   wrap and the ban modal are all untested against wide scripts.
+
+---
+
+## 9g. THE `/qf` ON §9f — CONVERGED, and it took the instrument apart (2026-07-28, 15 rounds)
+
+**SUPERSEDES §9f.4's four open decisions.** The `/qf` the user asked for ran to convergence (15
+rounds, 57 questions, 57 conceded, critic returned "that holds"). Thread:
+`scratchpad/qf_thread.md`. **Not one finding below came from running a game** — fifteen rounds of
+reading code, which is itself the pass's largest result (§9g.6).
+
+### 9g.1 What the instrument, as built, could not do
+
+Each row measured this session against HEAD `5c54116c`.
+
+| # | finding | evidence |
+|---|---|---|
+| 1 | **The arbiter's authored output is asserted NOWHERE.** `_i18n_checks` is `if needle not in text` over the WHOLE file, so `Пельмень` passes on `Пельмень2`; and the `must` list excludes a peer's own name for a rename the composition cannot produce. Arc B's entire point has no witness. | mp.py `_i18n_checks`, `mp.py:1266` |
+| 2 | **NONE of the four peers reaches the persist logic at all.** `canonical == g_requestedNick` early-returns; `FoldKey` preserves COUNT, so `张伟明` (3 sentinels) and `さくら田中` (5) never collide. Every name is unique, so nothing is arbitrated. | `player_handshake_nick.cpp:192` |
+| 3 | **The persist READ-BACK has never executed in ANY run.** `mp.py:438` sets `VOTVCOOP_NET_NICK` on every launch, `config.cpp:684` is "SET env wins (valid or not)", and no run relaunches. The user's own KEPT-name decision has zero coverage. | measured |
+| 4 | **No injection harness exists** — the assertion set has never been shown to FAIL. And the `[args unformattable]` fallback means `_EMPTY_LINE` is now a net for a fish that cannot exist. | grep, `log.cpp:189` |
+| 5 | **`I18N_NICKS` carries zero emoji**; the astral emoji rides the HOST's chat message, whose name is ASCII. The lane the +689 KB donor was bought for is exercised by nothing. | mp.py `I18N_NICKS` |
+| 6 | **No assertion reads a pixel**, and the capture photographs the player list — never the floating nameplate, the surface the user named. `_capture_window`'s bool is discarded, so a lost capture is a log line. | `mp.py:1203-1221` |
+| 7 | **`_type_chat` types BLIND** after a flat `sleep(0.8)`. A bar that never opened yields "never saw '<msg>'" — the s5 misattribution re-created inside the instrument built in response to it. | `mp.py:1414-1422` |
+| 8 | **Nothing recycles a slot to a differently-scripted successor.** `departure_drill.ps1`'s own header: "smoke4 only ever ADDS peers" — and it never brings a successor. Arc A's teardown crossed with arc B's uniqueness is untested. | `tools/net/departure_drill.ps1` |
+
+### 9g.2 Two live PRODUCT defects the pass found (filed, not fixed here)
+
+- **`g_nick[64]` is below `kNickBufBytes = 81`** (`kNickMaxBytes = 20*4`). The field a real user types
+  into (`server_browser.cpp:118`) caps at ~15 emoji while the protocol allows 20 codepoints. It is also
+  the only census member the ini/env harness structurally bypasses — a wide name has never been *typed*.
+- **`%.Ns` truncates UTF-8 at a BYTE boundary** at five `chat_feed.cpp` sites (`:91,:98,:105,:152,:237`),
+  which can put ill-formed UTF-8 in the log. Measured across the 22:12 run: **the HOST hit
+  `max_bytes=40`, exactly the cap**, and survived only because the cut fell on a character boundary.
+  `Пельмень` plus an emoji is 20 bytes of nickname before the message starts.
+
+These are also the **only real end-to-end positive controls that exist**, which decides the build order
+(§9g.5).
+
+### 9g.3 What DISSOLVED
+
+- **The readiness gate is not a thing.** The rule is: every simulated input is posted, then its EFFECT
+  observed, held N frames, before the next step. `T`, `VK_OEM_3` and every future bind ride one
+  primitive; there is no separate readiness concept to design.
+- **The pixel assertion** becomes an in-process invariant: at the egress, the bytes are the peer's exact
+  UTF-8 name AND every codepoint is `InRepertoire`. No camera, no differ. **Layout is the exception** —
+  clipping and width are the only things a photograph still owns.
+- **The collision drill** mostly re-proves `nickname_arbiter.cpp:236-300`, which already asserts the
+  two-CJK-collide case, length-separates, mixed folding, astral-is-one-element, emoji-distinct,
+  literal-U+FFFD and the 20-emoji cap (via a UTF-8 round trip) **per boot on every peer**. What is
+  irreducibly multi-process: propagation of an authored name, the ini round-trip, and
+  `AdoptCanonicalNickname`'s split on the RECEIVING peer.
+- **The four-peer lobby is justified by no mechanism.** Surrogate reassembly is single-peer; propagation
+  needs 3; the round-trip needs 2; the recycle cell needs 2 alive. Four peers is the USER's coverage
+  cell, and should be labelled as such rather than dressed as a mechanism.
+
+### 9g.4 The rules that survived (these are the durable half)
+
+1. **Every claim about a name needs a NON-LOG witness.** Three independent encoders already exist: the
+   ini (`net.nick`), the `NickForJson` blob, the screenshot. A log-only assertion cannot separate
+   "the product lost the bytes" from "the logger lost them again" — which is exactly what happened.
+2. **Every gate and observation line is argument-free ASCII by construction.** A gate that greps a line
+   which formats a peer name dies with that name.
+3. **Every assertion carries its boundary/lane id**, so a FAIL prints "boundary 6 (egress narrow,
+   `nameplate.cpp:163`), peer c2" — not "never saw X". An instrument whose failures need de-braiding
+   will be misread; this pass watched that happen twice.
+4. **The ASCII CLIENT is an asserted control**, differing on exactly one axis: ASCII passes +
+   non-ASCII fails means encoding; all fail means relay or the bar never opened. The old composition put
+   the control on the HOST *and* gave it the only astral payload.
+5. **Three states: PASS / FAIL / INCONCLUSIVE**, counted. A four-process gate with simulated input will
+   be flaky, and a two-state gate that is sometimes wrong gets skipped.
+6. **Boundary #10 must fail a GATE, not a scenario.** `nick_gate.ps1` (already keyed by operation kind)
+   polices the encoding-boundary CLASS. A scenario proves instances; only a gate proves the class.
+7. **Every piece carries a named retirement condition or it does not go in.** The PNG half is a LAYOUT
+   tripwire only (glyph presence is covered by the sentinel-count assertion plus `font selftest`); it
+   retires when a layout assertion exists or layout is explicitly declared human-owned.
+
+### 9g.5 The order, and why the build order is REVERSED
+
+**(0) hands-on → (1) the CJK product answer → (3) the runtime cells.** The **static half is gated by
+neither** and starts immediately: the `nick_gate` boundary-class extension, the `InRepertoire` egress
+invariant over the **five** narrowing paths, and fixture-level must-FAIL controls.
+
+The five narrowing paths — the census that was wrong once already, keyed on the OPERATION and not on one
+function's callers: `roster.cpp:62`, `roster.cpp:110`, `nameplate.cpp:163`, `moderation.cpp:77`
+(**BAN path — never executed by any run, and its output lands in a permanent IP-keyed banlist**), and
+`player_inventory_sync.cpp:119` `NickForJson` (**a persisted disk blob, and not a `CopyUtf8ToBuffer`
+call at all**).
+
+**Land the detector, prove it FAILS on the §9g.2 defects, THEN fix them.** They are the only defects on
+HEAD the instrument did not author; fixing first spends the one chance to prove it against a real one.
+
+Cells run in **separate phases with re-seeding**, each declaring which install's `multivoid.ini` it
+owns — the persist writes into the same file the round-trip cell asserts, and there are only four
+installs.
+
+### 9g.6 The deliverable is a SUPPORT MATRIX, not a green light
+
+| script | identity unique | legible | status |
+|---|---|---|---|
+| Latin | yes | yes | supported |
+| Cyrillic | yes | yes | supported |
+| single emoji | yes | yes | supported |
+| CJK / Hangul / Thai | **yes** | **no — sentinel boxes** | **PRODUCT QUESTION OPEN** |
+
+A green light cannot express "works as designed, and the design may be wrong". A PASS means the matrix
+is still true, and the CJK row carries the open question instead of hiding it. The saga closes on the
+matrix + a per-arc A/B/D1/D2 status + hands-on — **not** on a green run. The verdict must print, in its
+own output, that a PASS means every byte survived every lane and does NOT mean a Japanese player can
+read their own name.
+
+**And the pass's own largest result: zero of these findings came from running anything.** Fifteen rounds
+of reading found more than every execution of the instrument did. The investment split should follow:
+cheap static gates and in-process selftests first, a minimal runtime scenario for the three things that
+are structurally cross-process.
+
+### 9g.7 What is USER-gated (these block the runtime composition, nothing else)
+
+1. **CJK legibility.** `李明` and `张伟2` render as two identical box-strings differing by an ASCII `2`.
+   Unique, exactly as asked — but is that a "Nameplate"? **The composition is downstream of this**: if
+   CJK is refused or transliterated, the headline cell does not exist to be certified. A test that
+   certifies disputed behaviour as PASS is worse than no test.
+2. **The harness's home.** `tools/mp.py` is tracked (last commit `c1403fd7`, 2026-07-02) but its edits
+   are never committed — a +662/-64 diff right now — while `docs/RELEASE.md:37-43` machine-asserts two
+   release requirements through its verdict. `departure_drill.ps1`'s header says the rule is about the
+   *edits*, not the file; that still leaves a release gate running from one checkout's working tree.
+3. Which PLAYED verb — trivial once 1 and 2 are answered.
