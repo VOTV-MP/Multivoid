@@ -16,8 +16,26 @@ imgui+freetype harness that never touches the shipping build tree (`atlas_probe.
 
 ## Verdict first
 
-**The fork in §9b.7 item 1 — (A) bake the repertoire on 1.91.5 vs (B) upgrade to 1.92 — is
-decided by measurement, not by judgement: (B).**
+> **SUPERSEDED THE SAME DAY — the verdict below is WRONG; the measurements under it are not.**
+> This section resolved the fork to arm (B) on a 64x/300x margin. That margin was produced by
+> `atlas_probe_192.cpp`, which sets `ImGuiBackendFlags_RendererHasTextures` **on itself** because a
+> headless harness has no backend to do it. Our DX12 half calls the legacy `ImGui_ImplDX12_Init`,
+> and `imgui_impl_dx12.cpp:984` does `io.BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures`
+> on that path — it does not assert, it DEGRADES. So arm B *as it would actually ship* gets none of
+> the number that chose it, on DX12, with a clean compile and no warning.
+>
+> **The standing decision is RF3 (`/qf` round 6): the donors ship on the pinned 1.91.5, and the
+> 1.92 upgrade is an OPTIMISATION with its own precondition (the `SrvDescriptorAllocFn` /
+> `FreeFn` migration), not a prerequisite for arc D2.** Everything else in this document — M1's
+> 60-bake matrix, M2's classified diff, M3's `ImWchar` census, M4's entry ladder, M5's donor bytes
+> — was measured on this machine and stands.
+>
+> Left in place rather than deleted because the reasoning is the useful part: a benefit that rests
+> on a capability flag must be measured in a configuration the product can actually reach.
+> See `[[lesson-a-capability-can-be-silently-stripped-not-asserted]]`.
+
+**~~The fork in §9b.7 item 1 — (A) bake the repertoire on 1.91.5 vs (B) upgrade to 1.92 — is
+decided by measurement, not by judgement: (B).~~** (Struck 2026-07-28; see the box above.)
 
 | | arm A — 1.91.5, baked up front | arm B — 1.92.8, on demand |
 |---|---|---|

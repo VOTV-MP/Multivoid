@@ -566,6 +566,30 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   assertion that the flag survived on EVERY backend.
   `memory/lesson_a_capability_can_be_silently_stripped_not_asserted.md`
 
+- **A drill whose inputs stay UNDER the threshold proves the half that was never broken.** MEASURED
+  2026-07-28: arc D1 shipped "Cyrillic nicknames work", photographed with `Пельмень` — 8 characters,
+  **16 UTF-8 bytes**, comfortably under the **23-byte** buffer cliff that BLANKED the roster row at 12
+  Cyrillic characters (`WideCharToMultiByte` returns 0 on overflow; it does not truncate). Every drill
+  name passed by being short. And the photograph framed the **TAB board** — while the request had
+  literally named the **floating nameplate**, which was still rendering `????????` and had never once
+  appeared in a drill shot. *Look FIRST:* derive the drill input from the CODE's boundary
+  (`cap/bytes_per_unit + 1`), never from a plausible-looking example; and require one frame per SURFACE
+  the change touches — a shot of a different surface is not weak evidence for this one, it is none.
+  State the input's MAGNITUDE in the evidence line, not just its script.
+  `memory/lesson_a_drill_that_stays_under_the_threshold_proves_the_wrong_half.md`
+
+- **A gate that polices ONE verb makes the whole path look policed.** MEASURED 2026-07-28:
+  `tools/text/nick_gate.ps1` — fail-closed, positive-controlled, and whose header **quotes** "grep the
+  VERB, not the concept" — policed only `resize|substr` and sat GREEN over four shipped NARROW defects
+  on the same lane (a `WideCharToMultiByte` blanking two surfaces, an ASCII squash on the nameplate, a
+  filter dropping a name from a record), plus a fifth latent owner it could not see at all because a
+  literal `char nick[24]` is a *declaration*, not an operation. Citing a lesson is not applying it: one
+  verb reads as "the verb" to whoever writes it. *Look FIRST:* enumerate the lane's verbs exhaustively
+  before the first pattern (truncate / narrow / widen / copy-into-fixed / declare-a-width), state in the
+  header which are NOT covered, and **injection-prove every detector against the exact code you retired**
+  — a gate that has only ever been green is an assertion, not a measurement.
+  `memory/lesson_a_gate_on_one_verb_reads_as_a_gate_on_the_path.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`

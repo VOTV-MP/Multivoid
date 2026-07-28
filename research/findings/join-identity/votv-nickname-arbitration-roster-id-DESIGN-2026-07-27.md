@@ -15,11 +15,16 @@
   PHOTOGRAPH `Pelmentor / Pelmentor2 / Pelmentor3 / Pelmentor4`
   (`research/nickarb_shots/`), the four `multivoid.ini` files reading those names back, smoke4 PASS.
   See §9c for the as-built and the three defects the drill found.
-- **ARC D1 (the codec) — BUILT + DRILLED 2026-07-28, commit `9ae83454`.** `coop/text/utf8_codec.{h,cpp}`
-  is the one owner; both Latin-1 widens plus TWO sites the design's census never named are gone.
-  Evidence: `utf8-codec selftest PASS (17/17)`, `nick_gate: PASS`, and a 4-peer drill photographing
-  `Пельмень / Пельмень2 / Пельмень3 / Пельмень4` in real Cyrillic. **Cyrillic needs no new font bytes**
-  (all seven embedded families were cmap-measured to cover U+0400-04FF).
+- **ARC D1 (the codec) — BUILT 2026-07-28 in TWO parts: `9ae83454` (entry) and
+  `2c3975d2`+`f19eedac` (egress). The first part alone was INCOMPLETE and its evidence
+  OVERSTATED — see §9c.6.** `coop/text/utf8_codec.{h,cpp}` is the one owner of BOTH directions:
+  decode at entry and `CopyUtf8ToBuffer` out into every fixed `char[]`. Evidence on the current
+  bytes: `utf8-codec selftest PASS (27/27)` and `nickname-arbiter PASS (14/14)` on every peer,
+  `nick_gate: PASS` with its three narrow detectors injection-proven, smoke4 PASS, and a 4-peer
+  drill photographing `Пельменьмень / 2 / 3 / 4` — **13 characters, 26 bytes, past the 23-byte
+  cliff that blanked the row** — plus an in-world nameplate `Пельменьмень4 (<1ms)`.
+  **Cyrillic needs no new font bytes** (all seven embedded families were cmap-measured to cover
+  U+0400-04FF).
 - **ARC D2 (the repertoire — CJK + emoji donors) — DESIGN ONLY, NOT BUILT.** Code-verified
   2026-07-28: no donor font exists under `src/votv-coop/assets/fonts/`, and
   `ImGuiFreeTypeBuilderFlags_LoadColor` appears nowhere in the tree. CJK and emoji therefore render as
@@ -853,10 +858,15 @@ exist today (`chat_sync.cpp:42-68`, `chat_feed::ToUtf8`, `player_handshake.cpp:1
 ### 9b.7 The five measurements that GATE the build
 
 > **RUN 2026-07-28 — `votv-arc-d-gate-measurements-2026-07-28.md`.** Four are complete, the fifth
-> (M1) is complete for the question it had to answer. **The fork below resolves to arm (B),
-> ImGui 1.92**, by a 64x VRAM and ~300x hitch margin measured on both arms with the same three
-> resident faces. Three claims in §9b.3/§9b.4/§9b.7 were FALSIFIED by the run and are struck
-> below. Read the measurements doc before building any of arc D.
+> (M1) is complete for the question it had to answer. Three claims in §9b.3/§9b.4/§9b.7 were
+> FALSIFIED by the run and are struck below. Read the measurements doc before building any of arc D.
+>
+> **THE FORK RESOLVES TO ARM (A) — the donors ship on the PINNED ImGui 1.91.5.** An earlier
+> revision of this stamp said arm (B) on a 64x/300x margin; that margin came from a probe which
+> granted itself `RendererHasTextures`, a flag `imgui_impl_dx12.cpp:984` silently STRIPS on the
+> legacy DX12 init we call. Arm B as it would actually ship buys none of it. The standing decision
+> is `/qf` RF3: **1.92 is an OPTIMISATION gated on the descriptor-allocator migration, not a
+> precondition for arc D2.** See the superseded-verdict box at the top of the measurements doc.
 
 
 
@@ -1037,6 +1047,50 @@ two-character literal. Every non-ASCII literal in the tree was machine-dependent
   `multivoid.ini` files read back the assigned names.
 - `smoke4 PASS` on the shipped bytes. One intermediate FAIL was de-braided by changing exactly one
   variable: a 35 s monitor window is too short for three staggered clients; 60 s passes.
+
+### 9c.6 The D1 residual — four narrows the widen census could not see (2026-07-28, same day)
+
+**Arc D1 as first shipped (`9ae83454`) fixed encoding at ENTRY and left it unowned at EGRESS.** A
+`/qf` critic round opened on arc D2 and its first question was not about fonts at all: it asked
+whether `roster.cpp:29`, which writes a `char nick[24]` through
+`WideCharToMultiByte(..., 23, ...)` under a comment asserting "peer nicknames are ASCII-sanitized
+upstream", still returned 0 now that D1 had shipped a denylist and a CODEPOINT cap.
+
+It did. **Measured** (python ctypes): `WideCharToMultiByte(CP_UTF8, cap=23)` on 19 Cyrillic
+characters returns **0** with `ERROR_INSUFFICIENT_BUFFER` (122) — it does not truncate — so
+`out[n]='\0'` with `n==0` stored the empty string. Cliffs: **12 Cyrillic / 8 hanzi / 6 emoji**.
+
+The census by narrow verb, which D1 never ran, found four sites on the nick lane:
+
+| site | mechanism | effect before |
+|---|---|---|
+| `roster.cpp:32` | `WCTMB` cap 23 | TAB row **blanked** |
+| `moderation.cpp:47` | `WCTMB` cap 23 | ban record's nick **blanked** |
+| **`nameplate.cpp:80`** | `c < 127 ? c : '?'` | the **floating nameplate squashed** to `????????` |
+| `player_inventory_sync.cpp:114` | ASCII filter | name **dropped** from the record |
+
+**The nameplate is the one that matters.** The originating request was literally *"просто чтобы у
+всех был уникальный **Nameplate**"* — and the plate was the single surface where a Cyrillic name
+still could not render. D1's status line above claimed `Пельмень / Пельмень2 / …` "in real
+Cyrillic"; the photograph behind that claim is the **TAB board**, with no plate in frame, and
+`Пельмень` is 8 characters / **16 bytes — under the cliff**. Every drill name passed by being
+short. The evidence was real and proved the one path that already worked.
+
+Fixed at the layer, not the sites: `coop::text::CopyUtf8ToBuffer` is the one egress, the five
+`char nick[]` buffers are declared with `kNickBufBytes` instead of a literal 24, the three
+"ASCII-sanitized upstream" comments are deleted (each was why the site under it looked correct),
+and `nick_gate.ps1` grew three narrow detectors — each **injection-proven against the exact
+retired code**. No proto bump: the wire nick was already `[uint8 nicklen][bytes]` at
+`kNickMaxBytes`; every buffer here is a local snapshot row or a text-file field.
+
+Two lessons, both about instruments rather than code:
+`[[lesson-a-drill-that-stays-under-the-threshold-proves-the-wrong-half]]` and
+`[[lesson-a-gate-on-one-verb-reads-as-a-gate-on-the-path]]`.
+
+Also fixed this session, user-reported off the same drill screenshot: the plate centred the
+composite `"<nick> (<ping>)"` on the anchor, so the NAME's centre sat left of the health bar's by
+half the ping suffix — and would have slid sideways as the ping gained digits. The identity is now
+centred and the annotation hangs off its right edge (`eb0bcdf5`; measured 0.0 px offset at 8x).
 
 ### 9c.5 What arc D2 still owes
 
