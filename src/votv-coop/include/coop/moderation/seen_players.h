@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include "coop/text/utf8_codec.h"  // kNickBufBytes
+
 #include <vector>
 
 namespace coop::net { class Session; }
@@ -28,7 +30,7 @@ namespace coop::seen_players {
 // Plain-data record for UI consumption (render thread reads copies).
 struct Entry {
     char      guid[33] = {};   // 32 hex chars + NUL (validated upstream at the wire)
-    char      nick[24] = {};   // last known nick (ASCII-sanitized upstream)
+    char      nick[coop::text::kNickBufBytes] = {};  // last known nick, UTF-8
     char      ip[64]   = {};   // last known remote IP (dotted-decimal, no port)
     long long lastSeenUnix = 0;
     bool      online = false;  // currently connected to this host's session

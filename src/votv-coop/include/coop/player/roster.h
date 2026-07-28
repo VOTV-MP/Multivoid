@@ -15,6 +15,7 @@
 
 #include "coop/net/link_kind.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/text/utf8_codec.h"          // kNickBufBytes -- the nick buffer's ONE owner
 
 namespace coop::net { class Session; }
 
@@ -25,11 +26,13 @@ namespace coop::roster {
 inline constexpr unsigned short kNoPlayerNo = 0;
 
 // One roster entry. Plain data only (the render thread reads it) -- the nickname
-// is a fixed UTF-8 buffer (peer nicks are sanitized to ASCII upstream, so 23
-// bytes + NUL is ample).
+// is a fixed UTF-8 buffer sized by the display policy itself
+// (coop::text::kNickBufBytes), not by an ASCII assumption. The old 24-byte
+// literal predated arc D1's widened alphabet: it fit 23 ASCII characters but only
+// 11 Cyrillic and 7 hanzi, and the row went BLANK past that.
 struct Row {
     int  slot = -1;
-    char nick[24] = {};
+    char nick[coop::text::kNickBufBytes] = {};
     // The occupant's session ID -- the number TAB shows, minted by the host and
     // never reused within a session. 0 only out of session (see kNoPlayerNo).
     // Deliberately NOT the slot: slots recycle, IDs do not.

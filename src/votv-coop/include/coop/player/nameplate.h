@@ -18,13 +18,19 @@
 
 #include "coop/net/link_kind.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/text/utf8_codec.h"          // kNickBufBytes -- the nick buffer's ONE owner
 
 namespace coop::net { class Session; }
 
 namespace coop::nameplate {
 
 // One projected label (plain data; the render thread reads it). nick is a fixed
-// ASCII buffer (peer nicks are sanitized to ASCII upstream in player_handshake).
+// UTF-8 buffer sized by the display policy (coop::text::kNickBufBytes) -- the
+// same alphabet the roster board and the chat bubble already carry. It was an
+// ASCII buffer filled through a `c < 127 ? c : '?'` squash until 2026-07-28,
+// which meant the FLOATING NAMEPLATE -- the surface the whole nickname arc was
+// asked for ("просто чтобы у всех был уникальный Nameplate") -- was the one
+// place a Cyrillic name still rendered as '????????'.
 struct Plate {
     float x = 0.f;           // screen px (viewport pixels, top-left origin) -- the head anchor
     float y = 0.f;
@@ -45,7 +51,7 @@ struct Plate {
     uint32_t colorRGB = 0;   // v103 (12f): packed custom nick color (coop::nick_color; 0 = white)
     float bubbleAlpha = 0.f; // 12g: overhead chat bubble fade (0 = none; rides the plate anchor)
     char  bubble[208] = {};  // 12g: the peer's last chat message, UTF-8 (chat_bubbles)
-    char  nick[24] = {};
+    char  nick[coop::text::kNickBufBytes] = {};
 };
 
 struct Snapshot {

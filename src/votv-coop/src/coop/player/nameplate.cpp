@@ -77,15 +77,6 @@ float DistanceScale(float distCm) {
     return std::max(kRefCm / distCm, kMinScale);
 }
 
-void CopyNickAscii(char (&dst)[24], const std::wstring& nick) {
-    size_t i = 0;
-    for (; i + 1 < sizeof(dst) && i < nick.size(); ++i) {
-        const wchar_t c = nick[i];
-        dst[i] = (c >= 32 && c < 127) ? static_cast<char>(c) : '?';
-    }
-    dst[i] = '\0';
-}
-
 void Publish(const Snapshot& s) {
     {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -169,7 +160,7 @@ void Update() {
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
         pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble
-        CopyNickAscii(pl.nick, p->GetNickname());
+        coop::text::CopyUtf8ToBuffer(pl.nick, p->GetNickname());
 
         ++snap.count;
         if (snap.count >= static_cast<int>(coop::players::kMaxPeers)) break;

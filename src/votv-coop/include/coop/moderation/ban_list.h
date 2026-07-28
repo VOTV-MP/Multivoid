@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include "coop/text/utf8_codec.h"  // kNickBufBytes
+
 #include <vector>
 
 namespace coop::ban_list {
@@ -35,7 +37,7 @@ namespace coop::ban_list {
 // section renders copies on the render thread).
 struct Entry {
     char      ip[64]     = {};
-    char      nick[24]   = {};
+    char      nick[coop::text::kNickBufBytes] = {};
     char      reason[96] = {};
     long long bannedUnix = 0;
 };

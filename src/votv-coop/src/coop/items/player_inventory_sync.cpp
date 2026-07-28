@@ -8,6 +8,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/session/player_handshake.h"
+#include "coop/text/utf8_codec.h"
 #include "coop/save/save_transfer.h"
 #include "coop/config/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
 #include "ue_wrap/actors/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
@@ -15,6 +16,7 @@
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -108,10 +110,17 @@ std::string Hex(const std::vector<uint8_t>& b) {
     return s;
 }
 
-std::string NarrowNick(const std::wstring& w) {
-    std::string s;                       // nick is already SanitizeNickname'd (ASCII alnum + [-_. ])
-    s.reserve(w.size());
-    for (wchar_t c : w) if (c >= 32 && c < 127 && c != '"' && c != '\\') s.push_back(static_cast<char>(c));
+// The nick goes into a JSON string field below. ENCODING is the codec's job
+// (until 2026-07-28 this dropped every non-ASCII byte, so a Cyrillic player's
+// record carried an empty name); ESCAPING is this site's, because the container
+// is JSON. Raw UTF-8 is valid inside a JSON string -- only the two structural
+// metacharacters have to go, and they cannot appear inside a multi-byte sequence
+// (continuation bytes are all >= 0x80), so dropping them cannot corrupt one.
+std::string NickForJson(const std::wstring& w) {
+    std::string s = coop::text::CapUtf8Bytes(coop::text::ToUtf8(w), coop::text::kNickMaxBytes);
+    s.erase(std::remove_if(s.begin(), s.end(),
+                           [](char c) { return c == '"' || c == '\\'; }),
+            s.end());
     return s;
 }
 
@@ -433,7 +442,7 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     e.guid = guid;
     e.blob = std::move(blob);
     e.hash = hash;
-    e.nick = NarrowNick(coop::player_handshake::NicknameForSlot(senderPeerSlot));  // GT snapshot
+    e.nick = NickForJson(coop::player_handshake::NicknameForSlot(senderPeerSlot));  // GT snapshot
     e.dirty = true;
     // Write now if the rate-limit window has passed; else HostPersistTick flushes it.
     if (Clock::now() - e.lastWrite >= kWriteRate) FlushSlot(senderPeerSlot);
@@ -579,7 +588,7 @@ void EnsurePlayerFile(int peerSlot) {
     // magic+FNV format (NOT a raw placeholder), so the on-disk format is uniform. The client's
     // inventory stream overwrites it ~1 s later if it has items.
     const std::vector<uint8_t> empty = coop::inventory_wire::Serialize(ue_wrap::inventory::PlayerInventory{});
-    const std::string nick = NarrowNick(coop::player_handshake::NicknameForSlot(peerSlot));
+    const std::string nick = NickForJson(coop::player_handshake::NicknameForSlot(peerSlot));
     if (WriteBlobFile(file, empty, nick))
         UE_LOGI("player_inventory: created empty inventory file for slot %d guid=%s ('%ls')",
                 peerSlot, guid.c_str(), file.c_str());

@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/player/players_registry.h"
+#include "coop/text/utf8_codec.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
@@ -37,17 +38,6 @@ coop::net::Session* HostSession(const char* action) {
 
 bool ValidClientSlot(int slot) {
     return slot >= 1 && slot < static_cast<int>(coop::players::kMaxPeers);
-}
-
-// Narrow a (game-thread) nickname wstring into a small UTF-8 buffer for the ban
-// record. Best-effort -- a banlist nick is informational only.
-void NarrowNick(const std::wstring& w, char out[24]) {
-    out[0] = '\0';
-    if (w.empty()) return;
-    int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
-                                  out, 23, nullptr, nullptr);
-    if (n < 0) n = 0;
-    out[n] = '\0';
 }
 
 }  // namespace
@@ -83,8 +73,8 @@ void BanPlayer(const PlayerToken& token, const char* reason) {
         char ip[64] = {};
         const bool haveIp = s->GetPeerAddressWithToken(token.slot, token.generation,
                                                        ip, sizeof(ip));
-        char nick[24] = {};
-        NarrowNick(coop::roster_ledger::Get(token.slot).nick, nick);
+        char nick[coop::text::kNickBufBytes] = {};
+        coop::text::CopyUtf8ToBuffer(nick, coop::roster_ledger::Get(token.slot).nick);
 
         // ABORT before writing anything if the captured player is gone. A ban is
         // permanent and IP-keyed; applying it to whoever inherited the seat would

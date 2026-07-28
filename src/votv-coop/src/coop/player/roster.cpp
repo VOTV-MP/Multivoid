@@ -24,17 +24,6 @@ Snapshot   g_snap;            // guarded by g_mutex
 std::atomic<bool> g_localIsHost{false};  // lock-free mirror of g_snap.localIsHost
 unsigned long long g_lastMs = 0;  // throttle stamp (game thread only)
 
-// Peer nicknames are ASCII-sanitized upstream (player_handshake::SanitizeNickname),
-// so a straight UTF-8 narrowing into the fixed buffer is lossless + bounded.
-void NarrowNick(const std::wstring& w, char out[24]) {
-    out[0] = '\0';
-    if (w.empty()) return;
-    int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
-                                  out, 23, nullptr, nullptr);
-    if (n < 0) n = 0;
-    out[n] = '\0';
-}
-
 }  // namespace
 
 void SetSession(coop::net::Session* session) {
@@ -70,7 +59,7 @@ void Refresh() {
         // the "n/a" case -- NOT the "--" one, which means a sample has not landed
         // yet and implies it still might.
         snap.rows[0].linkKind = coop::net::LinkKind::Local;
-        NarrowNick(coop::player_handshake::LocalNickname(), snap.rows[0].nick);
+        coop::text::CopyUtf8ToBuffer(snap.rows[0].nick, coop::player_handshake::LocalNickname());
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             g_snap = snap;
@@ -118,9 +107,9 @@ void Refresh() {
         // The display fallback lives in the ledger (ONE copy); the local row
         // still resolves through LocalNickname because our own name is ours
         // before any row exists.
-        NarrowNick(rowIsLocal ? coop::player_handshake::LocalNickname()
-                              : coop::roster_ledger::DisplayName(slot),
-                   r.nick);
+        coop::text::CopyUtf8ToBuffer(r.nick,
+                                     rowIsLocal ? coop::player_handshake::LocalNickname()
+                                                : coop::roster_ledger::DisplayName(slot));
         ++idx;
     }
     snap.count = idx;
