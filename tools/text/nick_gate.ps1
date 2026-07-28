@@ -74,6 +74,70 @@ if ($fixture -notmatch $verb) {
     exit 1
 }
 
+# ---------------------------------------------------------------------------
+# THE SECOND VERB: NARROWING. Added 2026-07-28 after this gate, in its
+# truncation-only form, sat GREEN over four shipped narrow defects.
+#
+# Truncation and narrowing are different operations on the same lane, and a gate
+# that polices one reads as a gate on the path -- exactly the trap
+# [[lesson-census-the-operation-kind-not-only-the-sites]] names, which this file's
+# own header cites while committing it. What shipped in v132:
+#   * WideCharToMultiByte into a too-small buffer returns 0, so the name BLANKED
+#     (roster board + ban record) past 12 Cyrillic / 8 hanzi / 6 emoji;
+#   * `c < 127 ? c : '?'` SQUASHED the floating nameplate to '????????';
+#   * an ASCII filter DROPPED the name from the inventory record.
+# None is a resize() or a substr(), so none was visible to the verb above.
+# ---------------------------------------------------------------------------
+
+# (a) Encoding is the codec's. WideCharToMultiByte has no legitimate caller
+#     outside it -- the codec hand-rolls UTF-8 precisely because that API is
+#     undefined on the two inputs we care about (unpaired surrogate, C0), and its
+#     too-small-buffer contract ("return 0") is indistinguishable from "empty".
+$narrowApi = '\bWideCharToMultiByte\s*\('
+$narrowApiFixture = 'int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), out, 23, nullptr, nullptr);'
+if ($narrowApiFixture -notmatch $narrowApi) {
+    Write-Host 'nick_gate: FAIL -- the narrow-API detector does not match its own known-bad fixture'
+    exit 1
+}
+
+# (b) The ASCII squash, scoped to a nick-shaped value so the event/save/SDK lanes
+#     (which are legitimately ASCII) are not swept in. Matches both the '?'
+#     substitution and the silent-drop filter form.
+$squash = '(?i)\bnick[A-Za-z0-9_]*\b[^;]{0,80}<\s*12[78]\b'
+$squashFixture = "for (wchar_t c : nick) s.push_back(c < 128 ? (char)c : '?');"
+if ($squashFixture -notmatch $squash) {
+    Write-Host 'nick_gate: FAIL -- the squash detector does not match its own known-bad fixture'
+    exit 1
+}
+
+# (c) A nick buffer declared with a numeric literal. The width and the display
+#     policy are then two owners of one axis, and they drifted for five buffers:
+#     `char nick[24]` fit 23 ASCII but only 11 Cyrillic, while the policy said 20
+#     CHARACTERS. Declare with coop::text::kNickBufBytes.
+$litBuf = '(?i)\bchar\s+nick[A-Za-z0-9_]*\s*\[\s*\d+\s*\]'
+$litBufFixture = 'char nick[24] = {};'
+if ($litBufFixture -notmatch $litBuf) {
+    Write-Host 'nick_gate: FAIL -- the literal-buffer detector does not match its own known-bad fixture'
+    exit 1
+}
+
+foreach ($f in $files) {
+    $rel = $f.FullName.Substring($repo.Length + 1)
+    if ($rel -ieq $codecRel) { continue }
+    $n = 0
+    foreach ($line in (Get-Content -LiteralPath $f.FullName)) {
+        $n++
+        if ($line -match '^\s*//') { continue }   # prose may quote the retired forms
+        if ($line -match $narrowApi) {
+            $violations += [pscustomobject]@{ File = $rel; Line = $n; Text = $line.Trim() }
+        } elseif ($line -match $squash) {
+            $violations += [pscustomobject]@{ File = $rel; Line = $n; Text = $line.Trim() }
+        } elseif ($line -match $litBuf) {
+            $violations += [pscustomobject]@{ File = $rel; Line = $n; Text = $line.Trim() }
+        }
+    }
+}
+
 if (-not $Quiet) {
     Write-Host "nick_gate: scanned $($files.Count) files, $anchorHits carry the capacity vocabulary, detector control PASS"
 }
