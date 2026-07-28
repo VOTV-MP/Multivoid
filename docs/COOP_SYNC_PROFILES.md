@@ -473,8 +473,16 @@ NOT SYNCED: crouch (Phase-2 wire bump); streamed ragdoll pelvis ROTATION (on-wir
 | 1 | nameplate render (nick/health/ping/voice) | W | HO | ∅ | `nameplate::Update` (composite of synced inputs) | recompute each tick |
 | 2 | per-player plate visibility pref | U | code | CO | `HandleNameplateChange` | at-join via Join payload |
 | 3 | nick color (packed RGB) | U | code | CO | `nick_color::StoreForSlot` | at-join via Join |
+| 4 | **the display NAME itself (uniqueness)** | **W** | **HO** | **HA** | `nickname_arbiter::Assign` at the Join seam; assignment rides RosterRow's existing nick and the named peer adopts it into `g_localNick` (arc B, 2026-07-28) | arbitrated ON join, against the ledger's occupied rows |
+| 5 | **the name's ALPHABET (non-ASCII)** | **W** for Latin+Cyrillic, **BROKEN** for CJK/emoji | **HO** (Cyrillic photographed) / `code` (CJK) | ∅ (local render) | `coop/text/utf8_codec` decodes at entry, strict on receive; all seven embedded families cmap-cover U+0400-04FF, none covers CJK or emoji | n/a — a render property, not a lane |
 
 NOT SYNCED: health-bar/ping/voice-icon values are computed locally from their own sources; distance fade/occlusion are viewer-local.
+
+Facet 4's authority is the interesting one: uniqueness CANNOT be `CO` (co-authored), because two peers
+each choosing "Pelmentor" are both individually correct and neither can see the other. It is the first
+facet in this document whose `HA` (host-arbitrated) verdict comes from an impossibility rather than a
+preference. Facet 5 is the counter-shape: a pure render property with NO authority axis at all, which
+is why "the name renders wrong" was mis-filed as a sync bug for months.
 
 ### Skins — `coop/player/skin_registry`, `skin_effects`, `client_model`, `local_body`
 | # | facet | V | E | Auth | cite | mid-join |

@@ -262,6 +262,36 @@ its own -- so the bytes are exactly fresh and there is no second cadence to drif
 client board is the RTT sampler (<=1 s) + the pulse (<=5 s, `kPulseSlowMs`). **That constant now has
 two consumers** -- roster repair AND every board's ping freshness.
 
+### The name a row shows is the HOST's to assign (arc B, AS-BUILT 2026-07-28 `8592fb5e`, proto 132)
+
+Two players typing the same name each believe they are unique, and neither can see the other's choice
+at the moment it is made -- so **uniqueness is not the name-owner's call**. The host, the one peer that
+sees every name at once, ASSIGNS the display name at the Join seam and every peer including the named
+one adopts it. Four `Pelmentor`s read `Pelmentor (host) / Pelmentor2 / Pelmentor3 / Pelmentor4`,
+identically on all four boards.
+
+**The assignment is KEPT, not borrowed** (USER 2026-07-28): it is written back to `multivoid.ini`, so
+the next session asks to be called `Pelmentor2` and keeps it unless someone else already is. A second
+`Pelmentor2` is the one that moves -- to `Pelmentor22`, because the whole requested name is the stem.
+Deciding otherwise would mean guessing whether a trailing number is a suffix we once added or part of a
+name its owner chose, and nothing in the string says which.
+
+No new wire kind: the assignment rides the nick already in `RosterRow`'s FIXED PREFIX. On the receiving
+side a row about ME writes `g_localNick`, not the ledger row -- that store is what chat authorship, the
+action feed, the nameplate, the Join payload and both of the roster's local-row reads derive from, so
+writing the row alone would have left five surfaces showing the name we asked for.
+
+### Non-ASCII names render (arc D1, AS-BUILT 2026-07-28 `9ae83454`)
+
+`Пельмень / Пельмень2 / Пельмень3 / Пельмень4` renders on the board. The root was never the ASCII
+allowlist everyone blamed -- it was that nothing decoded UTF-8 at entry, so a Cyrillic name arrived at
+the sanitizer as mojibake and was stripped whole. Cyrillic costs **zero new font bytes**: all seven
+embedded families were cmap-measured to cover U+0400-04FF.
+
+**CJK and emoji still render as the fallback glyph** -- one glyph for every missing codepoint, not
+boxes (`imgui_draw.cpp` picks a single `FallbackGlyph`). The donor fonts are arc D2, designed and
+measured but NOT BUILT: `research/findings/join-identity/votv-arc-d-gate-measurements-2026-07-28.md`.
+
 ## Version identity surfaces (b122, AS-BUILT 2026-07-19 `5246844a`, drill-verified NOT hands-on)
 
 The Paper-pair identity (game target + build number; docs/RELEASE.md + the

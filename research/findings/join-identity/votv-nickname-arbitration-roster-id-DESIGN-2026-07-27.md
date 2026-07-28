@@ -1,15 +1,39 @@
 # Nickname arbitration + roster identity/ID — DESIGN (2026-07-27)
 
-**STATUS (2026-07-27 late, per arc):**
+**STATUS (2026-07-28, per arc — reconciled against the code, not against labels):**
 - **ARC A — BUILT, DRILLED, AUDITED. NOT hands-on.** Proto 130, commits `72805d96`..`89620d59`.
   The drills ran on DLL `c4d1d8d4bf1dcd3e`; the player-list fixes of `89620d59` landed after them, so
   what is DEPLOYED now is `51ec0c60cc698e68` (UI-only delta -- no sync path touched, drills unaffected). Four drills PASS (departure / replacement-with-loss-injection /
   successor-ban / idempotency-by-count), two audits at 0 CRITICAL. Evidence and the corrections the
   build measured against this design are in §3 AS-BUILT; the per-drill RUN/OPEN status is in
   §3 "Arc A drills". **No human has touched it** — every claim is autonomous.
-- **ARC B (nickname arbitration), ARC C (per-slot receive gate), ARC D (international text) —
-  DESIGN ONLY. Not built, not smoked, not hands-on.** B and D are ONE delivery (§9b.8); the five
-  §9b.7 measurements gate the build.
+- **ARC B (nickname arbitration) — BUILT + DRILLED 2026-07-28, commit `8592fb5e`, proto 132, DLL
+  `BC0285ADAECBCB12`. NOT hands-on.** `coop/player/nickname_arbiter.{h,cpp}`; the host arbitrates at
+  the Join seam (`player_handshake.cpp`) and the assignment rides the existing RosterRow FIXED PREFIX
+  to the named peer, which adopts it into `g_localNick`. Evidence: `nickname-arbiter selftest
+  PASS (14/14)` on every peer, a 4-peer drill where all four ask for "Pelmentor" and the boards
+  PHOTOGRAPH `Pelmentor / Pelmentor2 / Pelmentor3 / Pelmentor4`
+  (`research/nickarb_shots/`), the four `multivoid.ini` files reading those names back, smoke4 PASS.
+  See §9c for the as-built and the three defects the drill found.
+- **ARC D1 (the codec) — BUILT + DRILLED 2026-07-28, commit `9ae83454`.** `coop/text/utf8_codec.{h,cpp}`
+  is the one owner; both Latin-1 widens plus TWO sites the design's census never named are gone.
+  Evidence: `utf8-codec selftest PASS (17/17)`, `nick_gate: PASS`, and a 4-peer drill photographing
+  `Пельмень / Пельмень2 / Пельмень3 / Пельмень4` in real Cyrillic. **Cyrillic needs no new font bytes**
+  (all seven embedded families were cmap-measured to cover U+0400-04FF).
+- **ARC D2 (the repertoire — CJK + emoji donors) — DESIGN ONLY, NOT BUILT.** Code-verified
+  2026-07-28: no donor font exists under `src/votv-coop/assets/fonts/`, and
+  `ImGuiFreeTypeBuilderFlags_LoadColor` appears nowhere in the tree. CJK and emoji therefore render as
+  the fallback glyph. The five §9b.7 measurements that gated it are all RUN
+  (`votv-arc-d-gate-measurements-2026-07-28.md`).
+- **ARC C (per-slot receive gate) — DESIGN ONLY, NOT BUILT** (§8; unchanged this session).
+
+**§9b.8's "B and D are ONE delivery" was OVERTAKEN BY THE BUILD.** A `/qf` round held that ordering
+against the ask and it did not survive: arc B alone over today's alphabet IS the literal ask, and what
+D changes in B is the fold key plus the cap unit — one function and one constant, not the authority
+structure. B shipped first and D1 followed the same day; nothing had to be redone. The residual cost
+the reframe predicted is real and cosmetic: names arbitrated before D1 landed were folded over an
+alphabet that silently stripped non-ASCII, so a Cyrillic-named player could be renamed once more when
+D1 arrived. Nothing persists across it (bans key on IP, seen-players on GUID).
 
 Arcs A/B/C: 42-round `/qf`, the critic returned "that holds" at R42. Arc D: 19 rounds, NOT
 converged, stopped deliberately once the questions moved onto the drill (§9b). Round-by-round log:
@@ -946,3 +970,78 @@ than re-derive it.
 | R36 | Validating against the GT mirror only narrowed the window | Validate against the LIVE authority, atomically with the read |
 | R39 | "Zero empties" would erase the host's own row every tick | Reconcile skips slot 0 on the host |
 | R42 | — | "that holds" |
+
+---
+
+## 9c. ARC B + ARC D1 — AS-BUILT (2026-07-28)
+
+**Commits `8592fb5e` (arc B) and `9ae83454` (arc D1). Proto 132, DLL `BC0285ADAECBCB12` deployed x4.
+Every claim below is autonomous evidence — NO HUMAN HAS TOUCHED EITHER.**
+
+### 9c.1 What shipped, against what the design said
+
+| Design said | As built | Why it differs |
+|---|---|---|
+| B and D are ONE delivery (§9b.8) | B shipped first, D1 the same day | A `/qf` round held the ordering against the ask; B alone IS the literal ask, and D changes one function + one constant in it, not its authority structure |
+| The arbiter keys on the nick STORE (R4) | Unchanged — it reads the ledger's occupied rows | — |
+| The collision set needs occupancy-token scoping so a reconnect cannot ratchet | NOT built, and not needed | `ReconcileFromSession` already runs death FIRST and unconditionally (`roster_ledger.cpp:289`), so a reconnecting peer cannot collide with its own un-reaped row. Riding the ledger's existing guarantee beats adding a second one |
+| A suffix is appended to a stem | The whole REQUESTED name is the stem | USER 2026-07-28. A kept `Pelmentor2` meeting another becomes `Pelmentor22`; stripping trailing digits would require deciding whether a number is a suffix we added or part of a chosen name, and nothing in the string says which |
+| The handback is display-only; the ini keeps the REQUESTED name | The handback writes ALL THREE stores incl. `multivoid.ini` | USER 2026-07-28: "What user gets as a nickname gets recorded and persisted into his config files. It's not something temporary." |
+| The widen census is 2 sites (§9b.4), later 7 | FOUR sites actually mattered, two of which no widen census could see | See 9c.3 |
+
+### 9c.2 The invariant that made arc B one line instead of six
+
+`AdoptCanonicalNickname` writes **`g_localNick`**, not the ledger row. Measured census: `LocalNickname()`
+has SIX readers — `chat_sync.cpp:128` (chat authorship), `peer_action_feed.cpp:51`, `event_feed.cpp:136`
+(the row-0 seed), `roster.cpp:73` and `:121` (the local row, which deliberately BYPASSES the ledger),
+`player_handshake.cpp` (the Join payload) — plus 19 sites on the ledger-read verb
+(`NicknameForSlot`/`DisplayName`) across 9 files. Writing the row alone would have left five surfaces
+showing the name we asked for rather than the one we were given.
+
+A claim this design carried and the code falsified: the per-tick `event_feed.cpp:136` re-seed was
+believed to STOMP a ledger-written handback. It cannot — `EnsureRowZeroSeeded` (`roster_ledger.cpp:188`)
+returns for every non-host before reaching the re-seed, and per R12 the host seeds row 0 first so the
+host is never the suffixed peer. Right conclusion, wrong reason; the reason is now measured.
+
+### 9c.3 Three defects the drills found (none was visible in code review)
+
+1. **The host publishes a roster row BEFORE the joiner's Join arrives**, so the row's nick is empty,
+   `SanitizeNickname("")` minted the display placeholder `"Player"`, and the joiner adopted the
+   placeholder as its canonical name — and, after the persist decision, wrote it over the human's real
+   name permanently. Measured: `nick: host renamed us 'Client1' -> 'Player'`. **Root fix:** an empty
+   nick means NOT KNOWN YET; identity keeps it empty and the placeholder stays a display fallback the
+   ledger already owns one copy of.
+2. **`harness.cpp` narrowed the boot nickname with `c < 128 ? c : '?'`** — the site the widen census
+   could never find, because the census was of WIDENS and this is a NARROW. Its effect was total and
+   silent: a Cyrillic name read correctly from the ini became `????????` before the sanitizer or the
+   wire saw it, so every downstream fix looked like it had not worked.
+3. **`ReadEnv` used `GetEnvironmentVariableA`.** Windows holds the environment as UTF-16 and the
+   A-variant converts down to the process ANSI codepage, so a Cyrillic env var arrived as cp1251 —
+   not UTF-8, not well-formed UTF-8 either — and every correct layer above produced a row of U+FFFD.
+
+Also caught, by the codec selftest, against our own build: the target compiled **without `/utf-8`**, so
+MSVC decoded source literals with the SYSTEM codepage and the selftest counted three codepoints in a
+two-character literal. Every non-ASCII literal in the tree was machine-dependent.
+
+### 9c.4 Evidence
+
+- `nickname-arbiter selftest: PASS (14/14)` and `utf8-codec selftest: PASS (17/17)`, printed once per
+  process on every peer. They cover what no LAN drill can stage: a suffix displacing stem characters at
+  the cap, a variant colliding with a 20-character name a DIFFERENT player holds, the kept-name cases,
+  the strict decoder refusing truncated / over-long / lone-continuation sequences, both caps landing on
+  boundaries a raw `resize` would split.
+- `nick_gate: PASS` — 746 files scanned, 7 carry the capacity vocabulary, and the detector matched its
+  own known-bad fixture (the positive control the four-truncator census never had).
+- 4-peer drill, all peers asking for the same name: boards photographed at
+  `research/nickarb_shots/` for both `Pelmentor*` (ASCII) and `Пельмень*` (Cyrillic); the four
+  `multivoid.ini` files read back the assigned names.
+- `smoke4 PASS` on the shipped bytes. One intermediate FAIL was de-braided by changing exactly one
+  variable: a 35 s monitor window is too short for three staggered clients; 60 s passes.
+
+### 9c.5 What arc D2 still owes
+
+CJK and emoji render as the fallback glyph until the donors are embedded. Everything needed is measured
+(`votv-arc-d-gate-measurements-2026-07-28.md`): donor names, licences, subset bytes, the required
+`LoadColor` flag, the merge-order hazard, and the fact that the atlas cost is 16-64 MB on the pinned
+ImGui 1.91.5 versus 0.25 MB on 1.92. The open product boundary is unchanged: which hanzi set counts as
+"common" decides which NAMES are accepted (D-d).

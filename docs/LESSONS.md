@@ -379,7 +379,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Classify a repeated literal by the QUESTION each site answers, not its syntactic role.** The
   `"Player"` nick literal sits at 7 sites that look like one group and are two — and the axis is **MY
   NAME vs SOMEONE ELSE'S**, not default-vs-fallback. `SanitizeNickname`'s empty fallback
-  (`player_handshake.cpp:224` — re-cited 2026-07-27, the row had drifted to `:219`) reads as a
+  (`player_handshake.cpp:253` — re-cited 2026-07-28; the row read `:224`, and `:219` before that,
+  which is three drifts and a standing argument for citing the SYMBOL over the line) reads as a
   fallback but decides *my* displayed name; changing too few ships two different defaults, changing
   too many labels a nameless remote peer with your name. A 2026-07-27 re-census found
   `peer_action_feed.cpp:53` printing a NAMELESS REMOTE PEER with the MY-NAME literal — the trap, live.
@@ -422,7 +423,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   *widening* conversion on the nickname path was exhaustive — for widening — and therefore FELT
   complete, while four raw *truncations* on the same path stayed invisible for fifteen `/qf` rounds
   (`config.cpp:508` `resize(255)`; `player_handshake.cpp:302` and `:573` `resize(200)` AFTER `ToUtf8`;
-  `SanitizeNickname:212` capping in UTF-16 units). Two of them would have manufactured the ill-formed
+  `SanitizeNickname:212` capping in UTF-16 units — **all four are RETIRED as of `9ae83454`**: the caps
+  are `coop::text::CapUtf8Bytes` / `CapCodepoints` and `tools/text/nick_gate.ps1` polices the verb). Two of them would have manufactured the ill-formed
   UTF-8 that the same design's new fail-closed receive boundary rejects — the feature would have broken
   its own sender's nick and looked like a wire bug. Grep per VERB (`resize`, `substr`, `memcpy`,
   `snprintf`, `WideCharToMultiByte`), not per concept; and prefer a TYPE owning capacity + truncation
@@ -541,6 +543,28 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   answer body never touches anything role-specific.** *Look FIRST:* read the whole accessor before
   writing "only X can know this" in a design; and state which measured line makes it exclusive.
   `memory/lesson_verify_role_exclusivity_before_publishing.md`
+
+- **A failing selftest is a claim about TWO things — check the EXPECTATION before the code.** Measured
+  2026-07-28: the nickname-arbiter selftest failed 13/14 asserting a name the arbiter can never emit (a
+  19-char stem + `"10"` is 21 characters, over the 20-cap) — the code was right, the test was wrong. The
+  same day the codec selftest failed on `CountCodepoints(...) == 2` and that one was REAL but two layers
+  down: MSVC without `/utf-8` decodes source literals with the SYSTEM codepage, so every non-ASCII
+  literal in the tree was locale-dependent. Note which assertion caught it: every ROUND-TRIP case passed,
+  because a round trip is self-consistent under a shared corruption. **Include at least one ABSOLUTE
+  assertion per selftest**, and treat `/utf-8` as mandatory on MSVC. *Look FIRST:* re-derive the expected
+  value by hand, constructing it the way the code numbers rather than the way it reads.
+  `memory/lesson_a_selftest_expectation_can_be_the_bug.md`
+- **A capability can be silently STRIPPED where you expected an assert — and no compiler control can see
+  it.** Measured 2026-07-28 pricing ImGui 1.92: `imgui_impl_dx12.cpp:984` does
+  `io.BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures` when the legacy `Init` signature is used. It
+  does not assert; it degrades. The upgrade would have paid its whole cost (a submodule bump, a semantic
+  sweep of four kept redirects) for none of its benefit — 16-64 MB and a 139-416 ms atlas rebuild instead
+  of 0.25 MB — **DX12-only, clean compile, no warning**, on the RHI least likely to be tested. Worse, the
+  headless probe SET THAT FLAG ON ITSELF, so it measured a configuration the product never reproduces
+  (`grep RendererHasTextures src/` = zero). *Look FIRST:* when an upgrade's VALUE rests on a capability
+  flag, grep the vendored backend for `&= ~<FLAG>` before believing any benefit number, and ship a boot
+  assertion that the flag survived on EVERY backend.
+  `memory/lesson_a_capability_can_be_silently_stripped_not_asserted.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
@@ -702,6 +726,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **Identity-critical log lines carry cls+key+loc (USER RULE)** — a class histogram alone makes
   per-entity RCA impossible; cold paths only, never at the POST-native destroy seam (PendingKill),
   throttle mass arms. `memory/feedback_identity_logs_carry_key_and_loc.md`
+
+- **A display PLACEHOLDER must never be stored where identity is read.** Measured 2026-07-28 (arc B):
+  the host installs a roster row when a slot reaches READY, which is BEFORE that peer's Join carries its
+  name — so the first row about a joiner legitimately has an empty nick. `SanitizeNickname("")` minted
+  the display fallback `"Player"` and stored it as a name; the joiner then ADOPTED it as canonical and,
+  under the persist decision, wrote it over the human's real name permanently
+  (`nick: host renamed us 'Client1' -> 'Player'`). The placeholder had been correct for years — the bug
+  was created by a NEW READER, in a file that was not edited, and is invisible in the diff. *Look FIRST:*
+  before promoting any displayed value to an identity, ask "what is this when it is not known yet, and
+  does that sentinel round-trip?"; keep the fallback at the LAST layer (the renderer), one copy, never in
+  the store. `memory/lesson_a_placeholder_must_never_become_an_identity.md`
+- **Census the DIRECTION, not only the operation — a widen census is blind to a narrow.** Measured
+  2026-07-28 (arc D1): the design censused per-byte WIDENS and found 7 sites; fixing all seven changed
+  NOTHING VISIBLE, because two sites in front of them were NARROWS — `harness.cpp` replacing non-ASCII
+  with `'?'`, and `ReadEnv` using `GetEnvironmentVariableA` (Windows holds the environment as UTF-16; the
+  A-variant converts down to the ANSI codepage, so a Cyrillic env var arrived as cp1251 and the correct
+  new strict decoder produced a row of U+FFFD). The debugging trap is the worse half: because the
+  destroyer was UPSTREAM, each correct fix produced no visible change — the exact signature of "my fix is
+  wrong". *Look FIRST:* census both directions AND every Win32 `...A`/`...W` pair on the path; and when a
+  correct fix changes nothing, log the value at the seam you are about to trust instead of reading
+  further. Third instance of `lesson_census_the_operation_kind_not_only_the_sites`, which it sharpens.
+  `memory/lesson_census_the_direction_not_only_the_operation.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 

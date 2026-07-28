@@ -1,13 +1,15 @@
-# Hands-on runbook — arc A, the roster ledger (2026-07-27)
+# Hands-on runbook — arc A roster + v131 player list + v132 names (2026-07-27, extended 2026-07-28)
 
-**Deployed:** `multivoid-0.9.0n-131.dll`, sha256 begins `ab51b7fc072ad3be`,
-**proto 131** (wire changed — RELAUNCH BOTH PEERS; an older peer is refused at the join gate by
-design, with a feed line saying so).
-All four installs have it. HEAD `1fc74b0c`.
+**Deployed:** `multivoid-0.9.0n-132.dll`, sha256 begins `BC0285ADAECBCB12`,
+**proto 132** (RELAUNCH BOTH PEERS; an older peer is refused at the join gate by design, with a feed
+line saying so). All four installs have it. HEAD `9ae83454`.
 
-**SUPERSEDED-IN-PLACE 2026-07-28.** This runbook was written for arc A at proto 130. The two
-KNOWN-BAD items it told you not to report are both **FIXED** in v131, so the checks below now cover
-arc A *and* the v131 player-list rework — which no human has touched either.
+**SUPERSEDED-IN-PLACE TWICE.** Written for arc A at proto 130; extended 2026-07-28 for v131 (the
+player-list rework) and again for v132 (arc B host-canonical names + arc D1 the UTF-8 codec). Three
+generations of work stacked here and **no human has touched any of it** — every claim in all three is
+autonomous evidence. The two KNOWN-BAD items the original told you not to report are FIXED; judge them.
+
+**NEW in v132 — see the dedicated section at the end of this file before you start.**
 
 **Why this runbook exists.** Arc A is fully drilled and audited and **no human has touched it**.
 Four autonomous drills passed, but every one of them tests what I thought to test.
@@ -156,3 +158,35 @@ number of pulses.
 - The settings-check popup on the smoke's clients reports `posinfo = '1' -- not a known setting`.
   Unrelated to arc A: a retired key left in the test installs' ini. Cosmetic, but it sits on top of
   every screenshot.
+
+
+---
+
+## v132 — the names (arc B + arc D1), 2026-07-28
+
+**What changed:** the HOST now assigns display names so no two players share one, and the assignment
+is **persisted to your `multivoid.ini`**. Separately, names are finally real UTF-8 end to end, so
+Cyrillic works.
+
+**Autonomous evidence already in hand** (so do not spend your time re-proving these):
+`nickname-arbiter selftest PASS (14/14)` and `utf8-codec selftest PASS (17/17)` on every peer;
+`nick_gate: PASS`; a 4-peer drill where all four peers ask for the same name and the boards photograph
+`Pelmentor / Pelmentor2 / Pelmentor3 / Pelmentor4` and `Пельмень / Пельмень2 / Пельмень3 / Пельмень4`
+(`research/nickarb_shots/`); the four ini files reading the assigned names back; `smoke4 PASS`.
+
+**What a human is actually needed for:**
+
+1. **Does the rename FEEL right?** Set the same name on two installs, join, and watch your own
+   nameplate/board row. You should see the name you typed become `<name>2` — once, at join, not
+   flickering. The activity feed and chat should use the new name immediately.
+2. **Does it stick the way you meant?** After that session, open your `multivoid.ini`: `net.nick`
+   should now read `<name>2`. Relaunch and join an EMPTY host: you should stay `<name>2` (nobody else
+   has it). This is your decision from 2026-07-28 made real — say if it feels wrong in practice.
+3. **Type a Cyrillic name in the server browser field** (not the ini) and join. It should render on
+   the board, in chat and on the nameplate. **This path is the one piece the drills could NOT cover:**
+   the browser's text field with a live keyboard/IME was never exercised autonomously.
+4. **A Chinese/Japanese/emoji name is EXPECTED TO FAIL** — it will render as one placeholder glyph.
+   That is arc D2 (the donor fonts), designed and measured but not built. Do not report it as a bug;
+   report only if it does something WORSE than render a placeholder (crashes, blanks the row, etc.).
+
+**Known-open, do not report:** CJK/emoji glyphs (item 4). Everything else is fair game.
