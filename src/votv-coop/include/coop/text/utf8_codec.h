@@ -65,6 +65,20 @@ std::string SanitizeUtf8(const char* p, size_t n);
 // i.e. our own sender's name would arrive as the placeholder.
 std::string CapUtf8Bytes(std::string s, size_t maxBytes);
 
+// Decode the codepoint starting at `w[i]`, pairing surrogates, and return how
+// many wchar_t UNITS it occupied (1 or 2). An unpaired surrogate decodes to
+// itself over one unit, so a caller can deny it explicitly instead of silently
+// mis-measuring the string around it.
+//
+// THIS EXISTS BECAUSE wchar_t IS A CODE UNIT, NOT A CHARACTER, and every loop
+// that forgets it is wrong in the same way: `for (wchar_t c : name)` sees an
+// emoji as two meaningless halves. That produced two shipped defects at once --
+// a fold key with two sentinels where a BMP character has one, and a denylist
+// that could not see a supplementary-plane invisible character at all. Four
+// call sites now share this one decoder rather than each re-deriving the pair
+// arithmetic.
+size_t DecodeCodepoint(const std::wstring& w, size_t i, uint32_t* cp);
+
 // Cap a UTF-16 string to `maxChars` CODEPOINTS, never splitting a surrogate
 // pair. Counting in wchar_t units (what the old cap did) cuts an astral
 // character in half and yields an unpaired surrogate.

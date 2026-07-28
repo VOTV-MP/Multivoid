@@ -5,12 +5,34 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
+#include <locale.h>
 #include <mutex>
 #include <share.h>
 
 namespace ue_wrap::log {
 namespace {
+
+// A UTF-8 locale used for FORMATTING ONLY, never installed process-wide.
+//
+// MEASURED 2026-07-28, and it had been silently eating log lines since the first
+// Cyrillic nickname: `%ls` in vsnprintf converts wide -> narrow through the C
+// locale, and the default "C" locale can encode nothing above U+007F. The call
+// returns -1 and MSVC leaves the buffer EMPTY, so the whole line degenerates to
+// a bare "[21:04:18] [INFO ] " with no message at all -- not truncated, GONE.
+// Every line naming a Cyrillic, CJK or emoji peer vanished, which is precisely
+// the population the international-names work exists for, and it is why an
+// arc-D2 drill looked like a relay failure: the evidence lines were missing, not
+// the behaviour. (Probe: `%ls` of "Пел" -> n=-1; with this locale -> n=17.)
+//
+// _create_locale + the _l formatter keep this to OUR call. setlocale() would be
+// the two-line version and is wrong here: we are injected into someone else's
+// process, and LC_CTYPE is shared CRT state the game also reads.
+_locale_t Utf8Locale() {
+    static _locale_t loc = ::_create_locale(LC_ALL, ".UTF-8");
+    return loc;
+}
 
 FILE* g_file = nullptr;
 CRITICAL_SECTION g_lock;
@@ -129,8 +151,27 @@ void Write(Level level, const char* fmt, ...) {
     char msg[1024];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(msg, sizeof(msg), fmt, args);
+    int wrote = -1;
+    if (_locale_t loc = Utf8Locale())
+        wrote = ::_vsnprintf_s_l(msg, sizeof(msg), _TRUNCATE, fmt, loc, args);
+    else
+        wrote = std::vsnprintf(msg, sizeof(msg), fmt, args);
     va_end(args);
+    // A LINE MUST NEVER DISAPPEAR BECAUSE OF ITS ARGUMENTS. Any remaining
+    // conversion failure (an unpaired surrogate is the only one left) empties the
+    // buffer, and an empty message is indistinguishable from a bug that never
+    // logged. Fall back to the format string: it names the site, which is the
+    // half worth keeping.
+    if (wrote < 0 && msg[0] == '\0') {
+        std::snprintf(msg, sizeof(msg), "%s [args unformattable]", fmt);
+    } else if (wrote < 0) {
+        // _TRUNCATE cut mid-sequence: back off to a UTF-8 character boundary so
+        // the log file stays decodable by every reader downstream.
+        size_t n = std::strlen(msg);
+        while (n > 0 && (static_cast<unsigned char>(msg[n - 1]) & 0xC0) == 0x80) --n;
+        if (n > 0 && (static_cast<unsigned char>(msg[n - 1]) & 0x80) != 0) --n;
+        msg[n] = '\0';
+    }
 
     char ts[32] = {};
     {

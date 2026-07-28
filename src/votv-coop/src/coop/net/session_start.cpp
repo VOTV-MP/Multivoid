@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 
 #include "coop/player/nickname_arbiter.h"
+#include "coop/text/repertoire.h"
 #include "coop/text/utf8_codec.h"
 
 #include "ice_config.h"          // co-located: ICE STUN/TURN config (P2P)
@@ -156,6 +157,14 @@ bool Session::Start(const Config& cfg) {
     // character -- neither is stageable from a LAN drill, both are one memcmp here.
     static const bool kCodecOk = coop::text::RunUtf8CodecSelftest();
     (void)kCodecOk;
+
+    // ARC D2: the repertoire table is GENERATED, and a generated table is a
+    // claim about a build step nobody watches. These assert its shape (the
+    // binary search is only correct on a sorted, disjoint table) and the four
+    // membership facts the fold depends on -- which is the difference between
+    // "the constant compiled" and "the constant says what we think".
+    static const bool kRepertoireOk = coop::text::RunRepertoireSelftest();
+    (void)kRepertoireOk;
 
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(

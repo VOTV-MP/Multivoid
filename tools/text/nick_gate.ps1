@@ -22,8 +22,11 @@ $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $src  = Join-Path $repo 'src\votv-coop'
 
 # The ONE file allowed to cut bytes: it is the thing that knows where a character
-# boundary is.
-$codecRel = 'src\coop\text\utf8_codec.cpp'
+# boundary is. (The path is repo-relative and must stay so: it is compared against
+# $rel below, and when this string was written WITHOUT the src\votv-coop prefix
+# the comparison silently never matched -- a broken exemption that went unnoticed
+# only because no line in the codec had a nick-spelled receiver.)
+$codecRel = 'src\votv-coop\src\coop\text\utf8_codec.cpp'
 
 function Get-Sources {
     Get-ChildItem -Path $src -Recurse -Include *.cpp, *.h |
@@ -71,6 +74,67 @@ foreach ($f in $files) {
 $fixture = 'if (nickUtf8.size() > 200) nickUtf8.resize(200);'
 if ($fixture -notmatch $verb) {
     Write-Host 'nick_gate: FAIL -- the detector does not match its own known-bad fixture'
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# THE SUBJECT, NOT THE SPELLING. Added 2026-07-28 (arc D2) after this gate went
+# green and blind for the SECOND time, in a second dimension.
+#
+# The verb pattern above requires the RECEIVER to be called nick-something. It
+# therefore could not see nickname_arbiter.cpp's `stem.substr(0, keep)` -- a
+# UTF-16-unit cut of a nickname, on a lane where emoji are accepted, held in a
+# variable named for its role in the suffix policy rather than for its contents.
+# The first widening of this file added verbs; this one fixes the axis those
+# verbs were being tested on. A naming convention is not an invariant: it holds
+# until someone picks a better local name, which is a thing reviewers ASK for.
+#
+# A regex cannot know what a variable holds. What it CAN know is what a FILE
+# does. So the lane is defined by the vocabulary a file carries, and inside the
+# lane every raw truncation is suspect whatever the receiver is called.
+# The lane is the files that DECIDE name text -- the ones carrying the policy
+# vocabulary. Deliberately NOT the ones that merely hold a `char nick[]` (chat,
+# email, inventory, moderation, the HUD): those transport a name, they do not cut
+# one, and sweeping them in buries the signal under ini parsing and wire framing.
+$laneVocab = '(?i)\b(SanitizeNickname|FoldKey|AssignAgainst|AdoptCanonicalNickname|' +
+             'nickname_arbiter|kNickMaxChars)\b'
+$anyTrunc  = '\.\s*(resize|substr)\s*\('
+# The exemption is EXPLICIT and reviewable, which is the entire point: a cut in a
+# name-deciding file is name text unless someone says otherwise IN WRITING. The
+# previous shape inferred the same exemption from what the variable was CALLED,
+# and `stem.substr(0, keep)` -- a real UTF-16-unit cut of a nickname -- collected
+# it for free.
+$exempt = '(?i)//\s*not-name-text'
+$laneFixture = 'return stem.substr(0, keep) + suffix;'
+if ($laneFixture -notmatch $anyTrunc -or $laneFixture -match $exempt) {
+    Write-Host 'nick_gate: FAIL -- the lane-truncation detector does not match its own known-bad fixture'
+    exit 1
+}
+if (('    out.resize(4);  // not-name-text: a wire prefix' -notmatch $exempt)) {
+    Write-Host 'nick_gate: FAIL -- the exemption marker does not match its own fixture'
+    exit 1
+}
+$laneFiles = 0
+foreach ($f in $files) {
+    $rel = $f.FullName.Substring($repo.Length + 1)
+    if ($rel -ieq $codecRel) { continue }
+    $t = Get-Content -Raw -LiteralPath $f.FullName
+    if ($t -notmatch $laneVocab) { continue }
+    $laneFiles++
+    $n = 0
+    $prev = ''
+    foreach ($line in (Get-Content -LiteralPath $f.FullName)) {
+        $n++
+        $was = $prev
+        $prev = $line
+        if ($line -match '^\s*//') { continue }
+        if ($line -notmatch $anyTrunc) { continue }
+        if ($line -match $exempt -or $was -match $exempt) { continue }
+        $violations += [pscustomobject]@{ File = $rel; Line = $n; Text = $line.Trim() }
+    }
+}
+if ($laneFiles -eq 0) {
+    Write-Host 'nick_gate: FAIL -- the name lane is empty (vocabulary moved; a zero-row green is not evidence)'
     exit 1
 }
 
@@ -139,10 +203,10 @@ foreach ($f in $files) {
 }
 
 if (-not $Quiet) {
-    Write-Host "nick_gate: scanned $($files.Count) files, $anchorHits carry the capacity vocabulary, detector control PASS"
+    Write-Host "nick_gate: scanned $($files.Count) files, $anchorHits carry the capacity vocabulary, $laneFiles are in the name lane, detector controls PASS"
 }
 if ($violations.Count -gt 0) {
-    Write-Host "nick_gate: FAIL -- $($violations.Count) raw nick truncation(s) outside $codecRel"
+    Write-Host "nick_gate: FAIL -- $($violations.Count) raw name-text cut(s) outside $codecRel"
     foreach ($v in $violations) { Write-Host ("  {0}:{1}  {2}" -f $v.File, $v.Line, $v.Text) }
     Write-Host '  Use coop::text::CapUtf8Bytes (bytes) or coop::text::CapCodepoints (characters):'
     Write-Host '  a raw cut lands mid-character and the receive boundary then refuses the whole field.'

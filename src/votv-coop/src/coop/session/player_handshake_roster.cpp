@@ -85,7 +85,7 @@ std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint
                                            const std::string& skin,
                                            uint8_t prefsFlags) {
     std::vector<uint8_t> out;
-    out.resize(kRosterRowPrefixLen);
+    out.resize(kRosterRowPrefixLen);  // not-name-text: a wire row prefix, in bytes
     out[0] = slot;
     std::memcpy(out.data() + 1, &playerNo, 2);
     std::memcpy(out.data() + 3, &eid, 4);

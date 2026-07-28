@@ -1,0 +1,28 @@
+Twemoji Mozilla -- the colour emoji donor merged into the overlay atlas.
+
+File in this directory: TwemojiMozilla-Subset.ttf
+Upstream:              https://github.com/mozilla/twemoji-colr  (Twemoji.Mozilla.ttf)
+Produced by:           tools/text/build_repertoire.py
+
+WHAT THE SUBSET DID. The upstream face is kept in full at the cmap level -- all
+1,418 single-codepoint emoji survive, including the ones a hand-written "common
+emoji" range list drops (U+2B50, U+231A, U+25B6). What was removed is the layout
+tables: the multi-codepoint ZWJ sequences (families, flags, skin tones) are GSUB
+ligatures, and this build compiles FreeType with FT_DISABLE_HARFBUZZ while Dear
+ImGui performs no text shaping, so they could never have composed. COLR v0 and
+CPAL -- the tables that make the glyphs coloured -- are retained; the atlas is
+built with ImGuiFreeTypeBuilderFlags_LoadColor, without which they would bake as
+invisible rather than as outlines.
+
+LICENSING. Two licences apply to the one file, because it is Twitter's artwork
+in Mozilla's COLR container:
+
+  Graphics -- Copyright 2019 Twitter, Inc and other contributors.
+  Licensed under CC-BY 4.0: https://creativecommons.org/licenses/by/4.0/
+
+  Font build / code -- Copyright Mozilla Foundation.
+  Licensed under the Apache License, Version 2.0:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+The CC-BY 4.0 attribution requirement is satisfied by this file shipping beside
+the font in the source tree and by the credit in docs/MULTIPLAYER_UI.md.

@@ -29,11 +29,24 @@
 // that chat_sync, peer_action_feed, both roster.cpp local-row reads and the Join
 // payload all derive from (see player_handshake::AdoptCanonicalNickname).
 //
-// ALPHABET. FoldKey is ASCII case-folding because SanitizeNickname currently
-// strips everything else. Arc D replaces the fold and the cap UNIT together
-// (UTF-16 units -> codepoints); a name re-arbitrates on the next join and
-// nothing persists across it (bans key on IP, seen-players on GUID), so the
-// replacement is cosmetic and self-healing.
+// ALPHABET (arc D2, built 2026-07-28). FoldKey folds in CODEPOINTS, case-folds
+// the cased scripts the overlay can draw (ASCII, Latin-1, Cyrillic), and maps
+// every codepoint OUTSIDE coop::text::InRepertoire to one sentinel -- because
+// ImGui draws every absent codepoint as the SAME fallback glyph, so two names
+// with no codepoint in common can be two distinct keys and one identical
+// nameplate. Sentinelling them makes them collide and one takes the suffix, so
+// the guarantee holds on the SCREEN and holds independently of which fonts we
+// embed. See coop/text/repertoire.h for why the layer moved.
+//
+// AND IT IS NOT COSMETIC. An earlier draft of this comment said a name
+// "re-arbitrates on the next join and nothing persists across it" -- that was
+// FALSE when written and is worth naming, because it is the reason this file
+// gets a selftest rather than a shrug: player_handshake.cpp:290 writes the
+// assigned name to multivoid.ini (the user's 2026-07-28 keep-the-name decision),
+// so a suffix earned here follows a human into every future session. That is
+// also why the ADOPT side splits: a suffix earned against a REPERTOIRE
+// collision is a rendering artifact of this build's font set, and widening the
+// repertoire later must not have renamed anybody permanently.
 #pragma once
 
 #include <string>
@@ -41,8 +54,9 @@
 
 namespace coop::nickname_arbiter {
 
-// The collision key. Two display names collide iff their keys are equal.
-// ASCII case-fold today; arc D widens it.
+// The collision key. Two display names collide iff their keys are equal --
+// which now means "iff they could look the same", not merely "iff they are the
+// same string".
 std::wstring FoldKey(const std::wstring& name);
 
 // The policy, as a pure function: the first name in the dense-smallest-free

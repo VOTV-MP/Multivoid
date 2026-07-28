@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"           // arc B: persist a host-assigned name
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
+#include "coop/text/repertoire.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/moderation/seen_players.h"
@@ -212,20 +213,33 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
 std::wstring SanitizeNickname(const std::wstring& raw) {
     // ARC D: a DENYLIST. See the note above -- an allowlist cannot survive a
     // widening alphabet, because the script we forgot fails silently.
-    auto denied = [](wchar_t c) {
-        if (c < 0x20 || c == 0x7F) return true;       // C0 controls + DEL
-        if (c >= 0x200B && c <= 0x200F) return true;  // zero-width + LRM/RLM
-        if (c >= 0x202A && c <= 0x202E) return true;  // bidi embeddings/overrides
-        if (c >= 0x2066 && c <= 0x2069) return true;  // bidi isolates
-        if (c == 0xFEFF) return true;                 // BOM / zero-width no-break
-        return false;
+    //
+    // ARC D2 replaced four hand-written rows (U+200B-200F, U+202A-202E,
+    // U+2066-2069, U+FEFF) with the Unicode PROPERTY they were each sampling:
+    // Default_Ignorable_Code_Point. The rows were not wrong, they were
+    // incomplete in a way nobody could see from reading them -- U+034F (CGJ) has
+    // advance 0 in Fixedsys AND Roboto, the two default families, and sailed
+    // through, so `Ann͏a` carried a distinct fold key and identical pixels. An
+    // enumeration of the invisibles we happened to think of is a site list; the
+    // property is the invariant (RULE 1).
+    auto denied = [](uint32_t c) {
+        if (c < 0x20 || c == 0x7F) return true;          // C0 controls + DEL
+        if (c >= 0xD800 && c <= 0xDFFF) return true;     // unpaired surrogate
+        return coop::text::IsDefaultIgnorable(c);
     };
-    auto combining = [](wchar_t c) { return c >= 0x0300 && c <= 0x036F; };
+    auto combining = [](uint32_t c) { return c >= 0x0300 && c <= 0x036F; };
 
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
-    for (wchar_t c : raw) {
+    // In CODEPOINTS. Iterating wchar_t units cannot see a supplementary-plane
+    // character at all, so every tag character in U+E0000-E0FFF -- all of them
+    // ignorable -- would have passed the denylist as two anonymous halves.
+    for (size_t i = 0; i < raw.size(); ) {
+        uint32_t c = 0;
+        const size_t units = coop::text::DecodeCodepoint(raw, i, &c);
+        const wchar_t* at = raw.data() + i;
+        i += units;
         if (denied(c)) continue;
         if (c == L' ') {
             if (!lastWasSpace) { out.push_back(L' '); lastWasSpace = true; }
@@ -234,7 +248,7 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
         // A combining mark with nothing to combine with stacks onto whatever the
         // UI drew before the name.
         if (out.empty() && combining(c)) continue;
-        out.push_back(c);
+        out.append(at, units);
         lastWasSpace = false;
     }
     // Cap in CODEPOINTS, never in wchar_t units: the old cap could cut an astral
@@ -283,6 +297,40 @@ void AdoptCanonicalNickname(const std::wstring& canonical) {
     // a name that is displayed but not requested would silently revert on the
     // next launch, which is exactly the "temporary" behaviour that was rejected.
     if (canonical == g_requestedNick) return;
+
+    // ARC D2 -- THE PERSIST SPLIT, and it is decided HERE, locally, with no new
+    // wire kind and no kProtocolVersion bump.
+    //
+    // The arbiter now collides names that merely LOOK alike: every codepoint
+    // this build cannot draw folds to one sentinel, so two CJK names take a
+    // suffix even though they share no character. That suffix is a fact about
+    // OUR FONT SET, not about the human -- and a later build that embeds more
+    // scripts would stop producing it. Persisting it would make a rendering
+    // artifact permanent: the user would be Zhang2 forever, in an install that
+    // can draw 张伟 perfectly well.
+    //
+    // Only the receiving peer can tell the two apart, because only it knows what
+    // it ASKED for. A genuine string clash (two literal "Pelmentor") is the
+    // user's own name meeting someone else's and is kept, per the decision
+    // above. A repertoire-suspect request -- one containing any codepoint the
+    // fold sentinels -- keeps DISPLAYING the assigned name and keeps REQUESTING
+    // the original. See [[lesson-a-placeholder-must-never-become-an-identity]]:
+    // the last time a derived string was allowed to become the stored identity,
+    // a joiner learned "Player" and wrote it over its real name forever.
+    bool repertoireSuspect = false;
+    for (size_t i = 0; i < asked.size() && !repertoireSuspect; ) {
+        uint32_t cp = 0;
+        i += coop::text::DecodeCodepoint(asked, i, &cp);
+        if (!coop::text::InRepertoire(cp)) repertoireSuspect = true;
+    }
+    if (repertoireSuspect) {
+        UE_LOGI("nick: host renamed us '%ls' -> '%ls' (display only -- the request "
+                "contains characters this build cannot draw, so the suffix is a "
+                "rendering artifact and is NOT persisted)",
+                asked.c_str(), canonical.c_str());
+        return;
+    }
+
     g_requestedNick = canonical;
     const std::vector<uint8_t> u8 = ToUtf8(canonical);
     const std::string nickUtf8(reinterpret_cast<const char*>(u8.data()), u8.size());
@@ -349,7 +397,7 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         // PR-FOUNDATION-1b moved stale-gen defense to the packet header's
         // senderEpoch and removed the byte.)
         const uint32_t selfEidWire = selfEidProbe;
-        joinPayload.resize(4);
+        joinPayload.resize(4);  // not-name-text: a 4-byte wire field
         std::memcpy(joinPayload.data(), &selfEidWire, 4);
         // Ask for what the human typed, never for a suffix the host handed us last
 // time -- otherwise a reconnect would ratchet Pelmentor2 -> Pelmentor3.

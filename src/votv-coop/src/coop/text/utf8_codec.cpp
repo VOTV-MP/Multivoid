@@ -18,15 +18,10 @@ std::string ToUtf8(const std::wstring& w) {
     // carried every chat line since 2026-07-04.
     std::string s;
     s.reserve(w.size() * 2);
-    for (size_t i = 0; i < w.size(); ++i) {
-        uint32_t cp = static_cast<uint32_t>(w[i]);
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
-            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (static_cast<uint32_t>(w[i + 1]) - 0xDC00);
-            ++i;
-        } else if (cp >= 0xD800 && cp <= 0xDFFF) {
-            continue;  // unpaired surrogate -- not a character
-        }
+    for (size_t i = 0; i < w.size(); ) {
+        uint32_t cp = 0;
+        i += DecodeCodepoint(w, i, &cp);
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;  // unpaired surrogate -- not a character
         if (cp < 0x20) continue;
         if (cp < 0x80) {
             s.push_back(static_cast<char>(cp));
@@ -96,13 +91,22 @@ std::string CapUtf8Bytes(std::string s, size_t maxBytes) {
     return s;
 }
 
+size_t DecodeCodepoint(const std::wstring& w, size_t i, uint32_t* cp) {
+    const uint32_t c = static_cast<uint32_t>(w[i]);
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < w.size() &&
+        w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
+        if (cp) *cp = 0x10000 + ((c - 0xD800) << 10) +
+                      (static_cast<uint32_t>(w[i + 1]) - 0xDC00);
+        return 2;
+    }
+    if (cp) *cp = c;
+    return 1;
+}
+
 std::wstring CapCodepoints(const std::wstring& w, size_t maxChars) {
     size_t chars = 0, i = 0;
     while (i < w.size() && chars < maxChars) {
-        const wchar_t c = w[i];
-        const bool pair = (c >= 0xD800 && c <= 0xDBFF && i + 1 < w.size() &&
-                           w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF);
-        i += pair ? 2 : 1;
+        i += DecodeCodepoint(w, i, nullptr);
         ++chars;
     }
     return w.substr(0, i);
@@ -111,10 +115,7 @@ std::wstring CapCodepoints(const std::wstring& w, size_t maxChars) {
 size_t CountCodepoints(const std::wstring& w) {
     size_t chars = 0, i = 0;
     while (i < w.size()) {
-        const wchar_t c = w[i];
-        const bool pair = (c >= 0xD800 && c <= 0xDBFF && i + 1 < w.size() &&
-                           w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF);
-        i += pair ? 2 : 1;
+        i += DecodeCodepoint(w, i, nullptr);
         ++chars;
     }
     return chars;

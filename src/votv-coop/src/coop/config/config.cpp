@@ -38,7 +38,7 @@ std::wstring ModuleDir() {
     ::GetModuleFileNameW(self, path, MAX_PATH);
     std::wstring p(path);
     const size_t sep = p.find_last_of(L"\\/");
-    return sep == std::wstring::npos ? L"." : p.substr(0, sep);
+    return sep == std::wstring::npos ? L"." : p.substr(0, sep);  // not-name-text: a path
 }
 
 std::string ReadEnv(const char* name) {
@@ -87,7 +87,7 @@ static std::string TrimEdges(const std::string& s) {
     const size_t b = s.find_first_not_of(" \t\r\n");
     if (b == std::string::npos) return std::string();
     const size_t e = s.find_last_not_of(" \t\r\n");
-    return s.substr(b, e - b + 1);
+    return s.substr(b, e - b + 1);  // not-name-text: ini whitespace trim
 }
 
 // Split a raw ini line at the first '=' into an edge-trimmed key and an edge-trimmed,
@@ -96,8 +96,9 @@ static std::string TrimEdges(const std::string& s) {
 static bool ParseIniLine(const std::string& line, std::string& key, std::string& value) {
     const size_t eq = line.find('=');
     if (eq == std::string::npos) return false;
+    // not-name-text: splitting an ini line at its '='
     key = TrimEdges(line.substr(0, eq));
-    value = TrimEdges(line.substr(eq + 1));
+    value = TrimEdges(line.substr(eq + 1));  // not-name-text
     return !key.empty();
 }
 
@@ -223,7 +224,7 @@ static std::string StripInlineComment(const std::string& v, bool wsPrecededOnly)
     for (size_t i = 0; i < v.size(); ++i) {
         if (v[i] != ';') continue;
         if (!wsPrecededOnly || i == 0 || v[i - 1] == ' ' || v[i - 1] == '\t')
-            return TrimEdges(v.substr(0, i));
+            return TrimEdges(v.substr(0, i));  // not-name-text: an inline ini comment
     }
     return v;
 }
@@ -442,7 +443,7 @@ static void FillP2PFields(coop::net::Config& c) {
     auto maskOfficial = [](const std::string& v) -> std::string {
         std::string host = coop::net::kOfficialMasterUrl;
         const size_t colon = host.find(':');
-        if (colon != std::string::npos) host.resize(colon);
+        if (colon != std::string::npos) host.resize(colon);  // not-name-text: host:port
         return v.rfind(host, 0) == 0 ? std::string("DEFAULT") : v;
     };
     UE_LOGI("config: P2P fields -- identity='%s' host='%s' signaling='%s' stun='%s'",

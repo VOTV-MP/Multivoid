@@ -4,14 +4,17 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/text/repertoire.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
 #include "imgui.h"
+#include "misc/freetype/imgui_freetype.h"
 
 #include <windows.h>
 
 #include <string>
+#include <vector>
 
 #include "../../resources/font_resource_ids.h"
 
@@ -130,6 +133,60 @@ ImFont* AddFromResource(int id, float px, const ImFontConfig& baseCfg, const ImW
         const_cast<void*>(data), sz, px, &cfg, ranges);
 }
 
+// The repertoire (coop/text/repertoire.h) in ImGui's range form. THE SAME TABLE
+// the nickname arbiter folds against -- that is the whole construction: a name
+// is unique on screen because what we BAKE and what we FOLD are one generated
+// constant rather than two lists that drift.
+//
+// ImWchar must be 32-bit here: 1,232 of the donor's 1,418 codepoints live above
+// the BMP, so on a 16-bit build the ranges could not even express U+1F600 and
+// the emoji half of the repertoire would silently not exist.
+static_assert(sizeof(ImWchar) == 4,
+              "IMGUI_USE_WCHAR32 must be on: the emoji repertoire is astral");
+const ImWchar* Repertoire() {
+    static std::vector<ImWchar> v;
+    if (v.empty()) {
+        size_t n = 0;
+        const coop::text::CodepointRange* r = coop::text::RepertoireRanges(&n);
+        v.reserve(n * 2 + 1);
+        for (size_t i = 0; i < n; ++i) {
+            v.push_back(static_cast<ImWchar>(r[i].begin));
+            v.push_back(static_cast<ImWchar>(r[i].end));
+        }
+        v.push_back(0);
+    }
+    return v.data();
+}
+
+// Merge the OTHER embedded families, then the colour donor, into the face just
+// added. Two defects this closes, both live in b132:
+//
+//   - JetBrains Mono has no U+0400, U+040D, U+0450 or U+045D. Four Cyrillic
+//     letters that the other three families all carry, invisible to every drill
+//     because the drills ran on Fixedsys and Roboto. A backstop costs zero DLL
+//     bytes and closes it for every family at once.
+//   - Six of the seven faces have no U+FFFD, so an absent codepoint fell back to
+//     '?' -- indistinguishable from a name that really contains one.
+//
+// ORDER IS THE POLICY. imgui_freetype.cpp:515 refuses to overwrite a glyph an
+// earlier source already provided, so the chosen family wins wherever it HAS the
+// glyph and the backstops only fill holes. The donor goes last for the same
+// reason: a family that draws its own dingbat keeps drawing it.
+void MergeBackstops(int chosenFamily, bool bold, float px, const ImWchar* ranges) {
+    ImFontConfig merge;
+    merge.MergeMode = true;
+    for (int o = 0; o < kFamilyCount; ++o) {
+        if (o == chosenFamily) continue;
+        AddFromResource(bold ? kFamilies[o].boldId : kFamilies[o].regularId, px, merge, ranges);
+    }
+    // ImGuiFreeTypeBuilderFlags_LoadColor is not optional: without it the COLR
+    // layers are skipped and every emoji bakes with visible=0 -- INVISIBLE, not
+    // missing, which is exactly the state a "did the donor load?" check passes.
+    ImFontConfig donor = merge;
+    donor.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_LoadColor;
+    AddFromResource(IDR_FONT_EMOJI_DONOR, px, donor, ranges);
+}
+
 ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& cfg,
                     const ImWchar* ranges) {
     const DWORD attrs = ::GetFileAttributesA(path.c_str());
@@ -159,12 +216,78 @@ bool BakeEmbeddedRoles(float s, const ImFontConfig& cfg, const ImWchar* ranges) 
         if (!font) {
             const FamilyDesc& fam = kFamilies[fi];
             font = AddFromResource(rd.bold ? fam.boldId : fam.regularId, px, cfg, ranges);
-            if (font) { any = true; cache[nCache++] = { fi, pxi, rd.bold, font }; }
+            if (font) {
+                MergeBackstops(fi, rd.bold, px, ranges);
+                any = true;
+                cache[nCache++] = { fi, pxi, rd.bold, font };
+            }
         }
         g_roleFont[r] = font;
         g_rolePx[r]   = px;
     }
     return any;
+}
+
+// ASSERT THE PHENOMENON, NOT THE PRECONDITION. "Did the donor resource load?"
+// goes GREEN on a build compiled without ImGuiFreeTypeBuilderFlags_LoadColor,
+// where every COLR glyph bakes with Visible == 0 -- invisible, not missing, so
+// the atlas is full of emoji nobody can see and every check passes. What is
+// actually claimed is that a coloured emoji reached the texture, so that is what
+// is measured: the glyph carries Colored, and its box in the atlas contains
+// texels whose channels are not all equal (a greyscale mask cannot).
+// [[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]
+//
+// Logged, never a gate. A player whose atlas came out short should still be able
+// to join and see everyone; the FOLD is on a build constant either way, so the
+// names stay consistent across peers regardless of what baked here.
+void RunFontRepertoireSelftestOnce() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    if (!atlas->IsBuilt() && !atlas->Build()) {
+        UE_LOGE("font selftest: FAIL -- the atlas did not build");
+        return;
+    }
+    ImFont* f = g_roleFont[static_cast<int>(Role::Nameplate)];
+    if (!f) { UE_LOGE("font selftest: FAIL -- no nameplate face"); return; }
+
+    int pass = 0, total = 0;
+    auto ok = [&](bool cond, const char* what) {
+        ++total;
+        if (cond) ++pass;
+        else UE_LOGE("font selftest: FAIL -- %s", what);
+    };
+
+    const ImFontGlyph* emoji = f->FindGlyphNoFallback(0x1F600);
+    ok(emoji != nullptr, "the donor baked U+1F600 (grinning face)");
+    ok(emoji && emoji->Colored, "U+1F600 is flagged Colored (COLR layers loaded)");
+    ok(emoji && emoji->Visible, "U+1F600 has pixels (LoadColor is on)");
+
+    int nonGrey = 0;
+    if (emoji && atlas->TexPixelsRGBA32) {
+        const int w = atlas->TexWidth, h = atlas->TexHeight;
+        const int x0 = int(emoji->U0 * w), x1 = int(emoji->U1 * w);
+        const int y0 = int(emoji->V0 * h), y1 = int(emoji->V1 * h);
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x) {
+                const unsigned p = atlas->TexPixelsRGBA32[y * w + x];
+                const unsigned r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
+                if (r != g || g != b) ++nonGrey;
+            }
+    }
+    ok(nonGrey > 0, "U+1F600's atlas box holds non-greyscale texels (it is COLOURED)");
+
+    // The cross-merge's own two claims, each a defect that shipped in b132.
+    ok(f->FindGlyphNoFallback(0x0400) != nullptr,
+       "U+0400 is present (JetBrains Mono lacks it; a backstop must supply it)");
+    ok(f->FindGlyphNoFallback(0xFFFD) != nullptr,
+       "U+FFFD is present (six of seven faces lack it; absent text fell to '?')");
+
+    UE_LOGI("font selftest: %s (%d/%d) -- atlas %dx%d %s, %d colour texels in one emoji",
+            pass == total ? "PASS" : "FAIL", pass, total, atlas->TexWidth, atlas->TexHeight,
+            atlas->TexPixelsRGBA32 ? "RGBA32" : "Alpha8", nonGrey);
 }
 
 }  // namespace
@@ -184,8 +307,11 @@ void Load() {
 
     ImFontConfig cfg;
     // No OversampleH/V: the freetype builder ignores it and hints properly.
-    // Default (Basic Latin + Latin-1) + Cyrillic (all of Russian).
-    const ImWchar* ranges = io.Fonts->GetGlyphRangesCyrillic();
+    // The REPERTOIRE, not GetGlyphRangesCyrillic(): Latin-1 + Cyrillic still,
+    // plus every single-codepoint emoji, and minus the codepoints no embedded
+    // face can draw. Passing a superset costs nothing -- the freetype builder
+    // skips a codepoint whose face has no glyph for it.
+    const ImWchar* ranges = Repertoire();
 
     // PRIMARY: the per-role families embedded in the DLL as RCDATA (RULE 3, no
     // loose files). Menu is baked first -> ImGui default.
@@ -195,13 +321,33 @@ void Load() {
         if (!def) for (int r = 0; r < kRoleCount; ++r) if (g_roleFont[r]) { def = g_roleFont[r]; break; }
         for (int r = 0; r < kRoleCount; ++r) if (!g_roleFont[r]) g_roleFont[r] = def;
         UE_LOGI("fonts: roles menu=%s chat=%s net=%s nameplate=%s toast=%s (embedded; ui %.0f px, "
-                "chat %.0f px, scale %.2f, Cyrillic, freetype)",
+                "chat %.0f px, scale %.2f, repertoire+emoji, cross-merged, freetype)",
                 kFamilies[static_cast<int>(g_roleFamily[0])].label,
                 kFamilies[static_cast<int>(g_roleFamily[1])].label,
                 kFamilies[static_cast<int>(g_roleFamily[2])].label,
                 kFamilies[static_cast<int>(g_roleFamily[3])].label,
                 kFamilies[static_cast<int>(g_roleFamily[4])].label,
                 g_rolePx[0], g_rolePx[1], s);
+        // THE ACCEPTED COST, MEASURED WHERE IT IS PAID. Adding the donor took the
+        // offline bake from ~5-16 ms to ~28-87 ms, and ui::scale::NoteViewport
+        // re-bakes on every quantized-sixth crossing -- its own comment concedes
+        // a windowed drag crosses several. An offline probe is not that path (it
+        // never uploads a texture), so Build() is called HERE, timed, and logged:
+        // the number in a real session's log is the only honest version of it.
+        // The backend's own lazy Build() then becomes a no-op (IsBuilt latches).
+        {
+            LARGE_INTEGER f{}, a{}, b{};
+            ::QueryPerformanceFrequency(&f);
+            ::QueryPerformanceCounter(&a);
+            const bool built = io.Fonts->Build();
+            ::QueryPerformanceCounter(&b);
+            const double ms = f.QuadPart ? (double(b.QuadPart - a.QuadPart) * 1000.0 /
+                                            double(f.QuadPart)) : 0.0;
+            UE_LOGI("fonts: atlas %s in %.1f ms (%dx%d %s)", built ? "baked" : "FAILED TO BAKE",
+                    ms, io.Fonts->TexWidth, io.Fonts->TexHeight,
+                    io.Fonts->TexPixelsRGBA32 ? "RGBA32" : "Alpha8");
+        }
+        RunFontRepertoireSelftestOnce();
         return;
     }
 
@@ -218,7 +364,14 @@ void Load() {
     for (const Cand& c : cands) {
         ImFont* menu = AddFromFile(c.reg, kUiPx * s, cfg, ranges);
         if (!menu) continue;
+        // The donor still merges here -- it is RCDATA in the same DLL, so the
+        // only way this path runs with no emoji is a resource table that lost
+        // one entry and not the others. What the fold does NOT do is follow:
+        // FoldKey stays on the compile-time table whatever baked, so peers agree
+        // about names even on a machine whose atlas came out short.
+        MergeBackstops(-1, false, kUiPx * s, ranges);
         ImFont* chat = AddFromFile(c.reg, kChatPx * s, cfg, ranges);
+        if (chat) MergeBackstops(-1, false, kChatPx * s, ranges);
         g_roleFont[static_cast<int>(Role::Menu)]      = menu; g_rolePx[0] = kUiPx * s;
         g_roleFont[static_cast<int>(Role::Chat)]      = chat ? chat : menu; g_rolePx[1] = (chat ? kChatPx : kUiPx) * s;
         g_roleFont[static_cast<int>(Role::Net)]       = menu; g_rolePx[2] = kUiPx * s;

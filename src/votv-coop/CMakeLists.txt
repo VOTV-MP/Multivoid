@@ -103,7 +103,18 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 # IMGUI_ENABLE_FREETYPE makes FreeType the DEFAULT atlas builder (since 1.81) --
 # every font in the atlas (chat, panels, nameplates) rasterizes through it.
-target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE)
+# IMGUI_USE_WCHAR32 widens ImWchar to 32 bits (imgui.h:273) and raises
+# IM_UNICODE_CODEPOINT_MAX from 0xFFFF to 0x10FFFF (imgui.h:2515). REQUIRED, not
+# a preference: 1,232 of the emoji donor's 1,418 codepoints are above the BMP, so
+# on the default 16-bit build a glyph RANGE cannot even express U+1F600 and
+# imgui.cpp:1512 discards the codepoint AddInputCharacterUTF16 reassembles from a
+# surrogate pair -- an emoji could be neither baked nor typed.
+#
+# It rides HERE and not in imconfig.h because third_party/imgui is a git
+# submodule pinned at v1.91.5 (.gitmodules): editing the header is a dirty
+# submodule no fresh clone reproduces. IMGUI_ENABLE_FREETYPE below is the same
+# pattern, and ODR is safe because votv-coop is this target's only consumer.
+target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE IMGUI_USE_WCHAR32)
 target_link_libraries(imgui PUBLIC freetype)
 
 # --- GameNetworkingSockets (BSD-3, vendored as git submodule, pinned v1.5.1) ---
@@ -391,6 +402,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_redsky.cpp
     src/coop/config/config.cpp
     src/coop/text/utf8_codec.cpp
+    src/coop/text/repertoire.cpp
     src/coop/config/config_example.cpp
     src/coop/config/config_ini_write.cpp
     src/coop/config/config_registry.cpp
