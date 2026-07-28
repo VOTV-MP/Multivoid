@@ -497,6 +497,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   *Look FIRST:* `tools/net/roster_shot.ps1` preconditions; `coop/dev/menu_proceed.cpp` for why OMEGA
   cannot be clicked. `memory/lesson_readiness_announcements_precede_visible_state.md`
 
+- **ONE COLUMN, TWO AXES — a fused display axis stays invisible until a SECOND viewpoint renders it.**
+  Measured 2026-07-27 from the first 4-peer screenshot of the player list: `Link` fuses the peer's
+  TRANSPORT to the session (LAN/P2P/relay) with MY ROUTE to that peer (direct vs host-relayed →
+  "VIA HOST"). On the HOST's board the two coincide, so it looked coherent for as long as only the
+  host listed peers; arc A made a CLIENT list them and the column then showed transport on two rows
+  and routing on two others, on an all-LAN session. The client cannot fix it locally —
+  `LinkLabelForSlot` reads `peerConns_[slot]`, which a client owns only for slot 0. Ask of every
+  per-peer column: **is this a property OF that peer, or of MY relationship to them?** If only one
+  role can know it, that role must PUBLISH it (here: on `RosterRow`, so a wire bump) rather than
+  letting the other synthesise a plausible-looking substitute — "VIA HOST" read as information, which
+  is why it survived; a blank would have been caught sooner. *Look FIRST:*
+  `session_status.cpp:484`, and the design's item 7.
+  `memory/lesson_one_column_two_axes_transport_vs_route.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`

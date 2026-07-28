@@ -205,6 +205,36 @@ master's `LOBBY_TTL` is **90s** (3 missed 30s heartbeats; was 300s — commit `6
 `ad9844b6` live on the VPS). See
 `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
 
+## Player list / scoreboard (arc A, AS-BUILT 2026-07-27 `89620d59`, screenshot-verified NOT hands-on)
+
+Opened with **TILDE** (`VK_OEM_3`, the physical key above TAB -- NOT Tab; `imgui_overlay.cpp:162-171`).
+**Hold-to-peek on a client, toggle on the host**; the host's board is interactive (the clickable
+Teleport/Kick/Ban action popup), a client's is a passive peek with no input capture.
+
+Arc A made a CLIENT list every peer for the first time -- before it, `roster.cpp` skipped rows whose
+slot was not `IsSlotConnected`, and a client only ever fills `peerConns_[0]`, so a client's board
+showed only itself and the host. Columns, left to right: Player, [Mic], Link, Ping, **ID**.
+
+Verified by capture, not by eye: `tools/net/roster_shot.ps1` brings up four peers, waits until the
+HOST has seen a pose from every client slot (a peer's own "ready" log lines fire while it is still on
+the loading screen -- see LESSONS), PostMessages the real tilde key per window, and photographs all
+four. Evidence in `research/roster_shots/`.
+
+Three user verdicts on the first such screenshot were fixed the same day (`89620d59`): the ID column
+moved to the FAR RIGHT (right-aligned); the rows got a visible zebra + separator + cell padding (the
+default `RowBg` stripe is invisible over a dark 3D backdrop, and a first pass at 0.055 alpha was still
+unreadable in the re-shot picture); and a CLIENT's OWN row no longer renders a blank Link cell.
+
+**KNOWN-BAD, diagnosed, NOT fixed** (design item 7 in
+`research/findings/join-identity/votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md`):
+- The **Link column fuses TWO axes** -- the peer's transport to the session (LAN/P2P/relay) and MY
+  route to that peer (`VIA HOST`). They coincide on the host's board and diverge on a client's, so an
+  all-LAN session reads `LAN` on two rows and `VIA HOST` on the others. A client cannot fix it locally
+  (`LinkLabelForSlot` reads `peerConns_[slot]`, owned only for slot 0). The fix is the host PUBLISHING
+  each occupant's link + RTT on `RosterRow` -- a wire change, so it bumps `kProtocolVersion`.
+- **No header row at all**: `TableSetupColumn` names the columns and `TableHeadersRow()` is never
+  called, so ID/Link/Ping are unlabelled.
+
 ## Version identity surfaces (b122, AS-BUILT 2026-07-19 `5246844a`, drill-verified NOT hands-on)
 
 The Paper-pair identity (game target + build number; docs/RELEASE.md + the

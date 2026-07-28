@@ -1,8 +1,9 @@
 # Nickname arbitration + roster identity/ID — DESIGN (2026-07-27)
 
 **STATUS (2026-07-27 late, per arc):**
-- **ARC A — BUILT, DRILLED, AUDITED. NOT hands-on.** Proto 130, DLL `c4d1d8d4bf1dcd3e`, commits
-  `72805d96`..`63a488a7`. Four drills PASS (departure / replacement-with-loss-injection /
+- **ARC A — BUILT, DRILLED, AUDITED. NOT hands-on.** Proto 130, commits `72805d96`..`89620d59`.
+  The drills ran on DLL `c4d1d8d4bf1dcd3e`; the player-list fixes of `89620d59` landed after them, so
+  what is DEPLOYED now is `51ec0c60cc698e68` (UI-only delta -- no sync path touched, drills unaffected). Four drills PASS (departure / replacement-with-loss-injection /
   successor-ban / idempotency-by-count), two audits at 0 CRITICAL. Evidence and the corrections the
   build measured against this design are in §3 AS-BUILT; the per-drill RUN/OPEN status is in
   §3 "Arc A drills". **No human has touched it** — every claim is autonomous.
@@ -370,6 +371,52 @@ generation.**
    > rather than assumed benign. That read + a smoke is the remaining arc-A work.
 7. Cosmetic follow-through: after (2) a client renders `ping`/`link` for slots 1-3 for the first
    time; they land on `rttMsForSlot() == -1` beside "VIA HOST" and need a deliberate presentation.
+
+   **2026-07-27, ON THE FIRST SCREENSHOT: this is NOT cosmetic. It is a fused-axis defect, and the
+   fix is a wire change. NOT BUILT — user directive: "fix per rule 1 in next session".**
+
+   What the user saw on a 4-peer LAN session where every peer is on 127.0.0.1:
+
+   | board | Host row | own row | other client rows |
+   |---|---|---|---|
+   | HOST    | `LAN HOST` | (is the host) | `LAN  <1ms` | 
+   | CLIENT  | `LAN <1ms` | `LAN` | **`VIA HOST  --`** |
+
+   Their words: *"all clients i assume were connected via lan, why it says via host on 2 clients and
+   lan on one client. It should be all the same, no special treatment."* They are right, and the
+   reason is not presentation.
+
+   **ROOT CAUSE — one column, TWO axes.** `Link` fuses (a) the peer's TRANSPORT to the session
+   (LAN / P2P / P2P RELAY) with (b) MY ROUTE to that peer (direct / relayed by the host). On the
+   HOST's board the two axes coincide — the host holds a direct connection to everyone — so the
+   fusion was invisible for as long as the host's board was the only one that listed peers. Arc A
+   made a CLIENT list peers for the first time, and there the axes diverge: two rows report
+   transport, two report routing, in the same column, with no way for the reader to know which.
+
+   **WHY THE CLIENT CANNOT SIMPLY DO BETTER.** `Session::LinkLabelForSlot` (`session_status.cpp:484`)
+   reads `peerConns_[peerSlot]` — a connection THIS peer owns. A client owns only `peerConns_[0]`,
+   so it is structurally incapable of labelling another client's transport, exactly the
+   host/client asymmetry that produced the arc-A teardown bug. Same for `rttMsForSlot`. The client
+   is not being lazy; it does not have the fact.
+
+   **THE RULE-1 FIX: the host PUBLISHES what only the host knows.** The scoreboard's connection
+   column should answer ONE question on every row of every board — *how is this player connected to
+   the session* — which in a host-authoritative game means their link to the HOST. That is the
+   number every other multiplayer scoreboard shows. The host is the only peer holding it, and
+   `RosterRow` is already the channel by which the host asserts per-occupant facts, so the transport
+   label and the RTT-to-host join the row. Then:
+     - every row on every board describes the same property, no row is special;
+     - "VIA HOST" disappears entirely — it was answering a question nobody asked;
+     - a client's own row keeps showing its own link (which IS its link to the host, so it is the
+       same axis, not an exception);
+     - the host's own row keeps `LAN HOST` / `P2P HOST`: it is not connected TO the session, it IS
+       the session.
+   This is a WIRE CHANGE (RosterRow gains a link label + a ping) and therefore bumps
+   `kProtocolVersion` per the standing rule.
+
+   **Also owed (same surface, same session):** the table draws no header row at all — `TableSetupColumn`
+   names the columns and `TableHeadersRow()` is never called, so the ID/Link/Ping columns are
+   unlabelled. User: *"the rows are not even named properly."*
 
 ### Arc A drills
 

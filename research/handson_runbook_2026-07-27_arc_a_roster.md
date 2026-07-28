@@ -1,6 +1,6 @@
 # Hands-on runbook — arc A, the roster ledger (2026-07-27)
 
-**Deployed:** `multivoid-0.9.0n-130.dll`, sha256 `c4d1d8d4bf1dcd3e02549b8fd6920cb019cc51d3bd84a507346f350f0c7db08d`,
+**Deployed:** `multivoid-0.9.0n-130.dll`, sha256 `51ec0c60cc698e681873ccc63757f4d06f0870b3736a29ce1dad4f858ed87cb9`,
 **proto 130** (wire changed — RELAUNCH BOTH PEERS; a b128/proto-129 peer is refused at the join gate
 by design, with a feed line saying so).
 All four installs have it. HEAD `63a488a7`+.
@@ -43,15 +43,18 @@ in-world (`ClientWorldReady`) AND knows the last row, then PostMessages the real
 window and captures all four. Screens land in `research/roster_shots/`. Your job is the verdict on
 them; re-run it any time.
 
-- **Already answered on CLIENT_1:** `PLAYERS 4 online` with `1 Host / 2 Client1 (you) / 3 Client2 /
-  4 Client3` and the ID column present. Before arc A that list had two rows.
-- **Expect:** four rows on every peer, including on the clients. An **ID column** showing #1 for the
-  host and #2/#3/#4 for the clients in join order.
+- **Already answered on all four peers** (2026-07-27): `PLAYERS 4 online`, four rows, IDs 1-4. Before
+  arc A a client's list had two rows.
+- **Expect:** four rows on every peer, including on the clients. The **ID column is the RIGHTMOST**,
+  right-aligned (user 2026-07-27); #1 is the host and #2/#3/#4 the clients in join order.
 - **Watch for:** a client showing only two rows (the old bug), a blank or `Remote player` name where
   a real nickname should be, an ID that repeats, or the host drawing #2.
-- The `ping`/`link` columns for peer-to-peer rows on a CLIENT are new territory — they land on
-  "VIA HOST" with no RTT. If that reads badly, say so; it is a presentation question nobody has
-  looked at with human eyes.
+- **KNOWN-BAD, already diagnosed, fix queued (design item 7):** peer-to-peer rows on a CLIENT read
+  `VIA HOST  --`. That column fuses TWO axes (the peer's transport vs MY route to them) and a client
+  structurally cannot measure another client's transport. The fix is the host PUBLISHING each
+  occupant's link + ping on `RosterRow` (wire change, protocol bump). Do not re-report it.
+- **KNOWN-BAD, fix queued:** the table draws no header row at all (`TableHeadersRow()` is never
+  called), so the columns are unlabelled.
 
 ## 2. A third peer leaves (the client-side half that never worked) — AUTOMATED
 
