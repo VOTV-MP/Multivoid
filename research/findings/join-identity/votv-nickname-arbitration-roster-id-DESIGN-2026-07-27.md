@@ -755,7 +755,7 @@ rest), `NickUtf8:42-68` (UTF-16→UTF-8 **with surrogate-pair handling** `:46-50
 | **The missing-glyph path collapses to ONE glyph** | `imgui_draw.cpp:3699-3712` picks `FallbackGlyph` from `{U+FFFD, '?', ' '}` and returns it for every absent codepoint | "Boxes are fine" was false — every missing codepoint looks the same |
 | **Only FSEX300 of our seven TTFs carries U+FFFD** | cmap sweep, 2026-07-27 | Six families fall through to `'?'` — the ASCII squash this arc deletes. **U+FFFD must ride the donor merge.** |
 | **All seven embedded TTFs cover U+0400-04FF; none covers CJK or emoji** | cmap sweep | Cyrillic ships with ZERO new font bytes |
-| **Colour path exists and costs the whole atlas** | `ImGuiFreeTypeBuilderFlags_LoadColor` (`imgui_freetype.h:36`, `.cpp:221,487`) switches the atlas to RGBA32 (`.cpp:668-669`) | 4x VRAM for ALL faces, not just emoji |
+| ~~**Colour path exists and costs the whole atlas**~~ **FALSIFIED 2026-07-28** | `LoadColor` switches the BUILD BUFFER to RGBA32 (`imgui_freetype.cpp:665-669`), but both halves upload via `GetTexDataAsRGBA32` (`imgui_impl_dx11.cpp:330`, `imgui_impl_dx12.cpp:310`), which allocates an RGBA32 copy regardless (`imgui_draw.cpp:2501-2523`) | ~~4x VRAM for ALL faces~~ — the GPU texture is ALREADY 4 B/px today; colour is VRAM-neutral and skips a conversion pass |
 | **`FT_DISABLE_PNG ON`** | `CMakeLists.txt:80` | CBDT/sbix donors (Noto Color Emoji) cannot rasterize — the emoji donor must be **COLR/CPAL** |
 | **No shaping engine** | `FT_DISABLE_HARFBUZZ ON` (`CMakeLists.txt:81`); ImGui does none | ZWJ sequences, skin-tone modifiers and regional-indicator flags cannot compose (accepted, D-c) |
 | **Glyph cost in real CJK fonts** | outline bytes ÷ glyph count: SimSun 411 B, MS YaHei 620 B, Yu Gothic 522 B | ~3k common hanzi ≈ 1.2-1.9 MB; GB2312 (6,763) ≈ 2.8-4.2 MB; full CJK (~21k) ≈ 8.6-13 MB |
@@ -828,6 +828,14 @@ exist today (`chat_sync.cpp:42-68`, `chat_feed::ToUtf8`, `player_handshake.cpp:1
 
 ### 9b.7 The five measurements that GATE the build
 
+> **RUN 2026-07-28 — `votv-arc-d-gate-measurements-2026-07-28.md`.** Four are complete, the fifth
+> (M1) is complete for the question it had to answer. **The fork below resolves to arm (B),
+> ImGui 1.92**, by a 64x VRAM and ~300x hitch margin measured on both arms with the same three
+> resident faces. Three claims in §9b.3/§9b.4/§9b.7 were FALSIFIED by the run and are struck
+> below. Read the measurements doc before building any of arc D.
+
+
+
 1. **The atlas drill.** Measure the **live** F1 path (`fonts.cpp:174-176` re-bakes the whole atlas on
    every scale/family change; DX12 tears the texture) over the **resident (family, px, bold) tuple
    set**, with `IMGUI_USE_WCHAR32` **ON**, and with **pack-present as an axis** (a pack-less drill
@@ -836,21 +844,54 @@ exist today (`chat_sync.cpp:42-68`, `chat_feed::ToUtf8`, `player_handshake.cpp:1
    failure presents as a fontless UI, i.e. "the mod is broken", not "the atlas did not fit". This
    drill decides the remaining fork: **(A)** bake the base repertoire and pay the live-path rebuild vs
    **(B)** upgrade ImGui 1.91.5 → 1.92+ for on-demand glyphs.
+   **DONE (offline) 2026-07-28 — resolves to (B).** 60 bakes over the real resident set (3 faces at
+   default settings, not 5): arm A costs 16 MB / 139 ms at x1.0 and 64 MB / 416 ms at x2.0, paid on
+   EVERY F1 scale/family change even when nobody types a hanzi; arm B costs 0.25 MB / 0.4 ms for a
+   realistic load. **`Build()` never returned false** — the fontless-UI failure mode did not occur
+   and is NOT the reason to reject (A). The in-game half was not run; it is owed only if (A) is
+   revived.
 2. **The 1.92 classified diff.** Arm (B) is UNPRICED until someone diffs the upgrade against our
    145 + 578-line DX11/DX12 overlay halves. Pricing it by category was the
    `[[lesson-price-a-dependency-by-repair-history-not-by-line-count]]` error, committed in R8 and
    named in R9.
-3. **The `ImWchar` census.** `IMGUI_USE_WCHAR32` widens the type on every seam it crosses — the
-   `ranges` plumbing, both overlay halves, `imgui_impl_win32`'s `WM_CHAR` path. Vendored struct sizes
+   **DONE 2026-07-28: 11 call sites, 10 mechanical, ONE structural.** 1.92.8 still accepts our
+   legacy `ImGui_ImplDX12_Init` signature but wraps it in an allocator that asserts on the SECOND
+   simultaneous texture (`imgui_impl_dx12.cpp:894`), which a dynamic atlas needs — so the DX12 half
+   must expose its existing `kTextureSlots` allocator as `SrvDescriptorAllocFn`/`FreeFn`. DX11 is
+   unaffected. `ImWchar` is STILL 16-bit by default in 1.92.8: the upgrade does not subsume item 3.
+3. ~~**The `ImWchar` census.**~~ `IMGUI_USE_WCHAR32` widens the type on every seam it crosses — the
+   `ranges` plumbing, ~~both overlay halves~~, `imgui_impl_win32`'s `WM_CHAR` path. Vendored struct sizes
    are not the census.
+   **DONE 2026-07-28 — and the "overlay halves" premise was FALSE.** The census is FOUR
+   type-transparent `const ImWchar*` sites, all in `ui/fonts.cpp`; the overlay halves contain zero
+   occurrences of `ImWchar` / `ImFont` / `ImFontAtlas` / `GetTexDataAs*`. The real constraint is one
+   no round surfaced: `third_party/imgui` is a **git submodule**, so `imconfig.h` cannot be edited —
+   the define must ride a `PUBLIC` compile definition on the `imgui` target, as
+   `IMGUI_ENABLE_FREETYPE` already does (ODR-safe: `votv-coop` is its only consumer). The `WM_CHAR`
+   path becomes CORRECT under the define, not broken.
 4. **The entry ladder.** Rung 1: does default Win32 **clipboard paste** already deliver BMP CJK into
    the nick field (no clipboard override exists in our tree)? Only if it fails is rung 2 — IME
    composition over a window whose input we capture — a blocker. Plus `multivoid.ini`'s read encoding
    and its behaviour on a Notepad-written UTF-8 BOM. Without entry there is no feature: a Japanese
    player cannot type their own name.
+   **DONE (static) 2026-07-28: rung 1 GREEN on the code path** — `imgui.cpp:14784-14805` is
+   `CF_UNICODETEXT` → `WideCharToMultiByte(CP_UTF8)`, codepoint-transparent, and `InputText`'s 1.91.5
+   storage is UTF-8, so the field is byte-transparent even at 16-bit `ImWchar`. **The in-game IME
+   drill is still owed.** Two ini defects measured: the reader opens TEXT mode
+   (`config.cpp:165` `_wfopen_s(…, L"r")`) and **no BOM handling exists anywhere** in `coop/config/`.
+   Also: the §9b.4 widen census of TWO is really **seven** (six of the `wstring(begin,end)` idiom plus
+   one written as a loop the idiom grep misses, `harness/session_runtime.cpp:380-384` — and this
+   doc's `src/coop/harness/` path for it is stale; it lives at `src/harness/`).
 5. **The donor files.** Name + license + measured bytes for the hanzi subset and the COLR emoji font,
    and **which hanzi set counts as "common"** — that choice now also defines which NAMES are accepted,
    so it is a product-visible boundary, not a size preference.
+   **DONE 2026-07-28.** "Common" resolves to ImGui's own vendored sets, so it is a defined list, not
+   a preference: CN-common = 3,349 codepoints, CN+JP union = 4,992. Measured subset bytes (fontTools,
+   wght=400 instances): Noto Sans SC / CN-common (OFL 1.1) **1,037,496 B**; SC / union **1,583,628 B**;
+   Twemoji Mozilla v0.7.0 single-codepoint emoji (MIT + CC-BY 4.0) **905,404 B** — and it is
+   **COLR v0 + CPAL with no CBDT/sbix**, i.e. exactly what `FT_LOAD_COLOR` renders under
+   `FT_DISABLE_PNG=ON`. Embedded tiers: CN+emoji ≈ **1.94 MB**, union+emoji ≈ **2.49 MB** (inside
+   D-b's accepted budget).
 
 ### 9b.8 Ordering — D and B are ONE delivery
 

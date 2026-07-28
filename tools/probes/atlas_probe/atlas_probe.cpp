@@ -1,0 +1,199 @@
+// atlas_probe -- M1a of the arc-D gate (research/findings/join-identity/
+// votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md section 9b.7 item 1).
+//
+// Bakes the SAME atlas ui::fonts::Load() bakes -- same families, same per-role px,
+// same (family, px, bold) dedup -- across a repertoire x scale x family-config
+// matrix, headless, and reports what the design needs to decide arm A vs arm B:
+//
+//   texture W x H and bytes, whether ImFontAtlas::Build() SUCCEEDS, bake ms, glyph
+//   count, and the per-ImFont index-table cost (which is what IMGUI_USE_WCHAR32
+//   actually inflates: ImFont::IndexAdvanceX/IndexLookup are sized to the MAX
+//   codepoint present -- imgui_draw.cpp:3656-3669 GrowIndex(max_codepoint + 1)).
+//
+// DEV TOOL. Never linked into the mod (RULE 3 / probes are RULE-2 exempt).
+// Build twice -- once with -DWCHAR32=OFF, once ON -- to price the define.
+
+#include "imgui.h"
+#include "imgui_internal.h"
+#include "misc/freetype/imgui_freetype.h"
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+// ---- mirrored from src/votv-coop/include/ui/fonts.h + src/ui/fonts.cpp -------
+constexpr float kUiPx        = 16.f;
+constexpr float kChatPx      = 18.f;
+constexpr float kNameplatePx = 16.f;
+
+struct FamilyDesc { const char* label; const char* regular; const char* bold; };
+struct RoleDesc   { const char* label; float basePx; bool bold; };
+
+// Same order as ui::fonts::Family.
+const FamilyDesc kFamilies[] = {
+    { "JetBrains Mono",  "JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf" },
+    { "Roboto",          "Roboto-Regular.ttf",        "Roboto-Bold.ttf"        },
+    { "Cascadia Code",   "CascadiaCode-Regular.ttf",  "CascadiaCode-Bold.ttf"  },
+    { "Fixedsys (VOTV)", "FSEX300.ttf",               "FSEX300.ttf"            },
+};
+// Same order as ui::fonts::Role.
+const RoleDesc kRoles[] = {
+    { "Menu",      kUiPx,        false },
+    { "Chat",      kChatPx,      true  },
+    { "Net",       kUiPx,        false },
+    { "Nameplate", kNameplatePx, false },
+    { "Toast",     kUiPx,        false },
+};
+constexpr int kRoleCount = int(sizeof(kRoles) / sizeof(kRoles[0]));
+
+// config_registry::kFontRoleDefaultFamily -- menu/chat/toast = Fixedsys(3),
+// net/nameplate = Roboto(1).
+const int kDefaultFamilyForRole[kRoleCount] = { 3, 3, 1, 1, 3 };
+// The worst resident set a user can select: every role a different family.
+const int kWorstFamilyForRole[kRoleCount]   = { 0, 1, 2, 3, 0 };
+
+std::string g_assetDir;   // our four embedded families
+std::string g_donorDir;   // downloaded OFL/CC donors
+
+// ---- repertoire tiers --------------------------------------------------------
+enum Tier {
+    T_TODAY = 0,   // Latin-1 + Cyrillic, no donor  (what ships as of b131)
+    T_CN,          // + ImGui ChineseSimplifiedCommon from Noto Sans SC
+    T_CNJP,        // + ImGui Japanese too (Noto Sans JP merged)
+    T_CN_EMOJI,    // T_CN + single-codepoint COLR emoji (Twemoji Mozilla)
+    T_CNJP_EMOJI,  // T_CNJP + emoji
+    T_COUNT
+};
+const char* kTierName[T_COUNT] = {
+    "today (Latin+Cyrillic)", "+CN common", "+CN+JP", "+CN +emoji", "+CN+JP +emoji",
+};
+
+// Single-codepoint emoji ranges. Absent codepoints cost nothing: the freetype
+// builder skips glyphs the donor's cmap does not have (imgui_freetype.cpp:512+).
+const ImWchar kEmojiRanges[] = {
+    0x2190, 0x21FF, 0x2300, 0x23FF, 0x2600, 0x27BF, 0x2B00, 0x2BFF,
+#ifdef IMGUI_USE_WCHAR32
+    0x1F000, 0x1FAFF,
+#endif
+    0,
+};
+
+struct Result {
+    bool   built     = false;
+    int    texW      = 0, texH = 0;
+    size_t texBytes  = 0;
+    bool   rgba      = false;
+    double ms        = 0.0;
+    int    faces     = 0;
+    int    glyphs    = 0;
+    size_t indexBytes = 0;   // sum over faces of IndexAdvanceX+IndexLookup capacity
+    int    maxCp     = 0;
+};
+
+struct Face { int fam; int pxq; bool bold; };
+
+void AddSource(ImFontAtlas* atlas, const std::string& path, float px,
+               bool merge, const ImWchar* ranges, bool color) {
+    ImFontConfig cfg;
+    cfg.MergeMode        = merge;
+    cfg.GlyphRanges      = ranges;
+    if (color) cfg.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_LoadColor;
+    if (!atlas->AddFontFromFileTTF(path.c_str(), px, &cfg, ranges))
+        std::printf("  !! missing donor: %s\n", path.c_str());
+}
+
+Result Bake(Tier tier, float scale, const int* roleFamily) {
+    ImFontAtlas atlas;
+    // Dedup exactly like BakeEmbeddedRoles: one entry per (family, px*4, bold).
+    std::vector<Face> faces;
+    for (int r = 0; r < kRoleCount; ++r) {
+        const int   fam = roleFamily[r];
+        const float px  = kRoles[r].basePx * scale;
+        const int   pxq = int(px * 4.f + 0.5f);
+        bool seen = false;
+        for (const Face& f : faces)
+            if (f.fam == fam && f.pxq == pxq && f.bold == kRoles[r].bold) { seen = true; break; }
+        if (!seen) faces.push_back({ fam, pxq, kRoles[r].bold });
+    }
+
+    const ImWchar* cyr = atlas.GetGlyphRangesCyrillic();
+    for (const Face& f : faces) {
+        const float px = float(f.pxq) / 4.f;
+        const FamilyDesc& fd = kFamilies[f.fam];
+        AddSource(&atlas, g_assetDir + (f.bold ? fd.bold : fd.regular), px, false, cyr, false);
+        if (tier == T_CN || tier == T_CNJP || tier == T_CN_EMOJI || tier == T_CNJP_EMOJI)
+            AddSource(&atlas, g_donorDir + "NotoSansSC-Regular.ttf", px, true,
+                      atlas.GetGlyphRangesChineseSimplifiedCommon(), false);
+        if (tier == T_CNJP || tier == T_CNJP_EMOJI)
+            AddSource(&atlas, g_donorDir + "NotoSansJP-Regular.ttf", px, true,
+                      atlas.GetGlyphRangesJapanese(), false);
+        if (tier == T_CN_EMOJI || tier == T_CNJP_EMOJI)
+            AddSource(&atlas, g_donorDir + "Twemoji.Mozilla.ttf", px, true,
+                      kEmojiRanges, true);
+    }
+
+    Result res;
+    res.faces = int(faces.size());
+    const auto t0 = std::chrono::steady_clock::now();
+    res.built = atlas.Build();
+    const auto t1 = std::chrono::steady_clock::now();
+    res.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (!res.built) return res;
+
+    res.texW = atlas.TexWidth;
+    res.texH = atlas.TexHeight;
+    res.rgba = (atlas.TexPixelsRGBA32 != nullptr);
+    // What the GPU gets: both our halves call GetTexDataAsRGBA32
+    // (imgui_impl_dx11.cpp:330, imgui_impl_dx12.cpp:310) -> always 4 B/px.
+    res.texBytes = size_t(atlas.TexWidth) * size_t(atlas.TexHeight) * 4u;
+    for (ImFont* f : atlas.Fonts) {
+        res.glyphs += f->Glyphs.Size;
+        res.indexBytes += size_t(f->IndexAdvanceX.Size) * sizeof(float)
+                        + size_t(f->IndexLookup.Size)   * sizeof(ImWchar);
+        for (const ImFontGlyph& g : f->Glyphs)
+            if (int(g.Codepoint) > res.maxCp) res.maxCp = int(g.Codepoint);
+    }
+    return res;
+}
+
+void Row(const char* cfgName, Tier tier, float scale, const int* roleFamily) {
+    const Result r = Bake(tier, scale, roleFamily);
+    std::printf("%-8s %-16s x%.2f  faces=%d  ", cfgName, kTierName[tier], scale, r.faces);
+    if (!r.built) { std::printf("BUILD FAILED (atlas did not fit)\n"); return; }
+    std::printf("tex=%5dx%-5d %8.2f MB  glyphs=%-6d maxCp=U+%05X  idx=%7.2f MB  %7.1f ms  %s\n",
+                r.texW, r.texH, double(r.texBytes) / (1024.0 * 1024.0),
+                r.glyphs, r.maxCp, double(r.indexBytes) / (1024.0 * 1024.0),
+                r.ms, r.rgba ? "RGBA32" : "Alpha8");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        std::printf("usage: atlas_probe <assets/fonts dir> <donor dir>\n");
+        return 2;
+    }
+    g_assetDir = argv[1]; g_donorDir = argv[2];
+    if (!g_assetDir.empty() && g_assetDir.back() != '\\' && g_assetDir.back() != '/') g_assetDir += "\\";
+    if (!g_donorDir.empty() && g_donorDir.back() != '\\' && g_donorDir.back() != '/') g_donorDir += "\\";
+
+    ImGui::CreateContext();
+    std::printf("ImWchar = %d-bit   IM_UNICODE_CODEPOINT_MAX = 0x%X   imgui %s\n\n",
+                int(sizeof(ImWchar) * 8), IM_UNICODE_CODEPOINT_MAX, IMGUI_VERSION);
+    std::printf("%-8s %-16s %-6s %-7s %s\n", "config", "repertoire", "scale", "faces",
+                "texture / glyphs / index tables / bake");
+    for (int cfg = 0; cfg < 2; ++cfg) {
+        const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+        const char* name = cfg == 0 ? "default" : "worst";
+        for (float scale : { 1.0f, 1.5f, 2.0f })
+            for (int t = 0; t < T_COUNT; ++t)
+                Row(name, Tier(t), scale, fam);
+        std::printf("\n");
+    }
+    ImGui::DestroyContext();
+    return 0;
+}
