@@ -287,6 +287,7 @@ add_library(votv-coop SHARED
     src/ui/multiplayer_menu.cpp
     src/coop/player/nameplate.cpp
     src/coop/player/nick_color.cpp
+    src/coop/player/nickname_arbiter.cpp
     src/coop/player/hand_item.cpp
     src/coop/comms/chat_feed.cpp
     src/coop/comms/chat_bubbles.cpp

@@ -4,7 +4,9 @@
 
 #include "player_handshake_detail.h"  // co-located private header (src tree, not include/)
 
+#include "coop/config/config.h"           // arc B: persist a host-assigned name
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
+#include "coop/session/session_manager.h"
 #include "coop/moderation/seen_players.h"
 
 #include "coop/element/player.h"
@@ -14,6 +16,7 @@
 #include "coop/player/nameplate.h"
 #include "coop/player/hand_item.h"  // v105: hand-item mirrors reset/slot-disconnect
 #include "coop/player/nick_color.h"
+#include "coop/player/nickname_arbiter.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
@@ -41,6 +44,10 @@ namespace {
 // that function runs on inbound REMOTE nicks too (symmetric defense), and a
 // garbage remote nick must not render as our my-name default.
 std::wstring g_localNick = coop::config_registry::MyNameDefaultW();
+// What the human TYPED. The Join asks for this; g_localNick above is what we
+// DISPLAY, which the host may rename for uniqueness (arc B). Two stores, one
+// author each: the human owns the request, the host owns the display.
+std::wstring g_requestedNick = g_localNick;
 
 // v73 per-player inventory identity: OUR guid, which rides our outbound Join.
 // ASCII 32-hex; not displayed.
@@ -196,7 +203,7 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
 // boundary fix, profanity moderation is a separate moderation feature
 // pending Phase 6+ (per the VT adoption findings ranked shortlist).
 std::wstring SanitizeNickname(const std::wstring& raw) {
-    constexpr size_t kMaxNickLen = 20;
+    constexpr size_t kMaxNickLen = kNickMaxChars;  // ONE owner, player_handshake.h
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
@@ -235,10 +242,42 @@ void SetLocalNickname(const std::wstring& nick) {
     // can't accidentally send garbage over the wire that we then
     // sanitize on the OTHER end -- net is cleaner if both ends agree
     // on the displayable form.
-    if (!nick.empty()) g_localNick = SanitizeNickname(nick);
+    if (nick.empty()) return;
+    // Both stores: this is a fresh REQUEST, and until a host arbitrates it the
+    // requested name IS the displayed one. Splitting them here is what lets a
+    // host rename us without the next session re-asking for the suffix.
+    g_requestedNick = SanitizeNickname(nick);
+    g_localNick = g_requestedNick;
+}
+
+void AdoptCanonicalNickname(const std::wstring& canonical) {
+    // ARC B: the host assigned this. g_localNick is the single store that
+    // chat_sync.cpp:128, peer_action_feed.cpp:51, both of roster.cpp's local-row
+    // reads (:73, :121) and the nameplate all derive from, so writing it is the
+    // whole DISPLAY half of the handback.
+    if (canonical.empty() || canonical == g_localNick) return;
+    const std::wstring asked = g_requestedNick;
+    g_localNick = canonical;
+
+    // ...and the KEEPING half (user decision 2026-07-28). The name is now ours:
+    // it becomes what we ask for, in this process and in the ini, so the next
+    // session opens as Pelmentor2 and stays Pelmentor2 unless someone else is
+    // already using it. Writing all three stores in one place is deliberate --
+    // a name that is displayed but not requested would silently revert on the
+    // next launch, which is exactly the "temporary" behaviour that was rejected.
+    if (canonical == g_requestedNick) return;
+    g_requestedNick = canonical;
+    const std::vector<uint8_t> u8 = ToUtf8(canonical);
+    const std::string nickUtf8(reinterpret_cast<const char*>(u8.data()), u8.size());
+    coop::session_manager::SetNickname(nickUtf8);  // the browser field shows it too
+    coop::config::WriteIniValue(coop::config_registry::rows::net_nick, nickUtf8.c_str());
+    UE_LOGI("nick: host renamed us '%ls' -> '%ls' (kept: written to multivoid.ini)",
+            asked.c_str(), canonical.c_str());
 }
 
 const std::wstring& LocalNickname() { return g_localNick; }
+
+const std::wstring& RequestedNickname() { return g_requestedNick; }
 
 void SetLocalGuid(const std::string& guid) { g_localGuid = guid; }
 
@@ -295,8 +334,12 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         const uint32_t selfEidWire = selfEidProbe;
         joinPayload.resize(4);
         std::memcpy(joinPayload.data(), &selfEidWire, 4);
-        std::vector<uint8_t> nickUtf8 = ToUtf8(g_localNick);
+        // Ask for what the human typed, never for a suffix the host handed us last
+// time -- otherwise a reconnect would ratchet Pelmentor2 -> Pelmentor3.
+        std::vector<uint8_t> nickUtf8 = ToUtf8(g_requestedNick);
         if (nickUtf8.size() > 200) nickUtf8.resize(200);
+        UE_LOGI("handshake: Join to slot %d asks for '%ls' (%zu bytes)",
+                slot, g_requestedNick.c_str(), nickUtf8.size());
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
         joinPayload.insert(joinPayload.end(), nickUtf8.begin(), nickUtf8.end());
         // v73 per-player inventory: append [uint8 guidlen][guid ASCII] after the nick. The
@@ -530,6 +573,18 @@ bool HandleJoinMessage(net::Session& session,
     // the rest of the nameplate. Length-cap to 20 wchars caps
     // the worst-case widget overflow.
     nick = SanitizeNickname(nick);
+    // ARC B -- the host is the canonical namer. Two clients typing the same name
+    // each believe they are unique and neither can see the other's choice at the
+    // moment it is made, so uniqueness is decided by the one peer that sees every
+    // name at once. The assignment reaches the named peer (and everyone else) on
+    // the RosterRow below, whose nick sits in the FIXED PREFIX above the
+    // `applyDeclared` gate precisely so it can.
+    //
+    // Not gated on "is this a duplicate": Assign is the identity function when
+    // nothing collides, and running it unconditionally means there is ONE path a
+    // name can take to a row rather than two that must agree.
+    if (session.role() == net::Role::Host)
+        nick = coop::nickname_arbiter::Assign(senderSlot, nick);
     coop::roster_ledger::SetNick(senderSlot, nick);
     // Label the nameplate of THIS sender's puppet (not all puppets).
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(

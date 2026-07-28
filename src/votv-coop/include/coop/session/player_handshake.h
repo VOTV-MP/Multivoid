@@ -42,14 +42,48 @@
 
 namespace coop::player_handshake {
 
-// Set the local player's display name. Sanitized on the way in (see
-// SanitizeNickname inside the .cpp -- the same sanitizer that runs on
-// inbound peer nicknames, so both ends agree on the displayable form).
+// The display-name length cap, in wchar_t units. ONE owner: SanitizeNickname
+// enforces it and coop::nickname_arbiter sizes its suffix variants against it,
+// so a variant can never be longer than a name the sanitizer would accept.
+// (Arc D re-expresses this in CODEPOINTS -- the unit change moves the truncation
+// point and therefore re-partitions who collides, which is why it is named here
+// rather than repeated as a literal.)
+inline constexpr size_t kNickMaxChars = 20;
+
+// Set the local player's REQUESTED display name -- what the human typed, in the
+// browser or the ini. Sanitized on the way in (see SanitizeNickname inside the
+// .cpp -- the same sanitizer that runs on inbound peer nicknames, so both ends
+// agree on the displayable form). Also updates the displayed name optimistically:
+// until a host says otherwise, what you asked for is what you are.
 void SetLocalNickname(const std::wstring& nick);
 
-// Read the local player's (sanitized) display name. Game thread only (returns a
-// reference to the game-thread-owned string). Used by the roster snapshot.
+// ARC B. Adopt the display name the HOST assigned us. The host is the only peer
+// that sees every name at once, so uniqueness is its call and ours to accept;
+// this arrives on our own RosterRow (player_handshake_roster.cpp).
+//
+// USER DECISION 2026-07-28: the assigned name is KEPT, not borrowed. "What user
+// gets as a nickname gets recorded and persisted into his config files. It's not
+// something temporary." So adopting writes all three stores -- displayed,
+// requested, and multivoid.ini -- and the NEXT session asks to be called
+// Pelmentor2, which it then keeps, because there should not be another
+// Pelmentor2. A second Pelmentor2 is the one that gets renamed.
+//
+// This makes the ledger's ghost-freeness load-bearing rather than cosmetic: a
+// rename earned by colliding with your OWN un-reaped row would now persist. It
+// is safe because roster_ledger::ReconcileFromSession runs death FIRST and
+// unconditionally (roster_ledger.cpp:289), so no row survives its occupant.
+void AdoptCanonicalNickname(const std::wstring& canonical);
+
+// Read the local player's (sanitized) DISPLAYED name -- the host-assigned one
+// once we have joined, the requested one before that. Game thread only (returns
+// a reference to the game-thread-owned string). Every surface that prints "my
+// name" derives from this: the roster's local row, chat authorship, the action
+// feed and the nameplate.
 const std::wstring& LocalNickname();
+
+// Read the local player's REQUESTED name -- what we ask a host to call us. Only
+// the Join payload uses it; everything user-visible uses LocalNickname().
+const std::wstring& RequestedNickname();
 
 // v73 (per-player inventory): set the local player's durable identity GUID (32 hex chars
 // from coop::config::ReadPlayerGuid). Seeded once at boot, appended to our Join so the

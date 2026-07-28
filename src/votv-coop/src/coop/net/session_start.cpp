@@ -14,6 +14,8 @@
 
 #include "coop/net/session.h"
 
+#include "coop/player/nickname_arbiter.h"
+
 #include "ice_config.h"          // co-located: ICE STUN/TURN config (P2P)
 #include "signaling_client.h"    // co-located: P2P signaling transport
 #include "ue_wrap/core/log.h"
@@ -138,6 +140,15 @@ bool Session::Start(const Config& cfg) {
     // greps its one PASS line.
     static const bool kLinkClassifyOk = RunLinkClassifySelftest();
     (void)kLinkClassifyOk;
+
+    // ARC B, same discipline: the nickname arbiter's policy is a pure function
+    // (no ledger, no thread affinity), and its interesting cases -- a suffix
+    // displacing stem characters at the 20-char cap, a variant colliding with a
+    // name a DIFFERENT player already holds, a kept "Pelmentor2" meeting another
+    // "Pelmentor2" -- need four peers with chosen names to stage on a LAN and
+    // cost nothing to assert here.
+    static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
+    (void)kNickArbiterOk;
 
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(

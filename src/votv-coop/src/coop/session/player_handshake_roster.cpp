@@ -348,12 +348,32 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
             if (len > 0) nick = FromUtf8(nickStart + 1, len);
         }
     }
-    nick = SanitizeNickname(nick);
+    // AN EMPTY NICK MEANS "NOT KNOWN YET", NOT "CALLED NOTHING". The host installs
+    // a row the moment a slot is ready, which is BEFORE that peer's Join carries
+    // its name -- so the first row about a joiner legitimately has no nick. Running
+    // the sanitizer on it would mint the display PLACEHOLDER ("Player") and store
+    // it as if it were a name, and arc B made that actively harmful: the joiner
+    // would adopt the placeholder as its canonical name and persist it over the
+    // one the human chose. The placeholder is a DISPLAY fallback and the ledger
+    // already owns the ONE copy of it (roster_ledger::DisplayName); identity keeps
+    // "unknown" as empty. The sanitizer still runs on every non-empty peer-authored
+    // string -- that trust boundary is unchanged.
+    if (!nick.empty()) nick = SanitizeNickname(nick);
     if (nick != coop::roster_ledger::Get(describedSlot).nick) {
         coop::roster_ledger::SetNick(describedSlot, nick);
         if (RemotePlayer* p = coop::players::Registry::Get().Puppet(describedSlot))
             p->SetNickname(nick);
     }
+    // ARC B -- the handback. A row about US carries the name the HOST assigned,
+    // and the ledger is not where "my name" is read from: roster.cpp:73 and :121
+    // resolve the local row through LocalNickname() on purpose ("our own name is
+    // ours before any row exists"), and chat authorship, the action feed and the
+    // Join payload read the same store. Writing the ledger row alone would leave
+    // five surfaces still showing the name we ASKED for. Measured census:
+    // 6 readers of LocalNickname(), 19 sites on the ledger-read verb.
+    // Only a name the host actually AUTHORED FROM OUR REQUEST is ours to keep.
+    // An empty field is the host saying "I have not heard your Join yet".
+    if (aboutSelf && !nick.empty()) coop::player_handshake::AdoptCanonicalNickname(nick);
 
     // --- the mirror Element. Rows about slot 0 / our own slot carry the eid 0
     // sentinel and skip this: slot 0's identity is AssignPeerSlot's to author.
