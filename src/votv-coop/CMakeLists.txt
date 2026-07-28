@@ -63,7 +63,13 @@ target_include_directories(minhook PUBLIC ${MINHOOK_DIR}/include)
 # (RULE 3, no UE4SS at runtime). Compiled into our own static target so it picks up
 # the same static-CRT as the mod (like minhook). Backends: DX11 + DX12 (we
 # auto-detect the RHI at the swapchain) + Win32 (input). Source in third_party/imgui.
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+# Overridable so an upgrade can be PRICED by the compiler rather than by grep:
+# point it at a worktree of another tag and build (the arc-D gate did exactly this
+# for 1.92.8 -- see research/findings/join-identity/votv-arc-d-gate-measurements-2026-07-28.md).
+# Unset = the pinned submodule, which is what ships.
+if(NOT IMGUI_DIR)
+    set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+endif()
 
 # FreeType (FTL license, vendored 2.13.3) -- the imgui_freetype atlas rasterizer
 # (proper hinting; visibly sharper than stb_truetype at 16-18 px UI sizes, user

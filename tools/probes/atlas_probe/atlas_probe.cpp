@@ -170,6 +170,54 @@ void Row(const char* cfgName, Tier tier, float scale, const int* roleFamily) {
                 r.ms, r.rgba ? "RGBA32" : "Alpha8");
 }
 
+// Does a COLR/CPAL donor actually RASTERISE colour pixels under our FreeType
+// configuration -- or does "COLR v0, no CBDT" stay a TABLE fact while FreeType
+// hands back the (empty) base outline? Bakes one emoji and reads the bitmap.
+void ColorRasterCheck() {
+    for (int withFlag = 0; withFlag < 2; ++withFlag) {
+        ImFontAtlas atlas;
+        ImFontConfig cfg;
+        if (withFlag) cfg.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_LoadColor;
+        static const ImWchar r[] = {
+#ifdef IMGUI_USE_WCHAR32
+            0x1F600, 0x1F600, 0x1F60D, 0x1F60D,
+#endif
+            0x263A, 0x263A, 0,
+        };
+        cfg.GlyphRanges = r;
+        ImFont* f = atlas.AddFontFromFileTTF((g_donorDir + "Twemoji.Mozilla.ttf").c_str(),
+                                             32.f, &cfg, r);
+        if (!f) { std::printf("  LoadColor=%d: donor missing\n", withFlag); continue; }
+        if (!atlas.Build()) { std::printf("  LoadColor=%d: BUILD FAILED\n", withFlag); continue; }
+
+        // Count glyphs, and -- for the coloured path -- how many texels inside the
+        // baked glyph boxes are NOT greyscale (r==g==b), which is what proves colour
+        // pixels reached the atlas rather than a white-on-alpha mask.
+        int coloredFlag = 0, nonGrey = 0, visible = 0;
+        for (const ImFontGlyph& g : f->Glyphs) {
+            if (g.Colored) ++coloredFlag;
+            if (g.Visible) ++visible;
+        }
+        if (atlas.TexPixelsRGBA32) {
+            const int w = atlas.TexWidth;
+            for (const ImFontGlyph& g : f->Glyphs) {
+                const int x0 = int(g.U0 * w), x1 = int(g.U1 * w);
+                const int y0 = int(g.V0 * atlas.TexHeight), y1 = int(g.V1 * atlas.TexHeight);
+                for (int y = y0; y < y1; ++y)
+                    for (int x = x0; x < x1; ++x) {
+                        const unsigned p = atlas.TexPixelsRGBA32[y * w + x];
+                        const unsigned rr = p & 0xFF, gg = (p >> 8) & 0xFF, bb = (p >> 16) & 0xFF;
+                        if (rr != gg || gg != bb) ++nonGrey;
+                    }
+            }
+        }
+        std::printf("  LoadColor=%d: glyphs=%d visible=%d Colored-flag=%d  buffer=%s"
+                    "  non-greyscale texels=%d\n",
+                    withFlag, f->Glyphs.Size, visible, coloredFlag,
+                    atlas.TexPixelsRGBA32 ? "RGBA32" : "Alpha8", nonGrey);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -184,7 +232,9 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     std::printf("ImWchar = %d-bit   IM_UNICODE_CODEPOINT_MAX = 0x%X   imgui %s\n\n",
                 int(sizeof(ImWchar) * 8), IM_UNICODE_CODEPOINT_MAX, IMGUI_VERSION);
-    std::printf("%-8s %-16s %-6s %-7s %s\n", "config", "repertoire", "scale", "faces",
+    std::printf("=== COLR raster check (does the emoji donor actually paint?) ===\n");
+    ColorRasterCheck();
+    std::printf("\n%-8s %-16s %-6s %-7s %s\n", "config", "repertoire", "scale", "faces",
                 "texture / glyphs / index tables / bake");
     for (int cfg = 0; cfg < 2; ++cfg) {
         const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;

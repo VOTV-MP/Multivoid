@@ -10,6 +10,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "misc/freetype/imgui_freetype.h"
 
 #include <chrono>
 #include <cstdio>
@@ -129,6 +130,65 @@ void Run(float scale, bool withDonors) {
     ImGui::DestroyContext(ctx);
 }
 
+// R2 of the build pass: claim 6(a) ("colour is VRAM-neutral") was measured on
+// 1.91.5, the build C1 RETIRES. 1.92 uploads through ImTextureData with its own
+// Format, and exposes ImFontAtlas::TexDesiredFormat -- so the Alpha8 option that
+// did not exist at the 1.91.5 upload seam exists here. Re-measure on the arm
+// that actually ships: does LoadColor paint, and what does it cost against the
+// Alpha8 alternative?
+void ColorRasterCheck192() {
+    for (int mode = 0; mode < 3; ++mode) {
+        // 0 = no LoadColor, default format. 1 = LoadColor. 2 = LoadColor + ask for Alpha8.
+        ImGuiContext* ctx = ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(1920, 1080);
+        io.DeltaTime = 1.0f / 60.0f;
+        io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+        if (mode == 2) io.Fonts->TexDesiredFormat = ImTextureFormat_Alpha8;
+
+        ImFontConfig base;
+        ImFont* f = io.Fonts->AddFontFromFileTTF((g_assetDir + "Roboto-Regular.ttf").c_str(), 32.f, &base);
+        ImFontConfig m; m.MergeMode = true;
+        if (mode != 0) m.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
+        io.Fonts->AddFontFromFileTTF((g_donorDir + "Twemoji.Mozilla.ttf").c_str(), 32.f, &m);
+
+        const char* emoji = "\xF0\x9F\x98\x80\xF0\x9F\x98\x8D\xE2\x98\xBA";  // U+1F600 U+1F60D U+263A
+        for (int frame = 0; frame < 2; ++frame) {
+            ImGui::NewFrame();
+            ImGui::Begin("probe");
+            ImGui::PushFont(f, f->LegacySize);
+            ImGui::TextUnformatted(emoji);
+            ImGui::PopFont();
+            ImGui::End();
+            ImGui::Render();
+            ServiceTextures();
+        }
+        int visible = 0, colored = 0;
+        if (ImFontBaked* b = f->GetFontBaked(f->LegacySize))
+            for (const ImFontGlyph& g : b->Glyphs) {
+                if (g.Visible && g.Codepoint > 0x2000) ++visible;
+                if (g.Colored) ++colored;
+            }
+        for (ImTextureData* tex : ImGui::GetPlatformIO().Textures) {
+            int nonGrey = 0;
+            if (tex->Pixels && tex->BytesPerPixel == 4)
+                for (int i = 0; i < tex->Width * tex->Height; ++i) {
+                    const unsigned char* p = tex->Pixels + i * 4;
+                    if (p[0] != p[1] || p[1] != p[2]) ++nonGrey;
+                }
+            std::printf("  mode=%d (%s) tex=%dx%d fmt=%s bpp=%d UseColors=%d  "
+                        "emoji-visible=%d Colored=%d  non-greyscale texels=%d  %.2f MB\n",
+                        mode,
+                        mode == 0 ? "no LoadColor" : (mode == 1 ? "LoadColor" : "LoadColor + want Alpha8"),
+                        tex->Width, tex->Height,
+                        tex->Format == ImTextureFormat_RGBA32 ? "RGBA32" : "Alpha8",
+                        tex->BytesPerPixel, int(tex->UseColors), visible, colored, nonGrey,
+                        double(tex->GetSizeInBytes()) / (1024.0 * 1024.0));
+        }
+        ImGui::DestroyContext(ctx);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -138,6 +198,9 @@ int main(int argc, char** argv) {
     if (g_donorDir.back() != '\\' && g_donorDir.back() != '/') g_donorDir += "\\";
     std::printf("imgui %s   ImWchar = %d-bit   dynamic-font path (RendererHasTextures)\n\n",
                 IMGUI_VERSION, int(sizeof(ImWchar) * 8));
+    std::printf("=== COLR raster + format cost, on the arm that SHIPS ===\n");
+    ColorRasterCheck192();
+    std::printf("\n");
     for (float s : { 1.0f, 2.0f }) { Run(s, false); Run(s, true); }
     return 0;
 }
